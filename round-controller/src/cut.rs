@@ -302,6 +302,20 @@ fn state_is(r: &serde_json::Value, words: &[&str]) -> bool {
         .is_some_and(|s| words.iter().any(|w| s.eq_ignore_ascii_case(w)))
 }
 
+/// Whether a lifecycle record's `holds` names any hold. spira-lc writes the list either as a JSON
+/// array or as a JSON-encoded string of one; a value that is neither empty nor a list cannot be
+/// read as "no holds", so it holds the member out (law-a-control-that-cannot-check-must-refuse).
+fn held(holds: Option<&serde_json::Value>) -> bool {
+    use serde_json::Value;
+    match holds {
+        None | Some(Value::Null) => false,
+        Some(Value::Array(a)) => !a.is_empty(),
+        Some(Value::String(t)) if t.trim().is_empty() => false,
+        Some(Value::String(t)) => serde_json::from_str::<Vec<Value>>(t).map_or(true, |a| !a.is_empty()),
+        Some(_) => true,
+    }
+}
+
 fn pooled(id: &str, r: &serde_json::Value, repo: &str) -> Option<core::Member> {
     let s = |k: &str| r.get(k).and_then(|v| v.as_str());
     if s("repo") != Some(repo) || !state_is(r, &["SUBMITTED", "CERTIFIED"]) {
@@ -311,10 +325,7 @@ fn pooled(id: &str, r: &serde_json::Value, repo: &str) -> Option<core::Member> {
     if s("ejected_red_tip") == Some(tip) {
         return None;
     }
-    if r.get("holds")
-        .and_then(|h| h.as_array())
-        .is_some_and(|h| !h.is_empty())
-    {
+    if held(r.get("holds")) {
         return None;
     }
     let strings = |k: &str| -> Vec<String> {

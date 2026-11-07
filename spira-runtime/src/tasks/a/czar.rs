@@ -768,9 +768,9 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         }
         if matches!(land.as_str(), "queue" | "queue.local") {
             let certified = match lc.call(&["list", "--state", "CERTIFIED", "--repo", name.as_str()]) {
-                Ok(r) if r.code == 0 => match serde_json::from_str::<serde_json::Value>(&r.out) {
-                    Ok(v) => Read::Observed(v.as_array().into_iter().flatten().filter(|r| r["holds"].as_array().is_none_or(|h| h.is_empty())).filter_map(|r| r["bead_id"].as_str().map(str::to_string)).collect()),
-                    Err(err) => Read::Unobservable(format!("spira-lc list: {err}")),
+                Ok(r) if r.code == 0 => match unheld_ids(&r.out) {
+                    Ok(ids) => Read::Observed(ids),
+                    Err(err) => Read::Unobservable(err),
                 },
                 Ok(r) => Read::Unobservable(r.why()),
                 Err(err) => Read::Unobservable(err.to_string()),
@@ -820,4 +820,11 @@ pub fn status(e: &Effects, input: &str) -> Result<String, String> {
     let fields: Vec<(String, serde_json::Value)> = ["key", "status", "since"].iter().map(|k| (k.to_string(), v[*k].clone())).collect();
     tsd::store::Pusher::new(e.world.metrics_endpoint.clone()).push("czar-status", &tsd::now_iso(), &fields).map_err(|e| e.to_string())?;
     Ok(v["key"].as_str().unwrap_or_default().to_string())
+}
+
+/// The ids of the rows in a `spira-lc list` answer that carry no hold, read through the typed
+/// [`spira_config::lc_state::Row`], which takes `holds` as an array or as the JSON-encoded string
+/// spira-lc may write. A held row is not pool: reading the string form as unheld miscounted it.
+pub fn unheld_ids(list_json: &str) -> Result<Vec<String>, String> {
+    Ok(spira_config::lc_state::parse_rows(list_json)?.into_iter().filter(|r| r.holds.is_empty()).map(|r| r.bead_id).collect())
 }
