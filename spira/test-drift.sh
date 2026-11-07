@@ -365,25 +365,20 @@ CAPPED="8:99"
 out="$(bdi bdi 2>&1)"; rc=$?
 is "disk with no bdi entry: cannot-check, exit 3" "3" "$rc"
 
-ROOT_SRC="$(findmnt -nro SOURCE -T "$TMP" 2>/dev/null)"
-ROOT_ID=""
-while read -r row; do
-    [ -e "/sys/dev/block/$row/partition" ] || { ROOT_ID="$row"; break; }
-done < <(lsblk -snro MAJ:MIN "$ROOT_SRC" 2>/dev/null)
-if [ -n "$ROOT_ID" ]; then
-    mkdir -p "$SYS/$ROOT_ID"; echo 0 > "$SYS/$ROOT_ID/strict_limit"; echo 100 > "$SYS/$ROOT_ID/max_ratio"
-    CAPPED="$TMP"
-    out="$(bdi bdi)"; rc=$?
-    is "mount point: exits 1" "1" "$rc"
-    want "mount point: resolved to the disk's bdi" "UNCAPPED $TMP (bdi $ROOT_ID:" "$out"
-    NAME="$(lsblk -dnro NAME "/dev/block/$ROOT_ID")"
-    out="$(bdi bdi-rule)"; rc=$?
-    is "bdi-rule: exits 0" "0" "$rc"
-    is "bdi-rule: names the disk and the configured ratio" \
-        "ACTION==\"add|change\", SUBSYSTEM==\"block\", KERNEL==\"$NAME\", ATTR{bdi/strict_limit}=\"1\", ATTR{bdi/max_ratio}=\"7\"" "$out"
-else
-    skip "mount point and bdi-rule: no block device behind the temp dir here"
-fi
+ROOT_ID="4095:0"
+mkdir -p "$TMP/shim"
+printf '#!/bin/sh\necho /dev/fakedisk\n' > "$TMP/shim/findmnt"
+printf '#!/bin/sh\ncase "$*" in *NAME*) echo fakedisk;; *) echo %s;; esac\n' "$ROOT_ID" > "$TMP/shim/lsblk"
+chmod +x "$TMP/shim/findmnt" "$TMP/shim/lsblk"
+mkdir -p "$SYS/$ROOT_ID"; echo 0 > "$SYS/$ROOT_ID/strict_limit"; echo 100 > "$SYS/$ROOT_ID/max_ratio"
+CAPPED="$TMP"
+out="$(PATH="$TMP/shim:$PATH" bdi bdi)"; rc=$?
+is "mount point: exits 1" "1" "$rc"
+want "mount point: resolved to the disk's bdi" "UNCAPPED $TMP (bdi $ROOT_ID:" "$out"
+out="$(PATH="$TMP/shim:$PATH" bdi bdi-rule)"; rc=$?
+is "bdi-rule: exits 0" "0" "$rc"
+is "bdi-rule: names the disk and the configured ratio" \
+    "ACTION==\"add|change\", SUBSYSTEM==\"block\", KERNEL==\"fakedisk\", ATTR{bdi/strict_limit}=\"1\", ATTR{bdi/max_ratio}=\"7\"" "$out"
 
 CAPPED="8:99"
 out="$(bdi bdi-rule 2>&1)"; rc=$?
