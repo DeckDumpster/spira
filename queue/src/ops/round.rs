@@ -4022,8 +4022,8 @@ pub(super) fn reconcile_unrecorded(w: &World, c: &Ctx, path: &Path) {
     }
 }
 
-/// Why `round land` landed nothing, as the first word of its stderr: a lander acts on the word
-/// and the exit, never on the prose after them (law-a-matcher-reads-code-not-prose).
+/// Why `round land` landed nothing: its exit ([`LandRefusal::exit`]) is what a lander acts on;
+/// the word that starts its stderr is for the operator (law-a-matcher-reads-code-not-prose).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LandRefusal {
     /// Stacked on a round that has not landed: it waits for it.
@@ -4035,6 +4035,16 @@ pub enum LandRefusal {
 }
 
 impl LandRefusal {
+    /// The exit a lander classifies the refusal by: stacked and base-moved have their own, a
+    /// plain refusal keeps the exit the refusing step gave (law-lifecycle-state-is-not-text).
+    pub fn exit(self, rc: i32) -> i32 {
+        match self {
+            LandRefusal::Stacked => super::LAND_STACKED,
+            LandRefusal::BaseMoved => super::LAND_BASE_MOVED,
+            LandRefusal::Refused => rc,
+        }
+    }
+
     pub fn word(self) -> &'static str {
         match self {
             LandRefusal::Stacked => "stacked",
@@ -4076,11 +4086,11 @@ fn land(w: &World, batch: &str, repo: Option<&str>, token: Option<&str>) -> i32 
         }
         Err((why, rc)) if text.is_empty() => {
             w.io.err(&format!("{}: queue.sh round land: {batch} not landed\n", why.word()));
-            rc
+            why.exit(rc)
         }
         Err((why, rc)) => {
             w.io.err(&format!("{}: {text}", why.word()));
-            rc
+            why.exit(rc)
         }
     }
 }
