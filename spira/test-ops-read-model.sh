@@ -51,7 +51,8 @@ is "migrating the pre-0007 store gives ops_live its claimable and blocker" "bloc
 
 # SEED: 12 beads, 24 events: 6 live beads (OPEN..IN_DELIVERY), 4 landed in the last day, then one landed
 # 3 days ago and one dropped; 2 events inside the window, 22 older. No plan changed from 300 beads /
-# 3,000 events down to 12 / 3; 12 is the smallest that holds every state, 24 keeps both sides of the window.
+# 3,000 events down to 12 / 24, the floor: 12 beads is the fewest that hold every state and 24 events keep
+# both sides of the window. Nothing smaller was tried, so no first-changing size is known.
 NOW="$(date +%s)"
 SEED_BEADS=12
 SEED_EVENTS=24
