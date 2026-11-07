@@ -20,7 +20,7 @@
 2 unit-name install/src/bin/units_install.rs
 1 unit-name install/src/bootstrap.rs
 1 unit-name install/src/guards.rs
-3 unit-name install/src/install_units.rs
+4 unit-name install/src/install_units.rs
 2 unit-name install/src/manifest.rs
 1 unit-name install/src/values.rs
 1 output landing-pass/src/real.rs
