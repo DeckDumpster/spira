@@ -874,7 +874,7 @@ pub fn flow_lines(snap: &Snapshot) -> Vec<String> {
         let col = if v == "?" { BAD } else { "" };
         format!(" {DIM}{label}{RST} {col}{v}{}", if col.is_empty() { "" } else { RST })
     };
-    vec![row("WHERE ", "SP_TSD_WHERE"), row("REWORK", "SP_TSD_REWORK")]
+    vec![row("WHERE ", "SP_TSD_WHERE"), row("REWORK", "SP_TSD_REWORK"), row("TESTS ", "SP_TSD_TESTS")]
 }
 
 /// `standing_lines` — the fixed-height figures: ATTN, SEND, BEADS, LAND, LOCK, GATE, SUITES,
@@ -1348,7 +1348,7 @@ mod tests {
         let ok = flow_lines(&snap(&[("SP_TSD_WHERE", "WORKING 3 (12m)"), ("SP_TSD_REWORK", "1 reopened / 9 landed")])).join("\n");
         assert!(ok.contains("WORKING 3 (12m)") && ok.contains("1 reopened / 9 landed"), "{ok}");
         let bad = flow_lines(&snap(&[("SP_TSD_WHERE", "?")])).join("\n");
-        assert_eq!(bad.matches('?').count(), 2, "{bad}");
+        assert_eq!(bad.matches('?').count(), 3, "{bad}");
         assert!(!bad.contains(" 0"), "{bad}");
     }
 

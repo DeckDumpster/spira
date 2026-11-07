@@ -81,8 +81,24 @@ fn real_main(meter: &spira_otel::metrics::Run) -> i32 {
     let world = Real { batch_tail_lines, suite_timeout_default };
     let mut tally = Tally::default();
     let code = run(&world, &home, &root, &mut tally);
+    record_tests(&root, spira_config::process::cfg("SPIRA_RUN").ok().filter(|v| !v.is_empty()).map(PathBuf::from));
     push_tally(meter, &tally);
     code
+}
+
+/// Appends this round's `results.jsonl` to the `test-run` family as one row per test. Only a
+/// caller that names `SPIRA_RUN` has a family to append to; a failed append is said, never fatal.
+fn record_tests(root: &std::path::Path, run: Option<PathBuf>) {
+    let Some(run) = run else { return };
+    let Ok(jsonl) = std::fs::read_to_string(root.join("results.jsonl")) else { return };
+    let (ts, host) = (tsd::now_iso(), tsd::default_host());
+    let path = tsd::family_path(&run, tsd::testrun::FAMILY);
+    for row in tsd::testrun::rows_from_results(&jsonl, &format!("{ts} {}", root.display()), &ts, &host) {
+        if let Err(e) = tsd::append_line(&path, &row) {
+            eprintln!("gate-diag: test-run rows not recorded: {e}");
+            return;
+        }
+    }
 }
 
 fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path, tally: &mut Tally) -> i32 {
@@ -226,4 +242,26 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path, tally:
     }
 
     0
+}
+
+#[cfg(test)]
+mod record_tests_tests {
+    use super::record_tests;
+
+    #[test]
+    fn a_round_appends_one_test_run_row_per_case_and_none_without_a_run_dir() {
+        let tmp = testkit::TempDir::new("gate-diag-rec");
+        let d = tmp.path().to_path_buf();
+        std::fs::write(
+            d.join("results.jsonl"),
+            "{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"pass\",\"seconds\":1}\n{\"suite\":\"a.sh\",\"case\":\"(verdict)\",\"status\":\"red-red\",\"seconds\":0}\n",
+        )
+        .unwrap();
+        record_tests(&d, None);
+        assert!(!d.join("tsd").exists());
+        record_tests(&d, Some(d.clone()));
+        let text = std::fs::read_to_string(d.join("tsd/test-run.jsonl")).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        assert!(text.contains("\"test\":\"a.sh::x\""), "{text}");
+    }
 }
