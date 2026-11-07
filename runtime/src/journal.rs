@@ -141,6 +141,11 @@ pub trait Journal: Send + Sync {
     fn leases(&self) -> Option<&dyn LeaseTable> {
         None
     }
+    /// Make every write this journal has accepted durable now. A journal that writes through
+    /// has nothing to do; one that stages idempotent writes for its next request sends them.
+    fn flush(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -372,6 +377,9 @@ impl Journal for FaultyJournal {
     }
     fn leases(&self) -> Option<&dyn LeaseTable> {
         self.inner.leases().map(|_| self as &dyn LeaseTable)
+    }
+    fn flush(&self) -> Result<()> {
+        self.inner.flush()
     }
 }
 
