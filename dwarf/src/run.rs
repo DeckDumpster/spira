@@ -432,6 +432,11 @@ impl<'a> Run<'a> {
             self.ledger.awake(self.now(), self.f(), "halted");
             return Some(0);
         }
+        if let Some(why) = dwarves_stopped(self.run_dir(), &self.conf.repos.all(), self.f()) {
+            self.log(&why);
+            self.ledger.awake(self.now(), self.f(), "stopped");
+            return Some(0);
+        }
         if self.run_dir().join("world.draining").is_file() {
             self.log(&format!("{}: draining — claiming nothing (world.sh resume to lift)", self.f()));
             self.ledger.awake(self.now(), self.f(), "draining");
@@ -1686,9 +1691,28 @@ pub fn dwarf_settings(home: &Path, habits: bool) -> String {
     )
 }
 
+/// The line a dwarf logs when it declines because the dwarves lane is stopped on every repo.
+fn dwarves_stopped<S: AsRef<str>>(run: &Path, repos: &[S], f: &str) -> Option<String> {
+    spira_config::scoped_stop::stop_everywhere(run, repos, "dwarves").map(|s| spira_config::scoped_stop::skip_line(f, "dwarves", &s))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dwarves_lane_stopped_on_every_repo_declines_and_names_who_lifts_it() {
+        let d = testkit::TempDir::new("dwarf-dwarves-lane");
+        let repos = ["fixture".to_string(), "other".to_string()];
+        spira_config::scoped_stop::pause_repo(d.path(), "fixture", &["rounds".to_string()], "o", "r", "u", 1).unwrap();
+        spira_config::scoped_stop::pause_repo(d.path(), "other", &["rounds".to_string()], "o", "r", "u", 1).unwrap();
+        assert_eq!(dwarves_stopped(d.path(), &repos, "builder"), None, "another lane's stop is no decline");
+        spira_config::scoped_stop::pause_repo(d.path(), "fixture", &["dwarves".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+        assert_eq!(dwarves_stopped(d.path(), &repos, "builder"), None, "one repo still takes dwarves");
+        spira_config::scoped_stop::pause_repo(d.path(), "other", &["dwarves".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+        let why = dwarves_stopped(d.path(), &repos, "builder").expect("stopped everywhere");
+        assert!(why.contains("dwarves lane of fixture is stopped on purpose by cutover-mode") && why.contains("world stop"), "{why}");
+    }
 
     #[test]
     fn habits_group_only_when_the_rune_sets_it() {

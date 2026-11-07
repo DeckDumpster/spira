@@ -8,7 +8,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const LANES: [&str; 3] = ["claims", "rounds", "publish"];
+/// `land` is landing-pass, `dwarves` a dwarf deciding to work, `czar` czar-pass, `heimdall` the
+/// detectors that page (heimdall, watchtower), `remedies` the reconciler.
+pub const LANES: [&str; 8] = ["claims", "rounds", "publish", "land", "dwarves", "czar", "heimdall", "remedies"];
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct RepoStop {
@@ -200,6 +202,15 @@ pub fn repo_stops(run: &Path) -> Vec<RepoStop> {
     entries(run, "repo-").iter().filter_map(|p| read_repo(p)).collect()
 }
 
+/// Every repo stop, or an error naming the first file that cannot be read: a caller about to
+/// overwrite stops must not treat an unreadable one as absent.
+pub fn repo_stops_strict(run: &Path) -> Result<Vec<RepoStop>, String> {
+    entries(run, "repo-")
+        .iter()
+        .map(|p| fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display())).and_then(|t| serde_json::from_str(&t).map_err(|e| format!("{}: {e}", p.display()))))
+        .collect()
+}
+
 pub fn reservations(run: &Path) -> Vec<Reservation> {
     entries(run, "reserve-").iter().filter_map(|p| serde_json::from_str(&fs::read_to_string(p).ok()?).ok()).collect()
 }
@@ -210,6 +221,38 @@ pub fn stop_for(run: &Path, repo: &str, lane: &str) -> Option<RepoStop> {
         return None;
     }
     read_repo(&repo_path(run, repo)).filter(|s| s.lanes.iter().any(|l| l == lane))
+}
+
+/// The stop holding a host-wide actor's `lane`: that lane stopped on every repo in `repos`, the
+/// first repo's stop returned. `None` while any repo runs, or when `repos` names none.
+pub fn stop_everywhere<S: AsRef<str>>(run: &Path, repos: &[S], lane: &str) -> Option<RepoStop> {
+    let mut first = None;
+    for r in repos {
+        let s = stop_for(run, r.as_ref(), lane)?;
+        first.get_or_insert(s);
+    }
+    first
+}
+
+/// [`stop_everywhere`] over this process's registered repos, for a binary that holds no registry
+/// of its own. A process that cannot locate its home reads no stop.
+pub fn stop_everywhere_registered(run: &Path, lane: &str) -> Option<RepoStop> {
+    let home = crate::resolve::locate_home_for_process().ok()?;
+    stop_everywhere(run, &crate::repos::Registry::from_env(std::env::vars().collect(), &home).all(), lane)
+}
+
+/// The line an actor logs when it skips work under a stop on `lane`: deliberate, never a fault.
+pub fn skip_line(actor: &str, lane: &str, s: &RepoStop) -> String {
+    format!("{actor}: skipped — the {lane} lane of {} is stopped on purpose by {} ({}); lifts on: {}", s.repo, s.owner, s.reason, s.until)
+}
+
+/// Writes `stop` as the whole record for its repo, replacing any there: how a lifted overlay
+/// puts back the stop it was laid over.
+pub fn put_repo(run: &Path, stop: &RepoStop) -> Result<(), String> {
+    if !valid_name(&stop.repo) {
+        return Err(format!("bad repo name {:?}", stop.repo));
+    }
+    write_atomic(&repo_path(run, &stop.repo), &serde_json::to_string_pretty(stop).map_err(|e| e.to_string())?)
 }
 
 pub fn reserved_ids(run: &Path) -> BTreeSet<String> {
@@ -341,6 +384,36 @@ mod tests {
         let (lifted, unread) = sweep(d.path(), &mut |_, _, _| Err("store down".into()));
         assert!(lifted.is_empty() && unread.len() == 1);
         assert!(stop_for(d.path(), "cubby", "rounds").is_some(), "an unreadable bead keeps the stop");
+    }
+
+    #[test]
+    fn a_host_wide_lane_is_stopped_only_when_every_repo_stops_it() {
+        let d = testkit::TempDir::new("scoped-stop-everywhere");
+        let repos = ["spira", "other"];
+        pause_repo(d.path(), "spira", &lanes("czar"), "o", "r", "u", 1).unwrap();
+        assert!(stop_everywhere(d.path(), &repos, "czar").is_none(), "the other repo still runs");
+        pause_repo(d.path(), "other", &lanes("czar,land"), "o", "r", "u", 1).unwrap();
+        assert_eq!(stop_everywhere(d.path(), &repos, "czar").map(|s| s.repo), Some("spira".into()));
+        assert!(stop_everywhere(d.path(), &repos, "land").is_none());
+        assert!(stop_everywhere::<&str>(d.path(), &[], "czar").is_none(), "no repos is no stop");
+    }
+
+    #[test]
+    fn every_actor_lane_parses_and_a_skip_names_who_lifts_it() {
+        assert_eq!(lanes("land,dwarves,czar,heimdall,remedies").len(), 5);
+        let s = RepoStop { repo: "spira".into(), lanes: vec!["land".into()], owner: "cutover-mode".into(), reason: "cutover".into(), until: "world stop".into(), since: 1 };
+        let line = skip_line("landing-pass", "land", &s);
+        assert!(line.contains("cutover-mode") && line.contains("world stop") && line.contains("land lane of spira"), "{line}");
+    }
+
+    #[test]
+    fn put_repo_replaces_the_record_whole() {
+        let d = testkit::TempDir::new("scoped-stop-put");
+        pause_repo(d.path(), "spira", &lanes("rounds,claims"), "cutover-mode", "c", "world stop", 5).unwrap();
+        let prior = RepoStop { repo: "spira".into(), lanes: vec!["rounds".into()], owner: "concierge".into(), reason: "drain".into(), until: "fix lands".into(), since: 2 };
+        put_repo(d.path(), &prior).unwrap();
+        assert_eq!(stop_for(d.path(), "spira", "rounds"), Some(prior));
+        assert!(stop_for(d.path(), "spira", "claims").is_none());
     }
 
     #[test]
