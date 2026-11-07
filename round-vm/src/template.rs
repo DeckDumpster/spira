@@ -595,13 +595,13 @@ mod tests {
             .env_clear()
             .env("work", dir)
             .env("CARGO_HOME", "/opt/cargo")
-            .env("HOME", "/home/r")
+            .env("HOME", "/fixture/home")
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let rendered = std::fs::read_to_string(dir.join("template-config.toml")).unwrap();
         let cfg: toml::Table = toml::from_str(&rendered).unwrap_or_else(|e| panic!("{e}\n{rendered}"));
-        assert_eq!(cfg["spira"]["path"].as_str(), Some("/nix/var/nix/profiles/default/bin:/opt/cargo/bin:/home/r/.cargo/bin"));
+        assert_eq!(cfg["spira"]["path"].as_str(), Some("/nix/var/nix/profiles/default/bin:/opt/cargo/bin:/fixture/home/.cargo/bin"));
     }
 
     #[test]
