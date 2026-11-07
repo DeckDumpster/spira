@@ -40,17 +40,8 @@ fn spool_path(inbox: &str) -> PathBuf {
 }
 
 fn now_iso() -> String {
-    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as libc::time_t;
-    // SAFETY: `tm` is plain data gmtime_r fills; `buf` outlives the call and its length is passed.
-    unsafe {
-        let mut tm: libc::tm = std::mem::zeroed();
-        if libc::gmtime_r(&t, &mut tm).is_null() {
-            return String::new();
-        }
-        let mut buf = [0u8; 32];
-        let n = libc::strftime(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), c"%Y-%m-%dT%H:%M:%SZ".as_ptr(), &tm);
-        String::from_utf8_lossy(&buf[..n]).into_owned()
-    }
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    spira_world::clock::utc_iso(t as i64)
 }
 
 pub fn run(text: &str) -> Result<(), String> {
@@ -58,7 +49,8 @@ pub fn run(text: &str) -> Result<(), String> {
     let line = inbox_rules::line(&now_iso(), text);
     append_line(Path::new(&inbox), &line).map_err(|e| format!("cannot append to {inbox}: {e}"))?;
 
-    let push = push_config()?;
+    // the line is already recorded; a push key that will not parse must not fail the caller
+    let Ok(push) = push_config() else { return Ok(()) };
     if push.wake.is_empty() {
         return Ok(());
     }

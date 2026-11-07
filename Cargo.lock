@@ -795,6 +795,7 @@ dependencies = [
  "regex",
  "spira-config",
  "spira-otel",
+ "spira-world",
  "testkit",
 ]
 

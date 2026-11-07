@@ -9,6 +9,7 @@ inbox-rules = { path = "../inbox-rules" }
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 libc = "0.2"
+spira-world = { path = "../spira-world" }
 regex = "1"
 
 [profile.release]
