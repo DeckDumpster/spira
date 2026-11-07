@@ -690,3 +690,6 @@ throughput_floor_per_day
 throughput_abandon_count
 throughput_abandon_window
 throughput_restop_after
+bdi_capped
+bdi_max_ratio
+bdi_sysfs
