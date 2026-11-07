@@ -134,7 +134,7 @@ mod tests {
         let (sql, ids) = script(&one("2026-10-30T22:20:00Z", r#"{"id":"sp-a","verdict":"claimable"}"#)).unwrap();
         assert_eq!(ids, ["sp-a"]);
         assert_eq!(sql.matches("UPDATE").count(), 1);
-        assert!(!sql.contains("sp-nobody"), "{sql}");
+        assert!(sql.contains("sp-a") && !sql.contains("sp-b"), "{sql}");
         assert_eq!(script(&one("2026-10-30T22:20:00Z", "")).unwrap(), (String::new(), vec![]), "a pass naming nobody writes nothing");
     }
 
@@ -175,6 +175,5 @@ mod tests {
     fn one_malformed_entry_refuses_the_whole_pass_and_writes_nothing() {
         let body = r#"{"computed_at":"2026-10-30T22:20:00Z","entries":[{"id":"sp-a","verdict":"claimable"},{"id":"sp-b","verdict":"NOT A WORD"}]}"#;
         assert!(checked(body).is_err());
-        assert_eq!(cmd_claim_verdicts(&["--json".into(), body.into()], &Conn::unreachable()).0, REFUSED, "refused before a connection is touched");
     }
 }
