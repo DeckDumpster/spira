@@ -239,10 +239,8 @@ fn gc_tick<B: state_store::Backend>(store: &crate::control::store::Store<B>) {
     }
 }
 
-/// The sweeper's work on the store: the machine's `Expire` on every overdue MENDING row.
-/// live_tick, cold_tick, views_tick and epics_tick keep dolt-side caches that no store verb
-/// reads, and continuity_tick feeds `event-continuity`, which the store does not serve: all
-/// five are retired here. Epics are reconciled by the `reconcile-content` verb, not a sweep.
+/// On the store the sweep is `Expire` on overdue MENDING rows; the dolt ticks read tables
+/// the store does not have, and epics are reconciled by the `reconcile-content` verb.
 fn store_sweep<B: state_store::Backend>(store: &crate::control::store::Store<B>, now: i64) -> Result<usize, String> {
     let request = crate::control::served::request_id();
     let call = crate::control::state::Call { now, request: &request };
@@ -613,7 +611,7 @@ mod tests {
         let state = |suite: &str| store.mending("b-1", 1, suite).unwrap().unwrap().row.state.as_str().to_string();
         assert_eq!(super::store_sweep(&store, AT), Ok(0), "nothing is overdue yet");
         assert_eq!(super::store_sweep(&store, AT + 61), Ok(1));
-        assert_ne!(state("test-a.sh"), "MENDING", "the overdue row expired");
+        assert_eq!(state("test-a.sh"), "RETURNED", "the overdue row expired");
         assert_eq!(state("test-b.sh"), "MENDING", "the row within its deadline is left");
         assert_eq!(super::store_sweep(&store, AT + 61), Ok(0), "a second sweep finds nothing overdue");
     }
