@@ -47,7 +47,7 @@ pub struct Finish {
     pub selected_none: bool,
     /// `--deadline` runs that reached the suite phase: (deferred count, deadline secs).
     /// Renders ` deferred=<d> (deadline <S>s)` on GREEN and RED; None renders nothing (D7).
-    pub deferred: Option<(usize, u64)>,
+    pub deferred: Option<(u32, u32)>,
     /// Suites still `skip`/`skip-req` after the skip contract (DESIGN.md §3.7) — declared,
     /// so still green. Renders ` skipped=<n>` on GREEN and RED when > 0; an undeclared skip
     /// is not counted here at all, because it was already reclassified red.
@@ -901,7 +901,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             load::Admit::Immediate => {}
         }
     }
-    let armed = cap::arm(cap);
+    let armed = cap::arm(cap, Some(cap::ledger_path(&deps.settings.run, std::process::id())));
     let began = Instant::now();
     let mut fin = run_recorded(args, deps, &results);
     let queued = armed.waited().as_secs();
@@ -1826,7 +1826,6 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let out_fn = deps.out;
     let sim_log = move |m: &str| out_fn(&format!("{} spira: batch: {m}", iso_utc(now_epoch())));
     let sim_steps = std::sync::Mutex::new(Vec::<String>::new());
-    #[allow(clippy::result_large_err)]
     let bring_sim = |ss: &Session| -> Result<Fixtures, Finish> {
         sim_log(&format!(
             "starting sim-lane container {} (pids {}, memory {}, slots {})",
@@ -1865,7 +1864,6 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         })
     };
     let setup_log = std::sync::Mutex::new(Vec::<String>::new());
-    #[allow(clippy::result_large_err)]
     let (up, setup_res, sim_res) = std::thread::scope(|sc| {
         let sim = sim_session.as_ref().map(|ss| sc.spawn(|| bring_sim(ss)));
         let up = if claimed {
@@ -2553,7 +2551,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         })
         .cloned()
         .collect();
-    let deferred_count = args.deadline.map(|d| (deferred.len(), d));
+    let deferred_count = args.deadline.map(|d| (deferred.len() as u32, d as u32));
     // D9: a trial whose every runnable suite was deferred judged nothing — not a pass.
     if args.deadline.is_some() && ran == 0 && !deferred.is_empty() && reds.is_empty() {
         deps.log(&format!(
