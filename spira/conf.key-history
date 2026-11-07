@@ -693,3 +693,6 @@ throughput_restop_after
 open_promote_grace_secs
 runtime_readiness_dependents_secs
 testenv_max_runs
+bdi_capped
+bdi_max_ratio
+bdi_sysfs

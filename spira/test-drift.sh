@@ -334,4 +334,61 @@ done
 is "release directory: checkout half retired, no incident" "" "$(inc_calls)"
 [ -z "$(inc_calls)" ] || note "the last run said: $rel_out"
 
+# ==========================================================================
+echo
+echo "bdi — an uncapped bulk disk is named, a capped one is not:"
+# ==========================================================================
+SYS="$TMP/bdi"; mkdir -p "$SYS/8:32" "$SYS/8:48"
+bdi() {
+    env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$(tl_layer SPIRA_BDI_SYSFS="$SYS" SPIRA_BDI_MAX_RATIO=7 SPIRA_BDI_CAPPED="$CAPPED")" bash "$HERE/drift.sh" "$@"
+}
+echo 1 > "$SYS/8:32/strict_limit"; echo 7 > "$SYS/8:32/max_ratio"
+echo 0 > "$SYS/8:48/strict_limit"; echo 100 > "$SYS/8:48/max_ratio"
+
+CAPPED="8:32"
+out="$(bdi bdi)"; rc=$?
+is "capped disk: exits 0" "0" "$rc"
+want "capped disk: says clean" "clean" "$out"
+
+CAPPED="8:32 8:48"
+out="$(bdi bdi)"; rc=$?
+is "uncapped disk: exits 1" "1" "$rc"
+want "uncapped disk: named with its live values" "UNCAPPED 8:48 (bdi 8:48: strict_limit=0 max_ratio=100, want 1 and 7)" "$out"
+nowant "capped sibling: not named" "UNCAPPED 8:32" "$out"
+
+echo 5 > "$SYS/8:32/max_ratio"; CAPPED="8:32"
+out="$(bdi bdi)"; rc=$?
+is "ratio differing from the configured one: exits 1" "1" "$rc"
+
+CAPPED="8:99"
+out="$(bdi bdi 2>&1)"; rc=$?
+is "disk with no bdi entry: cannot-check, exit 3" "3" "$rc"
+
+ROOT_ID="4095:0"
+mkdir -p "$TMP/shim"
+printf '#!/bin/sh\necho /dev/fakedisk\n' > "$TMP/shim/findmnt"
+printf '#!/bin/sh\ncase "$*" in *NAME*) echo fakedisk;; *) echo %s;; esac\n' "$ROOT_ID" > "$TMP/shim/lsblk"
+chmod +x "$TMP/shim/findmnt" "$TMP/shim/lsblk"
+mkdir -p "$SYS/$ROOT_ID"; echo 0 > "$SYS/$ROOT_ID/strict_limit"; echo 100 > "$SYS/$ROOT_ID/max_ratio"
+CAPPED="$TMP"
+out="$(PATH="$TMP/shim:$PATH" bdi bdi)"; rc=$?
+is "mount point: exits 1" "1" "$rc"
+want "mount point: resolved to the disk's bdi" "UNCAPPED $TMP (bdi $ROOT_ID:" "$out"
+out="$(PATH="$TMP/shim:$PATH" bdi bdi-rule)"; rc=$?
+is "bdi-rule: exits 0" "0" "$rc"
+is "bdi-rule: names the disk and the configured ratio" \
+    "ACTION==\"add|change\", SUBSYSTEM==\"block\", KERNEL==\"fakedisk\", ATTR{bdi/strict_limit}=\"1\", ATTR{bdi/max_ratio}=\"7\"" "$out"
+
+CAPPED="8:99"
+out="$(bdi bdi-rule 2>&1)"; rc=$?
+is "bdi-rule: a disk with no block device exits 3" "3" "$rc"
+
+out="$(bdi nonsense 2>&1)"; rc=$?
+want "usage: lists bdi" "drift.sh bdi-rule" "$out"
+
+CAPPED=""
+out="$(bdi bdi)"; rc=$?
+is "nothing declared: exits 0" "0" "$rc"
+
 tl_summary
