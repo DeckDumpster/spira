@@ -1,8 +1,8 @@
 TYPE=u64
 GROUP=testenv
-DOC=Most seconds of admission-slot waiting a capped testenv run's cap does not count
+DOC=Seconds of admission-slot waiting testenv-cap allows a run on top of its cap before it kills it
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # The wait for a shared unit, test or compile slot is queueing, not the run's work, so the
-    # cap's clock stands still through it, up to this bound; waiting past it counts. 0 counts all.
+    # The run's own cap excludes all slot waiting; the testenv-cap scan cannot see it, so it
+    # allows this much on top of the cap in a run's total age.
     : "${SPIRA_TESTENV_SLOT_WAIT:=600}"
 SPIRA_CONF_DEFAULT_EOF

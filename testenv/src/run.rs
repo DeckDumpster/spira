@@ -56,6 +56,8 @@ pub struct Finish {
     pub session: Option<&'static str>,
     /// On RED: the first red suite and the case it stopped at, from its `.tap.json`.
     pub first_red: Option<Box<str>>,
+    /// Seconds spent queued for admission slots, and seconds of the run itself, from `run`.
+    pub timing: Option<(u64, u64)>,
 }
 
 impl Finish {
@@ -71,6 +73,7 @@ impl Finish {
             skipped: 0,
             session: None,
             first_red: None,
+            timing: None,
         }
     }
     fn in_session(self, session: &'static str) -> Self {
@@ -88,6 +91,7 @@ impl Finish {
             skipped: 0,
             session: None,
             first_red: None,
+            timing: None,
         }
     }
     fn empty(skipped: usize) -> Self {
@@ -105,6 +109,7 @@ impl Finish {
             skipped: 0,
             session: None,
             first_red: None,
+            timing: None,
         }
     }
 
@@ -131,6 +136,8 @@ impl Finish {
             .unwrap_or_default();
         let skipped = if self.skipped > 0 { format!(" skipped={}", self.skipped) } else { Default::default() };
         let tests = tests.map(|t| format!(" tests={t}")).unwrap_or_default();
+        let timing = self.timing.map(|(w, r)| format!(" slot_wait={w}s suite={r}s")).unwrap_or_default();
+        let tests = format!("{tests}{timing}");
         match self.rc {
             0 => {
                 let mut s = format!("VERDICT GREEN ran={}", self.ran);
@@ -894,12 +901,15 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             load::Admit::Immediate => {}
         }
     }
-    let armed = cap::arm(cap, deps.settings.slot_wait);
+    let armed = cap::arm(cap);
+    let began = Instant::now();
     let mut fin = run_recorded(args, deps, &results);
+    let queued = armed.waited().as_secs();
     if let Some((what, secs)) = armed.finish() {
         deps.log(&cap::over_cap_line(&what, secs, cap.source));
         fin = Finish::fault(2, "over-cap", fin.ran);
     }
+    fin.timing = Some((queued, began.elapsed().as_secs().saturating_sub(queued)));
     if let Some(dir) = results.into_inner() {
         let (word, reason, session) = fin.verdict_parts();
         note(RunLog::in_dir(&dir).record(RunEvent::Verdict { word, reason, session }, now_epoch()));
@@ -2032,6 +2042,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             skipped: skipped_count,
             session: None,
             first_red: first_red_case(&results, &reds),
+            timing: None,
         };
     }
 
@@ -2612,6 +2623,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             skipped: skipped.len(),
             session: None,
             first_red: first_red_case(&results, &reds),
+            timing: None,
         };
     }
     if verdict_ttl > 0 {

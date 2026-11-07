@@ -6,6 +6,14 @@ use super::*;
 // ---- the skip contract (DESIGN.md §3.7): fail closed, not open --------------------------
 
 #[test]
+fn the_verdict_line_records_slot_wait_and_suite_time_separately() {
+    let timed = Finish { timing: Some((1212, 62)), ..Finish::green(1) };
+    assert_eq!(timed.verdict_line(), "VERDICT GREEN ran=1 slot_wait=1212s suite=62s");
+    let fault = Finish { timing: Some((7, 600)), ..Finish::fault(2, "over-cap", 0) };
+    assert_eq!(fault.verdict_line(), "VERDICT FAULT rc=2 ran=0 reason=over-cap slot_wait=7s suite=600s");
+}
+
+#[test]
 fn verdict_lines() {
     assert_eq!(Finish::green(3).verdict_line(), "VERDICT GREEN ran=3");
     assert_eq!(
@@ -24,6 +32,7 @@ fn verdict_lines() {
             skipped: 0,
             session: None,
             first_red: None,
+            timing: None,
         }
         .verdict_line(),
         "VERDICT RED ran=5 red=2"
@@ -40,6 +49,7 @@ fn verdict_lines() {
             skipped: 0,
             session: None,
             first_red: Some("test-x.sh: case 3 b at spira/test-x.sh:9".into()),
+            timing: None,
         }
         .verdict_line(),
         "VERDICT RED ran=5 red=1 first=test-x.sh: case 3 b at spira/test-x.sh:9"
@@ -64,6 +74,7 @@ fn verdict_lines() {
             skipped: 0,
             session: None,
             first_red: None,
+            timing: None,
         }
         .verdict_line(),
         "VERDICT RED ran=2 red=1 deferred=3 (deadline 60s)"
@@ -88,6 +99,7 @@ fn verdict_lines() {
             skipped: 3,
             session: None,
             first_red: None,
+            timing: None,
         }
         .verdict_line(),
         "VERDICT RED ran=5 red=2 skipped=3"

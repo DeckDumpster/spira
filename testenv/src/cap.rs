@@ -5,8 +5,8 @@
 //! signal takes) and finishes `FAULT reason=over-cap`, naming what was running. `testenv-cap`
 //! scans live runs and kills any that outlive their cap plus [`GRACE`], plus the load-wait
 //! bound for a suite-tier run, whose cap starts only once load admission lets it in, plus the
-//! slot-wait bound: the cap's clock stands still while the run waits for an admission slot
-//! ([`hold`]), up to that bound.
+//! slot-wait bound. The run's own clock stands still for the whole of every admission-slot
+//! wait ([`hold`]); the scan, which cannot see the waits, bounds the run's total age instead.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -149,17 +149,16 @@ pub fn over_cap_line(what: &str, secs: u64, source: &str) -> String {
 
 type Trip = Arc<Mutex<Option<(String, u64)>>>;
 
-/// Wall time since arming, less the slot waits it excuses, which total at most `allowance`.
+/// Wall time since arming, less every slot wait: the cap meters work, not queueing.
 struct Clock {
     start: Instant,
     held_since: Option<Instant>,
     excused: Duration,
-    allowance: Duration,
 }
 
 impl Clock {
     fn excused(&self) -> Duration {
-        (self.excused + self.held_since.map_or(Duration::ZERO, |t| t.elapsed())).min(self.allowance)
+        self.excused + self.held_since.map_or(Duration::ZERO, |t| t.elapsed())
     }
 
     fn counted(&self) -> Duration {
@@ -168,12 +167,11 @@ impl Clock {
 
     #[cfg(test)]
     fn counting(&self) -> bool {
-        self.held_since.is_none() || self.excused() >= self.allowance
+        self.held_since.is_none()
     }
 }
 
-/// While this lives the cap armed on this thread does not count, until its slot-wait
-/// allowance is spent.
+/// While this lives the cap armed on this thread does not count.
 pub struct Held(Option<Arc<Mutex<Clock>>>);
 
 /// Stops the clock of the cap armed on this thread while the run waits for an admission slot.
@@ -199,9 +197,15 @@ impl Drop for Held {
     }
 }
 
-pub struct Armed(Arc<AtomicBool>, Trip);
+pub struct Armed(Arc<AtomicBool>, Trip, Arc<Mutex<Clock>>);
 
 impl Armed {
+    /// Time spent held for admission slots so far.
+    pub fn waited(&self) -> Duration {
+        self.2.lock().unwrap().excused()
+    }
+
+
     /// Stops the watchdog; what was running when the cap fired, if it did.
     pub fn finish(self) -> Option<(String, u64)> {
         self.0.store(true, Ordering::SeqCst);
@@ -214,8 +218,8 @@ impl Armed {
     }
 }
 
-/// Arms the cap on this thread; [`hold`] excuses at most `slot_wait` seconds of it.
-pub fn arm(cap: Cap, slot_wait: u64) -> Armed {
+/// Arms the cap on this thread; [`hold`] stops its clock.
+pub fn arm(cap: Cap) -> Armed {
     let limit = Duration::from_secs(cap.secs);
     let source = cap.source;
     let done = Arc::new(AtomicBool::new(false));
@@ -226,8 +230,8 @@ pub fn arm(cap: Cap, slot_wait: u64) -> Armed {
         start: Instant::now(),
         held_since: None,
         excused: Duration::ZERO,
-        allowance: Duration::from_secs(slot_wait),
     }));
+    let shared = clock.clone();
     CURRENT.with(|c| *c.borrow_mut() = Some(clock.clone()));
     std::thread::spawn(move || {
         let wait = |more: &dyn Fn() -> bool| {
@@ -260,7 +264,7 @@ pub fn arm(cap: Cap, slot_wait: u64) -> Armed {
             unsafe { libc::_exit(2) };
         }
     });
-    Armed(done, trip)
+    Armed(done, trip, shared)
 }
 
 fn children(pid: u32) -> Vec<u32> {
@@ -455,27 +459,27 @@ mod tests {
     }
 
     #[test]
-    fn a_hold_stops_the_clock_only_up_to_its_allowance() {
-        let held = |allowance: u64| {
-            let armed = arm(Cap { secs: 9_999, source: "test" }, allowance);
-            assert!(armed_here());
-            let h = hold();
-            let during = armed_here();
-            drop(h);
-            let after = armed_here();
-            armed.finish();
-            (during, after, armed_here())
-        };
-        assert_eq!(held(60), (false, true, false));
-        assert_eq!(held(0), (true, true, false), "a zero allowance excuses nothing");
-        let ago = |s| Instant::now() - Duration::from_secs(s);
-        let k = Clock {
-            start: ago(100),
-            held_since: Some(ago(70)),
-            excused: Duration::from_secs(20),
-            allowance: Duration::from_secs(60),
-        };
-        assert_eq!(k.counted().as_secs(), 40, "excused waits stop at the allowance");
+    fn a_hold_stops_the_clock_until_it_is_released() {
+        let armed = arm(Cap { secs: 9_999, source: "test" });
+        assert!(armed_here());
+        let h = hold();
+        assert!(!armed_here());
+        drop(h);
+        assert!(armed_here());
+        armed.finish();
+        assert!(!armed_here());
+    }
+
+    #[test]
+    fn a_run_admitted_after_a_slot_wait_longer_than_the_cap_gets_its_whole_cap() {
+        let armed = arm(Cap { secs: 1, source: "test" });
+        let slot = hold();
+        std::thread::sleep(Duration::from_millis(2_500));
+        drop(slot);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(armed_here(), "admission restarts the count");
+        assert!(armed.waited().as_millis() >= 2_500, "the wait is recorded for the verdict");
+        assert_eq!(armed.finish(), None, "a run admitted late was not over its cap");
     }
 
     #[test]
