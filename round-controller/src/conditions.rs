@@ -6,6 +6,7 @@ use spira_desired_state::sections::round_controller::{
     runbook, CONTRADICTIONS, CUT_OF_JUDGED_RED, EJECT_REFUSED, LANE_BLOCKED, LAND_REFUSED,
     PRIOR_RUNNER_ALIVE, REDRIVE_EXHAUSTED, STUCK_RUNNER, TWO_ANSWERS_OPEN_ROUND,
 };
+use spira_desired_state::store::format_rfc3339;
 use state_store::{Object, Request, Selector, Txn};
 
 use crate::death::{prove_dead, Holder, Proof};
@@ -144,10 +145,10 @@ fn two_answers(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Refu
                 TWO_ANSWERS_OPEN_ROUND,
                 format!("{repo}:{batch}:{}", token_word(lock.create_rev)),
                 format!(
-                    "{batch} is {} and a runner's lease {} on it is still live {}s after it was first seen terminal: the lease says it is driven, the store says it is over",
+                    "{batch} is {} and a runner's lease {} on it is still live more than one TTL after it was first seen terminal at {}: the lease says it is driven, the store says it is over",
                     round.row.state.as_str(),
                     token_word(lock.create_rev),
-                    now.saturating_sub(since) / 1000
+                    format_rfc3339(since / 1000)
                 ),
             ));
         }
@@ -200,10 +201,10 @@ fn stuck_runner(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Ref
                 STUCK_RUNNER,
                 format!("{}/{}", r.batch, token_word(held.token)),
                 format!(
-                    "{}'s runner under lease {} last made progress {}s ago in {}, past its {}s deadline",
+                    "{}'s runner under lease {} last made progress at {} in {}, past its {}s deadline",
                     r.batch,
                     token_word(held.token),
-                    age / 1000,
+                    format_rfc3339(mark.at_ms / 1000),
                     mark.phase,
                     p.leases.deadline_ms(phase) / 1000
                 ),

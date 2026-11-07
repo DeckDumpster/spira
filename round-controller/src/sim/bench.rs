@@ -412,6 +412,8 @@ pub struct Bench {
     pub installed: FakeInstalled,
     /// Every section and intent verb, in order, answered by spira-lc's own dispatch.
     pub lc_calls: Mutex<Vec<LcCall>>,
+    /// The pages the alarms rule sends for the sections committed, worked out once the run is over.
+    pub pages: std::sync::OnceLock<Vec<crate::sim::pages::Page>>,
     front: Mutex<Front>,
 }
 
@@ -481,6 +483,7 @@ impl Bench {
             stops: FakeStops::default(),
             installed: FakeInstalled::default(),
             lc_calls: Mutex::default(),
+            pages: std::sync::OnceLock::new(),
             front: Mutex::new(front),
         }
     }
