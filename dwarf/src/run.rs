@@ -498,26 +498,25 @@ impl<'a> Run<'a> {
 
     /// A WORKING bead this name holds under another session that is still running: claiming
     /// a second would silently double-hold. A dead session's row is the reaper's, not a refusal.
-    fn double_hold(&self, mine: &str) -> Option<String> {
-        let o = self.d.exec.exec("spira-lc", &s(&["list-all"]), None, None);
-        if o.code != 0 {
-            return None;
-        }
-        o.stdout.lines().find_map(|l| {
-            let mut f = l.split('\t');
-            let (id, state, holder) = (f.next()?, f.next()?, f.next()?);
-            let live = !spira_config::session::session_gone(holder, &spira_config::admission::RealProcs);
-            (state == "WORKING" && live && spira_config::session::same_name_other_session(holder, mine)).then(|| id.to_string())
-        })
+    fn double_hold(&self, mine: &str) -> Result<Option<String>, String> {
+        claim::double_hold(self.d.exec, mine, &|holder| !spira_config::session::session_gone(holder, &spira_config::admission::RealProcs))
     }
 
     /// The lifecycle claim: a Claim event per ranked candidate, carrying its stack proposal,
     /// until one applies. bd is read afterwards for the bead's content only. Ok(None): idle.
     fn lc_claim(&mut self, ids: &[String], resumable: &[String], tier: Option<&str>, who: &str) -> Result<Option<claim::Claimed>, i32> {
         let holder = self.s.holder.clone();
-        if let Some(held) = self.double_hold(&holder) {
-            self.log(&format!("{who}: refusing to claim — {held} is already WORKING under another live session of {}", self.s.dwarf));
-            return Err(1);
+        match self.double_hold(&holder) {
+            Ok(None) => {}
+            Ok(Some(held)) => {
+                self.log(&format!("{who}: refusing to claim — {held} is already WORKING under another live session of {}", self.s.dwarf));
+                return Err(1);
+            }
+            Err(e) => {
+                self.log(&format!("{who}: claim-error cannot tell whether another live session of {} holds a bead ({e}) — not claiming", self.s.dwarf));
+                self.ledger.awake(self.now(), self.f(), "claim-error double-hold read failed");
+                return Err(1);
+            }
         }
         let until = (self.now() + self.rune.lease_seconds()).to_string();
         let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
