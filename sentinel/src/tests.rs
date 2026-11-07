@@ -987,7 +987,7 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
 const STORE: &[(&str, &str)] = &[("SPIRA_LC_STORE_PATH", "/control/store.db"), ("SPIRA_OPEN_PROMOTE_GRACE_SECS", "90")];
 
 fn lc_verbs(r: &FakeRunner, verb: &str) -> Vec<Vec<String>> {
-    r.calls.borrow().iter().cloned().filter(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some(verb)).map(|s| s.args).collect()
+    r.calls.borrow().iter().filter(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some(verb)).map(|s| s.args.clone()).collect()
 }
 
 #[test]
