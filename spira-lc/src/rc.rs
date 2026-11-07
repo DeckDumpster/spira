@@ -166,4 +166,86 @@ mod tests {
         assert_eq!(code, wire::CANNOT_TELL, "{out}");
         assert!(out.contains("more than 1"), "{out}");
     }
+
+    mod on_sqlite {
+        use state_store_sqlite::{Options, SqliteBackend};
+
+        use super::*;
+
+        fn file() -> (testkit::TempDir, Contract<SqliteBackend>) {
+            let dir = testkit::TempDir::new("rc-sqlite");
+            let backend = SqliteBackend::open(&dir.join("store.db"), Options::default()).unwrap();
+            let ports = Ports { mono: Arc::new(MonotonicClock::new()), wall: Arc::new(MonotonicClock::new()) };
+            let s = Contract::open(backend, ports, Config { min_lock_ttl_ms: 1 }).unwrap();
+            (dir, s)
+        }
+
+        fn call(s: &Contract<SqliteBackend>, verb: &str, body: serde_json::Value) -> (i32, String) {
+            run(s, &["rc".into(), verb.into(), "--json".into(), body.to_string()])
+        }
+
+        fn put(key: &str, id: &str) -> serde_json::Value {
+            json!({
+                "txn": { "compares": [], "ops": [{ "put": [key, { "data": { "n": 1 } }] }], "else_ops": [] },
+                "request": { "id": id, "actor": "t", "kind": "t" },
+            })
+        }
+
+        #[test]
+        fn the_ledger_and_round_keys_are_written_read_and_listed_on_a_store_file() {
+            let (_dir, s) = file();
+            for (i, key) in ["verdicts/r/h/attempt/1", "verdicts/r/h", "faults/r/b/d", "batches/r/b1"].iter().enumerate() {
+                let (code, out) = call(&s, "txn", put(key, &format!("w{i}")));
+                assert_eq!(code, wire::OK, "{key}: {out}");
+            }
+            let (code, out) = call(&s, "get", json!({ "key": "verdicts/r/h" }));
+            assert_eq!(code, wire::OK, "{out}");
+            let got: Option<state_store::Item> = wire::decode(code, &out).unwrap();
+            assert_eq!(got.unwrap().value.data, json!({ "n": 1 }));
+            let (code, out) = call(&s, "list", json!({ "prefixes": ["verdicts/r/"], "selector": "everything" }));
+            let l: wire::Listed = wire::decode(code, &out).unwrap();
+            let keys: Vec<&str> = l.items.iter().map(|i| i.key.as_str()).collect();
+            assert_eq!(keys, ["verdicts/r/h", "verdicts/r/h/attempt/1"]);
+        }
+
+        #[test]
+        fn a_retry_under_the_same_request_id_finds_its_first_commit_on_a_store_file() {
+            let (_dir, s) = file();
+            let first: state_store::TxnResult = {
+                let (c, o) = call(&s, "txn", put("verdicts/r/h", "same"));
+                wire::decode(c, &o).unwrap()
+            };
+            let again: state_store::TxnResult = {
+                let (c, o) = call(&s, "txn", put("verdicts/r/h", "same"));
+                wire::decode(c, &o).unwrap()
+            };
+            assert!(!first.already_applied && again.already_applied);
+            assert_eq!(again.rev, first.rev);
+        }
+
+        #[test]
+        fn a_write_outside_the_round_controllers_prefixes_is_refused_and_leaves_the_file_unchanged() {
+            let (_dir, s) = file();
+            let (code, out) = call(&s, "txn", put("lifecycle/sp-a", "x"));
+            assert_eq!(code, wire::REFUSED, "{out}");
+            assert!(out.contains("rc writes only under"), "{out}");
+            let (code, out) = call(&s, "get", json!({ "key": "lifecycle/sp-a" }));
+            let got: Option<state_store::Item> = wire::decode(code, &out).unwrap();
+            assert!(got.is_none());
+        }
+
+        #[test]
+        fn a_lock_is_taken_renewed_and_released_on_a_store_file() {
+            let (_dir, s) = file();
+            let req = |id: &str| json!({ "id": id, "actor": "t", "kind": "t" });
+            let (code, out) = call(&s, "lock", json!({ "resource": "round/r/b1", "ttl_ms": 60000, "request": req("l") }));
+            let fence: state_store::Fence = wire::decode(code, &out).unwrap();
+            let (code, out) = call(&s, "renew", json!({ "fence": fence, "request": req("n") }));
+            assert_eq!(code, wire::OK, "{out}");
+            let (code, out) = call(&s, "release", json!({ "fence": fence, "request": req("r") }));
+            assert_eq!(code, wire::OK, "{out}");
+            let (code, out) = call(&s, "lock", json!({ "resource": "locks/x", "ttl_ms": 1, "request": req("o") }));
+            assert_eq!(code, wire::REFUSED, "{out}");
+        }
+    }
 }

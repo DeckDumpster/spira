@@ -281,4 +281,107 @@ mod tests {
         }
         assert!(!admitted("lifecycle/sp-a") && !admitted("locks/lifecycle/sp-a"));
     }
+
+    /// The ledger through `spira-lc rc` on a store file, as the daemon serves it.
+    mod on_sqlite {
+        use super::*;
+        use crate::ledger::{refuses, LedgerRefusal};
+        use crate::resources::Cause;
+        use runtime::ports::Clock;
+        use state_store::{Config, Ports as StorePorts};
+        use state_store_sqlite::{Options, SqliteBackend};
+
+        struct File {
+            _dir: testkit::TempDir,
+            store: Arc<Contract<SqliteBackend>>,
+        }
+
+        impl Transport for File {
+            fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+                let (code, out) = spira_lc::rc::run(self.store.as_ref(), argv);
+                Ok(Reply { code, out, err: String::new() })
+            }
+        }
+
+        fn file(b: &Bench) -> (Arc<File>, LcStore) {
+            let dir = testkit::TempDir::new("rc-ledger-sqlite");
+            let backend = SqliteBackend::open(&dir.join("store.db"), Options::default()).unwrap();
+            let store = Contract::open(backend, StorePorts::virtual_clock(&b.clock), Config { min_lock_ttl_ms: 1000 }).unwrap();
+            let f = Arc::new(File { _dir: dir, store: Arc::new(store) });
+            let lc = LcStore { client: LcClient::over(f.clone(), true) };
+            (f, lc)
+        }
+
+        fn attempt(class: Class, at: u64) -> Attempt {
+            Attempt { class, initiated_by: InitiatedBy::Judge, sub_passes: vec![], evidence: String::new(), at }
+        }
+
+        fn ledger() -> StoreLedger {
+            StoreLedger { policy: FaultPolicy { backoff_secs: 10, retries: 2 } }
+        }
+
+        #[test]
+        fn a_red_verdict_refuses_its_identity_and_survives_a_retry_of_the_same_call() {
+            let b = Bench::new();
+            let (_f, lc) = file(&b);
+            let p = Ports { store: &lc, ..b.ports() };
+            let a = attempt(Class::Red { step: "build".into() }, 7);
+            assert_eq!(ledger().record_attempt(&p, &identity(), "b1", &a), Ok(1));
+            assert_eq!(ledger().record_attempt(&p, &identity(), "b1", &a), Ok(1));
+            assert_eq!(
+                refuses(&p, &identity()),
+                Ok(Some(LedgerRefusal::RedIdentity { hash: identity().hash(), step: "build".into() }))
+            );
+            assert_eq!(ledger().held(&p, &identity()), Ok(Some(Class::Red { step: "build".into() })));
+        }
+
+        #[test]
+        fn a_transient_fault_backs_the_identity_off_until_the_clock_passes_it() {
+            let b = Bench::new();
+            let (_f, lc) = file(&b);
+            let p = Ports { store: &lc, ..b.ports() };
+            let at = b.clock.now_ms();
+            let a = attempt(Class::Fault { cause: Cause::Vm }, at);
+            assert_eq!(ledger().record_attempt(&p, &identity(), "b1", &a), Ok(1));
+            assert_eq!(
+                refuses(&p, &identity()),
+                Ok(Some(LedgerRefusal::BackingOff { hash: identity().hash(), until: Some(at + 10_000) }))
+            );
+            b.clock.advance(10_000);
+            assert_eq!(refuses(&p, &identity()), Ok(None));
+        }
+
+        #[test]
+        fn a_member_proven_red_refuses_a_new_identity_until_the_lifecycle_absolves_it() {
+            let b = Bench::new();
+            let (f, lc) = file(&b);
+            let p = Ports { store: &lc, ..b.ports() };
+            let red = identity();
+            let a = attempt(Class::Red { step: "test".into() }, 7);
+            ledger().record_attempt(&p, &red, "b1", &a).unwrap();
+            ledger().mark_proven(&p, &red, &red.members, 8).unwrap();
+            let mut other = red.clone();
+            other.selection = "some".into();
+            assert!(matches!(refuses(&p, &other), Ok(Some(LedgerRefusal::RedMember { .. }))));
+            f.store
+                .txn(
+                    &Txn::new().put("lifecycle/sp-a", Object::new(serde_json::json!({ "ejected_red_tip": "t2" }))),
+                    &Request::new("absolve", "test", "seed"),
+                )
+                .unwrap();
+            assert_eq!(refuses(&p, &other), Ok(None));
+        }
+
+        #[test]
+        fn a_lane_fault_stands_on_the_file_and_clearing_it_admits_the_lane() {
+            let b = Bench::new();
+            let (_f, lc) = file(&b);
+            let p = Ports { store: &lc, ..b.ports() };
+            let fault = crate::ledger::LaneFault { cause: Cause::Base, evidence: "red".into(), since: 3 };
+            ledger().record_lane_fault(&p, "r", "b0", "d1", &fault).unwrap();
+            assert!(matches!(refuses(&p, &identity()), Ok(Some(LedgerRefusal::LaneFault { .. }))));
+            crate::ledger::clear_lane_fault(&p, "r", "b0", "d1").unwrap();
+            assert_eq!(refuses(&p, &identity()), Ok(None));
+        }
+    }
 }

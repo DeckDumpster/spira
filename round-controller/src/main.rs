@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use round_controller::cut;
 use round_controller::ledger::{FaultPolicy, StoreLedger};
+use round_controller::ledger_verbs;
 use round_controller::cutover_check;
 use round_controller::real::facts::RealFacts;
 use round_controller::liveness::LeaseSettings;
@@ -42,6 +43,10 @@ const USAGE: &str = "usage: round-controller <verb>
                                             start that run as the transient unit round-controller-run-<batch>-<lease-token>
   lease clear --repo <r> --batch <b>        release a round's lease once its holder is proven dead; refused otherwise
   lease probe --secs <n> --out <file>       renew a lease of its own for n seconds and write each renewal's lateness
+  ledger record --repo <r> --batch <b> --members <id@tip,...> --base <sha> --image-digest <d> --harness-version <v> --selection <s> --class <green|flaky|red:<step>|fault:<cause>> [--evidence <text>]
+                                            record one attempt on that identity and print the summary the ledger kept
+  ledger refuses --repo <r> --members <id@tip,...> --base <sha> --image-digest <d> --harness-version <v> --selection <s>
+                                            print whether the Planner may open that identity, and why not
   lane record                               write each registered repo's lanes/<repo> from git and the installed release, and nothing else
   cutover-check --readiness                 one row per round repo (ci, base, submitted) and the world's; exit 0 only when all are green
   cutover-check --since-rev <rev>           each round repo's first round landed after store revision rev, or none; exit 0 only when none reads none
@@ -190,6 +195,24 @@ fn dispatch(args: &[String]) -> i32 {
                 Err(e) => {
                     eprintln!("round-controller lease clear: {e}");
                     1
+                }
+            }
+        }
+        ["ledger", verb @ ("record" | "refuses"), rest @ ..] => {
+            let answer = match *verb {
+                "record" => ledger_verbs::parse_record(rest)
+                    .and_then(|r| with_ports(|p| ledger_verbs::record(p, &r))),
+                _ => ledger_verbs::parse_refuses(rest)
+                    .and_then(|id| with_ports(|p| ledger_verbs::refuses(p, &id))),
+            };
+            match answer {
+                Ok(text) => {
+                    println!("{text}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("round-controller ledger {verb}: {e}");
+                    2
                 }
             }
         }
