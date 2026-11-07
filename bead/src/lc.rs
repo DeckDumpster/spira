@@ -107,6 +107,14 @@ mod tests {
     }
 
     #[test]
+    fn the_row_a_filed_bead_gets_carries_no_planning_field() {
+        let argv = create_bead_argv("sp-1", Some("abc"), Some("spira"));
+        assert_eq!(argv, ["create-bead", "sp-1", "--submitted-tip", "abc", "--repo", "spira"]);
+        assert!(!argv.iter().any(|a| a == "--title" || a == "--priority"), "{argv:?}");
+        assert_eq!(create_bead_argv("sp-1", None, None), ["create-bead", "sp-1"], "the control: the bare row still builds");
+    }
+
+    #[test]
     fn mirror_dep_is_applied_only_on_exit_zero() {
         let (lc, t) = client(0, "");
         assert!(mirror_dep(&lc, "dep-add", "a", "b", Some("blocks")));

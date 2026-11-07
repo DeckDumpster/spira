@@ -226,7 +226,6 @@ seed_bead "$DID_SPIKE"
 lc_working "$DID_SPIKE" dwarf-test "" spike
 DID="$DID_SPIKE"
 out="$(work_as "$DID" done --delivers "a document at wiki/x" 2>&1)"; rc=$?
-[ "$rc" = 0 ] || printf "%s\n" "$out" | sed "s/^/# done: /"
 is "done: exits 0 (applied)" "0" "$rc"
 row="$(lc_row "$DID")"
 want "done: state is DONE" "\"state\":\"DONE\"" "$row"

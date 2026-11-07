@@ -430,8 +430,8 @@ fn named_beads(message: &str) -> Vec<String> {
 /// A tip is submitted only on a recorded pass of its repository's compile-and-lint check; the
 /// broker runs it (a model session has no `testenv`) and records the pass for that exact tip.
 /// The repository comes from the bead's lifecycle row: a world or a fixture holds lifecycle rows
-/// with no content behind them. Only a row that names none (one created at the claim, before
-/// `backfill-repos` reached it) falls back to the content store's repo: label.
+/// with no content behind them. Only a row that names none (one created at the claim, before the repo was recorded
+/// at filing) falls back to the content store's repo: label.
 fn lint_refusal(conn: &Conn, bead_id: &str, tip: &str, actor: &str) -> Option<(i32, String)> {
     let repo = match submit_repo(conn, bead_id) {
         Ok(r) => r,

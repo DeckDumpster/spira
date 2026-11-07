@@ -1739,8 +1739,8 @@ fn dep_type_name(t: &str) -> &str {
 }
 
 /// Mirror one dependency edge into the lifecycle store, which the readiness verbs read for the claim.
-/// and `blocker`. bd already holds the edge, so a failed mirror is reported and repaired by
-/// `spira-lc backfill-deps --force`, never turned into a failed `dep`.
+/// bd already holds the edge, so a failed mirror is reported and repaired by
+/// repeating the `dep`, never turned into a failed `dep`.
 fn mirror_dep(verb: &str, id: &str, depid: &str, dep_type: Option<&str>) {
     let client = match lc() {
         Ok(c) => c,
