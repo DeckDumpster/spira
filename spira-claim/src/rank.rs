@@ -121,7 +121,8 @@ pub fn epic_started(children: &[ReadyRow], lc: &HashMap<String, LifecycleRow>) -
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Ranked {
     pub epic_priority: i64,
-    /// 0 = Express: ahead of every non-Express bead of the same effective priority.
+    /// 0 = Express: ahead of every non-Express bead, REWORK and every priority included
+    /// (law-a-beads-priority-is-a-floor; sp-2kntz0).
     pub express: u8,
     /// 0 = the epic has started (sorts first).
     pub epic_started: u8,
@@ -137,15 +138,18 @@ pub struct Ranked {
 }
 
 impl Ranked {
-    fn tier(&self) -> (u8, i64, u8, u8, i64) {
+    /// Express first, then REWORK (by bead priority), then fresh work by effective priority,
+    /// epic started-ness and bead priority. The order law-a-beads-priority-is-a-floor names:
+    /// express outranks both; started work outranks all fresh work.
+    fn tier(&self) -> (u8, u8, i64, u8, i64) {
         if self.rework == 0 {
-            (0, 0, 0, 0, self.bead_priority)
+            (self.express, 0, 0, 0, self.bead_priority)
         } else {
-            (1, self.epic_priority, self.express, self.epic_started, self.bead_priority)
+            (self.express, 1, self.epic_priority, self.epic_started, self.bead_priority)
         }
     }
     #[allow(clippy::type_complexity)]
-    fn key(&self) -> ((u8, i64, u8, u8, i64), u8, &str, &str, &str) {
+    fn key(&self) -> ((u8, u8, i64, u8, i64), u8, &str, &str, &str) {
         (self.tier(), self.resumable, &self.age, &self.id, &self.epic_id)
     }
     pub fn tsv(&self) -> String {
@@ -184,8 +188,9 @@ pub fn is_container(r: &ReadyRow) -> bool {
     matches!(r.issue_type.as_deref(), Some("epic") | Some("event"))
 }
 
-/// dwarf.sh's band lines for the best tier — REWORK beads by bead priority, else the best
-/// (epic priority, epic started, bead priority): `id|branch|repo|eprio|estarted|bprio`,
+/// dwarf.sh's band lines for the best tier — express first, then REWORK beads by bead
+/// priority, else the best (epic priority, epic started, bead priority):
+/// `id|branch|repo|eprio|estarted|bprio`,
 /// in input order.
 pub fn top_tier(rows: &[ReadyRow], lookup: &EpicLookup, rework: &BTreeSet<String>) -> Vec<String> {
     let none = BTreeSet::new();
@@ -194,7 +199,7 @@ pub fn top_tier(rows: &[ReadyRow], lookup: &EpicLookup, rework: &BTreeSet<String
     let Some(best) = ranked.iter().map(|(_, k)| k.tier()).min() else {
         return Vec::new();
     };
-    let top = (best.1, best.3, best.4);
+    let top = (best.2, best.3, best.4);
     ranked
         .iter()
         .filter(|(_, k)| k.tier() == best)
@@ -630,16 +635,56 @@ mod tests {
     }
 
     #[test]
-    fn express_ranks_right_after_priority_whatever_its_id() {
+    fn express_ranks_first_whatever_its_id() {
         let mut x = row("p0-z", 0, None, "2026-03-01");
         x.express = true;
         let rows = vec![row("p0-a", 0, None, "2026-01-01"), row("p0-b", 0, None, "2026-02-01"), x, row("p1-e", 1, None, "2026-01-01")];
         let r = rank(&rows, &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new());
         assert_eq!(ids(&r), ["p0-z", "p0-a", "p0-b", "p1-e"]);
-        let mut p1x = row("p1-x", 1, None, "2026-01-01");
+    }
+
+    /// sp-2kntz0, law-a-beads-priority-is-a-floor: the express label outranks REWORK and every
+    /// priority of fresh work. An express bead filed at P1 still goes before a fresh P0 and a
+    /// REWORK P2.
+    #[test]
+    fn express_outranks_a_better_priority_and_rework() {
+        let mut p1x = row("p1-x", 1, None, "2026-03-01");
         p1x.express = true;
-        let r = rank(&[row("p0-a", 0, None, "2026-01-01"), p1x], &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new());
-        assert_eq!(ids(&r), ["p0-a", "p1-x"], "express never outranks a better priority");
+        let rows = vec![row("p0-a", 0, None, "2026-01-01"), row("p2rw", 2, None, "2026-01-01"), p1x];
+        let rw: BTreeSet<String> = ["p2rw".to_string()].into();
+        let r = rank(&rows, &EpicLookup::default(), &BTreeSet::new(), &rw);
+        assert_eq!(ids(&r), ["p1-x", "p2rw", "p0-a"]);
+        assert_eq!(top_tier(&rows, &EpicLookup::default(), &rw), ["p1-x|spira/p1-x|spira|1|1|1"]);
+    }
+
+    /// sp-2kntz0: an express P0 and a non-express P1 both outrank older fresh P2s, in that
+    /// order, whatever their ids and ages.
+    #[test]
+    fn express_p0_then_p1_ahead_of_older_p2s() {
+        let mut x = row("sp-zzz", 0, None, "2026-11-07T00:41:00Z");
+        x.express = true;
+        let rows = vec![
+            row("sp-aaa", 2, None, "2026-10-31T17:30:18Z"),
+            row("sp-bbb", 2, None, "2026-10-31T17:33:25Z"),
+            row("sp-p1", 1, None, "2026-11-07T20:35:17Z"),
+            x,
+        ];
+        let r = rank(&rows, &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new());
+        assert_eq!(ids(&r), ["sp-zzz", "sp-p1", "sp-aaa", "sp-bbb"]);
+    }
+
+    /// sp-2kntz0: priority is the planning plane's, as filed and as amended — `plan items`
+    /// rows are what the ranking reads, so a row re-read after `amend --priority 0` ranks at
+    /// P0, ahead of the P1 it was filed beside.
+    #[test]
+    fn a_bead_filed_p1_and_amended_to_p0_ranks_at_p0() {
+        let filed = r#"[{"id":"sp-am","priority":1,"created_at":"2026-11-07T02:00:00Z","labels":["repo:spira"],"issue_type":"task","dependencies":[]},
+                        {"id":"sp-p1","priority":"1","created_at":"2026-11-07T01:00:00Z","labels":["repo:spira"],"issue_type":"task","dependencies":[]}]"#;
+        let r = rank(&parse_ready(filed).unwrap(), &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new());
+        assert_eq!((ids(&r), r[1].bead_priority), (vec!["sp-p1", "sp-am"], 1));
+        let amended = filed.replacen(r#""priority":1,"#, r#""priority":"0","#, 1);
+        let r = rank(&parse_ready(&amended).unwrap(), &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new());
+        assert_eq!((ids(&r), r[0].bead_priority), (vec!["sp-am", "sp-p1"], 0));
     }
 
     #[test]
