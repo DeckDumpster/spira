@@ -772,6 +772,7 @@ impl Conn {
 /// One row's CAS-update-and-log inside a `cascade`. Shaped like `cas_update_and_log`'s own
 /// arguments because it is the same primitive, just assembled N times into one script
 /// instead of one script each — see `cascade`'s doc for why that is enough.
+#[derive(Debug)]
 pub struct CascadeStep {
     pub table: &'static str,
     pub key_column: &'static str,
