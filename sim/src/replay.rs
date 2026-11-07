@@ -270,6 +270,31 @@ pub fn load(dir: &Path) -> Result<Vec<(u64, Record)>, String> {
 }
 
 /// A round that has not reached a terminal state.
+/// `LoopEvent` is hashed through its `Debug` text so the goodput library need not derive `Hash`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Events(pub Vec<LoopEvent>);
+
+impl Eq for Events {}
+
+impl Hash for Events {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        format!("{:?}", self.0).hash(h);
+    }
+}
+
+impl std::ops::Deref for Events {
+    type Target = Vec<LoopEvent>;
+    fn deref(&self) -> &Vec<LoopEvent> {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Events {
+    fn deref_mut(&mut self) -> &mut Vec<LoopEvent> {
+        &mut self.0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OpenRound {
     pub repo: String,
@@ -340,7 +365,7 @@ pub struct ReplayWorld {
     pub lands: BTreeMap<String, u32>,
     pub alarms: BTreeMap<(String, String, String), u32>,
     /// The typed events goodput is computed from, in the order the records arrived.
-    pub loop_events: Vec<LoopEvent>,
+    pub loop_events: Events,
     /// The repo each bead was cut into or landed in, for the events that name only a bead.
     pub bead_repo: BTreeMap<String, String>,
     pub applied: usize,

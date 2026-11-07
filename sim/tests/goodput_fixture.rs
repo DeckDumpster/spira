@@ -19,7 +19,7 @@ fn oct31_world() -> ReplayWorld {
 }
 
 fn oct31_events() -> Vec<LoopEvent> {
-    oct31_world().loop_events
+    oct31_world().loop_events.0
 }
 
 /// The landing-stop bead's stop, in seconds: from its pause to the landing of the revert that
