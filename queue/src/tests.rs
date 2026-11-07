@@ -2983,7 +2983,7 @@ fn land_local_refuses_while_another_operation_holds_the_lock() {
     let start = t.clock.now();
     assert_eq!(
         t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
-        1
+        crate::ops::LOCK_BUSY
     );
     assert!(
         t.err()
