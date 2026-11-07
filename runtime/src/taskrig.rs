@@ -68,6 +68,12 @@ impl TaskRig {
         Ok(TaskRig { journal, clock, engine, doubles: BTreeMap::new(), requested: vec![], refused: vec![], ticks: BTreeMap::new(), read_to: 0, journaled_requests: BTreeSet::new() })
     }
 
+    /// Stop the engine and open a new one on the same journal and clock: a runtime restart.
+    pub fn reopen(&mut self, reg: Registration) -> Result<()> {
+        self.engine = Engine::open(self.journal.clone(), Arc::new(self.clock.clone()), vec![reg], 0)?;
+        Ok(())
+    }
+
     pub fn double(mut self, name: &str, f: impl Fn(&str) -> std::result::Result<String, String> + Send + Sync + 'static) -> Self {
         self.doubles.insert(name.into(), Box::new(f));
         self

@@ -233,7 +233,7 @@ fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
 impl Engine {
     /// Rebuild from the journal without reading its history: the effects still waiting for an
     /// outcome, the schedule rows not yet fired, and the end of the journal. A stream's newest
-    /// `WINDOW` events are loaded when its first event past the cursor is dispatched.
+    /// `WINDOW` events are loaded when its first event is dispatched, memory-only or not.
     pub fn open(journal: Arc<dyn Journal>, clock: Arc<dyn Clock>, regs: Vec<Registration>, seed: u64) -> Result<Self> {
         let mut e = Engine {
             journal,
@@ -695,10 +695,8 @@ impl Engine {
     /// stream's handlers wrote for an earlier event before it sees a later one, whatever the
     /// journal offsets. Nothing reorders appends; only the view is ordered by cause.
     fn dispatch(&mut self, ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
-        if let Some(at) = at {
-            if !self.loaded.contains(&ev.stream) {
-                self.load(&ev.stream, at.0)?;
-            }
+        if !self.loaded.contains(&ev.stream) {
+            self.load(&ev.stream, at.map_or(self.cursor, |a| a.0))?;
         }
         if !self.early.remove(&ev.id) {
             if at.is_some() {
