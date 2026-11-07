@@ -188,11 +188,11 @@ fn a_round_that_passed_and_has_not_landed_in_five_minutes_pages_once_and_a_fresh
 #[test]
 fn leftover_round_records_are_cleared_and_the_ones_refused_are_paged_by_name_once() {
     let mut s = landed(400);
-    s.records = Records { clear: vec!["/q/a/round".into(), "/q/a/open".into()], held: vec!["/q/b/round names round b-1, which is OPEN".into()] };
+    s.records = Records { clear: vec!["/q/a/rec-one".into(), "/q/a/rec-two".into()], held: vec!["/q/b/rec-three names round b-1, which is OPEN".into()] };
     let mut r = rig(Arc::new(Mutex::new(s)));
-    assert_eq!(named(&r, CLEAR), [r#"["/q/a/round","/q/a/open"]"#]);
+    assert_eq!(named(&r, CLEAR), [r#"["/q/a/rec-one","/q/a/rec-two"]"#]);
     let pages = named(&r, INBOX_APPEND);
-    assert!(pages.len() == 1 && pages[0].contains("refused clearing: /q/b/round names round b-1, which is OPEN"), "{pages:?}");
+    assert!(pages.len() == 1 && pages[0].contains("refused clearing: /q/b/rec-three names round b-1, which is OPEN"), "{pages:?}");
     r.advance(CADENCE_MS).unwrap();
     assert_eq!(named(&r, INBOX_APPEND).len(), 1, "a standing refusal pages once");
 }
