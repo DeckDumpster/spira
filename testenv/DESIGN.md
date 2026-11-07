@@ -1219,8 +1219,9 @@ Before any worktree or build work a run takes a slot of the `run` admission pool
 run uses (`RUN_CARGO_JOBS`, 6), at least 1. A run past the ceiling prints
 `testenv: waiting for a CPU slot (n running)` and waits; load never refuses it. With `--deadline`
 the wait ends at the deadline and the run finishes `VERDICT FAULT rc=2 reason=deadline-slot`,
-never RED. The scratch slots stay the disk ledger. The cap's clock stands still through the
-wait like any other admission wait. A run under a gate's slot token takes none.
+never RED; the wait is part of the deadline's budget, which is not extended by it. The scratch
+slots stay the disk ledger. The cap's clock stands still through the wait like any other
+admission wait. A run under a gate's slot token takes none.
 
 ## Wall-clock cap (sp-dhvak1)
 

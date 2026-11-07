@@ -874,6 +874,14 @@ fn note(r: Result<(), String>) {
     }
 }
 
+/// The label an admission lease of this run carries: the dwarf's bead, else the branch.
+fn lease_label(args: &RunArgs, deps: &Deps) -> String {
+    [admission::WHO_ENV, "SPIRA_WORK_BEAD_ID", "BEAD_ID"]
+        .iter()
+        .find_map(|k| (deps.env)(k).filter(|v| !v.trim().is_empty()))
+        .unwrap_or_else(|| args.branch.clone())
+}
+
 /// Runs, then records the verdict in the run's event file once one was started.
 pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let results = std::cell::RefCell::new(None);
@@ -943,10 +951,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         // The wait for a slot is queueing, not this run's work: the cap stands still (sp-u56az1).
         let _held = cap::hold();
         let inherit = (deps.env)(admission::INHERIT_ENV);
-        let who = [admission::WHO_ENV, "SPIRA_WORK_BEAD_ID", "BEAD_ID"]
-            .iter()
-            .find_map(|k| (deps.env)(k).filter(|v| !v.trim().is_empty()))
-            .unwrap_or_else(|| args.branch.clone());
+        let who = lease_label(args, deps);
         let size_of = || {
             admission::size(pool, (deps.env)(pool.size_env()).as_deref(), admission::Host::read())
         };
@@ -1082,10 +1087,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         None
     } else {
         let _held = cap::hold();
-        let who = [admission::WHO_ENV, "SPIRA_WORK_BEAD_ID", "BEAD_ID"]
-            .iter()
-            .find_map(|k| (deps.env)(k).filter(|v| !v.trim().is_empty()))
-            .unwrap_or_else(|| args.branch.clone());
+        let who = lease_label(args, deps);
         let size = s.max_runs.unwrap_or_else(|| admission::derive(admission::Pool::Run, admission::Host::read()));
         let out_of_time = || cancelled() || deadline_at.get().is_some_and(|d| Instant::now() >= d);
         let size_of = || size;

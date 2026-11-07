@@ -77,6 +77,13 @@ mod tests {
     }
 
     #[test]
+    fn the_derived_ceiling_divides_by_the_jobs_the_unit_tier_defaults_to() {
+        let script = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/unit-tests.sh")).unwrap();
+        let want = format!("jobs=\"${{CARGO_BUILD_JOBS:-{}}}\"", adm::RUN_CARGO_JOBS);
+        assert!(script.contains(&want), "spira/unit-tests.sh no longer defaults to {want}");
+    }
+
+    #[test]
     fn a_wait_past_the_deadline_is_a_fault_naming_the_slot() {
         let d = dir();
         let Ok(_held) = take_as(&d, 101, "sp-a", &|_| {}, &|| false, &mut |_| {}) else { panic!("free slot") };
