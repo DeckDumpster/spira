@@ -64,7 +64,6 @@ spira/test-cockpit-bd-contract.sh
 spira/test-cockpit-queue-section.sh
 spira/test-cockpit-unlanded.sh
 spira/test-cockpit-unsent.sh
-spira/test-concierge-inbox.sh
 spira/test-concierge-roster.sh
 spira/test-concierge.sh
 spira/test-config-compat-master-base.sh

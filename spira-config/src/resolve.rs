@@ -1174,6 +1174,17 @@ mod tests {
     }
 
 
+    #[test]
+    fn a_declared_mail_readers_beats_the_registered_default() {
+        let ws = testkit::TempDir::new("spira-config-mail-readers");
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let repo = home.parent().unwrap().to_path_buf();
+        let toml = crate::fixture_toml_file(ws.path(), &env(&[("SPIRA_MAIL_READERS", "concierge=echo wake")]));
+        let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
+        let resolved = resolve_for_process(&home, &repo, &e).unwrap();
+        assert_eq!(resolved.values.get("SPIRA_MAIL_READERS").map(String::as_str), Some("concierge=echo wake"));
+    }
+
     /// An env override still wins outright, exactly as `SPIRA_RUN` always has — this is
     /// what makes a systemd unit, which sets it explicitly, keep working unchanged.
     #[test]

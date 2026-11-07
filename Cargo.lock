@@ -793,8 +793,11 @@ name = "inbox-triage"
 version = "1.0.0"
 dependencies = [
  "inbox-rules",
+ "libc",
+ "regex",
  "spira-config",
  "spira-otel",
+ "spira-world",
  "testkit",
 ]
 
