@@ -630,7 +630,7 @@ pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
 
 /// `gh-issue-backfill.sh` (sp-j3fim): apply `gh_issue_closeout` to existing closed+landed
 /// beads, with its OWN looser ancestry search — see `Git::grep_ancestor`'s doc comment for
-/// why this is deliberately not `gh_unlanded_scan`'s `landing_commit`. Returns the report lines
+/// why this is deliberately not `gh_unlanded_scan`'s lifecycle read. Returns the report lines
 /// plus (found, closed, skipped, would-close) for the summary line's counts.
 pub fn backfill(d: &Deps, ctx: &Ctx, dry_run: bool) -> (Vec<String>, u32, u32, u32, u32) {
     let snap = Snapshot::of(d.lc);
@@ -928,7 +928,7 @@ mod tests {
 
     #[derive(Default)]
     struct FakeGit {
-        /// repo-path -> id -> sha, for `landing_commit`/`grep_ancestor`.
+        /// repo-path -> id -> sha, for `grep_ancestor`.
         landed: RefCell<BTreeMap<String, BTreeMap<String, String>>>,
         subjects: RefCell<BTreeMap<String, String>>,
     }
@@ -945,12 +945,6 @@ mod tests {
         }
         fn subject_of(&self, _repo: &Path, sha: &str) -> Option<String> {
             self.subjects.borrow().get(sha).cloned()
-        }
-        fn landing_commit(&self, repo: &Path, id: &str, refs: &[String]) -> Option<String> {
-            if refs.is_empty() {
-                return None;
-            }
-            self.landed.borrow().get(&repo.display().to_string()).and_then(|m| m.get(id)).cloned()
         }
         fn grep_ancestor(&self, repo: &Path, id: &str, _land_ref: &str) -> Option<String> {
             self.landed.borrow().get(&repo.display().to_string()).and_then(|m| m.get(id)).cloned()

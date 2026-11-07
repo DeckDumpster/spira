@@ -18,7 +18,6 @@
 1 output dwarf/src/run.rs
 1 unit-name exec-census/src/lib.rs
 1 output gate-check/src/real.rs
-2 output gh-intake/src/real.rs
 1 output hel/src/real.rs
 1 unit-name hel/src/reap.rs
 1 output install/src/bin/install.rs
@@ -34,7 +33,6 @@
 7 output release/src/acceptance/phases.rs
 1 output release/src/canary.rs
 1 unit-name release/src/intake.rs
-1 output release/src/round_recert.rs
 2 unit-name release/src/units.rs
 3 output sentinel/src/detect.rs
 1 output sentinel/src/lifecycle.rs

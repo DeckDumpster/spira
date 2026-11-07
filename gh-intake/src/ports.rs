@@ -137,7 +137,7 @@ pub trait Repo {
     fn landref(&self, repo_path: &str) -> Option<String>;
 
     /// `spira_landrefs <repo-path>` (family W): the land ref plus its local counterpart
-    /// when one exists, both as refs `Git::landing_commit` greps. Empty when unresolvable.
+    /// when one exists, as refs to search. Empty when unresolvable.
     fn landrefs(&self, repo_path: &str) -> Vec<String>;
 }
 
@@ -179,13 +179,8 @@ pub trait Git {
     fn rev_parse_short(&self, repo: &Path, sha: &str) -> Option<String>;
     /// `git -C <repo> log --format=%s -1 <sha>`.
     fn subject_of(&self, repo: &Path, sha: &str) -> Option<String>;
-    /// lib.sh's newest-landing-commit lookup: the newest commit on any of `refs` whose subject names `id`
-    /// (`spira: land <id>`, optionally ` <title>`, or `<id>:...`) — `-F` (fixed-string)
-    /// `--grep`, subject-shape checked after. `None` when nothing matches.
-    fn landing_commit(&self, repo: &Path, id: &str, refs: &[String]) -> Option<String>;
-    /// `gh-issue-backfill.sh`'s OWN looser ancestry search, kept as its own reader rather
-    /// than unified with `landing_commit` (test-land-commit-contract.sh, "gap G4": the two are
-    /// allowed to disagree in general and are only proven to agree on one fixture): the
+    /// `gh-issue-backfill.sh`'s OWN looser ancestry search (test-land-commit-contract.sh, "gap
+    /// G4"); the unlanded scan reads landed-ness from the lifecycle row instead (sp-uzxf1o): the
     /// first commit on `land_ref` whose message contains `id` anywhere (`git log --grep`,
     /// no `-F`, no subject-shape check).
     fn grep_ancestor(&self, repo: &Path, id: &str, land_ref: &str) -> Option<String>;
