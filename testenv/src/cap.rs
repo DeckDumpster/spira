@@ -26,6 +26,7 @@ pub const SUBCOMMANDS: &[&str] = &[
 static TRIPPED: AtomicBool = AtomicBool::new(false);
 static PHASE: Mutex<String> = Mutex::new(String::new());
 static RUNNING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static CONTAINERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 #[cfg(test)]
 thread_local! {
@@ -103,6 +104,31 @@ impl Drop for Running {
         if let Some(i) = r.iter().position(|u| *u == self.0) {
             r.remove(i);
         }
+    }
+}
+
+/// Marks a container as this run's until the guard drops: the watchdog removes it before it
+/// cuts the run off, because killing our podman clients leaves conmon and the container running.
+pub struct Holding(String);
+
+pub fn holding(container: &str) -> Holding {
+    CONTAINERS.lock().unwrap().push(container.to_string());
+    Holding(container.to_string())
+}
+
+impl Drop for Holding {
+    fn drop(&mut self) {
+        let mut c = CONTAINERS.lock().unwrap();
+        if let Some(i) = c.iter().position(|n| *n == self.0) {
+            c.remove(i);
+        }
+    }
+}
+
+fn remove_held(remove: &dyn Fn(&str)) {
+    let held: Vec<String> = CONTAINERS.lock().unwrap().clone();
+    for name in held {
+        remove(&name);
     }
 }
 
@@ -223,6 +249,10 @@ pub fn arm(cap: Cap, slot_wait: u64) -> Armed {
         let tripped = Instant::now();
         if wait(&|| tripped.elapsed() < UNWIND) {
             kill_descendants(std::process::id());
+            remove_held(&|n| {
+                use crate::runtime::ContainerRuntime;
+                crate::runtime::Podman { exe: Default::default(), harness: Default::default() }.purge(n)
+            });
             crate::telemetry::push_over_cap(&crate::telemetry::sink(), "self");
             println!("{}", over_cap_line(&what, limit.as_secs(), source));
             println!("VERDICT FAULT rc=2 ran=0 reason=over-cap");
@@ -351,6 +381,22 @@ mod tests {
 
     fn p(pid: u32, age: u64, argv: &[&str]) -> Proc {
         Proc { pid, start_ticks: 1, argv: argv.iter().map(|s| s.to_string()).collect(), age_secs: age }
+    }
+
+    #[test]
+    fn the_cut_off_removes_every_container_the_run_still_holds() {
+        let removed = Mutex::new(Vec::new());
+        let mine = |v: &Mutex<Vec<String>>| v.lock().unwrap().iter().filter(|n| n.starts_with("cap-held-")).cloned().collect::<Vec<_>>();
+        let a = holding("cap-held-a");
+        {
+            let _b = holding("cap-held-b");
+            remove_held(&|n| removed.lock().unwrap().push(n.to_string()));
+            assert_eq!(mine(&removed), ["cap-held-a", "cap-held-b"]);
+        }
+        removed.lock().unwrap().clear();
+        drop(a);
+        remove_held(&|n| removed.lock().unwrap().push(n.to_string()));
+        assert!(mine(&removed).is_empty(), "a released container is not the cut-off's to remove");
     }
 
     #[test]
