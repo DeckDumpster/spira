@@ -19,7 +19,7 @@ pub enum StopKind {
     Pause,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LoopEvent {
     Landed {
         bead: String,
