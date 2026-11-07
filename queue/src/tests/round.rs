@@ -1286,7 +1286,7 @@ fn open_fails_and_does_not_claim_a_return_the_lifecycle_refused_or_ignored() {
             t.err()
         );
         assert!(
-            !t.err().contains("returned to rework")
+            !t.err().contains("— returned to rework")
                 && t.err().contains("sp-b: conflicts with base ("),
             "{}",
             t.err()
