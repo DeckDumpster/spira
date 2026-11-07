@@ -8,8 +8,10 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use crate::bd::BeadRow;
 use crate::ports::{Exec, Git};
+use crate::util::Out;
 
 /// One `spira-claim select --top-tier` line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,6 +162,74 @@ pub struct Claimed {
 pub const LC_APPLIED: i32 = 0;
 pub const LC_REFUSED: i32 = 3;
 
+/// A claim whose answer could not be read, and whose read-back could not tell either: the
+/// dwarf may hold the bead, so the loop stops rather than claim a second (sp-druc64).
+pub const LC_UNKNOWN: i32 = -1;
+
+/// What `spira-lc holds <id>` said: the hold names, or that the store could not tell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Holds {
+    Known(Vec<String>),
+    Unknown(String),
+}
+
+/// An answer the store gave, or why it gave none: a non-zero exit, or "cannot tell" text on
+/// stdout (an error is never data, whatever stream it arrived on).
+fn answered(o: &Out) -> Result<&str, String> {
+    let said = |o: &Out| o.stderr.lines().chain(o.stdout.lines()).map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
+    if o.code != 0 {
+        return Err(format!("rc={}: {}", o.code, said(o)));
+    }
+    if o.stdout.lines().any(|l| l.trim_start().starts_with("cannot tell")) {
+        return Err(said(o));
+    }
+    Ok(&o.stdout)
+}
+
+/// `call`, retried on a non-answer with a doubling backoff from `delay`, `tries` in all.
+fn ask(tries: u32, delay: Duration, sleep: &(dyn Fn(Duration) + Sync), call: impl Fn() -> Out) -> Result<String, String> {
+    let mut wait = delay;
+    let mut why = String::new();
+    for i in 1..=tries.max(1) {
+        let o = call();
+        match answered(&o) {
+            Ok(text) => return Ok(text.to_string()),
+            Err(e) => why = e,
+        }
+        if i < tries {
+            sleep(wait);
+            wait = wait.saturating_mul(2);
+        }
+    }
+    Err(why)
+}
+
+/// The holds on a bead, `wait` excluded (it does not block a claim). A store that cannot
+/// tell is retried; one that still cannot tell is `Unknown`, never a list of hold names.
+pub fn read_holds(exec: &dyn Exec, id: &str, tries: u32, delay: Duration, sleep: &(dyn Fn(Duration) + Sync)) -> Holds {
+    match ask(tries, delay, sleep, || exec.exec("spira-lc", &crate::ports::s(&["holds", id]), None, None)) {
+        Ok(text) => Holds::Known(text.lines().map(str::trim).filter(|h| !h.is_empty() && *h != "wait").map(String::from).collect()),
+        Err(why) => Holds::Unknown(why),
+    }
+}
+
+/// A claim attempt's exit, settled: applied and refused stand; "cannot tell" (the reply may
+/// have been lost after the write landed) is settled by reading the row back — WORKING under
+/// `holder` is applied, anything else read is refused, and a read-back that cannot tell
+/// either is `LC_UNKNOWN`, so the loop never claims a second bead while it may hold one.
+pub fn settle_claim(rc: i32, exec: &dyn Exec, id: &str, holder: &str, tries: u32, delay: Duration, sleep: &(dyn Fn(Duration) + Sync)) -> i32 {
+    if rc == LC_APPLIED || rc == LC_REFUSED {
+        return rc;
+    }
+    let row = ask(tries, delay, sleep, || exec.exec("spira-lc", &crate::ports::s(&["show", id]), None, None))
+        .and_then(|text| spira_config::lc_state::parse_show(&text));
+    match row {
+        Ok(Some(r)) if r.state == "WORKING" && r.holder.as_deref() == Some(holder) => LC_APPLIED,
+        Ok(_) => LC_REFUSED,
+        Err(_) => LC_UNKNOWN,
+    }
+}
+
 /// The lifecycle claim loop: one Claim event per ranked candidate until one applies. The row
 /// is the claim, so a refusal is the bead no longer READY/REWORK — another dwarf won it — and
 /// the next candidate is tried. Returns the claimed id, the log lines, and whether every
@@ -189,6 +259,12 @@ pub fn lc_claim_loop(
                     "{who}: the lifecycle machine refused ranked candidate {id} (no longer READY/REWORK, or its stack exceeds stack_max_depth) — trying the next ranked candidate"
                 ));
             }
+            LC_UNKNOWN => {
+                logs.push(format!(
+                    "{who}: the claim of {id} went unanswered and its row cannot be read back — it may be held, so no other candidate is claimed"
+                ));
+                return (None, logs, true);
+            }
             rc => logs.push(format!("{who}: the lifecycle machine could not be reached for ranked candidate {id} (rc={rc}) — trying the next ranked candidate")),
         }
     }
@@ -198,7 +274,6 @@ pub fn lc_claim_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::Out;
     use std::sync::Mutex;
 
     struct FakeExec {
@@ -292,5 +367,138 @@ mod tests {
         assert!(c.is_none() && !unreachable, "refusals are an answer: idle");
         let (c, _, unreachable) = lc_claim_loop(&[], &[], None, "b/x", |_| unreachable!());
         assert!(c.is_none() && !unreachable);
+    }
+
+    /// The scripted store the claim and holds tests run against: a row per bead, a reply
+    /// that can be lost after its write landed, and `spira-lc holds`/`show` answers that can
+    /// be "cannot tell" for a number of calls.
+    #[derive(Default)]
+    struct Store {
+        rows: Mutex<BTreeMap<String, (String, String)>>,
+        lost_reply: Vec<String>,
+        holds: Vec<String>,
+        cannot_tell_holds: Mutex<u32>,
+        cannot_tell_show: Mutex<u32>,
+        calls: Mutex<Vec<String>>,
+    }
+    impl Store {
+        fn ready(ids: &[&str]) -> Store {
+            let s = Store::default();
+            for id in ids {
+                s.rows.lock().unwrap().insert(id.to_string(), ("READY".into(), String::new()));
+            }
+            s
+        }
+        /// lib.sh's lc_claim_bead against this store: the write lands, then the reply may be lost.
+        fn claim(&self, id: &str, holder: &str) -> i32 {
+            let mut rows = self.rows.lock().unwrap();
+            let r = rows.get_mut(id).unwrap();
+            if r.0 != "READY" {
+                return LC_REFUSED;
+            }
+            *r = ("WORKING".into(), holder.into());
+            if self.lost_reply.iter().any(|l| l == id) {
+                2
+            } else {
+                LC_APPLIED
+            }
+        }
+        fn held_by(&self, holder: &str) -> Vec<String> {
+            self.rows.lock().unwrap().iter().filter(|(_, (st, h))| st == "WORKING" && h == holder).map(|(id, _)| id.clone()).collect()
+        }
+        fn take(n: &Mutex<u32>) -> bool {
+            let mut n = n.lock().unwrap();
+            if *n > 0 {
+                *n -= 1;
+                return true;
+            }
+            false
+        }
+    }
+    impl Exec for Store {
+        fn exec(&self, prog: &str, args: &[String], _stdin: Option<Vec<u8>>, _cwd: Option<&Path>) -> Out {
+            assert_eq!(prog, "spira-lc");
+            self.calls.lock().unwrap().push(args.join(" "));
+            let cannot = || Out { code: 2, stdout: "cannot tell: deadline\n".into(), stderr: "cannot tell: deadline".into() };
+            match args[0].as_str() {
+                "holds" => {
+                    if Store::take(&self.cannot_tell_holds) {
+                        return cannot();
+                    }
+                    Out::ok(self.holds.join("\n"))
+                }
+                "show" => {
+                    if Store::take(&self.cannot_tell_show) {
+                        return cannot();
+                    }
+                    let rows = self.rows.lock().unwrap();
+                    let (st, h) = rows.get(&args[1]).cloned().unwrap_or_default();
+                    Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": st, "holder": h}}).to_string())
+                }
+                other => panic!("unscripted spira-lc {other}"),
+            }
+        }
+    }
+
+    fn no_sleep(_: Duration) {}
+
+    #[test]
+    fn holds_answering_cannot_tell_is_never_a_hold() {
+        let st = Store { cannot_tell_holds: Mutex::new(u32::MAX), ..Store::ready(&["sp-a"]) };
+        let h = read_holds(&st, "sp-a", 3, Duration::ZERO, &no_sleep);
+        assert!(matches!(&h, Holds::Unknown(why) if why.contains("cannot tell")), "cannot tell must read as unknown, not as hold names: {h:?}");
+        assert_eq!(st.calls.lock().unwrap().len(), 3, "cannot tell is retried, then given up as unknown");
+    }
+
+    #[test]
+    fn holds_cannot_tell_then_an_answer_is_that_answer() {
+        let st = Store { cannot_tell_holds: Mutex::new(1), holds: vec!["ask".into(), "wait".into()], ..Store::ready(&["sp-a"]) };
+        let slept = Mutex::new(Vec::new());
+        let h = read_holds(&st, "sp-a", 3, Duration::from_secs(1), &|d| slept.lock().unwrap().push(d));
+        assert_eq!(h, Holds::Known(vec!["ask".into()]));
+        assert_eq!(*slept.lock().unwrap(), vec![Duration::from_secs(1)], "one backoff before the retry");
+        let st = Store { holds: vec![], ..Store::ready(&["sp-a"]) };
+        assert_eq!(read_holds(&st, "sp-a", 3, Duration::ZERO, &no_sleep), Holds::Known(vec![]));
+    }
+
+    #[test]
+    fn a_claim_whose_reply_is_lost_holds_exactly_that_one_bead() {
+        let me = "dwarf-eitri@1.2";
+        let st = Store { lost_reply: vec!["sp-a".into()], ..Store::ready(&["sp-a", "sp-b", "sp-c"]) };
+        let ids = vec!["sp-a".to_string(), "sp-b".into(), "sp-c".into()];
+        let (won, _, unreachable) = lc_claim_loop(&ids, &[], None, "b/eitri", |id| {
+            let rc = st.claim(id, me);
+            settle_claim(rc, &st, id, me, 3, Duration::ZERO, &no_sleep)
+        });
+        assert_eq!(st.held_by(me), vec!["sp-a"], "the lost-reply claim landed: the dwarf holds it and nothing else");
+        assert_eq!(won.as_deref(), Some("sp-a"));
+        assert!(!unreachable);
+    }
+
+    #[test]
+    fn a_lost_claim_reply_that_cannot_be_read_back_claims_nothing_else() {
+        let me = "dwarf-eitri@1.2";
+        let st = Store { lost_reply: vec!["sp-a".into()], cannot_tell_show: Mutex::new(u32::MAX), ..Store::ready(&["sp-a", "sp-b"]) };
+        let ids = vec!["sp-a".to_string(), "sp-b".into()];
+        let (won, logs, unreachable) = lc_claim_loop(&ids, &[], None, "b/eitri", |id| {
+            let rc = st.claim(id, me);
+            settle_claim(rc, &st, id, me, 2, Duration::ZERO, &no_sleep)
+        });
+        assert_eq!(st.held_by(me), vec!["sp-a"], "never a second claim while the first is unknown");
+        assert!(won.is_none() && unreachable, "{logs:?}");
+    }
+
+    #[test]
+    fn a_lost_claim_reply_that_did_not_land_tries_the_next() {
+        let me = "dwarf-eitri@1.2";
+        let st = Store::ready(&["sp-b"]);
+        st.rows.lock().unwrap().insert("sp-a".into(), ("WORKING".into(), "dwarf-other@9.9".into()));
+        let ids = vec!["sp-a".to_string(), "sp-b".into()];
+        let (won, _, _) = lc_claim_loop(&ids, &[], None, "b/eitri", |id| {
+            let rc = if id == "sp-a" { 2 } else { st.claim(id, me) };
+            settle_claim(rc, &st, id, me, 3, Duration::ZERO, &no_sleep)
+        });
+        assert_eq!(won.as_deref(), Some("sp-b"));
+        assert_eq!(st.held_by(me), vec!["sp-b"]);
     }
 }
