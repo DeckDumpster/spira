@@ -23,6 +23,7 @@ pub mod reap;
 pub mod resume;
 pub mod record;
 pub mod run;
+pub mod runslot;
 pub mod runtime;
 pub mod sandbox;
 pub mod schedule;

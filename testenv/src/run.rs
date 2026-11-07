@@ -881,6 +881,14 @@ fn note(r: Result<(), String>) {
     }
 }
 
+/// The label an admission lease of this run carries: the dwarf's bead, else the branch.
+fn lease_label(args: &RunArgs, deps: &Deps) -> String {
+    [admission::WHO_ENV, "SPIRA_WORK_BEAD_ID", "BEAD_ID"]
+        .iter()
+        .find_map(|k| (deps.env)(k).filter(|v| !v.trim().is_empty()))
+        .unwrap_or_else(|| args.branch.clone())
+}
+
 /// Runs, then records the verdict in the run's event file once one was started.
 pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let results = std::cell::RefCell::new(None);
@@ -953,10 +961,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         // The wait for a slot is queueing, not this run's work: the cap stands still (sp-u56az1).
         let _held = cap::hold();
         let inherit = (deps.env)(admission::INHERIT_ENV);
-        let who = [admission::WHO_ENV, "SPIRA_WORK_BEAD_ID", "BEAD_ID"]
-            .iter()
-            .find_map(|k| (deps.env)(k).filter(|v| !v.trim().is_empty()))
-            .unwrap_or_else(|| args.branch.clone());
+        let who = lease_label(args, deps);
         let size_of = || {
             admission::size(pool, (deps.env)(pool.size_env()).as_deref(), admission::Host::read())
         };
@@ -1086,6 +1091,31 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     // unit volume. `br` is the revision tested: the tip, or its merge onto the landing ref.
     let named = br;
     let br = &commit;
+
+    // ---- the run ceiling: a CPU slot before any disk or build work ------------------------
+    let _run_slot = if (deps.env)(admission::INHERIT_ENV).as_deref().is_some_and(admission::is_gate_token) {
+        None
+    } else {
+        let _held = cap::hold();
+        let who = lease_label(args, deps);
+        let size = s.max_runs.unwrap_or_else(|| admission::derive(admission::Pool::Run, admission::Host::read()));
+        let out_of_time = || cancelled() || deadline_at.get().is_some_and(|d| Instant::now() >= d);
+        let size_of = || size;
+        let seams = admission::Seams { size_of: &size_of, procs: &admission::RealProcs, sleep: deps.sleep };
+        match crate::runslot::take(&crate::runslot::request(&s.run, std::process::id(), &who), &seams, &out_of_time, &mut |l: &str| deps.log(l)) {
+            Ok(slot) => {
+                if slot.0.waited > 0 {
+                    deps.log(&format!("queue-wait={}s pool=run", slot.0.waited));
+                }
+                Some(slot)
+            }
+            Err(_) if cancelled() => return Finish::fault(2, "interrupted", 0),
+            Err(e) => {
+                deps.log(&e.line());
+                return Finish::fault(2, "deadline-slot", 0);
+            }
+        }
+    };
 
     // ---- worktree ------------------------------------------------------------------
     let wreq = worktree::Request {

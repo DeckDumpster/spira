@@ -549,3 +549,18 @@ fn a_second_unit_tests_batch_waits_for_the_first_and_names_it_while_other_pools_
     assert!(second.held());
     assert!(said[0].starts_with("waiting for a unit slot: 1 of 1 held by sp-a"), "{said:?}");
 }
+
+#[test]
+fn the_run_ceiling_is_the_cores_over_one_runs_cargo_jobs_and_never_below_one() {
+    let big = Host { cores: 32, mem_avail_mib: 1 };
+    assert_eq!(derive(Pool::Run, big), 5);
+    assert_eq!(derive(Pool::Run, Host { cores: 4, mem_avail_mib: 1 }), 1);
+    assert_eq!(size(Pool::Run, Some("3"), big), 3);
+    assert_eq!(Pool::Run.size_env(), "SPIRA_TESTENV_MAX_RUNS");
+}
+
+#[test]
+fn a_run_slot_waiter_says_what_it_waits_for() {
+    let holders = [Lease { slot: 1, pid: 7, start: 1, who: "sp-a".into(), since: 100, waited: 0, last: 100, weight: 1 }];
+    assert_eq!(wait_line(Pool::Run, 1, &holders, 130), "testenv: waiting for a CPU slot (1 running)");
+}

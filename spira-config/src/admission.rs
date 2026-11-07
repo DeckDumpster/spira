@@ -47,6 +47,9 @@ pub const ROUND_POLL_SECS: u64 = 5;
 /// Cold builds admitted at once, host-wide: a toolchain change invalidates every compiled
 /// artifact, so each cold session is a full-workspace build and two together starve the box.
 pub const COLD_PAR: u64 = 1;
+/// Cargo jobs one testenv run uses (`spira/unit-tests.sh` defaults `-j` to this): the divisor
+/// that turns the host's cores into how many runs fit at once.
+pub const RUN_CARGO_JOBS: u64 = 6;
 /// Longest one session keeps the cold slot: the build phase is over by then, whatever the
 /// session still does.
 pub const COLD_HOLD_SECS: u64 = 1200;
@@ -62,10 +65,11 @@ pub enum Pool {
     Gate,
     Cold,
     Unit,
+    Run,
 }
 
 impl Pool {
-    pub const ALL: [Pool; 5] = [Pool::Compile, Pool::Test, Pool::Gate, Pool::Cold, Pool::Unit];
+    pub const ALL: [Pool; 6] = [Pool::Compile, Pool::Test, Pool::Gate, Pool::Cold, Pool::Unit, Pool::Run];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -74,6 +78,7 @@ impl Pool {
             Pool::Gate => "gate",
             Pool::Cold => "cold",
             Pool::Unit => "unit",
+            Pool::Run => "run",
         }
     }
 
@@ -94,6 +99,7 @@ impl Pool {
             Pool::Gate => "SPIRA_CERTIFY_PAR",
             Pool::Cold => "SPIRA_COLD_PAR",
             Pool::Unit => "SPIRA_UNIT_PAR",
+            Pool::Run => "SPIRA_TESTENV_MAX_RUNS",
         }
     }
 }
@@ -127,6 +133,9 @@ pub fn derive(pool: Pool, h: Host) -> u64 {
     if pool == Pool::Cold || pool == Pool::Unit {
         return COLD_PAR;
     }
+    if pool == Pool::Run {
+        return (h.cores / RUN_CARGO_JOBS).max(1);
+    }
     let (per_core, per_mib) = match pool {
         // One dwarf-profile workspace build: ~9 cores average (14 peak), 2.7 GiB anon; a
         // release (LTO) build heavier. 10 cores and 4 GiB a slot.
@@ -136,7 +145,7 @@ pub fn derive(pool: Pool, h: Host) -> u64 {
         Pool::Test => (8, 8192),
         // The gate's own formula (gate/DESIGN.md), unchanged.
         Pool::Gate => (4, 400),
-        Pool::Cold | Pool::Unit => unreachable!("answered above"),
+        Pool::Cold | Pool::Unit | Pool::Run => unreachable!("answered above"),
     };
     (h.cores / per_core).min(h.mem_avail_mib / per_mib).max(1)
 }
@@ -162,7 +171,7 @@ pub fn doc_size(pool: Pool, doc: &crate::SpiraToml) -> Option<u64> {
         Pool::Compile => s.get_u32("SPIRA_COMPILE_PAR"),
         Pool::Test => s.get_u32("SPIRA_TEST_PAR"),
         Pool::Gate => s.get_u32("SPIRA_CERTIFY_PAR"),
-        Pool::Cold | Pool::Unit => Ok(None),
+        Pool::Cold | Pool::Unit | Pool::Run => Ok(None),
     })
     .map(u64::from)
     .filter(|n| *n > 0)
@@ -691,6 +700,9 @@ pub fn unwait(run: &Path, pool: Pool, pid: u32) {
 /// The waiting line (DESIGN-admission.md §3.1). Held is in units: a release build shows its
 /// weight (`×4`).
 pub fn wait_line(pool: Pool, size: u64, holders: &[Lease], now: u64) -> String {
+    if pool == Pool::Run {
+        return format!("testenv: waiting for a CPU slot ({} running)", holders.len());
+    }
     let named: Vec<String> = holders
         .iter()
         .map(|l| {
