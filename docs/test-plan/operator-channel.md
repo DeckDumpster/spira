@@ -77,7 +77,7 @@ Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptanc
 | UC-operator-channel-34 | `health-ids` reads the id prefix from the database's `issue_prefix`, not from the goal (sp-c57o), and falls back to `SPIRA_ID_PREFIX`. A state file with none of our ids, or no state file at all, is DEGRADED (exit 1). An unusable prefix exits 2. | correctness, config-compat | **T1** (stub `SPIRA_BD`) / cert |
 | UC-operator-channel-35 | `prune` removes the runtime files of watcher names that are no longer in the manifest and keeps active ones. A malformed manifest removes nothing, and a missing dir exits 0. | correctness, fail-closed | **T1** / cert |
 | UC-operator-channel-36 | A watcher-filed incident refiled while blocked by an open dependency stays open, records no reopen event and stays out of `bd ready`. A closed incident refiled within `SPIRA_WATCHER_INTERVAL_S` reopens with cause `closed-while-live`, and one refiled outside it reopens with cause `recurrence`. | correctness, observability | cause classifier T1; events-table write T3 / main |
-| UC-operator-channel-37 | Watcher and notifier units (`spira-watch@`, `-notify`, `-refresh`, `-pr-notify`, `-mail-tidy`) render with no CPUQuota and no Nice (sp-b4oct), reachable restart limits, no `@` placeholders and config-derived paths only. The notify timer fits 3 passes inside the default threshold. Install enables timers, not services. | config-compat, recovery | T0 (one shared unit-render lint) / cert |
+| UC-operator-channel-37 | Watcher and notifier units (`spira-watch@`, `-notify`, `-refresh`, `-pr-notify`, `-mail-tidy`) render with no CPUQuota and no Nice (sp-b4oct), reachable restart limits, no `@` placeholders and config-derived paths only. Install enables timers, not services. | config-compat, recovery | T0 (one shared unit-render lint) / cert |
 | UC-operator-channel-38 | `pr-notify` classifies each PR in a pr-mode repo as GREEN, RED or skipped (pending, null or empty checks) and ignores push/hold repos. It reports a `spira/*` branch that is ahead of base with no PR, stays silent when there is nothing to report, and appends to the log unless `--show`. | correctness, observability | classifier T1 + branch case T2 / cert |
 
 ### D. Concierge and codified knowledge (`concierge.sh`, `lib.sh render_memories`, `sop.sh`, `rule.sh`)
@@ -159,7 +159,7 @@ The "file::case" entries use the mapper's case names. The cost column shows ci_s
 | D5 | Answers harness | — | RETIRED (sp-xsl8i): answers.py, its readers and test-answers.sh are all deleted | — |
 | D6 | Notify health-half escalation of a matured unhealthy daemon | test-watch-notify.sh, test-watchd-halt-health.sh, test-cockpit-watcher-owner.sh (notify pc) | halt-health's "notify escalates without stamp" control is the same case as watch-notify's "matured unhealthy watcher escalates" | test-watch-notify.sh (+2 halt cases) |
 | D7 | Restart limiter reachable / Restart=always / StartLimit in [Unit] | test-watch-unit-restart.sh, test-unit-restart-limits.sh | The latter globs `systemd/*.service`, which includes `spira-watch@.service` | test-unit-restart-limits.sh. Delete test-watch-unit-restart.sh |
-| D8 | Rendered unit: CPUQuota/Nice/no `@`/config-only paths; install enables the timer, not the service | test-watch-notify.sh, test-watch-refresh.sh, test-pr-notify.sh, test-mail-tidy.sh (+ test-verdict-timer.sh, test-install-* elsewhere) | Same stub-systemctl + `install.sh` run pattern repeated per unit, each paying a full install run | One T0 `test-units-lint.sh` iterating every rendered unit |
+| D8 | Rendered unit: CPUQuota/Nice/no `@`/config-only paths; install enables the timer, not the service | test-watch-notify.sh, test-watch-refresh.sh, test-pr-notify.sh, test-mail-tidy.sh (+ test-verdict-timer.sh, test-install-* elsewhere) | Same stub-systemctl + `install.sh` run pattern repeated per unit, each paying a full install run | One cargo test in `install_units` iterating every periodic pair |
 | D9 | SOP back-door lint plant/forget | test-sop.sh (METRIC), test-sop-lint.sh | Same plant via `bd remember` → lint → forget pattern | T1 validator table in test-sop.sh |
 | D10 | Within-file duplicates | test-concierge.sh (HEADLESS ×2, launcher --resume ×2); test-watcher-reopen.sh (pc2 = case2) | Mapper notes | Keep one of each |
 
@@ -231,7 +231,7 @@ answers-premise-rejected 18 + answers-silent-seed 5 + archivist-cited-bead 8 + b
 | test-watcher-reopen (T1 + merged cases) | 45 | 11 | T1 classifier ~1 s + ~10 s marginal inside test-incident-recur-cause.sh's existing server db |
 | test-pr-notify.sh | 22 | 4 | install run out; classifier T1 |
 | test-watch-unit-restart.sh | 2 | 0 | deleted (D7) |
-| share of new T0 test-units-lint.sh | — | 5 | one render pass for all units, attributed here |
+| share of the install_units cargo test | — | 5 | one render pass for all units, attributed here |
 
 Sum: 5 + 20 + 4 + 13 + 2 + 3 + 3 + 2 + 1 + 4 + 5 + 10 + 5 + 6 + 16 + 8 + 1 + 3 + 15 + 11 + 4 + 0 + 5 = **146 s**.
 

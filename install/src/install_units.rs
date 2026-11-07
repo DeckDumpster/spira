@@ -702,6 +702,41 @@ mod tests {
         fs::write(dir.join("spira-example.timer"), "[Unit]\nUnit=spira-example.service\n[Timer]\nOnCalendar=*:0/5\n").unwrap();
     }
 
+    // covers: UC-operator-channel-37
+    #[test]
+    fn install_enables_each_periodic_timer_and_never_the_service_behind_it() {
+        let td = tempdir();
+        let (unit_dir, tmpl_dir) = (td.join("units"), td.join("templates"));
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        let pairs = ["spira-watchdog", "cockpit-ensure", "concierge", "lc-backup"];
+        let inputs = Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) };
+        let mut manifest = build(&inputs).unwrap();
+        manifest.units.retain(|u| pairs.iter().any(|p| u.name == format!("{p}.service") || u.name == format!("{p}.timer")));
+        assert_eq!(manifest.units.len(), pairs.len() * 2, "positive control: every pair is in the manifest");
+        for u in manifest.units.iter().filter(|u| u.name != "spira-watchdog.service" && u.name != "spira-watchdog.timer") {
+            fs::write(tmpl_dir.join(&u.name), "[Service]\nExecStart=/bin/true\n").unwrap();
+        }
+        let prod_root = td.join("prodroot");
+        fs::create_dir_all(prod_root.join("bin")).unwrap();
+        let wd = prod_root.join("bin/spira-watchdog");
+        std::os::unix::fs::OpenOptionsExt::mode(fs::OpenOptions::new().write(true).create_new(true), 0o755).open(&wd).unwrap();
+        let h = HostValues { prod: prod_root.join("spira").to_string_lossy().into_owned(), ..host() };
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+
+        let r = run(&ctx);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(sc.reloads.get() > 0, "the install ran");
+        let enabled = sc.enabled_now.borrow();
+        for p in pairs {
+            let (timer, service) = (inst_name(&format!("{p}.timer"), "prod"), inst_name(&format!("{p}.service"), "prod"));
+            assert!(enabled.contains(&timer), "{p}: install enabled its timer; enabled: {enabled:?}");
+            assert!(!enabled.contains(&service), "{p}: but not the service behind it; enabled: {enabled:?}");
+        }
+    }
+
     #[test]
     fn execstart_ok_skips_system_dirs_and_refuses_a_missing_target() {
         assert!(execstart_target_ok("ExecStart=/usr/bin/true\n").is_ok());

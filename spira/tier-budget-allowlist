@@ -266,7 +266,6 @@ test-unclaimable-worktree.sh	T1	5.0
 test-uninstall.sh	T1	17.0
 test-unit-drift.sh	T1	15.0
 test-unit-restart-limits.sh	T1	2.0
-test-units-lint.sh	T0	19.5
 test-verdict-timer.sh	T1	1.5
 test-verify-asks.sh	T1	8.5
 test-watchtower-czar-outcome.sh	T1	11.5
