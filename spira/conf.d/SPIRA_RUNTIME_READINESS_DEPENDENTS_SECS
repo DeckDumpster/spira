@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime passes that judge again the records waiting on, or under, a record that changed.
+SCHEMA=Seconds between spira-runtime readiness-dependents passes (unit: seconds; integer; default 5). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_READINESS_DEPENDENTS_SECS:=5}"
+SPIRA_CONF_DEFAULT_EOF

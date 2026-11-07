@@ -109,6 +109,10 @@ pub fn wait_decisions(
 
 pub use sentinel::checks::{inconsistent, stale_leases};
 
+fn names(v: &Value) -> Vec<String> {
+    v.as_array().into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect()
+}
+
 impl<'a> Sentinel<'a> {
     /// The pass's one lifecycle read. The machine is authoritative, so an absent binary or a
     /// failed read is LOUD: one `LIFECYCLE UNREACHABLE` line naming why, no lifecycle
@@ -281,7 +285,7 @@ impl<'a> Sentinel<'a> {
             })
             .collect();
         let now = self.h.now();
-        let mut n = 0;
+        let mut stale = Vec::new();
         for (id, ago) in stale_leases(&rows, now, self.cfg.reclaim_grace, |id| self.holder_alive(id), |h| spira_config::session::session_gone(h, &spira_config::admission::RealProcs)) {
             if let Some(now_state) = self.lc_live_state(&id).filter(|st| st != "WORKING") {
                 self.log(&format!("CHECK2 {id}: skipped HolderDead — the bead moved to {now_state} since the sweep read it"));
@@ -291,21 +295,98 @@ impl<'a> Sentinel<'a> {
                 self.log(&format!("CHECK2 {id}: NOT reclaimed — the lease lapsed but a live process still works in its worktree and its unit did not stop"));
                 continue;
             }
-            if !self.lc_apply(&id, HOLDER_DEAD) {
-                continue;
-            }
-            self.write_event_row(&id, "reclaimed", "stale-lease");
-            let note = if ago > 0 {
+            stale.push((id, ago));
+        }
+        let returned: HashSet<String> = if self.cfg.control_store {
+            self.expire_claims(&stale.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>())
+        } else {
+            stale.iter().filter(|(id, _)| self.lc_apply(id, HOLDER_DEAD)).map(|(id, _)| id.clone()).collect()
+        };
+        let mut n = 0;
+        for (id, ago) in stale.iter().filter(|(id, _)| returned.contains(id)) {
+            self.write_event_row(id, "reclaimed", "stale-lease");
+            let note = if *ago > 0 {
                 format!("Reclaimed by CHECK 2: in_progress with a lease that expired {}m ago and was never released.", ago / 60)
             } else {
                 "Reclaimed by CHECK 2: the holder's session is gone and never released the claim.".to_string()
             };
             self.bd()
-                .quiet(self.h, &["note", &id, "--stdin"], Some(&note));
+                .quiet(self.h, &["note", id, "--stdin"], Some(&note));
             n += 1;
         }
         if n > 0 {
             self.progress(&format!("reclaimed {n} stale lease(s)"));
+        }
+        if self.cfg.control_store {
+            self.sweep_open(&rows);
+        }
+    }
+
+    /// The control store's `expire-claims` for the holders just stopped: each named record with
+    /// no live claim lock goes back to the state it was claimed from. The records returned.
+    fn expire_claims(&self, stopped: &[&str]) -> HashSet<String> {
+        if stopped.is_empty() {
+            return HashSet::new();
+        }
+        let args = ["expire-claims", "--stopped", &stopped.join(","), "--actor", "sentinel"].map(String::from).to_vec();
+        let o = self.h.lc(&self.cfg.lc_bin, &args);
+        if !o.ok() {
+            self.lc_unreachable(&format!("spira-lc expire-claims failed (rc={})", o.rc));
+            return HashSet::new();
+        }
+        serde_json::from_str::<Value>(o.stdout.trim()).ok().map(|v| names(&v["returned"])).unwrap_or_default().into_iter().collect()
+    }
+
+    /// The control store's `sweep-open`: an OPEN record older than the grace is promoted when the
+    /// planning plane still has its bead open, and escalated once when it does not. A planning
+    /// read that cannot answer sweeps nothing: a bead it fails to list is not a bead that is gone.
+    fn sweep_open(&self, rows: &[LcRow]) {
+        let bin = &self.cfg.lc_bin;
+        let open: Vec<&str> = rows.iter().filter(|r| r.state == "OPEN").map(|r| r.bead_id.as_str()).collect();
+        if open.is_empty() {
+            return;
+        }
+        let mut standing = HashSet::new();
+        for chunk in open.chunks(100) {
+            let o = self.h.lc(bin, &["plan", "items", "--ids", &chunk.join(","), "--open"].map(String::from));
+            let items = o.ok().then(|| serde_json::from_str::<Value>(o.stdout.trim()).ok()).flatten().and_then(|v| v.get("items").cloned());
+            let Some(items) = items.filter(Value::is_array) else {
+                self.log("CHECK2 sweep-open: the planning plane did not answer — no OPEN record swept this pass");
+                return;
+            };
+            standing.extend(items.as_array().into_iter().flatten().filter_map(|i| i["id"].as_str().map(str::to_string)));
+        }
+        let (present, gone): (Vec<&str>, Vec<&str>) = open.iter().partition(|id| standing.contains(**id));
+        let call = |escalated: &[String]| {
+            let mut args = vec!["sweep-open".to_string(), "--grace-secs".into(), self.cfg.open_promote_grace.to_string()];
+            for (flag, ids) in [("--open", present.join(",")), ("--gone", gone.join(",")), ("--escalated", escalated.join(","))] {
+                if !ids.is_empty() {
+                    args.extend([flag.to_string(), ids]);
+                }
+            }
+            args.extend(["--actor".to_string(), "sentinel".to_string()]);
+            let o = self.h.lc(bin, &args);
+            o.ok().then(|| serde_json::from_str::<Value>(o.stdout.trim()).ok()).flatten()
+        };
+        let Some(out) = call(&[]) else {
+            self.lc_unreachable("spira-lc sweep-open failed");
+            return;
+        };
+        for id in names(&out["promoted"]) {
+            self.progress(&format!("promoted {id}: OPEN past the grace with its bead open"));
+        }
+        let mut mailed = Vec::new();
+        for id in names(&out["escalate"]) {
+            let subject = format!("{id} is OPEN with no open bead behind it");
+            let default = format!("drop the record: `spira-lc drop-row {id}`");
+            let body = format!("## Question\n{subject}\n\n## Default\n{default}\n\nA crashed filing left the record OPEN, and the planning plane has no open bead for it, so nothing will promote it.\n");
+            if self.mail("Sentinel <sentinel@spira>", &subject, &default, &body, &id, false) {
+                self.act(&format!("escalated {id}: OPEN with no open bead"));
+                mailed.push(id);
+            }
+        }
+        if !mailed.is_empty() && call(&mailed).is_none() {
+            self.lc_unreachable("spira-lc sweep-open could not mark the escalations");
         }
     }
 

@@ -10,6 +10,7 @@ pub mod inbox_keeper;
 pub mod overrides;
 pub mod pr_notify;
 pub mod publish_backlog;
+pub mod readiness_dependents;
 pub mod reconciler_flow;
 pub mod repo_events;
 pub mod reconciler;

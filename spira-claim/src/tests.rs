@@ -90,3 +90,118 @@ fn express_is_a_bool_flag_and_never_swallows_what_follows() {
 }
 
 // ---- ready-count shares one computation per ready_ttl_s (sp-su318h) ----------------------
+
+// ---- readiness is published for every live state ----------------------------------------
+
+mod published {
+    use super::*;
+    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    const LIVE: &str = "OPEN,READY,WORKING,SUBMITTED,CERTIFIED,IN_DELIVERY,REWORK";
+
+    struct Service(Mutex<Vec<Vec<String>>>);
+
+    impl Transport for Service {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            let mut seen = argv.to_vec();
+            seen.extend(stdin.map(|b| format!("stdin={b}")));
+            self.0.lock().unwrap().push(seen);
+            let out = match argv.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+                ["list", "--state", "READY,REWORK", ..] => r#"[{"bead_id":"sp-r","state":"READY","holds":[]}]"#.to_string(),
+                ["list", "--state", live, ..] if *live == LIVE => [
+                    r#"{"bead_id":"sp-r","state":"READY","holds":[]}"#,
+                    r#"{"bead_id":"sp-c","state":"CERTIFIED","holds":[],"tip":"abc"}"#,
+                    r#"{"bead_id":"sp-s","state":"SUBMITTED","holds":[]}"#,
+                ]
+                .join(",")
+                .pipe(|rows| format!("[{rows}]")),
+                ["list", "--ids", _] => r#"[{"bead_id":"sp-w","state":"WORKING","holds":[]}]"#.to_string(),
+                ["plan", "watermark"] => r#"{"watermark":7}"#.to_string(),
+                ["plan", "edges", "--ids", "sp-w", "--dependents"] => r#"{"watermark":7,"edges":[
+                    {"issue_id":"sp-r","depends_on_id":"sp-w","type":"blocks"},
+                    {"issue_id":"sp-s","depends_on_id":"sp-w","type":"parent-child"},
+                    {"issue_id":"sp-x","depends_on_id":"sp-w","type":"related"}]}"#
+                    .to_string(),
+                ["plan", "items", "--ids", ids] if ids.contains("sp-r") => [
+                    r#"{"id":"sp-r","dependencies":[{"issue_id":"sp-r","depends_on_id":"sp-w","type":"blocks"}]}"#,
+                    r#"{"id":"sp-c"}"#,
+                    r#"{"id":"sp-s","dependencies":[{"issue_id":"sp-s","depends_on_id":"sp-w","type":"blocks"}]}"#,
+                ]
+                .join(",")
+                .pipe(|rows| format!(r#"{{"watermark":7,"items":[{rows}]}}"#)),
+                ["plan", "items", ..] => r#"{"watermark":7,"items":[]}"#.to_string(),
+                _ => String::new(),
+            };
+            Ok(Reply { code: 0, out, err: String::new() })
+        }
+    }
+
+    trait Pipe: Sized {
+        fn pipe<T>(self, f: impl FnOnce(Self) -> T) -> T {
+            f(self)
+        }
+    }
+    impl Pipe for String {}
+
+    fn judged(control_store: bool) -> (Vec<Vec<String>>, Vec<verdicts::Entry>) {
+        let svc = Arc::new(Service(Mutex::new(Vec::new())));
+        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) };
+        let mut stdin = std::io::empty();
+        let none = |_: &str| None;
+        let config = Config { control_store, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+        let env = Env { stdin: &mut stdin, config, lookup: &none };
+        let a = Args::parse(&[]).unwrap();
+        let (_, entries) = judge_rows(&a, &env, &st, None).unwrap();
+        let seen = svc.0.lock().unwrap().clone();
+        (seen, entries)
+    }
+
+    fn published(seen: &[Vec<String>]) -> Option<serde_json::Value> {
+        let call = seen.iter().find(|c| c[0] == "publish-readiness")?;
+        serde_json::from_str(call[1].strip_prefix("stdin=")?).ok()
+    }
+
+    #[test]
+    fn judge_rows_publishes_readiness_for_certified_and_submitted_records_with_the_gates_it_read() {
+        let (seen, _) = judged(true);
+        let p = published(&seen).expect("no publish-readiness call");
+        assert_eq!(p["planning_watermark"], "7");
+        let entry = |id: &str| p["entries"].as_array().unwrap().iter().find(|e| e["id"] == id).unwrap_or_else(|| panic!("no entry for {id}: {p}")).clone();
+        let working = serde_json::to_value(spira_config::edges::gate(lifecycle::bead::BeadState::Working, None)).unwrap();
+        assert_eq!((entry("sp-s")["claimable"].clone(), entry("sp-s")["blocked_by"].clone(), entry("sp-s")["gates"]["sp-w"].clone()), (false.into(), serde_json::json!(["sp-w"]), working.clone()));
+        assert_eq!((entry("sp-c")["claimable"].clone(), entry("sp-c")["blocked_by"].clone()), (false.into(), serde_json::json!([])));
+        assert_eq!((entry("sp-r")["claimable"].clone(), entry("sp-r")["blocked_by"].clone(), entry("sp-r")["gates"]["sp-w"].clone()), (false.into(), serde_json::json!(["sp-w"]), working));
+    }
+
+    #[test]
+    fn the_planning_watermark_is_read_before_the_rows_it_stamps() {
+        let (seen, _) = judged(true);
+        let at = |what: &[&str]| seen.iter().position(|c| c.iter().map(String::as_str).take(what.len()).eq(what.iter().copied())).unwrap();
+        assert!(at(&["plan", "watermark"]) < at(&["list", "--state", LIVE]));
+    }
+
+    #[test]
+    fn nothing_is_published_while_the_control_store_is_not_in_use() {
+        let (seen, entries) = judged(false);
+        assert!(published(&seen).is_none());
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn republish_dependents_judges_and_publishes_only_the_records_that_wait_on_or_descend_from_the_changed() {
+        let svc = Arc::new(Service(Mutex::new(Vec::new())));
+        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) };
+        let mut stdin = std::io::empty();
+        let none = |_: &str| None;
+        let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+        let env = Env { stdin: &mut stdin, config, lookup: &none };
+        let a = Args::parse(&["--changed".into(), "sp-w".into()]).unwrap();
+        assert_eq!(republish_dependents(&a, &env, &st), Ok(2));
+        let p = published(&svc.0.lock().unwrap()).expect("no publish-readiness call");
+        let mut ids: Vec<&str> = p["entries"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap()).collect();
+        ids.sort();
+        assert_eq!(ids, ["sp-r", "sp-s"], "sp-c is neither waiting on sp-w nor under it, and a related edge holds nothing back");
+    }
+}

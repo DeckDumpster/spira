@@ -362,6 +362,10 @@ fn answer(outcome: state_store::Result<Outcome>) -> (i32, String) {
                 blocked_by.join(",")
             ),
         ),
+        Ok(Outcome::PlanningMoved { judged, now }) => (
+            REFUSED,
+            format!("refused: planning moved since the claim was judged (judged at {judged}, now {now})"),
+        ),
         Ok(Outcome::Locked { token }) => (
             REFUSED,
             format!(

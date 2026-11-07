@@ -16,6 +16,7 @@ mod decide;
 mod escalation;
 mod events;
 mod rank;
+mod readiness;
 mod ready;
 mod ready_cache;
 mod reopen;

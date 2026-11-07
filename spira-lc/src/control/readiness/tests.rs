@@ -139,6 +139,22 @@ impl Rig {
         self.ok(&["publish-readiness", "--json", &body.to_string()]);
     }
 
+    fn stamp_planning(&self, seq: u64) {
+        use state_store::{Object, Request, Txn};
+        let txn = Txn::new().put(keys::PLANNING_WATERMARK, Object::new(json!({ "seq": seq })));
+        self.store
+            .contract()
+            .txn(&txn, &Request::new(&format!("stamp/{seq}"), "test", "plan-stamp"))
+            .unwrap();
+    }
+
+    fn judged_at(&self, id: &str, watermark: &str, entry: Value) {
+        let mut entry = entry;
+        entry["id"] = json!(id);
+        let body = json!({ "computed_at": STAMP, "planning_watermark": watermark, "entries": [entry] });
+        self.ok(&["publish-readiness", "--json", &body.to_string()]);
+    }
+
     fn judged_claimable(&self, id: &str, gates: Value) {
         self.publish(json!([{ "id": id, "claimable": true, "gates": gates }]));
     }
@@ -430,4 +446,37 @@ fn a_verdict_pass_after_a_readiness_pass_keeps_its_revision_and_a_readiness_pass
         ),
         (3, Some("claimable"), 1, true)
     );
+}
+
+#[test]
+fn an_edge_added_after_judgement_refuses_the_claim_until_the_record_is_judged_again() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.stamp_planning(7);
+    r.judged_at("sp-a", "7", json!({ "claimable": true }));
+    r.stamp_planning(8);
+    let (code, out) = r.claim("sp-a");
+    assert_eq!(code, crate::REFUSED, "{out}");
+    assert!(out.contains("planning moved") && out.contains('7') && out.contains('8'), "{out}");
+    assert_eq!(r.state("sp-a"), "READY");
+    r.ok(&["create-bead", "sp-late", "--ready"]);
+    r.judged_at(
+        "sp-a",
+        "8",
+        json!({ "claimable": false, "blocked_by": ["sp-late"], "gates": { "sp-late": { "class": "idle" } } }),
+    );
+    let (code, out) = r.claim("sp-a");
+    assert_eq!(code, crate::REFUSED, "{out}");
+    assert!(out.contains("judged not claimable") && out.contains("sp-late"), "{out}");
+}
+
+#[test]
+fn a_claim_judged_at_the_planning_watermark_it_finds_goes_through() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.stamp_planning(7);
+    r.judged_at("sp-a", "7", json!({ "claimable": true }));
+    let (code, out) = r.claim("sp-a");
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(r.state("sp-a"), "WORKING");
 }

@@ -61,6 +61,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("publish-backlog", &["publish-backlog.observe", "inbox.append"]),
     ("repo-events", &["repo-events.observe", "inbox.append"]),
     ("overrides", &["overrides.apply", "inbox.append"]),
+    ("readiness-dependents", &["readiness-dependents.run"]),
     ("view", &["view.observe", "view.flip", "view.forget"]),
     ("reconciler", &["reconciler.observe", "reconciler.record", "reconciler.remedy", "reconciler.mail"]),
     ("reconciler-flow", &["reconciler-flow.observe", "reconciler-flow.status", "reconciler-flow.mail"]),

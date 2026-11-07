@@ -690,3 +690,5 @@ throughput_floor_per_day
 throughput_abandon_count
 throughput_abandon_window
 throughput_restop_after
+open_promote_grace_secs
+runtime_readiness_dependents_secs

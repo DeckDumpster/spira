@@ -387,3 +387,24 @@ fn a_store_missing_the_baseline_fails_the_load_check() {
     got.remove(keys::IMPORT_BASELINE);
     assert_eq!(checks::loaded(&a, &p, &got), [format!("import: 1 keys imported, 0 read back; first missing {}", keys::IMPORT_BASELINE)]);
 }
+
+#[test]
+fn every_imported_record_gets_the_gate_its_state_and_tip_give_it() {
+    use lifecycle::bead::BeadState;
+    let rows = vec![
+        with(bead("sp-c", "CERTIFIED", 3), &[("tip", json!(TIP))]),
+        with(bead("sp-r", "READY", 1), &[]),
+        with(bead("sp-w", "WORKING", 2), &[("holder", json!("d1"))]),
+        with(bead("sp-l", "LANDED", 4), &[("tip", json!(TIP))]),
+    ];
+    let p = projected(&archived(&[("bead", rows)]), &[]);
+    let gate = |state, tip| serde_json::to_value(spira_config::edges::gate(state, tip)).unwrap();
+    for (id, want) in [
+        ("sp-c", gate(BeadState::Certified, Some(TIP))),
+        ("sp-r", gate(BeadState::Ready, None)),
+        ("sp-w", gate(BeadState::Working, None)),
+        ("sp-l", gate(BeadState::Landed, None)),
+    ] {
+        assert_eq!(value(&p, &format!("gates/{id}")).data, want, "{id}");
+    }
+}

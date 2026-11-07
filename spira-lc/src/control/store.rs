@@ -48,6 +48,9 @@ pub enum Outcome {
     BlockerMoved { rev: u64, blocker: String },
     /// The last readiness pass judged the record not claimable; nothing is written.
     JudgedUnclaimable { blocked_by: Vec<String> },
+    /// The planning plane was written after the record was judged, so an edge may have been
+    /// added that the judgement never read; nothing is written until it is judged again.
+    PlanningMoved { judged: String, now: u64 },
 }
 
 /// Every lifecycle record, each id's readiness, and the revision they were read at.
@@ -161,6 +164,18 @@ fn claim_edges(judged: Option<&Readiness>, stack: &bead::Stack) -> Vec<(String, 
         }
     }
     edges
+}
+
+/// The refusal when the planning watermark a claim reads has moved past the one its record was
+/// judged at. With no watermark written there is nothing to compare, and nothing has been
+/// written to the planning plane since the control store began stamping it.
+fn planning_moved(judged: &Readiness, watermark: Option<&Item>) -> Option<Outcome> {
+    let at = judged.judged_at_planning_watermark.as_deref()?;
+    let now = watermark?.value.data.get("seq").and_then(Value::as_u64)?;
+    (at != now.to_string()).then(|| Outcome::PlanningMoved {
+        judged: at.to_string(),
+        now,
+    })
 }
 
 /// What a claim was judged against, for its event's evidence.
@@ -746,6 +761,13 @@ impl<B: Backend> Store<B> {
             let blocked_by = j.blocked_by.clone();
             return Ok((Outcome::JudgedUnclaimable { blocked_by }, None));
         }
+        let watermark = self.contract.get(keys::PLANNING_WATERMARK)?;
+        if let Some(moved) = judged
+            .as_ref()
+            .and_then(|j| planning_moved(j, watermark.as_ref()))
+        {
+            return Ok((moved, None));
+        }
         let edges = claim_edges(judged.as_ref(), &next.row.stack);
         if let Some(j) = &judged {
             if let Some(Value::Object(claim)) = applied[0].evidence.get_mut("Claim") {
@@ -753,6 +775,12 @@ impl<B: Backend> Store<B> {
             }
         }
         let mut t = Txn::new().when(Compare::ModRev(key.clone(), Some(cur.mod_rev)));
+        if judged.as_ref().is_some_and(|j| j.judged_at_planning_watermark.is_some()) {
+            t = t.when(Compare::ModRev(
+                keys::PLANNING_WATERMARK.into(),
+                watermark.as_ref().map(|w| w.mod_rev),
+            ));
+        }
         for (blocker, gate) in &edges {
             t = t.when(gate_compare(blocker, gate.as_ref())?);
         }

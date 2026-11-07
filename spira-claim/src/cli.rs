@@ -3,7 +3,7 @@
 //! lookup, so a caller in another process (the sentinel) asks in-process with the
 //! environment it would have handed a child. See DESIGN.md for the contract.
 
-use crate::{audit, counters, deadlock, decide, escalation, events, rank, ready, ready_cache, reopen, store, unpoison};
+use crate::{audit, counters, deadlock, decide, escalation, events, rank, ready, ready_cache, readiness, reopen, store, unpoison};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Read;
@@ -60,6 +60,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim rune-exclude <rune> [own-exclusions]                    (rune_exclude; resolves $SPIRA_HOME in-process, $SPIRA_RUNES)
        spira-claim rune-ready <rune> [--json] [--express]                             (rune_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
        spira-claim bulk-ready-by-rune                                      (bulk_ready_by_rune; the machine's claimable set)
+       spira-claim republish-dependents --changed a,b                     (judge and publish the records waiting on or under them)
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--dry-run]
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
        spira-claim audit --candidates F [--events F] [--lifecycle F]        (every partition's own bd list, exclusions dropped)
@@ -246,6 +247,7 @@ pub fn dispatch_in(raw: &[String], stdin: &mut dyn Read, env: &dyn Fn(&str) -> O
         "rune-exclude" => cmd_rune_exclude(&a, &mut env),
         "rune-ready" => cmd_rune_ready(&a, &mut env),
         "bulk-ready-by-rune" => cmd_bulk_ready_by_rune(&a, &mut env),
+        "republish-dependents" => cmd_republish_dependents(&a, &env),
         "unpoison" => cmd_unpoison(&a, &env),
         "audit" => cmd_audit(&a, &mut env),
         "deadlocked" => cmd_deadlocked(&a, &mut env),
@@ -907,7 +909,7 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
 
 /// [`machine_claimable`] with the verdict of every READY/REWORK row it judged.
 fn machine_judged(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow>, Vec<verdicts::Entry>), String> {
-    let (rows, entries) = judge_rows(a, env, st)?;
+    let (rows, entries) = judge_rows(a, env, st, None)?;
     let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
     Ok((rows.into_iter().filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id))).collect(), entries))
 }
@@ -927,15 +929,19 @@ fn ready_cache_key(a: &Args, env: &Env) -> String {
 }
 
 fn claimable_base(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>, String> {
-    judge_rows(a, env, st).map(|(rows, _)| rows)
+    judge_rows(a, env, st, None).map(|(rows, _)| rows)
 }
 
 /// The dispatcher's one computation: the claimable rows, and a verdict for every READY/REWORK
 /// row the content store could describe. The rows are derived from the verdicts, so what is
 /// published and what is claimed cannot diverge.
-fn judge_rows(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow>, Vec<verdicts::Entry>), String> {
+/// `only` narrows the pass to those records: the claimable rows, the verdicts and what is published.
+fn judge_rows(a: &Args, env: &Env, st: &Store, only: Option<&BTreeSet<String>>) -> Result<(Vec<rank::ReadyRow>, Vec<verdicts::Entry>), String> {
     use verdicts::Kind;
     let mut lc = st.lifecycle_in_states(&["READY", "REWORK"])?;
+    if let Some(only) = only {
+        lc.retain(|id, _| only.contains(id));
+    }
     let ids = ready::lifecycle_ready_ids(&lc);
     let want: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
     let mut entries: Vec<verdicts::Entry> = lc
@@ -985,7 +991,31 @@ fn judge_rows(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow>, V
     let carried = retain_uncarried(&mut claimable, &mut lc, Some(st), &env.config.queue_dir)?;
     entries.extend(carried.into_iter().map(|(id, carrier)| entry(&id, Kind::Carried, Some(carrier))));
     entries.extend(claimable.iter().map(|r| entry(&r.id, Kind::Claimable, None)));
+    if env.config.control_store {
+        if let Err(e) = publish_readiness(st, &entries, only) {
+            eprintln!("spira-claim: readiness not published: {e}");
+        }
+    }
     Ok((claimable, entries))
+}
+
+/// Judges every live record, whatever its state, and publishes the pass to the control store.
+/// The watermark is read before the rows it stamps.
+fn publish_readiness(st: &Store, entries: &[verdicts::Entry], only: Option<&BTreeSet<String>>) -> Result<(), String> {
+    let watermark = st.planning_watermark()?.to_string();
+    let mut lc = st.lifecycle_in_states(&readiness::LIVE_STATES)?;
+    if let Some(only) = only {
+        lc.retain(|id, _| only.contains(id));
+    }
+    let ids: Vec<String> = lc.keys().cloned().collect();
+    let bd = rank::index_rows(st.items_by_ids(&ids)?);
+    let blockers: Vec<String> = rank::all_blockers(&bd.values().cloned().collect::<Vec<_>>()).into_iter().filter(|b| !lc.contains_key(b)).collect();
+    let live: Vec<String> = lc.keys().cloned().collect();
+    lc.extend(st.lifecycle_of(&blockers)?);
+    let mut records: Vec<&rank::LifecycleRow> = live.iter().filter_map(|id| lc.get(id)).collect();
+    records.sort_by(|a, b| a.bead_id.cmp(&b.bead_id));
+    let body = readiness::payload(&records, &lc, &bd, entries, &verdicts::stamp(ready::now_epoch()), Some(&watermark));
+    st.lc_publish_readiness(&body)
 }
 
 fn entry(id: &str, verdict: verdicts::Kind, blocker: Option<String>) -> verdicts::Entry {
@@ -1174,6 +1204,29 @@ fn cmd_bulk_ready_by_rune(a: &Args, env: &mut Env) -> Outcome {
         }),
         err: warnings.join("\n"),
     }
+}
+
+/// `republish-dependents --changed a,b`: judges again, and publishes, the records that wait on
+/// or descend from the changed ones. Prints how many it judged.
+fn cmd_republish_dependents(a: &Args, env: &Env) -> Outcome {
+    if let Err(e) = a.check_known(&["--changed"]) {
+        return Outcome::usage(e);
+    }
+    if !env.config.control_store {
+        return Outcome::cannot_tell("republish-dependents: SPIRA_LC_STORE_PATH is unset, so there is no control store to publish to");
+    }
+    match store(a).and_then(|st| republish_dependents(a, env, &st)) {
+        Ok(n) => Outcome::ok(format!("{n}\n")),
+        Err(e) => Outcome::cannot_tell(format!("republish-dependents: {}", first_line(&e))),
+    }
+}
+
+fn republish_dependents(a: &Args, env: &Env, st: &Store) -> Result<usize, String> {
+    let dependents = st.dependents_of(&ready::split_csv(a.get("--changed").unwrap_or("")))?;
+    if !dependents.is_empty() {
+        judge_rows(a, env, st, Some(&dependents))?;
+    }
+    Ok(dependents.len())
 }
 
 /// `unpoison`'s arguments, validated, before anything is read (DESIGN.md §8.2).
