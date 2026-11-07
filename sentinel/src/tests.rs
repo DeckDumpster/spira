@@ -1060,12 +1060,22 @@ fn sentinel_sweeps_open_records_past_the_grace_with_the_planning_planes_answer()
 }
 
 #[test]
-fn a_record_with_no_open_bead_is_escalated_once_and_then_marked() {
+fn a_record_with_no_open_bead_is_mailed_and_then_marked_escalated() {
     let (w, r, sink, clock) = open_row_world(r#"{"watermark":4,"items":[{"id":"sp-o"}]}"#);
     run_mode(&w, &r, &sink, &clock, Mode::Pass, STORE, None);
+    let mail = r.find(|s| s.prog == "mail").expect("the operator is told");
+    assert!(mail.args.iter().any(|a| a.contains("sp-g is OPEN with no open bead")) && mail.args.windows(2).any(|p| p == ["--bead", "sp-g"]), "{:?}", mail.args);
     let sweeps = lc_verbs(&r, "sweep-open");
     assert_eq!(sweeps.len(), 2, "{}", sink.text());
     assert!(sweeps[1].windows(2).any(|p| p == ["--escalated", "sp-g"]), "{:?}", sweeps[1]);
+}
+
+#[test]
+fn a_record_whose_escalation_mail_failed_is_not_marked_so_the_next_pass_tells_again() {
+    let (w, r, sink, clock) = open_row_world(r#"{"watermark":4,"items":[{"id":"sp-o"}]}"#);
+    r.on(|s| if s.prog == "mail" { fail(1) } else { None });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, STORE, None);
+    assert_eq!(lc_verbs(&r, "sweep-open").len(), 1, "{}", sink.text());
 }
 
 #[test]
