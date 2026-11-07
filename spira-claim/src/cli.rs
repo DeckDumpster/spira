@@ -3,7 +3,7 @@
 //! lookup, so a caller in another process (the sentinel) asks in-process with the
 //! environment it would have handed a child. See DESIGN.md for the contract.
 
-use crate::{audit, counters, deadlock, decide, escalation, events, rank, ready, ready_cache, reopen, store, unpoison};
+use crate::{audit, counters, deadlock, decide, escalation, events, rank, ready, ready_cache, readiness, reopen, store, unpoison};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Read;
@@ -985,7 +985,28 @@ fn judge_rows(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow>, V
     let carried = retain_uncarried(&mut claimable, &mut lc, Some(st), &env.config.queue_dir)?;
     entries.extend(carried.into_iter().map(|(id, carrier)| entry(&id, Kind::Carried, Some(carrier))));
     entries.extend(claimable.iter().map(|r| entry(&r.id, Kind::Claimable, None)));
+    if env.config.control_store {
+        if let Err(e) = publish_readiness(st, &entries) {
+            eprintln!("spira-claim: readiness not published: {e}");
+        }
+    }
     Ok((claimable, entries))
+}
+
+/// Judges every live record, whatever its state, and publishes the pass to the control store.
+/// The watermark is read before the rows it stamps.
+fn publish_readiness(st: &Store, entries: &[verdicts::Entry]) -> Result<(), String> {
+    let watermark = st.planning_watermark()?.to_string();
+    let mut lc = st.lifecycle_in_states(&readiness::LIVE_STATES)?;
+    let ids: Vec<String> = lc.keys().cloned().collect();
+    let bd = rank::index_rows(st.items_by_ids(&ids)?);
+    let blockers: Vec<String> = rank::all_blockers(&bd.values().cloned().collect::<Vec<_>>()).into_iter().filter(|b| !lc.contains_key(b)).collect();
+    let live: Vec<String> = lc.keys().cloned().collect();
+    lc.extend(st.lifecycle_of(&blockers)?);
+    let mut records: Vec<&rank::LifecycleRow> = live.iter().filter_map(|id| lc.get(id)).collect();
+    records.sort_by(|a, b| a.bead_id.cmp(&b.bead_id));
+    let body = readiness::payload(&records, &lc, &bd, entries, &verdicts::stamp(ready::now_epoch()), Some(&watermark));
+    st.lc_publish_readiness(&body)
 }
 
 fn entry(id: &str, verdict: verdicts::Kind, blocker: Option<String>) -> verdicts::Entry {

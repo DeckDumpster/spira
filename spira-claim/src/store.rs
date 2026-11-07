@@ -72,6 +72,8 @@ pub struct Config {
     pub queue_dir: String,
     /// `SPIRA_READY_TTL_S` — how long `ready-count` shares one computed ready set; 0 = never.
     pub ready_ttl_s: u32,
+    /// `SPIRA_LC_STORE_PATH` is set: the control store is where readiness is published.
+    pub control_store: bool,
 }
 
 /// Every field of [`Config`], each its own `cfg`/`cfg_parse` call — `Err` names the first
@@ -94,6 +96,7 @@ pub fn load_config() -> Result<Config, String> {
         incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
         queue_dir: spira_config::process::cfg("SPIRA_QUEUE_DIR")?,
         ready_ttl_s: spira_config::process::cfg_parse("SPIRA_READY_TTL_S")?,
+        control_store: !spira_config::process::cfg("SPIRA_LC_STORE_PATH")?.is_empty(),
     })
 }
 
@@ -209,6 +212,22 @@ impl Store {
         let argv: Vec<&str> = std::iter::once("list").chain(filter.iter().copied()).collect();
         let text = self.lc_run(&argv).map_err(|e| format!("spira-lc list: {e}"))?;
         crate::rank::parse_lifecycle(&text)
+    }
+
+    /// The planning plane's watermark, read before the rows it orders.
+    pub fn planning_watermark(&self) -> Result<u64, String> {
+        let text = self.lc_run(&["plan", "watermark"]).map_err(|e| format!("spira-lc plan watermark: {e}"))?;
+        let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc plan watermark: not JSON: {e}"))?;
+        v["watermark"].as_u64().ok_or_else(|| "spira-lc plan watermark: no watermark".to_string())
+    }
+
+    /// Hands one readiness pass to the control store.
+    pub fn lc_publish_readiness(&self, payload: &str) -> Result<(), String> {
+        let r = self.lc.call_stdin(&["publish-readiness"], payload).map_err(|e| format!("spira-lc publish-readiness: {e}"))?;
+        match r.code {
+            0 => Ok(()),
+            c => Err(format!("spira-lc publish-readiness: exit {c}: {}", r.why())),
+        }
     }
 
     /// Hands one pass's verdicts to the lifecycle store, which keeps them on the bead rows.
