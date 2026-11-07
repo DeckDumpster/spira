@@ -115,58 +115,96 @@ fn scalar(v: Option<&Value>) -> Option<String> {
     }
 }
 
-fn holds(v: Option<&Value>) -> Vec<String> {
+/// The `holds` column: a JSON array of hold names, as an array or as JSON text (dolt hands a
+/// JSON column back as text). Absent, null or empty text is no holds; anything else that is not
+/// an array of strings is an error, never an empty list (sp-cxfgj5: a false empty reads as
+/// "not held").
+fn holds(v: Option<&Value>) -> Result<Vec<String>, String> {
     let arr = match v {
+        None | Some(Value::Null) => return Ok(Vec::new()),
         Some(Value::Array(a)) => a.clone(),
-        Some(Value::String(s)) if !s.trim().is_empty() => match serde_json::from_str::<Value>(s) {
+        Some(Value::String(s)) if s.trim().is_empty() => return Ok(Vec::new()),
+        Some(Value::String(s)) => match serde_json::from_str::<Value>(s) {
             Ok(Value::Array(a)) => a,
-            _ => Vec::new(),
+            Ok(Value::Null) => return Ok(Vec::new()),
+            _ => return Err(format!("holds is not a JSON array: {s:?}")),
         },
-        _ => Vec::new(),
+        Some(other) => return Err(format!("holds is not a JSON array: {other}")),
     };
-    arr.into_iter().filter_map(|x| x.as_str().map(str::to_string)).collect()
+    arr.into_iter().map(|x| x.as_str().map(str::to_string).ok_or_else(|| format!("a hold is not a name: {x}"))).collect()
 }
 
-fn stack(v: Option<&Value>) -> Vec<String> {
+/// The `stack` column: a JSON object keyed by prerequisite id, as an object or as JSON text.
+/// Absent, null or empty text is no stack; anything else that is not an object is an error.
+fn stack(v: Option<&Value>) -> Result<Vec<String>, String> {
     let obj = match v {
-        Some(Value::String(s)) if !s.trim().is_empty() => serde_json::from_str::<Value>(s).ok(),
-        Some(o) => Some(o.clone()),
-        None => None,
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::String(s)) if s.trim().is_empty() => return Ok(Vec::new()),
+        Some(Value::String(s)) => serde_json::from_str::<Value>(s).map_err(|_| format!("stack is not a JSON object: {s:?}"))?,
+        Some(o) => o.clone(),
     };
     match obj {
-        Some(Value::Object(m)) => m.keys().cloned().collect(),
-        _ => Vec::new(),
+        Value::Object(m) => Ok(m.keys().cloned().collect()),
+        Value::Null => Ok(Vec::new()),
+        other => Err(format!("stack is not a JSON object: {other}")),
     }
 }
 
-fn row_of(r: &Value) -> Row {
-    Row {
-        bead_id: scalar(r.get("bead_id")).unwrap_or_default(),
+fn lease(v: Option<&Value>) -> Result<Option<i64>, String> {
+    match scalar(v).filter(|x| !x.trim().is_empty()) {
+        None => Ok(None),
+        Some(x) => x.trim().parse::<f64>().map(|f| Some(f as i64)).map_err(|_| format!("lease_until is not a number: {x:?}")),
+    }
+}
+
+fn express(v: Option<&Value>) -> Result<bool, String> {
+    match scalar(v).as_deref() {
+        None | Some("" | "0" | "false") => Ok(false),
+        Some("1" | "true") => Ok(true),
+        Some(x) => Err(format!("express is not a flag: {x:?}")),
+    }
+}
+
+fn row_of(r: &Value) -> Result<Row, String> {
+    let id = scalar(r.get("bead_id")).unwrap_or_default();
+    let at = |e: String| format!("{id}: {e}");
+    Ok(Row {
         state: scalar(r.get("state")).unwrap_or_default(),
         holder: scalar(r.get("holder")).filter(|h| !h.is_empty()),
-        lease_until: scalar(r.get("lease_until")).and_then(|x| x.trim().parse::<f64>().ok()).map(|f| f as i64),
-        holds: holds(r.get("holds")),
-        express: matches!(scalar(r.get("express")).as_deref(), Some("1" | "true")),
-        stack: stack(r.get("stack")),
+        lease_until: lease(r.get("lease_until")).map_err(at)?,
+        holds: holds(r.get("holds")).map_err(at)?,
+        express: express(r.get("express")).map_err(at)?,
+        stack: stack(r.get("stack")).map_err(at)?,
         phase: scalar(r.get("dwarf_phase")).filter(|x| !x.is_empty()),
         disposition: scalar(r.get("disposition")).filter(|x| !x.is_empty()),
         disposition_note: scalar(r.get("disposition_note")),
-    }
+        bead_id: id,
+    })
 }
 
-/// `spira-lc list`'s JSON array.
+/// `spira-lc list`'s JSON array. A row whose columns do not parse is an error for the whole
+/// answer, never a row with its holds or stack read as empty.
 pub fn parse_rows(text: &str) -> Result<Vec<Row>, String> {
     let v: Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc list: not JSON: {e}"))?;
     let Value::Array(a) = v else {
         return Err("spira-lc list: not a JSON array".into());
     };
-    Ok(a.iter().map(row_of).filter(|r| !r.bead_id.is_empty()).collect())
+    let rows = a.iter().map(row_of).collect::<Result<Vec<_>, _>>().map_err(|e| format!("spira-lc list: {e}"))?;
+    Ok(rows.into_iter().filter(|r| !r.bead_id.is_empty()).collect())
 }
 
-/// `spira-lc show <id>`'s `{"bead": {...}, "delivery": ...}`.
+/// `spira-lc show <id>`'s `{"bead": {...}, "delivery": ...}`, as printed with exit 0. An
+/// answer that carries no bead is an error: "no row" is exit 1, never a shape of exit 0's text.
 pub fn parse_show(text: &str) -> Result<Option<Row>, String> {
     let v: Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc show: not JSON: {e}"))?;
-    Ok(v.get("bead").filter(|b| b.is_object()).map(row_of).filter(|r| !r.bead_id.is_empty()))
+    let Some(b) = v.get("bead").filter(|b| b.is_object()) else {
+        return Err("spira-lc show: the answer carries no bead".into());
+    };
+    let r = row_of(b).map_err(|e| format!("spira-lc show: {e}"))?;
+    if r.bead_id.is_empty() {
+        return Err("spira-lc show: the bead has no id".into());
+    }
+    Ok(Some(r))
 }
 
 /// Exit 0 or 1 is an answer (1: no such row); anything else is an error naming the call.
@@ -253,6 +291,203 @@ pub fn index(rows: Vec<Row>) -> HashMap<String, Row> {
     rows.into_iter().map(|r| (r.bead_id.clone(), r)).collect()
 }
 
+// ---- Typed answers (sp-cxfgj5, law-lifecycle-state-is-not-text) ----------------------------
+//
+// A decision about a bead's state or holds reads one of these: the machine's own enums, and a
+// `Lookup` whose "cannot tell" is a variant, never a substring of what a call printed.
+
+use lifecycle::bead::{BeadState, DispositionStatus, DwarfPhase, HoldKind};
+
+/// One typed read of one object: the object, the machine's "no such row", or that it could not
+/// tell (unreachable, past its deadline, exit 2, or an answer that does not parse).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Lookup<T> {
+    Found(T),
+    NoRow,
+    CannotTell(String),
+}
+
+impl<T> Lookup<T> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Lookup<U> {
+        match self {
+            Lookup::Found(t) => Lookup::Found(f(t)),
+            Lookup::NoRow => Lookup::NoRow,
+            Lookup::CannotTell(why) => Lookup::CannotTell(why),
+        }
+    }
+
+    pub fn found(self) -> Option<T> {
+        match self {
+            Lookup::Found(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    pub fn is_cannot_tell(&self) -> bool {
+        matches!(self, Lookup::CannotTell(_))
+    }
+}
+
+/// A hold name as the machine stores it. `operator` is the retired spelling of `manual`.
+pub fn hold_kind(name: &str) -> Option<HoldKind> {
+    HoldKind::from_str(name).or((name == "operator").then_some(HoldKind::Manual))
+}
+
+/// One `spira_lifecycle.bead` row, typed: every column a decision reads is the machine's enum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bead {
+    pub bead_id: String,
+    pub state: BeadState,
+    pub holder: Option<String>,
+    pub lease_until: Option<i64>,
+    pub holds: Vec<HoldKind>,
+    pub express: bool,
+    /// The prerequisite bead ids this bead's current work is stacked on.
+    pub stack: Vec<String>,
+    pub phase: Option<DwarfPhase>,
+    pub disposition: Option<DispositionStatus>,
+    /// The row's compare-and-swap version.
+    pub version: Option<String>,
+}
+
+impl Bead {
+    pub fn held(&self, kind: HoldKind) -> bool {
+        self.holds.contains(&kind)
+    }
+
+    /// The holds that keep a claim off the bead: every hold but `wait`, which a claim passes.
+    pub fn blocking_holds(&self) -> Vec<HoldKind> {
+        self.holds.iter().copied().filter(|h| *h != HoldKind::Wait).collect()
+    }
+}
+
+/// A row's JSON, typed. A state, hold, phase or disposition the machine does not define is an
+/// error, never a default.
+pub fn bead_of(r: &Value) -> Result<Bead, String> {
+    let row = row_of(r)?;
+    let at = |e: String| format!("{}: {e}", row.bead_id);
+    if row.bead_id.is_empty() {
+        return Err("a row has no bead_id".into());
+    }
+    let state = BeadState::from_str(&row.state).ok_or_else(|| at(format!("unknown state {:?}", row.state)))?;
+    let holds = row.holds.iter().map(|h| hold_kind(h).ok_or_else(|| at(format!("unknown hold {h:?}")))).collect::<Result<Vec<_>, _>>()?;
+    let phase = row.phase.as_deref().map(|p| DwarfPhase::from_str(p).ok_or_else(|| at(format!("unknown dwarf phase {p:?}")))).transpose()?;
+    let disposition = row.disposition.as_deref().map(|d| DispositionStatus::from_str(d).ok_or_else(|| at(format!("unknown disposition {d:?}")))).transpose()?;
+    Ok(Bead {
+        version: scalar(r.get("version")).filter(|v| !v.is_empty()),
+        bead_id: row.bead_id,
+        state,
+        holder: row.holder,
+        lease_until: row.lease_until,
+        holds,
+        express: row.express,
+        stack: row.stack,
+        phase,
+        disposition,
+    })
+}
+
+/// `spira-lc show <id>`'s answer, typed by its exit code first: 0 is a row (and must parse as
+/// one), 1 is no row, anything else is "cannot tell" whatever it printed.
+pub fn bead_from(code: i32, stdout: &str, why: &str) -> Lookup<Bead> {
+    match code {
+        0 => {
+            let v: Value = match serde_json::from_str(stdout.trim()) {
+                Ok(v) => v,
+                Err(e) => return Lookup::CannotTell(format!("spira-lc show: not JSON: {e}")),
+            };
+            match v.get("bead").filter(|b| b.is_object()).map(bead_of) {
+                Some(Ok(b)) => Lookup::Found(b),
+                Some(Err(e)) => Lookup::CannotTell(format!("spira-lc show: {e}")),
+                None => Lookup::CannotTell("spira-lc show: exit 0 carried no bead".into()),
+            }
+        }
+        1 => Lookup::NoRow,
+        rc => Lookup::CannotTell(format!("spira-lc show exited {rc}: {why}")),
+    }
+}
+
+/// One bead, typed, through `c`.
+pub fn bead_on(c: &LcClient, id: &str) -> Lookup<Bead> {
+    match c.call(&["show", id]) {
+        Ok(r) => bead_from(r.code, &r.out, &r.why()),
+        Err(e) => Lookup::CannotTell(e.to_string()),
+    }
+}
+
+/// One bead, typed, through the configured client.
+pub fn bead(id: &str) -> Lookup<Bead> {
+    match LcClient::configured() {
+        Ok(c) => bead_on(&c, id),
+        Err(e) => Lookup::CannotTell(e),
+    }
+}
+
+/// A bead's holds, typed: what `spira-lc holds` answers, with "cannot tell" a variant.
+pub fn holds_on(c: &LcClient, id: &str) -> Lookup<Vec<HoldKind>> {
+    bead_on(c, id).map(|b| b.holds)
+}
+
+/// `spira-lc list`'s JSON array, typed. One row that does not parse fails the whole answer.
+pub fn beads_of(text: &str) -> Result<Vec<Bead>, String> {
+    let v: Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc list: not JSON: {e}"))?;
+    let Value::Array(a) = v else {
+        return Err("spira-lc list: not a JSON array".into());
+    };
+    a.iter().map(bead_of).collect::<Result<Vec<_>, _>>().map_err(|e| format!("spira-lc list: {e}"))
+}
+
+/// Every row (or those in `state`), typed, through `c`. Err is "cannot tell": a caller that
+/// cannot read the state must not decide as if it had.
+pub fn beads_on(c: &LcClient, state: Option<BeadState>) -> Result<Vec<Bead>, String> {
+    let argv: Vec<&str> = match state {
+        Some(s) => vec!["list", "--state", s.as_str()],
+        None => vec!["list"],
+    };
+    let r = c.call(&argv)?;
+    if r.code != 0 {
+        return Err(format!("spira-lc {} exited {}: {}", argv.join(" "), r.code, r.why()));
+    }
+    beads_of(&r.out)
+}
+
+/// The `--json` answer of `spira-lc holds <id> --json` (and `state`, `held`): the bead and its
+/// typed columns, hold names in the machine's own spelling. Exit 1 is no row, exit 2 cannot
+/// tell; neither prints this.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HoldsAnswer {
+    pub bead_id: String,
+    pub state: String,
+    pub holds: Vec<String>,
+}
+
+impl HoldsAnswer {
+    pub fn of(b: &Bead) -> Self {
+        HoldsAnswer { bead_id: b.bead_id.clone(), state: b.state.as_str().into(), holds: b.holds.iter().map(|h| h.as_str().to_string()).collect() }
+    }
+
+    /// The answer typed back: an unknown state or hold is an error, never dropped.
+    pub fn typed(&self) -> Result<(BeadState, Vec<HoldKind>), String> {
+        let state = BeadState::from_str(&self.state).ok_or_else(|| format!("unknown state {:?}", self.state))?;
+        let holds = self.holds.iter().map(|h| hold_kind(h).ok_or_else(|| format!("unknown hold {h:?}"))).collect::<Result<_, _>>()?;
+        Ok((state, holds))
+    }
+}
+
+/// `spira-lc holds <id> --json`'s (exit code, stdout), typed: the shape a caller that runs the
+/// CLI (rather than holding an `LcClient`) reads. Exit 1 is no row, anything else but 0 is
+/// cannot tell, and exit 0 must parse.
+pub fn holds_answer_from(code: i32, stdout: &str, why: &str) -> Lookup<(BeadState, Vec<HoldKind>)> {
+    match code {
+        0 => match serde_json::from_str::<HoldsAnswer>(stdout.trim()).map_err(|e| e.to_string()).and_then(|a| a.typed()) {
+            Ok(t) => Lookup::Found(t),
+            Err(e) => Lookup::CannotTell(format!("spira-lc holds --json: {e}")),
+        },
+        1 => Lookup::NoRow,
+        rc => Lookup::CannotTell(format!("spira-lc holds exited {rc}: {why}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,5 +529,53 @@ mod tests {
         let one = parse_show(r#"{"bead":{"bead_id":"sp-c","state":"LANDED","holds":["poison"]},"delivery":null}"#).unwrap().unwrap();
         assert!(one.terminal() && one.held("poison"));
         assert!(parse_rows("{}").is_err());
+    }
+
+    /// sp-cxfgj5: a holds column that does not parse is "cannot tell", never "not held".
+    #[test]
+    fn a_holds_column_that_does_not_parse_is_an_error_never_no_holds() {
+        let bad = r#"[{"bead_id":"sp-a","state":"READY","holds":"cannot tell: deadline"}]"#;
+        assert!(parse_rows(bad).is_err(), "{:?}", parse_rows(bad));
+        assert!(parse_show(r#"{"bead":{"bead_id":"sp-a","state":"READY","holds":{"poison":1}}}"#).is_err());
+        assert!(parse_rows(r#"[{"bead_id":"sp-a","state":"READY","holds":null},{"bead_id":"sp-b","state":"READY","holds":""}]"#).is_ok());
+    }
+
+    /// sp-cxfgj5: exit 0 with no bead in it is not "no row" (that is exit 1).
+    #[test]
+    fn a_show_answer_with_no_bead_is_an_error_never_no_row() {
+        assert!(parse_show("{}").is_err());
+        assert!(parse_show(r#"{"bead":null,"delivery":null}"#).is_err());
+    }
+
+    /// sp-cxfgj5: a stack or lease that does not parse is an error, not empty.
+    #[test]
+    fn a_stack_or_lease_that_does_not_parse_is_an_error() {
+        assert!(parse_rows(r#"[{"bead_id":"sp-a","state":"WORKING","stack":"[oops"}]"#).is_err());
+        assert!(parse_rows(r#"[{"bead_id":"sp-a","state":"WORKING","lease_until":"soon"}]"#).is_err());
+        assert!(parse_rows(r#"[{"bead_id":"sp-a","state":"WORKING","express":"maybe"}]"#).is_err());
+    }
+
+    #[test]
+    fn the_typed_read_is_enums_and_cannot_tell_is_a_variant() {
+        let ok = r#"{"bead":{"bead_id":"sp-a","state":"WORKING","holder":"d1","holds":"[\"poison\",\"wait\"]","dwarf_phase":"building","version":"7"},"delivery":null}"#;
+        let Lookup::Found(b) = bead_from(0, ok, "") else { panic!("{:?}", bead_from(0, ok, "")) };
+        assert_eq!(b.state, BeadState::Working);
+        assert_eq!(b.holds, vec![HoldKind::Poison, HoldKind::Wait]);
+        assert_eq!(b.blocking_holds(), vec![HoldKind::Poison]);
+        assert_eq!(b.phase, Some(DwarfPhase::Building));
+        assert_eq!(b.version.as_deref(), Some("7"));
+        assert_eq!(bead_from(1, "{}", ""), Lookup::NoRow);
+        assert!(bead_from(2, "", "cannot tell: deadline").is_cannot_tell());
+        assert!(bead_from(0, "usage: spira-lc show <id>", "").is_cannot_tell(), "usage text is never a row");
+        assert!(bead_from(0, r#"{"bead":{"bead_id":"sp-a","state":"WEIRD"}}"#, "").is_cannot_tell(), "an unknown state is never a default");
+        assert!(bead_from(0, r#"{"bead":{"bead_id":"sp-a","state":"READY","holds":["frozen"]}}"#, "").is_cannot_tell(), "an unknown hold is never dropped");
+        assert_eq!(hold_kind("operator"), Some(HoldKind::Manual));
+        let a = HoldsAnswer::of(&b);
+        assert_eq!(serde_json::to_string(&a).unwrap(), r#"{"bead_id":"sp-a","state":"WORKING","holds":["poison","wait"]}"#);
+        assert_eq!(holds_answer_from(0, &serde_json::to_string(&a).unwrap(), ""), Lookup::Found((BeadState::Working, vec![HoldKind::Poison, HoldKind::Wait])));
+        assert_eq!(holds_answer_from(1, "", ""), Lookup::NoRow);
+        assert!(holds_answer_from(0, "poison\nwait", "").is_cannot_tell(), "the text form is never read as the typed one");
+        assert!(holds_answer_from(2, "", "x").is_cannot_tell());
+        assert!(beads_of(r#"[{"bead_id":"sp-a","state":"READY"},{"bead_id":"sp-b","state":"NOPE"}]"#).is_err());
     }
 }

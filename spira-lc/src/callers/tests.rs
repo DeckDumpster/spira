@@ -38,6 +38,13 @@ struct Fake {
     /// The `skew-check` answer; `None` is the planes agreeing.
     skew: Option<(i32, String)>,
     skew_checks: usize,
+    /// `show` answers "cannot tell" once this many shows have been answered.
+    show_fails_after: Option<usize>,
+    shows: usize,
+    /// `show` prints a holds column that is not a JSON array.
+    garble_holds: bool,
+    /// `history` answers "cannot tell".
+    history_down: bool,
 }
 
 fn opt(v: &Option<String>) -> Value {
@@ -78,9 +85,17 @@ impl Machine for Fake {
             return (CANNOT_TELL, "cannot tell: down".into());
         }
         match args[0].as_str() {
+            "show" if self.show_fails_after.is_some_and(|n| self.shows >= n) => (CANNOT_TELL, "cannot tell: deadline".into()),
+            "history" if self.history_down => (CANNOT_TELL, "cannot tell: deadline".into()),
+            "show" if self.garble_holds && self.beads.contains_key(&args[1]) => {
+                let mut row = Self::row_json(&self.beads[&args[1]]);
+                row["holds"] = json!("cannot tell: deadline");
+                (0, json!({"bead": row, "delivery": null}).to_string())
+            }
             "show" => match self.beads.get(&args[1]) {
                 None => (1, "{}".into()),
                 Some(r) => {
+                    self.shows += 1;
                     let d = self.deliveries.get(&args[1]).map(|d| {
                         json!({"bead_id": d.bead_id, "mode": d.mode.as_str(), "state": d.state.as_str(), "version": d.version.to_string()})
                     });
@@ -298,7 +313,77 @@ fn hold_refusals_and_absences_keep_the_shell_exit_codes() {
     assert_eq!(go(&mut f, "held", &["sp-none", "poison"]).code, 1);
     let mut down = Fake { down: true, ..Default::default() };
     assert_eq!(go(&mut down, "hold", &["sp-t", "poison", "x"]).code, CANNOT_TELL);
-    assert_eq!(go(&mut down, "list-all", &[]), Answer::code(0), "an unreachable machine lists nothing, rc 0");
+    assert_eq!(go(&mut down, "list-all", &[]).code, CANNOT_TELL, "an unreachable machine is cannot tell, never an empty list");
+}
+
+// ---- sp-cxfgj5: a read that failed is cannot tell, never an answer ---------------------
+
+#[test]
+fn holds_on_a_machine_that_cannot_tell_is_exit_2_not_an_empty_list() {
+    let mut down = Fake { down: true, ..Default::default() };
+    let a = go(&mut down, "holds", &["sp-x"]);
+    assert_eq!((a.code, a.stdout.as_str()), (CANNOT_TELL, ""), "{a:?}");
+    assert_eq!(go(&mut down, "held", &["sp-x", "poison"]).code, CANNOT_TELL, "held cannot say 'not held' when it could not read");
+    assert_eq!(go(&mut down, "state", &["sp-x"]).code, CANNOT_TELL);
+    assert_eq!(go(&mut down, "list-held", &["poison"]).code, CANNOT_TELL);
+    assert_eq!(go(&mut down, "list-state", &["READY"]).code, CANNOT_TELL);
+}
+
+#[test]
+fn a_holds_column_that_does_not_parse_is_cannot_tell_never_unheld() {
+    let mut f = Fake { garble_holds: true, ..Default::default() };
+    f.bead("sp-g", BeadState::Ready).holds.insert(HoldKind::Poison);
+    let a = go(&mut f, "holds", &["sp-g"]);
+    assert_eq!((a.code, a.stdout.as_str()), (CANNOT_TELL, ""), "{a:?}");
+    assert_eq!(go(&mut f, "held", &["sp-g", "poison"]).code, CANNOT_TELL);
+    assert_eq!(go(&mut f, "release", &["sp-g"]).code, CANNOT_TELL, "no event under a row read wrong");
+    assert!(f.events.is_empty());
+}
+
+#[test]
+fn holds_and_state_answer_typed_json_and_no_row_is_exit_1() {
+    let mut f = Fake::default();
+    f.bead("sp-j", BeadState::Working).holds.insert(HoldKind::Poison);
+    for verb in ["holds", "state"] {
+        let a = go(&mut f, verb, &["sp-j", "--json"]);
+        assert_eq!(a.code, APPLIED, "{a:?}");
+        let t: lc_state::HoldsAnswer = serde_json::from_str(&a.stdout).unwrap();
+        assert_eq!(t.typed().unwrap(), (BeadState::Working, vec![HoldKind::Poison]));
+        assert_eq!(lc_state::holds_answer_from(a.code, &a.stdout, ""), lc_state::Lookup::Found((BeadState::Working, vec![HoldKind::Poison])));
+        let none = go(&mut f, verb, &["sp-none", "--json"]);
+        assert_eq!((none.code, none.stdout.as_str()), (NO_ROW, ""));
+    }
+    assert_eq!(go(&mut f, "holds", &["sp-none"]), Answer::code(0), "the text form keeps no row as no holds");
+    assert_eq!(go(&mut f, "state", &["sp-j"]).stdout, "WORKING", "the text form is unchanged");
+    let mut down = Fake { down: true, ..Default::default() };
+    let a = go(&mut down, "holds", &["sp-j", "--json"]);
+    assert_eq!((a.code, a.stdout.as_str()), (CANNOT_TELL, ""));
+}
+
+#[test]
+fn a_delivery_exit_whose_read_cannot_tell_is_cannot_tell_not_inert() {
+    let mut f = Fake { show_fails_after: Some(0), ..Default::default() };
+    f.bead("sp-d", BeadState::Certified);
+    let a = go(&mut f, "deliver", &["push-delivered", "sp-d", "abc"]);
+    assert_eq!(a.code, CANNOT_TELL, "{a:?}");
+    assert!(f.events.is_empty());
+}
+
+#[test]
+fn an_infra_verdict_whose_stale_tip_check_cannot_read_is_not_applied() {
+    let mut f = Fake { show_fails_after: Some(1), ..Default::default() };
+    f.bead("sp-i", BeadState::Submitted).tip = Some("t1".into());
+    let a = go(&mut f, "certify", &["sp-i", "t1", "infra"]);
+    assert_eq!(a.code, CANNOT_TELL, "{a:?}");
+    assert!(f.events.is_empty(), "{:?}", f.events);
+}
+
+#[test]
+fn a_reply_by_seq_whose_history_cannot_tell_is_cannot_tell_not_refused() {
+    let mut f = Fake { history_down: true, ..Default::default() };
+    f.bead("sp-q", BeadState::Ready);
+    assert_eq!(go(&mut f, "reply", &["sp-q", "seq:4"]).code, CANNOT_TELL);
+    assert!(f.events.is_empty());
 }
 
 #[test]
