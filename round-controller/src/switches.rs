@@ -26,7 +26,12 @@ pub trait Stops {
     fn halted(&self) -> bool;
     /// The stop recorded on `repo`'s `lane`, if any.
     fn scoped(&self, repo: &str, lane: &str) -> Option<RepoStop>;
+    /// The round record files of the pre-R4 queue under `run/queue/<repo>/`, by name.
+    fn round_records(&self, repo: &str) -> Vec<String>;
 }
+
+/// The file the pre-R4 queue kept a round in, as a name prefix.
+pub const ROUND_RECORD_PREFIX: &str = "round";
 
 /// The real run directory.
 pub struct RunDir(pub PathBuf);
@@ -37,6 +42,17 @@ impl Stops for RunDir {
     }
     fn scoped(&self, repo: &str, lane: &str) -> Option<RepoStop> {
         spira_config::scoped_stop::stop_for(&self.0, repo, lane)
+    }
+    fn round_records(&self, repo: &str) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(self.0.join("queue").join(repo))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(ROUND_RECORD_PREFIX))
+            .collect();
+        names.sort();
+        names
     }
 }
 
@@ -49,6 +65,9 @@ impl Stops for NoStops {
     }
     fn scoped(&self, _: &str, _: &str) -> Option<RepoStop> {
         None
+    }
+    fn round_records(&self, _: &str) -> Vec<String> {
+        Vec::new()
     }
 }
 

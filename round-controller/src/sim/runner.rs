@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::death::{unit_name, UnitState, VmFact};
 use crate::lease::{acquire, Lease, Resource};
-use crate::liveness::Phase;
+use crate::liveness::{LeaseSettings, Phase};
 use crate::ports::Ports;
 use crate::sim::bench::Bench;
 
@@ -27,6 +27,10 @@ pub struct RunnerScript {
     /// The runner itself hangs this many seconds after the epoch, renewing nothing more.
     #[serde(default)]
     pub hangs_secs: Option<u64>,
+    /// The lease is taken for this many seconds rather than the settings' TTL, so a runner that
+    /// hangs keeps a live lease.
+    #[serde(default)]
+    pub hold_secs: Option<u64>,
 }
 
 pub struct Runner {
@@ -37,6 +41,7 @@ pub struct Runner {
     lease: Option<Lease>,
     unit: Option<String>,
     done: bool,
+    marked: Option<u64>,
     pub renewals: u64,
     pub faults: Vec<String>,
 }
@@ -59,6 +64,7 @@ impl Runner {
             lease: None,
             unit: None,
             done: false,
+            marked: None,
             renewals: 0,
             faults: Vec::new(),
         })
@@ -67,6 +73,19 @@ impl Runner {
     /// When it next acts; `None` once it has torn down or hung.
     pub fn next_ms(&self) -> Option<u64> {
         (!self.done).then_some(self.next_ms)
+    }
+
+    /// The child's latest mark, kept where `pass` reads it; written only when it moves.
+    fn write_mark(&mut self, p: &Ports, token: state_store::Rev, at_ms: u64) {
+        if self.marked == Some(at_ms) {
+            return;
+        }
+        self.marked = Some(at_ms);
+        let mark = crate::liveness::RunnerMark { token, phase: self.phase.word().into(), at_ms };
+        let key = crate::liveness::mark_key(&self.script.repo, &self.script.batch);
+        let req = state_store::Request::new(&format!("sim-mark-{key}-{at_ms}"), "round-controller", "run.mark");
+        let put = state_store::Txn::new().put(&key, state_store::Object::new(serde_json::json!(mark)));
+        let _ = p.store.txn(&put, &req);
     }
 
     fn at(&self, secs: u64) -> u64 {
@@ -81,10 +100,15 @@ impl Runner {
             self.done = true;
             return;
         }
-        let Some(lease) = &self.lease else {
+        let Some(token) = self.lease.as_ref().map(Lease::token) else {
             let res = Resource::round(&self.script.repo, &self.script.batch);
-            match acquire(p, &res, "round-controller-run") {
+            let held = LeaseSettings {
+                ttl_ms: self.script.hold_secs.map_or(p.leases.ttl_ms, |s| s * 1000),
+                ..p.leases.clone()
+            };
+            match acquire(&Ports { leases: &held, ..*p }, &res, "round-controller-run") {
                 Ok(l) => {
+                    self.write_mark(p, l.token(), now);
                     let unit = unit_name(&self.script.batch, l.token())
                         .expect("a scripted runner's batch names a unit");
                     b.units.set(&unit, UnitState::Running("active".into()));
@@ -114,7 +138,9 @@ impl Runner {
             .map_or(now, |s| now.min(self.at(s)));
         let every = self.script.marks_every_secs * 1000;
         let last_mark = start + marks_until.saturating_sub(start) / every * every;
-        if p.leases.gate().may_renew(now, last_mark, self.phase, start) && lease.renew(p).is_ok() {
+        self.write_mark(p, token, last_mark);
+        let renewed = || self.lease.as_ref().is_some_and(|l| l.renew(p).is_ok());
+        if p.leases.gate().may_renew(now, last_mark, self.phase, start) && renewed() {
             self.renewals += 1;
             return;
         }

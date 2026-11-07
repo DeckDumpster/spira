@@ -261,11 +261,17 @@ impl Launch for FakeLaunch {
 pub struct FakeStops {
     halted: Mutex<bool>,
     stops: Mutex<BTreeMap<String, RepoStop>>,
+    records: Mutex<BTreeMap<String, Vec<String>>>,
 }
 
 impl FakeStops {
     pub fn halt(&self) {
         *crate::lock(&self.halted) = true;
+    }
+
+    /// A round record file named `name` under `repo`'s queue directory.
+    pub fn round_record(&self, repo: &str, name: &str) {
+        crate::lock(&self.records).entry(repo.into()).or_default().push(name.into());
     }
 
     /// A stop on `repo`'s rounds lane.
@@ -293,6 +299,9 @@ impl Stops for FakeStops {
             .get(repo)
             .filter(|s| s.lanes.iter().any(|l| l == lane))
             .cloned()
+    }
+    fn round_records(&self, repo: &str) -> Vec<String> {
+        crate::lock(&self.records).get(repo).cloned().unwrap_or_default()
     }
 }
 
@@ -403,6 +412,8 @@ pub struct Bench {
     pub installed: FakeInstalled,
     /// Every section and intent verb, in order, answered by spira-lc's own dispatch.
     pub lc_calls: Mutex<Vec<LcCall>>,
+    /// The pages the alarms rule sends for the sections committed, worked out once the run is over.
+    pub pages: std::sync::OnceLock<Vec<crate::sim::pages::Page>>,
     front: Mutex<Front>,
 }
 
@@ -472,6 +483,7 @@ impl Bench {
             stops: FakeStops::default(),
             installed: FakeInstalled::default(),
             lc_calls: Mutex::default(),
+            pages: std::sync::OnceLock::new(),
             front: Mutex::new(front),
         }
     }

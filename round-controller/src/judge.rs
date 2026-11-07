@@ -240,6 +240,16 @@ pub struct Progress {
     /// The finished pass being judged, so a re-drive judges it without running it again.
     #[serde(default)]
     pub main: Option<PassResult>,
+    /// The eject the verb refused and the judgement still waits on; gone once the progress is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<EjectHeld>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EjectHeld {
+    pub member: Id,
+    pub suites: Vec<String>,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -388,10 +398,11 @@ impl<'a, 'p, R: RoundRunner> Subs<'a, 'p, R> {
     fn save(&mut self) -> Result<(), String> {
         let data = serde_json::to_value(&self.progress).map_err(|e| format!("progress: {e}"))?;
         let rq = self.request(&format!(
-            "{}-{}-{}",
+            "{}-{}-{}-{}",
             self.progress.runs.len(),
             self.progress.recorded.unwrap_or(0),
-            self.progress.ejected.len()
+            self.progress.ejected.len(),
+            u8::from(self.progress.held.is_some())
         ));
         self.p
             .store
@@ -776,6 +787,12 @@ fn finish<R: RoundRunner>(
             &r,
         ));
         if let Err(refused) = r {
+            s.progress.held = Some(EjectHeld {
+                member: e.member.clone(),
+                suites: pass.red.clone(),
+                text: refused.text.clone(),
+            });
+            s.save()?;
             return Ok(Judged::Held {
                 n,
                 ejected: s.progress.ejected.clone(),
@@ -796,6 +813,7 @@ fn finish<R: RoundRunner>(
             p.ledger.mark_proven(p, &identity, &m, p.clock.now_ms())?;
         }
         s.progress.ejected.push(e.member);
+        s.progress.held = None;
         s.save()?;
     }
     let ejected = std::mem::take(&mut s.progress.ejected);

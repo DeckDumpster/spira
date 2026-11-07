@@ -3,6 +3,7 @@
 //! against the scenario harness in [`sim`]. Only [`sifts`] is installed (DESIGN.md).
 
 pub mod clear;
+pub mod conditions;
 pub mod cutover_check;
 pub mod cut;
 pub mod death;

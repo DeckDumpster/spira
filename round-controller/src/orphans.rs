@@ -159,7 +159,7 @@ pub enum Redrive {
     Store(String),
 }
 
-fn read(p: &Ports, key: &str) -> Result<(Record, Option<Rev>), String> {
+pub(crate) fn read(p: &Ports, key: &str) -> Result<(Record, Option<Rev>), String> {
     match p.store.get(key).map_err(|e| e.to_string())? {
         None => Ok((Record::default(), None)),
         Some(i) => Ok((

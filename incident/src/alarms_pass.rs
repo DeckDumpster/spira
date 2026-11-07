@@ -287,12 +287,12 @@ fn class_of(section: &str) -> Option<String> {
 
 fn condition_facts(s: Option<&Seen>, now: u64) -> Vec<String> {
     let Some(s) = s else { return vec![] };
-    s.open()
-        .map(|c| {
-            let age = parse_rfc3339(&c.last_transition_time).map_or("unknown".into(), |t| format!("{}s", now.saturating_sub(t)));
-            format!("condition: {} — {} (open {age})", c.type_, c.reason)
-        })
-        .collect()
+    s.open().map(|c| condition_fact(c, now)).collect()
+}
+
+fn condition_fact(c: &spira_desired_state::section::Condition, now: u64) -> String {
+    let age = parse_rfc3339(&c.last_transition_time).map_or("unknown".into(), |t| format!("{}s", now.saturating_sub(t)));
+    format!("condition: {} — {} (open {age})", c.type_, c.reason)
 }
 
 /// Each step the pass record shows for `section`, with its result, in a form that changes only
@@ -374,7 +374,9 @@ pub fn raised(seen: &[Seen], now: u64) -> Vec<Candidate> {
             };
             let mut cand = Candidate::new(&r, Source::Raised { since: c.last_transition_time.clone() }, vec![c.type_.clone()], decision);
             cand.class = class_of(&r);
-            cand.facts = condition_facts(Some(s), now);
+            cand.key = c.key.clone();
+            cand.runbook = Some(c.runbook.clone()).filter(|b| !b.is_empty());
+            cand.facts = vec![condition_fact(c, now)];
             if !s.fresh {
                 cand.facts.push("the section is stale".into());
             }

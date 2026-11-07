@@ -113,6 +113,14 @@ pub fn explicit(p: &Ports, repo: &str, members: Vec<Member>) -> Result<Opened, R
     }
 }
 
+/// [`explicit`], its refusal kept as the standing one for `cut` so the section raises it, and
+/// cleared by the next explicit cut that opens.
+pub fn explicit_recorded(p: &Ports, repo: &str, members: Vec<Member>) -> Result<Opened, Refusal> {
+    let got = explicit(p, repo, members);
+    refusal::note(p, repo, STEP, got.as_ref().err());
+    got
+}
+
 /// `--repo <r> --members <id@tip,...>`, in either order, each once.
 pub fn parse_explicit(args: &[&str]) -> Result<(String, Vec<Member>), String> {
     let (mut repo, mut members) = (None, None);

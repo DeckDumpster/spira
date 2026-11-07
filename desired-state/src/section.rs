@@ -148,6 +148,12 @@ pub struct Condition {
     pub status: ConditionStatus,
     #[serde(default)]
     pub reason: String,
+    /// What one condition of a type is about, when a type can stand for several things at once.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub key: String,
+    /// The runbook entry that answers the condition.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub runbook: String,
     #[serde(rename = "lastTransitionTime")]
     pub last_transition_time: String,
 }

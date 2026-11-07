@@ -7,6 +7,7 @@ pub mod fixture;
 pub mod git;
 pub mod judge;
 pub mod ledger;
+pub mod pages;
 pub mod replay;
 pub mod run_pass;
 pub mod runner;

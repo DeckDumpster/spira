@@ -173,6 +173,28 @@ fn a_page_on_raise_condition_pages_on_raise_without_a_pass_record() {
     assert_eq!(w.pass(&r).sent, ["page:Probe/b:Wedged"], "a new raise pages inside the window");
 }
 
+#[test]
+fn raised_conditions_of_one_type_page_once_each_by_key_and_link_their_runbook() {
+    let r = rig();
+    let w = World::new("alarms-keyed", Some("sp-ask"));
+    let cond = |key: &str| json!({ "type": "Wedged", "status": "True", "reason": format!("reason of {key}"), "key": key, "runbook": "rc/runbook#wedged", "lastTransitionTime": NOW });
+    let body = json!({
+        "apiVersion": "spira/v1",
+        "kind": "Probe",
+        "metadata": { "name": "b", "owner": "probe", "observedAt": spira_desired_state::store::format_rfc3339(r.clock.now_ms() / 1000), "target_latency": "5m", "max_age": "15m" },
+        "status": { "observedGeneration": 0, "depth": { "value": 3.0, "window": "level" }, "conditions": [cond("k1"), cond("k2")] },
+    });
+    r.publish(&body);
+    w.pass(&r);
+    assert_eq!(w.sent(), 2, "one page per key");
+    let bodies: Vec<String> = w.mail.sent.borrow().iter().map(|m| m.body.clone()).collect();
+    assert!(bodies.iter().all(|b| b.contains("rc/runbook#wedged")), "{bodies:?}");
+    assert!(bodies.iter().any(|b| b.contains("reason of k1")) && bodies.iter().any(|b| b.contains("reason of k2")), "{bodies:?}");
+    r.clock.advance(MIN);
+    w.pass(&r);
+    assert_eq!(w.sent(), 2, "the same raise does not page again");
+}
+
 fn lifecycle<B: Backend>(r: &Rig<B>, rate: Value, below: bool) {
     let at = spira_desired_state::store::format_rfc3339(r.clock.now_ms() / 1000);
     let rev = r.call(&["section", "get", "Lifecycle/all"], None).1["section"]["metadata"]["resourceVersion"].as_str().map_or("0".to_string(), String::from);

@@ -689,3 +689,36 @@ fn the_members_a_supersede_releases_are_re_cut_on_the_new_head_in_the_same_pass(
         .unwrap();
     assert_eq!(r.round.tested_base.as_deref(), Some("k1-head"));
 }
+
+#[test]
+fn an_explicit_cut_of_a_judged_red_member_leaves_its_refusal_standing_until_an_explicit_cut_opens() {
+    let w = World::new(vec![open_ok("r1")]);
+    let p = w.ports();
+    let red = ident(&["sp-a"], "base-0");
+    record_attempt(&p, &red, "old", &attempt(Class::Red { step: "s".into() }), &POLICY).unwrap();
+    mark_proven(&p, &red, &[mem("sp-a")], 0).unwrap();
+    assert!(explicit_recorded(&p, "lane", vec![mem("sp-a")]).is_err());
+    assert_eq!(
+        refusal::standing(&p, "lane", STEP).unwrap(),
+        Some(("cut-of-judged-red".to_string(), summary_key(&red)))
+    );
+    explicit_recorded(&p, "lane", vec![mem("sp-q")]).unwrap();
+    assert_eq!(refusal::standing(&p, "lane", STEP).unwrap(), None);
+}
+
+#[test]
+fn the_planner_leaving_a_member_proven_red_out_of_its_own_cut_raises_no_contradiction() {
+    let w = World::new(vec![open_ok("r1")]);
+    let p = w.ports();
+    let red = ident(&["sp-a"], "base-0");
+    record_attempt(&p, &red, "old", &attempt(Class::Red { step: "s".into() }), &POLICY).unwrap();
+    mark_proven(&p, &red, &[mem("sp-a")], 0).unwrap();
+    w.member("sp-a", json!({}));
+    w.member("sp-b", json!({}));
+    let got = w.cut();
+    record(&p, "lane", &got);
+    got.unwrap().unwrap();
+    assert_eq!(w.opened_members(), ["sp-b"]);
+    let raised: Vec<_> = crate::conditions::raise(&p, "lane").unwrap().into_iter().filter(|c| c.raised.is_some()).collect();
+    assert!(raised.is_empty(), "{raised:?}");
+}

@@ -43,6 +43,10 @@ pub struct Candidate {
     pub facts: Vec<String>,
     /// Each step tried and its result.
     pub steps: Vec<String>,
+    /// What a raised condition is about, when its type can stand for several things at once.
+    pub key: String,
+    /// The runbook entry the raised condition names, in place of the type's default.
+    pub runbook: Option<String>,
 }
 
 impl Candidate {
@@ -50,7 +54,7 @@ impl Candidate {
         let mut conditions = conditions;
         conditions.sort();
         conditions.dedup();
-        Candidate { section: section.into(), source, conditions, decision, class: None, facts: Vec::new(), steps: Vec::new() }
+        Candidate { section: section.into(), source, conditions, decision, class: None, facts: Vec::new(), steps: Vec::new(), key: String::new(), runbook: None }
     }
 
     pub fn identity(&self) -> String {
@@ -58,7 +62,7 @@ impl Candidate {
             Source::Raised { since } => since.as_str(),
             _ => "",
         };
-        hash(&[&self.section, &self.conditions.join(","), &self.decision.question, raise])
+        hash(&[&self.section, &self.conditions.join(","), &self.decision.question, raise, &self.key])
     }
 
     pub fn evidence(&self) -> String {
@@ -106,7 +110,7 @@ impl Candidate {
         }
         b.push_str("\n## Runbook\n");
         for c in &self.conditions {
-            b.push_str(&format!("- {c}: {}\n", runbook(c)));
+            b.push_str(&format!("- {c}: {}\n", self.runbook.clone().unwrap_or_else(|| runbook(c))));
         }
         if let Some(class) = &self.class {
             b.push_str(&format!("\n## Class basis\nThe {} section's kind escalates its pages as {class}.\n", self.section));
