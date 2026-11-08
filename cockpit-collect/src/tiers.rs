@@ -114,12 +114,7 @@ fn parse_lines(text: &str) -> Vec<(String, String)> {
 fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let tmp = dir.join(format!(".{}.{}.tmp", path.file_name().and_then(|n| n.to_str()).unwrap_or("snap"), std::process::id()));
-    std::fs::write(&tmp, content).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("{}: {e}", tmp.display())
-    })?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+    io::replace_if_changed(path, content).map(|_| ()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Every tier's merged `Kv`, tiers in name order, the first value of a key winning.
@@ -204,7 +199,7 @@ pub fn append_history(run_dir: &Path) {
     let max: usize = std::env::var("SPIRA_COCKPIT_HISTORY_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(20160);
     if let Ok(content) = std::fs::read_to_string(&hist_path) {
         let lines: Vec<&str> = content.lines().collect();
-        if lines.len() > max + 1 {
+        if lines.len() > max + 1 + max / 10 {
             let mut kept = String::new();
             kept.push_str(lines[0]);
             kept.push('\n');
@@ -245,6 +240,33 @@ mod tests {
             "boom" => panic!("probe failed"),
             _ => None,
         }
+    }
+
+    #[test]
+    fn republishing_an_unchanged_tier_writes_no_snapshot_data() {
+        let run = testkit::TempDir::new("tier-nowrite");
+        publish(run.path(), "5s", "SP_A=1\n").unwrap();
+        let before = io::data_writes();
+        publish(run.path(), "5s", "SP_A=1\n").unwrap();
+        assert_eq!(io::data_writes(), before);
+        publish(run.path(), "5s", "SP_A=2\n").unwrap();
+        assert_eq!(io::data_writes(), before + 2, "tier file and merged snapshot both changed");
+    }
+
+    #[test]
+    fn history_is_trimmed_only_past_its_slack_and_back_to_the_cap() {
+        let run = testkit::TempDir::new("hist-trim");
+        let p = run.path().join("cockpit-history.csv");
+        let rows = |_: usize| std::fs::read_to_string(&p).unwrap().lines().count() - 1;
+        for _ in 0..25 {
+            append_history(run.path());
+        }
+        assert_eq!(rows(0), 25, "below cap + slack nothing is trimmed");
+        {
+            let _env = testkit::env(&[("SPIRA_COCKPIT_HISTORY_MAX", Some("20"))]);
+            append_history(run.path());
+        }
+        assert_eq!(rows(0), 20, "past cap + slack it is cut back to the cap");
     }
 
     #[test]
