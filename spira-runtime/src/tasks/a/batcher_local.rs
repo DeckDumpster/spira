@@ -43,6 +43,7 @@
 //! | Mending | `mending.settled` or timer 900 s (`main.rs:368`) | Certifying |
 //! | Certifying | `unit.ran` green | Landing (`lc_certify`, `land`) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
+//! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
 //! | Landing | land refused (lock busy ×N) | Done (`abandon`, verdict red) |
 //! | Promoting | promotion named | Corpus / Certifying for the staged round (`main.rs:1069`) |
@@ -305,6 +306,11 @@ pub enum Trigger {
     Advanced,
     /// A leg event whose `round_key` is not the carried round's.
     ForeignLeg,
+    /// The certify leg exited [`queue::ops::round::VM_LOST`]: the pass is incomplete, the round
+    /// is not judged, and it is certified again on its head (sp-e30jhh; not in the contract's table).
+    CertifyLost,
+    /// The VM was lost under more passes than [`LOST_VM_RECERTIFIES`] allows.
+    CertifyLostSpent,
 }
 
 pub static TABLE: &[(State, Trigger, State)] = &[
@@ -338,6 +344,9 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Promoting, Trigger::PromotedToCertifying, State::Certifying),
     (State::Promoting, Trigger::PromoteFailed, State::Done),
     (State::Done, Trigger::Advanced, State::Idle),
+
+    (State::Certifying, Trigger::CertifyLost, State::Certifying),
+    (State::Certifying, Trigger::CertifyLostSpent, State::Done),
 ];
 
 /// The pace state of `batcher-cut/src/pace.rs`, carried rather than kept in `run/rounds-pace`.
@@ -402,6 +411,9 @@ pub struct RepoCarry {
     pub base: String,
     #[serde(default)]
     pub own_testenv: bool,
+    /// Certify passes of this round whose VM was lost under them (sp-e30jhh).
+    #[serde(default)]
+    pub lost_vms: u32,
     /// The unit key of the live leg, when it started, and which run of the corpus it is.
     #[serde(default)]
     pub leg: Option<String>,
@@ -532,6 +544,9 @@ pub const RED_OUTPUT: &str = "red-output=";
 
 /// How long past its wall a leg with no `unit.ran` is given before it is judged lost.
 pub const LEG_GRACE_MS: u64 = 120_000;
+/// How many times a round whose VM was lost under its certify is certified again before the
+/// loss is the host's to look at (pace Infra): a lost VM says nothing about the members.
+pub const LOST_VM_RECERTIFIES: u32 = 2;
 
 pub fn step(state: State, event: Trigger) -> Result<State, String> {
     table_step(NAME, TABLE, state, event)
@@ -787,6 +802,7 @@ impl Machine<'_> {
                 self.acts.push(Leg { key: format!("round:{key}"), ..self.leg() }.act(LC_CERTIFY));
                 self.acts.push(Leg { key: self.rc.batch.clone().unwrap_or_default(), ..self.leg() }.act(LAND));
             }
+            (State::Certifying, false) if exit == Exit::Code(queue::ops::round::VM_LOST) => self.vm_lost(),
             (State::Certifying, false) => {
                 self.go(Trigger::CertifyRed);
                 // The guilty leave the round charged: the members whose files the repository's
@@ -799,6 +815,24 @@ impl Machine<'_> {
             }
             _ => {}
         }
+    }
+
+    /// `queue round certify` exited VM_LOST: the pass was recorded incomplete and the round is
+    /// not judged. Suites are keyed by tree, so certifying the same head on a new VM resumes
+    /// from the suites the lost pass finished (sp-e30jhh). Past [`LOST_VM_RECERTIFIES`] the round
+    /// is left open for the orphan re-drive and the pace counts an Infra fault; it is never
+    /// abandoned, and no member is charged.
+    fn vm_lost(&mut self) {
+        let batch = self.rc.batch.clone().unwrap_or_default();
+        if self.rc.lost_vms < LOST_VM_RECERTIFIES {
+            self.rc.lost_vms += 1;
+            self.go(Trigger::CertifyLost);
+            self.rc.run += 1;
+            self.certify();
+            return;
+        }
+        self.go(Trigger::CertifyLostSpent);
+        self.finish(pace::Outcome::Infra, &format!("certify exited {}: the VM was lost under {} passes of {batch} running; the round is left open", queue::ops::round::VM_LOST, self.rc.lost_vms + 1));
     }
 
     /// The outcome of one of this task's own effects.

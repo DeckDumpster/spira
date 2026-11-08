@@ -18,6 +18,7 @@ mod status;
 mod supersede_duty_parity;
 mod task_a_batcher_forge;
 mod task_a_batcher_local;
+mod task_a_batcher_local_vm_lost;
 mod task_a_czar;
 mod task_a_gate_check;
 mod task_a_gate_worker;
