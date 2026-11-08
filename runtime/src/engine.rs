@@ -605,7 +605,7 @@ impl Engine {
 
     fn append_derived(&mut self, id: String, stream: &StreamKey, kind: EventKind, cause: &Event, at: u64) -> Result<Event> {
         let ev = Event { id: EventId(id), stream: stream.clone(), kind, at, cause: Some(cause.id.clone()), correlation: cause.correlation.clone() };
-        self.journal.append(&ev)?;
+        self.journal.record(&ev)?;
         self.appended = true;
         Ok(ev)
     }
@@ -1014,8 +1014,8 @@ impl Engine {
                 cause: row.cause.clone(),
                 correlation: row.correlation.clone(),
             };
-            match self.journal.append(&ev) {
-                Ok(_) => self.appended = true,
+            match self.journal.record(&ev) {
+                Ok(()) => self.appended = true,
                 Err(e) if e.is_refused() => {
                     self.quarantine(&ev, "scheduler", &e.0)?;
                 }
@@ -1098,7 +1098,7 @@ impl Executor for Engine {
         if self.memory_only.remove(key) {
             self.local.push_back(ev.clone());
         } else {
-            self.journal.append(&ev)?;
+            self.journal.record(&ev)?;
             self.appended = true;
         }
         self.pending.remove(key);
