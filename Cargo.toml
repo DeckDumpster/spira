@@ -187,3 +187,15 @@ opt-level = 2
 opt-level = 2
 [profile.dwarf.package.sim]
 opt-level = 2
+# sim-replay runs whole captured days through these; at opt-level 0 its one case outran the
+# suite case deadline (52 s here, 20 s optimised).
+[profile.dwarf.package.spira-lc]
+opt-level = 2
+[profile.dwarf.package.spira-desired-state]
+opt-level = 2
+[profile.dwarf.package.state-store]
+opt-level = 2
+[profile.dwarf.package.reconciler-engine]
+opt-level = 2
+[profile.dwarf.package.runtime]
+opt-level = 2
