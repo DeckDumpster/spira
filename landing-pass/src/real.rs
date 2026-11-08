@@ -1175,13 +1175,12 @@ impl Tools for RealTools {
         combined(c).1.trim_end_matches('\n').to_string()
     }
     fn ensure(&self, script: &Path) -> Vec<String> {
-        // A bare name is a launcher-PATH program; a path is run as itself, through bash
-        // only when it is a `*.sh` (the tools are compiled binaries now).
+        // A bare name is a launcher-PATH program; a path is run as itself, by bash only if `*.sh`.
         let c = if script.components().count() == 1 {
             command(script)
         } else {
             if !executable(script) {
-                return Vec::new();
+                return vec![format!("landing: {} is not an executable file — not run", script.display())];
             }
             if script.extension().is_some_and(|e| e == "sh") {
                 let mut c = command("bash");
@@ -1448,6 +1447,14 @@ mod ensure_tests {
         let p = t.path().join("echo");
         std::os::unix::fs::symlink(which_echo(), &p).unwrap();
         assert_eq!(tools().ensure(&p), vec![String::new()]);
+    }
+
+    #[test]
+    fn an_ensure_program_that_is_missing_says_so() {
+        let t = testkit::TempDir::new("landing-pass-ensure-missing");
+        let out = tools().ensure(&t.path().join("target-reap"));
+        assert_eq!(out.len(), 1);
+        assert!(out[0].contains("not an executable file"), "{out:?}");
     }
 
     #[test]
