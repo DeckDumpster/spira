@@ -753,10 +753,6 @@ impl Machine<'_> {
         self.start(CERTIFY, "certify");
     }
 
-    fn abandon(&mut self, why: &str) {
-        self.abandon_naming(why, Vec::new());
-    }
-
     fn abandon_naming(&mut self, why: &str, reds: Vec<String>) {
         if self.rc.batch.is_some() {
             let leg = Leg { why: why.to_string(), reds, key: format!("{}:{}", self.repo, self.rc.batch.clone().unwrap_or_default()), ..self.leg() };
