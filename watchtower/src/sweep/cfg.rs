@@ -34,6 +34,7 @@ pub struct Cfg {
     pub drain_warn_mins: i64,
     pub idle_while_ready_n: usize,
     pub systemctl: String,
+    pub units: std::sync::Arc<dyn runtime::units::Units>,
 
     pub prompt_file: Option<PathBuf>,
     pub lapsed_dir: Option<PathBuf>,

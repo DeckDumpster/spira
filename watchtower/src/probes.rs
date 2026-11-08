@@ -6,10 +6,12 @@
 use crate::conditions::{Cond, Reading};
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::Command;
+use std::sync::Arc;
+
+use runtime::units::{Exit, UnitDetail, UnitHandle, UnitState, Units};
 
 pub struct Cfg {
-    pub systemctl: String,
+    pub units: Arc<dyn Units>,
     pub releases: Option<String>,
     pub keep: usize,
     pub store_slack: usize,
@@ -26,38 +28,20 @@ pub struct Cfg {
     pub psi_sustain_secs: i64,
 }
 
-fn systemctl_show(cfg: &Cfg, args: &[&str]) -> Option<String> {
-    // FORK-EDGE: needs a Units port listing (units by glob and state) with arbitrary properties (NRestarts, Result, Environment)
-    let out = crate::deadline::output("conditions systemctl", Command::new(&cfg.systemctl).arg("--user").arg("show").args(args)).ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
 fn sha_of(path: &str) -> &str {
     path.trim_end_matches('/').rsplit('/').next().unwrap_or(path)
 }
 
 // ---- (a) units whose rendered release is not current -------------------------------
 
-pub fn units_off_current(show: &str, current: &str, running: &dyn Fn(u32) -> Option<String>) -> Vec<(String, String)> {
+pub fn units_off_current(units: &[UnitDetail], current: &str, running: &dyn Fn(u32) -> Option<String>) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    for block in show.split("\n\n") {
-        let id = block.lines().find_map(|l| l.strip_prefix("Id="));
-        let release = block
-            .lines()
-            .filter(|l| l.starts_with("Environment="))
-            .flat_map(|l| l.split_whitespace())
-            .find_map(|w| w.trim_start_matches("Environment=").trim_matches(['"', '\'']).strip_prefix("SPIRA_RELEASE="));
-        if let (Some(id), Some(r)) = (id, release) {
-            let sha = sha_of(r);
-            let started = if sha == "current" {
-                let pid = block.lines().find_map(|l| l.strip_prefix("MainPID=")).and_then(|p| p.trim().parse::<u32>().ok()).filter(|p| *p != 0);
-                pid.and_then(running)
-            } else {
-                Some(sha.to_string())
-            };
-            if let Some(started) = started.filter(|s| s != current) {
-                out.push((id.to_string(), started));
-            }
+    for u in units {
+        let Some(release) = u.environment.iter().find_map(|e| e.strip_prefix("SPIRA_RELEASE=")) else { continue };
+        let sha = sha_of(release);
+        let started = if sha == "current" { u.main_pid.and_then(running) } else { Some(sha.to_string()) };
+        if let Some(started) = started.filter(|s| s != current) {
+            out.push((u.name.clone(), started));
         }
     }
     out
@@ -75,9 +59,9 @@ pub fn release_currency(cfg: &Cfg) -> Reading {
     let Some(current) = std::fs::read_link(Path::new(rel).join("current")).ok().map(|t| sha_of(&t.to_string_lossy()).to_string()) else {
         return Reading::Unknown;
     };
-    let Some(show) = systemctl_show(cfg, &[&cfg.unit_glob, "-p", "Id", "-p", "Environment", "-p", "MainPID"]) else { return Reading::Unknown };
+    let Ok(listed) = cfg.units.list(&cfg.unit_glob) else { return Reading::Unknown };
     Reading::Standing(
-        units_off_current(&show, &current, &|pid| process_release(rel, pid))
+        units_off_current(&listed, &current, &|pid| process_release(rel, pid))
             .into_iter()
             .map(|(unit, sha)| Cond {
                 key: unit.clone(),
@@ -98,15 +82,15 @@ pub struct Run {
     pub active_state: String,
     pub invocation: String,
     pub result: String,
-    pub exec_status: String,
+    pub exit: Option<Exit>,
 }
 
-const SIGTERM: &str = "15";
+const SIGTERM: i32 = 15;
 
 /// `Some((invocation, count))` is the new tally; `None` drops the unit.
 pub fn tally(prev: Option<(&str, i64)>, run: &Run) -> Option<(String, i64)> {
     match run.active_state.as_str() {
-        "failed" if run.result == "signal" && run.exec_status == SIGTERM => None,
+        "failed" if run.result == "signal" && run.exit == Some(Exit::Signal(SIGTERM)) => None,
         "failed" => match prev {
             Some((inv, n)) if inv == run.invocation => Some((inv.to_string(), n)),
             Some((_, n)) => Some((run.invocation.clone(), n + 1)),
@@ -137,13 +121,12 @@ fn render_tally(m: &BTreeMap<String, (String, i64)>) -> String {
 }
 
 fn unit_run(cfg: &Cfg, unit: &str) -> Option<Run> {
-    let show = systemctl_show(cfg, &[unit, "-p", "ActiveState", "-p", "InvocationID", "-p", "Result", "-p", "ExecMainStatus"])?;
-    let get = |k: &str| show.lines().find_map(|l| l.strip_prefix(k)).unwrap_or("").trim().to_string();
-    Some(Run { active_state: get("ActiveState="), invocation: get("InvocationID="), result: get("Result="), exec_status: get("ExecMainStatus=") })
+    let d = cfg.units.detail(&UnitHandle::named(unit)).ok()?;
+    Some(Run { active_state: d.active_state.unwrap_or_default(), invocation: d.invocation_id.unwrap_or_default(), result: d.result.unwrap_or_default(), exit: d.exit })
 }
 
 pub fn failing_units(cfg: &Cfg, run_dir: &Path) -> Reading {
-    let Some(failed) = crate::failed_units::gather(&cfg.systemctl) else { return Reading::Unknown };
+    let Some(failed) = crate::failed_units::gather(&*cfg.units) else { return Reading::Unknown };
     let path = run_dir.join("conditions").join("failed-runs.tally");
     let prev = parse_tally(&std::fs::read_to_string(&path).unwrap_or_default());
     let mut units: Vec<String> = failed;
@@ -188,7 +171,7 @@ pub struct OomRow {
     pub last_oom: i64,
 }
 
-/// What `systemctl show` reports for one unit: a restart counter that survives the restart
+/// What the manager reports for one unit: a restart counter that survives the restart
 /// and the result of its latest stop, which the restart itself erases.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OomShow {
@@ -197,13 +180,9 @@ pub struct OomShow {
     pub result: String,
 }
 
-pub fn parse_oom_show(show: &str) -> Vec<OomShow> {
-    show.split("\n\n")
-        .filter_map(|block| {
-            let get = |k: &str| block.lines().find_map(|l| l.strip_prefix(k)).map(|v| v.trim().to_string());
-            Some(OomShow { unit: get("Id=")?, restarts: get("NRestarts=")?.parse().ok()?, result: get("Result=").unwrap_or_default() })
-        })
-        .collect()
+/// Only units that count restarts (services) can be restart-looping.
+pub fn oom_reads(units: &[UnitDetail]) -> Vec<OomShow> {
+    units.iter().filter(|u| u.state != UnitState::Absent).filter_map(|u| Some(OomShow { unit: u.name.clone(), restarts: i64::from(u.n_restarts?), result: u.result.clone().unwrap_or_default() })).collect()
 }
 
 pub fn oom_decide(now: i64, prev: Option<&OomRow>, s: &OomShow) -> OomRow {
@@ -225,12 +204,12 @@ fn parse_oom_state(text: &str) -> BTreeMap<String, OomRow> {
 }
 
 pub fn oom_restarts(cfg: &Cfg, now: i64, run_dir: &Path) -> Reading {
-    let Some(show) = systemctl_show(cfg, &[&cfg.oom_glob, "-p", "Id", "-p", "NRestarts", "-p", "Result"]) else { return Reading::Unknown };
+    let Ok(listed) = cfg.units.list(&cfg.oom_glob) else { return Reading::Unknown };
     let path = run_dir.join("conditions").join("oom-restarts.state");
     let prev = parse_oom_state(&std::fs::read_to_string(&path).unwrap_or_default());
     let mut next = BTreeMap::new();
     let mut standing = Vec::new();
-    for s in parse_oom_show(&show) {
+    for s in oom_reads(&listed) {
         let row = oom_decide(now, prev.get(&s.unit), &s);
         if row.last_oom > 0 && now - row.last_oom < cfg.oom_hold_secs {
             standing.push(Cond {
@@ -624,10 +603,46 @@ mod tests {
         assert_eq!(lifecycle_ids(&crate::lc::scripted::scripted(2, "cannot tell").1), None, "no answer is unknown, never no rows");
     }
 
+    fn restarted(name: &str, n: u32, result: &str) -> UnitDetail {
+        UnitDetail { n_restarts: Some(n), result: Some(result.into()), load_state: Some("loaded".into()), state: UnitState::Active, ..UnitDetail::absent(name) }
+    }
+
+    fn rendering(name: &str, env: &[&str], pid: Option<u32>) -> UnitDetail {
+        UnitDetail { environment: env.iter().map(|e| e.to_string()).collect(), main_pid: pid, state: UnitState::Active, ..UnitDetail::absent(name) }
+    }
+
+    #[test]
+    fn the_probes_read_the_unit_manager_the_cfg_names_and_no_manager_is_unknown() {
+        let d = testkit::TempDir::new("probes-units");
+        let mut c = cfg(d.path());
+        let scripted = runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0)));
+        scripted.install_detail(UnitDetail { exit: Some(Exit::Code(1)), active_state: Some("failed".into()), invocation_id: Some("i1".into()), result: Some("exit-code".into()), ..UnitDetail { state: UnitState::Failed, load_state: Some("loaded".into()), ..UnitDetail::absent("spira-bad.service") } });
+        scripted.install_detail(UnitDetail { n_restarts: Some(2), result: Some("oom-kill".into()), ..restarted("spira-hog.service", 2, "oom-kill") });
+        c.units = Arc::new(scripted);
+        c.failed_runs = 1;
+        match failing_units(&c, d.path()) {
+            Reading::Standing(s) => assert_eq!(s.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(), ["spira-bad.service"]),
+            _ => panic!("not standing"),
+        }
+        match oom_restarts(&c, 100, d.path()) {
+            Reading::Standing(s) => assert_eq!(s.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(), ["spira-hog.service"]),
+            _ => panic!("not standing"),
+        }
+        c.units = crate::host_units::host_units_unreachable("no manager");
+        assert!(matches!(failing_units(&c, d.path()), Reading::Unknown));
+        assert!(matches!(oom_restarts(&c, 100, d.path()), Reading::Unknown));
+        assert!(matches!(release_currency(&c), Reading::Unknown));
+    }
+
+    #[test]
+    fn a_unit_without_a_restart_counter_is_not_an_oom_candidate() {
+        let timer = UnitDetail { state: UnitState::Active, ..UnitDetail::absent("spira-t.timer") };
+        assert_eq!(oom_reads(&[timer, UnitDetail::absent("spira-gone.service")]), vec![]);
+    }
+
     #[test]
     fn an_oom_kill_is_read_from_the_unit_result_and_held() {
-        let show = "Id=spira-a.service\nNRestarts=4\nResult=success\n\nId=spira-b.service\nNRestarts=0\nResult=oom-kill\n";
-        let rows = parse_oom_show(show);
+        let rows = oom_reads(&[restarted("spira-a.service", 4, "success"), restarted("spira-b.service", 0, "oom-kill")]);
         assert_eq!(rows.len(), 2);
         let prev = OomRow { restarts: 3, last_oom: 0 };
         assert_eq!(oom_decide(100, Some(&prev), &rows[0]), OomRow { restarts: 4, last_oom: 0 }, "a restart alone is not an OOM kill");
@@ -637,9 +652,9 @@ mod tests {
 
     #[test]
     fn a_sigterm_stop_is_not_a_failed_run() {
-        let term = Run { result: "signal".into(), exec_status: "15".into(), ..run("failed", "i2") };
+        let term = Run { result: "signal".into(), exit: Some(Exit::Signal(15)), ..run("failed", "i2") };
         assert_eq!(tally(Some(("i1", 2)), &term), None);
-        let kill = Run { exec_status: "9".into(), ..term };
+        let kill = Run { exit: Some(Exit::Signal(9)), ..term };
         assert_eq!(tally(Some(("i1", 2)), &kill), Some(("i2".into(), 3)));
     }
 
@@ -686,26 +701,27 @@ mod tests {
 
     #[test]
     fn units_off_current_names_only_units_rendering_another_release() {
-        let show = "Id=spira-a-prod.service\nEnvironment=SPIRA_RELEASE=/r/aaa PATH=/x\n\nId=spira-b-prod.service\nEnvironment=SPIRA_RELEASE=/r/bbb\n\nId=spira-c-prod.service\nEnvironment=\n";
-        assert_eq!(units_off_current(show, "bbb", &|_| None), vec![("spira-a-prod.service".to_string(), "aaa".to_string())]);
-        assert!(units_off_current(show, "aaa", &|_| None).iter().any(|(u, _)| u == "spira-b-prod.service"));
+        let show = [rendering("spira-a-prod.service", &["SPIRA_RELEASE=/r/aaa", "PATH=/x"], None), rendering("spira-b-prod.service", &["SPIRA_RELEASE=/r/bbb"], None), rendering("spira-c-prod.service", &[], None)];
+        assert_eq!(units_off_current(&show, "bbb", &|_| None), vec![("spira-a-prod.service".to_string(), "aaa".to_string())]);
+        assert!(units_off_current(&show, "aaa", &|_| None).iter().any(|(u, _)| u == "spira-b-prod.service"));
     }
 
     #[test]
     fn units_rendering_the_current_symlink_are_current() {
-        let show = "Id=spira-a-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\n\nId=spira-b-prod.service\nEnvironment=SPIRA_RELEASE=/r/current/\n\nId=spira-c-prod.service\nEnvironment=SPIRA_RELEASE=/r/aaa\n";
-        assert_eq!(units_off_current(show, "bbb", &|_| None), vec![("spira-c-prod.service".to_string(), "aaa".to_string())]);
+        let show = [rendering("spira-a-prod.service", &["SPIRA_RELEASE=/r/current"], None), rendering("spira-b-prod.service", &["SPIRA_RELEASE=/r/current/"], None), rendering("spira-c-prod.service", &["SPIRA_RELEASE=/r/aaa"], None)];
+        assert_eq!(units_off_current(&show, "bbb", &|_| None), vec![("spira-c-prod.service".to_string(), "aaa".to_string())]);
     }
 
     #[test]
     fn a_unit_rendering_current_is_stale_only_when_its_process_started_from_another_release() {
-        let show = "Id=spira-a-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\nMainPID=11\n\nId=spira-b-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\nMainPID=22\n\nId=spira-c-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\nMainPID=0\n\nId=spira-d-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\nMainPID=33\n";
+        let cur = ["SPIRA_RELEASE=/r/current"];
+        let show = [rendering("spira-a-prod.service", &cur, Some(11)), rendering("spira-b-prod.service", &cur, Some(22)), rendering("spira-c-prod.service", &cur, None), rendering("spira-d-prod.service", &cur, Some(33))];
         let running = |pid: u32| match pid { 11 => Some("old".to_string()), 22 => Some("new".to_string()), _ => None };
-        assert_eq!(units_off_current(show, "new", &running), vec![("spira-a-prod.service".to_string(), "old".to_string())]);
+        assert_eq!(units_off_current(&show, "new", &running), vec![("spira-a-prod.service".to_string(), "old".to_string())]);
     }
 
     fn run(state: &str, inv: &str) -> Run {
-        Run { active_state: state.into(), invocation: inv.into(), result: "exit-code".into(), exec_status: "1".into() }
+        Run { active_state: state.into(), invocation: inv.into(), result: "exit-code".into(), exit: Some(Exit::Code(1)) }
     }
 
     #[test]
@@ -738,7 +754,7 @@ mod tests {
 
     fn cfg(dir: &Path) -> Cfg {
         Cfg {
-            systemctl: "/nonexistent/systemctl".into(),
+            units: Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0)))),
             releases: Some(dir.join("releases").to_string_lossy().into_owned()),
             keep: 2,
             store_slack: 1,

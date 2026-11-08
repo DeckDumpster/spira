@@ -173,7 +173,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     let drain = read_drain(run, now);
 
     // FAILED UNITS ---------------------------------------------------------------------
-    let failed_units = failed_units::gather(&cfg.systemctl);
+    let failed_units = failed_units::gather(&*cfg.units);
     let cpu_cfg = cpu_throttle::Cfg {
         units: cfg.cpu_throttle_units.clone(),
         warn_pct: cfg.cpu_throttle_warn_pct,

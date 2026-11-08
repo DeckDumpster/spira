@@ -276,7 +276,7 @@ fn main() {
                 return;
             }
             let cfg = probes::Cfg {
-                systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()),
+                units: watchtower::host_units::host_units(),
                 releases: {
                     // SPIRA_RELEASES is registered but its declared value may legitimately be
                     // "" (not configured) — preserved as `None`, same as `getenv`'s own

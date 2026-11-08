@@ -1,5 +1,4 @@
-//! Failed spira-* and shared systemd units (sp-niqjl). `systemctl --user list-units --state=failed`
-//! gives the CURRENT list; a state file persists the pass each unit was FIRST seen failing,
+//! Failed spira-* and shared systemd units (sp-niqjl). The Units port gives the CURRENT list; a state file persists the pass each unit was FIRST seen failing,
 //! because a unit crash-looping every 30s re-enters `activating` then `failed` on every
 //! restart and systemd's own timestamps never age past one restart interval. One escalation
 //! per failure, not per pass — a unit still in the state file with its escalated flag set
@@ -7,6 +6,8 @@
 //! later, unrelated failure of the same unit starts its own clock.
 
 use std::path::Path;
+
+use runtime::units::{UnitHandle, UnitState, Units};
 
 /// Units no instance owns, so `spira-*` never matches them.
 pub const SHARED_UNITS: &[&str] = &[
@@ -18,67 +19,17 @@ pub const SHARED_UNITS: &[&str] = &[
     "sccache-dav.service",
 ];
 
-fn list_args() -> Vec<&'static str> {
-    let mut a = vec!["--user", "list-units", "--state=failed", "--no-legend", "spira-*"];
-    a.extend_from_slice(SHARED_UNITS);
-    a
-}
-
-/// `systemctl --user list-units --state=failed --no-legend 'spira-*' <shared units>`, one unit name per
-/// line with the leading bullet and trailing columns stripped. `None` means the probe
-/// itself failed — rendered `?`, never an empty (all-clear) list.
-pub fn gather(systemctl: &str) -> Option<Vec<String>> {
-    let out = crate::deadline::output(
-        "failed units",
-        // FORK-EDGE: needs a Units port listing (units by glob and state); systemctl list-units --state=failed
-        std::process::Command::new(systemctl).args(list_args()),
-    )
-    .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let mut units = Vec::new();
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        if is_not_found(line) {
-            continue;
-        }
-        if let Some(u) = extract_unit_name(line) {
-            units.push(u);
+/// The spira-* units and the shared ones that are failed now. `None` means the manager could
+/// not be asked, rendered `?`, never an empty (all-clear) list. A unit whose file is gone is
+/// `Absent`, not failed.
+pub fn gather(units: &dyn Units) -> Option<Vec<String>> {
+    let mut failed: Vec<String> = units.list("spira-*").ok()?.into_iter().filter(|d| d.state == UnitState::Failed).map(|d| d.name).collect();
+    for name in SHARED_UNITS {
+        if units.facts(&UnitHandle::named(name)).ok()?.state == UnitState::Failed {
+            failed.push((*name).to_string());
         }
     }
-    Some(crate::ctrl_gate::without_suspended(units))
-}
-
-/// `sed -E 's/^[^[:alnum:]]+ //; s/ .*//'` — drop the leading run of non-alphanumeric
-/// characters (the bullet and the space after it), then keep only the first remaining
-/// whitespace-delimited token.
-fn extract_unit_name(line: &str) -> Option<String> {
-    let bytes = line.as_bytes();
-    let mut i = 0usize;
-    while i < bytes.len() && !bytes[i].is_ascii_alphanumeric() {
-        i += 1;
-    }
-    // Consume through the first space after the bullet run, matching `[^alnum]+ ` (the
-    // pattern requires the run to be followed by exactly one space it also consumes).
-    let after_bullet = &line[i..];
-    let token = after_bullet.split(' ').next().unwrap_or("");
-    if token.is_empty() {
-        None
-    } else {
-        Some(token.to_string())
-    }
-}
-
-/// A unit whose file is gone keeps a residual failed state; LoadState=not-found is absent,
-/// not failing.
-fn is_not_found(line: &str) -> bool {
-    extract_unit_name(line).is_some_and(|u| {
-        line.split_whitespace().skip_while(|t| *t != u).nth(1) == Some("not-found")
-    })
+    Some(crate::ctrl_gate::without_suspended(failed))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,51 +103,56 @@ pub fn write_state_file(path: &Path, rows: &[StateRow]) {
 mod tests {
     use super::*;
 
+    use runtime::ports::VirtualClock;
+    use runtime::units::{ScriptedUnits, UnitDetail, UnitFacts};
+    use std::sync::Arc;
+
+    fn units() -> ScriptedUnits {
+        ScriptedUnits::new(Arc::new(VirtualClock::new(0)))
+    }
+
+    fn at(u: &ScriptedUnits, name: &str, state: UnitState) {
+        let mut d = UnitDetail::from_facts(name, &UnitFacts { state, main_pid: None, exit: None, since_ms: None });
+        d.load_state = Some("loaded".into());
+        u.install_detail(d);
+    }
+
     #[test]
-    fn the_probe_covers_shared_units_as_well_as_spira_prefixed_ones() {
-        let a = list_args();
-        assert!(a.contains(&"spira-*"));
-        for u in ["dolt-beads.service", "cockpit-ensure.service", "concierge.service"] {
-            assert!(a.contains(&u), "{u}");
+    fn a_failed_spira_unit_and_a_failed_shared_unit_are_both_named() {
+        let u = units();
+        at(&u, "spira-watchtower.service", UnitState::Failed);
+        at(&u, "spira-ok.service", UnitState::Active);
+        at(&u, "dolt-beads.service", UnitState::Failed);
+        at(&u, "concierge.service", UnitState::Active);
+        assert_eq!(gather(&u), Some(vec!["spira-watchtower.service".to_string(), "dolt-beads.service".to_string()]));
+    }
+
+    #[test]
+    fn a_unit_whose_file_is_gone_is_absent_not_failed() {
+        let u = units();
+        u.install_detail(UnitDetail::absent("spira-watch-refresh-prod.service"));
+        u.install_detail(UnitDetail::absent("lc-serve.service"));
+        assert_eq!(gather(&u), Some(vec![]));
+    }
+
+    #[test]
+    fn a_manager_that_cannot_be_asked_is_unknown_never_all_clear() {
+        struct Down;
+        impl Units for Down {
+            fn start(&self, _: &runtime::units::UnitSpec) -> runtime::Result<UnitHandle> {
+                Err(runtime::RuntimeError::new("down"))
+            }
+            fn stop(&self, _: &UnitHandle) -> runtime::Result<()> {
+                Err(runtime::RuntimeError::new("down"))
+            }
+            fn restart(&self, _: &UnitHandle) -> runtime::Result<()> {
+                Err(runtime::RuntimeError::new("down"))
+            }
+            fn facts(&self, _: &UnitHandle) -> runtime::Result<UnitFacts> {
+                Err(runtime::RuntimeError::new("down"))
+            }
         }
-    }
-
-    #[test]
-    fn extract_unit_name_strips_the_bullet_and_trailing_columns() {
-        assert_eq!(
-            extract_unit_name("● spira-watchtower.service loaded failed failed Spira watchtower"),
-            Some("spira-watchtower.service".to_string())
-        );
-    }
-
-    /// Regression for sp-ezeiy: watchtower.sh once extracted "●" itself as the unit name.
-    /// Ported verbatim from `test-watchtower-unit-extraction-sp-ezeiy.sh`, which tested a
-    /// hand-copied re-implementation of the sed pipeline rather than the real script; this
-    /// exercises the actual function, so the bash suite retires (DESIGN.md §4).
-    #[test]
-    fn sp_ezeiy_never_extracts_the_bullet_character_and_handles_a_double_leading_space() {
-        let lines = [
-            "● spira-watch-answers-prod.service loaded failed failed Spira watcher answers",
-            "● dolt-beads.service loaded failed failed Dolt beads",
-            "  ● another-unit.service loaded failed failed Another unit",
-        ];
-        let expected = [
-            "spira-watch-answers-prod.service",
-            "dolt-beads.service",
-            "another-unit.service",
-        ];
-        for (line, want) in lines.iter().zip(expected.iter()) {
-            let got = extract_unit_name(line);
-            assert_eq!(got.as_deref(), Some(*want));
-            assert_ne!(got.as_deref(), Some("\u{25cf}"));
-        }
-    }
-
-    #[test]
-    fn a_not_found_unit_is_absent_not_failed() {
-        assert!(is_not_found("○ spira-watch-refresh-prod.service not-found failed failed spira-watch-refresh-prod.service"));
-        assert!(!is_not_found("● spira-x.service loaded failed failed Spira x"));
-        assert!(!is_not_found("● spira-x.service"));
+        assert_eq!(gather(&Down), None);
     }
 
     #[test]
