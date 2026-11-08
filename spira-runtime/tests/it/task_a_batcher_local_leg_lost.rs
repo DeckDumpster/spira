@@ -110,3 +110,40 @@ fn a_round_open_with_no_driver_after_its_one_redrive_is_abandoned_not_paged() {
     assert_eq!(all.iter().filter(|a| *a == ABANDON).count(), 1, "then abandoned: {all:?}");
     assert!(!all.contains(&INBOX_APPEND.to_string()) && !all.contains(&FILE.to_string()), "an abandoned round pages nobody as open: {all:?}");
 }
+
+#[test]
+fn each_leg_gets_its_own_restart_a_corpus_restart_does_not_spend_the_certify_leg_s() {
+    let (carry, _) = observe_gone(corpus("spira.r9.corpus.1", NOW), NOW, 2);
+    let leg = carry.repos["spira"].leg.clone().unwrap();
+    assert_eq!(carry.repos["spira"].leg_restarts, 1);
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, &leg).unwrap(), exit: runtime::units::Exit::Code(0), duration_ms: 1 };
+    let (carry, acts) = on_ran(&carry, &ran, NOW + 5 * TICK).unwrap();
+    assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
+    let certify_at = NOW + 5 * TICK;
+    let (_, acts) = observe_gone(carry, certify_at, 2);
+    assert_eq!(names(&acts), [CERTIFY], "the certify leg is started again before the round is abandoned: {acts:?}");
+}
+
+#[test]
+fn a_round_certify_would_refuse_is_abandoned_after_the_wait_not_left_open() {
+    let repo = Repo { open_round: Some(Round { id: "r9".into(), worktree: "/w".into(), ..Round::default() }), unfit: Some("the round worktree is moved".into()), ..Repo::default() };
+    let mut acts = vec![];
+    let (mut carry, mut t) = (Carry::default(), NOW);
+    while t <= NOW + (Policy::default().orphan_wait_s + 60) * 1000 {
+        let (c, a) = decide(&carry, &Snapshot { repos: [("spira".to_string(), repo.clone())].into(), now_ms: t });
+        carry = c;
+        acts.extend(a);
+        t += TICK;
+    }
+    assert_eq!(names(&acts), [ABANDON], "{acts:?}");
+    let leg: Leg = serde_json::from_str(&acts[0].input).unwrap();
+    assert!(leg.why.contains("cannot be re-driven") && leg.why.contains("moved"), "{}", leg.why);
+}
+
+#[test]
+fn running_legs_are_this_task_s_active_units_by_key() {
+    use runtime::units::{UnitDetail, UnitHandle, UnitState};
+    let named = |task: &str, key: &str, state| UnitDetail { name: UnitHandle::of(task, key).unwrap().name, state, ..UnitDetail::default() };
+    let listed = [named(NAME, "spira.r9.corpus1", UnitState::Active), named(NAME, "spira.r9.corpus2", UnitState::Failed), named("sentinel-call", "x.y", UnitState::Active)];
+    assert_eq!(running_legs(&listed), ["spira.r9.corpus1"]);
+}

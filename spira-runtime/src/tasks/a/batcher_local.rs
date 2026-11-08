@@ -605,6 +605,16 @@ pub const ATTRIBUTE: &str = "attribute";
 /// The line `queue round certify` names its red output file by (`io::round_certify`).
 pub const RED_OUTPUT: &str = "red-output=";
 
+/// The keys of this task's leg units among `listed` that are running.
+pub fn running_legs(listed: &[runtime::units::UnitDetail]) -> Vec<String> {
+    use runtime::units::{UnitHandle, UnitState};
+    listed
+        .iter()
+        .filter(|d| matches!(d.state, UnitState::Active | UnitState::Activating))
+        .filter_map(|d| UnitHandle::named(&d.name).owner().filter(|(t, _)| t == NAME).map(|(_, k)| k))
+        .collect()
+}
+
 /// How long past its wall a leg with no `unit.ran` is given before it is judged lost.
 pub const LEG_GRACE_MS: u64 = 120_000;
 /// How long a started leg may go unlisted before it counts as missing.
@@ -987,6 +997,8 @@ impl Machine<'_> {
     /// A leg ended with `exit`, having written `out` (its captured stdout tail, empty when none
     /// came back): the attribution and certify legs are judged by what they said.
     fn leg_ended_with(&mut self, exit: Exit, out: &str) {
+        self.rc.leg_restarts = 0;
+        self.rc.leg_missing = 0;
         let ok = green(exit);
         match (self.rc.state, ok) {
             (State::Corpus, true) => {
@@ -1463,7 +1475,19 @@ pub mod edge {
         Ok(leg_env(vars, &release, &home, &spira_config::process::spec()?))
     }
 
+    fn logged(task: &str, key: &str, started: Result<String, String>) -> Result<String, String> {
+        match &started {
+            Ok(_) => eprintln!("{task}: leg {key} started"),
+            Err(why) => eprintln!("{task}: leg {key} did not start: {why}"),
+        }
+        started
+    }
+
     pub fn start_unit(e: &Effects, task: &str, key: &str, argv: Vec<String>, vars: Vec<(String, String)>, cwd: Option<PathBuf>) -> Result<String, String> {
+        logged(task, key, start_unit_quiet(e, task, key, argv, vars, cwd))
+    }
+
+    fn start_unit_quiet(e: &Effects, task: &str, key: &str, argv: Vec<String>, vars: Vec<(String, String)>, cwd: Option<PathBuf>) -> Result<String, String> {
         let units = e.units.as_deref().ok_or("no unit manager configured")?;
         let vars = with_base_env(vars)?;
         let unit = UnitSpec { task: task.into(), key: key.into(), argv, env: vars, cwd };
@@ -1480,6 +1504,10 @@ pub mod edge {
     /// A leg whose stdout comes back on its `unit.ran` (`UNIT_RUN_SCOPE`): the attribution and
     /// certify legs, judged by their own lines. Under the round's CPU quota when one is set.
     pub fn start_scope(e: &Effects, task: &str, key: &str, argv: Vec<String>, vars: Vec<(String, String)>, cwd: Option<PathBuf>) -> Result<String, String> {
+        logged(task, key, start_scope_quiet(e, task, key, argv, vars, cwd))
+    }
+
+    fn start_scope_quiet(e: &Effects, task: &str, key: &str, argv: Vec<String>, vars: Vec<(String, String)>, cwd: Option<PathBuf>) -> Result<String, String> {
         let units = e.units.as_deref().ok_or("no unit manager configured")?;
         let vars = with_base_env(vars)?;
         let quota = std::env::var("ROUND_CPU_QUOTA").ok().and_then(|q| q.trim().trim_end_matches('%').parse::<u32>().ok());
@@ -1522,12 +1550,7 @@ pub mod edge {
         let units = e.units.as_deref()?;
         let listed = runtime::units::effect(units, runtime::units::UNIT_LIST, &json(&runtime::units::task_glob(super::NAME)).ok()?).ok()?;
         let all: Vec<runtime::units::UnitDetail> = serde_json::from_str(&listed).ok()?;
-        Some(
-            all.into_iter()
-                .filter(|d| matches!(d.state, runtime::units::UnitState::Active | runtime::units::UnitState::Activating))
-                .filter_map(|d| runtime::units::UnitHandle::named(&d.name).owner().filter(|(t, _)| t == super::NAME).map(|(_, k)| k))
-                .collect(),
-        )
+        Some(super::running_legs(&all))
     }
 
     fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo) -> Result<Repo, String> {
@@ -1639,12 +1662,7 @@ pub mod edge {
         let suites = batcher_cut::order::longest_first(&io::suites_in(&wt, "HEAD"), &history).list;
         let results = wt.join(format!(".round-results-{}", leg.unit));
         let argv = ["timeout", "-k", "10", &env.wall_secs.to_string()].iter().map(|s| s.to_string()).chain([env.round_vm.display().to_string(), "run".into(), wt.display().to_string(), "--suites".into(), suites.join(","), "--maxpar".into(), env.maxpar.to_string(), "--results-dir".into(), results.display().to_string(), "--base".into(), repo.base.clone()]).collect();
-        let started = start_unit(e, task, &leg.unit, argv, home_vars(&env), None);
-        match &started {
-            Ok(_) => eprintln!("{task} {}: corpus leg {} started", leg.repo, leg.unit),
-            Err(why) => eprintln!("{task} {}: corpus leg {} did not start: {why}", leg.repo, leg.unit),
-        }
-        started
+        start_unit(e, task, &leg.unit, argv, home_vars(&env), None)
     }
 
     /// A round staged behind the open one: `queue round stage`, as a unit.
