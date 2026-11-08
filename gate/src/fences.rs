@@ -125,6 +125,16 @@ pub fn main(args: &[String]) -> i32 {
 /// one by bare name; the round, which builds the tree's own, is what finally judges. Exit 0 the
 /// fence passed, 1 it failed, 2 it could not be run (unknown name, no checkout).
 pub fn run_main(args: &[String]) -> i32 {
+    match spira_config::release_env::child_path_env_for_process() {
+        Ok(envs) => run_with(args, &envs),
+        Err(e) => {
+            eprintln!("gate fence-run: {e}");
+            2
+        }
+    }
+}
+
+fn run_with(args: &[String], envs: &[(String, String)]) -> i32 {
     const USAGE: &str = "usage: gate fence-run <name> --repo <root> --tip <sha> --base <ref>";
     let (mut name, mut repo, mut tip, mut base) = (None, None, None, None);
     let mut it = args.iter();
@@ -154,12 +164,12 @@ pub fn run_main(args: &[String]) -> i32 {
         eprintln!("gate fence-run: cannot check out {tip} in {repo}");
         return 2;
     }
-    let rc = run_in(&tree, &name, &base);
+    let rc = run_in(&tree, &name, &base, envs);
     let _ = git(&["worktree", "remove", "--force", &tree.display().to_string()]);
     rc
 }
 
-fn run_in(tree: &std::path::Path, name: &str, base: &str) -> i32 {
+fn run_in(tree: &std::path::Path, name: &str, base: &str, envs: &[(String, String)]) -> i32 {
     let path = tree.join(crate::def::PATH);
     let fences = std::fs::read_to_string(&path)
         .map_err(|e| format!("{}: {e}", path.display()))
@@ -186,8 +196,8 @@ fn run_in(tree: &std::path::Path, name: &str, base: &str) -> i32 {
     let status = std::process::Command::new("bash")
         .args(["-c", &fence.command])
         .current_dir(tree)
-        .env("SPIRA_GATE_BASE", base)
-        .env("SPIRA_GATE_BRANCH", "HEAD")
+        .envs(crate::engine::fence_env("HEAD", base))
+        .envs(envs.iter().map(|(k, v)| (k, v)))
         .env_remove("RUSTC_WRAPPER")
         .stdin(std::process::Stdio::null())
         .status();
@@ -276,7 +286,7 @@ mod tests {
     }
 
     fn fence_run(root: &str, tip: &str, name: &str) -> i32 {
-        run_main(&[name.into(), "--repo".into(), root.into(), "--tip".into(), tip.into(), "--base".into(), "main".into()])
+        run_with(&[name.into(), "--repo".into(), root.into(), "--tip".into(), tip.into(), "--base".into(), "main".into()], &[("PATH".to_string(), std::env::var("PATH").unwrap_or_default())])
     }
 
     #[test]
