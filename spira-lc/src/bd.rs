@@ -148,6 +148,21 @@ pub fn repo_label(bead_id: &str) -> Result<Option<String>, String> {
     Ok(labels.iter().filter_map(|l| l.as_str()).find_map(|l| l.strip_prefix("repo:").map(str::to_string)))
 }
 
+/// `bead_id`'s title; `Ok(None)` when bd holds no such bead.
+pub fn title(bead_id: &str) -> Result<Option<String>, String> {
+    let out = match run(&["show", bead_id, "--json"]) {
+        Ok(o) => o,
+        Err(e) if e.contains("no issue found matching") => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
+    let doc = match &parsed {
+        serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
+        v => v.clone(),
+    };
+    Ok(doc.get("title").and_then(|t| t.as_str()).map(str::to_string))
+}
+
 /// Every label on `bead_id`, read from bd.
 pub fn labels(bead_id: &str) -> Result<Vec<String>, String> {
     let out = run(&["show", bead_id, "--json"])?;
@@ -299,11 +314,21 @@ pub fn label_add(id: &str, label: &str) -> Result<(), String> {
 /// blocked`, and the supersede-by confirmation request). `--bead` ties the tracking
 /// decision bead mail files to the one this layer is bound to.
 pub fn ask_operator(from: &str, subject: &str, default: &str, bead_id: &str, body: &str) -> Result<String, String> {
+    ask_operator_classed(from, subject, default, None, bead_id, body)
+}
+
+/// [`ask_operator`] with an escalation `--class`: without one mail routes the ask to the
+/// concierge instead of the operator.
+pub fn ask_operator_classed(from: &str, subject: &str, default: &str, class: Option<&str>, bead_id: &str, body: &str) -> Result<String, String> {
     // mail, by name on the launcher's PATH (sp-gypjk); SPIRA_MAIL_SH is the harness-wide
     // binary-override seam.
     let mail_sh = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string());
-    let mut child = spira_config::bounded::bounded(&mail_sh)
-        .args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id])
+    let mut cmd = spira_config::bounded::bounded(&mail_sh);
+    cmd.args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id]);
+    if let Some(c) = class {
+        cmd.args(["--class", c]);
+    }
+    let mut child = cmd
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

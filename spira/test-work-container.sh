@@ -77,6 +77,7 @@ cp -r "$HERE/mail/kinds/." "$SPIRA_MAIL_KINDS/"
 # Empty lanes column admits every lane, so builder's plan partition is always granted.
 cat > "$TMP/repo-map" <<MAP
 testrepo | $TMP | push | origin/main | | |
+landrepo | $TMP/landrepo | push | main | | |
 MAP
 export SPIRA_REPO_MAP="$TMP/repo-map"
 tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
@@ -330,14 +331,34 @@ out="$(work_as "$BID" split "a split piece filed by the container-tier suite" --
 is "split: exits 0" "0" "$rc"
 
 # ── superseded-by: a hold plus a confirmation ask, never bd supersede directly ───────
+mail_count() { ls "$SPIRA_MAIL"/*/new 2>/dev/null | grep -c .; }
 SBID="$(bead.sh file "dwarf semantic layer: superseded-by fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 seed_bead "$SBID"
-out="$(work_as "$SBID" superseded-by "$BID" 2>&1)"; rc=$?
+before_all="$(mail_count)"
+out="$(work_as "$SBID" superseded-by --help 2>&1)"; rc=$?
+is "superseded-by --help: refused (exit 3)" "3" "$rc"
+want "superseded-by --help: the refusal says it is not a bead id" "not another bead's id" "$out"
+row="$(root_sql --use-db spira_lifecycle sql -q "SELECT holds FROM bead WHERE bead_id='$SBID'" -r json 2>&1)"
+nowant "superseded-by --help: no hold applied" "manual" "$row"
+is "superseded-by --help: nothing filed or mailed" "$before_all" "$(mail_count)"
+
+SUCC="$(bead.sh file "the landed successor of the supersede fixture" --for builder --repo landrepo --body-file "$TMP/build.md")"
+seed_bead "$SUCC"
+git init -q -b main "$TMP/landrepo"
+git -C "$TMP/landrepo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "spira: land $SUCC — the landed successor"
+land_sha="$(git -C "$TMP/landrepo" rev-parse --short HEAD)"
+before_op="$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | grep -c .)"
+out="$(work_as "$SBID" superseded-by "$SUCC" 2>&1)"; rc=$?
+[ "$rc" = 0 ] || echo "# $out" >&2
 is "superseded-by: exits 0" "0" "$rc"
+is "superseded-by: the confirmation ask is delivered to the operator, not rerouted" "$((before_op + 1))" "$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | grep -c .)"
+ask="$(cat "$SPIRA_MAIL"/operator/new/* 2>/dev/null)"
+want "superseded-by: the ask gives the successor's title" "the landed successor of the supersede fixture" "$ask"
+want "superseded-by: the ask gives the successor's landing commit" "$land_sha" "$ask"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, holds, reason FROM bead WHERE bead_id='$SBID'" -r json 2>&1)"
 want   "superseded-by: a manual hold is recorded, not SUPERSEDED" "manual" "$row"
 nowant "superseded-by: the bead itself is not moved to SUPERSEDED"   "\"state\":\"SUPERSEDED\"" "$row"
-want   "superseded-by: the request names the proposed successor"    "$BID" "$row"
+want   "superseded-by: the request names the proposed successor"    "$SUCC" "$row"
 
 # ── acceptance criterion, at full stack: a verb naming a foreign bead is refused ─────
 out="$(work_as "$BID" note "$SBID" 2>&1)"; rc=$?

@@ -770,32 +770,73 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
         Ok(a) => a,
         Err(e) => return e,
     };
-    let Some(successor) = args.first() else {
-        return (CANNOT_TELL, "work superseded-by: missing <successor-id>".into());
+    let successor = match args.first() {
+        Some(id) if is_bead_id(id) && id != bead_id => id.clone(),
+        Some(other) => return (REFUSED, format!("refused: work superseded-by: {other:?} is not another bead's id; nothing was held or asked. Usage: work superseded-by <successor-id>")),
+        None => return (CANNOT_TELL, "work superseded-by: missing <successor-id>".into()),
     };
-    // Not lifecycle::bead::BeadEventKind::Supersede: that is the authoritative, terminal
-    // transition, reserved for the groomer or operator's own confirmation (design §3.5 —
-    // "a supersede request, confirmed by the groomer or operator"). The dwarf's own request
-    // is a hold plus an ask; nothing here moves the bead to SUPERSEDED.
-    let (code, out) = apply_bead_event(
-        conn,
-        bead_id,
-        &actor,
-        BeadEventKind::Hold { kind: HoldKind::Manual, cause: HoldCause::SupersedeRequest, detail: Some(successor.clone()) },
-    );
-    if code != 0 {
-        return (code, out);
+    let successor_title = match crate::bd::title(&successor) {
+        Ok(Some(t)) => t,
+        Ok(None) => return (REFUSED, format!("refused: work superseded-by: no bead {successor} exists; nothing was held or asked")),
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
+    let own_title = crate::bd::title(bead_id).ok().flatten().unwrap_or_default();
+    let landing = landing_commit(conn, &successor);
+    let subject = format!("Retire as superseded by {successor}?");
+    let default = format!("supersede {bead_id} by {successor}");
+    let body = supersede_ask_body(bead_id, &own_title, &successor, &successor_title, landing.as_deref());
+    if let Err(e) = crate::bd::ask_operator_classed(&format!("{actor} <{actor}@spira>"), &subject, &default, Some(SUPERSEDE_CLASS), bead_id, &body) {
+        return (REFUSED, format!("refused: work superseded-by: the confirmation ask could not be delivered, so no hold was applied: {e}"));
     }
-    // mail refuses a Subject that leads with a bead id — the id belongs in --bead,
-    // which this call already carries. Same "## Question"/"## Default" requirement as
-    // cmd_blocked, from mail's "question" kind template.
-    let subject = format!("superseded-by {successor}?");
-    let question = format!("{bead_id} requests confirmation that it is superseded by {successor}.");
-    let body = format!("## Question\n{question}\n\n## Default\n{successor}\n");
-    match crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), &subject, successor, bead_id, &body) {
-        Ok(_) => (0, format!("hold applied; supersede-by-{successor} ask filed for {bead_id}")),
-        Err(e) => (CANNOT_TELL, format!("hold applied, but filing the ask failed: {e}")),
+    // Not BeadEventKind::Supersede: that terminal transition is the groomer's or operator's
+    // confirmation; the dwarf's request is a hold plus the ask.
+    let hold = BeadEventKind::Hold { kind: HoldKind::Manual, cause: HoldCause::SupersedeRequest, detail: Some(successor.clone()) };
+    match apply_bead_event(conn, bead_id, &actor, hold) {
+        (0, _) => (0, format!("supersede ask filed; hold applied for {bead_id}")),
+        (code, e) => (code, format!("the supersede ask WAS delivered (do not ask again), but the hold on {bead_id} was not applied: {e}")),
     }
+}
+
+const SUPERSEDE_CLASS: &str = "policy";
+
+/// Mail lint refuses a body line that names a bead without saying what the work is, so every
+/// id rides beside its title and, for the successor, where it landed.
+fn supersede_ask_body(bead_id: &str, own_title: &str, successor: &str, successor_title: &str, landing: Option<&str>) -> String {
+    let landed = match landing {
+        Some(l) => format!("It landed in commit {l}."),
+        None => "No landing commit naming it was found on its repository's landing ref.".to_string(),
+    };
+    format!(
+        "## Question\n\
+         Should {bead_id} (\"{own_title}\") be retired as superseded by {successor} (\"{successor_title}\")?\n\
+         The successor {successor} is \"{successor_title}\". {landed}\n\n\
+         ## Default\n\
+         Confirm the supersede: the bead's work already landed under its successor.\n\n\
+         ## Class basis\n\
+         Retiring a bead as superseded is terminal, and only the groomer or the operator may confirm it.\n"
+    )
+}
+
+/// `<short sha> <subject>` of the newest commit on the successor's landing ref naming it.
+fn landing_commit(conn: &Conn, id: &str) -> Option<String> {
+    let repo = submit_repo(conn, id).ok()?;
+    let home = spira_config::resolve::locate_home_for_process().ok()?;
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let reg = spira_config::repos::Registry::from_env(env, std::path::Path::new(&home));
+    let root = reg.root(&repo)?;
+    let landref = spira_config::repos::landref(&reg, &root)?;
+    let out = spira_config::bounded::bounded("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["log", "-n", "50", "--fixed-strings", &format!("--grep={id}"), "--format=%h%x1f%s%x1f%B%x1e", &landref])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    String::from_utf8_lossy(&out.stdout).split('\x1e').map(|r| r.trim_start_matches('\n')).find_map(|rec| {
+        let mut f = rec.splitn(3, '\x1f');
+        let (sha, subject, message) = (f.next()?, f.next()?, f.next()?);
+        crate::git_evidence::message_names_bead(message, id).then(|| format!("{sha} ({subject})"))
+    })
 }
 
 // ---- the lane verbs and the persona gate (sp-st0mm) --------------------------------------
@@ -1625,6 +1666,35 @@ mod tests {
         }
         for ok in ["sp-b411iv", "sp-b411iv.1"] {
             assert!(is_bead_id(ok), "{ok}");
+        }
+    }
+
+    /// mail's lint: a body line naming a bead must say, in at least four other words, what the work is.
+    fn bare_id_lines(body: &str) -> Vec<String> {
+        body.lines()
+            .filter(|l| l.contains("sp-"))
+            .filter(|l| l.split_whitespace().filter(|w| !w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-').starts_with("sp-")).count() < 4)
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn a_supersede_ask_describes_each_bead_it_names_and_argues_its_class() {
+        let body = supersede_ask_body("sp-old1", "fix the gate", "sp-new2", "the gate rewrite", Some("abc1234 (spira: land sp-new2)"));
+        assert_eq!(bare_id_lines(&body), Vec::<String>::new(), "{body}");
+        for want in ["fix the gate", "the gate rewrite", "abc1234", "## Question\n", "## Default\n", "## Class basis\n"] {
+            assert!(body.contains(want), "{want:?} missing from {body}");
+        }
+        let unlanded = supersede_ask_body("sp-old1", "", "sp-new2", "t", None);
+        assert_eq!(bare_id_lines(&unlanded), Vec::<String>::new(), "{unlanded}");
+        assert!(unlanded.contains("No landing commit"));
+        assert!(!bare_id_lines("## Question\nsp-old1 sp-new2?\n").is_empty(), "POSITIVE CONTROL: the lint shape catches a bare-id line");
+    }
+
+    #[test]
+    fn a_flag_is_never_taken_as_a_successor() {
+        for bad in ["--help", "-h", "--", ""] {
+            assert!(!is_bead_id(bad), "{bad:?}");
         }
     }
 
