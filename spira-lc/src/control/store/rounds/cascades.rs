@@ -30,7 +30,7 @@ pub struct Orphans {
     pub leased: Vec<String>,
 }
 
-const NEVER_BEGAN_CHECKED: &str = "no PR, run, pass, phase, eject or lease";
+const NEVER_BEGAN_CHECKED: &str = "no PR, run, pass, phase or ejected member";
 
 const FINISHED: [BatchState; 3] = [
     BatchState::Landed,

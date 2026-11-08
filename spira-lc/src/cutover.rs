@@ -1253,7 +1253,7 @@ pub(crate) fn plan_requeue_orphans(
             expect: batch::BatchState::Open,
             version: ob.row.version,
             actor: actor.to_string(),
-            reason: format!("requeue-orphans: opened and never began (no PR, run, pass, phase or eject in {stale_secs}s)"),
+            reason: format!("requeue-orphans: opened and never began (no PR, run, pass, phase or ejected member in {stale_secs}s)"),
         };
         let steps = plan_abandon(&rows, &abandon, now).map(|p| p.steps).unwrap_or_default();
         plan.phantoms.push(PhantomBatch { batch_id: ob.row.batch_id.clone(), members: ob.members.iter().map(|(id, _)| id.clone()).collect(), steps });
