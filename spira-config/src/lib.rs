@@ -1077,7 +1077,7 @@ pub fn require_id_prefix(doc: &SpiraToml) -> Result<(), String> {
 }
 
 /// Like [`validate`], but returns one warning per [`RETIRED_SPIRA_KEYS`] member found under
-/// `[spira]` — naming the key and the bead that retired it — instead of silently dropping
+/// `[spira]` (a member the registry in force still declares is kept: that registry requires it) — naming the key and the bead that retired it — instead of silently dropping
 /// them. A key this release does not know at all (a newer release wrote it) is warned and
 /// ignored, so a predecessor can read its successor's config; a malformed value of a known key
 /// still errors.
@@ -1109,7 +1109,7 @@ fn validate_value(mut root: toml::Value, reg: &registry::Registry) -> Result<(Sp
                 return Err(lifecycle_switch_refusal("spira.lifecycle_enforce", &v.to_string()));
             }
         }
-        for retired in RETIRED_SPIRA_KEYS {
+        for retired in RETIRED_SPIRA_KEYS.iter().filter(|r| reg.by_field(r.key).is_none()) {
             if spira.remove(retired.key).is_some() {
                 warnings.push(format!(
                     "{} is retired ({}) and ignored — remove it",
