@@ -124,7 +124,7 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         drain_warn_mins: getenv_i64("SPIRA_DRAIN_WARN_MINS", 15),
         idle_while_ready_n: getenv_i64("SPIRA_IDLE_WHILE_READY_N", 5).max(0) as usize,
         systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()),
-        units: crate::host_units::host_units(),
+        units: runtime::units::host(),
         prompt_file: getenv("SPIRA_WATCH_PROMPT_FILE").map(PathBuf::from),
         lapsed_dir: getenv("SPIRA_LAPSED_DIR").map(PathBuf::from),
         lapsed_marker: getenv("SPIRA_LAPSED_MARKER").map(PathBuf::from),

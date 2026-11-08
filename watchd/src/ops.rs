@@ -5,6 +5,9 @@
 
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+
+use runtime::units::{UnitHandle, Units};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SopMatch {
@@ -29,14 +32,12 @@ pub fn parse_match_output(out: &str) -> Vec<SopMatch> {
 }
 
 pub trait Ops {
-    /// `systemctl --user is-active <units…>` — ONE exec for every unit (the cost of
-    /// `status` must not grow with the manifest). Returns one state string per unit, in
-    /// the same order; `"?"` when the answer could not be had at all (no systemd, box has
-    /// no user manager).
+    /// The manager's `ActiveState` word for each unit, in the same order; `"?"` when the
+    /// answer could not be had at all (no systemd, box has no user manager).
     fn is_active(&self, units: &[String]) -> Vec<String>;
 
-    /// `systemctl --user show <units…> -p Id -p ActiveState -p NRestarts` — keyed by unit
-    /// Id so a unit that has gone cannot shift the answers onto its neighbour.
+    /// `(ActiveState, NRestarts)` keyed by unit name so a unit that has gone cannot shift the
+    /// answers onto its neighbour; a unit the manager cannot be asked about is left out.
     fn show(&self, units: &[String]) -> HashMap<String, (String, String)>;
 
     fn restart(&self, units: &[String]) -> Result<(), String>;
@@ -56,9 +57,8 @@ pub trait Ops {
     /// `mail-health.sh`'s own exit code (0 nothing to say, 1 escalated, 3 could not check).
     fn mail_health(&self) -> i32;
 
-    /// Every `spira-watch-*-<instance>.service` unit systemd currently knows about — from
-    /// `list-unit-files` (installed) and `list-units --all` (loaded) — so `prune` can find a
-    /// retired daemon's unit even when the two disagree about which set holds it.
+    /// Every `spira-watch-*-<instance>.service` unit the manager knows, loaded or only
+    /// installed, so `prune` can find a retired daemon's unit.
     fn list_watch_units(&self, instance: &str) -> Vec<String>;
 
     /// `systemctl --user disable --now <unit>` — never touched directly by command logic,
@@ -104,12 +104,13 @@ pub enum ToolRun {
 
 pub struct Real {
     pub systemctl: String,
+    pub units: Arc<dyn Units>,
     pub systemd_run: String,
 }
 
 impl Real {
     pub fn new(systemctl: String) -> Real {
-        Real { systemctl, systemd_run: std::env::var("SPIRA_SYSTEMD_RUN").unwrap_or_else(|_| "systemd-run".to_string()) }
+        Real { systemctl, units: runtime::units::host(), systemd_run: std::env::var("SPIRA_SYSTEMD_RUN").unwrap_or_else(|_| "systemd-run".to_string()) }
     }
 }
 
@@ -124,7 +125,7 @@ fn release_bin_tool(program: &str) -> Result<std::path::PathBuf, String> {
     }
 }
 
-// FORK-EDGE: needs Units list-by-pattern, is-enabled, disable and NRestarts (only facts/start/stop/restart exist), and a config-selected test double: SPIRA_SYSTEMCTL stubs in test-launchers-as-launched.sh would be bypassed onto the live user manager.
+// FORK-EDGE: needs a Units restart of several units with systemd's own refusal, and `disable --now`; reads go through `Real::units`.
 fn systemctl_cmd(systemctl: &str) -> Command {
     let mut c = Command::new(systemctl);
     c.arg("--user");
@@ -133,58 +134,17 @@ fn systemctl_cmd(systemctl: &str) -> Command {
 
 impl Ops for Real {
     fn is_active(&self, units: &[String]) -> Vec<String> {
-        if units.is_empty() {
-            return Vec::new();
-        }
-        let out = systemctl_cmd(&self.systemctl)
-            .arg("is-active")
-            .args(units)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output();
-        let text = match out {
-            Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
-            Err(_) => String::new(),
-        };
-        let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
-        while lines.len() < units.len() {
-            lines.push("?".to_string());
-        }
-        lines.truncate(units.len());
-        lines.iter().map(|l| if l.is_empty() { "?".to_string() } else { l.clone() }).collect()
+        units.iter().map(|u| self.units.detail(&UnitHandle::named(u)).map_or_else(|_| "?".to_string(), |d| d.active_state.unwrap_or_else(|| "inactive".into()))).collect()
     }
 
     fn show(&self, units: &[String]) -> HashMap<String, (String, String)> {
-        let mut out = HashMap::new();
-        if units.is_empty() {
-            return out;
-        }
-        let mut cmd = systemctl_cmd(&self.systemctl);
-        cmd.arg("show").args(units).args(["-p", "Id", "-p", "ActiveState", "-p", "NRestarts", "--no-pager"]);
-        let text = match cmd.stdin(Stdio::null()).stderr(Stdio::null()).output() {
-            Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
-            Err(_) => return out,
-        };
-        let mut id = String::new();
-        let mut state = String::new();
-        let mut restarts = String::new();
-        for line in text.lines() {
-            let Some((k, v)) = line.split_once('=') else { continue };
-            match k {
-                "Id" => {
-                    id = v.to_string();
-                    state.clear();
-                    restarts.clear();
-                }
-                "ActiveState" if !id.is_empty() => state = v.to_string(),
-                "NRestarts" if !id.is_empty() => {
-                    restarts = v.to_string();
-                    out.insert(id.clone(), (state.clone(), restarts.clone()));
-                }
-                _ => {}
-            }
-        }
-        out
+        units
+            .iter()
+            .filter_map(|u| {
+                let d = self.units.detail(&UnitHandle::named(u)).ok()?;
+                Some((u.clone(), (d.active_state.unwrap_or_else(|| "inactive".into()), d.n_restarts.unwrap_or(0).to_string())))
+            })
+            .collect()
     }
 
     fn restart(&self, units: &[String]) -> Result<(), String> {
@@ -270,20 +230,7 @@ impl Ops for Real {
     }
 
     fn list_watch_units(&self, instance: &str) -> Vec<String> {
-        let pattern = format!("spira-watch-*-{instance}.service");
-        let mut names = std::collections::BTreeSet::new();
-        for sub in [&["list-unit-files", "--no-legend"][..], &["list-units", "--all", "--no-legend"][..]] {
-            let mut args: Vec<&str> = sub.to_vec();
-            args.push(&pattern);
-            if let Ok(out) = systemctl_cmd(&self.systemctl).args(&args).stdin(Stdio::null()).stderr(Stdio::null()).output() {
-                for line in String::from_utf8_lossy(&out.stdout).lines() {
-                    if let Some(unit) = line.trim_start_matches(['●', ' ']).split_whitespace().next() {
-                        names.insert(unit.to_string());
-                    }
-                }
-            }
-        }
-        names.into_iter().collect()
+        self.units.list(&format!("spira-watch-*-{instance}.service")).map(|found| found.into_iter().map(|d| d.name).collect()).unwrap_or_default()
     }
 
     fn disable_now(&self, unit: &str) {
@@ -600,5 +547,48 @@ mod real_tests {
         assert_eq!(parse_match_output("sop-c\tMATCH\t1\tsym\n"), vec![m("sop-c", true)]);
     }
 
+    fn real_over(u: runtime::units::ScriptedUnits) -> Real {
+        Real { systemctl: "/nonexistent/systemctl".into(), units: Arc::new(u), systemd_run: "systemd-run".into() }
+    }
 
+    fn scripted() -> runtime::units::ScriptedUnits {
+        runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0)))
+    }
+
+    fn installed(name: &str, active: &str, restarts: u32) -> runtime::units::UnitDetail {
+        runtime::units::UnitDetail { active_state: Some(active.into()), n_restarts: Some(restarts), load_state: Some("loaded".into()), state: runtime::units::state_of_word(active), ..runtime::units::UnitDetail::absent(name) }
+    }
+
+    #[test]
+    fn is_active_reads_each_units_state_from_the_port_in_order() {
+        let u = scripted();
+        u.install_detail(installed("a.service", "active", 0));
+        u.install_detail(installed("b.service", "failed", 2));
+        let r = real_over(u);
+        assert_eq!(r.is_active(&["b.service".into(), "a.service".into(), "gone.service".into()]), ["failed", "active", "inactive"]);
+    }
+
+    #[test]
+    fn show_keys_state_and_restarts_by_unit_name() {
+        let u = scripted();
+        u.install_detail(installed("a.service", "active", 3));
+        let m = real_over(u).show(&["a.service".into()]);
+        assert_eq!(m.get("a.service"), Some(&("active".to_string(), "3".to_string())));
+    }
+
+    #[test]
+    fn list_watch_units_names_loaded_and_installed_units_of_the_instance() {
+        let u = scripted();
+        u.install_detail(installed("spira-watch-x-prod.service", "active", 0));
+        u.install_detail(installed("spira-watch-y-other.service", "active", 0));
+        assert_eq!(real_over(u).list_watch_units("prod"), ["spira-watch-x-prod.service"]);
+    }
+
+    #[test]
+    fn an_unreachable_manager_reads_as_unknown_not_inactive() {
+        let r = Real { systemctl: "x".into(), units: runtime::units::unreachable("down"), systemd_run: "x".into() };
+        assert_eq!(r.is_active(&["a.service".into()]), ["?"]);
+        assert!(r.show(&["a.service".into()]).is_empty());
+        assert!(r.list_watch_units("prod").is_empty());
+    }
 }

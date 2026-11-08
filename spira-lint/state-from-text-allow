@@ -44,8 +44,5 @@
 1 output spira/sim/src/world.rs
 1 output testenv/src/container.rs
 2 unit-name watchd/src/commands.rs
-4 output watchd/src/ops.rs
 1 unit-name watchtower/src/cpu_throttle.rs
-1 output watchtower/src/failed_units.rs
-1 output watchtower/src/probes.rs
 1 cannot-tell work/src/help.rs

@@ -1988,6 +1988,49 @@ pub fn for_host(clock: Arc<dyn Clock>, units: Option<&str>, systemctl: Option<&s
     from_value(clock, value)
 }
 
+/// A backend that could not be opened: every read says why, so a probe reports "unknown"
+/// rather than an all-clear.
+struct Unreachable(String);
+
+impl Unreachable {
+    fn err<T>(&self) -> Result<T> {
+        Err(RuntimeError::new(self.0.clone()))
+    }
+}
+
+impl Units for Unreachable {
+    fn start(&self, _: &UnitSpec) -> Result<UnitHandle> {
+        self.err()
+    }
+    fn stop(&self, _: &UnitHandle) -> Result<()> {
+        self.err()
+    }
+    fn restart(&self, _: &UnitHandle) -> Result<()> {
+        self.err()
+    }
+    fn facts(&self, _: &UnitHandle) -> Result<UnitFacts> {
+        self.err()
+    }
+    fn list(&self, _: &str) -> Result<Vec<UnitDetail>> {
+        self.err()
+    }
+}
+
+/// A manager that answers every read with `why`.
+pub fn unreachable(why: &str) -> Arc<dyn Units> {
+    Arc::new(Unreachable(why.into()))
+}
+
+/// The unit manager a host tool reads: [`for_host`] over this process's `SPIRA_UNITS` and
+/// `SPIRA_SYSTEMCTL`, or [`unreachable`] naming why it could not be opened.
+pub fn host() -> Arc<dyn Units> {
+    let var = |k: &str| std::env::var(k).ok();
+    match for_host(Arc::new(crate::ports::WallClock), var(UNITS_KEY).as_deref(), var(crate::systemctl::PROGRAM_KEY).as_deref()) {
+        Ok(backend) => backend.units(),
+        Err(e) => unreachable(&format!("unit manager unreachable: {e}")),
+    }
+}
+
 /// The backend `value` names; see [`UNITS_KEY`]. An unknown value is refused, naming it.
 pub fn from_value(clock: Arc<dyn Clock>, value: Option<&str>) -> Result<Backend> {
     match value.map(str::trim).filter(|v| !v.is_empty()) {
@@ -2011,6 +2054,13 @@ mod tests {
 
     fn spec(task: &str, key: &str, argv: &[&str]) -> UnitSpec {
         UnitSpec { task: task.into(), key: key.into(), argv: argv.iter().map(|s| s.to_string()).collect(), env: vec![], cwd: None }
+    }
+
+    #[test]
+    fn an_unreachable_manager_fails_every_read() {
+        let u = unreachable("no bus");
+        assert!(u.detail(&UnitHandle::named("a.service")).is_err());
+        assert!(u.list("spira-*").is_err());
     }
 
     #[test]

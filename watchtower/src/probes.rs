@@ -628,7 +628,7 @@ mod tests {
             Reading::Standing(s) => assert_eq!(s.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(), ["spira-hog.service"]),
             _ => panic!("not standing"),
         }
-        c.units = crate::host_units::host_units_unreachable("no manager");
+        c.units = runtime::units::unreachable("no manager");
         assert!(matches!(failing_units(&c, d.path()), Reading::Unknown));
         assert!(matches!(oom_restarts(&c, 100, d.path()), Reading::Unknown));
         assert!(matches!(release_currency(&c), Reading::Unknown));
