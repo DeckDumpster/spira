@@ -235,6 +235,7 @@ mod tests {
             phase: None,
             disposition: None,
             disposition_note: None,
+            version: None,
         }
     }
 
