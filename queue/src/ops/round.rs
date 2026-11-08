@@ -3218,7 +3218,7 @@ fn certify_pass(
         raise_unreported_reds(w, c, batch, &kv, &reds);
         let mut judged = kv.clone();
         judged.remove("over-cap");
-        judged.remove(NO_OUTPUT_KEY);
+    judged.remove(NO_OUTPUT_KEY);
         set(&mut judged, "red", &reds.join(","));
         let ride = Ride::with(w, &judged);
         let recorded = (if reds != [BUILD_RED] {
@@ -3270,7 +3270,7 @@ fn certify_pass(
     }
     let mut judged = kv.clone();
     judged.remove("over-cap");
-        judged.remove(NO_OUTPUT_KEY);
+    judged.remove(NO_OUTPUT_KEY);
     set(&mut judged, "ran", &ran.to_string());
     let ride = Ride::with(w, &judged);
     let greened = suites_started(w, batch, false)

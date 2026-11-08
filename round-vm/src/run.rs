@@ -2380,7 +2380,7 @@ fn on_vm_run(
             batch.join().unwrap_or_else(|_| Err("the batch thread panicked".into()))
         });
         let remote_rc = match streamed {
-            _ if watch.fired => return no_output_pass(env, args, vm, &watch, &mut progress, &results_dir),
+            Ok(255) if watch.fired => return no_output_pass(env, args, vm, &watch, &mut progress, &results_dir),
             Ok(255) if vm_lost(env, vm) => {
                 lose_vm(env, args, &mut progress);
                 progress.finish(&results_dir, VM_LOST_EXIT);
