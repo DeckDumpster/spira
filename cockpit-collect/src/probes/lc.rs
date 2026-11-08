@@ -213,11 +213,12 @@ mod tests {
         let t = testkit::TempDir::new("lc-nowrite");
         let d = t.join("snap");
         last_good(&d, "k", 100, || Some("[1]".into()));
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::OpenOptions::new().write(true).open(d.join("k.json")).unwrap().set_modified(past).unwrap();
         let before = io::data_writes();
         last_good(&d, "k", 101, || Some("[1]".into()));
         assert_eq!(io::data_writes(), before, "same content writes no data");
-        let age = std::fs::metadata(d.join("k.json")).unwrap().modified().unwrap().elapsed().unwrap();
-        assert!(age.as_secs() < 5, "mtime still marks the last good read");
+        assert!(std::fs::metadata(d.join("k.json")).unwrap().modified().unwrap() > past, "mtime still marks the last good read");
         last_good(&d, "k", 102, || Some("[2]".into()));
         assert_eq!(io::data_writes(), before + 1, "changed content is written");
     }
