@@ -1384,11 +1384,15 @@ pub mod edge {
         vars
     }
 
-    fn with_base_env(vars: Vec<(String, String)>) -> Result<Vec<(String, String)>, String> {
+    pub fn base_env(vars: Vec<(String, String)>, toml: &str) -> Vec<(String, String)> {
         let release = std::env::var(spira_config::RELEASE_ENV).unwrap_or_default();
         let home = std::env::var("HOME").unwrap_or_default();
         let path = std::env::var("PATH").unwrap_or_default();
-        Ok(leg_env(vars, &release, &home, &spira_config::process::spec()?, &path))
+        leg_env(vars, &release, &home, toml, &path)
+    }
+
+    fn with_base_env(vars: Vec<(String, String)>) -> Result<Vec<(String, String)>, String> {
+        Ok(base_env(vars, &spira_config::process::spec()?))
     }
 
     pub fn start_unit(e: &Effects, task: &str, key: &str, argv: Vec<String>, vars: Vec<(String, String)>, cwd: Option<PathBuf>) -> Result<String, String> {

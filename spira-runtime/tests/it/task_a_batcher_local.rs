@@ -496,6 +496,15 @@ fn a_leg_unit_carries_the_release_path_home_and_config_spec() {
 fn a_leg_unit_path_keeps_the_release_first_then_the_runtime_path_so_aws_is_found() {
     use spira_runtime::tasks::a::batcher_local::edge::leg_env;
     let path_of = |runtime: &str| leg_env(vec![], "/r", "/h", "/c/cfg", runtime).into_iter().find(|(n, _)| n == "PATH").map(|(_, v)| v).unwrap();
-    assert_eq!(path_of("/home/u/.local/lib/spira-env/bin:/usr/bin"), "/r/bin:/r/spira:/home/u/.local/lib/spira-env/bin:/usr/bin");
+    assert_eq!(path_of("/opt/tools/bin:/usr/bin"), "/r/bin:/r/spira:/opt/tools/bin:/usr/bin");
     assert_eq!(path_of(""), "/r/bin:/r/spira:/usr/local/bin:/usr/bin:/bin", "no runtime PATH falls back to the system dirs");
+}
+
+#[test]
+fn the_unit_environment_built_for_a_leg_ends_in_the_runtimes_own_path() {
+    use spira_runtime::tasks::a::batcher_local::edge::base_env;
+    let own = std::env::var("PATH").expect("test process has a PATH");
+    let env = base_env(vec![], "/c/cfg");
+    let path = env.into_iter().find(|(n, _)| n == "PATH").map(|(_, v)| v).unwrap();
+    assert!(path.ends_with(&format!(":{own}")), "{path} should end with the runtime PATH {own}");
 }
