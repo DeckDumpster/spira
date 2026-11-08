@@ -682,6 +682,19 @@ fn config_for_a_tree_has_its_delta_applied_and_a_key_without_an_entry_stays_abse
 }
 
 #[test]
+fn staging_a_delta_that_retires_a_key_keeps_the_key_the_installed_registry_still_requires() {
+    let w = World::with_git(delta_git(DELTA_BOTH));
+    let spec = w.cfg.toml_spec().unwrap();
+    file(Path::new(&spec), "[spira]\nid_prefix = \"sp\"\nold_key = 1\n");
+    let tree = w.cfg.releases.join("retiring-tree");
+    file(&tree.join(config_delta::DELTA_PATH), DELTA_BOTH);
+    let (dir, staged) = config_delta::staged_for_tree(&spec, &tree).unwrap().expect("the tree has a delta");
+    let text = fs::read_to_string(&staged).unwrap();
+    assert!(text.contains("new_key = 300") && text.contains("old_key = 1"), "{text}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn systemd_timespans_parse_into_a_start_budget() {
     use crate::systemctl::parse_timespan;
     assert_eq!(parse_timespan("5s"), Some(Duration::from_secs(5)));
