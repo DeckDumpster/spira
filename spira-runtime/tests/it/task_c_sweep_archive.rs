@@ -74,3 +74,15 @@ fn t5_the_fast_path_stores_new_changed_and_bodiless_rels_and_keeps_vanished_rows
 fn t6_two_virtual_days_are_deterministic_and_within_2_events_an_hour() {
     t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&matching())), 2, 2);
 }
+
+#[test]
+fn t7_one_pass_stores_at_most_a_bounded_batch_so_the_carry_fits_one_journal_record() {
+    let h = t::handler::<H>(SET);
+    let sources: Vec<Source> = (0..5000).map(|i| src(&format!("-home-ryan-spira-run-worktree-sp-{i:06}/{i:036}.jsonl"), 10, 1)).collect();
+    let snap = Snapshot { sources, index: BTreeMap::new(), projects_dir_exists: true, projects_dir_configured: false };
+    let (carry, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap), TICK).unwrap();
+    assert_eq!(acts.len(), task::PASS_MAX, "one pass stores at most PASS_MAX transcripts; the next pass takes the rest");
+    assert_eq!(carry.rels.len(), task::PASS_MAX);
+    let record = serde_json::to_string(&carry).unwrap();
+    assert!(record.len() < 64 * 1024, "the carry is one journal record and must stay under the store's string limit: {} bytes", record.len());
+}
