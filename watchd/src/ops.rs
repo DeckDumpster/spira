@@ -591,4 +591,14 @@ mod real_tests {
         assert!(r.show(&["a.service".into()]).is_empty());
         assert!(r.list_watch_units("prod").is_empty());
     }
+
+    #[test]
+    fn a_systemctl_override_decides_what_status_reads_instead_of_the_live_manager() {
+        let tmp = testkit::TempDir::new("watchd-stub");
+        let stub = tmp.path().join("stubctl");
+        testkit::write_exe(&stub, "#!/bin/sh\nprintf 'Id=spira-watch-a-prod.service\\nLoadState=loaded\\nActiveState=failed\\nNRestarts=7\\n'\n");
+        let r = Real::new(stub.to_string_lossy().into_owned(), Some(&stub.to_string_lossy()));
+        assert_eq!(r.is_active(&["spira-watch-a-prod.service".into()]), ["failed"]);
+        assert_eq!(r.show(&["spira-watch-a-prod.service".into()]).get("spira-watch-a-prod.service"), Some(&("failed".to_string(), "7".to_string())));
+    }
 }
