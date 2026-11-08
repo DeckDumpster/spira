@@ -17,12 +17,14 @@ pub const INFRA_MARKERS: &[&str] = &["NO RESULT", "OVER-CAP", "cannot check out"
 pub const STALE_AMI_MARKER: &str = "round AMI is stale";
 pub const BACKOFF_SECS: u64 = 600;
 pub const STOP_AFTER: u32 = 2;
+pub const NO_VM_PAGE_AFTER: u32 = 3;
 pub const REFUSAL_WINDOW_SECS: u64 = 1800;
 pub const REFUSAL_STOP_AFTER: u32 = 2;
 
 #[derive(Default, Clone, PartialEq, Debug)]
 pub struct State {
     pub infra: u32,
+    pub no_vm: u32,
     pub backoff_until: u64,
     pub paged_open: String,
     pub orphan: String,
@@ -91,14 +93,24 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, now: u64, detail: &str
     let mut next = st.clone();
     let mut fx = Effects::default();
     match outcome {
-        Outcome::Quiet => next.infra = 0,
+        Outcome::Quiet => {
+            next.infra = 0;
+            next.no_vm = 0;
+        }
         Outcome::Red => {
             next.infra = 0;
+            next.no_vm = 0;
             fx.pause = true;
             fx.pages.push(format!("ROUND RED {repo} — attribute and eject, then rm the pause file ({detail})"));
         }
         Outcome::StaleImage => {}
-        Outcome::NoVm => next.backoff_until = now + BACKOFF_SECS,
+        Outcome::NoVm => {
+            next.backoff_until = now + BACKOFF_SECS;
+            next.no_vm += 1;
+            if next.no_vm == NO_VM_PAGE_AFTER {
+                fx.pages.push(format!("NO ROUND VM {repo}: {} consecutive rounds could not run, retrying with backoff ({detail})", next.no_vm));
+            }
+        }
         Outcome::OpenFailed => {
             fx.pages.push(format!("OPEN FAILED {repo} — the cut could not open a round ({detail})"));
         }
@@ -180,6 +192,7 @@ impl Files {
             .collect();
         State {
             infra: kv.get("infra").and_then(|v| v.parse().ok()).unwrap_or(0),
+            no_vm: kv.get("no_vm").and_then(|v| v.parse().ok()).unwrap_or(0),
             backoff_until: kv.get("backoff_until").and_then(|v| v.parse().ok()).unwrap_or(0),
             paged_open: kv.get("paged_open").cloned().unwrap_or_default(),
             orphan: kv.get("orphan").cloned().unwrap_or_default(),
@@ -190,8 +203,8 @@ impl Files {
     pub fn save(&self, st: &State) -> Result<(), String> {
         fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
         let body = format!(
-            "infra={}\nbackoff_until={}\npaged_open={}\norphan={}\norphan_since={}\nredriven={}\n",
-            st.infra, st.backoff_until, st.paged_open, st.orphan, st.orphan_since, st.redriven
+            "infra={}\nno_vm={}\nbackoff_until={}\npaged_open={}\norphan={}\norphan_since={}\nredriven={}\n",
+            st.infra, st.no_vm, st.backoff_until, st.paged_open, st.orphan, st.orphan_since, st.redriven
         );
         fs::write(self.dir.join("state"), body).map_err(|e| format!("rounds-pace state: {e}"))
     }
@@ -370,7 +383,7 @@ mod tests {
         let mut st = State::default();
         for i in 0..5 {
             let (next, fx) = advance(&st, &Outcome::NoVm, "r", 1000 + i, "acquire failed");
-            assert_eq!((fx.pause, fx.stop, fx.pages.len(), next.infra, next.backoff_until), (false, false, 0, 0, 1000 + i + BACKOFF_SECS));
+            assert_eq!((fx.pause, fx.stop, fx.pages.len(), next.infra, next.backoff_until), (false, false, usize::from(i == 2), 0, 1000 + i + BACKOFF_SECS));
             st = next;
         }
     }
