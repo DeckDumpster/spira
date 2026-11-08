@@ -454,6 +454,42 @@ impl Journal for SocketJournal {
 mod tests {
     use super::*;
 
+
+    #[test]
+    fn a_closed_connection_with_no_reply_is_a_cannot_tell() {
+        let dir = testkit::TempDir::new("socket-closed");
+        let path = dir.path().join("s.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let t = std::thread::spawn(move || drop(listener.accept().unwrap()));
+        let err = lc_call(&path, &["cursor"]).unwrap_err();
+        t.join().unwrap();
+        assert!(err.is_cannot_tell(), "{err}");
+    }
+
+    #[test]
+    fn a_store_that_is_not_listening_is_a_cannot_tell() {
+        let err = lc_call(&testkit::TempDir::new("socket-absent").path().join("s.sock"), &["cursor"]).unwrap_err();
+        assert!(err.is_cannot_tell(), "{err}");
+    }
+
+    #[test]
+    fn the_stores_own_cannot_tell_exit_arrives_as_a_cannot_tell_and_a_fault_does_not() {
+        let dir = testkit::TempDir::new("socket-exit2");
+        let path = dir.path().join("s.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let t = std::thread::spawn(move || {
+            for reply in [RuntimeError::cannot_tell("cannot tell: deadline"), RuntimeError::new("broken")] {
+                let (stream, _) = listener.accept().unwrap();
+                answer_one(stream, &|_| Err(reply.clone())).unwrap();
+            }
+        });
+        let first = lc_call(&path, &["cursor"]).unwrap_err();
+        let second = lc_call(&path, &["cursor"]).unwrap_err();
+        t.join().unwrap();
+        assert!(first.is_cannot_tell(), "{first}");
+        assert!(!second.is_cannot_tell() && !second.is_refused(), "{second}");
+    }
+
     /// The flusher's bound: a write is due once it is `age` old, whichever write made it so
     /// (sp-4du857), and a restore keeps the older write's age.
     #[test]
