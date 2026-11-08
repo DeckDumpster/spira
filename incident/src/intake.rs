@@ -420,16 +420,32 @@ pub fn cmd_file(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, 
             }
         }
     }
-    if file_body(env, bd, mailer, clock, title, body) {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
+    match file_body_id(env, bd, mailer, clock, title, body) {
+        Ok(id) => {
+            println!("{}", filed_answer(id.as_deref()));
+            ExitCode::SUCCESS
+        }
+        Err(()) => ExitCode::FAILURE,
     }
+}
+
+/// What `incident file` says on stdout once the event is settled: the bead it filed or bumped,
+/// or null when nothing was filed (activation skew, or a spool entry with no REF set aside).
+/// Callers deserialise it.
+pub fn filed_answer(id: Option<&str>) -> String {
+    serde_json::json!({ "id": id }).to_string()
 }
 
 /// `incident file <title>` with its payload in hand: spooled, then filed. `false` when the
 /// event could not be spooled or stays spooled for `drain`.
 pub fn file_body(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, title: &str, body: Vec<u8>) -> bool {
+    file_body_id(env, bd, mailer, clock, title, body).is_ok()
+}
+
+/// `file_body`, naming the bead the event landed on: `Ok(None)` is a skew with nothing filed,
+/// `Err` is an event left spooled.
+#[allow(clippy::result_unit_err)]
+pub fn file_body_id(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, title: &str, body: Vec<u8>) -> Result<Option<String>, ()> {
     let reference = env.repo_override_ref().unwrap_or_else(|| {
         let slug: String = title.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' { c } else { '-' }).take(60).collect();
         format!("incident:{slug}")
@@ -447,15 +463,9 @@ pub fn file_body(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock,
     let stamp = spool_stamp();
     let sp = spool::entry_path(&env.spool_dir, &stamp, &reference, std::process::id());
     if std::fs::write(&sp, spool::format_entry(&entry)).is_err() {
-        return false;
+        return Err(());
     }
-    match drain_one(env, bd, mailer, clock, &sp) {
-        Ok(_) => true,
-        Err(()) => {
-            ilog(env, &format!("spooled {reference} at {}", sp.display()));
-            false
-        }
-    }
+    drain_one(env, bd, mailer, clock, &sp).inspect_err(|()| ilog(env, &format!("spooled {reference} at {}", sp.display())))
 }
 
 /// `incident file <title> -` in-process, with the host's ports: what a Spira caller runs where
@@ -488,3 +498,14 @@ pub fn spool_stamp() -> String {
     iso.chars().filter(|c| *c != '-' && *c != ':').collect()
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::filed_answer;
+
+    #[test]
+    fn the_filed_answer_is_one_json_object_naming_the_bead_or_null() {
+        assert_eq!(filed_answer(Some("sp-abc")), r#"{"id":"sp-abc"}"#);
+        assert_eq!(filed_answer(None), r#"{"id":null}"#);
+    }
+}
