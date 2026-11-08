@@ -29,7 +29,7 @@ fn every_corpus_exit_is_typed_and_a_fault_carries_round_vm_s_stderr() {
     assert_eq!(corpus_end(1, err, None, 600, 1, 1), Ok(MainEnd::Ran));
     assert_eq!(corpus_end(4, err, None, 600, 1, 1), Ok(MainEnd::WorkspaceBuild));
     for rc in [2, 3, 101, 124, 137, -1] {
-        let e = corpus_end(rc, err, 600, 3, 5).unwrap_err();
+        let e = corpus_end(rc, err, None, 600, 3, 5).unwrap_err();
         assert!(e.contains("harness fault"), "rc {rc}: {e}");
         assert!(
             e.contains("could not determine which binary"),
