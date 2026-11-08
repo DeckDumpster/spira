@@ -126,7 +126,7 @@ fn t3_a_corpus_unit_ran_on_its_own_stream_starts_certify_at_once() {
         .unwrap()
         .double(OBSERVE, move |_| Ok(serde_json::to_string(&snaps.lock().unwrap().pop().unwrap_or_else(idle)).unwrap()))
         .double(ASSEMBLE, move |_| Ok(serde_json::to_string(&assembled).unwrap()))
-        .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into() }).unwrap()));
+        .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap()));
     for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, ROUND_OPEN].contains(e)) {
         r = r.double(e, |_| Ok("{}".into()));
     }
@@ -235,4 +235,169 @@ fn t3_a_red_certify_ejects_the_guilty_then_abandons() {
     let eject = names.iter().position(|e| *e == EJECT).unwrap_or_else(|| panic!("no eject: {names:?}"));
     assert!(names[eject..].contains(&ABANDON), "{names:?}");
     assert_eq!((after[eject].1.why.as_str(), after[eject].1.bead.as_str()), ("/run/certify-r9.out", ""), "the guilty are read from the output");
+}
+
+// --- sp-8nlvra: a held or skipping repo names why, and a red round's pause ends on a landing ---
+
+/// `spira` with one admissible member, under the pause a red round wrote at base `b0`.
+fn paused(base: &str) -> Snapshot {
+    let mut s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-a", "t1")]))].into(), now_ms: NOW };
+    let r = s.repos.get_mut("spira").unwrap();
+    r.base_sha = base.into();
+    r.paused = Some("local corpus red — the attribution leg ended (Code(2)) with no outcome".into());
+    s
+}
+
+fn paused_on(base: &str) -> Carry {
+    Carry { repos: [("spira".to_string(), RepoCarry { paused_on: Some(base.into()), ..RepoCarry::default() })].into() }
+}
+
+/// The 2026-11-07 stall: a red round's pause stood a whole day while spira beads waited, and the
+/// pass logged nothing. A pause seen first is held, and the hold names the pause and how it lifts.
+#[test]
+fn sp_8nlvra_a_paused_repo_is_held_and_names_the_pause() {
+    let (carry, acts) = decide(&Carry::default(), &paused("b0"));
+    assert!(acts.is_empty(), "{acts:?}");
+    let rc = &carry.repos["spira"];
+    assert_eq!(rc.state, State::Held);
+    assert_eq!(rc.paused_on.as_deref(), Some("b0"), "the base the pause was seen on is carried");
+    let why = rc.skip_why.clone().expect("a held repo names why");
+    assert!(why.contains("paused") && why.contains("local corpus red") && why.contains("rounds-pace/spira/pause"), "{why}");
+}
+
+/// Once a round has landed past the base the pause was seen on, the red it guarded is behind the
+/// repo: the pass lifts the pause and cuts the waiting member.
+#[test]
+fn sp_8nlvra_a_landing_past_the_paused_base_lifts_the_pause_and_cuts() {
+    let (carry, acts) = decide(&paused_on("b0"), &paused("b1"));
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert_eq!(names, [PAUSE, FETCH, ASSEMBLE], "{acts:?}");
+    let lift: Leg = serde_json::from_str(&acts[0].input).unwrap();
+    assert_eq!(lift.bead, "lift", "{lift:?}");
+    let rc = &carry.repos["spira"];
+    assert_eq!((rc.state, rc.paused_on.clone(), rc.skip_why.clone()), (State::Assembling, None, None));
+}
+
+/// An operator's deliberate hold (`hold:`) is never lifted by a landing.
+#[test]
+fn sp_8nlvra_a_deliberate_hold_survives_a_landing() {
+    let mut s = paused("b1");
+    s.repos.get_mut("spira").unwrap().paused = Some("hold: publish red".into());
+    let (carry, acts) = decide(&paused_on("b0"), &s);
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Held);
+}
+
+/// A scoped stop names its owner's reason.
+#[test]
+fn sp_8nlvra_a_stopped_repo_names_the_stop() {
+    let mut s = busy();
+    let r = s.repos.get_mut("spira").unwrap();
+    r.stopped = true;
+    r.stop_why = Some("concierge: hand fix".into());
+    let (carry, _) = decide(&Carry::default(), &s);
+    let why = carry.repos["spira"].skip_why.clone().expect("named");
+    assert!(why.contains("stopped") && why.contains("concierge: hand fix") && why.contains("world.sh unpause --repo spira --lanes rounds"), "{why}");
+}
+
+/// A feature group whose every member waits on an unlanded prerequisite must not starve the
+/// catch-all: the blocked are refused first, then the round is selected from what is left.
+#[test]
+fn sp_8nlvra_a_blocked_feature_group_does_not_starve_the_catch_all() {
+    let mut x1 = member("sp-x.1", "t1");
+    x1.deps = vec!["sp-z".into()];
+    let mut x2 = member("sp-x.2", "t2");
+    x2.deps = vec!["sp-z".into()];
+    let mut r = repo(vec![x1, x2, member("sp-c", "t3")]);
+    r.blockers = vec!["sp-z".into()];
+    let s = Snapshot { repos: [("spira".to_string(), r)].into(), now_ms: NOW };
+    let (carry, acts) = decide(&Carry::default(), &s);
+    let assemble = acts.iter().find(|a| a.effect == ASSEMBLE).unwrap_or_else(|| panic!("the catch-all member cuts: {acts:?} {carry:?}"));
+    let leg: Leg = serde_json::from_str(&assemble.input).unwrap();
+    assert_eq!(leg.members, [("sp-c".to_string(), "t3".to_string())]);
+}
+
+/// Members wait but none is admissible: the pass names each and why.
+#[test]
+fn sp_8nlvra_a_pool_with_nothing_admissible_names_each_member() {
+    let mut s = busy();
+    for m in &mut s.repos.get_mut("spira").unwrap().pool {
+        m.sifted_tip = Some("old".into());
+    }
+    let (carry, acts) = decide(&Carry::default(), &s);
+    assert!(acts.is_empty(), "{acts:?}");
+    let why = carry.repos["spira"].skip_why.clone().expect("named");
+    assert!(why.contains("sp-a: no sift pass at its tip t1") && why.contains("sp-b: no sift pass at its tip t2"), "{why}");
+}
+
+/// The log owes one line per change of a repo's named reason, and one when it clears.
+#[test]
+fn sp_8nlvra_a_changed_skip_reason_is_logged_once() {
+    let (held, _) = decide(&Carry::default(), &paused("b0"));
+    let lines = notes(&Carry::default(), &held);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].starts_with("batcher.local spira: no cut — ") && lines[0].contains("paused"), "{lines:?}");
+    let (again, _) = decide(&held, &paused("b0"));
+    assert!(notes(&held, &again).is_empty(), "an unchanged reason is not logged again");
+    let (cut, _) = decide(&again, &paused("b1"));
+    let lifted = notes(&again, &cut);
+    assert!(lifted.len() == 1 && lifted[0].contains("cutting"), "{lifted:?}");
+}
+
+// --- sp-822b8l: a refused open re-cuts without the members it named, never abandons ---
+
+fn opening() -> Carry {
+    let rc = RepoCarry { state: State::Opened, round_key: Some("k".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into()), ("sp-c".into(), "t3".into())], wt: "/w".into(), base: "b1".into(), ..RepoCarry::default() };
+    Carry { repos: [("spira".to_string(), rc)].into() }
+}
+
+fn open_leg() -> Leg {
+    Leg { why: "suites".into(), ..Leg::on("spira") }
+}
+
+/// 2026-11-07 05:26Z: four cuts abandoned members-differ because the open would not admit
+/// sp-1mspuc. The open now names it (typed), and the batcher opens the others at once.
+#[test]
+fn sp_822b8l_a_pool_with_one_inadmissible_member_still_opens_a_round_of_the_others() {
+    let refused = Opened { refused: vec![("sp-b".into(), "integration".into(), "sp-b: carried by integration sp-int — lands with it, not admitted".into())], ..Opened::default() };
+    let (carry, acts) = on_outcome(&opening(), ROUND_OPEN, true, &serde_json::to_string(&refused).unwrap(), &open_leg(), NOW);
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert_eq!(names, [ROUND_OPEN], "re-opened without the refused member, nothing abandoned: {acts:?}");
+    let leg: Leg = serde_json::from_str(&acts[0].input).unwrap();
+    assert_eq!(leg.members, [("sp-a".to_string(), "t1".to_string()), ("sp-c".to_string(), "t3".to_string())]);
+    assert_eq!(leg.why, "suites", "the re-open keeps the corpus leg's mark");
+    let rc = &carry.repos["spira"];
+    assert_eq!(rc.state, State::Opened);
+    assert_eq!(rc.refused.get("sp-b"), Some(&("t2".to_string(), "b1".to_string(), "integration".to_string())));
+    let (carry, acts) = on_outcome(&carry, ROUND_OPEN, true, &serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap(), &leg, NOW);
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [CORPUS], "{acts:?}");
+    assert_eq!(carry.repos["spira"].members.len(), 2);
+}
+
+/// The refused member stays out of later cuts at the same tip and base, named; a moved base
+/// lets it be tried again.
+#[test]
+fn sp_822b8l_a_refused_member_stays_out_until_its_tip_or_the_base_moves() {
+    let rc = RepoCarry { refused: [("sp-b".to_string(), ("t2".to_string(), "b1".to_string(), "integration".to_string()))].into(), ..RepoCarry::default() };
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let (next, acts) = decide(&carry, &busy());
+    let assemble = acts.iter().find(|a| a.effect == ASSEMBLE).expect("sp-a still cuts");
+    let leg: Leg = serde_json::from_str(&assemble.input).unwrap();
+    assert_eq!(leg.members, [("sp-a".to_string(), "t1".to_string())]);
+    assert!(next.repos["spira"].refused.contains_key("sp-b"));
+    let mut moved = busy();
+    moved.repos.get_mut("spira").unwrap().base_sha = "b2".into();
+    let (_, acts) = decide(&carry, &moved);
+    let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ASSEMBLE).unwrap().input).unwrap();
+    assert_eq!(leg.members.len(), 2, "a moved base tries it again: {leg:?}");
+}
+
+/// Every named member refused: no round, no abandon, and the repo is idle with the members out.
+#[test]
+fn sp_822b8l_an_open_refusing_every_member_abandons_nothing() {
+    let all = Opened { refused: ["sp-a", "sp-b", "sp-c"].iter().map(|id| (id.to_string(), "gate-red".to_string(), format!("{id}: its gate is FAIL"))).collect(), ..Opened::default() };
+    let (carry, acts) = on_outcome(&opening(), ROUND_OPEN, true, &serde_json::to_string(&all).unwrap(), &open_leg(), NOW);
+    assert!(!acts.iter().any(|a| a.effect == ABANDON || a.effect == PAUSE), "{acts:?}");
+    let rc = &carry.repos["spira"];
+    assert_eq!((rc.state, rc.refused.len()), (State::Idle, 3));
 }

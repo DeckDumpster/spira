@@ -234,8 +234,15 @@ pub struct Repo {
     pub open_round: Option<Round>,
     pub branch_tips: BTreeMap<String, String>,
     pub base_sha: String,
-    /// The scoped stop for the repo's `rounds` lane, or the pace's pause file.
+    /// The scoped stop for the repo's `rounds` lane.
     pub stopped: bool,
+    /// The scoped stop's own reason (owner and why), when the lane is stopped.
+    #[serde(default)]
+    pub stop_why: Option<String>,
+    /// The pace's pause file (`run/rounds-pace/<repo>/pause`), its text, when it stands: a red
+    /// round wrote it. A text that starts with `hold:` is an operator's deliberate hold.
+    #[serde(default)]
+    pub paused: Option<String>,
     pub declares_own_testenv: bool,
     /// Why `round certify` would refuse the open round at once (`round_certifiable`), if it would.
     #[serde(default)]
@@ -286,6 +293,11 @@ pub enum Trigger {
     /// `round_open` refused, or the merged tree has no suites and declares no testenv (not in the
     /// contract's table, which gives `Opened` no failure exit).
     OpenFailed,
+    /// `round open` refused some named members, by name (sp-822b8l): it is asked again for the
+    /// rest (not in the contract's table).
+    OpenRefusedSome,
+    /// `round open` refused every named member: nothing to open, nothing to abandon.
+    OpenRefusedAll,
     LegRed,
     LegGreenMenders,
     LegGreen,
@@ -327,6 +339,8 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Opened, Trigger::OpenedWithSuites, State::Corpus),
     (State::Opened, Trigger::OpenedOwnTestenv, State::Certifying),
     (State::Opened, Trigger::OpenFailed, State::Done),
+    (State::Opened, Trigger::OpenRefusedSome, State::Opened),
+    (State::Opened, Trigger::OpenRefusedAll, State::Done),
     (State::Corpus, Trigger::LegRed, State::Attributing),
     (State::Corpus, Trigger::LegGreenMenders, State::Mending),
     (State::Corpus, Trigger::LegGreen, State::Certifying),
@@ -421,6 +435,17 @@ pub struct RepoCarry {
     pub leg_at_ms: u64,
     #[serde(default)]
     pub run: u32,
+    /// The base the standing pause was first seen on: a landing past it lifts the pause.
+    #[serde(default)]
+    pub paused_on: Option<String>,
+    /// Why this repo's last pass cut nothing while members waited, named
+    /// (law-a-failure-carries-its-own-explanation); logged once each time it changes.
+    #[serde(default)]
+    pub skip_why: Option<String>,
+    /// Members `queue round open` refused, as id → (tip, base, kind): each stays out of the cut
+    /// until its tip or the base moves.
+    #[serde(default)]
+    pub refused: BTreeMap<String, (String, String, String)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -495,6 +520,9 @@ pub struct Assembled {
 pub struct Opened {
     #[serde(default)]
     pub batch: String,
+    /// The members a refused open named as not admitted, as (id, kind, why); nothing opened.
+    #[serde(default)]
+    pub refused: Vec<(String, String, String)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -577,17 +605,65 @@ pub fn page_line(now_ms: u64, text: &str) -> String {
     format!("{} [watch:rounds] {text}", batcher_cut::io::utc_stamp(now_ms / 1000))
 }
 
-/// The cut `screen::cut_pool` → `base_fix_lane` → `select_round` → `refuse_blocked` →
+/// The cut `screen::cut_pool` → `refuse_blocked` → `base_fix_lane` → `select_round` →
 /// `cap_round` → `should_cut` selects from `repo`, with its round key; `None` when nothing triggers.
 pub fn select(repo: &Repo, max_members: usize) -> Option<(Vec<core::Member>, String)> {
+    select_why(repo, max_members).ok()
+}
+
+/// [`select`], or why nothing was cut: one line per waiting member set aside (empty when the
+/// pool is). The blocked are refused before the round is selected, so a feature group whose
+/// every member waits on an unlanded prerequisite never starves the catch-all.
+pub fn select_why(repo: &Repo, max_members: usize) -> Result<(Vec<core::Member>, String), Vec<String>> {
+    let mut why: Vec<String> = repo.pool.iter().filter(|m| m.gate_red).map(|m| format!("{}: its gate is red at {}", m.id, m.tip)).collect();
     let pool: Vec<core::Member> = repo.pool.iter().filter(|m| !m.gate_red).map(|m| m.core(&repo.blockers)).collect();
     let sifted: BTreeMap<String, String> = repo.pool.iter().filter_map(|m| m.sifted_tip.clone().map(|t| (m.id.clone(), t))).collect();
-    let (pool, _) = core::select_round(core::base_fix_lane(batcher_cut::screen::cut_pool(pool, &sifted)));
-    let (pool, _) = core::refuse_blocked(pool);
+    let screened = batcher_cut::screen::cut_pool(pool.clone(), &sifted);
+    why.extend(pool.iter().filter(|m| !screened.iter().any(|s| s.id == m.id)).map(|m| format!("{}: no sift pass at its tip {}", m.id, m.tip)));
+    let (pool, blocked) = core::refuse_blocked(screened);
+    why.extend(blocked);
+    let (pool, _) = core::select_round(core::base_fix_lane(pool));
     let (pool, _) = core::cap_round(pool, max_members);
-    core::should_cut(&core::TriggerInputs { pool: &pool, main_red: false, batch_open: false })?;
+    if core::should_cut(&core::TriggerInputs { pool: &pool, main_red: false, batch_open: false }).is_none() {
+        return Err(why);
+    }
     let key = core::round_key(&pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>());
-    Some((pool, key))
+    Ok((pool, key))
+}
+
+/// Why the round `key` is not cut again: its last assemble merged nothing new.
+fn held_key_why(key: &str) -> String {
+    format!("the round it would cut ({key}) is held: its last assemble merged nothing new")
+}
+
+/// Why a held repo cuts nothing, with how the hold lifts.
+fn hold_why(h: &pace::Hold, repo: &str, r: &Repo) -> String {
+    match h {
+        pace::Hold::Stopped => format!("the rounds lane is stopped ({}) — lift with: world.sh unpause --repo {repo} --lanes rounds", r.stop_why.as_deref().unwrap_or("no reason recorded")),
+        pace::Hold::Paused => format!(
+            "paused by a red round ({}) — the next landing on {repo} lifts it, or rm run/rounds-pace/{repo}/pause",
+            r.paused.as_deref().unwrap_or("").trim()
+        ),
+        pace::Hold::Backoff(until) => format!("backing off after a harness fault until {}", batcher_cut::io::utc_stamp(*until)),
+    }
+}
+
+/// The log lines a pass owes when it moved from `old` to `new`: each repo whose named skip
+/// reason changed says so once, and once more when it clears.
+pub fn notes(old: &Carry, new: &Carry) -> Vec<String> {
+    let names: std::collections::BTreeSet<&String> = old.repos.keys().chain(new.repos.keys()).collect();
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let was = old.repos.get(name).and_then(|rc| rc.skip_why.as_ref());
+            let now = new.repos.get(name).and_then(|rc| rc.skip_why.as_ref());
+            match (was, now) {
+                (a, Some(b)) if a != Some(b) => Some(format!("{NAME} {name}: no cut — {b}")),
+                (Some(_), None) => Some(format!("{NAME} {name}: the hold is gone — cutting again")),
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 /// How many recent held round keys the carry keeps.
@@ -675,8 +751,16 @@ impl Machine<'_> {
             self.acts.push(Act::new(INBOX_APPEND, p.clone()).with_input(page_line(self.now_ms, p)));
         }
         self.go(Trigger::Advanced);
-        let keep = (self.rc.pace.clone(), self.rc.base_moved.clone(), self.rc.conflict_streaks.clone(), self.rc.held_keys.clone());
-        self.rc = RepoCarry { pace: keep.0, base_moved: keep.1, conflict_streaks: keep.2, held_keys: keep.3, ..RepoCarry::default() };
+        let rc = std::mem::take(&mut self.rc);
+        self.rc = RepoCarry {
+            pace: rc.pace,
+            base_moved: rc.base_moved,
+            conflict_streaks: rc.conflict_streaks,
+            held_keys: rc.held_keys,
+            paused_on: rc.paused_on,
+            refused: rc.refused,
+            ..RepoCarry::default()
+        };
     }
 
     fn red(&mut self, why: &str) {
@@ -697,10 +781,13 @@ impl Machine<'_> {
     fn idle(&mut self, policy: &Policy, repo: &Repo) {
         let now_s = self.now_ms / 1000;
         let st = self.rc.pace.core();
-        if pace::hold(false, repo.stopped, &st, now_s).is_some() {
+        let paused = self.pause_in_force(repo);
+        if let Some(h) = pace::hold(paused, repo.stopped, &st, now_s) {
+            self.rc.skip_why = Some(hold_why(&h, self.repo, repo));
             self.go(Trigger::Stopped);
             return;
         }
+        self.rc.skip_why = None;
         if self.rc.state == State::Held {
             self.go(Trigger::Released);
         }
@@ -731,8 +818,19 @@ impl Machine<'_> {
             self.go(Trigger::OrphanStepped);
             return;
         }
-        match select(repo, policy.max_members) {
-            Some((pool, key)) if !self.rc.held_keys.contains(&key) => {
+        let (repo, refused) = self.without_refused(repo);
+        let repo = &repo;
+        match select_why(repo, policy.max_members) {
+            Ok((_, key)) if self.rc.held_keys.contains(&key) => {
+                self.rc.skip_why = Some(held_key_why(&key));
+                self.go(Trigger::NoTrigger);
+            }
+            Err(mut why) => {
+                why.splice(0..0, refused);
+                self.rc.skip_why = (!why.is_empty()).then(|| format!("{} member(s) wait, none admissible: {}", why.len(), why.join("; ")));
+                self.go(Trigger::NoTrigger);
+            }
+            Ok((pool, key)) => {
                 self.go(Trigger::Cut);
                 self.rc.round_key = Some(key.clone());
                 // In merge order (`topo_order`: express, priority, prerequisites first): the
@@ -743,10 +841,43 @@ impl Machine<'_> {
                 self.acts.push(Leg { key: format!("{}:{}", self.repo, repo.base_sha), base: repo.base_sha.clone(), ..Leg::on(self.repo) }.act(FETCH));
                 self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), members, versions, round_key: key, base: repo.base_sha.clone(), ..Leg::on(self.repo) }.act(ASSEMBLE));
             }
-            _ => {
-                self.go(Trigger::NoTrigger);
-            }
         }
+    }
+
+    /// The pause a red round wrote, if it still holds the repo. It is first seen on some base;
+    /// once a round lands past that base the red it guarded is behind the repo, so the pause is
+    /// lifted (removed, and the lift logged). An operator's `hold:` is never lifted here.
+    fn pause_in_force(&mut self, repo: &Repo) -> bool {
+        let Some(text) = repo.paused.as_deref() else {
+            self.rc.paused_on = None;
+            return false;
+        };
+        if text.starts_with("hold:") {
+            return true;
+        }
+        match self.rc.paused_on.clone() {
+            None => {
+                self.rc.paused_on = Some(repo.base_sha.clone());
+                true
+            }
+            Some(on) if !repo.base_sha.is_empty() && on != repo.base_sha => {
+                self.rc.paused_on = None;
+                let why = format!("{} landed {} past {on}, the base the red round's pause was seen on — pause lifted ({})", self.repo, repo.base_sha, text.trim());
+                self.acts.push(Leg { why, key: format!("{}:rounds:lift:{}", self.repo, repo.base_sha), bead: "lift".into(), ..Leg::on(self.repo) }.act(PAUSE));
+                false
+            }
+            Some(_) => true,
+        }
+    }
+
+    /// `repo` without the members `queue round open` refused at their current tip and base, and
+    /// a line naming each; a refusal whose tip or base has moved since is forgotten.
+    fn without_refused(&mut self, repo: &Repo) -> (Repo, Vec<String>) {
+        self.rc.refused.retain(|id, (tip, base, _)| repo.pool.iter().any(|m| &m.id == id && &m.tip == tip) && base == &repo.base_sha);
+        let refused = &self.rc.refused;
+        let why = repo.pool.iter().filter_map(|m| refused.get(&m.id).map(|(_, _, kind)| format!("{}: queue round open refused it ({kind}) at this tip and base", m.id))).collect();
+        let pool = repo.pool.iter().filter(|m| !refused.contains_key(&m.id)).cloned().collect();
+        (Repo { pool, ..repo.clone() }, why)
     }
 
     fn leg_ended(&mut self, exit: Exit) {
@@ -848,6 +979,10 @@ impl Machine<'_> {
             }
             (State::Opened, ROUND_OPEN) => {
                 let o: Opened = if ok { serde_json::from_str(body).unwrap_or_default() } else { Opened::default() };
+                if o.batch.is_empty() && !o.refused.is_empty() {
+                    self.refused_some(&o.refused, leg);
+                    return;
+                }
                 if o.batch.is_empty() {
                     self.go(Trigger::OpenFailed);
                     self.finish(pace::Outcome::OpenFailed, if ok { "queue round open named no batch" } else { body });
@@ -905,6 +1040,27 @@ impl Machine<'_> {
         }
     }
 
+    /// `round open` refused the members it names (typed, sp-822b8l): each is set aside at its tip
+    /// and the round's base, and the round is asked for again with the rest; with none left the
+    /// cut is over, nothing opened and nothing abandoned. The queue has already routed them (a
+    /// base conflict back to rework, a round conflict into an integration that carries it).
+    fn refused_some(&mut self, refused: &[(String, String, String)], leg: &Leg) {
+        for (id, kind, _) in refused {
+            let tip = self.rc.members.iter().find(|(m, _)| m == id).map(|(_, t)| t.clone()).unwrap_or_default();
+            self.rc.refused.insert(id.clone(), (tip, self.rc.base.clone(), kind.clone()));
+        }
+        self.rc.members.retain(|(id, _)| !refused.iter().any(|(r, _, _)| r == id));
+        if self.rc.members.is_empty() {
+            self.go(Trigger::OpenRefusedAll);
+            self.finish(pace::Outcome::Quiet, "");
+            return;
+        }
+        self.go(Trigger::OpenRefusedSome);
+        let key = core::round_key(&self.rc.members);
+        self.rc.round_key = Some(key.clone());
+        self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), why: leg.why.clone(), ..self.leg() }.act(ROUND_OPEN));
+    }
+
     fn assembled(&mut self, a: Assembled, leg: &Leg) {
         if !a.base.is_empty() && self.rc.base_moved.as_ref().map(|b| &b.0) != Some(&a.base) {
             self.rc.base_moved = Some((a.base.clone(), self.now_ms));
@@ -930,6 +1086,7 @@ impl Machine<'_> {
         let key = core::round_key(&a.merged);
         if a.merged.is_empty() || self.rc.held_keys.contains(&key) {
             hold_key(&mut self.rc, &leg.round_key);
+            self.rc.skip_why = Some(held_key_why(&leg.round_key));
             self.go(Trigger::AssembledEmpty);
             self.rc.round_key = None;
             return;
@@ -1101,7 +1258,17 @@ impl Handler for BatcherLocal {
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap));
+        let observed = |carry: &Carry, body: &str| {
+            serde_json::from_str::<Snapshot>(body).ok().map(|snap| {
+                let (next, acts) = decide_with(&self.policy, carry, &snap);
+                // law-a-failure-carries-its-own-explanation: a pass that cuts nothing while
+                // members wait says why, once each time the reason changes.
+                for line in notes(carry, &next) {
+                    eprintln!("{line}");
+                }
+                (next, acts)
+            })
+        };
         let outcome = |carry: &Carry, effect: &str, ok: bool, body: &str, input: &str| match serde_json::from_str::<Leg>(input) {
             Ok(leg) => on_outcome(carry, effect, ok, body, &leg, ev.at),
             Err(_) => (Carry { repos: carry.repos.clone() }, vec![]),
@@ -1222,16 +1389,22 @@ pub mod edge {
                 let members = io::round_members(env, repo, &id).unwrap_or_default();
                 let driven = io::certify_driven(env, &repo.name, &id);
                 let unfit = io::round_certifiable(env, repo, &id).err();
-                return Ok(Repo { pool, blockers, branch_tips, base_sha: io::resolve_base_sha(repo).unwrap_or_default(), stopped: stopped(env, &repo.name), unfit, open_round: Some(Round { id, members, driven, ..Round::default() }), ..Repo::default() });
+                let (stopped, stop_why, paused) = holds(env, &repo.name);
+                return Ok(Repo { pool, blockers, branch_tips, base_sha: io::resolve_base_sha(repo).unwrap_or_default(), stopped, stop_why, paused, unfit, open_round: Some(Round { id, members, driven, ..Round::default() }), ..Repo::default() });
             }
             None => None,
         };
-        Ok(Repo { pool, blockers, branch_tips, open_round, base_sha: io::resolve_base_sha(repo)?, stopped: stopped(env, &repo.name), ..Repo::default() })
+        let (stopped, stop_why, paused) = holds(env, &repo.name);
+        Ok(Repo { pool, blockers, branch_tips, open_round, base_sha: io::resolve_base_sha(repo)?, stopped, stop_why, paused, ..Repo::default() })
     }
 
-    fn stopped(env: &Env, repo: &str) -> bool {
+    /// The repo's holds: the scoped stop of its `rounds` lane (and its reason), and the pace's
+    /// pause file's text — each told apart, so the hold the pass names is the one that stands.
+    fn holds(env: &Env, repo: &str) -> (bool, Option<String>, Option<String>) {
         let files = batcher_cut::pace::Files::new(&env.run, repo);
-        files.stopped() || files.pause_file().exists()
+        let stop = spira_config::scoped_stop::stop_for(&env.run, repo, "rounds").map(|s| format!("{}: {}", s.owner, s.reason));
+        let paused = files.pause_file().exists().then(|| std::fs::read_to_string(files.pause_file()).unwrap_or_default());
+        (stop.is_some(), stop, paused)
     }
 
     fn repo_of(env: &Env, leg: &Leg) -> Result<batcher_cut::io::Repo, String> {
@@ -1270,8 +1443,16 @@ pub mod edge {
         let (env, leg) = (env()?, leg(spec)?);
         let repo = repo_of(&env, &leg)?;
         let Some(_lock) = io::try_lock(&env, &repo.name)? else { return Err(format!("{}: another operation holds the lock", repo.name)) };
-        let batch = io::round_open(&env, &repo, std::path::Path::new(&leg.wt), &core_members(&leg.members))?;
-        json(&Opened { batch })
+        match io::round_open_or_refused(&env, &repo, std::path::Path::new(&leg.wt), &core_members(&leg.members))? {
+            io::OpenOutcome::Opened(batch) => json(&Opened { batch, ..Opened::default() }),
+            io::OpenOutcome::Refused(refused, line) => {
+                for r in &refused {
+                    eprintln!("{} {}: queue round open refused {} ({}): {} — cutting without it", super::NAME, repo.name, r.id, r.kind, r.why);
+                }
+                eprintln!("{} {}: {line}", super::NAME, repo.name);
+                json(&Opened { refused: refused.into_iter().map(|r| (r.id, r.kind, r.why)).collect(), ..Opened::default() })
+            }
+        }
     }
 
     /// The corpus leg: `round-vm run` on the round tree, as a unit; it ends on its `unit.ran`.
@@ -1395,6 +1576,17 @@ pub mod edge {
         let files = batcher_cut::pace::Files::new(&env.run, &leg.repo);
         if leg.bead == "stop" {
             files.stop_rounds(&leg.why, spira_config::vtime::now_epoch())?;
+        } else if leg.bead == "lift" {
+            // A landing past the base the red round's pause was seen on: the pause is the loop's
+            // own and ends here; an operator's `hold:` is left as it stands.
+            let p = files.pause_file();
+            match std::fs::read_to_string(&p) {
+                Ok(text) if !text.starts_with("hold:") => {
+                    std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+                    eprintln!("{} {}: {}", super::NAME, leg.repo, leg.why);
+                }
+                _ => {}
+            }
         } else {
             let p = files.pause_file();
             if let Some(d) = p.parent() {
