@@ -88,8 +88,11 @@ impl LogSink {
 
     fn rotate(&self, live: &std::path::Path, cap: Cap) -> std::io::Result<()> {
         let numbered = |n: usize| PathBuf::from(format!("{}.{n}", live.display()));
-        let len = fs::metadata(live).map(|m| m.len()).unwrap_or(0);
-        if len >= cap.bytes {
+        let len = fs::metadata(live).map(|m| m.len());
+        if len.as_ref().is_ok_and(|n| *n < cap.bytes) {
+            return Ok(());
+        }
+        if len.is_ok() {
             for n in (1..cap.keep).rev() {
                 if numbered(n).exists() {
                     fs::rename(numbered(n), numbered(n + 1))?;
