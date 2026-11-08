@@ -240,7 +240,7 @@ pub fn settle_claim(rc: i32, exec: &dyn Exec, id: &str, holder: &str, tries: u32
 pub fn verify_held(exec: &dyn Exec, id: &str, holder: &str, tries: u32, delay: Duration, sleep: &(dyn Fn(Duration) + Sync)) -> Result<(), String> {
     match ask_row(exec, id, tries, delay, sleep)? {
         Some(r) if r.working() && r.holder.as_deref() == Some(holder) => Ok(()),
-        Some(r) => Err(format!("{id} reads {} held by {:?}, not WORKING under {holder}", r.state, r.holder)),
+        Some(r) => Err(format!("{id} reads {} held by {:?} at version {:?}, not WORKING under {holder}", r.state, r.holder, r.version)),
         None => Err(format!("{id} has no lifecycle row")),
     }
 }
@@ -477,7 +477,7 @@ mod tests {
                     }
                     let rows = self.rows.lock().unwrap();
                     let (st, h) = rows.get(&args[1]).cloned().unwrap_or_default();
-                    Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": st, "holder": h, "holds": self.holds}}).to_string())
+                    Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": st, "holder": h, "holds": self.holds, "version": "7"}}).to_string())
                 }
                 "list" => self.list.clone().expect("unscripted spira-lc list"),
                 other => panic!("unscripted spira-lc {other}"),
@@ -543,7 +543,8 @@ mod tests {
     fn a_row_held_by_another_holder_is_not_verified_held() {
         let st = Store::default();
         st.rows.lock().unwrap().insert("sp-a".into(), ("WORKING".into(), "dwarf-other@9.9".into()));
-        assert!(verify_held(&st, "sp-a", "dwarf-eitri@1.2", 1, Duration::ZERO, &no_sleep).is_err());
+        let why = verify_held(&st, "sp-a", "dwarf-eitri@1.2", 1, Duration::ZERO, &no_sleep).unwrap_err();
+        assert!(why.contains("WORKING") && why.contains("dwarf-other@9.9") && why.contains("\"7\""), "{why}");
     }
 
     #[test]

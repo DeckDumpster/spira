@@ -64,6 +64,7 @@ pub struct Row {
     pub phase: Option<String>,
     pub disposition: Option<String>,
     pub disposition_note: Option<String>,
+    pub version: Option<String>,
 }
 
 impl Row {
@@ -178,6 +179,7 @@ pub fn row_of(r: &Value) -> Result<Row, String> {
         phase: scalar(r.get("dwarf_phase")).filter(|x| !x.is_empty()),
         disposition: scalar(r.get("disposition")).filter(|x| !x.is_empty()),
         disposition_note: scalar(r.get("disposition_note")),
+        version: scalar(r.get("version")).filter(|v| !v.is_empty()),
         bead_id: id,
     })
 }

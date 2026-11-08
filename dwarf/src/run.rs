@@ -557,6 +557,7 @@ impl<'a> Run<'a> {
             self.log(&format!("{who}: claim-error {why} — not starting a session on a row this holder does not hold"));
             self.ledger.awake(self.now(), self.f(), &format!("claim-error row not held for {id}"));
             self.s.bead = id.clone();
+            self.note(&format!("claim-error {why}"));
             self.release();
             return Err(1);
         }
