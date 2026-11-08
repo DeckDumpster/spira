@@ -629,6 +629,7 @@ mod tests {
         assert_eq!(check_ask_shape(&s(&["create", "SLOW QUERY", "-l", "overseer"]), "needs-ryan"), None); // literal-ok: fixture/fallback
     }
 
+    // covers: UC-safety-fences-13
     #[test]
     fn schema_delete_is_detected_regardless_of_case_or_spacing() {
         assert!(check_schema_delete(&s(&["create", "DELETE   FROM schema_migrations"])).is_some());
