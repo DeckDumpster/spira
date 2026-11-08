@@ -131,6 +131,7 @@ pool_cap_container = 2
 watchdog_bound_secs = 300
 watchdog_unit = "spira-runtime-prod.service"
 watchdog_every_secs = 60
+watchdog_unit_log = "/fixture/userhome/spira/run/spira-runtime.log"
 units = "systemd"
 runtime_reconcile_section_secs = 60
 runtime_reconcile_goodput_secs = 60

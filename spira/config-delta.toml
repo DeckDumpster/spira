@@ -346,6 +346,7 @@ units = "systemd"
 watchdog_bound_secs = 300
 watchdog_every_secs = 60
 watchdog_unit = "spira-runtime-prod.service"
+watchdog_unit_log = ""
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

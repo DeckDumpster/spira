@@ -706,3 +706,4 @@ transitions_ask_bound
 transitions_release_repo
 dwarf_build_base
 dwarf_build_budget_gib
+watchdog_unit_log

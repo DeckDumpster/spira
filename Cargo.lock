@@ -2783,13 +2783,14 @@ dependencies = [
 name = "watchdog"
 version = "0.1.0"
 dependencies = [
- "mail",
+ "inbox-rules",
  "runtime",
  "serde",
  "serde_json",
  "spira-config",
  "spira-otel",
  "testkit",
+ "tsd",
 ]
 
 [[package]]
