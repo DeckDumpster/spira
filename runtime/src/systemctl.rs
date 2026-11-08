@@ -85,7 +85,7 @@ impl SystemctlUnits {
 
 /// `systemctl show` output: one block per unit, blank-line separated, `Key=value` lines.
 pub fn parse_show(text: &str) -> Vec<UnitDetail> {
-    text.split("\n\n").filter_map(|block| detail_of_block(block)).collect()
+    text.split("\n\n").filter_map(detail_of_block).collect()
 }
 
 fn detail_of_block(block: &str) -> Option<UnitDetail> {
