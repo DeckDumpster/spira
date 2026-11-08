@@ -1,7 +1,9 @@
 TYPE=u64
 GROUP=dwarf
-DOC=MiB one dwarf warm slot may hold. Over it, the next session to take the slot starts it empty, and a running session has its incremental trees (then everything) removed. Sized so slots times cap fits the warm tmpfs.
-SCHEMA=MiB one dwarf warm slot may hold; enforced at session start and while the session runs (unset: 6144).
+DOC=DEPRECATED (sp-ke0uk8): the RAM warm-slot cap is retired with the pool; a live build directory is never trimmed. Only watch.warm_full still reads it. Kept declared so the release that stops reading it lands; removed by a later release.
+SCHEMA=DEPRECATED (sp-ke0uk8): the retired warm-slot cap. No dwarf reads it (unset: 6144). Superseded by dwarf_build_budget_gib.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # DEPRECATED (sp-ke0uk8): the retired warm-slot cap. Nothing trims a live build directory
+    # any more; kept declared so the release that stops reading it is landable (sp-kylkad).
     : "${SPIRA_DWARF_WARM_CAP_MIB:=6144}"
 SPIRA_CONF_DEFAULT_EOF

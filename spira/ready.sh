@@ -319,21 +319,21 @@ $(printf '%s\n' "$_loom_log" | sed 's/^/      /')"
 
 # =============================================================================
 echo ""
-echo "dwarf warm slots"
+echo "dwarf build directories"
 # =============================================================================
-# Dwarf sessions refuse to start without a warm base (dwarf_warm_base), so an unset or
-# unusable one is a loop that is armed and can run nothing.
-_warm="${SPIRA_DWARF_WARM_BASE:-}"
-if [ -z "$_warm" ]; then
-    FAIL "SPIRA_DWARF_WARM_BASE is not set" \
-         "dwarf sessions refuse to start without it; set dwarf_warm_base in the config document."
-elif [ ! -d "$_warm" ] || [ ! -w "$_warm" ]; then
-    FAIL "dwarf warm base $_warm is not a writable directory" \
-         "create it (install does) or point dwarf_warm_base at a directory the loop can write."
+# A building dwarf leases its one cargo target under dwarf_build_base (sp-ke0uk8) and refuses
+# to start without it, so an unset or unusable base is a loop that is armed and can build nothing.
+_build="${SPIRA_DWARF_BUILD_BASE:-}"
+if [ -z "$_build" ]; then
+    FAIL "SPIRA_DWARF_BUILD_BASE is not set" \
+         "building dwarves refuse to start without it; set dwarf_build_base in the config document."
+elif [ ! -d "$_build" ] || [ ! -w "$_build" ]; then
+    FAIL "dwarf build base $_build is not a writable directory" \
+         "create it (install does) or point dwarf_build_base at a directory on the compile disk the loop can write."
 else
-    PASS "dwarf warm base $_warm"
+    PASS "dwarf build base $_build"
 fi
-unset _warm
+unset _build
 
 # =============================================================================
 echo ""

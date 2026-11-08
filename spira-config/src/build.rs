@@ -301,17 +301,6 @@ pub fn one_shot_words(profile: &str) -> String {
     format!("--config profile.{profile}.incremental=false")
 }
 
-/// Registry keys: the directory holding each dwarf slot's warm `CARGO_TARGET_DIR` (a tmpfs of
-/// its own), and the MiB one slot may hold.
-pub const DWARF_WARM_BASE_ENV: &str = "SPIRA_DWARF_WARM_BASE";
-pub const DWARF_WARM_CAP_ENV: &str = "SPIRA_DWARF_WARM_CAP_MIB";
-
-/// Slots offered: one per dwarf name, so a free one always exists below the live-dwarf ceiling.
-pub const DWARF_WARM_SLOTS: u64 = 10;
-
-/// Tmpfs fullness at which idle slots are emptied at acquire and the watcher speaks.
-pub const DWARF_WARM_FULL_PCT: u64 = 85;
-
 pub const TF_PLUGIN_CACHE_ENV: &str = "TF_PLUGIN_CACHE_DIR";
 
 /// The one Terraform provider cache of the box, under the run directory and outside every
@@ -321,14 +310,6 @@ pub fn tf_plugin_cache(run: &Path) -> std::io::Result<std::path::PathBuf> {
     let dir = run.join("tf-plugin-cache");
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
-}
-
-/// Create `base` and every slot directory in it, so a session never creates them.
-pub fn prepare_warm(base: &Path, slots: u64) -> std::io::Result<()> {
-    for n in 1..=slots.max(1) {
-        std::fs::create_dir_all(base.join(format!("slot.{n}")))?;
-    }
-    Ok(())
 }
 
 /// Whether `p` (or its nearest existing ancestor) is on a tmpfs.
@@ -349,26 +330,6 @@ pub fn on_tmpfs(p: &Path) -> bool {
     false
 }
 
-/// Claim the first free slot under `base` with a non-blocking exclusive `flock` that lives as
-/// long as the returned file. None when every slot is busy: the session then builds in its
-/// worktree's own target, never waits.
-pub fn acquire_warm(base: &Path, slots: u64) -> Option<(PathBuf, std::fs::File)> {
-    use std::os::unix::io::AsRawFd;
-    std::fs::create_dir_all(base).ok()?;
-    for n in 1..=slots.max(1) {
-        let Ok(f) = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(base.join(format!("slot.{n}.lock"))) else {
-            continue;
-        };
-        // SAFETY: flock on a descriptor we own; the lock lives as long as `f`.
-        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-            let dir = base.join(format!("slot.{n}"));
-            std::fs::create_dir_all(&dir).ok()?;
-            return Some((dir, f));
-        }
-    }
-    None
-}
-
 /// Bytes under `p`, not following symlinks.
 pub fn size_of(p: &Path) -> u64 {
     use std::os::unix::fs::MetadataExt;
@@ -377,175 +338,6 @@ pub fn size_of(p: &Path) -> u64 {
         return md.blocks() * 512;
     }
     std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| size_of(&e.path())).sum()).unwrap_or(0)
-}
-
-/// Empty `slot` when it holds more than `cap_mib`. True when it did. The caller holds the
-/// slot's lock.
-pub fn reap_over_cap(slot: &Path, cap_mib: u64) -> bool {
-    let slot = &resolved(slot);
-    if size_of(slot) <= cap_mib * 1024 * 1024 {
-        return false;
-    }
-    empty_dir(slot);
-    true
-}
-
-/// Empty `slot` at session start when it already holds more than half `cap_mib`: a slot that
-/// full cannot absorb a build's growth under the cap. The caller holds the slot's lock.
-pub fn reap_for_build(slot: &Path, cap_mib: u64) -> bool {
-    reap_over_cap(slot, cap_mib / 2)
-}
-
-/// Used percent of the filesystem holding `p`; None when it cannot be read.
-pub fn used_pct(p: &Path) -> Option<u64> {
-    let c = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok()?;
-    // SAFETY: statvfs into a zeroed struct we own, on a NUL-terminated path.
-    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 || st.f_blocks == 0 {
-        return None;
-    }
-    #[allow(clippy::unnecessary_cast)]
-    let (total, avail) = (st.f_blocks as u64, st.f_bavail as u64);
-    Some((total - avail.min(total)) * 100 / total)
-}
-
-/// Empty every slot under `base` that no session holds and that is over `cap_mib`, or every
-/// such slot whatever its size once the filesystem passes `full_pct`. Each is emptied under
-/// its own lock, so a slot a session takes meanwhile is skipped. Returns the slots emptied.
-pub fn reap_idle(base: &Path, slots: u64, cap_mib: u64, full_pct: u64) -> Vec<PathBuf> {
-    use std::os::unix::io::AsRawFd;
-    let mut out = Vec::new();
-    for n in 1..=slots.max(1) {
-        let dir = base.join(format!("slot.{n}"));
-        if !dir.is_dir() {
-            continue;
-        }
-        let Ok(f) = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(base.join(format!("slot.{n}.lock"))) else {
-            continue;
-        };
-        // SAFETY: flock on a descriptor we own; the lock lives as long as `f`.
-        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            continue;
-        }
-        let real = resolved(&dir);
-        let full = used_pct(base).is_some_and(|p| p >= full_pct);
-        let reaped = if full && std::fs::read_dir(&real).is_ok_and(|mut rd| rd.next().is_some()) {
-            empty_dir(&real);
-            true
-        } else {
-            reap_over_cap(&dir, cap_mib)
-        };
-        if reaped {
-            out.push(dir);
-        }
-    }
-    out
-}
-
-fn resolved(p: &Path) -> PathBuf {
-    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
-}
-
-fn empty_dir(dir: &Path) {
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if e.file_type().is_ok_and(|t| t.is_dir()) {
-                let _ = std::fs::remove_dir_all(&p);
-            } else {
-                let _ = std::fs::remove_file(&p);
-            }
-        }
-    }
-}
-
-/// Newest modification time of any file under `p`, not following symlinks.
-fn newest_file(p: &Path) -> Option<std::time::SystemTime> {
-    let md = std::fs::symlink_metadata(p).ok()?;
-    if !md.is_dir() {
-        return md.modified().ok();
-    }
-    std::fs::read_dir(p).ok()?.flatten().filter_map(|e| newest_file(&e.path())).max()
-}
-
-/// Hold a slot to `cap_mib` while a build runs. Whole profiles the build is not writing go
-/// first, least recently written first; the most recently written profile is the live one, and
-/// its `incremental` tree is dropped only if the slot is still over. Deleting a live
-/// `incremental` makes rustc fail as if the code were broken, and anything else under a running
-/// build deletes the fingerprints it is writing; the full reset is [`reap_over_cap`], at session
-/// start. True when the slot was over the cap.
-pub fn enforce_cap(slot: &Path, cap_mib: u64) -> bool {
-    let slot = &resolved(slot);
-    let cap = cap_mib * 1024 * 1024;
-    if size_of(slot) <= cap {
-        return false;
-    }
-    let mut profiles: Vec<(Option<std::time::SystemTime>, PathBuf)> = std::fs::read_dir(slot)
-        .map(|rd| rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| (newest_file(&e.path()), e.path())).collect())
-        .unwrap_or_default();
-    profiles.sort();
-    let live = profiles.pop();
-    for (_, p) in &profiles {
-        if size_of(slot) <= cap {
-            return true;
-        }
-        let _ = std::fs::remove_dir_all(p);
-    }
-    if let Some((_, p)) = live.filter(|_| size_of(slot) > cap) {
-        let _ = std::fs::remove_dir_all(p.join("incremental"));
-    }
-    true
-}
-
-/// Move a running session's slot over its cap onto `disk`: the slot name becomes a symlink to
-/// `disk`, so the next cargo invocation builds there and the tmpfs gets the space back. Never
-/// run on a slot already spilled. True when it spilled.
-pub fn spill(slot: &Path, disk: &Path, cap_mib: u64) -> bool {
-    size_of(slot) > cap_mib * 1024 * 1024 && move_to_disk(slot, disk)
-}
-
-/// Spill a slot at session start when the tmpfs is already past `full_pct`: a session handed a
-/// slot on a full tmpfs would otherwise fail its first build.
-pub fn spill_if_full(slot: &Path, disk: &Path, full_pct: u64) -> bool {
-    slot.parent().and_then(used_pct).is_some_and(|p| p >= full_pct) && move_to_disk(slot, disk)
-}
-
-pub fn is_spilled(slot: &Path) -> bool {
-    std::fs::symlink_metadata(slot).is_ok_and(|m| m.file_type().is_symlink())
-}
-
-fn move_to_disk(slot: &Path, disk: &Path) -> bool {
-    if is_spilled(slot) {
-        return false;
-    }
-    let Some(name) = slot.file_name().map(|n| n.to_string_lossy().into_owned()) else { return false };
-    let old = slot.with_file_name(format!("{name}.spill"));
-    if std::fs::create_dir_all(disk).is_err() || std::fs::rename(slot, &old).is_err() {
-        return false;
-    }
-    if std::os::unix::fs::symlink(disk, slot).is_err() {
-        let _ = std::fs::rename(&old, slot);
-        return false;
-    }
-    std::thread::spawn(move || {
-        let _ = std::fs::remove_dir_all(old);
-    });
-    true
-}
-
-/// Put a real, empty slot directory back where [`spill`] left a symlink.
-pub fn unspill(slot: &Path) {
-    if is_spilled(slot) {
-        let _ = std::fs::remove_file(slot);
-        let _ = std::fs::create_dir_all(slot);
-    }
-}
-
-/// Record `who` in the slot's lock file so the watcher can name the holder.
-pub fn note_holder(lock: &mut std::fs::File, who: &str) {
-    use std::io::Write;
-    let _ = lock.set_len(0);
-    let _ = lock.write_all(who.as_bytes());
 }
 
 #[cfg(test)]
@@ -558,78 +350,6 @@ mod tests {
     }
 
     #[test]
-    fn a_slot_over_its_cap_sheds_only_incremental_while_a_build_runs() {
-        let d = testkit::TempDir::new("warm-cap");
-        let slot = d.path().join("slot.1");
-        fill(&slot.join("debug/incremental/a"), 3072);
-        fill(&slot.join("debug/deps/b"), 512);
-        assert!(!enforce_cap(&slot, 4), "under the cap nothing is touched");
-        assert!(slot.join("debug/incremental/a").exists());
-        assert!(enforce_cap(&slot, 2), "over the cap is acted on");
-        assert!(!slot.join("debug/incremental").exists());
-        assert!(slot.join("debug/deps/b").exists(), "dropping incremental was enough: deps stay warm");
-        fill(&slot.join("debug/deps/c"), 3072);
-        assert!(enforce_cap(&slot, 2));
-        assert!(slot.join("debug/deps/c").exists(), "still over: a running build's artifacts are never deleted");
-    }
-
-    fn age(p: &Path, secs: u64) {
-        let f = std::fs::OpenOptions::new().write(true).open(p).unwrap();
-        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(secs)).unwrap();
-    }
-
-    #[test]
-    fn a_stale_profile_goes_before_the_live_builds_incremental_tree() {
-        let d = testkit::TempDir::new("warm-stale");
-        let slot = d.path().join("slot.1");
-        fill(&slot.join("dwarf/deps/old"), 2048);
-        age(&slot.join("dwarf/deps/old"), 3600);
-        fill(&slot.join("older/deps/x"), 1024);
-        age(&slot.join("older/deps/x"), 7200);
-        fill(&slot.join("debug/incremental/live/dep-graph.bin"), 1024);
-        fill(&slot.join("debug/deps/b"), 512);
-        assert!(enforce_cap(&slot, 3), "over the cap is acted on");
-        assert!(!slot.join("older").exists(), "the least recently written profile goes first");
-        assert!(!slot.join("dwarf").exists(), "then the next, until the slot is under");
-        assert!(slot.join("debug/incremental/live/dep-graph.bin").exists(), "a running build's incremental tree survives");
-        assert!(slot.join("debug/deps/b").exists());
-    }
-
-    #[test]
-    fn trimming_stops_at_the_first_stale_profile_that_brings_the_slot_under() {
-        let d = testkit::TempDir::new("warm-stale-one");
-        let slot = d.path().join("slot.1");
-        fill(&slot.join("dwarf/deps/old"), 2048);
-        age(&slot.join("dwarf/deps/old"), 7200);
-        fill(&slot.join("release/deps/r"), 512);
-        age(&slot.join("release/deps/r"), 3600);
-        fill(&slot.join("debug/incremental/live"), 1024);
-        assert!(enforce_cap(&slot, 3));
-        assert!(!slot.join("dwarf").exists());
-        assert!(slot.join("release/deps/r").exists(), "under the cap once the oldest went: nothing more is removed");
-        assert!(slot.join("debug/incremental/live").exists());
-    }
-
-    #[test]
-    fn an_unlocked_oversized_slot_is_emptied_and_a_held_one_is_not() {
-        use std::os::unix::io::AsRawFd;
-        let d = testkit::TempDir::new("warm-idle");
-        let base = d.path();
-        fill(&base.join("slot.1/debug/x"), 3072);
-        fill(&base.join("slot.2/debug/y"), 3072);
-        fill(&base.join("slot.3/debug/z"), 512);
-        let held = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(base.join("slot.2.lock")).unwrap();
-        assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
-        let reaped = reap_idle(base, 3, 2, 101);
-        assert_eq!(reaped, vec![base.join("slot.1")]);
-        assert!(std::fs::read_dir(base.join("slot.1")).unwrap().next().is_none());
-        assert!(base.join("slot.2/debug/y").exists(), "a held slot is never touched");
-        assert!(base.join("slot.3/debug/z").exists(), "under the cap and the disk not full: stays warm");
-        let reaped = reap_idle(base, 3, 2, 0);
-        assert_eq!(reaped, vec![base.join("slot.3")], "a full disk empties every idle slot that holds anything");
-    }
-
-    #[test]
     fn size_counts_blocks_so_a_sparse_file_holds_nothing() {
         let d = testkit::TempDir::new("warm-sparse");
         let sparse = d.path().join("sparse");
@@ -639,65 +359,6 @@ mod tests {
         assert_eq!(std::fs::metadata(&sparse).unwrap().len(), 512 * 1024);
         assert!(size_of(&sparse) < 512 * 1024, "length is not usage: unallocated blocks do not count");
         assert!(size_of(&dense) >= 512 * 1024, "allocated blocks count");
-    }
-
-    #[test]
-    fn a_slot_still_over_its_cap_spills_to_disk_and_is_restored() {
-        let d = testkit::TempDir::new("warm-spill");
-        let slot = d.path().join("slot.1");
-        let disk = d.path().join("disk");
-        fill(&slot.join("debug/deps/a"), 3072);
-        assert!(!spill(&slot, &disk, 4), "under the cap nothing moves");
-        assert!(spill(&slot, &disk, 2));
-        fill(&slot.join("debug/deps/b"), 16);
-        assert!(disk.join("debug/deps/b").exists(), "later writes land on disk");
-        assert!(!spill(&slot, &disk, 0), "a spilled slot is not spilled again");
-        unspill(&slot);
-        assert!(slot.is_dir() && !std::fs::symlink_metadata(&slot).unwrap().file_type().is_symlink());
-        assert!(std::fs::read_dir(&slot).unwrap().next().is_none());
-    }
-
-    #[test]
-    fn a_slot_on_a_full_tmpfs_starts_spilled() {
-        let d = testkit::TempDir::new("warm-start-full");
-        let slot = d.path().join("slot.1");
-        let disk = d.path().join("disk");
-        std::fs::create_dir_all(&slot).unwrap();
-        assert!(!spill_if_full(&slot, &disk, 101), "a filesystem below the limit leaves the slot alone");
-        assert!(spill_if_full(&slot, &disk, 0));
-        assert!(is_spilled(&slot));
-    }
-
-    #[test]
-    fn a_slot_over_half_the_cap_starts_empty() {
-        let d = testkit::TempDir::new("warm-start");
-        let slot = d.path().join("slot.1");
-        fill(&slot.join("debug/x"), 1024);
-        assert!(!reap_for_build(&slot, 4));
-        assert!(reap_for_build(&slot, 1));
-        assert!(std::fs::read_dir(&slot).unwrap().next().is_none());
-    }
-
-    #[test]
-    fn a_symlinked_slot_is_emptied_in_place() {
-        let d = testkit::TempDir::new("warm-link");
-        let real = d.path().join("real");
-        fill(&real.join("debug/x"), 3072);
-        let link = d.path().join("slot.1");
-        std::os::unix::fs::symlink(&real, &link).unwrap();
-        assert!(reap_over_cap(&link, 1));
-        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
-        assert!(std::fs::read_dir(&real).unwrap().next().is_none());
-    }
-
-    #[test]
-    fn prepare_creates_every_slot() {
-        let d = testkit::TempDir::new("warm-prep");
-        prepare_warm(&d.path().join("base"), 3).unwrap();
-        for n in 1..=3 {
-            assert!(d.path().join(format!("base/slot.{n}")).is_dir());
-        }
-        assert!(!on_tmpfs(Path::new("/nonexistent-root-xyz/a")) || on_tmpfs(Path::new("/")), "an unmounted path takes its nearest ancestor's answer");
     }
 
     fn bin_dir(with: bool) -> (testkit::TempDir, String) {

@@ -611,20 +611,10 @@ fn checks_passed_at_tip() -> bool {
     passed
 }
 
-/// A slot is reused across worktrees, and cargo may judge another branch's artifact fresh, so each
-/// worktree builds into its own subdirectory of it.
-fn worktree_dir_name(root: &std::path::Path) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    root.hash(&mut h);
-    format!("wt-{:016x}", h.finish())
-}
-
 /// Build `package` from the worktree and return its binary. Inherits `RUSTC_WRAPPER`, the
 /// `SPIRA_ADMIT_*` and `SCCACHE_*` vars, so the build is admitted and warm.
 fn build_from_worktree(root: &std::path::Path, package: &str, dirs: &[std::path::PathBuf], budget_ms: u64) -> Result<std::path::PathBuf, String> {
-    let slot = std::env::var_os("CARGO_TARGET_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| root.join("target"));
-    let target = slot.join(worktree_dir_name(root));
+    let target = work::check_target(std::env::var_os("CARGO_TARGET_DIR"), root);
     let secs = budget_ms.div_ceil(1000).max(900).to_string();
     let path = target.join("debug").join(package);
     match std::fs::remove_file(&path) {

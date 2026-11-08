@@ -202,6 +202,14 @@ pub fn target_dir(root: &Path, volume: &str) -> PathBuf {
     root.join(volume)
 }
 
+/// The cargo target a sandboxed unit run builds in: the calling session's owned build directory
+/// (sp-ke0uk8) when it has one, so the run shares the session's one target; else this branch's
+/// target under `root`. None when neither exists (an empty `root` and no owned directory).
+pub fn unit_target(owned: Option<PathBuf>, root: &str, volume: &str) -> Option<PathBuf> {
+    let root = root.trim();
+    owned.or_else(|| (!root.is_empty()).then(|| target_dir(Path::new(root), volume)))
+}
+
 /// The tests that need a running system and so stay in the container (sp-7p5la8), read from
 /// the tree's `testenv/container-tests.txt`: one name per line, `#` comments. A missing file
 /// lists none.
@@ -384,6 +392,15 @@ mod tests {
         let plain = testkit::TempDir::new("sandbox-plain");
         fs::create_dir(plain.path().join(".git")).unwrap();
         assert_eq!(worktree_gitdir(plain.path()), None);
+    }
+
+    #[test]
+    fn a_sandboxed_unit_run_resolves_to_the_sessions_owned_build_directory() {
+        let owned = PathBuf::from("/srv/ssd-b/dwarf-build/dir.2");
+        assert_eq!(unit_target(Some(owned.clone()), "/srv/ssd-a/unit-target", "v-b"), Some(owned.clone()), "the session's one target, not a per-bead one");
+        assert_eq!(unit_target(Some(owned.clone()), "", "v-b"), Some(owned), "an owned directory needs no sandbox root");
+        assert_eq!(unit_target(None, "/srv/t", "v-b"), Some(PathBuf::from("/srv/t/v-b")), "no session: the branch's target");
+        assert_eq!(unit_target(None, " ", "v-b"), None);
     }
 
     #[test]

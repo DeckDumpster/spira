@@ -148,7 +148,14 @@ calls a batch of dwarves at the same moment therefore does not start them in loc
 sleep checks the stop flag every second, so a stopped dwarf exits at once. The jitter is
 logged: `dwarf: call jitter 13s`.
 
-### 3.4a The cold-build slot
+### 3.4a The cold-build slot (RETIRED, sp-ke0uk8)
+
+**Retired.** No dwarf acquires this pool any more: each building session leases one owned build
+directory for its whole bead (spira-config `build_dir`), never waits for it, and takes its
+dependencies from sccache. Its size never reached the dwarf anyway — read only from the dwarf's own
+environment, which the unit does not carry, so every lease said size 1 whatever `cold_par` held.
+`SPIRA_COLD_PAR` stays declared (deprecated) until a later release removes it. What follows is the
+record of what it did.
 
 A fourth pool, `cold` (`$SPIRA_RUN/cold-admission`, size 1, `SPIRA_COLD_PAR` overrides), admits one
 cold build host-wide. Before its model session starts, the dwarf asks `admission::cold_reason`:

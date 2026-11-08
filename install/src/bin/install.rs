@@ -833,7 +833,7 @@ fn run_main() -> ExitCode {
     // Resolve the locations the rest of install reads, now that the config exists. They
     // were read straight from this process's environment, which a fresh host never sets,
     // so the database phase initialised "" (sp-xbxcb). install.sh used to source conf.sh here.
-    for (key, required) in [("SPIRA_DB", true), ("SPIRA_RUN", true), ("SPIRA_DOLT_DATA", false), ("SPIRA_RELEASES", false), (spira_config::build::DWARF_WARM_BASE_ENV, false)] {
+    for (key, required) in [("SPIRA_DB", true), ("SPIRA_RUN", true), ("SPIRA_DOLT_DATA", false), ("SPIRA_RELEASES", false), (spira_config::build_dir::BASE_ENV, false)] {
         if nonempty_env(key).is_some() {
             continue;
         }
@@ -1149,11 +1149,12 @@ fn run_main() -> ExitCode {
             let _ = std::fs::create_dir_all(&run);
             let _ = std::fs::create_dir_all(Path::new(&run).join("watchd"));
         }
-        if let Some(base) = nonempty_env(spira_config::build::DWARF_WARM_BASE_ENV) {
-            match spira_config::build::prepare_warm(Path::new(&base), spira_config::build::DWARF_WARM_SLOTS) {
-                Ok(()) => info(&format!("dwarf warm slots ready under {base}")),
+        if let Some(base) = nonempty_env(spira_config::build_dir::BASE_ENV) {
+            // The owned build directories' base (sp-ke0uk8): leases make dir.<n> under it.
+            match std::fs::create_dir_all(&base) {
+                Ok(()) => info(&format!("dwarf build base ready at {base}")),
                 Err(e) => {
-                    eprintln!("install: cannot create the dwarf warm slots under {base} (dwarf_warm_base): {e}");
+                    eprintln!("install: cannot create the dwarf build base {base} (dwarf_build_base): {e}");
                     return ExitCode::from(2);
                 }
             }

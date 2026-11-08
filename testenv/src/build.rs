@@ -21,12 +21,11 @@ pub fn artifacts_dir(worktree: &Path, profile: &str) -> PathBuf {
     worktree.join("target").join(profile_dir(profile))
 }
 
-/// The caller's warm slot (`CARGO_TARGET_DIR` under the configured warm base): any other value
-/// is ignored, so an inherited override can never redirect a build elsewhere.
+/// The calling session's owned build directory (`CARGO_TARGET_DIR` under `dwarf_build_base`,
+/// sp-ke0uk8): any other value is ignored, so an inherited override can never redirect a build
+/// elsewhere.
 pub fn warm_target(var: Option<std::ffi::OsString>, base: Option<&Path>) -> Option<PathBuf> {
-    let p = PathBuf::from(var?);
-    let ours = p.is_absolute() && p.is_dir() && base.is_some_and(|b| p != b && p.starts_with(b));
-    ours.then_some(p)
+    spira_config::build_dir::owned(var, base)
 }
 
 /// Make `<worktree>/target/<profile dir>` resolve to the warm slot's, so every reader of
@@ -129,7 +128,7 @@ impl Builder for Cargo {
     ) -> Result<Duration, BuildError> {
         let warm = warm_target(
             std::env::var_os("CARGO_TARGET_DIR"),
-            spira_config::process::cfg(spira_config::build::DWARF_WARM_BASE_ENV)
+            spira_config::process::cfg(spira_config::build_dir::BASE_ENV)
                 .ok()
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)

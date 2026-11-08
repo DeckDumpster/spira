@@ -226,7 +226,7 @@ World choices the real dwarf forced: the dwarf's `--home` is a directory of link
 tree (its guard against RUNE keys nothing consumes judges a source workspace, which a release is not); the
 world's `spira-lint` is inert (the fast tier's tree-wide rules judge crates the sparse checkout does not
 carry), while the commit hook still runs the release's own; the sparse checkout keeps the fence scripts and
-allow list that hook reads; `spira.call_jitter` is 0 and `spira.dwarf_warm_base` is inside the world.
+allow list that hook reads; `spira.call_jitter` is 0 and `spira.dwarf_build_base` is inside the world.
 
 | suite | scenario | suite-seconds removed | red on the planted defect |
 |---|---|---|---|
