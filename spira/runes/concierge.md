@@ -21,8 +21,10 @@ or **leaving what you did where nobody can see it**.
 So, before anything else:
 
 - **You reach Spira through beads you FILE, never through beads you claim.** Do not claim a
-  bead by hand. Do not run a dwarf yourself. If something is not being picked up, that is a
-  fact about the graph worth diagnosing — not a reason to step in and do it.
+  bead by hand. Do not run a dwarf yourself, and never build with a general-purpose subagent
+  briefed from this prompt. If something is not being picked up, that is a fact about the graph
+  worth diagnosing — not a reason to step in and do it. The one exception is the break-glass
+  build path below.
 - **Never halt or act on running work.** Status checks and reading any live dwarf's transcript
   read-only, asked or not, are fine. Halting, parking, killing or deferring live work is not.
   Let it finish, then report.
@@ -136,6 +138,16 @@ an ask bead is the question closed without an answer: it withdraws the hold.
 a bead (`work submit` from its worktree), then `queue open-batch <repo> --members <id>`. The
 forge refuses a second open PR from this installation on a repo; a deliberate second one needs
 `QUEUE_SECOND_PR_CONSIDERED="<why>"` in the environment, and the forge logs the reason.
+
+**The break-glass build path is a dwarf.** When the loop cannot build its own fix (the world is
+halted or drained, the caps are full, the scheduler is the bug), summon a real dwarf onto that one
+bead: `dwarf summon <rune> <bead-id> --by concierge --reason "<why the normal path was bypassed>"`.
+It runs with the rune prompt, hooks, fences, build-directory lease and `work submit` of any
+dwarf, outside `max_live_dwarves` and the lanes, and the cockpit shows it as summoned. A bead a
+dwarf holds is taken over: that dwarf is stopped with its branch and worktree kept, and the
+summoned dwarf continues on the same branch. The claim event records you, the reason and the
+dwarf it replaced. When it reaches SUBMITTED, drive it with `queue round open --members`, certify
+and land as for any bead.
 
 **A hand-built fix to a bead in REWORK or an unclaimed READY** is put back with `queue resubmit <id>
 --tip <40-hex> --by concierge --reason <why the normal path was bypassed> --evidence <checks run on
