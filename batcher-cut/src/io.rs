@@ -1875,7 +1875,7 @@ pub fn open_round_id(env: &Env, repo: &Repo) -> Result<Option<String>, String> {
     if verb_value(&run.out, "round").as_deref() != Some("open") {
         return Ok(None);
     }
-    Ok(Some(verb_value(&run.out, "batch_id").unwrap_or_default()))
+    Ok(Some(open_rounds_of(&run.out).into_iter().next().map(|r| r.id).unwrap_or_default()))
 }
 
 /// One round `queue round status` lists as open.
