@@ -6,7 +6,7 @@
 //!
 //! ## Tick
 //!
-//! - Cadence 30 s, single-flight **per queue.local repo**. A repo with a machine not in `Idle` ignores the tick.
+//! - Cadence 30 s, single-flight **per queue.local repo**. A repo cuts a further round only while fewer than `SPIRA_ROUND_MAX_OPEN` are in flight (default 1): it is assembled on the newest open round's head in a tree of its own, certified beside it, and lands only after the rounds below it (`State::Certified` holds a green round until then). A round the queue voids with the one below it is forgotten and its members are cut again.
 //! - Admission (today `main.rs:1299-1320`, `:1183-1206`): only `land == queue.local` repos; the home repo only while `SPIRA_BATCHER_ENABLE != 0`.
 //! - Wakes, besides the tick (proposed names, none exist today): `bead.certified` (a pool grew), `world.unpaused` for the repo's `rounds` lane, and `unit.ran` for any leg it started.
 //!
@@ -175,6 +175,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_BATCHER_ENABLE",
     "SPIRA_ROUNDS_PACING",
     "SPIRA_CONCIERGE_INBOX",
+    "SPIRA_ROUND_MAX_OPEN",
 ];
 /// The unregistered env reads the contract says to register. The seam
 /// (`batcher_cut::env_from_cfg`) still reads them as bare environment with its defaults; the
@@ -224,6 +225,15 @@ pub struct Round {
     pub worktree: String,
     /// A `round certify` or this task's own machine holds the round.
     pub driven: bool,
+    /// The queue marked the round red: a round is never stacked on it.
+    #[serde(default)]
+    pub red: bool,
+    /// Seconds since the round opened; the least is the newest, the one the next round stacks on.
+    #[serde(default)]
+    pub age_secs: u64,
+    /// Why `round certify` would refuse this round at once (`round_certifiable`), if it would.
+    #[serde(default)]
+    pub unfit: Option<String>,
 }
 
 /// One admitted `queue.local` repository.
@@ -234,6 +244,9 @@ pub struct Repo {
     /// `basefail:<repo>:` plan items open against the repo.
     pub basefail: Vec<String>,
     pub open_round: Option<Round>,
+    /// The rounds the queue holds open above `open_round`, oldest first.
+    #[serde(default)]
+    pub open_above: Vec<Round>,
     pub branch_tips: BTreeMap<String, String>,
     pub base_sha: String,
     /// The scoped stop for the repo's `rounds` lane.
@@ -252,6 +265,13 @@ pub struct Repo {
     /// The keys of the leg units the unit manager lists as running; `None` when it could not say.
     #[serde(default)]
     pub live_legs: Option<Vec<String>>,
+}
+
+impl Repo {
+    /// Every round the queue holds open, oldest first.
+    pub fn open_rounds(&self) -> impl Iterator<Item = &Round> {
+        self.open_round.iter().chain(self.open_above.iter())
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,6 +295,8 @@ pub enum State {
     Landing,
     Promoting,
     Done,
+    /// Certify green with a round still open below: it lands only after that one has.
+    Certified,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -338,6 +360,10 @@ pub enum Trigger {
     LegRestarted,
     /// The restarted leg is lost too: the round is abandoned (not in the contract's table).
     LegLost,
+    /// Certify green while a round below is still open: landing waits for it.
+    CertifyHeld,
+    /// The rounds below have ended: the held round lands.
+    LowerEnded,
 }
 
 pub static TABLE: &[(State, Trigger, State)] = &[
@@ -384,6 +410,8 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Corpus, Trigger::LegLost, State::Done),
     (State::Attributing, Trigger::LegLost, State::Done),
     (State::Certifying, Trigger::LegLost, State::Done),
+    (State::Certifying, Trigger::CertifyHeld, State::Certified),
+    (State::Certified, Trigger::LowerEnded, State::Landing),
 ];
 
 /// The pace state of `batcher-cut/src/pace.rs`, carried rather than kept in `run/rounds-pace`.
@@ -486,6 +514,85 @@ pub struct RepoCarry {
     /// base change.
     #[serde(default)]
     pub recertified_on: Option<String>,
+    /// The rounds stacked above this one, oldest first: each carries only its own round's fields,
+    /// the rest of the repo's carry being this one's.
+    #[serde(default)]
+    pub above: Vec<RepoCarry>,
+    /// The round was cut on the head of a round still open; it is gone when that one is voided.
+    #[serde(default)]
+    pub stacked: bool,
+    /// The landing ref the round was cut against, which `base` is not for a stacked round.
+    #[serde(default)]
+    pub landing_base: String,
+}
+
+impl RepoCarry {
+    fn live(&self) -> bool {
+        !matches!(self.state, State::Idle | State::Held)
+    }
+
+    /// This carry's own round, without what the repo shares across its rounds.
+    fn round(&self) -> RepoCarry {
+        RepoCarry {
+            state: self.state,
+            round_key: self.round_key.clone(),
+            batch: self.batch.clone(),
+            members: self.members.clone(),
+            wt: self.wt.clone(),
+            base: self.base.clone(),
+            own_testenv: self.own_testenv,
+            lost_vms: self.lost_vms,
+            attributed: self.attributed,
+            leg: self.leg.clone(),
+            leg_at_ms: self.leg_at_ms,
+            run: self.run,
+            leg_restarts: self.leg_restarts,
+            leg_missing: self.leg_missing,
+            recertified_on: self.recertified_on.clone(),
+            stacked: self.stacked,
+            landing_base: self.landing_base.clone(),
+            ..RepoCarry::default()
+        }
+    }
+
+    /// What the repo shares, with `round` as the one round the machine is moving.
+    fn holding(&self, round: &RepoCarry) -> RepoCarry {
+        RepoCarry { above: vec![], ..self.clone() }.with_round(round)
+    }
+
+    fn with_round(self, round: &RepoCarry) -> RepoCarry {
+        RepoCarry {
+            state: round.state,
+            round_key: round.round_key.clone(),
+            batch: round.batch.clone(),
+            members: round.members.clone(),
+            wt: round.wt.clone(),
+            base: round.base.clone(),
+            own_testenv: round.own_testenv,
+            lost_vms: round.lost_vms,
+            attributed: round.attributed,
+            leg: round.leg.clone(),
+            leg_at_ms: round.leg_at_ms,
+            run: round.run,
+            leg_restarts: round.leg_restarts,
+            leg_missing: round.leg_missing,
+            recertified_on: round.recertified_on.clone(),
+            stacked: round.stacked,
+            landing_base: round.landing_base.clone(),
+            ..self
+        }
+    }
+
+    /// The live rounds, lowest first.
+    fn rounds(&self) -> Vec<RepoCarry> {
+        std::iter::once(self.round()).chain(self.above.iter().cloned()).filter(RepoCarry::live).collect()
+    }
+
+    /// `shared` with `rounds` (lowest first) as its rounds, or at `idle` when there are none.
+    fn rebuilt(shared: &RepoCarry, mut rounds: Vec<RepoCarry>, idle: State) -> RepoCarry {
+        let first = if rounds.is_empty() { RepoCarry { state: idle, ..RepoCarry::default() } } else { rounds.remove(0) };
+        RepoCarry { above: rounds, ..shared.holding(&first) }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -521,6 +628,9 @@ pub struct Leg {
     pub unit: String,
     #[serde(default)]
     pub head: String,
+    /// The head of the open round an assemble builds on, when it stacks; empty for the landing ref.
+    #[serde(default)]
+    pub onto: String,
     /// The suites a red certify named, for the abandon to keep their evidence.
     #[serde(default)]
     pub reds: Vec<String>,
@@ -595,12 +705,13 @@ pub struct Policy {
     pub orphan_wait_s: u64,
     pub wall_ms: u64,
     pub max_members: usize,
+    pub max_open: usize,
 }
 
 impl Default for Policy {
     /// The registered defaults (`spira/conf.d/SPIRA_BATCHER_ORPHAN_REDRIVE_SECS`, `_WALL_SECS`).
     fn default() -> Self {
-        Policy { orphan_wait_s: 600, wall_ms: 3_600_000, max_members: batcher_cut::MAX_CUT_MEMBERS }
+        Policy { orphan_wait_s: 600, wall_ms: 3_600_000, max_members: batcher_cut::MAX_CUT_MEMBERS, max_open: 1 }
     }
 }
 
@@ -608,7 +719,7 @@ impl Policy {
     pub fn pinned(pinned: &BTreeMap<String, String>) -> Policy {
         let d = Policy::default();
         let num = |k: &str| pinned.get(k).and_then(|v| v.trim().parse::<u64>().ok());
-        Policy { orphan_wait_s: num("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS").unwrap_or(d.orphan_wait_s), wall_ms: num("SPIRA_BATCHER_WALL_SECS").map_or(d.wall_ms, |s| s * 1000), ..d }
+        Policy { orphan_wait_s: num("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS").unwrap_or(d.orphan_wait_s), wall_ms: num("SPIRA_BATCHER_WALL_SECS").map_or(d.wall_ms, |s| s * 1000), max_open: num("SPIRA_ROUND_MAX_OPEN").map_or(d.max_open, |n| (n as usize).max(1)), ..d }
     }
 }
 
@@ -752,7 +863,19 @@ struct Machine<'a> {
     rc: RepoCarry,
     acts: Vec<Act>,
     now_ms: u64,
+    /// A round of the repo below this one is still open.
+    below: bool,
 }
+
+/// The states in which a round may be stacked on: it is still being certified, or certified and
+/// waiting to land (`queue round open` refuses any other).
+fn stackable(state: State) -> bool {
+    matches!(state, State::Corpus | State::Attributing | State::Mending | State::Certifying | State::Certified)
+}
+
+/// How long past its last leg's start a stacked round may be missing from the queue's open list
+/// before it is judged voided: a snapshot may predate its open.
+const VOID_GRACE_MS: u64 = 2 * CADENCE_MS;
 
 impl Machine<'_> {
     fn go(&mut self, on: Trigger) -> bool {
@@ -820,6 +943,11 @@ impl Machine<'_> {
             self.acts.push(Act::new(INBOX_APPEND, p.clone()).with_input(page_line(self.now_ms, p)));
         }
         self.go(Trigger::Advanced);
+        self.forget_round();
+    }
+
+    /// The round is over: what the repo shares stays, the round and the skip reason go.
+    fn forget_round(&mut self) {
         let rc = std::mem::take(&mut self.rc);
         self.rc = RepoCarry {
             pace: rc.pace,
@@ -844,10 +972,17 @@ impl Machine<'_> {
     /// A tick's observe, for the states that read the world. A leg's end arrives as its own
     /// `unit.ran` (`on_ran`); a leg past its wall and grace with none is judged lost here.
     fn observe(&mut self, policy: &Policy, repo: &Repo) {
+        if self.voided(repo) {
+            self.forget_round();
+            return;
+        }
         match self.rc.state {
-            State::Idle | State::Held => self.idle(policy, repo),
             State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > policy.wall_ms + LEG_GRACE_MS => self.leg_ended(Exit::Unknown),
             State::Corpus | State::Attributing | State::Certifying => self.watch_leg(repo),
+            State::Certified if !self.below => {
+                self.go(Trigger::LowerEnded);
+                self.land_now();
+            }
             _ => {}
         }
     }
@@ -897,7 +1032,26 @@ impl Machine<'_> {
         self.finish(pace::Outcome::Infra, &why);
     }
 
-    fn idle(&mut self, policy: &Policy, repo: &Repo) {
+    /// A stacked round the queue no longer holds open: the round below it closed without
+    /// landing and the queue voided it, members and all. Nothing is abandoned; it is forgotten
+    /// and its members are cut again from the pool.
+    fn voided(&self, repo: &Repo) -> bool {
+        let Some(batch) = self.rc.batch.as_deref() else { return false };
+        self.rc.stacked && stackable(self.rc.state) && !repo.open_rounds().any(|r| r.id == batch) && self.now_ms.saturating_sub(self.rc.leg_at_ms) > VOID_GRACE_MS
+    }
+
+    fn land_now(&mut self) {
+        let key = self.rc.round_key.clone().unwrap_or_default();
+        self.acts.push(Leg { key: format!("round:{key}"), ..self.leg() }.act(LC_CERTIFY));
+        self.acts.push(Leg { key: self.rc.batch.clone().unwrap_or_default(), ..self.leg() }.act(LAND));
+    }
+
+    /// The cut: whether this repo may open a further round now, and if so which. `live` are the
+    /// rounds of the repo this task already drives, lowest first.
+    fn cut(&mut self, policy: &Policy, repo: &Repo, live: &[RepoCarry]) {
+        if live.len() >= policy.max_open {
+            return;
+        }
         let now_s = self.now_ms / 1000;
         let st = self.rc.pace.core();
         let paused = self.pause_in_force(repo);
@@ -910,36 +1064,28 @@ impl Machine<'_> {
         if self.rc.state == State::Held {
             self.go(Trigger::Released);
         }
-        if let Some(open) = &repo.open_round {
-            if open.driven {
-                self.go(Trigger::OpenRoundDriven);
-                if !st.orphan.is_empty() {
-                    self.rc.pace = Pace::of(&pace::State { orphan: String::new(), orphan_since: 0, ..st }, &self.rc.pace.refusals);
-                }
-                return;
-            }
-            self.go(Trigger::OpenRoundUndriven);
-            let fit = repo.unfit.clone().map_or(Ok(()), Err);
-            let (mut next, verdict) = pace::orphan_step(&st, &open.id, now_s, policy.orphan_wait_s, fit);
-            let leg = Leg { batch: open.id.clone(), wt: open.worktree.clone(), ..Leg::on(self.repo) };
-            match verdict {
-                pace::Orphan::Wait => {}
-                pace::Orphan::Redrive => self.acts.push(Leg { key: format!("{}:{}", self.repo, open.id), ..leg }.act(REDRIVE)),
-                pace::Orphan::Incident(why) => {
-                    let why = format!("round {} had no driver: {why}", open.id);
-                    self.acts.push(Leg { key: format!("{}:{}", self.repo, open.id), why: why.clone(), bead: NO_DRIVER.into(), ..leg }.act(ABANDON));
-                    let (after, fx) = pace::advance(&next, &pace::Outcome::Infra, self.repo, now_s, &why);
-                    next = after;
-                    for p in &fx.pages {
-                        self.acts.push(Act::new(INBOX_APPEND, p.clone()).with_input(page_line(self.now_ms, p)));
-                    }
-                }
-            }
-            self.rc.pace = Pace::of(&next, &self.rc.pace.refusals);
-            self.go(Trigger::OrphanStepped);
+        if live.iter().any(|r| matches!(r.state, State::Assembling | State::Opened)) {
             return;
         }
+        let ours: Vec<&str> = live.iter().filter_map(|r| r.batch.as_deref()).collect();
+        if let Some(open) = repo.open_rounds().find(|r| !ours.contains(&r.id.as_str())) {
+            self.foreign(policy, open, repo, &st);
+            return;
+        }
+        if !live.iter().all(|r| stackable(r.state)) || repo.open_rounds().any(|r| r.red) {
+            return;
+        }
+        if !live.is_empty() && repo.base_sha.is_empty() {
+            return;
+        }
+        let onto = match repo.open_rounds().min_by_key(|r| r.age_secs) {
+            Some(newest) if newest.head.is_empty() => return,
+            Some(newest) => newest.head.clone(),
+            None => String::new(),
+        };
+        let held: Vec<&str> = repo.open_rounds().flat_map(|r| r.members.iter().map(String::as_str)).chain(live.iter().flat_map(|r| r.members.iter().map(|(id, _)| id.as_str()))).collect();
         let (repo, refused) = self.without_refused(repo);
+        let repo = Repo { pool: repo.pool.into_iter().filter(|m| !held.contains(&m.id.as_str())).collect(), ..repo };
         let repo = &repo;
         match select_why(repo, policy.max_members) {
             Ok((_, key)) if self.rc.held_keys.contains(&key) => {
@@ -954,15 +1100,49 @@ impl Machine<'_> {
             Ok((pool, key)) => {
                 self.go(Trigger::Cut);
                 self.rc.round_key = Some(key.clone());
+                self.rc.stacked = !live.is_empty();
                 // In merge order (`topo_order`: express, priority, prerequisites first): the
                 // assemble effect rebuilds its members from `(id, tip)` alone, so the leg's
                 // order is the order they merge in and the order a conflict is decided by.
                 let members: Vec<(String, String)> = core::topo_order(&pool).iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
                 let versions = repo.pool.iter().filter(|m| members.iter().any(|(id, _)| id == &m.id)).map(|m| (m.id.clone(), m.version)).collect();
                 self.acts.push(Leg { key: format!("{}:{}", self.repo, repo.base_sha), base: repo.base_sha.clone(), ..Leg::on(self.repo) }.act(FETCH));
-                self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), members, versions, round_key: key, base: repo.base_sha.clone(), ..Leg::on(self.repo) }.act(ASSEMBLE));
+                self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), members, versions, round_key: key, base: repo.base_sha.clone(), onto, ..Leg::on(self.repo) }.act(ASSEMBLE));
             }
         }
+    }
+
+    /// An open round this task does not drive: while it stands the repo cuts nothing. Undriven
+    /// long enough it is re-driven, then a person is paged.
+    fn foreign(&mut self, policy: &Policy, open: &Round, repo: &Repo, st: &pace::State) {
+        let now_s = self.now_ms / 1000;
+        if open.driven {
+            self.go(Trigger::OpenRoundDriven);
+            if !st.orphan.is_empty() {
+                self.rc.pace = Pace::of(&pace::State { orphan: String::new(), orphan_since: 0, ..st.clone() }, &self.rc.pace.refusals);
+            }
+            return;
+        }
+        self.go(Trigger::OpenRoundUndriven);
+        let unfit = if repo.open_round.as_ref().is_some_and(|r| r.id == open.id) { repo.unfit.clone() } else { open.unfit.clone() };
+        let fit = unfit.map_or(Ok(()), Err);
+        let (mut next, verdict) = pace::orphan_step(st, &open.id, now_s, policy.orphan_wait_s, fit);
+        let leg = Leg { batch: open.id.clone(), wt: open.worktree.clone(), ..Leg::on(self.repo) };
+        match verdict {
+            pace::Orphan::Wait => {}
+            pace::Orphan::Redrive => self.acts.push(Leg { key: format!("{}:{}", self.repo, open.id), ..leg }.act(REDRIVE)),
+            pace::Orphan::Incident(why) => {
+                let why = format!("round {} had no driver: {why}", open.id);
+                self.acts.push(Leg { key: format!("{}:{}", self.repo, open.id), why: why.clone(), bead: NO_DRIVER.into(), ..leg }.act(ABANDON));
+                let (after, fx) = pace::advance(&next, &pace::Outcome::Infra, self.repo, now_s, &why);
+                next = after;
+                for p in &fx.pages {
+                    self.acts.push(Act::new(INBOX_APPEND, p.clone()).with_input(page_line(self.now_ms, p)));
+                }
+            }
+        }
+        self.rc.pace = Pace::of(&next, &self.rc.pace.refusals);
+        self.go(Trigger::OrphanStepped);
     }
 
     /// The pause a red round wrote, if it still holds the repo. It is first seen on some base;
@@ -1055,11 +1235,12 @@ impl Machine<'_> {
                     self.red(&format!("local corpus red — the attribution leg ended ({exit:?}) with no outcome"));
                 }
             },
+            (State::Certifying, true) if self.below => {
+                self.go(Trigger::CertifyHeld);
+            }
             (State::Certifying, true) => {
                 self.go(Trigger::CertifyGreen);
-                let key = self.rc.round_key.clone().unwrap_or_default();
-                self.acts.push(Leg { key: format!("round:{key}"), ..self.leg() }.act(LC_CERTIFY));
-                self.acts.push(Leg { key: self.rc.batch.clone().unwrap_or_default(), ..self.leg() }.act(LAND));
+                self.land_now();
             }
             (State::Certifying, false) if exit == Exit::Code(queue::ops::round::VM_LOST) => self.vm_lost(),
             (State::Certifying, false) if !self.rc.attributed && certify_red_evidence(out).1.is_empty() && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => {
@@ -1149,7 +1330,7 @@ impl Machine<'_> {
                 match l.staged {
                     Some(staged) => {
                         self.go(Trigger::LandedStaged);
-                        self.acts.push(Leg { batch: staged.clone(), key: staged, ..Leg::on(self.repo) }.act(PROMOTE));
+                        self.acts.push(Leg { batch: staged.clone(), key: staged, round_key: self.rc.round_key.clone().unwrap_or_default(), ..Leg::on(self.repo) }.act(PROMOTE));
                     }
                     None => {
                         self.go(Trigger::Landed);
@@ -1190,7 +1371,8 @@ impl Machine<'_> {
     fn refused_some(&mut self, refused: &[(String, String, String)], leg: &Leg) {
         for (id, kind, _) in refused {
             let tip = self.rc.members.iter().find(|(m, _)| m == id).map(|(_, t)| t.clone()).unwrap_or_default();
-            self.rc.refused.insert(id.clone(), (tip, self.rc.base.clone(), kind.clone()));
+            let landing = if self.rc.landing_base.is_empty() { &self.rc.base } else { &self.rc.landing_base };
+            self.rc.refused.insert(id.clone(), (tip, landing.clone(), kind.clone()));
         }
         self.rc.members.retain(|(id, _)| !refused.iter().any(|(r, _, _)| r == id));
         if self.rc.members.is_empty() {
@@ -1253,7 +1435,8 @@ impl Machine<'_> {
         self.rc.round_key = Some(key.clone());
         self.rc.members = a.merged;
         self.rc.wt = a.wt;
-        self.rc.base = a.base;
+        self.rc.base = if leg.onto.is_empty() { a.base } else { leg.onto.clone() };
+        self.rc.landing_base = leg.base.clone();
         self.rc.own_testenv = a.own_testenv;
         let why = if a.suites { "suites" } else { "" };
         self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), why: why.into(), ..self.leg() }.act(ROUND_OPEN));
@@ -1277,21 +1460,80 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
 pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     let (mut next, mut acts) = (carry.clone(), vec![]);
     for (name, repo) in &snap.repos {
-        let mut m = Machine { repo: name, rc: carry.repos.get(name).cloned().unwrap_or_default(), acts: vec![], now_ms: snap.now_ms };
-        m.observe(policy, repo);
-        store(&mut next, name, m.rc);
-        acts.extend(m.acts);
+        let rc = carry.repos.get(name).cloned().unwrap_or_default();
+        let (rc, more) = decide_repo(policy, name, &rc, repo, snap.now_ms);
+        store(&mut next, name, rc);
+        acts.extend(more);
     }
     (next, acts)
+}
+
+/// One repo's tick: each round this task drives is observed lowest first, then the repo may cut
+/// a further one. A tick on which one of its rounds finished cuts nothing: the next tick judges
+/// the cut on the outcome the finish wrote, as a single round always has. A voided round writes
+/// no outcome, so its members are cut again at once.
+fn decide_repo(policy: &Policy, name: &str, rc: &RepoCarry, repo: &Repo, now_ms: u64) -> (RepoCarry, Vec<Act>) {
+    let idle = if rc.live() { State::Idle } else { rc.state };
+    let (mut shared, mut live, mut acts, mut ended) = (rc.clone(), Vec::<RepoCarry>::new(), vec![], false);
+    for round in rc.rounds() {
+        let mut m = Machine { repo: name, rc: shared.holding(&round), acts: vec![], now_ms, below: !live.is_empty() };
+        let voided = m.voided(repo);
+        m.observe(policy, repo);
+        acts.extend(m.acts);
+        if m.rc.live() {
+            live.push(m.rc.round());
+        } else {
+            ended |= !voided;
+        }
+        shared = m.rc;
+    }
+    let mut m = Machine { repo: name, rc: shared.holding(&RepoCarry { state: idle, ..RepoCarry::default() }), acts, now_ms, below: !live.is_empty() };
+    if !ended {
+        m.cut(policy, repo, &live);
+    }
+    if m.rc.live() {
+        live.push(m.rc.round());
+    }
+    let state = if live.is_empty() { m.rc.state } else { idle };
+    (RepoCarry::rebuilt(&m.rc, live, state), m.acts)
+}
+
+/// Where `leg`'s round stands in `rc`: the index among its live rounds of the one the leg
+/// belongs to, by batch, round key or unit; a leg naming none belongs to the lowest.
+fn round_of(rc: &RepoCarry, leg: &Leg) -> Option<usize> {
+    let named = !(leg.batch.is_empty() && leg.round_key.is_empty() && leg.unit.is_empty());
+    let rounds = rc.rounds();
+    if !named {
+        return (!rounds.is_empty()).then_some(0);
+    }
+    rounds.iter().position(|r| {
+        (!leg.batch.is_empty() && r.batch.as_deref() == Some(leg.batch.as_str()))
+            || (!leg.round_key.is_empty() && r.round_key.as_deref() == Some(leg.round_key.as_str()))
+            || (!leg.unit.is_empty() && r.leg.as_deref() == Some(leg.unit.as_str()))
+    })
+}
+
+/// `rc` with round `at` of its live rounds replaced by what `m` made of it.
+fn replace_round(rc: &RepoCarry, at: usize, m: &Machine) -> RepoCarry {
+    let mut rounds = rc.rounds();
+    if m.rc.live() {
+        rounds[at] = m.rc.round();
+    } else {
+        rounds.remove(at);
+    }
+    let idle = if rounds.is_empty() { State::Idle } else { rc.state };
+    RepoCarry::rebuilt(&m.rc, rounds, idle)
 }
 
 /// The machine's answer to the outcome of one of its own effects, whose input was `leg`.
 pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, leg: &Leg, now_ms: u64) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
-    let mut m = Machine { repo: &leg.repo, rc: carry.repos.get(&leg.repo).cloned().unwrap_or_default(), acts: vec![], now_ms };
+    let rc = carry.repos.get(&leg.repo).cloned().unwrap_or_default();
+    let Some(at) = round_of(&rc, leg) else { return (next, vec![]) };
+    let mut m = Machine { repo: &leg.repo, rc: rc.holding(&rc.rounds()[at]), acts: vec![], now_ms, below: at > 0 };
     m.outcome(effect, ok, body, leg);
-    let acts = m.acts;
-    store(&mut next, &leg.repo, m.rc);
+    let acts = std::mem::take(&mut m.acts);
+    store(&mut next, &leg.repo, replace_round(&rc, at, &m));
     (next, acts)
 }
 
@@ -1305,12 +1547,15 @@ pub fn on_ran(carry: &Carry, ran: &UnitRan, now_ms: u64) -> Option<(Carry, Vec<A
 /// and certify legs are judged by their own lines.
 pub fn on_ran_with(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64) -> Option<(Carry, Vec<Act>)> {
     let key = ran.key_for(NAME)?;
-    let (repo, rc) = carry.repos.iter().find(|(_, rc)| rc.leg.as_deref() == Some(key.as_str()) && matches!(rc.state, State::Corpus | State::Attributing | State::Certifying))?;
+    let (repo, rc, at) = carry.repos.iter().find_map(|(repo, rc)| {
+        let at = rc.rounds().iter().position(|r| r.leg.as_deref() == Some(key.as_str()) && matches!(r.state, State::Corpus | State::Attributing | State::Certifying))?;
+        Some((repo, rc, at))
+    })?;
     let mut next = carry.clone();
-    let mut m = Machine { repo, rc: rc.clone(), acts: vec![], now_ms };
+    let mut m = Machine { repo, rc: rc.holding(&rc.rounds()[at]), acts: vec![], now_ms, below: at > 0 };
     m.leg_ended_with(ran.exit, out.stdout_tail.as_deref().unwrap_or_default());
-    let acts = m.acts;
-    store(&mut next, repo, m.rc);
+    let acts = std::mem::take(&mut m.acts);
+    store(&mut next, repo, replace_round(rc, at, &m));
     Some((next, acts))
 }
 
@@ -1601,18 +1846,17 @@ pub mod edge {
             .collect();
         let blockers = pool.iter().flat_map(|m| m.deps.clone()).collect();
         let branch_tips = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-        let open_round = match io::open_round_id(env, repo)? {
-            Some(id) => {
-                let members = io::round_members(env, repo, &id).unwrap_or_default();
-                let driven = io::certify_driven(env, &repo.name, &id);
-                let unfit = io::round_certifiable(env, repo, &id).err();
-                let (stopped, stop_why, paused) = holds(env, &repo.name);
-                return Ok(Repo { pool, blockers, branch_tips, base_sha: io::resolve_base_sha(repo).unwrap_or_default(), stopped, stop_why, paused, unfit, open_round: Some(Round { id, members, driven, ..Round::default() }), ..Repo::default() });
-            }
-            None => None,
-        };
+        let mut open = io::open_rounds(env, repo)?.into_iter().map(|r| {
+            let driven = io::certify_driven(env, &repo.name, &r.id);
+            let unfit = io::round_certifiable(env, repo, &r.id).err();
+            Round { id: r.id, members: r.members, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit }
+        });
+        let open_round = open.next();
+        let open_above: Vec<Round> = open.collect();
         let (stopped, stop_why, paused) = holds(env, &repo.name);
-        Ok(Repo { pool, blockers, branch_tips, open_round, base_sha: io::resolve_base_sha(repo)?, stopped, stop_why, paused, ..Repo::default() })
+        let unfit = open_round.as_ref().and_then(|r| r.unfit.clone());
+        let base_sha = if open_round.is_some() { io::resolve_base_sha(repo).unwrap_or_default() } else { io::resolve_base_sha(repo)? };
+        Ok(Repo { pool, blockers, branch_tips, open_round, open_above, base_sha, stopped, stop_why, paused, unfit, ..Repo::default() })
     }
 
     /// The repo's holds: the scoped stop of its `rounds` lane (and its reason), and the pace's
@@ -1643,8 +1887,12 @@ pub mod edge {
         let base = io::resolve_base_sha(&repo)?;
         let sorted = batcher::core::topo_order(&core_members(&leg.members));
         let sequenced = batcher::core::stack_sequencing(&sorted);
-        let wt = env.run.join("worktree").join(format!(".batcher-{}", repo.name));
-        io::worktree_reset(&repo, &wt, &base)?;
+        let (wt, at) = if leg.onto.is_empty() {
+            (env.run.join("worktree").join(format!(".batcher-{}", repo.name)), base.clone())
+        } else {
+            (env.run.join("worktree").join(format!(".batcher-{}-{}", repo.name, &super::digest(&leg.round_key)[..12])), leg.onto.clone())
+        };
+        io::worktree_reset(&repo, &wt, &at)?;
         if let Err(e) = io::template_refresh(&env, &wt) {
             eprintln!("batcher.local {}: template refresh before the lease failed ({e}) — cutting on the template as it stands", repo.name);
         }

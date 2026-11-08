@@ -238,7 +238,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
         .filter(|r| matches!(r.state, BeadState::Submitted | BeadState::Certified))
         .map(|r| bl::Member { id: r.bead_id.clone(), state: r.state.as_str().into(), version: r.version, tip: r.tip.clone().unwrap_or_default(), sifted_tip: r.sifted_tip.clone(), title: r.bead_id.clone(), priority: 2, ..bl::Member::default() })
         .collect();
-    let open_round = lc.round.as_ref().map(|(id, m)| bl::Round { id: id.clone(), members: m.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: format!("/sim/wt/{id}"), driven: held.as_ref() == Some(id) });
+    let open_round = lc.round.as_ref().map(|(id, m)| bl::Round { id: id.clone(), members: m.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: format!("/sim/wt/{id}"), driven: held.as_ref() == Some(id), ..bl::Round::default() });
     let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), ..bl::Repo::default() };
     json(&bl::Snapshot { repos: [(REPO.to_string(), repo)].into(), now_ms: w.now() })
 }
