@@ -12,7 +12,7 @@ off the serving path:
   copied in. A database already in RAM is newer than its copy and is kept.
 - **pass** — every database is synced into the copy; the pass records the moment it began.
 - **run** — a pass every `SPIRA_DOLT_PERSIST_INTERVAL_SECS`, through the running server.
-- **compact** — a copy grown past `SPIRA_DOLT_PERSIST_COMPACT_PCT` of its live size is rebuilt.
+- **compact** — first `dolt_gc()` on each live database when the filesystem has room for a second generation; then a copy grown past `SPIRA_DOLT_PERSIST_COMPACT_PCT` of its live size is rebuilt.
 - **age** — red once the newest finished pass began more than `SPIRA_DOLT_PERSIST_MAX_LAG_SECS` ago.
 
 **The loss bound.** Every write committed before the newest finished pass began is on disk. A

@@ -711,3 +711,4 @@ runtime_dwarf_usage_secs
 throughput_ratio_min_pct
 throughput_ratio_min_runs
 throughput_passed_grace
+dolt_tmp_pressure_pct

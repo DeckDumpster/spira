@@ -53,6 +53,32 @@ _dolt_tmp_prune_stale() {
     done < <(find "$dir" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
 }
 
+# _dolt_tmp_used_pct <dir> — percent of the filesystem holding <dir> in use.
+_dolt_tmp_used_pct() {
+    df --output=pcent "$1" 2>/dev/null | tail -n1 | tr -dc '0-9'
+}
+
+# _dolt_tmp_prune_pressure <tmp-dir> <threshold-pct> <used-pct-cmd> — while the filesystem
+# is at or past <threshold-pct>, removes the largest entry of <tmp-dir>, held open or not:
+# a live spill is held by the very query filling the disk, and waiting for it to let go is
+# waiting for the outage. Files are truncated first so their blocks come back at once; the
+# holder's query fails instead of the server.
+_dolt_tmp_prune_pressure() {
+    local dir="$1" threshold="$2" used_cmd="$3" used entry sz_kb f
+    [ -d "$dir" ] || return 0
+    while :; do
+        used="$("$used_cmd" "$dir")"
+        [ -n "$used" ] && [ "$used" -ge "$threshold" ] || return 0
+        entry="$(du -sk "$dir"/* "$dir"/.[!.]* 2>/dev/null | sort -rn | head -n1 | cut -f2-)"
+        [ -n "$entry" ] || return 0
+        sz_kb="$(du -sk "$entry" 2>/dev/null | cut -f1)"
+        while IFS= read -r -d '' f; do : > "$f" 2>/dev/null; done < <(find "$entry" -type f -print0 2>/dev/null)
+        rm -rf "$entry" 2>/dev/null || return 0
+        printf 'pruned dolt tmp entry %s (%sKiB freed, filesystem at %s%% >= threshold %s%%)\n' \
+            "$entry" "${sz_kb:-0}" "$used" "$threshold"
+    done
+}
+
 main() {
     set -uo pipefail
     . "$(dirname "$0")/lib.sh"
@@ -63,6 +89,7 @@ main() {
     local pid held
     pid="$(systemctl --user show -p MainPID --value dolt-beads.service 2>/dev/null)"
     held="$(_dolt_tmp_held_fds "${pid:-}")"
+    _dolt_tmp_prune_pressure "$SPIRA_DOLT_DATA/.dolt/tmp" "${SPIRA_DOLT_TMP_PRESSURE_PCT:-85}" _dolt_tmp_used_pct
     _dolt_tmp_prune_stale "$SPIRA_DOLT_DATA/.dolt/tmp" "${SPIRA_DOLT_TMP_TTL:-86400}" "$held"
 }
 

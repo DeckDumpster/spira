@@ -21,6 +21,10 @@ pub trait Dolt {
     /// `CALL dolt_backup('sync-url', 'file://<dest>')` on `data/db`: branches, tags and working
     /// sets, incremental against what `dest` already holds.
     fn sync(&self, conn: &Conn, data: &Path, db: &str, dest: &Path) -> Result<(), String>;
+    /// `CALL dolt_gc()` on `data/db`: rewrites the live store without the chunks no root reaches.
+    fn gc(&self, conn: &Conn, data: &Path, db: &str) -> Result<(), String>;
+    /// Bytes free on the filesystem holding `path`.
+    fn free_bytes(&self, path: &Path) -> Result<u64, String>;
     /// Opens the database at `db_dir` with no server and returns `dolt_hashof_db()`.
     fn verify(&self, db_dir: &Path) -> Result<String, String>;
     /// Whether `pid` is a live Dolt process.

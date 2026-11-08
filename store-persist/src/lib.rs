@@ -522,6 +522,9 @@ fn exchange(a: &Path, b: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Collects each live database first, when the filesystem has room for the second generation a
+/// collection writes beside the first; automatic GC alone left multi-GB table files standing.
+///
 /// A backup never sheds a chunk the live store has collected, so each copy grows until it is
 /// rebuilt. One past `compact_pct` of its live size is rebuilt beside itself without the lock,
 /// caught up under the lock, and exchanged in one rename.
@@ -530,7 +533,20 @@ pub fn compact(cfg: &Config, dolt: &dyn Dolt) -> Result<Vec<String>, String> {
     let conn = conn_for(&cfg.data, Mode::Online, dolt)?;
     let mut out = Vec::new();
     for db in durable_dbs(&l)? {
-        let (copy, live) = (tree_bytes(&l.db(&db)), tree_bytes(&cfg.data.join(&db).join(".dolt/noms")));
+        let noms = cfg.data.join(&db).join(".dolt/noms");
+        let before = tree_bytes(&noms);
+        if before > 0 {
+            let free = dolt.free_bytes(&cfg.data)?;
+            if free < before {
+                out.push(format!("{db}: not collected — {free} B free, a collection needs {before} B"));
+            } else {
+                match dolt.gc(&conn, &cfg.data, &db) {
+                    Ok(()) => out.push(format!("{db}: collected, live {before} B -> {} B", tree_bytes(&noms))),
+                    Err(e) => out.push(format!("{db}: collection failed: {e}")),
+                }
+            }
+        }
+        let (copy, live) = (tree_bytes(&l.db(&db)), tree_bytes(&noms));
         if live == 0 || copy.saturating_mul(100) <= live.saturating_mul(cfg.compact_pct) {
             out.push(format!("{db}: copy {copy} B, live {live} B — within {}%", cfg.compact_pct));
             continue;

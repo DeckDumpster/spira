@@ -25,6 +25,20 @@ impl Clock for RealClock {
 struct RealDolt;
 
 impl RealDolt {
+    fn command(conn: &Conn, data: &Path, db: &str) -> Command {
+        let mut cmd = Command::new("dolt");
+        match conn {
+            Conn::Server { port, secret } => {
+                cmd.env("DOLT_CLI_PASSWORD", secret)
+                    .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "-u", "__dolt_local_user__", "--use-db", db, "sql"]);
+            }
+            Conn::Offline => {
+                cmd.current_dir(data.join(db)).arg("sql");
+            }
+        }
+        cmd
+    }
+
     /// SQL goes on stdin; the server's local-user secret in the environment, never argv.
     fn sql(&self, mut cmd: Command, sql: &str) -> Result<String, String> {
         cmd.envs(spira_config::release_env::child_path_env_for_process()?);
@@ -47,21 +61,26 @@ impl RealDolt {
 impl Dolt for RealDolt {
     fn sync(&self, conn: &Conn, data: &Path, db: &str, dest: &Path) -> Result<(), String> {
         // batch-job: a sync copies whatever the copy lacks, a whole store when it starts empty
-        let mut cmd = Command::new("dolt");
-        match conn {
-            Conn::Server { port, secret } => {
-                cmd.env("DOLT_CLI_PASSWORD", secret)
-                    .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "-u", "__dolt_local_user__", "--use-db", db, "sql"]);
-            }
-            Conn::Offline => {
-                cmd.current_dir(data.join(db)).arg("sql");
-            }
-        }
+        let cmd = Self::command(conn, data, db);
         let url = format!("file://{}", dest.display());
         if url.contains('\'') {
             return Err(format!("{} cannot be quoted as a backup URL", dest.display()));
         }
         self.sql(cmd, &format!("CALL DOLT_BACKUP('sync-url', '{url}');\n")).map(|_| ())
+    }
+
+    fn gc(&self, conn: &Conn, data: &Path, db: &str) -> Result<(), String> {
+        // batch-job: a gc rewrites the whole live store
+        self.sql(Self::command(conn, data, db), "CALL DOLT_GC();\n").map(|_| ())
+    }
+
+    fn free_bytes(&self, path: &Path) -> Result<u64, String> {
+        let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())?;
+        let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+        if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+            return Err(format!("cannot stat {}: {}", path.display(), std::io::Error::last_os_error()));
+        }
+        Ok(st.f_bavail as u64 * st.f_frsize as u64)
     }
 
     fn verify(&self, db_dir: &Path) -> Result<String, String> {
