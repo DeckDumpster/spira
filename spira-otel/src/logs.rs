@@ -110,7 +110,7 @@ impl LogSink {
             })
             .collect();
         files.sort();
-        for (_, _, old) in files.into_iter().skip(cap.keep) {
+        for (_, _, old) in files.into_iter().skip(cap.keep - 1) {
             let _ = fs::remove_file(old);
         }
         Ok(())
@@ -268,6 +268,17 @@ mod tests {
         for f in files(d.path()) {
             assert!(fs::metadata(d.path().join(f)).unwrap().len() < 600 + one, "no file passes the cap by more than a record");
         }
+    }
+
+    #[test]
+    fn a_new_days_file_pushes_the_oldest_files_out_of_the_keep_count() {
+        let d = testkit::TempDir::new("otel-logs-days");
+        for f in ["svc.logs.2000-01-01.jsonl", "svc.logs.2000-01-01.jsonl.1", "svc.logs.1999-12-31.jsonl", "other.logs.1999-01-01.jsonl"] {
+            fs::write(d.path().join(f), "x\n").unwrap();
+        }
+        LogSink::new(d.path(), "svc").capped(1 << 20, 2).write("x", &[], SystemTime::now()).unwrap();
+        let day = crate::utc_date(SystemTime::now());
+        assert_eq!(files(d.path()), vec!["other.logs.1999-01-01.jsonl".to_string(), format!("svc.logs.{day}.jsonl"), "svc.logs.2000-01-01.jsonl".to_string()]);
     }
 
     #[test]
