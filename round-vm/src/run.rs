@@ -152,6 +152,8 @@ pub struct BatchJob {
     pub ci_entry: Option<String>,
     /// The tree's fences, `name<TAB>command` lines, run after the lint when `lint` is set.
     pub fences: String,
+    /// Set by the host when the VM showed no sign of the round: `run_batch` stops the batch's ssh.
+    pub cancel: std::sync::atomic::AtomicBool,
 }
 
 /// The VM side, reached only by address.
@@ -159,6 +161,10 @@ pub trait Remote: Sync {
     fn reachable(&self, addr: &str) -> bool;
     /// Runs the batch on the VM; the remote testenv runner's exit code (255: ssh itself).
     fn run_batch(&self, addr: &str, job: &BatchJob) -> Result<i32, String>;
+    /// Whether the round script has begun on the VM: its log exists and is not empty.
+    fn round_started(&self, addr: &str) -> bool;
+    /// The tail of the VM's cloud-init output and kernel log, for a VM that never began the round.
+    fn boot_log_tail(&self, addr: &str) -> Result<String, String>;
     /// Copies the remote directory `remote_path` into `local`.
     fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), String>;
     /// Copies the local directory `local` into the remote `remote_path`.
@@ -169,6 +175,10 @@ pub trait Remote: Sync {
     /// Runs one attribution rerun (DESIGN.md §2.2a); its testenv exit code (255: ssh).
     fn run_attr(&self, addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String>;
 }
+
+/// What the host reads of a VM that never began the round. cloud-init's output log, not its
+/// user-data: that carries secrets.
+const BOOT_LOG_COMMAND: &str = "tail -n 200 /var/log/cloud-init-output.log 2>&1; echo '--- kernel log'; dmesg 2>&1 | tail -n 100; echo '--- journal'; journalctl -n 100 --no-pager 2>&1";
 
 /// Single-quotes `s` for a POSIX shell, so an empty argument survives ssh's re-joining of
 /// the remote command line (the bash lost an empty --suites and shifted every later one).
@@ -1198,8 +1208,41 @@ impl Remote for SshRemote {
         if let Some(mut si) = child.stdin.take() {
             si.write_all(if job.ci_entry.is_some() { FOREIGN_SCRIPT } else { REMOTE_SCRIPT }.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
         }
-        let st = child.wait().map_err(|e| format!("ssh: {e}"))?;
-        Ok(st.code().unwrap_or(255))
+        loop {
+            if let Some(st) = child.try_wait().map_err(|e| format!("ssh: {e}"))? {
+                return Ok(st.code().unwrap_or(255));
+            }
+            if job.cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Ok(255);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn round_started(&self, addr: &str) -> bool {
+        command("ssh")
+            .args(self.ssh_opts())
+            .arg(format!("{}@{addr}", self.user))
+            .arg(format!("test -s \"$HOME/{}\"", crate::vm_fault::SCRIPT_LOG_FILE))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    fn boot_log_tail(&self, addr: &str) -> Result<String, String> {
+        let out = command("ssh")
+            .args(self.ssh_opts())
+            .arg(format!("{}@{addr}", self.user))
+            .arg(BOOT_LOG_COMMAND)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("ssh: {e}"))?;
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
     fn await_exit(&self, addr: &str, within: Duration, ssh_log: &Path) -> Result<Option<i32>, String> {
@@ -2303,6 +2346,7 @@ fn on_vm_run(
         ci_entry: args.ci_entry.clone(),
         resume_url: args.ci_entry.is_none().then(|| cfg.resume_url.clone()).flatten(),
         fences: args.fences.clone().unwrap_or_default(),
+        cancel: Default::default(),
     };
     if let (Some(dir), None) = (&cfg.resume_credentials, &args.ci_entry) {
         if job.resume_url.is_some() && !crate::ec2::is_ec2_handle(&vm.handle) {
@@ -2313,11 +2357,13 @@ fn on_vm_run(
     let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{}", std::process::id()));
     let mut refused: Option<String> = None;
     let Some(spool_dir) = args.attr_spool.clone() else {
+        let mut watch = NoOutputWatch::new(cfg.no_output);
         let streamed = std::thread::scope(|sc| {
             let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
             let mut last: Option<Instant> = None;
             while !batch.is_finished() {
                 if last.is_none_or(|l| l.elapsed() >= cfg.stream_every) {
+                    watch.check(env.remote, &vm.addr, &job);
                     stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
                     progress.update(&results_dir);
                     record_boundary(env, args, &mut progress, &mut refused);
@@ -2329,6 +2375,7 @@ fn on_vm_run(
             batch.join().unwrap_or_else(|_| Err("the batch thread panicked".into()))
         });
         let remote_rc = match streamed {
+            _ if watch.fired => return no_output_pass(env, args, vm, &watch, &mut progress, &results_dir),
             Ok(255) if vm_lost(env, vm) => {
                 lose_vm(env, args, &mut progress);
                 progress.finish(&results_dir, VM_LOST_EXIT);
@@ -2379,9 +2426,11 @@ fn on_vm_run(
             mirror_lock: &mirror_lock,
         };
         let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
+        let mut watch = NoOutputWatch::new(cfg.no_output);
         let mut last: Option<Instant> = None;
         while !batch.is_finished() {
             if last.is_none_or(|l| l.elapsed() >= cfg.stream_every) {
+                watch.check(env.remote, &vm.addr, &job);
                 stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
                 progress.update(&results_dir);
                 record_boundary(env, args, &mut progress, &mut refused);
@@ -2392,6 +2441,7 @@ fn on_vm_run(
         }
         let _ = fs::remove_dir_all(&stream_scratch);
         let judged = match batch.join() {
+            _ if watch.fired => Err(no_output_pass(env, args, vm, &watch, &mut progress, &results_dir)),
             Ok(Ok(255)) if vm_lost(env, vm) => {
                 lose_vm(env, args, &mut progress);
                 Err(VM_LOST_EXIT)
@@ -2447,6 +2497,59 @@ fn recover_dropped_ssh(env: &RunEnv, args: &RunArgs, vm: &Vm, job: &BatchJob, pr
     keep_after_lost_ssh(env, vm, results_dir, progress.total(), keep);
     record_incomplete(env, args, &format!("the batch's ssh dropped: {cause}"));
     None
+}
+
+/// `run`'s exit when the VM answered ssh and showed no sign of the round script: no verdict, no
+/// member at fault, the pass is run again on a fresh VM.
+pub const VM_NO_OUTPUT_EXIT: i32 = 77;
+
+/// Watches a running batch for the round script's first sign of life, so a VM that takes the
+/// ssh connection and never starts the round does not hold the pass until its wall guard.
+struct NoOutputWatch {
+    limit: Duration,
+    since: Instant,
+    started: bool,
+    fired: bool,
+}
+
+impl NoOutputWatch {
+    fn new(limit: Duration) -> NoOutputWatch {
+        NoOutputWatch { limit, since: Instant::now(), started: false, fired: false }
+    }
+
+    fn check(&mut self, remote: &dyn Remote, addr: &str, job: &BatchJob) {
+        // The foreign script writes no round-script log; its entry point has its own output.
+        if self.started || self.fired || job.ci_entry.is_some() {
+            return;
+        }
+        if remote.round_started(addr) {
+            self.started = true;
+        } else if self.since.elapsed() >= self.limit {
+            self.fired = true;
+            job.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
+/// Names the fault, keeps the VM's boot log beside it before the VM is destroyed, and ends the
+/// pass with no verdict and no member implicated.
+fn no_output_pass(env: &RunEnv, args: &RunArgs, vm: &Vm, watch: &NoOutputWatch, progress: &mut crate::progress::Progress, results_dir: &Path) -> i32 {
+    let fault = crate::vm_fault::no_output(watch.limit.as_secs());
+    eprintln!("round-vm run: INCOMPLETE reason={}", fault.cause);
+    let _ = fs::create_dir_all(results_dir);
+    match env.remote.boot_log_tail(&vm.addr) {
+        Ok(tail) => {
+            let _ = fs::write(results_dir.join(crate::vm_fault::BOOT_TAIL_FILE), tail);
+        }
+        Err(e) => eprintln!("round-vm run: the VM's boot log could not be read before it is destroyed: {e}"),
+    }
+    if let Err(e) = fs::write(results_dir.join(crate::vm_fault::ROUND_FAULT_FILE), fault.render()) {
+        eprintln!("round-vm run: {}: {e}", crate::vm_fault::ROUND_FAULT_FILE);
+    }
+    progress.marks().lose(crate::vm_fault::NO_OUTPUT);
+    record_incomplete(env, args, &format!("vm-no-output: {}", crate::vm_fault::NO_OUTPUT));
+    progress.finish(results_dir, VM_NO_OUTPUT_EXIT);
+    VM_NO_OUTPUT_EXIT
 }
 
 /// `run`'s exit when the VM died under the pass: no verdict, nothing to re-pull, retry the pass.
@@ -3280,6 +3383,7 @@ mod tests {
             round_sha: "abc".into(),
             ci_entry: Some("deploy/ci.sh all".into()),
             fences: String::new(),
+            cancel: Default::default(),
         });
         assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
@@ -3398,7 +3502,7 @@ mod tests {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
             testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
             testenv_limits: "x".into(), post_guard_secs: 1, lint: false, build_image: false,
-            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, fences: String::new(),
+            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, fences: String::new(), cancel: Default::default(),
         };
         assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' ''"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
@@ -3606,6 +3710,8 @@ mod tests {
         recorded_exit: Option<i32>,
         /// what ssh logged for the batch connection before it dropped
         ssh_log_text: Option<&'static str>,
+        /// answers ssh, holds the batch, and never writes the round script's log
+        never_starts: bool,
     }
     impl FakeRemote {
         fn green() -> FakeRemote {
@@ -3636,6 +3742,7 @@ mod tests {
                 kill_vm: None,
                 recorded_exit: None,
                 ssh_log_text: None,
+                never_starts: false,
             }
         }
     }
@@ -3646,6 +3753,10 @@ mod tests {
         fn run_batch(&self, _: &str, job: &BatchJob) -> Result<i32, String> {
             self.jobs.lock().unwrap().push(remote_command(job));
             self.batch_running.store(true, std::sync::atomic::Ordering::SeqCst);
+            if self.never_starts {
+                wait_until(|| job.cancel.load(std::sync::atomic::Ordering::SeqCst));
+                return Ok(255);
+            }
             if self.hold_for_attr {
                 wait_until(|| !self.attrs.lock().unwrap().is_empty());
             }
@@ -3663,6 +3774,12 @@ mod tests {
                 }
             }
             self.rc.clone()
+        }
+        fn round_started(&self, _: &str) -> bool {
+            !self.never_starts
+        }
+        fn boot_log_tail(&self, _: &str) -> Result<String, String> {
+            Ok("cloud-init: Failed to start Network Manager\n--- kernel log\nOut of memory: Killed process 412\n".into())
         }
         fn await_exit(&self, _: &str, _: Duration, _: &Path) -> Result<Option<i32>, String> {
             Ok(self.recorded_exit)
@@ -3758,6 +3875,7 @@ mod tests {
             post_guard_secs: 77,
             vm_budget_secs: 300,
             build_budget_secs: 600,
+            no_output_secs: 0,
         });
         Fixture { d, fp: FakeProvider::new(), cfg }
     }
@@ -4035,6 +4153,40 @@ mod tests {
         for f in [&fx, &fx2, &fx3, &fx4] {
             assert_eq!(f.fp.count("clone"), 0);
         }
+    }
+
+    fn round_args(fx: &Fixture) -> RunArgs {
+        RunArgs { round_batch: Some("r-1".into()), round_repo: Some("sp".into()), results_dir: Some(fx.cfg.run_dir.join("results")), ..tree(fx) }
+    }
+
+    #[test]
+    fn a_vm_that_answers_ssh_and_never_starts_the_round_is_the_named_no_output_fault() {
+        let fx = fixture();
+        let mut remote = FakeRemote::green();
+        remote.never_starts = true;
+        let rec = FakeRecorder::default();
+        let code = {
+            let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
+            let fp = fx.fp.clone();
+            let f = move || Ok(Attempt { provider: Box::new(fp.clone()), spill: None, iface: "ens18".into(), ssh_user: "root".into(), pubkey: "k".into(), timing: Timing { boot_tries: 1, poll: Duration::ZERO, gone_tries: 1 } });
+            let alarm = FakeAlarm::default();
+            let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
+            run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote: &remote, record: &rec }, &round_args(&fx))
+        };
+        assert_eq!(code, VM_NO_OUTPUT_EXIT);
+        let results = fx.cfg.run_dir.join("results");
+        let fault = fs::read_to_string(results.join(crate::vm_fault::ROUND_FAULT_FILE)).unwrap();
+        assert!(fault.starts_with("ROUND-FAULT: FAULT vm-no-output: VM produced no output"), "{fault}");
+        let boot = fs::read_to_string(results.join(crate::vm_fault::BOOT_TAIL_FILE)).unwrap();
+        assert!(boot.contains("Failed to start Network Manager") && boot.contains("Out of memory"), "{boot}");
+        assert_eq!(*rec.reasons.lock().unwrap(), vec!["vm-no-output: VM produced no output".to_string()], "the round records the fault by name");
+        assert_eq!(fx.fp.live_vms().len(), 0, "the VM is destroyed, so the re-drive gets a fresh one");
+    }
+
+    #[test]
+    fn a_vm_whose_round_script_has_begun_is_not_a_no_output_fault() {
+        let fx = fixture();
+        assert_ne!(go(&fx, &FakeRemote::green(), &round_args(&fx)), VM_NO_OUTPUT_EXIT);
     }
 
     #[test]

@@ -20,6 +20,12 @@ pub const FAULT_KIND_FILE: &str = "round-fault-kind";
 pub const KIND_OVER_CAP: &str = "over-cap";
 /// How much of the script's log a fault carries.
 pub const FAULT_TAIL: usize = 40;
+/// The fault of a VM that answered ssh and showed no sign of the round script: what the round
+/// records, and the word certify and the driver match on.
+pub const NO_OUTPUT: &str = "VM produced no output";
+/// The VM's cloud-init output and kernel log tail, fetched before the VM is destroyed. Never the
+/// user-data, which carries secrets.
+pub const BOOT_TAIL_FILE: &str = "vm-boot.tail";
 
 const PHASE_FAILED: &str = "round-vm: PHASE-FAILED ";
 const PHASE_MARK: &str = "round-vm: PHASE ";
@@ -37,6 +43,9 @@ pub struct RoundFault {
 impl RoundFault {
     pub fn render(&self) -> String {
         let key = self.settings_key.as_deref().map(|k| format!("settings-key: {k}\n")).unwrap_or_default();
+        if self.tail.is_empty() {
+            return format!("ROUND-FAULT: {}\n{key}", self.cause);
+        }
         format!("ROUND-FAULT: {}\n{key}--- the last {FAULT_TAIL} lines of the VM's script log ---\n{}\n", self.cause, self.tail)
     }
 }
@@ -80,6 +89,11 @@ pub fn name(results: &Path) -> RoundFault {
         None => format!("FAULT {at}{from}: {detail}"),
     };
     RoundFault { cause, settings_key, tail: window[end.saturating_sub(FAULT_TAIL)..].join("\n") }
+}
+
+/// The named fault of a VM that never started the round, as `round-fault.out` carries it.
+pub fn no_output(waited_secs: u64) -> RoundFault {
+    RoundFault { cause: format!("FAULT vm-no-output: {NO_OUTPUT} within {waited_secs}s of ssh being up"), settings_key: None, tail: String::new() }
 }
 
 fn parse_marker(text: &str) -> Option<(String, String)> {

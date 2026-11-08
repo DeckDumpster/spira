@@ -42,6 +42,10 @@ fn a_pass_is_typed_from_certify_s_exit_its_reason_and_its_red_steps() {
         Typed::Fault(Cause::Vm)
     );
     assert_eq!(
+        type_pass(&pass(VM_NO_OUTPUT, &["a"], None)),
+        Typed::Fault(Cause::Vm)
+    );
+    assert_eq!(
         type_pass(&pass(FAULT, &[], Some(OVER_CAP))),
         Typed::Fault(Cause::OverCap)
     );
