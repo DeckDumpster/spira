@@ -198,7 +198,10 @@ fn filter_red_in(results: &Path, members: &[Member], changed: &BTreeMap<Id, Vec<
 const TEST_PHASES: [(&str, &str); 2] = [("unit.json", "unit-tests"), ("integration.json", "integration-tests")];
 
 fn phase_red(results: &Path, json: &str) -> bool {
-    fs::read_to_string(results.join(json)).is_ok_and(|t| t.contains("\"verdict\":\"red\""))
+    fs::read_to_string(results.join(json))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .is_some_and(|v| v["verdict"] == "red")
 }
 
 /// The one member whose changed paths the failed phase's output names; nobody when none or
@@ -667,6 +670,15 @@ mod tests {
         assert_eq!(red.named.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["sp-b"]);
         fs::write(d.path().join("unit-tests.out"), "error: could not compile\n").unwrap();
         assert!(filter_red_in(d.path(), &ms, &changed).unwrap().named.is_empty(), "a red naming no member is filed, not guessed");
+        fs::write(d.path().join("unit-tests.out"), "panicked at queue/src/ops/round.rs:1:1\n").unwrap();
+        changed.insert("sp-a".to_string(), vec!["queue/src/ops/round.rs".to_string(), "docs/x.md".to_string()]);
+        assert!(filter_red_in(d.path(), &ms, &changed).unwrap().named.is_empty(), "two members touching the named file is ambiguous");
+        fs::write(d.path().join("unit.json"), "{\"verdict\":\"green\"}").unwrap();
+        assert_eq!(filter_red_in(d.path(), &ms, &changed), None, "only a red record is a red");
+        fs::write(d.path().join("integration.json"), "{\"stage\":\"integration-tests\",\"verdict\":\"red\"}").unwrap();
+        fs::write(d.path().join("integration-tests.out"), "panicked at docs/x.md:1:1\n").unwrap();
+        let red = filter_red_in(d.path(), &ms, &changed).unwrap();
+        assert_eq!((red.name.as_str(), red.named.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>()), ("integration-tests", vec!["sp-a"]));
     }
 
     #[test]
