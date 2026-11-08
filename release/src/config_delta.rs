@@ -553,7 +553,11 @@ pub fn prepare(cfg: &Config, rel: &Path, delta: &Delta, defer: bool) -> Result<T
     let (pre, post, undo) = apply(&original, delta, &retired, defer)?;
     let delta = &delta.expanded(&original);
     let mut deferred: Vec<String> = if defer { delta.removed.iter().filter(|k| original.iter().any(|t| get(t, k).is_some())).cloned().collect() } else { Vec::new() };
-    deferred.extend(held.into_iter().filter(|k| !deferred.contains(k)));
+    for k in held {
+        if !deferred.contains(&k) {
+            deferred.push(k);
+        }
+    }
     let txn = Txn { files, modes, original_text, original, pre, post, undo, deferred };
     txn.validate(cfg, rel)?;
     Ok(txn)
