@@ -114,6 +114,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("inbox.notify", &["inbox.notify.observe", "inbox.notify.ask", "inbox.notify.sop_match", "unit.start", "inbox.notify.sop_applied", "inbox.notify.concierge_note", "inbox.notify.mail_health"]),
     ("incident.probe", &["incident.probe.observe", "incident.probe.send"]),
     ("watch.ci_spill", &["watch.ci_spill.observe", "inbox.append"]),
+    ("watch.dwarf_usage", &["watch.dwarf_usage.sample"]),
     ("watch.backup_age", &["watch.backup_age.observe", "watch.backup_age.mail"]),
     ("watch.pass_rate", &["watch.pass_rate.observe", "watch.pass_rate.mail"]),
     ("watch.throughput", &["watch.throughput.observe", "watch.throughput.stamp", "inbox.append"]),

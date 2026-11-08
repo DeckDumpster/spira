@@ -327,6 +327,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("watch.backup_age.mail", Store),
     ("watch.backup_age.observe", Host),
     ("watch.ci_spill.observe", Git),
+    ("watch.dwarf_usage.sample", Host),
     ("watch.mend.lift_stop", Host),
     ("watch.mend.log_append", Host),
     ("watch.mend.observe", Store),

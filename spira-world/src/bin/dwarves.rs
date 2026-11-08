@@ -5,6 +5,8 @@
 //!   dwarves.sh set <n>          allow at most <n> dwarves at once, across every persona and lane
 //!   dwarves.sh unset            remove the fleet ceiling (back to pool + one per lane)
 //!   dwarves.sh pool <n>         set the TASK pool (SPIRA_MAX_DWARVES) — the older, narrower knob
+//!   dwarves.sh usage            each live dwarf's CPU, IO per disk, memory and disk, now
+//!   dwarves.sh usage bead <id>  a bead's sessions and totals, from the metrics store
 //!
 //! `status` always prints BOTH the task pool and the fleet ceiling and the sum they imply
 //! — the whole reason this tool exists rather than a line in a file (bash's own header:
@@ -175,6 +177,40 @@ fn cmd_pool(args: &[String]) -> i32 {
     0
 }
 
+/// `usage [--interval <secs>]`: every live dwarf and hand scope, read twice `<secs>` apart
+/// (1 by default) for the current rates. `usage bead <id> [--days <n>]`: the bead's sessions
+/// from the metrics store (30 days by default). Read-only.
+fn cmd_usage(args: &[String]) -> i32 {
+    let flag = |name: &str, default: f64| -> f64 {
+        match args.iter().position(|a| a == name) {
+            None => default,
+            Some(i) => args.get(i + 1).and_then(|v| v.parse::<f64>().ok()).filter(|v| *v > 0.0).unwrap_or_else(|| die(&format!("{name} takes a positive number"))),
+        }
+    };
+    if args.first().map(String::as_str) == Some("bead") {
+        let Some(bead) = args.get(1).filter(|b| !b.starts_with('-') && b.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')) else { die("usage: dwarves.sh usage bead <id> [--days <n>]") };
+        let days = flag("--days", 30.0);
+        let store = spira_otel::query::Store::new(spira_config::process::metrics_endpoint().as_deref()).unwrap_or_else(|e| die(&e.to_string()));
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let series = store.export(&spira_world::usage::bead_selector(bead), now.saturating_sub((days * 86_400.0) as u64)).unwrap_or_else(|e| die(&e.to_string()));
+        if series.is_empty() {
+            die(&format!("no usage series for {bead} in the last {days} day(s)"));
+        }
+        print!("{}", spira_world::usage::render_bead(bead, &spira_world::usage::bead_totals(&series)));
+        return 0;
+    }
+    let interval = flag("--interval", 1.0);
+    let run = spira_world::spira_run().unwrap_or_else(|e| die(&e));
+    let roots = runtime::usage::Roots::live(&run);
+    let before = runtime::usage::sample(&roots);
+    let t0 = std::time::Instant::now();
+    std::thread::sleep(std::time::Duration::from_secs_f64(interval)); // waits-on: nothing — the rate is the movement over a fixed --interval; cap --interval
+    let after = runtime::usage::sample(&roots);
+    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    print!("{}", spira_world::usage::render_live(&before, &after, t0.elapsed().as_secs_f64(), now_ms));
+    0
+}
+
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let cmd = args.first().cloned().unwrap_or_else(|| "status".to_string());
@@ -185,15 +221,18 @@ fn main() {
         "set" => cmd_set(&rest),
         "unset" => cmd_unset(),
         "pool" => cmd_pool(&rest),
+        "usage" => cmd_usage(&rest),
         "-h" | "--help" | "help" => {
             println!("dwarves.sh — how many dwarves may run at once, and how many are running.\n");
             println!("  dwarves.sh                  what the ceiling is, what is live, what the real ceiling is");
             println!("  dwarves.sh set <n>          allow at most <n> dwarves at once, across every persona and lane");
             println!("  dwarves.sh unset            remove the fleet ceiling (back to pool + one per lane)");
             println!("  dwarves.sh pool <n>         set the TASK pool (SPIRA_MAX_DWARVES) — the older, narrower knob");
+            println!("  dwarves.sh usage            each live dwarf's CPU, IO per disk, memory and disk, now");
+            println!("  dwarves.sh usage bead <id>  a bead's sessions and totals, from the metrics store");
             0
         }
-        other => die(&format!("unknown command '{other}' — try: status | set <n> | unset | pool <n>")),
+        other => die(&format!("unknown command '{other}' — try: status | set <n> | unset | pool <n> | usage")),
     };
     spira_otel::oneshot::exit(rc);
 }

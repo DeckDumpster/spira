@@ -22,6 +22,7 @@ pub mod sources;
 pub mod status_board;
 pub mod taskrig;
 pub mod units;
+pub mod usage;
 pub mod wide;
 
 pub use engine::{Engine, Executor, Outcome, PendingEffect};
