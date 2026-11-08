@@ -31,6 +31,9 @@ pub enum Mode {
     Summoned(crate::summon::Summon),
 }
 
+/// Ranked ids to try in order, which of them are resumable, and the rank's tier label.
+type Candidates = (Vec<String>, Vec<String>, Option<String>);
+
 /// Why the work phase stopped early. Every variant still runs the teardown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Abort {
@@ -603,7 +606,7 @@ impl<'a> Run<'a> {
     }
 
     /// The candidates to claim: the ranked ready set, or the one bead a summons names.
-    fn candidates(&mut self) -> Result<(Vec<String>, Vec<String>, Option<String>), i32> {
+    fn candidates(&mut self) -> Result<Candidates, i32> {
         if let Mode::Summoned(sm) = &self.mode {
             return Ok((vec![sm.bead.clone()], Vec::new(), None));
         }
