@@ -82,6 +82,18 @@ CALL
 chmod +x "$BIN/fake-systemd-run"
 export SPIRA_CALL="$BIN/fake-systemd-run"
 
+# slay's own behaviour (keep-work, the branch, the row) is test-slay.sh's; its seam resolves
+# spira-lc from the release, out of this suite's reach. This one stops the pid the pidfile
+# names, releases the stand-in's row and records the arguments the summons called it with.
+cat > "$BIN/slay" <<'SLAY'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TMP/slay-args"
+id="$2"
+for pf in "$SPIRA_RUN"/dwarf-*-"$id".pid; do kill -TERM "$(cat "$pf")" 2>/dev/null; rm -f "$pf"; done
+spira-lc holder-dead "$id" slay
+SLAY
+chmod +x "$BIN/slay"
+
 seed() {
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' "$1" "$_lbl" | testdb_seed
@@ -141,6 +153,7 @@ summon sp-sm-held --by concierge --reason "take it over"
 for _ in 1 2 3 4 5; do [ -d "/proc/$OLDPID" ] || break; sleep 1; done
 is   "the held dwarf is stopped" no "$([ -d "/proc/$OLDPID" ] && echo yes || echo no)"
 is   "its branch tip is still in the branch" 0 "$(git -C "$REPO" merge-base --is-ancestor "$OLDTIP" spira/sp-sm-held; echo $?)"
+is   "slay was called with the work kept and the requester in the why" "--bead sp-sm-held --keep-work --why summoned by concierge: take it over" "$(cat "$TMP/slay-args")"
 want "the summoned dwarf claimed on that bead" "claimed sp-sm-held" "$(cat "$TMP/out")"
 want "the claim names the requester" '"by":"concierge"' "$(claim_kind sp-sm-held)"
 want "the claim names the reason" '"reason":"take it over"' "$(claim_kind sp-sm-held)"
