@@ -41,6 +41,11 @@ pub fn round_bins(w: &World, repo: &Path, head: &str, worktree: &Path) -> Result
     Ok(dir)
 }
 
+/// Where tree certificates are kept, as the gate resolves it.
+pub fn verdicts_dir(w: &World, s: &crate::ports::Settings) -> PathBuf {
+    gate::cert::verdicts_dir(w.var("SPIRA_VERDICTS").as_deref(), &s.run)
+}
+
 /// §8 D12: Ok when a round GREEN (the full corpus on a round VM) certifies exactly `head`'s
 /// tree in `repo` (`gate::cert`, matched by (repo, tree) alone), naming it on stderr. A gate
 /// PASS is a budgeted selection and never certifies a landing; Err is the refusal text.
@@ -57,7 +62,7 @@ pub fn certified(
             "cannot resolve {head}^{{tree}} — nothing can say what would land"
         ));
     };
-    let verdicts = gate::cert::verdicts_dir(w.var("SPIRA_VERDICTS").as_deref(), &s.run);
+    let verdicts = verdicts_dir(w, s);
     let found = gate::cert::path(&verdicts, repo, &tree)
         .and_then(|p| w.env.read_file(&p).ok())
         .and_then(|text| gate::cert::certifies(&text, repo, &tree));

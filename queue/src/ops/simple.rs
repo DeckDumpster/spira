@@ -208,7 +208,7 @@ fn land_by_lint(w: &World, c: &Ctx, path: &std::path::Path, id: &str, tip: &str)
         harness: "-".into(),
         suites: "lint".into(),
     };
-    let verdicts = gate::cert::verdicts_dir(w.var("SPIRA_VERDICTS").as_deref(), &c.s.run);
+    let verdicts = super::land::verdicts_dir(w, &c.s);
     if let Err(e) = gate::cert::write(&verdicts, &cert) {
         w.err(format!("queue.sh submit: cannot record the lint-only certificate: {e} — refused"));
         return Some(FAIL);
