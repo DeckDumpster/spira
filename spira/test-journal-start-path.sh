@@ -109,7 +109,7 @@ import random
 random.seed(7)
 streams = ["task.cockpit-tier-5s", "watch.round-duty", "runtime.heartbeat", "units", "task.sweep.archive"]
 rows = []
-for i in range(80000):
+for i in range(100000):
     s = random.choice(streams)
     rows.append((f"req-{i}", s, "effect.requested", None))
     rows.append((f"out-{i}", s, random.choice(["effect.succeeded"] * 8 + ["effect.failed", "effect.timed_out"]), f"req-{i}"))
