@@ -59,6 +59,7 @@
 //! | Observing | red marker on same head, fix-forward live | Idle | — (wait, `:166-174`) |
 //! | Observing | act ∉ {Wait,Parked,Alarm} and round holds hypervisor, ticks < max | Deferred | carry `deferred_ticks+1` |
 //! | Observing | `Settle::Wait` / `Parked` | Open / Alarmed | — |
+//! | Observing | `Settle::Wait`, CI green | Merging | `publish.settle` (sp-hw3qio) |
 //! | Observing | `Settle::Rerun` | Rerun | `publish.rerun` (`:666`) |
 //! | Observing | `Settle::Alarm` | Alarmed | `publish.notify` + `publish.record` (`alarmed=`, `:675-695`) |
 //! | Observing | `Settle::Retire` / `Supersede` | Superseding | `publish.cancel_runs`, `publish.pr_close` (`:544-549`) |
@@ -68,6 +69,16 @@
 //! | Opening | any `effect.failed` | Refused | — (next tick re-observes) |
 //! | Deferred | tick | Observing | — |
 //! | Open | `queue.step` settles green/red | Idle | — (owned by [[queue-step]]) |
+//! | Adopting | `publish.record` succeeded | Merging | `publish.settle` (sp-hw3qio) |
+//! | Adopting | `publish.record` failed / timed out, or tick | Refused / Observing | — (sp-hw3qio) |
+//! | Merging | `publish.settle` answered | Idle / Refused | — |
+//!
+//! **A green PR is this task's to settle (sp-hw3qio).** The ported [[queue-step]] settles batches
+//! only; nothing in the scheduler ran queue's `settle_publish`, so a green publish PR waited on a
+//! landing pass's `queue verdict` reading its record, and one opened without a record (PR #989:
+//! its adoption's record outran a 2 s deadline, and a failed adoption wedged the machine in
+//! Adopting) waited for a hand `queue publish-settle`. `publish.settle` is `settle_publish`'s
+//! green half; red stays the verdict pass's, which files the fix-forward.
 //! | Refused | tick | Observing | — |
 //!
 //! ## Act
@@ -81,7 +92,8 @@
 //! | `publish.pr_close` | forge | 30 s | `repo/pr` (`:549`, `:629`) | — |
 //! | `publish.cancel_runs` | forge | 30 s | `repo/branch` (`:544`, `real.rs:782`) | — (best effort) |
 //! | `publish.rerun` | forge | 30 s | `repo/run` (`:666`, `real.rs:1410`) | `rerun=` already set (tries ≥ 1) |
-//! | `publish.record` | host (queue dir; store later, unverified) | 2 s | `repo/pr` | — |
+//! | `publish.record` | host (queue dir; store later, unverified) | 60 s (an adoption fetches and reads the range's members) | `repo/pr` | — |
+//! | `publish.settle` | git+forge | 60 s | `repo/pr/head` | queue lock busy, PR not open, CI not green on the record's branch (waits); non-fast-forward |
 //! | `publish.notify` | store (in-process mail) | 5 s | `repo/pr/subject` (`:583`, `:687`, `ops/helpers.rs:298`) | — |
 //!
 //! PR bodies list member titles: today `timeout bdq show` (`:257`, `real.rs:361`) → LcClient `content`.
@@ -135,15 +147,17 @@ pub const CANCEL_RUNS: &str = "publish.cancel_runs";
 pub const RERUN: &str = "publish.rerun";
 pub const RECORD: &str = "publish.record";
 pub const NOTIFY: &str = "publish.notify";
+/// A green open publish PR merged: the forge branch fast-forwarded to its head (sp-hw3qio).
+pub const SETTLE: &str = "publish.settle";
 
 pub const CADENCE_MS: u64 = 1_800_000;
 pub const OBSERVE_DEADLINE_MS: u64 = 60_000;
 
-pub const ACTS: &[(&str, u64)] = &[(PUSH_BRANCH, 60_000), (PUSH_FORGE, 60_000), (PR_CREATE, 60_000), (PR_CLOSE, 30_000), (CANCEL_RUNS, 30_000), (RERUN, 30_000), (RECORD, 2_000), (NOTIFY, 5_000)];
+pub const ACTS: &[(&str, u64)] = &[(PUSH_BRANCH, 60_000), (PUSH_FORGE, 60_000), (PR_CREATE, 60_000), (PR_CLOSE, 30_000), (CANCEL_RUNS, 30_000), (RERUN, 30_000), (RECORD, 60_000), (NOTIFY, 5_000), (SETTLE, 60_000)];
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: queue.step wants a publish.
 pub const WAKES: &[EventKindTag] = &[PUBLISH_WANTED];
-pub const EFFECTS: &[&str] = &[OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RERUN, RECORD, NOTIFY];
+pub const EFFECTS: &[&str] = &[OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RERUN, RECORD, NOTIFY, SETTLE];
 pub const KEYS: &[&str] = &["SPIRA_PUBLISH_SETTLE_DEFER_MAX", "SPIRA_FORGE", "SPIRA_QUEUE_DIR", "SPIRA_RUN", "SPIRA_MAIL_SESSION_MAILBOX", "SPIRA_QUEUE_LOCK_WAIT", "SPIRA_REPO_MAP"];
 pub const UNREGISTERED: &[&str] = &[];
 
@@ -236,6 +250,8 @@ pub enum State {
     Alarmed,
     Superseding,
     Refused,
+    /// `publish.settle` is merging a green PR (sp-hw3qio).
+    Merging,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -260,6 +276,8 @@ pub enum Trigger {
     PrCreated,
     EffectFailed,
     QueueStepSettled,
+    /// `Settle::Wait` on a PR whose CI is green: this task merges it (sp-hw3qio).
+    SettleGreen,
 }
 
 pub static TABLE: &[(State, Trigger, State)] = &[
@@ -293,6 +311,15 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     // is left open to settle).
     (State::Superseding, Trigger::EffectFailed, State::Refused),
     (State::Opening, Trigger::EffectSucceeded, State::Idle),
+    // sp-hw3qio: a green PR is merged here, an adopted one at once; a failed adoption is retried
+    // next tick, and so is an adoption or a merge whose outcome never came back.
+    (State::Observing, Trigger::SettleGreen, State::Merging),
+    (State::Adopting, Trigger::SettleGreen, State::Merging),
+    (State::Adopting, Trigger::EffectFailed, State::Refused),
+    (State::Adopting, Trigger::Tick, State::Observing),
+    (State::Merging, Trigger::EffectSucceeded, State::Idle),
+    (State::Merging, Trigger::EffectFailed, State::Refused),
+    (State::Merging, Trigger::Tick, State::Observing),
 ];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -405,7 +432,9 @@ impl Machine<'_> {
     }
 
     fn observe(&mut self, policy: &Policy, r: &Repo) {
-        if !matches!(self.rc.state, State::Idle | State::Deferred | State::Refused | State::Rerun | State::Alarmed) {
+        // Adopting and Merging too: both acts are idempotent, and one whose outcome was lost
+        // (a restart, a deadline) must not hold the repo forever (sp-hw3qio).
+        if !matches!(self.rc.state, State::Idle | State::Deferred | State::Refused | State::Rerun | State::Alarmed | State::Adopting | State::Merging) {
             return;
         }
         self.go(Trigger::Tick);
@@ -450,8 +479,14 @@ impl Machine<'_> {
         let pr = rec.map_or(0, |rec| rec.pr);
         match act {
             Settle::Open => self.open(r),
+            Settle::Wait if matches!(&r.pr, Pr::Open { ci, .. } if ci == "green") => {
+                // queue's `settle_publish`, green half: nothing else in the scheduler runs it.
+                self.go(Trigger::SettleGreen);
+                let rec = rec.cloned().unwrap_or_default();
+                self.settle(rec.pr, &rec.head, &rec.branch);
+            }
             Settle::Wait => {
-                // The open PR's CI is queue.step's to settle (`settle_publish`).
+                // Pending, or red: the verdict pass files a red's fix-forward.
                 self.go(Trigger::SettleWait);
                 self.go(Trigger::QueueStepSettled);
             }
@@ -476,6 +511,12 @@ impl Machine<'_> {
                 self.acts.push(Pub { pr, branch, head: r.head_sha.clone(), base: r.forge_sha.clone().unwrap_or_default(), key: format!("{}/{pr}", self.repo), ..Pub::on(self.repo) }.act(PR_CLOSE));
             }
         }
+    }
+
+    /// `publish.settle` for PR `pr` at `head`: the act reads the PR's state and CI again, so it
+    /// merges only a PR that is green when it runs.
+    fn settle(&mut self, pr: u64, head: &str, branch: &str) {
+        self.acts.push(Pub { pr, head: head.into(), branch: branch.into(), key: format!("{}/{pr}/{head}", self.repo), ..Pub::on(self.repo) }.act(SETTLE));
     }
 
     /// `Settle::Open`: guard the push (`:116-138`), then publish by PR or by fast-forward.
@@ -507,8 +548,18 @@ impl Machine<'_> {
     fn outcome(&mut self, effect: &str, ok: bool, body: &str, p: &Pub) {
         match (self.rc.state, effect, ok) {
             (State::Adopting, RECORD, true) => {
-                self.go(Trigger::EffectSucceeded);
-                self.go(Trigger::QueueStepSettled);
+                // The adopted PR may already be green (PR #989 was, for 16 h): settle it now.
+                self.go(Trigger::SettleGreen);
+                self.settle(p.pr, &p.head, &p.branch);
+            }
+            (State::Adopting, RECORD, false) => {
+                self.go(Trigger::EffectFailed);
+            }
+            (State::Merging, SETTLE, ok) => {
+                self.go(if ok { Trigger::EffectSucceeded } else { Trigger::EffectFailed });
+                if !ok {
+                    self.notify(p.pr, format!("publish PR {} for {} green but not merged", p.pr, self.repo), body.trim().to_string());
+                }
             }
             (State::Superseding, PR_CLOSE, true) => {
                 self.go(Trigger::EffectSucceeded);
@@ -845,6 +896,59 @@ pub mod edge {
             rec
         };
         queue::records::write_atomic(&path, &rec.render())
+    }
+
+    /// What `publish.settle` did: merged, or why it waits for the next tick.
+    #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub struct Settled {
+        pub settled: bool,
+        #[serde(default)]
+        pub why: String,
+    }
+
+    fn waits(why: impl Into<String>) -> Result<String, String> {
+        json(&Settled { settled: false, why: why.into() })
+    }
+
+    /// queue's `settle_publish`, green half, under the queue lock: the record's PR open and its CI
+    /// green on the record's branch, the forge branch fast-forwarded to the record's head, the PR
+    /// closed and the record retired. A PR that is not open, or not green, waits; a refused
+    /// fast-forward is an error and the record stays for a hand look.
+    pub fn settle(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        use queue::lock::Acquire;
+        let p = input(spec)?;
+        let _held = match queue::lock::try_lock_as(&e.world.queue_dir, &p.repo, "publish.settle") {
+            Acquire::Held(g) => g,
+            Acquire::Busy => return waits("another queue operation holds the lock"),
+            Acquire::Unopenable => return Err(format!("{}: cannot open the queue lock", p.repo)),
+        };
+        let qdir = e.world.queue_dir.join(&p.repo);
+        let Some(kv) = queue::records::read_kv(&qdir.join("publish"))? else { return waits("no publish record") };
+        if let Some(f) = queue::ops::verdict::publish_record_missing(&kv) {
+            return Err(format!("{}: the publish record has no {f} — left for a hand look", p.repo));
+        }
+        let field = |k: &str| kv.get(k).unwrap_or_default().to_string();
+        let (pr, head, branch, remote, forge_branch) = (field("pr"), field("head"), field("branch"), field("remote"), field("forge_branch"));
+        if pr.trim_start_matches('#') != p.pr.to_string() {
+            return waits(format!("the record names PR {pr}, not {}", p.pr));
+        }
+        let dir = root(&registry()?, &p.repo)?;
+        let state = forge_call(&dir, "pr-state", &[&pr], None)?.stdout().unwrap_or_default();
+        if !state.trim().eq_ignore_ascii_case("open") {
+            return waits(format!("PR {pr} is {}", state.trim()));
+        }
+        let status = forge_call(&dir, "check-status", &[&pr, &branch], None)?.stdout().unwrap_or_default();
+        let ci = queue::ops::verdict::normalize_status(status.lines().next().unwrap_or("").trim()).to_string();
+        if ci != "green" {
+            return waits(format!("PR {pr} CI is {ci}"));
+        }
+        git(&dir, &["push", &remote, &format!("{head}:refs/heads/{forge_branch}")], Duration::from_secs(55)).map_err(|why| format!("publish PR {pr} green but {remote}/{forge_branch} would not fast-forward to {head}: {why}"))?;
+        let closed = forge_call(&dir, "pr-close", &[&pr], None)?;
+        for f in ["publish", "publish-red-streak", "publish-fault-retries"] {
+            let _ = std::fs::remove_file(qdir.join(f));
+        }
+        queue::ops::landing_log(&e.world.run_dir, &format!("QUEUE PUBLISH_GREEN {} repo={} pr={pr} head={head}", spira_config::vtime::now_epoch(), p.repo));
+        json(&Settled { settled: true, why: if closed.ok() { String::new() } else { format!("merged; pr-close {pr}: {}", closed.err.trim()) } })
     }
 
     pub fn notify(e: &Effects, k: &str, spec: &EffectSpec) -> Result<String, String> {

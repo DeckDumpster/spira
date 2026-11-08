@@ -202,6 +202,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("publish.push_forge", Git),
     ("publish.record", Host),
     ("publish.rerun", Forge),
+    ("publish.settle", Git),
     ("queue.step.cancel_runs", Forge),
     ("queue.step.close_bead", Store),
     ("queue.step.eject", Store),

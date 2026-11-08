@@ -150,3 +150,41 @@ fn t7_a_terminal_fix_forward_is_not_live() {
     }
     assert!(!fix_forward_live("cannot tell: deadline"), "no answer is not a live bead");
 }
+
+/// sp-hw3qio: publish PR #989 went green on its latest runs, while older runs at the same head
+/// had failed, and sat open 16 h: `decide` answered Wait and left it to queue.step, which only
+/// settles batches. One publish pass now settles it: the probe sees it green and asks
+/// `publish.settle`, whose success leaves the repo idle for the next publish.
+#[test]
+fn a_green_open_publish_pr_settles_in_one_pass() {
+    let green = with(repo(Pr::Open { ci: "green".into(), behind: false, tries: 0 }));
+    let (carry, acts) = decide(&Carry::default(), &green);
+    assert_eq!(effects(&acts), ["publish.settle"], "{acts:?}");
+    let p: Pub = serde_json::from_str(&acts[0].input).expect("the settle's input is a Pub");
+    assert_eq!((p.pr, p.head.as_str(), p.branch.as_str()), (31, "h1", "publish/h1"));
+    let (after, more) = on_outcome(&carry, "publish.settle", true, "{}", &p);
+    assert!(more.is_empty(), "{more:?}");
+    assert_eq!(after.repos.get("spira").map_or(State::Idle, |rc| rc.state), State::Idle);
+    let mut r = rig(1, green);
+    r.advance(CADENCE_MS).unwrap();
+    assert!(r.requested().iter().any(|q| q.name == "publish.settle"), "{:?}", r.requested());
+}
+
+/// The PR #989 path: no record, one publish PR open. Adopting it settles it in the same pass;
+/// a failed or timed-out adoption is retried on the next tick instead of wedging in Adopting.
+#[test]
+fn an_adopted_publish_pr_settles_and_a_failed_adoption_is_retried() {
+    let orphan = with(Repo { publish_rec: None, pr: Pr::Unknown, open_publish_prs: vec![989], ..repo(Pr::Unknown) });
+    let (adopting, acts) = decide(&Carry::default(), &orphan);
+    assert_eq!((adopting.repos["spira"].state, effects(&acts)), (State::Adopting, vec![RECORD]));
+    let p: Pub = serde_json::from_str(&acts[0].input).unwrap();
+    let (_, chained) = on_outcome(&adopting, RECORD, true, "{}", &p);
+    assert_eq!(effects(&chained), ["publish.settle"], "an adoption settles at once: {chained:?}");
+    let (failed, _) = on_outcome(&adopting, RECORD, false, "deadline", &p);
+    let (_, retried) = decide(&failed, &orphan);
+    assert_eq!(effects(&retried), [RECORD], "a failed adoption is retried on the next tick");
+    let (_, lost) = decide(&adopting, &orphan);
+    assert_eq!(effects(&lost), [RECORD], "an adoption whose outcome was lost is retried on the next tick");
+    let deadline = ACTS.iter().find(|(e, _)| *e == RECORD).map(|(_, d)| *d).unwrap_or_default();
+    assert!(deadline >= OBSERVE_DEADLINE_MS, "an adoption fetches and reads the range's members: {deadline} ms is too short");
+}
