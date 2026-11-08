@@ -82,6 +82,9 @@ impl Cache {
     /// The store under `root`, served by the `sccache` among `ro_under_home`'s bin directories;
     /// `None` when there is no sccache to serve it.
     pub fn under(root: &Path, home: &Path) -> Option<Cache> {
+        if root.as_os_str().is_empty() {
+            return None;
+        }
         let sccache = TOOL_DIRS.iter().map(|d| home.join(d).join("sccache")).find(|p| p.is_file())?;
         Some(Cache { dir: root.join(CACHE_DIR_NAME), sccache })
     }
@@ -525,6 +528,7 @@ mod tests {
         let c = Cache::under(root.path(), home.path()).unwrap();
         assert_eq!(c.dir, root.path().join(CACHE_DIR_NAME));
         assert_eq!(c.sccache, home.path().join(".cargo/bin/sccache"));
+        assert_eq!(Cache::under(Path::new(""), home.path()), None, "an empty root must not make a store in the cwd");
     }
 
     #[test]
