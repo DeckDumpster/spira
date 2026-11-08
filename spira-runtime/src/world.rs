@@ -659,11 +659,13 @@ impl World {
     /// Nothing is created while `skew-check` refuses: after a restore bd can be hours behind the
     /// control plane, and its open beads may be ones the control plane already closed.
     pub fn sweep_repair(&self, input: &str) -> Result<String, String> {
-        let Repair { snapshot, todo } = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let Repair { ids: asked } = serde_json::from_str(input).map_err(|e| e.to_string())?;
         if let Err(e) = lc_call(&self.lc_socket, &["skew-check"]) {
             eprintln!("bead-sweep: the rowless repair is refused: {e}");
-            return serde_json::to_string(&Repaired { snapshot, ids: vec![] }).map_err(|e| e.to_string());
+            return serde_json::to_string(&Repaired { ids: vec![] }).map_err(|e| e.to_string());
         }
+        let snap: bead_sweep::Snapshot = serde_json::from_str(&self.sweep_snapshot()?).map_err(|e| e.to_string())?;
+        let todo: Vec<_> = bead_sweep::rowless(&self.ask_label, &snap).into_iter().filter(|r| asked.contains(&r.id)).collect();
         let ids = todo
             .iter()
             .filter(|r| {
@@ -677,7 +679,7 @@ impl World {
             })
             .map(|r| r.id.clone())
             .collect();
-        serde_json::to_string(&Repaired { snapshot, ids }).map_err(|e| e.to_string())
+        serde_json::to_string(&Repaired { ids }).map_err(|e| e.to_string())
     }
 
     /// Per queue.local repo, how far the forge trails the landing ref, as `spira-lc unpublished` measures it.
