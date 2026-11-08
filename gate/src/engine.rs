@@ -2416,6 +2416,11 @@ pub fn run_composed<W: World>(
     (fences_rc, out, phases)
 }
 
+/// The two variables every fence reads: the commit it judges and the ref it is judged against.
+pub fn fence_env<'a>(branch: &'a str, base: &'a str) -> [(&'static str, &'a str); 2] {
+    [("SPIRA_GATE_BRANCH", branch), ("SPIRA_GATE_BASE", base)]
+}
+
 /// `gate --definition [repo-name]` (sp-quu2w): the gate command the landing ref's tree
 /// defines for the repository — its `gate.steps`, composed; or its repo-map column when the
 /// landing ref never carried one. The one reader of a repository's gate outside a trial

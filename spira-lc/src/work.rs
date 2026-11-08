@@ -200,10 +200,13 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             Ok(r) => r,
             Err(refusal) => return refusal,
         };
+        let checkout = repo_checkout(&repo);
         let runner = |check: &str, secs: u64| {
-            // batch-job: one named suite in a container, bounded by what is left of the submit's budget
-            let args = ["--suites".to_string(), check.to_string(), tip.clone(), repo.clone()];
-            crate::bd::tool("testenv", &args, None, &actor, secs)
+            let Some((program, args)) = check_invocation(check, &tip, &repo, checkout.as_ref().map(|(r, l)| (r.as_str(), l.as_str()))) else {
+                return (CANNOT_TELL, format!("{check} is a fence and {repo} names no checkout or landing ref to run it in"));
+            };
+            // batch-job: one check by its own runner, bounded by what is left of the submit's budget
+            crate::bd::tool(program, &args, None, &actor, secs)
         };
         let owed = match owed_tiers(&tip, &repo, &actor) {
             Ok(o) => o,
@@ -229,6 +232,31 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
 /// any RPC deadline and builds inside the broker's process tree, so submit leaves these to the
 /// round: a red there ejects the bead again with the failing line.
 const ROUND_PROVEN: &[&str] = &["unit-tests"];
+
+/// The runner that owns a named check: the round's lint and build steps are the repository's
+/// compile-and-lint tier, a `fence-<name>` is one fence of the tip's `gate.steps`, anything else
+/// is a testenv suite. `None` when a fence has no checkout to run in.
+fn check_invocation(check: &str, tip: &str, repo: &str, checkout: Option<(&str, &str)>) -> Option<(&'static str, Vec<String>)> {
+    let s = |v: &[&str]| v.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+    if matches!(check, "spira-lint" | "workspace-build") {
+        return Some(("testenv", s(&["lint", tip, repo])));
+    }
+    if let Some(fence) = check.strip_prefix("fence-") {
+        let (root, base) = checkout?;
+        return Some(("gate", s(&["fence-run", fence, "--repo", root, "--tip", tip, "--base", base])));
+    }
+    Some(("testenv", s(&["--suites", check, tip, repo])))
+}
+
+/// The repository's checkout and landing ref.
+fn repo_checkout(repo: &str) -> Option<(String, String)> {
+    let home = spira_config::resolve::locate_home_for_process().ok()?;
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let reg = spira_config::repos::Registry::from_env(env, std::path::Path::new(&home));
+    let root = reg.root(repo)?;
+    let landref = spira_config::repos::landref(&reg, &root)?;
+    Some((root, landref))
+}
 
 /// What `work submit` may spend running the checks an ejection named; a retry resumes, because
 /// every pass is recorded as it happens.
@@ -288,7 +316,7 @@ fn proof_refusal(run: &std::path::Path, bead_id: &str, tip: &str, owed: &[String
     for n in notes {
         msg.push_str(&format!("\n  {n}"));
     }
-    msg.push_str(&format!("\nFix the failure, commit, and run `work submit` again — it runs: testenv --suites <check> {tip} <repo> for each unproven check."));
+    msg.push_str(&format!("\nFix the failure, commit, and run `work submit` again — it runs each unproven check with the runner that owns it (a suite by testenv, a fence by gate fence-run, lint by testenv lint) at {tip}."));
     Some((REFUSED, msg))
 }
 
@@ -1810,7 +1838,7 @@ mod tests {
         let red = |_: &str, _: u64| (1, "svelte-check found 1 error\n".to_string());
         let (code, msg) = proof_refusal(&run, "sp-a", TIP, &owed, 60, &red).expect("an unproven owed tier refuses");
         assert_eq!(code, REFUSED);
-        assert!(msg.contains("frontend") && msg.contains("FAILED") && msg.contains(&format!("testenv --suites <check> {TIP}")), "{msg}");
+        assert!(msg.contains("frontend") && msg.contains("FAILED") && msg.contains("the runner that owns it"), "{msg}");
         let green = |c: &str, _: u64| (0, format!("{c}: ok\n"));
         assert!(proof_refusal(&run, "sp-a", TIP, &owed, 60, &green).is_none());
         assert!(run.join("proof/sp-a/pass").join(TIP).join("frontend").is_file());
@@ -1827,6 +1855,35 @@ mod tests {
         spira_config::proof::record_failing(&run, "sp-a", &["unit-tests".into(), "test-x.sh".into()]).unwrap();
         let (_, msg) = proof_refusal(&run, "sp-a", TIP, &[], 60, &red).expect("a cheap check still proves in band");
         assert!(msg.contains("test-x.sh"), "{msg}");
+    }
+
+    #[test]
+    fn each_forced_check_is_run_by_the_runner_that_owns_it() {
+        let ck = Some(("/repo", "local/main"));
+        let inv = |c: &str| check_invocation(c, TIP, "spira", ck).unwrap();
+        assert_eq!(inv("test-x.sh"), ("testenv", v(&["--suites", "test-x.sh", TIP, "spira"])));
+        assert_eq!(inv("spira-lint"), ("testenv", v(&["lint", TIP, "spira"])));
+        assert_eq!(inv("workspace-build"), ("testenv", v(&["lint", TIP, "spira"])));
+        assert_eq!(inv("fence-lifecycle-guard"), ("gate", v(&["fence-run", "lifecycle-guard", "--repo", "/repo", "--tip", TIP, "--base", "local/main"])));
+        assert!(check_invocation("fence-lifecycle-guard", TIP, "spira", None).is_none(), "a fence with no checkout cannot be run, and is not handed to testenv");
+    }
+
+    #[test]
+    fn a_resubmit_after_an_eject_naming_a_fence_runs_the_fence_and_passes_when_it_passes() {
+        let dir = proof_dir("fence");
+        let run = dir.path().to_path_buf();
+        spira_config::proof::record_failing(&run, "sp-a", &["fence-lifecycle-guard".into()]).unwrap();
+        let ck = Some(("/repo", "local/main"));
+        let seen = std::cell::RefCell::new(Vec::new());
+        let runner = |c: &str, _: u64| {
+            let (program, args) = check_invocation(c, TIP, "spira", ck).unwrap();
+            seen.borrow_mut().push((program, args));
+            if program == "gate" { (0, "fence: lifecycle-guard checked 9 files\n".to_string()) } else { (2, "batch: unknown suite\n".to_string()) }
+        };
+        assert!(proof_refusal(&run, "sp-a", TIP, &[], 60, &runner).is_none());
+        assert_eq!(seen.borrow().len(), 1);
+        assert_eq!(seen.borrow()[0].0, "gate");
+        assert!(spira_config::proof::proven(&run, "sp-a", TIP, "fence-lifecycle-guard"));
     }
 
     #[test]
