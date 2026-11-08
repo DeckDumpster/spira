@@ -235,6 +235,16 @@ pub fn settle_claim(rc: i32, exec: &dyn Exec, id: &str, holder: &str, tries: u32
     }
 }
 
+/// The row a claim just won reads WORKING under `holder`: a resume of a REWORK bead is a
+/// Claim like any other, and a session started on a row still REWORK has a submit refused.
+pub fn verify_held(exec: &dyn Exec, id: &str, holder: &str, tries: u32, delay: Duration, sleep: &(dyn Fn(Duration) + Sync)) -> Result<(), String> {
+    match ask_row(exec, id, tries, delay, sleep)? {
+        Some(r) if r.working() && r.holder.as_deref() == Some(holder) => Ok(()),
+        Some(r) => Err(format!("{id} reads {} held by {:?}, not WORKING under {holder}", r.state, r.holder)),
+        None => Err(format!("{id} has no lifecycle row")),
+    }
+}
+
 /// Which WORKING row, if any, `mine`'s name holds under another session still running, read
 /// from `spira-lc list --state WORKING`'s JSON rows. Err when the machine cannot answer: a
 /// claim that cannot check for a double hold refuses rather than assume there is none.
@@ -418,7 +428,7 @@ mod tests {
         fn claim(&self, id: &str, holder: &str) -> i32 {
             let mut rows = self.rows.lock().unwrap();
             let r = rows.get_mut(id).unwrap();
-            if r.0 != "READY" {
+            if r.0 != "READY" && r.0 != "REWORK" {
                 return LC_REFUSED;
             }
             *r = ("WORKING".into(), holder.into());
@@ -426,6 +436,15 @@ mod tests {
                 2
             } else {
                 LC_APPLIED
+            }
+        }
+        /// `work submit`: accepted only from WORKING under the submitter.
+        fn submit(&self, id: &str, holder: &str) -> Result<(), String> {
+            let rows = self.rows.lock().unwrap();
+            match rows.get(id) {
+                Some((st, h)) if st == "WORKING" && h == holder => Ok(()),
+                Some((st, _)) => Err(format!("IllegalTransition from {st}")),
+                None => Err("no row".into()),
             }
         }
         fn held_by(&self, holder: &str) -> Vec<String> {
@@ -499,6 +518,32 @@ mod tests {
         assert_eq!(st.held_by(me), vec!["sp-a"], "the lost-reply claim landed: the dwarf holds it and nothing else");
         assert_eq!(won.as_deref(), Some("sp-a"));
         assert!(!unreachable);
+    }
+
+    #[test]
+    fn resuming_a_rework_bead_leaves_its_row_working_under_this_holder_and_its_submit_is_accepted() {
+        let me = "dwarf-eitri@1.2";
+        let st = Store::default();
+        st.rows.lock().unwrap().insert("sp-a".into(), ("REWORK".into(), String::new()));
+        assert!(st.submit("sp-a", me).is_err(), "a REWORK row refuses a submit");
+        assert!(verify_held(&st, "sp-a", me, 1, Duration::ZERO, &no_sleep).is_err(), "REWORK is not held");
+        let ids = vec!["sp-a".to_string()];
+        let (won, logs, _) = lc_claim_loop(&ids, &["sp-a".into()], None, "b/eitri", |id| {
+            let rc = st.claim(id, me);
+            settle_claim(rc, &st, id, me, 1, Duration::ZERO, &no_sleep)
+        });
+        assert_eq!(won.as_deref(), Some("sp-a"));
+        assert!(logs.iter().any(|l| l.contains("resuming sp-a")), "{logs:?}");
+        assert_eq!(verify_held(&st, "sp-a", me, 1, Duration::ZERO, &no_sleep), Ok(()));
+        assert_eq!(st.held_by(me), vec!["sp-a"]);
+        assert_eq!(st.submit("sp-a", me), Ok(()));
+    }
+
+    #[test]
+    fn a_row_held_by_another_holder_is_not_verified_held() {
+        let st = Store::default();
+        st.rows.lock().unwrap().insert("sp-a".into(), ("WORKING".into(), "dwarf-other@9.9".into()));
+        assert!(verify_held(&st, "sp-a", "dwarf-eitri@1.2", 1, Duration::ZERO, &no_sleep).is_err());
     }
 
     #[test]
