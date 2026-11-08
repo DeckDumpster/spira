@@ -555,6 +555,18 @@ impl Engine {
         self.halted
     }
 
+    /// Halts the scheduler before its first effect when it is not already halted: a boot under
+    /// an outside halt must not run a Work effect in the gap before the halt is journaled.
+    pub fn halt_at_boot(&mut self, why: &str) -> Result<()> {
+        if self.halted {
+            return Ok(());
+        }
+        let at = self.clock.now_ms();
+        self.submit(&format!("boot-halt/{at}"), HALT_STREAM, EventKind::new(SCHEDULER_HALTED, why))?;
+        self.halted = true;
+        Ok(())
+    }
+
     pub fn into_registrations(mut self) -> Vec<Registration> {
         std::mem::take(&mut self.regs)
     }

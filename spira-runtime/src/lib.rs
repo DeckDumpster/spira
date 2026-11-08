@@ -81,7 +81,11 @@ pub fn start_tasks(engine: &mut Engine) {
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {
     let mut regs = registrations(s);
     regs.extend(extra);
-    Engine::open(journal, clock, regs, 0)?
+    let mut engine = Engine::open(journal, clock, regs, 0)?;
+    if s.run_dir.join("world.halted").exists() {
+        engine.halt_at_boot("the world's halt stamp is present at boot")?;
+    }
+    engine
         .with_sink(sink)
         .with_baseline(vec![("runtime.version".into(), Value::from(env!("CARGO_PKG_VERSION"))), ("config.hash".into(), Value::from(s.hash()))])
         .with_foreign_poll(FOREIGN_POLL_MS)
