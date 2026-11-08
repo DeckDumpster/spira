@@ -278,7 +278,7 @@ mod tests {
         }
         LogSink::new(d.path(), "svc").capped(1 << 20, 2).write("x", &[], SystemTime::now()).unwrap();
         let day = crate::utc_date(SystemTime::now());
-        assert_eq!(files(d.path()), vec!["other.logs.1999-01-01.jsonl".to_string(), format!("svc.logs.{day}.jsonl"), "svc.logs.2000-01-01.jsonl".to_string()]);
+        assert_eq!(files(d.path()), vec!["other.logs.1999-01-01.jsonl".to_string(), "svc.logs.2000-01-01.jsonl".to_string(), format!("svc.logs.{day}.jsonl")]);
     }
 
     #[test]
