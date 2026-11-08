@@ -64,7 +64,7 @@ impl Rule for ConfigFixture {
                     let n = e.file_name().to_string_lossy().into_owned();
                     if is_key_name(&n) && e.path().is_file() {
                         keys.insert(bare_key(&n));
-                        files.insert(bare_key(&n), format!("{d}/{n}"));
+                        files.entry(bare_key(&n)).or_insert_with(|| format!("{d}/{n}"));
                         if d == DIRS[0] {
                             conf_d.insert(bare_key(&n));
                         }
@@ -84,8 +84,6 @@ impl Rule for ConfigFixture {
             read(HISTORY)?.lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
         let (no_fixture, no_history) = missing(&conf_d, &keys, &fixture, &history);
         let mut out = Vec::new();
-        // Attributed to the key's own registry file: `--diff` keeps a whole-file finding only
-        // for a file the branch touched, and the branch that adds a key never touches the fixture.
         for k in no_fixture {
             out.push(Finding {
                 rule: NAME,
@@ -139,5 +137,19 @@ mod tests {
         assert_eq!(got.len(), 1, "{:?}", got.iter().map(|f| f.to_string()).collect::<Vec<_>>());
         assert_eq!(got[0].path, "spira/conf.d/SPIRA_X");
         assert!(got[0].message.contains("SPIRA_X") && got[0].message.contains("complete.toml"), "{}", got[0].message);
+    }
+
+    #[test]
+    fn a_key_missing_only_from_the_history_is_reported_at_its_own_registry_file() {
+        let t = TempDir::new("cfx");
+        t.write("spira/conf.d/SPIRA_X", "TYPE=u32\n");
+        t.write(FIXTURE, "[spira]\nx = 1\n");
+        t.write(HISTORY, "");
+        let paths = ["spira/conf.d/SPIRA_X", FIXTURE, HISTORY];
+        let tree = Tree::from_paths(t.path(), paths, std::iter::empty::<&str>());
+        let got = ConfigFixture::default().check(&tree).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path, "spira/conf.d/SPIRA_X");
+        assert!(got[0].message.contains("SPIRA_X") && got[0].message.contains("conf.key-history"), "{}", got[0].message);
     }
 }
