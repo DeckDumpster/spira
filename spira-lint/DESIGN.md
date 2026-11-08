@@ -1692,5 +1692,7 @@ after a `#[cfg(test)]` line are out of scope.
 `list_raw*`, `beads_on(…, None)`, a bare `["list"]` argument array, or `spira-lc list` with nothing
 after it. A `batch-job: <why>` comment on the line or the one above exempts a true batch job.
 
+Prompt files (`.md`) are not scanned; the serve side below is what names a dwarf's tool call.
+
 **Refuses** (exit 3): no file in scope. The serve side names the same callers at run time in
 `unfiltered-lists.log` beside the slow-query log.

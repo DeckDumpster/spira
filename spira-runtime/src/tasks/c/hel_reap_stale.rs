@@ -250,8 +250,9 @@ pub fn observe(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient, pro
     let mut rows = spira_config::lc_state::index(spira_config::lc_state::list_live_on(lc)?);
     let unread = std::cell::Cell::new(None::<String>);
     let memo = std::cell::RefCell::new(&mut rows);
+    let asked = std::cell::RefCell::new(std::collections::HashSet::<String>::new());
     let state_of = |id: &str| {
-        if !memo.borrow().contains_key(id) {
+        if !memo.borrow().contains_key(id) && asked.borrow_mut().insert(id.to_string()) {
             match spira_config::lc_state::list_ids_on(lc, &[id.to_string()]) {
                 Ok(found) => memo.borrow_mut().extend(spira_config::lc_state::index(found)),
                 Err(e) => unread.set(Some(e)),

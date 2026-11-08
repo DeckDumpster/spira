@@ -126,8 +126,7 @@ impl Default for Cfg {
 pub fn query_beads(lc: &LcClient, label: &str) -> Vec<TriggerBead> {
     let beads = query_bd(lc, label);
     let ids: Vec<String> = beads.iter().map(|b| b.id.clone()).collect();
-    let read = spira_config::lifecycle_row::lc_bin().and_then(|bin| lc_state::list_ids_with(&bin, &ids));
-    match read {
+    match lc_state::list_ids_on(lc, &ids) {
         Ok(rows) => join_states(beads, &lc_state::index(rows)),
         Err(e) => {
             // A state that cannot be read is not read: no finding this pass.

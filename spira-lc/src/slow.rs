@@ -260,11 +260,12 @@ pub fn record(took: Duration, sql: &str) {
     append(took, &verb, &caller, sql);
 }
 
-const NARROWING_FLAGS: [&str; 8] = ["--state", "--ids", "--hold", "--repo", "--live", "--express", "--limit", "--after"];
+const NARROWING_FLAGS: [&str; 6] = ["--state", "--ids", "--hold", "--repo", "--live", "--express"];
 
 /// A `list` that names no state, ids, hold, repo, live window, express or page asks for every bead.
 pub fn is_unfiltered_list(args: &[String]) -> bool {
-    !args.iter().any(|a| NARROWING_FLAGS.contains(&a.as_str()) || a == "--delivery" || a == "--batches")
+    let limited = args.windows(2).any(|w| w[0] == "--limit" && w[1] != "0");
+    !limited && !args.iter().any(|a| NARROWING_FLAGS.contains(&a.as_str()) || a == "--delivery" || a == "--batches")
 }
 
 pub fn unfiltered_list_line(epoch: i64, caller: &str) -> String {
@@ -321,9 +322,11 @@ mod tests {
         let a = |v: &[&str]| is_unfiltered_list(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
         assert!(a(&[]));
         assert!(a(&["--cached"]));
-        for f in ["--state", "--ids", "--hold", "--repo", "--live", "--express", "--limit", "--after", "--delivery", "--batches"] {
+        for f in ["--state", "--ids", "--hold", "--repo", "--live", "--express", "--delivery", "--batches"] {
             assert!(!a(&[f, "x"]), "{f} narrows the list");
         }
+        assert!(!a(&["--limit", "100"]));
+        assert!(a(&["--limit", "0"]), "a limit of 0 is every row");
         assert_eq!(unfiltered_list_line(7, "sentinel/pass"), "7\tUNFILTERED-LIST\tsentinel/pass\n");
     }
 
