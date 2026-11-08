@@ -1614,6 +1614,7 @@ impl T {
             round_ami_wait_secs: 5400,
             round_spill: String::new(),
             rounds_max: 1,
+            text_only: vec!["law/".into(), "docs/".into()],
             publish_red_priority: "1".into(),
             publish_red_escalate_after: 3,
             publish_defer_max: Some(3),
@@ -4762,4 +4763,59 @@ fn land_local_takes_no_reverts_from_a_title_that_says_revert() {
     t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), title: Some("Revert \"x\" abcdef0123456".into()), labels: vec!["repo:spira".into()], ..BeadRow::default() });
     assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
     assert_eq!(land_rows(&t).iter().map(|r| r["reverts"].is_null()).collect::<Vec<_>>(), vec![true]);
+}
+
+// ------------------------------------------------------------------- text-only: lands by lint
+
+const T_TEXT: &str = "4444444444444444444444444444444444444444";
+
+fn text_branch(t: &T, files: &[(&str, u32, u32)]) {
+    t.git.set("refs/heads/local/main", "b0");
+    t.git.set("refs/heads/spira/sp-a", "t1");
+    t.git.ancestor("b0", "t1");
+    t.git.trees.borrow_mut().insert("t1".into(), T_TEXT.into());
+    t.git.stat("local/main", "t1", files);
+}
+
+#[test]
+fn submit_of_a_text_only_bead_lands_on_the_ref_by_lint_without_a_gate_or_round() {
+    let t = T::new(LandMode::QueueLocal);
+    text_branch(&t, &[("law/1-general/x.toml", 3, 0), ("docs/y.md", 1, 1)]);
+    assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("t1"));
+    assert!(t.out().contains("sp-a landed at t1"), "{}", t.out());
+    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("lint t1")));
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("gate ")), "no gate ran");
+    let p = gate::cert::path(&t.s().run.join("verdicts"), "spira", T_TEXT).unwrap();
+    let cert = gate::cert::certifies(&fs::read_to_string(p).unwrap(), "spira", T_TEXT).unwrap();
+    assert_eq!(cert.source, gate::cert::Source::LintOnly);
+}
+
+#[test]
+fn submit_of_a_text_only_bead_whose_lint_is_red_lands_nothing() {
+    let t = T::new(LandMode::QueueLocal);
+    text_branch(&t, &[("law/x.md", 1, 0)]);
+    t.scripts.lint_red.borrow_mut().insert("t1".into(), "law/x.md:1".into());
+    assert_eq!(t.run(&["submit", "spira/sp-a"]), 1);
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
+}
+
+#[test]
+fn submit_of_a_bead_touching_one_source_file_is_refused_by_the_classifier_and_gated() {
+    let t = T::new(LandMode::QueueLocal);
+    text_branch(&t, &[("law/x.md", 1, 0), ("queue/src/lib.rs", 1, 0)]);
+    assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing landed by lint");
+    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("gate ")), "the gate ran");
+    assert!(t.lc.has("certify sp-a t1"));
+}
+
+#[test]
+fn a_text_only_tip_that_does_not_fast_forward_is_not_landed_by_lint() {
+    let t = T::new(LandMode::QueueLocal);
+    text_branch(&t, &[("law/x.md", 1, 0)]);
+    t.git.anc.borrow_mut().clear();
+    assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
+    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("gate ")));
 }

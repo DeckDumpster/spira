@@ -15,6 +15,7 @@ pub mod records;
 pub mod seam;
 pub mod stats;
 pub mod telemetry;
+pub mod text_only;
 
 #[cfg(test)]
 mod tests;

@@ -58,6 +58,12 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
         return FAIL;
     }
 
+    if mode == LandMode::QueueLocal {
+        if let Some(rc) = land_by_lint(w, &c, &path, &id, &tip) {
+            return rc;
+        }
+    }
+
     let suites = c.s.certify_suites.clone();
     let start = w.clock.now();
     let (rc, out) = w.scripts.gate(branch, &name, &id, &suites);
@@ -159,6 +165,65 @@ pub fn lint_passed(w: &World, verb: &str, path: &std::path::Path, tip: &str, ver
         w.err(format!("queue.sh {verb}: {}", out.trim_end_matches('\n')));
     }
     rc == 0
+}
+
+/// Whether `tip`'s whole diff against `base` is declared text (`SPIRA_QUEUE_TEXT_ONLY`).
+pub fn diff_is_text_only(
+    w: &World,
+    s: &crate::ports::Settings,
+    path: &std::path::Path,
+    base: &str,
+    tip: &str,
+) -> bool {
+    let from = w
+        .git
+        .merge_base(path, base, tip)
+        .unwrap_or_else(|| base.to_string());
+    let Ok(stat) = w.git.numstat(path, &from, tip) else {
+        return false;
+    };
+    let paths: Vec<String> = stat.into_iter().map(|(p, ..)| p).collect();
+    crate::text_only::is_text_only(&paths, &s.text_only)
+}
+
+/// Certify a text-only tip by the lint that already passed on it and land it, never through a
+/// round. Only a tip that fast-forwards from the landing ref lands here; any other falls
+/// through to the gate and the round, which rebase it.
+fn land_by_lint(w: &World, c: &Ctx, path: &std::path::Path, id: &str, tip: &str) -> Option<i32> {
+    let base = c.r.landref.clone()?;
+    let base_sha = w.git.rev_parse(path, &base)?;
+    if !w.git.is_ancestor(path, &base_sha, tip) || !diff_is_text_only(w, &c.s, path, &base, tip) {
+        return None;
+    }
+    let tree = w.git.rev_parse(path, &format!("{tip}^{{tree}}"))?;
+    let cert = gate::cert::Cert {
+        source: gate::cert::Source::LintOnly,
+        tree,
+        repo: c.r.name.clone(),
+        rev: tip.to_string(),
+        branch: format!("spira/{id}"),
+        by: super::actor(w),
+        when: w.clock.now().to_string(),
+        at: w.clock.now(),
+        harness: "-".into(),
+        suites: "lint".into(),
+    };
+    let verdicts = gate::cert::verdicts_dir(w.var("SPIRA_VERDICTS").as_deref(), &c.s.run);
+    if let Err(e) = gate::cert::write(&verdicts, &cert) {
+        w.err(format!("queue.sh submit: cannot record the lint-only certificate: {e} — refused"));
+        return Some(FAIL);
+    }
+    if lc_certify(w, id, tip).is_err() {
+        return Some(FAIL);
+    }
+    w.out(format!("queue.sh submit: {id} is text-only: lands by lint, no round"));
+    Some(super::land::land_local(
+        w,
+        Some(&c.r.name),
+        tip,
+        &Text::Arg(format!("{id}:{tip}")),
+        None,
+    ))
 }
 
 /// The checks an ejection named must each pass at `tip` before the bead is resubmitted: the

@@ -1651,6 +1651,9 @@ fn open(
                             let state = w.lc.bead_row(dep).map(|d| d.state).unwrap_or_else(|| "unknown".into());
                             skips.push(skip(&m.id, "blocked", format!("{}: depends on {dep} ({state}) — not admitted until it lands", m.id)))
                         }
+                        None if super::simple::diff_is_text_only(w, &c.s, &path, &base, &tip) => {
+                            skips.push(skip(&m.id, "text-only", crate::text_only::skip_line(&m.id)))
+                        }
                         None => admitted.push(Member { id: m.id, tip }),
                     },
                 },

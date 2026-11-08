@@ -61,10 +61,14 @@ pub fn certified(
     let found = gate::cert::path(&verdicts, repo, &tree)
         .and_then(|p| w.env.read_file(&p).ok())
         .and_then(|text| gate::cert::certifies(&text, repo, &tree));
-    let gate_only = found
-        .as_ref()
-        .is_some_and(|c| c.source != gate::cert::Source::Round);
-    match found.filter(|c| c.source == gate::cert::Source::Round) {
+    let certifies = |c: &gate::cert::Cert| {
+        matches!(
+            c.source,
+            gate::cert::Source::Round | gate::cert::Source::LintOnly
+        )
+    };
+    let gate_only = found.as_ref().is_some_and(|c| !certifies(c));
+    match found.filter(certifies) {
         Some(c) => {
             w.err(format!(
                 "queue.sh land-local: tree {tree} certified by {} {} ({}, {} at {})",

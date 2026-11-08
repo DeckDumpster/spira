@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=round
+DOC=PATHS A queue.local BEAD MAY TOUCH AND STILL LAND BY LINT ALONE, never through a round VM
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # PATHS A queue.local BEAD MAY TOUCH AND STILL LAND BY LINT ALONE. Space-separated:
+    # `dir/` is a prefix, `*.ext` a suffix, anything else one exact path. A diff is text only
+    # when every path matches; empty means no diff is. Executable prose (the personas) is
+    # left out on purpose.
+    : "${SPIRA_QUEUE_TEXT_ONLY:=law/ spira/statutes/ wiki/ docs/ README.md AGENTS.md CLAUDE.md}"
+SPIRA_CONF_DEFAULT_EOF

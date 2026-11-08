@@ -60,6 +60,9 @@ pub struct Settings {
     pub round_spill: String,
     /// `SPIRA_QUEUE_ROUNDS_MAX` (declared value): how many rounds may be open at once per repo.
     pub rounds_max: usize,
+    /// `SPIRA_QUEUE_TEXT_ONLY` (declared value, split): the paths a bead may touch and land by
+    /// lint alone.
+    pub text_only: Vec<String>,
     /// `SPIRA_PUBLISH_RED_PRIORITY` (declared value): the priority of a red publish's tracker.
     pub publish_red_priority: String,
     /// `SPIRA_PUBLISH_RED_ESCALATE_AFTER` (declared value): consecutive red publish PRs of one
