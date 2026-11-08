@@ -123,6 +123,7 @@ dependencies = [
  "libc",
  "lifecycle",
  "migration-numbers",
+ "serde",
  "serde_json",
  "sift",
  "spira-config",

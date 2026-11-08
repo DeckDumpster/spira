@@ -3052,7 +3052,11 @@ fn promotion_on_an_identical_tree_reuses_the_staged_pass() {
         t.lc.calls.borrow()
     );
     assert_eq!(vm_runs(&t), 2, "promotion ran no pass of its own");
-    assert!(t.out().contains("attested=1"), "{}", t.out());
+    let answer: serde_json::Value = serde_json::from_str(t.out().lines().rev().find(|l| !l.trim().is_empty()).unwrap()).unwrap();
+    assert_eq!(answer["attested"], true, "{}", t.out());
+    assert_eq!(answer["batch"], s.as_str());
+    assert_eq!(answer["head"], "merged-tb", "{}", t.out());
+    assert!(answer["members"].as_array().is_some_and(|m| !m.is_empty() && m.iter().all(|x| x["id"].is_string() && x["tip"].is_string())), "{answer}");
     assert!(
         t.lc.calls
             .borrow()
@@ -3117,7 +3121,7 @@ fn promotion_onto_a_moved_base_gets_a_fresh_pass() {
         "{:?}",
         t.lc.calls.borrow()
     );
-    assert!(t.out().contains("attested=0"), "{}", t.out());
+    assert!(t.out().contains("\"attested\":false"), "{}", t.out());
     assert!(
         !t.lc
             .calls
@@ -3161,7 +3165,7 @@ fn a_staged_round_whose_pass_was_red_is_not_attested() {
         .insert(n, ("LANDED".into(), "9".into()));
     assert_eq!(t.run(&["round", "promote"]), 0, "{}", t.err());
     assert!(
-        t.out().contains("attested=0") && t.lc.has(&format!("promote {s} ")),
+        t.out().contains("\"attested\":false") && t.lc.has(&format!("promote {s} ")),
         "{}",
         t.out()
     );
