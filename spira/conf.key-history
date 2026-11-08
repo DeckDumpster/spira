@@ -711,3 +711,6 @@ runtime_dwarf_usage_secs
 throughput_ratio_min_pct
 throughput_ratio_min_runs
 throughput_passed_grace
+runtime_log_cap_mb
+runtime_log_debug
+runtime_log_keep

@@ -1,4 +1,7 @@
 [spira]
+runtime_log_keep = 4
+runtime_log_debug = 0
+runtime_log_cap_mb = 32
 admit_stagger_secs = 30
 cockpit_bottom_pct = 40
 cockpit_client_idle_secs = 21600
