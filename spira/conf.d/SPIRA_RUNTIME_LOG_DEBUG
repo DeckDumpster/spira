@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=runtime
+DOC=1 also writes spira-runtime's routine records (successful dispatches, effects and turns, and every deferred effect) to its local OTLP log; 0 writes only outcomes that failed or were anomalous.
+SCHEMA=0 or 1 (default 0). Routine records were 99% of the file.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_LOG_DEBUG:=0}"
+SPIRA_CONF_DEFAULT_EOF

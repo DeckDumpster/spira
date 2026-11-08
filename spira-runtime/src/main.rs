@@ -15,9 +15,6 @@ const USAGE: &str = "usage: spira-runtime serve|check-config";
 
 /// The OTLP log queue: a full queue drops and counts rather than blocking the loop.
 const LOG_QUEUE: usize = 1024;
-const LOG_CAP_BYTES: u64 = 32 << 20;
-const LOG_KEEP_FILES: usize = 4;
-const LOG_DEBUG_ENV: &str = "SPIRA_RUNTIME_LOG_DEBUG";
 const SUBMIT_QUEUE: usize = 16;
 const NO_WATCHDOG_BOOT: Duration = Duration::from_secs(20);
 
@@ -71,8 +68,10 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     };
     let max_sleep = notifier.max_sleep();
     let metrics = spira_otel::metrics::MetricsSink::for_component(settings.metrics_endpoint.as_deref(), "spira-runtime");
-    let debug = std::env::var(LOG_DEBUG_ENV).is_ok_and(|v| v == "1");
-    let logs = spira_otel::logs::LogSink::new(settings.otel_dir(), "spira-runtime").capped(LOG_CAP_BYTES, LOG_KEEP_FILES);
+    let debug = spira_config::process::cfg("SPIRA_RUNTIME_LOG_DEBUG")? == "1";
+    let cap_mb: u64 = spira_config::process::cfg_parse("SPIRA_RUNTIME_LOG_CAP_MB")?;
+    let keep: usize = spira_config::process::cfg_parse("SPIRA_RUNTIME_LOG_KEEP")?;
+    let logs = spira_otel::logs::LogSink::new(settings.otel_dir(), "spira-runtime").capped(cap_mb << 20, keep);
     let sink = Arc::new(OtlpSink::with_metrics(logs, LOG_QUEUE, metrics, debug));
     // sp-4du857: writes ride the next request in one transaction; the flusher bounds the rest.
     let journal = SocketJournal::flushing(settings.lc_socket.clone(), runtime::socket::FLUSH_AGE);

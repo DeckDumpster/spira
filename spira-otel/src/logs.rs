@@ -100,11 +100,14 @@ impl LogSink {
         let prefix = format!("{}.logs.", self.service);
         let mut files: Vec<_> = fs::read_dir(&self.dir)?
             .flatten()
-            .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
-            .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let (day, n) = name.strip_prefix(&prefix)?.split_once(".jsonl")?;
+                Some((std::cmp::Reverse(day.to_string()), n.trim_start_matches('.').parse::<usize>().unwrap_or(0), e.path()))
+            })
             .collect();
-        files.sort_by(|a, b| b.0.cmp(&a.0));
-        for (_, old) in files.into_iter().skip(cap.keep) {
+        files.sort();
+        for (_, _, old) in files.into_iter().skip(cap.keep) {
             let _ = fs::remove_file(old);
         }
         Ok(())
@@ -129,7 +132,7 @@ impl LogSink {
         if spawned.is_err() {
             QUEUE_DROPPED.fetch_add(1, Ordering::Relaxed);
         }
-        LogQueue { tx }
+        LogQueue { tx, writer: spawned.ok() }
     }
 
     /// Appends one record; a failure is counted, never returned.
@@ -174,9 +177,18 @@ impl LogSink {
 /// A `LogSink` behind a bounded queue: `emit` never blocks, and a record it cannot take is counted.
 pub struct LogQueue {
     tx: SyncSender<(String, Vec<(String, Attr)>)>,
+    writer: Option<std::thread::JoinHandle<()>>,
 }
 
 impl LogQueue {
+    /// Stops taking records and returns once every queued one is written.
+    pub fn close(self) {
+        drop(self.tx);
+        if let Some(w) = self.writer {
+            let _ = w.join();
+        }
+    }
+
     pub fn emit(&self, body: &str, attrs: &[(String, Attr)]) {
         if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) = self.tx.try_send((body.into(), attrs.to_vec())) {
             QUEUE_DROPPED.fetch_add(1, Ordering::Relaxed);

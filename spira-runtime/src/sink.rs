@@ -34,6 +34,11 @@ impl OtlpSink {
     }
 
     /// Each offload spill record also pushes its running total as a metric, from the writer thread.
+    /// Returns once every record taken so far is written.
+    pub fn close(self) {
+        self.queue.close();
+    }
+
     pub fn with_metrics(sink: LogSink, cap: usize, metrics: MetricsSink, debug: bool) -> OtlpSink {
         OtlpSink { queue: sink.queue_then(cap, move |body, attrs| push_spill(&metrics, body, attrs)), debug }
     }
@@ -114,15 +119,13 @@ mod tests {
             let d = testkit::TempDir::new("sink-routine");
             let s = OtlpSink::new(LogSink::new(d.path(), "svc"), 8, debug);
             s.emit(&rec(&[("unit", "effect.deferred")]));
-            drop(s);
-            std::thread::sleep(std::time::Duration::from_millis(300));
+            s.close();
             assert_eq!(spira_otel::logs::read_all(d.path(), "svc").len(), want, "debug={debug}");
         }
         let d = testkit::TempDir::new("sink-anomaly");
         let s = OtlpSink::new(LogSink::new(d.path(), "svc"), 8, false);
         s.emit(&rec(&[("unit", "dispatch"), ("outcome", "error")]));
-        drop(s);
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        s.close();
         assert_eq!(spira_otel::logs::read_all(d.path(), "svc").len(), 1, "positive control: a failure is written");
     }
 }
