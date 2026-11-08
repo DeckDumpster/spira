@@ -44,10 +44,10 @@ fn a_finding_whose_rule_arrives_in_a_members_diff_is_that_members_not_the_bases(
     std::fs::write(tree.join("spira-lint/old-rule-allow"), "").unwrap();
     std::fs::write(tree.join("spira-lint/src/rules/allow_rule.rs"), rule_src("allow-rule", "spira-lint/allow-rule-allow")).unwrap();
     std::fs::write(tree.join("spira-lint/allow-rule-allow"), "spira/old.sh\n").unwrap();
-    let member = |id: &str, change: &str| {
+    let member = |id: &str, subject: &str, change: &str| {
         format!(
             "git checkout -q -b m-{id} base && {change} && git add -A && git commit -qm 'work {id}' && \
-             git checkout -q round && git merge -q --no-ff -m 'round: merge {id} (spira/{id})' m-{id}\n"
+             git checkout -q round && git merge -q --no-ff -m '{subject}' m-{id}\n"
         )
     };
     let setup = format!(
@@ -55,10 +55,11 @@ fn a_finding_whose_rule_arrives_in_a_members_diff_is_that_members_not_the_bases(
          git update-ref refs/remotes/origin/base base\n{}{}{}",
         member(
             "sp-rule",
+            "spira: land sp-rule — adds the state-from-text rule",
             "printf 'const NAME: &str = \"state-from-text\";\\nconst ALLOW_FILE: &str = \"spira-lint/state-from-text-allow\";\\n' > spira-lint/src/rules/state_from_text.rs && printf 'spira/new.sh\\n' > spira-lint/state-from-text-allow"
         ),
-        member("sp-other", "echo false > spira/other.sh"),
-        member("sp-allow", ": > spira-lint/allow-rule-allow"),
+        member("sp-other", "spira: land sp-other", "echo false > spira/other.sh"),
+        member("sp-allow", "round: merge sp-allow (spira/sp-allow)", ": > spira-lint/allow-rule-allow"),
     );
     sh(&tree, &home, &setup);
     let culprit = |finding: &str| {
