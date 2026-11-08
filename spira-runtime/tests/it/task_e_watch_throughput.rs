@@ -183,13 +183,57 @@ fn round_counts_split_a_repos_rounds_by_how_they_ended_and_how_recently() {
     assert_eq!(got[1], RepoRounds { repo: "b".into(), cut: 1, abandoned: 0, landed: 1, abandoned_recent: 0, landed_recent: 0 });
 }
 
+/// A repository whose landing ref is `local/main` (the map row's `base`), with `n` landings
+/// inside the day, one landing older than the day and one commit on another branch.
+fn landing_repo(n: usize, now: u64) -> testkit::TempDir {
+    let d = testkit::TempDir::new("throughput-landref");
+    let p = d.path();
+    let commit = |msg: &str, at: u64| {
+        let date = format!("@{at} +0000");
+        let o = std::process::Command::new("git")
+            .arg("-C")
+            .arg(p)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", msg])
+            .env("GIT_AUTHOR_DATE", &date)
+            .env("GIT_COMMITTER_DATE", &date)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    };
+    testkit::git(p, &["init", "-q", "-b", "local/main"]);
+    commit("spira: land sp-old — before the day", now - 2 * 86_400);
+    for i in 0..n {
+        commit(&format!("sp-w{i}: the work"), now - 1_800 - 3_600 * i as u64 - 60);
+        commit(&format!("spira: land sp-w{i} — the work"), now - 1_800 - 3_600 * i as u64);
+    }
+    testkit::git(p, &["checkout", "-q", "-b", "elsewhere"]);
+    commit("spira: land sp-never — not on the landing ref", now - 60);
+    testkit::git(p, &["checkout", "-q", "local/main"]);
+    d
+}
+
 #[test]
-fn landed_rows_are_bucketed_by_hour_with_the_newest_hour_last() {
-    use spira_runtime::world::hourly_landed;
-    let now = 1_000_000u64;
-    let iso = |t: u64| spira_runtime::watchers::iso8601(t);
-    let row = |t: u64, machine: &str, state: &str, applied: bool| serde_json::json!({ "ts": iso(t), "machine": machine, "to_state": state, "applied": applied });
-    let rows = [row(now - 10, "bead", "LANDED", true), row(now - 3_599, "bead", "LANDED", true), row(now - 3_600, "bead", "LANDED", true), row(now - 86_399, "bead", "LANDED", true), row(now - 86_400, "bead", "LANDED", true), row(now - 5, "bead", "LANDED", false), row(now - 5, "batch", "LANDED", true), row(now - 5, "bead", "SUBMITTED", true)];
-    let h = hourly_landed(&rows, now);
-    assert_eq!((h.len(), h[23], h[22], h[0], h.iter().sum::<u64>()), (24, 2, 1, 1, 4), "{h:?}");
+fn the_landing_count_reads_the_resolved_landing_ref_not_the_lane_name() {
+    use spira_runtime::world::World;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let repo = landing_repo(3, now);
+    let dir = testkit::TempDir::new("throughput-map");
+    let map = dir.join("repos");
+    // the lane column names the landing machine (queue.local), never a ref git can read
+    std::fs::write(&map, format!("spira|{}|queue.local|local/main\n", repo.path().display())).unwrap();
+    let w = World { repo_map: map, home_repo: "spira".into(), ..World::default() };
+    let (hourly, landed) = w.landed_on_refs(now, "sp").expect("the landing ref is read");
+    assert_eq!(landed, 3, "three beads landed on local/main inside the day");
+    assert_eq!(hourly.iter().sum::<u64>(), 3, "each landing in one hour: {hourly:?}");
+    assert_eq!((hourly[23], hourly[22], hourly[21]), (1, 1, 1), "half an hour ago, then each hour before: {hourly:?}");
+}
+
+#[test]
+fn a_repo_whose_landing_ref_cannot_be_resolved_is_unreadable() {
+    use spira_runtime::world::World;
+    let dir = testkit::TempDir::new("throughput-nomap");
+    let map = dir.join("repos");
+    std::fs::write(&map, format!("spira|{}|queue.local|local/main\n", dir.join("not-a-repo").display())).unwrap();
+    let w = World { repo_map: map, home_repo: "spira".into(), ..World::default() };
+    assert!(w.landed_on_refs(1_000_000, "sp").is_err(), "no landing ref is a blind count, not zero");
 }

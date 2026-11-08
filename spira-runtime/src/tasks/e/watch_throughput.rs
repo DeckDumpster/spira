@@ -6,9 +6,11 @@
 //! per repo, pages (and stops nothing) when `SPIRA_THROUGHPUT_ABANDON_COUNT` rounds were abandoned
 //! inside `SPIRA_THROUGHPUT_ABANDON_WINDOW` seconds with no landing.
 //!
-//! The count is the larger of the lifecycle's LANDED transitions and the commits on the landing
-//! refs that name a bead: an export that lags must not stop the world. A count that cannot be read
-//! pages BLIND once and stops nothing. After a stop the task waits for the world to be resumed and
+//! The count is the distinct beads named by commits on each repo's landing ref (resolved as
+//! `spira_landref` does, never the lane name) inside the day: the ref is the authority on what
+//! landed, and one `git log` per repo reads it. The metrics series it once read (`bead-stage`) has
+//! been blind since the control-store cutover (sp-uf50sm). A count that cannot be read pages BLIND
+//! once and stops nothing. After a stop the task waits for the world to be resumed and
 //! `SPIRA_THROUGHPUT_RESTOP_AFTER` seconds more before it will stop it again.
 //!
 //! The halt is the scheduler's own (`scheduler.halted` on the halt stream) plus the stamp; live
@@ -62,7 +64,7 @@ pub struct RepoRounds {
 pub struct Snapshot {
     pub readable: bool,
     pub halted: bool,
-    /// Lifecycle LANDED transitions per hour, the oldest hour first.
+    /// Beads landed on the landing refs per hour, the oldest hour first.
     pub hourly: Vec<u64>,
     /// Distinct beads named by commits on the landing refs over the same day.
     pub landed_refs: u64,
