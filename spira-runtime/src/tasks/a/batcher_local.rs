@@ -1038,6 +1038,11 @@ impl Machine<'_> {
                     self.go(Trigger::RerunBlocked);
                     self.red("attribution ejected every member — nothing is left to land");
                 }
+                Some(Attribution::Fault(why)) => {
+                    self.go(Trigger::RerunBlocked);
+                    self.abandon(&why);
+                    self.finish(pace::Outcome::NoVm, &why);
+                }
                 Some(Attribution::Blocked(why)) => {
                     self.go(Trigger::RerunBlocked);
                     self.red(&format!("local corpus red — held before reaching CI: {why}"));

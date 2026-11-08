@@ -433,11 +433,16 @@ impl Machine<'_> {
                     self.rc.round_key = Some(core::round_key(&self.rc.members));
                     self.open();
                 }
+                Some(Attribution::Fault(why)) => {
+                    self.go(Trigger::RerunBlocked);
+                    println!("batcher {}: round not judged — {why}", self.repo);
+                    self.reset();
+                }
                 outcome => {
                     self.go(Trigger::RerunBlocked);
                     let why = match outcome {
                         Some(Attribution::Blocked(why)) => why,
-                        Some(Attribution::Land { .. }) => "attribution withdrew every member".into(),
+                        Some(Attribution::Land { .. } | Attribution::Fault(_)) => "attribution withdrew every member".into(),
                         None => format!("the attribution leg ended ({exit:?}) with no outcome"),
                     };
                     self.verdict("red", &format!("local corpus red — held before reaching CI: {why}"));

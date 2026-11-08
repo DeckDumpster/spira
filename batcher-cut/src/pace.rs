@@ -35,6 +35,7 @@ pub enum Outcome {
     Quiet,
     Red,
     Infra,
+    NoVm,
     StaleImage,
     OpenFailed,
 }
@@ -97,6 +98,7 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, now: u64, detail: &str
             fx.pages.push(format!("ROUND RED {repo} — attribute and eject, then rm the pause file ({detail})"));
         }
         Outcome::StaleImage => {}
+        Outcome::NoVm => next.backoff_until = now + BACKOFF_SECS,
         Outcome::OpenFailed => {
             fx.pages.push(format!("OPEN FAILED {repo} — the cut could not open a round ({detail})"));
         }
@@ -361,6 +363,16 @@ mod tests {
     }
     fn inbox(d: &Path) -> String {
         fs::read_to_string(d.join("inbox.log")).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_round_with_no_vm_backs_off_without_a_pause_or_a_stop() {
+        let mut st = State::default();
+        for i in 0..5 {
+            let (next, fx) = advance(&st, &Outcome::NoVm, "r", 1000 + i, "acquire failed");
+            assert_eq!((fx.pause, fx.stop, fx.pages.len(), next.infra, next.backoff_until), (false, false, 0, 0, 1000 + i + BACKOFF_SECS));
+            st = next;
+        }
     }
 
     #[test]

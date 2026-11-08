@@ -222,6 +222,26 @@ fn t3_the_attribution_line_decides_certify_mending_or_blocked() {
     assert!(after.contains(&ABANDON.to_string()), "an attribution with no outcome blocks the round: {after:?}");
 }
 
+/// A round whose VM could not be acquired never ran: the attribution leg says so as a fault, and
+/// the repo backs off and cuts again — no pause for an operator to lift (sp-lgffas).
+#[test]
+fn sp_lgffas_a_fault_in_the_attribution_leg_backs_off_and_re_cuts_without_a_pause() {
+    use batcher_cut::attribute::Attribution;
+    let fault = Attribution::Fault("the attribution did not finish: round-vm: harness fault — round-vm run: acquire failed".into()).line();
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.a2").unwrap(), exit: runtime::units::Exit::Code(0), duration_ms: 1 };
+    let out = runtime::units::RanOutput::captured(fault.as_bytes(), b"");
+    let (carry, acts) = on_ran_with(&driving(State::Attributing, "spira.a2"), &ran, &out, NOW).expect("its own leg");
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert!(names.contains(&ABANDON) && !names.contains(&PAUSE) && !names.contains(&CERTIFY), "{names:?}");
+    assert_eq!(carry.repos["spira"].pace.infra, 0, "a fault with no VM does not count toward a stop");
+
+    let (_, acts) = decide(&carry, &busy());
+    assert!(acts.is_empty(), "held through the backoff: {acts:?}");
+    let later = Snapshot { now_ms: NOW + (batcher_cut::pace::BACKOFF_SECS + 1) * 1000, ..busy() };
+    let (_, acts) = decide(&carry, &later);
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE], "cut again once the backoff ends");
+}
+
 /// Certifying × `unit.ran` red: the guilty are ejected from the round by the certify output
 /// `queue round certify` names (`red-output=`, `io::implicated`), then the round is abandoned.
 #[test]
