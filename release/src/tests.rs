@@ -692,6 +692,7 @@ fn activation_holds_a_retired_key_the_release_being_replaced_still_declares() {
     let old = tree_declaring(&w.cfg.releases.join("old"), &["SPIRA_ROUND_VM_DISK_NEED_GIB"]);
     std::os::unix::fs::symlink(&old, w.cfg.releases.join("current")).unwrap();
     let state = w.cfg.state_dir().unwrap();
+    fs::create_dir_all(&state).unwrap();
     config_delta::save_retired(&state, &["spira.round_vm_disk_need_gib".to_string()]).unwrap();
     let txn = config_delta::prepare(&w.cfg, &rel, &config_delta::Delta::default(), true).unwrap();
     let scratch = w.cfg.releases.join("scratch");
