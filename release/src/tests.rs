@@ -700,6 +700,14 @@ fn activation_holds_a_retired_key_the_release_being_replaced_still_declares() {
     let staged = fs::read_to_string(txn.stage(&scratch).unwrap()).unwrap();
     assert!(staged.contains("round_vm_disk_need_gib = 0"), "the replaced release's registry still requires it: {staged}");
     assert_eq!(txn.deferred, vec!["spira.round_vm_disk_need_gib".to_string()], "held for the activation after this one");
+
+    fs::remove_file(w.cfg.releases.join("current")).unwrap();
+    let old = tree_declaring(&w.cfg.releases.join("old2"), &["SPIRA_OTHER_SECS"]);
+    std::os::unix::fs::symlink(&old, w.cfg.releases.join("current")).unwrap();
+    let txn = config_delta::prepare(&w.cfg, &rel, &config_delta::Delta::default(), true).unwrap();
+    let staged = fs::read_to_string(txn.stage(&scratch).unwrap()).unwrap();
+    assert!(!staged.contains("round_vm_disk_need_gib"), "control: a registry that no longer declares it lets the retired key go: {staged}");
+    assert!(txn.deferred.is_empty());
 }
 
 #[test]

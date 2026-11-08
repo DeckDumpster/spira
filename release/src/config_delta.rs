@@ -462,7 +462,7 @@ pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Op
         None => Default::default(),
     };
     for k in registry_keys(rel)? {
-        let path = format!("spira.{}", k.name.strip_prefix("SPIRA_").unwrap_or(&k.name).to_ascii_lowercase());
+        let path = key_path(&k.name);
         if MERGED_LIST_KEYS.contains(&k.name.as_str()) && !d.replaced.contains_key(&path) {
             let live = original.iter().rev().find_map(|t| get(t, &path)).and_then(Value::as_str);
             if let (Some(live), Ok(Value::String(default))) = (live, literal_default(&k)) {
@@ -533,6 +533,10 @@ fn literal_default(k: &spira_config::registry::RegistryKey) -> Result<Value, Str
     }
 }
 
+fn key_path(registry_name: &str) -> String {
+    format!("spira.{}", registry_name.strip_prefix("SPIRA_").unwrap_or(registry_name).to_ascii_lowercase())
+}
+
 /// `retired` split into the keys to drop now and the keys to hold: the release being replaced
 /// still declares a held key, so its running processes would refuse a config without it.
 fn split_retired(retired: Vec<String>, active: &Path) -> Result<(Vec<String>, Vec<String>), String> {
@@ -540,7 +544,7 @@ fn split_retired(retired: Vec<String>, active: &Path) -> Result<(Vec<String>, Ve
         return Ok((retired, Vec::new()));
     }
     let declared: std::collections::BTreeSet<String> =
-        registry_keys(active)?.into_iter().map(|k| format!("spira.{}", k.name.strip_prefix("SPIRA_").unwrap_or(&k.name).to_ascii_lowercase())).collect();
+        registry_keys(active)?.into_iter().map(|k| key_path(&k.name)).collect();
     Ok(retired.into_iter().partition(|k| !declared.contains(k)))
 }
 
