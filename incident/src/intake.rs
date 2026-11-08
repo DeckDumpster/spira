@@ -123,6 +123,7 @@ pub struct Env {
     pub known_repos: Vec<String>,
     pub ask_label: String,
     pub express: bool,
+    pub reference: Option<String>,
     pub unit: String,
     pub path: String,
     pub lock_path: std::path::PathBuf,
@@ -158,6 +159,7 @@ impl Env {
             known_repos: repo_names(),
             ask_label: env_or("SPIRA_ASK_LABEL", "needs-ryan"), // literal-ok: Rust fallback mirroring lib.sh's own default when SPIRA_ASK_LABEL is unset
             express: env("SPIRA_INCIDENT_EXPRESS").as_deref() == Some("1"),
+            reference: env("SPIRA_INCIDENT_REF"),
             unit: env_or("SPIRA_INCIDENT_UNIT", &unit_from_cgroup()),
             path: env_or("SPIRA_INCIDENT_PATH", "?"),
             lock_path: std::path::PathBuf::from(env_or("SPIRA_INCIDENT_LOCK", &format!("{spira_run}/incident.lock"))),
@@ -471,7 +473,14 @@ pub fn file_body_id(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clo
 /// `incident file <title> -` in-process, with the host's ports: what a Spira caller runs where
 /// it used to spawn `incident.sh file`. `Err` names why nothing was filed.
 pub fn file_payload(title: &str, body: &[u8]) -> Result<(), String> {
-    let env = Env::load();
+    file_payload_with(title, body, |_| {})
+}
+
+/// `file_payload` with the per-call fields (`priority`, `express`, `reference`, ...) set on the
+/// loaded environment by `tune`, so a caller never writes them into the process environment.
+pub fn file_payload_with(title: &str, body: &[u8], tune: impl FnOnce(&mut Env)) -> Result<(), String> {
+    let mut env = Env::load();
+    tune(&mut env);
     if env.db.is_none() {
         let _ = require_db(&env);
         return Err("SPIRA_DB is not set".into());
@@ -486,7 +495,7 @@ pub fn file_payload(title: &str, body: &[u8]) -> Result<(), String> {
 
 impl Env {
     pub fn repo_override_ref(&self) -> Option<String> {
-        env("SPIRA_INCIDENT_REF")
+        self.reference.clone()
     }
 }
 
