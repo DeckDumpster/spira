@@ -14,6 +14,7 @@ use std::process::{Child, Command, Stdio};
 use batcher::attrib::{Job, JobResult};
 use batcher::core::{Id, Member, MergeResult};
 
+use batcher::pathattr::{attribute, MemberPaths, Red, Verdict};
 use batcher::drive::{FilterRed, MainEnd, MainKind, MainPoll, RoundRunner};
 use crate::io::{self, Env, Repo};
 use crate::order;
@@ -159,7 +160,7 @@ pub fn blamed_member(line: &str, members: &[Member]) -> Option<Id> {
 }
 
 /// The low-pass filter that ended the pass red in `results`, with each member its output blames.
-fn filter_red_in(results: &Path, members: &[Member]) -> Option<FilterRed> {
+fn filter_red_in(results: &Path, members: &[Member], changed: &BTreeMap<Id, Vec<String>>) -> Option<FilterRed> {
     let mut reds: Vec<String> = vec![];
     for e in fs::read_dir(results).ok()?.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
@@ -169,9 +170,18 @@ fn filter_red_in(results: &Path, members: &[Member]) -> Option<FilterRed> {
             }
         }
     }
+    let phases: Vec<&str> = TEST_PHASES.iter().filter(|(json, _)| phase_red(results, json)).map(|(_, stage)| *stage).collect();
+    reds.extend(phases.iter().map(|s| s.to_string()));
     reds.sort();
     let name = reds.first()?.clone();
     let mut named: Vec<(Id, String)> = vec![];
+    for stage in &phases {
+        for (id, line) in phase_owner(results, stage, members, changed) {
+            if !named.iter().any(|(n, _)| *n == id) {
+                named.push((id, line));
+            }
+        }
+    }
     for red in &reds {
         let text = fs::read_to_string(results.join(format!("{red}.out"))).unwrap_or_default();
         for line in text.lines() {
@@ -183,6 +193,27 @@ fn filter_red_in(results: &Path, members: &[Member]) -> Option<FilterRed> {
         }
     }
     Some(FilterRed { name, named })
+}
+
+const TEST_PHASES: [(&str, &str); 2] = [("unit.json", "unit-tests"), ("integration.json", "integration-tests")];
+
+fn phase_red(results: &Path, json: &str) -> bool {
+    fs::read_to_string(results.join(json))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .is_some_and(|v| v["verdict"] == "red")
+}
+
+/// The one member whose changed paths the failed phase's output names; nobody when none or
+/// several do, so an ambiguous red is filed rather than a guessed member ejected.
+fn phase_owner(results: &Path, stage: &str, members: &[Member], changed: &BTreeMap<Id, Vec<String>>) -> Vec<(Id, String)> {
+    let evidence = fs::read_to_string(results.join(format!("{stage}.out"))).unwrap_or_default();
+    let red = Red { suite: stage.to_string(), evidence, own: vec![] };
+    let paths: Vec<MemberPaths> = members.iter().map(|m| MemberPaths { id: m.id.clone(), paths: changed.get(&m.id).cloned().unwrap_or_default() }).collect();
+    match attribute(&[red], &paths) {
+        Verdict::Eject(owners) => owners,
+        Verdict::Ambiguous(_) => vec![],
+    }
 }
 
 /// How long a stopped round-vm gets to destroy its VM before the runner gives up on it.
@@ -454,7 +485,7 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn filter_red(&mut self) -> Option<FilterRed> {
-        filter_red_in(&self.results, &self.members)
+        filter_red_in(&self.results, &self.members, &self.changed)
     }
 
     fn stop_main(&mut self) -> Result<(), String> {
@@ -606,21 +637,48 @@ mod tests {
     fn filter_red_reads_the_lint_result_and_names_each_blamed_member_once() {
         let d = testkit::TempDir::new("vm-filter-red");
         let ms: Vec<Member> = ["sp-a", "sp-b"].iter().map(|id| Member { id: id.to_string(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() }).collect();
-        assert_eq!(filter_red_in(d.path(), &ms), None, "no filter result, no filter red");
+        assert_eq!(filter_red_in(d.path(), &ms, &BTreeMap::new()), None, "no filter result, no filter red");
         fs::write(d.path().join("fence-x.result"), "ok 1 1\n").unwrap();
-        assert_eq!(filter_red_in(d.path(), &ms), None, "a green fence is not a red");
+        assert_eq!(filter_red_in(d.path(), &ms, &BTreeMap::new()), None, "a green fence is not a red");
         fs::write(d.path().join("spira-lint.result"), "red 1 2 - - - 1\n").unwrap();
         fs::write(d.path().join("spira-lint.out"), "member=commit abc spira: land sp-b — t r: f.rs:1: x\nmember=sp-b r: g.rs:2: y\nmember=the base itself (z) r: h.rs:3: z\n").unwrap();
-        let red = filter_red_in(d.path(), &ms).unwrap();
+        let red = filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap();
         assert_eq!(red.name, "spira-lint");
         assert_eq!(red.named.len(), 1);
         assert_eq!(red.named[0].0, "sp-b");
         assert!(red.named[0].1.contains("f.rs:1"));
         fs::write(d.path().join("spira-lint.out"), "member=the base itself (z) r: h.rs:3: z\n").unwrap();
-        assert!(filter_red_in(d.path(), &ms).unwrap().named.is_empty());
+        assert!(filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap().named.is_empty());
         fs::write(d.path().join("fence-x.result"), "red 1 1 - - - 1\n").unwrap();
         fs::remove_file(d.path().join("spira-lint.result")).unwrap();
-        assert_eq!(filter_red_in(d.path(), &ms).unwrap().name, "fence-x", "a red fence is a filter red, naming nobody");
+        assert_eq!(filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap().name, "fence-x", "a red fence is a filter red, naming nobody");
+    }
+
+    #[test]
+    fn a_red_unit_phase_is_a_filter_red_naming_the_member_whose_paths_its_panic_names() {
+        let d = testkit::TempDir::new("vm-unit-red");
+        let mk = |id: &str| Member { id: id.to_string(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() };
+        let ms = vec![mk("sp-a"), mk("sp-b")];
+        let mut changed = BTreeMap::new();
+        changed.insert("sp-a".to_string(), vec!["docs/x.md".to_string()]);
+        changed.insert("sp-b".to_string(), vec!["queue/src/ops/round.rs".to_string()]);
+        assert_eq!(filter_red_in(d.path(), &ms, &changed), None, "no phase record, no filter red");
+        fs::write(d.path().join("unit.json"), "{\"stage\":\"unit-tests\",\"verdict\":\"red\",\"failed\":[\"ops::t\"]}\n").unwrap();
+        fs::write(d.path().join("unit-tests.out"), "---- ops::t stdout ----\nthread 'ops::t' panicked at queue/src/ops/round.rs:3124:9:\n").unwrap();
+        let red = filter_red_in(d.path(), &ms, &changed).expect("a red unit phase ends the pass");
+        assert_eq!(red.name, "unit-tests");
+        assert_eq!(red.named.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["sp-b"]);
+        fs::write(d.path().join("unit-tests.out"), "error: could not compile\n").unwrap();
+        assert!(filter_red_in(d.path(), &ms, &changed).unwrap().named.is_empty(), "a red naming no member is filed, not guessed");
+        fs::write(d.path().join("unit-tests.out"), "panicked at queue/src/ops/round.rs:1:1\n").unwrap();
+        changed.insert("sp-a".to_string(), vec!["queue/src/ops/round.rs".to_string(), "docs/x.md".to_string()]);
+        assert!(filter_red_in(d.path(), &ms, &changed).unwrap().named.is_empty(), "two members touching the named file is ambiguous");
+        fs::write(d.path().join("unit.json"), "{\"verdict\":\"green\"}").unwrap();
+        assert_eq!(filter_red_in(d.path(), &ms, &changed), None, "only a red record is a red");
+        fs::write(d.path().join("integration.json"), "{\"stage\":\"integration-tests\",\"verdict\":\"red\"}").unwrap();
+        fs::write(d.path().join("integration-tests.out"), "panicked at docs/x.md:1:1\n").unwrap();
+        let red = filter_red_in(d.path(), &ms, &changed).unwrap();
+        assert_eq!((red.name.as_str(), red.named.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>()), ("integration-tests", vec!["sp-a"]));
     }
 
     #[test]
