@@ -125,6 +125,7 @@ pub fn run(exec: &dyn Exec, sink: &dyn Sink, req: &Request, home: &Path, dwarf_p
             if !o.success() {
                 return fatal(format!("could not stop the dwarf holding it (slay rc={}): {} — nothing directed", o.code, o.first_err_line()));
             }
+            let _ = exec.exec("spira-lc", &s(&["unhold", &req.bead, "wait", "dwarf"]), None, None);
             sink.out(&util::log_line(now, &format!("direct {}: stopped {} with its branch and worktree kept", req.bead, holder.as_deref().unwrap_or("its holder"))));
             replaced = Some(holder.unwrap_or_else(|| "unknown".to_string()));
         } else if !CLAIMABLE.contains(&state.as_str()) {
@@ -222,10 +223,11 @@ mod tests {
         let f = Fake { show: row("WORKING", Some("dwarf-old")), slay_rc: 0, calls: Mutex::default() };
         let (rc, sink) = go(&f);
         assert_eq!(rc, 0);
-        assert_eq!(progs(&f), a(&["spira-lc", "slay", "systemd-run"]), "the old dwarf stops before the new one starts");
+        assert_eq!(progs(&f), a(&["spira-lc", "slay", "spira-lc", "systemd-run"]), "the old dwarf stops, and a world-stop checkpoint hold it left is lifted, before the new one starts");
         let calls = f.calls.lock().unwrap();
+        assert_eq!(calls[2].1, a(&["unhold", "sp-x", "wait", "dwarf"]));
         assert_eq!(calls[1].1, a(&["--bead", "sp-x", "--keep-work", "--why", "directed by concierge: loop fix"]));
-        assert!(calls[2].1.windows(2).any(|w| w == ["--replaced", "dwarf-old"]), "{:?}", calls[2].1);
+        assert!(calls[3].1.windows(2).any(|w| w == ["--replaced", "dwarf-old"]), "{:?}", calls[3].1);
         assert!(sink.all().contains("stopped dwarf-old"));
     }
 
