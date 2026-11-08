@@ -23,6 +23,7 @@ pub mod seam;
 pub mod session;
 pub mod stack;
 pub mod stop;
+pub mod summon;
 pub mod sweep;
 pub mod teardown;
 pub mod trace;

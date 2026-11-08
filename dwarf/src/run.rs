@@ -27,6 +27,8 @@ pub enum Mode {
     Claim,
     DryRun,
     Sweep { prompt: Option<String> },
+    /// `dwarf summon`: claim this one named bead, past the ready set, the caps and the world's state.
+    Summoned(crate::summon::Summon),
 }
 
 /// Why the work phase stopped early. Every variant still runs the teardown.
@@ -382,7 +384,8 @@ impl<'a> Run<'a> {
         if let Mode::Sweep { prompt } = self.mode.clone() {
             return self.sweep(prompt);
         }
-        if let Some(code) = self.decline() {
+        let declined = if matches!(self.mode, Mode::Summoned(_)) { self.capacity_decline() } else { self.decline() };
+        if let Some(code) = declined {
             return code;
         }
         if self.mode == Mode::DryRun {
@@ -443,6 +446,11 @@ impl<'a> Run<'a> {
             self.ledger.awake(self.now(), self.f(), "draining");
             return Some(0);
         }
+        self.capacity_decline()
+    }
+
+    /// The account out of capacity (or its pause file unreadable): nothing could run, so no claim.
+    fn capacity_decline(&mut self) -> Option<i32> {
         match self.capacity_check().state {
             crate::capacity::Paused::Open => {}
             crate::capacity::Paused::Paused(left) => {
@@ -527,6 +535,10 @@ impl<'a> Run<'a> {
         let until = (self.now() + self.rune.lease_seconds()).to_string();
         let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
         let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
+        let summons = match &self.mode {
+            Mode::Summoned(sm) => sm.claim_json(),
+            _ => String::new(),
+        };
         let mut stacks = std::collections::BTreeMap::new();
         let (won, logs, unreachable) = claim::lc_claim_loop(ids, resumable, tier, who, |id| {
             let p = self.stack_proposal(id, who);
@@ -536,7 +548,7 @@ impl<'a> Run<'a> {
             }
             let rc = self.sdo(
                 "lc_claim_bead",
-                &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.rune.name]),
+                &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.rune.name, &summons]),
             );
             stacks.insert(id.to_string(), p.stack);
             claim::settle_claim(rc, self.d.exec, id, &holder, tries, delay, self.d.sleep)
@@ -590,8 +602,11 @@ impl<'a> Run<'a> {
         claim::read_holds(self.d.exec, id, tries, delay, self.d.sleep)
     }
 
-    fn claim(&mut self) -> Result<(), i32> {
-        self.take_name();
+    /// The candidates to claim: the ranked ready set, or the one bead a summons names.
+    fn candidates(&mut self) -> Result<(Vec<String>, Vec<String>, Option<String>), i32> {
+        if let Mode::Summoned(sm) = &self.mode {
+            return Ok((vec![sm.bead.clone()], Vec::new(), None));
+        }
         let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
         let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
         let ready = match self.ready_set(tries, delay) {
@@ -605,18 +620,29 @@ impl<'a> Run<'a> {
         };
         let ready = if ready.trim().is_empty() { "[]".to_string() } else { ready };
         let claim_bin = self.claim_bin.clone();
-        let who = format!("{}/{}", self.f(), self.s.dwarf);
         let sel = Selector { exec: self.d.exec, git: self.d.git, claim_bin: &claim_bin, rune: &self.rune.name, scratch: &self.conf.run, pid: self.pid, repos: &self.conf.repos };
-        let (ids, resumable, tier) = match sel.select(&ready) {
+        match sel.select(&ready) {
             Selection::ClaimError { log, ledger } => {
                 self.log(&log);
                 self.ledger.awake(self.now(), self.f(), &ledger);
-                return Err(1);
+                Err(1)
             }
-            Selection::Ranked { ids, resumable, tier } => (ids, resumable, tier),
-        };
+            Selection::Ranked { ids, resumable, tier } => Ok((ids, resumable, tier)),
+        }
+    }
+
+    fn claim(&mut self) -> Result<(), i32> {
+        self.take_name();
+        let who = format!("{}/{}", self.f(), self.s.dwarf);
+        let (ids, resumable, tier) = self.candidates()?;
         let claimed = self.lc_claim(&ids, &resumable, tier.as_deref(), &who)?;
         let Some(c) = claimed else {
+            if let Mode::Summoned(sm) = &self.mode {
+                let (bead, by) = (sm.bead.clone(), sm.by.clone());
+                self.log(&format!("{who}: {bead} was not claimable — another claim won it or it left READY/REWORK; nothing summoned for {by}"));
+                self.ledger.awake(self.now(), self.f(), "summon-refused");
+                return Err(1);
+            }
             self.log(&format!("{}: nothing ready to claim", self.f()));
             self.ledger.awake(self.now(), self.f(), "idle");
             return Err(0);
