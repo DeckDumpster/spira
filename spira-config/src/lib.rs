@@ -23,6 +23,7 @@ pub mod lc_call;
 pub mod admission;
 pub mod bounded;
 pub mod build;
+pub mod build_dir;
 pub mod runes;
 pub mod containment;
 pub mod convert;
