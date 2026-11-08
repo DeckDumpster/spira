@@ -1183,6 +1183,8 @@ impl Tools for RealTools {
                 return vec![format!("landing: {} is not an executable file — not run", script.display())];
             }
             if script.extension().is_some_and(|e| e == "sh") {
+                // FORK-EDGE: an installed ensure script (systemd/), run by bash because it is *.sh; needs the
+                // install crate's unit ensure as a library to become in-process.
                 let mut c = command("bash");
                 c.arg(script);
                 c
