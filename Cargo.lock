@@ -788,6 +788,7 @@ name = "inbox-rules"
 version = "1.0.0"
 dependencies = [
  "regex",
+ "testkit",
 ]
 
 [[package]]
@@ -2142,6 +2143,7 @@ dependencies = [
  "heimdall",
  "hel",
  "idea-prompt",
+ "inbox-rules",
  "incident",
  "inotify",
  "install",

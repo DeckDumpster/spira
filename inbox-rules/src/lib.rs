@@ -1,7 +1,16 @@
 //! The drop and dedup rules for the Concierge inbox. One implementation, two readers
 //! (`inbox-triage`, `watchd next`): two copies of "what is noise" is how they come to disagree.
+//!
+//! And the one write leg, [`record`], for every writer of the inbox (`inbox-triage append`,
+//! spira-runtime's `World::inbox_append`, the scheduler watchdog's page): a line that matches the
+//! push pattern is spooled and handed to `inbox-triage flush`. It needs no store and no
+//! scheduler, so a writer that runs while the scheduler is down can call it (sp-nasmjd).
 
 use std::collections::HashMap;
+use std::io::Write;
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 /// Strips the leading UTC timestamp token: up to and including the first space.
@@ -83,6 +92,54 @@ pub fn is_urgent(text: &str, pattern: &regex::Regex) -> bool {
     pattern.is_match(text)
 }
 
+/// The push decision every writer of the inbox applies (sp-nasmjd): a line wakes the session
+/// when a wake command is configured (`SPIRA_CONCIERGE_PUSH_WAKE`) and the line matches
+/// `SPIRA_CONCIERGE_PUSH_PATTERN`. A pattern that will not compile is an error naming the key.
+pub fn pushes(line: &str, wake: &str, pattern: &str) -> Result<bool, String> {
+    if wake.is_empty() {
+        return Ok(false);
+    }
+    let re = regex::Regex::new(pattern).map_err(|e| format!("bad SPIRA_CONCIERGE_PUSH_PATTERN: {e}"))?;
+    Ok(is_urgent(line, &re))
+}
+
+/// Appends one line to `path`, creating the file and its directory.
+pub fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    writeln!(f, "{line}")
+}
+
+/// The push spool beside an inbox: `<inbox>.push`, drained by `inbox-triage flush`.
+pub fn spool_path(inbox: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.push", inbox.display()))
+}
+
+/// Records `line` in `inbox`; when it [`pushes`] under `wake` and `pattern`, also spools it and
+/// starts `<flusher> flush` (the `inbox-triage` program, resolved only for a line that pushes),
+/// detached, which wakes the session once per burst. Returns whether it pushed. A bad pattern
+/// disables the push and says so on stderr; a spool that cannot be written or a flusher that
+/// cannot be named is an error, after the line is recorded.
+pub fn record(inbox: &Path, line: &str, wake: &str, pattern: &str, flusher: impl FnOnce() -> Result<PathBuf, String>) -> Result<bool, String> {
+    append_line(inbox, line).map_err(|e| format!("cannot append to {}: {e}", inbox.display()))?;
+    match pushes(line, wake, pattern) {
+        Ok(true) => {}
+        Ok(false) => return Ok(false),
+        Err(e) => {
+            eprintln!("inbox push disabled: {e}");
+            return Ok(false);
+        }
+    }
+    let spool = spool_path(inbox);
+    append_line(&spool, line).map_err(|e| format!("cannot spool to {}: {e}", spool.display()))?;
+    let flusher = flusher().map_err(|e| format!("pushed line spooled, but no flusher to deliver it: {e}"))?;
+    // batch-job: spawned detached and never waited on; the flusher outlives the writer
+    let _ = Command::new(flusher).arg("flush").process_group(0).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+    Ok(true)
+}
+
 /// When a spooled burst is due: the spool has stopped growing for `idle_ticks`, or
 /// `window_ticks` have passed. Time is the number of `tick` calls; the caller sleeps.
 pub struct Flush {
@@ -137,6 +194,39 @@ mod tests {
 
     fn due_after(f: &mut Flush, sizes: impl IntoIterator<Item = u64>) -> Vec<bool> {
         sizes.into_iter().map(|s| f.tick(s)).collect()
+    }
+
+    #[test]
+    fn a_line_pushes_only_with_a_wake_and_a_matching_pattern() {
+        assert_eq!(pushes("x P0 down", "wake", r"\bP0\b"), Ok(true), "positive control");
+        assert_eq!(pushes("x P01 down", "wake", r"\bP0\b"), Ok(false));
+        assert_eq!(pushes("x P0 down", "", r"\bP0\b"), Ok(false), "no wake, no push");
+        assert!(pushes("x P0 down", "wake", "(").is_err(), "a bad pattern is named, not a silent no");
+    }
+
+    #[test]
+    fn append_creates_the_inbox_and_a_second_call_does_not_truncate() {
+        let d = testkit::TempDir::new("inbox-append");
+        let inbox = d.join("elsewhere/inbox.log");
+        assert!(!inbox.exists(), "the inbox does not exist before the first append");
+        append_line(&inbox, "2026-11-06T00:00:00Z hello world").unwrap();
+        assert_eq!(std::fs::read_to_string(&inbox).unwrap(), "2026-11-06T00:00:00Z hello world\n");
+        append_line(&inbox, "2026-11-06T00:00:01Z second event").unwrap();
+        assert_eq!(std::fs::read_to_string(&inbox).unwrap().lines().count(), 2);
+    }
+
+    #[test]
+    fn record_spools_only_a_line_that_pushes() {
+        let d = testkit::TempDir::new("inbox-record");
+        let inbox = d.join("inbox.log");
+        let none = || Ok(PathBuf::from("/nonexistent/inbox-triage"));
+        assert_eq!(record(&inbox, "t plain line", "wake", r"\bP0\b", none), Ok(false));
+        assert!(!d.join("inbox.log.push").exists());
+        assert_eq!(record(&inbox, "t P0 down", "wake", "(", none), Ok(false), "a bad pattern records and does not push");
+        assert_eq!(record(&inbox, "t P0 down", "wake", r"\bP0\b", none), Ok(true));
+        assert_eq!(std::fs::read_to_string(d.join("inbox.log.push")).unwrap(), "t P0 down\n");
+        assert!(record(&inbox, "t P0 again", "wake", r"\bP0\b", || Err("no release".into())).unwrap_err().contains("no release"), "an unnamed flusher is said");
+        assert_eq!(std::fs::read_to_string(&inbox).unwrap().lines().count(), 4, "every line is recorded first");
     }
 
     #[test]

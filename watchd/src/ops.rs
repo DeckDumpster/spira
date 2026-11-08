@@ -420,7 +420,7 @@ pub fn pids_with_arg(proc_root: &std::path::Path, prog: &str, except: i32) -> Ve
 /// Whether `inbox-append.sh` would push `text` (its `[ -n WAKE ] && grep -qE PATTERN` gate):
 /// only then does the detached flusher have work, and only then is the script run.
 pub fn inbox_pushes(text: &str, wake: &str, pattern: &str) -> bool {
-    !wake.is_empty() && regex::Regex::new(pattern).is_ok_and(|re| re.is_match(text))
+    inbox_rules::pushes(text, wake, pattern).unwrap_or(false)
 }
 
 /// `inbox-append.sh`'s own line: `<UTC %FT%TZ> <text>`.

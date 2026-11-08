@@ -80,6 +80,17 @@ Replaces the body of `spira/inbox-append.sh`, which becomes `exec inbox-triage a
   the script used `grep -E`; a pattern it rejects pushes nothing.
 * The timing rule is the pure `inbox_rules::Flush` (time is its `tick` count), the line, urgency
   and wake text are `inbox_rules::{line, is_urgent, wake_text}`; only the binary sleeps.
+* **One write leg for every writer (sp-nasmjd).** Appending the line, the push decision
+  (`inbox_rules::pushes`) and the spool-and-start-the-flusher step are `inbox_rules::record`, a
+  library function with no store and no scheduler behind it. `append` calls it with its own
+  executable as the flusher; spira-runtime's `World::inbox_append` calls it with `inbox-triage`
+  (its unit's `PATH` names the release `bin/`), and `watchd`'s in-process gate is
+  `inbox_rules::pushes`. Any other writer of `SPIRA_CONCIERGE_INBOX` calls `record` and never
+  writes the file itself — a direct write is a P0 that never pushes. The scheduler watchdog's
+  page (`InboxPager::page` in `watchdog/src/main.rs`, branch `spira/sp-xb12ib-hand`) is the
+  one writer still to move: it must call `inbox_rules::record(&inbox, &line, &wake, &pattern,
+  Path::new("inbox-triage"))` with `SPIRA_CONCIERGE_PUSH_WAKE`/`_PATTERN` read beside
+  `SPIRA_CONCIERGE_INBOX`, in place of its own `OpenOptions` append.
 
 ## Test strategy
 
