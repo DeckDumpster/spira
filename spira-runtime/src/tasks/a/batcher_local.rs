@@ -390,6 +390,8 @@ pub static TABLE: &[(State, Trigger, State)] = &[
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pace {
     pub infra: u32,
+    #[serde(default)]
+    pub no_vm: u32,
     pub backoff_until_ms: Option<u64>,
     /// The open round already paged as stranded (`paged_open`), at most one.
     pub paged: Vec<String>,
@@ -406,6 +408,7 @@ impl Pace {
     pub fn core(&self) -> pace::State {
         pace::State {
             infra: self.infra,
+            no_vm: self.no_vm,
             backoff_until: self.backoff_until_ms.map_or(0, |ms| ms / 1000),
             paged_open: self.paged.first().cloned().unwrap_or_default(),
             orphan: self.orphan.first().cloned().unwrap_or_default(),
@@ -418,6 +421,7 @@ impl Pace {
         let one = |s: &str| if s.is_empty() { vec![] } else { vec![s.to_string()] };
         Pace {
             infra: st.infra,
+            no_vm: st.no_vm,
             backoff_until_ms: (st.backoff_until > 0).then_some(st.backoff_until * 1000),
             paged: one(&st.paged_open),
             orphan: one(&st.orphan),
@@ -1036,6 +1040,11 @@ impl Machine<'_> {
                 Some(Attribution::Land { .. }) => {
                     self.go(Trigger::RerunBlocked);
                     self.red("attribution ejected every member — nothing is left to land");
+                }
+                Some(Attribution::Fault(why)) => {
+                    self.go(Trigger::RerunBlocked);
+                    self.abandon_naming(&why, Vec::new());
+                    self.finish(pace::Outcome::NoVm, &why);
                 }
                 Some(Attribution::Blocked(why)) => {
                     self.go(Trigger::RerunBlocked);

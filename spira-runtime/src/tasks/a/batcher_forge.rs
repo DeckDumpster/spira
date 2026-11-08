@@ -436,7 +436,7 @@ impl Machine<'_> {
                 outcome => {
                     self.go(Trigger::RerunBlocked);
                     let why = match outcome {
-                        Some(Attribution::Blocked(why)) => why,
+                        Some(Attribution::Blocked(why) | Attribution::Fault(why)) => why,
                         Some(Attribution::Land { .. }) => "attribution withdrew every member".into(),
                         None => format!("the attribution leg ended ({exit:?}) with no outcome"),
                     };

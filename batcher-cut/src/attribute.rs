@@ -16,6 +16,8 @@ pub enum Attribution {
     Land { members: Vec<(String, String)>, attribution_secs: Option<u64>, mended: bool },
     /// Nothing lands; why.
     Blocked(String),
+    /// The harness failed (no VM, a dead container): the round was not judged, red or green.
+    Fault(String),
 }
 
 impl Attribution {
@@ -24,6 +26,7 @@ impl Attribution {
         let body = match self {
             Attribution::Land { members, attribution_secs, mended } => json!({ "end": "land", "members": members, "attribution_secs": attribution_secs, "mended": mended }),
             Attribution::Blocked(why) => json!({ "end": "blocked", "why": why }),
+            Attribution::Fault(why) => json!({ "end": "fault", "why": why }),
         };
         format!("{PREFIX}{body}")
     }
@@ -38,6 +41,7 @@ impl Attribution {
                 Some(Attribution::Land { members, attribution_secs: body.get("attribution_secs").and_then(Value::as_u64), mended: body.get("mended").and_then(Value::as_bool).unwrap_or(false) })
             }
             "blocked" => Some(Attribution::Blocked(body.get("why")?.as_str()?.to_string())),
+            "fault" => Some(Attribution::Fault(body.get("why")?.as_str()?.to_string())),
             _ => None,
         }
     }
@@ -53,6 +57,10 @@ pub fn members_arg(members: &[(String, String)]) -> String {
     members.iter().map(|(i, t)| format!("{i}:{t}")).collect::<Vec<_>>().join(",")
 }
 
+pub fn is_round_vm_fault(err: &str) -> bool {
+    err.starts_with("round-vm:") && !err.contains("not a harness fault")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,6 +72,20 @@ mod tests {
         assert_eq!(Attribution::parse(&out), Some(land));
         let blocked = Attribution::Blocked("unattributed red test-y.sh".into());
         assert_eq!(Attribution::parse(&format!("{}\n{}", Attribution::Blocked("first".into()).line(), blocked.line())), Some(blocked), "the last line wins");
+    }
+
+    #[test]
+    fn a_fault_reads_back_as_a_fault_not_a_block() {
+        let fault = Attribution::Fault("round-vm: harness fault".into());
+        assert_eq!(Attribution::parse(&fault.line()), Some(fault));
+    }
+
+    #[test]
+    fn only_a_round_vm_harness_fault_is_a_fault() {
+        assert!(is_round_vm_fault("round-vm: harness fault — the round VM did not come up"));
+        assert!(is_round_vm_fault("round-vm: infrastructure fault — the round VM (h) was unreachable"));
+        assert!(!is_round_vm_fault("round-vm: suite list mismatch, not a harness fault — x"));
+        assert!(!is_round_vm_fault("refresh failed after round-vm refresh"));
     }
 
     #[test]
