@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
 use runtime::ports::{Clock, VirtualClock};
@@ -260,6 +260,9 @@ pub struct Contract<B: Backend> {
     cfg: Config,
     /// Each TTL'd key's expiry on the monotonic clock, restarted on every write and at open.
     deadlines: Mutex<BTreeMap<String, u64>>,
+    /// The locks' entries of `deadlines`, for display: a read projecting a lock's expiry takes
+    /// this, never `deadlines`, which a commit holds across the backend's write.
+    shown: RwLock<BTreeMap<String, u64>>,
     commits: Mutex<u64>,
     committed: Condvar,
 }
@@ -444,6 +447,7 @@ impl<B: Backend> Contract<B> {
             ports,
             cfg,
             deadlines: Mutex::new(BTreeMap::new()),
+            shown: RwLock::new(BTreeMap::new()),
             commits: Mutex::new(0),
             committed: Condvar::new(),
         };
@@ -464,6 +468,11 @@ impl<B: Backend> Contract<B> {
             }
             after = page.last().map(|(k, _)| k.clone());
         }
+        *c.shown.write().unwrap_or_else(lock_err) = deadlines
+            .iter()
+            .filter(|(k, _)| k.starts_with(LOCKS_PREFIX))
+            .map(|(k, d)| (k.clone(), *d))
+            .collect();
         *c.deadlines.lock().unwrap_or_else(lock_err) = deadlines;
         Ok(c)
     }
@@ -500,8 +509,8 @@ impl<B: Backend> Contract<B> {
         if i.key.starts_with(LOCKS_PREFIX) {
             let now = self.now_ms();
             let deadline = self
-                .deadlines
-                .lock()
+                .shown
+                .read()
                 .unwrap_or_else(lock_err)
                 .get(&i.key)
                 .copied();
@@ -1169,13 +1178,19 @@ impl<B: Backend> Contract<B> {
         }
         let now = self.now_ms();
         {
+            let mut shown = self.shown.write().unwrap_or_else(lock_err);
             for s in &staged {
+                let lock = s.key.starts_with(LOCKS_PREFIX);
                 match s.value.as_ref().and_then(|v| ttl_ms(&s.key, v)) {
                     Some(ttl) => {
                         d.insert(s.key.clone(), now.saturating_add(ttl));
+                        if lock {
+                            shown.insert(s.key.clone(), now.saturating_add(ttl));
+                        }
                     }
                     None if res.is_ok() => {
                         d.remove(&s.key);
+                        shown.remove(&s.key);
                     }
                     None => {}
                 }
@@ -1236,9 +1251,11 @@ impl<B: Backend> Contract<B> {
                 })
             })?;
             let mut d = self.deadlines.lock().unwrap_or_else(lock_err);
+            let mut shown = self.shown.write().unwrap_or_else(lock_err);
             for k in &settled {
                 if d.get(k).is_some_and(|at| *at <= now) {
                     d.remove(k);
+                    shown.remove(k);
                 }
             }
             gone.append(&mut planned);

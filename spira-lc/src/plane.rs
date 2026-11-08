@@ -71,12 +71,12 @@ impl<B: Backend> Plane<'_, B> {
 }
 
 /// The plane the configuration declares: the control store while lifecycle is on it.
-fn configured() -> Option<Result<Arc<Store<state_store_sqlite::SqliteBackend>>, String>> {
+fn configured() -> Option<Result<Arc<Store<crate::control::served::Served>>, String>> {
     crate::control::served::lifecycle_store()
 }
 
 /// Run `f` on the declared plane; a declared store that cannot be opened is cannot tell.
-fn with<T>(conn: &Conn, f: impl FnOnce(&Plane<'_, state_store_sqlite::SqliteBackend>) -> T, cannot: impl FnOnce(String) -> T) -> T {
+fn with<T>(conn: &Conn, f: impl FnOnce(&Plane<'_, crate::control::served::Served>) -> T, cannot: impl FnOnce(String) -> T) -> T {
     match configured() {
         Some(Ok(store)) => f(&Plane::Store(&store)),
         Some(Err(e)) => cannot(format!("the control store: {e}")),

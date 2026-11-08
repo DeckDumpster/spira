@@ -437,7 +437,9 @@ impl<B: Backend> Store<B> {
 
     /// The readiness of each of `ids` that has one, at `rev`. A few are read by key; more are
     /// read as key ranges over the span they cover, because every point read is a read
-    /// transaction of its own, and one per row was most of a whole-table list's time.
+    /// transaction of its own, and one per row was most of a whole-table list's time. A range
+    /// decodes only the readiness it was asked for: decoding every one in the span cost 300 ms
+    /// to find 650 of 13k.
     pub fn readiness_of(
         &self,
         ids: &[&str],
@@ -467,19 +469,18 @@ impl<B: Backend> Store<B> {
         loop {
             let page = self
                 .contract
-                .range_at(keys::READINESS, Some(&cursor), CHUNK, rev)?;
-            for item in &page {
-                if item.key > end {
+                .backend()
+                .range(keys::READINESS, Some(&cursor), CHUNK, rev)?;
+            for (key, version) in &page {
+                if *key > end {
                     return Ok(out);
                 }
-                if let Some(id) =
-                    keys::id_of(keys::READINESS, &item.key).filter(|id| wanted.contains(id))
-                {
-                    out.insert(id.to_string(), decode(&item.key, &item.value)?);
+                if let Some(id) = keys::id_of(keys::READINESS, key).filter(|id| wanted.contains(id)) {
+                    out.insert(id.to_string(), decode(key, &Object::decode(&version.value)?)?);
                 }
             }
             match page.last() {
-                Some(i) if page.len() == CHUNK => cursor = i.key.clone(),
+                Some((k, _)) if page.len() == CHUNK => cursor = k.clone(),
                 _ => return Ok(out),
             }
         }
