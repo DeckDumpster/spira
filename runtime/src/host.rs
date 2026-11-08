@@ -119,8 +119,9 @@ struct TurnOut {
 fn apply(t: &mut Turn) -> Result<()> {
     let mut subs = std::mem::take(&mut t.subs).into_iter();
     while let Some(s) = subs.next() {
+        let again = s.reply.is_none().then(|| Submit::new(&s.id, &s.stream, s.kind.clone()));
         if let Err(e) = accept(&mut t.engine, s) {
-            t.subs = subs.collect();
+            t.subs = again.filter(|_| e.is_cannot_tell()).into_iter().chain(subs).collect();
             return Err(e);
         }
     }

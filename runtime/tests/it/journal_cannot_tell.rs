@@ -56,3 +56,36 @@ async fn a_journal_read_that_cannot_tell_is_retried_not_returned_as_an_exit() {
     let retries: Vec<_> = sink.records().into_iter().filter(|r| r.get("unit").is_some_and(|u| *u == "journal.retry".into())).collect();
     assert_eq!(retries.len(), 1, "each retry is counted: {retries:?}");
 }
+
+#[tokio::test]
+async fn a_submission_nobody_waits_on_survives_a_journal_that_cannot_tell() {
+    let mem: Arc<dyn Journal> = MemJournal::new();
+    let faulty = FaultyJournal::new(mem.clone());
+    let engine = Engine::open(faulty.clone(), Arc::new(WallClock), vec![Registration::new("echo", Echo)], 1).unwrap();
+    let (tx, rx) = mpsc::channel::<Submit>(4);
+    let serving = tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(NoEffects), PoolCaps::default(), rx, ServeOpts::default()));
+    faulty.cannot_tell_next("append");
+    tx.send(Submit::new("p1", "s", EventKind::new("ping", ""))).await.unwrap();
+    for _ in 0..300 {
+        if pongs(&*mem) == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: polling a real host
+    }
+    assert_eq!(pongs(&*mem), 1, "the source's event was offered again, not dropped");
+    drop(tx);
+    tokio::time::timeout(Duration::from_secs(5), serving).await.expect("the host drains").unwrap().expect("a clean stop");
+}
+
+#[test]
+fn a_dropped_spira_lc_reply_is_a_cannot_tell_and_a_missing_socket_is_too() {
+    let dir = testkit::TempDir::new("cannot-tell");
+    let path = dir.path().join("lc.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let hang_up = std::thread::spawn(move || drop(listener.accept()));
+    let lost = runtime::socket::lc_call(&path, &["journal", "end"]).unwrap_err();
+    hang_up.join().unwrap();
+    assert!(lost.is_cannot_tell(), "{lost}");
+    let down = runtime::socket::lc_call(&dir.path().join("absent.sock"), &["journal", "end"]).unwrap_err();
+    assert!(down.is_cannot_tell(), "{down}");
+}
