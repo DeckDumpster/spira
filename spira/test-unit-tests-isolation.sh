@@ -9,7 +9,7 @@
 # its own tree's test, built against its own library.
 #
 # tier: T2
-# covers: spira/unit-tests.sh
+# covers: spira/unit-tests.sh spira/target-clean.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -25,7 +25,7 @@ VOL="$TMP/volume"
 put_tree() {
     rm -rf "$WS"
     mkdir -p "$WS/spira" "$WS/lc/src" "$WS/app/src" "$WS/target"
-    cp "$HERE/unit-tests.sh" "$WS/spira/unit-tests.sh"
+    cp "$HERE/unit-tests.sh" "$HERE/target-clean.sh" "$WS/spira/"
     printf '[workspace]\nmembers = ["lc", "app"]\nresolver = "2"\n' > "$WS/Cargo.toml"
     printf '[package]\nname = "lc"\nversion = "0.1.0"\nedition = "2021"\n' > "$WS/lc/Cargo.toml"
     printf '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\nlc = { path = "../lc" }\n' > "$WS/app/Cargo.toml"
