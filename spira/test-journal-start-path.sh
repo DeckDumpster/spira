@@ -140,7 +140,7 @@ PLAN="$(root_sql --use-db spira_lifecycle sql -q "EXPLAIN PLAN $SQL")"
 unkeyed="$(printf '%s\n' "$PLAN" | grep -A3 "IndexedTableAccess(runtime_event)" | grep -c "filters: \[{\[NULL, ∞)")"
 wantrc "POSITIVE CONTROL: the matcher sees a full-range access" 0 "$(printf 'IndexedTableAccess(runtime_event)\n index: [runtime_event.event_id]\n filters: [{[NULL, ∞)}]\n' | grep -A3 "IndexedTableAccess(runtime_event)" | grep -q "filters: \[{\[NULL, ∞)"; echo $?)"
 is "open-effects reads no part of runtime_event by range" "0" "$unkeyed"
-want "...it finds the candidates by the open index" "runtime_effect_open_idx" "$PLAN"
+want "...it finds the candidates by the open index" "index: [runtime_effect.resolved,runtime_effect.seq]" "$PLAN"
 
 for step in "cursor" "stream scheduler.halt 1000000000 1000" "open-effects" "end" "due"; do
     t0=$(date +%s%N)
