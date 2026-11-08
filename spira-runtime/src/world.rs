@@ -59,6 +59,8 @@ pub struct World {
     pub scope_label: String,
     pub desired_dir: PathBuf,
     pub export_bin: String,
+    /// The batch machine is served from the control store, so a round the store does not hold is stale.
+    pub batches_on_store: bool,
 }
 
 struct MapRow {
@@ -767,8 +769,12 @@ impl World {
         let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
         let Ok((hourly, landed_refs)) = self.landed_on_refs(p.now, &prefix) else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
         let Ok(batches) = self.lc_json(&["list", "--batches", "--window", &day.to_string()]) else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
-        let repos = round_counts(batches.as_array().map(Vec::as_slice).unwrap_or_default(), p.now, p.abandon_window_s);
-        to_json(&ThroughputSnapshot { readable: true, halted, hourly, landed_refs, repos })
+        let batches = batches.as_array().map(Vec::as_slice).unwrap_or_default();
+        let repos = round_counts(batches, p.now, p.abandon_window_s);
+        let unlanded = unlanded_rounds(batches, p.now);
+        let parts = self.round_record_partition();
+        let records = Records { clear: parts.clear.iter().map(|f| f.display().to_string()).collect(), held: parts.held };
+        to_json(&ThroughputSnapshot { readable: true, halted, hourly, landed_refs, repos, unlanded, records })
     }
 
     /// The beads landed over the 24 h ending `now`, read from each registered repo's landing ref
@@ -835,6 +841,33 @@ impl World {
         answer(&wt::snapshot_of(&dwell, activated).unwrap_or_else(|e| wt::blind(&e)))
     }
 
+    pub fn round_record_partition(&self) -> install::round_records::Partition {
+        if !self.batches_on_store {
+            return install::round_records::Partition { clear: vec![], held: vec![] };
+        }
+        let (named, bare): (Vec<_>, Vec<_>) = install::round_records::round_files(&self.queue_dir).into_iter().partition(|f| !f.batch.is_empty() || !f.pr.is_empty());
+        let mut parts = install::round_records::partition(&named, |batch| match self.lc_json(&["show-batch", batch]) {
+            Ok(v) => Ok(v["state"].as_str().map(str::to_string)),
+            Err(e) if e.trim() == "{}" => Ok(None),
+            Err(e) => Err(e),
+        });
+        parts.held.extend(bare.iter().map(|f| format!("{} names no round, so it cannot be told from a live record", f.path.display())));
+        parts
+    }
+
+    /// Removes the round record files in `input` (a JSON list of paths) that the store still says
+    /// nothing live names, re-asked now: a file whose round opened since the observation stays.
+    pub fn clear_round_records(&self, input: &str) -> Result<String, String> {
+        let asked: Vec<PathBuf> = serde_json::from_str::<Vec<String>>(input).map_err(|e| format!("round record paths unparsed: {e}"))?.into_iter().map(PathBuf::from).collect();
+        let parts = self.round_record_partition();
+        let mut cleared = 0;
+        for path in parts.clear.iter().filter(|p| asked.contains(p)) {
+            fs::remove_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            cleared += 1;
+        }
+        Ok(format!("cleared {cleared} of {}; {} refused", asked.len(), parts.held.len()))
+    }
+
     /// Writes the `world.halted` stamp as `world stop` does: the time, then the reason.
     pub fn halt_stamp(&self, why: &str) -> Result<String, String> {
         let stamp = self.run_dir.join("world.halted");
@@ -861,7 +894,7 @@ struct ThroughputParams {
     abandon_window_s: u64,
 }
 
-use crate::tasks::e::watch_throughput::{RepoRounds, Snapshot as ThroughputSnapshot};
+use crate::tasks::e::watch_throughput::{RepoRounds, Records, Snapshot as ThroughputSnapshot, Unlanded};
 
 fn to_json(s: &ThroughputSnapshot) -> Result<String, String> {
     serde_json::to_string(s).map_err(|e| e.to_string())
@@ -886,6 +919,7 @@ pub fn round_counts(batches: &[Value], now: u64, recent_s: u64) -> Vec<RepoRound
         let r = by.entry(repo.to_string()).or_insert_with(|| RepoRounds { repo: repo.to_string(), ..Default::default() });
         let recent = b["last_at"].as_i64().is_some_and(|t| now.saturating_sub(t.max(0) as u64) <= recent_s);
         r.cut += 1;
+        r.green_runs += b["passes"].as_array().map_or(0, |p| p.iter().filter(|p| p["verdict"] == "green").count() as u64);
         match b["state"].as_str() {
             Some("ABANDONED") => {
                 r.abandoned += 1;
@@ -899,6 +933,18 @@ pub fn round_counts(batches: &[Value], now: u64, recent_s: u64) -> Vec<RepoRound
         }
     }
     by.into_values().collect()
+}
+
+/// Rounds that passed CI and sit in a state short of landed, with the seconds since their last event.
+pub fn unlanded_rounds(batches: &[Value], now: u64) -> Vec<Unlanded> {
+    batches
+        .iter()
+        .filter_map(|b| {
+            let state = b["state"].as_str().filter(|s| matches!(*s, "GREEN" | "LANDING"))?;
+            let last = b["last_at"].as_i64()?.max(0) as u64;
+            Some(Unlanded { repo: b["repo"].as_str()?.to_string(), batch: b["batch_id"].as_str()?.to_string(), state: state.to_string(), age_s: now.saturating_sub(last) })
+        })
+        .collect()
 }
 
 /// A JSON number, or a string of digits, as a float; anything else is zero.

@@ -22,7 +22,7 @@ fn world(dir: &Path, exe: PathBuf) -> World {
 
 /// The throughput watcher's BLIND page, as the watcher itself builds the effect's input.
 fn blind_line() -> String {
-    let cfg = Config { floor: 1, abandon_count: 3, abandon_window_s: 3600, restop_after_s: 0 };
+    let cfg = Config { floor: 1, abandon_count: 3, abandon_window_s: 3600, restop_after_s: 0, ratio_min_pct: 50, ratio_min_runs: 6, passed_grace_s: 300 };
     let v = decide(&Carry::default(), &Snapshot::default(), 1_762_500_000_000, &cfg);
     v.acts.into_iter().next().expect("a blind page").input
 }

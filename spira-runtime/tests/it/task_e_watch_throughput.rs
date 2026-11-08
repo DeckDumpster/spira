@@ -12,22 +12,22 @@ use spira_runtime::watchers::INBOX_APPEND;
 const HOUR_MS: u64 = 3_600_000;
 
 fn config() -> Config {
-    Config { floor: 150, abandon_count: 5, abandon_window_s: 7_200, restop_after_s: 3_600 }
+    Config { floor: 150, abandon_count: 5, abandon_window_s: 7_200, restop_after_s: 3_600, ratio_min_pct: 40, ratio_min_runs: 6, passed_grace_s: 300 }
 }
 
 fn landed(n: u64) -> Snapshot {
     let mut hourly = vec![n / 24; 24];
     hourly[23] += n % 24;
-    Snapshot { readable: true, halted: false, hourly, landed_refs: n, repos: vec![] }
+    Snapshot { readable: true, halted: false, hourly, landed_refs: n, ..Default::default() }
 }
 
 fn starved(repo: &str, abandoned: u64, landed_recent: u64) -> RepoRounds {
-    RepoRounds { repo: repo.into(), cut: abandoned + landed_recent, abandoned, landed: landed_recent, abandoned_recent: abandoned, landed_recent }
+    RepoRounds { repo: repo.into(), cut: abandoned + landed_recent, abandoned, landed: landed_recent, abandoned_recent: abandoned, landed_recent, green_runs: 0 }
 }
 
 fn rig(world: Arc<Mutex<Snapshot>>) -> TaskRig {
     let (_, stream, kind) = WatchThroughput::boot();
-    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())).double(STAMP, |_| Ok("stamped".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
+    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())).double(STAMP, |_| Ok("stamped".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
     r.tick(stream, kind).unwrap();
     acc::assert_healthy(&r, STREAM);
     r
@@ -72,7 +72,7 @@ fn a_hundred_and_fifty_landings_in_a_day_do_not_stop_it() {
 fn the_page_carries_the_hourly_counts_and_each_repos_rounds() {
     let mut s = landed(100);
     s.hourly = (0..24).map(|h| h % 5).collect();
-    s.repos = vec![RepoRounds { repo: "alpha".into(), cut: 9, abandoned: 4, landed: 3, abandoned_recent: 0, landed_recent: 1 }];
+    s.repos = vec![RepoRounds { repo: "alpha".into(), cut: 9, abandoned: 4, landed: 3, abandoned_recent: 0, landed_recent: 1, green_runs: 0 }];
     let r = rig(Arc::new(Mutex::new(s)));
     let page = named(&r, INBOX_APPEND).remove(0);
     assert!(page.contains("hourly: 0 1 2 3 4 0 1 2 3 4 0 1 2 3 4 0 1 2 3 4 0 1 2 3"), "{page}");
@@ -149,6 +149,70 @@ fn a_repo_that_lands_again_and_starves_again_is_paged_again() {
     assert_eq!(named(&r, INBOX_APPEND).len(), 2);
 }
 
+fn repo_with_runs(repo: &str, green_runs: u64, landed: u64) -> RepoRounds {
+    RepoRounds { repo: repo.into(), cut: green_runs, landed, green_runs, ..Default::default() }
+}
+
+#[test]
+fn a_repo_whose_passing_runs_mostly_do_not_land_is_paged_once_and_a_healthy_or_thin_one_is_not() {
+    let mut s = landed(400);
+    s.repos = vec![repo_with_runs("diluted", 10, 3), repo_with_runs("healthy", 10, 4), repo_with_runs("thin", 5, 0)];
+    let mut r = rig(Arc::new(Mutex::new(s)));
+    let pages = named(&r, INBOX_APPEND);
+    assert!(pages.len() == 1 && pages[0].contains("diluted: 3 landed against 10 passing test runs in 24h, under 40%"), "{pages:?}");
+    assert_eq!(halts(&r), 0);
+    r.advance(4 * CADENCE_MS).unwrap();
+    assert_eq!(named(&r, INBOX_APPEND).len(), 1, "a standing ratio pages once");
+}
+
+fn unlanded(batch: &str, state: &str, age_s: u64) -> Unlanded {
+    Unlanded { repo: "alpha".into(), batch: batch.into(), state: state.into(), age_s }
+}
+
+#[test]
+fn a_round_that_passed_and_has_not_landed_in_five_minutes_pages_once_and_a_fresh_one_does_not() {
+    let mut s = landed(400);
+    s.unlanded = vec![unlanded("b-old", "GREEN", 300), unlanded("b-fresh", "LANDING", 299)];
+    let w = Arc::new(Mutex::new(s.clone()));
+    let mut r = rig(w.clone());
+    let pages = named(&r, INBOX_APPEND);
+    assert!(pages.len() == 1 && pages[0].contains("round b-old passed 300s ago and has not landed (still GREEN)") && !pages[0].contains("b-fresh"), "{pages:?}");
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(named(&r, INBOX_APPEND).len(), 1, "paged once while it stands");
+    s.unlanded = vec![unlanded("b-fresh", "LANDING", 301)];
+    *w.lock().unwrap() = s;
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(named(&r, INBOX_APPEND).len(), 2, "the fresh one is paged when it crosses five minutes");
+}
+
+#[test]
+fn leftover_round_records_are_cleared_and_the_ones_refused_are_paged_by_name_once() {
+    let mut s = landed(400);
+    s.records = Records { clear: vec!["/q/a/rec-one".into(), "/q/a/rec-two".into()], held: vec!["/q/b/rec-three names round b-1, which is OPEN".into()] };
+    let mut r = rig(Arc::new(Mutex::new(s)));
+    assert_eq!(named(&r, CLEAR), [r#"["/q/a/rec-one","/q/a/rec-two"]"#]);
+    let pages = named(&r, INBOX_APPEND);
+    assert!(pages.len() == 1 && pages[0].contains("refused clearing: /q/b/rec-three names round b-1, which is OPEN"), "{pages:?}");
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(named(&r, INBOX_APPEND).len(), 1, "a standing refusal pages once");
+}
+
+#[test]
+fn no_leftover_records_means_no_clear_effect() {
+    let r = rig(Arc::new(Mutex::new(landed(400))));
+    assert!(named(&r, CLEAR).is_empty());
+}
+
+#[test]
+fn green_runs_are_counted_from_each_rounds_passes_and_unlanded_means_green_or_landing_with_its_age() {
+    use spira_runtime::world::{round_counts, unlanded_rounds};
+    let b = |id: &str, state: &str, last: u64, verdicts: &[&str]| serde_json::json!({ "batch_id": id, "repo": "a", "state": state, "last_at": last, "passes": verdicts.iter().map(|v| serde_json::json!({ "verdict": v })).collect::<Vec<_>>() });
+    let rows = [b("x", "GREEN", 9_000, &["red", "green"]), b("y", "LANDED", 9_500, &["green"]), b("z", "LANDING", 9_900, &["green"]), b("w", "OPEN", 9_900, &["red"])];
+    assert_eq!(round_counts(&rows, 10_000, 7_200)[0].green_runs, 3);
+    let got = unlanded_rounds(&rows, 10_000);
+    assert_eq!(got, [Unlanded { repo: "a".into(), batch: "x".into(), state: "GREEN".into(), age_s: 1_000 }, Unlanded { repo: "a".into(), batch: "z".into(), state: "LANDING".into(), age_s: 100 }]);
+}
+
 #[test]
 fn every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("e/watch_throughput.rs")), None);
@@ -179,8 +243,8 @@ fn round_counts_split_a_repos_rounds_by_how_they_ended_and_how_recently() {
     let b = |repo: &str, state: &str, last: u64| serde_json::json!({ "repo": repo, "state": state, "opened_at": 1, "last_at": last });
     let rows = [b("a", "ABANDONED", 9_900), b("a", "ABANDONED", 1_000), b("a", "LANDED", 9_000), b("a", "CI_RUNNING", 9_990), b("b", "SETTLED", 100)];
     let got = round_counts(&rows, 10_000, 7_200);
-    assert_eq!(got[0], RepoRounds { repo: "a".into(), cut: 4, abandoned: 2, landed: 1, abandoned_recent: 1, landed_recent: 1 });
-    assert_eq!(got[1], RepoRounds { repo: "b".into(), cut: 1, abandoned: 0, landed: 1, abandoned_recent: 0, landed_recent: 0 });
+    assert_eq!(got[0], RepoRounds { repo: "a".into(), cut: 4, abandoned: 2, landed: 1, abandoned_recent: 1, landed_recent: 1, green_runs: 0 });
+    assert_eq!(got[1], RepoRounds { repo: "b".into(), cut: 1, abandoned: 0, landed: 1, abandoned_recent: 0, landed_recent: 0, green_runs: 0 });
 }
 
 /// A repository whose landing ref is `local/main` (the map row's `base`), with `n` landings

@@ -6,6 +6,13 @@
 //! per repo, pages (and stops nothing) when `SPIRA_THROUGHPUT_ABANDON_COUNT` rounds were abandoned
 //! inside `SPIRA_THROUGHPUT_ABANDON_WINDOW` seconds with no landing.
 //!
+//! Two more per-repo conditions page and stop nothing. A repo whose rounds pass CI far more often
+//! than they land (landed under `SPIRA_THROUGHPUT_RATIO_MIN_PCT` per cent of passing runs, once
+//! there are `SPIRA_THROUGHPUT_RATIO_MIN_RUNS` of them) is paged, and so is a round that passed and
+//! has not landed within `SPIRA_THROUGHPUT_PASSED_GRACE` seconds. Round record files naming a round
+//! the store has ended, or never held, are removed each tick (`CLEAR`); a file naming a round the
+//! store holds open, or cannot answer for, is refused clearing and paged by name once.
+//!
 //! The count is the distinct beads named by commits on each repo's landing ref (resolved as
 //! `spira_landref` does, never the lane name) inside the day: the ref is the authority on what
 //! landed, and one `git log` per repo reads it. The metrics series it once read (`bead-stage`) has
@@ -29,8 +36,9 @@ pub const TICK: EventKindTag = "watch.throughput.tick";
 pub const STATE: EventKindTag = "watch.throughput.state";
 pub const OBSERVE: &str = "watch.throughput.observe";
 pub const STAMP: &str = "watch.throughput.stamp";
-pub const EFFECTS: &[&str] = &[OBSERVE, STAMP, INBOX_APPEND];
-pub const KEYS: &[&str] = &["SPIRA_THROUGHPUT_FLOOR_PER_DAY", "SPIRA_THROUGHPUT_ABANDON_COUNT", "SPIRA_THROUGHPUT_ABANDON_WINDOW", "SPIRA_THROUGHPUT_RESTOP_AFTER", "SPIRA_ID_PREFIX"];
+pub const CLEAR: &str = "watch.throughput.clear";
+pub const EFFECTS: &[&str] = &[OBSERVE, STAMP, CLEAR, INBOX_APPEND];
+pub const KEYS: &[&str] = &["SPIRA_THROUGHPUT_FLOOR_PER_DAY", "SPIRA_THROUGHPUT_ABANDON_COUNT", "SPIRA_THROUGHPUT_ABANDON_WINDOW", "SPIRA_THROUGHPUT_RESTOP_AFTER", "SPIRA_THROUGHPUT_RATIO_MIN_PCT", "SPIRA_THROUGHPUT_RATIO_MIN_RUNS", "SPIRA_THROUGHPUT_PASSED_GRACE", "SPIRA_ID_PREFIX"];
 pub const CADENCE_MS: u64 = 900_000;
 const DEADLINE_MS: u64 = 60_000;
 const TAG: &str = "throughput";
@@ -41,11 +49,14 @@ pub struct Config {
     pub abandon_count: u64,
     pub abandon_window_s: u64,
     pub restop_after_s: u64,
+    pub ratio_min_pct: u64,
+    pub ratio_min_runs: u64,
+    pub passed_grace_s: u64,
 }
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config { floor: cfg_parse("SPIRA_THROUGHPUT_FLOOR_PER_DAY")?, abandon_count: cfg_parse("SPIRA_THROUGHPUT_ABANDON_COUNT")?, abandon_window_s: cfg_parse("SPIRA_THROUGHPUT_ABANDON_WINDOW")?, restop_after_s: cfg_parse("SPIRA_THROUGHPUT_RESTOP_AFTER")? })
+        Ok(Config { floor: cfg_parse("SPIRA_THROUGHPUT_FLOOR_PER_DAY")?, abandon_count: cfg_parse("SPIRA_THROUGHPUT_ABANDON_COUNT")?, abandon_window_s: cfg_parse("SPIRA_THROUGHPUT_ABANDON_WINDOW")?, restop_after_s: cfg_parse("SPIRA_THROUGHPUT_RESTOP_AFTER")?, ratio_min_pct: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_PCT")?, ratio_min_runs: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_RUNS")?, passed_grace_s: cfg_parse("SPIRA_THROUGHPUT_PASSED_GRACE")? })
     }
 }
 
@@ -58,6 +69,25 @@ pub struct RepoRounds {
     pub landed: u64,
     pub abandoned_recent: u64,
     pub landed_recent: u64,
+    /// Test passes that ended green over the day, whether or not their round landed.
+    pub green_runs: u64,
+}
+
+/// A round that passed CI and has not reached a landed state, and how long it has sat there.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Unlanded {
+    pub repo: String,
+    pub batch: String,
+    pub state: String,
+    pub age_s: u64,
+}
+
+/// What the queue's round record files stand at: the paths nothing live names, and the files
+/// refused clearing, each with its reason.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Records {
+    pub clear: Vec<String>,
+    pub held: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +99,8 @@ pub struct Snapshot {
     /// Distinct beads named by commits on the landing refs over the same day.
     pub landed_refs: u64,
     pub repos: Vec<RepoRounds>,
+    pub unlanded: Vec<Unlanded>,
+    pub records: Records,
 }
 
 impl Snapshot {
@@ -88,10 +120,14 @@ pub enum Stop {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub stop: Stop,
     pub blind: bool,
     pub starved: Vec<String>,
+    pub diluted: Vec<String>,
+    pub unlanded: Vec<String>,
+    pub held: Vec<String>,
 }
 
 pub struct Verdict {
@@ -148,6 +184,32 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
         }
     }
     next.starved = starving.iter().map(|r| r.repo.clone()).collect();
+
+    let diluted: Vec<&RepoRounds> = snap.repos.iter().filter(|r| r.green_runs >= cfg.ratio_min_runs && r.landed * 100 < r.green_runs * cfg.ratio_min_pct).collect();
+    for r in &diluted {
+        if !carry.diluted.contains(&r.repo) {
+            acts.push(say(now_ms, &format!("P0 {}: {} landed against {} passing test runs in 24h, under {}% — rounds pass and do not land", r.repo, r.landed, r.green_runs, cfg.ratio_min_pct)));
+        }
+    }
+    next.diluted = diluted.iter().map(|r| r.repo.clone()).collect();
+
+    let stuck: Vec<&Unlanded> = snap.unlanded.iter().filter(|u| u.age_s >= cfg.passed_grace_s).collect();
+    for u in &stuck {
+        if !carry.unlanded.contains(&u.batch) {
+            acts.push(say(now_ms, &format!("P0 {}: round {} passed {}s ago and has not landed (still {})", u.repo, u.batch, u.age_s, u.state)));
+        }
+    }
+    next.unlanded = stuck.iter().map(|u| u.batch.clone()).collect();
+
+    if !snap.records.clear.is_empty() {
+        acts.push(EffectSpec { name: CLEAR.into(), input: serde_json::to_string(&snap.records.clear).unwrap_or_default(), deadline_ms: DEADLINE_MS });
+    }
+    for h in &snap.records.held {
+        if !carry.held.contains(h) {
+            acts.push(say(now_ms, &format!("P0 round record refused clearing: {h}")));
+        }
+    }
+    next.held = snap.records.held.clone();
     Verdict { carry: next, acts, halt }
 }
 

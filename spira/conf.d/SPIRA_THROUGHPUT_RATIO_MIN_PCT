@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=batch
+DOC=Per cent of a repo's passing test runs over 24 hours that must land; under it the repo is paged.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_THROUGHPUT_RATIO_MIN_PCT:=50}"
+SPIRA_CONF_DEFAULT_EOF

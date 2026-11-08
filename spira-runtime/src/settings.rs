@@ -88,6 +88,7 @@ impl Settings {
     /// world, the forge). A task's own keys are on its row in `tasks::all()`.
     pub const SERVICE_KEYS: &'static [&'static str] = &[
         "SPIRA_LC_SOCKET",
+        "SPIRA_LC_LIFECYCLE_ON_STORE",
         "SPIRA_RUN",
         "SPIRA_RUNTIME_STALL_LIMIT",
         "SPIRA_METRICS_ENDPOINT",
@@ -262,6 +263,11 @@ impl Settings {
             scope_label: get("SPIRA_SCOPE_LABEL")?,
             desired_dir: PathBuf::from(get("SPIRA_DESIRED_DIR")?),
             export_bin: "tsd-lifecycle-export".into(),
+            batches_on_store: match get("SPIRA_LC_LIFECYCLE_ON_STORE")?.trim() {
+                "0" => false,
+                "1" => true,
+                _ => return Err("SPIRA_LC_LIFECYCLE_ON_STORE must be 0 or 1".into()),
+            },
             ..World::default()
         };
         let control_socket = get("SPIRA_RUNTIME_SOCKET")?;
@@ -364,6 +370,7 @@ mod tests {
                 "SPIRA_RUNTIME_STALL_LIMIT" => "3",
                 "SPIRA_METRICS_ENDPOINT" => "127.0.0.1:9",
                 "SPIRA_RUN" => "/r",
+                "SPIRA_LC_LIFECYCLE_ON_STORE" => "1",
                 "SPIRA_LC_SOCKET" => "/d/sock",
                 "SPIRA_GH_API" => "http://forge",
                 "SPIRA_BROKER_GH_TOKEN" | "SPIRA_BROKER_GH_CONFIG_DIR" | "SPIRA_GH" => "",

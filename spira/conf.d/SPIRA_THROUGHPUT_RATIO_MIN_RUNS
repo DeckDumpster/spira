@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=batch
+DOC=Passing test runs a repo needs in 24 hours before the landing ratio is judged.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_THROUGHPUT_RATIO_MIN_RUNS:=6}"
+SPIRA_CONF_DEFAULT_EOF
