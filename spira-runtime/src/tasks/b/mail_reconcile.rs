@@ -59,7 +59,7 @@
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
 //! |---|---|---|---|---|
 //! | `mail.reconcile.note` | store | 15 s | `<msgid>/note-orig\|note-work\|refused-note` | empty bead id; writes through `bdq note` today (`bead.rs:339`) |
-//! | `mail.reconcile.close` | store | 15 s | `<msgid>/close` | lifecycle refusal (exit 3) is reported, not retried (`reconcile.rs:104,149`); notes every upstream dep of a question/decision (`bead.rs:352-366`) |
+//! | `mail.reconcile.close` | store | 15 s | `<msgid>/close` | a typed `LcError::Refused` answers `<msgid>/close:refused` and is reported, not retried; notes every upstream dep of a question/decision (`bead.rs:352-366`) |
 //! | `mail.reconcile.lift` | store | 15 s | `<msgid>/lift` | terminal work bead (no-op, `lc.rs:46-49`); exit 1/3 quiet (`lc.rs:56`) |
 //! | `mail.reconcile.answer` | store | 15 s | `<msgid>/answer` | exit 1 (legacy ask, no row) and 3 (closed) quiet (`lc.rs:65-73`) |
 //! | `mail.reconcile.inbox` | host | 10 s | `<msgid>/refused-inbox\|abandoned-inbox` | writes the concierge maildir (`reconcile.rs:108-116`); becomes `inbox.append` |
@@ -96,6 +96,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use runtime::event::EventKindTag;
+use spira_config::lc_call::LcError;
 use serde::{Deserialize, Serialize};
 
 use super::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
@@ -298,11 +299,9 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
         }
         Input::Outcome { effect, .. } if effect == MARK => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, ok, body } if EFFECTS.contains(&effect.as_str()) => {
-            let Some((key, step, why)) = key_step(body) else { return Ok((carry.clone(), vec![])) };
+            let Some((key, step, _)) = key_step(body) else { return Ok((carry.clone(), vec![])) };
             let line = if *ok {
                 step
-            } else if effect == CLOSE && mail::reconcile::is_refusal(&why) {
-                "close:refused".into()
             } else {
                 format!("fail:{step}")
             };
@@ -335,6 +334,7 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
     let bd = || -> Result<mail::bead::BdCli, String> { Ok(mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: j.conn_retries.max(1) }) };
     let client = super::lc(e);
     let lc = mail::lc::Routed { client: Ok(&client), unserved: &mail::lc::LcProgram };
+    let mut refused = false;
     let out = match spec.name.as_str() {
         MARK => {
             mail::reconcile::mark(&ledger(e), &j.key, &j.step);
@@ -344,14 +344,18 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
         CLOSE => bd().and_then(|bd| match mail::bead::sendmail_close_bead(&bd, true, &j.bead, &j.kind, &j.para) {
             Ok(_) => Ok(()),
             Err(_) if mail::bead::bead_status(&bd, true, &j.bead).as_deref() == Some("closed") => Ok(()),
-            Err(e) => Err(e),
+            Err(LcError::Refused(_)) => {
+                refused = true;
+                Ok(())
+            }
+            Err(e) => Err(e.to_string()),
         }),
         LIFT => mail::lc::lift_ask(&lc, &j.work_bead, mail::lc::Lift::Reply { message_id: &j.key }, &j.actor).map_or(Ok(()), Err),
         ANSWER => mail::lc::answer_ask(&lc, &j.bead, &j.para, &j.actor, "mail", &j.key).map_or(Ok(()), Err),
         INBOX => mail::reconcile::inbox_row(&e.world.mail, &j.subject, &j.text),
         other => Err(format!("{NAME}: no runner for {other}")),
     };
-    out.map(|_| tag.clone()).map_err(|why| format!("{tag}: {why}"))
+    out.map(|_| if refused { format!("{}/close:refused", j.key) } else { tag.clone() }).map_err(|why| format!("{tag}: {why}"))
 }
 
 super::hosted!(MailReconcile);

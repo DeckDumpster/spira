@@ -297,6 +297,12 @@ pub fn close_on(c: &LcClient, id: &str, reason: &str, actor: &str, extra: &[&str
     }
 }
 
+/// A close by `actor` through the configured `spira-lc`, typed: the caller reads refusal from the variant.
+pub fn close_as(id: &str, reason: &str, actor: &str) -> Result<(), LcError> {
+    let c = lc_bin().and_then(|b| client(&b)).map_err(LcError::Fault)?;
+    close_on(&c, id, reason, actor, &[])
+}
+
 /// [`close_with`] through the configured `spira-lc`.
 pub fn close(id: &str, reason: &str, actor: &str, superseded_by: Option<&str>) -> Result<(), String> {
     close_with(&lc_bin()?, id, reason, actor, superseded_by)

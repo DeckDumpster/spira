@@ -8,6 +8,7 @@ use std::io::Write;
 use std::process::Stdio;
 
 use serde_json::Value;
+use spira_config::lc_call::LcError;
 
 #[derive(Debug, Default, Clone)]
 pub struct BdOut {
@@ -36,7 +37,7 @@ impl BdOut {
 pub trait Bd {
     fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut;
     /// Close `id` through the lifecycle machine (`spira-lc close`, sp-3fue0j) — never bd.
-    fn close(&self, id: &str, reason: &str) -> BdOut;
+    fn close(&self, id: &str, reason: &str) -> Result<(), LcError>;
     /// Open `id` on the ask machine (never the bead machine), linked to `work_bead` when non-empty.
     fn ensure_ask(&self, id: &str, work_bead: &str) -> Result<(), String>;
 }
@@ -83,11 +84,8 @@ impl Bd for BdCli {
     fn ensure_ask(&self, id: &str, work_bead: &str) -> Result<(), String> {
         spira_config::lifecycle_row::create_ask(id, work_bead)
     }
-    fn close(&self, id: &str, reason: &str) -> BdOut {
-        match spira_config::lifecycle_row::close(id, reason, "mail", None) {
-            Ok(()) => BdOut::ok(""),
-            Err(e) => BdOut::fail(1, e),
-        }
+    fn close(&self, id: &str, reason: &str) -> Result<(), LcError> {
+        spira_config::lifecycle_row::close_as(id, reason, "mail")
     }
     fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut {
         let tries = self.conn_retries.max(1);
@@ -333,13 +331,10 @@ pub fn abandon_bead(bd: &dyn Bd, id: &str, why: &str) -> String {
     let reason = format!("ask abandoned by mail send: {why}");
     let mut last = String::new();
     let closed = retry_until_deadline(|| {
-        let out = bd.close(id, &reason);
-        if out.code == 0 {
-            Ok(())
-        } else {
-            last = bd_failure_detail(&out);
-            Err(last.clone())
-        }
+        bd.close(id, &reason).map_err(|e| {
+            last = e.to_string();
+            last.clone()
+        })
     });
     match closed {
         Ok(()) => format!("{id} closed"),
@@ -375,13 +370,8 @@ pub fn dep_list_up_ids(bd: &dyn Bd, db_configured: bool, bead: &str) -> Vec<Stri
     ids_from_json_array(&out.stdout)
 }
 
-pub fn close(bd: &dyn Bd, id: &str, reason: &str) -> Result<(), String> {
-    let out = bd.close(id, reason);
-    if out.code == 0 {
-        Ok(())
-    } else {
-        Err(out.combined())
-    }
+pub fn close(bd: &dyn Bd, id: &str, reason: &str) -> Result<(), LcError> {
+    bd.close(id, reason)
 }
 
 pub fn note(bd: &dyn Bd, id: &str, text: &str) -> Result<(), String> {
@@ -397,12 +387,15 @@ pub fn note(bd: &dyn Bd, id: &str, text: &str) -> Result<(), String> {
 /// question/decision) notes every upstream work bead with the verdict. A close failure is
 /// fatal to the caller; a note failure is only printed (mail.sh: `printf ... >&2`, loop
 /// continues) — reported here as a side channel so callers can surface it the same way.
-pub fn sendmail_close_bead(bd: &dyn Bd, db_configured: bool, bead: &str, kind: &str, first_para: &str) -> Result<Vec<String>, String> {
+pub fn sendmail_close_bead(bd: &dyn Bd, db_configured: bool, bead: &str, kind: &str, first_para: &str) -> Result<Vec<String>, LcError> {
     if !db_configured {
         return Ok(Vec::new());
     }
     let reason = suit_reason(kind, first_para);
-    close(bd, bead, &reason).map_err(|e| format!("mail.sh: bead close failed for {bead}: {e}"))?;
+    close(bd, bead, &reason).map_err(|e| match e {
+        LcError::Refused(m) => LcError::Refused(format!("mail.sh: bead close refused for {bead}: {m}")),
+        LcError::Fault(m) => LcError::Fault(format!("mail.sh: bead close failed for {bead}: {m}")),
+    })?;
     let mut warnings = Vec::new();
     if kind == "question" || kind == "decision" {
         for wid in dep_list_up_ids(bd, db_configured, bead) {
@@ -574,8 +567,13 @@ pub mod fake {
             Ok(())
         }
         // Recorded as the argv the real close used to be, so the callers' tests read the same.
-        fn close(&self, id: &str, reason: &str) -> BdOut {
-            self.run(&[String::from("close"), id.to_string(), "--reason-file".into(), "-".into()], Some(reason))
+        fn close(&self, id: &str, reason: &str) -> Result<(), LcError> {
+            let out = self.run(&[String::from("close"), id.to_string(), "--reason-file".into(), "-".into()], Some(reason));
+            match out.code {
+                0 => Ok(()),
+                3 => Err(LcError::Refused(out.combined())),
+                _ => Err(LcError::Fault(out.combined())),
+            }
         }
         fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut {
             self.calls.borrow_mut().push((args.to_vec(), stdin.map(str::to_string)));
@@ -699,7 +697,15 @@ mod tests {
     fn sendmail_close_bead_propagates_a_close_failure() {
         let bd = FakeBd::new(vec![BdOut::fail(1, "no such bead")]);
         let err = sendmail_close_bead(&bd, true, "sp-a", "note", "para").unwrap_err();
-        assert!(err.contains("sp-a"), "{err}");
+        assert!(err.to_string().contains("sp-a"), "{err}");
+    }
+
+    #[test]
+    fn sendmail_close_bead_keeps_a_refusal_distinct_from_a_fault() {
+        let refused = FakeBd::new(vec![BdOut::fail(3, "a work bead in READY is not closed by a mail reply")]);
+        assert!(matches!(sendmail_close_bead(&refused, true, "sp-a", "note", "p"), Err(LcError::Refused(_))));
+        let faulted = FakeBd::new(vec![BdOut::fail(2, "exited 3 in a bead title")]);
+        assert!(matches!(sendmail_close_bead(&faulted, true, "sp-a", "note", "p"), Err(LcError::Fault(_))));
     }
 
     #[test]

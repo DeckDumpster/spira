@@ -70,3 +70,16 @@ fn t6_two_virtual_days_are_deterministic_and_within_60_events_an_hour() {
     let answers = vec![json(&Snapshot::default()), json(&Snapshot { replies: vec![reply("m1", "notice", &["note-orig", "complete"])] })];
     t::t6_deterministic::<H>(|seed| t::rig_cycle::<H>(seed, SET, answers.clone()), 2, 60);
 }
+
+fn marked(cfg: &spira_runtime::tasks::b::kit::Cfg, effect: &str, ok: bool, body: &str) -> String {
+    let (_, acts) = task::decide(cfg, &Carry::default(), &Input::Outcome { effect: effect.into(), ok, body: body.into() }, MIN).unwrap();
+    assert_eq!(names(&acts), [task::MARK]);
+    serde_json::from_str::<task::Job>(&acts[0].input).unwrap().step
+}
+
+#[test]
+fn a_close_refusal_is_the_runners_typed_answer_not_text_in_the_failure() {
+    let h = t::handler::<H>(SET);
+    assert_eq!(marked(&h.cfg, task::CLOSE, true, "m1/close:refused"), "close:refused");
+    assert_eq!(marked(&h.cfg, task::CLOSE, false, "m1/close: spira-lc exited 3: a bead title"), "fail:close", "the words 'exited 3' decide nothing");
+}
