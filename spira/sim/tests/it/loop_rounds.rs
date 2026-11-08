@@ -143,17 +143,42 @@ fn stale_round_pointer_a_redriven_stale_record_ends_and_the_next_round_certifies
     assert_no_process(&r);
 }
 
-/// The boundary of the same property: a stale record the re-drive cannot end is never cut over.
-/// `batcher.local` re-drives it once, then (undriven again past the wait) files one incident
-/// keyed by the round and leaves the pool SUBMITTED for a person's decision.
+/// The boundary of the same property: a stale record the re-drive cannot end is never cut over
+/// while it stands. `batcher.local` re-drives it once, then (undriven again past the wait)
+/// abandons it, naming why, and files no incident: no round stays open with nothing driving it.
 #[test]
-fn stale_round_pointer_a_stale_record_the_redrive_cannot_end_is_filed_once_and_never_cut_over() {
+fn stale_round_pointer_a_stale_record_the_redrive_cannot_end_is_abandoned_after_one_redrive() {
     let (r, filed) = stale_round(32, 20 * MIN, false);
-    show("rc-stale-round-pointer/incident", &r);
-    assert_eq!(filed, [format!("round-orphan:{REPO}:{STALE}")], "one incident, keyed by the stale round: {}", r.dump());
-    assert!(times(&r, bl::FILE)[0] >= times(&r, bl::REDRIVE)[0] + 300_000, "the incident waited a second orphan wait after the re-drive");
-    assert!(r.opened.is_empty() && r.lands.is_empty(), "no round was cut over the stale record: {}", r.dump());
-    assert_eq!(r.rows["sp-rp02"].state, BeadState::Submitted, "the pool waits: {}", r.dump());
+    show("rc-stale-round-pointer/abandon", &r);
+    assert!(filed.is_empty(), "an abandoned record files no incident: {filed:?}");
+    let (redrive, abandon) = (times(&r, bl::REDRIVE)[0], times(&r, bl::ABANDON)[0]);
+    assert!(abandon >= redrive + 300_000, "the abandon waited a second orphan wait after the re-drive: {abandon} vs {redrive}");
+    assert!(r.asked.iter().filter(|n| *n == bl::ABANDON).count() == 1, "abandoned once: {:?}", r.asked);
+    assert_no_process(&r);
+}
+
+/// A round whose corpus unit never starts (the start reports success, no unit runs, no
+/// `unit.ran` ever comes): the leg is started once more, then the round is abandoned and the
+/// pool is free again. Nothing leaves the round open.
+#[test]
+fn a_corpus_leg_that_never_runs_is_started_again_once_then_the_round_is_abandoned() {
+    let script = Script { beads: vec![Bead::new("sp-lg01", 30_000)], max_concurrent: 1, until: 20 * MIN, ..Script::default() };
+    let starts: Arc<Mutex<Vec<String>>> = Arc::default();
+    let seen = starts.clone();
+    let (r, w) = run_keeping(34, script, move |d, _| {
+        d.double(bl::CORPUS, move |input| {
+            seen.lock().unwrap_or_else(|e| e.into_inner()).push(leg(input)?.unit);
+            Ok(String::new())
+        })
+    });
+    show("corpus-leg-never-runs", &r);
+    let starts = starts.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    assert!(starts.len() >= 2 && starts[0] != starts[1], "the corpus leg was started again under a new unit: {starts:?}");
+    let (first, abandon) = (times(&r, bl::CORPUS)[0], times(&r, bl::ABANDON)[0]);
+    assert!(abandon - first >= 60_000 && abandon - first < 5 * 60_000, "re-started within a minute, abandoned soon after: first {first}, abandon {abandon}");
+    assert_eq!(times(&r, bl::ABANDON).len(), 1, "abandoned once: {}", r.dump());
+    assert!(w.lc().round.is_none(), "no round is left open: {}", r.dump());
+    assert_eq!(batcher_states(&r)[..5], ["Idle", "Assembling", "Opened", "Corpus", "Idle"], "{}", r.dump());
     assert_no_process(&r);
 }
 
