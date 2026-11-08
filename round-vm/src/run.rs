@@ -3309,10 +3309,10 @@ mod tests {
             .unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let spec = String::from_utf8(out.stdout).unwrap();
-        let without_key: String = complete.lines().filter(|l| !l.starts_with("lc_live_check_secs")).map(|l| format!("{l}\n")).collect();
+        let without_key: String = complete.lines().filter(|l| !l.starts_with("lc_ship_secs")).map(|l| format!("{l}\n")).collect();
         std::fs::write(fixture.join("complete.toml"), without_key).unwrap();
-        let declared = spira_config::load(std::path::Path::new(&spec)).unwrap().spira.unwrap().get_u32("SPIRA_LC_LIVE_CHECK_SECS").unwrap();
-        assert_eq!(declared, Some(60), "the legs' config still declares the key after the checkout; spec {spec}");
+        let declared = spira_config::load(std::path::Path::new(&spec)).unwrap().spira.unwrap().get_u32("SPIRA_LC_SHIP_SECS").unwrap();
+        assert_eq!(declared, Some(3), "the legs' config still declares the key after the checkout; spec {spec}");
     }
 
     #[test]
