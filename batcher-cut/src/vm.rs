@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn a_lint_line_blames_the_member_whose_land_commit_it_names_and_nobody_else() {
         let ms: Vec<Member> = ["sp-8mbnup", "sp-other"].iter().map(|id| Member { id: id.to_string(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() }).collect();
-        let l = "member=commit 26d967089685 spira: land sp-8mbnup — Wire it ffx-vocabulary: dwarf/src/lib.rs:26: the term \"summon\"";
+        let l = "member=commit 26d967089685 spira: land sp-8mbnup — Wire it ffx-vocabulary: dwarf/src/lib.rs:26: the term \"banned\"";
         assert_eq!(blamed_member(l, &ms), Some("sp-8mbnup".to_string()));
         assert_eq!(blamed_member("member=sp-other ffx: a.rs:1: x", &ms), Some("sp-other".to_string()));
         assert_eq!(blamed_member("member=commit 1 spira: land sp-gone — t r: f:1: x", &ms), None, "an id outside the round");

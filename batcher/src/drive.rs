@@ -344,7 +344,7 @@ fn eject_filter_owners<O: RoundOps>(ops: &mut O, f: &FilterRed, members: &[Membe
         if out.contains_key(&m.id) {
             match named.iter().find(|(id, _)| *id == m.id) {
                 Some((_, line)) => ops.eject_on(m, &f.name, line, true),
-                None => ops.eject(m, &[f.name.clone()], false),
+                None => ops.eject(m, std::slice::from_ref(&f.name), false),
             }
         }
     }
@@ -1046,7 +1046,7 @@ pub(crate) mod tests {
         Box::new(move |tree| {
             tree.contains(culprit).then(|| FilterRed {
                 name: "spira-lint".into(),
-                named: vec![(culprit.to_string(), format!("member={culprit} ffx-vocabulary: dwarf/src/lib.rs:26: the term \"summon\""))],
+                named: vec![(culprit.to_string(), format!("member={culprit} ffx-vocabulary: dwarf/src/lib.rs:26: the term \"banned\""))],
             })
         })
     }
