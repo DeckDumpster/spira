@@ -98,8 +98,8 @@ fn real_main() -> ExitCode {
     // before it may be submitted.
     if args.first().map(String::as_str) == Some("lint") {
         let env = |k: &str| std::env::var(k).ok();
-        let run = match testenv::settings::Settings::load(&testenv::settings::Source { env: &env }, testenv::batch::now_epoch()) {
-            Ok(s) => s.run,
+        let run = match spira_config::resolve::declared_run_dir_for_process() {
+            Ok(r) => r,
             Err(e) => {
                 eprintln!("lint: {e}");
                 return ExitCode::from(2);
