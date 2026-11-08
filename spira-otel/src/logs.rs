@@ -66,11 +66,48 @@ impl Attr {
 pub struct LogSink {
     dir: PathBuf,
     service: String,
+    cap: Option<Cap>,
+}
+
+#[derive(Clone, Copy)]
+struct Cap {
+    bytes: u64,
+    keep: usize,
 }
 
 impl LogSink {
     pub fn new(dir: impl Into<PathBuf>, service: &str) -> LogSink {
-        LogSink { dir: dir.into(), service: service.to_string() }
+        LogSink { dir: dir.into(), service: service.to_string(), cap: None }
+    }
+
+    /// Rotates the live file once it holds `bytes`, and keeps at most `keep` files of this service in all.
+    pub fn capped(mut self, bytes: u64, keep: usize) -> LogSink {
+        self.cap = Some(Cap { bytes, keep: keep.max(1) });
+        self
+    }
+
+    fn rotate(&self, live: &std::path::Path, cap: Cap) -> std::io::Result<()> {
+        let numbered = |n: usize| PathBuf::from(format!("{}.{n}", live.display()));
+        let len = fs::metadata(live).map(|m| m.len()).unwrap_or(0);
+        if len >= cap.bytes {
+            for n in (1..cap.keep).rev() {
+                if numbered(n).exists() {
+                    fs::rename(numbered(n), numbered(n + 1))?;
+                }
+            }
+            fs::rename(live, numbered(1))?;
+        }
+        let prefix = format!("{}.logs.", self.service);
+        let mut files: Vec<_> = fs::read_dir(&self.dir)?
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+            .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+            .collect();
+        files.sort_by(|a, b| b.0.cmp(&a.0));
+        for (_, old) in files.into_iter().skip(cap.keep) {
+            let _ = fs::remove_file(old);
+        }
+        Ok(())
     }
 
     /// Moves the writes to one thread behind a queue of `cap` records.
@@ -107,6 +144,9 @@ impl LogSink {
         line.push(b'\n');
         fs::create_dir_all(&self.dir)?;
         let path = self.dir.join(format!("{}.logs.{}.jsonl", self.service, crate::utc_date(now)));
+        if let Some(cap) = self.cap {
+            self.rotate(&path, cap)?;
+        }
         let mut f = OpenOptions::new().create(true).append(true).open(path)?;
         crate::append_locked(&mut f, &line)
     }
@@ -189,5 +229,39 @@ mod tests {
         assert_eq!(get("c")["arrayValue"]["values"][0]["stringValue"], "x");
         assert_eq!(get("e")["boolValue"], true);
         assert!(read_all(d.path(), "other").is_empty(), "positive control: another service reads nothing");
+    }
+
+    fn files(d: &std::path::Path) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn the_live_file_rotates_at_the_cap_and_only_keep_files_remain() {
+        let d = testkit::TempDir::new("otel-logs-cap");
+        let s = LogSink::new(d.path(), "svc").capped(600, 3);
+        let now = SystemTime::now();
+        let line = s.request("x", &[], now);
+        let one = serde_json::to_vec(&line).unwrap().len() as u64 + 1;
+        assert!(one < 600 && one * 2 >= 600 - one, "a record is a fraction of the cap");
+        for _ in 0..40 {
+            s.write("x", &[], now).unwrap();
+        }
+        let day = crate::utc_date(now);
+        assert_eq!(files(d.path()), vec![format!("svc.logs.{day}.jsonl"), format!("svc.logs.{day}.jsonl.1"), format!("svc.logs.{day}.jsonl.2")]);
+        for f in files(d.path()) {
+            assert!(fs::metadata(d.path().join(f)).unwrap().len() < 600 + one, "no file passes the cap by more than a record");
+        }
+    }
+
+    #[test]
+    fn an_uncapped_sink_never_rotates() {
+        let d = testkit::TempDir::new("otel-logs-uncapped");
+        let s = LogSink::new(d.path(), "svc");
+        for _ in 0..40 {
+            s.write("x", &[], SystemTime::now()).unwrap();
+        }
+        assert_eq!(files(d.path()).len(), 1);
     }
 }
