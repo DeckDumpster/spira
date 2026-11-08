@@ -37,6 +37,8 @@ pub use wide::{Fields, MemSink, NullSink, Value, Wide, WideSink};
 pub enum Class {
     Fault,
     Refused,
+    /// The journal may or may not have the write: a slow or lost reply, never a verdict.
+    CannotTell,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,8 +53,16 @@ impl RuntimeError {
         RuntimeError(m.into(), Class::Refused)
     }
 
+    pub fn cannot_tell(m: impl Into<String>) -> Self {
+        RuntimeError(m.into(), Class::CannotTell)
+    }
+
     pub fn is_refused(&self) -> bool {
         self.1 == Class::Refused
+    }
+
+    pub fn is_cannot_tell(&self) -> bool {
+        self.1 == Class::CannotTell
     }
 }
 

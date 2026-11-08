@@ -1002,26 +1002,33 @@ impl Engine {
         Ok(())
     }
 
+    fn fire(&mut self, row: &ScheduleRow) -> Result<()> {
+        let ev = Event {
+            id: EventId(derive_id(format!("sched/{}", row.id))),
+            stream: row.stream.clone(),
+            kind: row.kind.clone(),
+            at: row.at,
+            cause: row.cause.clone(),
+            correlation: row.correlation.clone(),
+        };
+        match self.journal.record(&ev) {
+            Ok(()) => self.appended = true,
+            Err(e) if e.is_refused() => self.quarantine(&ev, "scheduler", &e.0)?,
+            Err(e) => return Err(e),
+        }
+        self.journal.mark_fired(&row.id)
+    }
+
     /// Fire the schedule rows now due and time out the effects past their deadline.
     pub fn tick(&mut self) -> Result<usize> {
         let mut n = 0;
-        for row in self.scheduler.pop_due(self.clock.as_ref()) {
-            let ev = Event {
-                id: EventId(derive_id(format!("sched/{}", row.id))),
-                stream: row.stream.clone(),
-                kind: row.kind.clone(),
-                at: row.at,
-                cause: row.cause.clone(),
-                correlation: row.correlation.clone(),
-            };
-            match self.journal.record(&ev) {
-                Ok(()) => self.appended = true,
-                Err(e) if e.is_refused() => {
-                    self.quarantine(&ev, "scheduler", &e.0)?;
-                }
-                Err(e) => return Err(e),
+        let mut rows = self.scheduler.pop_due(self.clock.as_ref()).into_iter();
+        while let Some(row) = rows.next() {
+            if let Err(e) = self.fire(&row) {
+                self.scheduler.insert(row);
+                rows.for_each(|r| self.scheduler.insert(r));
+                return Err(e);
             }
-            self.journal.mark_fired(&row.id)?;
             n += 1;
         }
         let now = self.clock.now_ms();
