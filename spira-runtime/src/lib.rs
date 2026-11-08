@@ -78,10 +78,23 @@ pub fn start_tasks(engine: &mut Engine) {
     }
 }
 
+pub const BOOT_RETRY_FIRST_MS: u64 = 250;
+pub const BOOT_RETRY_BOUND_MS: u64 = 60_000;
+
+fn boot_retry(s: &Settings) -> runtime::engine::BootRetry {
+    runtime::engine::BootRetry {
+        first_ms: BOOT_RETRY_FIRST_MS,
+        bound_ms: BOOT_RETRY_BOUND_MS,
+        store: format!("the journal store at {}", s.lc_socket.display()),
+        // waits-on: the journal store's next answer; cap BOOT_RETRY_BOUND_MS
+        sleep: Arc::new(|ms| std::thread::sleep(std::time::Duration::from_millis(ms))),
+    }
+}
+
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {
     let mut regs = registrations(s);
     regs.extend(extra);
-    let mut engine = Engine::open_with(journal, clock, regs, 0, runtime::engine::BootRetry { store: format!("the journal store at {}", s.lc_socket.display()), ..Default::default() })?;
+    let mut engine = Engine::open_with(journal, clock, regs, 0, boot_retry(s))?;
     if s.run_dir.join("world.halted").exists() {
         engine.halt_at_boot("the world's halt stamp is present at boot")?;
     }

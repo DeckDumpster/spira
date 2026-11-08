@@ -240,27 +240,18 @@ pub struct BootRetry {
     pub sleep: Arc<dyn Fn(u64) + Send + Sync>,
 }
 
-impl Default for BootRetry {
-    fn default() -> Self {
-        BootRetry {
-            first_ms: 250,
-            bound_ms: 60_000,
-            store: "the journal store".into(),
-            sleep: Arc::new(|ms| {
-                // loop-safe: open runs at boot, before any turn; waits-on: the journal store's next answer; cap BootRetry::bound_ms
-                std::thread::sleep(std::time::Duration::from_millis(ms));
-            }),
-        }
-    }
-}
-
 impl BootRetry {
+    /// Ask once: the policy of a caller that has no store to wait for.
+    pub fn once() -> Self {
+        BootRetry { first_ms: 0, bound_ms: 0, store: String::new(), sleep: Arc::new(|_| {}) }
+    }
+
     fn read<T>(&self, mut ask: impl FnMut() -> Result<T>) -> Result<T> {
         let (mut wait, mut waited) = (self.first_ms, 0);
         loop {
             match ask() {
                 Err(e) if e.is_cannot_tell() => {
-                    if waited + wait > self.bound_ms {
+                    if wait == 0 || waited + wait > self.bound_ms {
                         return Err(RuntimeError::new(format!("{}: still cannot tell after {waited} ms of retries: {}", self.store, e.0)));
                     }
                     (self.sleep)(wait);
@@ -275,7 +266,7 @@ impl BootRetry {
 
 impl Engine {
     pub fn open(journal: Arc<dyn Journal>, clock: Arc<dyn Clock>, regs: Vec<Registration>, seed: u64) -> Result<Self> {
-        Self::open_with(journal, clock, regs, seed, BootRetry::default())
+        Self::open_with(journal, clock, regs, seed, BootRetry::once())
     }
 
     /// Rebuild from the journal without reading its history: the effects still waiting for an

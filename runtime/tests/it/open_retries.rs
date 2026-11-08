@@ -99,3 +99,10 @@ fn a_refusal_is_not_retried() {
     assert!(Engine::open_with(j, Arc::new(VirtualClock::new(0)), vec![], 0, retry(&slept, 60_000)).is_err());
     assert!(slept.lock().unwrap().is_empty());
 }
+
+#[test]
+fn open_without_a_retry_policy_asks_once() {
+    let j = Unsure::new(1);
+    assert!(Engine::open(j.clone(), Arc::new(VirtualClock::new(0)), vec![], 0).is_err());
+    assert_eq!(j.asked.load(Ordering::SeqCst), 1);
+}
