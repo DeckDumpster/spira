@@ -86,6 +86,7 @@ async fn a_full_class_defers_records_it_and_runs_the_effect_later() {
     assert!(!d.is_empty(), "a container effect over the cap must be deferred and recorded");
     assert_eq!(d[0].get("class"), Some(&Value::from("container")));
     assert!(d[0].contains_key("task"), "the record names the task");
+    assert_eq!(d[0].get("waits_for"), Some(&Value::from("container.slot")), "the record names what it waits for");
     assert_eq!(runner.ran.lock().unwrap().values().sum::<usize>(), 1, "the cap holds: one run at a time");
     for _ in 0..3 {
         let _ = release.send(());
@@ -133,4 +134,32 @@ async fn a_deferred_effect_survives_a_restart_and_runs_once() {
     let not_before: Vec<String> = after.ran.lock().unwrap().keys().filter(|k| !ran_before.contains(k)).cloned().collect();
     assert_eq!(not_before.len(), 1, "the deferred effect ran after the restart");
     assert_eq!(count(&*j, runtime::EFFECT_REQUESTED), 2, "a restart requests nothing again");
+}
+
+#[tokio::test]
+async fn a_deferred_effect_is_offered_again_only_when_a_slot_frees_not_on_idle_turns() {
+    let j: Arc<dyn Journal> = MemJournal::new();
+    let mut e = engine(j.clone());
+    e.submit("b0", "s0", EventKind::new("build", "b0")).unwrap();
+    e.submit("b1", "s1", EventKind::new("build", "b1")).unwrap();
+    let (release, gate) = std::sync::mpsc::channel();
+    let runner = Arc::new(Suites { gate: Mutex::new(Some(gate)), ..Suites::default() });
+    let sink = MemSink::new();
+    let (tx, rx) = mpsc::channel::<Submit>(4);
+    drop(tx);
+    let serving = tokio::spawn(serve_with(e, Arc::new(WallClock), runner.clone(), PoolCaps { container: 1, ..PoolCaps::default() }, rx, opts(&sink)));
+    for _ in 0..200 {
+        if !deferred(&sink).is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: polling a real host
+    }
+    assert_eq!(deferred(&sink).len(), 1, "the second effect is deferred once: {:?}", deferred(&sink));
+    tokio::time::sleep(Duration::from_millis(1500)).await; // clock-safe: idle turns would show as more records
+    assert_eq!(deferred(&sink).len(), 1, "with no slot freed, the deferred effect is not offered again");
+    let _ = release.send(());
+    let _ = release.send(());
+    tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
+    assert_eq!(deferred(&sink).len(), 1, "the freed slot takes it: no further deferral");
+    assert_eq!(count(&*j, "built"), 2);
 }

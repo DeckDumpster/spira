@@ -203,7 +203,8 @@ pub async fn serve_with(
         if running.is_none() && next_timer.is_some_and(|t| t <= clock.now_ms()) {
             dirty = true;
         }
-        if let Some(e) = engine.take_if(|_| running.is_none() && (dirty || !subs.is_empty() || !done.is_empty()) && Instant::now() >= retry_at) {
+        let wakes = |done: &[Done]| done.iter().any(|d| !matches!(d, Done::Deferred(..) | Done::Started(_)));
+        if let Some(e) = engine.take_if(|_| running.is_none() && (dirty || !subs.is_empty() || wakes(&done)) && Instant::now() >= retry_at) {
             let turn = Turn { engine: e, subs: std::mem::take(&mut subs), done: std::mem::take(&mut done), in_flight: in_flight.keys().cloned().collect() };
             let slot = Arc::new(Mutex::new(Some(turn)));
             let s = slot.clone();
@@ -221,7 +222,7 @@ pub async fn serve_with(
                 }
             }
         }
-        if !open && in_flight.is_empty() && running.is_none() && subs.is_empty() && done.is_empty() && !dirty {
+        if !open && in_flight.is_empty() && running.is_none() && subs.is_empty() && !wakes(&done) && !dirty {
             return Ok(());
         }
         let now = Instant::now();
@@ -233,7 +234,7 @@ pub async fn serve_with(
             if !r.overrun {
                 wait = wait.min((r.began + TURN_BUDGET).saturating_duration_since(now));
             }
-        } else if dirty || !subs.is_empty() || !done.is_empty() {
+        } else if dirty || !subs.is_empty() || wakes(&done) {
             wait = wait.min(retry_at.saturating_duration_since(now));
         }
         tokio::select! {
@@ -283,8 +284,6 @@ pub async fn serve_with(
                         }
                         Err(d) => {
                             emit(deferred_record(&p, &d, pools.deferred_total(d.class)));
-                            back_off(&mut backoff, &mut retry_at);
-                            dirty = true;
                             done.push(Done::Deferred(p.key.clone(), d.class));
                         }
                     }
@@ -323,7 +322,7 @@ fn classified(engine: Engine, runner: &Arc<dyn EffectRunner>) -> Engine {
     engine.with_classifier(Arc::new(move |spec: &EffectSpec| r.class(spec).name().to_string()))
 }
 
-/// A class at its cap refused `p`. It stays pending in the engine and is offered again after the backoff.
+/// A class at its cap refused `p`. It stays pending and is offered again when a slot frees: any outcome starts a turn.
 fn deferred_record(p: &PendingEffect, d: &Deferred, total: u64) -> Fields {
     let mut f = Fields::new();
     f.insert("unit".into(), "effect.deferred".into());
@@ -333,6 +332,7 @@ fn deferred_record(p: &PendingEffect, d: &Deferred, total: u64) -> Fields {
     f.insert("class.in_use".into(), d.in_use.into());
     f.insert("class.cap".into(), d.cap.into());
     f.insert("class.deferred_total".into(), total.into());
+    f.insert("waits_for".into(), format!("{}.slot", d.class.name()).into());
     f
 }
 
