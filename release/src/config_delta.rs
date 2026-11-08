@@ -533,15 +533,27 @@ fn literal_default(k: &spira_config::registry::RegistryKey) -> Result<Value, Str
     }
 }
 
+/// `retired` split into the keys to drop now and the keys to hold: the release being replaced
+/// still declares a held key, so its running processes would refuse a config without it.
+fn split_retired(retired: Vec<String>, active: &Path) -> Result<(Vec<String>, Vec<String>), String> {
+    if retired.is_empty() || !active.exists() {
+        return Ok((retired, Vec::new()));
+    }
+    let declared: std::collections::BTreeSet<String> =
+        registry_keys(active)?.into_iter().map(|k| format!("spira.{}", k.name.strip_prefix("SPIRA_").unwrap_or(&k.name).to_ascii_lowercase())).collect();
+    Ok(retired.into_iter().partition(|k| !declared.contains(k)))
+}
+
 /// `defer` leaves the delta's dropped keys in the config for one more activation; a rollback
 /// passes `false`, since the release it returns to rejects keys it does not know.
 pub fn prepare(cfg: &Config, rel: &Path, delta: &Delta, defer: bool) -> Result<Txn, String> {
     let spec = cfg.toml_spec().ok_or("this release declares config changes but SPIRA_TOML names no file to apply them to")?;
     let (files, modes, original_text, original) = read_layers(&spec)?;
-    let retired = if defer { load_retired(&cfg.state_dir()?) } else { Vec::new() };
+    let (retired, held) = if defer { split_retired(load_retired(&cfg.state_dir()?), &cfg.releases.join(crate::activate::CURRENT))? } else { Default::default() };
     let (pre, post, undo) = apply(&original, delta, &retired, defer)?;
     let delta = &delta.expanded(&original);
-    let deferred = if defer { delta.removed.iter().filter(|k| original.iter().any(|t| get(t, k).is_some())).cloned().collect() } else { Vec::new() };
+    let mut deferred: Vec<String> = if defer { delta.removed.iter().filter(|k| original.iter().any(|t| get(t, k).is_some())).cloned().collect() } else { Vec::new() };
+    deferred.extend(held.into_iter().filter(|k| !deferred.contains(k)));
     let txn = Txn { files, modes, original_text, original, pre, post, undo, deferred };
     txn.validate(cfg, rel)?;
     Ok(txn)

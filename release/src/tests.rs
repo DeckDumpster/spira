@@ -682,16 +682,23 @@ fn config_for_a_tree_has_its_delta_applied_and_a_key_without_an_entry_stays_abse
 }
 
 #[test]
-fn staging_a_delta_that_retires_a_key_keeps_the_key_the_installed_registry_still_requires() {
-    let w = World::with_git(delta_git(DELTA_BOTH));
-    let spec = w.cfg.toml_spec().unwrap();
-    file(Path::new(&spec), "[spira]\nid_prefix = \"sp\"\nold_key = 1\n");
-    let tree = w.cfg.releases.join("retiring-tree");
-    file(&tree.join(config_delta::DELTA_PATH), DELTA_BOTH);
-    let (dir, staged) = config_delta::staged_for_tree(&spec, &tree).unwrap().expect("the tree has a delta");
-    let text = fs::read_to_string(&staged).unwrap();
-    assert!(text.contains("new_key = 300") && text.contains("old_key = 1"), "{text}");
-    let _ = fs::remove_dir_all(dir);
+fn activation_holds_a_retired_key_the_release_being_replaced_still_declares() {
+    let w = World::with_git(delta_git(""));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nround_vm_disk_need_gib = 0\n");
+    let rel = w.cfg.releases.join("new");
+    fs::create_dir_all(rel.join("bin")).unwrap();
+    testkit::write_exe(&rel.join("bin/spira-config"), "#!/bin/sh\nexit 0\n");
+    tree_declaring(&rel, &["SPIRA_OTHER_SECS"]);
+    let old = tree_declaring(&w.cfg.releases.join("old"), &["SPIRA_ROUND_VM_DISK_NEED_GIB"]);
+    std::os::unix::fs::symlink(&old, w.cfg.releases.join("current")).unwrap();
+    let state = w.cfg.state_dir().unwrap();
+    config_delta::save_retired(&state, &["spira.round_vm_disk_need_gib".to_string()]).unwrap();
+    let txn = config_delta::prepare(&w.cfg, &rel, &config_delta::Delta::default(), true).unwrap();
+    let scratch = w.cfg.releases.join("scratch");
+    fs::create_dir_all(&scratch).unwrap();
+    let staged = fs::read_to_string(txn.stage(&scratch).unwrap()).unwrap();
+    assert!(staged.contains("round_vm_disk_need_gib = 0"), "the replaced release's registry still requires it: {staged}");
+    assert_eq!(txn.deferred, vec!["spira.round_vm_disk_need_gib".to_string()], "held for the activation after this one");
 }
 
 #[test]
