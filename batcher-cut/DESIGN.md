@@ -205,7 +205,7 @@ Unless `SPIRA_ROUNDS_PACING=0` each queue.local repo's pass runs through `pace::
 The cut fails with a `CutError` whose `CutKind` is set where the failure is produced; `classify`
 reads the kind, never the message:
 
-- `NotLanded` (a round that ran and did not land) or a red local verdict written in the pass
+- a red local verdict written in the pass (a round that ran and did not land)
   writes `pause` and pages the Concierge inbox; `rm pause` lifts it. `Other` failures never
   pause, whatever their wording. A round emptied because every member was ejected writes the
   `recut` verdict, not `red`: no culprit is left, so the next pass cuts the survivors;
@@ -213,6 +213,6 @@ reads the kind, never the message:
   fault) backs the repo off 600 s; the second in a row writes `stopped` and pages;
 - `StaleImage` counts toward neither;
 - an open round at the start of a pass has no driver: paged once per batch, never re-cut;
-- `OpenFailed` pages every time and pauses nothing.
+- an `Outcome::OpenFailed` (set by the runtime's rounds task) pages every time and pauses nothing.
 
 Tests: `pace::tests`, one fixture per rule.
