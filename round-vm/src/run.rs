@@ -588,6 +588,11 @@ base = "origin/base"
 ROUNDCFG
 export SPIRA_TOML="$HOME/round-work/spira/testlib/complete.toml:$HOME/round-config.toml"
 SPIRA_TOML="$(target/release/release config-stage "$HOME/round-work")" || { echo "round-vm: cannot apply the head's config delta" >&2; exit 2; }
+# A layer can name a file in round-work, which an attribution rerun checks out over; the legs read a copy.
+frozen="$HOME/round-config.d"; rm -rf "$frozen"; mkdir -p "$frozen"
+IFS=: read -ra layer_files <<< "$SPIRA_TOML"; frozen_spec=""
+for i in "${!layer_files[@]}"; do cp "${layer_files[$i]}" "$frozen/layer$i.toml"; frozen_spec="${frozen_spec:+$frozen_spec:}$frozen/layer$i.toml"; done
+SPIRA_TOML="$frozen_spec"
 export SPIRA_TOML
 release_red() {
     echo "round-vm: RELEASE-VERIFY: RED at $1 — the head's release cannot be built and verified, so it could not land:" >&2
@@ -3272,6 +3277,36 @@ mod tests {
         });
         assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    /// A rerun checks the survivors' tree out over `round-work`, so layers that name files
+    /// inside it would change under every later leg; the legs must read a copy.
+    #[test]
+    fn the_rounds_config_layers_survive_a_later_checkout_of_the_survivors_tree() {
+        let from = REMOTE_SCRIPT.find("export SPIRA_TOML=\"$HOME/round-work/spira/testlib/complete.toml:").unwrap();
+        let to = REMOTE_SCRIPT.find("SPIRA_HOME=\"$HOME/round-work/spira\" SPIRA_TOML=\"$SPIRA_TOML\" target/release/spira-config validate").unwrap();
+        let d = crate::testutil::TempDir::new();
+        let fixture = d.path().join("round-work/spira/testlib");
+        std::fs::create_dir_all(&fixture).unwrap();
+        std::fs::create_dir_all(d.path().join("round-work/target/release")).unwrap();
+        let complete = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml")).unwrap();
+        std::fs::write(fixture.join("complete.toml"), &complete).unwrap();
+        std::fs::write(d.path().join("round-config.toml"), "[spira]\nrun = \"/vm/run\"\n").unwrap();
+        let stage = d.path().join("round-work/target/release/release");
+        testkit::write_exe(&stage, "#!/bin/sh\nprintf '%s' \"$SPIRA_TOML\"\n");
+        let out = std::process::Command::new("bash")
+            .args(["-c", &format!("set -euo pipefail\ncd \"$HOME/round-work\"\n{}\nprintf %s \"$SPIRA_TOML\"", &REMOTE_SCRIPT[from..to])])
+            .env_clear()
+            .env("HOME", d.path())
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let spec = String::from_utf8(out.stdout).unwrap();
+        let without_key: String = complete.lines().filter(|l| !l.starts_with("lc_live_check_secs")).map(|l| format!("{l}\n")).collect();
+        std::fs::write(fixture.join("complete.toml"), without_key).unwrap();
+        let declared = spira_config::load(std::path::Path::new(&spec)).unwrap().spira.unwrap().get_u32("SPIRA_LC_LIVE_CHECK_SECS").unwrap();
+        assert_eq!(declared, Some(60), "the legs' config still declares the key after the checkout; spec {spec}");
     }
 
     #[test]
