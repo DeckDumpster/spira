@@ -321,11 +321,16 @@ impl<B: Backend> Store<B> {
         )? {
             return Ok(early);
         }
-        rec.members.extend(members.iter().map(|(id, tip)| Member {
-            bead_id: id.clone(),
-            tip: tip.clone(),
-        }));
+        let added: Vec<Member> = members
+            .iter()
+            .map(|(id, tip)| Member {
+                bead_id: id.clone(),
+                tip: tip.clone(),
+            })
+            .collect();
+        rec.members.extend(added.iter().cloned());
         c.put(self, &key, &rec, &[])?;
+        self.index_members(&mut c, &key, &rec.row, &added)?;
         Ok(Planned::Cascade(c))
     }
 

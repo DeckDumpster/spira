@@ -141,6 +141,10 @@ fn a_rounds_members_go_inside_its_value_and_its_progress_and_index_get_their_own
     assert_eq!(round.data["members"], json!([{"bead_id": "sp-a", "tip": TIP}, {"bead_id": "sp-b", "tip": TIP}]));
     assert_eq!(round.data["opened_at"], json!(50));
     assert_eq!(value(&p, "batches/harness/b-1/progress").data, json!({"done": 3}));
+    for bead in ["sp-a", "sp-b"] {
+        let m = value(&p, &format!("batch-members/{bead}/b-1"));
+        assert_eq!((m.data["repo"].as_str(), m.metadata.owner_references.as_slice()), (Some("harness"), ["batches/harness/b-1".to_string()].as_slice()));
+    }
     let ix = value(&p, "batch-ids/b-1");
     assert_eq!((ix.data["repo"].as_str(), ix.metadata.owner_references.as_slice()), (Some("harness"), ["batches/harness/b-1".to_string()].as_slice()));
 }

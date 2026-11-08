@@ -907,7 +907,25 @@ impl<B: Backend> Store<B> {
         let ix = BatchIndex {
             repo: rec.row.repo.clone(),
         };
-        c.put(self, &keys::batch_index(&rec.row.batch_id), &ix, &[key])
+        c.put(self, &keys::batch_index(&rec.row.batch_id), &ix, &[key])?;
+        self.index_members(c, key, &rec.row, &rec.members)
+    }
+
+    /// A membership entry for each of `members`, owned by the round at `key`.
+    pub(super) fn index_members(
+        &self,
+        c: &mut Cascade,
+        key: &str,
+        row: &BatchRow,
+        members: &[Member],
+    ) -> Result<()> {
+        let ix = BatchIndex {
+            repo: row.repo.clone(),
+        };
+        for m in members {
+            c.put(self, &keys::batch_member(&m.bead_id, &row.batch_id), &ix, &[key])?;
+        }
+        Ok(())
     }
 
     /// `land`: `FastForward` on the round, and every member still in it `Delivered` on its
@@ -949,16 +967,22 @@ impl<B: Backend> Store<B> {
 
     /// The rounds not yet finished that name `bead` as a member, by id.
     pub fn batches_of(&self, bead: &str) -> Result<Vec<BatchRow>> {
-        let mut out: Vec<BatchRow> = self
-            .batches()?
-            .into_iter()
-            .map(|(_, r)| r.value)
-            .filter(|r| {
-                !matches!(r.row.state.as_str(), "LANDED" | "SETTLED" | "ABANDONED")
-                    && r.members.iter().any(|m| m.bead_id == bead)
-            })
-            .map(|r| r.row)
-            .collect();
+        let (entries, _) = self
+            .contract()
+            .list(&[&keys::batch_members_of(bead)], &Selector::Everything)?;
+        let mut out = Vec::new();
+        for e in &entries {
+            let Some(id) = e.key.strip_prefix(&keys::batch_members_of(bead)) else {
+                continue;
+            };
+            let ix: BatchIndex = decode(&e.key, &e.value)?;
+            let Some((r, _)) = self.read::<BatchRecord>(&keys::batch(&ix.repo, id), None)? else {
+                continue;
+            };
+            if !matches!(r.value.row.state.as_str(), "LANDED" | "SETTLED" | "ABANDONED") {
+                out.push(r.value.row);
+            }
+        }
         out.sort_by(|a, b| a.batch_id.cmp(&b.batch_id));
         Ok(out)
     }

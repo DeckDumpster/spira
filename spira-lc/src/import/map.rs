@@ -293,8 +293,15 @@ pub fn project(a: &Archive, no_record: &BTreeSet<String>) -> Result<Projection, 
         l.put(
             "batch",
             keys::batch_index(&rec.row.batch_id),
-            Object::new(ix).with_owners(&[key.as_str()]),
+            Object::new(ix.clone()).with_owners(&[key.as_str()]),
         );
+        for m in &rec.members {
+            l.put(
+                "batch",
+                keys::batch_member(&m.bead_id, &rec.row.batch_id),
+                Object::new(ix.clone()).with_owners(&[key.as_str()]),
+            );
+        }
         if text(&r.row, "progress").is_some() {
             match json_col(&r.row, "progress") {
                 p @ Value::Object(_) => l.put(
