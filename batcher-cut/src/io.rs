@@ -1886,6 +1886,45 @@ pub fn open_round_id(env: &Env, repo: &Repo) -> Result<Option<String>, String> {
     Ok(Some(verb_value(&run.out, "batch_id").unwrap_or_default()))
 }
 
+/// One round `queue round status` lists as open.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OpenRound {
+    pub id: String,
+    pub members: Vec<String>,
+    pub head: String,
+    pub worktree: String,
+    pub red: bool,
+    pub age_secs: u64,
+}
+
+/// Every open round of the repo, as `queue round status` lists them: the first is unprefixed,
+/// the rest are `round<n>_`.
+pub fn open_rounds(env: &Env, repo: &Repo) -> Result<Vec<OpenRound>, String> {
+    let run = round_verb(env, &["status", &repo.name], "")?;
+    if run.code != Some(0) {
+        return Err(verb_failed("queue round status", &run));
+    }
+    Ok(open_rounds_of(&run.out))
+}
+
+fn open_rounds_of(out: &str) -> Vec<OpenRound> {
+    let prefixes = std::iter::once(String::new()).chain((2..).map(|n| format!("round{n}_")));
+    prefixes
+        .map_while(|p| {
+            let id = verb_value(out, &format!("{p}batch_id"))?;
+            let get = |k: &str| verb_value(out, &format!("{p}{k}")).unwrap_or_default();
+            Some(OpenRound {
+                id,
+                members: get("members").split_whitespace().map(|m| m.split(':').next().unwrap_or("").to_string()).collect(),
+                head: get("head"),
+                worktree: get("worktree"),
+                red: !get("red").is_empty(),
+                age_secs: get("wall_secs").parse().unwrap_or(0),
+            })
+        })
+        .collect()
+}
+
 /// `Ok` when `batch`'s worktree still stands at the round's head, which is all `queue round certify`
 /// needs of it; otherwise why a certify would be refused. One batcher worktree serves every round
 /// of a repo, so a later round moves it off an earlier one.
@@ -2906,6 +2945,15 @@ mod land_exit_tests {
         assert_eq!(round_head_and_worktree(out, "r2"), Some(("bbb".into(), "/w2".into())));
         assert_eq!(round_head_and_worktree(out, "r1"), Some(("aaa".into(), "/w".into())));
         assert_eq!(round_head_and_worktree(out, "r3"), None);
+    }
+
+    #[test]
+    fn status_lists_every_open_round_with_its_head_and_age() {
+        let out = "rounds=2\nround=open\nbatch_id=r1\nhead=h1\nmembers=sp-a:ta sp-b:tb\nworktree=/w/1\nwall_secs=90\nround2=open\nround2_batch_id=r2\nround2_head=h2\nround2_members=sp-c:tc\nround2_worktree=/w/2\nround2_red=test-x.sh\nround2_wall_secs=30\nstaged_members=sp-z\n";
+        let rounds = open_rounds_of(out);
+        assert_eq!(rounds.iter().map(|r| (r.id.as_str(), r.head.as_str(), r.red, r.age_secs)).collect::<Vec<_>>(), [("r1", "h1", false, 90), ("r2", "h2", true, 30)]);
+        assert_eq!(rounds[0].members, ["sp-a", "sp-b"]);
+        assert!(open_rounds_of("round=none\nrepo=spira\n").is_empty());
     }
 }
 

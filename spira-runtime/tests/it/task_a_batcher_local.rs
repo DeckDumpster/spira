@@ -61,7 +61,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 #[test]
 fn t2_a_held_repo_and_a_driven_round_are_silent() {
     let held = Snapshot { repos: [("spira".to_string(), Repo { stopped: true, ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
-    let driven = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(Round { id: "r1".into(), members: vec!["sp-a".into()], head: "h".into(), worktree: "/w".into(), driven: true }), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
+    let driven = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(Round { id: "r1".into(), members: vec!["sp-a".into()], head: "h".into(), worktree: "/w".into(), driven: true, ..Round::default() }), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
     for snap in [held, driven] {
         let mut r = rig(1, snap);
         kit::assert_unpoisoned(&r, STREAM);
