@@ -311,6 +311,8 @@ pub enum RoundEnd {
     Land { members: Vec<Member>, attribution_secs: Option<u64> },
     /// Nothing lands; the reason was already reported.
     Blocked(String),
+    /// Nothing lands, but every culprit was ejected: the pool holds only survivors to cut again.
+    Emptied(String),
 }
 
 /// A member stacked on one that leaves leaves with it.
@@ -475,11 +477,11 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                         }
                     }
                     if next.is_empty() {
-                        return Ok(RoundEnd::Blocked("round emptied by ejection".into()));
+                        return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
                     }
                     members = if retry && left.is_empty() { next } else { ops.rebuild(&next)? };
                     if members.is_empty() {
-                        return Ok(RoundEnd::Blocked("round emptied rebuilding the tree after the menders".into()));
+                        return Ok(RoundEnd::Emptied("round emptied rebuilding the tree after the menders".into()));
                     }
                     suites = m.suites;
                     kind = MainKind::Verify;
@@ -505,11 +507,11 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         }
         let survivors: Vec<Member> = members.iter().filter(|m| !out.contains_key(&m.id)).cloned().collect();
         if survivors.is_empty() {
-            return Ok(RoundEnd::Blocked("round emptied by ejection".into()));
+            return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
         }
         members = ops.rebuild(&survivors)?;
         if members.is_empty() {
-            return Ok(RoundEnd::Blocked("round emptied rebuilding the tree after ejection".into()));
+            return Ok(RoundEnd::Emptied("round emptied rebuilding the tree after ejection".into()));
         }
         (suites, kind) = match preempt {
             Some(p) => (p.rerun, MainKind::Corpus),
@@ -904,6 +906,15 @@ pub(crate) mod tests {
         assert_eq!(proofs.len(), 4, "two alone, the base, one touching member: {proofs:?}");
         assert!(proofs.contains(&vec!["m1".to_string(), "m3".to_string()]), "the touching member alone: {proofs:?}");
         assert!(proofs.contains(&vec!["m1".to_string(), "m2".to_string(), "m3".to_string()]), "the base alone: {proofs:?}");
+    }
+
+    #[test]
+    fn a_round_whose_every_member_is_ejected_ends_emptied_not_blocked() {
+        let mut f = Fake::new(breaks("m1", "test-01.sh"));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(end, RoundEnd::Emptied("round emptied by ejection".into()));
+        assert_eq!(ops.ejected.len(), 1);
     }
 
     #[test]

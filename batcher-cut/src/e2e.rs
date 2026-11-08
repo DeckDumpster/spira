@@ -260,6 +260,7 @@ impl CloneMembers for RoundEnd {
                 format!("land {:?} (attribution {:?}s)", members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), attribution_secs)
             }
             RoundEnd::Blocked(w) => format!("blocked: {w}"),
+            RoundEnd::Emptied(w) => format!("emptied: {w}"),
         }
     }
 }
