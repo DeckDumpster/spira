@@ -30,6 +30,8 @@ pub struct Orphans {
     pub leased: Vec<String>,
 }
 
+const NEVER_BEGAN_CHECKED: &str = "no PR, run, pass, phase, eject or lease";
+
 const FINISHED: [BatchState; 3] = [
     BatchState::Landed,
     BatchState::Settled,
@@ -469,6 +471,9 @@ impl<B: Backend> Store<B> {
             .collect();
         let mut phantoms: Vec<&BatchRecord> = Vec::new();
         for (key, r) in never_began {
+            if self.has_ejected_member(r)? {
+                continue;
+            }
             if self.round_leased(key)? {
                 out.leased.push(r.row.batch_id.clone());
             } else {
@@ -498,7 +503,7 @@ impl<B: Backend> Store<B> {
                 version: r.row.version,
                 kind: BatchEventKind::Abandon {
                     reason: format!(
-                        "requeue-orphans: opened and never began (no PR, run, pass or phase in {stale_secs}s)"
+                        "requeue-orphans: opened and never began ({NEVER_BEGAN_CHECKED} in {stale_secs}s)"
                     ),
                 },
                 actor: actor.into(),
@@ -535,6 +540,18 @@ impl<B: Backend> Store<B> {
             }
         }
         Ok(out)
+    }
+
+    /// A member that is no longer IN_DELIVERY left the round by an eject: the round has run.
+    fn has_ejected_member(&self, round: &BatchRecord) -> Result<bool> {
+        for m in &round.members {
+            if let Some(rec) = self.record(&m.bead_id)? {
+                if rec.value.row.state != BeadState::InDelivery {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Whether `locks/round/<repo>/<id>` is live for the round at `batches/<repo>/<id>`.

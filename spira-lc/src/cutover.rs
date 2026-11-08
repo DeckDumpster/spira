@@ -1237,7 +1237,7 @@ pub(crate) fn plan_requeue_orphans(
         released.push(b);
     }
     let roster = Roster { beads: in_delivery.iter().map(|b| (b.bead_id.clone(), b.clone())).collect(), deliveries: deliveries.clone() };
-    for ob in open_batches.iter().filter(|b| is_phantom(b, now, stale_secs)) {
+    for ob in open_batches.iter().filter(|b| is_phantom(b, now, stale_secs) && b.members.iter().all(|(id, _)| roster.beads.contains_key(id))) {
         let rows = Rows {
             batch: ob.row.clone(),
             members: ob.members.clone(),
@@ -1253,7 +1253,7 @@ pub(crate) fn plan_requeue_orphans(
             expect: batch::BatchState::Open,
             version: ob.row.version,
             actor: actor.to_string(),
-            reason: format!("requeue-orphans: opened and never began (no PR, run, pass or phase in {stale_secs}s)"),
+            reason: format!("requeue-orphans: opened and never began (no PR, run, pass, phase or eject in {stale_secs}s)"),
         };
         let steps = plan_abandon(&rows, &abandon, now).map(|p| p.steps).unwrap_or_default();
         plan.phantoms.push(PhantomBatch { batch_id: ob.row.batch_id.clone(), members: ob.members.iter().map(|(id, _)| id.clone()).collect(), steps });
@@ -2465,6 +2465,14 @@ mod tests {
         d.mode = delivery::Mode::Pr;
         d.state = delivery::DeliveryState::PrOpen;
         assert!(w.plan().orphans.is_empty());
+    }
+
+    #[test]
+    fn an_aged_open_batch_one_of_whose_members_was_ejected_is_not_a_phantom() {
+        let mut w = World::new().bead("sp-b", true, Some("b-ph"));
+        w.batches.push(open_batch("b-ph", STALE + 1, &["sp-a", "sp-b"]));
+        let plan = w.plan();
+        assert!(plan.phantoms.is_empty(), "an ejected member means the round ran");
     }
 
     #[test]

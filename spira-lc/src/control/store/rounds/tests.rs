@@ -682,6 +682,34 @@ fn a_round_that_opened_and_never_began_is_abandoned_and_its_members_requeued() {
 }
 
 #[test]
+fn a_round_with_an_ejected_member_and_no_phase_write_is_not_abandoned_as_never_began() {
+    let r = Rig::new();
+    r.certified("sp-a", T1);
+    r.certified("sp-b", T2);
+    let members = two();
+    let p = r.s.plan_cut(&r.cut_spec(&members)).unwrap();
+    r.s.run_planned(p, &r.req(), "cut").unwrap();
+    let (_, rec) = r.s.batch("b-1").unwrap().unwrap();
+    let ev = BatchEvent {
+        expect: BatchState::Open,
+        version: rec.value.row.version,
+        kind: BatchEventKind::Eject { bead_id: "sp-a".into(), reason: "red".into() },
+        actor: "test".into(),
+    };
+    let (p, _) = r.s.plan_eject("b-1", "sp-a", &ev, AT, &r.req()).unwrap();
+    r.s.run_planned(p, &r.req(), "eject").unwrap();
+    let applied =
+        r.s.requeue_orphans("test", true, 1800, AT + 3600, &r.req())
+            .unwrap();
+    assert!(
+        applied.phantom_batches.is_empty() && applied.abandoned.is_empty(),
+        "{applied:?}"
+    );
+    assert_eq!(round_state(&r), BatchState::Open);
+    assert_eq!(r.state("sp-b"), BeadState::InDelivery);
+}
+
+#[test]
 fn requeue_orphans_leaves_a_leased_round_that_never_began_open_and_lists_it_leased() {
     let r = Rig::new();
     open_round(&r);
