@@ -121,7 +121,7 @@ fn lock_holders_check(n: i64, run: &Path) -> Result<String, String> {
 fn conditions_check(n: i64, run: &Path) -> Result<(), String> {
     let releases = reg("SPIRA_RELEASES")?;
     let cfg = probes::Cfg {
-        systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".into()),
+        units: watchtower::host_units::host_units(),
         releases: (!releases.is_empty()).then_some(releases),
         keep: reg_i64("SPIRA_RELEASES_KEEP")?.max(1) as usize,
         store_slack: reg_i64("SPIRA_RELEASE_STORE_SLACK")?.max(0) as usize,
