@@ -137,7 +137,10 @@ pub fn run(exec: &dyn Exec, sink: &dyn Sink, req: &Request, home: &Path, dwarf_p
     }
     let argv = build_argv(req, replaced.as_deref(), home, dwarf_path, call_argv, now);
     sink.out(&util::log_line(now, &format!("summon {}: calling a {} dwarf directly (caps and the world's state bypassed)", req.bead, req.rune)));
-    exec.exec(call_bin, &argv, None, None).code
+    let o = exec.exec(call_bin, &argv, None, None);
+    o.stdout.lines().for_each(|l| sink.out(l));
+    o.stderr.lines().for_each(|l| sink.err(l));
+    o.code
 }
 
 #[cfg(test)]
