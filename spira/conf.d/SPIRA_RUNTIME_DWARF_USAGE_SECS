@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between the watch.dwarf_usage task's samples of each live dwarf's cgroup (CPU, IO per disk, memory, worktree and build-dir size), pushed to the metrics store.
+SCHEMA=REQUIRED: Seconds between the watch.dwarf_usage task's ticks in spira-runtime. Declared by a spira-runtime task row; its default is the task's pin, which spira-config init writes on a fresh install and activation's config delta declares on an upgrade.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Each sample also walks every live dwarf's worktree and build directory for their size.
+    : "${SPIRA_RUNTIME_DWARF_USAGE_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF

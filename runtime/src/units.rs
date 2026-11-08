@@ -1455,6 +1455,11 @@ mod systemd {
             prop("Type", Arg::S("exec".into())),
             prop("CollectMode", Arg::S("inactive-or-failed".into())),
             prop("ExecStart", Arg::Arr("(sasb)", vec![Arg::Struct(vec![Arg::S(prog.clone()), strings(&spec.argv), Arg::B(false)])])),
+            // What a unit used is read from its cgroup (`usage::sample`), so every unit
+            // counts it whatever the manager's defaults say.
+            prop("CPUAccounting", Arg::B(true)),
+            prop("IOAccounting", Arg::B(true)),
+            prop("MemoryAccounting", Arg::B(true)),
         ];
         if !spec.env.is_empty() {
             props.push(prop("Environment", strings(&spec.env.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>())));
@@ -2435,6 +2440,9 @@ mod tests {
             assert_eq!(f[1], Val::Arr(vec![Val::S("/bin/czar-pass".into()), Val::S("--pass".into())]));
             assert_eq!(f[2], Val::B(false));
             assert_eq!(get("Environment"), Val::Var(Box::new(Val::Arr(vec![Val::S("A=1".into())]))));
+            for p in ["CPUAccounting", "IOAccounting", "MemoryAccounting"] {
+                assert_eq!(get(p), Val::Var(Box::new(Val::B(true))), "{p}: a unit's usage is read from its cgroup");
+            }
             assert_eq!(m.body[3], Val::Arr(vec![]));
         }
 

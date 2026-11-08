@@ -20,6 +20,7 @@ pub mod stoprec;
 pub mod scheduler;
 pub mod seam;
 pub mod sysctl;
+pub mod usage;
 
 use std::collections::BTreeMap;
 use std::env;
