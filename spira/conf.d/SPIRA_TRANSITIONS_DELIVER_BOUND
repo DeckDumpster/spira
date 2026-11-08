@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=runtime
+DOC=Seconds with IN_DELIVERY work and no Delivered before watch.transitions pages an IN_DELIVERY→LANDED STALL.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_TRANSITIONS_DELIVER_BOUND:=3600}"
+SPIRA_CONF_DEFAULT_EOF

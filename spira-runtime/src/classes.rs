@@ -365,6 +365,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("watch.tower.log", Host),
     ("watch.tower.observe", Host),
     ("watch.tower.prompt", Host),
+    ("watch.transitions.observe", Host),
     ("watch.warm_full.observe", Host),
     ("watch.warm_full.reap", Host),
 ];

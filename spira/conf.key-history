@@ -696,3 +696,11 @@ testenv_max_runs
 bdi_capped
 bdi_max_ratio
 bdi_sysfs
+transitions_period
+transitions_working_min
+transitions_submit_bound
+transitions_cut_bound
+transitions_deliver_bound
+transitions_activate_bound
+transitions_ask_bound
+transitions_release_repo
