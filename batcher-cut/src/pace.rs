@@ -32,12 +32,9 @@ pub struct State {
 /// the message.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum CutKind {
-    /// A round ran and did not land.
-    NotLanded,
     /// The harness produced no verdict (VM lost, over cap, certify environment fault).
     Infra,
     StaleImage,
-    OpenFailed,
     /// Any other failure: fails the pass, never pauses or backs off.
     Other,
 }
@@ -102,8 +99,6 @@ pub fn classify(result: &Result<(), CutError>, verdict: Option<(&str, u64)>, pas
     match result.as_ref().err().map(|e| e.kind) {
         Some(CutKind::StaleImage) => Outcome::StaleImage,
         Some(CutKind::Infra) => Outcome::Infra,
-        Some(CutKind::NotLanded) => Outcome::Red,
-        Some(CutKind::OpenFailed) => Outcome::OpenFailed,
         Some(CutKind::Other) => Outcome::Quiet,
         None if matches!(verdict, Some(("red", at)) if at >= pass_start) => Outcome::Red,
         None => Outcome::Quiet,
@@ -419,7 +414,7 @@ mod tests {
     fn a_not_landed_round_pauses_and_pages_and_the_pause_holds_the_next_cut() {
         let t = dir("red");
         let d = t.path();
-        let ran = run(d, "a", 1000, None, None, Err(CutError::new(CutKind::NotLanded, "NOT LANDED: suite x red")));
+        let ran = run(d, "a", 1000, None, Some(("red", 1000)), Ok(()));
         assert!(ran);
         assert!(Files::new(d, "a").pause_file().exists());
         assert!(inbox(d).contains("T1000 [watch:rounds] ROUND RED a"));
@@ -492,13 +487,14 @@ mod tests {
     }
 
     #[test]
-    fn a_repeated_open_failed_pages_every_time_and_does_not_pause() {
-        let t = dir("openfail");
-        let d = t.path();
-        run(d, "a", 1000, None, None, Err(CutError::new(CutKind::OpenFailed, "x")));
-        run(d, "a", 1100, None, None, Err(CutError::new(CutKind::OpenFailed, "x")));
-        assert_eq!(inbox(d).matches("OPEN FAILED a").count(), 2);
-        assert!(!Files::new(d, "a").pause_file().exists());
+    fn an_open_failed_outcome_pages_every_time_and_does_not_pause() {
+        let (st, mut pages) = (State::default(), 0);
+        for at in [1000, 1100] {
+            let (next, fx) = advance(&st, &Outcome::OpenFailed, "a", at, "x");
+            assert!(!fx.pause && !fx.stop && next == st);
+            pages += fx.pages.iter().filter(|p| p.starts_with("OPEN FAILED a")).count();
+        }
+        assert_eq!(pages, 2);
     }
 
     const WAIT: u64 = 300;
@@ -604,7 +600,7 @@ mod tests {
     fn one_repos_red_does_not_hold_another() {
         let t = dir("repos");
         let d = t.path();
-        run(d, "a", 1000, None, None, Err(CutError::new(CutKind::NotLanded, "round not landed")));
+        run(d, "a", 1000, None, Some(("red", 1000)), Ok(()));
         let ran = run(d, "b", 1010, None, None, Ok(()));
         assert!(ran);
         assert!(!Files::new(d, "b").pause_file().exists());
@@ -649,10 +645,8 @@ mod tests {
     fn classify_reads_the_kind_and_never_the_words() {
         let words = "NOT LANDED OPEN FAILED OVER-CAP certify rc=75 round AMI is stale";
         let of = |k| classify(&Err(CutError::new(k, words)), None, 0);
-        assert_eq!(of(CutKind::NotLanded), Outcome::Red);
         assert_eq!(of(CutKind::Infra), Outcome::Infra);
         assert_eq!(of(CutKind::StaleImage), Outcome::StaleImage);
-        assert_eq!(of(CutKind::OpenFailed), Outcome::OpenFailed);
         assert_eq!(of(CutKind::Other), Outcome::Quiet);
         assert_eq!(classify(&Err(CutError::from(words)), Some(("red", 9)), 0), Outcome::Quiet, "a failed cut is judged by its kind, not the verdict file");
     }
