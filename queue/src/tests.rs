@@ -455,6 +455,9 @@ struct FScripts {
     /// `ActiveState` answers in order (the last repeats; empty reads `active`), and the units asked about.
     unit_states: RefCell<std::collections::VecDeque<String>>,
     unit_asked: RefCell<Vec<String>>,
+    /// Live round legs as (repo, batch, unit); `stop_round_legs` ends the ones it is asked for.
+    round_legs: RefCell<Vec<(String, String, String)>>,
+    round_legs_stubborn: std::cell::Cell<bool>,
     /// Every `release` call: the bin it was run as, its argv joined, and the SPIRA_DB it
     /// was handed.
     release_calls: RefCell<Vec<(String, String, String)>>,
@@ -701,6 +704,14 @@ impl Scripts for FScripts {
             fs::write(results.join("ci.result"), format!("{status} 1 1\n")).unwrap();
         }
         out
+    }
+    fn stop_round_legs(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
+        if self.round_legs_stubborn.get() {
+            return Err("1 still running after its stop".into());
+        }
+        let (mine, rest): (Vec<_>, Vec<_>) = self.round_legs.borrow().iter().cloned().partition(|(r, b, _)| r == repo && b == batch);
+        *self.round_legs.borrow_mut() = rest;
+        Ok(mine.into_iter().map(|(_, _, u)| u).collect())
     }
     fn unit_active_state(&self, unit: &str) -> String {
         self.unit_asked.borrow_mut().push(unit.to_string());

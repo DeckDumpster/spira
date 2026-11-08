@@ -645,6 +645,31 @@ fn abandon_returns_the_members_and_closes_the_round() {
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
 }
 
+#[test]
+fn abandoning_a_round_stops_its_running_legs_and_records_them_in_the_reason() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-1"]), 0, "{}", t.err());
+    {
+        let mut legs = t.scripts.round_legs.borrow_mut();
+        legs.push(("spira".into(), "hand-1".into(), "spira-run-batcher.local-leg-attribute2.service".into()));
+        legs.push(("spira".into(), "hand-2".into(), "spira-run-batcher.local-other-leg.service".into()));
+    }
+    assert_eq!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0, "{}", t.err());
+    let left: Vec<String> = t.scripts.round_legs.borrow().iter().map(|l| l.2.clone()).collect();
+    assert_eq!(left, ["spira-run-batcher.local-other-leg.service"], "only the abandoned round's leg stops");
+    assert!(t.lc.has("abandon-batch hand-1 OPEN 1 base moved — stopped spira-run-batcher.local-leg-attribute2.service"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn a_leg_that_outlives_its_stop_keeps_the_round_open() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-1"]), 0, "{}", t.err());
+    t.scripts.round_legs_stubborn.set(true);
+    assert_ne!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0);
+    assert!(!t.lc.has("abandon-batch hand-1"), "a round whose leg still runs is not abandoned");
+    assert!(t.qfile("round").exists());
+}
+
 /// Opens a round of `members` and certifies it red on `test-b.sh`.
 fn red_round(t: &T, members: &str) -> String {
     *t.scripts.round_vm_results.borrow_mut() = vec![

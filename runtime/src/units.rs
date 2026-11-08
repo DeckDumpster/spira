@@ -574,6 +574,67 @@ pub fn task_glob(task: &str) -> String {
     format!("{PREFIX}{}-*", escape(task))
 }
 
+/// A short stable digest of `s` (FNV-1a), so a unit name stays under systemd's bound.
+pub fn digest(s: &str) -> String {
+    let h = s.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3));
+    format!("{h:016x}")
+}
+
+/// The leading part of a round leg's unit key: `<repo>.<digest of the round>`. Every unit and
+/// scope a round's legs run in carries it, so abandoning the round can find them by name.
+pub fn round_stem(repo: &str, round: &str) -> String {
+    format!("{repo}.{}", &digest(round)[..12])
+}
+
+/// Every unit started under the naming rule for the legs of `round` in `repo`, as a [`Units::list`] glob.
+pub fn round_leg_glob(repo: &str, round: &str) -> String {
+    format!("{PREFIX}*-{}.*{SUFFIX}", escape(&round_stem(repo, round)))
+}
+
+const ROUND_SCOPE_PREFIX: &str = "spira-round-";
+
+/// The transient scope a round's `round-vm run` is fenced in (`systemd-run --scope --unit=`), without
+/// the `.scope` suffix; `tag` tells the round's successive runs apart.
+pub fn round_scope_unit(repo: &str, round: &str, tag: &str) -> String {
+    format!("{ROUND_SCOPE_PREFIX}{}-{tag}", escape(&round_stem(repo, round)))
+}
+
+/// Every scope [`round_scope_unit`] names for `round` in `repo`, as a [`Units::list`] glob.
+pub fn round_scope_glob(repo: &str, round: &str) -> String {
+    format!("{ROUND_SCOPE_PREFIX}{}-*.scope", escape(&round_stem(repo, round)))
+}
+
+const STOP_POLL_MS: u64 = 100;
+const STOP_POLLS: u32 = 300;
+
+fn is_live(state: UnitState) -> bool {
+    matches!(state, UnitState::Active | UnitState::Activating | UnitState::Deactivating)
+}
+
+/// Stops every live unit and scope of `round`'s legs in `repo` and waits until each has exited;
+/// returns the names it stopped. `Err` names the units that outlived the wait, or the
+/// listing or stop that failed: an abandon must not go on to free a tree a leg still writes. A unit whose name
+/// `spare` accepts (the caller's own) is left running.
+pub fn stop_round_legs(units: &dyn Units, repo: &str, round: &str, spare: &dyn Fn(&str) -> bool) -> std::result::Result<Vec<String>, String> {
+    let mut live: Vec<String> = vec![];
+    for glob in [round_leg_glob(repo, round), round_scope_glob(repo, round)] {
+        let listed = units.list(&glob).map_err(|e| format!("cannot list {glob}: {}", e.0))?;
+        live.extend(listed.into_iter().filter(|d| is_live(d.state) && !spare(&d.name)).map(|d| d.name));
+    }
+    for name in &live {
+        units.stop(&UnitHandle::named(name)).map_err(|e| format!("cannot stop {name}: {}", e.0))?;
+    }
+    let mut left = live.clone();
+    for _ in 0..STOP_POLLS {
+        left.retain(|n| units.facts(&UnitHandle::named(n)).map_or(true, |f| is_live(f.state)));
+        if left.is_empty() {
+            return Ok(live);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(STOP_POLL_MS));
+    }
+    Err(format!("{} still running after its stop: {}", left.len(), left.join(" ")))
+}
+
 /// The task whose units under the naming rule are dwarves: spira-runtime's `sentinel-call`.
 pub const DWARF_TASK: &str = "sentinel-call";
 /// The prefix of a dwarf unit started by its own name, outside the naming rule
@@ -2188,6 +2249,47 @@ mod tests {
         assert_eq!(back.key_for("czar-pass").as_deref(), Some("r7"));
         assert_eq!(back.key_for("czar"), None);
         assert_eq!(UnitRan::from_event_kind(&EventKind::new("unit.other", &ran.event_kind().body)), None);
+    }
+
+    #[test]
+    fn abandoning_a_round_stops_its_legs_and_scope_and_no_other_rounds() {
+        let clock = VirtualClock::new(0);
+        let u = ScriptedUnits::new(Arc::new(clock));
+        u.script("batcher.local", 3_600_000, Exit::Code(0));
+        let leg = |repo: &str, round: &str, what: &str| spec("batcher.local", &format!("{}.{what}2", round_stem(repo, round)), &["x"]);
+        let attribute = u.start(&leg("spira", "spira-A", "attribute")).unwrap();
+        let corpus = u.start(&leg("spira", "spira-A", "corpus")).unwrap();
+        let other = u.start(&leg("spira", "spira-B", "attribute")).unwrap();
+        let elsewhere = u.start(&leg("other", "spira-A", "attribute")).unwrap();
+        let live = UnitFacts { state: UnitState::Active, main_pid: Some(7), exit: None, since_ms: Some(0) };
+        let scope = format!("{}.scope", round_scope_unit("spira", "spira-A", "7-1"));
+        let other_scope = format!("{}.scope", round_scope_unit("spira", "spira-B", "7-1"));
+        u.install(&scope, live.clone());
+        u.install(&other_scope, live);
+
+        let stopped = stop_round_legs(&u, "spira", "spira-A", &|_| false).unwrap();
+
+        let mut want = vec![attribute.name.clone(), corpus.name.clone(), scope.clone()];
+        want.sort();
+        let mut got = stopped.clone();
+        got.sort();
+        assert_eq!(got, want);
+        for h in [&attribute, &corpus, &UnitHandle::named(&scope)] {
+            assert!(!is_live(u.facts(h).unwrap().state), "{} still live", h.name);
+        }
+        for h in [&other, &elsewhere, &UnitHandle::named(&other_scope)] {
+            assert!(is_live(u.facts(h).unwrap().state), "{} must keep running", h.name);
+        }
+        assert!(stop_round_legs(&u, "spira", "spira-A", &|_| false).unwrap().is_empty(), "nothing left to stop");
+    }
+
+    #[test]
+    fn a_round_stop_spares_the_caller_own_unit() {
+        let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
+        u.script("batcher.local", 3_600_000, Exit::Code(0));
+        let own = u.start(&spec("batcher.local", &format!("{}.abandon1", round_stem("spira", "r")), &["x"])).unwrap();
+        let stopped = stop_round_legs(&u, "spira", "r", &|n| n == own.name).unwrap();
+        assert!(stopped.is_empty() && is_live(u.facts(&own).unwrap().state));
     }
 
     #[test]

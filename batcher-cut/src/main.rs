@@ -612,7 +612,7 @@ fn stabilize_round(
     }
     let changed: BTreeMap<String, Vec<String>> = members.iter().map(|m| (m.id.clone(), io::changed_paths(repo, start_sha, &m.tip))).collect();
 
-    let mut runner = vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?;
+    let mut runner = vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?.in_batch(batch);
     let stage_bg = match batch {
         Some(_) if !stage.is_empty() && !env_.hypervisor.fits_a_staged_round() => {
             println!("batcher {}: no round staged — the hypervisor cannot hold the staged round beside this one and a CI runner", repo.name);
@@ -1415,7 +1415,7 @@ fn attribute(o: &Opts) -> Result<(), String> {
         return Ok(());
     }
     let changed: BTreeMap<String, Vec<String>> = members.iter().map(|m| (m.id.clone(), io::changed_paths(&repo, &start_sha, &m.tip))).collect();
-    let mut runner = vm::VmRunner::new(&env_, &repo, &wt, &start_sha, &round, changed.clone())?;
+    let mut runner = vm::VmRunner::new(&env_, &repo, &wt, &start_sha, &round, changed.clone())?.in_batch(o.batch.as_deref());
     let mut ops = LiveOps {
         env: &env_,
         repo: &repo,
