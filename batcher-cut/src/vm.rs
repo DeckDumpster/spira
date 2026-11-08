@@ -134,6 +134,7 @@ pub struct VmRunner<'a> {
     child: Option<Child>,
     child_rc: Option<i32>,
     install_failed: bool,
+    harness_fault: bool,
     probe_n: u32,
     stderr_path: PathBuf,
     members: Vec<Member>,
@@ -272,6 +273,7 @@ impl<'a> VmRunner<'a> {
             child: None,
             child_rc: None,
             install_failed: false,
+            harness_fault: false,
             probe_n: 0,
             members: vec![],
             changed,
@@ -370,6 +372,11 @@ impl<'a> VmRunner<'a> {
         /// Did the corpus run end on a failed container install?
     pub fn install_failed(&self) -> bool {
         self.install_failed
+    }
+
+    /// Did the corpus run end without a verdict the round can be judged on?
+    pub fn harness_fault(&self) -> bool {
+        self.harness_fault
     }
 
     /// Does the container install on the round tree minus `removal`? One `round-vm run` of
@@ -569,7 +576,7 @@ impl RoundRunner for VmRunner<'_> {
                 Main::Corpus { suites, seen } => (seen.len(), suites.len()),
                 _ => (0, 0),
             };
-            p.done = Some(corpus_end(rc, &self.stderr_text(), self.env.wall_secs, reported, total)?);
+            p.done = Some(corpus_end(rc, &self.stderr_text(), self.env.wall_secs, reported, total).inspect_err(|_| self.harness_fault = true)?);
             self.main = Main::Finished(p.done.unwrap());
             return Ok(p);
         };

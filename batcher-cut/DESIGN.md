@@ -202,13 +202,17 @@ A forge pass runs no local check: every certified member is batched and CI on th
 Unless `SPIRA_ROUNDS_PACING=0` each queue.local repo's pass runs through `pace::paced`, state in
 `<run>/rounds-pace/<repo>/` so a repo's hold never touches another's:
 
-- a round that ran and did not land (`NOT LANDED`, or a red local verdict written in the pass)
-  writes `pause` and pages the Concierge inbox; `rm pause` lifts it. A cut that admitted nothing
-  never pauses, whatever its wording. A round emptied because every member was ejected writes
-  the `recut` verdict, not `red`: no culprit is left, so the next pass cuts the survivors;
-- a round with no verdicts (`NO RESULT`, `OVER-CAP`, `cannot check out`, `certify rc=75`, `queue round certify exited 4`, `left
-  no verdicts`) backs the repo off 600 s; the second in a row writes `stopped` and pages;
+The cut fails with a `CutError` whose `CutKind` is set where the failure is produced; `classify`
+reads the kind, never the message:
+
+- `NotLanded` (a round that ran and did not land) or a red local verdict written in the pass
+  writes `pause` and pages the Concierge inbox; `rm pause` lifts it. `Other` failures never
+  pause, whatever their wording. A round emptied because every member was ejected writes the
+  `recut` verdict, not `red`: no culprit is left, so the next pass cuts the survivors;
+- `Infra` (a round with no verdict: certify exiting 4, a corpus run that ended in a harness
+  fault) backs the repo off 600 s; the second in a row writes `stopped` and pages;
+- `StaleImage` counts toward neither;
 - an open round at the start of a pass has no driver: paged once per batch, never re-cut;
-- `OPEN FAILED` pages every time and pauses nothing.
+- `OpenFailed` pages every time and pauses nothing.
 
 Tests: `pace::tests`, one fixture per rule.
