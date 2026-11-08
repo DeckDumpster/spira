@@ -1808,7 +1808,7 @@ mod tests {
         std::fs::remove_dir_all(&conf_d).unwrap();
         std::fs::create_dir_all(&conf_d).unwrap();
         let (doc, w) = validate_with(text, &registry::Registry::from_dirs(&dir).unwrap()).unwrap();
-        assert!(doc.spira.map_or(true, |s| !s.0.contains_key("unit_test_slow_secs")), "control: no registry declares it, so it is dropped");
+        assert!(doc.spira.is_none_or(|s| !s.0.contains_key("unit_test_slow_secs")), "control: no registry declares it, so it is dropped");
         assert!(w.iter().any(|w| w.contains("unit_test_slow_secs is retired")), "{w:?}");
     }
 
