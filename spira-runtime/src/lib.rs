@@ -81,7 +81,11 @@ pub fn start_tasks(engine: &mut Engine) {
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {
     let mut regs = registrations(s);
     regs.extend(extra);
-    Engine::open(journal, clock, regs, 0)?
+    let mut engine = Engine::open(journal, clock, regs, 0)?;
+    if s.run_dir.join("world.halted").exists() {
+        engine.halt_at_boot("the world's halt stamp is present at boot")?;
+    }
+    engine
         .with_sink(sink)
         .with_baseline(vec![("runtime.version".into(), Value::from(env!("CARGO_PKG_VERSION"))), ("config.hash".into(), Value::from(s.hash()))])
         .with_foreign_poll(FOREIGN_POLL_MS)
@@ -294,6 +298,56 @@ fn own_skip_units(instance: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod own_unit_tests {
+    use runtime::journal::MemJournal;
+    use runtime::ports::VirtualClock;
+    use runtime::{Command, Ctx, EffectSpec, Event, EventKindTag, Handler, Projection, Registration};
+    use std::sync::Arc;
+
+    struct Writer;
+    impl Handler for Writer {
+        fn interests(&self) -> &[EventKindTag] {
+            &["start"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+            vec![Command::Effect(EffectSpec { name: "write".into(), input: String::new(), deadline_ms: 1000 })]
+        }
+    }
+
+    fn boot_under(stamp: bool) -> (Vec<String>, runtime::engine::SchedulerStatus) {
+        let dir = testkit::TempDir::new("boot-halt");
+        let mut s = crate::settings::fixture();
+        s.run_dir = dir.path().to_path_buf();
+        if stamp {
+            std::fs::write(dir.path().join("world.halted"), "2000-01-01T00:00:00Z\nwhy: planted\n").unwrap();
+        }
+        let j = MemJournal::new();
+        let mut e = super::open_engine(&s, j.clone(), Arc::new(VirtualClock::new(1_000)), Arc::new(runtime::marker::NullMarker), Arc::new(runtime::NullSink), vec![Registration::new("probe", Writer)]).unwrap();
+        e.start("probe", runtime::EventKind::new("start", ""));
+        runtime::Executor::run_until_idle(&mut e).unwrap();
+        let tags = runtime::conformance::trace(&*j).into_iter().map(|t| t.2.to_string()).filter(|t| t.starts_with("effect.")).collect();
+        (tags, e.status())
+    }
+
+    #[test]
+    fn a_scheduler_booted_under_the_halt_stamp_leaves_world_status_halted_not_degraded() {
+        let status = boot_under(true).1;
+        let doc = crate::status::document(&status).to_string();
+        let parsed = spira_world::scheduler::parse_status(&doc).unwrap();
+        assert_eq!(spira_world::scheduler::mismatch(true, &parsed), None, "{doc}");
+    }
+
+    #[test]
+    fn a_boot_under_the_halt_stamp_holds_its_first_work_effect() {
+        let tags = boot_under(true).0;
+        assert!(tags.iter().any(|t| t == runtime::EFFECT_HELD) && !tags.iter().any(|t| t == runtime::EFFECT_REQUESTED), "{tags:?}");
+    }
+
+    #[test]
+    fn a_boot_without_the_halt_stamp_requests_its_first_work_effect() {
+        let tags = boot_under(false).0;
+        assert!(tags.iter().any(|t| t == runtime::EFFECT_REQUESTED) && !tags.iter().any(|t| t == runtime::EFFECT_HELD), "{tags:?}");
+    }
+
     #[test]
     fn skip_list_holds_the_installed_runtime_service_name() {
         assert_eq!(super::own_skip_units("prod"), vec!["spira-runtime-prod.service".to_string()]);
