@@ -1594,7 +1594,11 @@ fn a_pass_whose_tests_overran_the_cap_is_a_fault_even_with_every_verdict_in() {
         t.err()
     );
     let batch = batch_of(&t);
-    let err = "round-vm: OVER-CAP: guard=suites-cap elapsed=901s cap=900s — the suites and bare lane ran past the cap\nround-vm: UNIT-TESTS: PASS (3 test binaries)";
+    let err = "round-vm: UNIT-TESTS: PASS (3 test binaries)";
+    *t.scripts.round_vm_files.borrow_mut() = vec![(
+        "round-fault-kind".to_string(),
+        "over-cap guard=suites-cap elapsed=901s cap=900s — the suites and bare lane ran past the cap\n".to_string(),
+    )];
     let over = RunOut {
         rc: 124,
         out: String::new(),

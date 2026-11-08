@@ -48,6 +48,17 @@ fn read_rc(path: &Path) -> Option<i32> {
         .and_then(|v| v.trim().parse().ok())
 }
 
+/// round-vm's typed fault kind file in the results, and the kind it names for a cap breach.
+const FAULT_KIND_FILE: &str = "round-fault-kind";
+
+/// The detail round-vm recorded with an `over-cap` fault kind in `results_dir`; `None` when
+/// the pass was not cut off by a cap.
+pub fn over_cap_detail(results_dir: &Path) -> Option<String> {
+    let text = fs::read_to_string(results_dir.join(FAULT_KIND_FILE)).ok()?;
+    let rest = text.lines().next()?.strip_prefix("over-cap")?;
+    Some(rest.trim().to_string())
+}
+
 /// round-vm's exit code for a container install that failed before any suite ran.
 pub const INSTALL_FAILED_RC: i32 = 3;
 
@@ -77,6 +88,7 @@ pub fn stderr_tail(text: &str) -> String {
 pub fn corpus_end(
     rc: i32,
     stderr: &str,
+    over_cap: Option<&str>,
     wall_secs: u64,
     reported: usize,
     total: usize,
@@ -112,9 +124,8 @@ pub fn corpus_end(
         }
         INSTALL_FAILED_RC => "round-vm: harness fault — install failed".to_string(),
         124 | 137 => {
-            let named = stderr
-                .lines()
-                .find_map(|l| l.split_once("OVER-CAP:").map(|(_, r)| r.trim()))
+            let named = over_cap
+                .filter(|r| !r.is_empty())
                 .map(|r| format!(" ({r})"))
                 .unwrap_or_default();
             format!("round-vm: harness fault — over-cap: exceeded the {wall_secs}s wall bound{named}, no verdict (not a functional red)")
@@ -741,7 +752,14 @@ impl RoundRunner for VmRunner<'_, '_> {
                 Main::Corpus { suites, seen } => (seen.len(), suites.len()),
                 _ => (0, 0),
             };
-            let done = corpus_end(rc, &self.stderr_text(), self.env.wall_secs, reported, total)?;
+            let done = corpus_end(
+                rc,
+                &self.stderr_text(),
+                over_cap_detail(&self.results).as_deref(),
+                self.env.wall_secs,
+                reported,
+                total,
+            )?;
             p.done = Some(done);
             self.main = Main::Finished(done);
             return Ok(p);

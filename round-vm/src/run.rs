@@ -945,6 +945,7 @@ elif [ -z "$over_cap" ]; then
 fi
 if [ -n "$over_cap" ]; then
     echo "round-vm: OVER-CAP: guard=suites-cap elapsed=${suites_clock}s cap=${cap}s — the suites and bare lane ran past the cap" >&2
+    echo "over-cap guard=suites-cap elapsed=${suites_clock}s cap=${cap}s — the suites and bare lane ran past the cap" > "$bare_rdir/round-fault-kind"
 fi
 if kill -0 "$integ_pid" 2>/dev/null; then echo "round-vm: INTEGRATION-TESTS: waiting (suites done, integration tests still running)" >&2; fi
 test_phase_bound "$integ_pid" "$post_guard" ~/round-integration-tests.log "$integ_hung" INTEGRATION-TESTS integration-post
@@ -1888,7 +1889,7 @@ pub const FENCE_TIMES: &str = "fence-times";
 pub const TEST_PHASE_FILES: [&str; 4] = ["unit.json", "unit-tests.out", "integration.json", "integration-tests.out"];
 
 /// What the VM script leaves at the top of the results on every exit: its phase marker and its log.
-pub const SCRIPT_FILES: [&str; 2] = [crate::vm_fault::PHASE_FILE, crate::vm_fault::SCRIPT_LOG_FILE];
+pub const SCRIPT_FILES: [&str; 3] = [crate::vm_fault::PHASE_FILE, crate::vm_fault::SCRIPT_LOG_FILE, crate::vm_fault::FAULT_KIND_FILE];
 
 /// Carries the files the VM leaves outside testenv's leaf from `pulled` to `results_dir`, by name.
 pub fn keep_top_files(pulled: &Path, results_dir: &Path) {
@@ -2729,6 +2730,7 @@ fn after_batch(
     if args.ci_entry.is_none() {
         keep_runner_output(remote, cfg, &vm.addr, &scratch("runner"), &results_dir);
     }
+    let _ = fs::remove_file(results_dir.join(crate::vm_fault::FAULT_KIND_FILE));
     keep_top_files(&pulled, &results_dir);
     keep_launcher_output(remote, cfg, &vm.addr, &scratch("launcher"), &results_dir);
     if pulled_ok {
@@ -2820,11 +2822,15 @@ fn after_batch(
     let _ = fs::remove_dir_all(&bins);
 
     if cause.as_deref().is_some_and(|c| c.starts_with("FAULT over-cap")) {
-        eprintln!(
-            "round-vm run: OVER-CAP: FAULT over-cap guard=testenv-suite-cap cap={}s unreached={} — testenv's suite cap fired; no member is implicated",
+        let detail = format!(
+            "FAULT over-cap guard=testenv-suite-cap cap={}s unreached={} — testenv's suite cap fired; no member is implicated",
             suite_cap_s(&results_dir).unwrap_or_else(|| "?".into()),
             unreached_count(&results_dir),
         );
+        eprintln!("round-vm run: OVER-CAP: {detail}");
+        if let Err(e) = crate::vm_fault::write_kind(&results_dir, crate::vm_fault::KIND_OVER_CAP, &detail) {
+            eprintln!("round-vm run: {FAULT_KIND}: {e}", FAULT_KIND = crate::vm_fault::FAULT_KIND_FILE);
+        }
         return 124;
     }
     if remote_rc != 0 {
@@ -3869,6 +3875,8 @@ mod tests {
         assert!(!REMOTE_SCRIPT[start..stop].contains("timeout -k 5 \"$cap\""), "no timer counts from before the first suite");
         assert!(REMOTE_SCRIPT.contains("round-vm: BARE-SUITES: PASS"));
         assert!(REMOTE_SCRIPT.contains("round-vm: OVER-CAP: guard=suites-cap elapsed=") && REMOTE_SCRIPT.contains("if [ -n \"$over_cap\" ]; then exit 124; fi"));
+        assert!(REMOTE_SCRIPT.contains("> \"$bare_rdir/round-fault-kind\"") && REMOTE_SCRIPT.contains("echo \"over-cap guard=suites-cap"), "the script records the typed kind beside its stderr line");
+        assert_eq!(crate::vm_fault::FAULT_KIND_FILE, "round-fault-kind");
         assert!(REMOTE_SCRIPT[..unit_wait].contains("test_phase_bound \"$unit_pid\" \"$cap\""), "the unit phase's wait has its own guard, outside the cap clock");
         assert!(REMOTE_SCRIPT[stop..bins].contains("test_phase_bound \"$integ_pid\" \"$post_guard\""), "the integration phase's wait after the suites has its own guard");
         assert_eq!(exit_for_remote(124), 124, "over-cap reaches the caller as itself");
@@ -3913,6 +3921,24 @@ mod tests {
         assert!(kept.starts_with("ROUND-FAULT: FAULT phase=release rc=2: "), "{kept}");
         assert!(kept.contains("round-vm: setup line 23\n") && !kept.contains("round-vm: setup line 22\n"), "the last 40 lines: {kept}");
         assert!(kept.contains("round-vm: built the round in 12s"), "{kept}");
+    }
+
+    #[test]
+    fn an_over_cap_kind_the_vm_left_reaches_the_results_and_a_stale_one_does_not_survive_the_next_pull() {
+        let fx = fixture();
+        let mut remote = FakeRemote::green();
+        remote.files.insert(REMOTE_RESULTS, vec![(crate::vm_fault::FAULT_KIND_FILE, "over-cap guard=suites-cap cap=900s\n")]);
+        let pulled = fx.cfg.state_dir.join(".pulled-cap-test");
+        let results = fx.cfg.run_dir.join("capped");
+        remote.pull("addr", REMOTE_RESULTS, &pulled).unwrap();
+        keep_top_files(&pulled, &results);
+        let kind = fs::read_to_string(results.join(crate::vm_fault::FAULT_KIND_FILE)).unwrap();
+        assert_eq!(kind, "over-cap guard=suites-cap cap=900s\n");
+        let clean = fx.cfg.state_dir.join(".pulled-clean-test");
+        FakeRemote::green().pull("addr", REMOTE_RESULTS, &clean).unwrap();
+        let _ = fs::remove_file(results.join(crate::vm_fault::FAULT_KIND_FILE));
+        keep_top_files(&clean, &results);
+        assert!(!results.join(crate::vm_fault::FAULT_KIND_FILE).exists());
     }
 
     #[test]

@@ -2033,12 +2033,17 @@ fn wall_complete(wt: &Path, found: &[(String, String)], err: &str) -> bool {
     !found.is_empty() && unjudgeable(wt, found).is_none() && err.contains("UNIT-TESTS: PASS") && err.contains("INTEGRATION-TESTS: PASS")
 }
 
-fn over_cap_why(err: &str, cap: u64) -> String {
-    let line = err
-        .lines()
-        .find_map(|l| l.split("OVER-CAP:").nth(1))
-        .unwrap_or("")
-        .trim();
+const FAULT_KIND_FILE: &str = "round-fault-kind";
+
+/// The detail of an `over-cap` fault kind round-vm recorded in `results`: a pass cut off by a
+/// cap is named by that file, never by what round-vm printed.
+fn over_cap_detail(results: &Path) -> Option<String> {
+    let text = fs::read_to_string(results.join(FAULT_KIND_FILE)).ok()?;
+    Some(text.lines().next()?.strip_prefix("over-cap")?.trim().to_string())
+}
+
+fn over_cap_why(detail: &str, cap: u64) -> String {
+    let line = detail.trim();
     if line.is_empty() {
         format!("the suites and bare lane exceeded the {cap}s cap")
     } else {
@@ -2058,7 +2063,7 @@ fn result_dirs(dir: &Path) -> Vec<PathBuf> {
 
 /// A pass cut off by a cap holds no verdict: testenv's own suite cap ends the batch
 /// `verdict FAULT over-cap`, whatever exit round-vm reports, and round-vm's guard exits 124/137.
-fn batch_over_cap(results: &Path, rc: i32, err: &str) -> bool {
+fn batch_over_cap(results: &Path, rc: i32) -> bool {
     let verdict = result_dirs(results)
         .iter()
         .find_map(|d| fs::read_to_string(d.join("run.events")).ok())
@@ -2068,7 +2073,7 @@ fn batch_over_cap(results: &Path, rc: i32, err: &str) -> bool {
                 .next_back()
                 .map(|v| v.trim().to_string())
         });
-    verdict.as_deref() == Some("FAULT over-cap") || (matches!(rc, 124 | 137) && err.contains("OVER-CAP"))
+    verdict.as_deref() == Some("FAULT over-cap") || (matches!(rc, 124 | 137) && over_cap_detail(results).is_some())
 }
 
 fn suite_cap_s(results: &Path) -> Option<String> {
@@ -3013,12 +3018,12 @@ fn certify_pass(
         let mut found = Vec::new();
         suite_statuses(&results, &mut found, 0);
         ran = found.len();
-        if batch_over_cap(&results, out.rc, &out.err) {
+        let capped = over_cap_detail(&results);
+        if batch_over_cap(&results, out.rc) {
             let unreached = found.iter().filter(|(_, s)| s == "unreached").count();
-            let cut = if out.err.contains("OVER-CAP") {
-                format!(" ({})", over_cap_why(&out.err, c.s.round_wall_secs))
-            } else {
-                String::new()
+            let cut = match &capped {
+                Some(d) => format!(" ({})", over_cap_why(d, c.s.round_wall_secs)),
+                None => String::new(),
             };
             let why = format!("over-cap: FAULT over-cap unreached={unreached}{cut}");
             warn_unrecorded(
@@ -3056,7 +3061,7 @@ fn certify_pass(
                 |f| f.cause.clone(),
             )),
             0 | 1 => unjudgeable(&wt, &found),
-            124 | 137 if !out.err.contains("OVER-CAP") && wall_complete(&wt, &found, &out.err) => None,
+            124 | 137 if capped.is_none() && wall_complete(&wt, &found, &out.err) => None,
             4 if build_env.is_some() => Some(format!(
                 "workspace-build environment failure: {} (template VM {}, recipe_sha {})",
                 build_env.unwrap_or_default(),
@@ -3074,7 +3079,7 @@ fn certify_pass(
                 None
             }
             IMAGE_UNJUDGED if matches!(image, Image::Unjudged(_)) => Some(out.err.clone()),
-            124 | 137 if out.err.contains("OVER-CAP") => Some(over_cap_why(&out.err, c.s.round_wall_secs)),
+            124 | 137 if capped.is_some() => Some(over_cap_why(capped.as_deref().unwrap_or_default(), c.s.round_wall_secs)),
             124 | 137 => Some(format!(
                 "round-vm hung past its guard (guard=hang-guard elapsed={}s cap {}s)",
                 w.clock.now().saturating_sub(began),
