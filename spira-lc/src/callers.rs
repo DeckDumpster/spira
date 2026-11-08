@@ -719,11 +719,6 @@ fn submit_kind(tip: &str) -> String {
 /// unclaimed READY row; a keyed worker pass at another tip stays a refused stale verdict.
 const BRANCH_TIP_DETAIL: &str = "queue-submit";
 
-/// Move the row as close to SUBMITTED-at-<tip> as an event can: WORKING advances by Submit (a
-/// REWORK row has no Submit, so a verdict for a bead that moved on is skipped, not refused),
-/// and a CERTIFIED row at another tip is voided by Submit (the tip invariant, as bead.rs's
-/// own Certified+Submit arm has it). None: the row is unreadable.
-
 fn claim_unheld_ready(m: &mut dyn Machine, id: &str, st: &str, ver: &str, row: &Value, actor: &str) -> Option<(String, String)> {
     if !holds_of(row.get("bead").and_then(|b| b.get("holds"))).is_empty() {
         return Some((st.to_string(), ver.to_string()));
@@ -733,6 +728,10 @@ fn claim_unheld_ready(m: &mut dyn Machine, id: &str, st: &str, ver: &str, row: &
     state_version(m, id).map(|(s, v, _)| (s, v))
 }
 
+/// Move the row as close to SUBMITTED-at-<tip> as an event can: WORKING advances by Submit (a
+/// REWORK row has no Submit, so a verdict for a bead that moved on is skipped, not refused),
+/// and a CERTIFIED row at another tip is voided by Submit (the tip invariant, as bead.rs's
+/// own Certified+Submit arm has it). None: the row is unreadable.
 fn reach_submitted(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str, actor: &str) -> Option<(String, String)> {
     let (mut st, mut ver, row) = state_version(m, id)?;
     if st == "READY" && outcome == "pass" && detail == BRANCH_TIP_DETAIL {
