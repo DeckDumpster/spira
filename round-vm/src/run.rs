@@ -183,7 +183,7 @@ fn round_started_command() -> String {
 
 /// What the host reads of a VM that never began the round. cloud-init's output log and the kernel log, not
 /// the user-data: that carries secrets.
-const BOOT_LOG_COMMAND: &str = "tail -n 200 /var/log/cloud-init-output.log 2>&1; echo '--- kernel log'; dmesg 2>&1 | tail -n 100";
+const BOOT_LOG_COMMAND: &str = "tail -n 200 /var/log/cloud-init-output.log 2>&1; echo '--- kernel log'; (sudo -n dmesg || dmesg) 2>&1 | tail -n 100";
 
 /// Single-quotes `s` for a POSIX shell, so an empty argument survives ssh's re-joining of
 /// the remote command line (the bash lost an empty --suites and shifted every later one).
