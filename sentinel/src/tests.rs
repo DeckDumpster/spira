@@ -1602,3 +1602,45 @@ fn the_store_claim_hel_units_and_mail_are_doors_not_children() {
         .collect();
     assert!(children.is_empty(), "no child for an in-process door: {children:?}");
 }
+
+// A branch label is held only when `bd show --json` carries exactly that label; a longer
+// label that merely starts with it is another branch.
+fn park_with_labels(tag: &str, child_labels: &'static str) -> (FakeRunner, Vec<crate::detect::ParkOutcome>) {
+    let (w, r, sink, clock) = setup(tag);
+    r.on(move |s| {
+        if is_bd(s, "show") && s.args.iter().any(|a| a == "sp-child") {
+            return ok(&format!(r#"[{{"id":"sp-child","status":"open","labels":{child_labels}}}]"#));
+        }
+        if is_bd(s, "show") && s.args.iter().any(|a| a == "sp-root") {
+            return ok(r#"[{"id":"sp-root","status":"open"}]"#);
+        }
+        if is_bd(s, "label") && s.args.get(3).map(String::as_str) == Some("list") {
+            return ok("sp-child labels: branch:spira/sp-root-2\n");
+        }
+        None
+    });
+    let h: &Host = Box::leak(Box::new(test_host(&r, &clock, &sink)));
+    let s = Sentinel::new(h, w.ctx(&[], None), w.declared(&[]), &w.home, Mode::Report, "p".into());
+    let c = crate::detect::Collision {
+        id: "sp-child".into(),
+        repo: "fixture".into(),
+        branch: "spira/sp-root".into(),
+        holder_id: "sp-root".into(),
+        holder_path: "/r/worktree/sp-root".into(),
+    };
+    let out = s.park_branch_collisions(&[c]);
+    (r, out)
+}
+
+#[test]
+fn a_longer_branch_label_is_not_the_inherited_one() {
+    let (r, _) = park_with_labels("park-longer", r#"["branch:spira/sp-root-2"]"#);
+    assert_eq!(r.count(|s| s.prog == "bd" && s.args.iter().any(|a| a == "remove")), 0, "{:#?}", r.lines());
+}
+
+#[test]
+fn the_exact_inherited_branch_label_is_removed() {
+    let (r, out) = park_with_labels("park-exact", r#"["branch:spira/sp-root"]"#);
+    assert_eq!(r.count(|s| s.prog == "bd" && s.args.iter().any(|a| a == "remove") && s.args.iter().any(|a| a == "branch:spira/sp-root")), 1, "{:#?}", r.lines());
+    assert!(matches!(out.first(), Some(crate::detect::ParkOutcome::Unlabeled { .. })), "{out:?}");
+}

@@ -20,6 +20,7 @@ use std::collections::HashSet;
 use crate::model::{parse_beads, Bead};
 use crate::pass::Sentinel;
 use crate::store;
+use spira_config::lc_state;
 
 pub use sentinel::checks::{active_blockers_lc, decide, labeled_claimable};
 
@@ -131,7 +132,7 @@ impl<'a> Sentinel<'a> {
             return;
         };
         for id in ids {
-            if rows.iter().any(|r| r.bead_id == id && r.state == "LANDED") {
+            if rows.iter().any(|r| r.bead_id == id && lc_state::BeadState::from_str(&r.state) == Some(lc_state::BeadState::Landed)) {
                 self.bd().quiet(self.h, &["label", "remove", &id, &label], None);
                 self.lc_unhold(&id, "wait");
                 self.bd().quiet(

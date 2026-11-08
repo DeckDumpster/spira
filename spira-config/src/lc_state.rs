@@ -296,7 +296,8 @@ pub fn index(rows: Vec<Row>) -> HashMap<String, Row> {
 // A decision about a bead's state or holds reads one of these: the machine's own enums, and a
 // `Lookup` whose "cannot tell" is a variant, never a substring of what a call printed.
 
-use lifecycle::bead::{BeadState, DispositionStatus, DwarfPhase, HoldKind};
+pub use lifecycle::bead::BeadState;
+use lifecycle::bead::{DispositionStatus, DwarfPhase, HoldKind};
 
 /// One typed read of one object: the object, the machine's "no such row", or that it could not
 /// tell (unreachable, past its deadline, exit 2, or an answer that does not parse).
