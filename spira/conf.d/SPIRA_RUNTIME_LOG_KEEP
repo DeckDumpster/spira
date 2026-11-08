@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=How many OTLP log files spira-runtime keeps in all, the live file included; older ones are deleted.
+SCHEMA=Count; positive integer (default 4).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_LOG_KEEP:=4}"
+SPIRA_CONF_DEFAULT_EOF

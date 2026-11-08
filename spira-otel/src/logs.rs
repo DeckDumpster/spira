@@ -66,11 +66,54 @@ impl Attr {
 pub struct LogSink {
     dir: PathBuf,
     service: String,
+    cap: Option<Cap>,
+}
+
+#[derive(Clone, Copy)]
+struct Cap {
+    bytes: u64,
+    keep: usize,
 }
 
 impl LogSink {
     pub fn new(dir: impl Into<PathBuf>, service: &str) -> LogSink {
-        LogSink { dir: dir.into(), service: service.to_string() }
+        LogSink { dir: dir.into(), service: service.to_string(), cap: None }
+    }
+
+    /// Rotates the live file once it holds `bytes`, and keeps at most `keep` files of this service in all.
+    pub fn capped(mut self, bytes: u64, keep: usize) -> LogSink {
+        self.cap = Some(Cap { bytes, keep: keep.max(1) });
+        self
+    }
+
+    fn rotate(&self, live: &std::path::Path, cap: Cap) -> std::io::Result<()> {
+        let numbered = |n: usize| PathBuf::from(format!("{}.{n}", live.display()));
+        let len = fs::metadata(live).map(|m| m.len());
+        if len.as_ref().is_ok_and(|n| *n < cap.bytes) {
+            return Ok(());
+        }
+        if len.is_ok() {
+            for n in (1..cap.keep).rev() {
+                if numbered(n).exists() {
+                    fs::rename(numbered(n), numbered(n + 1))?;
+                }
+            }
+            fs::rename(live, numbered(1))?;
+        }
+        let prefix = format!("{}.logs.", self.service);
+        let mut files: Vec<_> = fs::read_dir(&self.dir)?
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let (day, n) = name.strip_prefix(&prefix)?.split_once(".jsonl")?;
+                Some((std::cmp::Reverse(day.to_string()), n.trim_start_matches('.').parse::<usize>().unwrap_or(0), e.path()))
+            })
+            .collect();
+        files.sort();
+        for (_, _, old) in files.into_iter().skip(cap.keep - 1) {
+            let _ = fs::remove_file(old);
+        }
+        Ok(())
     }
 
     /// Moves the writes to one thread behind a queue of `cap` records.
@@ -92,7 +135,7 @@ impl LogSink {
         if spawned.is_err() {
             QUEUE_DROPPED.fetch_add(1, Ordering::Relaxed);
         }
-        LogQueue { tx }
+        LogQueue { tx, writer: spawned.ok() }
     }
 
     /// Appends one record; a failure is counted, never returned.
@@ -107,6 +150,9 @@ impl LogSink {
         line.push(b'\n');
         fs::create_dir_all(&self.dir)?;
         let path = self.dir.join(format!("{}.logs.{}.jsonl", self.service, crate::utc_date(now)));
+        if let Some(cap) = self.cap {
+            self.rotate(&path, cap)?;
+        }
         let mut f = OpenOptions::new().create(true).append(true).open(path)?;
         crate::append_locked(&mut f, &line)
     }
@@ -134,9 +180,18 @@ impl LogSink {
 /// A `LogSink` behind a bounded queue: `emit` never blocks, and a record it cannot take is counted.
 pub struct LogQueue {
     tx: SyncSender<(String, Vec<(String, Attr)>)>,
+    writer: Option<std::thread::JoinHandle<()>>,
 }
 
 impl LogQueue {
+    /// Stops taking records and returns once every queued one is written.
+    pub fn close(self) {
+        drop(self.tx);
+        if let Some(w) = self.writer {
+            let _ = w.join();
+        }
+    }
+
     pub fn emit(&self, body: &str, attrs: &[(String, Attr)]) {
         if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) = self.tx.try_send((body.into(), attrs.to_vec())) {
             QUEUE_DROPPED.fetch_add(1, Ordering::Relaxed);
@@ -189,5 +244,50 @@ mod tests {
         assert_eq!(get("c")["arrayValue"]["values"][0]["stringValue"], "x");
         assert_eq!(get("e")["boolValue"], true);
         assert!(read_all(d.path(), "other").is_empty(), "positive control: another service reads nothing");
+    }
+
+    fn files(d: &std::path::Path) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn the_live_file_rotates_at_the_cap_and_only_keep_files_remain() {
+        let d = testkit::TempDir::new("otel-logs-cap");
+        let s = LogSink::new(d.path(), "svc").capped(600, 3);
+        let now = SystemTime::now();
+        let line = s.request("x", &[], now);
+        let one = serde_json::to_vec(&line).unwrap().len() as u64 + 1;
+        assert!(one < 600 && one * 2 >= 600 - one, "a record is a fraction of the cap");
+        for _ in 0..40 {
+            s.write("x", &[], now).unwrap();
+        }
+        let day = crate::utc_date(now);
+        assert_eq!(files(d.path()), vec![format!("svc.logs.{day}.jsonl"), format!("svc.logs.{day}.jsonl.1"), format!("svc.logs.{day}.jsonl.2")]);
+        for f in files(d.path()) {
+            assert!(fs::metadata(d.path().join(f)).unwrap().len() < 600 + one, "no file passes the cap by more than a record");
+        }
+    }
+
+    #[test]
+    fn a_new_days_file_pushes_the_oldest_files_out_of_the_keep_count() {
+        let d = testkit::TempDir::new("otel-logs-days");
+        for f in ["svc.logs.2000-01-01.jsonl", "svc.logs.2000-01-01.jsonl.1", "svc.logs.1999-12-31.jsonl", "other.logs.1999-01-01.jsonl"] {
+            fs::write(d.path().join(f), "x\n").unwrap();
+        }
+        LogSink::new(d.path(), "svc").capped(1 << 20, 2).write("x", &[], SystemTime::now()).unwrap();
+        let day = crate::utc_date(SystemTime::now());
+        assert_eq!(files(d.path()), vec!["other.logs.1999-01-01.jsonl".to_string(), "svc.logs.2000-01-01.jsonl".to_string(), format!("svc.logs.{day}.jsonl")]);
+    }
+
+    #[test]
+    fn an_uncapped_sink_never_rotates() {
+        let d = testkit::TempDir::new("otel-logs-uncapped");
+        let s = LogSink::new(d.path(), "svc");
+        for _ in 0..40 {
+            s.write("x", &[], SystemTime::now()).unwrap();
+        }
+        assert_eq!(files(d.path()).len(), 1);
     }
 }

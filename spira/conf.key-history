@@ -712,3 +712,6 @@ throughput_ratio_min_pct
 throughput_ratio_min_runs
 throughput_passed_grace
 dolt_tmp_pressure_pct
+runtime_log_cap_mb
+runtime_log_debug
+runtime_log_keep

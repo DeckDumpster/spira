@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Size at which spira-runtime's live OTLP log file is rotated.
+SCHEMA=Megabytes; positive integer (default 32).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_LOG_CAP_MB:=32}"
+SPIRA_CONF_DEFAULT_EOF
