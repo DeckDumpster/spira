@@ -489,6 +489,9 @@ pub struct Leg {
     pub unit: String,
     #[serde(default)]
     pub head: String,
+    /// The suites a red certify named, for the abandon to keep their evidence.
+    #[serde(default)]
+    pub reds: Vec<String>,
 }
 
 impl Leg {
@@ -606,6 +609,13 @@ pub fn digest(s: &str) -> String {
 /// The unit key of a leg: repo, round, what, run. Parsed back from `unit.ran` by `key_for`.
 pub fn unit_key(repo: &str, round: &str, what: &str, run: u32) -> String {
     format!("{repo}.{}.{what}{run}", &digest(round)[..12])
+}
+
+/// The verdict line and the red suites a `queue round certify` leg printed.
+pub fn certify_red_evidence(out: &str) -> (Option<String>, Vec<String>) {
+    let verdict = out.lines().rev().find(|l| l.contains(" is RED at ")).map(|l| l.trim().to_string());
+    let reds = out.lines().rev().find_map(|l| l.strip_prefix("red=")).map(|r| r.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()).unwrap_or_default();
+    (verdict, reds)
 }
 
 pub fn green(exit: Exit) -> bool {
@@ -744,8 +754,12 @@ impl Machine<'_> {
     }
 
     fn abandon(&mut self, why: &str) {
+        self.abandon_naming(why, Vec::new());
+    }
+
+    fn abandon_naming(&mut self, why: &str, reds: Vec<String>) {
         if self.rc.batch.is_some() {
-            let leg = Leg { why: why.to_string(), key: format!("{}:{}", self.repo, self.rc.batch.clone().unwrap_or_default()), ..self.leg() };
+            let leg = Leg { why: why.to_string(), reds, key: format!("{}:{}", self.repo, self.rc.batch.clone().unwrap_or_default()), ..self.leg() };
             self.acts.push(leg.act(ABANDON));
         }
     }
@@ -776,7 +790,11 @@ impl Machine<'_> {
     }
 
     fn red(&mut self, why: &str) {
-        self.abandon(why);
+        self.red_naming(why, Vec::new());
+    }
+
+    fn red_naming(&mut self, why: &str, reds: Vec<String>) {
+        self.abandon_naming(why, reds);
         self.finish(pace::Outcome::Red, why);
     }
 
@@ -954,7 +972,13 @@ impl Machine<'_> {
                     let leg = Leg { why: output.trim().to_string(), key: format!("{}:{}:guilty", self.repo, self.rc.batch.clone().unwrap_or_default()), ..self.leg() };
                     self.acts.push(leg.act(EJECT));
                 }
-                self.red("queue round certify judged the round red");
+                let (verdict, reds) = certify_red_evidence(out);
+                let why = match (&verdict, reds.is_empty()) {
+                    (Some(v), _) => format!("queue round certify judged the round red: {v}"),
+                    (None, false) => format!("queue round certify judged the round red: {}", reds.join(",")),
+                    (None, true) => "queue round certify judged the round red (its output named no verdict and no suite)".into(),
+                };
+                self.red_naming(&why, reds);
             }
             _ => {}
         }
@@ -1609,8 +1633,9 @@ pub mod edge {
 
     pub fn abandon(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
-        io::round_abandon(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.why, "red");
-        io::write_local_verdict(&env, &leg.repo, "red", &leg.why);
+        let why = io::keep_red_evidence(&env.run, &leg.batch, &leg.why, &leg.reds);
+        io::round_abandon(&env, &repo_of(&env, &leg)?, &leg.batch, &why, "red");
+        io::write_local_verdict(&env, &leg.repo, "red", &why);
         Ok("{}".into())
     }
 

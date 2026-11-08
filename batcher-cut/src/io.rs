@@ -1308,6 +1308,25 @@ pub fn suite_first_fail(results_dir: &Path, suite: &str) -> Option<String> {
     first_fail_line(&fs::read_to_string(locate(results_dir, suite, "out")?).ok()?)
 }
 
+/// Each red suite with the first FAIL line of its output in the round's results, written to
+/// `<run>/rounds/<batch>.results/red-evidence` and appended to `why`, so an abandoned red round
+/// can be attributed afterwards (law-a-failure-carries-its-own-explanation).
+pub fn keep_red_evidence(run: &Path, batch: &str, why: &str, reds: &[String]) -> String {
+    if reds.is_empty() || batch.is_empty() {
+        return why.to_string();
+    }
+    let results = run.join("rounds").join(format!("{batch}.results"));
+    let lines: Vec<String> = reds
+        .iter()
+        .map(|s| format!("{s}: {}", suite_first_fail(&results, s).unwrap_or_else(|| "(no FAIL line in its output)".into())))
+        .collect();
+    let evidence = format!("{why}\n{}\n", lines.join("\n"));
+    if fs::create_dir_all(&results).is_ok() {
+        let _ = fs::write(results.join("red-evidence"), &evidence);
+    }
+    evidence.trim_end().to_string()
+}
+
 /// The incident key for a local red: a bounded identity plus a short hash of the full reason,
 /// because external_ref is a fixed-width column and the reason carries command and error text.
 pub fn local_red_ref(repo: &str, suites: &[String], reason: &str) -> String {
@@ -2652,6 +2671,22 @@ mod sifted_state_tests {
 #[cfg(test)]
 mod fail_line_tests {
     use super::*;
+
+    #[test]
+    fn a_red_rounds_suites_and_first_fail_lines_are_kept_on_disk_and_in_the_reason() {
+        let run = testkit::TempDir::new("batcher-cut-red-evidence");
+        let results = run.path().join("rounds").join("b1.results");
+        fs::create_dir_all(&results).unwrap();
+        fs::write(results.join("test-a.sh.out"), "ok 1\nFAIL: a broke\nFAIL: later\n").unwrap();
+        fs::write(results.join("test-b.sh.out"), "not ok 2 - b broke\n").unwrap();
+        let reds = vec!["test-a.sh".to_string(), "test-b.sh".to_string()];
+        let why = keep_red_evidence(run.path(), "b1", "judged red: VERDICT", &reds);
+        let kept = fs::read_to_string(results.join("red-evidence")).unwrap();
+        for text in [&why, &kept] {
+            assert!(text.contains("judged red: VERDICT") && text.contains("test-a.sh: FAIL: a broke") && text.contains("test-b.sh: not ok 2 - b broke"), "{text}");
+            assert!(!text.contains("later"), "{text}");
+        }
+    }
 
     #[test]
     fn the_first_fail_line_is_found_and_absence_is_none() {
