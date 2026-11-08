@@ -863,6 +863,11 @@ mod tests {
         assert!(dl.starts_with("**This session is killed at 10:00:00 UTC — 600 seconds from now.**"));
         assert!(dl.ends_with("    echo $(( 1000600 - $(date +%s) ))"));
         assert!(deadline_brief(Some(5), 0, None).contains("killed at epoch 5 —"));
+        assert!(deadline_brief(None, 0, None).starts_with("**This session has no wall-clock deadline.**"));
+    }
+
+    #[test]
+    fn a_call_on_an_old_incident_gets_a_positive_wall_from_its_own_start() {
         let incident_first_seen = 1_000_000 - 6 * 86_400;
         let call_start = 1_000_000;
         let at = call_deadline(Some(480), call_start);
@@ -871,7 +876,6 @@ mod tests {
         assert!(spent_wall(call_deadline(Some(480), incident_first_seen), call_start).unwrap().contains("already spent"));
         assert!(spent_wall(call_deadline(Some(0), call_start), call_start).is_some());
         assert_eq!(spent_wall(None, call_start), None);
-        assert!(deadline_brief(None, 0, None).starts_with("**This session has no wall-clock deadline.**"));
     }
 
     #[test]
