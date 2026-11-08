@@ -242,7 +242,15 @@ pub struct BootRetry {
 
 impl Default for BootRetry {
     fn default() -> Self {
-        BootRetry { first_ms: 250, bound_ms: 60_000, store: "the journal store".into(), sleep: Arc::new(|ms| std::thread::sleep(std::time::Duration::from_millis(ms))) }
+        BootRetry {
+            first_ms: 250,
+            bound_ms: 60_000,
+            store: "the journal store".into(),
+            sleep: Arc::new(|ms| {
+                // loop-safe: open runs at boot, before any turn; waits-on: the journal store's next answer; cap BootRetry::bound_ms
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+            }),
+        }
     }
 }
 
@@ -251,7 +259,7 @@ impl BootRetry {
         let (mut wait, mut waited) = (self.first_ms, 0);
         loop {
             match ask() {
-                Err(e) if !e.is_refused() && e.0.starts_with("cannot tell") => {
+                Err(e) if e.is_cannot_tell() => {
                     if waited + wait > self.bound_ms {
                         return Err(RuntimeError::new(format!("{}: still cannot tell after {waited} ms of retries: {}", self.store, e.0)));
                     }

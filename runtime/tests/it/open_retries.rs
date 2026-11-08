@@ -25,7 +25,7 @@ impl Unsure {
             return Err(if self.refuse {
                 RuntimeError::refused("journal: no")
             } else {
-                RuntimeError::new("cannot tell: spira-lc took the journal request but its reply was lost (no reply)")
+                RuntimeError::cannot_tell("cannot tell: spira-lc took the journal request but its reply was lost (no reply)")
             });
         }
         Ok(())
