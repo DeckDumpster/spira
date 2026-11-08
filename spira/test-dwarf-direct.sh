@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-dwarf-summon.sh — `dwarf summon <rune> <bead> --by <who> --reason <why>` starts the
+# test-dwarf-direct.sh — `dwarf direct <rune> <bead> --by <who> --reason <why>` starts the
 #   sentinel's own dwarf on one named bead, outside the caps and the world's state.
 #
 # THE PROPERTY UNDER TEST. A scheduler that cannot schedule its own fix still needs a build
@@ -11,7 +11,7 @@
 # event's kind verbatim.
 #
 # EVERY CASE IS A PAIR (law-absence-needs-a-positive-control): the ordinary call declines
-# under the same halt that the summons walks through.
+# under the same halt that the directs walks through.
 #
 # defect: sp-8mbnup
 # tier: T2
@@ -22,13 +22,13 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 tl_config SPIRA_TEST_CASE_DEADLINE=120
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
-echo "test-dwarf-summon.sh"
+echo "test-dwarf-direct.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
-testdb_require test-dwarf-summon
+testdb_require test-dwarf-direct
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up dwarfsummon || { echo "test-dwarf-summon: could not build a fixture database"; exit 1; }
+testdb_up dwarfdirect || { echo "test-dwarf-direct: could not build a fixture database"; exit 1; }
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
@@ -63,7 +63,7 @@ chmod +x "$BIN/claude"
 dwarf_fixture_agent "$BIN/claude"
 tl_config SPIRA_AGENT="$SPIRA_AGENT"
 lc_dwarf_mirror "$TMP/lc"; export PATH="$TMP/lc:$BIN:$PATH"
-command -v dwarf >/dev/null 2>&1 || { echo "test-dwarf-summon: dwarf is not on PATH" >&2; exit 1; }
+command -v dwarf >/dev/null 2>&1 || { echo "test-dwarf-direct: dwarf is not on PATH" >&2; exit 1; }
 
 # The unit call: what systemd-run does with the argv the dwarf builds — record the unit name,
 # apply the --setenv pairs (the suite keeps its own PATH and release), run the command.
@@ -84,7 +84,7 @@ export SPIRA_CALL="$BIN/fake-systemd-run"
 
 # slay's own behaviour (keep-work, the branch, the row) is test-slay.sh's; its seam resolves
 # spira-lc from the release, out of this suite's reach. This one stops the pid the pidfile
-# names, releases the stand-in's row and records the arguments the summons called it with.
+# names, releases the stand-in's row and records the arguments the directs called it with.
 cat > "$BIN/slay" <<'SLAY'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TMP/slay-args"
@@ -98,17 +98,17 @@ seed() {
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' "$1" "$_lbl" | testdb_seed
 }
-summon() {   # summon <bead> <dwarf summon flags...>
+direct() {   # direct <bead> <dwarf direct flags...>
     local id="$1"; shift
     rm -rf "$SPIRA_RUN/worktree"
-    SPIRA_RELEASE="$(tl_release)" dwarf --home "$SPIRA_HOME" summon builder "$id" "$@" > "$TMP/out" 2>&1
+    SPIRA_RELEASE="$(tl_release)" dwarf --home "$SPIRA_HOME" direct builder "$id" "$@" > "$TMP/out" 2>&1
 }
 ordinary() { rm -rf "$SPIRA_RUN/worktree"; SPIRA_RELEASE="$(tl_release)" dwarf --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 claim_kind() { grep "^$1 " "$SPIRA_RUN/lc-claim-kinds.log" 2>/dev/null | tail -1 | cut -d' ' -f2-; }
 
 # ===========================================================================================
 echo
-echo "a halted world: the ordinary call claims nothing, the summons claims the named bead"
+echo "a halted world: the ordinary call claims nothing, the directs claims the named bead"
 # ===========================================================================================
 testdb_reset; seed sp-sm-halt
 : > "$SPIRA_RUN/world.halted"
@@ -117,8 +117,8 @@ want "positive control: the ordinary call declines when halted" "halted" "$(cat 
 is   "positive control: and claims nothing" "" "$(claim_kind sp-sm-halt)"
 
 : > "$TMP/units"
-summon sp-sm-halt --by concierge --reason "loop fix"
-want "the summons claims the named bead with the world halted" "claimed sp-sm-halt" "$(cat "$TMP/out")"
+direct sp-sm-halt --by concierge --reason "loop fix"
+want "the directs claims the named bead with the world halted" "claimed sp-sm-halt" "$(cat "$TMP/out")"
 want "the claim event carries the requester" '"by":"concierge"' "$(claim_kind sp-sm-halt)"
 want "the claim event carries the reason" '"reason":"loop fix"' "$(claim_kind sp-sm-halt)"
 want "no previous holder when none held it" '"previous_holder":null' "$(claim_kind sp-sm-halt)"
@@ -126,14 +126,14 @@ rm -f "$SPIRA_RUN/world.halted"
 
 # ===========================================================================================
 echo
-echo "the summoned unit takes no pool slot"
+echo "the directed unit takes no pool slot"
 # ===========================================================================================
 unit="$(tail -1 "$TMP/units")"
-want "the unit is named as a summoned dwarf of the rune" "spira-dwarf-builder-summoned-" "$unit"
+want "the unit is named as a directed dwarf of the rune" "spira-dwarf-builder-directed-" "$unit"
 testdb_reset; seed sp-sm-plain
 : > "$TMP/units"
 ordinary
-is "positive control: an ordinary call's claim carries no summons" '"summoned":null' "$(claim_kind sp-sm-plain | grep -o '"summoned":null')"
+is "positive control: an ordinary call's claim carries no directs" '"directed":null' "$(claim_kind sp-sm-plain | grep -o '"directed":null')"
 
 # ===========================================================================================
 echo
@@ -149,22 +149,22 @@ mkdir -p "$SPIRA_RUN/lc-claim"; printf 'dwarf-old@1.1' > "$SPIRA_RUN/lc-claim/sp
 ( sleep 300 & echo $! > "$SPIRA_RUN/dwarf-builder-sp-sm-held.pid" )
 OLDPID="$(cat "$SPIRA_RUN/dwarf-builder-sp-sm-held.pid")"
 is "positive control: the old dwarf is alive" yes "$([ -d "/proc/$OLDPID" ] && echo yes || echo no)"
-summon sp-sm-held --by concierge --reason "take it over"
+direct sp-sm-held --by concierge --reason "take it over"
 for _ in 1 2 3 4 5; do [ -d "/proc/$OLDPID" ] || break; sleep 1; done
 is   "the held dwarf is stopped" no "$([ -d "/proc/$OLDPID" ] && echo yes || echo no)"
 is   "its branch tip is still in the branch" 0 "$(git -C "$REPO" merge-base --is-ancestor "$OLDTIP" spira/sp-sm-held; echo $?)"
-is   "slay was called with the work kept and the requester in the why" "--bead sp-sm-held --keep-work --why summoned by concierge: take it over" "$(cat "$TMP/slay-args")"
-want "the summoned dwarf claimed on that bead" "claimed sp-sm-held" "$(cat "$TMP/out")"
+is   "slay was called with the work kept and the requester in the why" "--bead sp-sm-held --keep-work --why directed by concierge: take it over" "$(cat "$TMP/slay-args")"
+want "the directed dwarf claimed on that bead" "claimed sp-sm-held" "$(cat "$TMP/out")"
 want "the claim names the requester" '"by":"concierge"' "$(claim_kind sp-sm-held)"
 want "the claim names the reason" '"reason":"take it over"' "$(claim_kind sp-sm-held)"
 want "the claim names the dwarf it replaced" '"previous_holder":"dwarf-old@1.1"' "$(claim_kind sp-sm-held)"
 
 # ===========================================================================================
 echo
-echo "a summons without its requester and reason is refused before anything runs"
+echo "a directs without its requester and reason is refused before anything runs"
 # ===========================================================================================
 testdb_reset; seed sp-sm-bare
-summon sp-sm-bare
+direct sp-sm-bare
 wantrc "no requester: exit 1" 1 $?
 is "and nothing was claimed" "" "$(claim_kind sp-sm-bare)"
 

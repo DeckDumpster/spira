@@ -140,12 +140,12 @@ forge refuses a second open PR from this installation on a repo; a deliberate se
 `QUEUE_SECOND_PR_CONSIDERED="<why>"` in the environment, and the forge logs the reason.
 
 **The break-glass build path is a dwarf.** When the loop cannot build its own fix (the world is
-halted or drained, the caps are full, the scheduler is the bug), summon a real dwarf onto that one
-bead: `dwarf summon <rune> <bead-id> --by concierge --reason "<why the normal path was bypassed>"`.
+halted or drained, the caps are full, the scheduler is the bug), direct a real dwarf onto that one
+bead: `dwarf direct <rune> <bead-id> --by concierge --reason "<why the normal path was bypassed>"`.
 It runs with the rune prompt, hooks, fences, build-directory lease and `work submit` of any
-dwarf, outside `max_live_dwarves` and the lanes, and the cockpit shows it as summoned. A bead a
+dwarf, outside `max_live_dwarves` and the lanes, and the cockpit shows it as directed. A bead a
 dwarf holds is taken over: that dwarf is stopped with its branch and worktree kept, and the
-summoned dwarf continues on the same branch. The claim event records you, the reason and the
+directed dwarf continues on the same branch. The claim event records you, the reason and the
 dwarf it replaced. When it reaches SUBMITTED, drive it with `queue round open --members`, certify
 and land as for any bead.
 

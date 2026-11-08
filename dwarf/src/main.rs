@@ -33,8 +33,8 @@ pub struct Cli {
     /// `--dry-run` after `--escape <rune>`: passed through to the called dwarf, not a
     /// dry run of the escape decision itself.
     pub escape_dry_run: bool,
-    /// `summon <rune> <bead> --by --reason`: start a dwarf onto a named bead (summon.rs).
-    pub summon: Option<dwarf::summon::Request>,
+    /// `direct <rune> <bead> --by --reason`: start a dwarf onto a named bead (direct.rs).
+    pub direct: Option<dwarf::direct::Request>,
 }
 
 pub fn parse(args: &[String]) -> Result<Cli, String> {
@@ -52,16 +52,16 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         let escape_usage = "usage: dwarf --escape <rune> [--dry-run]".to_string();
         let rune = a.get(1).cloned().filter(|f| !f.is_empty()).ok_or(escape_usage)?;
         let escape_dry_run = a.get(2).map(|s| s.as_str()) == Some("--dry-run");
-        return Ok(Cli { home, rune, mode: Mode::Claim, prompt_from_stdin: false, escape: true, escape_dry_run, summon: None });
+        return Ok(Cli { home, rune, mode: Mode::Claim, prompt_from_stdin: false, escape: true, escape_dry_run, direct: None });
     }
-    if a.first().map(String::as_str) == Some("summon") {
-        let req = dwarf::summon::parse_request(&a[1..])?;
-        return Ok(Cli { home, rune: req.rune.clone(), mode: Mode::Claim, prompt_from_stdin: false, escape: false, escape_dry_run: false, summon: Some(req) });
+    if a.first().map(String::as_str) == Some("direct") {
+        let req = dwarf::direct::parse_request(&a[1..])?;
+        return Ok(Cli { home, rune: req.rune.clone(), mode: Mode::Claim, prompt_from_stdin: false, escape: false, escape_dry_run: false, direct: Some(req) });
     }
     let rune = a.first().cloned().filter(|f| !f.is_empty()).ok_or_else(|| usage.clone())?;
     let (mut mode, mut stdin) = (Mode::Claim, false);
     match a.get(1).map(|s| s.as_str()) {
-        Some("--summoned") => mode = Mode::Summoned(dwarf::summon::parse_summoned(&a[1..])?),
+        Some("--directed") => mode = Mode::Directed(dwarf::direct::parse_directed(&a[1..])?),
         Some("--dry-run") => mode = Mode::DryRun,
         Some("--sweep") => {
             let prompt = match a.get(2).map(|s| s.as_str()) {
@@ -83,7 +83,7 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         }
         _ => {}
     }
-    Ok(Cli { home, rune, mode, prompt_from_stdin: stdin, escape: false, escape_dry_run: false, summon: None })
+    Ok(Cli { home, rune, mode, prompt_from_stdin: stdin, escape: false, escape_dry_run: false, direct: None })
 }
 
 /// `dwarf capacity <verb> ...` (wave 4.26): no rune, so this resolves config without the
@@ -230,13 +230,13 @@ fn main() {
         let rc = dwarf::escape::run(&seam, &exec, &env, &sink, &conf, &call_bin, &home, &cli.rune, cli.escape_dry_run, util::now_epoch());
         { let code = rc; spira_otel::run::finish(code); std::process::exit(code) };
     }
-    if let Some(req) = &cli.summon {
+    if let Some(req) = &cli.direct {
         let exec = RealExec { env: &env, timeout: None };
         let call_argv: Vec<String> = dwarf::ports::Seam::call(&seam, "_dwarf_call_argv", &[]).stdout.lines().map(String::from).collect();
         let path = env.child().get("PATH").cloned().unwrap_or_default();
         let dwarf_path = dwarf::escape::find_on_path(&path, "dwarf", dwarf::escape::is_executable);
         let call_bin = original.get("SPIRA_CALL").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemd-run".to_string());
-        let rc = dwarf::summon::run(&exec, &StdSink, req, &home, dwarf_path.as_deref(), &call_bin, &call_argv, util::now_epoch());
+        let rc = dwarf::direct::run(&exec, &StdSink, req, &home, dwarf_path.as_deref(), &call_bin, &call_argv, util::now_epoch());
         { let code = rc; spira_otel::run::finish(code); std::process::exit(code) };
     }
     let bd = BdCli {
@@ -279,8 +279,8 @@ fn main() {
 fn operation_of(args: &[String]) -> String {
     match args.first().map(String::as_str) {
         Some(c @ ("dwarf-named" | "fast-tier" | "stop" | "capacity")) => c.to_string(),
-        Some("summon") => "summon".into(),
-        _ if args.iter().any(|a| a == "--summoned") => "summoned".into(),
+        Some("direct") => "direct".into(),
+        _ if args.iter().any(|a| a == "--directed") => "directed".into(),
         _ if args.iter().any(|a| a == "--escape") => "escape".into(),
         _ if args.iter().any(|a| a == "--sweep") => "sweep".into(),
         _ if args.iter().any(|a| a == "--dry-run") => "dry-run".into(),
@@ -332,14 +332,14 @@ mod tests {
     }
 
     #[test]
-    fn summon_grammar() {
-        let c = parse(&a(&["--home", "/h", "summon", "builder", "sp-x", "--by", "concierge", "--reason", "loop fix"])).unwrap();
+    fn direct_grammar() {
+        let c = parse(&a(&["--home", "/h", "direct", "builder", "sp-x", "--by", "concierge", "--reason", "loop fix"])).unwrap();
         assert_eq!((c.rune.as_str(), c.home.as_deref(), c.escape), ("builder", Some("/h"), false));
-        assert_eq!(c.summon.map(|r| r.bead), Some("sp-x".to_string()));
-        assert!(parse(&a(&["summon", "builder", "sp-x"])).is_err(), "a summons without its requester and reason is refused");
-        let c = parse(&a(&["builder", "--summoned", "sp-x", "--by", "concierge", "--reason", "r", "--replaced", "dwarf-old"])).unwrap();
-        assert!(matches!(&c.mode, Mode::Summoned(s) if s.bead == "sp-x" && s.replaced.as_deref() == Some("dwarf-old")));
-        assert_eq!(operation_of(&a(&["summon", "builder", "sp-x"])), "summon");
+        assert_eq!(c.direct.map(|r| r.bead), Some("sp-x".to_string()));
+        assert!(parse(&a(&["direct", "builder", "sp-x"])).is_err(), "a directs without its requester and reason is refused");
+        let c = parse(&a(&["builder", "--directed", "sp-x", "--by", "concierge", "--reason", "r", "--replaced", "dwarf-old"])).unwrap();
+        assert!(matches!(&c.mode, Mode::Directed(s) if s.bead == "sp-x" && s.replaced.as_deref() == Some("dwarf-old")));
+        assert_eq!(operation_of(&a(&["direct", "builder", "sp-x"])), "direct");
     }
 
     #[test]

@@ -192,16 +192,16 @@ fn sp_bpnmzg_dwarves_sh_and_sentinel_call_count_the_same_units() {
     assert_eq!((sh, call), (5, 5), "dwarves.sh {sh} and sentinel-call {call} must both count the 5 live dwarves (3 scheduler-started, 2 by name)");
 }
 
-/// A dwarf summoned onto a named bead runs outside the caps: the fleet the scheduler reads back
+/// A dwarf directed onto a named bead runs outside the caps: the fleet the scheduler reads back
 /// leaves it out, so a full fleet still reads full and an empty one still reads empty.
 #[test]
-fn sp_8mbnup_a_summoned_dwarf_takes_no_slot_in_the_fleet_ceiling() {
+fn sp_8mbnup_a_directed_dwarf_takes_no_slot_in_the_fleet_ceiling() {
     let (_clock, u) = manager(1_000_000);
     let facts = |state| UnitFacts { state, main_pid: Some(7), exit: None, since_ms: Some(1) };
     let roster = vec!["builder".to_string()];
     u.install("spira-dwarf-builder-1794006550.service", facts(UnitState::Active));
     let before = fleet(&u, &roster, &|r: &str| r.to_string()).unwrap().total();
-    u.install(&format!("{}.service", units::summoned_unit_stem("builder", 1794006551)), facts(UnitState::Active));
+    u.install(&format!("{}.service", units::directed_unit_stem("builder", 1794006551)), facts(UnitState::Active));
     let after = fleet(&u, &roster, &|r: &str| r.to_string()).unwrap();
-    assert_eq!((before, after.total()), (1, 1), "one ordinary dwarf counts, the summoned one beside it does not: {after:?}");
+    assert_eq!((before, after.total()), (1, 1), "one ordinary dwarf counts, the directed one beside it does not: {after:?}");
 }

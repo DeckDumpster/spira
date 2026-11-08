@@ -206,7 +206,7 @@ which runs `spira-lint` by name: a fresh worktree commits with no build of its o
 |---|---|---|
 | `spira/lib.sh` `call_rune` | 2726-2730 | `systemd-run --user --collect --quiet --unit=spira-dwarf-$f-<ts> <call_argv> [--setenv=SPIRA_REQUIRE_LABEL=…] "$SPIRA_HOME/dwarf.sh" "$f"` |
 | `dwarf --escape <rune>` (this binary, `escape.rs`; was `spira/escape.sh`) | — | same shape, unit `spira-dwarf-$RUNE-escape-<ts>`, `[--dry-run]` |
-| `dwarf summon <rune> <bead> --by --reason` (`summon.rs`) | — | unit `spira-dwarf-$RUNE-summoned-<ts>` running `dwarf <rune> --summoned <bead> …`; no ready set, caps or world gate; counted by no cap (`runtime::units::counts_toward_caps`) |
+| `dwarf direct <rune> <bead> --by --reason` (`direct.rs`) | — | unit `spira-dwarf-$RUNE-directed-<ts>` running `dwarf <rune> --directed <bead> …`; no ready set, caps or world gate; counted by no cap (`runtime::units::counts_toward_caps`) |
 | `systemd/spira-ops.service` | 46 | `exec @SPIRA_PROD@/dwarf.sh ops --sweep --prompt - < @SPIRA_RUN@/ops-sweep-prompt.txt` |
 | `spira/lib.sh` `dwarf_alive` | 822 | identifies a live dwarf by `dwarf.sh` in `/proc/<pid>/cmdline` |
 | `install.sh` `_conflict_dwarf` | 246 | refuses install while a process cmdline is `<home>/dwarf.sh` |

@@ -185,7 +185,7 @@ fn sentinel_unit_start(w: &World, input: &str) -> Result<String, String> {
     let unit = units::unit_name(sc::NAME, &start.key).map_err(|e| e.0)?;
     let mut lc = w.lc();
     let bead = lc.in_state(BeadState::Ready).first().map(|r| r.bead_id.clone()).ok_or("the dwarf found nothing ready")?;
-    lc.apply(now, &bead, &unit, BeadEventKind::Claim { holder: unit.clone(), lease_until: ((now + DWARF_MS) / 1000) as i64 + 600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, summoned: None })?;
+    lc.apply(now, &bead, &unit, BeadEventKind::Claim { holder: unit.clone(), lease_until: ((now + DWARF_MS) / 1000) as i64 + 600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None })?;
     lc.due.push((now + DWARF_MS - 1, Due::Event { bead: bead.clone(), actor: unit.clone(), kind: BeadEventKind::Submit { tip: tip_of(&bead) } }));
     lc.dwarves.insert(unit, now + DWARF_MS);
     drop(lc);

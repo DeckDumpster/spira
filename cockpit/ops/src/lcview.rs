@@ -1447,7 +1447,7 @@ pub fn view(s: &Snapshot) -> View {
             v.now_items = live
                 .iter()
                 .map(|a| {
-                    let mark = if runtime::units::is_summoned(&a.unit) { "summoned · " } else { "" };
+                    let mark = if runtime::units::is_directed(&a.unit) { "directed · " } else { "" };
                     let phase = format!("{mark}{} {}", a.phase, age(s.now - a.started));
                     match s.rows.iter().find(|r| r.holder.as_deref().and_then(holder_pid) == Some(a.pid)) {
                         Some(r) => {
@@ -2079,13 +2079,13 @@ mod tests {
     }
 
     #[test]
-    fn sp_8mbnup_a_summoned_dwarf_shows_as_summoned_with_its_bead() {
+    fn sp_8mbnup_a_directed_dwarf_shows_as_directed_with_its_bead() {
         let mut w = row("sp-w", "WORKING", 99_000);
         w.holder = Some("dwarf-dvalin@111.5".into());
         let mut s = snap(vec![w]);
-        s.live = Some(vec![LiveDwarf { unit: "spira-dwarf-builder-summoned-1794009721.service".into(), pid: 111, started: 99_000, phase: "session".into() }]);
+        s.live = Some(vec![LiveDwarf { unit: "spira-dwarf-builder-directed-1794009721.service".into(), pid: 111, started: 99_000, phase: "session".into() }]);
         let v = view(&s);
-        assert!(v.now_items[0].note.starts_with("summoned · session"), "{:?}", v.now_items[0].note);
+        assert!(v.now_items[0].note.starts_with("directed · session"), "{:?}", v.now_items[0].note);
         s.live = Some(vec![LiveDwarf { unit: "spira-dwarf-builder-1.service".into(), pid: 111, started: 99_000, phase: "session".into() }]);
         assert!(view(&s).now_items[0].note.starts_with("session"), "an ordinary dwarf is not marked");
     }

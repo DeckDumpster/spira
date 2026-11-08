@@ -95,7 +95,7 @@ pub fn decide(f: &Facts) -> Outcome {
 }
 
 /// `systemd-run --user --collect --quiet --unit=<stem> <call argv...> <dwarf-path> --home <home>
-/// <rune> <tail...>`: the one unit call every direct entry point (`--escape`, `summon`) starts a
+/// <rune> <tail...>`: the one unit call every direct entry point (`--escape`, `direct`) starts a
 /// dwarf by.
 pub fn unit_call_argv(stem: &str, home: &Path, dwarf_path: &str, call_argv: &[String], rune: &str, tail: &[String]) -> Vec<String> {
     let mut a = vec!["--user".to_string(), "--collect".to_string(), "--quiet".to_string(), format!("--unit={stem}")];

@@ -27,8 +27,8 @@ pub enum Mode {
     Claim,
     DryRun,
     Sweep { prompt: Option<String> },
-    /// `dwarf summon`: claim this one named bead, past the ready set, the caps and the world's state.
-    Summoned(crate::summon::Summon),
+    /// `dwarf direct`: claim this one named bead, past the ready set, the caps and the world's state.
+    Directed(crate::direct::Direct),
 }
 
 /// Ranked ids to try in order, which of them are resumable, and the rank's tier label.
@@ -387,7 +387,7 @@ impl<'a> Run<'a> {
         if let Mode::Sweep { prompt } = self.mode.clone() {
             return self.sweep(prompt);
         }
-        let declined = if matches!(self.mode, Mode::Summoned(_)) { self.capacity_decline() } else { self.decline() };
+        let declined = if matches!(self.mode, Mode::Directed(_)) { self.capacity_decline() } else { self.decline() };
         if let Some(code) = declined {
             return code;
         }
@@ -538,8 +538,8 @@ impl<'a> Run<'a> {
         let until = (self.now() + self.rune.lease_seconds()).to_string();
         let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
         let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
-        let summons = match &self.mode {
-            Mode::Summoned(sm) => sm.claim_json(),
+        let directs = match &self.mode {
+            Mode::Directed(sm) => sm.claim_json(),
             _ => String::new(),
         };
         let mut stacks = std::collections::BTreeMap::new();
@@ -551,7 +551,7 @@ impl<'a> Run<'a> {
             }
             let rc = self.sdo(
                 "lc_claim_bead",
-                &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.rune.name, &summons]),
+                &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.rune.name, &directs]),
             );
             stacks.insert(id.to_string(), p.stack);
             claim::settle_claim(rc, self.d.exec, id, &holder, tries, delay, self.d.sleep)
@@ -605,9 +605,9 @@ impl<'a> Run<'a> {
         claim::read_holds(self.d.exec, id, tries, delay, self.d.sleep)
     }
 
-    /// The candidates to claim: the ranked ready set, or the one bead a summons names.
+    /// The candidates to claim: the ranked ready set, or the one bead a directs names.
     fn candidates(&mut self) -> Result<Candidates, i32> {
-        if let Mode::Summoned(sm) = &self.mode {
+        if let Mode::Directed(sm) = &self.mode {
             return Ok((vec![sm.bead.clone()], Vec::new(), None));
         }
         let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
@@ -640,10 +640,10 @@ impl<'a> Run<'a> {
         let (ids, resumable, tier) = self.candidates()?;
         let claimed = self.lc_claim(&ids, &resumable, tier.as_deref(), &who)?;
         let Some(c) = claimed else {
-            if let Mode::Summoned(sm) = &self.mode {
+            if let Mode::Directed(sm) = &self.mode {
                 let (bead, by) = (sm.bead.clone(), sm.by.clone());
-                self.log(&format!("{who}: {bead} was not claimable — another claim won it or it left READY/REWORK; nothing summoned for {by}"));
-                self.ledger.awake(self.now(), self.f(), "summon-refused");
+                self.log(&format!("{who}: {bead} was not claimable — another claim won it or it left READY/REWORK; nothing directed for {by}"));
+                self.ledger.awake(self.now(), self.f(), "direct-refused");
                 return Err(1);
             }
             self.log(&format!("{}: nothing ready to claim", self.f()));

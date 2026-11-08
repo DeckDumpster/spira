@@ -1,11 +1,11 @@
-//! summon — a dwarf of one rune on one named bead, outside the caps and the world's state.
-//! `dwarf summon <rune> <bead> --by <who> --reason <why>`.
+//! direct — a dwarf of one rune on one named bead, outside the caps and the world's state.
+//! `dwarf direct <rune> <bead> --by <who> --reason <why>`.
 //!
 //! The dwarf is the sentinel's own (same rune prompt, hooks, fences, build-dir lease, submit
 //! and session end): this starts it by the same transient-unit call, and only the claim differs.
-//! The unit is named `spira-dwarf-<rune>-summoned-<epoch>` so drain, slay and the cockpit see a
+//! The unit is named `spira-dwarf-<rune>-directed-<epoch>` so drain, slay and the cockpit see a
 //! dwarf while no cap counts it (`runtime::units::counts_toward_caps`). The claim is the
-//! ordinary compare-and-set, so a second summon of the same bead loses it: one summoned dwarf
+//! ordinary compare-and-set, so a second direct of the same bead loses it: one directed dwarf
 //! per bead. A bead a dwarf holds is taken over: that dwarf is stopped with its work kept, then
 //! the bead is claimed on the same branch.
 
@@ -14,23 +14,23 @@ use std::path::Path;
 use crate::ports::{Exec, s};
 use crate::util::{self, Sink};
 
-/// Who summoned a dwarf, why, and which dwarf held the bead before.
+/// Who directed a dwarf, why, and which dwarf held the bead before.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Summon {
+pub struct Direct {
     pub bead: String,
     pub by: String,
     pub reason: String,
     pub replaced: Option<String>,
 }
 
-impl Summon {
-    /// The record the Claim event carries (`lifecycle::bead::Summons`).
+impl Direct {
+    /// The record the Claim event carries (`lifecycle::bead::Direction`).
     pub fn claim_json(&self) -> String {
         serde_json::json!({ "by": self.by, "reason": self.reason, "previous_holder": self.replaced }).to_string()
     }
 }
 
-/// What the Concierge typed: `summon <rune> <bead> --by <who> --reason <why>`, without `summon`.
+/// What the Concierge typed: `direct <rune> <bead> --by <who> --reason <why>`, without `direct`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
     pub rune: String,
@@ -39,7 +39,7 @@ pub struct Request {
     pub reason: String,
 }
 
-const USAGE: &str = "usage: dwarf summon <rune> <bead-id> --by <who> --reason <why>";
+const USAGE: &str = "usage: dwarf direct <rune> <bead-id> --by <who> --reason <why>";
 
 fn flags(rest: &[String], allowed: &[&str]) -> Result<Vec<(String, String)>, String> {
     let mut out = Vec::new();
@@ -69,27 +69,27 @@ pub fn parse_request(args: &[String]) -> Result<Request, String> {
     Ok(Request { rune, bead, by, reason })
 }
 
-/// The unit's own argv tail, after the dwarf path: `--home H <rune> --summoned <bead> …`.
-pub fn parse_summoned(rest: &[String]) -> Result<Summon, String> {
-    let usage = "usage: dwarf <rune> --summoned <bead-id> --by <who> --reason <why> [--replaced <holder>]";
-    let f = flags(rest, &["--summoned", "--by", "--reason", "--replaced"]).map_err(|e| e.replace(USAGE, usage))?;
+/// The unit's own argv tail, after the dwarf path: `--home H <rune> --directed <bead> …`.
+pub fn parse_directed(rest: &[String]) -> Result<Direct, String> {
+    let usage = "usage: dwarf <rune> --directed <bead-id> --by <who> --reason <why> [--replaced <holder>]";
+    let f = flags(rest, &["--directed", "--by", "--reason", "--replaced"]).map_err(|e| e.replace(USAGE, usage))?;
     let need = |k: &str| flag(&f, k).ok_or_else(|| format!("{usage}\n{k} is required"));
-    Ok(Summon { bead: need("--summoned")?, by: need("--by")?, reason: need("--reason")?, replaced: flag(&f, "--replaced") })
+    Ok(Direct { bead: need("--directed")?, by: need("--by")?, reason: need("--reason")?, replaced: flag(&f, "--replaced") })
 }
 
-/// The unit call: the dwarf is started as `<rune> --summoned <bead> --by <who> --reason <why>
+/// The unit call: the dwarf is started as `<rune> --directed <bead> --by <who> --reason <why>
 /// [--replaced <holder>]`.
 pub fn build_argv(req: &Request, replaced: Option<&str>, home: &Path, dwarf_path: &str, call_argv: &[String], epoch: i64) -> Vec<String> {
-    let mut tail = s(&["--summoned", &req.bead, "--by", &req.by, "--reason", &req.reason]);
+    let mut tail = s(&["--directed", &req.bead, "--by", &req.by, "--reason", &req.reason]);
     if let Some(h) = replaced {
         tail.extend(s(&["--replaced", h]));
     }
-    crate::escape::unit_call_argv(&runtime::units::summoned_unit_stem(&req.rune, epoch), home, dwarf_path, call_argv, &req.rune, &tail)
+    crate::escape::unit_call_argv(&runtime::units::directed_unit_stem(&req.rune, epoch), home, dwarf_path, call_argv, &req.rune, &tail)
 }
 
-/// The reason `slay` records when a summons takes a bead from a running dwarf.
+/// The reason `slay` records when a directs takes a bead from a running dwarf.
 pub fn takeover_why(req: &Request) -> String {
-    format!("summoned by {}: {}", req.by, req.reason)
+    format!("directed by {}: {}", req.by, req.reason)
 }
 
 /// States a claim can apply to, and the one a takeover releases from.
@@ -110,29 +110,29 @@ fn row_of(exec: &dyn Exec, bead: &str) -> Result<Option<(String, Option<String>)
 #[allow(clippy::too_many_arguments)]
 pub fn run(exec: &dyn Exec, sink: &dyn Sink, req: &Request, home: &Path, dwarf_path: Option<&str>, call_bin: &str, call_argv: &[String], now: i64) -> i32 {
     let fatal = |m: String| {
-        sink.err(&util::log_line(now, &format!("FATAL summon {}: {m}", req.bead)));
+        sink.err(&util::log_line(now, &format!("FATAL direct {}: {m}", req.bead)));
         1
     };
     let Some(dwarf_path) = dwarf_path else { return fatal("dwarf is not on PATH".into()) };
     let row = match row_of(exec, &req.bead) {
         Ok(r) => r,
-        Err(e) => return fatal(format!("{e} — nothing summoned")),
+        Err(e) => return fatal(format!("{e} — nothing directed")),
     };
     let mut replaced = None;
     if let Some((state, holder)) = row {
         if state == HELD {
             let o = exec.exec("slay", &s(&["--bead", &req.bead, "--keep-work", "--why", &takeover_why(req)]), None, None);
             if !o.success() {
-                return fatal(format!("could not stop the dwarf holding it (slay rc={}): {} — nothing summoned", o.code, o.first_err_line()));
+                return fatal(format!("could not stop the dwarf holding it (slay rc={}): {} — nothing directed", o.code, o.first_err_line()));
             }
-            sink.out(&util::log_line(now, &format!("summon {}: stopped {} with its branch and worktree kept", req.bead, holder.as_deref().unwrap_or("its holder"))));
+            sink.out(&util::log_line(now, &format!("direct {}: stopped {} with its branch and worktree kept", req.bead, holder.as_deref().unwrap_or("its holder"))));
             replaced = Some(holder.unwrap_or_else(|| "unknown".to_string()));
         } else if !CLAIMABLE.contains(&state.as_str()) {
-            return fatal(format!("it is {state}; only READY, REWORK or a held WORKING bead can be summoned onto — nothing summoned"));
+            return fatal(format!("it is {state}; only READY, REWORK or a held WORKING bead can be directed onto — nothing directed"));
         }
     }
     let argv = build_argv(req, replaced.as_deref(), home, dwarf_path, call_argv, now);
-    sink.out(&util::log_line(now, &format!("summon {}: calling a {} dwarf directly (caps and the world's state bypassed)", req.bead, req.rune)));
+    sink.out(&util::log_line(now, &format!("direct {}: calling a {} dwarf directly (caps and the world's state bypassed)", req.bead, req.rune)));
     let o = exec.exec(call_bin, &argv, None, None);
     o.stdout.lines().for_each(|l| sink.out(l));
     o.stderr.lines().for_each(|l| sink.err(l));
@@ -164,22 +164,22 @@ mod tests {
     #[test]
     fn the_unit_tail_round_trips_what_the_caller_built() {
         let argv = build_argv(&req(), Some("dwarf-old"), Path::new("/h"), "/rel/bin/dwarf", &a(&["--setenv=HOME=/h"]), 1000);
-        assert_eq!(&argv[..4], &a(&["--user", "--collect", "--quiet", "--unit=spira-dwarf-builder-summoned-1000"]));
-        let tail = &argv[argv.iter().position(|x| x == "--summoned").unwrap()..];
-        assert_eq!(parse_summoned(tail), Ok(Summon { bead: "sp-x".into(), by: "concierge".into(), reason: "loop fix".into(), replaced: Some("dwarf-old".into()) }));
+        assert_eq!(&argv[..4], &a(&["--user", "--collect", "--quiet", "--unit=spira-dwarf-builder-directed-1000"]));
+        let tail = &argv[argv.iter().position(|x| x == "--directed").unwrap()..];
+        assert_eq!(parse_directed(tail), Ok(Direct { bead: "sp-x".into(), by: "concierge".into(), reason: "loop fix".into(), replaced: Some("dwarf-old".into()) }));
         let at = argv.iter().position(|x| x == "/rel/bin/dwarf").unwrap();
         assert_eq!(argv[at..at + 4], a(&["/rel/bin/dwarf", "--home", "/h", "builder"])[..]);
-        assert!(runtime::units::is_summoned(&format!("{}.service", &argv[3]["--unit=".len()..])));
+        assert!(runtime::units::is_directed(&format!("{}.service", &argv[3]["--unit=".len()..])));
     }
 
     #[test]
     fn the_claim_record_names_requester_reason_and_previous_holder() {
-        let s = Summon { bead: "sp-x".into(), by: "concierge".into(), reason: "a \"quoted\" why".into(), replaced: None };
+        let s = Direct { bead: "sp-x".into(), by: "concierge".into(), reason: "a \"quoted\" why".into(), replaced: None };
         let v: serde_json::Value = serde_json::from_str(&s.claim_json()).unwrap();
         assert_eq!((v["by"].as_str(), v["reason"].as_str(), v["previous_holder"].is_null()), (Some("concierge"), Some("a \"quoted\" why"), true));
         let mut keys: Vec<_> = v.as_object().unwrap().keys().map(String::as_str).collect();
         keys.sort();
-        assert_eq!(keys, ["by", "previous_holder", "reason"], "the keys lifecycle::bead::Summons reads");
+        assert_eq!(keys, ["by", "previous_holder", "reason"], "the keys lifecycle::bead::Direction reads");
     }
 
     struct Fake {
@@ -224,13 +224,13 @@ mod tests {
         assert_eq!(rc, 0);
         assert_eq!(progs(&f), a(&["spira-lc", "slay", "systemd-run"]), "the old dwarf stops before the new one starts");
         let calls = f.calls.lock().unwrap();
-        assert_eq!(calls[1].1, a(&["--bead", "sp-x", "--keep-work", "--why", "summoned by concierge: loop fix"]));
+        assert_eq!(calls[1].1, a(&["--bead", "sp-x", "--keep-work", "--why", "directed by concierge: loop fix"]));
         assert!(calls[2].1.windows(2).any(|w| w == ["--replaced", "dwarf-old"]), "{:?}", calls[2].1);
         assert!(sink.all().contains("stopped dwarf-old"));
     }
 
     #[test]
-    fn a_dwarf_that_will_not_stop_means_nothing_is_summoned() {
+    fn a_dwarf_that_will_not_stop_means_nothing_is_directed() {
         let f = Fake { show: row("WORKING", Some("dwarf-old")), slay_rc: 1, calls: Mutex::default() };
         let (rc, sink) = go(&f);
         assert_eq!((rc, progs(&f)), (1, a(&["spira-lc", "slay"])));
