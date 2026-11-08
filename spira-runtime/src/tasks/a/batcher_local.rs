@@ -1461,21 +1461,28 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, V
 }
 
 /// One repo's tick: each round this task drives is observed lowest first, then the repo may cut
-/// a further one.
+/// a further one. A tick on which one of its rounds finished cuts nothing: the next tick judges
+/// the cut on the outcome the finish wrote, as a single round always has. A voided round writes
+/// no outcome, so its members are cut again at once.
 fn decide_repo(policy: &Policy, name: &str, rc: &RepoCarry, repo: &Repo, now_ms: u64) -> (RepoCarry, Vec<Act>) {
     let idle = if rc.live() { State::Idle } else { rc.state };
-    let (mut shared, mut live, mut acts) = (rc.clone(), Vec::<RepoCarry>::new(), vec![]);
+    let (mut shared, mut live, mut acts, mut ended) = (rc.clone(), Vec::<RepoCarry>::new(), vec![], false);
     for round in rc.rounds() {
         let mut m = Machine { repo: name, rc: shared.holding(&round), acts: vec![], now_ms, below: !live.is_empty() };
+        let voided = m.voided(repo);
         m.observe(policy, repo);
         acts.extend(m.acts);
         if m.rc.live() {
             live.push(m.rc.round());
+        } else {
+            ended |= !voided;
         }
         shared = m.rc;
     }
     let mut m = Machine { repo: name, rc: shared.holding(&RepoCarry { state: idle, ..RepoCarry::default() }), acts, now_ms, below: !live.is_empty() };
-    m.cut(policy, repo, &live);
+    if !ended {
+        m.cut(policy, repo, &live);
+    }
     if m.rc.live() {
         live.push(m.rc.round());
     }
