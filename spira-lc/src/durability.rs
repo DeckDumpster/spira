@@ -21,7 +21,6 @@ use crate::{CANNOT_TELL, REFUSED};
 pub const GAUGE: &str = "spira_lc_ship_oldest_unshipped_seconds";
 /// The watchd `log` row's file, under `SPIRA_RUN`.
 pub const ALARM_LOG: &str = "lc-ship.log";
-const SNAPSHOT_PAGES: i32 = 256;
 const MAX_MAINS: usize = 10_000;
 // batch-job: one upload, bounded by the object's size, not a round trip
 const PUT_DEADLINE: Duration = Duration::from_secs(300);
@@ -56,7 +55,6 @@ pub fn configured(backend: SqliteBackend, run: &Path) -> Option<Result<Shipping,
             dir: run.join("lc-ship"),
             max_mains: MAX_MAINS,
             snapshot_every_ms: cfg_u64("SPIRA_LC_SHIP_SNAPSHOT_SECS")?.saturating_mul(1_000),
-            snapshot_pages: SNAPSHOT_PAGES,
         };
         Ok(Shipping {
             shipper: Shipper::open(backend, cfg, Arc::new(put), Arc::new(WallClock))?,
@@ -264,7 +262,7 @@ mod tests {
         let b = SqliteBackend::open(&dir.join("live.db"), Options::default()).unwrap();
         let c = suite::open(b.clone(), clock);
         let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(dir.join("off")), creds: None, proc: Arc::new(SysProc), deadline: PUT_DEADLINE });
-        let cfg = ShipConfig { dir: dir.join("lc-ship"), max_mains: 2, snapshot_every_ms: u64::MAX, snapshot_pages: 64 };
+        let cfg = ShipConfig { dir: dir.join("lc-ship"), max_mains: 2, snapshot_every_ms: u64::MAX };
         let mut sh = Shipper::open(b, cfg, put, Arc::new(clock.clone())).unwrap();
         sh.tick().unwrap();
         for i in 0..6 {
@@ -370,7 +368,7 @@ mod tests {
             proc: curl.clone(),
             deadline: PUT_DEADLINE,
         });
-        let cfg = ShipConfig { dir: dir.path().join("lc-ship"), max_mains: 100, snapshot_every_ms: u64::MAX, snapshot_pages: 64 };
+        let cfg = ShipConfig { dir: dir.path().join("lc-ship"), max_mains: 100, snapshot_every_ms: u64::MAX };
         let mut sh = Shipper::open(b, cfg, put, Arc::new(clock.clone())).unwrap();
         let t = Txn::new().put("lifecycle/sp-1", Object::new(json!(1)));
         assert!(c.txn(&t, &Request::new("1", "t", "t.write")).unwrap().succeeded);
@@ -433,7 +431,7 @@ mod tests {
         let blocked = dir.path().join("blocked");
         std::fs::write(&blocked, "").unwrap();
         let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(blocked), creds: None, proc: Arc::new(SysProc), deadline: PUT_DEADLINE });
-        let cfg = ShipConfig { dir: dir.path().join("lc-ship"), max_mains: 100, snapshot_every_ms: u64::MAX, snapshot_pages: 64 };
+        let cfg = ShipConfig { dir: dir.path().join("lc-ship"), max_mains: 100, snapshot_every_ms: u64::MAX };
         let mut s = Shipping {
             shipper: Shipper::open(b, cfg, put, Arc::new(clock.clone())).unwrap(),
             every: Duration::from_secs(1),

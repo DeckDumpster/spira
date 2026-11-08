@@ -149,7 +149,13 @@ impl Uploader {
     /// One signed PUT; with `if_absent`, conditional on no object under `key`, and a failure
     /// carries the HTTP status curl reports (0 when it reports none) so a refusal can be told
     /// apart.
-    fn signed(&self, bucket: &str, key: &str, file: &Path, if_absent: bool) -> Result<(), (u16, String)> {
+    fn signed(
+        &self,
+        bucket: &str,
+        key: &str,
+        file: &Path,
+        if_absent: bool,
+    ) -> Result<(), (u16, String)> {
         let unsent = |e: String| (0, e);
         let c = self
             .creds
@@ -207,7 +213,9 @@ impl Uploader {
         .map(String::from)
         .to_vec();
         if if_absent {
-            args.extend(["-H", "If-None-Match: *", "--write-out", "%{http_code}"].map(String::from));
+            args.extend(
+                ["-H", "If-None-Match: *", "--write-out", "%{http_code}"].map(String::from),
+            );
         }
         args.push(url);
         let out = self
@@ -222,7 +230,10 @@ impl Uploader {
         match out.code {
             Some(0) => Ok(()),
             code => Err((
-                String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0),
+                String::from_utf8_lossy(&out.stdout)
+                    .trim()
+                    .parse()
+                    .unwrap_or(0),
                 format!(
                     "PUT {key}: curl exit {}: {}",
                     code.map_or("signal".into(), |c| c.to_string()),
@@ -296,14 +307,29 @@ mod tests {
         fn run(&self, spec: &ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
             self.1.lock().unwrap().push(spec.args.clone());
             let code = if self.0 < 400 { 0 } else { 22 };
-            Ok(runtime::ports::ProcOutput { code: Some(code), stdout: self.0.to_string().into_bytes(), stderr: Vec::new() })
+            Ok(runtime::ports::ProcOutput {
+                code: Some(code),
+                stdout: self.0.to_string().into_bytes(),
+                stderr: Vec::new(),
+            })
         }
     }
 
     fn s3(status: u16) -> (Uploader, Arc<Answering>) {
         let curl = Arc::new(Answering(status, Default::default()));
-        let creds = S3Creds { access_key: "AK".into(), secret_key: "sk".into(), session_token: None, region: "r".into(), endpoint: Some("http://s3.test".into()) };
-        let up = Uploader { dest: Dest::parse("s3://b/p/").unwrap(), creds: Some(creds), proc: curl.clone(), deadline: Duration::from_secs(5) };
+        let creds = S3Creds {
+            access_key: "AK".into(),
+            secret_key: "sk".into(),
+            session_token: None,
+            region: "r".into(),
+            endpoint: Some("http://s3.test".into()),
+        };
+        let up = Uploader {
+            dest: Dest::parse("s3://b/p/").unwrap(),
+            creds: Some(creds),
+            proc: curl.clone(),
+            deadline: Duration::from_secs(5),
+        };
         (up, curl)
     }
 
@@ -315,25 +341,41 @@ mod tests {
         let (up, curl) = s3(200);
         assert_eq!(up.put_new(&f, "archive/k"), Ok(()));
         let args = curl.1.lock().unwrap()[0].clone();
-        assert!(args.windows(2).any(|w| w == ["-H", "If-None-Match: *"]), "{args:?}");
+        assert!(
+            args.windows(2).any(|w| w == ["-H", "If-None-Match: *"]),
+            "{args:?}"
+        );
         assert_eq!(args.last().unwrap(), "http://s3.test/b/p/archive/k");
         let (up, _) = s3(412);
         assert_eq!(up.put_new(&f, "archive/k"), Err(PutNew::Exists));
         let (up, _) = s3(403);
-        assert!(matches!(up.put_new(&f, "archive/k"), Err(PutNew::Failed(m)) if m.contains("PUT p/archive/k")));
+        assert!(
+            matches!(up.put_new(&f, "archive/k"), Err(PutNew::Failed(m)) if m.contains("PUT p/archive/k"))
+        );
     }
 
     #[test]
     fn a_put_new_to_a_directory_never_replaces_what_is_there() {
         let dir = testkit::TempDir::new("put-new-file");
-        let up = Uploader { dest: Dest::File(dir.path().join("off")), creds: None, proc: Arc::new(Answering(200, Default::default())), deadline: Duration::from_secs(5) };
+        let up = Uploader {
+            dest: Dest::File(dir.path().join("off")),
+            creds: None,
+            proc: Arc::new(Answering(200, Default::default())),
+            deadline: Duration::from_secs(5),
+        };
         let (a, b) = (dir.path().join("a"), dir.path().join("b"));
         std::fs::write(&a, b"first").unwrap();
         std::fs::write(&b, b"second").unwrap();
         assert_eq!(up.put_new(&a, "archive/k"), Ok(()));
         assert_eq!(up.put_new(&b, "archive/k"), Err(PutNew::Exists));
-        assert_eq!(std::fs::read(dir.path().join("off/archive/k")).unwrap(), b"first");
-        let left: Vec<_> = std::fs::read_dir(dir.path().join("off/archive")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(
+            std::fs::read(dir.path().join("off/archive/k")).unwrap(),
+            b"first"
+        );
+        let left: Vec<_> = std::fs::read_dir(dir.path().join("off/archive"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
         assert_eq!(left, ["k"], "no temporary left beside it");
     }
 

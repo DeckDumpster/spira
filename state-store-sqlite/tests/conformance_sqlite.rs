@@ -9,7 +9,7 @@ use runtime::ports::VirtualClock;
 use serde_json::json;
 use state_store::conformance::{self as suite, Rig, SCENARIOS};
 use state_store::{Backend, Contract, Error, Object, Request, Rev, Txn, Write};
-use state_store_sqlite::{BackupStep, Options, SqliteBackend};
+use state_store_sqlite::{Options, SqliteBackend};
 use testkit::TempDir;
 
 struct Sqlite {
@@ -94,7 +94,11 @@ const OVER_BUDGET: &[&str] = &["request_bytes_at_the_limit_pass_and_one_over_is_
 
 #[test]
 fn every_scenario_of_the_suite_is_its_own_test_here() {
-    let want: Vec<&str> = SCENARIOS.iter().copied().filter(|s| !OVER_BUDGET.contains(s)).collect();
+    let want: Vec<&str> = SCENARIOS
+        .iter()
+        .copied()
+        .filter(|s| !OVER_BUDGET.contains(s))
+        .collect();
     assert_eq!(COVERED, want.as_slice());
 }
 
@@ -151,12 +155,22 @@ fn after_deleting_the_highest_revision_keys_and_reopening_the_next_main_is_great
     drop(b);
     let b = open(&path);
     let head = b.head().unwrap();
-    assert!(head >= last, "the counter is read back from its meta row, never from the keys: head {head}, last {last}");
+    assert!(
+        head >= last,
+        "the counter is read back from its meta row, never from the keys: head {head}, last {last}"
+    );
     let clock = VirtualClock::new(1_000);
     let c = contract(b, &clock);
     let next = put(&c, "n/c", json!(3), "after-reopen");
-    assert!(next > last, "a reopened store never reissues a revision: next {next}, last {last}");
-    assert_eq!(next, head + 1, "the next txn follows the head the reopen read back");
+    assert!(
+        next > last,
+        "a reopened store never reissues a revision: next {next}, last {last}"
+    );
+    assert_eq!(
+        next,
+        head + 1,
+        "the next txn follows the head the reopen read back"
+    );
 }
 
 #[test]
@@ -304,7 +318,8 @@ fn a_single_long_statement_is_ended_past_max_read_ms_by_the_progress_handler() {
         })
         .collect();
     b.commit(1, &dels).unwrap();
-    b.commit(2, &[put_write("u/after", b"{}", 3, None)]).unwrap();
+    b.commit(2, &[put_write("u/after", b"{}", 3, None)])
+        .unwrap();
     assert!(b.range("t/", None, 10, 2).unwrap().is_empty());
 
     clock.calls.store(0, Ordering::SeqCst);
@@ -343,7 +358,7 @@ fn bulk_load_reads_back_every_key_at_one_revision_and_the_next_txn_is_the_one_af
 }
 
 #[test]
-fn a_backup_taken_in_steps_while_commits_continue_matches_the_live_keys_at_its_revision() {
+fn a_snapshot_copy_matches_the_live_keys_at_its_revision_and_refuses_an_existing_file() {
     let dir = TempDir::new("sqlite-backup");
     let clock = VirtualClock::new(1_000);
     let c = contract(open(&dir.path().join("live.db")), &clock);
@@ -352,39 +367,28 @@ fn a_backup_taken_in_steps_while_commits_continue_matches_the_live_keys_at_its_r
         put(&c, &format!("b/{i:03}"), json!(big), &format!("seed{i}"));
     }
     let dest = dir.path().join("copy.db");
-    let mut steps = 0;
-    let rev = loop {
-        match c.backend().backup_step(&dest, 4).unwrap() {
-            BackupStep::Copying { .. } => {
-                steps += 1;
-                put(
-                    &c,
-                    &format!("b/{steps:03}"),
-                    json!(steps),
-                    &format!("during{steps}"),
-                );
-                put(
-                    &c,
-                    &format!("during/{steps:03}"),
-                    json!(steps),
-                    &format!("new{steps}"),
-                );
-            }
-            BackupStep::Done { rev } => break rev,
-        }
-    };
-    assert!(steps > 1, "the backup finished in one step");
+    let rev = c.backend().snapshot_to(&dest).unwrap();
     put(&c, "after/backup", json!(1), "after");
+    assert!(
+        c.backend().snapshot_to(&dest).is_err(),
+        "a copy never overwrites"
+    );
     let live = c.backend().clone();
     // A copy being verified keeps its revisions exactly: no jump on this open.
-    let copy = SqliteBackend::open(&dest, Options { jump_on_open: false, ..Options::default() }).unwrap();
+    let copy = SqliteBackend::open(
+        &dest,
+        Options {
+            jump_on_open: false,
+            ..Options::default()
+        },
+    )
+    .unwrap();
     assert_eq!(
         copy.head().unwrap(),
         rev,
         "the copy is tagged with the revision it captured"
     );
     assert_eq!(keys_at(&copy, "", rev), keys_at(&live, "", rev));
-    assert_eq!(keys_at(&copy, "during/", rev).len(), steps);
 }
 
 #[test]

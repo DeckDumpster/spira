@@ -200,18 +200,6 @@ pub struct Checkpoint {
     pub checkpointed: i64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BackupStep {
-    Copying {
-        remaining: i32,
-        pages: i32,
-    },
-    /// The copy is complete and holds the store as of `rev`, which its own meta row records.
-    Done {
-        rev: u64,
-    },
-}
-
 /// A handle to one open store; clones share its connections.
 #[derive(Clone)]
 pub struct SqliteBackend(Arc<Inner>);
@@ -233,35 +221,12 @@ struct Inner {
 }
 
 struct Writer {
-    /// Declared before `conn`: a backup in progress is finished before its source closes.
-    backup: Option<Stepped>,
     conn: Connection,
 }
 
 struct Reader {
     conn: Mutex<Connection>,
     deadline: Arc<AtomicU64>,
-}
-
-/// A `sqlite3_backup` on the writer connection, kept across calls so a copy proceeds in steps
-/// between commits; SQLite folds the writer's own later commits into the pages already copied.
-struct Stepped {
-    dest_path: PathBuf,
-    raw: NonNull<ffi::sqlite3_backup>,
-    /// Open until `raw` is finished, which `Drop` does first.
-    _dest: Connection,
-}
-
-// SAFETY: `raw` is only touched under the writer mutex, alongside the writer connection it was
-// initialised on and `dest`, which this struct owns.
-unsafe impl Send for Stepped {}
-
-impl Drop for Stepped {
-    fn drop(&mut self) {
-        // SAFETY: `raw` came from sqlite3_backup_init and is finished exactly once, here, while
-        // both connections are still open.
-        unsafe { ffi::sqlite3_backup_finish(self.raw.as_ptr()) };
-    }
 }
 
 /// What a statement the progress handler stopped maps to, so `read` can tell it apart.
@@ -336,17 +301,30 @@ fn exec(conn: &Connection, sql: &str, p: impl rusqlite::Params) -> Result<usize>
 /// a crash could lose would let the next open jump from the older head and reissue revisions.
 fn record_jump(conn: &mut Connection, head: u64, through: u64) -> Result<u64> {
     if through <= head {
-        return Err(Error::Backend(format!("a jump to {through} does not pass the head {head}")));
+        return Err(Error::Backend(format!(
+            "a jump to {through} does not pass the head {head}"
+        )));
     }
-    let mode: i64 = conn.pragma_query_value(None, "synchronous", |r| r.get(0)).map_err(db)?;
-    conn.pragma_update(None, "synchronous", "FULL").map_err(db)?;
+    let mode: i64 = conn
+        .pragma_query_value(None, "synchronous", |r| r.get(0))
+        .map_err(db)?;
+    conn.pragma_update(None, "synchronous", "FULL")
+        .map_err(db)?;
     let done = (|| {
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db)?;
         let at = meta(&tx, "head")?.unwrap_or(0);
         if at != head {
-            return Err(Error::Backend(format!("a jump from {head} found the head at {at}")));
+            return Err(Error::Backend(format!(
+                "a jump from {head} found the head at {at}"
+            )));
         }
-        exec(&tx, "INSERT INTO jumps (from_main, to_main) VALUES (?1, ?2)", params![main_i64(head + 1)?, main_i64(through)?])?;
+        exec(
+            &tx,
+            "INSERT INTO jumps (from_main, to_main) VALUES (?1, ?2)",
+            params![main_i64(head + 1)?, main_i64(through)?],
+        )?;
         set_meta(&tx, "head", through)?;
         tx.commit().map_err(db)
     })();
@@ -566,7 +544,7 @@ impl SqliteBackend {
         }
         Ok(SqliteBackend(Arc::new(Inner {
             path: path.to_path_buf(),
-            writer: Mutex::new(Writer { backup: None, conn }),
+            writer: Mutex::new(Writer { conn }),
             readers,
             next_reader: AtomicUsize::new(0),
             head: AtomicU64::new(head),
@@ -596,7 +574,10 @@ impl SqliteBackend {
     }
 
     pub fn synchronous(&self) -> Result<i64> {
-        lock(&self.0.writer).conn.pragma_query_value(None, "synchronous", |r| r.get(0)).map_err(db)
+        lock(&self.0.writer)
+            .conn
+            .pragma_query_value(None, "synchronous", |r| r.get(0))
+            .map_err(db)
     }
 
     /// The recorded jumps that end after `after` and start at or before `through`, in order.
@@ -607,7 +588,9 @@ impl SqliteBackend {
             .prepare_cached("SELECT from_main, to_main FROM jumps WHERE to_main > ?1 AND from_main <= ?2 ORDER BY from_main")
             .map_err(db)?;
         let rows = st
-            .query_map(params![main_i64(after)?, main_i64(through)?], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64)))
+            .query_map(params![main_i64(after)?, main_i64(through)?], |r| {
+                Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))
+            })
             .map_err(db)?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db)
     }
@@ -618,7 +601,9 @@ impl SqliteBackend {
         let mut w = lock(&self.0.writer);
         let head = self.0.head.load(Ordering::SeqCst);
         if from != head + 1 {
-            return Err(Error::Backend(format!("a jump from {from} does not follow the head {head}")));
+            return Err(Error::Backend(format!(
+                "a jump from {from} does not follow the head {head}"
+            )));
         }
         let at = record_jump(&mut w.conn, head, through)?;
         self.0.head.store(at, Ordering::SeqCst);
@@ -764,97 +749,56 @@ impl SqliteBackend {
         Ok(())
     }
 
-    /// Copies up to `pages` more pages of the store to `dest`, on the writer connection between
-    /// commits. The first call for a `dest` starts the copy (refusing a file already there),
-    /// later calls resume it, and the call that finishes it returns the revision it captured.
-    pub fn backup_step(&self, dest: &Path, pages: i32) -> Result<BackupStep> {
-        let mut w = lock(&self.0.writer);
-        let w = &mut *w;
-        match &w.backup {
-            Some(b) if b.dest_path != dest => {
-                return Err(Error::Backend(format!(
-                    "a backup to {} is in progress",
-                    b.dest_path.display()
-                )))
-            }
-            Some(_) => {}
-            None => {
-                if dest.exists() {
-                    return Err(Error::Backend(format!(
-                        "{} exists; a backup never overwrites",
-                        dest.display()
-                    )));
-                }
-                let dest_conn = connect(dest)?;
-                // SAFETY: both handles are open connections; the source is the writer, which
-                // outlives `Stepped` (it is declared after `backup` in `Writer`).
-                let raw = unsafe {
-                    ffi::sqlite3_backup_init(
-                        dest_conn.handle(),
-                        c"main".as_ptr(),
-                        w.conn.handle(),
-                        c"main".as_ptr(),
-                    )
-                };
-                let raw = NonNull::new(raw).ok_or_else(|| {
-                    Error::Backend(format!("{}: backup could not start", dest.display()))
-                })?;
-                w.backup = Some(Stepped {
-                    dest_path: dest.to_path_buf(),
-                    raw,
-                    _dest: dest_conn,
-                });
-            }
+    /// Copies the whole store to `dest` in one pass and returns the revision it holds. The copy
+    /// reads a single WAL snapshot on its own connection, so it neither holds the writer nor is
+    /// restarted by commits, and runs at disk speed. It never overwrites `dest`.
+    pub fn snapshot_to(&self, dest: &Path) -> Result<u64> {
+        if dest.exists() {
+            return Err(Error::Backend(format!(
+                "{} exists; a backup never overwrites",
+                dest.display()
+            )));
         }
-        let Some(b) = &w.backup else {
-            unreachable!("a backup was just ensured")
-        };
-        // SAFETY: `raw` is live until `Stepped` drops; the writer mutex is held.
-        let (rc, remaining, total) = unsafe {
-            let rc = ffi::sqlite3_backup_step(b.raw.as_ptr(), pages.max(1));
-            (
-                rc,
-                ffi::sqlite3_backup_remaining(b.raw.as_ptr()),
-                ffi::sqlite3_backup_pagecount(b.raw.as_ptr()),
-            )
-        };
-        match rc {
-            ffi::SQLITE_OK | ffi::SQLITE_BUSY | ffi::SQLITE_LOCKED => Ok(BackupStep::Copying {
-                remaining,
-                pages: total,
-            }),
-            ffi::SQLITE_DONE => {
-                w.backup = None;
-                Ok(BackupStep::Done {
-                    rev: meta(&w.conn, "head")?.unwrap_or(0),
-                })
-            }
-            rc => {
-                w.backup = None;
-                let _ = std::fs::remove_file(dest);
-                Err(Error::Backend(format!(
-                    "backup to {}: {}",
-                    dest.display(),
-                    ffi::code_to_str(rc)
-                )))
-            }
+        let result = self.copy_snapshot(dest);
+        if result.is_err() {
+            let _ = std::fs::remove_file(dest);
         }
+        result
     }
 
-    /// Abandons the backup in progress, if any, and removes its partial copy.
-    pub fn backup_abort(&self) -> Result<()> {
-        let mut w = lock(&self.0.writer);
-        let Some(b) = w.backup.take() else {
-            return Ok(());
-        };
-        let dest = b.dest_path.clone();
-        drop(b);
-        match std::fs::remove_file(&dest) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                Err(Error::Backend(format!("{}: {e}", dest.display())))
+    fn copy_snapshot(&self, dest: &Path) -> Result<u64> {
+        let src = Connection::open_with_flags(
+            &self.0.path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(db)?;
+        src.busy_timeout(Duration::from_millis(self.0.max_read_ms))
+            .map_err(db)?;
+        src.execute_batch("BEGIN").map_err(db)?;
+        let rev = meta(&src, "head")?.unwrap_or(0);
+        let dest_conn = connect(dest)?;
+        // SAFETY: both handles are open connections that outlive the backup, which is finished
+        // before either closes.
+        unsafe {
+            let raw = NonNull::new(ffi::sqlite3_backup_init(
+                dest_conn.handle(),
+                c"main".as_ptr(),
+                src.handle(),
+                c"main".as_ptr(),
+            ))
+            .ok_or_else(|| Error::Backend(format!("{}: backup could not start", dest.display())))?;
+            let step = ffi::sqlite3_backup_step(raw.as_ptr(), -1);
+            let fin = ffi::sqlite3_backup_finish(raw.as_ptr());
+            if step != ffi::SQLITE_DONE || fin != ffi::SQLITE_OK {
+                return Err(Error::Backend(format!(
+                    "backup to {}: {}",
+                    dest.display(),
+                    ffi::code_to_str(if step == ffi::SQLITE_DONE { fin } else { step })
+                )));
             }
-            _ => Ok(()),
         }
+        src.execute_batch("COMMIT").map_err(db)?;
+        Ok(rev)
     }
 
     /// Compaction never drops a revision above `rev`; it persists across opens.
@@ -925,7 +869,15 @@ impl Backend for SqliteBackend {
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
             let steps = &self.0.read_steps;
-            range_rows(conn, source(snap, at), &lo, hi.as_deref(), limit, steps, deadline)
+            range_rows(
+                conn,
+                source(snap, at),
+                &lo,
+                hi.as_deref(),
+                limit,
+                steps,
+                deadline,
+            )
         })
     }
 
@@ -946,12 +898,22 @@ impl Backend for SqliteBackend {
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
             let steps = &self.0.read_steps;
-            range_rows(conn, Source::State(state), &lo, hi.as_deref(), limit, steps, deadline)
-                .map(Some)
+            range_rows(
+                conn,
+                Source::State(state),
+                &lo,
+                hi.as_deref(),
+                limit,
+                steps,
+                deadline,
+            )
+            .map(Some)
         })?;
         match indexed {
             Some(rows) => Ok(rows),
-            None => state_store::backend::range_in_state_by_scan(self, prefix, state, after, limit, at),
+            None => {
+                state_store::backend::range_in_state_by_scan(self, prefix, state, after, limit, at)
+            }
         }
     }
 
@@ -971,7 +933,15 @@ impl Backend for SqliteBackend {
             let steps = &self.0.read_steps;
             let mut out = Vec::new();
             if lo.as_slice() < events {
-                out = range_rows(conn, source(snap, at), &lo, Some(events), limit, steps, deadline)?;
+                out = range_rows(
+                    conn,
+                    source(snap, at),
+                    &lo,
+                    Some(events),
+                    limit,
+                    steps,
+                    deadline,
+                )?;
             }
             if out.len() < limit {
                 let lo = lo.max(past_events);
@@ -1221,7 +1191,12 @@ mod tests {
                 KEYS * VERSIONS - 1
             );
             exec(&conn, &versions, []).unwrap();
-            exec(&conn, &format!("UPDATE meta SET value = {VERSIONS} WHERE name = 'head'"), []).unwrap();
+            exec(
+                &conn,
+                &format!("UPDATE meta SET value = {VERSIONS} WHERE name = 'head'"),
+                [],
+            )
+            .unwrap();
         }
         let opts = Options {
             jump_on_open: false,
@@ -1232,7 +1207,10 @@ mod tests {
 
     fn plan(b: &SqliteBackend, sql: &str) -> Vec<String> {
         let w = lock(&b.0.writer);
-        let mut stmt = w.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let mut stmt = w
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap();
         let mut rows = stmt.raw_query();
         let mut out = Vec::new();
         while let Some(r) = rows.next().unwrap() {
@@ -1256,8 +1234,15 @@ mod tests {
         let keys: Vec<&str> = page.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(keys.len(), PAGE);
         assert_eq!(keys[0], "p/025001");
-        assert_eq!(page[0].1.mod_rev, Rev::new(VERSIONS as u64, 25_001), "the newest version");
-        assert!(steps <= 20 * PAGE as u64, "{steps} VM steps for a page of {PAGE}");
+        assert_eq!(
+            page[0].1.mod_rev,
+            Rev::new(VERSIONS as u64, 25_001),
+            "the newest version"
+        );
+        assert!(
+            steps <= 20 * PAGE as u64,
+            "{steps} VM steps for a page of {PAGE}"
+        );
         for sql in [LATEST_BOUNDED, LATEST_OPEN, STATE_BOUNDED, STATE_OPEN] {
             for step in plan(&b, sql) {
                 assert!(
@@ -1276,13 +1261,24 @@ mod tests {
         let b = fixture(&dir);
         let head = b.head().unwrap();
         b.take_read_steps();
-        let page = b.range_in_state("p/", "s3", Some("p/010000"), PAGE, head).unwrap();
+        let page = b
+            .range_in_state("p/", "s3", Some("p/010000"), PAGE, head)
+            .unwrap();
         let steps = b.take_read_steps();
         assert_eq!(page.len(), PAGE);
-        assert!(steps <= 20 * PAGE as u64, "{steps} VM steps for a page of {PAGE}");
-        let scanned =
-            state_store::backend::range_in_state_by_scan(&b, "p/", "s3", Some("p/010000"), PAGE, head)
-                .unwrap();
+        assert!(
+            steps <= 20 * PAGE as u64,
+            "{steps} VM steps for a page of {PAGE}"
+        );
+        let scanned = state_store::backend::range_in_state_by_scan(
+            &b,
+            "p/",
+            "s3",
+            Some("p/010000"),
+            PAGE,
+            head,
+        )
+        .unwrap();
         assert_eq!(page, scanned);
     }
 
@@ -1296,17 +1292,49 @@ mod tests {
         let obj = |data: serde_json::Value| {
             serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": data })).unwrap()
         };
-        let audit = |machine: &str, to: &str, at: i64, applied: bool| {
-            serde_json::json!({ "machine": machine, "lc_key": "sp-a", "to_state": to, "at": at, "applied": applied })
-        };
+        let audit = |machine: &str, to: &str, at: i64, applied: bool| serde_json::json!({ "machine": machine, "lc_key": "sp-a", "to_state": to, "at": at, "applied": applied });
         let rows: Vec<(&str, i64, Vec<u8>)> = vec![
-            ("deliveries/sp-a", 9, obj(serde_json::json!({ "bead_id": "sp-a", "state": "Batched" }))),
-            ("deliveries/sp-b", 9, obj(serde_json::json!({ "bead_id": "sp-b", "state": "Queued" }))),
-            ("deliveries/sp-c/x", 9, obj(serde_json::json!({ "state": "Queued" }))),
-            ("history/sp-a/0/import/1", 1, obj(serde_json::json!({ "seq": 1, "audit": audit("delivery", "QUEUED", 10, true) }))),
-            ("history/sp-a/0/import/2", 1, obj(serde_json::json!({ "seq": 2, "audit": audit("delivery", "BATCHED", 20, true) }))),
-            ("history/sp-a/0/import/3", 1, obj(serde_json::json!({ "seq": 3, "audit": audit("bead", "BATCHED", 99, true) }))),
-            ("history/sp-a/0/import/4", 1, obj(serde_json::json!({ "seq": 4, "audit": audit("delivery", "BATCHED", 98, false) }))),
+            (
+                "deliveries/sp-a",
+                9,
+                obj(serde_json::json!({ "bead_id": "sp-a", "state": "Batched" })),
+            ),
+            (
+                "deliveries/sp-b",
+                9,
+                obj(serde_json::json!({ "bead_id": "sp-b", "state": "Queued" })),
+            ),
+            (
+                "deliveries/sp-c/x",
+                9,
+                obj(serde_json::json!({ "state": "Queued" })),
+            ),
+            (
+                "history/sp-a/0/import/1",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 1, "audit": audit("delivery", "QUEUED", 10, true) }),
+                ),
+            ),
+            (
+                "history/sp-a/0/import/2",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 2, "audit": audit("delivery", "BATCHED", 20, true) }),
+                ),
+            ),
+            (
+                "history/sp-a/0/import/3",
+                1,
+                obj(serde_json::json!({ "seq": 3, "audit": audit("bead", "BATCHED", 99, true) })),
+            ),
+            (
+                "history/sp-a/0/import/4",
+                1,
+                obj(
+                    serde_json::json!({ "seq": 4, "audit": audit("delivery", "BATCHED", 98, false) }),
+                ),
+            ),
             ("history/sp-a/5/r1", 7, obj(serde_json::json!({}))),
             (
                 "events/00000000000000000007",
@@ -1344,9 +1372,16 @@ mod tests {
             let v = b.get(key, 9).unwrap().unwrap().value;
             serde_json::from_slice::<serde_json::Value>(&v).unwrap()["data"]["entered"].clone()
         };
-        assert_eq!(entered("deliveries/sp-a"), serde_json::json!({ "QUEUED": 10, "BATCHED": 30 }));
+        assert_eq!(
+            entered("deliveries/sp-a"),
+            serde_json::json!({ "QUEUED": 10, "BATCHED": 30 })
+        );
         assert_eq!(entered("deliveries/sp-b"), serde_json::json!({}));
-        assert_eq!(entered("deliveries/sp-c/x"), serde_json::Value::Null, "not a delivery");
+        assert_eq!(
+            entered("deliveries/sp-c/x"),
+            serde_json::Value::Null,
+            "not a delivery"
+        );
         let w = lock(&b.0.writer);
         let mirrored: i64 = w
             .conn
@@ -1370,7 +1405,9 @@ mod tests {
         conn.pragma_update(None, "user_version", SCHEMA_MIGRATIONS as i64 + 1)
             .unwrap();
         drop(conn);
-        let e = SqliteBackend::open(&path, Options::default()).err().unwrap();
+        let e = SqliteBackend::open(&path, Options::default())
+            .err()
+            .unwrap();
         assert!(e.to_string().contains("this binary knows"), "{e}");
     }
 }

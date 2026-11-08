@@ -156,9 +156,16 @@ pub fn decode(bytes: &[u8]) -> Result<Run, String> {
             .as_array()
             .ok_or("the header's jumps are not a list")?
             .iter()
-            .map(|p| match p.as_array().map(|a| (a.first().and_then(Value::as_u64), a.get(1).and_then(Value::as_u64))) {
-                Some((Some(a), Some(b))) if a <= b => Ok((a, b)),
-                _ => Err("a jump is not [first, last]".to_string()),
+            .map(|p| {
+                match p.as_array().map(|a| {
+                    (
+                        a.first().and_then(Value::as_u64),
+                        a.get(1).and_then(Value::as_u64),
+                    )
+                }) {
+                    Some((Some(a), Some(b))) if a <= b => Ok((a, b)),
+                    _ => Err("a jump is not [first, last]".to_string()),
+                }
             })
             .collect::<Result<_, _>>()?,
     };
@@ -174,7 +181,9 @@ pub fn decode(bytes: &[u8]) -> Result<Run, String> {
         match js.peek() {
             Some(&&(a, b)) if a <= m => {
                 if a != m || b < a || b > to || a <= last_jump {
-                    return Err(format!("the jump {a}..={b} is not inside {from}..={to} in order"));
+                    return Err(format!(
+                        "the jump {a}..={b} is not inside {from}..={to} in order"
+                    ));
                 }
                 last_jump = b;
                 m = b + 1;
@@ -194,7 +203,15 @@ pub fn decode(bytes: &[u8]) -> Result<Run, String> {
     for e in &entries {
         let next = match cur {
             Some((main, sub)) if e.rev.main == main => (main, sub + 1),
-            _ => (want.next().ok_or_else(|| format!("entry {} at {}.{} is past the run's revisions", e.key, e.rev.main, e.rev.sub))?, 0),
+            _ => (
+                want.next().ok_or_else(|| {
+                    format!(
+                        "entry {} at {}.{} is past the run's revisions",
+                        e.key, e.rev.main, e.rev.sub
+                    )
+                })?,
+                0,
+            ),
         };
         if (e.rev.main, e.rev.sub) != next {
             return Err(format!(
@@ -205,9 +222,16 @@ pub fn decode(bytes: &[u8]) -> Result<Run, String> {
         cur = Some(next);
     }
     if let Some(m) = want.next() {
-        return Err(format!("its entries do not cover revision {m} of {from}..={to}, which no jump declares"));
+        return Err(format!(
+            "its entries do not cover revision {m} of {from}..={to}, which no jump declares"
+        ));
     }
-    Ok(Run { from, to, entries, jumps })
+    Ok(Run {
+        from,
+        to,
+        entries,
+        jumps,
+    })
 }
 
 /// The run's entries grouped by main, in order.
@@ -299,18 +323,29 @@ mod tests {
         let mut run = Run {
             from: 1,
             to: 1_003,
-            entries: vec![entry("a", 1, 0, Some(b"1")), entry("b", 1_003, 0, Some(b"2"))],
+            entries: vec![
+                entry("a", 1, 0, Some(b"1")),
+                entry("b", 1_003, 0, Some(b"2")),
+            ],
             jumps: vec![(2, 1_002)],
         };
         assert_eq!(decode(&encode(&run)).unwrap(), run);
         run.jumps.clear();
         let err = decode(&encode(&run)).unwrap_err();
-        assert!(err.contains("revision 2") || err.contains("1003.0 where 2.0"), "{err}");
+        assert!(
+            err.contains("revision 2") || err.contains("1003.0 where 2.0"),
+            "{err}"
+        );
     }
 
     #[test]
     fn a_run_that_is_only_a_jump_decodes() {
-        let run = Run { from: 5, to: 1_004, entries: vec![], jumps: vec![(5, 1_004)] };
+        let run = Run {
+            from: 5,
+            to: 1_004,
+            entries: vec![],
+            jumps: vec![(5, 1_004)],
+        };
         assert_eq!(decode(&encode(&run)).unwrap(), run);
     }
 }

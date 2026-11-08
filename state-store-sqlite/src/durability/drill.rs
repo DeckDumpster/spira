@@ -304,7 +304,14 @@ pub fn drill(
     }
     fs::copy(&snapshot, &base_path).map_err(|e| format!("{}: {e}", base_path.display()))?;
     let open = |p: &Path| {
-        SqliteBackend::open(p, Options { jump_on_open: false, ..Options::default() }).map_err(|e| format!("{}: {e}", p.display()))
+        SqliteBackend::open(
+            p,
+            Options {
+                jump_on_open: false,
+                ..Options::default()
+            },
+        )
+        .map_err(|e| format!("{}: {e}", p.display()))
     };
     let report = fold_compare(&open(&base_path)?, &restored.runs, &open(&out)?, ex)?;
     Ok((restored, report))
