@@ -667,8 +667,7 @@ impl World {
         let ids = todo
             .iter()
             .filter(|r| {
-                let priority = r.priority.to_string();
-                let mut argv = vec!["create-bead", &r.id, "--priority", &priority, "--title", &r.title];
+                let mut argv = vec!["create-bead", &r.id];
                 if let Some(repo) = &r.repo {
                     argv.extend(["--repo", repo]);
                 }

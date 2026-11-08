@@ -87,7 +87,7 @@ id="$(printf '%s\n' "$id" | tail -n 1)"
 row_created=0
 n=1
 while [ "$n" -le "$ATTEMPTS" ]; do
-    if timeout "$CALL_TIMEOUT" "$LC" create-bead "$id" --priority 3 >/dev/null 2>&1; then
+    if timeout "$CALL_TIMEOUT" "$LC" create-bead "$id" >/dev/null 2>&1; then
         row_created=1
         break
     fi
