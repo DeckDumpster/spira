@@ -69,7 +69,8 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     let max_sleep = notifier.max_sleep();
     let metrics = spira_otel::metrics::MetricsSink::for_component(settings.metrics_endpoint.as_deref(), "spira-runtime");
     let sink = Arc::new(OtlpSink::with_metrics(spira_otel::logs::LogSink::new(settings.otel_dir(), "spira-runtime"), LOG_QUEUE, metrics));
-    let journal = Arc::new(SocketJournal::new(settings.lc_socket.clone()));
+    // sp-4du857: writes ride the next request in one transaction; the flusher bounds the rest.
+    let journal = SocketJournal::flushing(settings.lc_socket.clone(), runtime::socket::FLUSH_AGE);
     let clock = Arc::new(WallClock);
     let board = Arc::new(runtime::engine::StatusBoard::default());
     let boot = {

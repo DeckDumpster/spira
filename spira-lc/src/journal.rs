@@ -198,10 +198,41 @@ fn cursor_sql(next: u64) -> String {
     format!("INSERT INTO runtime_cursor (id, `next`) VALUES (1, {next}) ON DUPLICATE KEY UPDATE `next` = {next}")
 }
 
-/// `journal batch`'s staged writes (sp-rkb6wl): `{"applied": [[handler, event_id], ...],
-/// "cursor": n|null}`, every one checked before any is written, so a refusal writes nothing.
+/// One staged write of `journal group` (sp-4du857): `{"append": event}`, `{"schedule": row}` or
+/// `{"fired": row_id}`, each the statement its own op would run.
+fn staged_write_sql(w: &Value) -> Result<String, String> {
+    let refused = || format!("journal: group refused: a write is not one of append, schedule, fired: {}", clip(&w.to_string()));
+    let Some((kind, v)) = w.as_object().filter(|o| o.len() == 1).and_then(|o| o.iter().next()) else { return Err(refused()) };
+    match kind.as_str() {
+        "append" => append_sql(v),
+        "schedule" => schedule_sql(v),
+        "fired" => match v.as_str() {
+            Some(id) if !id.is_empty() && !id.contains('\0') => Ok(fired_sql(id)),
+            _ => Err(format!("journal: group refused: a fired mark is not a row id: {v}")),
+        },
+        _ => Err(refused()),
+    }
+}
+
+fn fired_sql(row_id: &str) -> String {
+    format!("UPDATE runtime_schedule SET fired = 1 WHERE row_id = {}", lit(row_id))
+}
+
+/// The staged writes `journal group` and `journal batch` carry (sp-rkb6wl, sp-4du857):
+/// `{"writes": [...], "applied": [[handler, event_id], ...], "cursor": n|null}`. The writes come
+/// first, in the order the runtime made them, so journal order is record order; every one is
+/// checked before any is written, so a refusal writes nothing.
 pub fn staged_sql(staged: &Value) -> Result<Vec<String>, String> {
     let mut sqls = vec![];
+    match staged.get("writes") {
+        None | Some(Value::Null) => {}
+        Some(Value::Array(ws)) => {
+            for w in ws {
+                sqls.push(staged_write_sql(w)?);
+            }
+        }
+        Some(other) => return Err(format!("journal: group refused: writes is not a list: {}", clip(&other.to_string()))),
+    }
     for pair in staged.get("applied").and_then(Value::as_array).map_or(&[][..], Vec::as_slice) {
         let (h, i) = (pair.get(0).and_then(Value::as_str), pair.get(1).and_then(Value::as_str));
         let (Some(h), Some(i)) = (h.filter(|s| !s.is_empty()), i.filter(|s| !s.is_empty())) else {
@@ -239,11 +270,18 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             write(conn, &append_sql(&ev)?, Some(&ev))?;
             appended_seq(conn, op, &ev)
         }
-        "batch" => {
-            let mut sqls = staged_sql(&parse(a(1), "staged writes")?)?;
+        // `group` is `batch` that also carries records, schedule rows and fired marks
+        // (sp-4du857): a client that sends them asks for `group`, so a service without it
+        // refuses the op instead of dropping the writes it does not know.
+        "batch" | "group" => {
+            let staged = parse(a(1), "staged writes")?;
+            if op == "batch" && staged.get("writes").is_some() {
+                return Err("journal: batch refused: records ride `journal group`".into());
+            }
+            let mut sqls = staged_sql(&staged)?;
             let inner = &args[2..];
             match inner.first().map(String::as_str) {
-                Some("batch") => Err("journal: batch refused: a batch inside a batch".into()),
+                Some("batch" | "group") => Err(format!("journal: {op} refused: a batch inside a batch")),
                 Some("append") => {
                     let ev = parse(inner.get(1), "event")?;
                     sqls.push(append_sql(&ev)?);
@@ -312,7 +350,7 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             Ok(Value::Array(rows.iter().map(row_of).collect()).to_string())
         }
         "mark-fired" => {
-            write(conn, &format!("UPDATE runtime_schedule SET fired = 1 WHERE row_id = {}", lit(text_arg(a(1), "row id")?)), None)?;
+            write(conn, &fired_sql(text_arg(a(1), "row id")?), None)?;
             Ok(String::new())
         }
         "poison" => {
@@ -338,7 +376,7 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             let rows = read(conn, &format!("SELECT stream, event_id, handler, message FROM runtime_poison WHERE stream = {}", lit(text_arg(a(1), "stream")?)))?;
             Ok(rows.first().map_or("null".into(), |r| json!({ "stream": cell(r, "stream"), "event": cell(r, "event_id"), "handler": cell(r, "handler"), "message": cell(r, "message") }).to_string()))
         }
-        _ => Err(format!("journal: unknown op {op:?} (append|batch|read|stream|end|open-effects|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned)")),
+        _ => Err(format!("journal: unknown op {op:?} (append|batch|group|read|stream|end|open-effects|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned)")),
     }
 }
 
@@ -429,6 +467,38 @@ mod tests {
         assert!(staged_sql(&json!({"cursor": null})).unwrap().is_empty());
         for bad in [json!({"applied": [["h"]]}), json!({"applied": [["", "e"]]}), json!({"cursor": -1}), json!({"applied": [["h".repeat(129), "e"]]})] {
             assert!(staged_sql(&bad).unwrap_err().starts_with("journal:"), "{bad}");
+        }
+    }
+
+    /// sp-4du857: a group's records, schedule rows and fired marks become their ops' own
+    /// statements in the order sent, ahead of the marks and the cursor; one bad write refuses all.
+    #[test]
+    fn a_groups_writes_become_their_ops_statements_in_order_and_one_bad_write_refuses_them_all() {
+        let row = json!({"id": "r1", "at": 5, "stream": "s", "kind": {"tag": "tick", "body": ""}, "cause": null, "correlation": "c"});
+        let sqls = staged_sql(&json!({"writes": [{"append": ev()}, {"schedule": row}, {"fired": "r1"}, {"append": {"id": "e2", "stream": "s", "kind": {"tag": "t", "body": ""}, "at": 8, "cause": "e'1", "correlation": "c"}}], "applied": [["h", "e2"]], "cursor": 4})).unwrap();
+        assert_eq!(sqls.len(), 6, "{sqls:?}");
+        assert_eq!(sqls[0], append_sql(&ev()).unwrap());
+        assert_eq!(sqls[1], schedule_sql(&row).unwrap());
+        assert_eq!(sqls[2], fired_sql("r1"));
+        assert!(sqls[3].contains("'e2'") && sqls[4].starts_with("INSERT INTO runtime_applied") && sqls[5].contains("VALUES (1, 4)"), "{sqls:?}");
+        for bad in [
+            json!({"writes": [{"append": ev()}, {"append": {"id": "i".repeat(256), "stream": "s", "kind": {"tag": "t", "body": ""}, "at": 1, "cause": null, "correlation": "c"}}]}),
+            json!({"writes": [{"fired": ""}]}),
+            json!({"writes": [{"delete": "x"}]}),
+            json!({"writes": [{"append": ev(), "fired": "r"}]}),
+            json!({"writes": {"append": ev()}}),
+        ] {
+            assert!(staged_sql(&bad).unwrap_err().starts_with("journal:"), "{bad}");
+        }
+    }
+
+    /// The runtime stages a write only inside the widths this verb refuses past
+    /// (runtime/src/socket.rs), so a staged write is never the one that refuses a group.
+    #[test]
+    fn the_runtime_stages_only_inside_these_widths() {
+        let src = include_str!("../../runtime/src/socket.rs");
+        for (name, max) in [("ID_MAX", ID_MAX), ("STREAM_MAX", STREAM_MAX), ("TAG_MAX", TAG_MAX), ("HANDLER_MAX", HANDLER_MAX)] {
+            assert!(src.contains(&format!("const {name}: usize = {max};")), "runtime/src/socket.rs {name} differs from {max}");
         }
     }
 

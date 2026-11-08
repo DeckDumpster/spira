@@ -82,6 +82,12 @@ pub trait LeaseTable: Send + Sync {
 /// existing offset, so a replayed handler writes nothing twice.
 pub trait Journal: Send + Sync {
     fn append(&self, ev: &Event) -> Result<Offset>;
+    /// [`append`](Self::append) for a caller that does not need the offset. A journal may stage
+    /// the event to commit with its next request (sp-4du857): every later read still sees it,
+    /// in the order it was recorded, and [`flush`](Self::flush) makes it durable now.
+    fn record(&self, ev: &Event) -> Result<()> {
+        self.append(ev).map(|_| ())
+    }
     fn read_from(&self, from: Offset, limit: usize) -> Result<Vec<(Offset, Event)>>;
     fn applied(&self, handler: &str, id: &EventId) -> Result<bool>;
     fn mark_applied(&self, handler: &str, id: &EventId) -> Result<()>;
@@ -340,6 +346,10 @@ impl Journal for FaultyJournal {
     fn append(&self, ev: &Event) -> Result<Offset> {
         self.gate("append")?;
         self.inner.append(ev)
+    }
+    fn record(&self, ev: &Event) -> Result<()> {
+        self.gate("append")?;
+        self.inner.record(ev)
     }
     fn read_from(&self, from: Offset, limit: usize) -> Result<Vec<(Offset, Event)>> {
         self.inner.read_from(from, limit)
