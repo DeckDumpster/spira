@@ -994,7 +994,11 @@ fn cmd_guard() -> i32 {
 
 type StoreVerb = fn(&spira_world::freeze::Store, &mut dyn spira_world::freeze::Units) -> Result<Vec<String>, String>;
 
-fn cmd_store(verb: StoreVerb) -> i32 {
+fn cmd_store(name: &str, rest: &[String], verb: StoreVerb) -> i32 {
+    if !rest.is_empty() {
+        eprintln!("usage: world.sh {name}   (takes no arguments; refusing {:?})", rest[0]);
+        return 2;
+    }
     if let Some(e) = sysctl::bus_unreachable() {
         eprintln!("refused: {e}");
         return 1;
@@ -1030,8 +1034,8 @@ fn main() {
         "unpause" => cmd_unpause(rest),
         "status" => cmd_status(),
         "guard" => cmd_guard(),
-        "freeze-store" => cmd_store(spira_world::freeze::freeze),
-        "thaw-store" => cmd_store(spira_world::freeze::thaw),
+        "freeze-store" => cmd_store("freeze-store", rest, spira_world::freeze::freeze),
+        "thaw-store" => cmd_store("thaw-store", rest, spira_world::freeze::thaw),
         // `scheduler status` for a shell caller: the headline and task lines, and an exit code
         // that says running (0), not answering (1) or halted (2).
         "scheduler-status" => {
@@ -1068,4 +1072,27 @@ fn main() {
         spira_otel::oneshot::event("spira_world_state_changes", 1, &[("to", &cmd)]);
     }
     spira_otel::oneshot::exit(rc);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static ACTED: AtomicBool = AtomicBool::new(false);
+
+    fn acts(_: &spira_world::freeze::Store, _: &mut dyn spira_world::freeze::Units) -> Result<Vec<String>, String> {
+        ACTED.store(true, Ordering::SeqCst);
+        Ok(vec![])
+    }
+
+    #[test]
+    fn store_verbs_refuse_help_and_unknown_arguments_without_acting() {
+        for name in ["freeze-store", "thaw-store"] {
+            for arg in ["--help", "-h", "--bogus"] {
+                assert_eq!(cmd_store(name, &[arg.to_string()], acts), 2, "{name} {arg}");
+            }
+        }
+        assert!(!ACTED.load(Ordering::SeqCst), "a store verb acted on an argument");
+    }
 }
