@@ -54,7 +54,7 @@ fn cmd_show(bead_id: &str, conn: &Conn) -> (i32, String) {
         Ok(text) => text,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
-    match crate::cmd_show(&[bead_id.to_string()], conn) {
+    match crate::plane::read(conn, &[s("show"), bead_id.to_string()]) {
         (0, row) => (0, with_lifecycle(&text, &row)),
         (1, _) => (0, format!("{text}\nLIFECYCLE: no row\n")),
         (_, e) => (CANNOT_TELL, e),
@@ -1459,7 +1459,8 @@ fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[Strin
     } else {
         vec![s("--live")]
     };
-    let (rc, rows) = crate::cmd_list(&narrowing, conn);
+    let narrowing: Vec<String> = std::iter::once(s("list")).chain(narrowing).collect();
+    let (rc, rows) = crate::plane::read(conn, &narrowing);
     if rc != 0 {
         return (rc, rows);
     }
