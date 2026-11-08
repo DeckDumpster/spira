@@ -126,6 +126,7 @@ dwarf_build_budget_gib = 60
 dolt_persist_interval_secs = 5
 dolt_persist_max_lag_secs = 120
 dolt_persist_compact_pct = 150
+dolt_tmp_pressure_pct = 85
 lc_backup_db = "spira_lifecycle spira"
 lc_backup_max_age = 10800
 lc_backup_allow_local = false
