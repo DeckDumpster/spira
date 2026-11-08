@@ -328,10 +328,6 @@ mod own_unit_tests {
         (tags, e.status())
     }
 
-    fn first_write_under(stamp: bool) -> Vec<String> {
-        boot_under(stamp).0
-    }
-
     #[test]
     fn a_scheduler_booted_under_the_halt_stamp_leaves_world_status_halted_not_degraded() {
         let status = boot_under(true).1;
@@ -342,13 +338,13 @@ mod own_unit_tests {
 
     #[test]
     fn a_boot_under_the_halt_stamp_holds_its_first_work_effect() {
-        let tags = first_write_under(true);
+        let tags = boot_under(true).0;
         assert!(tags.iter().any(|t| t == runtime::EFFECT_HELD) && !tags.iter().any(|t| t == runtime::EFFECT_REQUESTED), "{tags:?}");
     }
 
     #[test]
     fn a_boot_without_the_halt_stamp_requests_its_first_work_effect() {
-        let tags = first_write_under(false);
+        let tags = boot_under(false).0;
         assert!(tags.iter().any(|t| t == runtime::EFFECT_REQUESTED) && !tags.iter().any(|t| t == runtime::EFFECT_HELD), "{tags:?}");
     }
 
