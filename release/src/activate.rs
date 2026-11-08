@@ -625,11 +625,13 @@ fn live_reason(old: &str, new: &str, roots: &Roots, exe: Option<&Path>) -> Optio
         return None;
     }
     let path = roots.resolve(&prog, Some(roots.new))?;
-    let want = std::fs::read(&path).ok()?;
+    let (have, want) = match (std::fs::read(exe), std::fs::read(&path)) {
+        (Ok(h), Ok(w)) => (h, w),
+        _ => return Some(format!("cannot compare its running executable with {}; restarted", path.display())),
+    };
     if want.starts_with(b"#!") {
         return None;
     }
-    let have = std::fs::read(exe).ok()?;
     (have != want).then(|| format!("its running process's executable is not {}", path.display()))
 }
 
@@ -883,5 +885,23 @@ mod restart_tests {
         let exe = a1.join("bin/spira-lc");
         assert!(live_reason(&now, &now, &roots, Some(&exe)).is_some_and(|w| w.contains("executable")), "the process runs a1's spira-lc");
         assert_eq!(live_reason(&now, &now, &roots, Some(&b2.join("bin/spira-lc"))), None, "the process runs b2's bytes");
+    }
+
+    /// sp-r1gmno: a running process whose executable cannot be read, or a program the unit
+    /// names that cannot be read, is not shown to match, so the service restarts.
+    #[test]
+    fn a_running_executable_that_cannot_be_compared_restarts_the_service() {
+        let t = testkit::TempDir::new("release-live-unreadable");
+        let rel = t.path().join("releases");
+        fs::create_dir_all(rel.join("b2").join("bin")).unwrap();
+        fs::write(rel.join("b2/bin/spira-lc"), "LC2").unwrap();
+        let (a1, b2) = (rel.join("a1"), rel.join("b2"));
+        let roots = Roots { releases: &rel, old: Some(&a1), new: &b2 };
+        let unit = |sha: &str| format!("[Service]\nExecStart={}/{sha}/bin/spira-lc serve\n", rel.display());
+        let gone = t.path().join("no-such-exe");
+        assert!(live_reason(&unit("b2"), &unit("b2"), &roots, Some(&gone)).is_some_and(|w| w.contains("cannot")), "unreadable process executable");
+        let pruned = Roots { releases: &rel, old: Some(&a1), new: &rel.join("c3") };
+        let exe = b2.join("bin/spira-lc");
+        assert!(live_reason(&unit("c3"), &unit("c3"), &pruned, Some(&exe)).is_some_and(|w| w.contains("cannot")), "unreadable new program");
     }
 }
