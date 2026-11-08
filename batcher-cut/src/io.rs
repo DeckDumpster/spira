@@ -2452,8 +2452,17 @@ impl Drop for Parked {
 /// its length, and marks `batch` driven by holding its certify lock meanwhile. The queue lock
 /// is taken again before returning: state transitions stay under it.
 pub fn unlocked<T>(env: &Env, repo: &str, batch: Option<&str>, wait_secs: u64, leg: impl FnOnce() -> T) -> Result<T, String> {
+    let Some(batch) = batch else { return Ok(leg()) };
     let held = HELD_QUEUE_LOCK.with(|s| s.borrow_mut().take()).is_some();
-    let driving = held.then(|| batch.and_then(|b| drive_marker(env, repo, b))).flatten();
+    let driving = if held {
+        let marker = drive_marker(env, repo, batch);
+        if marker.is_none() {
+            return Err(format!("{repo}: a leg may not run unlocked without marking {batch} driven"));
+        }
+        marker
+    } else {
+        None
+    };
     let out = leg();
     drop(driving);
     if held {
