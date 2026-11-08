@@ -10,6 +10,8 @@ pub const MENDS: &str = "mends/";
 pub const BATCHES: &str = "batches/";
 /// Each round's id, naming the repo it was cut in: a round id is unique across repos.
 pub const BATCH_IDS: &str = "batch-ids/";
+/// Each bead's rounds, `batch-members/<bead>/<round id>`: a range read answers `batches-of`.
+pub const BATCH_MEMBERS: &str = "batch-members/";
 pub const RUNTIME: &str = "runtime/";
 pub const HISTORY: &str = "history/";
 /// Knobs a section owner moves by applying an intent from one value to another.
@@ -78,6 +80,15 @@ pub fn batch(repo: &str, id: &str) -> String {
 
 pub fn batch_index(id: &str) -> String {
     format!("{BATCH_IDS}{id}")
+}
+
+/// Every membership entry of `bead`; a round id may hold a `/`, a bead id never does.
+pub fn batch_members_of(bead: &str) -> String {
+    format!("{BATCH_MEMBERS}{bead}/")
+}
+
+pub fn batch_member(bead: &str, id: &str) -> String {
+    format!("{}{id}", batch_members_of(bead))
 }
 
 pub fn batch_progress(repo: &str, id: &str) -> String {

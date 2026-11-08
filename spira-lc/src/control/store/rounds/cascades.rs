@@ -326,6 +326,7 @@ impl<B: Backend> Store<B> {
             tip: tip.clone(),
         }));
         c.put(self, &key, &rec, &[])?;
+        self.index_members(&mut c, &key, &rec.row, &rec.members[rec.members.len() - members.len()..])?;
         Ok(Planned::Cascade(c))
     }
 
