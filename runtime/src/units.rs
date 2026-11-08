@@ -1964,7 +1964,7 @@ impl Backend {
         match self {
             Backend::Scripted(_) => "scripted",
             Backend::Process(_) => "process",
-            Backend::Systemctl(_) => "systemctl",
+            Backend::Systemctl(_) => "cli",
             #[cfg(target_os = "linux")]
             Backend::Systemd(_) => "systemd",
         }
@@ -1982,10 +1982,13 @@ pub fn from_env(clock: Arc<dyn Clock>) -> Result<Backend> {
 pub fn for_host(clock: Arc<dyn Clock>, units: Option<&str>, systemctl: Option<&str>) -> Result<Backend> {
     let overridden = systemctl.is_some_and(|p| !p.trim().is_empty());
     let value = match units.map(str::trim).filter(|v| !v.is_empty()) {
-        None | Some("systemd") if overridden => Some("systemctl"),
+        None | Some("systemd") if overridden => Some("cli"),
         other => other,
     };
-    from_value(clock, value)
+    match (value, systemctl.map(str::trim).filter(|p| !p.is_empty())) {
+        (Some("cli"), Some(program)) => Ok(Backend::Systemctl(Arc::new(crate::systemctl::SystemctlUnits::new(program)))),
+        _ => from_value(clock, value),
+    }
 }
 
 /// A backend that could not be opened: every read says why, so a probe reports "unknown"
@@ -2021,11 +2024,10 @@ pub fn unreachable(why: &str) -> Arc<dyn Units> {
     Arc::new(Unreachable(why.into()))
 }
 
-/// The unit manager a host tool reads: [`for_host`] over this process's `SPIRA_UNITS` and
-/// `SPIRA_SYSTEMCTL`, or [`unreachable`] naming why it could not be opened.
-pub fn host() -> Arc<dyn Units> {
-    let var = |k: &str| std::env::var(k).ok();
-    match for_host(Arc::new(crate::ports::WallClock), var(UNITS_KEY).as_deref(), var(crate::systemctl::PROGRAM_KEY).as_deref()) {
+/// The unit manager a host tool reads: [`for_host`] over this process's `SPIRA_UNITS` and the
+/// caller's `SPIRA_SYSTEMCTL` override, or [`unreachable`] naming why it could not be opened.
+pub fn host(systemctl: Option<&str>) -> Arc<dyn Units> {
+    match for_host(Arc::new(crate::ports::WallClock), std::env::var(UNITS_KEY).ok().as_deref(), systemctl) {
         Ok(backend) => backend.units(),
         Err(e) => unreachable(&format!("unit manager unreachable: {e}")),
     }
@@ -2036,14 +2038,14 @@ pub fn from_value(clock: Arc<dyn Clock>, value: Option<&str>) -> Result<Backend>
     match value.map(str::trim).filter(|v| !v.is_empty()) {
         Some("scripted") => Ok(Backend::Scripted(Arc::new(ScriptedUnits::new(clock)))),
         Some("process") => Ok(Backend::Process(Arc::new(ProcessUnits::new(clock)))),
-        Some("systemctl") => Ok(Backend::Systemctl(Arc::new(crate::systemctl::SystemctlUnits::from_env()))),
+        Some("cli") => Ok(Backend::Systemctl(Arc::new(crate::systemctl::SystemctlUnits::system()))),
         #[cfg(target_os = "linux")]
         Some("systemd") | None => Ok(Backend::Systemd(Arc::new(SystemdUnits::connect(clock)?))),
         #[cfg(not(target_os = "linux"))]
         Some("systemd") => Err(RuntimeError::refused(format!("{UNITS_KEY}=systemd: systemd is Linux only"))),
         #[cfg(not(target_os = "linux"))]
         None => Ok(Backend::Process(Arc::new(ProcessUnits::new(clock)))),
-        Some(other) => Err(RuntimeError::refused(format!("{UNITS_KEY}={other}: not one of scripted, process, systemctl, systemd"))),
+        Some(other) => Err(RuntimeError::refused(format!("{UNITS_KEY}={other}: not one of scripted, process, cli, systemd"))),
     }
 }
 
@@ -2067,11 +2069,11 @@ mod tests {
     fn a_systemctl_override_outranks_the_default_backend_but_not_a_deliberate_one() {
         let clock = || -> Arc<dyn Clock> { Arc::new(VirtualClock::new(0)) };
         let kind = |units, sysctl| for_host(clock(), units, sysctl).map(|b| b.kind());
-        assert_eq!(kind(Some("systemd"), Some("/stub/systemctl")), Ok("systemctl"));
-        assert_eq!(kind(None, Some("/stub/systemctl")), Ok("systemctl"));
-        assert_eq!(kind(Some("scripted"), Some("/stub/systemctl")), Ok("scripted"));
+        assert_eq!(kind(Some("systemd"), Some("/stub/units-cli")), Ok("cli"));
+        assert_eq!(kind(None, Some("/stub/units-cli")), Ok("cli"));
+        assert_eq!(kind(Some("scripted"), Some("/stub/units-cli")), Ok("scripted"));
         assert_eq!(kind(Some("process"), Some("")), Ok("process"));
-        assert_eq!(kind(Some("systemctl"), None), Ok("systemctl"));
+        assert_eq!(kind(Some("cli"), None), Ok("cli"));
     }
 
     #[test]

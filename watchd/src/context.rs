@@ -47,6 +47,8 @@ pub struct Context {
     /// `SPIRA_SYSTEMCTL`, `SPIRA_INSTANCE` — ambient overrides `conf.sh` never defaults, so
     /// read straight from this process's own environment rather than through the seam.
     pub systemctl: String,
+    /// `SPIRA_SYSTEMCTL` when set: a wrapper or stub the unit reads must go through.
+    pub systemctl_override: Option<String>,
     pub instance: String,
     /// `SPIRA_NOW` captured once, here, when `load()` ran — never re-read per call. A
     /// dynamic per-call read of a process environment variable is a data race the moment
@@ -92,6 +94,7 @@ pub fn load(home: &Path) -> Result<Context, String> {
         bdq: spira_config::release_env::tool("bdq")?,
         placeholders,
         systemctl: std::env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
+        systemctl_override: std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()),
         // SPIRA_INSTANCE is a registered key too (just not in CONFIG_VARS above, since it
         // is not part of the conf.sh seam's own VARS/CONFIG_VARS split) — the same one
         // door, never the explicit-`home`-parameter `resolve_instance` call this used to

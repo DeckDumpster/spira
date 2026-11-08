@@ -121,7 +121,7 @@ fn lock_holders_check(n: i64, run: &Path) -> Result<String, String> {
 fn conditions_check(n: i64, run: &Path) -> Result<(), String> {
     let releases = reg("SPIRA_RELEASES")?;
     let cfg = probes::Cfg {
-        units: runtime::units::host(),
+        units: runtime::units::host(getenv("SPIRA_SYSTEMCTL").as_deref()),
         releases: (!releases.is_empty()).then_some(releases),
         keep: reg_i64("SPIRA_RELEASES_KEEP")?.max(1) as usize,
         store_slack: reg_i64("SPIRA_RELEASE_STORE_SLACK")?.max(0) as usize,

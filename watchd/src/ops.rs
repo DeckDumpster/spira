@@ -109,8 +109,8 @@ pub struct Real {
 }
 
 impl Real {
-    pub fn new(systemctl: String) -> Real {
-        Real { systemctl, units: runtime::units::host(), systemd_run: std::env::var("SPIRA_SYSTEMD_RUN").unwrap_or_else(|_| "systemd-run".to_string()) }
+    pub fn new(systemctl: String, systemctl_override: Option<&str>) -> Real {
+        Real { systemctl, units: runtime::units::host(systemctl_override), systemd_run: std::env::var("SPIRA_SYSTEMD_RUN").unwrap_or_else(|_| "systemd-run".to_string()) }
     }
 }
 

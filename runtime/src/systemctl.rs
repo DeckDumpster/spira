@@ -5,14 +5,12 @@
 //! onto the live user manager. The text `systemctl show` prints is read here, once, into the
 //! port's typed [`UnitDetail`]; no caller reads it.
 
-use std::io::Read;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::units::{state_of_word, Exit, UnitCompletions, UnitDetail, UnitFacts, UnitHandle, UnitRan, UnitState, Units};
 use crate::{Result, RuntimeError};
 
-pub const PROGRAM_KEY: &str = "SPIRA_SYSTEMCTL";
 const DEFAULT_PROGRAM: &str = "systemctl";
 const CALL_BUDGET: Duration = Duration::from_secs(20);
 
@@ -28,9 +26,9 @@ impl SystemctlUnits {
         SystemctlUnits { program: program.into(), budget: CALL_BUDGET }
     }
 
-    /// The program `SPIRA_SYSTEMCTL` names, else `systemctl` from `PATH`.
-    pub fn from_env() -> Self {
-        Self::new(&std::env::var(PROGRAM_KEY).ok().filter(|p| !p.is_empty()).unwrap_or_else(|| DEFAULT_PROGRAM.into()))
+    /// `systemctl` from `PATH`.
+    pub fn system() -> Self {
+        Self::new(DEFAULT_PROGRAM)
     }
 
     pub fn with_budget(mut self, budget: Duration) -> Self {
@@ -41,31 +39,13 @@ impl SystemctlUnits {
     /// `systemctl --user <args>`; stdout on a zero exit, a fault otherwise.
     fn run(&self, args: &[&str]) -> Result<String> {
         let what = format!("{} --user {}", self.program, args.join(" "));
-        let mut child = Command::new(&self.program).arg("--user").args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| RuntimeError::new(format!("{what}: {e}")))?;
-        let mut out = child.stdout.take().ok_or_else(|| RuntimeError::new(format!("{what}: no stdout")))?;
-        let reader = std::thread::spawn(move || {
-            let mut text = String::new();
-            let _ = out.read_to_string(&mut text);
-            text
-        });
-        let start = Instant::now();
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(st)) => break st,
-                Ok(None) if start.elapsed() >= self.budget => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(RuntimeError::new(format!("{what}: over its {} ms budget", self.budget.as_millis())));
-                }
-                Ok(None) => std::thread::sleep(Duration::from_millis(5)),
-                Err(e) => return Err(RuntimeError::new(format!("{what}: {e}"))),
-            }
-        };
-        let text = reader.join().unwrap_or_default();
-        if status.success() {
-            Ok(text)
-        } else {
-            Err(RuntimeError::new(format!("{what}: exited {}", status.code().map_or("by signal".to_string(), |c| c.to_string()))))
+        let secs = self.budget.as_secs_f64().max(0.001).to_string();
+        let out = Command::new("timeout").args(["--kill-after=2", &secs, &self.program, "--user"]).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().map_err(|e| RuntimeError::new(format!("{what}: {e}")))?;
+        match out.status.code() {
+            Some(0) => Ok(String::from_utf8_lossy(&out.stdout).into_owned()),
+            Some(124 | 137) => Err(RuntimeError::new(format!("{what}: over its {} ms budget", self.budget.as_millis()))),
+            Some(c) => Err(RuntimeError::new(format!("{what}: exited {c}"))),
+            None => Err(RuntimeError::new(format!("{what}: killed by a signal"))),
         }
     }
 
