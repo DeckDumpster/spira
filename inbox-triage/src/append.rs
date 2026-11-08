@@ -1,12 +1,13 @@
 //! `inbox-triage append <text>` — record an event, and for an urgent one wake the session
 //! once per burst. The timing rule is `inbox_rules::Flush`; this file is the only place
-//! that sleeps between its ticks.
+//! that sleeps between its ticks. The append-and-push leg itself is `inbox_rules::record`, shared
+//! with every other writer of the inbox (sp-nasmjd).
 
-use std::io::Write;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
+
+use inbox_rules::{record, spool_path};
 
 const TICKS_PER_SECOND: u32 = 5;
 
@@ -27,18 +28,6 @@ pub fn push_config() -> Result<Push, String> {
     })
 }
 
-pub fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(f, "{line}")
-}
-
-fn spool_path(inbox: &str) -> PathBuf {
-    PathBuf::from(format!("{inbox}.push"))
-}
-
 fn now_iso() -> String {
     let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     spira_world::clock::utc_iso(t as i64)
@@ -47,35 +36,15 @@ fn now_iso() -> String {
 pub fn run(text: &str) -> Result<(), String> {
     let inbox = spira_config::process::cfg("SPIRA_CONCIERGE_INBOX")?;
     let line = inbox_rules::line(&now_iso(), text);
-    append_line(Path::new(&inbox), &line).map_err(|e| format!("cannot append to {inbox}: {e}"))?;
-
-    // the line is already recorded; a push key that will not parse must not fail the caller
-    let push = match push_config() {
-        Ok(p) => p,
+    // the line is recorded whatever the push keys say; a push key that will not parse must not fail the caller
+    let (wake, pattern) = match push_config() {
+        Ok(p) => (p.wake, p.pattern),
         Err(e) => {
             eprintln!("inbox-triage append: push disabled: {e}");
-            return Ok(());
+            (String::new(), String::new())
         }
     };
-    if push.wake.is_empty() {
-        return Ok(());
-    }
-    let pattern = match regex::Regex::new(&push.pattern) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("inbox-triage append: push disabled: bad SPIRA_CONCIERGE_PUSH_PATTERN: {e}");
-            return Ok(());
-        }
-    };
-    if !inbox_rules::is_urgent(text, &pattern) {
-        return Ok(());
-    }
-    let spool = spool_path(&inbox);
-    append_line(&spool, &line).map_err(|e| format!("cannot spool to {}: {e}", spool.display()))?;
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    // batch-job: spawned detached and never waited on
-    let _ = Command::new(exe).arg("flush").process_group(0).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
-    Ok(())
+    record(Path::new(&inbox), &line, &wake, &pattern, || std::env::current_exe().map_err(|e| e.to_string())).map(|_| ())
 }
 
 fn size(path: &Path) -> u64 {
@@ -88,7 +57,7 @@ pub fn flush() -> Result<(), String> {
     use std::os::fd::AsRawFd;
     let inbox = spira_config::process::cfg("SPIRA_CONCIERGE_INBOX")?;
     let push = push_config()?;
-    let spool = spool_path(&inbox);
+    let spool = spool_path(Path::new(&inbox));
     let lock = std::fs::OpenOptions::new().create(true).append(true).open(format!("{inbox}.push.lock")).map_err(|e| e.to_string())?;
     // SAFETY: flock on an fd this process owns.
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
@@ -112,20 +81,4 @@ pub fn flush() -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn append_creates_the_inbox_and_a_second_call_does_not_truncate() {
-        let d = testkit::TempDir::new("inbox-append");
-        let inbox = d.join("elsewhere/inbox.log");
-        assert!(!inbox.exists(), "the inbox does not exist before the first append");
-        append_line(&inbox, "2026-11-06T00:00:00Z hello world").unwrap();
-        assert_eq!(std::fs::read_to_string(&inbox).unwrap(), "2026-11-06T00:00:00Z hello world\n");
-        append_line(&inbox, "2026-11-06T00:00:01Z second event").unwrap();
-        assert_eq!(std::fs::read_to_string(&inbox).unwrap().lines().count(), 2);
-    }
 }

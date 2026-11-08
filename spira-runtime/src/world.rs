@@ -3,7 +3,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use runtime::socket::{lc_call, lc_call_within};
@@ -41,6 +40,12 @@ pub struct World {
     pub repo_map: PathBuf,
     pub home_repo: String,
     pub inbox: PathBuf,
+    /// `SPIRA_CONCIERGE_PUSH_WAKE`: empty, no inbox line wakes the session.
+    pub push_wake: String,
+    /// `SPIRA_CONCIERGE_PUSH_PATTERN`: an inbox line that matches it also wakes the session.
+    pub push_pattern: String,
+    /// The `inbox-triage` program whose `flush` verb delivers a pushed line; empty, the release's.
+    pub inbox_flusher: PathBuf,
     pub lc_socket: PathBuf,
     pub proc_dir: PathBuf,
     pub mail: PathBuf,
@@ -814,13 +819,15 @@ impl World {
         Ok("stamped".into())
     }
 
+    /// Records `line` in the Concierge inbox through the inbox's one append-and-push leg (`inbox_rules::record`),
+    /// so a line matching the push pattern wakes the session as an `inbox-triage append` does.
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {
-        if let Some(dir) = self.inbox.parent() {
-            fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        }
-        let mut f = fs::OpenOptions::new().create(true).append(true).open(&self.inbox).map_err(|e| e.to_string())?;
-        writeln!(f, "{line}").map_err(|e| e.to_string())?;
-        Ok("appended".into())
+        let flusher = || match self.inbox_flusher.as_os_str().is_empty() {
+            true => spira_config::release_env::tool("inbox-triage").map(PathBuf::from),
+            false => Ok(self.inbox_flusher.clone()),
+        };
+        let pushed = inbox_rules::record(&self.inbox, line, &self.push_wake, &self.push_pattern, flusher)?;
+        Ok(if pushed { "appended, pushed" } else { "appended" }.into())
     }
 }
 
