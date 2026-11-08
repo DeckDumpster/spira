@@ -556,6 +556,8 @@ impl<'a> Run<'a> {
         if let Err(why) = claim::verify_held(self.d.exec, &id, &holder, tries, delay, self.d.sleep) {
             self.log(&format!("{who}: claim-error {why} — not starting a session on a row this holder does not hold"));
             self.ledger.awake(self.now(), self.f(), &format!("claim-error row not held for {id}"));
+            self.s.bead = id.clone();
+            self.release();
             return Err(1);
         }
         let mut raw = String::new();
