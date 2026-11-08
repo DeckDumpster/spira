@@ -430,7 +430,8 @@ pub fn cmd_file(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, 
 }
 
 /// What `incident file` says on stdout once the event is settled: the bead it filed or bumped,
-/// or null when nothing was filed (activation skew). Callers deserialise it.
+/// or null when nothing was filed (activation skew, or a spool entry with no REF set aside).
+/// Callers deserialise it.
 pub fn filed_answer(id: Option<&str>) -> String {
     serde_json::json!({ "id": id }).to_string()
 }
