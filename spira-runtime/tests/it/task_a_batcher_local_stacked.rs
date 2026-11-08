@@ -32,7 +32,7 @@ fn snap(open: Vec<Round>, now_ms: u64) -> Snapshot {
 }
 
 fn round(id: &str, members: &[&str], head: &str, age_secs: u64) -> Round {
-    Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), head: head.into(), worktree: format!("/w/{id}"), driven: true, red: false, age_secs }
+    Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), head: head.into(), worktree: format!("/w/{id}"), driven: true, red: false, age_secs, unfit: None }
 }
 
 fn names(acts: &[Act]) -> Vec<&str> {
@@ -196,4 +196,68 @@ fn a_red_open_round_is_not_stacked_on() {
     let red = Round { red: true, ..round("r1", &["sp-a", "sp-b"], "h1", 60) };
     let (_, acts) = decide_with(&p, &carry, &snap(vec![red], NOW + 60_000));
     assert!(acts.is_empty(), "{acts:?}");
+}
+
+#[test]
+fn a_promotion_moves_the_round_that_landed_not_the_one_above_it() {
+    let mut carry = certifying_two();
+    let rc = carry.repos.get_mut("spira").unwrap();
+    rc.state = State::Promoting;
+    rc.round_key = Some("lower-key".into());
+    rc.above[0].round_key = Some("upper-key".into());
+    let leg = Leg { batch: "r1-staged".into(), key: "r1-staged".into(), round_key: "lower-key".into(), ..Leg::on("spira") };
+    let promoted = Promoted { batch: "r1-staged".into(), members: vec![("sp-e".into(), "te".into())], attested: false };
+    let (carry, acts) = on_outcome(&carry, PROMOTE, true, &serde_json::to_string(&promoted).unwrap(), &leg, NOW);
+    assert_eq!(names(&acts), [CORPUS], "{acts:?}");
+    let rc = &carry.repos["spira"];
+    assert_eq!((rc.state, rc.batch.as_deref()), (State::Corpus, Some("r1-staged")));
+    assert_eq!((rc.above[0].state, rc.above[0].batch.as_deref()), (State::Certifying, Some("r2")), "the upper is as it was");
+}
+
+#[test]
+fn the_end_of_a_leg_of_a_round_the_queue_voided_moves_nothing() {
+    let carry = certifying_two();
+    let (carry, _) = ran(&carry, "spira.lower.certify1", 1, "red=test-a.sh\n");
+    let mut gone = snap(vec![], NOW + 300_000);
+    gone.repos.get_mut("spira").unwrap().pool.clear();
+    let (carry, _) = decide_with(&small(2), &carry, &gone);
+    let rc = &carry.repos["spira"];
+    assert_eq!((rc.state, rc.batch.as_deref(), rc.leg.as_deref(), rc.above.len()), (State::Idle, None, None, 0), "the voided round is forgotten");
+    let late = UnitRan { handle: UnitHandle::of(NAME, "spira.upper.certify1").unwrap(), exit: Exit::Code(1), duration_ms: 1 };
+    assert!(on_ran_with(&carry, &late, &RanOutput::default(), NOW + 310_000).is_none());
+}
+
+#[test]
+fn an_unattended_open_round_is_driven_to_the_same_acts_whatever_the_limit() {
+    let acts_at = |max_open: usize| {
+        let (mut carry, mut t, mut all) = (Carry::default(), NOW, vec![]);
+        let undriven = Round { driven: false, ..round("rx", &["sp-a"], "hx", 10) };
+        while t <= NOW + (Policy::default().orphan_wait_s + 60) * 1000 {
+            let (c, acts) = decide_with(&small(max_open), &carry, &snap(vec![undriven.clone()], t));
+            carry = c;
+            all.extend(acts.iter().map(|a| a.effect.clone()));
+            t += 30_000;
+        }
+        all
+    };
+    assert_eq!(acts_at(1), acts_at(2));
+    assert_eq!(acts_at(1), [REDRIVE], "{:?}", acts_at(1));
+}
+
+#[test]
+fn the_real_task_cuts_the_second_round_on_the_first_ones_head() {
+    use runtime::event::EventKind;
+    use runtime::taskrig::TaskRig;
+    let p = BTreeMap::from([("SPIRA_ROUND_MAX_OPEN".to_string(), "2".to_string())]);
+    let mut carry = Carry::default();
+    carry.repos.insert("spira".into(), RepoCarry { state: State::Corpus, round_key: Some("k".into()), batch: Some("r1".into()), members: vec![("sp-a".into(), "ta".into()), ("sp-b".into(), "tb".into())], wt: "/w/r1".into(), base: "b1".into(), leg: Some("spira.r1.corpus1".into()), leg_at_ms: NOW, run: 1, ..RepoCarry::default() });
+    let world = snap(vec![round("r1", &["sp-a", "sp-b"], "h1", 60)], NOW + 30_000);
+    let mut r = TaskRig::new(1, BatcherLocal::new(p).registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&world).unwrap()));
+    for e in EFFECTS.iter().filter(|e| **e != OBSERVE) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(STATE, &serde_json::to_string(&carry).unwrap())).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let cut = r.requested().iter().find(|q| q.name == ASSEMBLE).map(|q| serde_json::from_str::<Leg>(&q.input).unwrap()).expect("the second round is assembled");
+    assert_eq!((cut.onto.as_str(), ids(&cut.members)), ("h1", ["sp-c", "sp-d"].to_vec()));
 }

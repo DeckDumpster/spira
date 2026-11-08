@@ -231,6 +231,9 @@ pub struct Round {
     /// Seconds since the round opened; the least is the newest, the one the next round stacks on.
     #[serde(default)]
     pub age_secs: u64,
+    /// Why `round certify` would refuse this round at once (`round_certifiable`), if it would.
+    #[serde(default)]
+    pub unfit: Option<String>,
 }
 
 /// One admitted `queue.local` repository.
@@ -1069,6 +1072,9 @@ impl Machine<'_> {
         if !live.iter().all(|r| stackable(r.state)) || repo.open_rounds().any(|r| r.red) {
             return;
         }
+        if !live.is_empty() && repo.base_sha.is_empty() {
+            return;
+        }
         let onto = match repo.open_rounds().min_by_key(|r| r.age_secs) {
             Some(newest) if newest.head.is_empty() => return,
             Some(newest) => newest.head.clone(),
@@ -1115,7 +1121,8 @@ impl Machine<'_> {
             return;
         }
         self.go(Trigger::OpenRoundUndriven);
-        let fit = repo.unfit.clone().map_or(Ok(()), Err);
+        let unfit = if repo.open_round.as_ref().is_some_and(|r| r.id == open.id) { repo.unfit.clone() } else { open.unfit.clone() };
+        let fit = unfit.map_or(Ok(()), Err);
         let (mut next, verdict) = pace::orphan_step(st, &open.id, now_s, policy.orphan_wait_s, fit);
         let leg = Leg { batch: open.id.clone(), wt: open.worktree.clone(), ..Leg::on(self.repo) };
         match verdict {
@@ -1826,12 +1833,13 @@ pub mod edge {
         let branch_tips = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
         let mut open = io::open_rounds(env, repo)?.into_iter().map(|r| {
             let driven = io::certify_driven(env, &repo.name, &r.id);
-            Round { id: r.id, members: r.members, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs }
+            let unfit = io::round_certifiable(env, repo, &r.id).err();
+            Round { id: r.id, members: r.members, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit }
         });
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();
         let (stopped, stop_why, paused) = holds(env, &repo.name);
-        let unfit = open_round.as_ref().and_then(|r| io::round_certifiable(env, repo, &r.id).err());
+        let unfit = open_round.as_ref().and_then(|r| r.unfit.clone());
         let base_sha = if open_round.is_some() { io::resolve_base_sha(repo).unwrap_or_default() } else { io::resolve_base_sha(repo)? };
         Ok(Repo { pool, blockers, branch_tips, open_round, open_above, base_sha, stopped, stop_why, paused, unfit, ..Repo::default() })
     }

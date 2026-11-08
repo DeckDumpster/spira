@@ -1863,15 +1863,7 @@ pub fn round_members(env: &Env, repo: &Repo, batch: &str) -> Result<Vec<String>,
 /// The member ids `queue round status` reports for `batch`, whichever of the open rounds it is:
 /// the first is unprefixed, the rest are `round<n>_`.
 fn members_of_batch(out: &str, batch: &str) -> Option<Vec<String>> {
-    let prefixes = std::iter::once(String::new()).chain((2..).map(|n| format!("round{n}_")));
-    for prefix in prefixes {
-        let id = verb_value(out, &format!("{prefix}batch_id"))?;
-        if id == batch {
-            let members = verb_value(out, &format!("{prefix}members")).unwrap_or_default();
-            return Some(members.split_whitespace().map(|m| m.split(':').next().unwrap_or("").to_string()).collect());
-        }
-    }
-    None
+    open_rounds_of(out).into_iter().find(|r| r.id == batch).map(|r| r.members)
 }
 
 /// The id of the repo's open round, if `queue round status` reports one.
@@ -1948,13 +1940,7 @@ fn git_head(dir: &Path) -> Option<String> {
 }
 
 fn round_head_and_worktree(out: &str, batch: &str) -> Option<(String, String)> {
-    let prefixes = std::iter::once(String::new()).chain((2..).map(|n| format!("round{n}_")));
-    for prefix in prefixes {
-        if verb_value(out, &format!("{prefix}batch_id"))? == batch {
-            return Some((verb_value(out, &format!("{prefix}head"))?, verb_value(out, &format!("{prefix}worktree"))?));
-        }
-    }
-    None
+    open_rounds_of(out).into_iter().find(|r| r.id == batch).map(|r| (r.head, r.worktree))
 }
 
 /// `round-recert --batch <id> --repo <repo>`: starts the round's driver in its own unit and returns.
