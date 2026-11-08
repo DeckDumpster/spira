@@ -77,18 +77,14 @@ pub fn parse_summoned(rest: &[String]) -> Result<Summon, String> {
     Ok(Summon { bead: need("--summoned")?, by: need("--by")?, reason: need("--reason")?, replaced: flag(&f, "--replaced") })
 }
 
-/// `systemd-run --user --collect --quiet --unit=<stem> <call argv…> <dwarf> --home <home> <rune>
-/// --summoned <bead> --by <who> --reason <why> [--replaced <holder>]`.
+/// The unit call: the dwarf is started as `<rune> --summoned <bead> --by <who> --reason <why>
+/// [--replaced <holder>]`.
 pub fn build_argv(req: &Request, replaced: Option<&str>, home: &Path, dwarf_path: &str, call_argv: &[String], epoch: i64) -> Vec<String> {
-    let mut a = s(&["--user", "--collect", "--quiet"]);
-    a.push(format!("--unit={}", runtime::units::summoned_unit_stem(&req.rune, epoch)));
-    a.extend(call_argv.iter().cloned());
-    a.extend([dwarf_path.to_string(), "--home".to_string(), home.display().to_string(), req.rune.clone()]);
-    a.extend(s(&["--summoned", &req.bead, "--by", &req.by, "--reason", &req.reason]));
+    let mut tail = s(&["--summoned", &req.bead, "--by", &req.by, "--reason", &req.reason]);
     if let Some(h) = replaced {
-        a.extend(s(&["--replaced", h]));
+        tail.extend(s(&["--replaced", h]));
     }
-    a
+    crate::escape::unit_call_argv(&runtime::units::summoned_unit_stem(&req.rune, epoch), home, dwarf_path, call_argv, &req.rune, &tail)
 }
 
 /// The reason `slay` records when a summons takes a bead from a running dwarf.

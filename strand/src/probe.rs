@@ -511,6 +511,15 @@ mod tests {
     }
 
     #[test]
+    fn sp_8mbnup_a_summoned_dwarf_is_in_no_count_a_cap_reads() {
+        let t = testkit::TempDir::new("strand-summoned");
+        let units = [("spira-dwarf-builder-1794009721.service", "active"), ("spira-dwarf-builder-summoned-1794009722.service", "active")];
+        let cfg = Config { call: "systemd-run".into(), systemctl: fake_systemctl(&t, &units), ..Config::test_fixture() };
+        assert_eq!(dwarf_count(&cfg, "builder", None), 1, "the ordinary dwarf counts, the summoned one beside it does not");
+        assert_eq!(dwarves_live_total(&cfg), 1);
+    }
+
+    #[test]
     fn rune_free_matches_the_bash_originals_arithmetic() {
         let t = testkit::TempDir::new("strand-rune-free");
         let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_RUNES_DIR", Some(t.join("runes").to_str().unwrap()))]);
