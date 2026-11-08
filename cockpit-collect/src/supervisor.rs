@@ -134,13 +134,7 @@ pub fn write_never_frag(frag_dir: &Path, name: &str) {
 }
 
 fn write_atomic(path: &Path, content: &str) {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let tmp = dir.join(format!(".{}.{}", path.file_name().and_then(|n| n.to_str()).unwrap_or("frag"), std::process::id()));
-    if std::fs::write(&tmp, content).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
-    } else {
-        let _ = std::fs::remove_file(&tmp);
-    }
+    let _ = io::replace_if_changed(path, content);
 }
 
 fn read_header(frag: &Path) -> (i64, String, u32) {
@@ -381,12 +375,7 @@ pub fn merge_fragments(cfg: &Config) -> bool {
         .unwrap_or_else(|| "unknown".to_string());
     out.push_str(&format!("SP_COLLECTOR_REV={}\n", crate::quoting::self_quote(&rev)));
 
-    let tmp = cfg.run_dir.join(format!(".cockpit.{}.tmp", std::process::id()));
-    if std::fs::write(&tmp, out).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-        return false;
-    }
-    std::fs::rename(&tmp, &cfg.snap).is_ok()
+    io::replace_if_changed(&cfg.snap, &out).is_ok()
 }
 
 /// The snapshot is merged once per tick and the unit's watchdog pings only while it is

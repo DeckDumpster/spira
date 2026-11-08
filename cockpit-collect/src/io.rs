@@ -270,7 +270,45 @@ fn utc_stamp(epoch: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
-fn merge_rows(parts: &[Option<String>]) -> Option<String> {
+thread_local! {
+    static DATA_WRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Data writes this thread has issued through [`write_if_changed`].
+pub fn data_writes() -> usize {
+    DATA_WRITES.with(std::cell::Cell::get)
+}
+
+/// Writes `content` to `path` only when it differs from what is there; an identical file gets
+/// its mtime refreshed (a metadata update, no data blocks) because readers age snapshots by
+/// mtime. Answers whether data was written.
+pub fn write_if_changed(path: &Path, content: impl AsRef<[u8]>) -> std::io::Result<bool> {
+    let content = content.as_ref();
+    if std::fs::read(path).is_ok_and(|have| have == content) {
+        let touched = std::fs::OpenOptions::new().write(true).open(path).and_then(|f| f.set_modified(SystemTime::now()));
+        if touched.is_ok() {
+            return Ok(false);
+        }
+    }
+    DATA_WRITES.with(|c| c.set(c.get() + 1));
+    std::fs::write(path, content).map(|()| true)
+}
+
+/// [`write_if_changed`] through a temp file and rename, so a reader never sees a partial file.
+pub fn replace_if_changed(path: &Path, content: &str) -> std::io::Result<bool> {
+    if std::fs::read(path).is_ok_and(|have| have == content.as_bytes()) {
+        return write_if_changed(path, content);
+    }
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    DATA_WRITES.with(|c| c.set(c.get() + 1));
+    if let Err(e) = std::fs::write(&tmp, content) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    std::fs::rename(&tmp, path).map(|()| true)
+}
+
+fn merge_rows(parts:&[Option<String>]) -> Option<String> {
     let mut all: Vec<serde_json::Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for p in parts {
@@ -303,10 +341,7 @@ pub fn shared_read(dir: &Path, key: &str, ttl: i64, now: i64, fetch: impl FnOnce
         if std::fs::OpenOptions::new().write(true).create_new(true).open(&lock).is_ok() {
             let got = fetch();
             if let Some(raw) = &got {
-                let tmp = dir.join(format!("{key}.{}.tmp", std::process::id()));
-                if std::fs::write(&tmp, raw).is_ok() {
-                    let _ = std::fs::rename(&tmp, &file);
-                }
+                let _ = replace_if_changed(&file, raw);
             }
             let _ = std::fs::remove_file(&lock);
             return got;

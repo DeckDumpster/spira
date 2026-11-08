@@ -47,7 +47,7 @@ fn last_good(dir: &std::path::Path, key: &str, now: i64, fetch: impl FnOnce() ->
     let _ = std::fs::create_dir_all(dir);
     let (good, fails, stale) = (dir.join(format!("{key}.json")), dir.join(format!("{key}.fails")), dir.join(format!("{key}.stale")));
     if let Some(raw) = fetch() {
-        let _ = std::fs::write(&good, &raw);
+        let _ = io::write_if_changed(&good, &raw);
         let _ = std::fs::remove_file(&fails);
         let _ = std::fs::remove_file(&stale);
         return Some(raw);
@@ -206,6 +206,20 @@ mod tests {
         assert_eq!(last_good(&d, "k", 103, || None), None, "third consecutive failure shows");
         assert_eq!(last_good(&d, "k", 104, || Some("[2]".into())).as_deref(), Some("[2]"));
         assert_eq!(last_good(&d, "k", 105, || None).as_deref(), Some("[2]"), "a success resets the count");
+    }
+
+    #[test]
+    fn an_unchanged_snapshot_is_not_rewritten_but_keeps_its_age() {
+        let t = testkit::TempDir::new("lc-nowrite");
+        let d = t.join("snap");
+        last_good(&d, "k", 100, || Some("[1]".into()));
+        let before = io::data_writes();
+        last_good(&d, "k", 101, || Some("[1]".into()));
+        assert_eq!(io::data_writes(), before, "same content writes no data");
+        let age = std::fs::metadata(d.join("k.json")).unwrap().modified().unwrap().elapsed().unwrap();
+        assert!(age.as_secs() < 5, "mtime still marks the last good read");
+        last_good(&d, "k", 102, || Some("[2]".into()));
+        assert_eq!(io::data_writes(), before + 1, "changed content is written");
     }
 
     #[test]
