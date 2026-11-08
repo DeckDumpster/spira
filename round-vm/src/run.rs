@@ -712,7 +712,7 @@ lint_culprit() {
         for c in $(git -C "$tree" rev-list --first-parent --reverse origin/base..HEAD); do
             if { [ "$wanted" = file ] && lint_touches "$path"; } || { [ "$wanted" = rule ] && [ "${#rule_paths[@]}" -gt 0 ] && lint_touches "${rule_paths[@]}"; }; then
                 subj="$(git -C "$tree" log -1 --format=%s "$c")"
-                who="$(printf '%s\n' "$subj" | sed -n 's/.*merge \([^ ]*\) .*/\1/p')"
+                who="$(printf '%s\n' "$subj" | sed -nE -e 's/^spira: land ([^ ]+).*/\1/p;t' -e 's/.*merge ([^ ]+) .*/\1/p')"
                 echo "${who:-commit ${c:0:12} $subj}"
                 return 0
             fi
