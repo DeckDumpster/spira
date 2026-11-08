@@ -3338,6 +3338,25 @@ fn land_local_activates_its_release_with_the_queue_lock_released() {
     assert_eq!(*t.scripts.lock_free_at_activate.borrow(), [true], "the queue lock is free while the release activates");
 }
 
+/// sp-ia61tg: a round build that ships other binaries but not `release` is refused before the
+/// ref moves, never after the landing is recorded.
+#[test]
+fn land_local_refuses_before_landing_when_the_round_build_lacks_release() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.lib.s.home_repo = "spira".into();
+    local_repo(&t);
+    release_in_force(&t);
+    let bins = testkit::TempDir::new("queue-land-bins-norelease");
+    t.git.set("HEAD", "h1");
+    std::fs::create_dir_all(bins.path().join("target/release")).unwrap();
+    testkit::write_exe(bins.path().join("target/release/other"), "#!/bin/sh\n");
+    let wt = bins.path().display().to_string();
+    assert_ne!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta", "--worktree", &wt]), 0);
+    assert!(t.err().contains("no release binary at"), "{}", t.err());
+    assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("b0"), "the ref did not move");
+    assert!(!release_argv(&t).iter().any(|a| a.starts_with("activate ")), "{:?}", release_argv(&t));
+}
+
 /// sp-6ugk85: a landing whose activation runs after the round's build directory is gone (a
 /// deferred activation, the round VM's build) activates the release from that release's own
 /// `bin/release`, which `release build` copied from the same tested build.
