@@ -1118,7 +1118,11 @@ fn batches_of_finds_a_member_stacked_into_an_open_round() {
     let p = r.s.plan_cut(&r.cut_spec(&first)).unwrap();
     r.s.run_planned(p, &r.req(), "cut").unwrap();
     r.certified("sp-b", T2);
-    let p = r.s.plan_stack("b-1", &[("sp-b".to_string(), T2.to_string())], "test", AT).unwrap();
+    r.certified("sp-c", T2);
+    let added = [("sp-b".to_string(), T2.to_string()), ("sp-c".to_string(), T2.to_string())];
+    let p = r.s.plan_stack("b-1", &added, "test", AT).unwrap();
     r.s.run_planned(p, &r.req(), "stack").unwrap();
-    assert_eq!(r.s.batches_of("sp-b").unwrap().len(), 1);
+    for bead in ["sp-a", "sp-b", "sp-c"] {
+        assert_eq!(r.s.batches_of(bead).unwrap().len(), 1, "{bead}");
+    }
 }
