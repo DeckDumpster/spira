@@ -231,7 +231,62 @@ pub fn joins_planning(args: &[String]) -> bool {
 }
 
 pub fn with_planning_fields(answer: (i32, String), conn: &Conn) -> (i32, String) {
-    join_planning(answer, &|ids| titles(conn, ids))
+    join_planning(answer, &|ids| TITLES.titles(ids, current_watermark(), &|missing| titles(conn, missing)))
+}
+
+/// The planning watermark as the control store's read model holds it, or `None` without one.
+fn current_watermark() -> Option<u64> {
+    let store = crate::control::served::configured()?.ok()?;
+    let item = store.contract().get(crate::control::keys::PLANNING_WATERMARK).ok()??;
+    item.value.data.get("seq").and_then(Value::as_u64)
+}
+
+/// Titles and priorities read from bd, kept under the planning watermark they were read at: a
+/// title moves only by a planning write, and every planning write moves the watermark, so a
+/// listing joins them from memory and reads bd only for ids it has not seen since the last
+/// write. With no watermark nothing is kept.
+#[derive(Default)]
+pub struct TitleCache(Mutex<HeldTitles>);
+
+/// The watermark the titles were read at, and each id's title, `None` for one bd does not have.
+type HeldTitles = (Option<u64>, BTreeMap<String, Option<Titled>>);
+
+static TITLES: TitleCache = TitleCache(Mutex::new((None, BTreeMap::new())));
+
+impl TitleCache {
+    /// The titles of `ids` bd has, reading through `fetch` only those not held at `watermark`.
+    pub fn titles(&self, ids: &[&str], watermark: Option<u64>, fetch: &TitleLookup) -> Result<Vec<(String, Titled)>, String> {
+        let Some(w) = watermark else { return fetch(ids) };
+        let lock = || self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let (mut out, missing) = {
+            let mut g = lock();
+            if g.0 != Some(w) {
+                *g = (Some(w), BTreeMap::new());
+            }
+            let mut out = Vec::new();
+            let mut missing = Vec::new();
+            for id in ids {
+                match g.1.get(*id) {
+                    Some(Some(t)) => out.push((id.to_string(), t.clone())),
+                    Some(None) => {}
+                    None => missing.push(*id),
+                }
+            }
+            (out, missing)
+        };
+        if missing.is_empty() {
+            return Ok(out);
+        }
+        let found = fetch(&missing)?;
+        let mut g = lock();
+        if g.0 == Some(w) {
+            let mut known: BTreeMap<String, Option<Titled>> = missing.iter().map(|id| (id.to_string(), None)).collect();
+            known.extend(found.iter().map(|(id, t)| (id.clone(), Some(t.clone()))));
+            g.1.extend(known);
+        }
+        out.extend(found);
+        Ok(out)
+    }
 }
 
 /// Titles and priorities by id, for [`join_planning`].
@@ -289,7 +344,7 @@ pub fn with_ask_titles(answer: (i32, String), conn: &Conn) -> (i32, String) {
     let ids: Vec<&str> = rows.iter().filter_map(|r| s(r, "ask_id")).collect();
     let mut planned: BTreeMap<String, Titled> = BTreeMap::new();
     for chunk in ids.chunks(500) {
-        match titles(conn, chunk) {
+        match TITLES.titles(chunk, current_watermark(), &|missing| titles(conn, missing)) {
             Ok(t) => planned.extend(t),
             Err(e) => {
                 eprintln!("spira-lc list-asks: titles unread from bd: {e}");
@@ -370,7 +425,7 @@ fn lifecycle_seq(conn: &Conn) -> Result<u64, String> {
     Ok(rows.first().and_then(|r| r.get("seq")).and_then(|n| n.as_u64().or_else(|| n.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0))
 }
 
-type Control = Arc<crate::control::store::Store<state_store_sqlite::SqliteBackend>>;
+type Control = Arc<crate::control::store::Store<crate::control::served::Served>>;
 
 /// The control store's sequence and the revision it was read at. Before the key's first write
 /// it continues the lifecycle store's sequence, so moving onto the control store never moves
@@ -393,6 +448,7 @@ pub fn stamp(conn: &Conn) -> Result<u64, String> {
         None => stamp_lifecycle(conn)?,
     };
     mirror(seq);
+    crate::content_cache::moved();
     Ok(seq)
 }
 
@@ -659,6 +715,26 @@ mod tests {
 
     fn v(x: &str) -> Vec<Value> {
         serde_json::from_str(x).unwrap()
+    }
+
+    #[test]
+    fn a_listings_titles_are_read_from_bd_once_per_planning_watermark() {
+        let asked = std::cell::RefCell::new(Vec::<Vec<String>>::new());
+        let bd = |ids: &[&str]| -> Result<Vec<(String, Titled)>, String> {
+            asked.borrow_mut().push(ids.iter().map(|s| s.to_string()).collect());
+            Ok(ids.iter().filter(|id| **id != "sp-gone").map(|id| (id.to_string(), (json!(format!("title of {id}")), json!(2)))).collect())
+        };
+        let cache = TitleCache::default();
+        let got = cache.titles(&["sp-a", "sp-gone"], Some(5), &bd).unwrap();
+        assert_eq!(got, [("sp-a".to_string(), (json!("title of sp-a"), json!(2)))]);
+        let got = cache.titles(&["sp-a", "sp-gone", "sp-b"], Some(5), &bd).unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(*asked.borrow(), [vec!["sp-a", "sp-gone"], vec!["sp-b"]], "only an id not yet seen at this watermark is read, and an unknown one is remembered");
+        cache.titles(&["sp-a"], Some(6), &bd).unwrap();
+        assert_eq!(asked.borrow().last().unwrap(), &["sp-a"], "a moved watermark reads the title again");
+        cache.titles(&["sp-a"], None, &bd).unwrap();
+        cache.titles(&["sp-a"], None, &bd).unwrap();
+        assert_eq!(asked.borrow().len(), 5, "with no watermark every listing reads bd");
     }
 
     /// sp-jf7spl: the content database is the one the store declares, never a default.

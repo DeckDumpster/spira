@@ -10,6 +10,7 @@ pub mod contract;
 pub mod gc;
 pub mod limits;
 pub mod mem;
+pub mod model;
 pub mod wire;
 
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,7 @@ pub use contract::{
     Request, Selector, Txn, TxnResult, Watched,
 };
 pub use mem::MemBackend;
+pub use model::Modeled;
 
 pub const EVENTS_PREFIX: &str = "events/";
 pub const REQUESTS_PREFIX: &str = "requests/";

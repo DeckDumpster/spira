@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use runtime::ports::Clock;
-use state_store::{Config, Contract, MonotonicClock, Ports};
+use state_store::{Config, Contract, Modeled, MonotonicClock, Ports};
 use state_store_sqlite::{Options, SqliteBackend};
 
 use super::store::Store;
@@ -17,7 +17,7 @@ use super::{readiness, sections, state, verbs};
 use crate::{CANNOT_TELL, REFUSED};
 
 /// A failed open is not kept, so the next call tries again.
-static OPENED: Mutex<Option<Arc<Store<SqliteBackend>>>> = Mutex::new(None);
+static OPENED: Mutex<Option<Arc<Store<Served>>>> = Mutex::new(None);
 
 /// The store path the config declares: `None` while the key is unset or the config is
 /// unreadable, so the dolt path answers and reports its own config error.
@@ -57,13 +57,33 @@ impl Clock for Wall {
     }
 }
 
-fn open(path: &str) -> Result<Store<SqliteBackend>, String> {
+/// The store as this process opens it: SQLite under an in-memory copy of everything but the
+/// keyspaces that grow without bound, kept by the store's own commits ([`Modeled`]), so an
+/// observer's read never waits on the database and a compare-and-set stays SQLite's.
+pub type Served = Modeled<SqliteBackend>;
+
+/// What the copy leaves to SQLite: the audit history, each record's history entries and the
+/// request keys, which grow with every write and which only `history`, `event-seq`, a watch
+/// and a retry's idempotency check read.
+pub const UNMODELED: &[&str] = &[
+    state_store::EVENTS_PREFIX,
+    state_store::REQUESTS_PREFIX,
+    super::keys::HISTORY,
+];
+
+/// Revisions behind the head the copy still answers a snapshot read at: a list paging one
+/// snapshot while this many commits land keeps reading from memory.
+pub const MODEL_WINDOW: u64 = 1_024;
+
+fn open(path: &str) -> Result<Store<Served>, String> {
     // Opening creates a missing file, which would answer every read as an empty store.
     if !Path::new(path).is_file() {
         return Err(format!("no control store at {path}"));
     }
     let backend = SqliteBackend::open(Path::new(path), Options::default())
         .map_err(|e| format!("{path}: {e}"))?;
+    let backend = Modeled::open(backend, UNMODELED, MODEL_WINDOW)
+        .map_err(|e| format!("{path}: the read model: {e}"))?;
     let floor = lock_floor_ms()?;
     let ports = Ports {
         mono: Arc::new(MonotonicClock::new()),
@@ -80,7 +100,7 @@ fn open(path: &str) -> Result<Store<SqliteBackend>, String> {
     Ok(Store::new(contract, floor))
 }
 
-fn opened(path: &str) -> Result<Arc<Store<SqliteBackend>>, String> {
+fn opened(path: &str) -> Result<Arc<Store<Served>>, String> {
     let mut slot = OPENED.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = slot.as_ref() {
         return Ok(Arc::clone(s));
@@ -92,13 +112,13 @@ fn opened(path: &str) -> Result<Arc<Store<SqliteBackend>>, String> {
 
 /// The store the config declares, opened: `None` while the key is unset, so lc-serve serves
 /// from dolt alone.
-pub fn configured() -> Option<Result<Arc<Store<SqliteBackend>>, String>> {
+pub fn configured() -> Option<Result<Arc<Store<Served>>, String>> {
     Some(store_path()?.and_then(|p| opened(&p)))
 }
 
 /// The control store while the bead-state verbs answer from it (`SPIRA_LC_LIFECYCLE_ON_STORE`),
 /// opened; `None` while they answer from dolt.
-pub fn lifecycle_store() -> Option<Result<Arc<Store<SqliteBackend>>, String>> {
+pub fn lifecycle_store() -> Option<Result<Arc<Store<Served>>, String>> {
     let path = match store_path()? {
         Ok(p) => p,
         Err(e) => return Some(Err(e)),

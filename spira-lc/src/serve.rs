@@ -76,11 +76,17 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
 
+    if let Some(store) = &control {
+        let model = store.contract().backend();
+        let (keys, bytes) = model.size();
+        eprintln!("spira-lc serve: read model: {keys} keys, {} KiB, at revision {}", bytes / 1024, model.revision());
+    }
+
     // lc-serve is the store's only opener, so it is the one process that can ship it off-box.
     let shipping = match &control {
         None => None,
         Some(store) => {
-            let shipper = crate::lifecycle_run_dir().and_then(|run| match crate::durability::configured(store.contract().backend().clone(), &run) {
+            let shipper = crate::lifecycle_run_dir().and_then(|run| match crate::durability::configured(store.contract().backend().inner().clone(), &run) {
                 None => Ok(None),
                 Some(s) => s.map(Some),
             });
@@ -88,7 +94,7 @@ pub fn run(args: &[String]) -> i32 {
                 Ok(None) => {
                     eprintln!("spira-lc serve: SPIRA_LC_BACKUP_URL is empty: the control store is not shipped off-box");
                     // A floor left by an earlier shipper would pin compaction for good.
-                    if let Err(e) = store.contract().backend().clear_compaction_floor() {
+                    if let Err(e) = store.contract().backend().inner().clear_compaction_floor() {
                         eprintln!("spira-lc serve: the control store's compaction floor: {e}");
                         return 2;
                     }
@@ -363,22 +369,26 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
             let who = caller.clone();
             let began = Arc::clone(&started_work);
             let limit = request_deadline(&argv);
-            let req = Request { argv, stdin: req.stdin, caller: req.caller };
+            let min_rev = req.min_rev;
+            let req = Request { argv, stdin: req.stdin, caller: req.caller, min_rev };
             within(limit.saturating_sub(received.elapsed()), move || {
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
                 crate::db::set_request_deadline(Some(received + limit));
+                state_store::model::track(!min_rev.is_none_or(model_reached));
                 let mut local = Local(&worker);
-                answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir)
+                let ans = answer(req, &mut local, &mut crate::bd::LiveBd, crate::content_cache::served(), &crate::lifecycle_run_dir);
+                (ans, state_store::model::stamp())
             })
-            .unwrap_or_else(|| Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)))
+            .unwrap_or_else(|| (Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)), None))
         }
-        Err((code, out)) => Answer::out(code, out),
+        Err((code, out)) => (Answer::out(code, out), None),
     };
+    let (ans, rev) = ans;
     let method = crate::slow::method_of(&argv_seen);
     crate::slow::request_done(&verb, &method, &caller, received.elapsed());
     crate::slow::sample(&method, received.elapsed());
-    let _ = write_response(&stream, ans.code, &ans.stdout, &ans.stderr);
+    let _ = write_response_at(&stream, ans.code, &ans.stdout, &ans.stderr, rev);
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
     record_span(spans, &verb, &caller, size, ans.stdout.len() + ans.stderr.len(), ans.code, started, SystemTime::now(), waited);
@@ -393,13 +403,32 @@ pub(crate) struct Request {
     /// The caller's guard variables (`spira_config::lc_call::GUARD_VARS`), which a content
     /// write is judged on as bdq judged it in the caller's own process.
     pub caller: std::collections::BTreeMap<String, String>,
+    /// The store revision the caller's answer must reflect (`{"min_rev": N}`): a caller that
+    /// read its own write's revision off that write's reply. Its reads wait for the read model
+    /// to reach it, briefly, and otherwise go to the database.
+    pub min_rev: Option<u64>,
+}
+
+/// How long a request naming a `min_rev` waits for the read model before reading the database.
+/// The model applies every commit before the commit returns, so a revision this service
+/// answered is reached at once; the wait covers a model catching up after a failed commit.
+const MIN_REV_WAIT: Duration = Duration::from_millis(250);
+
+/// Whether the read model holds `rev`, waiting [`MIN_REV_WAIT`] for it; true with no control
+/// store, whose dolt reads have no model to lag.
+fn model_reached(rev: u64) -> bool {
+    match crate::control::served::configured() {
+        Some(Ok(store)) => store.contract().backend().wait_for(rev, MIN_REV_WAIT),
+        _ => true,
+    }
 }
 
 /// Longest request body read: a claim-verdicts batch or a section spec, never a file transfer.
 const MAX_BODY: u64 = 16 << 20;
 
 /// The request on `reader`: a JSON argv array on one line, or `{"argv": [...], "len": N}` on
-/// one line followed by exactly `N` bytes of stdin. `Ok(None)` when the client sent nothing;
+/// one line followed by exactly `N` bytes of stdin; the object may also carry `caller` and
+/// `min_rev`. `Ok(None)` when the client sent nothing;
 /// `Err((bytes read, refusal))` for a request that cannot be read.
 fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (usize, String)> {
     let mut line = String::new();
@@ -408,11 +437,11 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
     }
     let bad = |e: &dyn std::fmt::Display| (line.len(), format!("bad request: {e}"));
     let head: serde_json::Value = serde_json::from_str(line.trim()).map_err(|e| bad(&e))?;
-    let (argv, len, caller) = match head {
-        serde_json::Value::Array(_) => (head, None, Default::default()),
+    let (argv, len, caller, min_rev) = match head {
+        serde_json::Value::Array(_) => (head, None, Default::default(), None),
         serde_json::Value::Object(mut o) => {
             let len = match o.get("len") {
-                None if o.contains_key("caller") => None,
+                None if o.contains_key("caller") || o.contains_key("min_rev") => None,
                 l => Some(l.and_then(serde_json::Value::as_u64).ok_or_else(|| bad(&"a request object needs a numeric len"))?),
             };
             if let Some(len) = len.filter(|&l| l > MAX_BODY) {
@@ -422,7 +451,11 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
                 None => Default::default(),
                 Some(c) => serde_json::from_value(c).map_err(|e| bad(&format!("caller: {e}")))?,
             };
-            (o.remove("argv").unwrap_or_default(), len, caller)
+            let min_rev = match o.remove("min_rev") {
+                None => None,
+                Some(r) => Some(r.as_u64().ok_or_else(|| bad(&"min_rev is a revision number"))?),
+            };
+            (o.remove("argv").unwrap_or_default(), len, caller, min_rev)
         }
         _ => return Err(bad(&"a request is an argv array or an {argv, len} object")),
     };
@@ -436,7 +469,7 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
         }
     };
     let size = line.len() + stdin.as_ref().map_or(0, String::len);
-    Ok(Some((Request { argv, stdin, caller }, size)))
+    Ok(Some((Request { argv, stdin, caller, min_rev }, size)))
 }
 
 /// The primitives, in this process against its own connection: a composed verb's reads and
@@ -459,7 +492,7 @@ pub(crate) fn answer(
     content: &dyn crate::composed::Content,
     run_dir: &dyn Fn() -> Result<std::path::PathBuf, String>,
 ) -> Answer {
-    let Request { argv, stdin, caller } = req;
+    let Request { argv, stdin, caller, .. } = req;
     if !argv.first().is_some_and(|v| crate::composed::is_served(v)) {
         let argv = match stdin {
             Some(body) => crate::cutover::inline_payload_from(argv, &mut body.as_bytes()),
@@ -565,13 +598,24 @@ fn peer_pid(stream: &UnixStream) -> Option<i32> {
 
 /// A header line, then the stdout bytes; a non-empty stderr follows them, its length in the
 /// header's `err_len` (a client that predates it reads `len` bytes and stops).
-fn write_response(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str) -> std::io::Result<()> {
+fn write_response(stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str) -> std::io::Result<()> {
+    write_response_at(stream, exit_code, stdout, stderr, None)
+}
+
+/// [`write_response`] with the store revision the answer reflects as the header's `rev`: every
+/// read it made was at that revision or later, and every write it made is at or below it, so a
+/// caller that needs its own write passes it back as `min_rev`. A client that predates it
+/// ignores the key.
+fn write_response_at(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str, rev: Option<u64>) -> std::io::Result<()> {
     let mut buf = Vec::with_capacity(stdout.len() + stderr.len() + 64);
-    if stderr.is_empty() {
-        writeln!(buf, "{}", serde_json::json!({"exit_code": exit_code, "len": stdout.len()}))?;
-    } else {
-        writeln!(buf, "{}", serde_json::json!({"exit_code": exit_code, "len": stdout.len(), "err_len": stderr.len()}))?;
+    let mut head = serde_json::json!({"exit_code": exit_code, "len": stdout.len()});
+    if !stderr.is_empty() {
+        head["err_len"] = stderr.len().into();
     }
+    if let Some(rev) = rev {
+        head["rev"] = rev.into();
+    }
+    writeln!(buf, "{head}")?;
     buf.extend_from_slice(stdout.as_bytes());
     buf.extend_from_slice(stderr.as_bytes());
     stream.write_all(&buf)
@@ -844,7 +888,7 @@ mod tests {
 
         let mut acting = caller.clone();
         acting.insert("SPIRA_CZAR_STAGE_DEADLOCK".into(), "act".into());
-        let req = super::Request { argv: argv.clone(), stdin: None, caller: acting };
+        let req = super::Request { argv: argv.clone(), stdin: None, caller: acting, min_rev: None };
         let ans = super::answer(req, &mut m, &mut b, &c, &|| Err("no run dir here".to_string()));
         assert_eq!(ans.code, 0, "{ans:?}");
         assert_eq!(*c.0.borrow(), ["update sp-a --add-label x"]);
@@ -854,6 +898,27 @@ mod tests {
         assert_eq!(super::read_request(&mut wire).unwrap().unwrap().0.stdin.as_deref(), Some("hi"), "a body still rides with its len");
         let mut wire = std::io::Cursor::new(b"{\"argv\":[\"list\"]}\n".to_vec());
         assert!(super::read_request(&mut wire).is_err(), "an object with neither len nor caller is still refused");
+    }
+
+    #[test]
+    fn a_request_may_name_the_revision_its_answer_must_reflect_and_the_answer_names_the_one_it_does() {
+        use std::io::Read;
+        let mut wire = std::io::Cursor::new(b"{\"argv\":[\"show\",\"sp-a\"],\"min_rev\":42}\n".to_vec());
+        let (req, _) = super::read_request(&mut wire).unwrap().unwrap();
+        assert_eq!((req.argv.as_slice(), req.min_rev, req.stdin), (&["show".to_string(), "sp-a".to_string()][..], Some(42), None));
+        let mut wire = std::io::Cursor::new(b"{\"argv\":[\"show\"],\"min_rev\":\"x\"}\n".to_vec());
+        assert!(super::read_request(&mut wire).is_err(), "a min_rev that is not a revision is refused");
+        assert_eq!(super::read_request(&mut std::io::Cursor::new(b"[\"show\"]\n".to_vec())).unwrap().unwrap().0.min_rev, None);
+
+        let (a, mut b) = std::os::unix::net::UnixStream::pair().unwrap();
+        super::write_response_at(&a, 0, "{}\n", "", Some(43)).unwrap();
+        super::write_response(&a, 0, "{}\n", "").unwrap();
+        drop(a);
+        let mut got = String::new();
+        b.read_to_string(&mut got).unwrap();
+        let heads: Vec<serde_json::Value> = got.lines().filter(|l| l.starts_with("{\"")).map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(heads[0]["rev"], 43, "{got}");
+        assert!(heads[1].get("rev").is_none(), "an answer that touched no store names no revision: {got}");
     }
 
     // ---- content writes over the socket: one test per sub-verb ------------------------------
@@ -923,6 +988,7 @@ mod tests {
             argv: std::iter::once("content").chain(argv.iter().copied()).map(str::to_string).collect(),
             stdin: None,
             caller: caller.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            min_rev: None,
         };
         let (mut m, mut b) = (w, w);
         super::answer(req, &mut m, &mut b, c, &|| Err("no run dir here".to_string()))
@@ -1032,7 +1098,7 @@ mod tests {
         }
         let w = World::new();
         let (mut rec, mut bd) = (Rec(Vec::new()), &w);
-        let req = super::Request { argv: vec!["claim-verdicts".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()), caller: Default::default() };
+        let req = super::Request { argv: vec!["claim-verdicts".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()), caller: Default::default(), min_rev: None };
         super::answer(req, &mut rec, &mut bd, &Content::default(), &|| Err(String::new()));
         assert_eq!(rec.0, vec![vec!["claim-verdicts".to_string(), "--json".into(), "[{\"bead_id\":\"sp-a\"}]".into()]]);
     }
