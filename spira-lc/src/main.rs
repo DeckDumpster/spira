@@ -38,7 +38,6 @@ mod facts;
 mod git_evidence;
 mod import;
 mod parity;
-mod goodput;
 mod group;
 mod journal;
 mod legacy_files;
@@ -67,7 +66,7 @@ use db::Conn;
 use lifecycle::{batch, bead, delivery};
 use serde_json::Value;
 
-use spira_lc::{flag, CANNOT_TELL, REFUSED};
+use spira_lc::{flag, goodput, CANNOT_TELL, REFUSED};
 
 fn main() {
     if let Err(e) = spira_config::release_env::ensure_release_path() {

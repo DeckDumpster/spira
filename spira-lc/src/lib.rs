@@ -2,6 +2,7 @@
 //! library: `spira-lc` serves them, and an in-process caller (the simulator's replay) reaches
 //! the same dispatch on its own store instead of a hand-written copy of it.
 
+pub mod goodput;
 pub mod keys;
 pub mod rc;
 pub mod sections;

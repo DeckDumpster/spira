@@ -17,6 +17,8 @@ use super::{round_controller, BatchState, Record, Replay, Scripted, ScriptedOwne
 use crate::replay;
 const SEED: u64 = 31;
 
+mod lifecycle;
+pub use lifecycle::the_lifecycle_sections_one_hour_rate_falls_below_its_day_rate_while_the_stacked_pointer_stands;
 mod ranking;
 pub use ranking::{the_held_out_lanes_rank_above_every_healthy_section, the_inverted_map_fails_the_stacked_repo_ranking_check, the_stacked_repos_round_controller_section_binds_from_its_first_refused_round};
 
@@ -373,7 +375,7 @@ pub fn hooks_run_at_their_periods_across_the_whole_day_and_the_pass_reads_what_w
 }
 
 /// Every check, by the name its unit-tier test carries.
-pub const CHECKS: [(&str, fn()); 9] = [
+pub const CHECKS: [(&str, fn()); 10] = [
     ("the_publisher_sees_the_stacked_parent_from_its_first_refused_child", the_publisher_sees_the_stacked_parent_from_its_first_refused_child),
     ("the_publisher_sees_the_repeat_red_member_re_cut_at_one_tip", the_publisher_sees_the_repeat_red_member_re_cut_at_one_tip),
     ("the_held_out_lanes_sections_show_their_recorded_rounds_against_landings", the_held_out_lanes_sections_show_their_recorded_rounds_against_landings),
@@ -383,4 +385,5 @@ pub const CHECKS: [(&str, fn()); 9] = [
     ("the_stacked_repos_round_controller_section_binds_from_its_first_refused_round", the_stacked_repos_round_controller_section_binds_from_its_first_refused_round),
     ("the_inverted_map_fails_the_stacked_repo_ranking_check", the_inverted_map_fails_the_stacked_repo_ranking_check),
     ("the_held_out_lanes_rank_above_every_healthy_section", the_held_out_lanes_rank_above_every_healthy_section),
+    ("the_lifecycle_sections_one_hour_rate_falls_below_its_day_rate_while_the_stacked_pointer_stands", the_lifecycle_sections_one_hour_rate_falls_below_its_day_rate_while_the_stacked_pointer_stands),
 ];

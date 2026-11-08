@@ -20,6 +20,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use spira_desired_state::intent::{parse_intent, Intent};
 use spira_desired_state::section::parse_rfc3339;
+use spira_lc::goodput::{LoopEvent, StopKind as LoopStop};
 use spira_otel::metrics::MetricsSink;
 use state_store::{Config, Contract, MemBackend, Ports};
 
@@ -268,6 +269,31 @@ pub fn load(dir: &Path) -> Result<Vec<(u64, Record)>, String> {
     Ok(out)
 }
 
+/// `LoopEvent` is hashed through its `Debug` text so the goodput library need not derive `Hash`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Events(pub Vec<LoopEvent>);
+
+impl Eq for Events {}
+
+impl Hash for Events {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        format!("{:?}", self.0).hash(h);
+    }
+}
+
+impl std::ops::Deref for Events {
+    type Target = Vec<LoopEvent>;
+    fn deref(&self) -> &Vec<LoopEvent> {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Events {
+    fn deref_mut(&mut self) -> &mut Vec<LoopEvent> {
+        &mut self.0
+    }
+}
+
 /// A round that has not reached a terminal state.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OpenRound {
@@ -338,6 +364,10 @@ pub struct ReplayWorld {
     pub passes: BTreeMap<(String, String), u32>,
     pub lands: BTreeMap<String, u32>,
     pub alarms: BTreeMap<(String, String, String), u32>,
+    /// The typed events goodput is computed from, in the order the records arrived.
+    pub loop_events: Events,
+    /// The repo each bead was cut into or landed in, for the events that name only a bead.
+    pub bead_repo: BTreeMap<String, String>,
     pub applied: usize,
 }
 
@@ -355,14 +385,52 @@ impl ReplayWorld {
         match r {
             Record::Round(x) => self.round(at, x),
             Record::Transition(Transition::Bead { id, to, event, .. }) => self.bead(id, to, event),
+            Record::Transition(Transition::Batch { id, event, member: Some(bead), .. }) if event == "Eject" => {
+                let repeat_n = 1 + self.loop_events.iter().filter(|e| matches!(e, LoopEvent::Eject { bead: b, .. } if b == bead)).count() as u32;
+                self.loop_events.push(LoopEvent::Eject { bead: bead.clone(), batch: id.clone(), at, repeat_n });
+            }
             Record::Transition(Transition::Batch { .. }) => {}
-            Record::CertPass(x) => *self.passes.entry((x.repo.clone(), x.cause.clone())).or_default() += 1,
-            Record::Attribution(x) => self.attribution(x),
+            Record::CertPass(x) => {
+                *self.passes.entry((x.repo.clone(), x.cause.clone())).or_default() += 1;
+                if x.cause == "over-cap" {
+                    self.loop_events.push(LoopEvent::OverCapPass { repo: x.repo.clone(), at, wall_secs: x.wall_secs });
+                }
+            }
+            Record::Attribution(x) => {
+                self.attribution(x);
+                for bead in &x.owner {
+                    self.loop_events.push(LoopEvent::RedAttributed {
+                        bead: bead.clone(),
+                        batch: x.batch.clone(),
+                        innocent: x.innocent.clone(),
+                        at,
+                        wall_secs: x.wall_secs,
+                    });
+                }
+            }
             Record::Land(x) => {
                 *self.lands.entry(x.repo.clone()).or_default() += 1;
                 self.landed(&x.bead);
+                self.loop_events.push(LoopEvent::Landed {
+                    bead: x.bead.clone(),
+                    repo: x.repo.clone(),
+                    at,
+                    reverts: x.reverts.clone(),
+                    subject: String::new(),
+                });
             }
-            Record::Stop(x) => self.stop(x),
+            Record::Stop(x) => {
+                self.stop(x);
+                let kind = match x.kind {
+                    StopKind::Halted => Some(LoopStop::Halt),
+                    StopKind::Released => Some(LoopStop::Release),
+                    StopKind::Paused => Some(LoopStop::Pause),
+                    StopKind::Unpaused => None,
+                };
+                if let Some(kind) = kind {
+                    self.loop_events.push(LoopEvent::Stop { kind, repo: x.repo.clone(), bead: x.bead.clone(), at, reason: String::new() });
+                }
+            }
             Record::AlarmAttempt(x) => {
                 *self.alarms.entry((x.caller.clone(), x.kind.clone(), x.outcome.clone())).or_default() += 1
             }
@@ -389,6 +457,9 @@ impl ReplayWorld {
             lane.last_landed = Some(at);
         }
 
+        for m in &r.members {
+            self.bead_repo.entry(m.bead.clone()).or_insert_with(|| r.repo.clone());
+        }
         let before: BTreeSet<Member> = self.rounds.get(&r.batch).map(|o| o.members.iter().cloned().collect()).unwrap_or_default();
         for m in r.members.iter().filter(|m| !before.contains(m)) {
             self.cut(at, &r.repo, m);
