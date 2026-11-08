@@ -113,7 +113,7 @@ case "$*" in
     *"run list"*"--status success"*)
         printf '[{"headSha":"aabbcc"}]\n' ;;
     *"run list"*"--status failure"*)
-        printf '55\taabbdd\n' ;;
+        printf '[{"databaseId":55,"headSha":"aabbdd"}]\n' ;;
     *"actions/runs/55/jobs"*)
         printf '{"jobs":[{"id":201},{"id":202}]}\n' ;;
     *"check-runs/201/annotations"*)
@@ -181,7 +181,7 @@ case "$*" in
     *"run list"*"--status success"*)
         printf '[{"headSha":"aabbcc"}]\n' ;;
     *"run list"*"--status failure"*)
-        printf '77\taabbee\n' ;;
+        printf '[{"databaseId":77,"headSha":"aabbee"}]\n' ;;
     *"actions/runs/77/jobs"*)
         printf '{"jobs":[{"id":301}]}\n' ;;
     *"check-runs/301/annotations"*)
