@@ -25,9 +25,9 @@ fn a_rerun_reuses_the_round_binaries_only_when_the_removed_members_changed_no_so
 #[test]
 fn every_corpus_exit_is_typed_and_a_fault_carries_round_vm_s_stderr() {
     let err = "round-vm run: 103 192.168.1.194 warm\nerror: `cargo run` could not determine which binary to run.\n";
-    assert_eq!(corpus_end(0, err, 600, 1, 1), Ok(MainEnd::Ran));
-    assert_eq!(corpus_end(1, err, 600, 1, 1), Ok(MainEnd::Ran));
-    assert_eq!(corpus_end(4, err, 600, 1, 1), Ok(MainEnd::WorkspaceBuild));
+    assert_eq!(corpus_end(0, err, None, 600, 1, 1), Ok(MainEnd::Ran));
+    assert_eq!(corpus_end(1, err, None, 600, 1, 1), Ok(MainEnd::Ran));
+    assert_eq!(corpus_end(4, err, None, 600, 1, 1), Ok(MainEnd::WorkspaceBuild));
     for rc in [2, 3, 101, 124, 137, -1] {
         let e = corpus_end(rc, err, 600, 3, 5).unwrap_err();
         assert!(e.contains("harness fault"), "rc {rc}: {e}");
@@ -36,41 +36,52 @@ fn every_corpus_exit_is_typed_and_a_fault_carries_round_vm_s_stderr() {
             "rc {rc}: {e}"
         );
     }
-    assert!(corpus_end(101, err, 600, 3, 5)
+    assert!(corpus_end(101, err, None, 600, 3, 5)
         .unwrap_err()
         .contains("exit 101"));
-    assert!(corpus_end(124, "", 600, 3, 5)
+    assert!(corpus_end(124, "", None, 600, 3, 5)
         .unwrap_err()
         .contains("over-cap: exceeded the 600s wall bound"));
     let named = corpus_end(
         124,
-        "round-vm run: OVER-CAP: FAULT over-cap guard=testenv-suite-cap cap=600s unreached=4\n",
+        "",
+        Some("FAULT over-cap guard=testenv-suite-cap cap=600s unreached=4"),
         600,
         3,
         5,
     )
     .unwrap_err();
     assert!(named.contains("guard=testenv-suite-cap"), "{named}");
-    let mismatch = corpus_end(2, "batch: unknown suite: test-x.sh\n", 600, 0, 5).unwrap_err();
+    let prose = corpus_end(
+        124,
+        "round-vm run: OVER-CAP: FAULT over-cap guard=testenv-suite-cap cap=600s\n",
+        None,
+        600,
+        3,
+        5,
+    )
+    .unwrap_err();
+    assert!(!prose.contains("(FAULT over-cap"), "stderr prose names no cap: {prose}");
+    let mismatch = corpus_end(2, "batch: unknown suite: test-x.sh\n", None, 600, 0, 5).unwrap_err();
     assert!(mismatch.contains("suite list mismatch"), "{mismatch}");
 }
 
 #[test]
 fn a_pass_that_lost_its_vm_before_any_suite_reported_is_an_infrastructure_fault_not_a_cap_breach() {
     let err = "round-vm run: 103 192.168.13.252 warm\nssh: connect failed, exit 255\n";
-    let e = corpus_end(124, err, 900, 0, 444).unwrap_err();
+    let e = corpus_end(124, err, None, 900, 0, 444).unwrap_err();
     assert!(
         e.contains("infrastructure fault")
             && e.contains("192.168.13.252")
             && e.contains("ssh exit 255"),
         "{e}"
     );
-    let bare = corpus_end(137, "", 900, 0, 444).unwrap_err();
+    let bare = corpus_end(137, "", None, 900, 0, 444).unwrap_err();
     assert!(
         bare.contains("infrastructure fault") && !bare.contains("over-cap"),
         "{bare}"
     );
-    assert!(corpus_end(124, err, 900, 7, 444)
+    assert!(corpus_end(124, err, None, 900, 7, 444)
         .unwrap_err()
         .contains("over-cap"));
 }
@@ -408,4 +419,15 @@ fn a_job_is_a_fault_when_a_step_left_no_verdict_or_the_exit_disagrees_with_its_s
         job_verdict(0, d.path(), &s(&["a.sh"])),
         (JobResult::Green, vec![])
     );
+}
+
+#[test]
+fn an_over_cap_fault_kind_file_in_the_results_names_the_cap_and_no_file_names_none() {
+    let t = testkit::TempDir::new("vmr-kind");
+    let d = t.path().to_path_buf();
+    assert_eq!(over_cap_detail(&d), None);
+    fs::write(d.join("round-fault-kind"), "other something\n").unwrap();
+    assert_eq!(over_cap_detail(&d), None);
+    fs::write(d.join("round-fault-kind"), "over-cap guard=suites-cap cap=900s\n").unwrap();
+    assert_eq!(over_cap_detail(&d).as_deref(), Some("guard=suites-cap cap=900s"));
 }

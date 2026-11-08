@@ -15,6 +15,9 @@ pub const LAUNCHER_OUT_FILE: &str = "vm-batch.out";
 pub const LAUNCHER_ERR_FILE: &str = "vm-batch.err";
 /// The named fault: a `ROUND-FAULT:` line, an optional `settings-key:` line, then the log's tail.
 pub const ROUND_FAULT_FILE: &str = "round-fault.out";
+/// `over-cap <detail>`: the pass was cut off by a cap, whatever its stderr says.
+pub const FAULT_KIND_FILE: &str = "round-fault-kind";
+pub const KIND_OVER_CAP: &str = "over-cap";
 /// How much of the script's log a fault carries.
 pub const FAULT_TAIL: usize = 40;
 
@@ -36,6 +39,12 @@ impl RoundFault {
         let key = self.settings_key.as_deref().map(|k| format!("settings-key: {k}\n")).unwrap_or_default();
         format!("ROUND-FAULT: {}\n{key}--- the last {FAULT_TAIL} lines of the VM's script log ---\n{}\n", self.cause, self.tail)
     }
+}
+
+/// Records the typed kind of a fault in `results`, where certify and the batcher read it.
+pub fn write_kind(results: &Path, kind: &str, detail: &str) -> std::io::Result<()> {
+    fs::create_dir_all(results)?;
+    fs::write(results.join(FAULT_KIND_FILE), format!("{kind} {}\n", detail.trim()))
 }
 
 /// The fault whose evidence `results` holds; evidence that did not come back is named as such.
@@ -102,6 +111,13 @@ mod tests {
             fs::write(d.path().join(SCRIPT_LOG_FILE), l).unwrap();
         }
         d
+    }
+
+    #[test]
+    fn a_written_fault_kind_is_the_first_word_of_its_file_and_its_detail_the_rest() {
+        let d = TempDir::new();
+        write_kind(d.path(), KIND_OVER_CAP, "guard=suites-cap cap=600s ").unwrap();
+        assert_eq!(fs::read_to_string(d.path().join(FAULT_KIND_FILE)).unwrap(), "over-cap guard=suites-cap cap=600s\n");
     }
 
     #[test]
