@@ -2,6 +2,7 @@
 //! check names, so a log from either compares line for line.
 
 use super::*;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -199,6 +200,30 @@ impl Run<'_> {
         self.h.run(&Cmd::new("systemctl").arg("--user").args(args.iter().copied()))
     }
 
+    fn systemctl_json(&self, args: &[&str]) -> Result<String, String> {
+        let mut a = args.to_vec();
+        a.push("--output=json");
+        let o = self.systemctl(&a);
+        if o.rc != 0 {
+            return Err(format!("systemctl {} exited {}", args.join(" "), o.rc));
+        }
+        Ok(o.out)
+    }
+
+    /// The user manager's unit files matching the systemd glob `glob`.
+    fn unit_files(&self, glob: &str) -> Result<Vec<UnitFile>, String> {
+        unit_files_of(&self.systemctl_json(&["list-unit-files", glob])?)
+    }
+
+    /// The user manager's loaded units matching `glob`, in `state` when given.
+    fn listed_units(&self, state: Option<&str>, glob: &str) -> Result<Vec<String>, String> {
+        let flag = state.map(|s| format!("--state={s}"));
+        let mut args = vec!["list-units"];
+        args.extend(flag.as_deref());
+        args.push(glob);
+        unit_names_of(&self.systemctl_json(&args)?)
+    }
+
     /// `scheduler status` of the installed release, through `world scheduler-status --json`.
     fn scheduler_status(&self) -> String {
         self.h.run(&self.tool("world").args(["scheduler-status", "--json"])).out
@@ -209,15 +234,16 @@ impl Run<'_> {
     /// shows `task` fired since the kick. A predecessor that still ships the sentinel unit has
     /// that unit started, as it was. Best-effort either way: the stage that follows judges it.
     pub(super) fn kick(&self, task: &str) {
-        if let Some(unit) = first_fields(&self.systemctl(&["list-unit-files", "spira-sentinel*.service", "--no-legend", "--plain"]).out).into_iter().next() {
-            self.systemctl(&["start", &unit]);
+        if let Some(unit) = self.unit_files("spira-sentinel*.service").unwrap_or_default().into_iter().next() {
+            self.systemctl(&["start", &unit.name]);
             return;
         }
         let before = fired_at(&self.scheduler_status(), task);
-        let units = first_fields(&self.systemctl(&["list-unit-files", "spira-runtime*.service", "--no-legend", "--plain"]).out);
-        match units.into_iter().find(|u| !u.contains("-watch")) {
+        let watchers = self.unit_files("spira-runtime*-watch*.service").unwrap_or_default();
+        let units = self.unit_files("spira-runtime*.service").unwrap_or_default();
+        match units.into_iter().find(|u| !watchers.iter().any(|w| w.name == u.name)) {
             Some(unit) => {
-                self.systemctl(&["start", &unit]);
+                self.systemctl(&["start", &unit.name]);
             }
             None => eprintln!("acceptance: no spira-runtime unit installed — the scheduler cannot be started"),
         }
@@ -254,8 +280,8 @@ impl Run<'_> {
     fn wait_for_asset(&self, tag: &str, timeout: u64) -> bool {
         let start = self.h.now();
         loop {
-            let out = self.h.run(&self.gh(&["release", "view", tag, "--json", "assets", "--jq", ".assets[].name"]));
-            if out.rc == 0 && out.out.lines().any(|l| l.ends_with(".tar.gz")) {
+            let out = self.h.run(&self.gh(&["release", "view", tag, "--json", "assets"]));
+            if out.rc == 0 && tarball_assets_of(&out.out).is_ok_and(|a| !a.is_empty()) {
                 return true;
             }
             if self.h.now().saturating_sub(start) >= timeout {
@@ -297,8 +323,16 @@ impl Run<'_> {
     /// Start every installed oneshot `spira-*` service once; none may fail.
     fn check_oneshots(&mut self, label: &str) {
         let mut failed = Vec::new();
-        for u in first_fields(&self.systemctl(&["list-unit-files", "--no-legend", "--plain", "spira-*.service"]).out) {
-            if self.systemctl(&["show", "-p", "Type", "--value", &u]).out.trim() != "oneshot" {
+        let files = match self.unit_files("spira-*.service") {
+            Ok(f) => f,
+            Err(e) => {
+                self.bad(&format!("{label}: oneshots listed"), &e);
+                return;
+            }
+        };
+        for UnitFile { name: u, .. } in files {
+            let ty = self.systemctl(&["show", "-p", "Type", "--value", &u]);
+            if ServiceType::of(ty.rc, &ty.out) != ServiceType::Oneshot {
                 continue;
             }
             if self.systemctl(&["start", &u]).rc != 0 {
@@ -309,8 +343,8 @@ impl Run<'_> {
         self.check(&name, failed.is_empty(), || format!("failed: {}", failed.join(", ")));
     }
 
-    fn unit_set(&self) -> Vec<String> {
-        unit_set(&self.systemctl(&["list-unit-files", "--no-legend"]).out)
+    fn unit_set(&self) -> Result<Vec<String>, String> {
+        Ok(unit_set(&self.unit_files("spira-*")?))
     }
 
     /// The model's part is over: its lifecycle history has reached SUBMITTED (a model finishes
@@ -328,15 +362,16 @@ impl Run<'_> {
         Some(format!("builder declined: {status}"))
     }
 
-    fn spira_units(&self, state: &str) -> Vec<String> {
-        let flag = format!("--state={state}");
-        first_fields(&self.systemctl(&["list-units", &flag, "--no-legend", "--plain"]).out).into_iter().filter(|u| u.starts_with("spira-")).collect()
+    fn spira_units(&self, state: &str) -> Result<Vec<String>, String> {
+        self.listed_units(Some(state), "spira-*")
     }
 
     /// Wait up to `budget` seconds for the spira units to leave activation or for one to fail.
     fn wait_units_settled(&self, budget: u64) {
         self.poll(budget, 2, || {
-            !self.spira_units("failed").is_empty() || (self.spira_units("activating").is_empty() && self.spira_units("reloading").is_empty())
+            let in_state = |s: &str| self.spira_units(s).map(|u| !u.is_empty());
+            // A manager that cannot answer ends the wait; the check after it judges.
+            in_state("failed").unwrap_or(true) || !(in_state("activating").unwrap_or(false) || in_state("reloading").unwrap_or(false))
         });
     }
 
@@ -767,8 +802,10 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     println!("\nphase A — uninstall and clean state");
     let rc = h.run(&r.uninstall()).rc;
     r.is0("phase A: uninstall.sh --yes exits 0", rc);
-    let left: Vec<String> = first_fields(&r.systemctl(&["list-unit-files", "--no-legend", "--plain"]).out).into_iter().filter(|u| u.starts_with("spira-")).collect();
-    r.check("phase A: no spira-* units remain after uninstall", left.is_empty(), || left.join("\n"));
+    match r.unit_files("spira-*") {
+        Ok(left) => r.check("phase A: no spira-* units remain after uninstall", left.is_empty(), || left.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join("\n")),
+        Err(e) => r.bad("phase A: no spira-* units remain after uninstall", &e),
+    }
 
     // ---- phase B / C ----------------------------------------------------------------------
     r.phase("phase-B");
@@ -847,7 +884,13 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
 
 fn phase_bc(r: &mut Run, tag: &str, pt: &str) {
     let h = r.h;
-    let pre = r.unit_set();
+    let pre = match r.unit_set() {
+        Ok(p) => p,
+        Err(e) => {
+            r.bad("phase B: unit set snapshot before the upgrade", &e);
+            return;
+        }
+    };
     let rc = h.show(&r.deploy_tag());
     r.is0(&format!("phase B: deploy.sh {tag} exits 0 (no rollback)"), rc);
     r.check_oneshots("phase B");
@@ -875,8 +918,15 @@ fn phase_bc(r: &mut Run, tag: &str, pt: &str) {
     let rc = h.show(&r.deploy_prev(pt, r.o.a.prev_tarball.as_deref()));
     r.is0(&format!("phase C: deploy.sh {pt} (rollback) exits 0"), rc);
     r.check_oneshots("phase C");
-    let post = r.unit_set();
-    let diff: Vec<String> = pre.iter().filter(|u| !post.contains(u)).map(|u| format!("< {u}")).chain(post.iter().filter(|u| !pre.contains(u)).map(|u| format!("> {u}"))).collect();
+    let post = match r.unit_set() {
+        Ok(p) => p,
+        Err(e) => {
+            r.bad("phase C: unit set after rollback matches pre-upgrade snapshot", &e);
+            return;
+        }
+    };
+    let (pre_set, post_set): (BTreeSet<&String>, BTreeSet<&String>) = (pre.iter().collect(), post.iter().collect());
+    let diff: Vec<String> = pre_set.difference(&post_set).map(|u| format!("< {u}")).chain(post_set.difference(&pre_set).map(|u| format!("> {u}"))).collect();
     if diff.is_empty() {
         r.ok("phase C: unit set after rollback matches pre-upgrade snapshot (no extra/dropped units)");
     } else {
@@ -987,8 +1037,10 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
         r.is_same("phase D: operator override survived aged upgrade", &val, &got);
 
         r.wait_units_settled(120);
-        let failed = r.spira_units("failed");
-        r.check("phase D: no failed spira units once settled after aged upgrade", failed.is_empty(), || failed.join("\n"));
+        match r.spira_units("failed") {
+            Ok(failed) => r.check("phase D: no failed spira units once settled after aged upgrade", failed.is_empty(), || failed.join("\n")),
+            Err(e) => r.bad("phase D: no failed spira units once settled after aged upgrade", &e),
+        }
         match r.world_halted_line() {
             Some(l) => r.bad("phase D: world running after aged upgrade", &l),
             None => r.ok("phase D: world running after aged upgrade"),

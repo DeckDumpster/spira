@@ -486,17 +486,77 @@ pub fn land_modes_missing(modes: &[String]) -> Vec<&'static str> {
 /// release directory, which is not one, so an upgrade and a rollback never keep these.
 const GIT_CHECKOUT_UNITS: [&str; 2] = ["spira-cert-sweep-", "spira-round-template-"];
 
-/// The installed `spira-*` unit files, "name state" per line, sorted; transient units
-/// excluded (a landing pass alive at snapshot time is not part of an install), and so are
-/// the `GIT_CHECKOUT_UNITS`.
-pub fn unit_set(list_unit_files: &str) -> Vec<String> {
-    let mut v: Vec<String> = list_unit_files
-        .lines()
-        .filter_map(|l| {
-            let mut f = l.split_whitespace();
-            let (n, s) = (f.next()?, f.next().unwrap_or(""));
-            (n.starts_with("spira-") && s != "transient" && !GIT_CHECKOUT_UNITS.iter().any(|p| n.starts_with(p))).then(|| format!("{n} {s}"))
+/// One row of `systemctl list-unit-files --output=json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnitFile {
+    pub name: String,
+    pub state: String,
+}
+
+fn json_rows(text: &str, what: &str) -> Result<Vec<serde_json::Value>, String> {
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(serde_json::Value::Array(a)) => Ok(a),
+        Ok(_) => Err(format!("{what}: not a JSON array")),
+        Err(e) => Err(format!("{what}: not JSON ({e})")),
+    }
+}
+
+/// The unit files `systemctl list-unit-files --output=json` lists.
+pub fn unit_files_of(json: &str) -> Result<Vec<UnitFile>, String> {
+    json_rows(json, "list-unit-files")?
+        .iter()
+        .map(|r| {
+            let field = |k: &str| r.get(k).and_then(serde_json::Value::as_str).map(str::to_string);
+            Ok(UnitFile { name: field("unit_file").ok_or("list-unit-files: a row has no unit_file")?, state: field("state").unwrap_or_default() })
         })
+        .collect()
+}
+
+/// The unit names `systemctl list-units --output=json` lists.
+pub fn unit_names_of(json: &str) -> Result<Vec<String>, String> {
+    json_rows(json, "list-units")?
+        .iter()
+        .map(|r| r.get("unit").and_then(serde_json::Value::as_str).map(str::to_string).ok_or_else(|| "list-units: a row has no unit".to_string()))
+        .collect()
+}
+
+/// A service's `Type=`, as `systemctl show -p Type --value` answers it; an answer that is not a
+/// type is `Unknown`, never a guess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceType {
+    Oneshot,
+    Other,
+    Unknown,
+}
+
+impl ServiceType {
+    pub fn of(rc: i32, value: &str) -> ServiceType {
+        if rc != 0 {
+            return ServiceType::Unknown;
+        }
+        match value.trim() {
+            "oneshot" => ServiceType::Oneshot,
+            "simple" | "exec" | "forking" | "notify" | "notify-reload" | "dbus" | "idle" => ServiceType::Other,
+            _ => ServiceType::Unknown,
+        }
+    }
+}
+
+/// The names of the release assets that are tarballs, from `gh release view --json assets`.
+pub fn tarball_assets_of(json: &str) -> Result<Vec<String>, String> {
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("release assets: not JSON ({e})"))?;
+    let assets = v.get("assets").and_then(serde_json::Value::as_array).ok_or("release assets: no assets array")?;
+    Ok(assets.iter().filter_map(|a| a.get("name").and_then(serde_json::Value::as_str)).filter(|n| n.ends_with(".tar.gz")).map(str::to_string).collect())
+}
+
+/// The installed `spira-*` unit files, "name state", sorted; transient units excluded (a
+/// landing pass alive at snapshot time is not part of an install), and so are the
+/// `GIT_CHECKOUT_UNITS`.
+pub fn unit_set(files: &[UnitFile]) -> Vec<String> {
+    let mut v: Vec<String> = files
+        .iter()
+        .filter(|f| f.state != "transient" && !GIT_CHECKOUT_UNITS.iter().any(|p| f.name.starts_with(p)))
+        .map(|f| format!("{} {}", f.name, f.state))
         .collect();
     v.sort();
     v

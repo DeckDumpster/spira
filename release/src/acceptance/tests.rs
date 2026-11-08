@@ -41,16 +41,43 @@ fn ready_has_finds_the_probe_and_unreadable_is_not_claimable() {
     assert!(!ready_has("not json", "sp-b"));
 }
 
+fn files(rows: &str) -> Vec<UnitFile> {
+    unit_files_of(rows).unwrap()
+}
+
 #[test]
 fn unit_set_is_sorted_spira_units_without_transient_ones() {
-    let t = "spira-z.timer enabled enabled\nspira-landing.service transient -\ndolt.service enabled\nspira-a.service static -\n";
-    assert_eq!(unit_set(t), s(&["spira-a.service static", "spira-z.timer enabled"]));
+    let t = r#"[{"unit_file":"spira-z.timer","state":"enabled"},{"unit_file":"spira-landing.service","state":"transient"},{"unit_file":"spira-a.service","state":"static"}]"#;
+    assert_eq!(unit_set(&files(t)), s(&["spira-a.service static", "spira-z.timer enabled"]));
 }
 
 #[test]
 fn unit_set_leaves_out_units_a_release_directory_render_never_keeps() {
-    let t = "spira-cert-sweep-full-prod.timer enabled\nspira-round-template-prod.service static\nspira-a.service static\n";
-    assert_eq!(unit_set(t), s(&["spira-a.service static"]));
+    let t = r#"[{"unit_file":"spira-cert-sweep-full-prod.timer","state":"enabled"},{"unit_file":"spira-round-template-prod.service","state":"static"},{"unit_file":"spira-a.service","state":"static"}]"#;
+    assert_eq!(unit_set(&files(t)), s(&["spira-a.service static"]));
+}
+
+#[test]
+fn systemctl_text_is_never_read_as_a_unit_list() {
+    assert!(unit_files_of("spira-a.service static -\n").is_err());
+    assert!(unit_names_of("spira-a.timer loaded active waiting").is_err());
+    assert!(unit_files_of(r#"{"unit_file":"x"}"#).is_err(), "an object is not a list");
+    assert_eq!(unit_names_of(r#"[{"unit":"spira-a.service","active":"failed"}]"#), Ok(s(&["spira-a.service"])));
+}
+
+#[test]
+fn a_service_type_is_oneshot_only_when_the_manager_said_so() {
+    assert_eq!(ServiceType::of(0, "oneshot\n"), ServiceType::Oneshot);
+    assert_eq!(ServiceType::of(0, "simple\n"), ServiceType::Other);
+    assert_eq!(ServiceType::of(1, "oneshot\n"), ServiceType::Unknown, "a failed call's text is not a type");
+    assert_eq!(ServiceType::of(0, "Failed to connect to bus\n"), ServiceType::Unknown);
+}
+
+#[test]
+fn release_assets_are_read_from_the_json_not_from_names_on_lines() {
+    assert_eq!(tarball_assets_of(r#"{"assets":[{"name":"spira-1.tar.gz"},{"name":"notes.txt"}]}"#), Ok(s(&["spira-1.tar.gz"])));
+    assert!(tarball_assets_of("spira-1.tar.gz\n").is_err(), "a bare name line is not the answer");
+    assert_eq!(tarball_assets_of(r#"{"assets":[]}"#), Ok(vec![]));
 }
 
 #[test]
@@ -233,14 +260,15 @@ impl Fake {
         let prog = c.prog.rsplit('/').next().unwrap_or("");
         match (prog, a.as_slice()) {
             ("systemctl", ["--user", "is-system-running"]) => ok("running\n"),
-            ("systemctl", ["--user", "list-unit-files", "spira-sentinel*.service", ..]) => ok(if self.no_sentinel_unit { "" } else { "spira-sentinel-t.service static\n" }),
-            ("systemctl", ["--user", "list-unit-files", "spira-runtime*.service", ..]) => ok("spira-runtime-t.service enabled\n"),
-            ("systemctl", ["--user", "list-unit-files", "--no-legend", "--plain", "spira-*.service"]) => ok("spira-archive-t.service static\nspira-loom-t.service enabled\n"),
-            ("systemctl", ["--user", "list-unit-files", "--no-legend", "--plain"]) => ok("dolt.service enabled\n"),
-            ("systemctl", ["--user", "list-unit-files", "--no-legend"]) => ok("spira-a.service enabled\nspira-b.timer enabled\n"),
+            ("systemctl", ["--user", "list-unit-files", "spira-sentinel*.service", ..]) => ok(if self.no_sentinel_unit { "[]" } else { r#"[{"unit_file":"spira-sentinel-t.service","state":"static"}]"# }),
+            ("systemctl", ["--user", "list-unit-files", "spira-runtime*-watch*.service", ..]) => ok("[]"),
+            ("systemctl", ["--user", "list-unit-files", "spira-runtime*.service", ..]) => ok(r#"[{"unit_file":"spira-runtime-t.service","state":"enabled"}]"#),
+            ("systemctl", ["--user", "list-unit-files", "spira-*.service", ..]) => ok(r#"[{"unit_file":"spira-archive-t.service","state":"static"},{"unit_file":"spira-loom-t.service","state":"enabled"}]"#),
+            ("systemctl", ["--user", "list-unit-files", "spira-*", ..]) => ok(r#"[{"unit_file":"spira-a.service","state":"enabled"},{"unit_file":"spira-b.timer","state":"enabled"}]"#),
             ("systemctl", ["--user", "show", "-p", "Type", "--value", u]) => ok(if u.contains("archive") { "oneshot\n" } else { "simple\n" }),
             ("systemctl", ["--user", "list-units", "--state=active", ..]) => ok("spira-sentinel-t.timer loaded active waiting\n"),
-            ("systemctl", ["--user", "list-units", "--state=failed", ..]) => ok(if self.failed_unit { "spira-ops-t.service loaded failed failed\n" } else { "" }),
+            ("systemctl", ["--user", "list-units", "--state=failed", ..]) => ok(if self.failed_unit { r#"[{"unit":"spira-ops-t.service","active":"failed"}]"# } else { "[]" }),
+            ("systemctl", ["--user", "list-units", "--state=activating" | "--state=reloading", ..]) => ok("[]"),
             ("systemctl", _) => ok(""),
             (_, ["install-tarball", "--skip-restart", tb, "--answers", answers]) => {
                 // As the real one does: the operator's answers become the one config file.

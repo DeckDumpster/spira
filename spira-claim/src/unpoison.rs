@@ -464,11 +464,15 @@ impl World for Live {
     fn bead(&mut self, id: &str) -> Result<Option<BeadRecord>, String> {
         let r = self.lc(&["content", "show", id, "--json"])?;
         if r.code != 0 {
-            let said = format!("{}\n{}", r.stdout, r.stderr);
-            if said.contains("no issue found") || said.contains("no issues found") {
-                return Ok(None);
+            let failed = format!("exit {}: {}", r.code, first_line(&r));
+            if r.code != 1 {
+                return Err(failed);
             }
-            return Err(format!("exit {}: {}", r.code, first_line(&r)));
+            return match self.lc_row(id) {
+                Ok(None) => Ok(None),
+                Ok(Some(_)) => Err(format!("{failed} (the lifecycle machine has a row for it)")),
+                Err(e) => Err(format!("{failed}; and the machine could not say whether it exists: {e}")),
+            };
         }
         parse_bead(&r.stdout)
     }
@@ -481,9 +485,7 @@ impl World for Live {
         let r = self.lc(&["show", id])?;
         match r.code {
             0 => parse_lc_show(&r.stdout).map(Some),
-            // spira-lc's "no such row" is exit 1 with `{}`; any other exit 1 is not that.
-            1 if r.stdout.trim() == "{}" => Ok(None),
-            // spira-lc prints its "cannot tell: …" on stdout, not stderr.
+            1 => Ok(None),
             c => Err(format!("exit {c}: {}", first_line(&r))),
         }
     }

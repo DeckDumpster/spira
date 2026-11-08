@@ -10,9 +10,10 @@
 //! `cockpit-collect`'s cross-check (test-cockpit-unclaimable.sh, UC-dispatch-17).
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::host::{Io, Spec};
-use crate::model::parse_beads;
+use crate::model::{parse_beads, LcRow};
 use crate::pass::Sentinel;
 use spira_config::lc_state;
 
@@ -240,8 +241,8 @@ impl<'a> Sentinel<'a> {
             .filter(|r| !r.is_empty())
     }
 
-    fn worktree_prefix(&self) -> String {
-        format!("{}/", self.cfg.run.join("worktree").display())
+    fn worktree_prefix(&self) -> PathBuf {
+        self.cfg.run.join("worktree")
     }
 
     /// lib.sh `detect_branch_collisions`. The candidates are the claimable beads — READY or
@@ -254,11 +255,7 @@ impl<'a> Sentinel<'a> {
         };
         // Claimable = READY/REWORK with no ask or poison hold: a parked bead is the row's hold,
         // never a label (sp-psztcc), and it is not re-detected on the next pass.
-        let claimable: std::collections::HashSet<&str> = rows
-            .iter()
-            .filter(|r| lc_state::is_claimable(&r.state) && !r.holds.iter().any(|h| h == "ask" || h == "poison"))
-            .map(|r| r.bead_id.as_str())
-            .collect();
+        let by_id: HashMap<&str, &LcRow> = rows.iter().map(|r| (r.bead_id.as_str(), r)).collect();
         let args = vec![
             "list".into(),
             "--all".into(),
@@ -274,8 +271,9 @@ impl<'a> Sentinel<'a> {
         let Ok(mut beads) = parse_beads(&raw) else {
             return Vec::new();
         };
-        beads.retain(|b| claimable.contains(b.id.as_str()));
-        // `claimable` is the machine's set, which already leaves ask- and poison-held beads out.
+        beads.retain(|b| {
+            by_id.get(b.id.as_str()).is_some_and(|r| lc_state::is_claimable(&r.state) && !r.holds.iter().any(|h| h == "ask" || h == "poison"))
+        });
         let prefix = self.worktree_prefix();
         let mut maps: HashMap<String, Vec<(String, String)>> = HashMap::new();
         let mut out = Vec::new();
@@ -299,7 +297,8 @@ impl<'a> Sentinel<'a> {
             let Some(holder_path) = find_holder(list, &branch) else {
                 continue;
             };
-            let Some(holder_id) = holder_path.strip_prefix(&prefix) else {
+            let holder = std::path::Path::new(&holder_path);
+            let Some(holder_id) = holder.file_name().and_then(|n| n.to_str()).filter(|_| holder.parent() == Some(prefix.as_path())) else {
                 continue;
             };
             if holder_id == b.id {
@@ -316,8 +315,12 @@ impl<'a> Sentinel<'a> {
         out
     }
 
-    fn label_list(&self, id: &str) -> String {
-        self.bd().call(self.h, &["label", "list", id], None).stdout
+    /// The labels `bd show --json` carries for `id`; empty when bd cannot say.
+    fn labels_of(&self, id: &str) -> Vec<String> {
+        let Ok(raw) = self.bd().json(self.h, &["show".into(), id.into()]) else {
+            return Vec::new();
+        };
+        parse_beads(&raw).ok().and_then(|v| v.into_iter().find(|b| b.id == id)).map(|b| b.labels).unwrap_or_default()
     }
 
 
@@ -360,7 +363,7 @@ impl<'a> Sentinel<'a> {
             if asked.contains(&c.id) {
                 continue;
             }
-            let labels = self.label_list(&c.id);
+            let labels = self.labels_of(&c.id);
 
             let inherited_from = c.branch.strip_prefix("spira/").map(str::to_string);
             if let Some(inh) = &inherited_from {
@@ -368,7 +371,7 @@ impl<'a> Sentinel<'a> {
                     && inh != &c.id
                     && self.bd().call(self.h, &["show", inh, "--json"], None).ok();
                 if looks_inherited {
-                    if labels.contains(&format!("branch:{}", c.branch)) {
+                    if labels.iter().any(|l| *l == format!("branch:{}", c.branch)) {
                         let commits = self.inherited_commits(&c.holder_path, &c.id);
                         self.bd().quiet(self.h, &["label", "remove", &c.id, &format!("branch:{}", c.branch)], None);
                         let note = if commits.is_empty() {

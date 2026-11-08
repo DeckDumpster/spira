@@ -465,3 +465,55 @@ fn stop_occupants_stops_the_occupants_unit_through_the_port() {
     assert_eq!(r, Ok(()));
     assert_eq!(units.calls(), ["stop spira-dwarf-andvari-sp-a-1.service"]);
 }
+
+/// `Live` over a scripted lifecycle service: `content` answers `content`, `show` answers `show`.
+fn live_over(content: spira_config::lc_call::Reply, show: spira_config::lc_call::Reply) -> Live {
+    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use std::sync::Arc;
+    struct Two(Reply, Reply);
+    impl Transport for Two {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
+            Ok(if argv[0] == "content" { self.0.clone() } else { self.1.clone() })
+        }
+    }
+    let store = crate::store::Store {
+        bdq: "/nonexistent/bdq".into(),
+        lc: LcClient::over(Arc::new(Two(content, show)), true),
+        lc_bin: "/nonexistent/spira-lc".into(),
+        timeout: std::time::Duration::from_secs(1),
+    };
+    Live {
+        store,
+        run_dir: PathBuf::new(),
+        asked_dir: PathBuf::new(),
+        beads_actor: "t".into(),
+        own_dwarf: false,
+        units: UnitsPort::Host(std::sync::OnceLock::new()),
+    }
+}
+
+fn reply(code: i32, out: &str) -> spira_config::lc_call::Reply {
+    spira_config::lc_call::Reply { code, out: out.into(), err: String::new() }
+}
+
+const ROW: &str = r#"{"bead":{"bead_id":"sp-a","state":"READY","holds":[],"version":1}}"#;
+
+#[test]
+fn no_lifecycle_row_is_exit_one_whatever_the_machine_printed() {
+    let mut w = live_over(reply(0, "[]"), reply(1, "no such bead sp-a"));
+    assert_eq!(w.lc_row("sp-a"), Ok(None));
+    let mut w = live_over(reply(0, "[]"), reply(2, "{}"));
+    assert!(w.lc_row("sp-a").is_err(), "exit 2 is cannot-tell even when it prints {{}}");
+}
+
+#[test]
+fn a_content_failure_is_absence_only_when_the_machine_has_no_row() {
+    let mut w = live_over(reply(1, "wording changed: bead missing"), reply(1, ""));
+    assert_eq!(w.bead("sp-a"), Ok(None));
+    let mut w = live_over(reply(1, "no issue found matching sp-a"), reply(0, ROW));
+    assert!(w.bead("sp-a").is_err(), "a failed read of a bead the machine knows is not absence");
+    let mut w = live_over(reply(1, "no issue found matching sp-a"), reply(2, ""));
+    assert!(w.bead("sp-a").is_err());
+    let mut w = live_over(reply(2, "no issue found matching sp-a"), reply(1, ""));
+    assert!(w.bead("sp-a").is_err(), "only exit 1 can mean absent; a deadline or crash cannot tell");
+}

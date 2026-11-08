@@ -11,7 +11,7 @@ use spira_config::amendment;
 use bead::claimdesc::notify_live_dwarf;
 use bead::{
     branch_candidate, branch_label, runes_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
-    awaits_dispatch, lane_check, stack_after_refusal, find_id_by_title, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
+    awaits_dispatch, lane_check, stack_after_refusal, find_id_by_title, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, relates_only_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
 
@@ -1750,10 +1750,16 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
                 rc = 1;
                 continue;
             }
-            for oid in parse_blocks_targets(&rel_out) {
-                if blocks_targets.contains(&oid) {
+            let linked_only = match relates_only_targets(&blocks_targets, &rel_out) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("bead: {id}: unreadable (bd dep list --type relates-to: {e})");
+                    bad += 1;
+                    rc = 1;
                     continue;
                 }
+            };
+            for oid in linked_only {
                 let (_, oout) = bdq_capture(home, &s(&["show", &oid, "--json"]));
                 let Some(orow) = parse_show_row(&oout) else { continue };
                 if lc_done(&mut lc, &oid) || orow.labels.iter().any(|l| l == &incident_label) {

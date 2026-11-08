@@ -287,7 +287,7 @@ impl<'a> Sentinel<'a> {
         let now = self.h.now();
         let mut stale = Vec::new();
         for (id, ago) in stale_leases(&rows, now, self.cfg.reclaim_grace, |id| self.holder_alive(id), |h| spira_config::session::session_gone(h, &spira_config::admission::RealProcs)) {
-            if let Some(now_state) = self.lc_live_state(&id).filter(|st| st != "WORKING") {
+            if let Some(now_state) = self.lc_live_state(&id).filter(|st| !lc_state::is_working(st)) {
                 self.log(&format!("CHECK2 {id}: skipped HolderDead — the bead moved to {now_state} since the sweep read it"));
                 continue;
             }

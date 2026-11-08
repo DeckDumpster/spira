@@ -727,11 +727,7 @@ impl Beads for RealBeads {
         let mut out = Vec::new();
         for chunk in ids.chunks(100) {
             let raw = self.show_raw(chunk)?;
-            let js = json_only(&raw);
-            if js.trim().is_empty() {
-                continue;
-            }
-            let v: serde_json::Value = serde_json::from_str(js).map_err(|e| format!("bd show: not JSON ({e})"))?;
+            let v: serde_json::Value = serde_json::from_str(json_only(&raw)).map_err(|e| format!("bd show: not JSON ({e})"))?;
             let items = match v {
                 serde_json::Value::Array(a) => a,
                 o @ serde_json::Value::Object(_) => vec![o],
@@ -1393,6 +1389,13 @@ mod store_tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].state, "SUBMITTED");
         assert_eq!(*s.seen.lock().unwrap(), vec!["content show sp-a --json", "show sp-a"]);
+    }
+
+    #[test]
+    fn a_bead_read_that_answers_no_json_is_an_error_not_no_beads() {
+        let (_s, c) = store(|a| if a[0] == "content" { (0, "warning: slow store\n".into()) } else { (1, String::new()) });
+        let e = beads(&c).show(&["sp-a".into()]).unwrap_err();
+        assert!(e.contains("not JSON"), "{e}");
     }
 
     #[test]
