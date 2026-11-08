@@ -810,3 +810,33 @@ fn completion_leaves_a_key_the_config_already_sets() {
     assert!(!d.added.contains_key("spira.orphan_secs"));
     assert_eq!(d.added.get("spira.other_secs"), Some(&toml::Value::Integer(600)));
 }
+
+/// sp-rdldh2: a release that registers a new scheduler task ships its mode in the
+/// `SPIRA_TASK_MODES` default, but a live `spira.task_modes` written before the task existed
+/// wins over the default, and the new runtime refuses to start without a mode for every task.
+/// Completion adds the default's mode for each task the live value lacks and keeps the live
+/// modes for the rest.
+#[test]
+fn completion_gives_a_task_the_live_task_modes_lacks_its_release_default_mode() {
+    let tmp = TempDir::new("complete-task-modes");
+    let tree = |root: &Path, default: &str| {
+        file(
+            &root.join("spira/conf.d/SPIRA_TASK_MODES"),
+            &format!("TYPE=string\nDOC=modes\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${{SPIRA_TASK_MODES:={default}}}\"\nSPIRA_CONF_DEFAULT_EOF\n"),
+        );
+        root.to_path_buf()
+    };
+    let active = tree(&tmp.path().join("old"), "heartbeat=act watch.spill_key=act");
+    let new = tree(&tmp.path().join("new"), "heartbeat=act watch.spill_key=act watch.throughput=act");
+    let live: toml::Table = "[spira]\ntask_modes = \"heartbeat=act watch.spill_key=observe\"\n".parse().unwrap();
+    let d = config_delta::complete(std::slice::from_ref(&live), &new, Some(&active), None).unwrap().expect("a delta that completes task_modes");
+    let (_, post, undo) = config_delta::apply(std::slice::from_ref(&live), &d, &[], true).unwrap();
+    assert_eq!(
+        post[0]["spira"]["task_modes"].as_str(),
+        Some("heartbeat=act watch.spill_key=observe watch.throughput=act"),
+        "the new task takes the release default; the live override stands"
+    );
+    let (_, back, _) = config_delta::apply(&post, &undo, &[], false).unwrap();
+    assert_eq!(back[0], live, "a rollback puts the live value back as it was");
+    assert!(config_delta::complete(&post, &new, Some(&active), None).unwrap().is_none(), "a complete value is left alone");
+}
