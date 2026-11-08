@@ -6,6 +6,7 @@ mod halt;
 mod host_pools;
 mod in_process;
 mod journal_calls;
+mod journal_cannot_tell;
 mod lease;
 mod memory_only;
 mod no_unit_children;

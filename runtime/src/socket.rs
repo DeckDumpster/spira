@@ -276,13 +276,13 @@ pub fn lc_call(path: &std::path::Path, argv: &[&str]) -> Result<String> {
 
 /// [`lc_call`] for a verb that does work of its own (a fetch) and so waits longer than a store read.
 pub fn lc_call_within(path: &std::path::Path, argv: &[&str], deadline: Duration) -> Result<String> {
-    let down = |why: &dyn std::fmt::Display| RuntimeError::new(format!("cannot tell: spira-lc is not answering on {}: {why}", path.display()));
+    let down = |why: &dyn std::fmt::Display| RuntimeError::cannot_tell(format!("cannot tell: spira-lc is not answering on {}: {why}", path.display()));
     let stream = connect(path).map_err(|e| down(&e))?;
     stream.set_read_timeout(Some(deadline)).and_then(|_| stream.set_write_timeout(Some(deadline))).map_err(|e| down(&e))?;
     let request = serde_json::to_string(argv).map_err(|e| RuntimeError::new(e.to_string()))?;
     writeln!(&stream, "{request}").map_err(|e| down(&e))?;
 
-    let lost = |why: &str| RuntimeError::new(format!("cannot tell: spira-lc took the journal request but its reply was lost ({why})"));
+    let lost = |why: &str| RuntimeError::cannot_tell(format!("cannot tell: spira-lc took the journal request but its reply was lost ({why})"));
     let mut reader = BufReader::new(stream);
     let mut head = String::new();
     if !matches!(reader.read_line(&mut head), Ok(n) if n > 0) {

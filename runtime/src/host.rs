@@ -21,6 +21,9 @@ use crate::{Result, RuntimeError};
 pub const TURN_BUDGET: Duration = Duration::from_secs(5);
 const BACKOFF_FIRST: Duration = Duration::from_millis(50);
 const BACKOFF_MAX: Duration = Duration::from_secs(2);
+const JOURNAL_BACKOFF_MAX: Duration = Duration::from_secs(10);
+
+static JOURNAL_RETRIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub trait EffectRunner: Send + Sync {
     /// Must be idempotent under `key`: a restart re-issues every effect that has no outcome.
@@ -105,34 +108,49 @@ struct Turn {
 struct TurnOut {
     engine: Engine,
     result: Result<()>,
+    subs: Vec<Submit>,
+    done: Vec<Done>,
     launch: Vec<PendingEffect>,
     next_timer_at: Option<u64>,
 }
 
-fn run_turn(mut t: Turn) -> TurnOut {
-    let result = (|| {
-        for s in t.subs.drain(..) {
-            accept(&mut t.engine, s)?; // loop-safe: runs on the offload pool
+/// Applies the turn's submissions and outcomes in order. On an error what it had not applied stays
+/// in `t`, so a turn that is retried loses nothing; a submission that failed was answered.
+fn apply(t: &mut Turn) -> Result<()> {
+    let mut subs = std::mem::take(&mut t.subs).into_iter();
+    while let Some(s) = subs.next() {
+        let again = s.reply.is_none().then(|| Submit::new(&s.id, &s.stream, s.kind.clone()));
+        if let Err(e) = accept(&mut t.engine, s) {
+            t.subs = again.filter(|_| e.is_cannot_tell()).into_iter().chain(subs).collect();
+            return Err(e);
         }
-        for d in t.done.drain(..) {
-            match d {
-                Done::Started(key) => t.engine.note_attempt(&key),
-                Done::Outcome(key, o) => {
-                    t.engine.complete(&key, o)?; // loop-safe: runs on the offload pool
+    }
+    let mut done = std::mem::take(&mut t.done).into_iter();
+    while let Some(d) = done.next() {
+        match d {
+            Done::Started(key) => t.engine.note_attempt(&key),
+            Done::Outcome(key, o) => {
+                if let Err(e) = t.engine.complete(&key, o.clone()) { // loop-safe: runs on the offload pool
+                    t.done = std::iter::once(Done::Outcome(key, o)).chain(done).collect();
+                    return Err(e);
                 }
-                Done::Deferred(key, class) => t.engine.note_deferred(&key, class.name()),
-                Done::Spilled(..) => {}
             }
+            Done::Deferred(key, class) => t.engine.note_deferred(&key, class.name()),
+            Done::Spilled(..) => {}
         }
-        t.engine.run_until_idle() // loop-safe: runs on the offload pool
-    })();
+    }
+    Ok(())
+}
+
+fn run_turn(mut t: Turn) -> TurnOut {
+    let result = apply(&mut t).and_then(|()| t.engine.run_until_idle()); // loop-safe: runs on the offload pool
     let launch: Vec<PendingEffect> = t.engine.pending_effects().into_iter().filter(|p| !t.in_flight.contains(&p.key)).collect();
     // The host now owns each of these until it starts: its deadline waits for the runner.
     for p in &launch {
         t.engine.note_queued(&p.key);
     }
     let next_timer_at = t.engine.next_timer_at();
-    TurnOut { engine: t.engine, result, launch, next_timer_at }
+    TurnOut { engine: t.engine, result, subs: t.subs, done: t.done, launch, next_timer_at }
 }
 
 /// Runs until `submissions` closes and no effect is in flight.
@@ -181,6 +199,7 @@ pub async fn serve_with(
     let mut dirty = true;
     let mut next_timer: Option<u64> = None;
     let (mut backoff, mut retry_at) = (BACKOFF_FIRST, Instant::now());
+    let mut journal_backoff = BACKOFF_FIRST;
     let emit = |f: Fields| {
         if let Some(s) = &opts.sink {
             s.emit(&f); // loop-safe: try_send, drops when full
@@ -269,7 +288,27 @@ pub async fn serve_with(
                     f.insert("turn.elapsed_ms".into(), (r.began.elapsed().as_millis() as u64).into());
                     emit(f);
                 }
-                out.result?;
+                let retry = match out.result {
+                    Err(e) if e.is_cannot_tell() => Some(e),
+                    r => {
+                        r?;
+                        journal_backoff = BACKOFF_FIRST;
+                        None
+                    }
+                };
+                if let Some(e) = &retry {
+                    subs.extend(out.subs);
+                    done.extend(out.done);
+                    dirty = true;
+                    retry_at = Instant::now() + journal_backoff;
+                    let mut f = Fields::new();
+                    f.insert("unit".into(), "journal.retry".into());
+                    f.insert("journal.retries_total".into(), (JOURNAL_RETRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1).into());
+                    f.insert("journal.retry_in_ms".into(), (journal_backoff.as_millis() as u64).into());
+                    f.insert("error".into(), e.0.as_str().into());
+                    emit(f);
+                    journal_backoff = (journal_backoff * 2).min(JOURNAL_BACKOFF_MAX);
+                }
                 for p in out.launch {
                     let class = runner.class(&p.spec);
                     let mine = in_flight.values().filter(|s| **s == p.stream.0).count();

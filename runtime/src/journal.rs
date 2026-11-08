@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 
 use crate::event::{Event, EventId, EventKind, StreamKey, EFFECT_FAILED, EFFECT_REQUESTED, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT};
-use crate::{Result, RuntimeError};
+use crate::{Class, Result, RuntimeError};
 
 pub type Offset = u64;
 
@@ -313,7 +313,7 @@ impl LeaseTable for MemJournal {
 /// A journal that refuses one named operation once, to stand in for a crash at that point.
 pub struct FaultyJournal {
     inner: Arc<dyn Journal>,
-    fail: Mutex<Option<(&'static str, bool)>>,
+    fail: Mutex<Option<(&'static str, Class)>>,
 }
 
 impl FaultyJournal {
@@ -323,20 +323,29 @@ impl FaultyJournal {
 
     /// The next call of `op` (a `Journal` method name) fails, once.
     pub fn fail_next(&self, op: &'static str) {
-        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, false));
+        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, Class::Fault));
     }
 
     /// The next call of `op` is refused, once: the journal looked and said no.
     pub fn refuse_next(&self, op: &'static str) {
-        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, true));
+        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, Class::Refused));
+    }
+
+    /// The next call of `op` cannot tell, once: the journal's reply was slow or lost.
+    pub fn cannot_tell_next(&self, op: &'static str) {
+        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, Class::CannotTell));
     }
 
     fn gate(&self, op: &'static str) -> Result<()> {
         let mut f = self.fail.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((want, refused)) = f.filter(|(want, _)| *want == op) {
+        if let Some((want, class)) = f.filter(|(want, _)| *want == op) {
             *f = None;
             let m = format!("injected fault in {want}");
-            return Err(if refused { RuntimeError::refused(format!("journal: {m}")) } else { RuntimeError::new(m) });
+            return Err(match class {
+                Class::Refused => RuntimeError::refused(format!("journal: {m}")),
+                Class::CannotTell => RuntimeError::cannot_tell(format!("cannot tell: {m}")),
+                Class::Fault => RuntimeError::new(m),
+            });
         }
         Ok(())
     }
@@ -352,6 +361,7 @@ impl Journal for FaultyJournal {
         self.inner.record(ev)
     }
     fn read_from(&self, from: Offset, limit: usize) -> Result<Vec<(Offset, Event)>> {
+        self.gate("read_from")?;
         self.inner.read_from(from, limit)
     }
     fn applied(&self, handler: &str, id: &EventId) -> Result<bool> {

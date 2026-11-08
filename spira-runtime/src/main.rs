@@ -16,6 +16,7 @@ const USAGE: &str = "usage: spira-runtime serve|check-config";
 /// The OTLP log queue: a full queue drops and counts rather than blocking the loop.
 const LOG_QUEUE: usize = 1024;
 const SUBMIT_QUEUE: usize = 16;
+const OPEN_BACKOFF_FIRST: Duration = Duration::from_millis(250);
 const NO_WATCHDOG_BOOT: Duration = Duration::from_secs(20);
 
 fn check() -> Result<(), String> {
@@ -73,15 +74,26 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     let journal = SocketJournal::flushing(settings.lc_socket.clone(), runtime::socket::FLUSH_AGE);
     let clock = Arc::new(WallClock);
     let board = Arc::new(runtime::engine::StatusBoard::default());
+    let deadline = max_sleep.map_or(NO_WATCHDOG_BOOT, |m| m * 2);
     let boot = {
         let (settings, clock, sink, board) = (settings.clone(), clock.clone(), sink.clone(), board.clone());
         move || -> Result<runtime::Engine, String> {
-            let mut engine = open_engine(&settings, journal, clock, Arc::new(FileMarker(settings.marker_path())), sink, vec![]).map_err(|e| e.to_string())?.with_status_board(board);
+            // A journal that cannot tell is asked again until most of the startup deadline is spent.
+            let (began, mut wait) = (std::time::Instant::now(), OPEN_BACKOFF_FIRST);
+            let opened = loop {
+                match open_engine(&settings, journal.clone(), clock.clone(), Arc::new(FileMarker(settings.marker_path())), sink.clone(), vec![]) {
+                    Err(e) if e.is_cannot_tell() && began.elapsed() + wait < deadline / 2 => {
+                        std::thread::sleep(wait); // loop-safe: runs on the startup offload thread
+                        wait *= 2;
+                    }
+                    r => break r,
+                }
+            };
+            let mut engine = opened.map_err(|e| e.to_string())?.with_status_board(board);
             spira_runtime::start_tasks(&mut engine);
             Ok(engine)
         }
     };
-    let deadline = max_sleep.map_or(NO_WATCHDOG_BOOT, |m| m * 2);
     let mut starting = runtime::offload::offload("startup", None, boot).map_err(|e| e.to_string())?;
     let engine = tokio::time::timeout(deadline, &mut starting).await.map_err(|_| format!("startup did not finish within {deadline:?}"))?.map_err(|e| e.to_string())??;
     let (tx, rx) = mpsc::channel(SUBMIT_QUEUE);
