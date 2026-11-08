@@ -682,6 +682,23 @@ fn config_for_a_tree_has_its_delta_applied_and_a_key_without_an_entry_stays_abse
 }
 
 #[test]
+fn a_key_the_delta_removes_still_resolves_under_the_registry_that_requires_it() {
+    let w = World::with_git(delta_git(""));
+    let spec = w.cfg.toml_spec().unwrap();
+    file(Path::new(&spec), "[spira]\nid_prefix = \"sp\"\nunit_test_slow_secs = 9\n");
+    let tree = w.cfg.releases.join("head-tree");
+    file(&tree.join(config_delta::DELTA_PATH), "removed = [\"spira.unit_test_slow_secs\"]\n");
+    let (dir, staged) = config_delta::staged_for_tree(&spec, &tree).unwrap().expect("the tree has a delta");
+    let text = fs::read_to_string(&staged).unwrap();
+    let predecessor = tree_declaring(&w.cfg.releases.join("old"), &["SPIRA_UNIT_TEST_SLOW_SECS"]);
+    fs::create_dir_all(predecessor.join("spira/conf.toml.d")).unwrap();
+    let reg = spira_config::registry::Registry::from_dirs(&predecessor.join("spira")).unwrap();
+    let (doc, _) = spira_config::validate_with(&text, &reg).unwrap();
+    assert!(doc.spira.unwrap().0.contains_key("unit_test_slow_secs"), "the predecessor's registry requires it, so the resolver must still see it: {text}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn activation_holds_a_retired_key_the_release_being_replaced_still_declares() {
     let w = World::with_git(delta_git(""));
     file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nround_vm_disk_need_gib = 0\n");

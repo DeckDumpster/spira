@@ -1109,7 +1109,7 @@ fn validate_value(mut root: toml::Value, reg: &registry::Registry) -> Result<(Sp
                 return Err(lifecycle_switch_refusal("spira.lifecycle_enforce", &v.to_string()));
             }
         }
-        for retired in RETIRED_SPIRA_KEYS {
+        for retired in RETIRED_SPIRA_KEYS.iter().filter(|r| reg.by_field(r.key).is_none()) {
             if spira.remove(retired.key).is_some() {
                 warnings.push(format!(
                     "{} is retired ({}) and ignored — remove it",
@@ -1791,6 +1791,25 @@ mod tests {
         );
         assert!(release_path_from_env_with_tail(None, "/x/y").unwrap_err().contains("SPIRA_RELEASE is not set"));
         assert!(release_path_from_env_with_tail(Some("/h/"), "/r/spira-releases/def").unwrap_err().contains("spira-releases"));
+    }
+
+    #[test]
+    fn a_retired_key_the_registry_in_force_declares_is_kept() {
+        let tmp = testkit::TempDir::new("retired-kept");
+        let dir = tmp.path().to_path_buf();
+        let conf_d = dir.join("conf.d");
+        std::fs::create_dir_all(dir.join("conf.toml.d")).unwrap();
+        std::fs::create_dir_all(&conf_d).unwrap();
+        std::fs::write(conf_d.join("SPIRA_UNIT_TEST_SLOW_SECS"), "TYPE=u32\nDOC=d\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_UNIT_TEST_SLOW_SECS:=600}\"\nSPIRA_CONF_DEFAULT_EOF\n").unwrap();
+        let declaring = registry::Registry::from_dirs(&dir).unwrap();
+        let text = "[spira]\nunit_test_slow_secs = 9\n";
+        let (doc, w) = validate_with(text, &declaring).unwrap();
+        assert!(doc.spira.unwrap().0.contains_key("unit_test_slow_secs") && w.is_empty(), "{w:?}");
+        std::fs::remove_dir_all(&conf_d).unwrap();
+        std::fs::create_dir_all(&conf_d).unwrap();
+        let (doc, w) = validate_with(text, &registry::Registry::from_dirs(&dir).unwrap()).unwrap();
+        assert!(doc.spira.is_none_or(|s| !s.0.contains_key("unit_test_slow_secs")), "control: no registry declares it, so it is dropped");
+        assert!(w.iter().any(|w| w.contains("unit_test_slow_secs is retired")), "{w:?}");
     }
 
     #[test]
