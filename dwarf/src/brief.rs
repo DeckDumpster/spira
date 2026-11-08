@@ -196,6 +196,18 @@ bead — the number is worth having."
     }
 }
 
+/// The kill time of a call starting at `now`: the wall counts from the call, never from a
+/// time carried on the bead or from when the process began.
+pub fn call_deadline(timeout: Option<u64>, now: i64) -> Option<i64> {
+    timeout.map(|t| now + t as i64)
+}
+
+/// A call whose wall is spent is refused before launch, naming the cause.
+pub fn spent_wall(deadline_at: Option<i64>, now: i64) -> Option<String> {
+    let at = deadline_at?;
+    (at - now <= 0).then(|| format!("session wall already spent at launch: kill time {at}, now {now} ({} s remaining); refusing to launch", at - now))
+}
+
 /// `render_deadline_brief <at> <now>`. `hms` is the local `%H:%M:%S %Z` of `at` (None when
 /// it cannot be formatted, which renders `epoch <at>`).
 pub fn deadline_brief(at: Option<i64>, now: i64, hms: Option<String>) -> String {
@@ -851,6 +863,14 @@ mod tests {
         assert!(dl.starts_with("**This session is killed at 10:00:00 UTC — 600 seconds from now.**"));
         assert!(dl.ends_with("    echo $(( 1000600 - $(date +%s) ))"));
         assert!(deadline_brief(Some(5), 0, None).contains("killed at epoch 5 —"));
+        let incident_first_seen = 1_000_000 - 6 * 86_400;
+        let call_start = 1_000_000;
+        let at = call_deadline(Some(480), call_start);
+        assert_eq!(at, Some(call_start + 480), "wall anchors to the call, not to {incident_first_seen}");
+        assert_eq!(spent_wall(at, call_start), None);
+        assert!(spent_wall(call_deadline(Some(480), incident_first_seen), call_start).unwrap().contains("already spent"));
+        assert!(spent_wall(call_deadline(Some(0), call_start), call_start).is_some());
+        assert_eq!(spent_wall(None, call_start), None);
         assert!(deadline_brief(None, 0, None).starts_with("**This session has no wall-clock deadline.**"));
     }
 
