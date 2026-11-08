@@ -129,7 +129,7 @@ fn apply(t: &mut Turn) -> Result<()> {
         match d {
             Done::Started(key) => t.engine.note_attempt(&key),
             Done::Outcome(key, o) => {
-                if let Err(e) = t.engine.complete(&key, o.clone()) {
+                if let Err(e) = t.engine.complete(&key, o.clone()) { // loop-safe: runs on the offload pool
                     t.done = std::iter::once(Done::Outcome(key, o)).chain(done).collect();
                     return Err(e);
                 }
