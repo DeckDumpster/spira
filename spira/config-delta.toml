@@ -12,6 +12,7 @@ round_certify_wall_secs = 900
 round_fault_backoff_secs = 300
 round_fault_retries = 3
 queue_rounds_max = 2
+queue_text_only = "law/ spira/statutes/ wiki/ docs/ README.md AGENTS.md CLAUDE.md"
 publish_red_priority = 1
 publish_red_escalate_after = 3
 publish_settle_defer_max = 3
