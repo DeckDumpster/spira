@@ -318,6 +318,13 @@ mod tests {
     }
 
     #[test]
+    fn a_red_trackers_fix_with_no_live_row_is_read_by_id() {
+        let beads = parse_beads(r#"[{"id":"t","status":"open","labels":["rt"],"dependencies":[{"depends_on_id":"old","type":"blocks"},{"depends_on_id":"new","type":"blocks"}]},{"id":"u","status":"open","dependencies":[{"depends_on_id":"other","type":"blocks"}]}]"#).unwrap();
+        let has = |id: &str| id == "new";
+        assert_eq!(unread_blockers(&beads, "rt", &has), vec!["old".to_string()]);
+    }
+
+    #[test]
     fn an_open_child_labels_its_parent_and_a_closed_one_releases_it() {
         let beads = parse_beads(r#"[{"id":"p","status":"open"},{"id":"c","status":"open","parent":"p"}]"#).unwrap();
         let rows = vec![row("p", "READY"), row("c", "WORKING")];

@@ -528,7 +528,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     // The pass's one `spira-lc list` is its state read (design §3.4, sp-mve9i: bd status
     // decides nothing).
     assert_eq!(r.count(|s| s.prog == "spira-lc"), 1, "{:#?}", r.lines());
-    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "list"), 1);
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args == ["list", "--live"]), 1);
     assert!(sink.has("spira: state: open=2 plan_ready=1 in_progress=1 dwarves=0 runes=[builder ops]"), "{}", sink.text());
     assert!(sink.has("RECLAIMED sp-x — ghost"));
     assert!(sink.has("ACT handled 1 stranded item(s)"));
@@ -945,7 +945,7 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
         None,
     );
     assert_eq!(
-        r.count(|s| s.prog == "spira-lc" && s.args[0] == "list"),
+        r.count(|s| s.prog == "spira-lc" && s.args == ["list", "--live"]),
         1,
         "ON: one lifecycle read per pass"
     );
@@ -1114,7 +1114,7 @@ fn on_plan_ready_is_spira_claims_and_in_progress_is_the_machines_working_rows() 
         .find(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count"))
         .expect("plan_ready asks spira-claim");
     assert_eq!(q.args, vec!["ready-count", "spira,plan"]); // literal-ok: asserts argv built from the fixture
-    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "list"), 1, "the counts reuse the pass's one lifecycle read");
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args == ["list", "--live"]), 1, "the counts reuse the pass's one lifecycle read");
     assert_eq!(r.count(|s| is_bd(s, "recompute-blocked")), 0, "work is running: CHECK 3 has nothing to free");
     assert!(!sink.has("STARVED"), "{}", sink.text());
 }
