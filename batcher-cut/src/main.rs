@@ -359,7 +359,6 @@ impl drive::RoundOps for LiveOps<'_> {
         self.eject_with(member, &[filter.to_string()], &[(filter.to_string(), line.to_string())], owner);
     }
 
-
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
         merge_round(self.env, self.repo, self.wt, &self.start_sha, survivors.to_vec())
     }
@@ -442,7 +441,6 @@ impl drive::RoundOps for LiveOps<'_> {
             io::tsd_append(self.env, "round-attribution", &fields);
         }
     }
-
 
     fn settle_mending(&mut self, d: &batcher::attrib::Decision, members: &[Member]) -> Option<Result<drive::Mended, String>> {
         let batch = self.batch?;
@@ -1601,7 +1599,6 @@ mod base_conflict_handling {
 #[cfg(test)]
 mod vtime_tests {
     use super::*;
-
 
     #[test]
     fn utc_stamp_formats_epoch_seconds() {

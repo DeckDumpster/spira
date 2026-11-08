@@ -158,6 +158,33 @@ pub fn blamed_member(line: &str, members: &[Member]) -> Option<Id> {
     members.iter().find(|m| m.id == token).map(|m| m.id.clone())
 }
 
+/// The low-pass filter that ended the pass red in `results`, with each member its output blames.
+fn filter_red_in(results: &Path, members: &[Member]) -> Option<FilterRed> {
+    let mut reds: Vec<String> = vec![];
+    for e in fs::read_dir(results).ok()?.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if let Some(stem) = name.strip_suffix(".result").filter(|s| *s == LINT || s.starts_with(FENCE_PREFIX)) {
+            if io::result_status(results, stem) == Some(false) {
+                reds.push(stem.to_string());
+            }
+        }
+    }
+    reds.sort();
+    let name = reds.first()?.clone();
+    let mut named: Vec<(Id, String)> = vec![];
+    for red in &reds {
+        let text = fs::read_to_string(results.join(format!("{red}.out"))).unwrap_or_default();
+        for line in text.lines() {
+            if let Some(id) = blamed_member(line, members) {
+                if !named.iter().any(|(n, _)| *n == id) {
+                    named.push((id, line.to_string()));
+                }
+            }
+        }
+    }
+    Some(FilterRed { name, named })
+}
+
 /// How long a stopped round-vm gets to destroy its VM before the runner gives up on it.
 const STOP_SECS: u64 = 300;
 
@@ -427,29 +454,7 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn filter_red(&mut self) -> Option<FilterRed> {
-        let mut reds: Vec<String> = vec![];
-        for e in fs::read_dir(&self.results).ok()?.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if let Some(stem) = name.strip_suffix(".result").filter(|s| *s == LINT || s.starts_with(FENCE_PREFIX)) {
-                if io::result_status(&self.results, stem) == Some(false) {
-                    reds.push(stem.to_string());
-                }
-            }
-        }
-        reds.sort();
-        let name = reds.first()?.clone();
-        let mut named: Vec<(Id, String)> = vec![];
-        for red in &reds {
-            let text = fs::read_to_string(self.results.join(format!("{red}.out"))).unwrap_or_default();
-            for line in text.lines() {
-                if let Some(id) = blamed_member(line, &self.members) {
-                    if !named.iter().any(|(n, _)| *n == id) {
-                        named.push((id, line.to_string()));
-                    }
-                }
-            }
-        }
-        Some(FilterRed { name, named })
+        filter_red_in(&self.results, &self.members)
     }
 
     fn stop_main(&mut self) -> Result<(), String> {
@@ -597,9 +602,27 @@ mod tests {
         assert_eq!(build_for(&["unknown".to_string()], &changed), "dwarf", "unknown paths are never neutral");
     }
 
-    /// sp-dp872: two walkthrough rounds ended "round-vm: unexpected exit 101" and the round
-    /// log never said why — the reason sat in round-vm.stderr, unread. Every exit is a typed
-    /// outcome, and every fault carries round-vm's own words.
+    #[test]
+    fn filter_red_reads_the_lint_result_and_names_each_blamed_member_once() {
+        let d = testkit::TempDir::new("vm-filter-red");
+        let ms: Vec<Member> = ["sp-a", "sp-b"].iter().map(|id| Member { id: id.to_string(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() }).collect();
+        assert_eq!(filter_red_in(d.path(), &ms), None, "no filter result, no filter red");
+        fs::write(d.path().join("fence-x.result"), "ok 1 1\n").unwrap();
+        assert_eq!(filter_red_in(d.path(), &ms), None, "a green fence is not a red");
+        fs::write(d.path().join("spira-lint.result"), "red 1 2 - - - 1\n").unwrap();
+        fs::write(d.path().join("spira-lint.out"), "member=commit abc spira: land sp-b — t r: f.rs:1: x\nmember=sp-b r: g.rs:2: y\nmember=the base itself (z) r: h.rs:3: z\n").unwrap();
+        let red = filter_red_in(d.path(), &ms).unwrap();
+        assert_eq!(red.name, "spira-lint");
+        assert_eq!(red.named.len(), 1);
+        assert_eq!(red.named[0].0, "sp-b");
+        assert!(red.named[0].1.contains("f.rs:1"));
+        fs::write(d.path().join("spira-lint.out"), "member=the base itself (z) r: h.rs:3: z\n").unwrap();
+        assert!(filter_red_in(d.path(), &ms).unwrap().named.is_empty());
+        fs::write(d.path().join("fence-x.result"), "red 1 1 - - - 1\n").unwrap();
+        fs::remove_file(d.path().join("spira-lint.result")).unwrap();
+        assert_eq!(filter_red_in(d.path(), &ms).unwrap().name, "fence-x", "a red fence is a filter red, naming nobody");
+    }
+
     #[test]
     fn a_lint_line_blames_the_member_whose_land_commit_it_names_and_nobody_else() {
         let ms: Vec<Member> = ["sp-8mbnup", "sp-other"].iter().map(|id| Member { id: id.to_string(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() }).collect();
@@ -611,6 +634,9 @@ mod tests {
         assert_eq!(blamed_member("lint noise without the prefix", &ms), None);
     }
 
+    /// sp-dp872: two walkthrough rounds ended "round-vm: unexpected exit 101" and the round
+    /// log never said why — the reason sat in round-vm.stderr, unread. Every exit is a typed
+    /// outcome, and every fault carries round-vm's own words.
     #[test]
     fn every_corpus_exit_is_typed_and_a_fault_carries_round_vm_s_stderr() {
         let err = "round-vm run: 103 192.168.1.194 warm\nerror: `cargo run` could not determine which binary to run.\n";

@@ -1067,6 +1067,19 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_member_stacked_on_the_one_a_lint_red_names_leaves_with_it() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(lint_naming("m1"));
+        let mut ops = Ops::default();
+        let mut ms = three();
+        ms[1].stack.insert("m1".into(), "m1-tip".into());
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), ms, Budget { slots: 6, maxpar: 2 }).unwrap();
+        let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
+        assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["m3"]);
+        assert_eq!(ops.owner_flags, vec![("m1".to_string(), true), ("m2".to_string(), false)]);
+    }
+
+    #[test]
     fn a_lint_red_naming_no_member_is_filed_once_and_does_not_run_the_corpus_again() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(Box::new(|_| Some(FilterRed { name: "spira-lint".into(), named: vec![] })));
