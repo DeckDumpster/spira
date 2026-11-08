@@ -246,7 +246,7 @@ fn a_narrower_window_does_not_report_what_a_wider_one_indexed() {
     let wide = s.dwell(4_000, 100_000, None).unwrap();
     assert_eq!(wide.last["harness"]["Submit"], 2_500);
     let narrow = s.dwell(4_000, 100, None).unwrap();
-    assert!(narrow.last.get("harness").map_or(true, |k| !k.contains_key("Submit")), "{narrow:?}");
+    assert!(narrow.last.get("harness").is_none_or(|k| !k.contains_key("Submit")), "{narrow:?}");
     assert!(narrow.complete);
 }
 
