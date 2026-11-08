@@ -48,6 +48,21 @@ impl<B: Backend> Plane<'_, B> {
         }
     }
 
+    /// A primitive read (`show`, `list`) as `spira-lc` itself answers it on this plane.
+    pub(crate) fn read(&self, args: &[String]) -> (i32, String) {
+        match self {
+            Plane::Store(s) => {
+                let request = crate::control::served::request_id();
+                state::run(s, args, &state::Call { now: crate::db::now_epoch(), request: &request })
+            }
+            Plane::Dolt(conn) => match args.first().map(String::as_str) {
+                Some("show") => crate::cmd_show(&args[1..], conn),
+                Some("list") => crate::cmd_list(&args[1..], conn),
+                other => (CANNOT_TELL, format!("plane read: {other:?} is not a read verb")),
+            },
+        }
+    }
+
     /// One bead event from wherever the row is now, under its CAS.
     pub(crate) fn apply(&self, id: &str, actor: &str, kind: &BeadEventKind) -> (i32, String) {
         match self {
@@ -94,6 +109,11 @@ pub(crate) fn repo(conn: &Conn, id: &str) -> Result<Option<String>, DbError> {
     with(conn, |p| p.repo(id), |e| Err(DbError::CannotTell(e)))
 }
 
+/// `show <id>` or `list …`, on the declared plane.
+pub(crate) fn read(conn: &Conn, args: &[String]) -> (i32, String) {
+    with(conn, |p| p.read(args), |e| (CANNOT_TELL, format!("cannot tell: {e}")))
+}
+
 /// One bead event, on the declared plane.
 pub(crate) fn apply(conn: &Conn, id: &str, actor: &str, kind: BeadEventKind) -> (i32, String) {
     with(conn, |p| p.apply(id, actor, &kind), |e| (CANNOT_TELL, format!("cannot tell: {e}")))
@@ -126,6 +146,13 @@ mod tests {
         let (rc, out) = p.apply("sp-a453hs", "dwarf-1", &BeadEventKind::Submit { tip: "0123456789abcdef0123456789abcdef01234567".into() });
         assert_eq!(rc, 0, "{out}");
         assert_eq!(s.record("sp-a453hs").unwrap().unwrap().value.row.state, BeadState::Submitted, "the event landed on the store");
+        let (rc, shown) = p.read(&["show".to_string(), "sp-a453hs".to_string()]);
+        assert_eq!(rc, 0, "{shown}");
+        let shown: serde_json::Value = serde_json::from_str(&shown).unwrap();
+        assert_eq!(shown["bead"]["state"], "SUBMITTED", "`work show` reads the plane the submit wrote: {shown}");
+        let (rc, listed) = p.read(&["list".to_string(), "--live".to_string()]);
+        assert_eq!(rc, 0, "{listed}");
+        assert!(listed.contains("SUBMITTED") && listed.contains("sp-a453hs"), "`work list` reads it too: {listed}");
         let dolt = Conn::unreachable();
         assert!(Plane::<MemBackend>::Dolt(&dolt).bead("sp-a453hs").is_err(), "the dolt plane is a different store");
     }
@@ -145,7 +172,7 @@ mod tests {
     fn the_semantic_verbs_never_read_the_dolt_row_directly() {
         let code = |src: &'static str| src.split("#[cfg(test)]").next().unwrap_or(src);
         for (name, src) in [("work.rs", include_str!("work.rs")), ("classify_cmd.rs", include_str!("classify_cmd.rs"))] {
-            for direct in [concat!("rows::", "fetch_bead("), concat!("rows::", "bead_repo(")] {
+            for direct in [concat!("rows::", "fetch_bead("), concat!("rows::", "bead_repo("), concat!("crate::", "cmd_show("), concat!("crate::", "cmd_list(")] {
                 assert!(!code(src).contains(direct), "{name} reads {direct} — the dolt row — instead of plane::");
             }
         }
