@@ -981,7 +981,9 @@ checked <n> rust sources`.
 key of `[spira]` in `spira/testlib/complete.toml` and a line of
 `spira/conf.key-history`; without them every config-reading test in a
 round refuses the config as not declared, and the pass is lost. (`config-delta` covers
-`spira/config-delta.toml`.) One finding per key and file, naming both.
+`spira/config-delta.toml`.) One finding per key and file, naming both, **at the key's own
+registry file**: `--diff` keeps a whole-file finding only for a file the branch touched, and the
+branch that adds a key does not touch the fixture, so a finding at the fixture was dropped.
 
 **Refuses:** no registry keys, an unreadable or unparseable fixture or history.
 **Positive control:** `fence: config-fixture checked <n> registry keys`.
