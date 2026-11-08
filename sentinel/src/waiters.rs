@@ -128,9 +128,7 @@ impl<'a> Sentinel<'a> {
         if ids.is_empty() {
             return;
         }
-        let Some(rows) = self.lc_rows() else {
-            return;
-        };
+        let rows = self.lc_rows_by_id(&ids);
         for id in ids {
             if rows.iter().any(|r| r.bead_id == id && lc_state::BeadState::from_str(&r.state) == Some(lc_state::BeadState::Landed)) {
                 self.bd().quiet(self.h, &["label", "remove", &id, &label], None);

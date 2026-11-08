@@ -779,7 +779,19 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
             })
             .collect()
     });
-    let rows = answer(&lc, &["list"]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok());
+    let mut rows = answer(&lc, &["list", "--live"]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok());
+    if let (Some(live), Some(beads)) = (rows.as_mut(), content.as_ref()) {
+        let known: std::collections::HashSet<String> = live.iter().map(|r| r.bead_id.clone()).collect();
+        let mut ids = sentinel::pass_checks::unread_blockers(beads, &snap.labels.red_tracker, &|id| known.contains(id));
+        ids.extend(sentinel::pilgrimage::open_epic_children(beads, &snap.labels.epics).into_iter().filter(|id| !known.contains(id)));
+        ids.sort();
+        ids.dedup();
+        for chunk in ids.chunks(100) {
+            if let Some(older) = answer(&lc, &["list", "--ids", &chunk.join(",")]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok()) {
+                live.extend(older);
+            }
+        }
+    }
     if let Some(rows) = &rows {
         for r in rows.iter().filter(|r| r.state == "WORKING") {
             snap.holder_alive.insert(r.bead_id.clone(), sentinel::hel_verbs::holder_alive(&r.bead_id).unwrap_or(false));

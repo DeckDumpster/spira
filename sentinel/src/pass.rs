@@ -368,7 +368,8 @@ impl<'a> Sentinel<'a> {
             }
         };
         // A child's state is its lifecycle row (design §3.4): the one `spira-lc list`.
-        let snap = Snapshot::new(list, r.ready.ok()).with_lc(self.state_rows().as_deref());
+        let mut snap = Snapshot::new(list, r.ready.ok()).with_lc(self.state_rows().as_deref());
+        self.complete_snapshot(&mut snap);
         self.mark_open_children(&snap, dry);
         0
     }
@@ -401,7 +402,9 @@ impl<'a> Sentinel<'a> {
         // Every state decision over this snapshot reads the bead's lifecycle row, never bd
         // status (design §3.4, sp-mve9i): the pass's one `spira-lc list`, read whatever
         // fail-closed (`state_rows`).
-        Ok(Snapshot::new(list, ready).with_lc(self.state_rows().as_deref()))
+        let mut snap = Snapshot::new(list, ready).with_lc(self.state_rows().as_deref());
+        self.complete_snapshot(&mut snap);
+        Ok(snap)
     }
 
     fn full(&self) -> i32 {

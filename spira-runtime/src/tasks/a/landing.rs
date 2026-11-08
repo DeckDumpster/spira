@@ -556,7 +556,6 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
     }
     let reg = registry()?;
     let lc = lc()?;
-    let rows = spira_config::lc_state::index(spira_config::lc_state::list_on(&lc)?);
     let mut repos = vec![];
     for name in reg.names().into_iter().filter(|n| reg.land(n) == "pr") {
         let Some(path) = reg.root(&name).filter(|p| std::path::Path::new(p).join(".git").exists()) else { continue };
@@ -571,6 +570,7 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
             continue;
         }
         let ids: Vec<String> = refs.iter().map(|(b, _)| b.trim_start_matches("spira/").to_string()).collect();
+        let rows = spira_config::lc_state::index(spira_config::lc_state::list_ids_on(&lc, &ids)?);
         let mut argv = vec!["content".to_string(), "show".to_string()];
         argv.extend(ids.iter().cloned());
         argv.push("--json".into());

@@ -524,6 +524,9 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     if args.iter().any(|a| a == "--batches") {
         return cmd_list_batches(args, conn);
     }
+    if slow::is_unfiltered_list(args) {
+        slow::note_unfiltered_list();
+    }
     let state = flag(args, "--state");
     let hold = flag(args, "--hold");
     let express = args.iter().any(|a| a == "--express");

@@ -51,6 +51,19 @@ impl<'a> View<'a> {
     }
 }
 
+/// The `blocks` targets of the beads carrying `label` that `has_row` does not know.
+pub fn unread_blockers(beads: &[Bead], label: &str, has_row: &dyn Fn(&str) -> bool) -> Vec<String> {
+    let mut ids: Vec<String> = beads
+        .iter()
+        .filter(|b| b.has(label))
+        .flat_map(|b| b.dependencies.iter().filter(|d| d.r#type.as_deref() == Some("blocks")).filter_map(|d| d.target().map(str::to_string)))
+        .filter(|id| !has_row(id))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 fn has_all(b: &Bead, labels: &[String]) -> bool {
     labels.iter().all(|l| b.has(l))
 }

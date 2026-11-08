@@ -193,6 +193,18 @@ impl Snapshot {
             .collect();
     }
 
+    /// States read by id after the live read: terminal rows older than its window.
+    pub fn add_lc_states(&mut self, rows: &[LcRow]) {
+        for r in rows {
+            self.lc.entry(r.bead_id.clone()).or_insert_with(|| r.state.clone());
+        }
+    }
+
+    /// The `blocks` targets of the beads carrying `label` that the live read has no row for.
+    pub fn unread_blockers(&self, label: &str) -> Vec<String> {
+        sentinel::pass_checks::unread_blockers(&self.list, label, &|id| self.lc.contains_key(id))
+    }
+
     /// The bead has a branch of its own or children stacked on it: not a coordination bead.
     pub fn has_own_work(&self, id: &str) -> bool {
         self.own_work.contains(id)

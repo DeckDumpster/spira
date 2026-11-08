@@ -334,10 +334,9 @@ pub fn observe(e: &crate::Effects, label: &str) -> Result<String, String> {
     let (asks, mislabelled) = parse_rows(&doc, label);
     let mut work_states = BTreeMap::new();
     if asks.iter().any(|a| !a.works.is_empty()) {
-        for row in spira_config::lc_state::list_on(&lc)? {
-            if asks.iter().any(|a| a.works.contains(&row.bead_id)) {
-                work_states.insert(row.bead_id, row.state);
-            }
+        let works: Vec<String> = asks.iter().flat_map(|a| a.works.iter().cloned()).collect();
+        for row in spira_config::lc_state::list_ids_on(&lc, &works)? {
+            work_states.insert(row.bead_id, row.state);
         }
     }
     serde_json::to_string(&Snapshot { asks, mislabelled, work_states }).map_err(|e| e.to_string())

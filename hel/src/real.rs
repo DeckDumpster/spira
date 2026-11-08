@@ -212,7 +212,7 @@ impl World for Real {
         if !map.is_empty() {
             *self.beads.borrow_mut() = Some(map);
         }
-        if let Ok(rows) = self.lc().and_then(|c| spira_config::lc_state::list_on(&c)) {
+        if let Ok(rows) = self.lc().and_then(|c| spira_config::lc_state::list_live_on(&c)) {
             *self.claims.borrow_mut() = Some(spira_config::lc_state::index(rows));
         }
     }

@@ -650,7 +650,8 @@ impl RealBeads {
         let lc = if rows.len() == 1 {
             spira_config::lc_state::row_on(&c, &rows[0].id)?.into_iter().collect()
         } else {
-            spira_config::lc_state::list_on(&c)?
+            let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+            spira_config::lc_state::list_ids_on(&c, &ids)?
         };
         let lc = spira_config::lc_state::index(lc);
         for r in rows.iter_mut() {

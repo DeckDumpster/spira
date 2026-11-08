@@ -390,7 +390,7 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
             }
         }
     }
-    let rows = spira_config::lc_state::list_on(&lc).ok();
+    let rows = spira_config::lc_state::list_live_on(&lc).ok();
     let lc_open = rows.as_ref().map(|r| r.iter().filter(|r| !r.terminal()).map(|r| r.bead_id.clone()).collect());
     let mut snap = Snapshot { gate_list: branches, lc_open, pr_repos, flaky_gh_repo: flaky_gh_repo.clone(), home_repo: reg.home_repo().to_string(), ..Snapshot::default() };
     let repo = flaky_gh_repo.trim();

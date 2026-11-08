@@ -260,6 +260,26 @@ pub fn record(took: Duration, sql: &str) {
     append(took, &verb, &caller, sql);
 }
 
+const NARROWING_FLAGS: [&str; 8] = ["--state", "--ids", "--hold", "--repo", "--live", "--express", "--limit", "--after"];
+
+/// A `list` that names no state, ids, hold, repo, live window, express or page asks for every bead.
+pub fn is_unfiltered_list(args: &[String]) -> bool {
+    !args.iter().any(|a| NARROWING_FLAGS.contains(&a.as_str()) || a == "--delivery" || a == "--batches")
+}
+
+pub fn unfiltered_list_line(epoch: i64, caller: &str) -> String {
+    format!("{epoch}\tUNFILTERED-LIST\t{}\n", clean(caller))
+}
+
+/// Names the caller of an unfiltered `list` in `unfiltered-lists.log` beside the slow-query log.
+pub fn note_unfiltered_list() {
+    let caller = CALLER.with(|c| c.borrow().clone());
+    let Some(path) = log_path().map(|p| p.with_file_name("unfiltered-lists.log")) else { return };
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(unfiltered_list_line(crate::db::now_epoch(), &caller).as_bytes());
+    }
+}
+
 fn append(took: Duration, verb: &str, caller: &str, sql: &str) {
     if took < threshold() {
         return;
@@ -294,6 +314,17 @@ mod tests {
         assert_eq!(got, ["7\tLC-LATENCY\tevent-continuity\tp95=2400ms\tn=12\tlimit=500ms"]);
         assert!(l.breaches(t0, 8).is_empty(), "re-alarm waits out the interval");
         assert_eq!(l.breaches(t0 + LATENCY_REALARM + Duration::from_secs(1), 9).len(), 0, "the window has emptied by then");
+    }
+
+    #[test]
+    fn a_list_with_no_narrowing_flag_is_unfiltered_and_one_with_any_is_not() {
+        let a = |v: &[&str]| is_unfiltered_list(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert!(a(&[]));
+        assert!(a(&["--cached"]));
+        for f in ["--state", "--ids", "--hold", "--repo", "--live", "--express", "--limit", "--after", "--delivery", "--batches"] {
+            assert!(!a(&[f, "x"]), "{f} narrows the list");
+        }
+        assert_eq!(unfiltered_list_line(7, "sentinel/pass"), "7\tUNFILTERED-LIST\tsentinel/pass\n");
     }
 
     #[test]

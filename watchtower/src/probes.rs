@@ -394,9 +394,13 @@ pub fn rowless_cond(missing: &[String], cap: usize, sustain_secs: i64) -> Option
     })
 }
 
-/// Every lifecycle row's bead id, from the store's `list`; `None` when it did not answer.
-pub fn lifecycle_ids(lc: &spira_config::lc_call::LcClient) -> Option<Vec<String>> {
-    ids_of(lc.answer(&["list"]).ok()?.as_bytes(), "bead_id")
+/// The bead ids among `ids` that have a lifecycle row (`list --ids`); `None` when it did not answer.
+pub fn lifecycle_ids(lc: &spira_config::lc_call::LcClient, ids: &[String]) -> Option<Vec<String>> {
+    let mut found = Vec::new();
+    for chunk in ids.chunks(100) {
+        found.extend(ids_of(lc.answer(&["list", "--ids", &chunk.join(",")]).ok()?.as_bytes(), "bead_id")?);
+    }
+    Some(found)
 }
 
 fn ids_of(stdout: &[u8], key: &str) -> Option<Vec<String>> {
@@ -427,7 +431,7 @@ pub fn rowless_beads(cfg: &RowlessCfg, now: i64) -> Reading {
     let missing = if candidates.is_empty() {
         Vec::new()
     } else {
-        let Some(rows) = lifecycle_ids(&cfg.lc) else { return Reading::Unknown };
+        let Some(rows) = lifecycle_ids(&cfg.lc, &candidates) else { return Reading::Unknown };
         rowless(&candidates, &rows)
     };
     save_rowless_state(&cfg.state, &RowlessState { last_full: if plan.created_after.is_none() { now } else { prior.map_or(now, |p| p.last_full) }, last_check: now, missing: missing.clone() });
@@ -598,9 +602,10 @@ mod tests {
     #[test]
     fn lifecycle_ids_come_from_the_store_client() {
         let (t, c) = crate::lc::scripted::scripted(0, r#"[{"bead_id":"sp-a"},{"bead_id":"sp-b"}]"#);
-        assert_eq!(lifecycle_ids(&c), Some(vec!["sp-a".to_string(), "sp-b".to_string()]));
-        assert_eq!(t.seen.lock().unwrap().as_slice(), &[vec!["list".to_string()]]);
-        assert_eq!(lifecycle_ids(&crate::lc::scripted::scripted(2, "cannot tell").1), None, "no answer is unknown, never no rows");
+        let ids = vec!["sp-a".to_string(), "sp-b".to_string()];
+        assert_eq!(lifecycle_ids(&c, &ids), Some(ids.clone()));
+        assert_eq!(t.seen.lock().unwrap().as_slice(), &[vec!["list".to_string(), "--ids".to_string(), "sp-a,sp-b".to_string()]]);
+        assert_eq!(lifecycle_ids(&crate::lc::scripted::scripted(2, "cannot tell").1, &ids), None, "no answer is unknown, never no rows");
     }
 
     fn restarted(name: &str, n: u32, result: &str) -> UnitDetail {

@@ -65,6 +65,12 @@ pub fn epics(beads: &[Bead], labels: &[String], state: &dyn Fn(&str) -> Option<S
         .collect()
 }
 
+/// The children of the open epics carrying `labels`: the beads whose state decides the epic,
+/// whatever their age.
+pub fn open_epic_children(beads: &[Bead], labels: &[String]) -> Vec<String> {
+    epics(beads, labels, &|_| None).into_iter().flat_map(|e| e.children).collect()
+}
+
 /// What one pass does for one epic.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Step {

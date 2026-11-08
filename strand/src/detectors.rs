@@ -101,7 +101,7 @@ fn git_rev_list_count(repo: &Path, range: &str) -> Option<u64> {
 /// (sp-mve9i); with the machine unreadable there is no answer, so no members.
 pub fn all_partition_members(cfg: &Config) -> String {
     let specs = probe::roster(cfg, None).unwrap_or_default();
-    let Ok(lc) = spira_config::lc_state::list().map(spira_config::lc_state::index) else {
+    let Ok(lc) = spira_config::lc_state::list_live().map(spira_config::lc_state::index) else {
         return String::new();
     };
     let per_spec = specs
@@ -147,7 +147,7 @@ pub fn detect_incident_needs_builder(cfg: &Config) -> Result<String, String> {
     if cfg.incident_label.is_empty() {
         return Err("SPIRA_INCIDENT_LABEL is unset — source conf.sh".into());
     }
-    let lc = spira_config::lc_state::list().map(spira_config::lc_state::index).map_err(|e| format!("cannot tell: {e}"))?;
+    let lc = spira_config::lc_state::list_live().map(spira_config::lc_state::index).map_err(|e| format!("cannot tell: {e}"))?;
     let reg = registry(cfg);
     let home = reg.home_repo().to_string();
     let mut out = Vec::new();
@@ -250,7 +250,7 @@ pub fn detect_livelocked(cfg: &Config) -> String {
         if reg.map_present() {
             let valid: HashSet<String> = reg.names().into_iter().collect();
             // Held is the lifecycle row's ask/poison hold, never a label (sp-psztcc).
-            let held: HashSet<String> = spira_config::lc_state::list()
+            let held: HashSet<String> = spira_config::lc_state::list_live()
                 .map(|rows| rows.into_iter().filter(|r| r.held("ask") || r.held("poison")).map(|r| r.bead_id).collect())
                 .unwrap_or_default();
             for b in list_beads(cfg, &[]) {

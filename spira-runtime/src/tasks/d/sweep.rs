@@ -740,7 +740,7 @@ pub fn file_bead(e: &crate::Effects, spec: &EffectSpec) -> Result<String, String
     let listed = lc.answer(&["content", "list", "--all", "--limit", "0", "--brief", "--json"]).map_err(|err| format!("open beads unreadable: {err}"))?;
     let rows: Vec<serde_json::Value> = serde_json::from_str(&listed).map_err(|err| format!("content list: {err}"))?;
     let all = rows.iter().filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r.get("title")?.as_str()?.to_string()))).collect();
-    let states = spira_config::lc_state::list_on(&lc).map_err(|err| format!("lifecycle state unreadable: {err}"))?;
+    let states = spira_config::lc_state::list_live_on(&lc).map_err(|err| format!("lifecycle state unreadable: {err}"))?;
     let open = cert_sweep::still_open(all, &spira_config::lc_state::index(states));
     if let Some(id) = cert_sweep::open_duplicate(&open, &req.suite, req.kind) {
         return Ok(format!("{DUPLICATE}{id}"));
