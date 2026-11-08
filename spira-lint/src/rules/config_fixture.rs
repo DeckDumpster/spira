@@ -56,6 +56,7 @@ impl Rule for ConfigFixture {
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
         self.checked.set(None);
         let mut keys = BTreeSet::new();
+        let mut files: std::collections::BTreeMap<String, String> = Default::default();
         let mut conf_d = BTreeSet::new();
         for d in DIRS {
             if let Ok(rd) = std::fs::read_dir(tree.root.join(d)) {
@@ -63,6 +64,7 @@ impl Rule for ConfigFixture {
                     let n = e.file_name().to_string_lossy().into_owned();
                     if is_key_name(&n) && e.path().is_file() {
                         keys.insert(bare_key(&n));
+                        files.insert(bare_key(&n), format!("{d}/{n}"));
                         if d == DIRS[0] {
                             conf_d.insert(bare_key(&n));
                         }
@@ -82,20 +84,22 @@ impl Rule for ConfigFixture {
             read(HISTORY)?.lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
         let (no_fixture, no_history) = missing(&conf_d, &keys, &fixture, &history);
         let mut out = Vec::new();
+        // Attributed to the key's own registry file: `--diff` keeps a whole-file finding only
+        // for a file the branch touched, and the branch that adds a key never touches the fixture.
         for k in no_fixture {
             out.push(Finding {
                 rule: NAME,
-                path: FIXTURE.into(),
+                path: files[&k].clone(),
                 line: None,
-                message: format!("registry key {k} has no entry under [spira] in {FIXTURE}"),
+                message: format!("registry key {} has no entry under [spira] in {FIXTURE}", files[&k].rsplit('/').next().unwrap_or(&k)),
             });
         }
         for k in no_history {
             out.push(Finding {
                 rule: NAME,
-                path: HISTORY.into(),
+                path: files[&k].clone(),
                 line: None,
-                message: format!("registry key {k} is not listed in {HISTORY}"),
+                message: format!("registry key {} is not listed in {HISTORY}", files[&k].rsplit('/').next().unwrap_or(&k)),
             });
         }
         if out.is_empty() {
@@ -115,4 +119,25 @@ impl Rule for ConfigFixture {
 
 pub fn rules() -> Vec<Box<dyn crate::Rule>> {
     vec![Box::new(ConfigFixture::default())]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::TempDir;
+
+    #[test]
+    fn a_key_missing_from_the_fixture_is_reported_at_its_own_registry_file() {
+        let t = TempDir::new("cfx");
+        t.write("spira/conf.d/SPIRA_X", "TYPE=u32\n");
+        t.write("spira/conf.d/SPIRA_Y", "TYPE=u32\n");
+        t.write(FIXTURE, "[spira]\ny = 2\n");
+        t.write(HISTORY, "x\ny\n");
+        let paths = ["spira/conf.d/SPIRA_X", "spira/conf.d/SPIRA_Y", FIXTURE, HISTORY];
+        let tree = Tree::from_paths(t.path(), paths, std::iter::empty::<&str>());
+        let got = ConfigFixture::default().check(&tree).unwrap();
+        assert_eq!(got.len(), 1, "{:?}", got.iter().map(|f| f.to_string()).collect::<Vec<_>>());
+        assert_eq!(got[0].path, "spira/conf.d/SPIRA_X");
+        assert!(got[0].message.contains("SPIRA_X") && got[0].message.contains("complete.toml"), "{}", got[0].message);
+    }
 }
