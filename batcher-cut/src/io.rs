@@ -2075,6 +2075,18 @@ pub fn classify_land_exit(code: Option<i32>) -> LandOutcome {
 pub struct LandRun {
     pub outcome: LandOutcome,
     pub refusal: String,
+    /// The verb's exit, which classifies a refusal ([`land_base_moved`]).
+    pub code: Option<i32>,
+}
+
+/// Must equal queue::ops::LAND_BASE_MOVED: the round's base moved, and the verb rebuilt (or
+/// could not rebuild) it on the new one; it is certified again, not landed.
+pub const LAND_BASE_MOVED_EXIT: i32 = 8;
+
+/// Whether a `queue round land` refusal was base-moved, read from its exit
+/// (law-lifecycle-state-is-not-text).
+pub fn land_base_moved(code: Option<i32>) -> bool {
+    code == Some(LAND_BASE_MOVED_EXIT)
 }
 
 /// Must equal queue::ops::LOCK_BUSY: another queue operation held the repo's lock past the wait.
@@ -2100,10 +2112,10 @@ fn refusal_line(err: &str) -> String {
 /// outcome is final.
 pub fn round_land(env: &Env, repo: &Repo, batch: &str) -> Result<LandRun, String> {
     let attempts = env.land_lock_attempts.max(1);
-    let mut last = LandRun { outcome: LandOutcome::Refused, refusal: String::new() };
+    let mut last = LandRun { outcome: LandOutcome::Refused, refusal: String::new(), code: None };
     for n in 1..=attempts {
         let run = round_verb(env, &["land", batch, &repo.name], "")?;
-        last = LandRun { outcome: classify_land_exit(run.code), refusal: refusal_line(&run.err) };
+        last = LandRun { outcome: classify_land_exit(run.code), refusal: refusal_line(&run.err), code: run.code };
         let busy = lock_busy(run.code);
         if !busy || n == attempts {
             break;
@@ -2670,6 +2682,13 @@ mod land_exit_tests {
         assert_eq!(classify_land_exit(Some(2)), LandOutcome::Refused);
         assert_eq!(classify_land_exit(Some(3)), LandOutcome::DeployFault);
         assert_eq!(classify_land_exit(None), LandOutcome::Refused, "killed by a signal: nothing is known to have landed");
+    }
+
+    /// sp-tjrjca: a base-moved refusal is told by its exit, never by its words.
+    #[test]
+    fn a_base_moved_land_refusal_is_read_from_its_exit() {
+        assert!(land_base_moved(Some(LAND_BASE_MOVED_EXIT)));
+        assert!(!land_base_moved(Some(1)) && !land_base_moved(Some(7)) && !land_base_moved(None));
     }
 
     /// sp-822b8l: the typed records of a refused open, one member each; other lines are not.

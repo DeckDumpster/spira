@@ -196,7 +196,7 @@ fn attributing_redrive_a_red_early_round_is_redriven_on_its_own_batch_and_lands_
         })
     });
     show("rc-attributing-redrive", &r);
-    assert_eq!(batcher_states(&r), ["Assembling", "Opened", "Corpus", "Attributing", "Certifying", "Landing", "Idle"], "{}", r.dump());
+    assert_eq!(batcher_states(&r), ["Idle", "Assembling", "Opened", "Corpus", "Attributing", "Certifying", "Landing", "Idle"], "{}", r.dump());
     let legs = legs.lock().unwrap_or_else(|e| e.into_inner()).clone();
     assert_eq!(legs.iter().map(|l| l.why.as_str()).collect::<Vec<_>>(), ["", bl::ATTRIBUTE], "one corpus pass, then one attribution leg: {legs:?}");
     assert!(legs.iter().all(|l| l.batch == "round-1"), "the attribution re-drives the open round's own batch: {legs:?}");

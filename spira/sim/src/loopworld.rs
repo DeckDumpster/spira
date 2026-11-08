@@ -485,7 +485,7 @@ fn batcher_round_open(w: &World, input: &str) -> Result<String, String> {
     let batch = format!("round-{}", lc.rounds);
     lc.opened.push(leg.members.clone());
     lc.round = Some((batch.clone(), leg.members));
-    json(&bl::Opened { batch })
+    json(&bl::Opened { batch, ..bl::Opened::default() })
 }
 
 /// The corpus is green: these ports turn on the store and the cut, not on attribution.
@@ -535,7 +535,7 @@ fn batcher_land(w: &World, input: &str) -> Result<String, String> {
     }
     lc.lands.push(leg.members.clone());
     lc.round = None;
-    json(&bl::Landed { staged: None })
+    json(&bl::Landed { staged: None, base_moved: None })
 }
 
 fn batcher_abandon(w: &World) -> Result<String, String> {
