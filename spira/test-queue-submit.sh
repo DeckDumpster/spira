@@ -83,6 +83,14 @@ want "exit 0 for valid branch" "certified" "$out"
 is "bead-less: the lifecycle row is CERTIFIED" "CERTIFIED" "$(lcfix_state sp-abc01)"
 [ ! -e "$TMP/run/queue/sp-abc01" ] && ok "the queue keeps no certification record of its own" \
     || bad "the queue keeps no certification record of its own" "found: $TMP/run/queue/sp-abc01"
+
+echo
+echo "an unclaimed READY bead is certified by submit, as a claimed one is:"
+lcfix_seed sp-rdy01 READY
+git -C "$REPO" branch "spira/sp-rdy01" main
+out="$(run submit spira/sp-rdy01)"; rc=$?
+is "READY: submit exits 0" "0" "$rc"
+is "READY: the lifecycle row is CERTIFIED" "CERTIFIED" "$(lcfix_state sp-rdy01)"
 rm -rf "$TMP/run"
 
 echo
