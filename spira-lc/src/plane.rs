@@ -121,7 +121,7 @@ mod tests {
         let row = p.bead("sp-a453hs").unwrap().expect("the store's record is the row");
         assert_eq!(row.state, BeadState::Ready);
         assert_eq!(p.repo("sp-a453hs").unwrap().as_deref(), Some("harness"));
-        let claim = BeadEventKind::Claim { holder: "dwarf-1".into(), lease_until: crate::db::now_epoch() + 3_600, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None };
+        let claim = BeadEventKind::Claim { holder: "dwarf-1".into(), lease_until: crate::db::now_epoch() + 3_600, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None };
         assert_eq!(p.apply("sp-a453hs", "dwarf-1", &claim).0, 0, "claim on the store");
         let (rc, out) = p.apply("sp-a453hs", "dwarf-1", &BeadEventKind::Submit { tip: "0123456789abcdef0123456789abcdef01234567".into() });
         assert_eq!(rc, 0, "{out}");

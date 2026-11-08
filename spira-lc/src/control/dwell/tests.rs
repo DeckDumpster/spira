@@ -36,7 +36,7 @@ fn create(s: &Store<MemBackend>, id: &str, repo: &str, at: i64) {
 /// `id` claimed at `at`, and submitted at `submit` when given; WORKING otherwise.
 fn work(s: &Store<MemBackend>, id: &str, repo: &str, at: i64, submit: Option<i64>) {
     create(s, id, repo, at - 10);
-    let claim = BeadEventKind::Claim { holder: "dwarf-1".into(), lease_until: at + 1_000_000, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None };
+    let claim = BeadEventKind::Claim { holder: "dwarf-1".into(), lease_until: at + 1_000_000, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None };
     let (out, fence) = s.claim(id, &ev(BeadState::Ready, version(s, id), claim, at), &req(&format!("claim-{id}"))).unwrap();
     assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
     if let Some(t) = submit {

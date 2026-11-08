@@ -243,6 +243,15 @@ pub const FROM_SUBMITTED: &str = "delivered-from-submitted";
 /// Prefix of the reason an IN_DELIVERY row carries once a red gate verdict at its tip arrived.
 pub const GATE_RED_MARK: &str = "gate-red: ";
 
+/// Who summoned the dwarf that made this claim, why, and which dwarf held the bead before.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Summons {
+    pub by: String,
+    pub reason: String,
+    #[serde(default)]
+    pub previous_holder: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BeadEventKind {
     /// `stack`/`stack_depth` are the caller's already-computed proposal (design §1: "stack
@@ -252,7 +261,7 @@ pub enum BeadEventKind {
     /// multi-row check the caller makes before ever proposing a claim (see
     /// `claim_refusal_for_stale_stack`). `stack_max_depth` is the caller's own config read,
     /// carried as evidence exactly like `lease_until`.
-    Claim { holder: String, lease_until: i64, #[serde(default)] stack: Stack, #[serde(default)] stack_depth: u32, #[serde(default)] stack_max_depth: u32, #[serde(default)] persona: Option<String> },
+    Claim { holder: String, lease_until: i64, #[serde(default)] stack: Stack, #[serde(default)] stack_depth: u32, #[serde(default)] stack_max_depth: u32, #[serde(default)] persona: Option<String>, #[serde(default)] summoned: Option<Summons> },
     Release,
     HolderDead,
     Submit { tip: String },
@@ -804,7 +813,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
 
     match row.state {
         BeadState::Ready => match kind {
-            Claim { holder, lease_until, stack, stack_depth, stack_max_depth, persona } => {
+            Claim { holder, lease_until, stack, stack_depth, stack_max_depth, persona, .. } => {
                 if *stack_depth > *stack_max_depth {
                     return depth_exceeded(row, *stack_depth, *stack_max_depth);
                 }
@@ -1160,7 +1169,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
         },
 
         BeadState::Rework => match kind {
-            Claim { holder, lease_until, stack, stack_depth, stack_max_depth, persona } => {
+            Claim { holder, lease_until, stack, stack_depth, stack_max_depth, persona, .. } => {
                 if *stack_depth > *stack_max_depth {
                     return depth_exceeded(row, *stack_depth, *stack_max_depth);
                 }
@@ -1375,7 +1384,7 @@ fn kind_name(kind: &BeadEventKind) -> &'static str {
 /// of a finished row, not a move of the flow, and is left out.
 fn edge_probes() -> Vec<BeadEventKind> {
     vec![
-        BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None },
+        BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None },
         BeadEventKind::Release,
         BeadEventKind::HolderDead,
         BeadEventKind::Submit { tip: "t1".into() },
@@ -1489,7 +1498,7 @@ mod tests {
             BeadEventKind::Restack { tip: "1111111111111111111111111111111111111111".into(), stack: Stack::from([("sp-base".to_string(), "t0".to_string())]), stack_depth: 1 },
             BeadEventKind::Absolve { tip: "1111111111111111111111111111111111111111".into(), break_glass: BreakGlass::default() },
             BeadEventKind::Resubmit { tip: "1111111111111111111111111111111111111111".into(), break_glass: BreakGlass::default() },
-            BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None },
+            BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None },
             BeadEventKind::BaseWithdrawn { prereq: "sp-prereq".into(), tip: "1111111111111111111111111111111111111111".into() },
             BeadEventKind::PrereqLanded { prereq: "sp-prereq".into() },
             BeadEventKind::Release,
@@ -1817,7 +1826,7 @@ mod tests {
     #[test]
     fn claim_from_ready_enters_working() {
         let r = row(BeadState::Ready);
-        let e = ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "dwarf-1".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None });
+        let e = ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "dwarf-1".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None });
         let out = apply(&r, &e);
         assert!(out.applied);
         assert_eq!(out.row.state, BeadState::Working);
@@ -1826,9 +1835,22 @@ mod tests {
     }
 
     #[test]
+    fn a_summoned_claim_names_who_summoned_why_and_the_dwarf_it_replaced() {
+        let by = Summons { by: "concierge".into(), reason: "loop fix".into(), previous_holder: Some("dwarf-old".into()) };
+        let k = BeadEventKind::Claim { holder: "dwarf-new".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: Some("builder".into()), summoned: Some(by) };
+        let wire = serde_json::to_value(&k).unwrap();
+        assert_eq!(wire["Claim"]["summoned"], serde_json::json!({"by": "concierge", "reason": "loop fix", "previous_holder": "dwarf-old"}));
+        assert_eq!(serde_json::from_value::<BeadEventKind>(wire).unwrap(), k);
+        let out = apply(&BeadRow::filed("sp-x"), &ev(BeadState::Ready, 0, k));
+        assert!(out.applied && out.row.holder.as_deref() == Some("dwarf-new"));
+        let legacy: BeadEventKind = serde_json::from_str(r#"{"Claim":{"holder":"h","lease_until":1}}"#).unwrap();
+        assert!(matches!(legacy, BeadEventKind::Claim { summoned: None, .. }));
+    }
+
+    #[test]
     fn a_claim_records_its_persona_beside_the_holder_and_a_legacy_claim_has_none() {
         let claim = |persona: Option<&str>| {
-            let k = BeadEventKind::Claim { holder: "dwarf-austri".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: persona.map(String::from) };
+            let k = BeadEventKind::Claim { holder: "dwarf-austri".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: persona.map(String::from), summoned: None };
             apply(&BeadRow::filed("sp-x"), &ev(BeadState::Ready, 0, k)).row
         };
         let (builder, ops) = (claim(Some("builder")), claim(Some("ops")));
@@ -1975,7 +1997,7 @@ mod tests {
     #[test]
     fn expect_mismatch_never_mutates() {
         let r = row(BeadState::Ready);
-        let e = ev(BeadState::Working, 0, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None });
+        let e = ev(BeadState::Working, 0, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None });
         let out = apply(&r, &e);
         assert!(!out.applied);
         assert_eq!(out.row, r);
@@ -1986,7 +2008,7 @@ mod tests {
     fn stale_version_never_mutates() {
         let mut r = row(BeadState::Ready);
         r.version = 5;
-        let e = ev(BeadState::Ready, 4, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None });
+        let e = ev(BeadState::Ready, 4, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None });
         let out = apply(&r, &e);
         assert!(!out.applied);
         assert_eq!(out.row, r);
@@ -2186,7 +2208,7 @@ mod tests {
         let mut r = row(BeadState::Ready);
         let mut last = r.version;
         let chain: Vec<(BeadState, BeadEventKind)> = vec![
-            (BeadState::Ready, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }),
+            (BeadState::Ready, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None }),
             (BeadState::Working, BeadEventKind::Submit { tip: "1111111111111111111111111111111111111111".into() }),
             (BeadState::Submitted, BeadEventKind::GatePass { tip: "1111111111111111111111111111111111111111".into(), gate_key: "k".into() }),
             (BeadState::Certified, BeadEventKind::Deliver),
@@ -2234,7 +2256,7 @@ mod tests {
         r.state = BeadState::InDelivery;
         let ejected = apply(&r, &ev(BeadState::InDelivery, r.version, BeadEventKind::Returned { reason: ReturnedReason::BatchEjectedRed }));
         assert_eq!((ejected.row.state, ejected.row.ejected_red_tip.as_deref()), (BeadState::Rework, Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")));
-        let claimed = apply(&ejected.row, &ev(BeadState::Rework, ejected.row.version, BeadEventKind::Claim { holder: "h".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }));
+        let claimed = apply(&ejected.row, &ev(BeadState::Rework, ejected.row.version, BeadEventKind::Claim { holder: "h".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None }));
         assert_eq!(claimed.row.state, BeadState::Working);
 
         let again = apply(&claimed.row, &ev(BeadState::Working, claimed.row.version, BeadEventKind::Submit { tip: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into() }));
@@ -2335,7 +2357,7 @@ mod tests {
         let mut r = row(BeadState::Submitted);
         r.tip = Some("1111111111111111111111111111111111111111".into());
         let red = apply(&r, &ev(BeadState::Submitted, r.version, BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed }));
-        let claimed = apply(&red.row, &ev(BeadState::Rework, red.row.version, BeadEventKind::Claim { holder: "h".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }));
+        let claimed = apply(&red.row, &ev(BeadState::Rework, red.row.version, BeadEventKind::Claim { holder: "h".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None }));
         let again = apply(&claimed.row, &ev(BeadState::Working, claimed.row.version, BeadEventKind::Submit { tip: "1111111111111111111111111111111111111111".into() }));
         assert_eq!(again.refusal, Some(Refusal::EjectedRedTip { tip: "1111111111111111111111111111111111111111".into() }));
     }
@@ -2471,7 +2493,7 @@ mod tests {
     // ── stacked dependents (design stacked-dependents-2026-09-28 §1) ──────────────────
 
     fn claim_ev(expect: BeadState, version: Version, stack: Stack, stack_depth: u32, stack_max_depth: u32) -> BeadEvent {
-        ev(expect, version, BeadEventKind::Claim { holder: "dwarf-1".into(), lease_until: 100, stack, stack_depth, stack_max_depth, persona: None })
+        ev(expect, version, BeadEventKind::Claim { holder: "dwarf-1".into(), lease_until: 100, stack, stack_depth, stack_max_depth, persona: None, summoned: None })
     }
 
     #[test]
@@ -2871,7 +2893,7 @@ mod tests {
         assert_eq!(late.row.state, BeadState::Ready);
         // And once a successor claims it, the dead holder's renewal cannot touch the new lease.
         let mut succ = reaped.row.clone();
-        succ = apply(&succ, &BeadEvent { actor: "dwarf-next".into(), ..ev(BeadState::Ready, succ.version, BeadEventKind::Claim { holder: "dwarf-next".into(), lease_until: 900, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) }).row;
+        succ = apply(&succ, &BeadEvent { actor: "dwarf-next".into(), ..ev(BeadState::Ready, succ.version, BeadEventKind::Claim { holder: "dwarf-next".into(), lease_until: 900, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None }) }).row;
         let out = apply(&succ, &renew_by("dwarf-austri", &succ, 5_000));
         assert!(!out.applied);
         assert_eq!(out.row.lease_until, Some(900));
@@ -2882,7 +2904,7 @@ mod tests {
         r.state = BeadState::InDelivery;
         let back = apply(&r, &ev(BeadState::InDelivery, r.version, BeadEventKind::Returned { reason: ReturnedReason::BatchEjectedRed }));
         assert_eq!(back.row.state, BeadState::Rework);
-        let k = BeadEventKind::Claim { holder: holder.into(), lease_until: 600, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None };
+        let k = BeadEventKind::Claim { holder: holder.into(), lease_until: 600, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None };
         apply(&back.row, &BeadEvent { actor: holder.into(), ..ev(BeadState::Rework, back.row.version, k) }).row
     }
 
@@ -2918,7 +2940,7 @@ mod tests {
     }
 
     fn claimed(holder: &str) -> BeadRow {
-        let ev = BeadEvent { actor: holder.into(), ..ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: holder.into(), lease_until: 600, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) };
+        let ev = BeadEvent { actor: holder.into(), ..ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: holder.into(), lease_until: 600, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None }) };
         apply(&BeadRow::filed("sp-test"), &ev).row
     }
 
@@ -3023,7 +3045,7 @@ mod tests {
         let mut r = claimed("dwarf-a");
         r = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Disposition { status: DispositionStatus::Lapsed, note: "q".into() })).row;
         r = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Release)).row;
-        let out = apply(&r, &BeadEvent { actor: "dwarf-b".into(), ..ev(BeadState::Ready, r.version, BeadEventKind::Claim { holder: "dwarf-b".into(), lease_until: 900, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) });
+        let out = apply(&r, &BeadEvent { actor: "dwarf-b".into(), ..ev(BeadState::Ready, r.version, BeadEventKind::Claim { holder: "dwarf-b".into(), lease_until: 900, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None }) });
         assert!(out.applied);
         assert_eq!((out.row.phase, out.row.disposition), (Some(DwarfPhase::Claimed), None));
     }
@@ -3095,7 +3117,7 @@ mod tests {
     fn a_replay_of_the_log_reproduces_the_phase_and_disposition() {
         let r0 = BeadRow::filed("sp-replay");
         let log = vec![
-            BeadEvent { actor: "dwarf-a".into(), ..ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "dwarf-a".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) },
+            BeadEvent { actor: "dwarf-a".into(), ..ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "dwarf-a".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, summoned: None }) },
             BeadEvent { actor: "dwarf-a".into(), ..ev(BeadState::Working, 1, BeadEventKind::Phase { phase: DwarfPhase::Session }) },
             ev(BeadState::Working, 2, BeadEventKind::Disposition { status: DispositionStatus::Thrash, note: "t".into() }),
         ];
