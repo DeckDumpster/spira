@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=watchdog
+DOC=The file the scheduler unit appends its stdout and stderr to; spira-watchdog puts its last lines in the page.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The file the scheduler unit appends its stdout and stderr to; spira-watchdog puts its last lines in the page.
+    : "${SPIRA_WATCHDOG_UNIT_LOG:=$SPIRA_RUN/spira-runtime.log}"
+SPIRA_CONF_DEFAULT_EOF

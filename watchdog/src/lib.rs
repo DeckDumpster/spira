@@ -1,8 +1,11 @@
 //! spira-watchdog (S15): one pass per invocation, run by the platform's timer. It asks the
 //! scheduler for its last turn (`scheduler status` on the control socket) and the service
 //! manager for the scheduler unit's facts (the `Units` port); when the scheduler is absent or its
-//! last turn is older than the bound, it restarts the unit and pages the operator, once per
-//! incident.
+//! last turn is older than the bound, it opens an incident. While the incident is open every
+//! pass whose backoff is due starts the unit again (`reset-failed` then `start` for a unit that
+//! is not running, so systemd's start limit never ends the retries; `restart` for a wedged one),
+//! pages the Concierge inbox once when the starts have not brought it back, with the unit's own
+//! last log lines, and reports the scheduler down rather than success.
 
 pub mod render;
 
@@ -16,7 +19,9 @@ pub const KEY_BOUND: &str = "SPIRA_WATCHDOG_BOUND_SECS";
 pub const KEY_SOCKET: &str = "SPIRA_RUNTIME_SOCKET";
 pub const KEY_UNIT: &str = "SPIRA_WATCHDOG_UNIT";
 pub const KEY_RUN: &str = "SPIRA_RUN";
-pub const KEYS: [&str; 4] = [KEY_BOUND, KEY_SOCKET, KEY_UNIT, KEY_RUN];
+/// The file the scheduler unit appends its stdout and stderr to; its tail is a page's evidence.
+pub const KEY_UNIT_LOG: &str = "SPIRA_WATCHDOG_UNIT_LOG";
+pub const KEYS: [&str; 5] = [KEY_BOUND, KEY_SOCKET, KEY_UNIT, KEY_RUN, KEY_UNIT_LOG];
 /// The seconds between passes: read by the installer that renders the timer, not by a pass.
 pub const KEY_EVERY: &str = "SPIRA_WATCHDOG_EVERY_SECS";
 
@@ -29,6 +34,8 @@ pub struct Config {
     pub marker: PathBuf,
     /// The open incident, so one incident pages once across passes.
     pub incident: PathBuf,
+    /// The scheduler unit's own log.
+    pub unit_log: PathBuf,
 }
 
 impl Config {
@@ -46,6 +53,7 @@ impl Config {
             unit: req(KEY_UNIT)?,
             marker: run.join("runtime-inflight.json"),
             incident: run.join("watchdog-incident.json"),
+            unit_log: PathBuf::from(req(KEY_UNIT_LOG)?),
         })
     }
 }
@@ -142,12 +150,39 @@ pub fn decide(now_ms: u64, bound_ms: u64, unit: &str, facts: &UnitFacts, reading
     }
 }
 
+/// The first retry waits this long after the first start; each retry doubles it.
+pub const BACKOFF_FIRST_MS: u64 = 60_000;
+/// No retry waits longer than this.
+pub const BACKOFF_CAP_MS: u64 = 900_000;
+/// A timer that fires a little early still counts as due.
+const BACKOFF_SLACK_MS: u64 = 5_000;
+/// The incident pages once this many starts have been tried and the scheduler is still down.
+pub const PAGE_AFTER_STARTS: u32 = 2;
+/// The page carries this many of the unit log's last lines.
+pub const LOG_TAIL_LINES: usize = 8;
+const LOG_LINE_MAX: usize = 300;
+
+/// How long after the `n`th start (1-based) the next one is due.
+pub fn backoff_ms(n: u32) -> u64 {
+    BACKOFF_FIRST_MS.saturating_mul(1u64 << n.saturating_sub(1).min(20)).min(BACKOFF_CAP_MS)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Incident {
     pub since_ms: u64,
     pub reason: String,
-    pub restarted: bool,
+    /// Starts (or restarts) tried in this incident.
+    #[serde(default)]
+    pub starts: u32,
+    #[serde(default)]
+    pub last_start_ms: Option<u64>,
+    /// What the last start call itself refused with, if it did.
+    #[serde(default)]
+    pub last_error: Option<String>,
     pub paged: bool,
+    /// Why the last page attempt failed, until one succeeds.
+    #[serde(default)]
+    pub page_error: Option<String>,
 }
 
 fn load(p: &Path) -> Result<Option<Incident>, String> {
@@ -171,27 +206,64 @@ fn clear(p: &Path) -> Result<(), String> {
     }
 }
 
+/// The last `n` non-empty lines of `path`, each cut to a readable length; reads at most the
+/// file's last 64 KiB, so a large log costs one bounded read.
+pub fn log_tail(path: &Path, n: usize) -> Result<Vec<String>, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let len = f.metadata().map_err(|e| format!("{}: {e}", path.display()))?.len();
+    let from = len.saturating_sub(64 * 1024);
+    f.seek(SeekFrom::Start(from)).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = String::from_utf8_lossy(&buf);
+    let mut lines: Vec<&str> = text.lines().skip(usize::from(from > 0)).filter(|l| !l.trim().is_empty()).collect();
+    lines = lines.split_off(lines.len().saturating_sub(n));
+    Ok(lines.into_iter().map(|l| if l.chars().count() > LOG_LINE_MAX { format!("{}…", l.chars().take(LOG_LINE_MAX).collect::<String>()) } else { l.to_string() }).collect())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Healthy,
     Unknown(String),
-    /// A new incident: the restart's result and whether the page went out.
-    Acted { reason: String, restart: Result<(), String>, paged: bool },
-    /// The incident is already open and paged; nothing more this pass.
-    Open { since_ms: u64 },
-    /// The page that failed last pass, sent now.
-    Repaged { paged: bool },
+    /// The scheduler is down or wedged and an incident is open: what this pass did about it.
+    Down {
+        since_ms: u64,
+        reason: String,
+        /// Starts tried in the incident so far, this pass's included.
+        starts: u32,
+        /// This pass's start, if one was due: `Ok` when the manager accepted it.
+        started: Option<Result<(), String>>,
+        /// This pass's page, if one was due.
+        page: Option<Result<(), String>>,
+        paged: bool,
+    },
     Recovered { since_ms: u64 },
+}
+
+impl Outcome {
+    /// The scheduler is not running as it should: the pass must not report success.
+    pub fn scheduler_down(&self) -> bool {
+        matches!(self, Outcome::Down { .. })
+    }
 }
 
 impl std::fmt::Display for Outcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let res = |r: &Result<(), String>| r.as_ref().map_or_else(|e| format!("failed ({e})"), |_| "ok".into());
         match self {
             Outcome::Healthy => write!(f, "healthy"),
             Outcome::Unknown(why) => write!(f, "cannot tell: {why}"),
-            Outcome::Acted { reason, restart, paged } => write!(f, "incident: {reason}; restart {}; paged {paged}", restart.as_ref().map_or_else(|e| format!("failed ({e})"), |_| "requested".into())),
-            Outcome::Open { since_ms } => write!(f, "incident open since {since_ms}; already paged"),
-            Outcome::Repaged { paged } => write!(f, "incident open; page retried, paged {paged}"),
+            Outcome::Down { since_ms, reason, starts, started, page, paged } => {
+                write!(f, "incident open since {since_ms}: {reason}; starts {starts}")?;
+                if let Some(r) = started {
+                    write!(f, "; reset-failed+start this pass {}", res(r))?;
+                }
+                if let Some(r) = page {
+                    write!(f, "; page {}", res(r))?;
+                }
+                write!(f, "; paged {paged}")
+            }
             Outcome::Recovered { since_ms } => write!(f, "recovered from the incident opened at {since_ms}"),
         }
     }
@@ -205,12 +277,30 @@ pub struct Deps<'a> {
     pub pager: &'a dyn Pager,
 }
 
+/// Bring the unit up: a unit that is not running has its failed state (and with it systemd's
+/// start-limit count) forgotten, then is started; a running one that is wedged is restarted.
+fn kick(units: &dyn Units, h: &UnitHandle, state: UnitState) -> Result<(), String> {
+    match state {
+        UnitState::Absent | UnitState::Inactive | UnitState::Failed => {
+            let reset = units.reset_failed(h).map_err(|e| format!("reset-failed: {}", e.0));
+            units.start_installed(h).map_err(|e| format!("start: {}", e.0)).and(reset)
+        }
+        UnitState::Activating | UnitState::Deactivating | UnitState::Active => units.restart(h).map_err(|e| format!("restart: {}", e.0)),
+    }
+}
+
 /// One pass. `Err` is a pass that could not look (the unit's facts unreadable, the incident file
 /// unwritable); it changes nothing.
+///
+/// While the scheduler is down, every pass whose backoff is due resets and starts it again, so
+/// systemd's start limit never ends the retries; once [`PAGE_AFTER_STARTS`] starts have not
+/// brought it back, the incident pages once with the unit's own last log lines. A page that
+/// fails is retried on the next pass and never counted as paged.
 pub fn pass(cfg: &Config, d: &Deps) -> Result<Outcome, String> {
     let now = d.clock.now_ms();
     let h = UnitHandle::named(&cfg.unit);
-    let facts = d.units.facts(&h).map_err(|e| format!("{}: facts: {e}", cfg.unit))?;
+    let detail = d.units.detail(&h).map_err(|e| format!("{}: facts: {e}", cfg.unit))?;
+    let facts = detail.facts();
     let open = load(&cfg.incident)?;
     let verdict = decide(now, cfg.bound_ms, &cfg.unit, &facts, &d.status.read(), d.marker.in_flight_since());
     let reason = match verdict {
@@ -226,27 +316,55 @@ pub fn pass(cfg: &Config, d: &Deps) -> Result<Outcome, String> {
         Verdict::Unknown(why) => return Ok(Outcome::Unknown(why)),
         Verdict::Absent(r) | Verdict::Wedged(r) => r,
     };
-    if let Some(mut i) = open {
-        if i.paged {
-            return Ok(Outcome::Open { since_ms: i.since_ms });
-        }
-        i.paged = d.pager.page(&subject(cfg), &body(cfg, &i.reason, i.restarted)).is_ok();
-        save(&cfg.incident, &i)?;
-        return Ok(Outcome::Repaged { paged: i.paged });
-    }
-    let restart = d.units.restart(&h).map_err(|e| e.0);
-    let paged = d.pager.page(&subject(cfg), &body(cfg, &reason, restart.is_ok())).is_ok();
-    save(&cfg.incident, &Incident { since_ms: now, reason: reason.clone(), restarted: restart.is_ok(), paged })?;
-    Ok(Outcome::Acted { reason, restart, paged })
+    let mut i = open.unwrap_or(Incident { since_ms: now, reason: reason.clone(), starts: 0, last_start_ms: None, last_error: None, paged: false, page_error: None });
+    let page = (!i.paged && i.starts >= PAGE_AFTER_STARTS).then(|| {
+        let r = d.pager.page(&subject(cfg), &body(cfg, &reason, &i, &detail));
+        i.paged = r.is_ok();
+        i.page_error = r.as_ref().err().cloned();
+        r
+    });
+    let due = match i.last_start_ms {
+        None => true,
+        Some(t) => now.saturating_sub(t) + BACKOFF_SLACK_MS >= backoff_ms(i.starts),
+    };
+    let started = due.then(|| {
+        let r = kick(d.units, &h, facts.state);
+        i.starts += 1;
+        i.last_start_ms = Some(now);
+        i.last_error = r.as_ref().err().cloned();
+        r
+    });
+    save(&cfg.incident, &i)?;
+    Ok(Outcome::Down { since_ms: i.since_ms, reason, starts: i.starts, started, page, paged: i.paged })
 }
 
 fn subject(cfg: &Config) -> String {
-    format!("spira-watchdog: scheduler {} wedged or absent", cfg.unit)
+    format!("spira-watchdog: scheduler {} is DOWN", cfg.unit)
 }
 
-fn body(cfg: &Config, reason: &str, restarted: bool) -> String {
-    let what = if restarted { "restart requested through the service manager" } else { "the restart request FAILED; the scheduler is still down" };
-    format!("## Watchdog\n{reason}.\n\n{what} for {}. This incident pages once; the next healthy pass closes it.\n", cfg.unit)
+/// One line: the inbox is line-oriented. The evidence is the unit's own words — its state and
+/// result as the service manager reports them, then the last lines it wrote to its log.
+fn body(cfg: &Config, reason: &str, i: &Incident, d: &runtime::units::UnitDetail) -> String {
+    let word = |o: &Option<String>| o.clone().unwrap_or_else(|| "?".into());
+    let mins = (i.last_start_ms.unwrap_or(i.since_ms).saturating_sub(i.since_ms)) / 60_000;
+    let mut s = format!(
+        "{reason}; {} reset-failed+start attempts over {mins} min have not brought it back; unit active={} sub={} result={} n_restarts={}",
+        i.starts,
+        word(&d.active_state),
+        word(&d.sub_state),
+        word(&d.result),
+        d.n_restarts.map_or_else(|| "?".into(), |n| n.to_string()),
+    );
+    if let Some(e) = &i.last_error {
+        s.push_str(&format!("; last start refused: {e}"));
+    }
+    match log_tail(&cfg.unit_log, LOG_TAIL_LINES) {
+        Ok(lines) if lines.is_empty() => s.push_str(&format!("; {} is empty", cfg.unit_log.display())),
+        Ok(lines) => s.push_str(&format!("; last lines of {}: {}", cfg.unit_log.display(), lines.join(" ⏎ "))),
+        Err(e) => s.push_str(&format!("; unit log unreadable: {e}")),
+    }
+    s.push_str(&format!("; the watchdog keeps retrying with backoff (cap {}s); this incident pages once and the next healthy pass closes it", BACKOFF_CAP_MS / 1000));
+    s
 }
 
 #[cfg(test)]
@@ -294,7 +412,7 @@ mod tests {
     }
 
     fn cfg(dir: &Path) -> Config {
-        let m: HashMap<&str, String> = [(KEY_BOUND, "90".to_string()), (KEY_SOCKET, "/nonexistent/control.sock".into()), (KEY_UNIT, UNIT.into()), (KEY_RUN, dir.display().to_string())].into();
+        let m: HashMap<&str, String> = [(KEY_BOUND, "90".to_string()), (KEY_SOCKET, "/nonexistent/control.sock".into()), (KEY_UNIT, UNIT.into()), (KEY_RUN, dir.display().to_string()), (KEY_UNIT_LOG, dir.join("spira-runtime.log").display().to_string())].into();
         Config::from_lookup(|k| m.get(k).cloned().ok_or_else(|| format!("{k} unset"))).unwrap()
     }
 
@@ -324,7 +442,7 @@ mod tests {
 
     #[test]
     fn every_key_is_required_and_the_bound_must_be_positive() {
-        let full: HashMap<&str, &str> = [(KEY_BOUND, "90"), (KEY_SOCKET, "/s"), (KEY_UNIT, "u"), (KEY_RUN, "/r")].into();
+        let full: HashMap<&str, &str> = [(KEY_BOUND, "90"), (KEY_SOCKET, "/s"), (KEY_UNIT, "u"), (KEY_RUN, "/r"), (KEY_UNIT_LOG, "/r/u.log")].into();
         for missing in KEYS {
             let err = Config::from_lookup(|k| if k == missing { Err(format!("{k} unset")) } else { Ok(full[k].to_string()) }).unwrap_err();
             assert!(err.contains(missing), "{err}");
@@ -338,19 +456,31 @@ mod tests {
         assert_eq!((c.bound_ms, c.marker.clone()), (90_000, PathBuf::from("/r/runtime-inflight.json")));
     }
 
+    fn started(o: &Outcome) -> Option<Result<(), String>> {
+        match o {
+            Outcome::Down { started, .. } => started.clone(),
+            _ => None,
+        }
+    }
+
     #[test]
-    fn a_wedged_scheduler_is_restarted_and_paged_once_per_incident() {
+    fn a_wedged_scheduler_is_restarted_with_backoff_and_paged_once_per_incident() {
         let tmp = testkit::TempDir::new("watchdog");
         let c = cfg(tmp.path());
         let w = World::new(1_000_000, active(0), Reading::Turn { at_ms: 1_000_000 - 91_000 });
-        assert!(matches!(w.pass(&c), Outcome::Acted { restart: Ok(()), paged: true, .. }));
+        let o = w.pass(&c);
+        assert!(o.scheduler_down() && started(&o) == Some(Ok(())), "{o}");
         assert_eq!(w.units.calls(), vec![format!("restart {UNIT}")]);
-        assert_eq!(w.pages.0.borrow().len(), 1);
-        w.clock.advance(60_000);
-        w.units.install(UNIT, active(0));
-        assert_eq!(w.pass(&c), Outcome::Open { since_ms: 1_000_000 });
-        assert_eq!(w.units.calls().len(), 1, "no second restart in the same incident");
-        assert_eq!(w.pages.0.borrow().len(), 1, "no second page in the same incident");
+        assert!(w.pages.0.borrow().is_empty(), "the first restart may yet bring it back: no page");
+        for _ in 0..4 {
+            w.clock.advance(60_000);
+            assert!(w.pass(&c).scheduler_down());
+        }
+        assert_eq!(w.units.calls().len(), 3, "passes at 0..240 s restart at 0, 60 and 180 s, not every pass");
+        assert_eq!(w.pages.0.borrow().len(), 1, "one page in the incident");
+        *w.status.0.borrow_mut() = Reading::Turn { at_ms: w.clock.now_ms() };
+        assert_eq!(w.pass(&c), Outcome::Recovered { since_ms: 1_000_000 });
+        assert!(!w.pass(&c).scheduler_down());
     }
 
     #[test]
@@ -365,31 +495,53 @@ mod tests {
     }
 
     #[test]
-    fn a_healthy_pass_closes_the_incident_and_the_next_wedge_pages_again() {
+    fn a_healthy_pass_closes_the_incident_and_the_next_one_starts_fresh() {
         let tmp = testkit::TempDir::new("watchdog");
         let c = cfg(tmp.path());
         let w = World::new(500_000, UnitFacts { state: UnitState::Failed, main_pid: None, exit: Some(Exit::Code(1)), since_ms: Some(1) }, Reading::Unreachable("refused".into()));
-        assert!(matches!(w.pass(&c), Outcome::Acted { .. }));
+        assert_eq!(started(&w.pass(&c)), Some(Ok(())));
+        assert_eq!(w.units.calls(), vec![format!("reset-failed {UNIT}"), format!("start {UNIT}")]);
         *w.status.0.borrow_mut() = Reading::Turn { at_ms: 500_000 };
         assert_eq!(w.pass(&c), Outcome::Recovered { since_ms: 500_000 });
         w.clock.advance(200_000);
-        assert!(matches!(w.pass(&c), Outcome::Acted { .. }));
-        assert_eq!(w.pages.0.borrow().len(), 2);
-        assert_eq!(w.units.calls().len(), 2);
+        let o = w.pass(&c);
+        assert!(matches!(&o, Outcome::Down { since_ms: 700_000, starts: 1, .. }), "{o}");
+        assert_eq!(w.units.calls().last(), Some(&format!("restart {UNIT}")));
     }
 
     #[test]
-    fn a_failed_page_is_retried_without_a_second_restart() {
+    fn a_failed_page_is_retried_and_never_counted_as_paged() {
         let tmp = testkit::TempDir::new("watchdog");
         let c = cfg(tmp.path());
         let w = World::new(500_000, UnitFacts::absent(), Reading::Unreachable("refused".into()));
         *w.pages.1.borrow_mut() = true;
-        assert!(matches!(w.pass(&c), Outcome::Acted { paged: false, .. }));
-        w.units.install(UNIT, UnitFacts::absent());
+        let mut outs = Vec::new();
+        for _ in 0..3 {
+            outs.push(w.pass(&c));
+            w.clock.advance(60_000);
+        }
+        assert!(outs.iter().all(Outcome::scheduler_down), "{outs:?}");
+        assert!(matches!(started(&outs[0]), Some(Err(_))), "an uninstalled unit cannot be started: {}", outs[0]);
+        assert!(matches!(&outs[2], Outcome::Down { page: Some(Err(_)), paged: false, .. }), "{}", outs[2]);
         *w.pages.1.borrow_mut() = false;
-        assert_eq!(w.pass(&c), Outcome::Repaged { paged: true });
-        assert_eq!(w.pass(&c), Outcome::Open { since_ms: 500_000 });
-        assert_eq!((w.units.calls().len(), w.pages.0.borrow().len()), (1, 1));
+        assert!(matches!(w.pass(&c), Outcome::Down { page: Some(Ok(())), paged: true, .. }));
+        w.clock.advance(60_000);
+        assert!(matches!(w.pass(&c), Outcome::Down { page: None, paged: true, .. }));
+        assert_eq!(w.pages.0.borrow().len(), 1);
+    }
+
+    #[test]
+    fn the_backoff_doubles_to_its_cap_and_the_log_tail_is_bounded() {
+        assert_eq!((1..=7).map(backoff_ms).collect::<Vec<_>>(), vec![60_000, 120_000, 240_000, 480_000, 900_000, 900_000, 900_000]);
+        assert_eq!(backoff_ms(u32::MAX), BACKOFF_CAP_MS);
+        let tmp = testkit::TempDir::new("watchdog");
+        let p = tmp.path().join("u.log");
+        assert!(log_tail(&p, 3).is_err());
+        let long = "x".repeat(LOG_LINE_MAX + 50);
+        std::fs::write(&p, format!("{}a\n\nb\n{long}\nc\n", "filler line\n".repeat(10_000))).unwrap();
+        let t = log_tail(&p, 3).unwrap();
+        assert_eq!((t[0].as_str(), t[2].as_str()), ("b", "c"));
+        assert_eq!(t[1].chars().count(), LOG_LINE_MAX + 1);
     }
 
     #[test]
@@ -404,6 +556,138 @@ mod tests {
         let starting = UnitFacts { state: UnitState::Activating, main_pid: None, exit: None, since_ms: Some(now - 91_000) };
         assert!(matches!(decide(now, b, UNIT, &starting, &Reading::NoTurnYet, None), Verdict::Wedged(_)));
         assert_eq!(decide(now, b, UNIT, &UnitFacts::absent(), &Reading::Turn { at_ms: now }, None), Verdict::Absent(format!("{UNIT} is absent")));
+    }
+
+    /// The service manager as it behaved on 2026-11-07: a unit that hit its start limit stays
+    /// failed through any start or restart (the job is accepted, then refused) until
+    /// `reset-failed`; with `crashes` set, every start that does get through fails again.
+    struct StartLimited {
+        inner: ScriptedUnits,
+        clock: VirtualClock,
+        limited: std::sync::atomic::AtomicBool,
+        crashes: bool,
+        calls: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl StartLimited {
+        fn new(clock: &VirtualClock, crashes: bool) -> StartLimited {
+            let inner = ScriptedUnits::new(Arc::new(clock.clone()));
+            let s = StartLimited { inner, clock: clock.clone(), limited: true.into(), crashes, calls: Default::default() };
+            s.fail();
+            s
+        }
+        fn fail(&self) {
+            let d = runtime::units::UnitDetail {
+                result: Some("start-limit-hit".into()),
+                n_restarts: Some(6),
+                ..runtime::units::UnitDetail::from_facts(UNIT, &UnitFacts { state: UnitState::Failed, main_pid: None, exit: Some(Exit::Code(1)), since_ms: Some(self.clock.now_ms()) })
+            };
+            self.inner.install_detail(runtime::units::UnitDetail { active_state: Some("failed".into()), sub_state: Some("failed".into()), load_state: Some("loaded".into()), ..d });
+            self.limited.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn go(&self, verb: &str, h: &UnitHandle) -> runtime::Result<()> {
+            self.calls.lock().unwrap().push(format!("{verb} {}", h.name));
+            if self.limited.load(std::sync::atomic::Ordering::SeqCst) {
+                return Ok(());
+            }
+            let r = if verb == "restart" { self.inner.restart(h) } else { self.inner.start_installed(h) };
+            if self.crashes {
+                self.fail();
+            }
+            r
+        }
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl Units for StartLimited {
+        fn start(&self, spec: &runtime::units::UnitSpec) -> runtime::Result<UnitHandle> {
+            self.inner.start(spec)
+        }
+        fn stop(&self, h: &UnitHandle) -> runtime::Result<()> {
+            self.inner.stop(h)
+        }
+        fn restart(&self, h: &UnitHandle) -> runtime::Result<()> {
+            self.go("restart", h)
+        }
+        fn facts(&self, h: &UnitHandle) -> runtime::Result<UnitFacts> {
+            self.inner.facts(h)
+        }
+        fn detail(&self, h: &UnitHandle) -> runtime::Result<runtime::units::UnitDetail> {
+            self.inner.detail(h)
+        }
+        fn start_installed(&self, h: &UnitHandle) -> runtime::Result<()> {
+            self.go("start", h)
+        }
+        fn reset_failed(&self, h: &UnitHandle) -> runtime::Result<()> {
+            self.calls.lock().unwrap().push(format!("reset-failed {}", h.name));
+            self.limited.store(false, std::sync::atomic::Ordering::SeqCst);
+            self.inner.reset_failed(h)
+        }
+    }
+
+    #[derive(Default)]
+    struct Bodies(RefCell<Vec<String>>, RefCell<bool>);
+    impl Pager for Bodies {
+        fn page(&self, subject: &str, body: &str) -> Result<(), String> {
+            if *self.1.borrow() {
+                return Err("inbox unwritable".into());
+            }
+            self.0.borrow_mut().push(format!("{subject}\n{body}"));
+            Ok(())
+        }
+    }
+
+    fn run_pass(c: &Config, clock: &VirtualClock, units: &dyn Units, status: &Fixed, pages: &dyn Pager) -> Outcome {
+        pass(c, &Deps { clock, units, status, marker: &Marker(None), pager: pages }).unwrap()
+    }
+
+    #[test]
+    fn a_unit_failed_at_its_start_limit_is_reset_then_started() {
+        let tmp = testkit::TempDir::new("watchdog");
+        let c = cfg(tmp.path());
+        let clock = VirtualClock::new(1_000_000);
+        let units = StartLimited::new(&clock, false);
+        let status = Fixed(RefCell::new(Reading::Unreachable("connection refused".into())));
+        let pages = Bodies::default();
+        run_pass(&c, &clock, &units, &status, &pages);
+        let calls = units.calls();
+        let reset = calls.iter().position(|c| c == &format!("reset-failed {UNIT}"));
+        let start = calls.iter().position(|c| c == &format!("start {UNIT}"));
+        assert!(matches!((reset, start), (Some(r), Some(s)) if r < s), "reset-failed, then start: {calls:?}");
+        assert_eq!(units.inner.facts(&UnitHandle::named(UNIT)).unwrap().state, UnitState::Active);
+        clock.advance(60_000);
+        *status.0.borrow_mut() = Reading::Turn { at_ms: clock.now_ms() };
+        assert_eq!(run_pass(&c, &clock, &units, &status, &pages), Outcome::Recovered { since_ms: 1_000_000 });
+        assert!(pages.0.borrow().is_empty(), "a start that worked first time pages no one: {:?}", pages.0.borrow());
+    }
+
+    #[test]
+    fn a_unit_that_keeps_failing_is_retried_with_backoff_and_paged_once_with_its_log() {
+        let tmp = testkit::TempDir::new("watchdog");
+        let c = cfg(tmp.path());
+        std::fs::write(tmp.path().join("spira-runtime.log"), "spira-runtime: serve: starting\nspira-runtime: SPIRA_TASK_MODES gives no mode for task watch.throughput\n").unwrap();
+        let clock = VirtualClock::new(1_000_000);
+        let units = StartLimited::new(&clock, true);
+        let status = Fixed(RefCell::new(Reading::Unreachable("connection refused".into())));
+        let pages = Bodies::default();
+        let mut starts_at = Vec::new();
+        for _ in 0..=30 {
+            let before = units.calls().iter().filter(|c| c.starts_with("start ")).count();
+            assert!(run_pass(&c, &clock, &units, &status, &pages).scheduler_down());
+            if units.calls().iter().filter(|c| c.starts_with("start ")).count() > before {
+                starts_at.push((clock.now_ms() - 1_000_000) / 1000);
+            }
+            clock.advance(60_000);
+        }
+        assert_eq!(starts_at, vec![0, 60, 180, 420, 900, 1800], "starts back off, doubling to a cap");
+        assert_eq!(units.calls().iter().filter(|c| c.starts_with("reset-failed ")).count(), starts_at.len(), "every start is preceded by reset-failed");
+        let pages = pages.0.borrow();
+        assert_eq!(pages.len(), 1, "one page per incident: {pages:?}");
+        for want in ["SPIRA_TASK_MODES gives no mode for task watch.throughput", "start-limit-hit", UNIT] {
+            assert!(pages[0].contains(want), "the page carries {want:?}: {}", pages[0]);
+        }
     }
 
     #[test]
