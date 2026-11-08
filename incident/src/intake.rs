@@ -510,11 +510,18 @@ pub fn spool_stamp() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::filed_answer;
+    use super::{filed_answer, Env};
 
     #[test]
     fn the_filed_answer_is_one_json_object_naming_the_bead_or_null() {
         assert_eq!(filed_answer(Some("sp-abc")), r#"{"id":"sp-abc"}"#);
         assert_eq!(filed_answer(None), r#"{"id":null}"#);
+    }
+
+    #[test]
+    fn a_reference_set_on_the_loaded_env_is_the_filings_dedup_reference() {
+        let mut env = Env::load();
+        env.reference = Some("incident:throughput-stall:alpha:7".into());
+        assert_eq!(env.repo_override_ref().as_deref(), Some("incident:throughput-stall:alpha:7"));
     }
 }

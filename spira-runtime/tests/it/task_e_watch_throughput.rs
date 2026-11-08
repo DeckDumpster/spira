@@ -147,10 +147,12 @@ fn a_filing_that_failed_is_asked_again_and_pages_nothing_until_it_succeeds() {
     let w = Arc::new(Mutex::new(waiting(landed(55), 3, Last::Never)));
     let (_, stream, kind) = WatchThroughput::boot();
     let w2 = w.clone();
+    let up = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let up2 = up.clone();
     let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration())
         .unwrap()
         .double(OBSERVE, move |_| Ok(serde_json::to_string(&w2.lock().unwrap().snap).unwrap()))
-        .double(FILE, |_| Err("store down".into()))
+        .double(FILE, move |_| if up2.load(std::sync::atomic::Ordering::SeqCst) { Ok("filed".into()) } else { Err("store down".into()) })
         .double(CLEAR, |_| Ok("cleared".into()))
         .double(INBOX_APPEND, |_| Ok("appended".into()));
     r.clock.advance_to(3 * DAY_MS);
@@ -160,6 +162,11 @@ fn a_filing_that_failed_is_asked_again_and_pages_nothing_until_it_succeeds() {
     assert!(named(&r, FILE).len() >= 2, "refiled on the next tick");
     assert!(named(&r, INBOX_APPEND).is_empty());
     assert!(episodes(&r).iter().all(|e| e.is_empty()));
+    up.store(true, std::sync::atomic::Ordering::SeqCst);
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(named(&r, INBOX_APPEND).len(), 1, "paged once the filing succeeded");
+    r.advance(3 * CADENCE_MS).unwrap();
+    assert_eq!(named(&r, INBOX_APPEND).len(), 1);
 }
 
 #[test]
