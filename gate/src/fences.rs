@@ -159,6 +159,7 @@ fn run_with(args: &[String], envs: &[(String, String)]) -> i32 {
         // batch-job: one worktree add or remove
         spira_config::bounded::bounded_for("git", "60").arg("-C").arg(&repo).args(args).output()
     };
+    let _ = git(&["worktree", "prune"]);
     let added = git(&["worktree", "add", "-q", "--detach", &tree.display().to_string(), &tip]);
     if !added.as_ref().is_ok_and(|o| o.status.success()) {
         eprintln!("gate fence-run: cannot check out {tip} in {repo}");
