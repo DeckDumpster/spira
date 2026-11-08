@@ -2,6 +2,7 @@
 //! `None`, never an empty answer, so a forge that is down cannot look like a repository with
 //! nothing open.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io::Read;
@@ -82,6 +83,30 @@ fn vmid_of(name: &str) -> String {
     }
 }
 
+/// The check runs that judge a PR on `branch`, each `(name, STATUS, CONCLUSION)`. A commit's check
+/// runs are every run at that head, whichever branch it ran for: a head published once as a PR
+/// that went red and again as a new PR carries the old PR's failures too. `runs` are the commit's
+/// workflow runs; a check a workflow run owns counts only when that run is the latest of its
+/// workflow on `branch`, and a check no workflow run owns (an app's own check) always counts.
+pub fn current_checks(check_runs: &[Value], runs: &[Value], branch: &str) -> Vec<(String, String, String)> {
+    let suite = |v: &Value, key: &str| v.pointer(key).and_then(Value::as_u64);
+    let owned: BTreeSet<u64> = runs.iter().filter_map(|r| suite(r, "/check_suite_id")).collect();
+    let mut latest: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    for r in runs.iter().filter(|r| r["head_branch"].as_str() == Some(branch)) {
+        let (Some(id), Some(s)) = (r["id"].as_u64(), suite(r, "/check_suite_id")) else { continue };
+        let workflow = r["workflow_id"].as_u64().map_or_else(|| text(r, "name"), |w| w.to_string());
+        if latest.get(&workflow).is_none_or(|(newest, _)| id > *newest) {
+            latest.insert(workflow, (id, s));
+        }
+    }
+    let current: BTreeSet<u64> = latest.values().map(|(_, s)| *s).collect();
+    check_runs
+        .iter()
+        .filter(|c| suite(c, "/check_suite/id").is_none_or(|s| !owned.contains(&s) || current.contains(&s)))
+        .map(|c| (text(c, "name"), text(c, "status").to_uppercase(), text(c, "conclusion").to_uppercase()))
+        .collect()
+}
+
 impl Forge {
     /// A static token when one is set, else whatever `gh auth token` answers now under the
     /// configured gh config dir. Read per call, so a rotated login is picked up; never logged.
@@ -120,8 +145,11 @@ impl Forge {
         let prs = self.listed(&format!("/repos/{slug}/pulls?state=open&{PAGE}"))?;
         prs.iter()
             .map(|p| {
-                let runs = self.get(&format!("/repos/{slug}/commits/{}/check-runs?{PAGE}", p["head"]["sha"].as_str()?))?;
-                let checks: Vec<(String, String, String)> = runs["check_runs"].as_array()?.iter().map(|c| (text(c, "name"), text(c, "status").to_uppercase(), text(c, "conclusion").to_uppercase())).collect();
+                let sha = p["head"]["sha"].as_str()?;
+                let checks = self.get(&format!("/repos/{slug}/commits/{sha}/check-runs?{PAGE}"))?;
+                let runs = self.get(&format!("/repos/{slug}/actions/runs?head_sha={sha}&{PAGE}"))?;
+                let runs = runs["workflow_runs"].as_array().filter(|a| a.len() < PAGE_SIZE)?;
+                let checks = current_checks(checks["check_runs"].as_array()?, runs, &text(&p["head"], "ref"));
                 let (status, fail) = classify(&checks);
                 let title = text(p, "title").replace(['\n', '\t'], " ");
                 Some((OpenPr { number: p["number"].as_u64()?, status: status.into(), title, fail }, text(&p["head"], "ref")))
@@ -249,6 +277,32 @@ mod tests {
     #[test]
     fn a_runner_is_known_by_the_first_run_of_two_digits_in_its_name_else_its_name() {
         assert_eq!((vmid_of("ci-vm-9001-a7").as_str(), vmid_of("r1").as_str(), vmid_of("").as_str()), ("9001", "r1", "?"));
+    }
+
+    /// sp-hw3qio: PR #989's head had also been published as PR #988, whose Gate runs failed at
+    /// provision. The commit's check runs carry both PRs' runs, so pr-notify said FAIL RED for a
+    /// PR whose own latest runs were green. A PR is judged by the latest run of each workflow on
+    /// its own branch; a check that no workflow run owns (an app's check) still counts.
+    #[test]
+    fn a_pr_is_judged_by_the_latest_run_of_each_workflow_on_its_own_branch() {
+        let check = |name: &str, conclusion: &str, suite: u64| serde_json::json!({"name": name, "status": "completed", "conclusion": conclusion, "check_suite": {"id": suite}});
+        let run = |id: u64, workflow: &str, branch: &str, suite: u64| serde_json::json!({"id": id, "name": workflow, "head_branch": branch, "check_suite_id": suite});
+        let checks = [
+            check("provision", "failure", 1), // PR 988's Gate run, same head
+            check("gate", "failure", 1),
+            check("provision", "failure", 2), // PR 989's first Gate run, superseded
+            check("provision", "success", 3), // PR 989's latest Gate run
+            check("gate", "success", 3),
+            check("tag", "success", 4), // PR 989's Test image run
+            check("lint-app", "success", 9), // an app's check, no workflow run
+        ];
+        let runs = [run(10, "Gate", "spira/publish/20261107T001222Z", 1), run(11, "Gate", "spira/publish/1794013814", 2), run(12, "Gate", "spira/publish/1794013814", 3), run(13, "Test image", "spira/publish/1794013814", 4)];
+        let judged = current_checks(&checks, &runs, "spira/publish/1794013814");
+        assert_eq!(classify(&judged), ("green", String::new()), "{judged:?}");
+        let names: Vec<&str> = judged.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert_eq!(names, ["provision", "gate", "tag", "lint-app"]);
+        // On PR 988's own branch the same commit is red.
+        assert_eq!(classify(&current_checks(&checks, &runs, "spira/publish/20261107T001222Z")).0, "red");
     }
 
     #[test]

@@ -144,7 +144,7 @@ pub static TASKS: &[Task] = &[
         effects: publish::EFFECTS,
         runners: {
             use publish::{edge as x, *};
-            &[(OBSERVE, x::observe), (PUSH_BRANCH, x::push_branch), (PUSH_FORGE, x::push_forge), (PR_CREATE, x::pr_create), (PR_CLOSE, x::pr_close), (CANCEL_RUNS, x::cancel_runs), (RERUN, x::rerun), (RECORD, x::record), (NOTIFY, x::notify)]
+            &[(OBSERVE, x::observe), (PUSH_BRANCH, x::push_branch), (PUSH_FORGE, x::push_forge), (PR_CREATE, x::pr_create), (PR_CLOSE, x::pr_close), (CANCEL_RUNS, x::cancel_runs), (RERUN, x::rerun), (RECORD, x::record), (NOTIFY, x::notify), (SETTLE, x::settle)]
         },
         keys: &[publish::KEYS],
         build: |s| publish::Publish::from_settings(s).registration(),
