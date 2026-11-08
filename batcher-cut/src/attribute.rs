@@ -57,6 +57,10 @@ pub fn members_arg(members: &[(String, String)]) -> String {
     members.iter().map(|(i, t)| format!("{i}:{t}")).collect::<Vec<_>>().join(",")
 }
 
+pub fn is_round_vm_fault(err: &str) -> bool {
+    err.starts_with("round-vm:") && !err.contains("not a harness fault")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,6 +78,14 @@ mod tests {
     fn a_fault_reads_back_as_a_fault_not_a_block() {
         let fault = Attribution::Fault("round-vm: harness fault".into());
         assert_eq!(Attribution::parse(&fault.line()), Some(fault));
+    }
+
+    #[test]
+    fn only_a_round_vm_harness_fault_is_a_fault() {
+        assert!(is_round_vm_fault("round-vm: harness fault — the round VM did not come up"));
+        assert!(is_round_vm_fault("round-vm: infrastructure fault — the round VM (h) was unreachable"));
+        assert!(!is_round_vm_fault("round-vm: suite list mismatch, not a harness fault — x"));
+        assert!(!is_round_vm_fault("refresh failed after round-vm refresh"));
     }
 
     #[test]

@@ -1442,7 +1442,7 @@ fn attribute(o: &Opts) -> Result<(), String> {
     let outcome = match end {
         Ok(drive::RoundEnd::Land { members, attribution_secs }) => Attribution::Land { members: members.into_iter().map(|m| (m.id, m.tip)).collect(), attribution_secs, mended },
         Ok(drive::RoundEnd::Blocked(why) | drive::RoundEnd::Emptied(why)) => Attribution::Blocked(why),
-        Err(e) if e.contains("round-vm") => Attribution::Fault(format!("the attribution did not finish: {e}")),
+        Err(e) if batcher_cut::attribute::is_round_vm_fault(&e) => Attribution::Fault(format!("the attribution did not finish: {e}")),
         Err(e) => Attribution::Blocked(format!("the attribution did not finish: {e}")),
     };
     println!("{}", outcome.line());
