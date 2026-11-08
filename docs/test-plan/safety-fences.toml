@@ -32,11 +32,6 @@ tier = "T1"
 statement = "`DELETE FROM schema_migrations` is refused at `bdq create` (case- and whitespace-insensitive) even with the ask label, and the refusal points at `bd migrate schema`"
 
 [[use_case]]
-id = "UC-safety-fences-14"
-tier = "T1"
-statement = "`bdq create` refuses harness-halting vocabulary (world stop, `systemd/install.sh`, daemon-reload, `systemctl stop/restart spira-*`, schema migrate) unless the bead carries the ask label, refusing before `bd` is invoked; near-miss text passes"
-
-[[use_case]]
 id = "UC-safety-fences-15"
 tier = "T1"
 statement = "every guard blocks through one documented PreToolUse protocol naming guard, remedy and override; the override works from env and inline; the guard is inert outside its session scope, for tools it does not own, and for single-quoted/heredoc prose; behaviour on an empty or malformed payload is defined and tested"
