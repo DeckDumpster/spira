@@ -41,6 +41,9 @@ fn main() {
     if argv.first().map(String::as_str) == Some("fences") {
         std::process::exit(gate::fences::main(&argv[1..]));
     }
+    if argv.first().map(String::as_str) == Some("fence-run") {
+        std::process::exit(gate::fences::run_main(&argv[1..]));
+    }
     if matches!(argv.first().map(String::as_str), Some("status" | "cancel")) {
         let run = match spira_config::process::cfg("SPIRA_RUN") {
             Ok(r) => PathBuf::from(r),

@@ -120,6 +120,87 @@ pub fn main(args: &[String]) -> i32 {
     }
 }
 
+/// `gate fence-run <name> --repo <root> --tip <sha> --base <ref>`: one fence of the tip's own
+/// `gate.steps`, run in a throwaway checkout of the tip. A bin the fence reads is the installed
+/// one by bare name; the round, which builds the tree's own, is what finally judges. Exit 0 the
+/// fence passed, 1 it failed, 2 it could not be run (unknown name, no checkout).
+pub fn run_main(args: &[String]) -> i32 {
+    const USAGE: &str = "usage: gate fence-run <name> --repo <root> --tip <sha> --base <ref>";
+    let (mut name, mut repo, mut tip, mut base) = (None, None, None, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--repo" => repo = it.next().cloned(),
+            "--tip" => tip = it.next().cloned(),
+            "--base" => base = it.next().cloned(),
+            n if !n.starts_with('-') && name.is_none() => name = Some(n.to_string()),
+            _ => {
+                eprintln!("{USAGE}");
+                return 2;
+            }
+        }
+    }
+    let (Some(name), Some(repo), Some(tip), Some(base)) = (name, repo, tip, base) else {
+        eprintln!("{USAGE}");
+        return 2;
+    };
+    let tree = std::env::temp_dir().join(format!("gate-fence-run-{}-{}", std::process::id(), name));
+    let git = |args: &[&str]| {
+        // batch-job: one worktree add or remove
+        spira_config::bounded::bounded_for("git", "60").arg("-C").arg(&repo).args(args).output()
+    };
+    let added = git(&["worktree", "add", "-q", "--detach", &tree.display().to_string(), &tip]);
+    if !added.as_ref().is_ok_and(|o| o.status.success()) {
+        eprintln!("gate fence-run: cannot check out {tip} in {repo}");
+        return 2;
+    }
+    let rc = run_in(&tree, &name, &base);
+    let _ = git(&["worktree", "remove", "--force", &tree.display().to_string()]);
+    rc
+}
+
+fn run_in(tree: &std::path::Path, name: &str, base: &str) -> i32 {
+    let path = tree.join(crate::def::PATH);
+    let fences = std::fs::read_to_string(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))
+        .and_then(|t| crate::def::parse(&t))
+        .and_then(|d| {
+            let prefix = |f: &Fence| {
+                d.bins.iter().filter(|b| f.command.contains(&b.var)).fold(String::new(), |acc, b| acc + &format!("export {}={}; ", b.var, b.package))
+            };
+            list(&d, None).map(|l| l.into_iter().map(|f| Fence { command: prefix(&f) + &f.command, name: f.name }).collect::<Vec<_>>())
+        });
+    let fences = match fences {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("gate fence-run: {e}");
+            return 2;
+        }
+    };
+    let Some(fence) = fences.iter().find(|f| f.name == name) else {
+        let known: Vec<&str> = fences.iter().map(|f| f.name.as_str()).collect();
+        eprintln!("gate fence-run: {name} is not a fence of this tree; its fences: {}", known.join(" "));
+        return 2;
+    };
+    // batch-job: the fence's own command, bounded by the caller's timeout
+    let status = std::process::Command::new("bash")
+        .args(["-c", &fence.command])
+        .current_dir(tree)
+        .env("SPIRA_GATE_BASE", base)
+        .env("SPIRA_GATE_BRANCH", "HEAD")
+        .env_remove("RUSTC_WRAPPER")
+        .stdin(std::process::Stdio::null())
+        .status();
+    match status {
+        Ok(s) if s.success() => 0,
+        Ok(_) => 1,
+        Err(e) => {
+            eprintln!("gate fence-run: cannot run {name}: {e}");
+            2
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,5 +258,36 @@ mod tests {
         std::fs::write(d.join(crate::def::PATH), "step bash spira/x.sh\n").unwrap();
         assert_eq!(main(&["--tree".into(), tree]), 0);
         assert_eq!(main(&[]), 2);
+    }
+
+    fn repo_with_fences(tag: &str, steps: &str) -> (testkit::TempDir, String, String) {
+        let t = testkit::TempDir::new(tag);
+        let r = t.path();
+        testkit::git(r, &["init", "-q", "-b", "main"]);
+        std::fs::write(r.join(crate::def::PATH), steps).unwrap();
+        std::fs::create_dir_all(r.join("spira")).unwrap();
+        std::fs::write(r.join("spira/ok.sh"), "echo \"on $SPIRA_GATE_BRANCH vs $SPIRA_GATE_BASE\"\n").unwrap();
+        std::fs::write(r.join("spira/bad.sh"), "exit 7\n").unwrap();
+        testkit::git(r, &["add", "."]);
+        testkit::git(r, &["commit", "-q", "-m", "x"]);
+        let tip = testkit::git(r, &["rev-parse", "HEAD"]);
+        let root = r.display().to_string();
+        (t, root, tip)
+    }
+
+    fn fence_run(root: &str, tip: &str, name: &str) -> i32 {
+        run_main(&[name.into(), "--repo".into(), root.into(), "--tip".into(), tip.into(), "--base".into(), "main".into()])
+    }
+
+    #[test]
+    fn one_named_fence_runs_at_the_tip_and_its_exit_is_the_answer() {
+        let (_t, root, tip) = repo_with_fences("fence-run", "step bash spira/ok.sh\nstep bash spira/bad.sh\n");
+        assert_eq!(fence_run(&root, &tip, "ok"), 0);
+        assert_eq!(fence_run(&root, &tip, "bad"), 1, "any red exit of the fence is a red");
+        assert_eq!(fence_run(&root, &tip, "fence-ok"), 2, "the round's `fence-` prefix is not part of the fence's name");
+        assert_eq!(fence_run(&root, &tip, "nonesuch"), 2, "an unknown fence cannot be run, which is not a pass");
+        assert_eq!(fence_run(&root, "0000000000000000000000000000000000000000", "ok"), 2, "a tip the repository lacks cannot be run");
+        let trees = testkit::git(std::path::Path::new(&root), &["worktree", "list"]);
+        assert_eq!(trees.lines().count(), 1, "the throwaway checkout is removed: {trees}");
     }
 }
