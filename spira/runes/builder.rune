@@ -119,3 +119,9 @@ RUNE_HABITS=1
 # The system prompt is runes/builder.md rendered and nothing else: no memories, no statute
 # index, no session blocks. The session's facts arrive in the task prompt.
 RUNE_STATIC_PROMPT=1
+
+# THE ONE BUILD DIRECTORY (sp-ke0uk8): the builder compiles, so each session leases an owned
+# cargo target under SPIRA_DWARF_BUILD_BASE for its whole bead — the agent's cargo, testenv's
+# unit run and `work checks` all build there. A rune without this flag compiles nothing and
+# leases nothing (ops, warden, mender and the batcher took the old cold slot without one).
+RUNE_BUILDS=1

@@ -300,7 +300,7 @@ mod tests {
             ("BEAD_ID", "sp-x"),
             ("BEADS_ACTOR", "dwarf-eitri"),
             ("SPIRA_MAIL", "/run/spira/mail"),
-            ("CARGO_TARGET_DIR", "/run/spira/dwarf-warm/slot.1"),
+            ("CARGO_TARGET_DIR", "/srv/ssd-b/dwarf-build/dir.1"),
             ("RUSTC_WRAPPER", "/rel/bin/spira-admit"),
             ("SPIRA_ADMIT_INNER", "/usr/bin/sccache"),
             ("SPIRA_ADMIT_WHO", "sp-x"),

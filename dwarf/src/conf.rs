@@ -29,6 +29,9 @@ pub struct Rune {
     pub system_prompt: SystemPrompt,
     pub groom_escalation_check: bool,
     pub graph_only: bool,
+    /// RUNE_BUILDS=1: the persona compiles, so each session leases an owned build directory
+    /// (sp-ke0uk8). Every other rune leases none.
+    pub builds: bool,
     pub requires_build_spec: bool,
     pub habits: bool,
     pub static_prompt: bool,
@@ -60,6 +63,7 @@ impl Rune {
             system_prompt: if get(v, "RUNE_SYSTEM_PROMPT") == Some("replace") { SystemPrompt::Replace } else { SystemPrompt::Append },
             groom_escalation_check: get(v, "RUNE_GROOM_ESCALATION_CHECK") == Some("1"),
             graph_only: get(v, "RUNE_GRAPH_ONLY") == Some("1"),
+            builds: get(v, "RUNE_BUILDS") == Some("1"),
             requires_build_spec: get(v, "RUNE_REQUIRES_BUILD_SPEC") == Some("1"),
             habits: get(v, "RUNE_HABITS") == Some("1"),
             static_prompt: get(v, "RUNE_STATIC_PROMPT") == Some("1"),

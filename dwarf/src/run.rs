@@ -114,6 +114,8 @@ pub struct State {
     /// tip of every prerequisite this claim was built on, keyed by prerequisite bead id.
     /// Empty for a claim that is not stacked on anything.
     pub stack: std::collections::BTreeMap<String, String>,
+    /// The owned build directory this run leased (sp-ke0uk8), held until teardown ends.
+    pub build_dir: Option<spira_config::build_dir::Lease>,
 }
 
 /// `spira-lc phase`'s exit for a move the machine refused (not WORKING, not the holder, not forward).
@@ -402,7 +404,9 @@ impl<'a> Run<'a> {
                 Err(Abort::Exit(n)) => n,
                 Err(Abort::Signal(sig)) => 128 + sig,
             };
-            self.teardown(rc)
+            let rc = self.teardown(rc);
+            self.release_build_dir();
+            rc
         })
     }
 
@@ -1309,48 +1313,16 @@ impl<'a> Run<'a> {
             Ok(d) => env.set(spira_config::build::TF_PLUGIN_CACHE_ENV, &d.display().to_string()),
             Err(e) => self.log(&format!("{}: no terraform provider cache ({e}) — terraform init downloads per worktree", self.f())),
         }
-        // THE WARM TARGET: the session builds into its slot's directory, kept between sessions
-        // and worktrees (cargo's fingerprints cover the different checkout), so a second session
-        // on a bead recompiles only what changed. The slot's lock is held until this returns.
-        let graph_only = self.rune.graph_only;
-        let mut warm_slot = None;
-        let _warm = if graph_only {
-            self.log(&format!("{}: graph-only rune — no warm target or cold-build slot", self.f()));
-            None
+        // THE OWNED BUILD DIRECTORY (sp-ke0uk8; spira-config build_dir): a rune that compiles
+        // leases ONE cargo target on the compile disk for its whole bead, held until teardown —
+        // the most recently idled one, selectively cleaned for this tree, never one another
+        // session holds. Nothing trims it while it builds, and no build of this session goes
+        // anywhere else. A rune that does not compile leases nothing and builds nowhere warm.
+        if self.rune.builds {
+            self.lease_build_dir(work)?;
         } else {
-            let warm_base = self.conf.s(spira_config::build::DWARF_WARM_BASE_ENV);
-            if warm_base.is_empty() {
-                return Err(Abort::Harness(format!("{} is not set — the dwarf warm slots have no home; set dwarf_warm_base in the config document", spira_config::build::DWARF_WARM_BASE_ENV)));
-            }
-            let warm_base = PathBuf::from(warm_base);
-            let cap_mib = self.conf.i(spira_config::build::DWARF_WARM_CAP_ENV).max(1) as u64;
-            if !spira_config::build::on_tmpfs(&warm_base) {
-                self.log(&format!("{}: warm base {} is not a tmpfs — builds write to its disk", self.f(), warm_base.display()));
-            }
-            match spira_config::build::acquire_warm(&warm_base, spira_config::build::DWARF_WARM_SLOTS) {
-                Some((dir, mut lock)) => {
-                    spira_config::build::note_holder(&mut lock, &bead);
-                    if spira_config::build::reap_for_build(&dir, cap_mib) {
-                        self.log(&format!("{}: warm target {} held over half of {cap_mib} MiB — started empty", self.f(), dir.display()));
-                    }
-                    for idle in spira_config::build::reap_idle(&warm_base, spira_config::build::DWARF_WARM_SLOTS, cap_mib, spira_config::build::DWARF_WARM_FULL_PCT) {
-                        self.log(&format!("{}: idle warm target {} emptied (over {cap_mib} MiB or the tmpfs is past {}%)", self.f(), idle.display(), spira_config::build::DWARF_WARM_FULL_PCT));
-                    }
-                    let spill = work.join("target");
-                    if spira_config::build::spill_if_full(&dir, &spill, spira_config::build::DWARF_WARM_FULL_PCT) {
-                        self.log(&format!("{}: warm tmpfs is past {}% — this session builds in {}", self.f(), spira_config::build::DWARF_WARM_FULL_PCT, spill.display()));
-                    }
-                    env.set("CARGO_TARGET_DIR", &dir.display().to_string());
-                    warm_slot = Some(crate::session::WarmSlot { dir: dir.clone(), cap_mib, every: crate::session::WARM_CHECK_EVERY, spill });
-                    Some(lock)
-                }
-                None => {
-                    self.log(&format!("{}: every warm target slot is busy — this session builds in its worktree", self.f()));
-                    None
-                }
-            }
-        };
-        let _cold = if graph_only { None } else { self.cold_slot(work, warm_slot.as_ref().map(|w| w.dir.as_path()))? };
+            self.log(&format!("{}: this rune does not build — no build directory", self.f()));
+        }
         // THE CALL JITTER (sp-f4ig1 §3.4): dwarves a pass called together start apart.
         let max = self.conf.i(spira_config::admission::JITTER_ENV).max(0) as u64;
         let seed = ((std::process::id() as u64) << 32)
@@ -1385,7 +1357,7 @@ impl<'a> Run<'a> {
             };
             (agent, argv, restrict::restricted_env(&bead, &child, &model_bin))
         };
-        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.rune.timeout_seconds, halted: Some(self.run_dir().join("world.halted")), warm: warm_slot };
+        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.rune.timeout_seconds, halted: Some(self.run_dir().join("world.halted")) };
         let launched = self.now();
         let rc = self.d.launcher.run(&spec, &self.stop);
         self.s.session_wall_s = Some((self.now() - launched).max(0));
@@ -1396,43 +1368,60 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    /// The host-wide cold-build slot (`Pool::Cold`): a session whose first build is cold waits
-    /// here, saying so, until the one running cold build's hold ends. A warm session passes.
-    fn cold_slot(&mut self, work: &Path, warm: Option<&Path>) -> Result<Option<spira_config::admission::Hold>, Abort> {
-        use spira_config::admission as adm;
-        let title = self.s.claimed.as_ref().and_then(|c| c.title.clone()).unwrap_or_default();
-        let base = self.s.base_fq.clone();
-        let touched: Vec<String> = if base.is_empty() {
-            Vec::new()
-        } else {
-            let o = self.d.git.git(work, &["diff", "--name-only", &format!("{base}...HEAD")]);
-            if o.success() { o.stdout.lines().map(str::to_string).collect() } else { Vec::new() }
-        };
-        let target = warm.map(Path::to_path_buf).unwrap_or_else(|| work.join("target"));
-        let Some(why) = adm::cold_reason(&title, &touched).or_else(|| adm::target_is_cold(&target).then(|| format!("no warm target at {}", target.display()))) else {
-            return Ok(None);
-        };
-        let bead = self.s.bead.clone();
-        let q = adm::Request { run: &self.conf.run, pool: adm::Pool::Cold, holder_pid: std::process::id(), who: &bead, inherit: None, weight: 1 };
-        let size_of = || adm::size_from_env(adm::Pool::Cold);
-        let sleep = |d: Duration| (self.d.sleep)(d);
-        let seams = adm::Seams { size_of: &size_of, procs: &adm::RealProcs, sleep: &sleep };
+    /// Lease this session's owned build directory and point every build at it (sp-ke0uk8):
+    /// `CARGO_TARGET_DIR` in the session's environment, which the agent's cargo, `testenv`'s
+    /// unit run and `work checks` all resolve. Never waits: a lease takes an idle directory or
+    /// makes a new one. Then idle directories over the disk budget go, least recently used first.
+    fn lease_build_dir(&mut self, work: &Path) -> Result<(), Abort> {
+        use spira_config::build_dir as bd;
         let f = self.f().to_string();
-        let mut waiting = false;
-        let mut say = |l: &str| {
-            waiting = true;
-            self.log(&format!("{f}: waiting on cold-build slot ({why}): {l}"));
-        };
-        let stop = &self.stop;
-        let wait = stop.harness_waiting(util::now_epoch());
-        let guard = adm::acquire_unless(&q, &seams, &mut say, &|| stop.signalled().is_some());
-        drop(wait);
-        let Some(guard) = guard else {
-            self.check_stop()?;
-            return Ok(None);
-        };
-        self.log(&format!("{f}: cold build ({why}) — holds the cold-build slot{}", if waiting { " after waiting" } else { "" }));
-        Ok(Some(adm::Hold::new(guard, Duration::from_secs(adm::COLD_HOLD_SECS))))
+        if self.s.build_dir.is_none() {
+            let base = self.conf.s(bd::BASE_ENV);
+            if base.is_empty() {
+                return Err(Abort::Harness(format!("{} is not set — a building dwarf has no build directory; set dwarf_build_base in the config document", bd::BASE_ENV)));
+            }
+            let base = PathBuf::from(base);
+            let lease = bd::lease(&base, &self.s.bead).map_err(|e| Abort::Harness(format!("cannot lease a build directory under {}: {e}", base.display())))?;
+            let dir = lease.dir().to_path_buf();
+            self.log(&format!("{f}: build directory {} — {}", dir.display(), if lease.reused { "warm: the most recently idled one" } else { "new" }));
+            // The shared selective clean: only the workspace crates whose bytes differ from the
+            // tree this directory last built. A clean that cannot run leaves the directory
+            // untrusted, so it is emptied — cold, never wrong.
+            let path = self.d.env.child().get("PATH").cloned().unwrap_or_default();
+            match bd::clean(&self.home().join(bd::CLEAN_SCRIPT), work, &dir, &path, false) {
+                Ok(out) => {
+                    for l in out.lines().filter(|l| !l.trim().is_empty()) {
+                        self.log(&format!("{f}: {l}"));
+                    }
+                }
+                Err(e) => {
+                    self.log(&format!("{f}: selective clean of {} failed ({e}) — emptied, this session builds cold", dir.display()));
+                    bd::empty(&dir);
+                }
+            }
+            let budget = (self.conf.i(bd::BUDGET_ENV).max(0) as u64).saturating_mul(1 << 30);
+            for gone in bd::evict_idle(&base, budget) {
+                self.log(&format!("{f}: evicted idle build directory {} (over the {} GiB budget)", gone.display(), budget >> 30));
+            }
+            self.s.build_dir = Some(lease);
+        }
+        if let Some(l) = &self.s.build_dir {
+            self.d.env.set("CARGO_TARGET_DIR", &l.dir().display().to_string());
+        }
+        Ok(())
+    }
+
+    /// Release the build directory to idle at the end of the run, recording the worktree's tree
+    /// as the one it holds, so the next lease cleans exactly what differs from it.
+    pub fn release_build_dir(&mut self) {
+        let Some(lease) = self.s.build_dir.take() else { return };
+        if let Some(work) = self.s.work.clone().filter(|w| w.is_dir()) {
+            let path = self.d.env.child().get("PATH").cloned().unwrap_or_default();
+            if let Err(e) = spira_config::build_dir::clean(&self.home().join(spira_config::build_dir::CLEAN_SCRIPT), &work, lease.dir(), &path, true) {
+                self.log(&format!("{}: could not record the tree {} holds ({e}) — the next lease cleans its workspace crates", self.f(), lease.dir().display()));
+            }
+        }
+        lease.release();
     }
 
     /// The session-id arguments for this launch. A checkpoint left by a world stop is

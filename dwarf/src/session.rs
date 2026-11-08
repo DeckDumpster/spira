@@ -67,16 +67,6 @@ impl Drop for HarnessWait<'_> {
     }
 }
 
-/// A warm build slot held to `cap_mib` while the session runs, looked at every `every`.
-#[derive(Debug, Clone)]
-pub struct WarmSlot {
-    pub dir: PathBuf,
-    pub cap_mib: u64,
-    pub every: Duration,
-    /// Where the build continues when trimming `incremental` leaves the slot over the cap.
-    pub spill: PathBuf,
-}
-
 /// Everything one session launch needs.
 #[derive(Debug, Clone)]
 pub struct SessionSpec {
@@ -90,16 +80,12 @@ pub struct SessionSpec {
     pub timeout: Option<u64>,
     /// The world-halted stamp: while it exists, a signal waits for a turn boundary first.
     pub halted: Option<PathBuf>,
-    /// The warm slot this session builds in and the MiB it may hold: checked while it runs.
-    pub warm: Option<WarmSlot>,
 }
 
 pub trait Launcher: Send + Sync {
     /// Runs the session to its end; its exit code (124 on timeout, 128+sig when signalled).
     fn run(&self, spec: &SessionSpec, stop: &Stop) -> i32;
 }
-
-pub const WARM_CHECK_EVERY: Duration = Duration::from_secs(5);
 
 pub struct RealLauncher;
 
@@ -129,27 +115,7 @@ impl Launcher for RealLauncher {
         let mut timed_out = false;
         let mut forwarded = false;
         let mut signalled_at: Option<Instant> = None;
-        let mut warm_checked = Instant::now();
-        let mut spilled = spec.warm.as_ref().is_some_and(|w| spira_config::build::is_spilled(&w.dir));
         let code = loop {
-            if let Some(w) = spec.warm.as_ref().filter(|_| !spilled) {
-                if warm_checked.elapsed() >= w.every {
-                    warm_checked = Instant::now();
-                    if spira_config::build::enforce_cap(&w.dir, w.cap_mib) {
-                        let say = |m: String| {
-                            if let Ok(mut f) = OpenOptions::new().append(true).open(&spec.log) {
-                                use std::io::Write;
-                                let _ = writeln!(f, "{m}");
-                            }
-                        };
-                        say(format!("dwarf: warm target {} passed {} MiB — trimmed while the session ran", w.dir.display(), w.cap_mib));
-                        if spira_config::build::spill(&w.dir, &w.spill, w.cap_mib) {
-                            spilled = true;
-                            say(format!("dwarf: warm target {} still over {} MiB — the build continues in {}", w.dir.display(), w.cap_mib, w.spill.display()));
-                        }
-                    }
-                }
-            }
             match child.try_wait() {
                 Ok(Some(s)) => break util::exit_code(s),
                 Ok(None) => {}
@@ -171,11 +137,6 @@ impl Launcher for RealLauncher {
             std::thread::sleep(Duration::from_millis(100));
         };
         stop.pgid.store(0, Ordering::SeqCst);
-        if spilled {
-            if let Some(w) = &spec.warm {
-                spira_config::build::unspill(&w.dir);
-            }
-        }
         if timed_out {
             124
         } else {
