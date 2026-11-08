@@ -2870,11 +2870,15 @@ fn sweep_scratch(deps: &Deps) {
 /// same `.out`/`.result` files and verdict as the container path; no image, volume or test DB.
 fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume: &str, results: &Path) -> Finish {
     let script = crate::unit::SCRIPT;
-    let root = s.sandbox_target_root.trim();
-    if root.is_empty() {
+    // THE SESSION'S ONE TARGET (sp-ke0uk8): a dwarf session's owned build directory, else the
+    // branch's own under the sandbox root.
+    let base = spira_config::process::cfg(spira_config::build_dir::BASE_ENV).ok().filter(|b| !b.is_empty()).map(PathBuf::from);
+    let owned = spira_config::build_dir::owned((deps.env)("CARGO_TARGET_DIR").map(Into::into), base.as_deref());
+    let is_owned = owned.is_some();
+    let Some(target) = crate::sandbox::unit_target(owned, &s.sandbox_target_root, volume) else {
         deps.log("unit-tests: runner=sandbox needs SPIRA_TESTENV_SANDBOX_TARGET_ROOT (where each branch's cargo target lives) — set it, or run with --runner container");
         return Finish::fault(2, "sandbox-target-root", 0);
-    }
+    };
     if let Err(e) = crate::sandbox::usable("bwrap") {
         deps.log(&format!("unit-tests: runner=sandbox: {e} — run with --runner container, or set SPIRA_TESTENV_UNIT_RUNNER=container"));
         return Finish::fault(2, "sandbox-unusable", 0);
@@ -2883,7 +2887,6 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
         deps.log("unit-tests: runner=sandbox: HOME is not set — the sandbox replaces it and binds the toolchain back under it");
         return Finish::fault(2, "sandbox-home", 0);
     };
-    let target = crate::sandbox::target_dir(Path::new(root), volume);
     let _ = fs::create_dir_all(&target);
     crate::sandbox::touch(&target);
     let threads = (deps.env)("RUST_TEST_THREADS").and_then(|v| v.trim().parse().ok()).unwrap_or(4);
@@ -2897,7 +2900,9 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
             return Finish::fault(2, "sandbox-start", 0);
         }
     };
-    for gone in crate::sandbox::prune_targets(Path::new(root), &target, s.sandbox_target_keep) {
+    let root = s.sandbox_target_root.trim();
+    let pruned = if !is_owned && !root.is_empty() { crate::sandbox::prune_targets(Path::new(root), &target, s.sandbox_target_keep) } else { Vec::new() };
+    for gone in pruned {
         deps.log(&format!("unit-tests: pruned the least recently used sandbox target {}", gone.display()));
     }
     let text = fs::read_to_string(&out).unwrap_or_default();

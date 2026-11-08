@@ -122,8 +122,8 @@ ready_out="$("${INSTALL_EXEC[@]}" \
 want "ready.sh: world not halted"     "pass  world not halted"       "$ready_out"
 want "ready.sh: database readable"    "pass  database readable"      "$ready_out"
 want "ready.sh: loom probe passes"    "loom answers 200"              "$ready_out"
-want "ready.sh: dwarf warm base is a writable directory" "pass  dwarf warm base" "$ready_out"
-nowant "ready.sh: dwarf warm base is not missing" "dwarf warm base .* is not a writable directory" "$ready_out"
+want "ready.sh: dwarf build base is a writable directory" "pass  dwarf build base" "$ready_out"
+nowant "ready.sh: dwarf build base is not missing" "dwarf build base .* is not a writable directory" "$ready_out"
 
 # ===========================================================================
 echo

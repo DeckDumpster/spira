@@ -182,6 +182,13 @@ pub fn statute_check_report(registry: &str, plan: &str, text_of: impl Fn(&str) -
     Ok(Some((out, note)))
 }
 
+/// The cargo target a `work checks` build writes to: the session's `CARGO_TARGET_DIR` — its owned
+/// build directory (sp-ke0uk8), selectively cleaned for this worktree at lease — when it has one,
+/// else the worktree's own `target/`. Never a second tree beneath it: one directory per bead.
+pub fn check_target(var: Option<std::ffi::OsString>, root: &std::path::Path) -> std::path::PathBuf {
+    var.map(std::path::PathBuf::from).unwrap_or_else(|| root.join("target"))
+}
+
 /// `crates` as the words to append to a cargo command: `-p a -p b`, empty when nothing buildable changed.
 pub fn crates_words(crates: &[String]) -> String {
     crates.iter().map(|c| format!("-p {c}")).collect::<Vec<_>>().join(" ")
@@ -324,6 +331,14 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_checks_build_resolves_to_the_sessions_owned_build_directory() {
+        let root = std::path::Path::new("/w/sp-x");
+        let owned = std::path::Path::new("/srv/ssd-b/dwarf-build/dir.3");
+        assert_eq!(check_target(Some(owned.as_os_str().to_os_string()), root), owned, "the owned directory itself, never a second tree beneath it");
+        assert_eq!(check_target(None, root), root.join("target"), "no session target: the worktree's own");
+    }
 
     #[test]
     fn accepts_bound_bead_everywhere() {

@@ -53,7 +53,7 @@ pub struct Fake {
     pub sccache_help: RefCell<Option<String>>,
     pub sccache_show_stats: RefCell<Option<String>>,
     pub sccache_dav_addr: RefCell<Option<String>>,
-    pub warm_base: RefCell<Option<PathBuf>>,
+    pub build_base: RefCell<Option<PathBuf>>,
     pub tmpfs: RefCell<Vec<PathBuf>>,
     pub daemon_bases: RefCell<Vec<String>>,
     pub hooks_path: RefCell<Option<String>>,
@@ -107,7 +107,7 @@ impl Default for Fake {
             sccache_help: RefCell::new(None),
             sccache_show_stats: RefCell::new(None),
             sccache_dav_addr: RefCell::new(None),
-            warm_base: RefCell::new(None),
+            build_base: RefCell::new(None),
             tmpfs: RefCell::new(Vec::new()),
             daemon_bases: RefCell::new(Vec::new()),
             hooks_path: RefCell::new(None),
@@ -247,8 +247,8 @@ impl World for Fake {
     fn sccache_dav_addr(&self) -> Option<String> {
         self.sccache_dav_addr.borrow().clone()
     }
-    fn dwarf_warm_base(&self) -> Option<PathBuf> {
-        self.warm_base.borrow().clone()
+    fn dwarf_build_base(&self) -> Option<PathBuf> {
+        self.build_base.borrow().clone()
     }
     fn on_tmpfs(&self, p: &Path) -> bool {
         self.tmpfs.borrow().iter().any(|t| p.starts_with(t))
@@ -648,23 +648,23 @@ fn sccache_present_but_unresponsive_to_help_fails() {
     assert!(lines[0].msg.contains("did not answer --help"), "{:?}", lines[0].msg);
 }
 
-// -------------------------------------------------------- dwarf warm slots
+// -------------------------------------------------------- dwarf build directories (sp-ke0uk8)
 
 #[test]
-fn warm_base_check_names_an_unset_key_a_base_off_tmpfs_and_a_good_one() {
+fn build_base_check_names_an_unset_key_a_base_in_ram_and_a_good_one() {
     let f = Fake::default();
-    let unset = check_dwarf_warm(&f);
+    let unset = check_dwarf_build(&f);
     assert_eq!(levels(&unset), vec![Level::Fail]);
-    assert!(unset[0].msg.contains("SPIRA_DWARF_WARM_BASE"), "{:?}", unset[0].msg);
-    assert!(unset[0].detail.as_deref().unwrap_or("").contains("dwarf_warm_base"), "{:?}", unset[0].detail);
+    assert!(unset[0].msg.contains("SPIRA_DWARF_BUILD_BASE"), "{:?}", unset[0].msg);
+    assert!(unset[0].detail.as_deref().unwrap_or("").contains("dwarf_build_base"), "{:?}", unset[0].detail);
 
-    *f.warm_base.borrow_mut() = Some("/var/warm".into());
-    let off = check_dwarf_warm(&f);
-    assert_eq!(levels(&off), vec![Level::Warn], "planted offender: a base on the root disk must be caught");
-    assert!(off[0].msg.contains("not a tmpfs"), "{:?}", off[0].msg);
+    *f.build_base.borrow_mut() = Some("/srv/ssd-b/dwarf-build".into());
+    assert_eq!(levels(&check_dwarf_build(&f)), vec![Level::Ok], "a base on the compile disk is good");
 
-    f.tmpfs.borrow_mut().push("/var".into());
-    assert_eq!(levels(&check_dwarf_warm(&f)), vec![Level::Ok]);
+    f.tmpfs.borrow_mut().push("/srv/ssd-b".into());
+    let ram = check_dwarf_build(&f);
+    assert_eq!(levels(&ram), vec![Level::Warn], "planted offender: a base in RAM must be caught");
+    assert!(ram[0].msg.contains("tmpfs"), "{:?}", ram[0].msg);
 }
 
 // -------------------------------------------------------- compilation cache backend (sp-xtdqi)

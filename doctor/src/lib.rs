@@ -78,7 +78,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "time series query layer", lines: check_duckdb(w) },
         Section { title: "compilation cache", lines: check_sccache(w) },
         Section { title: "compilation cache backend", lines: check_sccache_backend(w) },
-        Section { title: "dwarf warm slots", lines: check_dwarf_warm(w) },
+        Section { title: "dwarf build directories", lines: check_dwarf_build(w) },
         Section { title: "round-vm mirror", lines: check_round_vm_mirror(w) },
         Section { title: "events substrate", lines: check_events_probe(w) },
         Section {
@@ -610,21 +610,22 @@ pub fn check_sccache_backend(w: &dyn World) -> Vec<Line> {
     }
 }
 
-// ============================================================================ dwarf warm slots
+// ============================================================================ dwarf build directories
 
-/// Detects drift, never repairs it: the base is a mount the operator owns, and a base that fell
-/// back to the root disk puts every dwarf build's writes on the store's disk.
-pub fn check_dwarf_warm(w: &dyn World) -> Vec<Line> {
-    let Some(base) = w.dwarf_warm_base() else {
-        return vec![fail("SPIRA_DWARF_WARM_BASE is not set", "dwarf sessions refuse to start without it; set dwarf_warm_base (the config document) to a directory on a tmpfs.")];
+/// Detects drift, never repairs it (sp-ke0uk8): every building dwarf leases its one cargo target
+/// under this base, so an unset base is a loop that can build nothing, and a base on a tmpfs puts
+/// 20-45 GiB targets in RAM.
+pub fn check_dwarf_build(w: &dyn World) -> Vec<Line> {
+    let Some(base) = w.dwarf_build_base() else {
+        return vec![fail("SPIRA_DWARF_BUILD_BASE is not set", "building dwarves refuse to start without it; set dwarf_build_base (the config document) to a directory on the compile disk.")];
     };
-    if !w.on_tmpfs(&base) {
+    if w.on_tmpfs(&base) {
         return vec![warn(
-            format!("dwarf warm base {} is not a tmpfs", base.display()),
-            "incremental builds write tens of MB/s there and starve the store's disk. Mount a tmpfs on it (fstab) or point dwarf_warm_base at one.",
+            format!("dwarf build base {} is on a tmpfs", base.display()),
+            "each owned build directory holds a whole cargo target (20-45 GiB) for a session's life; RAM cannot hold them. Point dwarf_build_base at the compile disk (SSD-B).",
         )];
     }
-    vec![ok(format!("dwarf warm base {} is a tmpfs", base.display()))]
+    vec![ok(format!("dwarf build base {}", base.display()))]
 }
 
 // ============================================================================ round-vm mirror

@@ -1048,7 +1048,7 @@ pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, Str
         ("spira.repo_map".to_string(), world.join(HOME).join(REGISTRY_ROWS).display().to_string()),
         ("spira.home_repo".to_string(), REPO_NAME.to_string()),
         ("spira.agent".to_string(), world.join("bin").join(AGENT_LAUNCHER).display().to_string()),
-        ("spira.dwarf_warm_base".to_string(), world.join("warm").display().to_string()),
+        ("spira.dwarf_build_base".to_string(), world.join("build").display().to_string()),
         ("spira.call_jitter".to_string(), "0".to_string()),
     ]
 }
