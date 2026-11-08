@@ -15,6 +15,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use spira_config::lc_call::LcError;
+
 use crate::bead::{self, Bd};
 use crate::lc::{self, Lc, Lift};
 use crate::maildir;
@@ -101,11 +103,6 @@ fn tally<'a>(s: Step, name: &'a str, converged: &mut bool, abandoned: &mut Vec<&
     }
 }
 
-/// Whether `err` is the lifecycle machine's refusal (exit 3), which is reported, not retried.
-pub fn is_refusal(err: &str) -> bool {
-    err.contains("exited 3")
-}
-
 /// One alert row in the Concierge's mailbox under `mail_root`.
 pub fn inbox_row(mail_root: &Path, subject: &str, body: &str) -> Result<(), String> {
     let dir = mail_root.join("concierge");
@@ -148,7 +145,7 @@ fn apply(bd: &dyn Bd, lc: &dyn Lc, mail_root: &Path, reply: &str, key: &str, don
                 done.mark("close");
             }
             Err(_) if bead::bead_status(bd, true, &orig_bead).as_deref() == Some("closed") => done.mark("close"),
-            Err(e) if is_refusal(&e) => {
+            Err(LcError::Refused(e)) => {
                 let n = step(done, "refused-note", || bead::note(bd, &orig_bead, &format!("Answer from {actor} to \"{orig_subject}\" (not applied as a close: {e}): {para}")));
                 let i = step(done, "refused-inbox", || {
                     inbox_row(mail_root, &format!("Mail reply to {orig_bead} refused as a close"), &format!("{actor} replied to \"{orig_subject}\" (thread bead {orig_bead}); the lifecycle refused the close: {e}\nThe answer is noted on {orig_bead}:\n{para}"))
@@ -160,7 +157,7 @@ fn apply(bd: &dyn Bd, lc: &dyn Lc, mail_root: &Path, reply: &str, key: &str, don
                     converged = false;
                 }
             }
-            Err(e) => {
+            Err(LcError::Fault(e)) => {
                 let s = step(done, "close", || Err(e));
                 tally(s, "close", &mut converged, &mut abandoned);
             }
@@ -429,7 +426,7 @@ mod tests {
         let fx = Fx::new();
         let q = fx.question("archivist", "X-Spira-Bead: sp-work1\n");
         fx.reply(&q, "ans-1", "Prove it on a copy.");
-        let refuse = || BdOut::fail(1, "spira-lc close sp-work1 exited 3: a work bead in READY is not closed by a mail reply");
+        let refuse = || BdOut::fail(3, "spira-lc close sp-work1: a work bead in READY is not closed by a mail reply");
         let bd = FakeBd::new(vec![refuse(), BdOut::ok("{}"), BdOut::ok("")]);
         let lc = FakeLc::new(0);
         let r = fx.pass(&bd, &lc);

@@ -2,7 +2,7 @@
 //! verb on [`LcClient`] — in-process, no `bdq` child. It reads only: a close, an ask or any
 //! write is refused, because the content door serves none of them.
 
-use spira_config::lc_call::LcClient;
+use spira_config::lc_call::{LcClient, LcError};
 
 use crate::bead::{Bd, BdOut};
 
@@ -22,8 +22,8 @@ impl Bd for ContentBd<'_> {
         }
     }
 
-    fn close(&self, id: &str, _: &str) -> BdOut {
-        BdOut::fail(3, format!("ContentBd reads only; refusing to close {id}"))
+    fn close(&self, id: &str, _: &str) -> Result<(), LcError> {
+        Err(LcError::Refused(format!("ContentBd reads only; refusing to close {id}")))
     }
 
     fn ensure_ask(&self, id: &str, _: &str) -> Result<(), String> {

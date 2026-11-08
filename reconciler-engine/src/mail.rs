@@ -72,8 +72,8 @@ mod tests {
         fn run(&self, args: &[String], _stdin: Option<&str>) -> BdOut {
             BdOut::fail(1, format!("no store in this test: {args:?}"))
         }
-        fn close(&self, id: &str, _reason: &str) -> BdOut {
-            BdOut::fail(1, format!("no store in this test: close {id}"))
+        fn close(&self, id: &str, _reason: &str) -> Result<(), spira_config::lc_call::LcError> {
+            Err(spira_config::lc_call::LcError::Fault(format!("no store in this test: close {id}")))
         }
         fn ensure_ask(&self, id: &str, _work: &str) -> Result<(), String> {
             Err(format!("no store in this test: ask {id}"))
