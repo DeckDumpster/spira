@@ -45,6 +45,9 @@ const PAGE: usize = 1_000;
 /// The most audit keys one answer reads, whatever the window: the read stays bounded.
 pub const MAX_SCANNED: usize = 60_000;
 
+/// How far back the index keeps Delivered times, whatever window was asked.
+const DELIVERED_KEPT_S: i64 = 7 * 86_400;
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Waiting {
     pub id: String,
@@ -145,6 +148,13 @@ impl LastIndex {
         self.delivered.iter().filter_map(|(repo, ats)| Some((repo.clone(), *ats.range(from + 1..).next()?))).collect()
     }
 
+    /// The range just folded reached `oldest`: only now does the index claim coverage that far.
+    fn reached(&mut self, oldest: Option<i64>) {
+        if let Some(o) = oldest {
+            self.horizon = self.horizon.min(o);
+        }
+    }
+
     /// `last` without what is older than `floor`.
     fn last_since(&self, floor: i64) -> BTreeMap<String, BTreeMap<String, i64>> {
         self.last
@@ -191,8 +201,9 @@ impl<B: Backend> Store<B> {
         }
         if idx.high_rev < head {
             let after = events_key(idx.high_rev);
-            self.scan(&mut idx, Some(after), events_key(head), head, &mut d.scanned, &mut repo)?;
+            let oldest = self.scan(&mut idx, Some(after), events_key(head), head, &mut d.scanned, &mut repo)?;
             idx.high_rev = head;
+            idx.reached(oldest);
         }
         let mut span = CHUNK_REVS;
         while idx.horizon > floor && idx.low_rev > 0 && d.scanned < MAX_SCANNED {
@@ -200,6 +211,7 @@ impl<B: Backend> Store<B> {
             let lo = hi.saturating_sub(span);
             let oldest = self.scan(&mut idx, Some(events_key(lo)), events_key(hi), head, &mut d.scanned, &mut repo)?;
             idx.low_rev = lo;
+            idx.reached(oldest);
             // Revisions with no audit (lock renewals, a reopen's jump, the import's baseline)
             // are crossed in doubling strides, so a gap costs a few reads, not one per chunk.
             span = if oldest.is_some() { CHUNK_REVS } else { (span * 2).min(CHUNK_REVS * 64) };
@@ -209,6 +221,7 @@ impl<B: Backend> Store<B> {
         if d.complete {
             d.horizon = d.horizon.min(floor);
         }
+        idx.delivered.values_mut().for_each(|ats| ats.retain(|at| *at >= now - DELIVERED_KEPT_S));
         d.last = idx.last_since(floor);
         if let Some(t) = landed_after {
             d.landed_after = idx.landed_after(t, floor);
@@ -217,7 +230,7 @@ impl<B: Backend> Store<B> {
     }
 
     /// Folds the audits of the `events/` keys after `after` up to and including `end`, as of
-    /// `head`; the oldest audit time seen, which also lowers the index's horizon.
+    /// `head`; the oldest audit time seen. The caller lowers the horizon once the range is done.
     fn scan(&self, idx: &mut LastIndex, mut after: Option<String>, end: String, head: u64, scanned: &mut usize, repo: &mut impl FnMut(&str) -> Result<Option<String>>) -> Result<Option<i64>> {
         let mut oldest = None::<i64>;
         loop {
@@ -232,7 +245,6 @@ impl<B: Backend> Store<B> {
                     let (named, at) = bead_audit(a);
                     let Some(at) = at else { continue };
                     oldest = Some(oldest.map_or(at, |o| o.min(at)));
-                    idx.horizon = idx.horizon.min(at);
                     if let Some((event, id)) = named {
                         idx.fold(event, id, at, repo)?;
                     }
