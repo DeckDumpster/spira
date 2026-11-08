@@ -237,6 +237,34 @@ fn t3_a_red_certify_ejects_the_guilty_then_abandons() {
     assert_eq!((after[eject].1.why.as_str(), after[eject].1.bead.as_str()), ("/run/certify-r9.out", ""), "the guilty are read from the output");
 }
 
+/// A red certify with no `red-output=` still names its suites and verdict line in the abandon
+/// act (sp-7yu70y): the Concierge attributes the red from the reason, not from a guess.
+#[test]
+fn sp_7yu70y_a_red_certify_abandons_naming_its_verdict_and_red_suites() {
+    let mut r = carried(&driving(State::Certifying, "spira.c3"));
+    let n = r.requested().len();
+    let out = "queue.sh round certify: round r9 is RED at abc123: test-a.sh,test-b.sh\nred=test-a.sh,test-b.sh\n";
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), out)).unwrap();
+    let after = asked_after(&r, n);
+    let abandon = after.iter().find(|(e, _)| e == ABANDON).unwrap_or_else(|| panic!("no abandon: {after:?}")).1.clone();
+    assert!(abandon.why.contains("round r9 is RED at abc123"), "{}", abandon.why);
+    assert!(abandon.why.contains("test-a.sh") && abandon.why.contains("test-b.sh"), "{}", abandon.why);
+    assert_eq!(abandon.reds, ["test-a.sh", "test-b.sh"]);
+}
+
+#[test]
+fn sp_7yu70y_a_red_certify_with_only_a_red_line_or_nothing_still_says_what_it_had() {
+    for (out, want, reds) in [("red=test-a.sh\n", "test-a.sh", vec!["test-a.sh"]), ("", "no verdict and no suite", vec![])] {
+        let mut r = carried(&driving(State::Certifying, "spira.c3"));
+        let n = r.requested().len();
+        r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), out)).unwrap();
+        let after = asked_after(&r, n);
+        let abandon = &after.iter().find(|(e, _)| e == ABANDON).unwrap().1;
+        assert!(abandon.why.contains(want), "{}", abandon.why);
+        assert_eq!(abandon.reds, reds);
+    }
+}
+
 // --- sp-8nlvra: a held or skipping repo names why, and a red round's pause ends on a landing ---
 
 /// `spira` with one admissible member, under the pause a red round wrote at base `b0`.
