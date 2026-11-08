@@ -1044,7 +1044,7 @@ impl Machine<'_> {
                 }
                 Some(Attribution::Fault(why)) => {
                     self.go(Trigger::RerunBlocked);
-                    self.abandon(&why);
+                    self.abandon_naming(&why, Vec::new());
                     self.finish(pace::Outcome::NoVm, &why);
                 }
                 Some(Attribution::Blocked(why)) => {
