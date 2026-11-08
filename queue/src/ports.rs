@@ -335,6 +335,9 @@ pub trait Scripts {
     /// The declared release's own `release` binary (`$SPIRA_RELEASE/bin/release`), for a step with
     /// no round bin-dir; a refusal naming `SPIRA_RELEASE` when it is not declared.
     fn release_tool(&self) -> Result<PathBuf, String>;
+    /// Stops every live unit and scope the legs of `batch` in `repo` run in and waits for each to
+    /// exit: the names it stopped. `Err` when one outlived the wait or the units cannot be read.
+    fn stop_round_legs(&self, repo: &str, batch: &str) -> Result<Vec<String>, String>;
     /// A user unit's `ActiveState` (`systemctl --user show -p ActiveState --value`); empty when unreadable.
     fn unit_active_state(&self, unit: &str) -> String;
     /// `round-vm run <tree> --results-dir <results> --base <base> --round-batch <batch> --round-repo <repo>` under `timeout <wall_secs>`: the full

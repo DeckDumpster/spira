@@ -4510,6 +4510,20 @@ fn void_stacked(w: &World, label: &str, c: &Ctx, path: &Path, parent: &str) -> R
 fn close_abandoned(w: &World, label: &str, c: &Ctx, path: &Path, kv: &Kv, reason: &str, cause: &str) -> i32 {
     let batch = kv.get("batch_id").unwrap_or("");
     let members = kv.members();
+    let stopped = match w.scripts.stop_round_legs(&c.r.name, batch) {
+        Ok(units) => units,
+        Err(e) => {
+            w.err(format!("queue.sh {label}: round {batch} still has a leg running ({e}) — the round stays open and its tree is kept"));
+            return FAIL;
+        }
+    };
+    let reason = &match stopped.is_empty() {
+        true => reason.to_string(),
+        false => {
+            w.out(format!("queue.sh {label}: stopped {} of round {batch}", stopped.join(" ")));
+            format!("{reason} — stopped {}", stopped.join(" "))
+        }
+    };
     let why = bounded_text(reason);
     match lc_abandon(w, batch, LC_ACTOR, &why) {
         Ok(()) => {

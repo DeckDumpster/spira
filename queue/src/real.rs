@@ -1069,6 +1069,11 @@ impl Scripts for RealScripts {
             },
         }
     }
+    fn stop_round_legs(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
+        let units = runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock)).map_err(|e| e.0)?;
+        let cgroup = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+        runtime::units::stop_round_legs(&units, repo, batch, &|name| cgroup.contains(name))
+    }
     fn unit_active_state(&self, unit: &str) -> String {
         #[cfg(target_os = "linux")]
         {

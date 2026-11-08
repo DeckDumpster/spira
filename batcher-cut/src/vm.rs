@@ -141,6 +141,7 @@ pub struct VmRunner<'a> {
     jobs: BTreeMap<u64, (String, String)>,
     verify_n: u32,
     corpus_runs: u32,
+    batch: Option<String>,
 }
 
 /// The member a `member=` line of the VM's lint report blames: the bead id after `land` in a
@@ -209,6 +210,12 @@ fn clear_results(results: &Path, suites: &[String]) {
 }
 
 impl<'a> VmRunner<'a> {
+    /// Names the round-vm scope after `batch`, so abandoning that batch stops it.
+    pub fn in_batch(mut self, batch: Option<&str>) -> Self {
+        self.batch = batch.map(str::to_string);
+        self
+    }
+
     pub fn new(env: &'a Env, repo: &'a Repo, wt: &Path, base_sha: &str, round: &str, changed: BTreeMap<Id, Vec<String>>) -> Result<Self, String> {
         let root = env.run.join("batch-results").join(format!("{}-{round}", repo.name));
         let spool = root.join("spool");
@@ -236,6 +243,7 @@ impl<'a> VmRunner<'a> {
             jobs: BTreeMap::new(),
             verify_n: 0,
             corpus_runs: 0,
+            batch: None,
         })
     }
 
@@ -427,7 +435,8 @@ impl RoundRunner for VmRunner<'_> {
                 // batch-job: this runs whatever its caller names, as long as that takes
                 // FORK-EDGE: needs a Units scope start (a CPU-quota scope whose process stays this one's child, stderr to a file); round-vm inside it is the machine leg
                 let mut cmd = Command::new("systemd-run");
-                cmd.args(scope_args(std::env::var("ROUND_CPU_QUOTA").ok().as_deref()));
+                let unit = self.batch.as_deref().map(|b| runtime::units::round_scope_unit(&self.repo.name, b, &format!("{}-{}", self.round, self.corpus_runs)));
+                cmd.args(scope_args(std::env::var("ROUND_CPU_QUOTA").ok().as_deref(), unit.as_deref()));
                 cmd.arg("timeout");
                 cmd.arg("-k").arg("10").arg(self.env.wall_secs.to_string());
                 cmd.arg(&self.env.round_vm).arg("run").arg(&self.wt);
@@ -702,9 +711,10 @@ mod tests {
 }
 
 /// sp-kzhg6: `systemd-run` args fencing the corpus run in a user scope with a CPUQuota.
-pub fn scope_args(quota: Option<&str>) -> Vec<String> {
+pub fn scope_args(quota: Option<&str>, unit: Option<&str>) -> Vec<String> {
     let q = quota.filter(|q| !q.is_empty()).unwrap_or("1600%");
-    ["--user", "--scope", "--quiet", "-p"].iter().map(|s| s.to_string()).chain([format!("CPUQuota={q}")]).collect()
+    let named = unit.map(|u| format!("--unit={u}"));
+    ["--user", "--scope", "--quiet"].iter().map(|s| s.to_string()).chain(named).chain(["-p".to_string(), format!("CPUQuota={q}")]).collect()
 }
 
 #[cfg(test)]
@@ -712,9 +722,18 @@ mod scope_tests {
     use super::scope_args;
     #[test]
     fn default_and_override_quota() {
-        assert!(scope_args(None).contains(&"CPUQuota=1600%".to_string()));
-        assert!(scope_args(Some("800%")).contains(&"CPUQuota=800%".to_string()));
-        assert!(scope_args(None).contains(&"--scope".to_string()));
+        assert!(scope_args(None, None).contains(&"CPUQuota=1600%".to_string()));
+        assert!(scope_args(Some("800%"), None).contains(&"CPUQuota=800%".to_string()));
+        assert!(scope_args(None, None).contains(&"--scope".to_string()));
+    }
+
+    #[test]
+    fn a_round_scope_is_named_so_its_abandon_can_find_it() {
+        let unit = runtime::units::round_scope_unit("spira", "spira-20261108T183608Z", "9-1");
+        let args = scope_args(None, Some(&unit));
+        assert!(args.contains(&format!("--unit={unit}")));
+        assert!(runtime::units::glob_match(&runtime::units::round_scope_glob("spira", "spira-20261108T183608Z"), &format!("{unit}.scope")));
+        assert!(!scope_args(None, None).iter().any(|a| a.starts_with("--unit")));
     }
 }
 

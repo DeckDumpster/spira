@@ -602,13 +602,12 @@ pub fn table_step<S: Copy + PartialEq + std::fmt::Debug, T: Copy + PartialEq + s
 
 /// A short stable digest of `s` (FNV-1a), so a unit name stays under systemd's bound.
 pub fn digest(s: &str) -> String {
-    let h = s.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3));
-    format!("{h:016x}")
+    runtime::units::digest(s)
 }
 
 /// The unit key of a leg: repo, round, what, run. Parsed back from `unit.ran` by `key_for`.
 pub fn unit_key(repo: &str, round: &str, what: &str, run: u32) -> String {
-    format!("{repo}.{}.{what}{run}", &digest(round)[..12])
+    format!("{}.{what}{run}", runtime::units::round_stem(repo, round))
 }
 
 /// The verdict line and the red suites a `queue round certify` leg printed.
