@@ -2890,6 +2890,7 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
     let _ = fs::create_dir_all(&target);
     crate::sandbox::touch(&target);
     let threads = (deps.env)("RUST_TEST_THREADS").and_then(|v| v.trim().parse().ok()).unwrap_or(4);
+    let root = s.sandbox_target_root.trim();
     let profile = crate::sandbox::Profile::for_run(tree, &target, Path::new(root), Path::new(&home), threads);
     let out = results.join(format!("{script}.out"));
     deps.log(&format!("unit-tests: runner=sandbox tree={} target={}", tree.display(), target.display()));
@@ -2900,7 +2901,6 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
             return Finish::fault(2, "sandbox-start", 0);
         }
     };
-    let root = s.sandbox_target_root.trim();
     let pruned = if !is_owned && !root.is_empty() { crate::sandbox::prune_targets(Path::new(root), &target, s.sandbox_target_keep) } else { Vec::new() };
     for gone in pruned {
         deps.log(&format!("unit-tests: pruned the least recently used sandbox target {}", gone.display()));
