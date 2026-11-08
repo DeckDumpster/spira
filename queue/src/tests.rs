@@ -1912,17 +1912,24 @@ fn step_queue_local_publishes_with_stderr_folded_into_stdout() {
     t.git.set("refs/heads/local/main", "f0");
     let rc = t.run(&["step", "spira"]);
     assert_eq!(rc, 0);
-    // the verdict runs in process (nothing to settle) and batch.sh's old sweep is retired
-    // (sp-uwhx0) — with no batcher configured, the cut refuses before calling anything, so
-    // no Scripts call happens at all.
     assert!(
         t.scripts.calls.borrow().is_empty(),
         "{:?}",
         t.scripts.calls.borrow()
     );
-    // the missing batcher's refusal is on stderr (it is _batch_cut's own), the publish's on stdout
-    assert!(t.err().contains("no batcher program"));
     assert!(t.out().contains("nothing to publish for spira"));
+}
+
+#[test]
+fn step_never_cuts_a_round_even_with_a_batcher_program() {
+    for mode in [LandMode::QueueLocal, LandMode::Queue] {
+        let mut t = T::new(mode);
+        t.lib.s.batcher_bin = Some(std::path::PathBuf::from("batcher"));
+        t.run(&["step", "spira"]);
+        t.run(&["step", "--all"]);
+        let calls = t.scripts.calls.borrow().clone();
+        assert!(!calls.iter().any(|c| c.starts_with("cut ")), "{calls:?}");
+    }
 }
 
 #[test]

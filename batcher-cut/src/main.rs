@@ -182,9 +182,10 @@ fn cut(o: &Opts) -> Result<(), String> {
     }
 
     let wait_secs = cfg_parse::<u64>("SPIRA_QUEUE_LOCK_WAIT")?;
-    let Some(_lock) = io::wait_lock(&env_, &repo.name, wait_secs)? else {
+    let Some(lock) = io::wait_lock(&env_, &repo.name, wait_secs)? else {
         return Err(format!("{}: another operation holds the lock (waited {wait_secs}s)", repo.name));
     };
+    let _parked = io::park_queue_lock(lock);
 
     let screened = screen::cut_pool(io::certified_pool(&env_, &repo)?, &io::sifted_tips(&env_)?);
     let (pool, kind) = batcher::core::select_round(batcher::core::base_fix_lane(screened));
@@ -498,6 +499,19 @@ fn staged_worktree(env_: &Env, repo: &Repo) -> PathBuf {
 /// reds do not block (a base red is filed for Ops); an unattributed red or a workspace that
 /// does not build does. Returns `Ok(None)` for a blocked or emptied round — the caller opens
 /// no PR and changes no open-batch record, as if the round had never been cut.
+fn stabilize_unlocked(
+    env_: &Env,
+    repo: &Repo,
+    wt: &Path,
+    start_sha: &str,
+    starting: Vec<Member>,
+    batch: Option<&str>,
+    stage: &[Member],
+) -> Result<Option<StableRound>, String> {
+    let wait_secs = cfg_parse::<u64>("SPIRA_QUEUE_LOCK_WAIT")?;
+    io::unlocked(env_, &repo.name, batch, wait_secs, || stabilize_round(env_, repo, wt, start_sha, starting, batch, stage))?
+}
+
 fn stabilize_round(
     env_: &Env,
     repo: &Repo,
@@ -930,7 +944,7 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
 
     let merged_ids: Vec<&str> = combined.merged.iter().map(|m| m.id.as_str()).collect();
     let stage_pool: Vec<Member> = sorted.iter().filter(|m| !merged_ids.contains(&m.id.as_str())).cloned().collect();
-    let stable = match stabilize_round(env_, repo, &wt, &base_sha, combined.merged.clone(), batch.as_deref(), &stage_pool) {
+    let stable = match stabilize_unlocked(env_, repo, &wt, &base_sha, combined.merged.clone(), batch.as_deref(), &stage_pool) {
         Err(e) => {
             abandon(&e, "error");
             return Err(e);
@@ -1009,7 +1023,7 @@ fn follow_promoted(env_: &Env, repo: &Repo, pool: &[Member], p: io::Promotion) -
     let stable = if p.attested {
         StableRound { members, head: p.head.clone(), green_branch: String::new(), attribution_seconds: None, regreen_seconds: None, staged: None }
     } else {
-        match stabilize_round(env_, repo, &wt, &base_sha, members, Some(&p.batch), &[]) {
+        match stabilize_unlocked(env_, repo, &wt, &base_sha, members, Some(&p.batch), &[]) {
             Err(e) => {
                 abandon(&e, "error");
                 return Err(e);
