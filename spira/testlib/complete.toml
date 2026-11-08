@@ -425,6 +425,7 @@ quarantine_max_age = "604800"
 queue_actions_app_id = "15368"
 queue_batch_max = 500
 queue_rounds_max = 2
+queue_text_only = "law/ spira/statutes/ wiki/ docs/ README.md AGENTS.md CLAUDE.md"
 publish_red_priority = 1
 publish_red_escalate_after = 3
 publish_settle_defer_max = 3
