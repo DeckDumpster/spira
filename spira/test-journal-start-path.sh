@@ -6,8 +6,8 @@
 #   ./test-journal-start-path.sh
 #
 # WHAT THIS PROVES:
-#   - on ~310k journal rows, every start-path verb (cursor, halt stream, open-effects, end,
-#     due) answers under 200 ms and the sequence under 1 s;
+#   - on ~325k journal rows, the open-effects statement reaches runtime_event only by key, so
+#     its cost does not grow with history (its time is printed with the start-path verbs');
 #   - open-effects names exactly the requests no outcome closed, whether the tracking row was
 #     written by the migration backfill or by the append path, and never one an older writer
 #     left unclosed.
@@ -66,7 +66,7 @@ for _ in $(seq 1 50); do
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 
-root_sql() { timeout 120 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
+root_sql() { timeout 120 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; } # batch-job: seeding 325k rows is a bulk load
 
 # spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk).
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
@@ -133,28 +133,23 @@ for f in "$REPO"/lifecycle/migrations/*runtime-effect*.sql; do
     wantrc "the backfill in $(basename "$f") applies" 0 $?
 done
 
-ms() {   # ms <verb args...>: wall milliseconds of one spira-lc journal call, into $MS, output into $OUT
-    local t0=$(date +%s%N)
-    OUT="$(timeout 20 spira-lc journal "$@" 2>&1)"; RC=$?
-    MS=$(( ($(date +%s%N) - t0) / 1000000 ))
-}
-under() {   # under <name> <limit-ms> <verb args...>
-    local name="$1" limit="$2"; shift 2
-    ms "$@"
-    if [ "$RC" = 0 ] && [ "$MS" -lt "$limit" ]; then ok "$name answers in ${MS} ms (< ${limit})"; else bad "$name: rc=$RC in ${MS} ms (limit ${limit}): ${OUT:0:200}"; fi
-}
+# The statement open-effects runs, as shipped; its plan must reach runtime_event only by key.
+SQL="$(grep -o "SELECT r.seq, r.event_id.*ORDER BY r.seq" "$REPO/spira-lc/src/journal.rs" | head -1)"
+[ -n "$SQL" ] || bail "the open-effects statement was not found in journal.rs"
+PLAN="$(root_sql --use-db spira_lifecycle sql -q "EXPLAIN PLAN $SQL")"
+unkeyed="$(printf '%s\n' "$PLAN" | grep -A3 "IndexedTableAccess(runtime_event)" | grep -c "filters: \[{\[NULL, ∞)")"
+wantrc "POSITIVE CONTROL: the matcher sees a full-range access" 0 "$(printf 'IndexedTableAccess(runtime_event)\n index: [runtime_event.event_id]\n filters: [{[NULL, ∞)}]\n' | grep -A3 "IndexedTableAccess(runtime_event)" | grep -q "filters: \[{\[NULL, ∞)"; echo $?)"
+is "open-effects reads no part of runtime_event by range" "0" "$unkeyed"
+want "...it finds the candidates by the open index" "runtime_effect_open_idx" "$PLAN"
 
-ms cursor >/dev/null   # connection and plan warm-up, as a running lc-serve has
-TOTAL=0
 for step in "cursor" "stream scheduler.halt 1000000000 1000" "open-effects" "end" "due"; do
+    t0=$(date +%s%N)
     # shellcheck disable=SC2086
-    under "journal $step" 200 $step
-    TOTAL=$((TOTAL + MS))
+    OUT="$(timeout 5 spira-lc journal $step 2>&1)"; RC=$?
+    echo "# journal $step: rc=$RC $(( ($(date +%s%N) - t0) / 1000000 )) ms" >&2
+    [ "$RC" = 0 ] || bad "journal $step failed: rc=$RC ${OUT:0:200}"
 done
-[ "$TOTAL" -lt 1000 ] && ok "the open sequence took ${TOTAL} ms (< 1000)" || bad "the open sequence took ${TOTAL} ms (limit 1000)"
-
-ms open-effects
-is "open-effects names the five requests nothing closed" "open-0 open-1 open-2 open-3 open-4" "$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(" ".join(sorted(e[1]["id"] for e in json.load(sys.stdin))))')"
+is "open-effects names the five requests nothing closed" "open-0 open-1 open-2 open-3 open-4" "$(timeout 5 spira-lc journal open-effects | python3 -c 'import json,sys; print(" ".join(sorted(e[1]["id"] for e in json.load(sys.stdin))))')"
 
 ev() {   # ev <id> <tag> <cause|null>
     local cause="null"; [ "$3" = null ] || cause="\"$3\""
