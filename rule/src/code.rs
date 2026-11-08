@@ -586,7 +586,7 @@ pub fn land_law(repo: &LawRepo, wt_root: &Path, verb: &str, key: &str, toc: &[Pa
         return file_enact_bead(repo, wt_root, key, part).map(|id| (id.clone(), format!("spira/{id}")));
     }
     let law_branch = commit_law(repo_path, repo.base, wt_root, verb, key, toc, pointers, book)?;
-    submit_law(repo_path, repo_name, wt_root, &law_branch, verb, key).map_err(|e| format!("{e}\nrule: the law/ commit is on branch {law_branch}"))
+    submit_law(repo_path, repo_name, wt_root, &law_branch, verb, key)
 }
 
 fn enact_bead_title(key: &str) -> String {
@@ -708,6 +708,11 @@ pub fn with_in_flight_pointers(repo_path: &Path, base: Option<&str>, pointers: P
 /// Files a SUBMITTED bead at the tip of `law_branch`, renames the branch to the bead's own
 /// (`spira/<id>`, the name the queue lands) and submits it. Returns the bead id and the branch.
 pub fn submit_law(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: &str, verb: &str, key: &str) -> Result<(String, String), String> {
+    let mut held = law_branch.to_string();
+    submit_law_on(repo_path, repo_name, wt_root, law_branch, verb, key, &mut held).map_err(|e| format!("{e}\nrule: the law/ commit is kept on branch {held}"))
+}
+
+fn submit_law_on(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: &str, verb: &str, key: &str, held: &mut String) -> Result<(String, String), String> {
     let tip = git_in(repo_path, &["rev-parse", law_branch])?;
     let title = format!("law: {verb} {key} — land its law/ commit");
     let body = format!(
@@ -731,6 +736,7 @@ pub fn submit_law(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch:
     let id = filed_id(&String::from_utf8_lossy(&filed.stdout))?;
     let branch = format!("spira/{id}");
     git_in(repo_path, &["branch", "-m", law_branch, &branch])?;
+    *held = branch.clone();
     let queue = spira_config::release_env::tool("queue").map_err(|e| format!("rule: {e}"))?;
     let submit = queue_submit_command(&queue, &branch, repo_name).stdin(Stdio::null()).output().map_err(|e| format!("rule: queue: {e}"))?;
     if !submit.status.success() {
