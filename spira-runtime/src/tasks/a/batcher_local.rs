@@ -30,13 +30,14 @@
 //! |---|---|---|
 //! | Idle | observe: stopped / paused / backoff (`pace.rs:77`) | Held (no write) |
 //! | Idle | observe: open round, driven | Idle |
-//! | Idle | observe: open round, undriven | Orphan (`orphan_step`: Wait / Redrive / Incident) |
+//! | Idle | observe: open round, undriven | Orphan (`orphan_step`: Wait / Redrive once / then `abandon` naming why, pace Infra) |
 //! | Idle | observe: `should_cut` = None | Idle (silent) |
 //! | Idle | observe: trigger | Assembling (`fetch`, `assemble`) |
 //! | Assembling | `assemble` ok, merged empty / held key | Idle |
 //! | Assembling | `assemble` ok | Opened (`round_open`) |
 //! | Opened | `round_open` ok, suites present | Corpus (`corpus` = unit.start; `stage` if hypervisor fits, `io.rs:52`) |
 //! | Opened | no suites and repo declares own testenv | Certifying |
+//! | Corpus, Attributing, Certifying | the leg's unit fails to start, or is unlisted for two observes with no `unit.ran` | the same state with the leg started once more; the second time Done (`abandon` naming the leg, pace Infra) |
 //! | Corpus | `unit.ran` red | Attributing (`eject` + re-run leg) |
 //! | Corpus | `unit.ran` green | Mending if menders open, else Certifying |
 //! | Attributing | `unit.ran` (re-run) | Corpus-judged: Mending / Certifying / Done(blocked) |
@@ -247,6 +248,9 @@ pub struct Repo {
     /// Why `round certify` would refuse the open round at once (`round_certifiable`), if it would.
     #[serde(default)]
     pub unfit: Option<String>,
+    /// The keys of the leg units the unit manager lists as running; `None` when it could not say.
+    #[serde(default)]
+    pub live_legs: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -326,6 +330,10 @@ pub enum Trigger {
     CertifyLost,
     /// The VM was lost under more passes than [`LOST_VM_RECERTIFIES`] allows.
     CertifyLostSpent,
+    /// A leg never started or is gone with no `unit.ran`: started once more (not in the contract's table).
+    LegRestarted,
+    /// The restarted leg is lost too: the round is abandoned (not in the contract's table).
+    LegLost,
 }
 
 pub static TABLE: &[(State, Trigger, State)] = &[
@@ -365,6 +373,12 @@ pub static TABLE: &[(State, Trigger, State)] = &[
 
     (State::Certifying, Trigger::CertifyLost, State::Certifying),
     (State::Certifying, Trigger::CertifyLostSpent, State::Done),
+    (State::Corpus, Trigger::LegRestarted, State::Corpus),
+    (State::Attributing, Trigger::LegRestarted, State::Attributing),
+    (State::Certifying, Trigger::LegRestarted, State::Certifying),
+    (State::Corpus, Trigger::LegLost, State::Done),
+    (State::Attributing, Trigger::LegLost, State::Done),
+    (State::Certifying, Trigger::LegLost, State::Done),
 ];
 
 /// The pace state of `batcher-cut/src/pace.rs`, carried rather than kept in `run/rounds-pace`.
@@ -439,6 +453,12 @@ pub struct RepoCarry {
     pub leg_at_ms: u64,
     #[serde(default)]
     pub run: u32,
+    /// Times the carried leg has been started again because it never ran or vanished.
+    #[serde(default)]
+    pub leg_restarts: u32,
+    /// Consecutive observes that did not list the carried leg's unit.
+    #[serde(default)]
+    pub leg_missing: u32,
     /// The base the standing pause was first seen on: a landing past it lifts the pause.
     #[serde(default)]
     pub paused_on: Option<String>,
@@ -587,6 +607,12 @@ pub const RED_OUTPUT: &str = "red-output=";
 
 /// How long past its wall a leg with no `unit.ran` is given before it is judged lost.
 pub const LEG_GRACE_MS: u64 = 120_000;
+/// How long a started leg may go unlisted before it counts as missing.
+pub const LEG_START_GRACE_MS: u64 = 30_000;
+/// Consecutive observes that must miss the leg before it is started again or the round abandoned.
+pub const LEG_MISSING_OBSERVES: u32 = 2;
+/// Cause word on the `.result` line of a round abandoned for want of a driver.
+pub const NO_DRIVER: &str = "no-driver";
 /// How many times a round whose VM was lost under its certify is certified again before the
 /// loss is the host's to look at (pace Infra): a lost VM says nothing about the members.
 pub const LOST_VM_RECERTIFIES: u32 = 2;
@@ -800,8 +826,54 @@ impl Machine<'_> {
         match self.rc.state {
             State::Idle | State::Held => self.idle(policy, repo),
             State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > policy.wall_ms + LEG_GRACE_MS => self.leg_ended(Exit::Unknown),
+            State::Corpus | State::Attributing | State::Certifying => self.watch_leg(repo),
             _ => {}
         }
+    }
+
+    /// A leg the unit manager does not list for [`LEG_MISSING_OBSERVES`] observes in a row, past
+    /// [`LEG_START_GRACE_MS`], never started or died with no `unit.ran`.
+    fn watch_leg(&mut self, repo: &Repo) {
+        let (Some(live), Some(leg)) = (&repo.live_legs, self.rc.leg.clone()) else { return };
+        if self.now_ms.saturating_sub(self.rc.leg_at_ms) < LEG_START_GRACE_MS || live.contains(&leg) {
+            self.rc.leg_missing = 0;
+            return;
+        }
+        self.rc.leg_missing += 1;
+        if self.rc.leg_missing >= LEG_MISSING_OBSERVES {
+            self.leg_unstarted(&format!("its unit {leg} is not running and sent no result"));
+        }
+    }
+
+    /// The carried leg did not run: it is started once more, and when that fails too the round is
+    /// abandoned with the reason and the pace counts an infrastructure fault.
+    fn leg_unstarted(&mut self, why: &str) {
+        let what = match self.rc.state {
+            State::Corpus => "corpus",
+            State::Attributing => "attribution",
+            _ => "certify",
+        };
+        self.rc.leg_missing = 0;
+        if self.rc.leg_restarts < 1 {
+            self.rc.leg_restarts += 1;
+            self.go(Trigger::LegRestarted);
+            match self.rc.state {
+                State::Corpus => self.corpus(self.rc.run + 1),
+                State::Attributing => self.attribute(),
+                _ => {
+                    self.rc.run += 1;
+                    self.certify();
+                }
+            }
+            return;
+        }
+        let why = format!("the {what} leg did not run: {why}, and it was started again once");
+        self.go(Trigger::LegLost);
+        if self.rc.batch.is_some() {
+            let leg = Leg { why: why.clone(), bead: NO_DRIVER.into(), key: format!("{}:{}", self.repo, self.rc.batch.clone().unwrap_or_default()), ..self.leg() };
+            self.acts.push(leg.act(ABANDON));
+        }
+        self.finish(pace::Outcome::Infra, &why);
     }
 
     fn idle(&mut self, policy: &Policy, repo: &Repo) {
@@ -832,13 +904,15 @@ impl Machine<'_> {
             match verdict {
                 pace::Orphan::Wait => {}
                 pace::Orphan::Redrive => self.acts.push(Leg { key: format!("{}:{}", self.repo, open.id), ..leg }.act(REDRIVE)),
-                pace::Orphan::Incident(why) if next.paged_open != open.id => {
-                    next.paged_open = open.id.clone();
-                    self.acts.push(Leg { key: format!("round-orphan:{}:{}", self.repo, open.id), why: why.clone(), ..leg }.act(FILE));
-                    let page = format!("ROUND OPEN {} {} with no driver — finish, eject or abandon it ({why})", self.repo, open.id);
-                    self.acts.push(Act::new(INBOX_APPEND, page.clone()).with_input(page_line(self.now_ms, &page)));
+                pace::Orphan::Incident(why) => {
+                    let why = format!("round {} had no driver: {why}", open.id);
+                    self.acts.push(Leg { key: format!("{}:{}", self.repo, open.id), why: why.clone(), bead: NO_DRIVER.into(), ..leg }.act(ABANDON));
+                    let (after, fx) = pace::advance(&next, &pace::Outcome::Infra, self.repo, now_s, &why);
+                    next = after;
+                    for p in &fx.pages {
+                        self.acts.push(Act::new(INBOX_APPEND, p.clone()).with_input(page_line(self.now_ms, p)));
+                    }
                 }
-                pace::Orphan::Incident(_) => {}
             }
             self.rc.pace = Pace::of(&next, &self.rc.pace.refusals);
             self.go(Trigger::OrphanStepped);
@@ -1032,7 +1106,7 @@ impl Machine<'_> {
                     self.red("round blocked — the merged tree has no test-*.sh suites; an empty corpus certifies nothing");
                 }
             }
-            (State::Corpus | State::Attributing, CORPUS) | (State::Certifying, CERTIFY) if !ok && self.rc.leg.as_deref() == Some(leg.unit.as_str()) => self.leg_ended(Exit::Unknown),
+            (State::Corpus | State::Attributing, CORPUS) | (State::Certifying, CERTIFY) if !ok && self.rc.leg.as_deref() == Some(leg.unit.as_str()) => self.leg_unstarted(&format!("it could not be started ({})", body.trim())),
             (State::Landing, LAND) if ok => {
                 let l: Landed = serde_json::from_str(body).unwrap_or_default();
                 if let Some(base) = l.base_moved {
@@ -1428,7 +1502,7 @@ pub mod edge {
     }
 
     /// The probe: every admitted `queue.local` repo's pool, open round, base and hold.
-    pub fn observe(_: &Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
+    pub fn observe(e: &Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
         let env = env()?;
         io::lc_forget(&env);
         let enabled = spira_config::process::cfg("SPIRA_BATCHER_ENABLE")?.trim() != "0";
@@ -1436,9 +1510,24 @@ pub mod edge {
         let mut snap = Snapshot { now_ms: spira_config::vtime::now_epoch() * 1000, ..Snapshot::default() };
         for name in reg.names().into_iter().filter(|n| reg.land(n) == "queue.local" && (enabled || n != reg.home_repo())) {
             let repo = batcher_cut::find_repo(&env, &name)?;
-            snap.repos.insert(name.clone(), observe_repo(&env, &repo)?);
+            let mut seen = observe_repo(&env, &repo)?;
+            seen.live_legs = live_legs(e);
+            snap.repos.insert(name.clone(), seen);
         }
         json(&snap)
+    }
+
+    /// The keys of this task's leg units the manager lists as running; `None` when it cannot say.
+    fn live_legs(e: &Effects) -> Option<Vec<String>> {
+        let units = e.units.as_deref()?;
+        let listed = runtime::units::effect(units, runtime::units::UNIT_LIST, &json(&runtime::units::task_glob(super::NAME)).ok()?).ok()?;
+        let all: Vec<runtime::units::UnitDetail> = serde_json::from_str(&listed).ok()?;
+        Some(
+            all.into_iter()
+                .filter(|d| matches!(d.state, runtime::units::UnitState::Active | runtime::units::UnitState::Activating))
+                .filter_map(|d| runtime::units::UnitHandle::named(&d.name).owner().filter(|(t, _)| t == super::NAME).map(|(_, k)| k))
+                .collect(),
+        )
     }
 
     fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo) -> Result<Repo, String> {
@@ -1550,7 +1639,12 @@ pub mod edge {
         let suites = batcher_cut::order::longest_first(&io::suites_in(&wt, "HEAD"), &history).list;
         let results = wt.join(format!(".round-results-{}", leg.unit));
         let argv = ["timeout", "-k", "10", &env.wall_secs.to_string()].iter().map(|s| s.to_string()).chain([env.round_vm.display().to_string(), "run".into(), wt.display().to_string(), "--suites".into(), suites.join(","), "--maxpar".into(), env.maxpar.to_string(), "--results-dir".into(), results.display().to_string(), "--base".into(), repo.base.clone()]).collect();
-        start_unit(e, task, &leg.unit, argv, home_vars(&env), None)
+        let started = start_unit(e, task, &leg.unit, argv, home_vars(&env), None);
+        match &started {
+            Ok(_) => eprintln!("{task} {}: corpus leg {} started", leg.repo, leg.unit),
+            Err(why) => eprintln!("{task} {}: corpus leg {} did not start: {why}", leg.repo, leg.unit),
+        }
+        started
     }
 
     /// A round staged behind the open one: `queue round stage`, as a unit.
@@ -1629,6 +1723,11 @@ pub mod edge {
 
     pub fn abandon(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
+        if leg.bead == super::NO_DRIVER {
+            eprintln!("batcher.local {}: abandoning round {}: {}", leg.repo, leg.batch, leg.why);
+            io::round_abandon(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.why, super::NO_DRIVER);
+            return Ok("{}".into());
+        }
         let why = io::keep_red_evidence(&env.run, &leg.batch, &leg.why, &leg.reds);
         io::round_abandon(&env, &repo_of(&env, &leg)?, &leg.batch, &why, "red");
         io::write_local_verdict(&env, &leg.repo, "red", &why);
