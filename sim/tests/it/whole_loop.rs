@@ -318,7 +318,7 @@ fn batcher_land(w: &World, input: &str) -> Result<String, String> {
         lc.apply(now, id, bl::NAME, BeadEventKind::Delivered { merge_sha: BASE.into(), proof: format!("round {}", leg.batch) })?;
     }
     lc.round = None;
-    json(&bl::Landed { staged: None })
+    json(&bl::Landed::default())
 }
 
 fn batcher_abandon(w: &World) -> Result<String, String> {

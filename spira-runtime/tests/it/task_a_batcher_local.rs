@@ -401,3 +401,47 @@ fn sp_822b8l_an_open_refusing_every_member_abandons_nothing() {
     let rc = &carry.repos["spira"];
     assert_eq!((rc.state, rc.refused.len()), (State::Idle, 3));
 }
+
+// --- sp-tjrjca: a green round refused base-moved is certified again, never abandoned ---
+
+fn landing() -> Carry {
+    let mut c = driving(State::Landing, "spira.c1");
+    c.repos.get_mut("spira").unwrap().leg = None;
+    c
+}
+
+/// 2026-11-07 07:24Z: spira-20261107T070615Z certified GREEN stacked on a parent that ended
+/// without landing; land answered base-moved (rebuilt on the new base) and the batcher abandoned
+/// it. Now it certifies the rebuilt round and lands it.
+#[test]
+fn sp_tjrjca_a_green_round_refused_base_moved_is_certified_again_and_landed() {
+    let moved = serde_json::to_string(&Landed { base_moved: Some("b2".into()), ..Landed::default() }).unwrap();
+    let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
+    let (carry, acts) = on_outcome(&landing(), LAND, true, &moved, &land, NOW);
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert_eq!(names, [CERTIFY], "re-certified, not abandoned: {acts:?}");
+    let rc = &carry.repos["spira"];
+    assert_eq!((rc.state, rc.recertified_on.as_deref()), (State::Certifying, Some("b2")));
+    let unit = serde_json::from_str::<Leg>(&acts[0].input).unwrap().unit;
+    assert_ne!(unit, "spira.c1", "a fresh certify leg");
+
+    let mut r = carried(&carry);
+    let n = r.requested().len();
+    r.tick(STREAM, ended(&unit, runtime::units::Exit::Code(0), "verdict=green\n")).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let after: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
+    assert_eq!(after, [LC_CERTIFY, LAND], "green again: it lands");
+
+    let (_, acts) = on_outcome(&Carry { repos: [("spira".to_string(), RepoCarry { state: State::Landing, ..carry.repos["spira"].clone() })].into() }, LAND, true, &serde_json::to_string(&Landed::default()).unwrap(), &land, NOW);
+    assert!(!acts.iter().any(|a| a.effect == ABANDON), "{acts:?}");
+}
+
+/// At most once per base change: base-moved again on the same base is a red, abandoned.
+#[test]
+fn sp_tjrjca_base_moved_twice_on_one_base_is_red() {
+    let mut c = landing();
+    c.repos.get_mut("spira").unwrap().recertified_on = Some("b2".into());
+    let moved = serde_json::to_string(&Landed { base_moved: Some("b2".into()), ..Landed::default() }).unwrap();
+    let (_, acts) = on_outcome(&c, LAND, true, &moved, &Leg { batch: "r9".into(), ..Leg::on("spira") }, NOW);
+    assert!(acts.iter().any(|a| a.effect == ABANDON) && !acts.iter().any(|a| a.effect == CERTIFY), "{acts:?}");
+}

@@ -310,6 +310,9 @@ pub enum Trigger {
     LandedStaged,
     Landed,
     LandRefused,
+    /// `round land` refused base-moved (its exit, sp-tjrjca): the round is certified again on
+    /// the base it was rebuilt on, at most once per base (not in the contract's table).
+    LandBaseMoved,
     PromotedToCorpus,
     PromotedToCertifying,
     /// `round promote` named no round (not in the contract's table): the cut goes on from the pool.
@@ -348,6 +351,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Landing, Trigger::LandedStaged, State::Promoting),
     (State::Landing, Trigger::Landed, State::Done),
     (State::Landing, Trigger::LandRefused, State::Done),
+    (State::Landing, Trigger::LandBaseMoved, State::Certifying),
     (State::Promoting, Trigger::PromotedToCorpus, State::Corpus),
     (State::Promoting, Trigger::PromotedToCertifying, State::Certifying),
     (State::Promoting, Trigger::PromoteFailed, State::Done),
@@ -434,6 +438,10 @@ pub struct RepoCarry {
     /// until its tip or the base moves.
     #[serde(default)]
     pub refused: BTreeMap<String, (String, String, String)>,
+    /// The base the round was re-certified on after a base-moved land refusal: at most once per
+    /// base change.
+    #[serde(default)]
+    pub recertified_on: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -518,6 +526,10 @@ pub struct Landed {
     /// The round `land` left staged behind it, to promote.
     #[serde(default)]
     pub staged: Option<String>,
+    /// `round land` refused base-moved (its exit): the base it now stands on. The round is
+    /// certified again, not landed.
+    #[serde(default)]
+    pub base_moved: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -969,6 +981,10 @@ impl Machine<'_> {
             (State::Corpus | State::Attributing, CORPUS) | (State::Certifying, CERTIFY) if !ok && self.rc.leg.as_deref() == Some(leg.unit.as_str()) => self.leg_ended(Exit::Unknown),
             (State::Landing, LAND) if ok => {
                 let l: Landed = serde_json::from_str(body).unwrap_or_default();
+                if let Some(base) = l.base_moved {
+                    self.base_moved(&base);
+                    return;
+                }
                 match l.staged {
                     Some(staged) => {
                         self.go(Trigger::LandedStaged);
@@ -1025,6 +1041,21 @@ impl Machine<'_> {
         let key = core::round_key(&self.rc.members);
         self.rc.round_key = Some(key.clone());
         self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), why: leg.why.clone(), ..self.leg() }.act(ROUND_OPEN));
+    }
+
+    /// `round land` refused base-moved (sp-tjrjca): the queue rebuilt the round on `base` and
+    /// asks for `round certify`. The green round is certified again — once per base — and lands
+    /// on its own green; base-moved again on the same base is a red.
+    fn base_moved(&mut self, base: &str) {
+        if self.rc.recertified_on.as_deref() == Some(base) {
+            self.go(Trigger::LandRefused);
+            self.red(&format!("NOT LANDED: base-moved again on {base} after the round was certified on it once"));
+            return;
+        }
+        self.rc.recertified_on = Some(base.to_string());
+        self.go(Trigger::LandBaseMoved);
+        self.rc.run += 1;
+        self.certify();
     }
 
     fn assembled(&mut self, a: Assembled, leg: &Leg) {
@@ -1503,10 +1534,15 @@ pub mod edge {
     /// `queue round land`, retried while another operation holds the lock; a refusal is an `Err`.
     pub fn land(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
-        let run = io::round_land(&env, &repo_of(&env, &leg)?, &leg.batch)?;
+        let repo = repo_of(&env, &leg)?;
+        let run = io::round_land(&env, &repo, &leg.batch)?;
+        if io::land_base_moved(run.code) {
+            eprintln!("{} {}: queue round land refused base-moved for {} ({}) — certifying it again", super::NAME, repo.name, leg.batch, run.refusal);
+            return json(&Landed { base_moved: Some(io::resolve_base_sha(&repo)?), ..Landed::default() });
+        }
         match run.outcome {
             io::LandOutcome::Refused => Err(run.refusal),
-            io::LandOutcome::Landed | io::LandOutcome::DeployFault => json(&Landed { staged: None }),
+            io::LandOutcome::Landed | io::LandOutcome::DeployFault => json(&Landed::default()),
         }
     }
 
