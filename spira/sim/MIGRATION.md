@@ -243,7 +243,7 @@ Left, and why:
 |---|---|
 | test-rune-project-instructions | half is static (each rune file declares its value) and half is the archivist's `--add-dir`, neither a session the dwarf runs |
 | test-dwarf-lifecycle-cutover | the lifecycle functions called by name (`lc_claim_bead`, `lc_release_bead`) and the stacked-dependents ready set need their own rows and a state the world does not seed |
-| test-dwarf-worktree-collision, test-dwarf-prod-dirty*, test-dwarf-resume*, test-concierge | they hold a worktree or a prior session's state across two dwarves, or script the resume brief from a transcript; the world has no second concurrent dwarf or seeded resume record |
+| test-dwarf-worktree-collision, test-dwarf-resume*, test-concierge | they hold a worktree or a prior session's state across two dwarves, or script the resume brief from a transcript; the world has no second concurrent dwarf or seeded resume record |
 | test-dwarf-dirty-commit, test-dwarf-base-ref-qualify, test-branch-guard | `lib.sh` and hook functions called directly in a scratch repository, not a session |
 | test-guards | the PreToolUse fences bind the model's tool calls; a stub agent makes none |
 | test-timeout, test-thrash-teardown, test-dwarf-elastic-concurrency | their remaining case is a real signal to a live process group or the dwarf's concurrency count, which needs live dwarf units (G2) |

@@ -83,7 +83,7 @@ Rust cutover was "leave lib.sh alone"):**
 ## Parity
 
 See the sibling bead report: the bash `bead.sh` and the shimmed `bead` binary run against
-`test-bead-file.sh`, `test-bead-lint.sh`, `test-bead-dep-add.sh`, `test-bead-contract.sh`
+`test-bead-file.sh`, `test-bead-dep-add.sh`, `test-bead-contract.sh`
 and `test-bead-repo-guard.sh`'s fixtures (repo-map, runes, stub `bd`), output and exit
 code compared line for line. Every one of these suites continues to run unmodified through
 `testenv` — they name `bead.sh` by its unchanged path, and the shim makes that

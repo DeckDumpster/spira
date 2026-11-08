@@ -100,8 +100,7 @@ migration bead per family from this table.
 | test-epic-claim-order.sh | 74 | claim rank: min(epic, bead) priority, started epic first, resumable before fresh, oldest | unit | A sort key; `epic_rank_rows` already isolates it. Cheapest win in the family. |
 | test-dwarf-worktree-collision.sh | 77 | never a second live session in a worktree another bead holds | sim | Two dwarves racing is a scenario, and flips in shell. |
 | test-dwarf-world-stop.sh | 40 | a world-stop-labelled bead is not run while live dwarves exist | unit | A predicate over labels and live count. |
-| test-dwarf-prod-dirty.sh | 55 | the prod-dirty guard is bound to the dwarf's own worktree, not the shared checkout | unit | Path-scoping predicate; keep one git fixture row. |
-| test-dwarf-prod-dirty-rest.sh | 47 | cases 2 and 3 of the above | unit | Shard; goes with parent. |
+| test-dwarf-prod-dirty.sh | 55 | the prod-dirty guard is bound to the dwarf's own worktree, not the shared checkout | unit | Retired: `own_dirty` and `own_dirty_note` unit tests in `dwarf/src/verdict.rs` (UC-dwarf-execution-16). |
 | test-dwarf-wiki-dirty.sh | 39 | only this session's own still-dirty wiki writes are committed at exit, never `wiki/tasks.md` | unit | Path filter over a transcript. |
 | test-dwarf-sweep.sh | 44 | `dwarf.sh --sweep` runs the persona without a bead | keep | Launcher wiring with real argv; only a real dwarf.sh proves it. Candidate to share the full-dwarf fixture with D. |
 | test-unclaimable.sh | 30 | ready beads no persona can claim are surfaced; the detector does not report its own reports | unit | Claimers arithmetic plus a cycle guard. |
@@ -169,7 +168,6 @@ Migrated (sp-k8z731): test-gate-verdict.sh (49 s) and test-gate-base-evidence.sh
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-bead-lint.sh | 92 | `bead.sh lint` wiring over real `bd show --json`, including the branch-label check | keep | The judgement is already T1 (`_bead_lint_judge`); the real `bd` wiring is what this holds. |
 
 ## Order of work
 

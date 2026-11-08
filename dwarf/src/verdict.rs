@@ -162,28 +162,11 @@ impl Run<'_> {
 
         // ---- own-worktree dirty guard ----
         let work = self.s.work.clone().unwrap_or_default();
-        if submitted && committed && !self.conf.set_nonempty("SPIRA_ALLOW_PROD_DIRTY") {
-            let dirty = self.d.git.git(&work, &["status", "--porcelain", "--untracked-files=no"]).stdout.trim_end().to_string();
-            if !dirty.is_empty() {
-                let spd_base = if let Some(b) = spira_config::repos::landref(&self.conf.repos, &work.display().to_string()) {
-                    b
-                } else {
-                    let h = self.d.git.git(&work, &["rev-parse", "--abbrev-ref", "HEAD"]);
-                    if h.success() { h.text() } else { "HEAD".into() }
-                };
-                let names: Vec<String> = self.d.git.git(&work, &["diff", "--name-only", "HEAD"]).stdout.lines().filter(|l| !l.is_empty()).map(String::from).collect();
-                let identical: Vec<&String> = names.iter().filter(|p| self.d.git.git(&work, &["diff", "--quiet", &spd_base, "--", p]).success()).collect();
-                let w = work.display().to_string();
-                let mut n = format!(
-                    "Reopened by dwarf.sh: bead closed while the dwarf's own worktree ({w}) carried uncommitted tracked modifications. Staged but uncommitted code is invisible to the commit graph — commit it or restore the file.\n\nModified paths:\n{}",
-                    dirty.lines().map(|l| format!("  {l}")).collect::<Vec<_>>().join("\n")
-                );
-                if !identical.is_empty() {
-                    let ids = identical.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" ");
-                    n.push_str(&format!("\n\nPaths byte-for-byte identical to {spd_base} (hand-applied, not genuinely new):\n  {ids}\nRemedy: git -C {w} checkout -- {ids}"));
-                }
-                n.push_str("\n\nOverride (only when the modification is intentional and will be committed separately): SPIRA_ALLOW_PROD_DIRTY=1");
+        if submitted && committed {
+            let landref = spira_config::repos::landref(&self.conf.repos, &work.display().to_string());
+            if let Some((n, names)) = own_dirty_note(self.d.git, &work, landref, self.conf.set_nonempty("SPIRA_ALLOW_PROD_DIRTY")) {
                 self.refuse(submitted, PROD_DIRTY, &n);
+                let w = work.display().to_string();
                 let first5 = names.iter().take(5).map(|s| format!("{s} ")).collect::<String>();
                 self.log(&format!("{f}: {id} REOPENED — own worktree dirty: {first5}"));
                 self.requeue(PROD_DIRTY, format!("Bead closed while the dwarf's own worktree ({w}) carried uncommitted tracked modifications. Commit or restore the staged/modified files, then resume this bead."));
@@ -231,6 +214,44 @@ impl Run<'_> {
     }
 }
 
+/// The refusal note for a restricted hand-on whose own worktree carries uncommitted tracked
+/// changes, or None. Pure: every input is an answer already read from `work`, never from the
+/// shared checkout (sp-nqtrg).
+pub(crate) fn own_dirty(work: &str, porcelain: &str, identical: &[String], base: &str, override_set: bool) -> Option<String> {
+    let dirty = porcelain.trim_end();
+    if override_set || dirty.is_empty() {
+        return None;
+    }
+    let mut n = format!(
+        "Reopened by dwarf.sh: bead closed while the dwarf's own worktree ({work}) carried uncommitted tracked modifications. Staged but uncommitted code is invisible to the commit graph — commit it or restore the file.\n\nModified paths:\n{}",
+        dirty.lines().map(|l| format!("  {l}")).collect::<Vec<_>>().join("\n")
+    );
+    if !identical.is_empty() {
+        let ids = identical.join(" ");
+        n.push_str(&format!("\n\nPaths byte-for-byte identical to {base} (hand-applied, not genuinely new):\n  {ids}\nRemedy: git -C {work} checkout -- {ids}"));
+    }
+    n.push_str("\n\nOverride (only when the modification is intentional and will be committed separately): SPIRA_ALLOW_PROD_DIRTY=1");
+    Some(n)
+}
+
+/// Reads the three git answers from `work` alone and judges them; the note and the changed names.
+fn own_dirty_note(git: &dyn Git, work: &Path, landref: Option<String>, override_set: bool) -> Option<(String, Vec<String>)> {
+    if override_set {
+        return None;
+    }
+    let porcelain = git.git(work, &["status", "--porcelain", "--untracked-files=no"]).stdout;
+    if porcelain.trim().is_empty() {
+        return None;
+    }
+    let base = landref.unwrap_or_else(|| {
+        let h = git.git(work, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        if h.success() { h.text() } else { "HEAD".into() }
+    });
+    let names: Vec<String> = git.git(work, &["diff", "--name-only", "HEAD"]).stdout.lines().filter(|l| !l.is_empty()).map(String::from).collect();
+    let identical: Vec<String> = names.iter().filter(|p| git.git(work, &["diff", "--quiet", &base, "--", p]).success()).cloned().collect();
+    own_dirty(&work.display().to_string(), &porcelain, &identical, &base, false).map(|n| (n, names))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +285,63 @@ mod tests {
 
         // Empty landrefs short-circuits without a second git call that would need a ref.
         assert!(!verdict_committed(&git2, "", Path::new("/repo"), "mybranch", "sp-a", 400));
+    }
+
+    // ---- own_dirty (UC-dwarf-execution-16) --------------------------------------------
+
+    // covers: UC-dwarf-execution-16
+    #[test]
+    fn own_dirty_worktree_is_refused_naming_path_and_override() {
+        let n = own_dirty("/w/own", " M f\n", &[], "local/main", false).expect("dirty worktree is refused");
+        assert!(n.contains("/w/own"), "{n}");
+        assert!(n.contains("Modified paths:\n   M f"), "{n}");
+        assert!(n.contains("SPIRA_ALLOW_PROD_DIRTY=1"), "{n}");
+        assert!(!n.contains("byte-for-byte"), "{n}");
+    }
+
+    // covers: UC-dwarf-execution-16
+    #[test]
+    fn own_dirty_override_lets_the_hand_on_stand() {
+        assert_eq!(own_dirty("/w/own", " M f\n", &[], "local/main", true), None);
+    }
+
+    // covers: UC-dwarf-execution-16
+    #[test]
+    fn clean_worktree_is_not_refused() {
+        assert_eq!(own_dirty("/w/own", "", &[], "local/main", false), None);
+        assert_eq!(own_dirty("/w/own", "\n", &[], "local/main", false), None);
+    }
+
+    // covers: UC-dwarf-execution-16
+    #[test]
+    fn paths_identical_to_the_landing_ref_get_the_checkout_remedy() {
+        let n = own_dirty("/w/own", " M f\n M g\n", &["f".into(), "g".into()], "local/main", false).unwrap();
+        assert!(n.contains("Paths byte-for-byte identical to local/main"), "{n}");
+        assert!(n.contains("Remedy: git -C /w/own checkout -- f g"), "{n}");
+    }
+
+    /// Records every directory git is asked about; answers as a dirty tree.
+    struct DirGit(std::sync::Mutex<Vec<std::path::PathBuf>>);
+    impl Git for DirGit {
+        fn git(&self, dir: &Path, args: &[&str]) -> Out {
+            self.0.lock().unwrap().push(dir.to_path_buf());
+            match args[0] {
+                "status" => Out::ok(" M f\n"),
+                "diff" if args.contains(&"--name-only") => Out::ok("f\n"),
+                _ => Out { code: 1, stdout: String::new(), stderr: String::new() },
+            }
+        }
+    }
+
+    // covers: UC-dwarf-execution-16
+    #[test]
+    fn guard_reads_only_the_dwarfs_own_worktree_never_the_shared_checkout() {
+        let git = DirGit(Default::default());
+        let (n, names) = own_dirty_note(&git, Path::new("/w/own"), Some("local/main".into()), false).unwrap();
+        assert!(n.contains("/w/own") && names == ["f"]);
+        assert!(git.0.lock().unwrap().iter().all(|d| d == Path::new("/w/own")), "git was asked about another directory");
+        let git = DirGit(Default::default());
+        assert!(own_dirty_note(&git, Path::new("/w/own"), None, true).is_none());
+        assert!(git.0.lock().unwrap().is_empty(), "override must not read git at all");
     }
 }

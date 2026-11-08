@@ -119,8 +119,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | dwarf-launch-grammar | no | - | 2 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | dwarf-lease | no | - | 3 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | dwarf-lifecycle-cutover | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
-| dwarf-prod-dirty-rest | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
-| dwarf-prod-dirty | no | - | 49 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | dwarf-prompt-layers-sticking | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | dwarf-prompt-layers | no | - | 41 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | dwarf-resume-collision | no | - | 17 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
