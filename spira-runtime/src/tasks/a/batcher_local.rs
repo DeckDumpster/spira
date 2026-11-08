@@ -1344,8 +1344,34 @@ pub mod edge {
 
     /// One unit leg under the naming rule: a scope with the round's CPU quota when the backend
     /// runs scopes, else a plain transient unit.
+    /// The base environment every leg unit needs, as sentinel-call gives a dwarf: the release, a
+    /// PATH onto it, HOME and the one config spec. A transient unit inherits none of the
+    /// runtime's environment, so without `SPIRA_TOML` round-vm refuses at once (exit 2) and the
+    /// round is abandoned before it runs. A variable the leg already set is kept.
+    pub fn leg_env(mut vars: Vec<(String, String)>, release: &str, home: &str, toml: &str) -> Vec<(String, String)> {
+        let base = [
+            ("SPIRA_RELEASE", release.to_string()),
+            ("PATH", format!("{release}/bin:{release}/spira:/usr/local/bin:/usr/bin:/bin")),
+            ("HOME", home.to_string()),
+            ("SPIRA_TOML", toml.to_string()),
+        ];
+        for (k, v) in base {
+            if !vars.iter().any(|(have, _)| have == k) {
+                vars.push((k.to_string(), v));
+            }
+        }
+        vars
+    }
+
+    fn with_base_env(vars: Vec<(String, String)>) -> Result<Vec<(String, String)>, String> {
+        let release = std::env::var(spira_config::RELEASE_ENV).unwrap_or_default();
+        let home = std::env::var("HOME").unwrap_or_default();
+        Ok(leg_env(vars, &release, &home, &spira_config::process::spec()?))
+    }
+
     pub fn start_unit(e: &Effects, task: &str, key: &str, argv: Vec<String>, vars: Vec<(String, String)>, cwd: Option<PathBuf>) -> Result<String, String> {
         let units = e.units.as_deref().ok_or("no unit manager configured")?;
+        let vars = with_base_env(vars)?;
         let unit = UnitSpec { task: task.into(), key: key.into(), argv, env: vars, cwd };
         let quota = std::env::var("ROUND_CPU_QUOTA").ok().and_then(|q| q.trim().trim_end_matches('%').parse::<u32>().ok());
         if quota.is_some() {
@@ -1361,6 +1387,7 @@ pub mod edge {
     /// certify legs, judged by their own lines. Under the round's CPU quota when one is set.
     pub fn start_scope(e: &Effects, task: &str, key: &str, argv: Vec<String>, vars: Vec<(String, String)>, cwd: Option<PathBuf>) -> Result<String, String> {
         let units = e.units.as_deref().ok_or("no unit manager configured")?;
+        let vars = with_base_env(vars)?;
         let quota = std::env::var("ROUND_CPU_QUOTA").ok().and_then(|q| q.trim().trim_end_matches('%').parse::<u32>().ok());
         let scope = ScopeSpec { unit: UnitSpec { task: task.into(), key: key.into(), argv, env: vars, cwd }, cpu_quota_pct: quota, memory_max_bytes: None };
         runtime::units::effect(units, UNIT_RUN_SCOPE, &json(&scope)?)

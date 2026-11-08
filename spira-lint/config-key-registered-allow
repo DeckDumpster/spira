@@ -973,3 +973,4 @@ SPIRA_YIELD_SH watchtower/src/process.rs
 SPIRA_YIELD_WINDOW spira/yield.sh
 SPIRA_YIELD_WINDOW watchtower/src/process.rs
 SPIRA_YIELD_WINDOW watchtower/src/sweep/collect.rs
+SPIRA_TOML spira-runtime/src/tasks/a/batcher_local.rs
