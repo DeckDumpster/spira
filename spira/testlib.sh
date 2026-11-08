@@ -1065,7 +1065,7 @@ lc_dwarf_mirror() {
     mkdir -p "$dir"
     { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
-    show|state|list|event|create-bead|unclaim) ;;
+    show|state|list|event|create-bead|unclaim|holder-dead) ;;
     plan) if [ "${2:-}" = items ]; then
             ids=; while [ $# -gt 0 ]; do [ "$1" = --ids ] && ids="${2:-}"; shift; done
             out="$(BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --id "$ids" --status all --limit 0 --json)" || exit $?
@@ -1160,6 +1160,10 @@ elif verb == "unclaim":
     if r["holder"] != actor:
         sys.exit(1)
     claim = os.path.join(run, "lc-claim", i)
+    if os.path.exists(claim):
+        os.remove(claim)
+elif verb == "holder-dead":
+    claim = os.path.join(run, "lc-claim", args[1] if len(args) > 1 else "")
     if os.path.exists(claim):
         os.remove(claim)
 elif verb == "hold":

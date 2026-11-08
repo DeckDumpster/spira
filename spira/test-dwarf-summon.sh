@@ -106,7 +106,6 @@ is   "positive control: and claims nothing" "" "$(claim_kind sp-sm-halt)"
 
 : > "$TMP/units"
 summon sp-sm-halt --by concierge --reason "loop fix"
-{ echo "# DEBUG units: $(cat "$TMP/units" 2>&1)"; ls -la "$SPIRA_RUN" | sed 's/^/# DEBUG /'; cat "$SPIRA_RUN"/*.log 2>/dev/null | tail -20 | sed 's/^/# DEBUG /'; } >&2
 want "the summons claims the named bead with the world halted" "claimed sp-sm-halt" "$(cat "$TMP/out")"
 want "the claim event carries the requester" '"by":"concierge"' "$(claim_kind sp-sm-halt)"
 want "the claim event carries the reason" '"reason":"loop fix"' "$(claim_kind sp-sm-halt)"
