@@ -5080,10 +5080,49 @@ fn an_eject_red_on_unit_tests_records_the_step_as_the_requirement() {
 }
 
 #[test]
-fn a_round_only_step_is_proven_only_by_a_recorded_pass_at_the_tip() {
+fn a_bead_ejected_on_a_round_only_step_resubmits_with_a_note_not_a_refusal() {
+    for step in ["spira-lint", "workspace-build", "fence-forge-batch-readers"] {
+        let t = rework_world(&["manual"]);
+        spira_config::proof::record_failing(&proof_run(&t), "sp-a", &[step.to_string()]).unwrap();
+        let tip_arg = format!("--tip={T_FIX}");
+        let args = [
+            "resubmit",
+            "sp-a",
+            &tip_arg,
+            "--by=concierge",
+            "--reason=hand-built fix",
+            "--evidence=cargo build 1/0",
+            &ev_tip(),
+        ];
+        assert_eq!(t.run(&args), 0, "{step}: {}", t.err());
+        assert!(
+            t.out().contains(&format!(
+                "queue.sh resubmit: {step} passes only in the round that carries {T_FIX}"
+            )),
+            "{step}: {}",
+            t.out()
+        );
+        assert!(
+            !t.scripts
+                .calls
+                .borrow()
+                .iter()
+                .any(|c| c.starts_with(&format!("suite_run {step}"))),
+            "a round-only step is never run as a suite"
+        );
+    }
+}
+
+#[test]
+fn a_round_only_step_does_not_excuse_a_host_runnable_check_that_is_red() {
     let t = rework_world(&["manual"]);
-    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["workspace-build".to_string()])
-        .unwrap();
+    spira_config::proof::record_failing(
+        &proof_run(&t),
+        "sp-a",
+        &["spira-lint".to_string(), "unit-tests".to_string()],
+    )
+    .unwrap();
+    t.scripts.suite_red.borrow_mut().push("unit-tests".into());
     let tip_arg = format!("--tip={T_FIX}");
     let args = [
         "resubmit",
@@ -5091,27 +5130,48 @@ fn a_round_only_step_is_proven_only_by_a_recorded_pass_at_the_tip() {
         &tip_arg,
         "--by=concierge",
         "--reason=hand-built fix",
-        "--evidence=cargo build 1/0",
+        "--evidence=cargo test 1/0",
         &ev_tip(),
     ];
     assert_eq!(t.run(&args), 1);
-    assert!(
-        t.err()
-            .contains("workspace-build has no green round recorded"),
-        "{}",
-        t.err()
-    );
-    assert!(
-        !t.scripts
-            .calls
-            .borrow()
-            .iter()
-            .any(|c| c.starts_with("suite_run workspace-build")),
-        "a round-only step is never run as a suite"
-    );
-    spira_config::proof::record_run(&proof_run(&t), "sp-a", T_FIX, "workspace-build", 0, "ok")
+    assert!(t.err().contains("unit-tests failed at"), "{}", t.err());
+}
+
+fn resubmit_args_for(tip_arg: &str) -> Vec<String> {
+    ["resubmit", "sp-a", tip_arg, "--by=concierge", "--reason=hand-built fix", "--evidence=cargo build 1/0"]
+        .iter()
+        .map(|s| s.to_string())
+        .chain(std::iter::once(ev_tip()))
+        .collect()
+}
+
+#[test]
+fn a_bead_ejected_on_spira_lint_is_still_refused_when_the_host_lint_is_red_at_the_tip() {
+    let t = rework_world(&["manual"]);
+    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["spira-lint".to_string()])
         .unwrap();
-    assert_eq!(t.run(&args), 0, "{}", t.err());
+    t.scripts
+        .lint_red
+        .borrow_mut()
+        .insert(T_FIX.into(), "src/x.rs:1:1".into());
+    let args = resubmit_args_for(&format!("--tip={T_FIX}"));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    assert_eq!(t.run(&args), 1);
+    assert!(t.err().contains("src/x.rs:1:1"), "{}", t.err());
+}
+
+#[test]
+fn a_round_only_note_is_not_printed_for_a_resubmit_that_is_refused_later() {
+    let t = rework_world(&["manual"]);
+    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["spira-lint".to_string()])
+        .unwrap();
+    let args = resubmit_args_for(&format!("--tip={T_FIX}"));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    t.lc.rows.borrow_mut().as_mut().unwrap().retain(|r| r.bead_id != "sp-a");
+    t.lc_row("sp-a", "WORKING", "ta", 100);
+    assert_eq!(t.run(&args), 1);
+    assert!(t.err().contains("held by a live dwarf"), "{}", t.err());
+    assert!(!t.out().contains("passes only in the round"), "{}", t.out());
 }
 
 #[test]

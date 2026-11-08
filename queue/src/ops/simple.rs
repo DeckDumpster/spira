@@ -242,7 +242,7 @@ fn land_by_lint(w: &World, c: &Ctx, path: &std::path::Path, id: &str, tip: &str)
 
 /// The checks an ejection named must each pass at `tip` before the bead is resubmitted: the
 /// missing ones are run here, recorded with their summary line, and any still red or unrun
-/// refuses by name.
+/// refuses by name. A round-only check cannot be run on the host: it is noted, not refused.
 fn checks_proven(
     w: &World,
     verb: &str,
@@ -250,14 +250,14 @@ fn checks_proven(
     repo: &str,
     id: &str,
     tip: &str,
-) -> bool {
+) -> Option<Vec<String>> {
     use spira_config::proof;
     let mut notes = Vec::new();
     let mut failed = Vec::new();
     let mut unverified = Vec::new();
     for check in proof::unproven(run, id, tip) {
         if super::round::ROUND_ONLY_STEPS.contains(&check.as_str()) || check.starts_with("fence-") {
-            notes.push(format!("{check} has no green round recorded at {tip}; it passes only in a round that contains this tip"));
+            notes.push(format!("queue.sh {verb}: {check} passes only in the round that carries {tip}"));
             continue;
         }
         let first_check = !proof::recorded(run, id, tip, &check);
@@ -266,7 +266,7 @@ fn checks_proven(
             w.err(format!(
                 "queue.sh {verb}: cannot record the run of {check}: {e} — refused"
             ));
-            return false;
+            return None;
         }
         if rc != 0 {
             let last = out
@@ -282,8 +282,8 @@ fn checks_proven(
             }
         }
     }
-    if notes.is_empty() && failed.is_empty() && unverified.is_empty() {
-        return true;
+    if failed.is_empty() && unverified.is_empty() {
+        return Some(notes);
     }
     if !failed.is_empty() {
         notes.extend(failed);
@@ -295,7 +295,7 @@ fn checks_proven(
         notes.extend(unverified);
         w.err(format!("queue.sh {verb}: {id} was ejected for checks that could not be verified at {tip} — refused:\n  {}", notes.join("\n  ")));
     }
-    false
+    None
 }
 
 /// Record the gate pass on spira-lc; a refusal is reported and the submit does not certify.
@@ -761,9 +761,9 @@ pub fn resubmit(
     if !lint_passed(w, "resubmit", &path, tip, false) {
         return FAIL;
     }
-    if !checks_proven(w, "resubmit", &c.s.run, &c.r.name, id, tip) {
+    let Some(round_only_notes) = checks_proven(w, "resubmit", &c.s.run, &c.r.name, id, tip) else {
         return FAIL;
-    }
+    };
     if super::require_lc(w, "resubmit").is_err() {
         return FAIL;
     }
@@ -819,6 +819,9 @@ pub fn resubmit(
             reason.lines().next().unwrap_or("")
         ),
     );
+    for note in &round_only_notes {
+        w.out(note);
+    }
     w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; admit it with `queue round open --members {id}:{tip}` — the round certifies it", row.state));
     OK
 }
