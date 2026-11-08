@@ -759,54 +759,59 @@ impl World {
         Ok("forgot".into())
     }
 
-    /// The day's landings and rounds for `watch.throughput`: the beads landed on each repo's
-    /// landing ref by hour, and every repo's rounds from the batch rows.
+    /// The day's landings and rounds for `watch.throughput`: per repo, the beads landed on its
+    /// landing ref by hour and the beads waiting to land, and every repo's rounds from the batch rows.
     pub fn throughput_snapshot(&self, input: &str) -> Result<String, String> {
         let p: ThroughputParams = serde_json::from_str(input).map_err(|e| format!("throughput params unparsed: {e}"))?;
         let day = 24 * 3600;
         let blind = ThroughputSnapshot { readable: false, ..Default::default() };
-        let halted = self.run_dir.join("world.halted").exists();
-        let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
-        let Ok((hourly, landed_refs)) = self.landed_on_refs(p.now, &prefix) else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
-        let Ok(batches) = self.lc_json(&["list", "--batches", "--window", &day.to_string()]) else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
+        let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&blind) };
+        let Ok(mut landings) = self.landed_on_refs(p.now, &prefix) else { return to_json(&blind) };
+        let Ok(waiting) = self.lc_json(&["list", "--state", "SUBMITTED,IN_DELIVERY"]) else { return to_json(&blind) };
+        let Ok(batches) = self.lc_json(&["list", "--batches", "--window", &day.to_string()]) else { return to_json(&blind) };
+        for l in &mut landings {
+            l.waiting = waiting.as_array().map_or(0, |rows| rows.iter().filter(|r| r["repo"].as_str() == Some(l.repo.as_str())).count() as u64);
+        }
         let batches = batches.as_array().map(Vec::as_slice).unwrap_or_default();
         let repos = round_counts(batches, p.now, p.abandon_window_s);
         let unlanded = unlanded_rounds(batches, p.now);
         let parts = self.round_record_partition();
         let records = Records { clear: parts.clear.iter().map(|f| f.display().to_string()).collect(), held: parts.held };
-        to_json(&ThroughputSnapshot { readable: true, halted, hourly, landed_refs, repos, unlanded, records })
+        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records })
     }
 
-    /// The beads landed over the 24 h ending `now`, read from each registered repo's landing ref
+    /// The beads landed over the 24 h ending `now`, per registered repo, read from its landing ref
     /// as `spira_landref` resolves it (the map row's `base`, else the remote's default; never the
-    /// lane name): by hour of the last commit naming each (repo, bead), the oldest hour first, and
-    /// how many distinct (repo, bead) pairs. A repo whose ref cannot be resolved or read is an error.
-    pub fn landed_on_refs(&self, now: u64, prefix: &str) -> Result<(Vec<u64>, u64), String> {
+    /// lane name): by hour of the last commit naming each bead, the oldest hour first, and the
+    /// time of the last such commit. A repo whose ref cannot be resolved or read is an error.
+    pub fn landed_on_refs(&self, now: u64, prefix: &str) -> Result<Vec<RepoLanding>, String> {
         let day = 24 * 3600;
         let map = fs::read_to_string(&self.repo_map).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
         let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), self.home_repo.clone())]);
         let reg = spira_config::repos::Registry::new(Some(&map), &env, Path::new(""));
         let since = format!("--since=@{}", now.saturating_sub(day));
-        let mut landed: BTreeMap<(String, String), u64> = BTreeMap::new();
+        let mut out = vec![];
         for row in map_rows(&map) {
             let land = spira_config::repos::landref(&reg, &row.name).ok_or_else(|| format!("{}: no landing ref resolves", row.name))?;
-            let Ok((Some(0), out)) = git(Path::new(&row.path), &["log", &land, &since, "--format=%ct %s"]) else { return Err(format!("{}: git log {land} failed", row.name)) };
-            for line in String::from_utf8_lossy(&out).lines() {
+            let Ok((Some(0), log)) = git(Path::new(&row.path), &["log", &land, &since, "--format=%ct %s"]) else { return Err(format!("{}: git log {land} failed", row.name)) };
+            let mut landed: BTreeMap<String, u64> = BTreeMap::new();
+            for line in String::from_utf8_lossy(&log).lines() {
                 let Some((at, subject)) = line.split_once(' ') else { continue };
                 let Ok(at) = at.parse::<u64>() else { continue };
                 for id in bead_ids(subject, prefix) {
-                    let t = landed.entry((row.name.clone(), id)).or_insert(at);
+                    let t = landed.entry(id).or_insert(at);
                     *t = (*t).max(at);
                 }
             }
-        }
-        let mut hourly = vec![0u64; 24];
-        for at in landed.values() {
-            if let Some(age) = now.checked_sub(*at).filter(|a| *a < day) {
-                hourly[(23 - age / 3600) as usize] += 1;
+            let mut hourly = vec![0u64; 24];
+            for at in landed.values() {
+                if let Some(age) = now.checked_sub(*at).filter(|a| *a < day) {
+                    hourly[(23 - age / 3600) as usize] += 1;
+                }
             }
+            out.push(RepoLanding { repo: row.name, hourly, last_landing: landed.values().copied().max().unwrap_or(0), waiting: 0 });
         }
-        Ok((hourly, landed.len() as u64))
+        Ok(out)
     }
 
     /// The waits at every lifecycle state for `watch.transitions`: `spira-lc dwell` over the
@@ -868,14 +873,6 @@ impl World {
         Ok(format!("cleared {cleared} of {}; {} refused", asked.len(), parts.held.len()))
     }
 
-    /// Writes the `world.halted` stamp as `world stop` does: the time, then the reason.
-    pub fn halt_stamp(&self, why: &str) -> Result<String, String> {
-        let stamp = self.run_dir.join("world.halted");
-        let now = crate::watchers::iso8601(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()));
-        fs::write(&stamp, format!("{now}\nwhy: {why}\n")).map_err(|e| format!("{}: {e}", stamp.display()))?;
-        Ok("stamped".into())
-    }
-
     /// Records `line` in the Concierge inbox through the inbox's one append-and-push leg (`inbox_rules::record`),
     /// so a line matching the push pattern wakes the session as an `inbox-triage append` does.
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {
@@ -894,7 +891,7 @@ struct ThroughputParams {
     abandon_window_s: u64,
 }
 
-use crate::tasks::e::watch_throughput::{RepoRounds, Records, Snapshot as ThroughputSnapshot, Unlanded};
+use crate::tasks::e::watch_throughput::{RepoLanding, RepoRounds, Records, Snapshot as ThroughputSnapshot, Unlanded};
 
 fn to_json(s: &ThroughputSnapshot) -> Result<String, String> {
     serde_json::to_string(s).map_err(|e| e.to_string())

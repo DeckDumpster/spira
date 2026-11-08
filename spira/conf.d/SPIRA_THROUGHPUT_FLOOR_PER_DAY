@@ -1,6 +1,0 @@
-TYPE=u32
-GROUP=batch
-DOC=Landed-bead floor over the trailing 24 hours across every repo; below it the loop stops the world and pages.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_THROUGHPUT_FLOOR_PER_DAY:=150}"
-SPIRA_CONF_DEFAULT_EOF

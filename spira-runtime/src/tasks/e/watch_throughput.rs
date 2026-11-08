@@ -1,10 +1,13 @@
-//! # watch.throughput — the landing floor
+//! # watch.throughput — the landing stall
 //!
-//! Every 15 minutes: count the beads landed over the trailing 24 h across every registered repo.
-//! Below `SPIRA_THROUGHPUT_FLOOR_PER_DAY` the scheduler is halted, the `world.halted` stamp is
-//! written and one P0 line goes to the Concierge inbox (law-throughput-floor). A second condition,
-//! per repo, pages (and stops nothing) when `SPIRA_THROUGHPUT_ABANDON_COUNT` rounds were abandoned
-//! inside `SPIRA_THROUGHPUT_ABANDON_WINDOW` seconds with no landing.
+//! Every 15 minutes, per registered repo: no landing for `SPIRA_THROUGHPUT_STALL_SECS` while
+//! beads sit SUBMITTED or IN_DELIVERY there is a stall. A stall files one express P0 incident
+//! (hourly landings, the repo's rounds, the last landing) for the ops lane to root-cause and
+//! repair, and appends one inbox line once the filing succeeded. The episode is cleared by the
+//! next landing; a stall older than the 24 h landing window is one episode. A low trailing-day rate alone triggers nothing, and nothing here halts the world.
+//!
+//! A second condition, per repo, pages (and stops nothing) when `SPIRA_THROUGHPUT_ABANDON_COUNT`
+//! rounds were abandoned inside `SPIRA_THROUGHPUT_ABANDON_WINDOW` seconds with no landing.
 //!
 //! Two more per-repo conditions page and stop nothing. A repo whose rounds pass CI far more often
 //! than they land (landed under `SPIRA_THROUGHPUT_RATIO_MIN_PCT` per cent of passing runs, once
@@ -13,18 +16,13 @@
 //! the store has ended, or never held, are removed each tick (`CLEAR`); a file naming a round the
 //! store holds open, or cannot answer for, is refused clearing and paged by name once.
 //!
-//! The count is the distinct beads named by commits on each repo's landing ref (resolved as
-//! `spira_landref` does, never the lane name) inside the day: the ref is the authority on what
-//! landed, and one `git log` per repo reads it. The metrics series it once read (`bead-stage`) has
-//! been blind since the control-store cutover (sp-uf50sm). A count that cannot be read pages BLIND
-//! once and stops nothing. After a stop the task waits for the world to be resumed and
-//! `SPIRA_THROUGHPUT_RESTOP_AFTER` seconds more before it will stop it again.
-//!
-//! The halt is the scheduler's own (`scheduler.halted` on the halt stream) plus the stamp; live
-//! dwarves are not slain from here, since no task launches a process.
+//! A landing is a commit naming a bead on a repo's landing ref (resolved as `spira_landref` does,
+//! never the lane name): the ref is the authority on what landed. A count that cannot be read
+//! pages BLIND once and files nothing.
 
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use spira_config::process::cfg_parse;
 
 use crate::tasks::d::pattern;
@@ -35,20 +33,20 @@ pub const STREAM: &str = "watch.throughput";
 pub const TICK: EventKindTag = "watch.throughput.tick";
 pub const STATE: EventKindTag = "watch.throughput.state";
 pub const OBSERVE: &str = "watch.throughput.observe";
-pub const STAMP: &str = "watch.throughput.stamp";
+pub const FILE: &str = "watch.throughput.file";
 pub const CLEAR: &str = "watch.throughput.clear";
-pub const EFFECTS: &[&str] = &[OBSERVE, STAMP, CLEAR, INBOX_APPEND];
-pub const KEYS: &[&str] = &["SPIRA_THROUGHPUT_FLOOR_PER_DAY", "SPIRA_THROUGHPUT_ABANDON_COUNT", "SPIRA_THROUGHPUT_ABANDON_WINDOW", "SPIRA_THROUGHPUT_RESTOP_AFTER", "SPIRA_THROUGHPUT_RATIO_MIN_PCT", "SPIRA_THROUGHPUT_RATIO_MIN_RUNS", "SPIRA_THROUGHPUT_PASSED_GRACE", "SPIRA_ID_PREFIX"];
+pub const EFFECTS: &[&str] = &[OBSERVE, FILE, CLEAR, INBOX_APPEND];
+pub const KEYS: &[&str] = &["SPIRA_THROUGHPUT_STALL_SECS", "SPIRA_THROUGHPUT_ABANDON_COUNT", "SPIRA_THROUGHPUT_ABANDON_WINDOW", "SPIRA_THROUGHPUT_RATIO_MIN_PCT", "SPIRA_THROUGHPUT_RATIO_MIN_RUNS", "SPIRA_THROUGHPUT_PASSED_GRACE", "SPIRA_ID_PREFIX"];
 pub const CADENCE_MS: u64 = 900_000;
 const DEADLINE_MS: u64 = 60_000;
+const FILE_DEADLINE_MS: u64 = 120_000;
 const TAG: &str = "throughput";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
-    pub floor: u64,
+    pub stall_s: u64,
     pub abandon_count: u64,
     pub abandon_window_s: u64,
-    pub restop_after_s: u64,
     pub ratio_min_pct: u64,
     pub ratio_min_runs: u64,
     pub passed_grace_s: u64,
@@ -56,7 +54,7 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config { floor: cfg_parse("SPIRA_THROUGHPUT_FLOOR_PER_DAY")?, abandon_count: cfg_parse("SPIRA_THROUGHPUT_ABANDON_COUNT")?, abandon_window_s: cfg_parse("SPIRA_THROUGHPUT_ABANDON_WINDOW")?, restop_after_s: cfg_parse("SPIRA_THROUGHPUT_RESTOP_AFTER")?, ratio_min_pct: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_PCT")?, ratio_min_runs: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_RUNS")?, passed_grace_s: cfg_parse("SPIRA_THROUGHPUT_PASSED_GRACE")? })
+        Ok(Config { stall_s: cfg_parse("SPIRA_THROUGHPUT_STALL_SECS")?, abandon_count: cfg_parse("SPIRA_THROUGHPUT_ABANDON_COUNT")?, abandon_window_s: cfg_parse("SPIRA_THROUGHPUT_ABANDON_WINDOW")?, ratio_min_pct: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_PCT")?, ratio_min_runs: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_RUNS")?, passed_grace_s: cfg_parse("SPIRA_THROUGHPUT_PASSED_GRACE")? })
     }
 }
 
@@ -90,40 +88,51 @@ pub struct Records {
     pub held: Vec<String>,
 }
 
+/// One repo's landings over the day: beads per hour (oldest first), the time of the last, and
+/// the beads waiting to land.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoLanding {
+    pub repo: String,
+    pub hourly: Vec<u64>,
+    /// Epoch seconds of the last landing inside the day; 0 when the day holds none.
+    pub last_landing: u64,
+    /// Beads SUBMITTED or IN_DELIVERY for this repo.
+    pub waiting: u64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub readable: bool,
-    pub halted: bool,
-    /// Beads landed on the landing refs per hour, the oldest hour first.
-    pub hourly: Vec<u64>,
-    /// Distinct beads named by commits on the landing refs over the same day.
-    pub landed_refs: u64,
+    pub landings: Vec<RepoLanding>,
     pub repos: Vec<RepoRounds>,
     pub unlanded: Vec<Unlanded>,
     pub records: Records,
 }
 
-impl Snapshot {
-    pub fn landed(&self) -> u64 {
-        self.hourly.iter().sum::<u64>().max(self.landed_refs)
-    }
+/// What `watch.throughput.file` is handed: one stall episode and the incident that names it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Filing {
+    pub repo: String,
+    pub last_landing: u64,
+    pub title: String,
+    pub body: String,
+    pub line: String,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Stop {
-    #[default]
-    Idle,
-    Stopped,
-    Resumed {
-        at_ms: u64,
-    },
+impl Filing {
+    /// The incident's dedup reference: one per repo and stall episode, an episode being the
+    /// stretch since one landing.
+    pub fn reference(&self) -> String {
+        format!("incident:throughput-stall:{}:{}", self.repo, self.last_landing)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Carry {
-    pub stop: Stop,
     pub blind: bool,
+    /// Repo → the last landing of the stall episode already filed.
+    pub stalled: BTreeMap<String, u64>,
     pub starved: Vec<String>,
     pub diluted: Vec<String>,
     pub unlanded: Vec<String>,
@@ -133,17 +142,24 @@ pub struct Carry {
 pub struct Verdict {
     pub carry: Carry,
     pub acts: Vec<EffectSpec>,
-    pub halt: Option<String>,
 }
 
 fn say(now_ms: u64, line: &str) -> EffectSpec {
     EffectSpec { name: INBOX_APPEND.into(), input: pattern::inbox_line(now_ms, TAG, line), deadline_ms: DEADLINE_MS }
 }
 
-fn floor_page(snap: &Snapshot, cfg: &Config) -> String {
-    let hourly: Vec<String> = snap.hourly.iter().map(u64::to_string).collect();
-    let repos: Vec<String> = snap.repos.iter().map(|r| format!("{}: cut {} abandoned {} landed {}", r.repo, r.cut, r.abandoned, r.landed)).collect();
-    format!("P0 THROUGHPUT FLOOR: {} landed/24h < {} — world stopped; root-cause and propose | hourly: {} | rounds per repo: {}", snap.landed(), cfg.floor, hourly.join(" "), if repos.is_empty() { "none".into() } else { repos.join("; ") })
+fn stall_filing(l: &RepoLanding, rounds: Option<&RepoRounds>, now_ms: u64, cfg: &Config) -> Filing {
+    let hourly: Vec<String> = l.hourly.iter().map(u64::to_string).collect();
+    let since = if l.last_landing == 0 { "no landing in the last 24h".to_string() } else { format!("last landing {} ({}s ago)", crate::watchers::iso8601(l.last_landing), (now_ms / 1000).saturating_sub(l.last_landing)) };
+    let rounds = rounds.map_or("none".to_string(), |r| format!("cut {} abandoned {} landed {}", r.cut, r.abandoned, r.landed));
+    let title = format!("landing stalled on {}: {} beads waiting, no landing for {}s", l.repo, l.waiting, cfg.stall_s);
+    let body = format!("## Problem\nNo bead has landed on {} for at least {}s while {} sit SUBMITTED or IN_DELIVERY there.\n\n## Evidence\n- {since}\n- landings per hour over 24h, oldest first: {}\n- rounds over 24h: {rounds}\n\n## Ask\nRoot-cause why landing stopped and repair it. Nothing was halted.\n", l.repo, cfg.stall_s, l.waiting, hourly.join(" "));
+    let line = format!("P0 {}: landing stalled — {} beads waiting, {since}; incident filed for the ops lane", l.repo, l.waiting);
+    Filing { repo: l.repo.clone(), last_landing: l.last_landing, title, body, line }
+}
+
+fn is_stalled(l: &RepoLanding, now_ms: u64, cfg: &Config) -> bool {
+    l.waiting > 0 && (now_ms / 1000).saturating_sub(l.last_landing) >= cfg.stall_s
 }
 
 pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verdict {
@@ -151,30 +167,20 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     let mut acts = vec![];
     if !snap.readable {
         if !carry.blind {
-            acts.push(say(now_ms, "P0 BLIND: the landing count cannot be read, so the throughput floor is not being checked"));
+            acts.push(say(now_ms, "P0 BLIND: the landings cannot be read, so landing stalls are not being checked"));
         }
         next.blind = true;
-        return Verdict { carry: next, acts, halt: None };
+        return Verdict { carry: next, acts };
     }
     next.blind = false;
 
-    next.stop = match (carry.stop, snap.halted) {
-        (_, true) => Stop::Stopped,
-        (Stop::Stopped, false) => Stop::Resumed { at_ms: now_ms },
-        (s, false) => s,
-    };
-    let settled = match next.stop {
-        Stop::Idle => true,
-        Stop::Stopped => false,
-        Stop::Resumed { at_ms } => now_ms >= at_ms + cfg.restop_after_s * 1000,
-    };
-    let mut halt = None;
-    if settled && !snap.halted && snap.landed() < cfg.floor {
-        let page = floor_page(snap, cfg);
-        halt = Some(page.clone());
-        acts.push(EffectSpec { name: STAMP.into(), input: page.clone(), deadline_ms: DEADLINE_MS });
-        acts.push(say(now_ms, &page));
-        next.stop = Stop::Stopped;
+    next.stalled.retain(|repo, _| snap.landings.iter().any(|l| l.repo == *repo && is_stalled(l, now_ms, cfg)));
+    for l in snap.landings.iter().filter(|l| is_stalled(l, now_ms, cfg)) {
+        if next.stalled.get(&l.repo) == Some(&l.last_landing) {
+            continue;
+        }
+        let f = stall_filing(l, snap.repos.iter().find(|r| r.repo == l.repo), now_ms, cfg);
+        acts.push(EffectSpec { name: FILE.into(), input: serde_json::to_string(&f).unwrap_or_default(), deadline_ms: FILE_DEADLINE_MS });
     }
 
     let starving: Vec<&RepoRounds> = snap.repos.iter().filter(|r| r.abandoned_recent >= cfg.abandon_count && r.landed_recent == 0).collect();
@@ -210,7 +216,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
         }
     }
     next.held = snap.records.held.clone();
-    Verdict { carry: next, acts, halt }
+    Verdict { carry: next, acts }
 }
 
 pub struct WatchThroughput {
@@ -251,6 +257,12 @@ impl Handler for WatchThroughput {
             };
             return pattern::tick(ev, OBSERVE, input, DEADLINE_MS, ev.at + CADENCE_MS);
         }
+        if let Some(f) = crate::watchers::answered_spec(view, ev).filter(|s| s.name == FILE).and_then(|s| serde_json::from_str::<Filing>(&s.input).ok()) {
+            let carry = carried::<Carry>(view, &ev.stream, STATE);
+            let mut next = carry.clone();
+            next.stalled.insert(f.repo.clone(), f.last_landing);
+            return pattern::commands(STATE, &carry, &next, vec![say(ev.at, &f.line)]);
+        }
         let Some(snap) = pattern::answer::<Snapshot>(view, ev, OBSERVE) else { return vec![] };
         let cfg = match &self.config {
             Ok(c) => c,
@@ -261,10 +273,20 @@ impl Handler for WatchThroughput {
         };
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let v = decide(&carry, &snap, ev.at, cfg);
-        let mut out = pattern::commands(STATE, &carry, &v.carry, v.acts);
-        if let Some(why) = v.halt {
-            out.push(Command::EmitTo { stream: StreamKey(HALT_STREAM.into()), kind: EventKind::new(SCHEDULER_HALTED, &why) });
-        }
-        out
+        pattern::commands(STATE, &carry, &v.carry, v.acts)
     }
+}
+
+/// The incident for one stall episode, filed express at P0 against the home repo, keyed so a
+/// refiling of the same episode bumps the existing bead rather than opening another.
+pub fn file(input: &str) -> Result<String, String> {
+    let f: Filing = serde_json::from_str(input).map_err(|e| format!("{FILE}: {e}"))?;
+    let reference = f.reference();
+    incident::intake::file_payload_with(&f.title, f.body.as_bytes(), |env| {
+        env.priority = "0".into();
+        env.express = true;
+        env.fenrir_exempt = true;
+        env.reference = Some(reference);
+    })
+    .map(|()| format!("filed {}", f.title))
 }

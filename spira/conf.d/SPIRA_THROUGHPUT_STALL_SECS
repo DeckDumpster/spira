@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=batch
+DOC=Seconds without a landing on a repo, while beads sit SUBMITTED or IN_DELIVERY there, before watch.throughput files a stall incident.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_THROUGHPUT_STALL_SECS:=7200}"
+SPIRA_CONF_DEFAULT_EOF

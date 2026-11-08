@@ -361,7 +361,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("watch.testenv_cap.metric", Host),
     ("watch.testenv_cap.observe", Host),
     ("watch.throughput.observe", Host),
-    ("watch.throughput.stamp", Host),
+    ("watch.throughput.file", Store),
     ("watch.throughput.clear", Host),
     ("watch.tower.alarm", Store),
     ("watch.tower.drain_check", Store),

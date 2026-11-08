@@ -1,6 +1,0 @@
-TYPE=u32
-GROUP=batch
-DOC=Seconds after the world is resumed before the throughput floor may stop it again.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_THROUGHPUT_RESTOP_AFTER:=3600}"
-SPIRA_CONF_DEFAULT_EOF

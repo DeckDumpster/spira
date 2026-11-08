@@ -1,33 +1,66 @@
-//! Tests for `watch.throughput`: the 24 h landing floor that stops the world and pages, and the
-//! per-repo "abandoned rounds, no landings" page.
+//! Tests for `watch.throughput`: a landing stall files one express P0 incident and halts nothing,
+//! and the per-repo "abandoned rounds, no landings" page.
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_deterministic, DAY_MS, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
 use runtime::{HALT_STREAM, SCHEDULER_HALTED};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_throughput::*;
 use spira_runtime::watchers::INBOX_APPEND;
 
-const HOUR_MS: u64 = 3_600_000;
-
 fn config() -> Config {
-    Config { floor: 150, abandon_count: 5, abandon_window_s: 7_200, restop_after_s: 3_600, ratio_min_pct: 40, ratio_min_runs: 6, passed_grace_s: 300 }
+    Config { stall_s: 7_200, abandon_count: 5, abandon_window_s: 7_200, ratio_min_pct: 40, ratio_min_runs: 6, passed_grace_s: 300 }
 }
 
-fn landed(n: u64) -> Snapshot {
+/// When the fake host says the last landing happened, relative to the clock it is asked at.
+#[derive(Clone, Copy)]
+enum Last {
+    Never,
+    Ago(u64),
+    FirstSight,
+}
+
+#[derive(Clone)]
+struct Host {
+    snap: Snapshot,
+    last: Last,
+    first_seen: Option<u64>,
+}
+
+fn landed(n: u64) -> Host {
     let mut hourly = vec![n / 24; 24];
     hourly[23] += n % 24;
-    Snapshot { readable: true, halted: false, hourly, landed_refs: n, ..Default::default() }
+    Host { snap: Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly, last_landing: 0, waiting: 0 }], ..Default::default() }, last: Last::Ago(60), first_seen: None }
+}
+
+fn waiting(mut h: Host, n: u64, last: Last) -> Host {
+    h.snap.landings[0].waiting = n;
+    h.last = last;
+    h
 }
 
 fn starved(repo: &str, abandoned: u64, landed_recent: u64) -> RepoRounds {
     RepoRounds { repo: repo.into(), cut: abandoned + landed_recent, abandoned, landed: landed_recent, abandoned_recent: abandoned, landed_recent, green_runs: 0 }
 }
 
-fn rig(world: Arc<Mutex<Snapshot>>) -> TaskRig {
+fn rig(world: Arc<Mutex<Host>>) -> TaskRig {
     let (_, stream, kind) = WatchThroughput::boot();
-    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())).double(STAMP, |_| Ok("stamped".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
+    let observe = move |input: &str| {
+        let now = serde_json::from_str::<serde_json::Value>(input).unwrap()["now"].as_u64().unwrap();
+        let mut h = world.lock().unwrap();
+        let first = *h.first_seen.get_or_insert(now);
+        let at = match h.last {
+            Last::Never => 0,
+            Last::Ago(s) => now - s,
+            Last::FirstSight => first,
+        };
+        let mut snap = h.snap.clone();
+        snap.landings.iter_mut().for_each(|l| l.last_landing = at);
+        Ok(serde_json::to_string(&snap).unwrap())
+    };
+    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, observe).double(FILE, |_| Ok("filed".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
+    r.clock.advance_to(3 * DAY_MS);
     r.tick(stream, kind).unwrap();
     acc::assert_healthy(&r, STREAM);
     r
@@ -51,81 +84,95 @@ fn the_row_is_registered_and_its_boot_arms_the_fifteen_minute_tick() {
     assert_eq!(Config::pinned().map(|_| ()), Ok(()), "every key resolves through the config door");
 }
 
-#[test]
-fn a_hundred_and_forty_nine_landings_in_a_day_stop_the_world_and_page_once() {
-    let r = rig(Arc::new(Mutex::new(landed(149))));
-    assert_eq!(halts(&r), 1, "the scheduler is halted");
-    assert_eq!(named(&r, STAMP).len(), 1, "the world.halted stamp is written");
-    let pages = named(&r, INBOX_APPEND);
-    assert_eq!(pages.len(), 1, "{pages:?}");
-    assert!(pages[0].contains("THROUGHPUT FLOOR: 149 landed/24h < 150 — world stopped; root-cause and propose"), "{pages:?}");
+const CADENCE_S: u64 = CADENCE_MS / 1000;
+
+fn episodes(r: &TaskRig) -> Vec<std::collections::BTreeMap<String, u64>> {
+    r.journaled().iter().filter(|e| e.kind.tag == STATE).filter_map(|e| serde_json::from_str::<Carry>(&e.kind.body).ok()).map(|c| c.stalled).collect()
 }
 
 #[test]
-fn a_hundred_and_fifty_landings_in_a_day_do_not_stop_it() {
-    let mut r = rig(Arc::new(Mutex::new(landed(150))));
-    assert_eq!((halts(&r), named(&r, STAMP).len(), named(&r, INBOX_APPEND).len()), (0, 0, 0));
+fn fifty_five_landings_in_a_day_with_steady_landings_file_no_incident_and_halt_nothing() {
+    let w = Arc::new(Mutex::new(waiting(landed(55), 4, Last::Ago(1_800))));
+    let mut r = rig(w);
+    r.advance(12 * CADENCE_MS).unwrap();
+    assert_eq!((halts(&r), named(&r, FILE).len(), named(&r, INBOX_APPEND).len()), (0, 0, 0));
     assert_silent_tick(&mut r, STREAM);
 }
 
 #[test]
-fn the_page_carries_the_hourly_counts_and_each_repos_rounds() {
-    let mut s = landed(100);
-    s.hourly = (0..24).map(|h| h % 5).collect();
-    s.repos = vec![RepoRounds { repo: "alpha".into(), cut: 9, abandoned: 4, landed: 3, abandoned_recent: 0, landed_recent: 1, green_runs: 0 }];
-    let r = rig(Arc::new(Mutex::new(s)));
-    let page = named(&r, INBOX_APPEND).remove(0);
-    assert!(page.contains("hourly: 0 1 2 3 4 0 1 2 3 4 0 1 2 3 4 0 1 2 3 4 0 1 2 3"), "{page}");
-    assert!(page.contains("alpha: cut 9 abandoned 4 landed 3"), "{page}");
-}
-
-#[test]
-fn the_larger_of_the_lifecycle_and_the_landing_refs_is_the_count() {
-    let mut s = landed(149);
-    s.landed_refs = 150;
-    assert_eq!(s.landed(), 150, "an export that lags the refs does not stop the world");
-    let r = rig(Arc::new(Mutex::new(s)));
-    assert_eq!(halts(&r), 0);
-}
-
-#[test]
-fn it_does_not_stop_again_until_resumed_and_an_hour_has_passed() {
-    let w = Arc::new(Mutex::new(landed(10)));
-    let mut r = rig(w.clone());
-    assert_eq!(halts(&r), 1);
-    w.lock().unwrap().halted = true;
-    r.advance(2 * CADENCE_MS).unwrap();
-    assert_eq!(halts(&r), 1, "still stopped: once");
-    w.lock().unwrap().halted = false;
-    r.advance(CADENCE_MS).unwrap();
-    assert_eq!(halts(&r), 1, "resumed, but within the hour");
-    r.advance(HOUR_MS + CADENCE_MS).unwrap();
-    let stops = r.journaled().iter().filter(|e| e.kind.tag == STATE).filter(|e| serde_json::from_str::<Carry>(&e.kind.body).is_ok_and(|c| c.stop == Stop::Stopped)).count();
-    assert_eq!(stops, 2, "an hour after the resume it decides to stop again (the rig stays halted, so its effects are held)");
-}
-
-#[test]
-fn a_world_already_stopped_is_not_stopped_or_paged_again() {
-    let mut s = landed(0);
-    s.halted = true;
-    let r = rig(Arc::new(Mutex::new(s)));
-    assert_eq!((halts(&r), named(&r, INBOX_APPEND).len()), (0, 0));
-}
-
-#[test]
-fn a_count_that_cannot_be_read_pages_blind_once_and_never_stops_the_world() {
-    let w = Arc::new(Mutex::new(Snapshot { readable: false, ..landed(0) }));
+fn no_landing_for_two_hours_with_beads_waiting_files_exactly_one_incident_and_halts_nothing() {
+    let w = Arc::new(Mutex::new(waiting(landed(55), 3, Last::FirstSight)));
     let mut r = rig(w);
-    r.advance(4 * CADENCE_MS).unwrap();
-    assert_eq!(halts(&r), 0);
+    r.advance(7 * CADENCE_MS).unwrap();
+    assert!(named(&r, FILE).is_empty(), "an hour and three quarters is not yet a stall");
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(7_200, 8 * CADENCE_S, "the eighth tick is the two-hour mark");
+    r.advance(8 * CADENCE_MS).unwrap();
+    let filings = named(&r, FILE);
+    assert_eq!(filings.len(), 1, "one incident for the whole episode: {filings:?}");
+    let f: Filing = serde_json::from_str(&filings[0]).unwrap();
+    assert!(f.title.contains("alpha") && f.title.contains("3 beads waiting"), "{}", f.title);
+    assert!(f.body.contains("landings per hour") && f.body.contains("rounds over 24h"), "{}", f.body);
+    assert_eq!(f.reference(), format!("incident:throughput-stall:alpha:{}", f.last_landing));
     let pages = named(&r, INBOX_APPEND);
-    assert!(pages.len() == 1 && pages[0].contains("BLIND"), "{pages:?}");
+    assert!(pages.len() == 1 && pages[0].contains("P0 alpha: landing stalled"), "{pages:?}");
+    assert_eq!(halts(&r), 0, "a stall starts a repair, never a halt");
+}
+
+#[test]
+fn a_stall_with_nothing_waiting_files_nothing() {
+    let w = Arc::new(Mutex::new(waiting(landed(55), 0, Last::Never)));
+    let r = rig(w);
+    assert_eq!((named(&r, FILE).len(), named(&r, INBOX_APPEND).len()), (0, 0));
+}
+
+#[test]
+fn a_landing_clears_the_episode_and_the_next_stall_files_again() {
+    let w = Arc::new(Mutex::new(waiting(landed(55), 3, Last::Never)));
+    let mut r = rig(w.clone());
+    assert_eq!(named(&r, FILE).len(), 1);
+    assert!(episodes(&r).last().is_some_and(|e| e.contains_key("alpha")), "the episode is recorded once filed");
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(named(&r, FILE).len(), 1, "a standing stall is filed once");
+    w.lock().unwrap().last = Last::Ago(60);
+    r.advance(CADENCE_MS).unwrap();
+    assert!(episodes(&r).last().is_some_and(|e| e.is_empty()), "the landing clears the episode");
+    w.lock().unwrap().last = Last::Never;
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(named(&r, FILE).len(), 2, "a new stall is a new episode");
+}
+
+#[test]
+fn a_filing_that_failed_is_asked_again_and_pages_nothing_until_it_succeeds() {
+    let w = Arc::new(Mutex::new(waiting(landed(55), 3, Last::Never)));
+    let (_, stream, kind) = WatchThroughput::boot();
+    let w2 = w.clone();
+    let up = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let up2 = up.clone();
+    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration())
+        .unwrap()
+        .double(OBSERVE, move |_| Ok(serde_json::to_string(&w2.lock().unwrap().snap).unwrap()))
+        .double(FILE, move |_| if up2.load(std::sync::atomic::Ordering::SeqCst) { Ok("filed".into()) } else { Err("store down".into()) })
+        .double(CLEAR, |_| Ok("cleared".into()))
+        .double(INBOX_APPEND, |_| Ok("appended".into()));
+    r.clock.advance_to(3 * DAY_MS);
+    w.lock().unwrap().snap.landings[0].last_landing = 0;
+    r.tick(stream, kind).unwrap();
+    r.advance(CADENCE_MS).unwrap();
+    assert!(named(&r, FILE).len() >= 2, "refiled on the next tick");
+    assert!(named(&r, INBOX_APPEND).is_empty());
+    assert!(episodes(&r).iter().all(|e| e.is_empty()));
+    up.store(true, std::sync::atomic::Ordering::SeqCst);
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(named(&r, INBOX_APPEND).len(), 1, "paged once the filing succeeded");
+    r.advance(3 * CADENCE_MS).unwrap();
+    assert_eq!(named(&r, INBOX_APPEND).len(), 1);
 }
 
 #[test]
 fn five_abandoned_rounds_and_no_landing_page_the_repo_by_name_without_stopping_the_world() {
     let mut s = landed(400);
-    s.repos = vec![starved("stuck-repo", 5, 0), starved("quiet", 4, 0), starved("busy", 9, 1)];
+    s.snap.repos = vec![starved("stuck-repo", 5, 0), starved("quiet", 4, 0), starved("busy", 9, 1)];
     let mut r = rig(Arc::new(Mutex::new(s)));
     let pages = named(&r, INBOX_APPEND);
     assert!(pages.len() == 1 && pages[0].contains("stuck-repo") && pages[0].contains("5 abandoned") && !pages[0].contains("quiet") && !pages[0].contains("busy"), "{pages:?}");
@@ -137,13 +184,13 @@ fn five_abandoned_rounds_and_no_landing_page_the_repo_by_name_without_stopping_t
 #[test]
 fn a_repo_that_lands_again_and_starves_again_is_paged_again() {
     let mut s = landed(400);
-    s.repos = vec![starved("stuck-repo", 5, 0)];
+    s.snap.repos = vec![starved("stuck-repo", 5, 0)];
     let w = Arc::new(Mutex::new(s.clone()));
     let mut r = rig(w.clone());
-    s.repos = vec![starved("stuck-repo", 5, 1)];
+    s.snap.repos = vec![starved("stuck-repo", 5, 1)];
     *w.lock().unwrap() = s.clone();
     r.advance(CADENCE_MS).unwrap();
-    s.repos = vec![starved("stuck-repo", 6, 0)];
+    s.snap.repos = vec![starved("stuck-repo", 6, 0)];
     *w.lock().unwrap() = s;
     r.advance(CADENCE_MS).unwrap();
     assert_eq!(named(&r, INBOX_APPEND).len(), 2);
@@ -156,7 +203,7 @@ fn repo_with_runs(repo: &str, green_runs: u64, landed: u64) -> RepoRounds {
 #[test]
 fn a_repo_whose_passing_runs_mostly_do_not_land_is_paged_once_and_a_healthy_or_thin_one_is_not() {
     let mut s = landed(400);
-    s.repos = vec![repo_with_runs("diluted", 10, 3), repo_with_runs("healthy", 10, 4), repo_with_runs("thin", 5, 0)];
+    s.snap.repos = vec![repo_with_runs("diluted", 10, 3), repo_with_runs("healthy", 10, 4), repo_with_runs("thin", 5, 0)];
     let mut r = rig(Arc::new(Mutex::new(s)));
     let pages = named(&r, INBOX_APPEND);
     assert!(pages.len() == 1 && pages[0].contains("diluted: 3 landed against 10 passing test runs in 24h, under 40%"), "{pages:?}");
@@ -172,14 +219,14 @@ fn unlanded(batch: &str, state: &str, age_s: u64) -> Unlanded {
 #[test]
 fn a_round_that_passed_and_has_not_landed_in_five_minutes_pages_once_and_a_fresh_one_does_not() {
     let mut s = landed(400);
-    s.unlanded = vec![unlanded("b-old", "GREEN", 300), unlanded("b-fresh", "LANDING", 299)];
+    s.snap.unlanded = vec![unlanded("b-old", "GREEN", 300), unlanded("b-fresh", "LANDING", 299)];
     let w = Arc::new(Mutex::new(s.clone()));
     let mut r = rig(w.clone());
     let pages = named(&r, INBOX_APPEND);
     assert!(pages.len() == 1 && pages[0].contains("round b-old passed 300s ago and has not landed (still GREEN)") && !pages[0].contains("b-fresh"), "{pages:?}");
     r.advance(CADENCE_MS).unwrap();
     assert_eq!(named(&r, INBOX_APPEND).len(), 1, "paged once while it stands");
-    s.unlanded = vec![unlanded("b-fresh", "LANDING", 301)];
+    s.snap.unlanded = vec![unlanded("b-fresh", "LANDING", 301)];
     *w.lock().unwrap() = s;
     r.advance(CADENCE_MS).unwrap();
     assert_eq!(named(&r, INBOX_APPEND).len(), 2, "the fresh one is paged when it crosses five minutes");
@@ -188,7 +235,7 @@ fn a_round_that_passed_and_has_not_landed_in_five_minutes_pages_once_and_a_fresh
 #[test]
 fn leftover_round_records_are_cleared_and_the_ones_refused_are_paged_by_name_once() {
     let mut s = landed(400);
-    s.records = Records { clear: vec!["/q/a/rec-one".into(), "/q/a/rec-two".into()], held: vec!["/q/b/rec-three names round b-1, which is OPEN".into()] };
+    s.snap.records = Records { clear: vec!["/q/a/rec-one".into(), "/q/a/rec-two".into()], held: vec!["/q/b/rec-three names round b-1, which is OPEN".into()] };
     let mut r = rig(Arc::new(Mutex::new(s)));
     assert_eq!(named(&r, CLEAR), [r#"["/q/a/rec-one","/q/a/rec-two"]"#]);
     let pages = named(&r, INBOX_APPEND);
@@ -286,8 +333,10 @@ fn the_landing_count_reads_the_resolved_landing_ref_not_the_lane_name() {
     // the lane column names the landing machine (queue.local), never a ref git can read
     std::fs::write(&map, format!("spira|{}|queue.local|local/main\n", repo.path().display())).unwrap();
     let w = World { repo_map: map, home_repo: "spira".into(), ..World::default() };
-    let (hourly, landed) = w.landed_on_refs(now, "sp").expect("the landing ref is read");
-    assert_eq!(landed, 3, "three beads landed on local/main inside the day");
+    let got = w.landed_on_refs(now, "sp").expect("the landing ref is read");
+    assert_eq!(got.len(), 1);
+    let (hourly, repo, last) = (&got[0].hourly, &got[0].repo, got[0].last_landing);
+    assert_eq!((repo.as_str(), last), ("spira", now - 1_800), "the last landing on local/main, not on the other branch");
     assert_eq!(hourly.iter().sum::<u64>(), 3, "each landing in one hour: {hourly:?}");
     assert_eq!((hourly[23], hourly[22], hourly[21]), (1, 1, 1), "half an hour ago, then each hour before: {hourly:?}");
 }
