@@ -357,6 +357,7 @@ fn launch_effect(workers: &Arc<Pool>, permit: OwnedSemaphorePermit, runner: &Arc
             let mut h = match workers.offload("effect", None, job) {
                 Ok(h) => h,
                 Err(sp) => {
+                    drop(permit.lock().unwrap_or_else(|e| e.into_inner()).take()); // loop-safe: the job never ran, so nothing else holds the lock
                     let _ = tx.send(Done::Spilled(p.key.clone(), sp));
                     return None;
                 }
