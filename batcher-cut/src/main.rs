@@ -816,7 +816,11 @@ fn finish_local_round(
             }
             io::Certified::Failed(e) => {
                 let refused = refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name));
-                return if e.kind == pace::CutKind::Infra { Err(e) } else { refused };
+                return match e.kind {
+                    pace::CutKind::Infra => Err(e),
+                    pace::CutKind::StaleImage => refused.map_err(|r| pace::CutError::new(e.kind, r.msg)),
+                    _ => refused,
+                };
             }
         }
     }

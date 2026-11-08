@@ -1836,7 +1836,7 @@ pub fn round_certify(env: &Env, repo: &Repo, batch: &str, attest: Option<(&str, 
 fn certify_failure(code: Option<i32>, stderr: &str, failed: String) -> CutError {
     if stderr.contains(crate::pace::STALE_AMI_MARKER) {
         CutError::new(CutKind::StaleImage, format!("{}: {failed}", crate::pace::STALE_AMI_MARKER))
-    } else if code == Some(CERTIFY_ENV_RC) {
+    } else if matches!(code, Some(CERTIFY_ENV_RC | CERTIFY_LOST_RC)) {
         CutError::new(CutKind::Infra, failed)
     } else {
         failed.into()
@@ -1845,6 +1845,9 @@ fn certify_failure(code: Option<i32>, stderr: &str, failed: String) -> CutError 
 
 /// `queue round certify`'s exit code for an environment fault: no verdict on the round.
 pub const CERTIFY_ENV_RC: i32 = 4;
+
+/// `queue round certify`'s exit code when the round VM was lost mid-run: no verdict either.
+pub const CERTIFY_LOST_RC: i32 = 75;
 
 pub enum Certified {
     Green,
@@ -3096,7 +3099,7 @@ mod forge_release_tests {
         let kind = |code, err: &str| certify_failure(code, err, "queue round certify exited x".into()).kind;
         assert_eq!(kind(Some(CERTIFY_ENV_RC), "no VM"), CutKind::Infra);
         assert_eq!(kind(Some(CERTIFY_ENV_RC), "round AMI is stale: clone refused"), CutKind::StaleImage);
-        assert_eq!(kind(Some(75), "INCOMPLETE reason=vm-lost"), CutKind::Other);
+        assert_eq!(kind(Some(CERTIFY_LOST_RC), "INCOMPLETE reason=vm-lost"), CutKind::Infra);
         assert_eq!(kind(Some(3), "certify exited 4 in words only"), CutKind::Other);
         assert_eq!(kind(None, ""), CutKind::Other);
     }
