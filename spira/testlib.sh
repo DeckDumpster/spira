@@ -1182,6 +1182,7 @@ elif verb == "event":
         os.makedirs(claims, exist_ok=True)
         open(os.path.join(claims, i), "w").write(actor)
         open(os.path.join(run, "lc-claims.log"), "a").write("%s %s\n" % (i, actor))
+        open(os.path.join(run, "lc-claim-kinds.log"), "a").write("%s %s\n" % (i, kind))
         if os.path.exists(os.path.join(run, "lc-disposition", i)):
             os.remove(os.path.join(run, "lc-disposition", i))
         pinned = os.path.join(run, "lc-row", i)
