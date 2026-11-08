@@ -488,6 +488,10 @@ impl RoundRunner for VmRunner<'_> {
         filter_red_in(&self.results, &self.members, &self.changed)
     }
 
+    fn build_output(&mut self) -> String {
+        self.stderr_text()
+    }
+
     fn stop_main(&mut self) -> Result<(), String> {
         let Some(mut child) = self.child.take() else { return Ok(()) };
         if child.try_wait().map_err(|e| format!("round-vm: {e}"))?.is_none() {

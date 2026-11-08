@@ -3,6 +3,7 @@
 //! a separate crate (sp-jzfog).
 
 pub mod attrib;
+pub mod buildattr;
 pub mod core;
 pub mod drive;
 

@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::attrib::{Attributor, Budget, Decision, Job, JobResult, Outcome, Purpose, Shape};
+use crate::buildattr::{self, Action, MemberDiff};
 use crate::core::{Id, Member};
 
 /// What one poll of the main run returned: results that became final since the last poll,
@@ -59,6 +60,10 @@ pub trait RoundRunner {
     fn filter_red(&mut self) -> Option<FilterRed> {
         None
     }
+    /// The compiler's output of the main run that ended `WorkspaceBuild`.
+    fn build_output(&mut self) -> String {
+        String::new()
+    }
 }
 
 /// A filter's red. `named` is each member the filter's own output blames, with the line that does;
@@ -91,6 +96,15 @@ pub trait RoundOps {
     fn base_moved(&mut self, members: &[Member]) -> Result<Option<(String, Vec<Member>)>, String>;
     /// A red no single member reproduces, still red on a changed input: call the Judge.
     fn judge(&mut self, suites: &[String], members: &[Id]);
+    /// Each member's changed paths and added lines, for attributing a workspace-build red.
+    fn diffs(&self, _members: &[Id]) -> Vec<MemberDiff> {
+        vec![]
+    }
+    /// Holds `member` behind `behind` — it leaves this round and is admitted again only once
+    /// they have landed — carrying the compiler error as the reason.
+    fn sequence(&mut self, member: &Member, behind: &[Id], line: &str) {
+        self.eject_on(member, WORKSPACE_BUILD, &format!("held behind {}: {line}", behind.join(",")), false);
+    }
     /// `kind`: `base`, `unattributed`, `integration` or `workspace-build`.
     fn incident(&mut self, kind: &str, suites: &[String]);
     /// The members whose diff touches `suite`.
@@ -358,6 +372,37 @@ fn eject_filter_owners<O: RoundOps>(ops: &mut O, f: &FilterRed, members: &[Membe
     Ok((!rebuilt.is_empty()).then_some(rebuilt))
 }
 
+/// A workspace-build red whose compiler errors map to members: owners leave with the error as
+/// their evidence, a member lacking what another adds is held behind it, the rest re-cut.
+/// `None` when no member can be named, which leaves the red to be filed.
+fn eject_build_culprits<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O, members: &[Member]) -> Result<Option<Vec<Member>>, String> {
+    let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
+    let actions = buildattr::attribute(&buildattr::compile_errors(&runner.build_output()), &ops.diffs(&ids));
+    if actions.is_empty() {
+        return Ok(None);
+    }
+    let mut out: BTreeMap<Id, Vec<String>> = BTreeMap::new();
+    for a in &actions {
+        let (Action::Eject { id, .. } | Action::Sequence { id, .. }) = a;
+        out.insert(id.clone(), vec![WORKSPACE_BUILD.to_string()]);
+    }
+    with_dependents(members, &mut out);
+    for m in members {
+        match actions.iter().find(|a| matches!(a, Action::Eject { id, .. } | Action::Sequence { id, .. } if *id == m.id)) {
+            Some(Action::Eject { line, .. }) => ops.eject_on(m, WORKSPACE_BUILD, line, true),
+            Some(Action::Sequence { behind, line, .. }) => ops.sequence(m, behind, line),
+            None if out.contains_key(&m.id) => ops.eject(m, &[WORKSPACE_BUILD.to_string()], false),
+            None => {}
+        }
+    }
+    let survivors: Vec<Member> = members.iter().filter(|m| !out.contains_key(&m.id)).cloned().collect();
+    if survivors.is_empty() {
+        return Ok(None);
+    }
+    let rebuilt = ops.rebuild(&survivors)?;
+    Ok((!rebuilt.is_empty()).then_some(rebuilt))
+}
+
 /// The whole round: corpus with concurrent attribution; then, while anyone was ejected, the
 /// owners' suites (only those) on the survivors' release build, attributed the same way.
 pub fn attribute_round<R: RoundRunner, O: RoundOps>(
@@ -378,6 +423,12 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     for iteration in 0..bound {
         let s = drive(runner, &*ops, kind, &suites, &members, budget)?;
         if s.end == MainEnd::WorkspaceBuild {
+            if let Some(next) = eject_build_culprits(runner, ops, &members)? {
+                println!("batcher: the round's workspace failed to build — culprits left, re-cutting {} member(s)", next.len());
+                runner.stop_main()?;
+                members = next;
+                continue;
+            }
             ops.incident("workspace-build", &[WORKSPACE_BUILD.to_string()]);
             return Ok(RoundEnd::Blocked("the round's workspace failed to build".into()));
         }
@@ -569,7 +620,12 @@ pub(crate) mod tests {
         /// A lint-like filter: red for a tree holding these members, naming the given ones.
         pub filter: Option<FilterFn>,
         pub filtered: Option<FilterRed>,
+        /// A compiler: the error text for a tree holding these members, if it does not build.
+        pub compiler: Option<BuildFn>,
+        pub build_failed: Option<String>,
     }
+
+    pub type BuildFn = Box<dyn Fn(&BTreeSet<String>) -> Option<String>>;
 
     pub type FilterFn = Box<dyn Fn(&BTreeSet<String>) -> Option<FilterRed>>;
 
@@ -596,6 +652,8 @@ pub(crate) mod tests {
                 on_base: None,
                 filter: None,
                 filtered: None,
+                compiler: None,
+                build_failed: None,
             }
         }
         fn verdict(&mut self, suite: &str, tree: &BTreeSet<String>) -> bool {
@@ -634,6 +692,10 @@ pub(crate) mod tests {
             if self.filtered.is_some() {
                 return Ok(());
             }
+            self.build_failed = self.compiler.as_ref().and_then(|c| c(&tree));
+            if self.build_failed.is_some() {
+                return Ok(());
+            }
             // LPT-free simple list scheduling: maxpar lanes, suites in the given order.
             let mut lanes = vec![self.t; self.maxpar];
             for s in suites {
@@ -647,6 +709,10 @@ pub(crate) mod tests {
         }
         fn poll_main(&mut self) -> Result<MainPoll, String> {
             let mut p = MainPoll::default();
+            if self.build_failed.is_some() {
+                p.done = Some(MainEnd::WorkspaceBuild);
+                return Ok(p);
+            }
             for (s, fin, g) in &self.main {
                 if *fin <= self.t && self.reported.insert(s.clone()) {
                     p.results.push((s.clone(), *g));
@@ -660,6 +726,9 @@ pub(crate) mod tests {
         }
         fn filter_red(&mut self) -> Option<FilterRed> {
             self.filtered.take()
+        }
+        fn build_output(&mut self) -> String {
+            self.build_failed.clone().unwrap_or_default()
         }
         fn stop_main(&mut self) -> Result<(), String> {
             self.stopped += 1;
@@ -713,6 +782,8 @@ pub(crate) mod tests {
         pub moves: Vec<String>,
         /// The next pass the menders decide, once per red pass; empty means no mender owns it.
         pub menders: Vec<crate::mender::Next>,
+        pub diffs: Vec<MemberDiff>,
+        pub sequenced: Vec<(String, Vec<String>)>,
     }
 
     impl RoundOps for Ops {
@@ -729,6 +800,13 @@ pub(crate) mod tests {
         fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) {
             self.eject_evidence.push((member.id.clone(), line.to_string()));
             self.eject(member, &[filter.to_string()], owner);
+        }
+        fn diffs(&self, _: &[Id]) -> Vec<MemberDiff> {
+            self.diffs.clone()
+        }
+        fn sequence(&mut self, member: &Member, behind: &[Id], line: &str) {
+            self.sequenced.push((member.id.clone(), behind.to_vec()));
+            self.eject_evidence.push((member.id.clone(), line.to_string()));
         }
         fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
             self.rebuilt.push(survivors.iter().map(|m| m.id.clone()).collect());
@@ -1088,6 +1166,57 @@ pub(crate) mod tests {
         let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
         assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["m3"]);
         assert_eq!(ops.owner_flags, vec![("m1".to_string(), true), ("m2".to_string(), false)]);
+    }
+
+    const E0063: &str = "error[E0063]: missing field `directed` in initializer of `Kind`\n --> lc/src/callers.rs:726:13\n";
+
+    fn md(id: &str, path: &str, added: &str) -> MemberDiff {
+        MemberDiff { id: id.into(), paths: vec![path.into()], added: added.into() }
+    }
+
+    /// A tree that fails to build while every named member is in it.
+    fn broken_by(all: &'static [&'static str]) -> BuildFn {
+        Box::new(move |tree| all.iter().all(|m| tree.contains(*m)).then(|| E0063.to_string()))
+    }
+
+    #[test]
+    fn a_workspace_build_red_at_a_file_one_member_touches_ejects_it_and_recuts_without_a_pause() {
+        let mut f = Fake::new(|_, _| false);
+        f.compiler = Some(broken_by(&["m2"]));
+        let mut ops = Ops { diffs: vec![md("m1", "doc/x.md", "+p\n"), md("m2", "lc/src/callers.rs", "+x\n"), md("m3", "doc/y.md", "+q\n")], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
+        assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["m1", "m3"]);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
+        assert!(ops.eject_evidence[0].1.contains("callers.rs:726"), "{:?}", ops.eject_evidence);
+        assert!(ops.incidents.is_empty(), "a mapped build red writes no pause: {:?}", ops.incidents);
+    }
+
+    #[test]
+    fn a_workspace_build_red_naming_what_another_member_adds_sequences_the_caller_behind_it() {
+        let mut f = Fake::new(|_, _| false);
+        f.compiler = Some(broken_by(&["m1", "m2"]));
+        let mut ops = Ops { diffs: vec![
+            md("m1", "lc/src/events.rs", "+    directed: bool,\n"),
+            md("m2", "lc/src/callers.rs", "+    Kind::Claim { x: 1 }\n"),
+            md("m3", "doc/y.md", "+q\n"),
+        ], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
+        assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["m1", "m3"]);
+        assert_eq!(ops.sequenced, vec![("m2".to_string(), vec!["m1".to_string()])]);
+        assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+    }
+
+    #[test]
+    fn a_workspace_build_red_that_maps_to_no_member_still_files_the_incident() {
+        let mut f = Fake::new(|_, _| false);
+        f.compiler = Some(broken_by(&["m1"]));
+        let mut ops = Ops { diffs: vec![md("m1", "doc/x.md", "+p\n")], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert_eq!(ops.incidents, vec![("workspace-build".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
+        assert!(ops.ejected.is_empty());
     }
 
     #[test]
