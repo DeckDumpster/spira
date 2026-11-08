@@ -585,6 +585,26 @@ mod tests {
     }
 
     #[test]
+    fn the_rendered_template_config_declares_the_toolchain_path_nix_first() {
+        let start = TEMPLATE_SCRIPT.find("nix_bin=/nix").expect("nix_bin is assigned").min(TEMPLATE_SCRIPT.find("cat > \"$work/template-config.toml\"").unwrap());
+        let end = TEMPLATE_SCRIPT.find("\nTEMPLATECFG\n").unwrap() + "\nTEMPLATECFG\n".len();
+        let tmp = testkit::TempDir::new("template-cfg");
+        let dir = tmp.path();
+        let out = std::process::Command::new("bash")
+            .args(["-c", &TEMPLATE_SCRIPT[start..end]])
+            .env_clear()
+            .env("work", dir)
+            .env("CARGO_HOME", "/opt/cargo")
+            .env("HOME", "/fixture/home")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let rendered = std::fs::read_to_string(dir.join("template-config.toml")).unwrap();
+        let cfg: toml::Table = toml::from_str(&rendered).unwrap_or_else(|e| panic!("{e}\n{rendered}"));
+        assert_eq!(cfg["spira"]["path"].as_str(), Some("/nix/var/nix/profiles/default/bin:/opt/cargo/bin:/fixture/home/.cargo/bin"));
+    }
+
+    #[test]
     fn the_script_builds_rather_than_loads_and_reports_the_image_last() {
         assert!(TEMPLATE_SCRIPT.contains("-p testenv -- container image"));
         assert!(!TEMPLATE_SCRIPT.contains("podman load"));
