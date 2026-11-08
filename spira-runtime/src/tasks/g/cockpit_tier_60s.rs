@@ -40,7 +40,7 @@
 //!
 //! Unchanged snapshot: no `publish`. `slots_sample` is the time series and fires every tick by
 //! design; the contract counts it as zero journal rows, which a journaled effect is not (see the
-//! T2 note in `tests/task_g_cockpit_tier_60s.rs`).
+//! T2 note in `tests/it/task_g_cockpit_tier_60s.rs`).
 //!
 //! # Replaces
 //!

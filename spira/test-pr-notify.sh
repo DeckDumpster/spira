@@ -21,7 +21,7 @@
 #      open list — and a gh call that fails leaves the tracked PR in place for a retry rather
 #      than guessing it away.
 #   6. BRANCHES WITH NO PR (T2: real git, stubbed gh) — pr-mode only; unchanged from before.
-#   7. THE MANIFEST HAS NO ROW: spira-runtime hosts the watcher (spira-runtime/tests/pr_notify_parity.rs
+#   7. THE MANIFEST HAS NO ROW: spira-runtime hosts the watcher (spira-runtime/tests/it/pr_notify_parity.rs
 #      holds this script and that handler to the same lines).
 #   8. NO TRANSITION IS MAILED to the concierge mailbox: the watchd log is its one source.
 #

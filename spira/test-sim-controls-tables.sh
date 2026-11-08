@@ -11,7 +11,7 @@
 #
 # The base was run-state-trail, a real landing, until the loop's units became tasks of the service
 # (ruling D6): a world lands nothing now. Its property (the landing logged with its member, after
-# its certificate) is spira/sim/tests/loop_rounds.rs
+# its certificate) is spira/sim/tests/it/loop_rounds.rs
 # run_state_trail_the_landing_names_its_member_after_its_certificate_and_the_publish_is_at_its_head
 # and queue's open_certify_land_is_one_round_the_whole_way; this suite keeps only the invariant's
 # control, on a world with no actors.

@@ -6,7 +6,7 @@
 //! (`sim::doubles::service`) unless a scenario lays a double of its own over it ([`run_with`]).
 //!
 //! The world the doubles answer from is one in-memory lifecycle store whose rows move only
-//! through the store's own machine (`lifecycle::bead::apply`). It widens `sim/tests/whole_loop.rs`
+//! through the store's own machine (`lifecycle::bead::apply`). It widens `sim/tests/it/whole_loop.rs`
 //! with what the world scenarios of `spira/sim/scenarios/` scripted: a dwarf session may submit
 //! more than once (a moved tip); beads carry a priority and a file they touch, so two siblings
 //! can conflict and the dwarf claims in priority order; REWORK is claimable again; a gate outside

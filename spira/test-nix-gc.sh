@@ -41,6 +41,6 @@ out="$(nix_gc_main 2>&1)"; rc=$?
 [ "$rc" = 1 ] && [[ "$out" == *"$TMP/fakebin"* && "$out" == *"$TMP/spira-env/bin"* ]] && ok "neither present: fails naming both places" || bad "neither present: fails naming both places" "rc=$rc out=$out"
 mv "$TMP/hidden" "$TMP/fakebin"
 
-# The weekly cadence and the fence are the scheduler's sweep.nix_gc task now (spira-runtime/tests).
+# The weekly cadence and the fence are the scheduler's sweep.nix_gc task now (spira-runtime/tests/it).
 
 tl_summary

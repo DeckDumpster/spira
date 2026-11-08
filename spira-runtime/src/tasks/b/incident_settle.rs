@@ -1,7 +1,7 @@
 //! # incident.settle — contract
 //!
 //! Family B of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/incident-settle.md`;
-//! its Acceptance section is the test file `tests/task_b_incident_settle.rs`.
+//! its Acceptance section is the test file `tests/it/task_b_incident_settle.rs`.
 //!
 //! **Pattern (corrections from the contracts).** A P2 machine, not a P1/P4 tick: the state
 //! table is `TRANSITIONS`, and a long leg run as a transient unit ends on its `unit.ran`,

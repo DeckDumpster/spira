@@ -1,6 +1,6 @@
 # Replay fixtures
 
-Typed records of the loop's own history, for the replay (sim), the goodput test and its 20-day scenario test. Every line is a closed shape (`sim/tests/fixture_schema.rs`), stamped by its producer's own clock in UTC. No certify or gate output, `.result` text, log line, title, body, path or hostname is kept.
+Typed records of the loop's own history, for the replay (sim), the goodput test and its 20-day scenario test. Every line is a closed shape (`sim/tests/it/fixture_schema.rs`), stamped by its producer's own clock in UTC. No certify or gate output, `.result` text, log line, title, body, path or hostname is kept.
 
 Records are newline-delimited JSON, one object per line, in `.ndjson` files: the harness refuses any `*.jsonl` path as beads data (`spira/exclude.sh`).
 

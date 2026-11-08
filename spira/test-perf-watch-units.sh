@@ -3,7 +3,7 @@
 # test-perf-watch-units.sh — perf-watch's read contract: its log is a watchd row and the probe
 # file names only well-formed hot paths. The units it once checked are gone: perf-watch and
 # perf-happy-path are the scheduler's watch.perf and watch.perf_happy tasks, whose registration,
-# cadence and fence are T1-T6 in spira-runtime/tests.
+# cadence and fence are T1-T6 in spira-runtime/tests/it.
 #
 # tier: T0
 # covers: spira/perf-probes spira/watchers

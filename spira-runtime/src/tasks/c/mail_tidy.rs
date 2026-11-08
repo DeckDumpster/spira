@@ -1,7 +1,7 @@
 //! # mail.tidy — contract
 //!
 //! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/mail-tidy.md`;
-//! its Acceptance section is the test file `tests/task_c_mail_tidy.rs`.
+//! its Acceptance section is the test file `tests/it/task_c_mail_tidy.rs`.
 //!
 //! ## Tick
 //!

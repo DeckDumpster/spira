@@ -1,0 +1,92 @@
+//! The crate's integration tests, linked as one test binary (sp-qd5io5): each module is one
+//! former `tests/<name>.rs` file, which linked as its own executable carrying the whole crate.
+//!
+//! Two files stay their own targets beside this one: `tests/world_readiness_dependents.rs` and
+//! `tests/world_readiness_dependents_off.rs` each point `SPIRA_TOML` at a fixture with a
+//! different `SPIRA_LC_STORE_PATH`, and `spira_config::process::config()` resolves once per
+//! process, so whichever ran first would decide the other's store.
+
+mod boot_stagger;
+mod check_config;
+mod effect_classes;
+mod effects_runnable;
+mod no_fork_edges_ops;
+mod no_spawn;
+mod pr_notify_parity;
+mod repo_events_restart;
+mod status;
+mod supersede_duty_parity;
+mod task_a_batcher_forge;
+mod task_a_batcher_local;
+mod task_a_czar;
+mod task_a_gate_check;
+mod task_a_gate_worker;
+mod task_a_landing;
+mod task_a_publish;
+mod task_a_queue_step;
+mod task_a_sentinel_call;
+mod task_a_sentinel_pass;
+mod task_a_sift;
+mod task_a_submission_provision;
+mod task_a_sweep_target;
+mod task_b_asks_verify;
+mod task_b_incident_alarms;
+mod task_b_incident_settle;
+mod task_b_mail_reconcile;
+mod task_b_reconcile_content;
+mod task_b_reconcile_continuity;
+mod task_b_reconcile_goodput;
+mod task_b_reconcile_heimdall;
+mod task_b_reconcile_section;
+mod task_c_asks_moot;
+mod task_c_hel_reap_stale;
+mod task_c_hel_reap_terminal;
+mod task_c_hel_sweep;
+mod task_c_mail_tidy;
+mod task_c_roundvm_ami_prune;
+mod task_c_roundvm_drain;
+mod task_c_sweep_archive;
+mod task_c_sweep_escape_census;
+mod task_c_sweep_export_beads;
+mod task_c_sweep_nix_gc;
+mod task_c_sweep_reclaim;
+mod task_c_sweep_tsd;
+mod task_d_cert_full;
+mod task_d_cert_sample;
+mod task_d_watch_mend;
+mod task_d_watch_perf_happy;
+mod task_d_watch_perf;
+mod task_d_watch_refusals;
+mod task_d_watch_runtime;
+mod task_d_watch_skew;
+mod task_d_watch_sop_lint;
+mod task_d_watch_statute_audit;
+mod task_d_watch_tower;
+mod task_e_inbox_notify;
+mod task_e_incident_probe;
+mod task_e_watch_ami_stale;
+mod task_e_watch_backup_age;
+mod task_e_watch_ci_spill;
+mod task_e_watch_pass_rate;
+mod task_e_watch_spill_key;
+mod task_e_watch_testenv_cap;
+mod task_e_watch_throughput;
+mod task_e_watch_warm_full;
+mod task_f_asks_ideas;
+mod task_f_intake_filings;
+mod task_f_intake_gh;
+mod task_f_intake_kit_bump;
+mod task_f_persona_archivist;
+mod task_f_persona_ops;
+mod task_f_trigger_groom;
+mod task_f_trigger_mimir;
+mod task_f_trigger_warden;
+mod task_g_cockpit_tier_5s;
+mod task_g_cockpit_tier_600s;
+mod task_g_cockpit_tier_60s;
+mod task_g_mail_arrived;
+mod task_g_submission;
+mod task_g_unit_ran;
+mod unit_ran_routing;
+mod view_parity;
+mod world_supersede;

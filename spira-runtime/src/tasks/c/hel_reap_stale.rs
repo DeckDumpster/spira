@@ -1,7 +1,7 @@
 //! # hel.reap_stale — contract
 //!
 //! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/hel-reap-stale.md`;
-//! its Acceptance section is the test file `tests/task_c_hel_reap_stale.rs`.
+//! its Acceptance section is the test file `tests/it/task_c_hel_reap_stale.rs`.
 //!
 //! ## Tick
 //!

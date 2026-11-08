@@ -197,7 +197,7 @@ pub fn cycling<S: Serialize + Send + Sync + 'static>(worlds: Vec<S>, every: usiz
 
 /// The lines of `src` that start a process or reach for one: the T4 static scan.
 pub fn spawns(src: &str) -> Vec<String> {
-    // Spelled in pieces so this module does not name a launcher itself (`tests/no_spawn.rs`).
+    // Spelled in pieces so this module does not name a launcher itself (`tests/it/no_spawn.rs`).
     const MARKS: [&str; 4] = [concat!("Command", "::new"), concat!("std::", "process"), concat!("process::", "Command"), concat!("posix", "_spawn")];
     src.lines().filter(|l| MARKS.iter().any(|m| l.contains(m))).map(|l| l.trim().to_string()).collect()
 }

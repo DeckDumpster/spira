@@ -1,7 +1,7 @@
 //! # mail.reconcile — contract
 //!
 //! Family B of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/mail-reconcile.md`;
-//! its Acceptance section is the test file `tests/task_b_mail_reconcile.rs`.
+//! its Acceptance section is the test file `tests/it/task_b_mail_reconcile.rs`.
 //!
 //! ## Tick
 //!

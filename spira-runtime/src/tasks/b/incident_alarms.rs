@@ -1,7 +1,7 @@
 //! # incident.alarms — contract
 //!
 //! Family B of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/incident-alarms.md`;
-//! its Acceptance section is the test file `tests/task_b_incident_alarms.rs`.
+//! its Acceptance section is the test file `tests/it/task_b_incident_alarms.rs`.
 //!
 //! **Contract amended (2026-11-06):** the stub's Snapshot and Carry were simplified shapes
 //! (a string `no_lever`, a timer-derived `goodput_armed`, page rows without the ask id) that

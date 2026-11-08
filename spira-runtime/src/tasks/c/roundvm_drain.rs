@@ -1,7 +1,7 @@
 //! # roundvm.drain — contract
 //!
 //! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/roundvm-drain.md`;
-//! its Acceptance section is the test file `tests/task_c_roundvm_drain.rs`.
+//! its Acceptance section is the test file `tests/it/task_c_roundvm_drain.rs`.
 //!
 //! ## Tick
 //!

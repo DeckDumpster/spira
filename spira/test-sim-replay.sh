@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # tier: T3
 # requires: testenv
-# covers: sim/src/replay.rs sim/src/replay/** sim/src/bin/sim-replay.rs sim/tests/replay.rs sim/fixtures/replay/** desired-state/src/sections/** spira-lc/src/sections.rs spira-lc/src/sections/** spira-lc/src/keys.rs
+# covers: sim/src/replay.rs sim/src/replay/** sim/src/bin/sim-replay.rs sim/tests/it/replay.rs sim/fixtures/replay/** desired-state/src/sections/** spira-lc/src/sections.rs spira-lc/src/sections/** spira-lc/src/keys.rs
 # lane: sim
 #
 # test-sim-replay.sh — the captured days replayed whole on the simulator: `sim-replay` runs
 # every check in sim::replay::checks (the stacked parent and the repeat-red member on 10-31,
 # the held-out lanes' rounds against landings on 10-21..25, acks that change nothing, one seed
 # one trace, hooks at their periods). Each costs seconds unoptimised, past the unit tier's
-# second, so sim/tests/replay.rs ignores its copies and the installed binary runs them here.
+# second, so sim/tests/it/replay.rs ignores its copies and the installed binary runs them here.
 #
 #   CONTROL: every check the binary holds must report ok by name, so a binary that ran fewer,
 #   or none, is red rather than a green that checked nothing.
