@@ -1368,10 +1368,11 @@ pub mod edge {
     /// PATH onto it, HOME and the one config spec. A transient unit inherits none of the
     /// runtime's environment, so without `SPIRA_TOML` round-vm refuses at once (exit 2) and the
     /// round is abandoned before it runs. A variable the leg already set is kept.
-    pub fn leg_env(mut vars: Vec<(String, String)>, release: &str, home: &str, toml: &str) -> Vec<(String, String)> {
+    pub fn leg_env(mut vars: Vec<(String, String)>, release: &str, home: &str, toml: &str, runtime_path: &str) -> Vec<(String, String)> {
+        let tail = if runtime_path.is_empty() { "/usr/local/bin:/usr/bin:/bin" } else { runtime_path };
         let base = [
             ("SPIRA_RELEASE", release.to_string()),
-            ("PATH", format!("{release}/bin:{release}/spira:/usr/local/bin:/usr/bin:/bin")),
+            ("PATH", format!("{release}/bin:{release}/spira:{tail}")),
             ("HOME", home.to_string()),
             ("SPIRA_TOML", toml.to_string()),
         ];
@@ -1383,10 +1384,15 @@ pub mod edge {
         vars
     }
 
-    fn with_base_env(vars: Vec<(String, String)>) -> Result<Vec<(String, String)>, String> {
+    pub fn base_env(vars: Vec<(String, String)>, toml: &str) -> Vec<(String, String)> {
         let release = std::env::var(spira_config::RELEASE_ENV).unwrap_or_default();
         let home = std::env::var("HOME").unwrap_or_default();
-        Ok(leg_env(vars, &release, &home, &spira_config::process::spec()?))
+        let path = std::env::var("PATH").unwrap_or_default();
+        leg_env(vars, &release, &home, toml, &path)
+    }
+
+    fn with_base_env(vars: Vec<(String, String)>) -> Result<Vec<(String, String)>, String> {
+        Ok(base_env(vars, &spira_config::process::spec()?))
     }
 
     pub fn start_unit(e: &Effects, task: &str, key: &str, argv: Vec<String>, vars: Vec<(String, String)>, cwd: Option<PathBuf>) -> Result<String, String> {
