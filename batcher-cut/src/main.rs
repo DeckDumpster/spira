@@ -556,7 +556,7 @@ fn stabilize_unlocked(
     starting: Vec<Member>,
     batch: Option<&str>,
     stage: &[Member],
-) -> Result<Stabilized, String> {
+) -> Result<Stabilized, pace::CutError> {
     let wait_secs = cfg_parse::<u64>("SPIRA_QUEUE_LOCK_WAIT")?;
     io::unlocked(env_, &repo.name, batch, wait_secs, || stabilize_round(env_, repo, wt, start_sha, starting, batch, stage))?
 }
