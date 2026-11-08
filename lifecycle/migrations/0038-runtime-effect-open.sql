@@ -11,4 +11,4 @@ CREATE TABLE IF NOT EXISTS runtime_effect (
 CREATE INDEX runtime_effect_open_idx ON runtime_effect (resolved, seq);
 
 INSERT INTO runtime_effect (event_id, seq, resolved)
-SELECT runtime_event.event_id, runtime_event.seq, 0 FROM runtime_event WHERE runtime_event.kind_tag = 'effect.requested' AND NOT EXISTS (SELECT 1 FROM runtime_event o WHERE o.cause = runtime_event.event_id AND o.kind_tag IN ('effect.succeeded', 'effect.failed', 'effect.timed_out'));
+SELECT runtime_event.event_id, runtime_event.seq, 0 FROM runtime_event WHERE runtime_event.kind_tag = 'effect.requested' AND NOT EXISTS (SELECT 1 FROM runtime_event o WHERE o.cause = runtime_event.event_id AND o.kind_tag IN ('effect.succeeded', 'effect.failed', 'effect.timed_out')) AND NOT EXISTS (SELECT 1 FROM runtime_effect e WHERE e.event_id = runtime_event.event_id);

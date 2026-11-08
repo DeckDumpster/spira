@@ -473,6 +473,14 @@ mod tests {
     }
 
     #[test]
+    fn a_group_carries_the_effect_rows_in_the_order_of_its_events() {
+        let at = |id: &str, tag: &str, cause: Value| json!({"id": id, "stream": "s", "kind": {"tag": tag, "body": ""}, "at": 1, "cause": cause, "correlation": "c"});
+        let sqls = staged_sql(&json!({"writes": [{"append": at("r", "effect.requested", Value::Null)}, {"append": at("o", "effect.failed", json!("r"))}]})).unwrap();
+        let heads: Vec<&str> = sqls.iter().map(|s| s.split(" (").next().unwrap().split(" SET").next().unwrap()).collect();
+        assert_eq!(heads, ["INSERT INTO runtime_event", "INSERT INTO runtime_effect", "INSERT INTO runtime_event", "UPDATE runtime_effect"], "{sqls:?}");
+    }
+
+    #[test]
     fn no_write_swallows_a_conflict_but_ignore() {
         let sql = append_sql(&ev()).unwrap();
         assert!(!sql.contains("IGNORE") && sql.contains("WHERE NOT EXISTS (SELECT 1 FROM runtime_event WHERE event_id = "), "{sql}");
