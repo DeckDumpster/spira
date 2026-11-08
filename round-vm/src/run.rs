@@ -3289,12 +3289,11 @@ mod tests {
         let fixture = d.path().join("round-work/spira/testlib");
         std::fs::create_dir_all(&fixture).unwrap();
         std::fs::create_dir_all(d.path().join("round-work/target/release")).unwrap();
-        let complete = include_str!("../../spira/testlib/complete.toml");
-        std::fs::write(fixture.join("complete.toml"), complete).unwrap();
+        let complete = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml")).unwrap();
+        std::fs::write(fixture.join("complete.toml"), &complete).unwrap();
         std::fs::write(d.path().join("round-config.toml"), "[spira]\nrun = \"/vm/run\"\n").unwrap();
         let stage = d.path().join("round-work/target/release/release");
-        std::fs::write(&stage, "#!/bin/sh\nprintf '%s' \"$SPIRA_TOML\"\n").unwrap();
-        std::process::Command::new("chmod").arg("755").arg(&stage).status().unwrap();
+        testkit::write_exe(&stage, "#!/bin/sh\nprintf '%s' \"$SPIRA_TOML\"\n");
         let out = std::process::Command::new("bash")
             .args(["-c", &format!("set -euo pipefail\ncd \"$HOME/round-work\"\n{}\nprintf %s \"$SPIRA_TOML\"", &REMOTE_SCRIPT[from..to])])
             .env_clear()
