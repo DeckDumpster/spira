@@ -1176,19 +1176,22 @@ impl Tools for RealTools {
         combined(c).1.trim_end_matches('\n').to_string()
     }
     fn ensure(&self, script: &Path) -> Vec<String> {
-        // A bare name is a launcher-PATH program, run directly; a path (systemd/ is not on
-        // PATH) is run with bash when it is there.
+        // A bare name is a launcher-PATH program; a path is run as itself, by bash only if `*.sh`.
         let c = if script.components().count() == 1 {
             command(script)
         } else {
             if !executable(script) {
-                return Vec::new();
+                return vec![format!("landing: {} is not an executable file — not run", script.display())];
             }
-            // FORK-EDGE: an installed ensure script (systemd/), run as itself; needs the
-            // install crate's unit ensure as a library to become in-process.
-            let mut c = command("bash");
-            c.arg(script);
-            c
+            if script.extension().is_some_and(|e| e == "sh") {
+                // FORK-EDGE: an installed ensure script (systemd/), run by bash because it is *.sh; needs the
+                // install crate's unit ensure as a library to become in-process.
+                let mut c = command("bash");
+                c.arg(script);
+                c
+            } else {
+                command(script)
+            }
         };
         combined(c).1.lines().map(String::from).collect()
     }
@@ -1426,5 +1429,42 @@ mod store_tests {
         let e = lc.resubmit_submitted("sp-a", "t").unwrap_err();
         assert!(e.contains("exited 2: cannot tell"), "{e}");
         assert_eq!(s.seen.lock().unwrap()[0], "list --state IN_DELIVERY");
+    }
+}
+
+#[cfg(test)]
+mod ensure_tests {
+    use super::*;
+
+    fn tools() -> RealTools {
+        RealTools::new(PathBuf::new(), None, None, None)
+    }
+
+    fn which_echo() -> PathBuf {
+        ["/bin/echo", "/usr/bin/echo"].iter().map(PathBuf::from).find(|p| p.exists()).unwrap()
+    }
+
+    #[test]
+    fn an_ensure_program_that_is_not_a_shell_script_is_run_as_itself() {
+        let t = testkit::TempDir::new("landing-pass-ensure-direct");
+        let p = t.path().join("echo");
+        std::os::unix::fs::symlink(which_echo(), &p).unwrap();
+        assert_eq!(tools().ensure(&p), vec![String::new()]);
+    }
+
+    #[test]
+    fn an_ensure_program_that_is_missing_says_so() {
+        let t = testkit::TempDir::new("landing-pass-ensure-missing");
+        let out = tools().ensure(&t.path().join("target-reap"));
+        assert_eq!(out.len(), 1);
+        assert!(out[0].contains("not an executable file"), "{out:?}");
+    }
+
+    #[test]
+    fn an_ensure_shell_script_without_a_shebang_is_still_run_by_bash() {
+        let t = testkit::TempDir::new("landing-pass-ensure-sh");
+        let p = t.path().join("unit-ensure.sh");
+        testkit::write_exe(&p, "echo ensured\n");
+        assert_eq!(tools().ensure(&p), vec!["ensured"]);
     }
 }
