@@ -687,7 +687,7 @@ fn activation_holds_a_retired_key_the_release_being_replaced_still_declares() {
     file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nround_vm_disk_need_gib = 0\n");
     let rel = w.cfg.releases.join("new");
     fs::create_dir_all(rel.join("bin")).unwrap();
-    testkit::write_exe(&rel.join("bin/spira-config"), "#!/bin/sh\nexit 0\n");
+    testkit::write_exe(rel.join("bin/spira-config"), "#!/bin/sh\nexit 0\n");
     tree_declaring(&rel, &["SPIRA_OTHER_SECS"]);
     let old = tree_declaring(&w.cfg.releases.join("old"), &["SPIRA_ROUND_VM_DISK_NEED_GIB"]);
     std::os::unix::fs::symlink(&old, w.cfg.releases.join("current")).unwrap();
