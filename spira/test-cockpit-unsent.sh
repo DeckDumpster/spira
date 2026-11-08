@@ -36,82 +36,26 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 tl_config SPIRA_TEST_CASE_DEADLINE=90
 
-# Resolve cargo/dolt BEFORE conf.sh, same hazard as test-lifecycle-container.sh: conf.sh
-# can overwrite PATH with the harness's own tool directories. Needed only for the
-# BATCHED-stranded/-too-long section below, which now reads spira-lc instead of landstate.
-DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
-[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — needed for spira_lifecycle's own throwaway server"
-
+. "$HERE/testlib/lc-fixture.sh"
 TMP="$(mktemp -d)"
+trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
 
 # Git identity for fixture commits — required in the container (no ~/.gitconfig).
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 BASE_PATH="$PATH"
-export PATH="$(dirname "$DOLT_BIN"):$BASE_PATH"
 
-# spira_lifecycle's own throwaway server — the same shape test-census.sh's own section 5
-# and test-lc-hold.sh use. A distinct store on its own port, never dolt-beads.service.
-LC_PORT=$((3309 + (RANDOM % 500)))
-LC_SERVER_PID=""
-mkdir -p "$TMP/lc-data"
-cat > "$TMP/lc-server.yaml" <<YAML
-log_level: warning
-listener:
-  port: $LC_PORT
-  max_connections: 50
-  read_timeout_millis: 30000
-  write_timeout_millis: 30000
-data_dir: "$TMP/lc-data"
-behavior:
-  dolt_transaction_commit: false
-  event_scheduler: "OFF"
-YAML
-"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
-LC_SERVER_PID=$!
-_lc_stop() { [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; }
-trap '_lc_stop; rm -rf "$TMP"' EXIT INT TERM
-
-lc_up=0
-for _ in $(seq 1 50); do
-    if timeout 5 "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
-        lc_up=1
-        break
-    fi
-    sleep 0.2
-done
-[ "$lc_up" = 1 ] || bail "spira_lifecycle's throwaway dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
-
-REPO_ROOT="$(cd "$HERE/.." && pwd)"
 LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
-
-# SPIRA_LC_PASSWORD_FILE/SPIRA_LC_SOCKET are registered keys; undeclared, they resolve to
-# the complete fixture's own dummy paths ("reading .../spira-lc.credential: No such file"),
-# not "unset" — this suite connects with direct TCP params below, so both must be declared
-# empty to mean exactly that, not left to the fixture's own (unreachable) defaults.
-tl_config SPIRA_LC_PASSWORD_FILE="" SPIRA_LC_SOCKET=""
-
-SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" SPIRA_LC_DB=spira_lifecycle \
-SPIRA_LC_DATA_DIR="$TMP/lc-data" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
-SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
-    "$LC_BIN" admin-apply-ddl "$REPO_ROOT/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
-wantrc "spira_lifecycle schema applies cleanly" 0 $?
+lcfix_up || bail "the control store did not come up"
 
 lc_seed_bead() {   # lc_seed_bead <id> <state> <updated_at-epoch>
-    timeout 5 "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
-        --use-db spira_lifecycle sql -q \
-        "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','$2','[]',0,$3)
-         ON DUPLICATE KEY UPDATE state='$2', updated_at=$3" >/dev/null 2>&1
+    SPIRA_NOW="$3" lcfix_seed "$1" "$2" || bail "could not seed $1 $2"
 }
 lc_drop_bead() {   # lc_drop_bead <id> -> no row at all (the "not BATCHED" case)
-    timeout 5 "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
-        --use-db spira_lifecycle sql -q \
-        "DELETE FROM bead WHERE bead_id = '$1'" >/dev/null 2>&1
+    _lcfix_lc delete-bead-row "$1" >/dev/null 2>&1
 }
 
-LC_ENV=(SPIRA_LC_BIN="$LC_BIN" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" \
-        SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP/lc-data" \
-        SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_DOLT_BIN="$DOLT_BIN")
+LC_ENV=(SPIRA_LC_BIN="$LC_BIN" SPIRA_LC_PASSWORD=unused)
 
 # Two git repos. `alpha` is the home repo (listed first by spira_repos), `beta` is the second.
 ALPHA="$TMP/alpha"; BETA="$TMP/beta"

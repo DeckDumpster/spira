@@ -1,8 +1,7 @@
 //! The control store at `SPIRA_LC_STORE_PATH`, opened once per process on first use and held
 //! for the process's life: its opener is exclusive, so in practice lc-serve holds it and any
-//! other opener answers "cannot tell". Unset, no verb reaches it and every verb keeps its dolt
-//! path. Set, the verbs only it serves reach it; the bead-state verbs move to it only once
-//! `SPIRA_LC_LIFECYCLE_ON_STORE` is also on, so a store can serve rounds before the cutover.
+//! other opener answers "cannot tell". Every lifecycle verb is served from it; with the key
+//! unset they answer "cannot tell" rather than fall back to a store that no longer exists.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,11 +31,6 @@ fn confined(path: &str) -> Result<(), String> {
     let instance = spira_config::process::cfg("SPIRA_INSTANCE")?;
     let workspaces = spira_config::process::cfg("SPIRA_WORKSPACES")?;
     spira_config::containment::check_path(&instance, &workspaces, "SPIRA_LC_STORE_PATH", path)
-}
-
-/// Whether the bead-state verbs, `history` and `event-seq` answer from the control store.
-fn lifecycle_on_store() -> Result<bool, String> {
-    Ok(spira_config::process::cfg_parse::<u8>("SPIRA_LC_LIFECYCLE_ON_STORE")? != 0)
 }
 
 /// The shortest lock the contract grants, and so the shortest claim: `SPIRA_LC_LOCK_TTL_MIN_MS`.
@@ -128,24 +122,9 @@ fn prime_dwell(s: Arc<Store<Served>>) {
 const PRIME_WINDOW_S: u64 = 86_400;
 const PRIME_CALLS: usize = 16;
 
-/// The store the config declares, opened: `None` while the key is unset, so lc-serve serves
-/// from dolt alone.
+/// The store the config declares, opened: `None` while the key is unset.
 pub fn configured() -> Option<Result<Arc<Store<Served>>, String>> {
     Some(store_path()?.and_then(|p| opened(&p)))
-}
-
-/// The control store while the bead-state verbs answer from it (`SPIRA_LC_LIFECYCLE_ON_STORE`),
-/// opened; `None` while they answer from dolt.
-pub fn lifecycle_store() -> Option<Result<Arc<Store<Served>>, String>> {
-    let path = match store_path()? {
-        Ok(p) => p,
-        Err(e) => return Some(Err(e)),
-    };
-    match lifecycle_on_store() {
-        Ok(true) => Some(opened(&path)),
-        Ok(false) => None,
-        Err(e) => Some(Err(e)),
-    }
 }
 
 /// `admin-create-store`: a new, empty control store at `SPIRA_LC_STORE_PATH`, which no verb
@@ -238,12 +217,7 @@ fn dispatch_watermark(args: &[String]) -> Option<(i32, String)> {
     }
 }
 
-/// The verbs with no dolt path: the control store answers them whenever its path is set, so they
-/// never wait for the `SPIRA_LC_LIFECYCLE_ON_STORE` cutover.
-const STORE_ONLY: &[&str] = &["watch", "condition"];
-
-/// The control store's answer to `args`, or `None` when the dolt path answers it: a verb this
-/// store does not serve, or any verb with a dolt path while the key is unset.
+/// The control store's answer to `args`, or `None` for a verb it does not serve.
 pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     let verb = args.first()?;
     if let Some(answer) = dispatch_watermark(args) {
@@ -259,19 +233,13 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     let path = match store_path() {
         Some(Ok(p)) => p,
         Some(Err(e)) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
-        None if STORE_ONLY.contains(&verb.as_str()) => return Some((
-            CANNOT_TELL,
-            format!("cannot tell: {verb} is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable"),
-        )),
-        None => return None,
-    };
-    if !STORE_ONLY.contains(&verb.as_str()) {
-        match lifecycle_on_store() {
-            Ok(true) => {}
-            Ok(false) => return None,
-            Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+        None => {
+            return Some((
+                CANNOT_TELL,
+                format!("cannot tell: {verb} is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable"),
+            ))
         }
-    }
+    };
     Some(match opened(&path) {
         Ok(store) if lifecycle => {
             let request = request_id();

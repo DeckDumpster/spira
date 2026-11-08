@@ -430,8 +430,8 @@ fn named_beads(message: &str) -> Vec<String> {
 /// A tip is submitted only on a recorded pass of its repository's compile-and-lint check; the
 /// broker runs it (a model session has no `testenv`) and records the pass for that exact tip.
 /// The repository comes from the bead's lifecycle row: a world or a fixture holds lifecycle rows
-/// with no content behind them. Only a row that names none (one created at the claim, before
-/// `backfill-repos` reached it) falls back to the content store's repo: label.
+/// with no content behind them. Only a row that names none (one created at the claim, before the repo was recorded
+/// at filing) falls back to the content store's repo: label.
 fn lint_refusal(conn: &Conn, bead_id: &str, tip: &str, actor: &str) -> Option<(i32, String)> {
     let repo = match submit_repo(conn, bead_id) {
         Ok(r) => r,
@@ -658,14 +658,13 @@ fn red_tracker_done_refusal(bead_id: &str) -> Option<(i32, String)> {
 }
 
 fn released_on_ask_history(conn: &Conn, bead_id: &str) -> bool {
-    let sql = format!(
-        "SELECT event, evidence FROM event WHERE machine = 'bead' AND lc_key = '{}' AND applied = 1 ORDER BY seq",
-        rows::escape(bead_id)
-    );
-    let Ok(found) = conn.query(&sql) else { return true };
+    let argv = ["history", bead_id, "--machine", "bead"].map(String::from);
+    let (0, out) = crate::dispatch(&argv, conn) else { return true };
+    let Ok(serde_json::Value::Array(found)) = serde_json::from_str::<serde_json::Value>(&out) else { return true };
     let history: Vec<(String, String)> = found
         .iter()
-        .map(|r| (r.get("event").and_then(|v| v.as_str()).unwrap_or("").to_string(), r.get("evidence").and_then(|v| v.as_str()).unwrap_or("").to_string()))
+        .filter(|r| r.get("applied").and_then(serde_json::Value::as_bool) == Some(true))
+        .map(|r| (r.get("event").and_then(serde_json::Value::as_str).unwrap_or("").to_string(), r.get("evidence").map(serde_json::Value::to_string).unwrap_or_default()))
         .collect();
     released_on_ask(&history)
 }
@@ -774,7 +773,7 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
     let body = split_reserved(args).stdin;
     let parent = if after_landing { None } else { Some(bead_id) };
     match crate::bd::file_child(title, &persona, &repo, parent, body.as_deref()) {
-        Ok(new_id) => match crate::cutover::cmd_create_bead(std::slice::from_ref(&new_id), conn) {
+        Ok(new_id) => match crate::dispatch(&[s("create-bead"), new_id.clone(), s("--ready")], conn) {
             (0, _) if after_landing => match crate::bd::add_blocker(&new_id, bead_id) {
                 Ok(()) => (0, new_id),
                 Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be made to wait on {bead_id} (do not file it again; add the dependency): {e}")),
@@ -1646,7 +1645,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
             }
             Step::CreateRow => {
                 let new_id = out.trim().to_string();
-                match crate::cutover::cmd_create_bead(std::slice::from_ref(&new_id), conn) {
+                match crate::dispatch(&[s("create-bead"), new_id.clone(), s("--ready")], conn) {
                     (0, _) => (0, String::new()),
                     (_, e) => (
                         CANNOT_TELL,

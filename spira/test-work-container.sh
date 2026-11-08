@@ -9,9 +9,6 @@
 # filing, and a verb naming any bead other than the bound one is refused even when a real
 # socket answers (test-work-crate.sh already proves the refusal never needs one).
 #
-# host-reason: starts its own disposable `dolt sql-server`, same shape as
-# test-lifecycle-container.sh; testenv-batch.sh already provides the container.
-#
 # tier: T2
 # covers: work/* spira-lc/src/work.rs spira-lc/src/main.rs spira-lc/src/bd.rs spira/bead.sh mail/src/*
 # timeout: 300
@@ -20,35 +17,24 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 tl_config SPIRA_TEST_CASE_DEADLINE=90
 
-DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
-[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
-
 # round 4 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME — without it,
 # bead.sh file --for builder cannot find runes/builder.rune ("no such persona: builder").
 tl_config SPIRA_RUNES_DIR="$HERE/runes"
 
 . "$HERE/conf.sh"
-export PATH="$(dirname "$DOLT_BIN"):$PATH"
 
 . "$HERE/testdb.sh"
+. "$HERE/testlib/lc-fixture.sh"
 testdb_require "test-work-container.sh"
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
 printf '## Build\n\nA fixture change in spira/x.\n' > "$TMP/build.md"
-# Other suites draw from overlapping ranges concurrently; take the first port nothing answers on.
-PORT=""
-for _ in $(seq 1 50); do
-    cand=$((3309 + 700 + (RANDOM % 500)))
-    if ! (exec 3<>"/dev/tcp/127.0.0.1/$cand") 2>/dev/null; then PORT="$cand"; break; fi
-done
-[ -n "$PORT" ] || bail "no free port found near 3309"
-SERVER_PID=""
 SERVE_PID=""
 
 cleanup() {
     [ -n "$SERVE_PID" ] && kill "$SERVE_PID" >/dev/null 2>&1
-    [ -n "$SERVER_PID" ] && kill "$SERVER_PID" >/dev/null 2>&1
+    lcfix_down
     testdb_drop >/dev/null 2>&1
     rm -rf "$TMP"
 }
@@ -82,63 +68,45 @@ MAP
 export SPIRA_REPO_MAP="$TMP/repo-map"
 tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 
-mkdir -p "$TMP/data"
-cat > "$TMP/server.yaml" <<YAML
-log_level: warning
-listener:
-  port: $PORT
-  max_connections: 100
-  read_timeout_millis: 30000
-  write_timeout_millis: 30000
-data_dir: "$TMP/data"
-behavior:
-  dolt_transaction_commit: false
-  event_scheduler: "OFF"
-YAML
-
-"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
-SERVER_PID=$!
-
-up=0
-for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then # batch-job: fixture dolt call against the suite's private store
-        up=1; break
-    fi
-    sleep 0.2
-done
-[ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
-
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture dolt call against the suite's private store
-
 # Same pin as test-lifecycle-container.sh: this suite runs inside testenv-batch.sh's own
 # podman exec, which sets its own CARGO_TARGET_DIR.
 LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 WORK_BIN="$(command -v work 2>/dev/null)"; [ -n "$WORK_BIN" ] || { echo "work is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
 # `work` is the lifecycle machine's door.
-export SPIRA_LC_HOST=127.0.0.1
-export SPIRA_LC_PORT="$PORT"
-export SPIRA_LC_DB=spira_lifecycle
-export SPIRA_LC_DATA_DIR="$TMP"
-export SPIRA_LC_USER=root
-export SPIRA_LC_PASSWORD=""
-# round 3 fix (pattern 7): SPIRA_LC_PASSWORD_FILE is a registered key; undeclared, it
-# resolves to the complete fixture's placeholder /fixture/userhome/.../spira-lc.credential,
-# which does not exist. Declare this suite's own (empty-password) credential file.
-: > "$TMP/lc-credential"
-tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-credential"
+lcfix_up || bail "the control store did not come up"
 
-"$LC_BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
-wantrc "schema applies cleanly" 0 $?
-# Grants restrict the spira_lc user specifically; this suite connects as root throughout
-# (SPIRA_LC_USER=root above) to exercise the verbs themselves, not the grant boundary —
-# that is test-lifecycle-container.sh's job — so grants.sql (which needs its
-# @SPIRA_LC_PASSWORD@ placeholder filled first) is not applied here.
-
+# A filed bead has its row already (bead.sh creates it); this makes one for a fixture bead that
+# was not filed, and leaves an existing one as it is.
 seed_bead() {   # seed_bead <bead-id>
-    root_sql --use-db spira_lifecycle sql -q \
-        "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','READY','[]',0,0)" >/dev/null 2>&1
+    "$LC_BIN" create-bead "$1" --ready >/dev/null 2>&1
 }
+
+# lc_working <bead-id> <holder> [stack-json] [persona] — the row a real Claim would leave.
+lc_working() {
+    LCFIX_HOLDER="$2" LCFIX_STACK="${3:-}" LCFIX_PERSONA="${4:-}" lcfix_claim "$1" || bail "could not claim $1 as $2"
+}
+
+# lc_certified <bead-id> <tip> — a CERTIFIED row at <tip>.
+lc_certified() {
+    lcfix_claim "$1" && lcfix_event "$1" WORKING "{\"Submit\":{\"tip\":\"$2\"}}" \
+        && lcfix_event "$1" SUBMITTED "{\"GatePass\":{\"tip\":\"$2\",\"gate_key\":\"fixture-gate-key\"}}" \
+        || bail "could not certify $1"
+}
+
+# lc_row <bead-id> — the row as compact JSON, so a case matches "state":"X".
+lc_row() {
+    _lcfix_show "$1" | python3 -c '
+import json, sys
+b = (json.load(sys.stdin) or {}).get("bead") or {}
+print(json.dumps(b, separators=(",", ":")))'
+}
+
+# lc_events <bead-id> — how many events the bead's history holds.
+lc_events() { "$LC_BIN" history "$1" 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+
+OLDTIP=1111111111111111111111111111111111111111
+NEWTIP=2222222222222222222222222222222222222222
 
 SOCK="$TMP/spira-lc.sock"
 tl_config SPIRA_LC_SOCKET="$SOCK"
@@ -168,12 +136,12 @@ is   "show: exits 0"                 "0"                                        
 want "show: bd's own title is in it" "dwarf semantic layer container-tier fixture"     "$out"
 
 # ── note: a plain bd note, no lifecycle event ────────────────────────────────────────
-before_events="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event WHERE lc_key='$BID'" -r json 2>&1)"
+before_events="$(lc_events "$BID")"
 out="$(work_as "$BID" note "left by the container-tier suite" 2>&1)"; rc=$?
 is "note: exits 0" "0" "$rc"
 note_text="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$BID" 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 want "note: text landed on the bd bead" "left by the container-tier suite" "$note_text"
-after_events="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event WHERE lc_key='$BID'" -r json 2>&1)"
+after_events="$(lc_events "$BID")"
 is "note: emits no lifecycle event (bd, non-lifecycle, per design §3.5)" "$before_events" "$after_events"
 
 PRE_WT="$TMP/ready-worktree"
@@ -184,12 +152,12 @@ out="$(cd "$PRE_WT" && work_as "$BID" submit 2>&1)"; rc=$?
 wantrc "submit from READY: refused (exit 3), never a silent exit 0" "3" "$rc"
 want "submit from READY: the refusal names READY" "READY" "$out"
 want "submit from READY: the refusal names the way out" "claim it first" "$out"
-row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$BID'" -r json 2>&1)"
+row="$(lc_row "$BID")"
 want "submit from READY: the row stays READY" "READY" "$row"
 
 # submit is legal only from WORKING (lifecycle/src/bead.rs) — seed_bead leaves BID at
 # READY, same as every other fixture bead here; move it to WORKING first.
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='dwarf-test', version=1 WHERE bead_id='$BID'" >/dev/null 2>&1
+lc_working "$BID" dwarf-test
 
 # ── submit: bead Submit(tip), tip read from the worktree, never taken as an argument ──
 # A throwaway repo, never $REPO: $REPO here is testenv-batch.sh's own bind-mounted worktree,
@@ -202,7 +170,7 @@ git -C "$DWARF_WT" -c user.email=dwarf@spira.local -c user.name=dwarf commit -q 
 real_tip="$(git -C "$DWARF_WT" rev-parse HEAD)"
 out="$(cd "$DWARF_WT" && work_as "$BID" submit 2>&1)"; rc=$?
 is "submit: exits 0 (applied)" "0" "$rc"
-row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, tip FROM bead WHERE bead_id='$BID'" -r json 2>&1)"
+row="$(lc_row "$BID")"
 want "submit: state is SUBMITTED" "SUBMITTED" "$row"
 want "submit: tip is the worktree's real HEAD, not something the dwarf could type" "$real_tip" "$row"
 
@@ -210,48 +178,56 @@ want "submit: tip is the worktree's real HEAD, not something the dwarf could typ
 # submit is refused until the stack is current (design stacked-dependents-2026-09-28 §1,
 # sp-falao's own acceptance: "A reworked while B WORKING -> B's submit refused until it
 # rebases") ────────────────────────────────────────────────────────────────────────────
-PREREQ="prereq-fixture"
+PREREQ="sp-prereqfx"
 seed_bead "$PREREQ"
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='CERTIFIED', tip='newtip', version=1 WHERE bead_id='$PREREQ'" >/dev/null 2>&1
+lc_certified "$PREREQ" "$OLDTIP"
 
 STK="$(bead.sh file "dwarf semantic layer: stacked-base fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 seed_bead "$STK"
-root_sql --use-db spira_lifecycle sql -q \
-    "UPDATE bead SET state='WORKING', holder='dwarf-stacked', version=1, stack=JSON_OBJECT('$PREREQ','oldtip') WHERE bead_id='$STK'" >/dev/null 2>&1
+lc_working "$STK" dwarf-stacked "{\"$PREREQ\":\"$OLDTIP\"}"
 
 before_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
-out="$("$LC_BIN" event bead "$STK" --expect WORKING --version 1 --actor test --kind "{\"BaseWithdrawn\":{\"prereq\":\"$PREREQ\",\"tip\":\"oldtip\"}}" 2>&1)"; rc=$?
+out="$("$LC_BIN" event bead "$STK" --expect WORKING --version 1 --actor test --kind "{\"BaseWithdrawn\":{\"prereq\":\"$PREREQ\",\"tip\":\"$OLDTIP\"}}" 2>&1)"; rc=$?
 is "base_withdrawn on a WORKING dependent: applied (exit 0)" "0" "$rc"
-row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, reason FROM bead WHERE bead_id='$STK'" -r json 2>&1)"
+row="$(lc_row "$STK")"
 want "base_withdrawn: the dependent stays WORKING, not sent to REWORK" "\"state\":\"WORKING\"" "$row"
-want "base_withdrawn: the reason names the withdrawn prerequisite and tip" "base_withdrawn: $PREREQ oldtip" "$row"
+want "base_withdrawn: the reason names the withdrawn prerequisite and tip" "base_withdrawn: $PREREQ $OLDTIP" "$row"
 after_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 [ "$after_note" != "$before_note" ] && ok "base_withdrawn: the WORKING holder is told (a note landed on the bead)" \
     || bad "base_withdrawn: the WORKING holder is told (a note landed on the bead)" "bd show did not change"
 want "base_withdrawn: the note names the holder" "dwarf-stacked" "$after_note"
 
+# The prerequisite is re-cut at a new tip and certified there, so the stack names a tip it left.
+"$LC_BIN" resubmit "$PREREQ" "$NEWTIP" >/dev/null 2>&1 && "$LC_BIN" certify "$PREREQ" "$NEWTIP" pass fixture-key >/dev/null 2>&1 \
+    || bail "could not re-cut $PREREQ at its new tip"
 out="$(cd "$DWARF_WT" && work_as "$STK" submit 2>&1)"; rc=$?
 is "submit while the stack still names a withdrawn tip: refused (exit 3)" "3" "$rc"
 want "submit refusal: tells the dwarf to rebase onto the current stack" "rebase" "$out"
 
 # once the stack is current again (the dwarf rebased and the claim's stack now names the
 # prerequisite's real tip), submit succeeds exactly as it does for an unstacked bead.
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET stack=JSON_OBJECT('$PREREQ','newtip') WHERE bead_id='$STK'" >/dev/null 2>&1
-out="$(cd "$DWARF_WT" && work_as "$STK" submit 2>&1)"; rc=$?
+STK2="$(bead.sh file "dwarf semantic layer: restacked fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
+seed_bead "$STK2"
+lc_working "$STK2" dwarf-stacked "{\"$PREREQ\":\"$NEWTIP\"}"
+out="$(cd "$DWARF_WT" && work_as "$STK2" submit 2>&1)"; rc=$?
 is "submit once the stack matches the prerequisite's current tip: applied (exit 0)" "0" "$rc"
 
 # ── done needs WORKING, not SUBMITTED — reset via a fresh bead for the rest ──────────
 DID="$(bead.sh file "dwarf semantic layer: done/blocked/split fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 seed_bead "$DID"
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='dwarf-test', version=1 WHERE bead_id='$DID'" >/dev/null 2>&1
+lc_working "$DID" dwarf-test
 
 out="$(work_as "$DID" done --delivers "a document at wiki/x" 2>&1)"; rc=$?
 is "builder done: refused (exit 3), its rune declares no DONE exit" "3" "$rc"
 want "builder done: the refusal names the rune and its exits" "SUBMITTED ask park hold" "$out"
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET persona='spike' WHERE bead_id='$DID'" >/dev/null 2>&1
+# A row's persona is set by its claim: the spike's own bead is claimed as a spike.
+DID_SPIKE="$(bead.sh file "dwarf semantic layer: spike done fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
+seed_bead "$DID_SPIKE"
+lc_working "$DID_SPIKE" dwarf-test "" spike
+DID="$DID_SPIKE"
 out="$(work_as "$DID" done --delivers "a document at wiki/x" 2>&1)"; rc=$?
 is "done: exits 0 (applied)" "0" "$rc"
-row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, reason FROM bead WHERE bead_id='$DID'" -r json 2>&1)"
+row="$(lc_row "$DID")"
 want "done: state is DONE" "\"state\":\"DONE\"" "$row"
 want "done: reason carries the delivers evidence" "a document at wiki/x" "$row"
 
@@ -260,10 +236,10 @@ groom_as() { SPIRA_WORK_BEAD_ID="$1" SPIRA_RUNE="groomer" SPIRA_LC_SOCKET="$SOCK
 GWORK="$(bead.sh file "groomer claimed a work bead" --for builder --repo testrepo --body-file "$TMP/build.md")"
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$GWORK" "${SPIRA_GROOMER_LABEL:-groom}" >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 seed_bead "$GWORK"
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='dwarf-groomer', version=1 WHERE bead_id='$GWORK'" >/dev/null 2>&1
+lc_working "$GWORK" dwarf-groomer
 out="$(groom_as "$GWORK" done --delivers "note:groom.log" 2>&1)"; rc=$?
 is "groomer done on an unmarked work bead: refused (exit 3)" "3" "$rc"
-row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$GWORK'" -r json 2>&1)"
+row="$(lc_row "$GWORK")"
 want "groomer done on an unmarked work bead: READY again" "\"state\":\"READY\"" "$row"
 nowant "groomer done on an unmarked work bead: never DONE" "\"state\":\"DONE\"" "$row"
 want "groomer done on an unmarked work bead: the refusal says why" "not a groom trigger" "$out"
@@ -271,10 +247,10 @@ want "groomer done on an unmarked work bead: the refusal says why" "not a groom 
 GTRIG="$(bead.sh file "groomer trigger fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$GTRIG" groom-trigger >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 seed_bead "$GTRIG"
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='dwarf-groomer', version=1 WHERE bead_id='$GTRIG'" >/dev/null 2>&1
+lc_working "$GTRIG" dwarf-groomer
 out="$(groom_as "$GTRIG" done --delivers "note:groom.log" 2>&1)"; rc=$?
 is "POSITIVE CONTROL: groomer done on a marked trigger: exits 0" "0" "$rc"
-row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$GTRIG'" -r json 2>&1)"
+row="$(lc_row "$GTRIG")"
 want "POSITIVE CONTROL: groomer done on a marked trigger: DONE" "\"state\":\"DONE\"" "$row"
 
 # ── red-tracker done: refused; a handled red leaves WORKING only by submit or ask ───
@@ -282,10 +258,10 @@ RTL="$(. "$SPIRA_HOME/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_RED_TRACKER
 RT="$(bead.sh file "publish PR 1 red for testrepo" --for builder --repo testrepo --body-file "$TMP/build.md")"
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$RT" "$RTL" >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 seed_bead "$RT"
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='dwarf-test', version=1 WHERE bead_id='$RT'" >/dev/null 2>&1
+lc_working "$RT" dwarf-test
 out="$(work_as "$RT" done --delivers "no code change" 2>&1)"; rc=$?
 is "red-tracker done: refused (exit 3)" "3" "$rc"
-row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$RT'" -r json 2>&1)"
+row="$(lc_row "$RT")"
 want "red-tracker done: still WORKING" "\"state\":\"WORKING\"" "$row"
 want "red-tracker done: the refusal names the exits" "its exits are SUBMITTED ask park hold" "$out"
 
@@ -296,7 +272,7 @@ before_unread="$(ls "$SPIRA_MAIL/operator/new" "$SPIRA_MAIL/concierge/new" 2>/de
 out="$(work_as "$BLID" blocked "which persona owns this?" --default "builder" 2>&1)"; rc=$?
 [ "$rc" = 0 ] || echo "# $out" >&2
 is "blocked: exits 0" "0" "$rc"
-row="$(root_sql --use-db spira_lifecycle sql -q "SELECT holds FROM bead WHERE bead_id='$BLID'" -r json 2>&1)"
+row="$(lc_row "$BLID")"
 want "blocked: an ask hold is recorded" "ask" "$row"
 after_unread="$(ls "$SPIRA_MAIL/operator/new" "$SPIRA_MAIL/concierge/new" 2>/dev/null | grep -c .)"
 [ "$after_unread" -gt "$before_unread" ] && ok "blocked: an ask landed in the operator's mailbox" \
@@ -338,7 +314,7 @@ before_all="$(mail_count)"
 out="$(work_as "$SBID" superseded-by --help 2>&1)"; rc=$?
 is "superseded-by --help: refused (exit 3)" "3" "$rc"
 want "superseded-by --help: the refusal says it is not a bead id" "not another bead's id" "$out"
-row="$(root_sql --use-db spira_lifecycle sql -q "SELECT holds FROM bead WHERE bead_id='$SBID'" -r json 2>&1)"
+row="$(lc_row "$SBID")"
 nowant "superseded-by --help: no hold applied" "manual" "$row"
 is "superseded-by --help: nothing filed or mailed" "$before_all" "$(mail_count)"
 
@@ -355,7 +331,7 @@ is "superseded-by: the confirmation ask is delivered to the operator, not rerout
 ask="$(cat "$SPIRA_MAIL"/operator/new/* 2>/dev/null)"
 want "superseded-by: the ask gives the successor's title" "the landed successor of the supersede fixture" "$ask"
 want "superseded-by: the ask gives the successor's landing commit" "$land_sha" "$ask"
-row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, holds, reason FROM bead WHERE bead_id='$SBID'" -r json 2>&1)"
+row="$(lc_row "$SBID")"
 want   "superseded-by: a manual hold is recorded, not SUPERSEDED" "manual" "$row"
 nowant "superseded-by: the bead itself is not moved to SUPERSEDED"   "\"state\":\"SUPERSEDED\"" "$row"
 want   "superseded-by: the request names the proposed successor"    "$SUCC" "$row"

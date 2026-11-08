@@ -147,7 +147,7 @@ nowant "work: no submitted label by default" "testsubmitted" "$(cat "$BD_LOG")"
 out="$(run_bead "own fix" --for builder --repo testrepo --submitted --tip "$SHORT")"; rc=$?
 is   "submitted: exits 0"               "0"             "$rc"
 want "submitted: configured label applied" "testsubmitted" "$(cat "$BD_LOG")"
-want "submitted: row created at the tip, not READY" "create-bead sp-test --priority 2 --title own fix --submitted-tip $FULL" "$(cat "$LC_LOG")"
+want "submitted: row created at the tip, not READY" "create-bead sp-test --submitted-tip $FULL" "$(cat "$LC_LOG")"
 
 out="$(LC_FAIL=1 run_bead_raw "own fix" --for builder --repo testrepo --submitted --tip "$SHORT" 2>/dev/null)"; rc=$?
 is     "submitted, row write fails: exits non-zero" "1" "$rc"
@@ -157,7 +157,7 @@ out="$(LC_FAIL=1 run_bead_raw "plain fix" --for builder --repo testrepo 2>&1)"; 
 is     "row write fails: exits non-zero" "1" "$rc"
 want   "row write fails: names the content id" "sp-test" "$out"
 want   "row write fails: prints the repair command" "spira-lc create-bead sp-test" "$out"
-n="$(grep -c "^create-bead sp-test .*--title plain fix" "$LC_LOG")"; is "row write fails: retried before giving up" "3" "$n"
+n="$(grep -c "^create-bead sp-test .*--repo testrepo" "$LC_LOG")"; is "row write fails: retried before giving up" "3" "$n"
 
 out="$(run_bead "own fix" --for builder --repo testrepo --submitted)"; rc=$?
 is     "submitted without tip: refused"            "2"     "$rc"

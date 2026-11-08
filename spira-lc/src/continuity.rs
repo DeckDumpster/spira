@@ -3,15 +3,11 @@
 //! `seq` it has seen. The sweeper does the work, so a request never pays for the whole log.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde_json::Value;
 
 use crate::db::Conn;
-
-/// A full rescan, off the request path, in case a lower `seq` ever committed after a higher.
-const RESCAN: Duration = Duration::from_secs(86400);
 
 pub type Break = (String, String, String, Value);
 
@@ -119,34 +115,6 @@ pub fn scan(conn: &Conn) -> Result<Tracker, String> {
     t.absorb(&read_after(conn, 0)?);
     t.built = Some(Instant::now());
     Ok(t)
-}
-
-/// The serving process's answer: the cached tracker brought up to date by the new events only.
-pub fn current(conn: &Conn, cell: &Mutex<Tracker>) -> Result<Vec<Break>, String> {
-    let mut t = cell.lock().unwrap_or_else(|e| e.into_inner());
-    if t.built.is_none() {
-        *t = scan(conn)?;
-    } else {
-        let rows = read_after(conn, t.upto)?;
-        t.absorb(&rows);
-    }
-    Ok(t.breaks())
-}
-
-/// One pass of the sweeper: build the tracker, catch it up, or rebuild it once a day. The
-/// rebuild is read outside the lock, so a request meanwhile is answered from the old one.
-pub fn tick(conn: &Conn) -> Result<(), String> {
-    let Some(live) = conn.live.as_ref() else { return Ok(()) };
-    let cell = live.continuity();
-    let age = cell.lock().unwrap_or_else(|e| e.into_inner()).built.map(|b| b.elapsed());
-    match age {
-        Some(a) if a >= RESCAN => {
-            let fresh = scan(conn)?;
-            *cell.lock().unwrap_or_else(|e| e.into_inner()) = fresh;
-            Ok(())
-        }
-        _ => current(conn, cell).map(|_| ()),
-    }
 }
 
 #[cfg(test)]

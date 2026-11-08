@@ -225,7 +225,7 @@ _bs_converge_rowless() {
     fi
     while IFS=$'\t' read -r id prio repo title; do
         [ -n "$id" ] || continue
-        args=(create-bead "$id" --priority "$prio" --title "$title")
+        args=(create-bead "$id")
         [ "$repo" != "-" ] && args+=(--repo "$repo")
         args+=(--ready)
         # batch-job: one point write per rowless bead, bounded by timeout(1)

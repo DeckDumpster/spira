@@ -6,7 +6,7 @@
 //! left null here; a scenario that seeds beads has them merged in from `bd list` by `merge_bd`,
 //! so `inv_closed_is_terminal` can fire only on such a scenario.
 
-use crate::world::{is_world, lc_command, run, LANDING_BASE, PRODUCTION_LOCATORS};
+use crate::world::{ask_body, is_world, lc_command, lc_socket, run, LANDING_BASE, PRODUCTION_LOCATORS};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -357,7 +357,11 @@ pub fn landstate_of(world: &Path) -> impl Fn(&str) -> Option<String> {
 pub fn probe(world: &Path, env: &dyn Fn(&str) -> Option<String>) -> Result<String, String> {
     let world = refuse_foreign(world, env)?;
     let port = lc_port(&world)?;
-    let list = run(lc_command(&world.join("release"), &world.join("config"), &port).arg("list"), CALL_DEADLINE).map_err(|e| format!("spira-lc list: {e}"))?;
+    // The store has one opener: the world's serve while it runs, else this process.
+    let list = match ask_body(&lc_socket(&world), &["list"]) {
+        Some((0, body)) => body,
+        _ => run(lc_command(&world.join("release"), &world.join("config"), &port).arg("list"), CALL_DEADLINE).map_err(|e| format!("spira-lc list: {e}"))?,
+    };
     let rows = rows(&list, &landstate_of(&world), &git_facts(&world)?)?;
     let mut out = String::new();
     for r in rows {

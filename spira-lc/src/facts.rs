@@ -14,7 +14,6 @@ const REFUSED: i32 = 3;
 pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "blind-rework", "rejection", "escalated", "no-progress", "gate-start", "__doctor_probe__"];
 
 pub const MACHINE: &str = "fact";
-pub const GATE_START: &str = "gate-start";
 pub const CAUSE_MAX: usize = 200;
 pub const READ_MAX: usize = 120;
 /// Kinds whose cause is a multi-line digest rather than a one-line token.
@@ -290,9 +289,8 @@ mod tests {
 
     #[test]
     fn the_gate_start_kind_the_gate_sends_is_one_the_fact_verb_accepts() {
-        assert_eq!(GATE_START, "gate-start");
-        assert!(KINDS.contains(&GATE_START));
-        assert!(insert_sql("sp-a", GATE_START, "", "gate", 5).contains("'fact', 'sp-a', 'gate-start'"));
+        assert!(KINDS.contains(&"gate-start"));
+        assert!(insert_sql("sp-a", "gate-start", "", "gate", 5).contains("'fact', 'sp-a', 'gate-start'"));
     }
 
     #[test]

@@ -125,7 +125,7 @@ git -C "$B_RUN/worktree/sp-mbase" commit -q -m "sp-mbase: work"
 B_TIP="$(git -C "$B_REPO" rev-parse spira/sp-mbase)"
 git -C "$B_REPO" worktree remove -f "$B_RUN/worktree/sp-mbase"
 lcfix_seed sp-mbase CERTIFIED "$B_TIP"
-lcfix_sql -q "UPDATE bead SET sifted_tip='$B_TIP' WHERE bead_id='sp-mbase'" >/dev/null 2>&1
+lcfix_sifted sp-mbase "$B_TIP"
 
 tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$B_SH/repo-map" SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
@@ -203,6 +203,6 @@ is   "verdict: remote MASTER fast-forwards to the batch head" \
 want "verdict: reports a fast-forward landing" "landed by fast-forward" "$out"
 nowant "verdict: spira-lc refused no step of the land walk" "refused" "$out"
 is "verdict: the batch is LANDED on spira-lc" "LANDED" \
-    "$(lcfix_sql -q "SELECT state FROM batch WHERE batch_id='$V_BATCH_ID'" -r csv 2>/dev/null | sed -n 2p)"
+    "$(lcfix_batch_state "$V_BATCH_ID")"
 
 tl_summary

@@ -1154,3 +1154,17 @@ fn batches_of_finds_a_member_stacked_into_an_open_round() {
         assert_eq!(r.s.batches_of(bead).unwrap().len(), 1, "{bead}");
     }
 }
+
+#[test]
+fn create_bead_refuses_the_planning_fields_it_used_to_keep() {
+    let r = Rig::new();
+    for flag in ["--title", "--priority"] {
+        let (rc, why) = r.lc(&["create-bead", "sp-plan", flag, "x", "--ready"]);
+        assert_eq!(rc, crate::REFUSED, "{flag}: {why}");
+        assert!(why.contains(flag), "{why}");
+    }
+    assert_eq!(r.lc(&["show", "sp-plan"]).0, 1, "a refused create leaves no record");
+    // The positive control: the same call without the planning flag creates the record.
+    r.ok(&["create-bead", "sp-plan", "--ready"]);
+    assert_eq!(r.lc(&["show", "sp-plan"]).0, 0);
+}

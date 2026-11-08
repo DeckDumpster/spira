@@ -212,7 +212,7 @@ impl StepDef {
             (None, Some(b), None) if self.script.is_empty() => {
                 let b = bead_id(b)?;
                 let named = self.repo.as_ref().map(|r| format!(" --repo {r}")).unwrap_or_default();
-                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p {} -l spira -l plan -l repo:{repo}{} --silent >/dev/null && spira-lc create-bead {b}{named}", shell_quote(&format!("sim {b}")), self.priority.unwrap_or(2), self.body.as_ref().map(|d| format!(" -d {}", shell_quote(d))).unwrap_or_default()))
+                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p {} -l spira -l plan -l repo:{repo}{} --silent >/dev/null && spira-lc create-bead {b}{named} --ready", shell_quote(&format!("sim {b}")), self.priority.unwrap_or(2), self.body.as_ref().map(|d| format!(" -d {}", shell_quote(d))).unwrap_or_default()))
             }
             (None, None, Some(b)) if !self.script.is_empty() => {
                 let b = bead_id(b)?;

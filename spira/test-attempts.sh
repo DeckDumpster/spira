@@ -220,10 +220,8 @@ echo "the release (real lifecycle store):"
 . "$HERE/testlib/lc-fixture.sh"
 trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 lcfix_up || bail "lc-fixture: the lifecycle store did not come up"
-lcfix_seed sp-r1 WORKING || bail "lc-fixture: could not seed sp-r1"
-lcfix_sql -q "UPDATE bead SET holder='dwarf-regin', lease_until=$(( $(date +%s) + 3600 )) WHERE bead_id='sp-r1'" >/dev/null \
-    || bail "lc-fixture: could not set sp-r1's holder"
-lc_holder() { lcfix_sql -q "SELECT IFNULL(holder,'') FROM bead WHERE bead_id='$1'" -r csv 2>/dev/null | sed -n 2p; }
+LCFIX_HOLDER=dwarf-regin lcfix_seed sp-r1 WORKING || bail "lc-fixture: could not seed sp-r1"
+lc_holder() { lcfix_holder "$1"; }
 is "the fixture holds the bead under the dwarf's name" "WORKING dwarf-regin" "$(lcfix_state sp-r1) $(lc_holder sp-r1)"
 
 if BEADS_ACTOR=dwarf-builder release_own_claim sp-r1; then r=0; else r=1; fi

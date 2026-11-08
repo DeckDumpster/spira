@@ -41,18 +41,6 @@ pub fn run(args: &[String]) -> i32 {
         },
     };
 
-    let check_every = match spira_config::process::cfg_parse::<u64>("SPIRA_LC_LIVE_CHECK_SECS") {
-        Ok(n) if n >= 1 => Duration::from_secs(n),
-        Ok(_) => {
-            eprintln!("spira-lc serve: SPIRA_LC_LIVE_CHECK_SECS must be at least 1");
-            return 2;
-        }
-        Err(e) => {
-            eprintln!("spira-lc serve: {e}");
-            return 2;
-        }
-    };
-
     let spans = spira_config::process::cfg("SPIRA_RUN")
         .and_then(|run| spira_config::process::cfg_parse::<u32>("SPIRA_OTEL_KEEP_DAYS").map(|keep| (run, keep)));
     match spans {
@@ -111,7 +99,6 @@ pub fn run(args: &[String]) -> i32 {
 
     let conn = match Conn::from_env() {
         Ok(mut c) => {
-            c.enable_live();
             c.enable_group_commit();
             Arc::new(c)
         }
@@ -148,23 +135,10 @@ pub fn run(args: &[String]) -> i32 {
     // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
     // socket; serving one connection at a time deadlocks on that. The session mutex still
     // serializes the queries themselves.
-    let on_store = crate::control::served::lifecycle_store().is_some();
-    if on_store {
-        eprintln!("spira-lc serve: the lifecycle is on the control store: no dolt lifecycle rows are loaded or swept");
-    } else {
-        match conn.live_load() {
-            Ok(n) => eprintln!("spira-lc serve: {n} live rows in memory"),
-            Err(e) => eprintln!("spira-lc serve: live rows not loaded, reads go to Dolt until they are: {e}"),
-        }
+    if crate::control::served::configured().is_none() {
+        eprintln!("spira-lc serve: SPIRA_LC_STORE_PATH is unset: every lifecycle verb answers cannot-tell");
     }
     std::thread::scope(|scope| {
-        let checker = Arc::clone(&conn);
-        if !on_store {
-            scope.spawn(move || loop {
-                std::thread::sleep(check_every);
-                live_tick(&checker);
-            });
-        }
         match (spira_config::process::cfg_parse::<u64>("SPIRA_LC_SNAPSHOT_SECS"), spira_config::process::cfg("SPIRA_LC_SNAPSHOT")) {
             (Ok(secs), Ok(path)) if secs > 0 && !path.is_empty() => {
                 let refresher = Arc::clone(&conn);
@@ -196,28 +170,17 @@ pub fn run(args: &[String]) -> i32 {
             });
         }
         scope.spawn(crate::plan::run_mirror);
-        let sweeper = Arc::clone(&conn);
         scope.spawn(move || loop {
             std::thread::sleep(SWEEP_EVERY);
             alarm_tick();
-            if on_store {
-                match crate::control::served::lifecycle_store() {
-                    Some(Ok(store)) => match store_sweep(&store, crate::db::now_epoch()) {
-                        Ok(n) if n > 0 => eprintln!("spira-lc serve: {n} overdue mending rows expired"),
-                        Ok(_) => {}
-                        Err(e) => eprintln!("spira-lc serve: mending sweep: {e}"),
-                    },
-                    Some(Err(e)) => eprintln!("spira-lc serve: mending sweep: the control store: {e}"),
-                    None => {}
-                }
-                continue;
-            }
-            cold_tick(&sweeper);
-            continuity_tick(&sweeper);
-            crate::ops::epics_tick(&sweeper);
-            crate::ops::views_tick(&sweeper);
-            if let Err(e) = crate::mending::expire_overdue(&sweeper, "spira-lc.sweep") {
-                eprintln!("spira-lc serve: mending sweep: {e:?}");
+            match crate::control::served::configured() {
+                Some(Ok(store)) => match store_sweep(&store, crate::db::now_epoch()) {
+                    Ok(n) if n > 0 => eprintln!("spira-lc serve: {n} overdue mending rows expired"),
+                    Ok(_) => {}
+                    Err(e) => eprintln!("spira-lc serve: mending sweep: {e}"),
+                },
+                Some(Err(e)) => eprintln!("spira-lc serve: mending sweep: the control store: {e}"),
+                None => {}
             }
         });
         for conn_stream in listener.incoming() {
@@ -233,9 +196,6 @@ pub fn run(args: &[String]) -> i32 {
     });
     0
 }
-
-/// Between attempts to fetch the older rows: each is a read of the whole table.
-const COLD_RETRY: Duration = Duration::from_secs(30);
 
 /// One pass of the control store's GC controller: finalized keys, orphans and lapsed TTLs.
 fn gc_tick<B: state_store::Backend>(store: &crate::control::store::Store<B>) {
@@ -257,21 +217,6 @@ fn store_sweep<B: state_store::Backend>(store: &crate::control::store::Store<B>,
     }
 }
 
-fn cold_tick(conn: &Conn) {
-    if conn.live.as_ref().is_some_and(|l| l.cold_due(COLD_RETRY)) {
-        match conn.live_load_cold() {
-            Ok(n) => eprintln!("spira-lc serve: {n} older rows in memory"),
-            Err(e) => eprintln!("spira-lc serve: older rows not loaded, reads that need them go to Dolt: {e}"),
-        }
-    }
-}
-
-fn continuity_tick(conn: &Conn) {
-    if let Err(e) = crate::continuity::tick(conn) {
-        eprintln!("spira-lc serve: event continuity not refreshed: {e}");
-    }
-}
-
 fn alarm_tick() {
     let lines = crate::slow::latency_breaches(Instant::now());
     if lines.is_empty() {
@@ -283,34 +228,6 @@ fn alarm_tick() {
     let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
     if let Err(e) = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| f.write_all(text.as_bytes())) {
         eprintln!("spira-lc serve: {}: {e}", path.display());
-    }
-}
-
-const LIVE_SETTLE_MARGIN: Duration = Duration::from_secs(2);
-
-/// One pass of the timer: load the rows if they are not in memory, else check them against Dolt.
-fn live_tick(conn: &Conn) {
-    if let Some(live) = conn.live.as_ref().filter(|l| !l.is_loaded()) {
-        if !live.settled(crate::db::QUERY_DEADLINE + LIVE_SETTLE_MARGIN) {
-            return;
-        }
-        if let Err(e) = conn.live_load() {
-            eprintln!("spira-lc serve: live rows still not loaded: {e}");
-        }
-        return;
-    }
-    if conn.live.as_ref().is_some_and(|l| l.verify_due(crate::db::QUERY_DEADLINE * 2 + LIVE_SETTLE_MARGIN)) {
-        match conn.live_check() {
-            Ok(c) if c.divergent.is_empty() => {}
-            Ok(c) => eprintln!("spira-lc serve: an abandoned write committed after the reload; reconciled: {}\n{}", c.divergent.join(", "), crate::ops::last_writers(conn, &c.divergent)),
-            Err(e) => eprintln!("spira-lc serve: post-reload verification failed: {e}"),
-        }
-        return;
-    }
-    match crate::ops::run_live_check(conn, &crate::ops::raise_incident) {
-        Ok(c) if c.divergent.is_empty() => {}
-        Ok(c) => eprintln!("spira-lc serve: live rows diverged from Dolt and were reloaded{}: {}\n{}", if c.explained { " (explained by an ambiguous write)" } else { "" }, c.divergent.join(", "), crate::ops::last_writers(conn, &c.divergent)),
-        Err(e) => eprintln!("spira-lc serve: live check failed: {e}"),
     }
 }
 

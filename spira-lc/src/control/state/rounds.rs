@@ -453,6 +453,11 @@ fn claim_verdicts<B: Backend>(store: &Store<B>, args: &[String], call: &Call) ->
     }
 }
 
+/// The refusal for a repo change on a record a session is working.
+fn working_refusal(id: &str) -> String {
+    format!("set-repo: {id} is WORKING in a worktree of its current repo; release the claim first (spira-lc unclaim {id} <actor>), then change the repo label")
+}
+
 /// `set-repo <bead-id> <repo>|--clear [--only-if <repo>]`.
 fn set_repo<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let (Some(id), Some(target)) = (args.first(), args.get(1)) else {
@@ -476,7 +481,7 @@ fn set_repo<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32,
                 only_if.unwrap_or_default()
             ),
         ),
-        Ok(RepoSet::Working) => (1, crate::ops::working_refusal(id)),
+        Ok(RepoSet::Working) => (1, working_refusal(id)),
         Ok(RepoSet::Set) => (0, format!("set-repo: {id} -> {}", repo.unwrap_or("(none)"))),
         Err(e) => cannot_tell(e),
     }

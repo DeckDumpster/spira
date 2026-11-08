@@ -2,7 +2,7 @@
 #
 # test-lifecycle-cert.sh — container-tier acceptance for certification onto events
 # (sp-vd9dn): spira-lc certify/resubmit (lifecycle-cert.sh until sp-arpjt) and gate.sh's verdict() against a real, disposable
-# spira_lifecycle database.
+# control store.
 #
 # WHAT THIS PROVES:
 #   - a GatePass whose tip does not match the row's own is refused — the mechanism the tip
@@ -16,10 +16,6 @@
 #   - gate.sh's own verdict() calls through for real: a PASS certifies the row at the
 #     branch's exact commit with a real, non-empty gate key; a FAIL sends it to REWORK.
 #
-# host-reason: starts its own disposable `dolt sql-server`, the same shape
-# test-lifecycle-container.sh already uses without a container call — testenv-batch.sh
-# already provides the container this suite executes in.
-#
 # defect: sp-vd9dn
 # tier: T2
 # covers: spira-lc/src/callers.rs spira/gate.sh gate/src/engine.rs lifecycle/src/bead.rs
@@ -29,92 +25,24 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 . "$HERE/testlib/gate-fixture.sh"
 
-DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
-[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
-
+. "$HERE/testlib/lc-fixture.sh"
 . "$HERE/conf.sh"
-export PATH="$PATH:$(dirname "$DOLT_BIN")"
-unset SPIRA_LC_SOCKET
-
-REPO_ROOT="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
-# SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
-# (spira-lc/src/db.rs password_from) — the complete fixture's own declared path does not
-# exist for this suite's throwaway server. testlib/lc-fixture.sh's own pattern: an empty
-# (root, no password) credential file, declared, and no socket.
-: > "$TMP/credential"
-tl_config SPIRA_LC_PASSWORD_FILE="$TMP/credential" SPIRA_LC_SOCKET=""
-PORT=$((3309 + (RANDOM % 500)))
-SERVER_PID=""
-cleanup() {
-    [ -n "$SERVER_PID" ] && kill "$SERVER_PID" >/dev/null 2>&1
-    rm -rf "$TMP"
-}
-trap cleanup EXIT INT TERM
-
-mkdir -p "$TMP/data"
-cat > "$TMP/server.yaml" <<YAML
-log_level: warning
-listener:
-  port: $PORT
-  max_connections: 100
-  read_timeout_millis: 30000
-  write_timeout_millis: 30000
-data_dir: "$TMP/data"
-behavior:
-  dolt_transaction_commit: false
-  event_scheduler: "OFF"
-YAML
-
-"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
-SERVER_PID=$!
-up=0
-for _ in $(seq 1 50); do
-    if timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
-        up=1; break
-    fi
-    sleep 0.2
-done
-[ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
-root_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
+trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
+REPO_ROOT="$(cd "$HERE/.." && pwd)"
 
 # spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk).
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
-
-export SPIRA_LC_HOST=127.0.0.1
-export SPIRA_LC_PORT="$PORT"
-export SPIRA_LC_DB=spira_lifecycle
-export SPIRA_LC_DATA_DIR="$TMP"
-export SPIRA_LC_USER=root
-export SPIRA_LC_PASSWORD=""
-
-spira-lc admin-apply-ddl "$REPO_ROOT/lifecycle/schema.sql" > "$TMP/schema.log" 2>&1
-wantrc "schema applies cleanly" 0 $?
-cat "$TMP/schema.log" >&2
+lcfix_up || bail "the control store did not come up"
 
 # seed_bead <id> <state> <tip|-> <gate_key|->
 seed_bead() {
-    local id="$1" state="$2" tip="$3" gk="$4" tip_sql gk_sql
-    tip_sql="NULL"; [ "$tip" = "-" ] || tip_sql="'$tip'"
-    gk_sql="NULL"; [ "$gk" = "-" ] || gk_sql="'$gk'"
-    root_sql --use-db spira_lifecycle sql -q \
-        "INSERT INTO bead (bead_id, state, tip, gate_key, holds, version, updated_at) VALUES ('$id','$state',$tip_sql,$gk_sql,'[]',0,0)" \
-        >/dev/null 2>&1
+    local id="$1" state="$2" tip="$3" gk="$4"
+    [ "$tip" = "-" ] && tip=""
+    [ "$gk" = "-" ] && gk=""
+    lcfix_seed "$id" "$state" ${tip:+"$tip"} ${gk:+"$gk"}
 }
-row_field() {   # row_field <id> <column> -> the column's value, or "" for SQL NULL/missing
-    root_sql --use-db spira_lifecycle sql -q "SELECT $2 FROM bead WHERE bead_id='$1'" -r json 2>/dev/null \
-        | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-rows = d.get("rows") or []
-if not rows:
-    print("")
-else:
-    vals = list(rows[0].values())
-    v = vals[0] if vals else None
-    print(v if v is not None else "")
-' 2>/dev/null
-}
+row_field() { lcfix_field "$1" "$2"; }
 
 echo "test-lifecycle-cert.sh"
 
@@ -205,8 +133,7 @@ printf 'repo | %s | push | origin/main |  | true\n' "$REPO" > "$MAP"
 TIP_PASS="$(git -C "$REPO" rev-parse spira/sp-gpass)"
 seed_bead sp-gpass WORKING - -
 gout="$(gate_fixture_run spira/sp-gpass repo PATH="$PATH" \
-    SPIRA_GATE_BEAD=sp-gpass SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
-    SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=)"
+    SPIRA_GATE_BEAD=sp-gpass $(lcfix_decl))"
 want "gate.sh: reports PASS" "VERDICT=PASS" "$gout"
 is "gate.sh PASS: row is CERTIFIED" "CERTIFIED" "$(row_field sp-gpass state)"
 is "gate.sh PASS: row tip is the branch's exact commit" "$TIP_PASS" "$(row_field sp-gpass tip)"
@@ -223,8 +150,7 @@ gate_fixture_branch spira/sp-gred bad.txt trip
 printf 'repo | %s | push | origin/main |  | test ! -f bad.txt\n' "$REPO" > "$MAP"
 seed_bead sp-gred WORKING - -
 gout2="$(gate_fixture_run spira/sp-gred repo PATH="$PATH" \
-    SPIRA_GATE_BEAD=sp-gred SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
-    SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=)"
+    SPIRA_GATE_BEAD=sp-gred $(lcfix_decl))"
 want "gate.sh: reports FAIL" "VERDICT=FAIL" "$gout2"
 is "gate.sh FAIL: row is REWORK, not CERTIFIED" "REWORK" "$(row_field sp-gred state)"
 

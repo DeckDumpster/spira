@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # testlib/forge-batch.sh — seed a queue.forge repository's open batch the way production opens
 # one: `queue batch open`, against a forge stub that opens the PR. The queue writes the record
-# wherever it keeps it (the batch's own record on the control store, or the open file before the
-# batch machine moved there), so a suite seeds the state its subject reads without ever naming
-# the place, and `queue batch show` is how it reads the record back.
+# on the control store, so a suite seeds the state its subject reads without ever naming the
+# place, and `queue batch show` is how it reads the record back.
 #
 # Sourced, never executed, after testlib.sh and testlib/lc-fixture.sh, by a suite whose repo map
 # names the repository in queue mode:
-#   lcfix_up || exit 1                    # (or fb_store_up: the switch on)
+#   lcfix_up || exit 1
 #   rec="$(seed_forge_batch fixq sp-a,sp-b --pr 42)" || bad ...
 #   end_forge_batch fixq "next case"
 #
@@ -23,12 +22,8 @@
 # end_forge_batch <repo> [reason] — `queue abandon` the repo's open batch against the same stub;
 #   nothing to do when the queue shows none open (a case's own eject or verdict ended it).
 #
-# fb_store_up — put the batch machine on the control store for the rest of the suite: a fresh
-#   SQLite store, SPIRA_LC_STORE_PATH and SPIRA_LC_LIFECYCLE_ON_STORE=1 declared. Members are
-#   then made CERTIFIED by the bead machine's own walk on the store.
-#
-# fb_certify <id> <tip> — a bead CERTIFIED at <tip> outside any batch, where the batch machine
-#   keeps its rows (the control store once fb_store_up ran, else the dolt fixture).
+# fb_certify <id> <tip> — a bead CERTIFIED at <tip> outside any batch, by the bead machine's own
+#   walk on the control store.
 
 # Made once, when sourced: a seeding call usually runs in a command substitution, whose own
 # assignments never reach the suite.
@@ -73,11 +68,6 @@ _fb_row() {
     awk -F'|' -v r="$1" '{ n=$1; gsub(/[ \t]/, "", n); if (n == r) { p=$2; l=$4; gsub(/^[ \t]+|[ \t]+$/, "", p); gsub(/^[ \t]+|[ \t]+$/, "", l); print p "|" l; exit } }' "$map"
 }
 
-_fb_on_store() {
-    [ -n "$(_fb_run spira-config get spira.lc_store_path 2>/dev/null)" ] \
-        && [ "$(_fb_run spira-config get spira.lc_lifecycle_on_store 2>/dev/null)" = 1 ]
-}
-
 # _fb_remote <path> <landref> — the landing ref resolves and its remote exists; a repository
 # with neither gets a bare remote beside it, holding the landing branch.
 _fb_remote() {
@@ -103,10 +93,6 @@ _fb_remote() {
 # _fb_certify <id> <tip> — the member's lifecycle row, CERTIFIED at <tip>.
 _fb_certify() {
     local id="$1" tip="$2" v
-    if ! _fb_on_store; then
-        lcfix_seed "$id" CERTIFIED "$tip"
-        return
-    fi
     _fb_version() { _fb_run spira-lc show "$1" 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d.get("bead", d) or {}
@@ -187,17 +173,3 @@ end_forge_batch() {
 }
 
 fb_certify() { _fb_certify "$@"; }
-
-fb_store_up() {
-    local dir
-    dir="$(_fb_dir)" || return 1
-    # With no dolt fixture up there is no lifecycle credential: an undeclared password file names
-    # the fixture home's absent one, and spira-lc refuses before it reaches the store.
-    if [ -z "${LCFIX_DIR:-}" ]; then
-        export SPIRA_LC_PASSWORD=unused
-        tl_config SPIRA_LC_SOCKET="" SPIRA_LC_PASSWORD_FILE="" || return 1
-    fi
-    tl_config SPIRA_LC_STORE_PATH="$dir/control.db" SPIRA_LC_LIFECYCLE_ON_STORE=1 || return 1
-    rm -f "$dir/control.db"
-    _fb_run spira-lc admin-create-store >/dev/null || { echo "fb_store_up: cannot create the control store" >&2; return 1; }
-}

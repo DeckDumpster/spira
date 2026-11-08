@@ -8,7 +8,53 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 
-use crate::live::{self, ListFilter};
+use serde_json::Map;
+
+const LIVE: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK"];
+
+/// The control store's list columns, then the planning fields a plain list joins on.
+const LIST_COLS: [&str; 22] = [
+    "bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "dwarf_phase", "disposition", "disposition_note",
+    "ejected_red_tip", "repo", "claim_verdict", "claim_blocker", "claim_runes",
+];
+const FULL_ONLY: [&str; 1] = ["sifted_tip"];
+const CLAIM_AT: &str = "claim_at";
+
+#[derive(Default)]
+struct ListFilter {
+    repo: Option<String>,
+    states: Option<Vec<String>>,
+    ids: Option<Vec<String>>,
+    hold: Option<String>,
+    express: bool,
+}
+
+fn filter_from_flags(state: Option<&str>, ids: Option<&str>, hold: Option<&str>, express: bool, repo: Option<&str>) -> ListFilter {
+    let csv = |v: &str| v.split(',').filter(|x| !x.is_empty()).map(str::to_string).collect::<Vec<_>>();
+    ListFilter { states: state.map(csv), ids: ids.map(csv), hold: hold.map(str::to_string), express, repo: repo.map(str::to_string) }
+}
+
+fn text<'a>(row: &'a Value, col: &str) -> &'a str {
+    row.get(col).and_then(Value::as_str).unwrap_or_default()
+}
+
+fn num(row: &Value, col: &str) -> Option<i64> {
+    row.get(col).and_then(Value::as_str).and_then(|s| s.parse().ok())
+}
+
+fn project(row: &Value, cols: &[&str]) -> Map<String, Value> {
+    cols.iter().map(|c| (c.to_string(), row.get(*c).cloned().unwrap_or(Value::Null))).collect()
+}
+
+fn columns(full: bool) -> Vec<&'static str> {
+    let mut cols: Vec<&str> = LIST_COLS.to_vec();
+    cols.push(CLAIM_AT);
+    cols.extend(crate::plan::JOINED);
+    if full {
+        cols.extend(FULL_ONLY);
+    }
+    cols
+}
 
 /// The rows to serve the request from, or `None` when it must go to the service. A poller that
 /// asked for the snapshot and did not get it is counted by reason, so a broken snapshot shows.
@@ -41,26 +87,27 @@ fn record_miss(reason: &str) {
         .push(&[Point::Count { name: "spira_lc_snapshot_fallback", value: 1 }], &[("reason", reason)]);
 }
 
-pub(crate) fn answer_from(args: &[String], text: &str, now: i64, secs: u64) -> Option<String> {
+pub(crate) fn answer_from(args: &[String], raw: &str, now: i64, secs: u64) -> Option<String> {
     let f = filter_of(args)?;
-    let snap: Value = serde_json::from_str(text).ok()?;
+    let snap: Value = serde_json::from_str(raw).ok()?;
     let at = snap.get("at")?.as_i64()?;
     if now < at || (now - at) as u64 > secs.saturating_mul(3) {
         return None;
     }
     let live = args.iter().any(|a| a == "--live");
-    let cols: &[&str] = if live && f.repo.is_none() { &live::LIST_COLS } else { &live::FULL_LIST_COLS };
+    let cols = columns(!(live && f.repo.is_none()));
+    let cols = cols.as_slice();
     let wanted = |set: &Option<Vec<String>>, v: &str| set.as_ref().is_none_or(|s| s.iter().any(|x| x == v));
     let out: Vec<Value> = snap
         .get("beads")?
         .as_array()?
         .iter()
-        .filter(|b| wanted(&f.states, live::text(b, "state")) && wanted(&f.ids, live::text(b, "bead_id")))
-        .filter(|b| f.hold.as_ref().is_none_or(|k| serde_json::from_str::<Vec<String>>(live::text(b, "holds")).is_ok_and(|h| h.contains(k))))
-        .filter(|b| !f.express || live::num(b, "express") == Some(1))
+        .filter(|b| wanted(&f.states, text(b, "state")) && wanted(&f.ids, text(b, "bead_id")))
+        .filter(|b| f.hold.as_ref().is_none_or(|k| serde_json::from_str::<Vec<String>>(text(b, "holds")).is_ok_and(|h| h.contains(k))))
+        .filter(|b| !f.express || num(b, "express") == Some(1))
         .filter(|b| f.repo.as_ref().is_none_or(|r| b.get("repo").and_then(Value::as_str) == Some(r.as_str())))
         .map(|b| {
-            let mut o = live::project(b, cols);
+            let mut o = project(b, cols);
             o.insert("blocked_by".into(), b.get("blocked_by").cloned().unwrap_or(Value::Array(vec![])));
             Value::Object(o)
         })
@@ -78,8 +125,8 @@ fn filter_of(args: &[String]) -> Option<ListFilter> {
         return None;
     }
     let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(String::as_str);
-    let f = live::filter_from_flags(value("--state"), value("--ids"), value("--hold"), args.iter().any(|a| a == "--express"), value("--repo"));
-    let live_scope = args.iter().any(|a| a == "--live") || f.states.as_ref().is_some_and(|s| !s.is_empty() && s.iter().all(|x| live::LIVE.contains(&x.as_str())));
+    let f = filter_from_flags(value("--state"), value("--ids"), value("--hold"), args.iter().any(|a| a == "--express"), value("--repo"));
+    let live_scope = args.iter().any(|a| a == "--live") || f.states.as_ref().is_some_and(|s| !s.is_empty() && s.iter().all(|x| LIVE.contains(&x.as_str())));
     live_scope.then_some(f)
 }
 
@@ -91,32 +138,24 @@ pub fn without_flag(args: &[String]) -> Vec<String> {
     args.iter().filter(|a| *a != "--snapshot").cloned().collect()
 }
 
-/// One refresh: the live rows rendered and moved into place atomically, read from wherever a
-/// plain `list --live` reads them — the control store once the lifecycle is on it, else dolt's
-/// in-memory rows. `Ok(false)` while dolt's rows are not in memory; an error leaves the old
-/// file to age out, so pollers go to the service rather than read rows the store has moved past.
+/// One refresh: the control store's live rows rendered and moved into place atomically.
+/// `Ok(false)` while no store is configured; an error leaves the old file to age out, so
+/// pollers go to the service rather than read rows the store has moved past.
 pub fn write(conn: &crate::db::Conn, path: &str) -> std::io::Result<bool> {
-    write_from(crate::control::served::lifecycle_store(), conn, path, crate::db::now_epoch())
+    write_from(crate::control::served::configured(), conn, path, crate::db::now_epoch())
 }
 
-/// [`write`] with the switch already read: `store` is the control store while the bead-state
-/// verbs answer from it, `None` while they answer from dolt.
 fn write_from<B: state_store::Backend, S: std::ops::Deref<Target = crate::control::store::Store<B>>>(
     store: Option<Result<S, String>>,
     conn: &crate::db::Conn,
     path: &str,
     now: i64,
 ) -> std::io::Result<bool> {
-    let beads = match store {
-        Some(store) => store
-            .and_then(|s| store_rows(&s, now))
-            .and_then(|rows| with_planning(rows, conn))
-            .map_err(std::io::Error::other)?,
-        None => match conn.live().and_then(|l| l.list_live_full(&ListFilter::default())) {
-            Some(b) => b,
-            None => return Ok(false),
-        },
-    };
+    let Some(store) = store else { return Ok(false) };
+    let beads = store
+        .and_then(|s| store_rows(&s, now))
+        .and_then(|rows| with_planning(rows, conn))
+        .map_err(std::io::Error::other)?;
     let tmp = format!("{path}.tmp");
     let mut f = std::fs::File::create(&tmp)?;
     f.write_all(body(beads, now).as_bytes())?;
@@ -157,7 +196,7 @@ mod tests {
 
     fn fixture(at: i64) -> String {
         let bead = |id: &str, state: &str, holds: &str, express: &str, repo: &str| {
-            json!({"bead_id": id, "state": state, "holds": holds, "express": express, "repo": repo, "title": "t", "tip": "", "blocked_by": ["sp-b"]})
+            json!({"bead_id": id, "state": state, "holds": holds, "express": express, "repo": repo, "tip": "", "blocked_by": ["sp-b"]})
         };
         json!({"at": at, "beads": [
             bead("sp-a", "IN_DELIVERY", "[]", "0", "spira"),
