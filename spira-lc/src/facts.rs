@@ -128,21 +128,110 @@ pub fn events_table() -> String {
     )
 }
 
-const BD_TABLE: &str = "FROM events";
+const FROM_EVENTS_ONLY: &str = "the only table it may read is `events`; for anything else use the typed form `facts [--ids a,b] [--kinds x,y] [--since EPOCH]`";
+
+#[derive(PartialEq)]
+enum Tok<'a> {
+    Word(&'a str),
+    Punct(char),
+    Literal,
+}
+
+fn scan(sql: &str) -> Result<Vec<(usize, usize, Tok<'_>)>, &'static str> {
+    let b = sql.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c.is_ascii_whitespace() {
+            i += 1;
+        } else if c == b'\'' {
+            let start = i;
+            i += 1;
+            loop {
+                match b.get(i) {
+                    None => return Err("unterminated string"),
+                    Some(b'\\') => i += 2,
+                    Some(b'\'') if b.get(i + 1) == Some(&b'\'') => i += 2,
+                    Some(b'\'') => break,
+                    Some(_) => i += 1,
+                }
+            }
+            i += 1;
+            out.push((start, i, Tok::Literal));
+        } else if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80 {
+            let start = i;
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] == b'$' || b[i] >= 0x80) {
+                i += 1;
+            }
+            out.push((start, i, Tok::Word(&sql[start..i])));
+        } else if matches!(c, b'`' | b'"' | b'#' | b';' | b'@') || (c == b'-' && b.get(i + 1) == Some(&b'-')) || (c == b'/' && b.get(i + 1) == Some(&b'*')) {
+            return Err("quoted identifiers, comments, variables and statement separators are not allowed");
+        } else {
+            out.push((i, i + 1, Tok::Punct(c as char)));
+            i += 1;
+        }
+    }
+    Ok(out)
+}
 
 /// One SELECT written against bd's `events` table, with every `FROM events` pointed at the facts.
-/// Refused when it is anything else.
-pub fn retarget(sql: &str) -> Result<String, &'static str> {
-    if !sql.trim_start().starts_with("SELECT ") {
-        return Err("not a SELECT");
+/// Every table reference must be `events` (a UNION of such SELECTs and a subquery over it are
+/// fine); any other table, join, comma list, table function or INTO is refused, so the
+/// fact view is the only thing a caller can read.
+pub fn retarget(sql: &str) -> Result<String, String> {
+    let toks = scan(sql).map_err(|why| format!("{why}; {FROM_EVENTS_ONLY}"))?;
+    let word = |i: usize| match toks.get(i) {
+        Some((_, _, Tok::Word(w))) => Some(*w),
+        _ => None,
+    };
+    if !word(0).is_some_and(|w| w.eq_ignore_ascii_case("SELECT")) {
+        return Err("not a SELECT".into());
     }
-    if sql.contains(';') {
-        return Err("more than one statement");
+    let mut out = String::new();
+    let mut last = 0;
+    let mut reads_events = false;
+    for (i, (start, _, tok)) in toks.iter().enumerate() {
+        let Tok::Word(w) = tok else { continue };
+        let upper = w.to_ascii_uppercase();
+        match upper.as_str() {
+            "JOIN" | "INTO" | "STRAIGHT_JOIN" | "OUTFILE" | "DUMPFILE" | "LOAD_FILE" => {
+                return Err(format!("{upper} is not allowed; {FROM_EVENTS_ONLY}"));
+            }
+            "FROM" => {
+                let derived = matches!(toks.get(i + 1), Some((_, _, Tok::Punct('(')))) && word(i + 2).is_some_and(|t| t.eq_ignore_ascii_case("SELECT"));
+                if derived {
+                    continue;
+                }
+                if !word(i + 1).is_some_and(|t| t.eq_ignore_ascii_case("events")) {
+                    return Err(FROM_EVENTS_ONLY.into());
+                }
+                let mut after = i + 2;
+                if word(after).is_some_and(|a| a.eq_ignore_ascii_case("AS")) {
+                    after += 1;
+                }
+                let aliased = word(after).is_some_and(|a| !is_clause_word(a));
+                let list_or_qualified = |at: usize| matches!(toks.get(at), Some((_, _, Tok::Punct('.' | ',' | '('))));
+                if list_or_qualified(i + 2) || list_or_qualified(after) || (aliased && list_or_qualified(after + 1)) {
+                    return Err(FROM_EVENTS_ONLY.into());
+                }
+                out.push_str(&sql[last..*start]);
+                out.push_str(&format!("FROM {} events", events_table()));
+                last = toks[i + 1].1;
+                reads_events = true;
+            }
+            _ => {}
+        }
     }
-    if !sql.contains(BD_TABLE) {
-        return Err("does not read the events table");
+    if !reads_events {
+        return Err("does not read the events table".into());
     }
-    Ok(sql.replace(BD_TABLE, &format!("FROM {} events", events_table())))
+    out.push_str(&sql[last..]);
+    Ok(out)
+}
+
+fn is_clause_word(w: &str) -> bool {
+    ["WHERE", "GROUP", "ORDER", "HAVING", "UNION", "LIMIT", "WINDOW", "INTERSECT", "EXCEPT"].iter().any(|k| w.eq_ignore_ascii_case(k))
 }
 
 /// bd's `sql` table rendering, which is what census's parsers read.
@@ -245,6 +334,41 @@ mod tests {
         assert!(retarget("DELETE FROM events").is_err());
         assert!(retarget("SELECT 1 FROM events; DROP TABLE event").is_err());
         assert!(retarget("SELECT * FROM bead").is_err(), "a SELECT that never reads events is refused");
+    }
+
+    #[test]
+    fn a_union_subquery_or_second_table_over_another_table_is_refused_naming_the_typed_form() {
+        let bad = [
+            "SELECT a FROM events WHERE 1=0 UNION ALL SELECT id FROM bead",
+            "SELECT a FROM events WHERE x IN (SELECT id FROM ask)",
+            "SELECT a FROM events e JOIN bead b ON b.id = e.issue_id",
+            "SELECT a FROM events, bead",
+            "SELECT a FROM events e, bead",
+            "SELECT a FROM events WHERE 1=0 UNION ALL SELECT id FROM `event`",
+            "SELECT a FROM events WHERE 1=0 UNION ALL SELECT id FROM spira.event",
+            "SELECT a FROM events WHERE 1=0 UNION ALL SELECT id FROM (bead)",
+            "SELECT a FROM events WHERE 1=0 UNION ALL SELECT id FROM dolt_log()",
+            "SELECT a FROM events /* x */ WHERE 1=0",
+            "SELECT a FROM events INTO OUTFILE '/tmp/x'",
+            "select a from events where 1=0 union all select id from bead",
+        ];
+        for q in bad {
+            let why = retarget(q).expect_err(q);
+            assert!(why.contains("facts [--ids"), "{q}: {why}");
+        }
+    }
+
+    #[test]
+    fn a_string_literal_that_says_from_bead_is_data_not_a_table() {
+        let q = retarget("SELECT a FROM events WHERE new_value = 'FROM bead' AND x = 'it''s FROM events'").unwrap();
+        assert!(q.contains("'FROM bead'") && q.contains("'it''s FROM events'"), "{q}");
+        assert_eq!(q.matches("machine = 'fact'").count(), 1, "{q}");
+    }
+
+    #[test]
+    fn a_union_of_fact_selects_and_an_aliased_derived_table_over_events_still_run() {
+        let q = retarget("SELECT x FROM (SELECT a AS x FROM events WHERE y) b UNION ALL SELECT a FROM events e WHERE z ORDER BY 1").unwrap();
+        assert_eq!(q.matches("machine = 'fact'").count(), 2, "{q}");
     }
 
     #[test]
