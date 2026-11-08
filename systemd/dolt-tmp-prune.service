@@ -5,9 +5,8 @@
 # 10GB behind, filling the root filesystem twice (sp-n1l7y). Tied to the same
 # SPIRA_DOLT_DATA gate as dolt-beads.service itself: no server, nothing to prune.
 #
-# NEVER DELETES A SPOOL THE LIVE SERVER HOLDS OPEN. dolt-tmp-prune.sh reads
-# dolt-beads.service's own MainPID and its /proc/<pid>/fd before removing anything
-# past the TTL — the same rule the 2026-09-27 incident used by hand.
+# Past the TTL it spares a spool the live server holds open; past SPIRA_DOLT_TMP_PRESSURE_PCT
+# of the filesystem it cuts the largest spill whether held or not.
 Description=Prune dolt-beads.service's temp spool
 Documentation=file://@SPIRA_HOME@/dolt-tmp-prune.sh
 

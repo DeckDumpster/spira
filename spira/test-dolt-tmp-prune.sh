@@ -91,5 +91,38 @@ empty_held="$(_dolt_tmp_held_fds "")"
     && ok "D: an empty pid returns nothing held" \
     || bad "D: an empty pid returns nothing held" "got: $empty_held"
 
+# ---------------------------------------------------------------------------
+echo
+echo "E ACCEPTANCE: past the usage threshold the biggest spill goes, a live holder or not"
+# ---------------------------------------------------------------------------
+PDIR="$TMP/pressure"
+mkdir -p "$PDIR"
+head -c 3000000 /dev/zero > "$PDIR/spill_big"
+head -c 1000000 /dev/zero > "$PDIR/spill_small"
+used_pct() { local k; k=$(du -sk "$PDIR" | cut -f1); echo $(( k * 100 / 8000 )); }   # 8000 KiB "tmpfs"
+exec 8<>"$PDIR/spill_big"
+out_e="$(_dolt_tmp_prune_pressure "$PDIR" 90 used_pct)"
+[ -e "$PDIR/spill_big" ] && [ -e "$PDIR/spill_small" ] \
+    && ok "E-: below the threshold nothing is touched — the check ran, it did not just delete" \
+    || bad "E-: below threshold nothing is touched" "removed: $out_e"
+head -c 3000000 /dev/zero > "$PDIR/spill_big2"
+head -c 3000000 /dev/zero >> "$PDIR/spill_big"
+out_e="$(_dolt_tmp_prune_pressure "$PDIR" 60 used_pct)"
+[ ! -e "$PDIR/spill_big" ] \
+    && ok "E: the largest entry is removed although this process holds it open" \
+    || bad "E: largest entry removed under pressure" "still there; output: $out_e"
+[ "$(stat -L -c %s /proc/$$/fd/8)" = 0 ] \
+    && ok "E: the held spill is truncated, so its blocks are freed before the holder lets go" \
+    || bad "E: held spill truncated" "size $(stat -L -c %s /proc/$$/fd/8)"
+exec 8<&-
+[[ "$out_e" == *"spill_big"* ]] \
+    && ok "E: removal is reported" || bad "E: removal is reported" "got: $out_e"
+[ "$(used_pct)" -lt 60 ] \
+    && ok "E: it stops once usage is back under the threshold" \
+    || bad "E: stops under threshold" "usage $(used_pct)%"
+[ -e "$PDIR/spill_small" ] \
+    && ok "E: smaller entries survive once the pressure is relieved" \
+    || bad "E: smaller entries survive" "spill_small removed"
+
 echo
 tl_summary
