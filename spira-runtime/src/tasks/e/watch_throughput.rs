@@ -4,7 +4,7 @@
 //! beads sit SUBMITTED or IN_DELIVERY there is a stall. A stall files one express P0 incident
 //! (hourly landings, the repo's rounds, the last landing) for the ops lane to root-cause and
 //! repair, and appends one inbox line once the filing succeeded. The episode is cleared by the
-//! next landing. A low trailing-day rate alone triggers nothing, and nothing here halts the world.
+//! next landing; a stall older than the 24 h landing window is one episode. A low trailing-day rate alone triggers nothing, and nothing here halts the world.
 //!
 //! A second condition, per repo, pages (and stops nothing) when `SPIRA_THROUGHPUT_ABANDON_COUNT`
 //! rounds were abandoned inside `SPIRA_THROUGHPUT_ABANDON_WINDOW` seconds with no landing.
