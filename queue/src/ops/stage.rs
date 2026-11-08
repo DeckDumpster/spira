@@ -581,7 +581,7 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     let repo_name = c.r.name.clone();
-    let (batch, head, attested_from) = {
+    let (batch, head, members, attested_from) = {
         let _g = match lock(w, label, &c) {
         Ok(g) => g,
         // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
@@ -728,12 +728,13 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
         w.git.branch_delete_sanctioned(&path, &branch_of(&batch));
         mark_running(&c, &batch);
         landing_log(&c.s.run, &format!("QUEUE ROUND-PROMOTE {now} repo={repo_name} batch={batch} head={head} base={base_sha} members={}", csv(&admitted)));
-        w.out(format!("batch={batch}"));
-        w.out(format!("head={head}"));
-        w.out(format!("members={}", render_members(&admitted)));
-        (batch, head, attested_from)
+        let members: Vec<_> = admitted.iter().map(|m| serde_json::json!({"id": m.id, "tip": m.tip})).collect();
+        (batch, head, members, attested_from)
     };
 
+    let answer = |attested: bool| {
+        w.out(serde_json::json!({"batch": batch, "head": head, "members": members, "attested": attested}).to_string());
+    };
     match attested_from {
         Some((tree, tested_head, staged_ran)) => {
             w.out(format!("queue.sh {label}: {batch}'s tree {tree} is the tree its staged pass at {tested_head} judged — attesting that pass"));
@@ -748,12 +749,12 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
             );
             landing_log(&c.s.run, &format!("QUEUE ROUND-ATTEST {} repo={repo_name} batch={batch} head={head} tree={tree} tested={tested_head} rc={rc}", w.clock.now()));
             if rc == OK {
-                w.out("attested=1");
+                answer(true);
             }
             rc
         }
         None => {
-            w.out("attested=0");
+            answer(false);
             OK
         }
     }

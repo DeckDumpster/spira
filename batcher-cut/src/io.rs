@@ -2022,12 +2022,26 @@ pub struct Promotion {
     pub attested: bool,
 }
 
+#[derive(serde::Deserialize)]
+struct PromotionAnswer {
+    batch: String,
+    head: String,
+    members: Vec<PromotedMember>,
+    attested: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct PromotedMember {
+    id: String,
+    tip: String,
+}
+
+/// The verb's answer is its last non-empty stdout line, one JSON object; the lines before it
+/// are the certification pass's progress.
 pub fn parse_promotion(out: &str) -> Option<Promotion> {
-    let members = verb_value(out, "members")?
-        .split_whitespace()
-        .filter_map(|m| m.split_once(':').map(|(i, t)| (i.to_string(), t.to_string())))
-        .collect();
-    Some(Promotion { batch: verb_value(out, "batch")?, head: verb_value(out, "head")?, members, attested: verb_value(out, "attested").as_deref() == Some("1") })
+    let line = out.lines().rev().find(|l| !l.trim().is_empty())?;
+    let a: PromotionAnswer = serde_json::from_str(line.trim()).ok()?;
+    Some(Promotion { batch: a.batch, head: a.head, members: a.members.into_iter().map(|m| (m.id, m.tip)).collect(), attested: a.attested })
 }
 
 /// `queue round promote`. A refusal is not an error: the verb has discarded the stage, or left
@@ -2723,9 +2737,10 @@ mod land_exit_tests {
 
     #[test]
     fn a_promotion_names_its_round_head_members_and_whether_it_was_attested() {
-        let p = parse_promotion("batch=r2\nhead=abc\nmembers=sp-a:t1 sp-b:t2\nattested=1\n").unwrap();
+        let p = parse_promotion("pass ran\n{\"batch\":\"r2\",\"head\":\"abc\",\"members\":[{\"id\":\"sp-a\",\"tip\":\"t1\"},{\"id\":\"sp-b\",\"tip\":\"t2\"}],\"attested\":true}\n").unwrap();
         assert_eq!(p, Promotion { batch: "r2".into(), head: "abc".into(), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], attested: true });
-        assert!(!parse_promotion("batch=r2\nhead=abc\nmembers=sp-a:t1\nattested=0\n").unwrap().attested);
+        assert!(!parse_promotion("{\"batch\":\"r2\",\"head\":\"abc\",\"members\":[{\"id\":\"sp-a\",\"tip\":\"t1\"}],\"attested\":false}\n").unwrap().attested);
+        assert!(parse_promotion("batch=r2\nhead=abc\nmembers=sp-a:t1\nattested=1\n").is_none(), "key=value lines are no answer");
         assert_eq!(parse_promotion("batch=r2\nmembers=sp-a:t1\n"), None, "a promotion with no head names no tree to land");
     }
 
