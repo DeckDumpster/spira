@@ -186,13 +186,27 @@ pub fn diff_is_text_only(
     crate::text_only::is_text_only(&paths, &s.text_only)
 }
 
+/// Whether `tip` lands by lint: its whole diff is declared text and it fast-forwards from
+/// `base`. A text-only tip that has fallen behind goes the gate-and-round way, which rebases it.
+pub fn lands_by_lint(
+    w: &World,
+    s: &crate::ports::Settings,
+    path: &std::path::Path,
+    base: &str,
+    tip: &str,
+) -> bool {
+    w.git
+        .rev_parse(path, base)
+        .is_some_and(|b| w.git.is_ancestor(path, &b, tip))
+        && diff_is_text_only(w, s, path, base, tip)
+}
+
 /// Certify a text-only tip by the lint that already passed on it and land it, never through a
 /// round. Only a tip that fast-forwards from the landing ref lands here; any other falls
 /// through to the gate and the round, which rebase it.
 fn land_by_lint(w: &World, c: &Ctx, path: &std::path::Path, id: &str, tip: &str) -> Option<i32> {
     let base = c.r.landref.clone()?;
-    let base_sha = w.git.rev_parse(path, &base)?;
-    if !w.git.is_ancestor(path, &base_sha, tip) || !diff_is_text_only(w, &c.s, path, &base, tip) {
+    if !lands_by_lint(w, &c.s, path, &base, tip) {
         return None;
     }
     let tree = w.git.rev_parse(path, &format!("{tip}^{{tree}}"))?;
