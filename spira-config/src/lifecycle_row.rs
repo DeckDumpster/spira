@@ -3,7 +3,7 @@
 
 use lifecycle::bead::BeadEventKind;
 
-use crate::lc_call::{LcClient, LC_TIMEOUT};
+use crate::lc_call::{LcClient, LcError, LC_TIMEOUT, REFUSED};
 
 pub const LC_BIN_ENV: &str = "SPIRA_LC_BIN";
 
@@ -278,12 +278,22 @@ pub fn close_landed(id: &str, reason: &str, actor: &str) -> Result<(), String> {
 }
 
 fn close_args(bin: &str, id: &str, reason: &str, actor: &str, extra: Vec<&str>) -> Result<(), String> {
+    let c = client(bin)?;
+    close_on(&c, id, reason, actor, &extra).map_err(|e| match e {
+        LcError::Refused(m) => format!("{bin} close {id} exited {REFUSED}: {m}"),
+        LcError::Fault(m) => format!("{bin} close {id}: {m}"),
+    })
+}
+
+/// A close, typed: a refusal (exit 3) and a fault (anything else, or no answer) are variants.
+pub fn close_on(c: &LcClient, id: &str, reason: &str, actor: &str, extra: &[&str]) -> Result<(), LcError> {
     let mut args = vec!["close", id, "--reason-file", "-", "--actor", actor];
     args.extend(extra);
-    let r = client(bin)?.call_stdin(&args, reason).map_err(|e| format!("{bin} close {id}: {e}"))?;
+    let r = c.call_stdin(&args, reason)?;
     match r.code {
         0 => Ok(()),
-        code => Err(format!("{bin} close {id} exited {code}: {}", r.text())),
+        REFUSED => Err(LcError::Refused(r.text())),
+        _ => Err(LcError::Fault(format!("exited {}: {}", r.code, r.text()))),
     }
 }
 
