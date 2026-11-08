@@ -383,7 +383,10 @@ impl drive::RoundOps for LiveOps<'_> {
         };
         match outcome {
             Ok(()) => println!("batcher {}: {} held behind {} — {line}", self.repo.name, member.id, behind.join(",")),
-            Err(e) => println!("batcher {}: could not hold {} behind {}: {e}", self.repo.name, member.id, behind.join(",")),
+            Err(e) => {
+                println!("batcher {}: could not hold {} behind {}: {e}", self.repo.name, member.id, behind.join(","));
+                drive::RoundOps::incident(self, "workspace-build", &[drive::WORKSPACE_BUILD.to_string()]);
+            }
         }
     }
 

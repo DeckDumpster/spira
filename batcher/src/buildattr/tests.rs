@@ -73,3 +73,19 @@ fn an_initializer_is_not_a_definition_of_the_field_it_sets() {
     assert!(!defines("+                directed: String::new(),", "directed"));
     assert!(!defines("+    x.directed();", "directed"));
 }
+
+#[test]
+fn a_member_defining_a_same_named_field_in_another_crate_is_no_provider() {
+    let members = vec![diff("a", &["other-crate/src/s.rs"], "+    directed: bool,\n"), diff("b", &["spira-lc/src/callers.rs"], "+    x\n")];
+    let acts = attribute(&compile_errors(E0063), &members);
+    assert!(matches!(&acts[..], [Action::Eject { id, .. }] if id == "b"), "{acts:?}");
+}
+
+#[test]
+fn several_errors_in_real_compiler_output_each_map_and_a_bare_summary_line_is_skipped() {
+    let text = "error[E0599]: no method named `x` found\n  --> a/src/one.rs:3:9\n   |\nerror[E0308]: mismatched types\n  --> b/src/two.rs:8:5\n\nerror: could not compile `a` (lib) due to 2 previous errors\n";
+    let e = compile_errors(text);
+    assert_eq!(e.iter().map(|e| (e.file.as_str(), e.line)).collect::<Vec<_>>(), vec![("a/src/one.rs", 3), ("b/src/two.rs", 8)]);
+    let members = vec![diff("p", &["a/src/one.rs"], "+1\n"), diff("q", &["b/src/two.rs"], "+2\n")];
+    assert_eq!(attribute(&e, &members).len(), 2);
+}

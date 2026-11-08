@@ -106,7 +106,9 @@ fn touches(m: &MemberDiff, file: &str) -> bool {
 fn one(e: &CompileError, members: &[MemberDiff]) -> Option<Action> {
     let touchers: Vec<&MemberDiff> = members.iter().filter(|m| touches(m, &e.file)).collect();
     let items = quoted(&e.message);
-    let providers: Vec<&MemberDiff> = members.iter().filter(|m| items.iter().any(|i| provides(m, i))).collect();
+    let krate = e.file.split('/').next().unwrap_or_default();
+    let in_crate = |m: &MemberDiff| m.paths.iter().any(|p| p.split('/').next() == Some(krate));
+    let providers: Vec<&MemberDiff> = members.iter().filter(|m| in_crate(m) && items.iter().any(|i| provides(m, i))).collect();
     let line = format!("{} at {}:{}: {}", e.head, e.file, e.line, e.message);
     let dependents: Vec<&&MemberDiff> = touchers.iter().filter(|t| !providers.iter().any(|p| p.id == t.id)).collect();
     let behind: Vec<Id> = providers.iter().filter(|p| dependents.iter().all(|d| d.id != p.id)).map(|p| p.id.clone()).collect();
