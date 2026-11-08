@@ -12,7 +12,7 @@
 //!   would reopen its close.
 //!
 //! - **The create-time fences** (`create`/`create-form`/`q`): a `repo:` label the repo map
-//!   does not hold; destructive wording without an operator ask; an ask without a question, a
+//!   does not hold; an ask without a question, a
 //!   `Default:` and a `Class:`; and `DELETE FROM schema_migrations`, refused always.
 //! - **The ask-label write fence.** `label add <ask>` / `update --add-label|--set-labels <ask>`
 //!   is refused: an ask is created whole, through the create-time shape check.
@@ -123,9 +123,8 @@ fn ask_label(ctx: &Ctx) -> Result<String, Refusal> {
 }
 
 /// The create-time fences, short-circuiting on the first refusal as bdq does: repo label,
-/// destructive wording, ask shape, schema delete. `body` is the create's `--body-file` text: the
-/// ask-shape fence reads it as the description it is (unless `--description` is given); the
-/// destructive fence judges only `--description`, since a body carries quoted evidence.
+/// ask shape, schema delete. `body` is the create's `--body-file` text: the
+/// ask-shape fence reads it as the description it is (unless `--description` is given).
 pub fn create(args: &[String], body: Option<&str>, ctx: &Ctx) -> Result<(), Refusal> {
     if !bdq::is_create(args) {
         return Ok(());
@@ -134,9 +133,6 @@ pub fn create(args: &[String], body: Option<&str>, ctx: &Ctx) -> Result<(), Refu
         return Err(refused(msg));
     }
     let ask = ask_label(ctx)?;
-    if let Some(msg) = bdq::check_destructive(args, &ask) {
-        return Err(refused(msg));
-    }
     let judged: Vec<String> = match body {
         Some(t) if !args.iter().any(|a| a == "--description" || a.starts_with("--description=")) => args.iter().cloned().chain(["--description".to_string(), t.to_string()]).collect(),
         _ => args.to_vec(),
@@ -322,9 +318,6 @@ mod tests {
         assert_eq!(refused(&["create", "T", "--labels", "repo:deck"], None), Ok(()));
         let r = refused(&["create", "T", "--labels", "repo:nowhere"], None).unwrap_err();
         assert_eq!((r.0, r.1.starts_with("spira: repo:nowhere is not in the repo map")), (1, true), "{r:?}");
-        let r = refused(&["create", "Stop the world", "--description", "run world.sh stop first"], None).unwrap_err();
-        // literal-ok: test fixture label
-        assert!(r.1.contains("procedures that halt the harness require needs-ryan"), "{r:?}");
         // literal-ok: test fixture label
         let r = refused(&["create", "Pick one", "--labels", "needs-ryan"], None).unwrap_err();
         // literal-ok: test fixture label

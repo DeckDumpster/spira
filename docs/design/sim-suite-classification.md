@@ -254,7 +254,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | deploy-preflight-new-unit | no | - | 13 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | deploy | no | - | 18 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | destroy-branch | no | - | 6 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| destructive-bead | no | - | 6 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | dispatch-open-children | partly | new:claim-order | ? | open parent-child bead is not selected until children close |
 | dolt-tmp-prune | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
 | drain-banner | no | - | 3 | cockpit/pane rendering and its probes: no loop actor changes state |

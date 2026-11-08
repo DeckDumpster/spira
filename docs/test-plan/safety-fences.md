@@ -2,7 +2,7 @@
 
 Part of [[test-plan-2026-09-23]], section 5. Area id `safety-fences`; use-case ids are `UC-safety-fences-NN`.
 
-Primary files (22): test-dwarf-dirty-commit, test-dwarf-fence-bd-create, test-dwarf-fence, test-dwarf-worktree-guard, test-bd-close-unacked-guard, test-bd-delivers-label-guard, test-bd-remember-guard, test-bd-update-inflight-guard, test-branch-guard, test-destructive-bead, test-focus-close-guard, test-host-reason, test-inventory, test-mail-fence, test-null-close-reason, test-ops-allowlist, test-orphan-test, test-ref-guard, test-scratch-fence, test-set-state-writers, test-spike, test-testenv-batch-fence.
+Primary files (21): test-dwarf-dirty-commit, test-dwarf-fence-bd-create, test-dwarf-fence, test-dwarf-worktree-guard, test-bd-close-unacked-guard, test-bd-delivers-label-guard, test-bd-remember-guard, test-bd-update-inflight-guard, test-branch-guard, test-focus-close-guard, test-host-reason, test-inventory, test-mail-fence, test-null-close-reason, test-ops-allowlist, test-orphan-test, test-ref-guard, test-scratch-fence, test-set-state-writers, test-spike, test-testenv-batch-fence.
 Secondary (5): test-czar-shadow, test-freshclone, test-schema-migration-guard, test-suite-state-fence, test-suite-state.
 Sources: map/*.jsonl records for these 27 files, reduce/r0–r3 (agent-guardrails, agent-safety-fences, fences-and-guards), signals.tsv (main-push run 35947142904), and read-only reads of `spira/dwarf.sh`, `spira/hooks/*`, `spira/worktree-hooks.sh`, `spira/gate-spira.sh`, `brain/.claude/settings.json`.
 
@@ -18,7 +18,7 @@ A fence is a Rung-4 mechanism: a program that refuses an honest mistake at the m
 1. **PreToolUse hooks on agent sessions.** They read Claude Code's hook JSON on stdin and refuse specific shell or tool actions: queue and landing operations, writes into production, mail and landstate, test-data bead creation, closing without an ACK or a cited bead, statute writes, spec edits on in-flight beads, `bd update --status closed`, direct suite execution and `DELETE FROM schema_migrations`. They let through non-dwarf sessions (or, for the inflight guard, dwarf sessions), non-Bash tools, quoted prose and heredoc bodies, sanctioned wrapper scripts, and any command carrying the named override.
 2. **Git hooks.** `pre-commit` (made up of `exclude.sh`, `scratch-fence.sh` and `branch-guard.sh staged`), the per-worktree `pre-commit-guard.sh` dirty-path guard, and the `reference-transaction` guard on `refs/heads/spira/*`. Together they keep a dwarf's commits inside its own worktree and branch, and keep its deletes away from other dwarves' branches.
 3. **Shipped-tree and gate-time lints.** `inventory.sh`, `scratch-fence.sh`, `orphan-test.sh`, `host-check.sh`, `suite-state-fence.sh`, the set-state writer lint, the runes placeholder/command/reopen lints and the syntax sweep. They refuse a tree that should not ship, and they exit 3 or `?` rather than report "clean" on an empty input.
-4. **Persona scoping.** `RUNE_TOOLS` allowlists, the czar stage fence, spike `confine.sh`, and `bdq create`'s destructive-vocabulary refusal. Each limits what a persona or bead can do, even when the agent asks for more.
+4. **Persona scoping.** `RUNE_TOOLS` allowlists, the czar stage fence, spike `confine.sh`. Each limits what a persona or bead can do, even when the agent asks for more.
 
 Every refusal must name the rule, the correct path and the override. Every fence must be armed where the offender actually runs (`law-guard-binds-the-caller`, `law-guard-proved-where-the-offender-runs`).
 
@@ -34,7 +34,7 @@ Every refusal must name the rule, the correct path and the override. Every fence
 | UC-safety-fences-04 | A dwarf may not `bd close` while an operator comment posted after its claim is unacknowledged. An `ACK <uuid>` note satisfies the guard. Pre-claim comments and the dwarf's own comments are exempt. The refusal names the comment id and `SPIRA_CLOSE_UNACKED_CONSIDERED`. | C, O, K | T1 (canned `bd show/comments --json`) | cert |
 | UC-safety-fences-05 | A post-claim operator comment is delivered to the dwarf exactly once as PostToolUse `additionalContext`, naming the ACK command. Pre-claim and self comments are not delivered. | C, I | T1 | cert |
 | UC-safety-fences-13 | `DELETE FROM schema_migrations` is refused at `bdq create` (case- and whitespace-insensitive) even when the bead carries needs-ryan. The refusal points at `bd migrate schema`. | C, FC | T1 | cert |
-| UC-safety-fences-14 | `bdq create` refuses harness-halting vocabulary (world stop, `systemd/install.sh`, daemon-reload, `systemctl stop/restart spira-*`, schema migrate) unless the bead carries the ask label. The refusal happens before `bd` is invoked, and near-miss text passes. | C, FC, CFG | T1 | cert |
+| UC-safety-fences-14 | (Dropped, sp-yht0pn: the keyword vocabulary check on bead text no longer exists; a bead is never refused for its words.) | C, FC, CFG | T1 | cert |
 | UC-safety-fences-15 | **Shared PreToolUse contract:** every guard blocks through one documented protocol and names guard, remedy and override. The override works from env and inline. The guard is inert outside its session scope, for tools it does not own, and for single-quoted/heredoc prose. Behaviour on an empty or malformed payload is defined and tested. | K, FC, O, TI | T1 (one table) | cert |
 | UC-safety-fences-16 | **Dwarf sessions actually carry the fences:** `dwarf_settings` registers every guard meant for dwarves, identically for the sweep and the claimed launch. A guard that is missing or not executable is reported, never silently dropped. | FC, K, O | T1 | cert |
 | UC-safety-fences-17 | A dwarf commit that stages a path already dirty before the session began is refused, naming the path. Own-path commits succeed. `SPIRA_ALLOW_DIRTY_STAGE=1` overrides. | C, O | T2 (tmp git) | batch |
@@ -77,8 +77,8 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 | 10 | test-null-close-reason::all | T1, 2 s | MERGE-INTO test-guards.sh (rename: the file is named after the defect, not the guard) |
 | 11 | test-mail-fence::all | T1, 4 s | MERGE-INTO test-guards.sh (add exit-code column) |
 | 12 | test-testenv-batch-fence::all | T1, 3 s | MERGE-INTO test-guards.sh (add exit-code column) |
-| 13 | test-schema-migration-guard::all (secondary); test-destructive-bead::schema-delete × 6 | T1, 3 s + (in 4 s) | MERGE schema-migration-guard INTO test-guards.sh. Keep the bdq rows in test-destructive-bead (a different mechanism) and share the input strings. Fix the vacuous `want(...,'')` / unconditional `ok` rows |
-| 14 | test-destructive-bead::sp-6ylz … bdq e2e | T1, 4 s | KEEP (exemplar unit suite) |
+| 13 | test-schema-migration-guard::all (secondary); bdq create schema-delete rows (Rust: `bead::bdq` and `spira-lc` content tests) | T1, 3 s + (in 4 s) | MERGE schema-migration-guard INTO test-guards.sh. The bdq rows live in the Rust tests (a different mechanism). Fix the vacuous `want(...,'')` / unconditional `ok` rows |
+| 14 | none | — | DROPPED: the keyword vocabulary check on bead text was deleted (sp-yht0pn); a bead is never refused for its words |
 | 15 | pass-through rows copied into all 10 guard suites (non-dwarf, non-Bash, `'prose'`, heredoc, env override, inline override) | ~60 rows across 93 s of suites | MERGE into one parameterised block in test-guards.sh that runs against every guard. Add a malformed-payload row and a uniform exit-protocol column |
 | 16 | none | — | GAP → new T1 rows in test-guards.sh (call `dwarf_settings` with a tmp `SPIRA_HOME`) |
 | 17 | test-dwarf-dirty-commit::all | T2 inside podman; NA in CI (never ran) | KEEP, but fix the harness: drop the podman re-exec, use `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1`, and drive the *composed* worktree hook (UC-21) instead of a hand-written one |
@@ -123,7 +123,7 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 - **Keep:** test-suite-state, plus one CLOSED-bead row with stub bd.
 
 **D5 — the schema_migrations DELETE refusal in two mechanisms.**
-- **Evidence:** test-schema-migration-guard (PreToolUse) and test-destructive-bead (bdq create).
+- **Evidence:** test-schema-migration-guard (PreToolUse) and the bdq create fence (Rust tests).
 - **Keep:** both mechanisms, which are legitimately separate, but share the input strings. Delete the vacuous rows in test-schema-migration-guard (`want` with an empty needle; `ok` called unconditionally).
 
 **D6 — shipped-tree fence re-run.**
@@ -215,7 +215,7 @@ The saving is 174 − 77 = **97 s (−56 %)**. Of that, 93 − 28 = 65 s comes f
 With a stage-2 `guardlib.py` in-process decision table, test-guards.sh drops from 20 s to about 2 s and the area total to about **59 s**. About 4 s of `suites.sh status` time moves to test-infrastructure rather than disappearing.
 
 **Tier placement after the change:**
-- **T0 / T1 → certification:** test-guards.sh, destructive-bead, host-check, suite-state, ops/czar allowlists, runes lint, syntax lint. About 30 s, and every commit gets the full guard table.
+- **T0 / T1 → certification:** test-guards.sh, host-check, suite-state, ops/czar allowlists, runes lint, syntax lint. About 30 s, and every commit gets the full guard table.
 - **T2 → batch CI:** branch-guard, ref-guard, dirty-commit, scratch, inventory tree-walk, orphan-test, confine, bd-contract. About 35 s.
 - **T3 → main CI only:** spike landing rows, about 10 s.
 

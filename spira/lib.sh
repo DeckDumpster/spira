@@ -128,8 +128,8 @@ bdq() {
         command bdq "$@"
 }
 
-# Each of these three is also called directly, by name, from several test suites
-# (test-repo-map.sh, test-destructive-bead.sh) — not only from inside bdq() above — so each
+# Each of these two is also called directly, by name, from several test suites
+# (test-repo-map.sh) — not only from inside bdq() above — so each
 # gets its own shim onto the binary's `__fence` subcommand rather than relying on bdq()'s own
 # dispatch to reach them.
 _bdq_check_repo_label() {   # _bdq_check_repo_label <create-args> -> 0 or refuse
@@ -137,10 +137,6 @@ _bdq_check_repo_label() {   # _bdq_check_repo_label <create-args> -> 0 or refuse
     SPIRA_REPO_DERIVED="${SPIRA_REPO_DERIVED:-}" SPIRA_HOME_REPO="${SPIRA_HOME_REPO:-}" \
     SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-}" \
         command bdq __fence repo-label "$@"
-}
-
-_bdq_check_destructive() {  # _bdq_check_destructive <create-args> -> 0 or refuse
-    command bdq __fence destructive "$@"
 }
 
 _bdq_check_schema_delete() {  # _bdq_check_schema_delete <create-args> -> 0 or refuse

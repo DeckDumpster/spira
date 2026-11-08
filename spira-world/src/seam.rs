@@ -17,7 +17,7 @@
 //!   - `bdq`/`bdjson`, `salvage`, `spira_destroy_worktree`/`_branch`, `spira_landref`,
 //!     `bead_repo`, `repo_root` (slay.sh steps 0, 4a, 5, 4b, 6): the one
 //!     permitted door onto `git worktree remove`/`git branch -D` in the harness, and `bdq`
-//!     carries its own fencing (repo-label validation, the destructive-vocabulary and
+//!     carries its own fencing (repo-label validation, the
 //!     schema-delete refusals, a dead-Dolt-connection retry) that a direct `bd` call would
 //!     silently drop.
 

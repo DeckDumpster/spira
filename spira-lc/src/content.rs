@@ -538,7 +538,6 @@ mod tests {
                         Err((1, t)) if t.starts_with("spira: bdq refuses") => "state",
                         Err((1, t)) if t.starts_with("spira: refusing to add") => "ask-label",
                         Err((1, t)) if t.contains("is not in the repo map") => "repo-label",
-                        Err((1, t)) if t.contains("procedures that halt the harness") => "destructive",
                         Err((1, t)) if t.contains("DELETE FROM schema_migrations") => "schema-delete",
                         Err((1, t)) if t.contains(ASK) => "ask-shape",
                         Err(other) => panic!("a refusal no guard gives: {other:?}"),
@@ -548,7 +547,7 @@ mod tests {
             }
         }
         let kinds: Vec<&str> = seen.keys().copied().collect();
-        assert_eq!(kinds, ["admitted", "ask-label", "ask-shape", "claim", "czar", "destructive", "repo-label", "schema-delete", "state"], "every guard refuses somewhere in the table: {seen:?}");
+        assert_eq!(kinds, ["admitted", "ask-label", "ask-shape", "claim", "czar", "repo-label", "schema-delete", "state"], "every guard refuses somewhere in the table: {seen:?}");
         assert_eq!(
             through_content(&v(&["update", "sp-a", "--add-label", "x"]), None, &czar(None), None),
             Err((1, "czar-fence: loop-stalled is shadow — mutation refused (SPIRA_CZAR_STAGE_LOOP_STALLED=act to enable)\n".into()))
