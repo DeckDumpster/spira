@@ -108,6 +108,8 @@ pub struct State {
     pub requeue_cause: Option<String>,
     pub requeue_why: String,
     pub session_epoch: i64,
+    /// Kill time the brief promised the model; checked again at launch.
+    pub wall_deadline: Option<i64>,
     pub rebase_conflicts: String,
     pub groom_lines_before: usize,
     /// The claim's stack proposal (design stacked-dependents-2026-09-28 §1): the certified
@@ -1041,7 +1043,8 @@ impl<'a> Run<'a> {
                 prior.push_str(&format!("\nIt does not rebase onto `{}`; conflicts in: {}.", self.s.base, if self.s.rebase_conflicts.is_empty() { "unknown" } else { &self.s.rebase_conflicts }));
             }
         }
-        let deadline_at = self.rune.timeout_seconds.map(|t| self.t0 + t as i64);
+        let deadline_at = brief::call_deadline(self.rune.timeout_seconds, self.now());
+        self.s.wall_deadline = deadline_at;
         let deadline = brief::deadline_brief(deadline_at, self.now(), deadline_at.and_then(util::local_hms_zone));
         let task = brief::static_task(&brief::TaskFacts {
             id: &bead,
@@ -1069,7 +1072,8 @@ impl<'a> Run<'a> {
         let park = brief::park_brief(&self.s.repo_land, &self.s.branch, &self.s.repo_name, &self.s.base_branch);
         let finish = brief::finish_brief(&bead);
         let fixture = brief::fixture_brief(self.s.fixture.as_ref(), &self.conf.s("SPIRA_TESTDB_LIB"), fixture_ms);
-        let deadline_at = self.rune.timeout_seconds.map(|t| self.t0 + t as i64);
+        let deadline_at = brief::call_deadline(self.rune.timeout_seconds, self.now());
+        self.s.wall_deadline = deadline_at;
         let deadline = brief::deadline_brief(deadline_at, self.now(), deadline_at.and_then(util::local_hms_zone));
 
         let runes_file = self.home().join("runes").join(format!("{}.md", self.f()));
@@ -1358,6 +1362,9 @@ impl<'a> Run<'a> {
             (agent, argv, restrict::restricted_env(&bead, &child, &model_bin))
         };
         let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.rune.timeout_seconds, halted: Some(self.run_dir().join("world.halted")) };
+        if let Some(why) = brief::spent_wall(self.s.wall_deadline, self.now()) {
+            return Err(Abort::Die(format!("{}: {bead}: {why}", self.f())));
+        }
         let launched = self.now();
         let rc = self.d.launcher.run(&spec, &self.stop);
         self.s.session_wall_s = Some((self.now() - launched).max(0));
