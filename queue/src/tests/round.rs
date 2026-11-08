@@ -3052,7 +3052,11 @@ fn promotion_on_an_identical_tree_reuses_the_staged_pass() {
         t.lc.calls.borrow()
     );
     assert_eq!(vm_runs(&t), 2, "promotion ran no pass of its own");
-    assert!(t.out().contains("\"attested\":true"), "{}", t.out());
+    let answer: serde_json::Value = serde_json::from_str(t.out().lines().rev().find(|l| !l.trim().is_empty()).unwrap()).unwrap();
+    assert_eq!(answer["attested"], true, "{}", t.out());
+    assert_eq!(answer["batch"], s.as_str());
+    assert_eq!(answer["head"], "merged-ta", "{}", t.out());
+    assert!(answer["members"].as_array().is_some_and(|m| !m.is_empty() && m.iter().all(|x| x["id"].is_string() && x["tip"].is_string())), "{answer}");
     assert!(
         t.lc.calls
             .borrow()
