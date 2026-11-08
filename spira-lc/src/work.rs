@@ -819,9 +819,12 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
     // Not BeadEventKind::Supersede: that terminal transition is the groomer's or operator's
     // confirmation; the dwarf's request is a hold plus the ask.
     let hold = BeadEventKind::Hold { kind: HoldKind::Manual, cause: HoldCause::SupersedeRequest, detail: Some(successor.clone()) };
-    match apply_bead_event(conn, bead_id, &actor, hold) {
-        (0, _) => (0, format!("supersede ask filed; hold applied for {bead_id}")),
-        (code, e) => (code, format!("the supersede ask WAS delivered (do not ask again), but the hold on {bead_id} was not applied: {e}")),
+    let (code, out) = apply_bead_event(conn, bead_id, &actor, hold);
+    let recorded = matches!(crate::plane::bead(conn, bead_id), Ok(Some(r)) if r.holds.contains(&HoldKind::Manual) && r.reason.as_deref() == Some(successor.as_str()));
+    match (code, recorded) {
+        (0, true) => (0, format!("supersede ask filed; hold applied for {bead_id}")),
+        (0, false) => (CANNOT_TELL, format!("the supersede ask WAS delivered (do not ask again), but no hold was applied to {bead_id}: the store does not list it")),
+        (code, _) => (code, format!("the supersede ask WAS delivered (do not ask again), but the hold on {bead_id} was not applied: {out}")),
     }
 }
 
