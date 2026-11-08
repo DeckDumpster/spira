@@ -25,6 +25,8 @@ struct FakeDolt {
     fail_sync: Cell<usize>,
     fail_verify: Cell<bool>,
     bloat: Cell<usize>,
+    gcs: RefCell<Vec<String>>,
+    free: Cell<Option<u64>>,
 }
 
 impl Dolt for FakeDolt {
@@ -39,6 +41,13 @@ impl Dolt for FakeDolt {
         fs::write(dest.join("manifest"), db).unwrap();
         fs::write(dest.join("garbage"), vec![b'g'; self.bloat.get()]).unwrap();
         Ok(())
+    }
+    fn gc(&self, _conn: &Conn, _data: &Path, db: &str) -> Result<(), String> {
+        self.gcs.borrow_mut().push(db.to_string());
+        Ok(())
+    }
+    fn free_bytes(&self, _path: &Path) -> Result<u64, String> {
+        Ok(self.free.get().unwrap_or(u64::MAX))
     }
     fn verify(&self, db_dir: &Path) -> Result<String, String> {
         if self.fail_verify.get() {
@@ -292,16 +301,31 @@ fn compaction_rebuilds_only_a_copy_past_its_ratio_and_swaps_it_whole() {
     live_server(&w, 4242);
     let l = layout(&w);
     let out = compact(&w.cfg, &w.dolt).unwrap();
-    assert!(out.iter().all(|o| o.contains("within")), "{out:?}");
+    assert!(out.iter().filter(|o| o.contains("copy")).all(|o| o.contains("within")), "{out:?}");
     w.dolt.bloat.set(4096);
     pass(&w.cfg, Mode::Online, &w.dolt, &w.clock).unwrap();
     let bloated = tree_bytes(&l.db("spira"));
     w.dolt.bloat.set(0);
     let out = compact(&w.cfg, &w.dolt).unwrap();
-    assert!(out.iter().all(|o| o.contains("rebuilt")), "{out:?}");
+    assert!(out.iter().filter(|o| o.contains("copy")).all(|o| o.contains("rebuilt")), "{out:?}");
     assert!(tree_bytes(&l.db("spira")) < bloated);
     assert_eq!(fs::read_to_string(l.db("spira").join("payload")).unwrap(), "beads-v1");
     assert!(!l.compact_dir().join("spira").exists(), "the superseded copy is removed");
+}
+
+#[test]
+fn compaction_collects_the_live_store_only_when_the_filesystem_has_room_for_a_second_generation() {
+    let w = seeded();
+    restore(&w.cfg, &w.dolt).unwrap();
+    live_server(&w, 4242);
+    w.dolt.free.set(Some(1));
+    let out = compact(&w.cfg, &w.dolt).unwrap();
+    assert!(w.dolt.gcs.borrow().is_empty(), "no room: collecting would fill the tmpfs itself");
+    assert!(out.iter().any(|o| o.contains("not collected")), "{out:?}");
+    w.dolt.free.set(Some(u64::MAX));
+    let out = compact(&w.cfg, &w.dolt).unwrap();
+    assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_lifecycle"]);
+    assert!(out.iter().any(|o| o.contains("collected, live")), "{out:?}");
 }
 
 #[test]
