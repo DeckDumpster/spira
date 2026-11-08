@@ -22,9 +22,8 @@
 //! `{halted, rows:{id→state}, entries:[{name, is_dir, is_git, repo, unsaved:No|Yes|Unknown, age_secs, held:Option<why>}]}`.
 //! - `halted`: `run/world.halted`, which replaces `ExecStartPre=world guard`
 //!   (`spira-world/src/guard.rs:11`). The in-process precedent is `spira-runtime/src/world.rs:524`.
-//! - `rows`: **S7 `LcClient` `list`**. Today this is `spira_config::lc_state::list_within(lc, 120)`
-//!   forking `spira-lc list` (`main.rs:144`, `spira-config/src/lc_state.rs:209`). **An empty or
-//!   failed list refuses the whole pass** (`main.rs:145-147`). The snapshot carries `rows_ok:false`,
+//! - `rows`: the entries' rows by id (`spira-lc list --ids`). **An empty live list or a failed
+//!   read refuses the whole pass**: a bead with no row is scratch, so a store that lost its rows must not reap. The snapshot carries `rows_ok:false`,
 //!   and decide acts on nothing.
 //! - `entries`: a read of `run/worktree` (`terminal.rs:123-129`), with these fields:
 //!   - `repo_of` from git-common-dir (`terminal.rs:72-76`, `hel/src/git.rs:237`);
@@ -266,11 +265,14 @@ pub fn observe(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient) -> 
     if real.run().join("world.halted").exists() {
         return serde_json::to_string(&Snapshot { halted: true, ..Snapshot::default() }).map_err(|e| e.to_string());
     }
-    let rows: BTreeMap<String, String> = spira_config::lc_state::list_on(lc).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();
-    if rows.is_empty() {
+    let listed = hel::terminal::entries(real)?;
+    let names: Vec<String> = listed.iter().map(|e| e.name.clone()).collect();
+    let alive = spira_config::lc_state::list_live_on(lc).is_ok_and(|r| !r.is_empty());
+    let Some(read) = alive.then(|| spira_config::lc_state::list_ids_on(lc, &names).ok()).flatten() else {
         return serde_json::to_string(&Snapshot { rows_ok: false, ..Snapshot::default() }).map_err(|e| e.to_string());
-    }
-    let entries = hel::terminal::entries(real)?
+    };
+    let rows: BTreeMap<String, String> = read.into_iter().map(|r| (r.bead_id, r.state)).collect();
+    let entries = listed
         .into_iter()
         .map(|e| Entry {
             name: e.name,

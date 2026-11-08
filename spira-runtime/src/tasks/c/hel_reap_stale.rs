@@ -247,9 +247,24 @@ pub fn observe(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient, pro
     if run.join("world.halted").exists() {
         return serde_json::to_string(&Snapshot { halted: true, repos: vec![] }).map_err(|e| e.to_string());
     }
-    let rows = spira_config::lc_state::index(spira_config::lc_state::list_on(lc)?);
-    let state_of = |id: &str| rows.get(id).map(|r| r.state.clone());
-    let repos = hel::stale::scan(real, &real.repos(), proc_root, &state_of)
+    let mut rows = spira_config::lc_state::index(spira_config::lc_state::list_live_on(lc)?);
+    let unread = std::cell::Cell::new(None::<String>);
+    let memo = std::cell::RefCell::new(&mut rows);
+    let asked = std::cell::RefCell::new(std::collections::HashSet::<String>::new());
+    let state_of = |id: &str| {
+        if !memo.borrow().contains_key(id) && asked.borrow_mut().insert(id.to_string()) {
+            match spira_config::lc_state::list_ids_on(lc, &[id.to_string()]) {
+                Ok(found) => memo.borrow_mut().extend(spira_config::lc_state::index(found)),
+                Err(e) => unread.set(Some(e)),
+            }
+        }
+        memo.borrow().get(id).map(|r| r.state.clone())
+    };
+    let scanned = hel::stale::scan(real, &real.repos(), proc_root, &state_of);
+    if let Some(e) = unread.take() {
+        return Err(format!("lifecycle state unreadable: {e}"));
+    }
+    let repos = scanned
         .into_iter()
         .map(|r| Repo {
             name: r.name,

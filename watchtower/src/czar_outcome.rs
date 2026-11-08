@@ -125,7 +125,8 @@ impl Default for Cfg {
 /// their lifecycle states — a read failure yields an empty list, matching the bash's `|| _co_raw=""` -> `'[]'`.
 pub fn query_beads(lc: &LcClient, label: &str) -> Vec<TriggerBead> {
     let beads = query_bd(lc, label);
-    match lc_state::list() {
+    let ids: Vec<String> = beads.iter().map(|b| b.id.clone()).collect();
+    match lc_state::list_ids_on(lc, &ids) {
         Ok(rows) => join_states(beads, &lc_state::index(rows)),
         Err(e) => {
             // A state that cannot be read is not read: no finding this pass.

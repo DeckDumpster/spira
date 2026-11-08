@@ -139,8 +139,9 @@ pub fn join_lc(rows: Vec<BeadRow>, lc: &std::collections::HashMap<String, spira_
 
 impl Bd for RealBd {
     fn list(&self, db: &str, scope: Scope, label: Option<&str>, closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
-        // The state first: a machine that cannot answer is Err, never "no incident".
-        let lc = spira_config::lc_state::list().map(spira_config::lc_state::index)?;
+        // A machine that cannot answer is Err, never "no incident".
+        let unfinished_sweep = label.is_none() && scope == Scope::Unfinished;
+        let live = if unfinished_sweep { Some(spira_config::lc_state::list_live().map(spira_config::lc_state::index)?) } else { None };
         let mut base: Vec<String> = vec!["list".into(), "--all".into(), "--limit".into(), "0".into(), "--json".into()];
         if let Some(c) = closed_after {
             base.push("--closed-after".into());
@@ -157,7 +158,7 @@ impl Bd for RealBd {
             // The unlabelled fallback over every unfinished bead: those ids from the machine,
             // their content from bd by id, chunked (never the whole store).
             None if scope == Scope::Unfinished => {
-                let mut ids: Vec<&String> = lc.values().filter(|r| !r.past_builder()).map(|r| &r.bead_id).collect();
+                let mut ids: Vec<&String> = live.iter().flat_map(|m| m.values()).filter(|r| !r.past_builder()).map(|r| &r.bead_id).collect();
                 ids.sort();
                 for chunk in ids.chunks(100) {
                     let mut q = base.clone();
@@ -177,6 +178,14 @@ impl Bd for RealBd {
             }
             rows.extend(rows_from_json(&out));
         }
+        let lc = match live {
+            Some(m) => m,
+            None => {
+                let bin = spira_config::lifecycle_row::lc_bin()?;
+                let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+                spira_config::lc_state::index(spira_config::lc_state::list_ids_with(&bin, &ids)?)
+            }
+        };
         Ok(join_lc(rows, &lc, scope))
     }
 

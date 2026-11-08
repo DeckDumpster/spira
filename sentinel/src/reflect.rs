@@ -171,7 +171,7 @@ pub fn run(ids: &[String]) -> Result<String, String> {
     let state: String = ids.iter().map(|id| format!("{}\n", clean_show(&show(&["content", "show", id])))).collect();
     // What holds work back is the lifecycle machine's account (its held rows), not bd's
     // status field, which is inert for a work bead (design §3.4).
-    let blocked = blocked_rows(&spira_config::lc_state::list_on(&lc).unwrap_or_default());
+    let blocked = blocked_rows(&spira_config::lc_state::list_live_on(&lc).unwrap_or_default());
     let text = prompt(&state, &blocked, &cfg.design, &cfg.operator);
     let args = ["-p", "--model", &cfg.model, "--settings", DENY, "--dangerously-skip-permissions"].iter().map(|s| s.to_string()).collect();
     let o = SysProc.run(&ProcSpec { prog: cfg.agent.clone(), args, stdin: text.into_bytes(), deadline: std::time::Duration::from_secs(AGENT_TIMEOUT_SECS) })?;

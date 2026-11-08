@@ -1678,3 +1678,21 @@ binary held in a variable with an unrelated name, is not followed; a segment hol
 is taken as typed throughout, so `out.status.success() && out.stdout.contains(…)` in one condition
 is missed. `.is_empty()` on output is not a violation (it chooses messages as often as it decides
 state).
+
+## Rule `core-full-list`
+
+**Intent.** A core process asks the control store for the rows it acts on, never for every bead
+(~6 MB, hundreds of ms, which sets the store's p95; law-list-reads-paginate-in-the-database).
+
+**Scope.** `.rs` and `.sh` files under `sentinel/`, `strand/`, `landing-pass/`, `incident/`, `hel/`,
+`dwarf/`, `watchtower/` and `spira-runtime/src/tasks/`. Suites, `tests.rs`, `tests/` and everything
+after a `#[cfg(test)]` line are out of scope.
+
+**Violation.** A live line that calls `lc_state::list`, `list_on`, `list_with`, `list_within` or a
+`list_raw*`, `beads_on(…, None)`, a bare `["list"]` argument array, or `spira-lc list` with nothing
+after it. A `batch-job: <why>` comment on the line or the one above exempts a true batch job.
+
+Prompt files (`.md`) are not scanned; the serve side below is what names a dwarf's tool call.
+
+**Refuses** (exit 3): no file in scope. The serve side names the same callers at run time in
+`unfiltered-lists.log` beside the slow-query log.

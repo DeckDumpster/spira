@@ -245,6 +245,42 @@ pub fn list_state_on(c: &LcClient, state: &str) -> Result<Vec<Row>, String> {
     }
 }
 
+/// The rows a tick acts on (`spira-lc list --live`): every non-terminal row and the terminal
+/// ones from the last day. A terminal row older than that is absent, so a caller that needs a
+/// named bead's terminal state asks [`list_ids_on`].
+pub fn list_live_on(c: &LcClient) -> Result<Vec<Row>, String> {
+    match run_on(c, &["list", "--live"])? {
+        (0, out) => parse_rows(&out),
+        (rc, _) => Err(format!("spira-lc list --live exited {rc}")),
+    }
+}
+
+pub fn list_live_with(bin: &str) -> Result<Vec<Row>, String> {
+    list_live_on(&client(bin, 5)?)
+}
+
+pub fn list_live() -> Result<Vec<Row>, String> {
+    list_live_with(&lc_bin()?)
+}
+
+/// The rows of the named beads (`spira-lc list --ids`); an id with no row is absent.
+pub fn list_ids_on(c: &LcClient, ids: &[String]) -> Result<Vec<Row>, String> {
+    let mut rows = Vec::new();
+    for chunk in ids.chunks(IDS_PER_CALL) {
+        match run_on(c, &["list", "--ids", &chunk.join(",")])? {
+            (0, out) => rows.extend(parse_rows(&out)?),
+            (rc, _) => return Err(format!("spira-lc list --ids exited {rc}")),
+        }
+    }
+    Ok(rows)
+}
+
+const IDS_PER_CALL: usize = 100;
+
+pub fn list_ids_with(bin: &str, ids: &[String]) -> Result<Vec<Row>, String> {
+    list_ids_on(&client(bin, 5)?, ids)
+}
+
 /// `list_with` for a batch caller that can wait out a loaded store: `secs` bounds the read.
 pub fn list_within(bin: &str, secs: u32) -> Result<Vec<Row>, String> {
     list_on(&client(bin, secs)?)

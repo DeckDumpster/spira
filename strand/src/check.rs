@@ -111,7 +111,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let capacity = probe::capacity(cfg, now);
     let throttle = probe::throttle(cfg);
 
-    let lc_rows = match spira_config::lc_state::list() {
+    let lc_rows = match spira_config::lc_state::list_live() {
         Ok(rows) => rows,
         Err(e) => {
             warn(&format!("WARN the lifecycle rows could not be read ({e}) — no bead is counted as moving by WORKING, parked or poisoned"));

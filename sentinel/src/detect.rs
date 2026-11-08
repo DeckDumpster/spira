@@ -402,7 +402,8 @@ impl<'a> Sentinel<'a> {
             // the worktree alone.
             let holder_done = self
                 .state_rows()
-                .is_some_and(|rows| rows.iter().any(|r| r.bead_id == c.holder_id && lc_state::past_builder(&r.state)));
+                .is_some_and(|rows| rows.iter().any(|r| r.bead_id == c.holder_id && lc_state::past_builder(&r.state)))
+                || self.lc_rows_by_id(std::slice::from_ref(&c.holder_id)).iter().any(|r| lc_state::past_builder(&r.state));
             if holder_done && !self.holder_alive(&c.holder_id) {
                 let dirty = self.git(&c.holder_path, &["status", "--porcelain"]);
                 if dirty.ok() && dirty.stdout.trim().is_empty() {

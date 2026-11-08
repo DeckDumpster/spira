@@ -120,7 +120,7 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let lc = match spira_config::lc_state::list().map(spira_config::lc_state::index) {
+    let lc = match spira_config::lc_state::list_live().map(spira_config::lc_state::index) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("incident: list: cannot tell which incidents are open: {e}");

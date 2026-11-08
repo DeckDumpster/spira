@@ -133,15 +133,33 @@ impl<'a> Sentinel<'a> {
         self.lc_rows()
     }
 
+    /// Rows for named beads whatever their age: the live read omits old terminal rows.
+    pub fn lc_rows_by_id(&self, ids: &[String]) -> Vec<LcRow> {
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        let o = self.h.lc(&self.cfg.lc_bin, &["list".into(), "--ids".into(), ids.join(",")]);
+        if !o.ok() {
+            return Vec::new();
+        }
+        parse_lc_rows(&o.stdout).unwrap_or_default()
+    }
+
+    /// Adds the terminal states the live read leaves out, for the beads a red tracker waits on.
+    pub fn complete_snapshot(&self, snap: &mut crate::store::Snapshot) {
+        let ids = snap.unread_blockers(&self.cfg.red_tracker);
+        snap.add_lc_states(&self.lc_rows_by_id(&ids));
+    }
+
     fn lc_rows_read(&self) -> Option<Vec<LcRow>> {
-        let o = self.h.lc(&self.cfg.lc_bin, &["list".into()]);
+        let o = self.h.lc(&self.cfg.lc_bin, &["list".into(), "--live".into()]);
         if !o.ok() {
             let why = o
                 .stderr
                 .lines()
                 .find(|l| !l.trim().is_empty())
                 .unwrap_or("no message");
-            self.lc_unreachable(&format!("`spira-lc list` failed (rc={}: {why})", o.rc));
+            self.lc_unreachable(&format!("`spira-lc list --live` failed (rc={}: {why})", o.rc));
             return None;
         }
         match parse_lc_rows(&o.stdout) {

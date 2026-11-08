@@ -51,6 +51,19 @@ impl<'a> View<'a> {
     }
 }
 
+/// The `blocks` targets of the beads carrying `label` that `has_row` does not know.
+pub fn unread_blockers(beads: &[Bead], label: &str, has_row: &dyn Fn(&str) -> bool) -> Vec<String> {
+    let mut ids: Vec<String> = beads
+        .iter()
+        .filter(|b| b.has(label))
+        .flat_map(|b| b.dependencies.iter().filter(|d| d.r#type.as_deref() == Some("blocks")).filter_map(|d| d.target().map(str::to_string)))
+        .filter(|id| !has_row(id))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 fn has_all(b: &Bead, labels: &[String]) -> bool {
     labels.iter().all(|l| b.has(l))
 }
@@ -302,6 +315,13 @@ mod tests {
         assert!(!should_recompute(false, None, 0, 3), "unknown is not starved");
         assert!(!should_recompute(false, Some(0), 1, 3));
         assert!(!should_recompute(false, Some(0), 0, 0));
+    }
+
+    #[test]
+    fn a_red_trackers_fix_with_no_live_row_is_read_by_id() {
+        let beads = parse_beads(r#"[{"id":"t","status":"open","labels":["rt"],"dependencies":[{"depends_on_id":"old","type":"blocks"},{"depends_on_id":"new","type":"blocks"}]},{"id":"u","status":"open","dependencies":[{"depends_on_id":"other","type":"blocks"}]}]"#).unwrap();
+        let has = |id: &str| id == "new";
+        assert_eq!(unread_blockers(&beads, "rt", &has), vec!["old".to_string()]);
     }
 
     #[test]
