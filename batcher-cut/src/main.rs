@@ -502,12 +502,20 @@ fn staged_worktree(env_: &Env, repo: &Repo) -> PathBuf {
     env_.run.join("worktree").join(format!(".batcher-{}-staged", repo.name))
 }
 
+/// What stabilizing a round came to. `Emptied` means every culprit was ejected, so the pool
+/// holds only survivors and the next cut is owed at once; `Blocked` means something is still red.
+enum Stabilized {
+    Stable(StableRound),
+    Blocked,
+    Emptied,
+}
+
 /// Enforces law-a-round-takes-certified-tips (amended 2026-09-27): a round that is red on its
 /// own corpus is never sent on. The corpus runs on the round VM with concurrent attribution
 /// (DESIGN.md §4): each red is attributed while the corpus still runs; every owner is ejected
 /// with its suites; only those suites re-run on the survivors' release build. Flaky and base
 /// reds do not block (a base red is filed for Ops); an unattributed red or a workspace that
-/// does not build does. Returns `Ok(None)` for a blocked or emptied round — the caller opens
+/// does not build does. Returns `Blocked` or `Emptied` for a round that cannot land — the caller opens
 /// no PR and changes no open-batch record, as if the round had never been cut.
 fn stabilize_unlocked(
     env_: &Env,
@@ -517,7 +525,7 @@ fn stabilize_unlocked(
     starting: Vec<Member>,
     batch: Option<&str>,
     stage: &[Member],
-) -> Result<Option<StableRound>, String> {
+) -> Result<Stabilized, String> {
     let wait_secs = cfg_parse::<u64>("SPIRA_QUEUE_LOCK_WAIT")?;
     io::unlocked(env_, &repo.name, batch, wait_secs, || stabilize_round(env_, repo, wt, start_sha, starting, batch, stage))?
 }
@@ -530,7 +538,7 @@ fn stabilize_round(
     starting: Vec<Member>,
     batch: Option<&str>,
     stage: &[Member],
-) -> Result<Option<StableRound>, String> {
+) -> Result<Stabilized, String> {
     let mut members = merge_round(env_, repo, wt, start_sha, starting)?;
     if let Some(batch) = batch {
         let held: Vec<(String, String)> = members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
@@ -548,7 +556,7 @@ fn stabilize_round(
     }
     if members.is_empty() {
         println!("{}", skipped_event("round emptied rebuilding the tree").text);
-        return Ok(None);
+        return Ok(Stabilized::Emptied);
     }
     let round = now().to_string();
     let round_branch = format!("spira/batcher-attr/{}-{round}", repo.name);
@@ -562,15 +570,15 @@ fn stabilize_round(
     let suites = ordered.list;
     if suites.is_empty() && repo.land == Land::Forge {
         let head = io::head_of(wt)?;
-        return Ok(Some(StableRound { members, head, green_branch: round_branch, attribution_seconds: None, regreen_seconds: None, staged: None }));
+        return Ok(Stabilized::Stable(StableRound { members, head, green_branch: round_branch, attribution_seconds: None, regreen_seconds: None, staged: None }));
     }
     if suites.is_empty() && repo.land == Land::Local && gate::own::declares_own_testenv(wt) {
         let head = io::head_of(wt)?;
-        return Ok(Some(StableRound { members, head, green_branch: round_branch, attribution_seconds: None, regreen_seconds: None, staged: None }));
+        return Ok(Stabilized::Stable(StableRound { members, head, green_branch: round_branch, attribution_seconds: None, regreen_seconds: None, staged: None }));
     }
     if suites.is_empty() {
         println!("batcher {}: round blocked — the merged tree has no test-*.sh suites; an empty corpus certifies nothing", repo.name);
-        return Ok(None);
+        return Ok(Stabilized::Blocked);
     }
     let changed: BTreeMap<String, Vec<String>> = members.iter().map(|m| (m.id.clone(), io::changed_paths(repo, start_sha, &m.tip))).collect();
 
@@ -622,7 +630,7 @@ fn stabilize_round(
                 io::set_branch(repo, &b, &head);
                 b
             };
-            Ok(Some(StableRound {
+            Ok(Stabilized::Stable(StableRound {
                 members,
                 head,
                 green_branch,
@@ -633,7 +641,11 @@ fn stabilize_round(
         }
         drive::RoundEnd::Blocked(why) => {
             println!("batcher {}: round blocked — {why}", repo.name);
-            Ok(None)
+            Ok(Stabilized::Blocked)
+        }
+        drive::RoundEnd::Emptied(why) => {
+            println!("batcher {}: round emptied — {why}", repo.name);
+            Ok(Stabilized::Emptied)
         }
     }
 }
@@ -959,8 +971,22 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
             abandon(&e, "error");
             return Err(e);
         }
-        Ok(Some(s)) => s,
-        Ok(None) => {
+        Ok(Stabilized::Stable(s)) => s,
+        Ok(Stabilized::Emptied) => {
+            abandon("every member was ejected; the survivors are re-cut", "emptied");
+            io::write_local_verdict(env_, &repo.name, io::RECUT_VERDICT, "every member of the round was ejected");
+            io::tsd_append_round(
+                env_,
+                &[
+                    ("repo", repo.name.clone()),
+                    ("verdict", "emptied".to_string()),
+                    ("duration_ms", ((now() - round_start) * 1000).to_string()),
+                    ("base", base_sha),
+                ],
+            );
+            return Ok(());
+        }
+        Ok(Stabilized::Blocked) => {
             abandon("the round was blocked before it could land", "blocked");
             io::write_local_verdict(env_, &repo.name, "red", "local corpus red — held before reaching CI");
             io::tsd_append_round(
@@ -1038,8 +1064,13 @@ fn follow_promoted(env_: &Env, repo: &Repo, pool: &[Member], p: io::Promotion) -
                 abandon(&e, "error");
                 return Err(e);
             }
-            Ok(Some(s)) => s,
-            Ok(None) => {
+            Ok(Stabilized::Stable(s)) => s,
+            Ok(Stabilized::Emptied) => {
+                abandon("every member was ejected; the survivors are re-cut", "emptied");
+                io::write_local_verdict(env_, &repo.name, io::RECUT_VERDICT, "every member of the round was ejected");
+                return Ok(None);
+            }
+            Ok(Stabilized::Blocked) => {
                 abandon("the round was blocked before it could land", "blocked");
                 io::write_local_verdict(env_, &repo.name, "red", "local corpus red — held before reaching CI");
                 return Ok(None);
@@ -1378,7 +1409,7 @@ fn attribute(o: &Opts) -> Result<(), String> {
     let mended = ops.prior != batcher::mender::Prior::default();
     let outcome = match end {
         Ok(drive::RoundEnd::Land { members, attribution_secs }) => Attribution::Land { members: members.into_iter().map(|m| (m.id, m.tip)).collect(), attribution_secs, mended },
-        Ok(drive::RoundEnd::Blocked(why)) => Attribution::Blocked(why),
+        Ok(drive::RoundEnd::Blocked(why) | drive::RoundEnd::Emptied(why)) => Attribution::Blocked(why),
         Err(e) => Attribution::Blocked(format!("the attribution did not finish: {e}")),
     };
     println!("{}", outcome.line());

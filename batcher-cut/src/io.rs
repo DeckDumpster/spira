@@ -1484,6 +1484,10 @@ pub fn integration_fix(env: &Env, wt: &Path, base_sha: &str, members: &[Member])
     Ok(fixes)
 }
 
+/// The verdict of a round that ejected every member it had: nothing is red any longer, so the
+/// rounds loop owes a re-cut, not a pause.
+pub const RECUT_VERDICT: &str = "recut";
+
 /// The last local corpus verdict for this repo's round — read by queue's own open-batch so
 /// a hand-invoked cut never sends a round CI would only reject (law-a-round-takes-certified-
 /// tips). Best-effort like every other queue-dir write here: a failure to record it leaves

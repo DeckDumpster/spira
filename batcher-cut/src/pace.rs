@@ -405,6 +405,16 @@ mod tests {
     }
 
     #[test]
+    fn a_round_that_ejected_every_member_is_recut_at_once_not_paused() {
+        let t = dir("recut");
+        let d = t.path();
+        assert!(run(d, "a", 1000, None, Some((crate::io::RECUT_VERDICT, 1005)), Ok(())));
+        assert!(!Files::new(d, "a").pause_file().exists());
+        assert_eq!(inbox(d), "");
+        assert!(run(d, "a", 1010, None, None, Ok(())), "the next pass cuts again");
+    }
+
+    #[test]
     fn a_cut_that_admitted_nothing_never_pauses_whatever_its_wording() {
         let t = dir("empty");
         let d = t.path();
