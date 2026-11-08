@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=runtime
+DOC=Seconds a landing on the release repo may go unactivated before watch.transitions pages a LANDED→ACTIVATED STALL.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_TRANSITIONS_ACTIVATE_BOUND:=900}"
+SPIRA_CONF_DEFAULT_EOF

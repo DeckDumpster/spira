@@ -1,5 +1,5 @@
-//! `watch`, `history` and `event-seq` on the control store, answering as the dolt verbs of the
-//! same names do: exit 0 with JSON, or 2 ("cannot tell") with the reason.
+//! `watch`, `history`, `event-seq` and `dwell` on the control store, answering as the dolt verbs
+//! of the same names do (`dwell` has none): exit 0 with JSON, or 2 ("cannot tell") with the reason.
 
 use serde_json::{json, Map, Value};
 use state_store::{Backend, Event, Item, Rev, MAX_WATCH_WAIT_MS};
@@ -10,7 +10,7 @@ use super::store::Store;
 use crate::{flag, CANNOT_TELL};
 
 /// The verbs this module answers.
-pub const VERBS: &[&str] = &["watch", "history", "event-seq"];
+pub const VERBS: &[&str] = &["watch", "history", "event-seq", "dwell"];
 
 pub fn run<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
     let rest = &args[1..];
@@ -18,6 +18,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
         Some("watch") => watch(store, rest),
         Some("history") => history(store, rest),
         Some("event-seq") => event_seq(store, rest),
+        Some("dwell") => dwell(store, rest),
         other => Err(format!("{other:?} is not a control-store verb")),
     };
     match answer {
@@ -129,4 +130,21 @@ fn event_seq<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, St
         .event_seq(since)
         .map_err(|e| format!("event-seq: {e}"))?;
     Ok(json!({ "seq": seq, "keys": keys }).to_string())
+}
+
+/// `dwell [--window S] [--landed-after T] [--now T]`: every waiting record's state, repo and
+/// entry time, and per repo the newest Claim, Submit, Deliver and Delivered back `S` seconds
+/// (default 21600). Read-only; see [`super::dwell`].
+fn dwell<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
+    let window = number(args, "--window", 21_600).map_err(|e| format!("dwell: {e}"))?;
+    let now = match flag(args, "--now") {
+        None => crate::db::now_epoch(),
+        Some(_) => number(args, "--now", 0).map_err(|e| format!("dwell: {e}"))? as i64,
+    };
+    let landed_after = match flag(args, "--landed-after") {
+        None => None,
+        Some(_) => Some(number(args, "--landed-after", 0).map_err(|e| format!("dwell: {e}"))? as i64),
+    };
+    let d = store.dwell(now, window, landed_after).map_err(|e| format!("dwell: {e}"))?;
+    serde_json::to_string(&d).map_err(|e| e.to_string())
 }
