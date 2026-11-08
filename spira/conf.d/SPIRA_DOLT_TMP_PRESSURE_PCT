@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=dolt
+DOC=Percent of the filesystem holding the dolt-beads temp spool past which dolt-tmp-prune cuts the largest spill, a live server holding it or not. The store's own table files share that filesystem, so keep it above their steady share.
+SCHEMA=Filesystem usage percent that triggers spill removal (default 85).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_DOLT_TMP_PRESSURE_PCT:=85}"
+SPIRA_CONF_DEFAULT_EOF

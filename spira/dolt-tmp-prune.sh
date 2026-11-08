@@ -89,7 +89,7 @@ main() {
     local pid held
     pid="$(systemctl --user show -p MainPID --value dolt-beads.service 2>/dev/null)"
     held="$(_dolt_tmp_held_fds "${pid:-}")"
-    _dolt_tmp_prune_pressure "$SPIRA_DOLT_DATA/.dolt/tmp" "${SPIRA_DOLT_TMP_PRESSURE_PCT:-70}" _dolt_tmp_used_pct
+    _dolt_tmp_prune_pressure "$SPIRA_DOLT_DATA/.dolt/tmp" "${SPIRA_DOLT_TMP_PRESSURE_PCT:-85}" _dolt_tmp_used_pct
     _dolt_tmp_prune_stale "$SPIRA_DOLT_DATA/.dolt/tmp" "${SPIRA_DOLT_TMP_TTL:-86400}" "$held"
 }
 

@@ -125,4 +125,16 @@ exec 8<&-
     || bad "E: smaller entries survive" "spill_small removed"
 
 echo
+echo "F: the real usage reader agrees with df"
+want="$(df --output=pcent "$TMP" | tail -n1 | tr -dc '0-9')"
+[ -n "$want" ] && [ "$(_dolt_tmp_used_pct "$TMP")" = "$want" ] \
+    && ok "F: _dolt_tmp_used_pct reads the filesystem's percent" \
+    || bad "F: _dolt_tmp_used_pct matches df" "want $want got $(_dolt_tmp_used_pct "$TMP")"
+EDIR="$TMP/empty"; mkdir -p "$EDIR"
+always_full() { echo 99; }
+[ -z "$(_dolt_tmp_prune_pressure "$EDIR" 10 always_full)" ] \
+    && ok "F: a full filesystem with an empty spool ends the loop instead of spinning" \
+    || bad "F: empty spool ends the loop" "produced output"
+
+echo
 tl_summary

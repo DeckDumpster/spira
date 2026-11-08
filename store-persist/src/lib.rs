@@ -540,8 +540,10 @@ pub fn compact(cfg: &Config, dolt: &dyn Dolt) -> Result<Vec<String>, String> {
             if free < before {
                 out.push(format!("{db}: not collected — {free} B free, a collection needs {before} B"));
             } else {
-                dolt.gc(&conn, &cfg.data, &db)?;
-                out.push(format!("{db}: collected, live {before} B -> {} B", tree_bytes(&noms)));
+                match dolt.gc(&conn, &cfg.data, &db) {
+                    Ok(()) => out.push(format!("{db}: collected, live {before} B -> {} B", tree_bytes(&noms))),
+                    Err(e) => out.push(format!("{db}: collection failed: {e}")),
+                }
             }
         }
         let (copy, live) = (tree_bytes(&l.db(&db)), tree_bytes(&noms));

@@ -200,7 +200,6 @@ SPIRA_DOLT_DROP_WINDOW_MINS sentinel/src/tower.rs
 SPIRA_DOLT_DROP_WINDOW_MINS watchtower/src/main.rs
 SPIRA_DOLT_LOG sentinel/src/tower.rs
 SPIRA_DOLT_LOG watchtower/src/main.rs
-SPIRA_DOLT_TMP_PRESSURE_PCT spira/dolt-tmp-prune.sh
 SPIRA_DOLT_TMP_TTL spira/dolt-tmp-prune.sh
 SPIRA_DOLT_UNIT spira/dolt-boot-check.sh
 SPIRA_DRAIN_INTERVAL install/src/install_units.rs
