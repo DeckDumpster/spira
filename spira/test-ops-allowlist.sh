@@ -139,7 +139,7 @@ persona_table ops "$OPS_TOOLS" "$OPS_ALLOW" "$OPS_DENY"
 
 # ==========================================================================================
 # czar.rune — the second restricted persona (UC-safety-fences-30's extension, gap 11).
-# czar carries its own destructive-vocabulary surface (queue eject, landing halt), so its
+# czar carries its own destructive surface (queue eject, landing halt), so its
 # allow rows exercise those instead of Ops's systemctl diagnostics.
 # ==========================================================================================
 CZAR_TOOLS="$(rune_tools czar)"

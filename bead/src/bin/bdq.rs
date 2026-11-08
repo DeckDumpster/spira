@@ -5,7 +5,7 @@
 //! `bead::bdq` for the pure decision logic this binary drives.
 //!
 //! Internal subcommands exist ONLY so the bash shims for `_bdq_check_repo_label`/
-//! `_bdq_check_schema_delete`/`json_only`/`json_count`/`ghq` — each
+//! `json_only`/`json_count`/`ghq` — each
 //! called directly by name in test suites and other scripts, not only from inside `bdq` —
 //! have something to exec into. The `__` prefix cannot collide with a real `bd` verb.
 
@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use bead::claimdesc;
 use bead::bdq::{
-    check_repo_label, check_schema_delete, id_bearing_args, is_create, json_count, json_only,
+    check_repo_label, id_bearing_args, is_create, json_count, json_only,
     should_retry, retryable, backoff_ms, is_write, WRITER_LOCK_BUSY,
 };
 use spira_config::repos::Registry;
@@ -86,14 +86,14 @@ fn build_registry() -> Registry {
 }
 
 // =========================================================================================
-// __fence <repo-label|schema-delete> <bdq-create-argv...>
+// __fence <repo-label> <bdq-create-argv...>
 // =========================================================================================
 
 fn cmd_fence(args: &[String]) -> i32 {
     let (kind, rest) = match args.split_first() {
         Some((k, r)) => (k.as_str(), r.to_vec()),
         None => {
-            eprintln!("bdq: __fence requires a check name (repo-label|schema-delete)");
+            eprintln!("bdq: __fence requires a check name (repo-label)");
             return 2;
         }
     };
@@ -108,13 +108,6 @@ fn cmd_fence(args: &[String]) -> i32 {
                 None => 0,
             }
         }
-        "schema-delete" => match check_schema_delete(&rest) {
-            Some(msg) => {
-                eprint!("{msg}");
-                1
-            }
-            None => 0,
-        },
         other => {
             eprintln!("bdq: unknown fence '{other}'");
             2
