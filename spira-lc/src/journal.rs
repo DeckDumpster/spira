@@ -459,6 +459,20 @@ mod tests {
     }
 
     #[test]
+    fn a_request_opens_its_effect_row_and_an_outcome_closes_the_one_it_names() {
+        let at = |tag: &str, cause: Value| json!({"id": "x", "stream": "s", "kind": {"tag": tag, "body": ""}, "at": 1, "cause": cause, "correlation": "c"});
+        let opened = append_sqls(&at("effect.requested", Value::Null)).unwrap();
+        assert!(opened.len() == 2 && opened[1].starts_with("INSERT INTO runtime_effect") && opened[1].contains("resolved") && opened[1].contains("NOT EXISTS"), "{opened:?}");
+        for tag in ["effect.succeeded", "effect.failed", "effect.timed_out"] {
+            let closed = append_sqls(&at(tag, json!("r'1"))).unwrap();
+            assert_eq!(closed[1], "UPDATE runtime_effect SET resolved = 1 WHERE event_id = 'r\\'1'", "{tag}");
+        }
+        assert_eq!(append_sqls(&at("effect.succeeded", Value::Null)).unwrap().len(), 1, "an outcome naming no request closes nothing");
+        assert_eq!(append_sqls(&at("heartbeat", Value::Null)).unwrap().len(), 1);
+        assert!(open_effects_sql().contains("t.resolved = 0"), "the boot read starts from the open rows");
+    }
+
+    #[test]
     fn no_write_swallows_a_conflict_but_ignore() {
         let sql = append_sql(&ev()).unwrap();
         assert!(!sql.contains("IGNORE") && sql.contains("WHERE NOT EXISTS (SELECT 1 FROM runtime_event WHERE event_id = "), "{sql}");
