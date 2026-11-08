@@ -49,6 +49,7 @@ fn claim(holder: &str, lease_until: i64) -> BeadEventKind {
         stack_depth: 0,
         stack_max_depth: 4,
         persona: None,
+        directed: None,
     }
 }
 

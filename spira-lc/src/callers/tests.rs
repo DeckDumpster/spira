@@ -1406,7 +1406,7 @@ fn claimable_by_a_builder(f: &mut Fake, id: &str) -> bool {
         &BeadEvent {
             expect: row.state,
             version: row.version,
-            kind: BeadEventKind::Claim { holder: "dwarf-2".into(), lease_until: 1, stack: Default::default(), stack_depth: 0, stack_max_depth: 4, persona: None },
+            kind: BeadEventKind::Claim { holder: "dwarf-2".into(), lease_until: 1, stack: Default::default(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None },
             actor: "dwarf-2".into(),
             at: None,
         },
@@ -1570,7 +1570,7 @@ fn reconcile_closed_leaves_an_external_residue_ready() {
 
 fn claim_for(f: &mut Fake, id: &str, holder: &str) {
     f.bead(id, BeadState::Ready);
-    let ev = serde_json::to_string(&BeadEventKind::Claim { holder: holder.into(), lease_until: 600, stack: Default::default(), stack_depth: 0, stack_max_depth: 4, persona: None }).unwrap();
+    let ev = serde_json::to_string(&BeadEventKind::Claim { holder: holder.into(), lease_until: 600, stack: Default::default(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None }).unwrap();
     let (rc, out) = f.call(&v(&["event", "bead", id, "--expect", "READY", "--version", "0", "--actor", holder, "--kind", &ev]));
     assert_eq!(rc, 0, "{out}");
 }

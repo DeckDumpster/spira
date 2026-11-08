@@ -685,7 +685,7 @@ fn call_only_gates_then_reads_ready_once() {
         }
         None
     });
-    r.on(|s| if s.args.iter().any(|a| a == "list-units") { ok("spira-dwarf-builder-1 loaded active\nspira-dwarf-ops-2 loaded active\nspira-dwarf-opsx-3 x\n") } else { None });
+    r.on(|s| if s.args.iter().any(|a| a == "list-units") { ok("spira-dwarf-builder-1.service loaded active\nspira-dwarf-ops-2.service loaded active\nspira-dwarf-opsx-3.service x\n") } else { None });
     // CK7 runs in-process now too: `rune_ready` reaches `spira-claim rune-ready`
     // directly, reading the SAME SPIRA_READY_CACHE the pass already wrote.
     r.on(|s| {

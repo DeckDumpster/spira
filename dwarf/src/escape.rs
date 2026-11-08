@@ -94,19 +94,21 @@ pub fn decide(f: &Facts) -> Outcome {
     Outcome::Called(Vec::new()) // argv filled in by build_argv, kept apart from decide()
 }
 
-/// `systemd-run --user --collect --quiet --unit=spira-dwarf-<rune>-escape-<epoch> <call
-/// argv...> <dwarf-path> --home <home> <rune> [--dry-run]` — escape.sh:52-58, unchanged.
-pub fn build_argv(rune: &str, home: &Path, dwarf_path: &str, call_argv: &[String], epoch: i64, dry_run: bool) -> Vec<String> {
-    let mut a = vec!["--user".to_string(), "--collect".to_string(), "--quiet".to_string(), format!("--unit=spira-dwarf-{rune}-escape-{epoch}")];
+/// `systemd-run --user --collect --quiet --unit=<stem> <call argv...> <dwarf-path> --home <home>
+/// <rune> <tail...>`: the one unit call every direct entry point (`--escape`, `direct`) starts a
+/// dwarf by.
+pub fn unit_call_argv(stem: &str, home: &Path, dwarf_path: &str, call_argv: &[String], rune: &str, tail: &[String]) -> Vec<String> {
+    let mut a = vec!["--user".to_string(), "--collect".to_string(), "--quiet".to_string(), format!("--unit={stem}")];
     a.extend(call_argv.iter().cloned());
-    a.push(dwarf_path.to_string());
-    a.push("--home".to_string());
-    a.push(home.display().to_string());
-    a.push(rune.to_string());
-    if dry_run {
-        a.push("--dry-run".to_string());
-    }
+    a.extend([dwarf_path.to_string(), "--home".to_string(), home.display().to_string(), rune.to_string()]);
+    a.extend(tail.iter().cloned());
     a
+}
+
+/// The `--escape` call: unit `spira-dwarf-<rune>-escape-<epoch>`, `[--dry-run]` after the rune.
+pub fn build_argv(rune: &str, home: &Path, dwarf_path: &str, call_argv: &[String], epoch: i64, dry_run: bool) -> Vec<String> {
+    let tail: Vec<String> = dry_run.then(|| "--dry-run".to_string()).into_iter().collect();
+    unit_call_argv(&format!("spira-dwarf-{rune}-escape-{epoch}"), home, dwarf_path, call_argv, rune, &tail)
 }
 
 /// The full orchestration: gathers the facts through the seam, decides, and (unless

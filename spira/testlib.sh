@@ -1065,7 +1065,7 @@ lc_dwarf_mirror() {
     mkdir -p "$dir"
     { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
-    show|state|list|event|create-bead|unclaim) ;;
+    show|state|list|event|create-bead|unclaim|holder-dead) ;;
     plan) if [ "${2:-}" = items ]; then
             ids=; while [ $# -gt 0 ]; do [ "$1" = --ids ] && ids="${2:-}"; shift; done
             out="$(BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --id "$ids" --status all --limit 0 --json)" || exit $?
@@ -1162,6 +1162,10 @@ elif verb == "unclaim":
     claim = os.path.join(run, "lc-claim", i)
     if os.path.exists(claim):
         os.remove(claim)
+elif verb == "holder-dead":
+    claim = os.path.join(run, "lc-claim", args[1] if len(args) > 1 else "")
+    if os.path.exists(claim):
+        os.remove(claim)
 elif verb == "hold":
     i = args[1] if len(args) > 1 else ""
     if i not in rows:
@@ -1182,6 +1186,7 @@ elif verb == "event":
         os.makedirs(claims, exist_ok=True)
         open(os.path.join(claims, i), "w").write(actor)
         open(os.path.join(run, "lc-claims.log"), "a").write("%s %s\n" % (i, actor))
+        open(os.path.join(run, "lc-claim-kinds.log"), "a").write("%s %s\n" % (i, kind))
         if os.path.exists(os.path.join(run, "lc-disposition", i)):
             os.remove(os.path.join(run, "lc-disposition", i))
         pinned = os.path.join(run, "lc-row", i)

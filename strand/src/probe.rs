@@ -247,7 +247,7 @@ fn unit_count(cfg: &Config, keep: &dyn Fn(&str) -> bool, exclude: Option<&str>) 
     args.extend(globs.iter().map(String::as_str));
     args.push("--no-legend");
     let o = run("timeout", &args, None, &[]);
-    let live: HashSet<&str> = o.stdout.lines().filter_map(runtime::units::live_dwarf_in_list_line).filter(|u| keep(u) && Some(*u) != exclude).collect();
+    let live: HashSet<&str> = o.stdout.lines().filter_map(runtime::units::live_dwarf_in_list_line).filter(|u| runtime::units::counts_toward_caps(u) && keep(u) && Some(*u) != exclude).collect();
     live.len() as u32
 }
 
@@ -508,6 +508,15 @@ mod tests {
         assert_eq!(dwarf_count(&cfg, "builder", Some(b1)), 1, "the caller's own unit is excluded");
         assert_eq!(dwarf_count(&cfg, "ops", None), 1);
         assert_eq!(dwarves_live_total(&cfg), 3, "every live dwarf; the landing pass is not one");
+    }
+
+    #[test]
+    fn sp_8mbnup_a_directed_dwarf_is_in_no_count_a_cap_reads() {
+        let t = testkit::TempDir::new("strand-directed");
+        let units = [("spira-dwarf-builder-1794009721.service", "active"), ("spira-dwarf-builder-directed-1794009722.service", "active")];
+        let cfg = Config { call: "systemd-run".into(), systemctl: fake_systemctl(&t, &units), ..Config::test_fixture() };
+        assert_eq!(dwarf_count(&cfg, "builder", None), 1, "the ordinary dwarf counts, the directed one beside it does not");
+        assert_eq!(dwarves_live_total(&cfg), 1);
     }
 
     #[test]

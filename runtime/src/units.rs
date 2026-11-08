@@ -580,6 +580,27 @@ pub const DWARF_TASK: &str = "sentinel-call";
 /// (`systemd-run --unit=spira-dwarf-<rune>-…`, `dwarf --escape`).
 pub const DWARF_PREFIX: &str = "spira-dwarf-";
 
+/// Joins a directed dwarf's rune name to its start epoch in its unit name.
+pub const DIRECTED_MARK: &str = "-directed-";
+
+/// The unit stem a directed dwarf of `rune_name` starts under (`systemd-run --unit=…`).
+pub fn directed_unit_stem(rune_name: &str, epoch: i64) -> String {
+    format!("{DWARF_PREFIX}{rune_name}{DIRECTED_MARK}{epoch}")
+}
+
+/// Whether `name` is a dwarf directed onto a named bead (`dwarf direct`): a dwarf unit in
+/// every respect but the caps.
+pub fn is_directed(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(DWARF_PREFIX).and_then(|r| r.strip_suffix(SUFFIX)) else { return false };
+    rest.rsplit_once(DIRECTED_MARK).is_some_and(|(rune, epoch)| !rune.is_empty() && !epoch.is_empty() && epoch.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Whether a dwarf unit counts toward `max_live_dwarves`, a lane's cap or a rune's
+/// concurrency: every dwarf but a directed one.
+pub fn counts_toward_caps(name: &str) -> bool {
+    is_dwarf_unit(name) && !is_directed(name)
+}
+
 /// The globs that together list every dwarf unit, by either name.
 pub fn dwarf_globs() -> [String; 2] {
     [format!("{DWARF_PREFIX}*{SUFFIX}"), task_glob(DWARF_TASK)]
@@ -2110,6 +2131,20 @@ mod tests {
         let cg = format!("0::/user.slice/user-1000.slice/user@1000.service/app.slice/{own}\n");
         assert_eq!(dwarf_units_in_cgroup(&cg), vec![own]);
         assert!(dwarf_units_in_cgroup("0::/app.slice/spira-run-sentinel_2dpass-landing.service\n").is_empty());
+    }
+
+    #[test]
+    fn a_directed_dwarf_is_a_dwarf_unit_that_no_cap_counts() {
+        let n = format!("{}.service", directed_unit_stem("builder", 1794009721));
+        assert_eq!(n, "spira-dwarf-builder-directed-1794009721.service");
+        assert!(is_dwarf_unit(&n) && is_directed(&n) && !counts_toward_caps(&n));
+        assert!(is_live_dwarf(&n, UnitState::Active), "drain, slay and the cockpit still see it");
+        assert!(dwarf_globs().iter().any(|g| glob_match(g, &n)));
+        for other in ["spira-dwarf-builder-17.service", "spira-dwarf-builder-directed-x.service", "spira-dwarf--directed-1.service", "spira-dwarf-builder-directed-1.scope"] {
+            assert!(!is_directed(other), "{other}");
+        }
+        assert!(counts_toward_caps("spira-dwarf-builder-17.service"));
+        assert!(counts_toward_caps(&unit_name(DWARF_TASK, "builder-1-0").unwrap()));
     }
 
     #[test]
