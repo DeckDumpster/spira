@@ -723,7 +723,7 @@ fn claim_unheld_ready(m: &mut dyn Machine, id: &str, st: &str, ver: &str, row: &
     if !holds_of(row.get("bead").and_then(|b| b.get("holds"))).is_empty() {
         return Some((st.to_string(), ver.to_string()));
     }
-    let claim = BeadEventKind::Claim { holder: actor.to_string(), lease_until: 0, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None };
+    let claim = BeadEventKind::Claim { holder: actor.to_string(), lease_until: 0, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None };
     let _ = event(m, "bead", id, st, ver, actor, &serde_json::to_string(&claim).unwrap_or_default());
     state_version(m, id).map(|(s, v, _)| (s, v))
 }
