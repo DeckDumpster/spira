@@ -253,16 +253,40 @@ fn sp_7yu70y_a_red_certify_abandons_naming_its_verdict_and_red_suites() {
 }
 
 #[test]
-fn sp_7yu70y_a_red_certify_with_only_a_red_line_or_nothing_still_says_what_it_had() {
-    for (out, want, reds) in [("red=test-a.sh\n", "test-a.sh", vec!["test-a.sh"]), ("", "no verdict and no suite", vec![])] {
-        let mut r = carried(&driving(State::Certifying, "spira.c3"));
-        let n = r.requested().len();
-        r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), out)).unwrap();
-        let after = asked_after(&r, n);
-        let abandon = &after.iter().find(|(e, _)| e == ABANDON).unwrap().1;
-        assert!(abandon.why.contains(want), "{}", abandon.why);
-        assert_eq!(abandon.reds, reds);
-    }
+fn sp_7yu70y_a_red_certify_with_only_a_red_line_still_says_what_it_had() {
+    let mut r = carried(&driving(State::Certifying, "spira.c3"));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
+    let after = asked_after(&r, n);
+    let abandon = &after.iter().find(|(e, _)| e == ABANDON).unwrap().1;
+    assert!(abandon.why.contains("test-a.sh"), "{}", abandon.why);
+    assert_eq!(abandon.reds, ["test-a.sh"]);
+}
+
+/// A certify red naming no suite is attributed, once per round, before it is abandoned whole
+/// (sp-7yu70y.2): the second unnamed red abandons.
+#[test]
+fn sp_7yu70y_2_an_unnamed_certify_red_attributes_once_then_abandons() {
+    let mut r = carried(&driving(State::Certifying, "spira.c3"));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "queue.sh round certify: nothing useful\n")).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let after = asked_after(&r, n);
+    assert_eq!(after.iter().map(|(e, l)| (e.as_str(), l.why.as_str())).collect::<Vec<_>>(), [(CORPUS, "attribute")], "{after:?}");
+    let attribution_unit = after[0].1.unit.clone();
+
+    let land = batcher_cut::attribute::Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: false }.line();
+    let n = r.requested().len();
+    r.tick(STREAM, ended(&attribution_unit, runtime::units::Exit::Code(0), &format!("{land}\n"))).unwrap();
+    let after = asked_after(&r, n);
+    assert_eq!(after.iter().map(|(e, _)| e.as_str()).collect::<Vec<_>>(), [CERTIFY], "{after:?}");
+    let certify_unit = after[0].1.unit.clone();
+
+    let n = r.requested().len();
+    r.tick(STREAM, ended(&certify_unit, runtime::units::Exit::Code(1), "")).unwrap();
+    let after = asked_after(&r, n);
+    let abandon = &after.iter().find(|(e, _)| e == ABANDON).unwrap_or_else(|| panic!("no abandon: {after:?}")).1;
+    assert!(abandon.why.contains("no verdict and no suite"), "{}", abandon.why);
 }
 
 // --- sp-8nlvra: a held or skipping repo names why, and a red round's pause ends on a landing ---
