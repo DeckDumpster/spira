@@ -1,7 +1,7 @@
 //! # asks.moot — contract
 //!
 //! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/asks-moot.md`;
-//! its Acceptance section is the test file `tests/task_c_asks_moot.rs`.
+//! its Acceptance section is the test file `tests/it/task_c_asks_moot.rs`.
 //!
 //! ## Tick
 //!

@@ -456,7 +456,7 @@ pub mod kit {
         use runtime::journal::Journal;
         use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig, PLANTED_UNKNOWN};
 
-        /// The launchers `tests/no_spawn.rs` scans for, each split so this file does not name one.
+        /// The launchers `tests/it/no_spawn.rs` scans for, each split so this file does not name one.
         pub const LAUNCHERS: &[&str] = &[concat!("Command", "::new"), concat!("std", "::process"), concat!("process", "::Command"), concat!("libc", "::fork"), concat!("libc", "::exec"), concat!("posix", "_spawn"), concat!("nix", "::unistd")];
 
         /// A config door that answers exactly `T`'s declared keys, `set` first and `"fixture"`

@@ -1,7 +1,7 @@
 //! # sweep.reclaim — contract
 //!
 //! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/sweep-reclaim.md`;
-//! its Acceptance section is the test file `tests/task_c_sweep_reclaim.rs`.
+//! its Acceptance section is the test file `tests/it/task_c_sweep_reclaim.rs`.
 //!
 //! ## Tick
 //!

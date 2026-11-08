@@ -3,7 +3,7 @@
 # Every unit the loop used to run on a shipped timer (landing-pass, gate-worker, sentinel-call,
 # sentinel-landing, sift, rounds, publish, reconciler-goodput) is a task of `spira-runtime serve`
 # now, and its timer is gone from systemd/. Ruling D6 of the scheduler consolidation design: the
-# simulator drives those tasks' real registrations with effect doubles (sim/tests/whole_loop.rs),
+# simulator drives those tasks' real registrations with effect doubles (sim/tests/it/whole_loop.rs),
 # never an actor process, so none has a row here. `actors::parse_specs` refuses an actor whose
 # units would be shipped ones.
 

@@ -1,7 +1,7 @@
 //! # reconcile.section — contract
 //!
 //! Family B of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/reconcile-section.md`;
-//! its Acceptance section is the test file `tests/task_b_reconcile_section.rs`.
+//! its Acceptance section is the test file `tests/it/task_b_reconcile_section.rs`.
 //!
 //! ## Tick
 //!

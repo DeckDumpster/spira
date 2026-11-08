@@ -1,7 +1,7 @@
 //! # sweep.export_beads — contract
 //!
 //! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/sweep-export-beads.md`;
-//! its Acceptance section is the test file `tests/task_c_sweep_export_beads.rs`.
+//! its Acceptance section is the test file `tests/it/task_c_sweep_export_beads.rs`.
 //!
 //! ## Tick
 //!

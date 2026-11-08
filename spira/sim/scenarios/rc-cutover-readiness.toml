@@ -8,7 +8,7 @@ horizon = 300000
 repos = ["other:queue.local"]
 
 # The call claims the bead and plays its script; nothing lands or certifies it. sentinel-call is
-# a task of `spira-runtime serve` now (ruling D6), tested in sim/tests; this world keeps what its
+# a task of `spira-runtime serve` now (ruling D6), tested in sim/tests/it; this world keeps what its
 # `unit_start` effect runs once it calls: `dwarf --home <home> builder` under the properties
 # `call_argv` gives, through the world's SPIRA_CALL seam (`sim-call`), on the call's minute.
 [[actor]]

@@ -1,7 +1,7 @@
 //! # asks.verify — contract
 //!
 //! Family B of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/asks-verify.md`;
-//! its Acceptance section is the test file `tests/task_b_asks_verify.rs`.
+//! its Acceptance section is the test file `tests/it/task_b_asks_verify.rs`.
 //!
 //! ## Tick
 //!

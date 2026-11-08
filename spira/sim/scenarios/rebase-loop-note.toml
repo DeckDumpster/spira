@@ -5,7 +5,7 @@ goal = "sp-rl01:SUBMITTED"
 # `landing-pass ask-rebase-loop` tells the Concierge with a note and never asks the operator
 # (replaced test-rebase-escalation, sp-jyx6yr). The property is the ask's, so the world needs the
 # bead's branch and row, not its landing: it stops at SUBMITTED. The loop's tasks are
-# `spira-runtime serve`'s now (ruling D6), tested in sim/tests.
+# `spira-runtime serve`'s now (ruling D6), tested in sim/tests/it.
 #
 # The call: what sentinel-call's `unit_start` effect runs once it calls, `dwarf --home <home>
 # builder` under the properties `call_argv` gives, through the world's SPIRA_CALL seam

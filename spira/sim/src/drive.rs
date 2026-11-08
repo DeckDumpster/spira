@@ -364,7 +364,7 @@ fn load_specs(release: &Path, names: &[String]) -> Result<Vec<sim::actors::Actor
         .iter()
         .map(|n| match all.iter().position(|a| &a.name == n) {
             Some(i) => Ok(all.remove(i)),
-            None => Err(format!("scenario: no actor {n:?} in the tree's sim/actors.toml — every unit the loop ran on a shipped timer is a task of spira-runtime serve now, which the simulator drives in-process (ruling D6, sim/tests/whole_loop.rs), never as an actor process")),
+            None => Err(format!("scenario: no actor {n:?} in the tree's sim/actors.toml — every unit the loop ran on a shipped timer is a task of spira-runtime serve now, which the simulator drives in-process (ruling D6, sim/tests/it/whole_loop.rs), never as an actor process")),
         })
         .collect()
 }

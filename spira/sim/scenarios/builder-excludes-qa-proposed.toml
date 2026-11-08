@@ -4,7 +4,7 @@ settle = 240000
 goal = "sp-qa01:SUBMITTED"
 
 # The call. sentinel-call is a task of `spira-runtime serve` now (ruling D6): when to call is
-# decided in-process and tested in sim/tests (`whole_loop.rs`, `loop_ports.rs`). This world keeps
+# decided in-process and tested in sim/tests/it (`whole_loop.rs`, `loop_ports.rs`). This world keeps
 # what its `unit_start` effect runs once it calls: `dwarf --home <home> builder` under the
 # properties `call_argv` gives, through the world's SPIRA_CALL seam (`sim-call`, standing where
 # systemd-run stands, which ranks the builder's claimable beads with `spira-claim`), on the

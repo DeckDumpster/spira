@@ -46,7 +46,7 @@ pub fn module_source(rel: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
-/// The process launchers `tests/no_spawn.rs` scans for, the first `text` names outside its
+/// The process launchers `tests/it/no_spawn.rs` scans for, the first `text` names outside its
 /// `#[cfg(test)]` tail.
 pub fn launcher(text: &str) -> Option<&'static str> {
     // Spelled in pieces so this file does not name them itself.

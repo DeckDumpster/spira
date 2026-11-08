@@ -11,7 +11,7 @@
 # units.sh's UNITS array, so install.sh never wrote it to disk. Defect sp-mplcb: WatchdogSec
 # was wired onto a bash ExecStart target, which cannot deliver the heartbeat systemd needs.
 # (The verdict service's checks, sp-vhvyi and sp-tv7ue, left with the unit: `queue step --all`
-# is the scheduler's queue.step task now, and its T1-T6 live in spira-runtime/tests.)
+# is the scheduler's queue.step task now, and its T1-T6 live in spira-runtime/tests/it.)
 # Split-checkout deploys: an ExecStart pointing at @SPIRA_REPO@ resolves into the git checkout
 # instead of the release tree.
 #

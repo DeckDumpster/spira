@@ -1,7 +1,7 @@
 //! # roundvm.ami_prune — contract
 //!
 //! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/roundvm-ami-prune.md`;
-//! its Acceptance section is the test file `tests/task_c_roundvm_ami_prune.rs`.
+//! its Acceptance section is the test file `tests/it/task_c_roundvm_ami_prune.rs`.
 //!
 //! ## Tick
 //!

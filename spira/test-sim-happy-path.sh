@@ -9,7 +9,7 @@
 # (`sim run happy-path --seed 7 --keep`, then the kept run's exec.log, then `sim world down`).
 # happy-path is a loop world (ruling D6): the service's registrations in-process on doubles, one
 # bead filed to LANDED and its landed head published by PR (spira/sim/src/loopworld.rs). What the
-# run proves about the loop is asserted in spira/sim/tests/loop_ports.rs
+# run proves about the loop is asserted in spira/sim/tests/it/loop_ports.rs
 # `happy_path_the_shipped_loop_scenario_lands_and_publishes_and_logs_its_effects`; this suite holds
 # the staged binary to the command-line contract the perf watch reads.
 #

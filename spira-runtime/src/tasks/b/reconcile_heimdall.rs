@@ -1,7 +1,7 @@
 //! # reconcile.heimdall — contract
 //!
 //! Family B of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/reconcile-heimdall.md`;
-//! its Acceptance section is the test file `tests/task_b_reconcile_heimdall.rs`.
+//! its Acceptance section is the test file `tests/it/task_b_reconcile_heimdall.rs`.
 //!
 //! **Scope (rulings of 2026-11-03, S15).** Only heimdall's in-scheduler checks move here. The
 //! outside watch, the one that sees the scheduler itself wedged or absent, is the watchdog
