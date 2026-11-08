@@ -104,3 +104,24 @@ fn a_spira_lc_reply_that_says_cannot_tell_is_a_cannot_tell_and_survives_the_wire
     assert!(err.is_cannot_tell(), "a journal call spira-lc could not answer in time must be retried, not returned: {err:?}");
     assert!(err.0.contains("deadline"), "{err}");
 }
+
+#[tokio::test]
+async fn a_spira_lc_deadline_on_the_socket_journal_is_retried_by_serve_not_returned() {
+    let (store, path, _dir) = crate::journal_calls::serve(crate::journal_calls::Level::Group);
+    let journal = runtime::socket::SocketJournal::new(path);
+    let engine = Engine::open(Arc::new(journal), Arc::new(WallClock), vec![Registration::new("echo", Echo)], 1).unwrap();
+    let (tx, rx) = mpsc::channel::<Submit>(4);
+    let serving = tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(NoEffects), PoolCaps::default(), rx, ServeOpts::default()));
+    store.deadline_next.store(true, std::sync::atomic::Ordering::SeqCst);
+    tx.send(Submit::new("p1", "s", EventKind::new("ping", ""))).await.unwrap();
+    for _ in 0..300 {
+        if pongs(&*store.mem) == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: polling a real host
+    }
+    assert!(!serving.is_finished(), "serve returned on a store call that hit spira-lc's deadline");
+    assert_eq!(pongs(&*store.mem), 1, "the submission was kept and journaled once the store answered");
+    drop(tx);
+    tokio::time::timeout(Duration::from_secs(5), serving).await.expect("the host drains").unwrap().expect("a clean stop");
+}
