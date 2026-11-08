@@ -576,7 +576,7 @@ pub fn fleet(unitp: &dyn units::Units, roster: &[String], rune_name: &dyn Fn(&st
     let mut seen = std::collections::BTreeSet::new();
     for glob in units::dwarf_globs() {
         for d in unitp.list(&glob).map_err(|e| e.to_string())? {
-            if !units::is_live_dwarf(&d.name, d.state) || !seen.insert(d.name.clone()) {
+            if !units::is_live_dwarf(&d.name, d.state) || !units::counts_toward_caps(&d.name) || !seen.insert(d.name.clone()) {
                 continue;
             }
             let ran = UnitRan { handle: units::UnitHandle::named(&d.name), exit: units::Exit::Unknown, duration_ms: 0 };

@@ -167,6 +167,7 @@ impl<'a> Sentinel<'a> {
                 .lines()
                 .filter_map(|l| l.split_whitespace().next())
                 .filter(|u| u.starts_with(&prefix))
+                .filter(|u| runtime::units::counts_toward_caps(u))
                 .filter(|u| exclude != Some(*u))
                 .count() as i64;
         }

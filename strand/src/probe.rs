@@ -247,7 +247,7 @@ fn unit_count(cfg: &Config, keep: &dyn Fn(&str) -> bool, exclude: Option<&str>) 
     args.extend(globs.iter().map(String::as_str));
     args.push("--no-legend");
     let o = run("timeout", &args, None, &[]);
-    let live: HashSet<&str> = o.stdout.lines().filter_map(runtime::units::live_dwarf_in_list_line).filter(|u| keep(u) && Some(*u) != exclude).collect();
+    let live: HashSet<&str> = o.stdout.lines().filter_map(runtime::units::live_dwarf_in_list_line).filter(|u| runtime::units::counts_toward_caps(u) && keep(u) && Some(*u) != exclude).collect();
     live.len() as u32
 }
 

@@ -609,7 +609,7 @@ impl<'a> Sentinel<'a> {
                 .map(|f| {
                     units
                         .iter()
-                        .filter(|u| u.starts_with(&format!("spira-dwarf-{f}-")))
+                        .filter(|u| u.starts_with(&format!("spira-dwarf-{f}-")) && runtime::units::counts_toward_caps(u))
                         .count()
                 })
                 .sum();
