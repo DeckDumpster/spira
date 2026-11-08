@@ -681,7 +681,7 @@ fn complete_fixture(key: &str) -> Option<String> {
 }
 
 /// The settings the loop boots the service's task table with: every task acts, so its effects
-/// reach the doubles; the container cap is the host run ceiling; a calendar key holds the
+/// reach the doubles; the container cap is the host run ceiling; the store flag is off; a calendar key holds the
 /// complete fixture's spec; `set` overrides, its last entry for a key winning; every other key is 300.
 pub fn settings_with(set: &[(&str, &str)]) -> Result<Settings, String> {
     let modes: Vec<String> = tasks::all().map(|t| format!("{}=act", t.name)).collect();
@@ -692,6 +692,7 @@ pub fn settings_with(set: &[(&str, &str)]) -> Result<Settings, String> {
         Ok(match k {
             "SPIRA_TASK_MODES" => modes.join(","),
             "SPIRA_POOL_CAP_CONTAINER" => "2".into(),
+            "SPIRA_LC_LIFECYCLE_ON_STORE" => "0".into(),
             k if k.ends_with("_CALENDAR") => complete_fixture(k).ok_or_else(|| format!("{k} has no value in the complete fixture"))?,
             _ => "300".into(),
         })
