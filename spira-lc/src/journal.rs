@@ -115,9 +115,28 @@ pub fn append_sql(ev: &Value) -> Result<String, String> {
     ))
 }
 
-/// Requests with no outcome event naming them as cause; `runtime_event_cause_idx` makes each probe a seek.
+const REQUESTED: &str = "effect.requested";
+const OUTCOMES: [&str; 3] = ["effect.succeeded", "effect.failed", "effect.timed_out"];
+
+/// An event and the `runtime_effect` row that follows it, in one transaction: a request opens
+/// its row, an outcome closes the row of the request it names.
+pub fn append_sqls(ev: &Value) -> Result<Vec<String>, String> {
+    let mut sqls = vec![append_sql(ev)?];
+    let tag = field(ev.get("kind").unwrap_or(&Value::Null), "tag")?;
+    if tag == REQUESTED {
+        let id = lit(field(ev, "id")?);
+        sqls.push(format!("INSERT INTO runtime_effect (event_id, seq, resolved) SELECT event_id, seq, 0 FROM runtime_event WHERE event_id = {id} AND NOT EXISTS (SELECT 1 FROM runtime_effect WHERE event_id = {id})"));
+    } else if let (true, Some(cause)) = (OUTCOMES.contains(&tag), ev.get("cause").and_then(Value::as_str)) {
+        sqls.push(format!("UPDATE runtime_effect SET resolved = 1 WHERE event_id = {}", lit(cause)));
+    }
+    Ok(sqls)
+}
+
+/// Requests with no outcome event naming them as cause. `runtime_effect_open_idx` finds the
+/// candidates without reading the journal; the probe on `runtime_event_cause_idx` keeps a row
+/// an older writer never closed from being reported open.
 pub fn open_effects_sql() -> String {
-    "SELECT r.seq, r.event_id, r.stream, r.kind_tag, r.kind_body, r.at, r.cause, r.correlation FROM runtime_event r WHERE r.kind_tag = 'effect.requested' AND NOT EXISTS (SELECT 1 FROM runtime_event o WHERE o.cause = r.event_id AND o.kind_tag IN ('effect.succeeded', 'effect.failed', 'effect.timed_out')) ORDER BY r.seq".into()
+    "SELECT r.seq, r.event_id, r.stream, r.kind_tag, r.kind_body, r.at, r.cause, r.correlation FROM runtime_effect t JOIN runtime_event r ON r.seq = t.seq WHERE t.resolved = 0 AND NOT EXISTS (SELECT 1 FROM runtime_event o WHERE o.cause = r.event_id AND o.kind_tag IN ('effect.succeeded', 'effect.failed', 'effect.timed_out')) ORDER BY r.seq".into()
 }
 
 /// The newest `limit` events of a stream below `below`, newest first; `runtime_event_stream_idx` walks them backward.
@@ -200,14 +219,14 @@ fn cursor_sql(next: u64) -> String {
 
 /// One staged write of `journal group` (sp-4du857): `{"append": event}`, `{"schedule": row}` or
 /// `{"fired": row_id}`, each the statement its own op would run.
-fn staged_write_sql(w: &Value) -> Result<String, String> {
+fn staged_write_sql(w: &Value) -> Result<Vec<String>, String> {
     let refused = || format!("journal: group refused: a write is not one of append, schedule, fired: {}", clip(&w.to_string()));
     let Some((kind, v)) = w.as_object().filter(|o| o.len() == 1).and_then(|o| o.iter().next()) else { return Err(refused()) };
     match kind.as_str() {
-        "append" => append_sql(v),
-        "schedule" => schedule_sql(v),
+        "append" => append_sqls(v),
+        "schedule" => schedule_sql(v).map(|s| vec![s]),
         "fired" => match v.as_str() {
-            Some(id) if !id.is_empty() && !id.contains('\0') => Ok(fired_sql(id)),
+            Some(id) if !id.is_empty() && !id.contains('\0') => Ok(vec![fired_sql(id)]),
             _ => Err(format!("journal: group refused: a fired mark is not a row id: {v}")),
         },
         _ => Err(refused()),
@@ -228,7 +247,7 @@ pub fn staged_sql(staged: &Value) -> Result<Vec<String>, String> {
         None | Some(Value::Null) => {}
         Some(Value::Array(ws)) => {
             for w in ws {
-                sqls.push(staged_write_sql(w)?);
+                sqls.extend(staged_write_sql(w)?);
             }
         }
         Some(other) => return Err(format!("journal: group refused: writes is not a list: {}", clip(&other.to_string()))),
@@ -267,7 +286,8 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
     match op {
         "append" => {
             let ev = parse(a(1), "event")?;
-            write(conn, &append_sql(&ev)?, Some(&ev))?;
+            let sqls = append_sqls(&ev)?;
+            conn.append_events(&sqls).map_err(|e| failed(op, &sqls.join(";\n"), Some(&ev), e))?;
             appended_seq(conn, op, &ev)
         }
         // `group` is `batch` that also carries records, schedule rows and fired marks
@@ -284,7 +304,7 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
                 Some("batch" | "group") => Err(format!("journal: {op} refused: a batch inside a batch")),
                 Some("append") => {
                     let ev = parse(inner.get(1), "event")?;
-                    sqls.push(append_sql(&ev)?);
+                    sqls.extend(append_sqls(&ev)?);
                     conn.append_events(&sqls).map_err(|e| failed(op, &sqls.join(";\n"), Some(&ev), e))?;
                     appended_seq(conn, op, &ev)
                 }

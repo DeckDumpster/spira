@@ -195,6 +195,14 @@ CREATE TABLE IF NOT EXISTS runtime_event (
 CREATE INDEX IF NOT EXISTS runtime_event_stream_idx ON runtime_event (stream, seq);
 CREATE INDEX IF NOT EXISTS runtime_event_cause_idx ON runtime_event (cause, kind_tag);
 
+CREATE TABLE IF NOT EXISTS runtime_effect (
+    event_id VARCHAR(255) NOT NULL PRIMARY KEY,
+    seq      BIGINT NOT NULL,
+    resolved TINYINT(1) NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS runtime_effect_open_idx ON runtime_effect (resolved, seq);
+
 CREATE TABLE IF NOT EXISTS runtime_applied (
     handler  VARCHAR(128) NOT NULL,
     event_id VARCHAR(255) NOT NULL,
