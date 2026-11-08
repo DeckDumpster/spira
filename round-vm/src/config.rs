@@ -268,7 +268,7 @@ impl Config {
             post_guard_secs: num_env("SPIRA_ROUND_VM_POST_GUARD_SECS", 600)?,
             vm_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_VM_SECS", 300)?,
             build_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_BUILD_SECS", 600)?,
-            no_output_secs: num_env("SPIRA_ROUND_VM_NO_OUTPUT_SECS", 180)?,
+            no_output_secs: must_cfg_parse("SPIRA_ROUND_VM_NO_OUTPUT_SECS")?,
         }))
     }
 

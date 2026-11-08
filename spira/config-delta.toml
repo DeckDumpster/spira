@@ -94,6 +94,7 @@ round_vm_ec2_tailscale_key_file = ""
 round_vm_ec2_host_addr = ""
 round_vm_ec2_run_deadline = 7200
 round_vm_ec2_boot_tries = 150
+round_vm_no_output_secs = 180
 round_vm_ec2_key_warn_days = 14
 rounds_pacing = "0"
 scoped_stop_review_secs = 86400
