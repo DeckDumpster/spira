@@ -66,12 +66,13 @@ lc_dwarf_mirror "$TMP/lc"; export PATH="$TMP/lc:$BIN:$PATH"
 command -v dwarf >/dev/null 2>&1 || { echo "test-dwarf-summon: dwarf is not on PATH" >&2; exit 1; }
 
 # The unit call: what systemd-run does with the argv the dwarf builds — record the unit name,
-# apply the --setenv pairs, run the command.
+# apply the --setenv pairs (the suite keeps its own PATH and release), run the command.
 cat > "$BIN/fake-systemd-run" <<'CALL'
 #!/usr/bin/env bash
 for a in "$@"; do
     case "$a" in
         --unit=*) printf '%s\n' "${a#--unit=}" >> "$TMP/units" ;;
+        --setenv=PATH=*|--setenv=SPIRA_RELEASE=*) ;;
         --setenv=*) export "${a#--setenv=}" ;;
     esac
 done
