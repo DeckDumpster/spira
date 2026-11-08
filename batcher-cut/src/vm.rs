@@ -14,7 +14,7 @@ use std::process::{Child, Command, Stdio};
 use batcher::attrib::{Job, JobResult};
 use batcher::core::{Id, Member, MergeResult};
 
-use batcher::drive::{MainEnd, MainKind, MainPoll, RoundRunner};
+use batcher::drive::{FilterRed, MainEnd, MainKind, MainPoll, RoundRunner};
 use crate::io::{self, Env, Repo};
 use crate::order;
 
@@ -143,19 +143,38 @@ pub struct VmRunner<'a> {
     corpus_runs: u32,
 }
 
+/// The member a `member=` line of the VM's lint report blames: the bead id after `land` in a
+/// `commit <sha> <subject>` culprit, or the leading token when the VM already resolved one.
+/// A base culprit, or an id outside the round, names nobody.
+pub fn blamed_member(line: &str, members: &[Member]) -> Option<Id> {
+    let who = line.strip_prefix("member=")?;
+    let clean = |w: &str| w.trim_end_matches(|c: char| !c.is_alphanumeric()).to_string();
+    let words: Vec<&str> = who.split_whitespace().collect();
+    let token = match words.first()? {
+        &"commit" => words.iter().skip_while(|w| **w != "land").nth(1).copied(),
+        w => Some(*w),
+    }?;
+    let token = clean(token);
+    members.iter().find(|m| m.id == token).map(|m| m.id.clone())
+}
+
 /// How long a stopped round-vm gets to destroy its VM before the runner gives up on it.
 const STOP_SECS: u64 = 300;
+
+const LINT: &str = "spira-lint";
+const FENCE_PREFIX: &str = "fence-";
 
 /// Removes the results of `suites`, which are about to run again, so the old verdict is not
 /// read as the new one. A result is `<suite>.<ext>` at the top or one directory down.
 fn clear_results(results: &Path, suites: &[String]) {
     let wanted: BTreeSet<&str> = suites.iter().map(String::as_str).collect();
+    let is_filter = |stem: &str| stem == LINT || stem.starts_with(FENCE_PREFIX);
     let mut dirs = vec![results.to_path_buf()];
     dirs.extend(fs::read_dir(results).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()));
     for dir in dirs {
         for e in fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.rsplit_once('.').is_some_and(|(stem, _)| wanted.contains(stem)) && e.path().is_file() {
+            if name.rsplit_once('.').is_some_and(|(stem, _)| wanted.contains(stem) || is_filter(stem)) && e.path().is_file() {
                 let _ = fs::remove_file(e.path());
             }
         }
@@ -407,19 +426,47 @@ impl RoundRunner for VmRunner<'_> {
         Ok(())
     }
 
+    fn filter_red(&mut self) -> Option<FilterRed> {
+        let mut reds: Vec<String> = vec![];
+        for e in fs::read_dir(&self.results).ok()?.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(stem) = name.strip_suffix(".result").filter(|s| *s == LINT || s.starts_with(FENCE_PREFIX)) {
+                if io::result_status(&self.results, stem) == Some(false) {
+                    reds.push(stem.to_string());
+                }
+            }
+        }
+        reds.sort();
+        let name = reds.first()?.clone();
+        let mut named: Vec<(Id, String)> = vec![];
+        for red in &reds {
+            let text = fs::read_to_string(self.results.join(format!("{red}.out"))).unwrap_or_default();
+            for line in text.lines() {
+                if let Some(id) = blamed_member(line, &self.members) {
+                    if !named.iter().any(|(n, _)| *n == id) {
+                        named.push((id, line.to_string()));
+                    }
+                }
+            }
+        }
+        Some(FilterRed { name, named })
+    }
+
     fn stop_main(&mut self) -> Result<(), String> {
         let Some(mut child) = self.child.take() else { return Ok(()) };
-        // SAFETY: kill(2) on our own child's pid, which we have not reaped yet.
-        let _ = unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
-        let mut waited = 0;
-        while child.try_wait().map_err(|e| format!("round-vm: {e}"))?.is_none() {
-            if waited >= STOP_SECS {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("round-vm did not stop within {STOP_SECS}s of TERM — killed; its VM may be left to the reaper"));
+        if child.try_wait().map_err(|e| format!("round-vm: {e}"))?.is_none() {
+            // SAFETY: kill(2) on our own child's pid, which we have not reaped yet.
+            let _ = unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
+            let mut waited = 0;
+            while child.try_wait().map_err(|e| format!("round-vm: {e}"))?.is_none() {
+                if waited >= STOP_SECS {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("round-vm did not stop within {STOP_SECS}s of TERM — killed; its VM may be left to the reaper"));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                waited += 1;
             }
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            waited += 1;
         }
         self.child_rc = None;
         self.install_failed = false;
@@ -553,6 +600,17 @@ mod tests {
     /// sp-dp872: two walkthrough rounds ended "round-vm: unexpected exit 101" and the round
     /// log never said why — the reason sat in round-vm.stderr, unread. Every exit is a typed
     /// outcome, and every fault carries round-vm's own words.
+    #[test]
+    fn a_lint_line_blames_the_member_whose_land_commit_it_names_and_nobody_else() {
+        let ms: Vec<Member> = ["sp-8mbnup", "sp-other"].iter().map(|id| Member { id: id.to_string(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() }).collect();
+        let l = "member=commit 26d967089685 spira: land sp-8mbnup — Wire it ffx-vocabulary: dwarf/src/lib.rs:26: the term \"summon\"";
+        assert_eq!(blamed_member(l, &ms), Some("sp-8mbnup".to_string()));
+        assert_eq!(blamed_member("member=sp-other ffx: a.rs:1: x", &ms), Some("sp-other".to_string()));
+        assert_eq!(blamed_member("member=commit 1 spira: land sp-gone — t r: f:1: x", &ms), None, "an id outside the round");
+        assert_eq!(blamed_member("member=the base itself (no member's diff touches a.rs or its rule r) r: a.rs:1: x", &ms), None);
+        assert_eq!(blamed_member("lint noise without the prefix", &ms), None);
+    }
+
     #[test]
     fn every_corpus_exit_is_typed_and_a_fault_carries_round_vm_s_stderr() {
         let err = "round-vm run: 103 192.168.1.194 warm\nerror: `cargo run` could not determine which binary to run.\n";

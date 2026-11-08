@@ -328,6 +328,20 @@ impl LiveOps<'_> {
     }
 }
 
+impl LiveOps<'_> {
+    fn eject_with(&mut self, member: &Member, suites: &[String], fails: &[(String, String)], owner: bool) {
+        match self.batch {
+            Some(batch) => {
+                if let Err(e) = io::round_eject(self.env, self.repo, batch, &member.id, suites, fails, owner) {
+                    println!("batcher {}: could not eject {} from round {batch}: {e}", self.repo.name, member.id);
+                }
+            }
+            None => io::eject_member(self.env, &self.repo.name, &member.id, suites, fails, owner),
+        }
+        println!("{}", ejected_event(&Ejection { id: member.id.clone(), suites: suites.to_vec() }).text);
+    }
+}
+
 impl drive::RoundOps for LiveOps<'_> {
     fn suspects(&self, suite: &str, members: &[String]) -> Vec<String> {
         suspects_in(self.wt, &self.changed, suite, members)
@@ -338,16 +352,13 @@ impl drive::RoundOps for LiveOps<'_> {
             .iter()
             .filter_map(|s| io::suite_first_fail(Path::new(&self.evidence), s).map(|l| (s.clone(), l)))
             .collect();
-        match self.batch {
-            Some(batch) => {
-                if let Err(e) = io::round_eject(self.env, self.repo, batch, &member.id, suites, &fails, owner) {
-                    println!("batcher {}: could not eject {} from round {batch}: {e}", self.repo.name, member.id);
-                }
-            }
-            None => io::eject_member(self.env, &self.repo.name, &member.id, suites, &fails, owner),
-        }
-        println!("{}", ejected_event(&Ejection { id: member.id.clone(), suites: suites.to_vec() }).text);
+        self.eject_with(member, suites, &fails, owner);
     }
+
+    fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) {
+        self.eject_with(member, &[filter.to_string()], &[(filter.to_string(), line.to_string())], owner);
+    }
+
 
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
         merge_round(self.env, self.repo, self.wt, &self.start_sha, survivors.to_vec())
@@ -431,6 +442,7 @@ impl drive::RoundOps for LiveOps<'_> {
             io::tsd_append(self.env, "round-attribution", &fields);
         }
     }
+
 
     fn settle_mending(&mut self, d: &batcher::attrib::Decision, members: &[Member]) -> Option<Result<drive::Mended, String>> {
         let batch = self.batch?;

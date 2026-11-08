@@ -55,6 +55,18 @@ pub trait RoundRunner {
     /// Seconds.
     fn now(&self) -> u64;
     fn wait(&mut self);
+    /// The low-pass filter (lint, a fence) that ended the corpus pass before any suite ran, if one did.
+    fn filter_red(&mut self) -> Option<FilterRed> {
+        None
+    }
+}
+
+/// A filter's red. `named` is each member the filter's own output blames, with the line that does;
+/// empty when the red names no member of this round.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FilterRed {
+    pub name: String,
+    pub named: Vec<(Id, String)>,
 }
 
 /// Everything the round does besides running suites.
@@ -63,6 +75,10 @@ pub trait RoundOps {
     fn suspects(&self, suite: &str, members: &[Id]) -> Vec<Id>;
     /// `owner`: the member's own tip owns the red; a stacked dependent leaves as collateral.
     fn eject(&mut self, member: &Member, suites: &[String], owner: bool);
+    /// Ejects `member` on a filter's red, carrying the line that names it as the evidence.
+    fn eject_on(&mut self, member: &Member, filter: &str, _line: &str, owner: bool) {
+        self.eject(member, &[filter.to_string()], owner);
+    }
     /// Reset the round tree to the base and merge `survivors`; the members that actually
     /// merged (a fresh conflict drops one).
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String>;
@@ -133,6 +149,7 @@ pub struct Settled {
     /// When the main run ended and when the last red settled (runner clock).
     pub main_end_at: u64,
     pub settled_at: u64,
+    pub filter: Option<FilterRed>,
 }
 
 /// One main run with concurrent attribution, to the point where every red is settled.
@@ -167,7 +184,12 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
         }
         if let Some(end) = poll.done {
             if end == MainEnd::WorkspaceBuild {
-                return Ok(Settled { preempt: None, decision: Decision::default(), end, main_end_at: now, settled_at: now });
+                return Ok(Settled { preempt: None, decision: Decision::default(), end, main_end_at: now, settled_at: now, filter: None });
+            }
+            if kind == MainKind::Corpus && main_end_at.is_none() {
+                if let Some(filter) = runner.filter_red() {
+                    return Ok(Settled { preempt: None, decision: Decision::default(), end, main_end_at: now, settled_at: now, filter: Some(filter) });
+                }
             }
             if main_end_at.is_none() {
                 // Absence is never green: a selected suite with no result is red.
@@ -197,11 +219,11 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                     unreached: suites.iter().filter(|s| !seen.contains(*s)).cloned().collect(),
                     rerun: suites.iter().filter(|s| !green_suites.contains(*s)).cloned().collect(),
                 };
-                return Ok(Settled { preempt: Some(preempt), decision: a.decision_of(&owned), end: MainEnd::Ran, main_end_at: now, settled_at: now });
+                return Ok(Settled { preempt: Some(preempt), decision: a.decision_of(&owned), end: MainEnd::Ran, main_end_at: now, settled_at: now, filter: None });
             }
         }
         if a.settled() {
-            return Ok(Settled { preempt: None, decision: a.decision(), end: MainEnd::Ran, main_end_at: main_end_at.unwrap_or(now), settled_at: now });
+            return Ok(Settled { preempt: None, decision: a.decision(), end: MainEnd::Ran, main_end_at: main_end_at.unwrap_or(now), settled_at: now, filter: None });
         }
         runner.wait();
     }
@@ -291,6 +313,49 @@ pub enum RoundEnd {
     Blocked(String),
 }
 
+/// A member stacked on one that leaves leaves with it.
+fn with_dependents(members: &[Member], out: &mut BTreeMap<Id, Vec<String>>) {
+    loop {
+        let before = out.len();
+        for m in members {
+            if let Some(p) = m.stack.keys().find(|p| out.contains_key(*p)) {
+                let suites = out[p].clone();
+                out.entry(m.id.clone()).or_insert(suites);
+            }
+        }
+        if out.len() == before {
+            break;
+        }
+    }
+}
+
+/// A filter's red names its owners: they leave with the red as their evidence and the survivors
+/// run the corpus again. A red naming no member cannot be attributed: it is filed (which holds
+/// this membership) instead of re-cut. `None` means the round is blocked.
+fn eject_filter_owners<O: RoundOps>(ops: &mut O, f: &FilterRed, members: &[Member]) -> Result<Option<Vec<Member>>, String> {
+    let named: Vec<&(Id, String)> = f.named.iter().filter(|(id, _)| members.iter().any(|m| &m.id == id)).collect();
+    if named.is_empty() {
+        ops.incident("unattributed", std::slice::from_ref(&f.name));
+        return Ok(None);
+    }
+    let mut out: BTreeMap<Id, Vec<String>> = named.iter().map(|(id, _)| (id.clone(), vec![f.name.clone()])).collect();
+    with_dependents(members, &mut out);
+    for m in members {
+        if out.contains_key(&m.id) {
+            match named.iter().find(|(id, _)| *id == m.id) {
+                Some((_, line)) => ops.eject_on(m, &f.name, line, true),
+                None => ops.eject(m, &[f.name.clone()], false),
+            }
+        }
+    }
+    let survivors: Vec<Member> = members.iter().filter(|m| !out.contains_key(&m.id)).cloned().collect();
+    if survivors.is_empty() {
+        return Ok(None);
+    }
+    let rebuilt = ops.rebuild(&survivors)?;
+    Ok((!rebuilt.is_empty()).then_some(rebuilt))
+}
+
 /// The whole round: corpus with concurrent attribution; then, while anyone was ejected, the
 /// owners' suites (only those) on the survivors' release build, attributed the same way.
 pub fn attribute_round<R: RoundRunner, O: RoundOps>(
@@ -313,6 +378,15 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         if s.end == MainEnd::WorkspaceBuild {
             ops.incident("workspace-build", &[WORKSPACE_BUILD.to_string()]);
             return Ok(RoundEnd::Blocked("the round's workspace failed to build".into()));
+        }
+        if let Some(f) = &s.filter {
+            println!("batcher: {} red before any suite ran, naming {} member(s)", f.name, f.named.len());
+            let Some(next) = eject_filter_owners(ops, f, &members)? else {
+                return Ok(RoundEnd::Blocked(format!("{} red names no member that can be ejected", f.name)));
+            };
+            runner.stop_main()?;
+            members = next;
+            continue;
         }
         let d = s.decision;
         let preempt = s.preempt;
@@ -415,18 +489,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         }
         // Every owner leaves with its suites; a member stacked on an owner leaves with it.
         let mut out: BTreeMap<Id, Vec<String>> = d.owners.clone();
-        loop {
-            let before = out.len();
-            for m in &members {
-                if let Some(p) = m.stack.keys().find(|p| out.contains_key(*p)) {
-                    let suites = out[p].clone();
-                    out.entry(m.id.clone()).or_insert(suites);
-                }
-            }
-            if out.len() == before {
-                break;
-            }
-        }
+        with_dependents(&members, &mut out);
         let mut n = 0;
         for m in members.iter().filter(|_| preempt.is_none()) {
             for suite in d.owners.get(&m.id).into_iter().flatten() {
@@ -501,7 +564,12 @@ pub(crate) mod tests {
         pub bases: Vec<String>,
         pub stopped: u32,
         pub on_base: Option<std::rc::Rc<std::cell::Cell<bool>>>,
+        /// A lint-like filter: red for a tree holding these members, naming the given ones.
+        pub filter: Option<FilterFn>,
+        pub filtered: Option<FilterRed>,
     }
+
+    pub type FilterFn = Box<dyn Fn(&BTreeSet<String>) -> Option<FilterRed>>;
 
     impl Fake {
         pub fn new(red: impl Fn(&str, &BTreeSet<String>) -> bool + 'static) -> Fake {
@@ -524,6 +592,8 @@ pub(crate) mod tests {
                 bases: vec![],
                 stopped: 0,
                 on_base: None,
+                filter: None,
+                filtered: None,
             }
         }
         fn verdict(&mut self, suite: &str, tree: &BTreeSet<String>) -> bool {
@@ -558,6 +628,10 @@ pub(crate) mod tests {
             self.reported.clear();
             self.main_ended = None;
             let tree: BTreeSet<String> = self.members.iter().cloned().collect();
+            self.filtered = self.filter.as_ref().and_then(|f| f(&tree));
+            if self.filtered.is_some() {
+                return Ok(());
+            }
             // LPT-free simple list scheduling: maxpar lanes, suites in the given order.
             let mut lanes = vec![self.t; self.maxpar];
             for s in suites {
@@ -581,6 +655,9 @@ pub(crate) mod tests {
                 p.done = Some(MainEnd::Ran);
             }
             Ok(p)
+        }
+        fn filter_red(&mut self) -> Option<FilterRed> {
+            self.filtered.take()
         }
         fn stop_main(&mut self) -> Result<(), String> {
             self.stopped += 1;
@@ -618,6 +695,7 @@ pub(crate) mod tests {
     pub struct Ops {
         pub touch: BTreeMap<String, Vec<String>>,
         pub ejected: Vec<(String, Vec<String>)>,
+        pub eject_evidence: Vec<(String, String)>,
         pub owner_flags: Vec<(String, bool)>,
         pub rebuilt: Vec<Vec<String>>,
         pub incidents: Vec<(String, Vec<String>)>,
@@ -645,6 +723,10 @@ pub(crate) mod tests {
         fn eject(&mut self, member: &Member, suites: &[String], owner: bool) {
             self.ejected.push((member.id.clone(), suites.to_vec()));
             self.owner_flags.push((member.id.clone(), owner));
+        }
+        fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) {
+            self.eject_evidence.push((member.id.clone(), line.to_string()));
+            self.eject(member, &[filter.to_string()], owner);
         }
         fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
             self.rebuilt.push(survivors.iter().map(|m| m.id.clone()).collect());
@@ -958,6 +1040,42 @@ pub(crate) mod tests {
         assert_eq!(ops.fix_calls, 1, "the fix is tried once");
         assert_eq!(ops.incidents, vec![("integration".to_string(), vec!["test-01.sh".to_string()])]);
         assert!(ops.ejected.is_empty());
+    }
+
+    fn lint_naming(culprit: &'static str) -> FilterFn {
+        Box::new(move |tree| {
+            tree.contains(culprit).then(|| FilterRed {
+                name: "spira-lint".into(),
+                named: vec![(culprit.to_string(), format!("member={culprit} ffx-vocabulary: dwarf/src/lib.rs:26: the term \"summon\""))],
+            })
+        })
+    }
+
+    #[test]
+    fn a_lint_red_naming_one_member_ejects_it_with_that_line_and_certifies_the_rest() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(lint_naming("m2"));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
+        assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["m1", "m3"]);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["spira-lint".to_string()])]);
+        assert!(ops.eject_evidence[0].1.contains("ffx-vocabulary"), "{:?}", ops.eject_evidence);
+        assert!(ops.incidents.is_empty());
+        assert_eq!(f.main_kind.len(), 2, "the corpus ran again on the survivors");
+        assert_eq!(f.main_kind[1], (MainKind::Corpus, corpus(3)));
+    }
+
+    #[test]
+    fn a_lint_red_naming_no_member_is_filed_once_and_does_not_run_the_corpus_again() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(Box::new(|_| Some(FilterRed { name: "spira-lint".into(), named: vec![] })));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert_eq!(ops.incidents, vec![("unattributed".to_string(), vec!["spira-lint".to_string()])]);
+        assert!(ops.ejected.is_empty());
+        assert_eq!(f.main_kind.len(), 1);
     }
 
     #[test]
