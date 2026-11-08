@@ -151,7 +151,7 @@ fn rounds_stop_note(run: &Path, repo: &str) -> Option<String> {
         .map(|s| format!("batcher {repo}: rounds lane stopped on purpose by {} ({}) — no cut; lift with: world.sh unpause --repo {repo} --lanes rounds", s.owner, s.reason))
 }
 
-fn cut(o: &Opts) -> Result<(), String> {
+fn cut(o: &Opts) -> Result<(), pace::CutError> {
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
     if o.repo.is_empty() {
@@ -170,7 +170,8 @@ fn cut(o: &Opts) -> Result<(), String> {
         return Err(format!(
             "batcher cut {}: spira-lc is unreachable ({e}) — refused, nothing changed; fix the lifecycle machine",
             repo.name
-        ));
+        )
+        .into());
     }
 
     // A forge batch the queue cannot read may still be open: the verdict settles it or says why.
@@ -183,7 +184,7 @@ fn cut(o: &Opts) -> Result<(), String> {
 
     let wait_secs = cfg_parse::<u64>("SPIRA_QUEUE_LOCK_WAIT")?;
     let Some(lock) = io::wait_lock(&env_, &repo.name, wait_secs)? else {
-        return Err(format!("{}: another operation holds the lock (waited {wait_secs}s)", repo.name));
+        return Err(format!("{}: another operation holds the lock (waited {wait_secs}s)", repo.name).into());
     };
     let _parked = io::park_queue_lock(lock);
 
@@ -555,7 +556,7 @@ fn stabilize_unlocked(
     starting: Vec<Member>,
     batch: Option<&str>,
     stage: &[Member],
-) -> Result<Stabilized, String> {
+) -> Result<Stabilized, pace::CutError> {
     let wait_secs = cfg_parse::<u64>("SPIRA_QUEUE_LOCK_WAIT")?;
     io::unlocked(env_, &repo.name, batch, wait_secs, || stabilize_round(env_, repo, wt, start_sha, starting, batch, stage))?
 }
@@ -568,7 +569,7 @@ fn stabilize_round(
     starting: Vec<Member>,
     batch: Option<&str>,
     stage: &[Member],
-) -> Result<Stabilized, String> {
+) -> Result<Stabilized, pace::CutError> {
     let mut members = merge_round(env_, repo, wt, start_sha, starting)?;
     if let Some(batch) = batch {
         let held: Vec<(String, String)> = members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
@@ -649,8 +650,10 @@ fn stabilize_round(
         let fault = attribute_install(&mut runner, &round_members, &suites);
         install_fault_outcome(repo, &mut ops, &round_members, &fault);
     }
+    let harness_fault = runner.harness_fault();
     runner.close();
     let staged = stage_bg.and_then(|bg| io::round_stage_done(repo, bg));
+    let end = end.map_err(|e| pace::CutError::new(if harness_fault { pace::CutKind::Infra } else { pace::CutKind::Other }, e));
     match end? {
         drive::RoundEnd::Land { members, attribution_secs } => {
             let head = io::head_of(wt)?;
@@ -729,7 +732,7 @@ fn finish_local_round(
     stable: &StableRound,
     batch: &str,
     attested: bool,
-) -> Result<Option<io::Promotion>, String> {
+) -> Result<Option<io::Promotion>, pace::CutError> {
     let head = io::head_of(wt)?;
     let named = io::named_ids(repo, base_sha, &head, &stable.members);
     let bins_ok = io::bins_present(repo, wt, &head) || gate::own::declares_own_testenv(wt);
@@ -813,7 +816,11 @@ fn finish_local_round(
             }
             io::Certified::Failed(e) => {
                 let refused = refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name));
-                return if e.contains(pace::CERTIFY_ENV_MARKER) { Err(e) } else { refused };
+                return match e.kind {
+                    pace::CutKind::Infra => Err(e),
+                    pace::CutKind::StaleImage => refused.map_err(|r| pace::CutError::new(e.kind, r.msg)),
+                    _ => refused,
+                };
             }
         }
     }
@@ -835,7 +842,7 @@ fn finish_local_round(
             if let Some(bg) = stage_test {
                 io::round_stage_test_done(repo, bg);
             }
-            return Err(e);
+            return Err(e.into());
         }
     };
     let mut landed = run.outcome;
@@ -926,13 +933,13 @@ fn stop_on_repeat(env_: &Env, repo: &str, batch: &str, msg: &str) {
     }
 }
 
-fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), String> {
+fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), pace::CutError> {
     let end = cut_new_round_inner(env_, repo, pool, reason);
     io::reap_branches(repo, &format!("spira/batcher-attr/{}-*", repo.name));
     end
 }
 
-fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), String> {
+fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), pace::CutError> {
     let round_start = now();
     io::fetch_base(repo)?;
     let base_sha = io::resolve_base_sha(repo)?;
@@ -999,7 +1006,7 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
     let stage_pool: Vec<Member> = sorted.iter().filter(|m| !merged_ids.contains(&m.id.as_str())).cloned().collect();
     let stable = match stabilize_unlocked(env_, repo, &wt, &base_sha, combined.merged.clone(), batch.as_deref(), &stage_pool) {
         Err(e) => {
-            abandon(&e, "error");
+            abandon(&e.msg, "error");
             return Err(e);
         }
         Ok(Stabilized::Stable(s)) => s,
@@ -1063,14 +1070,14 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
         return Ok(());
     }
     let batch_head = io::head_of(&wt)?;
-    open_round_pr(env_, repo, &stable.members, &batch_head, round_start, stable.attribution_seconds, stable.regreen_seconds)
+    Ok(open_round_pr(env_, repo, &stable.members, &batch_head, round_start, stable.attribution_seconds, stable.regreen_seconds)?)
 }
 
 /// The staged round `promote` cut after the round before it landed. Attested, its tree is the
 /// one the staged pass judged and it lands on that; otherwise it gets its own pass here, as any
 /// opened round does. Either way it ends as the rounds before it did, and may promote nothing
 /// further: one stage is staged per cut.
-fn follow_promoted(env_: &Env, repo: &Repo, pool: &[Member], p: io::Promotion) -> Result<Option<io::Promotion>, String> {
+fn follow_promoted(env_: &Env, repo: &Repo, pool: &[Member], p: io::Promotion) -> Result<Option<io::Promotion>, pace::CutError> {
     let round_start = now();
     let wt = staged_worktree(env_, repo);
     let base_sha = io::resolve_base_sha(repo)?;
@@ -1092,7 +1099,7 @@ fn follow_promoted(env_: &Env, repo: &Repo, pool: &[Member], p: io::Promotion) -
     } else {
         match stabilize_unlocked(env_, repo, &wt, &base_sha, members, Some(&p.batch), &[]) {
             Err(e) => {
-                abandon(&e, "error");
+                abandon(&e.msg, "error");
                 return Err(e);
             }
             Ok(Stabilized::Stable(s)) => s,
@@ -1253,7 +1260,7 @@ fn utc_stamp(at: u64) -> String {
     format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
-fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), String> {
+fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), pace::CutError> {
     let repo = find_repo(env_, name)?;
     let inbox = PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?);
     let stamp = utc_stamp;
@@ -1301,9 +1308,9 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
         Step::Cut => {
             let one = Opts { cmd: "cut".into(), repo: name.to_string(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None, reds: None, record: None, wt: None, base: None, batch: None };
             if paced && reg.land(name) == "queue.local" {
-                paced_cut(&env_, name, &one)
+                paced_cut(&env_, name, &one).map_err(|e| e.msg)
             } else {
-                cut(&one)
+                cut(&one).map_err(|e| e.msg)
             }
         }
     });
@@ -1550,7 +1557,7 @@ fn dispatch() -> ExitCode {
         };
     }
     let r = match o.cmd.as_str() {
-        "cut" => cut(&o),
+        "cut" => cut(&o).map_err(|e| e.msg),
         "rounds" => rounds(&o, Pass::All),
         "rounds-local" => rounds(&o, Pass::Local),
         "rounds-forge" => rounds(&o, Pass::Forge),

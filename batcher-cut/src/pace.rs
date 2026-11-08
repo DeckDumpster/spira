@@ -12,8 +12,6 @@ use spira_config::scoped_stop;
 
 pub const PACE_OWNER: &str = "batcher";
 
-pub const CERTIFY_ENV_MARKER: &str = "queue round certify exited 4";
-pub const INFRA_MARKERS: &[&str] = &["NO RESULT", "OVER-CAP", "cannot check out", "certify rc=75", "certify exited 75", "left no verdicts", CERTIFY_ENV_MARKER];
 pub const STALE_AMI_MARKER: &str = "round AMI is stale";
 pub const BACKOFF_SECS: u64 = 600;
 pub const STOP_AFTER: u32 = 2;
@@ -30,6 +28,47 @@ pub struct State {
     pub orphan: String,
     pub orphan_since: u64,
     pub redriven: String,
+}
+
+/// Why a cut failed, decided where the failure is produced; the pacing reads the kind and never
+/// the message.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum CutKind {
+    /// The harness produced no verdict (VM lost, over cap, certify environment fault).
+    Infra,
+    StaleImage,
+    /// Any other failure: fails the pass, never pauses or backs off.
+    Other,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct CutError {
+    pub kind: CutKind,
+    pub msg: String,
+}
+
+impl CutError {
+    pub fn new(kind: CutKind, msg: impl Into<String>) -> CutError {
+        CutError { kind, msg: msg.into() }
+    }
+}
+
+impl std::fmt::Display for CutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.msg)
+    }
+}
+
+impl From<String> for CutError {
+    fn from(msg: String) -> CutError {
+        CutError::new(CutKind::Other, msg)
+    }
+}
+
+impl From<&str> for CutError {
+    fn from(msg: &str) -> CutError {
+        CutError::new(CutKind::Other, msg)
+    }
 }
 
 #[derive(PartialEq, Debug)]
@@ -59,22 +98,14 @@ pub struct Effects {
 /// The cut's result and the repo's local verdict (`verdict`, `at`) as written during the pass.
 /// A cut that admitted nothing is `Quiet` whatever its wording: only a round that ran and did
 /// not land is red.
-pub fn classify(result: &Result<(), String>, verdict: Option<(&str, u64)>, pass_start: u64) -> Outcome {
-    let text = result.as_ref().err().map(String::as_str).unwrap_or("");
-    if text.contains(STALE_AMI_MARKER) {
-        return Outcome::StaleImage;
+pub fn classify(result: &Result<(), CutError>, verdict: Option<(&str, u64)>, pass_start: u64) -> Outcome {
+    match result.as_ref().err().map(|e| e.kind) {
+        Some(CutKind::StaleImage) => Outcome::StaleImage,
+        Some(CutKind::Infra) => Outcome::Infra,
+        Some(CutKind::Other) => Outcome::Quiet,
+        None if matches!(verdict, Some(("red", at)) if at >= pass_start) => Outcome::Red,
+        None => Outcome::Quiet,
     }
-    if INFRA_MARKERS.iter().any(|m| text.contains(m)) {
-        return Outcome::Infra;
-    }
-    let red_verdict = matches!(verdict, Some(("red", at)) if at >= pass_start);
-    if text.contains("NOT LANDED") || (result.is_ok() && red_verdict) {
-        return Outcome::Red;
-    }
-    if text.contains("OPEN FAILED") {
-        return Outcome::OpenFailed;
-    }
-    Outcome::Quiet
 }
 
 pub fn hold(paused: bool, stopped: bool, st: &State, now: u64) -> Option<Hold> {
@@ -294,8 +325,8 @@ pub fn paced(
     driven: impl FnOnce(&str) -> bool,
     verdict: impl FnOnce() -> Option<(String, u64)>,
     orphans: &Orphans,
-    cut: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
+    cut: impl FnOnce() -> Result<(), CutError>,
+) -> Result<(), CutError> {
     let mut st = files.load();
     if let Some(h) = hold(files.pause_file().exists(), files.stopped(), &st, sm.now) {
         println!("batcher rounds: {}: held ({h:?}) — no cut", sm.repo);
@@ -335,7 +366,7 @@ pub fn paced(
     let res = cut();
     let v = verdict();
     let outcome = classify(&res, v.as_ref().map(|(s, at)| (s.as_str(), *at)), sm.now);
-    let detail = res.as_ref().err().cloned().unwrap_or_default();
+    let detail = res.as_ref().err().map(|e| e.msg.clone()).unwrap_or_default();
     let (next, fx) = advance(&st, &outcome, sm.repo, sm.now, &detail);
     st = next;
     if fx.pause {
@@ -362,7 +393,7 @@ mod tests {
     fn stamp(n: u64) -> String {
         format!("T{n}")
     }
-    fn run(d: &Path, repo: &str, now: u64, open: Option<&str>, verdict: Option<(&str, u64)>, res: Result<(), String>) -> bool {
+    fn run(d: &Path, repo: &str, now: u64, open: Option<&str>, verdict: Option<(&str, u64)>, res: Result<(), CutError>) -> bool {
         let inbox = d.join("inbox.log");
         let sm = Seams { repo, now, inbox: &inbox, stamp: &stamp, redrive_after: WAIT };
         let cut_ran = Cell::new(false);
@@ -408,7 +439,7 @@ mod tests {
     fn a_not_landed_round_pauses_and_pages_and_the_pause_holds_the_next_cut() {
         let t = dir("red");
         let d = t.path();
-        let ran = run(d, "a", 1000, None, None, Err("NOT LANDED: suite x red".into()));
+        let ran = run(d, "a", 1000, None, Some(("red", 1000)), Ok(()));
         assert!(ran);
         assert!(Files::new(d, "a").pause_file().exists());
         assert!(inbox(d).contains("T1000 [watch:rounds] ROUND RED a"));
@@ -444,7 +475,7 @@ mod tests {
         let t = dir("empty");
         let d = t.path();
         for (i, msg) in ["nothing admissible", "pool empty", "queue is empty"].iter().enumerate() {
-            run(d, "a", 1000 + i as u64 * 100, None, None, Err(msg.to_string()));
+            run(d, "a", 1000 + i as u64 * 100, None, None, Err(CutError::from(*msg)));
             run(d, "a", 1050 + i as u64 * 100, None, None, Ok(()));
         }
         assert!(!Files::new(d, "a").pause_file().exists());
@@ -456,7 +487,7 @@ mod tests {
     fn a_round_with_no_verdicts_backs_off_and_the_second_in_a_row_stops_and_pages() {
         let t = dir("infra");
         let d = t.path();
-        let infra = || Err("round left no verdicts".to_string());
+        let infra = || Err(CutError::new(CutKind::Infra, "round left no verdicts"));
         run(d, "a", 1000, None, None, infra());
         assert_eq!(inbox(d), "");
         let ran = run(d, "a", 1000 + BACKOFF_SECS - 1, None, None, infra());
@@ -473,21 +504,22 @@ mod tests {
     fn a_clean_round_resets_the_infra_streak() {
         let t = dir("reset");
         let d = t.path();
-        run(d, "a", 1000, None, None, Err("OVER-CAP".into()));
+        run(d, "a", 1000, None, None, Err(CutError::new(CutKind::Infra, "over cap")));
         run(d, "a", 2000, None, None, Ok(()));
         assert_eq!(Files::new(d, "a").load().infra, 0);
-        run(d, "a", 3000, None, None, Err("OVER-CAP".into()));
+        run(d, "a", 3000, None, None, Err(CutError::new(CutKind::Infra, "over cap")));
         assert!(!Files::new(d, "a").stopped());
     }
 
     #[test]
-    fn a_repeated_open_failed_pages_every_time_and_does_not_pause() {
-        let t = dir("openfail");
-        let d = t.path();
-        run(d, "a", 1000, None, None, Err("OPEN FAILED: x".into()));
-        run(d, "a", 1100, None, None, Err("OPEN FAILED: x".into()));
-        assert_eq!(inbox(d).matches("OPEN FAILED a").count(), 2);
-        assert!(!Files::new(d, "a").pause_file().exists());
+    fn an_open_failed_outcome_pages_every_time_and_does_not_pause() {
+        let (st, mut pages) = (State::default(), 0);
+        for at in [1000, 1100] {
+            let (next, fx) = advance(&st, &Outcome::OpenFailed, "a", at, "x");
+            assert!(!fx.pause && !fx.stop && next == st);
+            pages += fx.pages.iter().filter(|p| p.starts_with("OPEN FAILED a")).count();
+        }
+        assert_eq!(pages, 2);
     }
 
     const WAIT: u64 = 300;
@@ -593,7 +625,7 @@ mod tests {
     fn one_repos_red_does_not_hold_another() {
         let t = dir("repos");
         let d = t.path();
-        run(d, "a", 1000, None, None, Err("NOT LANDED".into()));
+        run(d, "a", 1000, None, Some(("red", 1000)), Ok(()));
         let ran = run(d, "b", 1010, None, None, Ok(()));
         assert!(ran);
         assert!(!Files::new(d, "b").pause_file().exists());
@@ -604,9 +636,10 @@ mod tests {
         let t = dir("stale-ami");
         let d = t.path();
         let stale = "certify rc=75: round AMI is stale: acquire failed: clone refused";
-        assert_eq!(classify(&Err(stale.into()), None, 0), Outcome::StaleImage);
+        let err = || CutError::new(CutKind::StaleImage, stale);
+        assert_eq!(classify(&Err(err()), None, 0), Outcome::StaleImage);
         for at in [1000, 2000, 3000] {
-            run(d, "a", at, None, None, Err(stale.into()));
+            run(d, "a", at, None, None, Err(err()));
         }
         assert!(!Files::new(d, "a").stopped());
         assert_eq!(Files::new(d, "a").load().infra, 0);
@@ -622,7 +655,7 @@ mod tests {
     fn a_certify_that_always_exits_4_gets_two_attempts_and_one_alert() {
         let t = dir("exit4");
         let d = t.path();
-        let env = || Err(format!("refused — cannot certify the round: {CERTIFY_ENV_MARKER}: no VM"));
+        let env = || Err(CutError::new(CutKind::Infra, "refused — cannot certify the round: no VM"));
         let mut attempts = 0;
         for i in 0..10u64 {
             if run(d, "a", 1000 + i * (BACKOFF_SECS + 1), None, None, env()) {
@@ -634,9 +667,20 @@ mod tests {
     }
 
     #[test]
-    fn the_matcher_could_have_found_a_marker() {
-        assert_eq!(classify(&Err("x certify rc=75".into()), None, 0), Outcome::Infra);
-        assert_eq!(classify(&Err("queue round certify exited 75: INCOMPLETE reason=vm-lost".into()), None, 0), Outcome::Infra);
-        assert_eq!(classify(&Err("fine".into()), None, 0), Outcome::Quiet);
+    fn classify_reads_the_kind_and_never_the_words() {
+        let words = "NOT LANDED OPEN FAILED OVER-CAP certify rc=75 round AMI is stale";
+        let of = |k| classify(&Err(CutError::new(k, words)), None, 0);
+        assert_eq!(of(CutKind::Infra), Outcome::Infra);
+        assert_eq!(of(CutKind::StaleImage), Outcome::StaleImage);
+        assert_eq!(of(CutKind::Other), Outcome::Quiet);
+        assert_eq!(classify(&Err(CutError::from(words)), Some(("red", 9)), 0), Outcome::Quiet, "a failed cut is judged by its kind, not the verdict file");
+    }
+
+    #[test]
+    fn classify_an_ok_cut_is_red_only_on_a_red_verdict_written_this_pass() {
+        assert_eq!(classify(&Ok(()), Some(("red", 5)), 5), Outcome::Red);
+        assert_eq!(classify(&Ok(()), Some(("red", 4)), 5), Outcome::Quiet);
+        assert_eq!(classify(&Ok(()), Some(("green", 9)), 5), Outcome::Quiet);
+        assert_eq!(classify(&Ok(()), None, 5), Outcome::Quiet);
     }
 }

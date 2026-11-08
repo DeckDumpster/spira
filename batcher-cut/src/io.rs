@@ -18,6 +18,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration};
 
 use batcher::core::{Member, MergeResult};
+use crate::pace::{CutError, CutKind};
 
 /// Where a repo's landed branch goes — `repo_land`'s `queue`/`queue.forge` alias normalizes
 /// to `Forge`; `queue.local` is `Local`. Carried on `Repo` so a caller never has to re-derive
@@ -1820,7 +1821,7 @@ pub fn round_certify(env: &Env, repo: &Repo, batch: &str, attest: Option<(&str, 
     }
     let run = match round_verb(env, &args, "") {
         Ok(r) => r,
-        Err(e) => return Certified::Failed(e),
+        Err(e) => return Certified::Failed(e.into()),
     };
     if run.code == Some(0) {
         return Certified::Green;
@@ -1829,18 +1830,30 @@ pub fn round_certify(env: &Env, repo: &Repo, batch: &str, attest: Option<(&str, 
         return Certified::Red { output };
     }
     let failed = verb_failed("queue round certify", &run);
-    Certified::Failed(if run.err.contains(crate::pace::STALE_AMI_MARKER) {
-        format!("{}: {failed}", crate::pace::STALE_AMI_MARKER)
-    } else {
-        failed
-    })
+    Certified::Failed(certify_failure(run.code, &run.err, failed))
 }
+
+fn certify_failure(code: Option<i32>, stderr: &str, failed: String) -> CutError {
+    if stderr.contains(crate::pace::STALE_AMI_MARKER) {
+        CutError::new(CutKind::StaleImage, format!("{}: {failed}", crate::pace::STALE_AMI_MARKER))
+    } else if matches!(code, Some(CERTIFY_ENV_RC | CERTIFY_LOST_RC)) {
+        CutError::new(CutKind::Infra, failed)
+    } else {
+        failed.into()
+    }
+}
+
+/// `queue round certify`'s exit code for an environment fault: no verdict on the round.
+pub const CERTIFY_ENV_RC: i32 = 4;
+
+/// `queue round certify`'s exit code when the round VM was lost mid-run: no verdict either.
+pub const CERTIFY_LOST_RC: i32 = 75;
 
 pub enum Certified {
     Green,
     /// The repository's own CI judged the round red; `output` is the file holding its output.
     Red { output: String },
-    Failed(String),
+    Failed(CutError),
 }
 
 /// The members whose changed files the red output names; a lone member owns any red.
@@ -3113,5 +3126,15 @@ mod forge_release_tests {
         let rec = Record { id: "b".into(), state: "OPEN".into(), fields: vec![("batch_id".into(), "b".into()), ("members".into(), "sp-a:t1".into()), ("pr".into(), "12".into())] };
         let ob = open_batch_of(Ok(BatchView { repo: "r".into(), open: Some(rec) })).unwrap().unwrap();
         assert_eq!((ob.pr.as_str(), ob.members), ("12", vec![("sp-a".to_string(), "t1".to_string())]));
+    }
+
+    #[test]
+    fn a_certify_failure_is_typed_by_its_exit_code_and_stale_image_never_by_the_code() {
+        let kind = |code, err: &str| certify_failure(code, err, "queue round certify exited x".into()).kind;
+        assert_eq!(kind(Some(CERTIFY_ENV_RC), "no VM"), CutKind::Infra);
+        assert_eq!(kind(Some(CERTIFY_ENV_RC), "round AMI is stale: clone refused"), CutKind::StaleImage);
+        assert_eq!(kind(Some(CERTIFY_LOST_RC), "INCOMPLETE reason=vm-lost"), CutKind::Infra);
+        assert_eq!(kind(Some(3), "certify exited 4 in words only"), CutKind::Other);
+        assert_eq!(kind(None, ""), CutKind::Other);
     }
 }
