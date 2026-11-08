@@ -1,6 +1,6 @@
-//! `bdq` — the harness's one chokepoint for invoking `bd`, and the three create-time safety
+//! `bdq` — the harness's one chokepoint for invoking `bd`, and the create-time safety
 //! fences every caller goes through on the way there. Ported from `spira/lib.sh`'s `bdq`,
-//! `_bdq_check_repo_label`, `_bdq_check_destructive`, `_bdq_check_schema_delete`, `ghq`,
+//! `_bdq_check_repo_label`, `_bdq_check_schema_delete`, `ghq`,
 //! `bdjson`, `json_only` and `json_count` (sp-w3h16, wave 4.14, wave4-decomposition.md row A
 //! and row B, safety note (c1)).
 //!
@@ -42,12 +42,12 @@ fn last_labels_value(args: &[String]) -> String {
     labels
 }
 
-/// Title/description/labels extracted by `_bdq_check_destructive`'s loop: `--title`/
+/// Title/description/labels extracted by the ask-shape check's loop: `--title`/
 /// `--title=`/a bare positional all set `title` (first non-flag arg after the leading
 /// `create` token is skipped; the next sets `title`, and only if nothing has set it yet);
 /// `-d`/`--description`/`--description=` set `desc`; `--labels`/`-l`/`--labels=` set
 /// `labels` (last one wins, matching bash's unconditional overwrite in both branches).
-fn destructive_fields(args: &[String]) -> (String, String, String) {
+fn ask_fields(args: &[String]) -> (String, String, String) {
     let mut labels = String::new();
     let mut title = String::new();
     let mut desc = String::new();
@@ -94,7 +94,7 @@ fn destructive_fields(args: &[String]) -> (String, String, String) {
 }
 
 /// Title/description extracted by `_bdq_check_schema_delete`'s loop — identical shape to
-/// [`destructive_fields`] but with NO `--labels`/`-l` case at all: a `--labels` token there
+/// [`ask_fields`] but with NO `--labels`/`-l` case at all: a `--labels` token there
 /// falls into the bare `-*)` skip branch instead of consuming the next arg as a value.
 fn schema_delete_fields(args: &[String]) -> (String, String) {
     let mut title = String::new();
@@ -181,55 +181,6 @@ pub fn check_repo_label(args: &[String], registry: &Registry) -> Option<String> 
     Some(format!("spira: repo:{repo_val} is not in the repo map; valid keys: {valid}\n"))
 }
 
-/// The destructive-vocabulary regexes, shared by `check_destructive` (bdq's own
-/// argv-parsing entry point) and incident's `destructive_phrase` (decide.rs — `incident.sh`
-/// never goes through `bdq`'s argv either, so it builds its own "<title> <desc>" text and
-/// calls this directly). One pattern table for both, so a tightened regex here reaches every
-/// caller and a narrower hand-rolled substring check in a second copy cannot quietly accept
-/// text the real fence would have refused (or refuse text the real fence would have let
-/// through — `\bdaemon-reload\b` not matching "mydaemon-reloaded" is the test that pins
-/// this). Case-insensitive; returns the matched phrase in its ORIGINAL case, same as bash's
-/// `grep -io` capture.
-pub fn destructive_match(text: &str) -> Option<String> {
-    const PATTERNS: &[&str] = &[
-        r"world\.sh +stop",
-        r"spira-world +down",
-        r"systemd/install\.sh",
-        r"\bdaemon-reload\b",
-        r"systemctl +(stop|restart) +spira-",
-        r"schema +migrat",
-        r"world +stopped",
-    ];
-    for p in PATTERNS {
-        let re = regex::RegexBuilder::new(p).case_insensitive(true).build().expect("static pattern");
-        if let Some(m) = re.find(text) {
-            return Some(m.as_str().to_string());
-        }
-    }
-    None
-}
-
-/// `_bdq_check_destructive`. `ask_label` is `$SPIRA_ASK_LABEL` (conf.sh always exports it;
-/// the bash original hard-refuses to run at all with it unset — callers here are expected to
-/// have already resolved it the same way, see `src/bin/bdq.rs`).
-pub fn check_destructive(args: &[String], ask_label: &str) -> Option<String> {
-    let (title, desc, labels) = destructive_fields(args);
-    if labels.split(',').any(|l| l == ask_label) {
-        return None;
-    }
-    // Mirrors bash's `[ -z "${text# }" ]`: text is always "<title> <desc>", which strips to
-    // empty iff both are empty — i.e. iff text is exactly one space.
-    let text = format!("{title} {desc}");
-    if text == " " {
-        return None;
-    }
-    destructive_match(&text).map(|phrase| {
-        format!(
-            "spira: bead contains \"{phrase}\" — procedures that halt the harness require needs-ryan.\nAdd needs-ryan to --labels with a question, Default: and Class: destructive in --description, or reword to remove the destructive step.\n", // literal-ok: fixture/fallback
-        )
-    })
-}
-
 /// A bead's state is its lifecycle row's (sp-6oimlm): bdq refuses every verb that writes bd's
 /// status — `close`, `reopen`, `defer`, `undefer`, and `update` with `--status`/`-s`/`--defer` —
 /// so the store can never move on its own and drift from the row. On 2026-10-07 33 beads sat
@@ -279,7 +230,7 @@ pub fn check_ask_label_write(args: &[String], ask_label: &str) -> Option<String>
 /// The ask label belongs on a decision: a question, a stated default and one of the three
 /// operator classes. Anything else is worked by the overseer/ops queue without it.
 pub fn check_ask_shape(args: &[String], ask_label: &str) -> Option<String> {
-    let (title, desc, labels) = destructive_fields(args);
+    let (title, desc, labels) = ask_fields(args);
     if ask_label.is_empty() || !labels.split(',').any(|l| l == ask_label) {
         return None;
     }
@@ -299,7 +250,7 @@ pub fn check_ask_shape(args: &[String], ask_label: &str) -> Option<String> {
     ))
 }
 
-/// The schema-migrations-DELETE regex, shared the same way [`destructive_match`] is.
+/// The schema-migrations-DELETE regex, kept as a pure matcher.
 pub fn schema_delete_match(text: &str) -> bool {
     static PATTERN: &str = r"delete[[:space:]]+from[[:space:]]+schema_migrations";
     let re = regex::RegexBuilder::new(PATTERN).case_insensitive(true).build().expect("static pattern");
@@ -653,45 +604,6 @@ mod tests {
         );
     }
 
-    // -- check_destructive ------------------------------------------------------------------
-
-    #[test]
-    fn destructive_matches_and_is_bypassed_by_ask_label() {
-        assert!(check_destructive(&s(&["create", "needs the world stopped"]), "needs-ryan").is_some()); // literal-ok: fixture/fallback
-        assert_eq!(
-            check_destructive(&s(&["create", "needs the world stopped", "--labels", "needs-ryan"]), "needs-ryan"), // literal-ok: fixture/fallback
-            None
-        );
-    }
-
-    #[test]
-    fn destructive_matched_text_preserves_original_case() {
-        let msg = check_destructive(&s(&["create", "Needs The WORLD STOPPED now"]), "needs-ryan").unwrap(); // literal-ok: fixture/fallback
-        assert!(msg.contains("WORLD STOPPED"), "{msg}");
-    }
-
-    #[test]
-    fn destructive_systemctl_alternation_matches_stop_and_restart() {
-        assert!(check_destructive(&s(&["create", "run systemctl restart spira-gate"]), "needs-ryan").is_some()); // literal-ok: fixture/fallback
-        assert!(check_destructive(&s(&["create", "run systemctl stop spira-gate"]), "needs-ryan").is_some()); // literal-ok: fixture/fallback
-    }
-
-    #[test]
-    fn destructive_ordinary_bead_is_allowed() {
-        assert_eq!(check_destructive(&s(&["create", "ordinary title", "-d", "ordinary body"]), "needs-ryan"), None); // literal-ok: fixture/fallback
-    }
-
-    #[test]
-    fn destructive_daemon_reload_is_word_bounded() {
-        assert!(check_destructive(&s(&["create", "run daemon-reload now"]), "needs-ryan").is_some()); // literal-ok: fixture/fallback
-        assert_eq!(check_destructive(&s(&["create", "mydaemon-reloaded"]), "needs-ryan"), None); // literal-ok: fixture/fallback
-    }
-
-    #[test]
-    fn destructive_description_flag_is_read() {
-        assert!(check_destructive(&s(&["create", "clean title", "-d", "world.sh stop please"]), "needs-ryan").is_some()); // literal-ok: fixture/fallback
-    }
-
     // -- check_schema_delete -----------------------------------------------------------------
 
     #[test]
@@ -717,6 +629,7 @@ mod tests {
         assert_eq!(check_ask_shape(&s(&["create", "SLOW QUERY", "-l", "overseer"]), "needs-ryan"), None); // literal-ok: fixture/fallback
     }
 
+    // covers: UC-safety-fences-13
     #[test]
     fn schema_delete_is_detected_regardless_of_case_or_spacing() {
         assert!(check_schema_delete(&s(&["create", "DELETE   FROM schema_migrations"])).is_some());

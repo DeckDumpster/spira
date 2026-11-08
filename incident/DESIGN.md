@@ -80,10 +80,10 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
 ## Kept and ported faithfully
 
 - **The `bd create` guards `bdq` applies underneath every filing** —
-  `_bdq_check_repo_label`, `_bdq_check_destructive`, `_bdq_check_schema_delete` — are ported
-  to `decide::invalid_repo_label`/`destructive_phrase`/`contains_schema_delete` and enforced
+  `_bdq_check_repo_label`, `_bdq_check_schema_delete` — are ported
+  to `decide::invalid_repo_label`/`contains_schema_delete` and enforced
   in `run::file_new` before calling `Bd::create`. `real.rs` shells to `bd` directly (not
-  through `bdq`/lib.sh), so without this port these three safety fences would silently stop
+  through `bdq`/lib.sh), so without this port these safety fences would silently stop
   applying to every incident filing — a real regression, not a simplification. They are
   small, self-contained, and change rarely; lib.sh's own rewrite wave can delete these three
   functions here once `bdq`'s fences live in a shared crate this one can depend on instead.
@@ -160,8 +160,7 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   directly instead of through `bdq` — see "Kept and ported faithfully" above. Rejected the
   alternative (skip them, since `incident.sh` "never enforced them itself, only ever called
   bdq") as a real regression: `bdq` applies them to every `bd create` incident.sh has ever
-  made, so a Rust port that calls `bd` directly and skips them would let a destructive-phrase
-  title or an invalid `repo:` label through where the bash never did.
+  made, so a Rust port that calls `bd` directly and skips them would let an invalid `repo:` label through where the bash never did.
 - **The age-in-hours clause in the Fenrir ask now actually fires** (see "Retired" above) —
   reads `created_at`, the real bd field, instead of the bash's dead `"created"` grep.
 - **Delivered at P1** (bead priority).

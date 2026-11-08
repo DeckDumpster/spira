@@ -119,7 +119,7 @@ Side effects (unchanged from the bash):
 
 - **The bash calls `bd create` directly, not `bdq`** — Rust preserves that literally rather
   than "fixing" it by routing through `bdq`'s extra fences (repo-label validation, the
-  destructive-phrase and schema-delete refusals). Changing that posture is not this bead's
+  schema-delete refusal). Changing that posture is not this bead's
   call; noted here so a future reader does not mistake it for an oversight.
 - **Invalid-closed dedup is by an exact bead-id set, not the bash's substring-containment
   check** (`case "$acc" in *"$_bid"*)`). The two agree on every realistic input — a bead id is

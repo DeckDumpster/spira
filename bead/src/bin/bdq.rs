@@ -4,8 +4,8 @@
 //! `bead/DESIGN.md` "bdq" for the exec-boundary env threading those shims carry, and
 //! `bead::bdq` for the pure decision logic this binary drives.
 //!
-//! Three internal subcommands exist ONLY so the bash shims for `_bdq_check_repo_label`/
-//! `_bdq_check_destructive`/`_bdq_check_schema_delete`/`json_only`/`json_count`/`ghq` — each
+//! Internal subcommands exist ONLY so the bash shims for `_bdq_check_repo_label`/
+//! `json_only`/`json_count`/`ghq` — each
 //! called directly by name in test suites and other scripts, not only from inside `bdq` —
 //! have something to exec into. The `__` prefix cannot collide with a real `bd` verb.
 
@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use bead::claimdesc;
 use bead::bdq::{
-    check_destructive, check_repo_label, check_schema_delete, id_bearing_args, is_create, json_count, json_only,
+    check_repo_label, id_bearing_args, is_create, json_count, json_only,
     should_retry, retryable, backoff_ms, is_write, WRITER_LOCK_BUSY,
 };
 use spira_config::repos::Registry;
@@ -86,14 +86,14 @@ fn build_registry() -> Registry {
 }
 
 // =========================================================================================
-// __fence <repo-label|destructive|schema-delete> <bdq-create-argv...>
+// __fence <repo-label> <bdq-create-argv...>
 // =========================================================================================
 
 fn cmd_fence(args: &[String]) -> i32 {
     let (kind, rest) = match args.split_first() {
         Some((k, r)) => (k.as_str(), r.to_vec()),
         None => {
-            eprintln!("bdq: __fence requires a check name (repo-label|destructive|schema-delete)");
+            eprintln!("bdq: __fence requires a check name (repo-label)");
             return 2;
         }
     };
@@ -108,26 +108,6 @@ fn cmd_fence(args: &[String]) -> i32 {
                 None => 0,
             }
         }
-        "destructive" => match spira_config::process::cfg("SPIRA_ASK_LABEL") {
-            Ok(ask_label) => match check_destructive(&rest, &ask_label) {
-                Some(msg) => {
-                    eprint!("{msg}");
-                    1
-                }
-                None => 0,
-            },
-            Err(e) => {
-                eprintln!("bdq: {e}");
-                1
-            }
-        },
-        "schema-delete" => match check_schema_delete(&rest) {
-            Some(msg) => {
-                eprint!("{msg}");
-                1
-            }
-            None => 0,
-        },
         other => {
             eprintln!("bdq: unknown fence '{other}'");
             2
@@ -285,7 +265,7 @@ fn cmd_bdq(args: &[String]) -> i32 {
         }
     };
     let args = &body.args[..];
-    // The create-time fences (repo label, destructive wording, ask shape, schema delete), the
+    // The create-time fences (repo label, ask shape, schema delete), the
     // ask-label write fence and the state-verb fence, in that order, short-circuiting on the
     // first refusal as the bash `_bdq_check_x "$@" || return 1` chain did. `bead::guard` is the
     // one implementation, shared with the content door. The ask fence reads a body file's text

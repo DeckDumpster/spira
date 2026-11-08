@@ -133,7 +133,6 @@ test-czar-pass.sh	T1	20.0
 test-dependents.sh	T1	18.0
 test-deploy.sh	T1	17.5
 test-destroy-branch.sh	T2	18.5
-test-destructive-bead.sh	T1	8.0
 test-forge-batch-ci-status.sh	T1	2.0
 test-forge-check-status.sh	T1	8.0
 test-forge-orphan-runs.sh	T1	2.0

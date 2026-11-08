@@ -36,7 +36,7 @@ pub enum FileOutcome {
     /// The database could not be reached; the caller must keep the spool entry.
     Unreachable,
     /// The database was reachable but the `bd create` guards refused the filing outright
-    /// (a bad repo: label or destructive/schema-delete text) — also kept spooled, since
+    /// (a schema-delete text) — also kept spooled, since
     /// retrying an unreachable-looking failure is safer than silently dropping the event,
     /// and the guard message is on the log for a human to fix the caller.
     Refused,
@@ -284,10 +284,6 @@ fn file_new(
         log.push(format!("spira: repo:{bad_repo} is not in the repo map"));
         // Same fallback the bash's set-state guard takes: file under the home repo rather
         // than refuse the whole event.
-    }
-    if let Some(phrase) = decide::destructive_phrase(title, "", labels, cfg.ask_label) {
-        log.push(format!("create FAILED for {reference} — contains \"{phrase}\", needs {} — stays spooled", cfg.ask_label));
-        return FileOutcome::Refused;
     }
     if decide::contains_schema_delete(title, "") {
         log.push(format!("create FAILED for {reference} — contains a schema_migrations DELETE — stays spooled"));
@@ -970,18 +966,6 @@ mod tests {
             _ => panic!(),
         };
         assert!(bd.label_list("db", &id).contains(&"needs-repo-triage".to_string()));
-    }
-
-    #[test]
-    fn destructive_title_is_refused_without_needs_ryan() {
-        let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
-        let clock = FixedClock(1_000_000);
-        let known = vec!["spira".to_string()];
-        let mut log = vec![];
-        let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:danger", "needs the world stopped", b"p", "spira,incident", &mut log);
-        assert!(matches!(out, FileOutcome::Refused));
-        assert_eq!(bd.created.borrow().len(), 0);
     }
 
     #[test]

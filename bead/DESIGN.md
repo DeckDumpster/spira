@@ -62,8 +62,7 @@ rewrite-wave group 4 and group 5's own later beads; Ryan's standing instruction 
 Rust cutover was "leave lib.sh alone"):**
 - **Every `bd`-touching call goes through `bdq`** (the *bash function* in `lib.sh`), not
   through `bd` directly: `bash -c '. "$home/lib.sh"; bdq "$@"' bdq <argv...>`. `bdq` carries
-  three create-time safety fences (`_bdq_check_repo_label`, `_bdq_check_destructive`,
-  `_bdq_check_schema_delete`), a czar-fence check, a connection retry loop and
+  create-time safety fences (`_bdq_check_repo_label`, `_bdq_check_schema_delete`), a czar-fence check, a connection retry loop and
   `BEADS_NO_AUTO_IMPORT`/`SPIRA_DB` guards — none of which are `bead.sh`'s own logic, all of
   which have other live callers throughout the bash harness. Reimplementing them here would
   duplicate safety-critical code that this bead has no mandate to audit; bridging to the
@@ -168,8 +167,8 @@ this process's own environment happened to inherit.
 
 ## bdq (sp-w3h16, wave 4.14)
 
-`spira/lib.sh`'s `bdq` — the harness's one chokepoint for invoking `bd` — plus its three
-create-time safety fences (`_bdq_check_repo_label`, `_bdq_check_destructive`,
+`spira/lib.sh`'s `bdq` — the harness's one chokepoint for invoking `bd` — plus its
+create-time safety fences (`_bdq_check_repo_label`,
 `_bdq_check_schema_delete`) and the small family bundled with it in the decomposition
 (`bdjson`, `json_only`, `json_count`, `ghq`) are now `bead::bdq` (pure decision logic,
 `bead/src/bdq.rs`) plus a sibling binary, `bdq` (`bead/src/bin/bdq.rs`). `log`/`die` stay in
@@ -221,9 +220,7 @@ scope (czar-fence.sh guards the czar's own queue mutations, a different family e
 bdsim is the fixture engine for several `cockpit.sh` suites, group 5).
 
 **Safety (c1), carried over fence for fence:** the repo-label refusal names every valid key in
-its error (not just "refused"); the destructive-vocabulary refusal still bypasses only on
-`needs-ryan` (or whatever `SPIRA_ASK_LABEL` is) already being present, and still refuses with
-the ORIGINAL-case matched phrase; the schema-delete refusal is still unconditional — it does
+its error (not just "refused"); the keyword vocabulary refusal on bead text is deleted (sp-yht0pn) — a bead is never refused for its words; the schema-delete refusal is still unconditional — it does
 not consult `needs-ryan` at all, on purpose (sp-1khst, approved three times while wrong).
 `bdq`'s own fence dispatch still short-circuits: the first refusal returns before the next
 fence runs, matching the bash's `_bdq_check_x "$@" || return 1` chain.
@@ -239,7 +236,7 @@ superseded rather than land.
 sp-pwmlj, wave 4.15, which depends on this one): `dwarf/src/bd.rs`'s own native
 reimplementation (no create-time fences — the dwarf never creates), `cockpit-collect/src/
 io.rs`'s own `bdq`/`bdjson`/`json_only` (read-only, same reason), `incident/src/decide.rs`'s
-pure ports of the three fences (`invalid_repo_label`/`destructive_phrase`/
+pure ports of the fences (`invalid_repo_label`/
 `contains_schema_delete` — close in spirit to this bead's own, but a separate, pre-existing
 copy; collapsing it onto `bead::bdq` is the whole point of 4.15, not this bead), and
 `heimdall/src/seam.rs`'s `_heimdall_bdq() { bdq "$@"; }`, which already calls the bash `bdq` and so

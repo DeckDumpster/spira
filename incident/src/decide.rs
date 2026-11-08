@@ -254,14 +254,14 @@ pub fn unit_from_cgroup_line(line: &str) -> String {
 /// goes through lib.sh's `bdq`, which applies this fence (plus the two below) underneath.
 /// This crate's `real.rs` shells to `bd` directly, so calling `bd create` without
 /// reimplementing these three checks here would be a real regression, not a
-/// simplification: an invalid `repo:` label, a harness-halting phrase, or a
+/// simplification: an invalid `repo:` label, or a
 /// schema_migrations DELETE that `bdq` refuses today would go through silently.
 ///
 /// COLLAPSED ONTO `bead::bdq` (sp-pwmlj, wave 4.15): the matching rules themselves —
-/// which repo values are allowed, which phrases count as destructive, what counts as a
+/// which repo values are allowed, what counts as a
 /// schema-migrations DELETE — now live in exactly one place (`bead::bdq`), shared with
 /// `bdq`'s own argv-parsing fences, rather than in a second hand-rolled copy here that could
-/// (and did: see `destructive_phrase` below) drift from it.
+/// drift from it.
 pub fn invalid_repo_label(labels: &str, home_repo: &str, known_repos: &[String]) -> Option<String> {
     let repo_val = labels.split(',').find_map(|l| l.strip_prefix("repo:"))?;
     if bead::bdq::repo_label_allowed(repo_val, home_repo, known_repos) {
@@ -269,33 +269,6 @@ pub fn invalid_repo_label(labels: &str, home_repo: &str, known_repos: &[String])
     } else {
         Some(repo_val.to_string())
     }
-}
-
-/// `_bdq_check_destructive`: title+description containing one of a fixed set of
-/// harness-halting phrases is refused unless `needs-ryan` (or whatever `ask_label` is
-/// configured to) is already on the bead — the label that records the danger was
-/// acknowledged at filing time (sp-6hdi). Case-insensitive. Returns the matched phrase.
-///
-/// Matching delegated to `bead::bdq::destructive_match` (sp-pwmlj): this function's own
-/// plain-substring patterns disagreed with `bdq`'s real (regex) fence in two ways, both
-/// fixed by sharing the one pattern table instead of a second copy of it — a bug each time,
-/// not a feature, since `bdq`'s suites are the parity contract this crate's own doc comment
-/// above claims to keep:
-///   - `\bdaemon-reload\b` is word-bounded in the real fence; the plain `contains("daemon-
-///     reload")` this function used to run was not, so "mydaemon-reloaded" (an ordinary
-///     word, not the destructive op) would have been refused here and allowed by `bdq`.
-///   - the real fence's patterns tolerate any run of whitespace (`world\.sh +stop`); the
-///     plain substring checks this function used to run required exactly one space, so
-///     "world.sh  stop" (two spaces) would have been missed here and caught by `bdq`.
-pub fn destructive_phrase(title: &str, description: &str, labels: &str, ask_label: &str) -> Option<String> {
-    if labels.split(',').any(|l| l == ask_label) {
-        return None;
-    }
-    let text = format!("{title} {description}");
-    if text == " " {
-        return None;
-    }
-    bead::bdq::destructive_match(&text)
 }
 
 /// `_bdq_check_schema_delete`: refused regardless of `needs-ryan` — approved three times
@@ -590,33 +563,6 @@ mod tests {
     fn invalid_repo_label_empty_value_is_allowed_same_as_bdq() {
         let known = vec!["spira".to_string()];
         assert_eq!(invalid_repo_label("plan,repo:", "spira", &known), None);
-    }
-
-    #[test]
-    fn destructive_phrase_matches_and_is_bypassed_by_ask_label() {
-        // literal-ok: test fixture values (the ask-label argument under test), not a
-        // config default read at runtime.
-        assert_eq!(destructive_phrase("needs the world stopped", "", "plan", "needs-ryan"), Some("world stopped".to_string())); // literal-ok
-        assert_eq!(destructive_phrase("needs the world stopped", "", "plan,needs-ryan", "needs-ryan"), None); // literal-ok
-        assert_eq!(
-            destructive_phrase("run systemctl restart spira-gate", "", "plan", "needs-ryan"), // literal-ok
-            Some("systemctl restart spira-".to_string())
-        );
-        assert_eq!(destructive_phrase("ordinary title", "ordinary body", "plan", "needs-ryan"), None); // literal-ok
-    }
-
-    // Pins the sp-pwmlj collapse: before it, this function's own plain-substring patterns
-    // disagreed with `bdq`'s real (regex) fence on both of these — see the doc comment.
-    #[test]
-    fn destructive_phrase_agrees_with_bdq_on_word_boundary_and_whitespace() {
-        // word-bounded: an ordinary word containing the substring is not a match.
-        assert_eq!(destructive_phrase("mydaemon-reloaded", "", "plan", "needs-ryan"), None); // literal-ok
-        assert!(destructive_phrase("run daemon-reload now", "", "plan", "needs-ryan").is_some()); // literal-ok
-        // whitespace-flexible: two spaces must still match, same as the real fence.
-        assert_eq!(
-            destructive_phrase("world.sh  stop", "", "plan", "needs-ryan"), // literal-ok
-            Some("world.sh  stop".to_string())
-        );
     }
 
     #[test]

@@ -105,7 +105,7 @@ No new persisted schema — this crate reads and writes the same stamp files (`w
   their own comment, "the only permitted callers of `git worktree remove` and `git branch
   -D` in the harness" — a second, Rust implementation of that chokepoint is exactly the kind
   of duplicate-writer hazard the chokepoint exists to prevent, and `bdq`'s own fencing
-  (repo-label validation, the destructive-vocabulary/schema-delete refusals, a dead-Dolt-
+  (repo-label validation, the schema-delete refusal, a dead-Dolt-
   connection retry) would silently not apply to a direct `bd` call. What DID move to Rust:
   argument parsing and every usage/exit-2 case (the 2026-09-13 positional-argument scar),
   the marker write, the hold-vs-dwarf distinction, systemd-unit-or-pid resolution, and the
