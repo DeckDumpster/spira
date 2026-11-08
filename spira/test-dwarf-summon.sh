@@ -79,7 +79,7 @@ while [ $# -gt 0 ] && [[ "$1" == --* ]]; do shift; done
 "$@"
 CALL
 chmod +x "$BIN/fake-systemd-run"
-tl_config SPIRA_CALL="$BIN/fake-systemd-run"
+export SPIRA_CALL="$BIN/fake-systemd-run"
 
 seed() {
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
