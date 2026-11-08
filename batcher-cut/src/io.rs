@@ -2443,6 +2443,57 @@ pub fn try_lock(env: &Env, repo: &str) -> Result<Option<Lock>, String> {
     lock_at(&env.queue_dir.join(repo).join("lock"), "batcher")
 }
 
+thread_local! {
+    static HELD_QUEUE_LOCK: std::cell::RefCell<Option<Lock>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Parks the queue lock a cut took where `unlocked` can release it around a long leg; dropping
+/// the guard releases whatever is still parked.
+pub struct Parked;
+
+pub fn park_queue_lock(lock: Lock) -> Parked {
+    HELD_QUEUE_LOCK.with(|s| *s.borrow_mut() = Some(lock));
+    Parked
+}
+
+impl Drop for Parked {
+    fn drop(&mut self) {
+        HELD_QUEUE_LOCK.with(|s| s.borrow_mut().take());
+    }
+}
+
+/// Runs a long leg (a suite run) without the queue lock, so an operator verb is not refused for
+/// its length, and marks `batch` driven by holding its certify lock meanwhile. The queue lock
+/// is taken again before returning: state transitions stay under it.
+pub fn unlocked<T>(env: &Env, repo: &str, batch: Option<&str>, wait_secs: u64, leg: impl FnOnce() -> T) -> Result<T, String> {
+    let Some(batch) = batch else { return Ok(leg()) };
+    let held = HELD_QUEUE_LOCK.with(|s| s.borrow_mut().take()).is_some();
+    let driving = if held {
+        let marker = drive_marker(env, repo, batch);
+        if marker.is_none() {
+            return Err(format!("{repo}: a leg may not run unlocked without marking {batch} driven"));
+        }
+        marker
+    } else {
+        None
+    };
+    let out = leg();
+    drop(driving);
+    if held {
+        let Some(l) = wait_lock(env, repo, wait_secs)? else {
+            return Err(format!("{repo}: another operation took the queue lock during the leg (waited {wait_secs}s to take it back)"));
+        };
+        HELD_QUEUE_LOCK.with(|s| *s.borrow_mut() = Some(l));
+    }
+    Ok(out)
+}
+
+fn drive_marker(env: &Env, repo: &str, batch: &str) -> Option<fs::File> {
+    let path = env.queue_dir.join(repo).join(format!("certify-{batch}.lock"));
+    let f = fs::OpenOptions::new().create(true).write(true).truncate(false).open(path).ok()?;
+    (unsafe { flock(f.as_raw_fd(), LOCK_EX | LOCK_NB) } == 0).then_some(f)
+}
+
 /// Whether a `round certify` of `batch` is running, asked of the lock it holds for its whole run.
 pub fn certify_driven(env: &Env, repo: &str, batch: &str) -> bool {
     let path = env.queue_dir.join(repo).join(format!("certify-{batch}.lock"));
@@ -2816,6 +2867,22 @@ mod wait_lock_tests {
         assert!(beat.is_file(), "the batcher's queue-lock holder must beat while it lands");
         drop(held);
         assert!(!beat.exists(), "the beat goes with the lock");
+    }
+
+    #[test]
+    fn a_leg_runs_without_the_queue_lock_and_the_round_reads_as_driven() {
+        let d = testkit::TempDir::new("batcher-cut-unlocked");
+        let e = super::lifecycle_tests_env(&d);
+        let _parked = park_queue_lock(try_lock(&e, "r").unwrap().unwrap());
+        let mut seen = None;
+        unlocked(&e, "r", Some("b1"), 1, || {
+            let free = try_lock(&e, "r").unwrap();
+            seen = Some((free.is_some(), certify_driven(&e, "r", "b1")));
+        })
+        .unwrap();
+        assert_eq!(seen, Some((true, true)), "during the leg the queue lock is free and the round is driven");
+        assert!(try_lock(&e, "r").unwrap().is_none(), "the queue lock is held again after the leg");
+        assert!(!certify_driven(&e, "r", "b1"), "a finished leg drives nothing");
     }
 
     #[test]

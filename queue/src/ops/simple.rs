@@ -334,11 +334,8 @@ pub fn churn(w: &World, since: Option<&str>, until: Option<&str>, repo: Option<&
     OK
 }
 
-/// The batcher's cut (queue.sh _batch_cut). Used to run batch.sh's own pre-cut sweep first
-/// (orphan-run reaping, closed-red-live mail, DIRTY-PR abandon, stale-certification
-/// reconciliation, the queue-stuck alert) — dead weight since batcher-cut (sp-jzfog) took
-/// over the round itself and no repo runs in `land=queue` mode (sp-uwhx0: batch.sh deleted,
-/// its sweep retired with it, not ported — see queue/DESIGN.md "batch.sh retirement").
+/// The operator's cut (`flush`). A step never cuts: the batcher tasks own cutting, and a
+/// second cutter beside them holds the repo's rounds for its whole run.
 fn batch_cut(w: &World, c: &Ctx, wait_zero: bool) -> i32 {
     if c.s.batcher_off {
         w.out(format!(
@@ -515,7 +512,6 @@ fn step_locked(w: &World, c: &Ctx) -> i32 {
     // The verdict runs in process (DESIGN-verdict.md); its status is not the step's, as
     // verdict.sh's was not.
     let _ = super::verdict::pass(w, c);
-    batch_cut(w, c, false);
     if c.r.mode == LandMode::QueueLocal {
         let merged = Merged(w.io);
         let w2 = World { io: &merged, ..*w };

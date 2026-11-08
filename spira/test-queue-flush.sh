@@ -86,15 +86,15 @@ want   "names the repo"        "no such repo" "$out"
 nowant "batcher not called"    "batcher-called" "$out"
 
 echo
-echo "step settles the open batch, then cuts the next — verdict before the batcher:"
+echo "step settles the open batch and never cuts — the batcher tasks own the cut:"
 printf 'fixq | %s | queue | main | | |\n' "$TMP/repo" > "$RMAP"
 tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$TMP/run/queue"
 seed_forge_batch fixq sp-a --pr 1 >/dev/null || bad "step: the open batch is seeded" "no batch opened"
 : > "$ORDER"
 out="$(run step fixq)"
 want "verdict settled the open batch (pending)" "verdict fixq: PR 1 pending" "$out"
-want "batcher called for the repo" "batcher-called verb=cut repo=fixq" "$out"
-is "verdict runs before the batcher" "verdict-called batcher-called" "$(tr '\n' ' ' < "$ORDER" | sed 's/ $//')"
+nowant "step does not call the batcher" "batcher-called" "$out"
+is "the verdict ran and nothing after it" "verdict-called" "$(tr '\n' ' ' < "$ORDER" | sed 's/ $//')"
 
 # RETIRED with landing.sh: the landing pass's queue step is landing-pass's Tools::queue_step
 # (`queue step <repo>`), pinned by cargo test -p landing-pass
