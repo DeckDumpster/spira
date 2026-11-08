@@ -297,17 +297,6 @@ pub fn close_on(c: &LcClient, id: &str, reason: &str, actor: &str, extra: &[&str
     }
 }
 
-/// [`close_with`], typed.
-pub fn close_typed_with(bin: &str, id: &str, reason: &str, actor: &str, superseded_by: Option<&str>) -> Result<(), LcError> {
-    let by: Vec<&str> = superseded_by.filter(|b| !b.is_empty()).map(|b| vec!["--superseded-by", b]).unwrap_or_default();
-    close_on(&client(bin).map_err(LcError::Fault)?, id, reason, actor, &by)
-}
-
-/// [`close_typed_with`] through the configured `spira-lc`.
-pub fn close_typed(id: &str, reason: &str, actor: &str, superseded_by: Option<&str>) -> Result<(), LcError> {
-    close_typed_with(&lc_bin().map_err(LcError::Fault)?, id, reason, actor, superseded_by)
-}
-
 /// [`close_with`] through the configured `spira-lc`.
 pub fn close(id: &str, reason: &str, actor: &str, superseded_by: Option<&str>) -> Result<(), String> {
     close_with(&lc_bin()?, id, reason, actor, superseded_by)
