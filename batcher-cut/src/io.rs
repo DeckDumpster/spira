@@ -1718,6 +1718,42 @@ pub fn round_eject(env: &Env, repo: &Repo, batch: &str, id: &str, suites: &[Stri
     round_eject_with(env, repo, batch, id, &reason, &csv)
 }
 
+/// `queue round eject` for a member whose code lacks what `behind` adds: it leaves the round
+/// holding the compiler error as its reason, and a blocks edge keeps the next cut from admitting
+/// it before they have landed.
+pub fn round_sequence(env: &Env, repo: &Repo, batch: &str, id: &str, behind: &[String], line: &str) -> Result<(), String> {
+    let reason = format!(
+        "Held behind {} by the merge queue's local attribution (pre-PR): the round's workspace failed to build because spira/{id} uses what {} adds. It is admitted again once {} landed. Compiler: {line}",
+        behind.join(", "),
+        behind.join(", "),
+        if behind.len() == 1 { "it has" } else { "they have" }
+    );
+    round_eject_with(env, repo, batch, id, &reason, "workspace-build")?;
+    sequence_edges(env, id, behind)
+}
+
+/// The blocks edges that record a sequence: `id` depends on each of `behind`.
+pub fn sequence_edges(env: &Env, id: &str, behind: &[String]) -> Result<(), String> {
+    for dep in behind {
+        // batch-job: bead.sh dep add is a bead-store write that takes as long as the store does
+        // FORK-EDGE: bead.sh dep add refuses the edges that would deadlock (an epic, an incident); no library entry does
+        let mut cmd = Command::new("bash");
+        cmd.arg(env.home.join("bead.sh")).args(["dep", "add", id, dep]).env("SPIRA_HOME", &env.home);
+        run(&mut cmd, "bead.sh dep add")?;
+    }
+    Ok(())
+}
+
+/// The lines `tip` adds over `base_sha`, as `git diff` prints them.
+pub fn added_lines(repo: &Repo, base_sha: &str, tip: &str) -> String {
+    run(Command::new("git").arg("-C").arg(&repo.path).args(["diff", "-U0", &format!("{base_sha}...{tip}")]), "git diff added lines")
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+        .map(|l| format!("{l}\n"))
+        .collect()
+}
+
 /// Members of an open round whose lifecycle row carries a red gate verdict at the very tip the
 /// round holds, as `(id, the row's mark)`: the gate already judged this tree red, so the round's
 /// corpus need not rediscover it.

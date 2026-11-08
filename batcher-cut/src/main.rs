@@ -283,6 +283,7 @@ struct LiveOps<'a> {
     evidence: String,
     round: String,
     changed: BTreeMap<String, Vec<String>>,
+    tips: BTreeMap<String, String>,
     first_red: Option<u64>,
     key: String,
     batch: Option<&'a str>,
@@ -358,6 +359,32 @@ impl drive::RoundOps for LiveOps<'_> {
 
     fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) {
         self.eject_with(member, &[filter.to_string()], &[(filter.to_string(), line.to_string())], owner);
+    }
+
+    fn diffs(&self, members: &[String]) -> Vec<batcher::buildattr::MemberDiff> {
+        let tips: BTreeMap<&str, &str> = self.tips.iter().map(|(i, t)| (i.as_str(), t.as_str())).collect();
+        members
+            .iter()
+            .map(|id| batcher::buildattr::MemberDiff {
+                id: id.clone(),
+                paths: self.changed.get(id).cloned().unwrap_or_default(),
+                added: tips.get(id.as_str()).map(|t| io::added_lines(self.repo, &self.start_sha, t)).unwrap_or_default(),
+            })
+            .collect()
+    }
+
+    fn sequence(&mut self, member: &Member, behind: &[String], line: &str) {
+        let outcome = match self.batch {
+            Some(batch) => io::round_sequence(self.env, self.repo, batch, &member.id, behind, line),
+            None => {
+                self.eject_with(member, &[drive::WORKSPACE_BUILD.to_string()], &[(drive::WORKSPACE_BUILD.to_string(), line.to_string())], false);
+                io::sequence_edges(self.env, &member.id, behind)
+            }
+        };
+        match outcome {
+            Ok(()) => println!("batcher {}: {} held behind {} — {line}", self.repo.name, member.id, behind.join(",")),
+            Err(e) => println!("batcher {}: could not hold {} behind {}: {e}", self.repo.name, member.id, behind.join(",")),
+        }
     }
 
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
@@ -598,6 +625,7 @@ fn stabilize_round(
         evidence: runner.results.display().to_string(),
         round,
         changed,
+        tips: members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(),
         first_red: None,
         key: batcher::core::round_key(&members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>()),
         batch,
@@ -1363,6 +1391,7 @@ fn attribute(o: &Opts) -> Result<(), String> {
         evidence: runner.results.display().to_string(),
         round,
         changed,
+        tips: members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(),
         first_red: None,
         key: batcher::core::round_key(&given),
         batch: o.batch.as_deref(),
