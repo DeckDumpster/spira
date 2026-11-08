@@ -486,6 +486,7 @@ pub const CONFIG_KEYS: &[&str] = &[
     "SPIRA_ROUND_CERTIFY_WALL_SECS",
     "SPIRA_ROUND_AMI_WAIT_SECS",
     "SPIRA_QUEUE_ROUNDS_MAX",
+    "SPIRA_QUEUE_TEXT_ONLY",
     "SPIRA_PUBLISH_RED_PRIORITY",
     "SPIRA_PUBLISH_RED_ESCALATE_AFTER",
     "SPIRA_PUBLISH_SETTLE_DEFER_MAX",
@@ -572,6 +573,7 @@ impl Lib for RealLib {
         let round_ami_wait_secs =
             spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_AMI_WAIT_SECS")?;
         let rounds_max = spira_config::process::cfg_parse::<usize>("SPIRA_QUEUE_ROUNDS_MAX")?;
+        let text_only = crate::text_only::parse_allow(&spira_config::process::cfg("SPIRA_QUEUE_TEXT_ONLY")?);
         let publish_red_priority = spira_config::process::cfg("SPIRA_PUBLISH_RED_PRIORITY")?;
         let publish_red_escalate_after =
             spira_config::process::cfg_parse::<usize>("SPIRA_PUBLISH_RED_ESCALATE_AFTER")?;
@@ -619,6 +621,7 @@ impl Lib for RealLib {
             round_ami_wait_secs,
             round_spill: spira_config::process::cfg("SPIRA_ROUND_VM_SPILL").unwrap_or_default(),
             rounds_max,
+            text_only,
             publish_red_priority,
             publish_red_escalate_after,
             publish_defer_max,

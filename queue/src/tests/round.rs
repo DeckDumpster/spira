@@ -6693,3 +6693,30 @@ fn a_refused_open_prints_one_typed_record_per_member_it_did_not_admit() {
     assert!(o.lines().any(|l| l.starts_with("refused=sp-c kind=round-conflict why=sp-c: conflicts with the round") && l.contains("paths: child.rs")), "{o}");
     assert!(!o.lines().any(|l| l.starts_with("refused=sp-a")), "the admissible member is not refused: {o}");
 }
+
+#[test]
+fn open_skips_a_text_only_member_and_says_it_lands_by_lint() {
+    let t = round_world();
+    t.git.stat("local/main", "ta", &[("law/1-general/x.toml", 2, 0)]);
+    t.git.ancestor("b0", "ta");
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "{}", t.err());
+    assert!(t.err().contains("sp-a: text-only: lands by lint"), "{}", t.err());
+    assert!(t.out().contains("refused=sp-a kind=text-only"), "{}", t.out());
+    assert!(!t.err().contains("sp-b:") && !t.qfile("round").exists());
+}
+
+#[test]
+fn open_admits_a_member_that_touches_a_source_file() {
+    let t = round_world();
+    t.git.stat("local/main", "ta", &[("law/x.toml", 2, 0), ("queue/src/lib.rs", 1, 0)]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert!(!t.err().contains("text-only"), "{}", t.err());
+}
+
+#[test]
+fn open_admits_a_text_only_member_that_has_fallen_behind_the_landing_ref() {
+    let t = round_world();
+    t.git.stat("local/main", "ta", &[("law/x.toml", 2, 0)]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert!(!t.err().contains("text-only"), "{}", t.err());
+}

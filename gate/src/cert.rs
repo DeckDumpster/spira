@@ -18,6 +18,9 @@ pub enum Source {
     Gate,
     /// A round's full corpus on this exact tree: `verdict=GREEN`.
     Round,
+    /// The repository's lint set on the host, for a tree whose whole diff is declared text:
+    /// `verdict=LINT`. Nothing compiled changed, so no VM has anything to certify.
+    LintOnly,
 }
 
 impl Source {
@@ -25,6 +28,7 @@ impl Source {
         match self {
             Source::Gate => "gate",
             Source::Round => "round",
+            Source::LintOnly => "lint-only",
         }
     }
     /// The verdict word this source certifies with.
@@ -32,6 +36,7 @@ impl Source {
         match self {
             Source::Gate => "PASS",
             Source::Round => "GREEN",
+            Source::LintOnly => "LINT",
         }
     }
 }
@@ -104,8 +109,8 @@ pub fn render(c: &Cert) -> String {
     )
 }
 
-/// Parse a certificate. None unless `verdict=` and `source=` are a matched pair (PASS/gate or
-/// GREEN/round) and `tree=`/`repo=` are present.
+/// Parse a certificate. None unless `verdict=` and `source=` are a matched pair (PASS/gate,
+/// GREEN/round or LINT/lint-only) and `tree=`/`repo=` are present.
 pub fn parse(text: &str) -> Option<Cert> {
     let get = |k: &str| {
         text.lines()
@@ -115,6 +120,7 @@ pub fn parse(text: &str) -> Option<Cert> {
     let source = match (get("verdict")?.as_str(), get("source")?.as_str()) {
         ("PASS", "gate") => Source::Gate,
         ("GREEN", "round") => Source::Round,
+        ("LINT", "lint-only") => Source::LintOnly,
         _ => return None,
     };
     let tree = get("tree").filter(|t| !t.is_empty())?;
@@ -166,6 +172,26 @@ mod tests {
         assert!(path(v, "spira", "../../etc").is_none());
         assert!(path(v, "spira", "HEAD").is_none());
         assert_eq!(path(v, "spira", T), Some(PathBuf::from(format!("/v/trees/spira/{T}"))));
+    }
+
+    #[test]
+    fn a_lint_only_certificate_round_trips_and_is_not_a_round_green() {
+        let c = Cert {
+            source: Source::LintOnly,
+            tree: T.into(),
+            repo: "spira".into(),
+            rev: "r".into(),
+            branch: "spira/x".into(),
+            by: "queue".into(),
+            when: "w".into(),
+            at: 3,
+            harness: "-".into(),
+            suites: "lint".into(),
+        };
+        let text = render(&c);
+        assert!(text.contains("verdict=LINT\nsource=lint-only\n"));
+        assert_eq!(certifies(&text, "spira", T), Some(c));
+        assert!(parse(&text.replace("verdict=LINT", "verdict=GREEN")).is_none());
     }
 
     #[test]
