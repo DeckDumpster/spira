@@ -309,7 +309,7 @@ mod own_unit_tests {
         }
     }
 
-    fn first_write_under(stamp: bool) -> Vec<String> {
+    fn boot_under(stamp: bool) -> (Vec<String>, runtime::engine::SchedulerStatus) {
         let dir = testkit::TempDir::new("boot-halt");
         let mut s = crate::settings::fixture();
         s.run_dir = dir.path().to_path_buf();
@@ -320,7 +320,20 @@ mod own_unit_tests {
         let mut e = super::open_engine(&s, j.clone(), Arc::new(VirtualClock::new(1_000)), Arc::new(runtime::marker::NullMarker), Arc::new(runtime::NullSink), vec![Registration::new("probe", Writer)]).unwrap();
         e.start("probe", runtime::EventKind::new("start", ""));
         runtime::Executor::run_until_idle(&mut e).unwrap();
-        runtime::conformance::trace(&*j).into_iter().map(|t| t.2.to_string()).filter(|t| t.starts_with("effect.")).collect()
+        let tags = runtime::conformance::trace(&*j).into_iter().map(|t| t.2.to_string()).filter(|t| t.starts_with("effect.")).collect();
+        (tags, e.status())
+    }
+
+    fn first_write_under(stamp: bool) -> Vec<String> {
+        boot_under(stamp).0
+    }
+
+    #[test]
+    fn a_scheduler_booted_under_the_halt_stamp_leaves_world_status_halted_not_degraded() {
+        let status = boot_under(true).1;
+        let doc = crate::status::document(&status).to_string();
+        let parsed = spira_world::scheduler::parse_status(&doc).unwrap();
+        assert_eq!(spira_world::scheduler::mismatch(true, &parsed), None, "{doc}");
     }
 
     #[test]
