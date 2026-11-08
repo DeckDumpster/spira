@@ -30,18 +30,49 @@ pub struct Delta {
     /// `persona.<old>` → `persona.<new>`: the persona's table, roster entry and lane entry move.
     /// `spira.<old>` → `spira.<new>`: the operator's value is carried to the new key and the old one dropped.
     pub renamed: BTreeMap<String, String>,
+    /// Keys whose value is set outright, whatever the config holds: a `name=value` list key
+    /// (see [`MERGED_LIST_KEYS`]) completed with the entries a release's default adds, and, in
+    /// an undo record, the value such a completion replaced.
+    pub replaced: BTreeMap<String, Value>,
+}
+
+/// Registry keys holding a `name=value` list in which every name the release's default lists
+/// must appear (sp-rdldh2): the runtime refuses to start unless `SPIRA_TASK_MODES` gives a mode
+/// for every task, so a live value written before a release added a task must gain that task's
+/// default mode. The live entries are the operator's and stand.
+pub const MERGED_LIST_KEYS: &[&str] = &["SPIRA_TASK_MODES"];
+
+/// `live` with every entry of `default` whose name it lacks appended, in the default's order;
+/// `None` when `live` already names every one.
+fn merge_list(live: &str, default: &str) -> Option<String> {
+    let entries = |v: &str| v.split(|c: char| c == ',' || c.is_whitespace()).filter(|e| !e.is_empty()).map(str::to_string).collect::<Vec<_>>();
+    let name = |e: &str| e.split_once('=').map_or(e, |x| x.0).to_string();
+    let have: std::collections::BTreeSet<String> = entries(live).iter().map(|e| name(e)).collect();
+    let missing: Vec<String> = entries(default).into_iter().filter(|e| !have.contains(&name(e))).collect();
+    if missing.is_empty() {
+        return None;
+    }
+    Some(entries(live).into_iter().chain(missing).collect::<Vec<_>>().join(" "))
 }
 
 impl Delta {
     pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.removed.is_empty() && self.renamed.is_empty()
+        self.added.is_empty() && self.removed.is_empty() && self.renamed.is_empty() && self.replaced.is_empty()
     }
 
     pub fn parse(text: &str) -> Result<Delta, String> {
-        let Value::Table(top) = text.parse::<Value>().map_err(|e| e.to_string())? else {
+        let Value::Table(mut top) = text.parse::<Value>().map_err(|e| e.to_string())? else {
             return Err("not a TOML table".into());
         };
         let mut d = Delta::default();
+        let text = &match top.remove("replaced") {
+            None => text.to_string(),
+            Some(Value::Table(t)) => {
+                d.replaced = spira_config::leaf_paths(&t).into_iter().collect();
+                toml::to_string(&Value::Table(top.clone())).map_err(|e| e.to_string())?
+            }
+            Some(_) => return Err("replaced must be a table of config keys".into()),
+        };
         for (k, v) in top {
             match (k.as_str(), v) {
                 ("removed", Value::Array(a)) => {
@@ -106,6 +137,13 @@ impl Delta {
         }
         for (k, v) in &self.added {
             let _ = set(&mut top, k, v.clone());
+        }
+        if !self.replaced.is_empty() {
+            let mut r = Table::new();
+            for (k, v) in &self.replaced {
+                let _ = set(&mut r, k, v.clone());
+            }
+            top.insert("replaced".into(), Value::Table(r));
         }
         toml::to_string_pretty(&Value::Table(top)).unwrap_or_default()
     }
@@ -244,7 +282,7 @@ pub struct Txn {
 /// the keys `retired` (left by the previous activation) removed, and what undoes both. The
 /// delta's own dropped keys are removed only when `defer` is off: a process still running the
 /// previous release's code resolves them until it exits.
-fn apply(original: &[Table], delta: &Delta, retired: &[String], defer: bool) -> Result<(Vec<Table>, Vec<Table>, Delta), String> {
+pub(crate) fn apply(original: &[Table], delta: &Delta, retired: &[String], defer: bool) -> Result<(Vec<Table>, Vec<Table>, Delta), String> {
     let delta = &delta.expanded(original);
     let mut pre = original.to_vec();
     let mut undo = Delta::default();
@@ -261,6 +299,21 @@ fn apply(original: &[Table], delta: &Delta, retired: &[String], defer: bool) -> 
         }
         set(&mut pre[0], k, v.clone())?;
         undo.removed.push(k.clone());
+    }
+    for (k, v) in &delta.replaced {
+        match (0..pre.len()).rev().find(|&i| get(&pre[i], k).is_some()) {
+            Some(i) => {
+                let old = get(&pre[i], k).cloned().unwrap_or_else(|| v.clone());
+                if old != *v {
+                    set(&mut pre[i], k, v.clone())?;
+                    undo.replaced.insert(k.clone(), old);
+                }
+            }
+            None => {
+                set(&mut pre[0], k, v.clone())?;
+                undo.removed.push(k.clone());
+            }
+        }
     }
     let mut post = pre.clone();
     let dropping = retired.iter().chain(delta.removed.iter().filter(|_| !defer));
@@ -410,6 +463,14 @@ pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Op
     };
     for k in registry_keys(rel)? {
         let path = format!("spira.{}", k.name.strip_prefix("SPIRA_").unwrap_or(&k.name).to_ascii_lowercase());
+        if MERGED_LIST_KEYS.contains(&k.name.as_str()) && !d.replaced.contains_key(&path) {
+            let live = original.iter().rev().find_map(|t| get(t, &path)).and_then(Value::as_str);
+            if let (Some(live), Ok(Value::String(default))) = (live, literal_default(&k)) {
+                if let Some(merged) = merge_list(live, &default) {
+                    d.replaced.insert(path.clone(), Value::String(merged));
+                }
+            }
+        }
         if d.added.contains_key(&path) || d.removed.contains(&path) || original.iter().any(|t| get(t, &path).is_some()) {
             continue;
         }

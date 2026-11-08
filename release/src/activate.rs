@@ -200,6 +200,11 @@ pub struct Switched {
     /// unit is a fact about its config, not about whether this activation's own restarts
     /// came up.
     pub retired: Vec<String>,
+    /// Running services left on the previous release's code, each with why (sp-m9rruh): one
+    /// whose template opts out of a restart on activation (`X-Spira-NoRestart=true`), or a
+    /// running oneshot still on its previous pass when the drain wait ran out. Never silent:
+    /// `release activate` names every one as STALE.
+    pub stale: Vec<String>,
 }
 
 fn unit_files(dir: &Path) -> BTreeSet<String> {
@@ -223,6 +228,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
     let instance = cfg.instance();
     let host = cfg.host_values()?;
     let mut changes = Vec::new();
+    let mut rendered = Vec::new();
     let mut errors = Vec::new();
     let mut retiring = Vec::new();
     for m in units::installed(&cfg.unit_dir, &rel, &instance)? {
@@ -246,7 +252,9 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
         };
         let path = cfg.unit_dir.join(&m.installed);
         let old = fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        if units::without_documentation(&old) != units::without_documentation(&new) {
+        let changed = units::without_documentation(&old) != units::without_documentation(&new);
+        rendered.push((m.installed.clone(), old.clone(), new.clone(), changed));
+        if changed {
             changes.push(Change { unit: m.installed, path, old, new });
         }
     }
@@ -256,6 +264,8 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
 
     let cur_link = cfg.releases.join(CURRENT);
     let prev = fs::read_link(&cur_link).ok().map(|t| t.to_string_lossy().to_string());
+    let prev_root = prev.as_ref().map(|p| cfg.releases.join(p));
+    let roots = Roots { releases: &cfg.releases, old: prev_root.as_deref(), new: &rel };
 
     for (written, c) in changes.iter().enumerate() {
         if let Err(e) = fsutil::write_atomic(&c.path, &c.new) {
@@ -299,22 +309,42 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
 
     let mut out = Switched { rewritten: changes.iter().map(|c| c.unit.clone()).collect(), retired, ..Default::default() };
     let mut draining = Vec::new();
-    for c in &changes {
-        if !c.unit.ends_with(".service") || !restart_needed(&c.unit, &c.old, &c.new, &rel) {
+    for (unit, old, new, changed) in &rendered {
+        if !unit.ends_with(".service") {
             continue;
         }
-        match ctx.sc.state(&c.unit) {
-            Ok(st) if is_up(&st.active) && st.kind != "oneshot" => out.restarted.push(c.unit.clone()),
-            Ok(st) => {
-                if st.kind == "oneshot" && is_up(&st.active) && !units::undrained(&c.new) {
-                    draining.push(c.unit.clone());
-                }
-                out.deferred.push(c.unit.clone());
+        let fixed = restart_reason(unit, old, new, &roots);
+        let st = match ctx.sc.state(unit) {
+            Ok(st) => st,
+            Err(e) if fixed.is_some() => {
+                let undo = undo(ctx, &changes, prev.as_deref(), &[]);
+                return Err(format!("cannot read the state of {unit}: {e}; rolled back{undo}"));
             }
             Err(e) => {
-                let undo = undo(ctx, &changes, prev.as_deref(), &[]);
-                return Err(format!("cannot read the state of {}: {e}; rolled back{undo}", c.unit));
+                eprintln!("release: WARN: cannot read the state of {unit}: {e}; not checked for running stale code");
+                continue;
             }
+        };
+        let long_running = is_up(&st.active) && st.kind != "oneshot";
+        let why = fixed.or_else(|| (long_running && unit != KILL_RESTARTED).then(|| live_reason(old, new, &roots, ctx.sc.running_exe(unit).as_deref())).flatten());
+        let Some(why) = why else {
+            if *changed {
+                eprintln!("release: {unit} differs only in the release root and runs the same bytes; left running");
+            }
+            continue;
+        };
+        eprintln!("release: {unit}: {why}");
+        if long_running {
+            if units::no_restart(new) {
+                out.stale.push(format!("{unit} ({why}; its unit says X-Spira-NoRestart, so restart it at a safe point)"));
+            } else {
+                out.restarted.push(unit.clone());
+            }
+        } else {
+            if st.kind == "oneshot" && is_up(&st.active) && !units::undrained(new) {
+                draining.push(unit.clone());
+            }
+            out.deferred.push(unit.clone());
         }
     }
     let mut failed = Vec::new();
@@ -348,7 +378,12 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
     for s in units::path_shadows(&cfg.unit_dir, &rel, &cfg.releases) {
         eprintln!("release: WARN: {s}");
     }
-    drain(ctx, &draining);
+    for u in drain(ctx, &draining) {
+        out.stale.push(format!("{u} (still on its previous pass after the {}s drain wait; its next start runs {sha})", ctx.drain.as_secs()));
+    }
+    for s in &out.stale {
+        eprintln!("release: STALE: {s}");
+    }
     Ok(out)
 }
 
@@ -371,8 +406,10 @@ fn revive_failed(ctx: &Ctx, out: &mut Switched) {
 
 /// Wait for each running oneshot of a changed unit to exit, so its next start runs the new
 /// release. The worker's own release check ends its pass between jobs; this only bounds how
-/// long the deploy waits for that, and a unit still running at the bound is named, not fatal.
-fn drain(ctx: &Ctx, units: &[String]) {
+/// long the deploy waits for that, and a unit still running at the bound is named, not fatal:
+/// it is returned, for the caller to report as stale.
+fn drain(ctx: &Ctx, units: &[String]) -> Vec<String> {
+    let mut left = Vec::new();
     let deadline = std::time::Instant::now() + ctx.drain;
     let mut next_note = std::time::Instant::now() + Duration::from_secs(30);
     for u in units {
@@ -389,11 +426,13 @@ fn drain(ctx: &Ctx, units: &[String]) {
             }
             if now >= deadline {
                 eprintln!("release: {u} still running its previous release after {}s; continuing", ctx.drain.as_secs());
+                left.push(u.clone());
                 break;
             }
             std::thread::sleep((ctx.drain / 20).clamp(Duration::from_millis(10), Duration::from_secs(1)));
         }
     }
+    left
 }
 
 fn restore_files(changes: &[Change]) -> Vec<String> {
@@ -487,53 +526,111 @@ fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
 /// `Restart=always` is the sanctioned way to cycle it.
 const KILL_RESTARTED: &str = "dolt-beads.service";
 
-/// Whether a rewritten service must be restarted (over-broad-scopes #4, sp-ipwlic): when its
-/// unit text, with the release root collapsed, changed, or when a program one of its `Exec*=`
-/// lines runs out of the release differs in bytes between the two releases. Every unit names
-/// the release root, so comparing exec lines verbatim restarted 80 of 82 services on every
-/// release — a single changed binary cycled loom, watchd and the scheduler and drained every
-/// running oneshot. A program that cannot be read, or one that is a script (it reads siblings
-/// such as `lib.sh` that its bytes do not show), is a change.
+/// The two release roots a unit's paths resolve under (sp-m9rruh): the one `current` named
+/// before this switch, which the running process started from, and the one it switches to.
+/// Installed units name their programs through `<releases>/current/`, and the switch compares
+/// after `current` has moved, so a path through the link must be resolved per side; reading it
+/// as written read the NEW binary for both and left every such service on its old code.
+struct Roots<'a> {
+    releases: &'a Path,
+    /// `None` when no release was current: nothing names what the old side ran.
+    old: Option<&'a Path>,
+    new: &'a Path,
+}
+
+impl Roots<'_> {
+    fn current_prefix(&self) -> String {
+        format!("{}/{CURRENT}/", self.releases.display())
+    }
+
+    /// `path` with a leading `<releases>/current/` resolved under `root`; `None` when it runs
+    /// through the link and `root` is unknown.
+    fn resolve(&self, path: &str, root: Option<&Path>) -> Option<PathBuf> {
+        match path.strip_prefix(&self.current_prefix()) {
+            Some(rest) => root.map(|r| r.join(rest)),
+            None => Some(PathBuf::from(path)),
+        }
+    }
+}
+
+/// Why a rendered service must be restarted whatever its run state (over-broad-scopes #4,
+/// sp-ipwlic), or `None`: its unit text, with the release root collapsed, changed, or a program
+/// one of its `Exec*=` lines runs differs in bytes between the release it ran and the one it
+/// switches to. Every unit names the release root, so comparing exec lines verbatim restarted
+/// 80 of 82 services on every release — a single changed binary cycled loom, watchd and the
+/// scheduler and drained every running oneshot. A program that cannot be read, or one that is
+/// a script (it reads siblings such as `lib.sh` that its bytes do not show), is a change.
 ///
 /// The store server keeps its own reason: its binary comes from the toolchain environment, so
 /// only its unit text decides, and a restart is an outage for every caller.
-fn restart_needed(unit: &str, old: &str, new: &str, new_root: &Path) -> bool {
-    let text_changed = unrooted(&units::without_documentation(old), new_root) != unrooted(&units::without_documentation(new), new_root);
+fn restart_reason(unit: &str, old: &str, new: &str, roots: &Roots) -> Option<String> {
+    let text_changed = unrooted(&units::without_documentation(old), roots.new) != unrooted(&units::without_documentation(new), roots.new);
     if text_changed {
-        return true;
+        return Some("its unit changed".into());
     }
-    if unit != KILL_RESTARTED {
-        if let Some(why) = program_changed(old, new) {
-            eprintln!("release: {unit}: {why}");
-            return true;
-        }
+    if unit == KILL_RESTARTED {
+        return None;
     }
-    eprintln!("release: {unit} differs only in the release root and runs the same bytes; left running");
-    false
+    program_changed(old, new, roots)
 }
 
-/// The first program an `Exec*=` line runs whose path moved between the renderings and whose
-/// content differs (or cannot be shown to match), as a reason; `None` when every one matches.
-fn program_changed(old: &str, new: &str) -> Option<String> {
+/// The first program an `Exec*=` line runs whose content differs between the two roots (or
+/// cannot be shown to match), as a reason; `None` when every one matches.
+fn program_changed(old: &str, new: &str, roots: &Roots) -> Option<String> {
     let path_of = |w: &str| w.find('/').map(|i| w[i..].trim_end_matches(['"', '\'', ';']).to_string());
     for (o, n) in units::exec_lines(old).iter().zip(units::exec_lines(new).iter()) {
         let (ov, nv) = (o.split_once('=').map_or("", |x| x.1), n.split_once('=').map_or("", |x| x.1));
         for (ow, nw) in ov.split_whitespace().zip(nv.split_whitespace()) {
-            if ow == nw {
+            let (op, np) = match (path_of(ow), path_of(nw)) {
+                (None, None) if ow == nw => continue,
+                (Some(op), Some(np)) => (op, np),
+                _ => return Some(format!("{ow} became {nw}")),
+            };
+            let Some(or) = roots.resolve(&op, roots.old) else {
+                return Some(format!("cannot tell which release {op} ran before; restarted"));
+            };
+            let nr = roots.resolve(&np, Some(roots.new)).unwrap_or_else(|| PathBuf::from(&np));
+            if or == nr {
                 continue;
             }
-            let (Some(op), Some(np)) = (path_of(ow), path_of(nw)) else {
-                return Some(format!("{ow} became {nw}"));
-            };
-            match (std::fs::read(&op), std::fs::read(&np)) {
+            match (std::fs::read(&or), std::fs::read(&nr)) {
                 (Ok(a), Ok(b)) if a == b && !b.starts_with(b"#!") => {}
-                (Ok(_), Ok(b)) if b.starts_with(b"#!") => return Some(format!("{np} is a script; restarted")),
-                (Ok(_), Ok(_)) => return Some(format!("{np} differs from {op}")),
-                _ => return Some(format!("cannot compare {op} with {np}; restarted")),
+                (Ok(_), Ok(b)) if b.starts_with(b"#!") => return Some(format!("{} is a script; restarted", nr.display())),
+                (Ok(_), Ok(_)) => return Some(format!("{} differs from {}", nr.display(), or.display())),
+                _ => return Some(format!("cannot compare {} with {}; restarted", or.display(), nr.display())),
             }
         }
     }
     None
+}
+
+/// Why a RUNNING long-lived service is on old code although its unit's programs match
+/// (sp-m9rruh), or `None`: an `Environment=` line pins a release by name other than the one it
+/// switches to (lc-serve's `SPIRA_HOME=<sha>/spira` kept its broker resolving the old
+/// release's registry for hours), or the executable its main process runs (`exe`, from
+/// [`Systemctl::running_exe`]) differs in bytes from the program its `ExecStart=` names — a
+/// process left behind by an earlier activation, whatever the unit file now says.
+fn live_reason(old: &str, new: &str, roots: &Roots, exe: Option<&Path>) -> Option<String> {
+    let cur = roots.current_prefix();
+    let now = format!("{}/", roots.new.display());
+    let env = |t: &str| t.lines().filter(|l| l.starts_with("Environment=")).map(|l| l.replace(&cur, &now)).collect::<Vec<_>>();
+    let (oe, ne) = (env(old), env(new));
+    if let Some((o, n)) = oe.iter().zip(ne.iter()).find(|(o, n)| o != n) {
+        return Some(format!("its environment pins the previous release ({o}; now {n})"));
+    }
+    let exe = exe?;
+    let line = units::exec_lines(new).into_iter().find(|l| l.starts_with("ExecStart="))?;
+    let prog = line["ExecStart=".len()..].trim_start_matches(['-', '@', '+', '!', ':']).split_whitespace().next()?.to_string();
+    if !prog.starts_with(&format!("{}/", roots.releases.display())) {
+        return None;
+    }
+    let path = roots.resolve(&prog, Some(roots.new))?;
+    let want = std::fs::read(&path).ok()?;
+    if want.starts_with(b"#!") {
+        return None;
+    }
+    let have = std::fs::read(exe).ok()?;
+    (have != want).then(|| format!("its running process's executable is not {}", path.display()))
 }
 
 /// The text with every `<releases>/<name>` prefix collapsed, whatever `<name>` is: an installed
@@ -706,8 +803,14 @@ pub fn status(cfg: &Config) -> Result<String, String> {
 
 #[cfg(test)]
 mod restart_tests {
-    use super::restart_needed;
+    use super::{live_reason, restart_reason, Roots};
     use std::fs;
+    use std::path::Path;
+
+    fn restart_needed(unit: &str, old: &str, new: &str, releases: &Path, from: &str, to: &str) -> bool {
+        let (o, n) = (releases.join(from), releases.join(to));
+        restart_reason(unit, old, new, &Roots { releases, old: Some(&o), new: &n }).is_some()
+    }
 
     /// Over-broad-scopes #4 (sp-ipwlic): a release that changed only another binary leaves a
     /// service running; one that changed this service's binary, its unit text, or the script it
@@ -726,11 +829,59 @@ mod restart_tests {
             let r = rel.join(sha).display().to_string();
             format!("[Service]\nEnvironment=SPIRA_RELEASE={r}\nExecStart={r}/bin/loom --serve{extra}\n")
         };
-        let (b, c) = (rel.join("b2"), rel.join("c3"));
-        assert!(!restart_needed("spira-loom.service", &unit("a1", ""), &unit("b2", ""), &b), "only bin/other changed");
-        assert!(restart_needed("spira-loom.service", &unit("b2", ""), &unit("c3", ""), &c), "bin/loom changed");
-        assert!(restart_needed("spira-loom.service", &unit("a1", ""), &unit("b2", " --fast"), &b), "the unit text changed");
+        assert!(!restart_needed("spira-loom.service", &unit("a1", ""), &unit("b2", ""), &rel, "a1", "b2"), "only bin/other changed");
+        assert!(restart_needed("spira-loom.service", &unit("b2", ""), &unit("c3", ""), &rel, "b2", "c3"), "bin/loom changed");
+        assert!(restart_needed("spira-loom.service", &unit("a1", ""), &unit("b2", " --fast"), &rel, "a1", "b2"), "the unit text changed");
         let job = |sha: &str| format!("[Service]\nType=oneshot\nExecStart={}/job.sh\n", rel.join(sha).display());
-        assert!(restart_needed("spira-job.service", &job("a1"), &job("b2"), &b), "a script reads siblings its bytes do not show");
+        assert!(restart_needed("spira-job.service", &job("a1"), &job("b2"), &rel, "a1", "b2"), "a script reads siblings its bytes do not show");
+    }
+
+    /// sp-m9rruh: an installed unit names its programs through the `current` link, and
+    /// activation compares after `current` has moved, so reading the old unit's path read the
+    /// NEW binary and every such service was "left running" on its old code. Each side's
+    /// program resolves under its own release root; identical bytes still leave it running.
+    #[test]
+    fn a_unit_naming_current_restarts_when_the_binary_under_the_old_root_differs() {
+        let t = testkit::TempDir::new("release-restart-current");
+        let rel = t.path().join("releases");
+        for (sha, rt) in [("a1", "RUNTIME1"), ("b2", "RUNTIME2"), ("c3", "RUNTIME2")] {
+            fs::create_dir_all(rel.join(sha).join("bin")).unwrap();
+            fs::write(rel.join(sha).join("bin/spira-runtime"), rt).unwrap();
+        }
+        std::os::unix::fs::symlink("b2", rel.join("current")).unwrap();
+        let cur = rel.join("current").display().to_string();
+        let at = |sha: &str| rel.join(sha).display().to_string();
+        let old = format!("[Service]\nEnvironment=SPIRA_HOME={cur}/spira\nExecStart={cur}/bin/spira-runtime serve\n");
+        let new = |sha: &str| format!("[Service]\nEnvironment=SPIRA_HOME={}/spira\nExecStart={}/bin/spira-runtime serve\n", at(sha), at(sha));
+        assert!(restart_needed("spira-runtime-prod.service", &old, &new("b2"), &rel, "a1", "b2"), "a1's binary differs from b2's; the unit runs a1's");
+        assert!(!restart_needed("spira-runtime-prod.service", &old, &new("c3"), &rel, "b2", "c3"), "b2's and c3's binaries match: left running");
+        let both = |sha: &str| format!("[Service]\nEnvironment=SPIRA_HOME={}/spira\nExecStart={cur}/bin/spira-runtime serve\n", at(sha));
+        assert!(restart_needed("lc-serve.service", &both("a1"), &both("b2"), &rel, "a1", "b2"), "the same current path names a1's binary before the flip");
+        let no_prev = Roots { releases: &rel, old: None, new: &rel.join("b2") };
+        assert!(restart_reason("lc-serve.service", &both("a1"), &both("b2"), &no_prev).is_some(), "no previous release: cannot show the bytes match");
+    }
+
+    /// sp-m9rruh: a running server is on old code when its environment pins the previous
+    /// release by name, or when its process runs an executable other than the one its unit now
+    /// names (left behind by an earlier activation); not when both match.
+    #[test]
+    fn a_running_server_pinned_to_an_old_release_or_running_an_old_executable_is_stale() {
+        let t = testkit::TempDir::new("release-live-reason");
+        let rel = t.path().join("releases");
+        for (sha, lc) in [("a1", "LC1"), ("b2", "LC2")] {
+            fs::create_dir_all(rel.join(sha).join("bin")).unwrap();
+            fs::write(rel.join(sha).join("bin/spira-lc"), lc).unwrap();
+        }
+        let cur = rel.join("current").display().to_string();
+        let (a1, b2) = (rel.join("a1"), rel.join("b2"));
+        let roots = Roots { releases: &rel, old: Some(&a1), new: &b2 };
+        let unit = |home: &str| format!("[Service]\nEnvironment=SPIRA_HOME={home}/spira\nExecStart={cur}/bin/spira-lc serve\n");
+        let pinned = unit(&a1.display().to_string());
+        let now = unit(&b2.display().to_string());
+        assert!(live_reason(&pinned, &now, &roots, None).is_some_and(|w| w.contains("environment")), "SPIRA_HOME names a1");
+        assert_eq!(live_reason(&unit(&cur), &now, &roots, None), None, "current follows the flip");
+        let exe = a1.join("bin/spira-lc");
+        assert!(live_reason(&now, &now, &roots, Some(&exe)).is_some_and(|w| w.contains("executable")), "the process runs a1's spira-lc");
+        assert_eq!(live_reason(&now, &now, &roots, Some(&b2.join("bin/spira-lc"))), None, "the process runs b2's bytes");
     }
 }

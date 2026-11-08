@@ -224,6 +224,10 @@ fn main() {
                 repo: getenv("SPIRA_REPO").unwrap_or_default(),
                 retry_secs: getenv_i64("SPIRA_DEPLOY_FAULT_RETRY_SECS", 1800),
                 build_timeout_secs: getenv_i64("SPIRA_DEPLOY_FAULT_BUILD_TIMEOUT", 1800).max(1) as u64,
+                releases: {
+                    let r = reg("SPIRA_RELEASES");
+                    (!r.is_empty()).then(|| PathBuf::from(r))
+                },
             };
             let queue_dir = PathBuf::from(reg("SPIRA_QUEUE_DIR"));
             deploy_fault::run(
