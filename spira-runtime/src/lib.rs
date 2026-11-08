@@ -81,7 +81,7 @@ pub fn start_tasks(engine: &mut Engine) {
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {
     let mut regs = registrations(s);
     regs.extend(extra);
-    let mut engine = Engine::open(journal, clock, regs, 0)?;
+    let mut engine = Engine::open_with(journal, clock, regs, 0, runtime::engine::BootRetry { store: format!("the journal store at {}", s.lc_socket.display()), ..Default::default() })?;
     if s.run_dir.join("world.halted").exists() {
         engine.halt_at_boot("the world's halt stamp is present at boot")?;
     }
