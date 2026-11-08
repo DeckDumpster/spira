@@ -280,6 +280,7 @@ dolt_durable = ""
 dolt_persist_interval_secs = 5
 dolt_persist_max_lag_secs = 120
 dolt_persist_compact_pct = 150
+dolt_tmp_pressure_pct = 85
 eviction_escalate_at = "3"
 exporter = ""
 failed_unit_runs = 3
