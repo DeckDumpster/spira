@@ -107,8 +107,26 @@ fn opened(path: &str) -> Result<Arc<Store<Served>>, String> {
     }
     let s = Arc::new(open(path)?);
     *slot = Some(Arc::clone(&s));
+    prime_dwell(Arc::clone(&s));
     Ok(s)
 }
+
+/// Fills the dwell index for the day an observer asks about, off the caller's thread, so the
+/// first observer's read finds it built rather than building it inside its deadline.
+fn prime_dwell(s: Arc<Store<Served>>) {
+    std::thread::spawn(move || {
+        for _ in 0..PRIME_CALLS {
+            match s.dwell(spira_config::vtime::now_epoch() as i64, PRIME_WINDOW_S, None) {
+                Ok(d) if !d.complete => {}
+                _ => break,
+            }
+        }
+    });
+}
+
+/// The window the index is primed to, and the most calls spent on it (each reads a bounded part).
+const PRIME_WINDOW_S: u64 = 86_400;
+const PRIME_CALLS: usize = 16;
 
 /// The store the config declares, opened: `None` while the key is unset, so lc-serve serves
 /// from dolt alone.

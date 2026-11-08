@@ -117,15 +117,15 @@ fn a_scan_that_stops_short_names_its_horizon_and_is_not_complete() {
 
 #[test]
 fn landed_after_is_the_oldest_delivery_newer_than_the_mark() {
-    let mut d = super::Dwell::default();
+    let mut idx = super::LastIndex::default();
     let mut repo = |_: &str| Ok(Some("harness".to_string()));
     for at in [90, 120, 150, 110] {
-        super::fold(&mut d, "Delivered", "sp-a", at, Some(100), &mut repo).unwrap();
+        idx.fold("Delivered", "sp-a", at, &mut repo).unwrap();
     }
-    super::fold(&mut d, "Renew", "sp-a", 500, Some(100), &mut repo).unwrap();
-    assert!(!d.last["harness"].contains_key("Renew"), "only the four kinds are kept");
-    assert_eq!(d.landed_after.get("harness"), Some(&110));
-    assert_eq!(d.last["harness"]["Delivered"], 150);
+    idx.fold("Renew", "sp-a", 500, &mut repo).unwrap();
+    assert!(!idx.last["harness"].contains_key("Renew"), "only the four kinds are kept");
+    assert_eq!(idx.landed_after(100, 0).get("harness"), Some(&110));
+    assert_eq!(idx.last["harness"]["Delivered"], 150);
 }
 
 #[test]
@@ -135,15 +135,21 @@ fn a_bad_flag_cannot_tell() {
     assert_eq!(code, crate::CANNOT_TELL, "{out}");
 }
 
-/// Production's size on 2026-11-07: ~13k records (a few hundred waiting) and ~300k audited
-/// txns, about 6k of them inside the window (one a second: twice production's rate), over the
-/// 600 beads in flight. The window is `watch.transitions`'s default: the longest bound plus 10 min. Written straight through the backend so the
-/// fixture builds in seconds; the read is the verb's own. Run by hand:
-/// `cargo test -p spira-lc --bin spira-lc --release dwell_on_a_production_sized_store -- --ignored --nocapture`
-/// (release, as lc-serve runs: 97 ms median on 2026-11-07 under load 17-45; debug is ~550 ms).
-#[test]
-#[ignore]
-fn dwell_on_a_production_sized_store_answers_inside_500ms() {
+/// Production's size: ~13k records (400 waiting) and ~300k audited txns, `recent` of them one a
+/// second inside the last day (more than [`super::MAX_SCANNED`]), over the 600 beads in flight.
+/// Written straight through the backend so the fixture builds in seconds. Returns the store, the
+/// clock it is read at, and the newest time per repo and kind (and every Delivered) at or after
+/// `now - 86_400`, as the audits say.
+struct Sized {
+    store: Store<state_store_sqlite::SqliteBackend>,
+    now: i64,
+    waiting: u64,
+    last: std::collections::BTreeMap<String, std::collections::BTreeMap<String, i64>>,
+    delivered: std::collections::BTreeMap<String, Vec<i64>>,
+    _dir: testkit::TempDir,
+}
+
+fn production_sized(recent: u64) -> Sized {
     use state_store::{events_key, Backend, Object, Rev, Write};
     use state_store_sqlite::{Options, SqliteBackend};
     let dir = testkit::TempDir::new("spira-lc-dwell-size");
@@ -151,13 +157,12 @@ fn dwell_on_a_production_sized_store_answers_inside_500ms() {
     let now: i64 = 2_000_000_000;
     let put = |key: String, data: Value, main: u64| Write::Put { key, value: Object::new(data).encode(), create_rev: Rev::new(main, 0), prev: None };
     let audit = |id: &str, event: &str, at: i64| serde_json::json!({ "refused": false, "evidence": { "then": [{ "machine": "bead", "lc_key": id, "event": event, "expect": "READY", "from_state": "READY", "to_state": "READY", "applied": true, "refusal": null, "evidence": null, "actor": "a", "at": at }] } });
-    let (records, waiting, txns, recent) = (13_000u64, 400u64, 300_000u64, 6_000u64);
+    let (records, waiting, txns) = (13_000u64, 400u64, 300_000u64);
     let mut head = b.head().unwrap();
-    let t0 = std::time::Instant::now();
+    let mut repo_of = std::collections::BTreeMap::new();
+    let mut seen: Vec<(String, &str, i64)> = vec![];
     for main_n in 1..=txns {
         let main = head + 1;
-        // The window's audits touch the beads in flight (here 600 of them), as production's do;
-        // the older ones range over every record.
         let in_window = main_n > txns - recent;
         let i = if in_window { main_n % 600 } else { main_n % records };
         let id = format!("sp-{i:05}");
@@ -169,25 +174,80 @@ fn dwell_on_a_production_sized_store_answers_inside_500ms() {
             let repo = ["spira", "deckdumpster", "pokedumpster"][(main_n % 3) as usize];
             let rec = serde_json::json!({ "bead_id": id, "state": state, "tip": null, "gate_key": null, "holder": null, "lease_until": null, "holds": [], "reason": null, "version": 1, "since": at, "repo": repo, "updated_at": at });
             batch.push(put(keys::lifecycle(&id), rec, main));
+            repo_of.insert(id.clone(), repo.to_string());
         }
+        seen.push((id, event, at));
         head = b.commit(head, &batch).unwrap();
     }
-    eprintln!("fixture: {txns} txns in {:?}", t0.elapsed());
+    let (mut last, mut delivered) = (std::collections::BTreeMap::new(), std::collections::BTreeMap::<String, Vec<i64>>::new());
+    for (id, event, at) in seen.into_iter().filter(|(_, e, at)| super::KINDS.contains(e) && *at >= now - 86_400) {
+        let repo = repo_of[&id].clone();
+        let newest: &mut i64 = last.entry(repo.clone()).or_insert_with(std::collections::BTreeMap::new).entry(event.to_string()).or_insert(at);
+        *newest = (*newest).max(at);
+        if event == "Delivered" {
+            delivered.entry(repo).or_default().push(at);
+        }
+    }
     let clock = VirtualClock::new(0);
     let c = Contract::open(b, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: FLOOR_MS }).unwrap();
-    let s = Store::new(c, FLOOR_MS);
+    Sized { store: Store::new(c, FLOOR_MS), now, waiting, last, delivered, _dir: dir }
+}
+
+/// Run by hand, release as lc-serve runs:
+/// `cargo test -p spira-lc --bin spira-lc --release dwell_ -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn dwell_over_a_day_on_a_production_sized_store_answers_from_the_index_inside_200ms_and_matches_the_audits() {
+    let z = production_sized(80_000);
+    let (s, now) = (&z.store, z.now);
+    let mark = now - 3_600;
+    let mut complete = false;
+    for _ in 0..10 {
+        complete = s.dwell(now, 86_400, Some(mark)).unwrap().complete;
+        if complete {
+            break;
+        }
+    }
+    assert!(complete, "the index never covered the day");
     let mut times = vec![];
     for _ in 0..5 {
         let t = std::time::Instant::now();
-        let d = s.dwell(now, 5_400 + 600, None).unwrap();
+        let d = s.dwell(now, 86_400, Some(mark)).unwrap();
         times.push(t.elapsed());
-        assert_eq!(d.beads.len() as u64, waiting);
+        assert_eq!(d.beads.len() as u64, z.waiting);
         assert!(d.complete, "{d:?}");
-        assert_eq!(d.last.len(), 3);
+        assert_eq!(d.scanned, 0, "nothing new to read");
+        assert_eq!(d.last, z.last);
+        let landed: std::collections::BTreeMap<String, i64> = z.delivered.iter().filter_map(|(r, ts)| Some((r.clone(), *ts.iter().filter(|t| **t > mark).min()?))).collect();
+        assert_eq!(d.landed_after, landed);
     }
     times.sort();
-    eprintln!("dwell over {records} records / {txns} txns: median {:?}, max {:?}", times[2], times[4]);
-    assert!(times[2] < std::time::Duration::from_millis(500), "{times:?}");
+    eprintln!("dwell --window 86400: median {:?}, max {:?}", times[2], times[4]);
+    assert!(times[2] < std::time::Duration::from_millis(200), "{times:?}");
+}
+
+#[test]
+fn a_warm_dwell_reads_only_the_revisions_committed_since_the_last_answer() {
+    let s = fresh();
+    work(&s, "sp-a", "harness", 2_000, Some(2_500));
+    let first = s.dwell(4_000, 100_000, None).unwrap();
+    assert!(first.scanned > 0);
+    assert_eq!(s.dwell(4_000, 100_000, None).unwrap().scanned, 0, "nothing new");
+    work(&s, "sp-b", "harness", 3_000, None);
+    let d = s.dwell(4_000, 100_000, None).unwrap();
+    assert_eq!(d.last["harness"]["Claim"], 3_000, "{d:?}");
+    assert!(d.scanned > 0 && d.scanned < first.scanned + 8, "{d:?}");
+}
+
+#[test]
+fn a_narrower_window_does_not_report_what_a_wider_one_indexed() {
+    let s = fresh();
+    work(&s, "sp-a", "harness", 2_000, Some(2_500));
+    let wide = s.dwell(4_000, 100_000, None).unwrap();
+    assert_eq!(wide.last["harness"]["Submit"], 2_500);
+    let narrow = s.dwell(4_000, 100, None).unwrap();
+    assert!(narrow.last.get("harness").is_none_or(|k| !k.contains_key("Submit")), "{narrow:?}");
+    assert!(narrow.complete);
 }
 
 #[test]
