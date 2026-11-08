@@ -52,6 +52,6 @@ fn a_round_whose_vm_is_lost_is_certified_again_on_the_same_head_never_abandoned(
 fn a_red_certify_is_still_judged_red() {
     let carry = certifying("spira.r9.certify.1");
     let ran = UnitRan { handle: UnitHandle::of(NAME, "spira.r9.certify.1").unwrap(), exit: Exit::Code(1), duration_ms: 1 };
-    let (_, acts) = on_ran_with(&carry, &ran, &RanOutput::captured(b"verdict=red\n", b""), NOW).unwrap();
+    let (_, acts) = on_ran_with(&carry, &ran, &RanOutput::captured(b"verdict=red\nred=test-a.sh\n", b""), NOW).unwrap();
     assert!(names(&acts).contains(&ABANDON), "{acts:?}");
 }

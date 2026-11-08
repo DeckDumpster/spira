@@ -42,6 +42,7 @@
 //! | Attributing | `unit.ran` (re-run) | Corpus-judged: Mending / Certifying / Done(blocked) |
 //! | Mending | `mending.settled` or timer 900 s (`main.rs:368`) | Certifying |
 //! | Certifying | `unit.ran` green | Landing (`lc_certify`, `land`) |
+//! | Certifying | `unit.ran` red naming no suite and no guilty file, first time | Attributing (the round is attributed, not abandoned whole) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
@@ -308,6 +309,9 @@ pub enum Trigger {
     MendTimeout,
     CertifyGreen,
     CertifyRed,
+    /// A red certify named no suite and no guilty file: the round is attributed, once, instead of
+    /// abandoned whole.
+    CertifyRedUnnamed,
     LandedStaged,
     Landed,
     LandRefused,
@@ -354,6 +358,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Mending, Trigger::MendTimeout, State::Certifying),
     (State::Certifying, Trigger::CertifyGreen, State::Landing),
     (State::Certifying, Trigger::CertifyRed, State::Done),
+    (State::Certifying, Trigger::CertifyRedUnnamed, State::Attributing),
     (State::Landing, Trigger::LandedStaged, State::Promoting),
     (State::Landing, Trigger::Landed, State::Done),
     (State::Landing, Trigger::LandRefused, State::Done),
@@ -432,6 +437,9 @@ pub struct RepoCarry {
     /// Certify passes of this round whose VM was lost under them (sp-e30jhh).
     #[serde(default)]
     pub lost_vms: u32,
+    /// This round's unnamed certify red has already been attributed.
+    #[serde(default)]
+    pub attributed: bool,
     /// The unit key of the live leg, when it started, and which run of the corpus it is.
     #[serde(default)]
     pub leg: Option<String>,
@@ -960,6 +968,11 @@ impl Machine<'_> {
                 self.acts.push(Leg { key: self.rc.batch.clone().unwrap_or_default(), ..self.leg() }.act(LAND));
             }
             (State::Certifying, false) if exit == Exit::Code(queue::ops::round::VM_LOST) => self.vm_lost(),
+            (State::Certifying, false) if !self.rc.attributed && certify_red_evidence(out).1.is_empty() && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => {
+                self.rc.attributed = true;
+                self.go(Trigger::CertifyRedUnnamed);
+                self.attribute();
+            }
             (State::Certifying, false) => {
                 self.go(Trigger::CertifyRed);
                 // The guilty leave the round charged: the members whose files the repository's
