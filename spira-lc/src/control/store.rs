@@ -81,6 +81,8 @@ pub struct Store<B: Backend> {
     contract: Contract<B>,
     /// The shortest claim lock taken, whatever lease the claimant asked for.
     claim_floor_ms: u64,
+    /// What [`Store::dwell`] has read of the audit log so far, kept for the store's life.
+    pub(super) dwell_index: std::sync::Mutex<super::dwell::LastIndex>,
 }
 
 /// Ops a pass puts in one txn, leaving room under etcd's limit for the request and events keys.
@@ -209,6 +211,7 @@ impl<B: Backend> Store<B> {
         Store {
             contract,
             claim_floor_ms,
+            dwell_index: Default::default(),
         }
     }
 
