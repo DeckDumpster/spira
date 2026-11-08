@@ -5626,7 +5626,7 @@ fn a_recipe_changing_round_builds_its_own_image_and_certifies_on_it() {
     ];
 
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
-    let branch = format!("spira-round-candidate/{batch}-candidate-re");
+    let branch = format!("spira-round-candidate/{batch}-candidate-re-merged-ta");
     let forge = t.forge.calls.borrow().join("\n");
     assert_eq!(
         forge.matches(&format!("ami-dispatch {branch}")).count(),
@@ -5643,6 +5643,46 @@ fn a_recipe_changing_round_builds_its_own_image_and_certifies_on_it() {
     assert!(git.contains(&format!(":refs/heads/{branch}")), "{git}");
     let vm = t.scripts.calls.borrow().join("\n");
     assert!(vm.contains("ami=ami-cand"), "{vm}");
+}
+
+#[test]
+fn a_round_reheaded_after_an_eject_builds_a_new_image_instead_of_reusing_the_failed_one() {
+    let mut t = round_world();
+    t.lib.s.round_spill = "ec2-always".into();
+    *t.scripts.recipe_release.borrow_mut() = Some("release-recipe".into());
+    *t.scripts.recipe_tree.borrow_mut() = Some("candidate-recipe-sha".into());
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.forge.ami_results.borrow_mut() = vec![
+        Some(AmiBuild::NotStarted),
+        Some(AmiBuild::Failure("41".into(), vec!["build / Build, image and tag".into()])),
+    ];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "harness"]),
+        0,
+        "{}",
+        t.err()
+    );
+
+    *t.forge.ami_results.borrow_mut() = vec![
+        Some(AmiBuild::NotStarted),
+        Some(AmiBuild::Success("42".into())),
+    ];
+    *t.scripts.ami_for.borrow_mut() = vec![AmiLookup::Missing, AmiLookup::Found("ami-new".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+
+    let dispatched: std::collections::BTreeSet<String> = t
+        .forge
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("ami-dispatch "))
+        .cloned()
+        .collect();
+    assert_eq!(dispatched.len(), 2, "a new head gets its own image build: {dispatched:?}");
+    assert!(t.scripts.calls.borrow().join("\n").contains("ami=ami-new"));
 }
 
 #[test]
