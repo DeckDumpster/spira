@@ -1,6 +1,6 @@
 TYPE=u32
 GROUP=lc
-DOC=Seconds between the control store's consistent snapshots, taken in backup_step slices on lc-serve's writer and shipped beside the revision runs; a restore replays the runs after the newest one.
+DOC=Seconds between the control store's consistent snapshots, taken whole on a read connection and shipped beside the revision runs; a restore replays the runs after the newest one.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_LC_SHIP_SNAPSHOT_SECS:=3600}"
 SPIRA_CONF_DEFAULT_EOF

@@ -94,11 +94,7 @@ const OVER_BUDGET: &[&str] = &["request_bytes_at_the_limit_pass_and_one_over_is_
 
 #[test]
 fn every_scenario_of_the_suite_is_its_own_test_here() {
-    let want: Vec<&str> = SCENARIOS
-        .iter()
-        .copied()
-        .filter(|s| !OVER_BUDGET.contains(s))
-        .collect();
+    let want: Vec<&str> = SCENARIOS.iter().copied().filter(|s| !OVER_BUDGET.contains(s)).collect();
     assert_eq!(COVERED, want.as_slice());
 }
 
@@ -155,22 +151,12 @@ fn after_deleting_the_highest_revision_keys_and_reopening_the_next_main_is_great
     drop(b);
     let b = open(&path);
     let head = b.head().unwrap();
-    assert!(
-        head >= last,
-        "the counter is read back from its meta row, never from the keys: head {head}, last {last}"
-    );
+    assert!(head >= last, "the counter is read back from its meta row, never from the keys: head {head}, last {last}");
     let clock = VirtualClock::new(1_000);
     let c = contract(b, &clock);
     let next = put(&c, "n/c", json!(3), "after-reopen");
-    assert!(
-        next > last,
-        "a reopened store never reissues a revision: next {next}, last {last}"
-    );
-    assert_eq!(
-        next,
-        head + 1,
-        "the next txn follows the head the reopen read back"
-    );
+    assert!(next > last, "a reopened store never reissues a revision: next {next}, last {last}");
+    assert_eq!(next, head + 1, "the next txn follows the head the reopen read back");
 }
 
 #[test]
@@ -318,8 +304,7 @@ fn a_single_long_statement_is_ended_past_max_read_ms_by_the_progress_handler() {
         })
         .collect();
     b.commit(1, &dels).unwrap();
-    b.commit(2, &[put_write("u/after", b"{}", 3, None)])
-        .unwrap();
+    b.commit(2, &[put_write("u/after", b"{}", 3, None)]).unwrap();
     assert!(b.range("t/", None, 10, 2).unwrap().is_empty());
 
     clock.calls.store(0, Ordering::SeqCst);
@@ -388,6 +373,36 @@ fn a_snapshot_copy_matches_the_live_keys_at_its_revision_and_refuses_an_existing
         rev,
         "the copy is tagged with the revision it captured"
     );
+    assert_eq!(keys_at(&copy, "", rev), keys_at(&live, "", rev));
+}
+
+#[test]
+fn a_snapshot_copy_taken_while_another_thread_commits_holds_one_revision() {
+    let dir = TempDir::new("sqlite-backup-live");
+    let clock = VirtualClock::new(1_000);
+    let c = contract(open(&dir.path().join("live.db")), &clock);
+    let big = "x".repeat(2_000);
+    for i in 0..400 {
+        put(&c, &format!("b/{i:03}"), json!(big), &format!("seed{i}"));
+    }
+    let dest = dir.path().join("copy.db");
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let rev = std::thread::scope(|sc| {
+        let writer = sc.spawn(|| {
+            let mut n = 0;
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                n += 1;
+                put(&c, &format!("live/{n:05}"), json!(n), &format!("live{n}"));
+            }
+        });
+        let rev = c.backend().snapshot_to(&dest).unwrap();
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        writer.join().unwrap();
+        rev
+    });
+    let live = c.backend().clone();
+    let copy = SqliteBackend::open(&dest, Options { jump_on_open: false, ..Options::default() }).unwrap();
+    assert_eq!(copy.head().unwrap(), rev);
     assert_eq!(keys_at(&copy, "", rev), keys_at(&live, "", rev));
 }
 

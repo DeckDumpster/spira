@@ -97,8 +97,7 @@ fn jump(b: &SqliteBackend, a: u64, z: u64) -> Result<(), String> {
     if z <= head {
         return Ok(());
     }
-    b.jump(a, z)
-        .map_err(|e| format!("the jump {a}..={z} does not follow the restored head {head}: {e}"))
+    b.jump(a, z).map_err(|e| format!("the jump {a}..={z} does not follow the restored head {head}: {e}"))
 }
 
 /// `spira-lc admin-restore --snapshot <file> --revlog <dir> --out <path>`. Every run is read and
@@ -112,14 +111,7 @@ pub fn restore(snapshot: &Path, revlog_dir: &Path, out: &Path) -> Result<Restore
     }
     fs::copy(snapshot, out).map_err(|e| format!("{}: {e}", snapshot.display()))?;
     let res = (|| {
-        let b = SqliteBackend::open(
-            out,
-            Options {
-                jump_on_open: false,
-                ..Options::default()
-            },
-        )
-        .map_err(|e| e.to_string())?;
+        let b = SqliteBackend::open(out, Options { jump_on_open: false, ..Options::default() }).map_err(|e| e.to_string())?;
         let snapshot_rev = b.head().map_err(|e| e.to_string())?;
         let mut runs = Vec::new();
         for p in plan(revlog_dir, snapshot_rev)? {

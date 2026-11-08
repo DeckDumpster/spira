@@ -301,30 +301,17 @@ fn exec(conn: &Connection, sql: &str, p: impl rusqlite::Params) -> Result<usize>
 /// a crash could lose would let the next open jump from the older head and reissue revisions.
 fn record_jump(conn: &mut Connection, head: u64, through: u64) -> Result<u64> {
     if through <= head {
-        return Err(Error::Backend(format!(
-            "a jump to {through} does not pass the head {head}"
-        )));
+        return Err(Error::Backend(format!("a jump to {through} does not pass the head {head}")));
     }
-    let mode: i64 = conn
-        .pragma_query_value(None, "synchronous", |r| r.get(0))
-        .map_err(db)?;
-    conn.pragma_update(None, "synchronous", "FULL")
-        .map_err(db)?;
+    let mode: i64 = conn.pragma_query_value(None, "synchronous", |r| r.get(0)).map_err(db)?;
+    conn.pragma_update(None, "synchronous", "FULL").map_err(db)?;
     let done = (|| {
-        let tx = conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(db)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
         let at = meta(&tx, "head")?.unwrap_or(0);
         if at != head {
-            return Err(Error::Backend(format!(
-                "a jump from {head} found the head at {at}"
-            )));
+            return Err(Error::Backend(format!("a jump from {head} found the head at {at}")));
         }
-        exec(
-            &tx,
-            "INSERT INTO jumps (from_main, to_main) VALUES (?1, ?2)",
-            params![main_i64(head + 1)?, main_i64(through)?],
-        )?;
+        exec(&tx, "INSERT INTO jumps (from_main, to_main) VALUES (?1, ?2)", params![main_i64(head + 1)?, main_i64(through)?])?;
         set_meta(&tx, "head", through)?;
         tx.commit().map_err(db)
     })();
@@ -574,10 +561,7 @@ impl SqliteBackend {
     }
 
     pub fn synchronous(&self) -> Result<i64> {
-        lock(&self.0.writer)
-            .conn
-            .pragma_query_value(None, "synchronous", |r| r.get(0))
-            .map_err(db)
+        lock(&self.0.writer).conn.pragma_query_value(None, "synchronous", |r| r.get(0)).map_err(db)
     }
 
     /// The recorded jumps that end after `after` and start at or before `through`, in order.
@@ -588,9 +572,7 @@ impl SqliteBackend {
             .prepare_cached("SELECT from_main, to_main FROM jumps WHERE to_main > ?1 AND from_main <= ?2 ORDER BY from_main")
             .map_err(db)?;
         let rows = st
-            .query_map(params![main_i64(after)?, main_i64(through)?], |r| {
-                Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))
-            })
+            .query_map(params![main_i64(after)?, main_i64(through)?], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64)))
             .map_err(db)?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db)
     }
@@ -601,9 +583,7 @@ impl SqliteBackend {
         let mut w = lock(&self.0.writer);
         let head = self.0.head.load(Ordering::SeqCst);
         if from != head + 1 {
-            return Err(Error::Backend(format!(
-                "a jump from {from} does not follow the head {head}"
-            )));
+            return Err(Error::Backend(format!("a jump from {from} does not follow the head {head}")));
         }
         let at = record_jump(&mut w.conn, head, through)?;
         self.0.head.store(at, Ordering::SeqCst);
@@ -774,7 +754,7 @@ impl SqliteBackend {
         .map_err(db)?;
         src.busy_timeout(Duration::from_millis(self.0.max_read_ms))
             .map_err(db)?;
-        src.execute_batch("BEGIN").map_err(db)?;
+        let _read = src.unchecked_transaction().map_err(db)?;
         let rev = meta(&src, "head")?.unwrap_or(0);
         let dest_conn = connect(dest)?;
         // SAFETY: both handles are open connections that outlive the backup, which is finished
@@ -786,7 +766,9 @@ impl SqliteBackend {
                 src.handle(),
                 c"main".as_ptr(),
             ))
-            .ok_or_else(|| Error::Backend(format!("{}: backup could not start", dest.display())))?;
+            .ok_or_else(|| {
+                Error::Backend(format!("{}: backup could not start", dest.display()))
+            })?;
             let step = ffi::sqlite3_backup_step(raw.as_ptr(), -1);
             let fin = ffi::sqlite3_backup_finish(raw.as_ptr());
             if step != ffi::SQLITE_DONE || fin != ffi::SQLITE_OK {
@@ -797,7 +779,6 @@ impl SqliteBackend {
                 )));
             }
         }
-        src.execute_batch("COMMIT").map_err(db)?;
         Ok(rev)
     }
 
@@ -869,15 +850,7 @@ impl Backend for SqliteBackend {
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
             let steps = &self.0.read_steps;
-            range_rows(
-                conn,
-                source(snap, at),
-                &lo,
-                hi.as_deref(),
-                limit,
-                steps,
-                deadline,
-            )
+            range_rows(conn, source(snap, at), &lo, hi.as_deref(), limit, steps, deadline)
         })
     }
 
@@ -898,22 +871,12 @@ impl Backend for SqliteBackend {
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
             let steps = &self.0.read_steps;
-            range_rows(
-                conn,
-                Source::State(state),
-                &lo,
-                hi.as_deref(),
-                limit,
-                steps,
-                deadline,
-            )
-            .map(Some)
+            range_rows(conn, Source::State(state), &lo, hi.as_deref(), limit, steps, deadline)
+                .map(Some)
         })?;
         match indexed {
             Some(rows) => Ok(rows),
-            None => {
-                state_store::backend::range_in_state_by_scan(self, prefix, state, after, limit, at)
-            }
+            None => state_store::backend::range_in_state_by_scan(self, prefix, state, after, limit, at),
         }
     }
 
@@ -933,15 +896,7 @@ impl Backend for SqliteBackend {
             let steps = &self.0.read_steps;
             let mut out = Vec::new();
             if lo.as_slice() < events {
-                out = range_rows(
-                    conn,
-                    source(snap, at),
-                    &lo,
-                    Some(events),
-                    limit,
-                    steps,
-                    deadline,
-                )?;
+                out = range_rows(conn, source(snap, at), &lo, Some(events), limit, steps, deadline)?;
             }
             if out.len() < limit {
                 let lo = lo.max(past_events);
@@ -1191,12 +1146,7 @@ mod tests {
                 KEYS * VERSIONS - 1
             );
             exec(&conn, &versions, []).unwrap();
-            exec(
-                &conn,
-                &format!("UPDATE meta SET value = {VERSIONS} WHERE name = 'head'"),
-                [],
-            )
-            .unwrap();
+            exec(&conn, &format!("UPDATE meta SET value = {VERSIONS} WHERE name = 'head'"), []).unwrap();
         }
         let opts = Options {
             jump_on_open: false,
@@ -1207,10 +1157,7 @@ mod tests {
 
     fn plan(b: &SqliteBackend, sql: &str) -> Vec<String> {
         let w = lock(&b.0.writer);
-        let mut stmt = w
-            .conn
-            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-            .unwrap();
+        let mut stmt = w.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
         let mut rows = stmt.raw_query();
         let mut out = Vec::new();
         while let Some(r) = rows.next().unwrap() {
@@ -1234,15 +1181,8 @@ mod tests {
         let keys: Vec<&str> = page.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(keys.len(), PAGE);
         assert_eq!(keys[0], "p/025001");
-        assert_eq!(
-            page[0].1.mod_rev,
-            Rev::new(VERSIONS as u64, 25_001),
-            "the newest version"
-        );
-        assert!(
-            steps <= 20 * PAGE as u64,
-            "{steps} VM steps for a page of {PAGE}"
-        );
+        assert_eq!(page[0].1.mod_rev, Rev::new(VERSIONS as u64, 25_001), "the newest version");
+        assert!(steps <= 20 * PAGE as u64, "{steps} VM steps for a page of {PAGE}");
         for sql in [LATEST_BOUNDED, LATEST_OPEN, STATE_BOUNDED, STATE_OPEN] {
             for step in plan(&b, sql) {
                 assert!(
@@ -1261,24 +1201,13 @@ mod tests {
         let b = fixture(&dir);
         let head = b.head().unwrap();
         b.take_read_steps();
-        let page = b
-            .range_in_state("p/", "s3", Some("p/010000"), PAGE, head)
-            .unwrap();
+        let page = b.range_in_state("p/", "s3", Some("p/010000"), PAGE, head).unwrap();
         let steps = b.take_read_steps();
         assert_eq!(page.len(), PAGE);
-        assert!(
-            steps <= 20 * PAGE as u64,
-            "{steps} VM steps for a page of {PAGE}"
-        );
-        let scanned = state_store::backend::range_in_state_by_scan(
-            &b,
-            "p/",
-            "s3",
-            Some("p/010000"),
-            PAGE,
-            head,
-        )
-        .unwrap();
+        assert!(steps <= 20 * PAGE as u64, "{steps} VM steps for a page of {PAGE}");
+        let scanned =
+            state_store::backend::range_in_state_by_scan(&b, "p/", "s3", Some("p/010000"), PAGE, head)
+                .unwrap();
         assert_eq!(page, scanned);
     }
 
@@ -1292,49 +1221,17 @@ mod tests {
         let obj = |data: serde_json::Value| {
             serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": data })).unwrap()
         };
-        let audit = |machine: &str, to: &str, at: i64, applied: bool| serde_json::json!({ "machine": machine, "lc_key": "sp-a", "to_state": to, "at": at, "applied": applied });
+        let audit = |machine: &str, to: &str, at: i64, applied: bool| {
+            serde_json::json!({ "machine": machine, "lc_key": "sp-a", "to_state": to, "at": at, "applied": applied })
+        };
         let rows: Vec<(&str, i64, Vec<u8>)> = vec![
-            (
-                "deliveries/sp-a",
-                9,
-                obj(serde_json::json!({ "bead_id": "sp-a", "state": "Batched" })),
-            ),
-            (
-                "deliveries/sp-b",
-                9,
-                obj(serde_json::json!({ "bead_id": "sp-b", "state": "Queued" })),
-            ),
-            (
-                "deliveries/sp-c/x",
-                9,
-                obj(serde_json::json!({ "state": "Queued" })),
-            ),
-            (
-                "history/sp-a/0/import/1",
-                1,
-                obj(
-                    serde_json::json!({ "seq": 1, "audit": audit("delivery", "QUEUED", 10, true) }),
-                ),
-            ),
-            (
-                "history/sp-a/0/import/2",
-                1,
-                obj(
-                    serde_json::json!({ "seq": 2, "audit": audit("delivery", "BATCHED", 20, true) }),
-                ),
-            ),
-            (
-                "history/sp-a/0/import/3",
-                1,
-                obj(serde_json::json!({ "seq": 3, "audit": audit("bead", "BATCHED", 99, true) })),
-            ),
-            (
-                "history/sp-a/0/import/4",
-                1,
-                obj(
-                    serde_json::json!({ "seq": 4, "audit": audit("delivery", "BATCHED", 98, false) }),
-                ),
-            ),
+            ("deliveries/sp-a", 9, obj(serde_json::json!({ "bead_id": "sp-a", "state": "Batched" }))),
+            ("deliveries/sp-b", 9, obj(serde_json::json!({ "bead_id": "sp-b", "state": "Queued" }))),
+            ("deliveries/sp-c/x", 9, obj(serde_json::json!({ "state": "Queued" }))),
+            ("history/sp-a/0/import/1", 1, obj(serde_json::json!({ "seq": 1, "audit": audit("delivery", "QUEUED", 10, true) }))),
+            ("history/sp-a/0/import/2", 1, obj(serde_json::json!({ "seq": 2, "audit": audit("delivery", "BATCHED", 20, true) }))),
+            ("history/sp-a/0/import/3", 1, obj(serde_json::json!({ "seq": 3, "audit": audit("bead", "BATCHED", 99, true) }))),
+            ("history/sp-a/0/import/4", 1, obj(serde_json::json!({ "seq": 4, "audit": audit("delivery", "BATCHED", 98, false) }))),
             ("history/sp-a/5/r1", 7, obj(serde_json::json!({}))),
             (
                 "events/00000000000000000007",
@@ -1372,16 +1269,9 @@ mod tests {
             let v = b.get(key, 9).unwrap().unwrap().value;
             serde_json::from_slice::<serde_json::Value>(&v).unwrap()["data"]["entered"].clone()
         };
-        assert_eq!(
-            entered("deliveries/sp-a"),
-            serde_json::json!({ "QUEUED": 10, "BATCHED": 30 })
-        );
+        assert_eq!(entered("deliveries/sp-a"), serde_json::json!({ "QUEUED": 10, "BATCHED": 30 }));
         assert_eq!(entered("deliveries/sp-b"), serde_json::json!({}));
-        assert_eq!(
-            entered("deliveries/sp-c/x"),
-            serde_json::Value::Null,
-            "not a delivery"
-        );
+        assert_eq!(entered("deliveries/sp-c/x"), serde_json::Value::Null, "not a delivery");
         let w = lock(&b.0.writer);
         let mirrored: i64 = w
             .conn
@@ -1405,9 +1295,7 @@ mod tests {
         conn.pragma_update(None, "user_version", SCHEMA_MIGRATIONS as i64 + 1)
             .unwrap();
         drop(conn);
-        let e = SqliteBackend::open(&path, Options::default())
-            .err()
-            .unwrap();
+        let e = SqliteBackend::open(&path, Options::default()).err().unwrap();
         assert!(e.to_string().contains("this binary knows"), "{e}");
     }
 }

@@ -164,12 +164,8 @@ pub fn parse(args: &[String]) -> std::result::Result<Command, String> {
     };
     let min_secs = match min_secs {
         None => 300,
-        Some(_) if limit_ms.is_none() => {
-            return Err(format!("--min-secs needs --limit-ms\n{USAGE}"))
-        }
-        Some(v) => v
-            .parse::<u64>()
-            .map_err(|_| format!("--min-secs must be a whole number of seconds, got {v}"))?,
+        Some(_) if limit_ms.is_none() => return Err(format!("--min-secs needs --limit-ms\n{USAGE}")),
+        Some(v) => v.parse::<u64>().map_err(|_| format!("--min-secs must be a whole number of seconds, got {v}"))?,
     };
     Ok(Command::Cas(CasArgs {
         path,
@@ -488,33 +484,9 @@ mod tests {
 
     #[test]
     fn a_limit_is_parsed_with_its_minimum_window_and_a_window_alone_is_refused() {
-        let got = parse(&args(&[
-            "--path",
-            "p",
-            "--rate",
-            "50",
-            "--duration-secs",
-            "1800",
-            "--limit-ms",
-            "20",
-            "--min-secs",
-            "120",
-        ]))
-        .unwrap();
-        assert!(
-            matches!(got, Command::Cas(CasArgs { limit_ms: Some(l), min_secs: 120, .. }) if l == 20.0)
-        );
-        assert!(parse(&args(&[
-            "--path",
-            "p",
-            "--rate",
-            "50",
-            "--duration-secs",
-            "9",
-            "--min-secs",
-            "5"
-        ]))
-        .is_err());
+        let got = parse(&args(&["--path", "p", "--rate", "50", "--duration-secs", "1800", "--limit-ms", "20", "--min-secs", "120"])).unwrap();
+        assert!(matches!(got, Command::Cas(CasArgs { limit_ms: Some(l), min_secs: 120, .. }) if l == 20.0));
+        assert!(parse(&args(&["--path", "p", "--rate", "50", "--duration-secs", "9", "--min-secs", "5"])).is_err());
     }
 
     #[test]
