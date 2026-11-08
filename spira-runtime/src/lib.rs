@@ -294,6 +294,47 @@ fn own_skip_units(instance: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod own_unit_tests {
+    use runtime::journal::MemJournal;
+    use runtime::ports::VirtualClock;
+    use runtime::{Command, Ctx, EffectSpec, Event, EventKindTag, Handler, Projection, Registration};
+    use std::sync::Arc;
+
+    struct Writer;
+    impl Handler for Writer {
+        fn interests(&self) -> &[EventKindTag] {
+            &["start"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+            vec![Command::Effect(EffectSpec { name: "write".into(), input: String::new(), deadline_ms: 1000 })]
+        }
+    }
+
+    fn first_write_under(stamp: bool) -> Vec<String> {
+        let dir = testkit::TempDir::new("boot-halt");
+        let mut s = crate::settings::fixture();
+        s.run_dir = dir.path().to_path_buf();
+        if stamp {
+            std::fs::write(dir.path().join("world.halted"), "2000-01-01T00:00:00Z\nwhy: planted\n").unwrap();
+        }
+        let j = MemJournal::new();
+        let mut e = super::open_engine(&s, j.clone(), Arc::new(VirtualClock::new(1_000)), Arc::new(runtime::marker::NullMarker), Arc::new(runtime::NullSink), vec![Registration::new("probe", Writer)]).unwrap();
+        e.start("probe", runtime::EventKind::new("start", ""));
+        runtime::Executor::run_until_idle(&mut e).unwrap();
+        runtime::conformance::trace(&*j).into_iter().map(|t| t.2.to_string()).filter(|t| t.starts_with("effect.")).collect()
+    }
+
+    #[test]
+    fn a_boot_under_the_halt_stamp_holds_its_first_work_effect() {
+        let tags = first_write_under(true);
+        assert!(tags.iter().any(|t| t == runtime::EFFECT_HELD) && !tags.iter().any(|t| t == runtime::EFFECT_REQUESTED), "{tags:?}");
+    }
+
+    #[test]
+    fn a_boot_without_the_halt_stamp_requests_its_first_work_effect() {
+        let tags = first_write_under(false);
+        assert!(tags.iter().any(|t| t == runtime::EFFECT_REQUESTED) && !tags.iter().any(|t| t == runtime::EFFECT_HELD), "{tags:?}");
+    }
+
     #[test]
     fn skip_list_holds_the_installed_runtime_service_name() {
         assert_eq!(super::own_skip_units("prod"), vec!["spira-runtime-prod.service".to_string()]);
