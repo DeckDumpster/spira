@@ -540,6 +540,14 @@ mod tests {
     }
 
     #[test]
+    fn a_claim_that_left_the_row_in_rework_is_refused_with_the_rows_state_and_version() {
+        let st = Store::default();
+        st.rows.lock().unwrap().insert("sp-a".into(), ("REWORK".into(), String::new()));
+        let why = verify_held(&st, "sp-a", "dwarf-eitri@1.2", 1, Duration::ZERO, &no_sleep).unwrap_err();
+        assert!(why.contains("REWORK") && why.contains("\"7\""), "{why}");
+    }
+
+    #[test]
     fn a_row_held_by_another_holder_is_not_verified_held() {
         let st = Store::default();
         st.rows.lock().unwrap().insert("sp-a".into(), ("WORKING".into(), "dwarf-other@9.9".into()));
