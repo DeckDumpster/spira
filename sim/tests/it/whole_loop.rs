@@ -258,7 +258,7 @@ fn batcher_round_open(w: &World, input: &str) -> Result<String, String> {
     lc.rounds += 1;
     let batch = format!("round-{}", lc.rounds);
     lc.round = Some((batch.clone(), leg.members));
-    json(&bl::Opened { batch })
+    json(&bl::Opened { batch, ..bl::Opened::default() })
 }
 
 /// The corpus leg and the attribution leg both run under `batcher.local.corpus`: the corpus is

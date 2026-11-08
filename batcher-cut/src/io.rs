@@ -1618,6 +1618,44 @@ fn verb_failed(what: &str, run: &VerbRun) -> String {
 /// exactly the members asked for. Any other outcome is an Err and, when a round was opened, it
 /// is abandoned first — the batcher never works a round it did not name.
 pub fn round_open(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Result<String, String> {
+    match round_open_or_refused(env, repo, wt, members)? {
+        OpenOutcome::Opened(batch) => Ok(batch),
+        OpenOutcome::Refused(r, line) => Err(format!("{line} (refused: {})", r.iter().map(|r| format!("{} {}", r.id, r.kind)).collect::<Vec<_>>().join(", "))),
+    }
+}
+
+/// One member a refused `queue round open` named as not admitted, from its typed stdout record
+/// (`refused=<id> kind=<kind> why=<line>`, `queue::ops::round::refused_record`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refused {
+    pub id: String,
+    pub kind: String,
+    pub why: String,
+}
+
+/// Every typed refusal record in a `queue round open` stdout.
+pub fn parse_refused(out: &str) -> Vec<Refused> {
+    out.lines()
+        .filter_map(|l| {
+            let rest = l.strip_prefix("refused=")?;
+            let (id, rest) = rest.split_once(" kind=")?;
+            let (kind, why) = rest.split_once(" why=").unwrap_or((rest, ""));
+            Some(Refused { id: id.trim().to_string(), kind: kind.trim().to_string(), why: why.trim().to_string() })
+        })
+        .collect()
+}
+
+/// What `queue round open` came to: the batch it opened with exactly the named members, or the
+/// members it refused (each named, with its kind) and the refusal's line, nothing opened.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenOutcome {
+    Opened(String),
+    Refused(Vec<Refused>, String),
+}
+
+/// [`round_open`], with a refusal that names its members returned as [`OpenOutcome::Refused`]
+/// so the caller re-cuts without them instead of failing the cut.
+pub fn round_open_or_refused(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Result<OpenOutcome, String> {
     let text = members.iter().fold(String::new(), |mut acc, m| {
         acc.push_str(&format!("{}:{}\n", m.id, m.tip));
         acc
@@ -1625,7 +1663,11 @@ pub fn round_open(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Resu
     let wt_arg = wt.display().to_string();
     let run = round_verb(env, &["open", &repo.name, "--members-file", "-", "--worktree", &wt_arg], &text)?;
     if run.code != Some(0) {
-        return Err(verb_failed("queue round open", &run));
+        let refused = parse_refused(&run.out);
+        if refused.is_empty() {
+            return Err(verb_failed("queue round open", &run));
+        }
+        return Ok(OpenOutcome::Refused(refused, verb_failed("queue round open", &run)));
     }
     let batch = verb_value(&run.out, "batch").ok_or("queue round open named no batch")?;
     let opened: Vec<String> = verb_value(&run.out, "members")
@@ -1638,7 +1680,7 @@ pub fn round_open(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Resu
         round_abandon(env, repo, &batch, "the round opened with members other than the ones the batcher named", "members-differ");
         return Err(format!("queue round open admitted [{}], the batcher named [{}] — round {batch} abandoned", opened.join(" "), wanted.join(" ")));
     }
-    Ok(batch)
+    Ok(OpenOutcome::Opened(batch))
 }
 
 /// `queue round eject`: `owner` is a member whose own tip reddened `suites`; a collateral
@@ -2628,6 +2670,16 @@ mod land_exit_tests {
         assert_eq!(classify_land_exit(Some(2)), LandOutcome::Refused);
         assert_eq!(classify_land_exit(Some(3)), LandOutcome::DeployFault);
         assert_eq!(classify_land_exit(None), LandOutcome::Refused, "killed by a signal: nothing is known to have landed");
+    }
+
+    /// sp-822b8l: the typed records of a refused open, one member each; other lines are not.
+    #[test]
+    fn a_refused_open_names_each_member_by_its_typed_record() {
+        let out = "refused=sp-1mspuc kind=integration why=sp-1mspuc: carried by integration sp-ggdrzb — lands with it, not admitted\nnoise\nrefused=sp-zr6wdz kind=round-conflict why=sp-zr6wdz: conflicts with the round — paths: a.rs\n";
+        let r = parse_refused(out);
+        assert_eq!(r.iter().map(|r| (r.id.as_str(), r.kind.as_str())).collect::<Vec<_>>(), [("sp-1mspuc", "integration"), ("sp-zr6wdz", "round-conflict")]);
+        assert!(r[1].why.ends_with("paths: a.rs"), "{r:?}");
+        assert!(parse_refused("batch=x\nmembers=sp-a:t\n").is_empty());
     }
 
     fn repo_at(d: &Path) -> Repo {

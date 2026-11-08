@@ -126,7 +126,7 @@ fn t3_a_corpus_unit_ran_on_its_own_stream_starts_certify_at_once() {
         .unwrap()
         .double(OBSERVE, move |_| Ok(serde_json::to_string(&snaps.lock().unwrap().pop().unwrap_or_else(idle)).unwrap()))
         .double(ASSEMBLE, move |_| Ok(serde_json::to_string(&assembled).unwrap()))
-        .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into() }).unwrap()));
+        .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap()));
     for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, ROUND_OPEN].contains(e)) {
         r = r.double(e, |_| Ok("{}".into()));
     }
@@ -342,4 +342,62 @@ fn sp_8nlvra_a_changed_skip_reason_is_logged_once() {
     let (cut, _) = decide(&again, &paused("b1"));
     let lifted = notes(&again, &cut);
     assert!(lifted.len() == 1 && lifted[0].contains("cutting"), "{lifted:?}");
+}
+
+// --- sp-822b8l: a refused open re-cuts without the members it named, never abandons ---
+
+fn opening() -> Carry {
+    let rc = RepoCarry { state: State::Opened, round_key: Some("k".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into()), ("sp-c".into(), "t3".into())], wt: "/w".into(), base: "b1".into(), ..RepoCarry::default() };
+    Carry { repos: [("spira".to_string(), rc)].into() }
+}
+
+fn open_leg() -> Leg {
+    Leg { why: "suites".into(), ..Leg::on("spira") }
+}
+
+/// 2026-11-07 05:26Z: four cuts abandoned members-differ because the open would not admit
+/// sp-1mspuc. The open now names it (typed), and the batcher opens the others at once.
+#[test]
+fn sp_822b8l_a_pool_with_one_inadmissible_member_still_opens_a_round_of_the_others() {
+    let refused = Opened { refused: vec![("sp-b".into(), "integration".into(), "sp-b: carried by integration sp-int — lands with it, not admitted".into())], ..Opened::default() };
+    let (carry, acts) = on_outcome(&opening(), ROUND_OPEN, true, &serde_json::to_string(&refused).unwrap(), &open_leg(), NOW);
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert_eq!(names, [ROUND_OPEN], "re-opened without the refused member, nothing abandoned: {acts:?}");
+    let leg: Leg = serde_json::from_str(&acts[0].input).unwrap();
+    assert_eq!(leg.members, [("sp-a".to_string(), "t1".to_string()), ("sp-c".to_string(), "t3".to_string())]);
+    assert_eq!(leg.why, "suites", "the re-open keeps the corpus leg's mark");
+    let rc = &carry.repos["spira"];
+    assert_eq!(rc.state, State::Opened);
+    assert_eq!(rc.refused.get("sp-b"), Some(&("t2".to_string(), "b1".to_string(), "integration".to_string())));
+    let (carry, acts) = on_outcome(&carry, ROUND_OPEN, true, &serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap(), &leg, NOW);
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [CORPUS], "{acts:?}");
+    assert_eq!(carry.repos["spira"].members.len(), 2);
+}
+
+/// The refused member stays out of later cuts at the same tip and base, named; a moved base
+/// lets it be tried again.
+#[test]
+fn sp_822b8l_a_refused_member_stays_out_until_its_tip_or_the_base_moves() {
+    let rc = RepoCarry { refused: [("sp-b".to_string(), ("t2".to_string(), "b1".to_string(), "integration".to_string()))].into(), ..RepoCarry::default() };
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let (next, acts) = decide(&carry, &busy());
+    let assemble = acts.iter().find(|a| a.effect == ASSEMBLE).expect("sp-a still cuts");
+    let leg: Leg = serde_json::from_str(&assemble.input).unwrap();
+    assert_eq!(leg.members, [("sp-a".to_string(), "t1".to_string())]);
+    assert!(next.repos["spira"].refused.contains_key("sp-b"));
+    let mut moved = busy();
+    moved.repos.get_mut("spira").unwrap().base_sha = "b2".into();
+    let (_, acts) = decide(&carry, &moved);
+    let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ASSEMBLE).unwrap().input).unwrap();
+    assert_eq!(leg.members.len(), 2, "a moved base tries it again: {leg:?}");
+}
+
+/// Every named member refused: no round, no abandon, and the repo is idle with the members out.
+#[test]
+fn sp_822b8l_an_open_refusing_every_member_abandons_nothing() {
+    let all = Opened { refused: ["sp-a", "sp-b", "sp-c"].iter().map(|id| (id.to_string(), "gate-red".to_string(), format!("{id}: its gate is FAIL"))).collect(), ..Opened::default() };
+    let (carry, acts) = on_outcome(&opening(), ROUND_OPEN, true, &serde_json::to_string(&all).unwrap(), &open_leg(), NOW);
+    assert!(!acts.iter().any(|a| a.effect == ABANDON || a.effect == PAUSE), "{acts:?}");
+    let rc = &carry.repos["spira"];
+    assert_eq!((rc.state, rc.refused.len()), (State::Idle, 3));
 }

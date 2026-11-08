@@ -292,6 +292,11 @@ pub enum Trigger {
     /// `round_open` refused, or the merged tree has no suites and declares no testenv (not in the
     /// contract's table, which gives `Opened` no failure exit).
     OpenFailed,
+    /// `round open` refused some named members, by name (sp-822b8l): it is asked again for the
+    /// rest (not in the contract's table).
+    OpenRefusedSome,
+    /// `round open` refused every named member: nothing to open, nothing to abandon.
+    OpenRefusedAll,
     LegRed,
     LegGreenMenders,
     LegGreen,
@@ -328,6 +333,8 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Opened, Trigger::OpenedWithSuites, State::Corpus),
     (State::Opened, Trigger::OpenedOwnTestenv, State::Certifying),
     (State::Opened, Trigger::OpenFailed, State::Done),
+    (State::Opened, Trigger::OpenRefusedSome, State::Opened),
+    (State::Opened, Trigger::OpenRefusedAll, State::Done),
     (State::Corpus, Trigger::LegRed, State::Attributing),
     (State::Corpus, Trigger::LegGreenMenders, State::Mending),
     (State::Corpus, Trigger::LegGreen, State::Certifying),
@@ -423,6 +430,10 @@ pub struct RepoCarry {
     /// (law-a-failure-carries-its-own-explanation); logged once each time it changes.
     #[serde(default)]
     pub skip_why: Option<String>,
+    /// Members `queue round open` refused, as id → (tip, base, kind): each stays out of the cut
+    /// until its tip or the base moves.
+    #[serde(default)]
+    pub refused: BTreeMap<String, (String, String, String)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -497,6 +508,9 @@ pub struct Assembled {
 pub struct Opened {
     #[serde(default)]
     pub batch: String,
+    /// The members a refused open named as not admitted, as (id, kind, why); nothing opened.
+    #[serde(default)]
+    pub refused: Vec<(String, String, String)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -729,6 +743,7 @@ impl Machine<'_> {
             conflict_streaks: rc.conflict_streaks,
             held_keys: rc.held_keys,
             paused_on: rc.paused_on,
+            refused: rc.refused,
             ..RepoCarry::default()
         };
     }
@@ -788,12 +803,15 @@ impl Machine<'_> {
             self.go(Trigger::OrphanStepped);
             return;
         }
+        let (repo, refused) = self.without_refused(repo);
+        let repo = &repo;
         match select_why(repo, policy.max_members) {
             Ok((_, key)) if self.rc.held_keys.contains(&key) => {
                 self.rc.skip_why = Some(held_key_why(&key));
                 self.go(Trigger::NoTrigger);
             }
-            Err(why) => {
+            Err(mut why) => {
+                why.splice(0..0, refused);
                 self.rc.skip_why = (!why.is_empty()).then(|| format!("{} member(s) wait, none admissible: {}", why.len(), why.join("; ")));
                 self.go(Trigger::NoTrigger);
             }
@@ -835,6 +853,16 @@ impl Machine<'_> {
             }
             Some(_) => true,
         }
+    }
+
+    /// `repo` without the members `queue round open` refused at their current tip and base, and
+    /// a line naming each; a refusal whose tip or base has moved since is forgotten.
+    fn without_refused(&mut self, repo: &Repo) -> (Repo, Vec<String>) {
+        self.rc.refused.retain(|id, (tip, base, _)| repo.pool.iter().any(|m| &m.id == id && &m.tip == tip) && base == &repo.base_sha);
+        let refused = &self.rc.refused;
+        let why = repo.pool.iter().filter_map(|m| refused.get(&m.id).map(|(_, _, kind)| format!("{}: queue round open refused it ({kind}) at this tip and base", m.id))).collect();
+        let pool = repo.pool.iter().filter(|m| !refused.contains_key(&m.id)).cloned().collect();
+        (Repo { pool, ..repo.clone() }, why)
     }
 
     fn leg_ended(&mut self, exit: Exit) {
@@ -917,6 +945,10 @@ impl Machine<'_> {
             }
             (State::Opened, ROUND_OPEN) => {
                 let o: Opened = if ok { serde_json::from_str(body).unwrap_or_default() } else { Opened::default() };
+                if o.batch.is_empty() && !o.refused.is_empty() {
+                    self.refused_some(&o.refused, leg);
+                    return;
+                }
                 if o.batch.is_empty() {
                     self.go(Trigger::OpenFailed);
                     self.finish(pace::Outcome::OpenFailed, if ok { "queue round open named no batch" } else { body });
@@ -972,6 +1004,27 @@ impl Machine<'_> {
             }
             _ => {}
         }
+    }
+
+    /// `round open` refused the members it names (typed, sp-822b8l): each is set aside at its tip
+    /// and the round's base, and the round is asked for again with the rest; with none left the
+    /// cut is over, nothing opened and nothing abandoned. The queue has already routed them (a
+    /// base conflict back to rework, a round conflict into an integration that carries it).
+    fn refused_some(&mut self, refused: &[(String, String, String)], leg: &Leg) {
+        for (id, kind, _) in refused {
+            let tip = self.rc.members.iter().find(|(m, _)| m == id).map(|(_, t)| t.clone()).unwrap_or_default();
+            self.rc.refused.insert(id.clone(), (tip, self.rc.base.clone(), kind.clone()));
+        }
+        self.rc.members.retain(|(id, _)| !refused.iter().any(|(r, _, _)| r == id));
+        if self.rc.members.is_empty() {
+            self.go(Trigger::OpenRefusedAll);
+            self.finish(pace::Outcome::Quiet, "");
+            return;
+        }
+        self.go(Trigger::OpenRefusedSome);
+        let key = core::round_key(&self.rc.members);
+        self.rc.round_key = Some(key.clone());
+        self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), why: leg.why.clone(), ..self.leg() }.act(ROUND_OPEN));
     }
 
     fn assembled(&mut self, a: Assembled, leg: &Leg) {
@@ -1356,8 +1409,16 @@ pub mod edge {
         let (env, leg) = (env()?, leg(spec)?);
         let repo = repo_of(&env, &leg)?;
         let Some(_lock) = io::try_lock(&env, &repo.name)? else { return Err(format!("{}: another operation holds the lock", repo.name)) };
-        let batch = io::round_open(&env, &repo, std::path::Path::new(&leg.wt), &core_members(&leg.members))?;
-        json(&Opened { batch })
+        match io::round_open_or_refused(&env, &repo, std::path::Path::new(&leg.wt), &core_members(&leg.members))? {
+            io::OpenOutcome::Opened(batch) => json(&Opened { batch, ..Opened::default() }),
+            io::OpenOutcome::Refused(refused, line) => {
+                for r in &refused {
+                    eprintln!("{} {}: queue round open refused {} ({}): {} — cutting without it", super::NAME, repo.name, r.id, r.kind, r.why);
+                }
+                eprintln!("{} {}: {line}", super::NAME, repo.name);
+                json(&Opened { refused: refused.into_iter().map(|r| (r.id, r.kind, r.why)).collect(), ..Opened::default() })
+            }
+        }
     }
 
     /// The corpus leg: `round-vm run` on the round tree, as a unit; it ends on its `unit.ran`.

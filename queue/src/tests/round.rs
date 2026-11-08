@@ -6633,3 +6633,30 @@ fn a_preflight_red_ejects_every_recipe_changing_member_and_names_them() {
     assert!(t.lib.has("bead_reopen sp-a eject-red") && t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
     assert!(t.out().contains("ejected=sp-a,sp-b"), "{}", t.out());
 }
+
+/// sp-822b8l: a refused open names each member it did not admit as a typed stdout record
+/// (`refused=<id> kind=<kind> why=<line>`), so the batcher re-cuts without them by kind rather
+/// than abandoning on a members list that differs from the one it named.
+#[test]
+fn a_refused_open_prints_one_typed_record_per_member_it_did_not_admit() {
+    let t = round_world();
+    *t.lib.bug_id.borrow_mut() = Some("sp-int".into());
+    t.lc_row("sp-int", "READY", "ti", 100);
+    fs::create_dir_all(t.s().queue_dir.join("spira")).unwrap();
+    fs::write(t.qfile("integrations"), "sp-int sp-a\n").unwrap();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "{}", t.err());
+    let o = t.out();
+    let records: Vec<&str> = o.lines().filter(|l| l.starts_with("refused=")).collect();
+    assert_eq!(records.len(), 1, "{o}");
+    assert!(records[0].starts_with("refused=sp-a kind=integration why=sp-a: carried by integration sp-int"), "{o}");
+
+    let t2 = round_world();
+    touches(&t2, "ta", "child.rs");
+    touches(&t2, "tc", "child.rs");
+    t2.git.merge_fail.borrow_mut().insert("tc".into());
+    t2.git.rebase_fail.borrow_mut().insert("tc".into(), vec!["child.rs".into()]);
+    assert_eq!(t2.run(&["round", "open", "--members", "sp-a,sp-c"]), 1, "{}", t2.err());
+    let o = t2.out();
+    assert!(o.lines().any(|l| l.starts_with("refused=sp-c kind=round-conflict why=sp-c: conflicts with the round") && l.contains("paths: child.rs")), "{o}");
+    assert!(!o.lines().any(|l| l.starts_with("refused=sp-a")), "the admissible member is not refused: {o}");
+}

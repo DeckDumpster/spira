@@ -1421,13 +1421,32 @@ fn recipe_inputs_touched(w: &World, repo: &Path, base: &str, tip: &str) -> Vec<S
         .collect()
 }
 
-fn refuse_open(w: &World, label: &str, repo: &str, named: usize, skips: &[String]) -> i32 {
+/// One named member `round open` did not admit: its id, the kind of refusal (a word a caller
+/// acts on, law-a-matcher-reads-code-not-prose) and the operator's line.
+pub struct Skip {
+    pub id: String,
+    pub kind: &'static str,
+    pub why: String,
+}
+
+fn skip(id: &str, kind: &'static str, why: String) -> Skip {
+    Skip { id: id.to_string(), kind, why }
+}
+
+/// The typed record a refused open prints on stdout for each member it did not admit, one per
+/// line: `refused=<id> kind=<kind> why=<line>`. A caller re-cuts without these members.
+pub fn refused_record(s: &Skip) -> String {
+    format!("refused={} kind={} why={}", s.id, s.kind, s.why)
+}
+
+fn refuse_open(w: &World, label: &str, repo: &str, named: usize, skips: &[Skip]) -> i32 {
     w.err(format!(
         "queue.sh {label}: refused — {} of {named} named members cannot be admitted to a round for {repo}; no round opened (members already returned to rework, and integrations already filed, stay so):",
         skips.len()
     ));
     for s in skips {
-        w.err(format!("queue.sh {label}:   {s}"));
+        w.err(format!("queue.sh {label}:   {}", s.why));
+        w.out(refused_record(s));
     }
     FAIL
 }
@@ -1601,42 +1620,42 @@ fn open(
     }
 
     let named_count = wanted.len();
-    let mut skips: Vec<String> = Vec::new();
+    let mut skips: Vec<Skip> = Vec::new();
     let mut admitted: Vec<Member> = Vec::new();
     for m in wanted {
         if let Some(by) = super::integrate::carried_by(w, &c, &m.id) {
-            skips.push(format!(
+            skips.push(skip(&m.id, "integration", format!(
                 "{}: carried by integration {by} — lands with it, not admitted",
                 m.id
-            ));
+            )));
             continue;
         }
         match w.lc.bead_row(&m.id) {
-            None => skips.push(format!("{}: no lifecycle row (spira-lc could not say) — not admitted", m.id)),
+            None => skips.push(skip(&m.id, "no-row", format!("{}: no lifecycle row (spira-lc could not say) — not admitted", m.id))),
             // SUBMITTED or CERTIFIED (law-a-round-is-feature-first-then-catch-all): the round's own
             // full suite is the certification, so a submitted tip need not pass a per-bead gate first.
             Some(r) if r.state != "CERTIFIED" && r.state != "SUBMITTED" => {
-                skips.push(format!("{}: lifecycle state={} (not SUBMITTED or CERTIFIED) — not admitted", m.id, r.state))
+                skips.push(skip(&m.id, "state", format!("{}: lifecycle state={} (not SUBMITTED or CERTIFIED) — not admitted", m.id, r.state)))
             }
             Some(r) => match r.tip.clone().filter(|t| !t.is_empty()) {
                 Some(tip) if r.ejected_red_tip.as_deref() == Some(tip.as_str()) => {
-                    skips.push(format!("{}: {tip} is a recorded ejected-red tip — not admitted until the tip changes or `queue absolve {} --evidence-tip {tip}` withdraws a red that was not the tree's fault", m.id, m.id))
+                    skips.push(skip(&m.id, "ejected-red", format!("{}: {tip} is a recorded ejected-red tip — not admitted until the tip changes or `queue absolve {} --evidence-tip {tip}` withdraws a red that was not the tree's fault", m.id, m.id)))
                 }
                 Some(tip) if tip.starts_with(&m.tip) && batch_red_at(&c, &m.id, &tip) => {
-                    skips.push(format!("{}: {tip} already went red in a batch — not admitted until the tip changes", m.id))
+                    skips.push(skip(&m.id, "batch-red", format!("{}: {tip} already went red in a batch — not admitted until the tip changes", m.id)))
                 }
                 Some(tip) if tip.starts_with(&m.tip) => match gate_red_at(&c, &m.id, &tip) {
-                    Some(why) => skips.push(format!("{}: its gate is FAIL at {tip} ({why}) — not admitted", m.id)),
+                    Some(why) => skips.push(skip(&m.id, "gate-red", format!("{}: its gate is FAIL at {tip} ({why}) — not admitted", m.id))),
                     None => match r.blocked_by.first() {
                         Some(dep) => {
                             let state = w.lc.bead_row(dep).map(|d| d.state).unwrap_or_else(|| "unknown".into());
-                            skips.push(format!("{}: depends on {dep} ({state}) — not admitted until it lands", m.id))
+                            skips.push(skip(&m.id, "blocked", format!("{}: depends on {dep} ({state}) — not admitted until it lands", m.id)))
                         }
                         None => admitted.push(Member { id: m.id, tip }),
                     },
                 },
-                Some(tip) => skips.push(format!("{}: {} is not its row's tip {tip} — not admitted", m.id, m.tip)),
-                None => skips.push(format!("{}: no submitted tip — not admitted", m.id)),
+                Some(tip) => skips.push(skip(&m.id, "tip-moved", format!("{}: {} is not its row's tip {tip} — not admitted", m.id, m.tip))),
+                None => skips.push(skip(&m.id, "no-tip", format!("{}: no submitted tip — not admitted", m.id))),
             },
         }
     }
@@ -1676,10 +1695,10 @@ fn open(
     let mut collided: Vec<(Member, String)> = Vec::new();
     for m in admitted {
         if !super::simple::lint_passed(w, label, &path, &m.tip, false) {
-            skips.push(format!(
+            skips.push(skip(&m.id, "lint", format!(
                 "{}: {} fails its compile-and-lint check — not admitted",
                 m.id, m.tip
-            ));
+            )));
             continue;
         }
         if merge_member(w, &c, &wt, &m.id, &m.tip) {
@@ -1687,10 +1706,10 @@ fn open(
         } else {
             w.git.merge_abort(&wt);
             if w.lib.base_conflict(&path, &landed_sha, &m.tip) {
-                skips.push(match return_to_rework(w, &m) {
+                skips.push(skip(&m.id, "base-conflict", match return_to_rework(w, &m) {
                     Ok(()) => format!("{}: conflicts with base — returned to rework", m.id),
                     Err(e) => format!("{}: conflicts with base ({e})", m.id),
-                });
+                }));
             } else {
                 let onto = w
                     .git
@@ -1722,8 +1741,8 @@ fn open(
                     Ok(_) => {
                         w.git.merge_abort(&wt);
                         let why = format!("{}: conflicts with the round, and its rebase onto the round's head does not merge", m.id);
-                        collided.push((m, why.clone()));
-                        skips.push(why);
+                        skips.push(skip(&m.id, "round-conflict", why.clone()));
+                        collided.push((m, why));
                     }
                     Err(paths) => {
                         let why = format!(
@@ -1731,8 +1750,8 @@ fn open(
                             m.id,
                             if paths.is_empty() { "unknown".to_string() } else { paths.join(" ") }
                         );
-                        collided.push((m, why.clone()));
-                        skips.push(why)
+                        skips.push(skip(&m.id, "round-conflict", why.clone()));
+                        collided.push((m, why))
                     }
                 }
             }
