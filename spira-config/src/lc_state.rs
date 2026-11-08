@@ -119,7 +119,7 @@ fn scalar(v: Option<&Value>) -> Option<String> {
 /// JSON column back as text). Absent, null or empty text is no holds; anything else that is not
 /// an array of strings is an error, never an empty list (sp-cxfgj5: a false empty reads as
 /// "not held").
-fn holds(v: Option<&Value>) -> Result<Vec<String>, String> {
+pub fn holds(v: Option<&Value>) -> Result<Vec<String>, String> {
     let arr = match v {
         None | Some(Value::Null) => return Ok(Vec::new()),
         Some(Value::Array(a)) => a.clone(),
@@ -165,7 +165,7 @@ fn express(v: Option<&Value>) -> Result<bool, String> {
     }
 }
 
-fn row_of(r: &Value) -> Result<Row, String> {
+pub fn row_of(r: &Value) -> Result<Row, String> {
     let id = scalar(r.get("bead_id")).unwrap_or_default();
     let at = |e: String| format!("{id}: {e}");
     Ok(Row {
