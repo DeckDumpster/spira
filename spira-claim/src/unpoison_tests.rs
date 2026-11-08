@@ -514,4 +514,6 @@ fn a_content_failure_is_absence_only_when_the_machine_has_no_row() {
     assert!(w.bead("sp-a").is_err(), "a failed read of a bead the machine knows is not absence");
     let mut w = live_over(reply(1, "no issue found matching sp-a"), reply(2, ""));
     assert!(w.bead("sp-a").is_err());
+    let mut w = live_over(reply(2, "no issue found matching sp-a"), reply(1, ""));
+    assert!(w.bead("sp-a").is_err(), "only exit 1 can mean absent; a deadline or crash cannot tell");
 }

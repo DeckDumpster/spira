@@ -465,6 +465,9 @@ impl World for Live {
         let r = self.lc(&["content", "show", id, "--json"])?;
         if r.code != 0 {
             let failed = format!("exit {}: {}", r.code, first_line(&r));
+            if r.code != 1 {
+                return Err(failed);
+            }
             return match self.lc_row(id) {
                 Ok(None) => Ok(None),
                 Ok(Some(_)) => Err(format!("{failed} (the lifecycle machine has a row for it)")),
