@@ -209,20 +209,11 @@ impl World for Real {
                 &limit.to_string(),
                 "--json",
                 "databaseId,headSha",
-                "--jq",
-                ".[] | [(.databaseId|tostring), .headSha] | @tsv",
             ])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output();
-        out.ok()
-            .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .filter_map(|l| l.split_once('\t').map(|(a, b)| (a.to_string(), b.to_string())))
-                    .collect()
-            })
-            .unwrap_or_default()
+        out.ok().filter(|o| o.status.success()).and_then(|o| failed_runs_of(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
     }
 
     fn gh_fail_lines(&self, repo: &str, run_id: &str) -> String {
@@ -243,5 +234,28 @@ impl World for Real {
     fn print(&self, s: &str) {
         print!("{s}");
         let _ = std::io::stdout().flush();
+    }
+}
+
+/// `gh run list --json databaseId,headSha` as (run id, head sha); `None` when the answer is not
+/// that array.
+pub fn failed_runs_of(json: &str) -> Option<Vec<(String, String)>> {
+    let rows = serde_json::from_str::<serde_json::Value>(json).ok()?;
+    rows.as_array()?
+        .iter()
+        .map(|r| Some((r.get("databaseId")?.as_u64()?.to_string(), r.get("headSha")?.as_str()?.to_string())))
+        .collect()
+}
+
+#[cfg(test)]
+mod failed_runs_tests {
+    use super::failed_runs_of;
+
+    #[test]
+    fn failed_runs_are_read_from_the_json_array() {
+        let got = failed_runs_of(r#"[{"databaseId":42,"headSha":"abc"},{"databaseId":7,"headSha":"def"}]"#);
+        assert_eq!(got, Some(vec![("42".into(), "abc".into()), ("7".into(), "def".into())]));
+        assert_eq!(failed_runs_of("42\tabc\n"), None, "tab-separated text is not the answer");
+        assert_eq!(failed_runs_of("[]"), Some(vec![]));
     }
 }

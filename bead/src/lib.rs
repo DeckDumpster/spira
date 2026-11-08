@@ -480,6 +480,16 @@ pub fn parse_blocks_targets(json: &str) -> Vec<String> {
         .collect()
 }
 
+/// The `relates-to` link targets in `rel_json` that `blocks` does not already name. Err when
+/// the list is not a JSON array: an unreadable answer is never "no links".
+pub fn relates_only_targets(blocks: &[String], rel_json: &str) -> Result<Vec<String>, String> {
+    let v: serde_json::Value = serde_json::from_str(rel_json).map_err(|e| format!("not JSON: {e}"))?;
+    if !v.is_array() {
+        return Err("not a JSON array".into());
+    }
+    Ok(parse_blocks_targets(rel_json).into_iter().filter(|t| !blocks.iter().any(|b| b == t)).collect())
+}
+
 /// The id `bd create` printed: bare under `--silent`, or the `id` of the object (or
 /// one-element array) under `--json`.
 pub fn parse_created_id(out: &str) -> Option<String> {
@@ -903,6 +913,15 @@ mod tests {
             parse_blocks_targets(json),
             vec!["sp-a".to_string(), "sp-b".to_string()]
         );
+    }
+
+    #[test]
+    fn relates_only_targets_drops_blockers_and_refuses_an_unreadable_list() {
+        let blocks = vec!["sp-a".to_string()];
+        let json = r#"[{"depends_on_id":"sp-a"},{"id":"sp-b"}]"#;
+        assert_eq!(relates_only_targets(&blocks, json), Ok(vec!["sp-b".to_string()]));
+        assert!(relates_only_targets(&blocks, "warning: slow").is_err(), "text is never an empty link list");
+        assert!(relates_only_targets(&blocks, r#"{"error":"x"}"#).is_err());
     }
 
     #[test]
