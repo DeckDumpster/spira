@@ -176,6 +176,11 @@ pub trait Remote: Sync {
     fn run_attr(&self, addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String>;
 }
 
+/// The probe for the round script's log: [`REMOTE_SCRIPT`] writes it at `~/round-script.log`.
+fn round_started_command() -> String {
+    format!("test -s \"$HOME/{}\"", crate::vm_fault::SCRIPT_LOG_FILE)
+}
+
 /// What the host reads of a VM that never began the round. cloud-init's output log and the kernel log, not
 /// the user-data: that carries secrets.
 const BOOT_LOG_COMMAND: &str = "tail -n 200 /var/log/cloud-init-output.log 2>&1; echo '--- kernel log'; dmesg 2>&1 | tail -n 100";
@@ -1225,7 +1230,7 @@ impl Remote for SshRemote {
         command("ssh")
             .args(self.ssh_opts())
             .arg(format!("{}@{addr}", self.user))
-            .arg(format!("test -s \"$HOME/{}\"", crate::vm_fault::SCRIPT_LOG_FILE))
+            .arg(round_started_command())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -4181,6 +4186,14 @@ mod tests {
         assert!(boot.contains("Failed to start Network Manager") && boot.contains("Out of memory"), "{boot}");
         assert_eq!(*rec.reasons.lock().unwrap(), vec!["vm-no-output: VM produced no output".to_string()], "the round records the fault by name");
         assert_eq!(fx.fp.live_vms().len(), 0, "the VM is destroyed, so the re-drive gets a fresh one");
+    }
+
+    #[test]
+    fn the_probe_looks_where_the_round_script_writes_its_log() {
+        let probe = round_started_command();
+        let path = probe.trim_start_matches("test -s \"").trim_end_matches('"').replace("$HOME", "~");
+        assert_eq!(path, "~/round-script.log");
+        assert!(REMOTE_SCRIPT.contains(&format!("tee -a {path}")), "the script must write {path}");
     }
 
     #[test]

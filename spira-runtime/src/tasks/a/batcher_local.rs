@@ -46,6 +46,7 @@
 //! | Certifying | `unit.ran` red naming no suite and no guilty file, first time | Attributing (the round is attributed, not abandoned whole) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
+//! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
 //! | Landing | land refused (lock busy ×N) | Done (`abandon`, verdict red) |
 //! | Promoting | promotion named | Corpus / Certifying for the staged round (`main.rs:1069`) |
@@ -486,6 +487,9 @@ pub struct RepoCarry {
     /// This round's unnamed certify red has already been attributed.
     #[serde(default)]
     pub attributed: bool,
+    /// Certify passes of this round whose VM answered ssh and never started the round.
+    #[serde(default)]
+    pub no_output_vms: u32,
     /// The unit key of the live leg, when it started, and which run of the corpus it is.
     #[serde(default)]
     pub leg: Option<String>,
@@ -749,6 +753,9 @@ pub const NO_DRIVER: &str = "no-driver";
 /// How many times a round whose VM was lost under its certify is certified again before the
 /// loss is the host's to look at (pace Infra): a lost VM says nothing about the members.
 pub const LOST_VM_RECERTIFIES: u32 = 2;
+/// How many times a round whose VM produced no output is certified again, on a fresh VM, before
+/// it is parked: a second such VM says the image or the provider is at fault, not the members.
+pub const NO_OUTPUT_RECERTIFIES: u32 = 1;
 
 pub fn step(state: State, event: Trigger) -> Result<State, String> {
     table_step(NAME, TABLE, state, event)
@@ -1243,6 +1250,7 @@ impl Machine<'_> {
                 self.land_now();
             }
             (State::Certifying, false) if exit == Exit::Code(queue::ops::round::VM_LOST) => self.vm_lost(),
+            (State::Certifying, false) if exit == Exit::Code(queue::ops::round::VM_NO_OUTPUT) => self.vm_no_output(),
             (State::Certifying, false) if !self.rc.attributed && certify_red_evidence(out).1.is_empty() && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => {
                 self.rc.attributed = true;
                 self.go(Trigger::CertifyRedUnnamed);
@@ -1284,6 +1292,22 @@ impl Machine<'_> {
         }
         self.go(Trigger::CertifyLostSpent);
         self.finish(pace::Outcome::Infra, &format!("certify exited {}: the VM was lost under {} passes of {batch} running; the round is left open", queue::ops::round::VM_LOST, self.rc.lost_vms + 1));
+    }
+
+    /// `queue round certify` exited VM_NO_OUTPUT: the VM took the ssh connection and never started
+    /// the round. Certified once more on a fresh VM; a second parks the round open as an Infra
+    /// fault, with no member charged.
+    fn vm_no_output(&mut self) {
+        let batch = self.rc.batch.clone().unwrap_or_default();
+        if self.rc.no_output_vms < NO_OUTPUT_RECERTIFIES {
+            self.rc.no_output_vms += 1;
+            self.go(Trigger::CertifyLost);
+            self.rc.run += 1;
+            self.certify();
+            return;
+        }
+        self.go(Trigger::CertifyLostSpent);
+        self.finish(pace::Outcome::Infra, &format!("certify exited {}: the VM produced no output under {} passes of {batch} running; the round is parked open", queue::ops::round::VM_NO_OUTPUT, self.rc.no_output_vms + 1));
     }
 
     /// The outcome of one of this task's own effects.

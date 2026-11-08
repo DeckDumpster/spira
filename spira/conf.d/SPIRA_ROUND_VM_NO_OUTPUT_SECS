@@ -1,7 +1,7 @@
 TYPE=u32
 GROUP=round
-DOC=SPIRA_ROUND_VM_NO_OUTPUT_SECS — how long a round VM that answers ssh may show no sign of the round script before the pass is a VM fault and is re-driven on a fresh VM.
-SCHEMA=Seconds after the batch's ssh is up with no round script log on the VM before round-vm names the VM's fault (default 180).
+DOC=SPIRA_ROUND_VM_NO_OUTPUT_SECS — how long after the batch starts a round VM may show no sign of the round script before the pass is a VM fault and is re-driven on a fresh VM.
+SCHEMA=Seconds after the batch starts with no round script log on the VM before round-vm names the VM's fault (default 180).
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_ROUND_VM_NO_OUTPUT_SECS:=180}"
 SPIRA_CONF_DEFAULT_EOF

@@ -6275,6 +6275,20 @@ fn a_red_round_whose_latest_pass_was_a_no_output_vm_abandons_without_the_overrid
     assert!(t.lc.has(&format!("abandon-batch {batch}")), "{:?}", t.lc.calls.borrow());
 }
 
+#[test]
+fn a_red_pass_after_a_no_output_vm_clears_it_so_the_abandon_guard_holds_again() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    no_output_next_pass(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 77, "{}", t.err());
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into()), ("test-b.sh".into(), "red 1 2 fp p e 1".into())];
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "red"]), 1);
+    assert!(t.err().contains("QUEUE_ABANDON_CONSIDERED"), "{}", t.err());
+}
+
 const ENDED: [(&str, &str); 3] = [
     ("r-abandoned", "ABANDONED"),
     ("r-landed", "LANDED"),

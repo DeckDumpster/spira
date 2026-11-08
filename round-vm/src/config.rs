@@ -73,7 +73,7 @@ pub struct Config {
     /// A progress phase with no change for this long reports itself stalled.
     pub vm_budget_secs: u64,
     pub build_budget_secs: u64,
-    /// How long after the batch's ssh is up the VM may show no sign of the round script before
+    /// How long after the batch starts the VM may show no sign of the round script before
     /// the pass is a VM fault.
     pub no_output: Duration,
 }

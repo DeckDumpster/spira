@@ -273,7 +273,7 @@ pub fn fault_reason(field: &str) -> String {
 /// being certified) judged nothing, so it records no attempt and backs no identity off.
 pub fn is_verdict(end: &CertifyEnd) -> bool {
     match end.exit {
-        0 | judge::FAULT | judge::PREEMPTED | judge::VM_LOST => true,
+        0 | judge::FAULT | judge::PREEMPTED | judge::VM_LOST | judge::VM_NO_OUTPUT => true,
         1 => end
             .fields
             .get("red")
