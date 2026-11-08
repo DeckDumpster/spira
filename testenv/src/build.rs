@@ -138,6 +138,28 @@ impl Builder for Cargo {
     }
 }
 
+/// The workspace build, without the cache wrapper's environment. The warm slot goes by
+/// `--target-dir`: sccache keys on every `CARGO_*` variable, so a `CARGO_TARGET_DIR` that differs
+/// per slot gives each slot a cache of its own.
+fn cargo_build_command(worktree: &Path, profile: &str, warm: Option<&Path>) -> Command {
+    let mut cmd = Command::new("cargo");
+    cmd.args(["build", "--profile", profile, "--workspace"])
+        // One-shot: no incremental cache (a switch, not CARGO_INCREMENTAL, which would
+        // split the compilation cache's keys).
+        .args(spira_config::build::one_shot(profile))
+        .current_dir(worktree)
+        .env_remove("CARGO_TARGET_DIR")
+        .env_remove("CARGO_INCREMENTAL")
+        .env_remove("CARGO_BUILD_TARGET_DIR")
+        .env_remove("SPIRA_ARTIFACTS")
+        // Its own process group, so a kill at the cutoff takes rustc with it.
+        .process_group(0);
+    if let Some(w) = warm {
+        cmd.arg("--target-dir").arg(w);
+    }
+    cmd
+}
+
 fn build_in(
     worktree: &Path,
     profile: &str,
@@ -166,29 +188,11 @@ fn build_in(
     if let Some(w) = &warm {
         let _ = std::fs::create_dir_all(w.join(profile_dir(profile)));
     }
-    let mut cargo_cmd = Command::new("cargo");
+    let mut cargo_cmd = cargo_build_command(worktree, profile, warm.as_deref());
     cargo_cmd
-        .args(["build", "--profile", profile, "--workspace"])
-        // One-shot: no incremental cache (a switch, not CARGO_INCREMENTAL, which would
-        // split the compilation cache's keys).
-        .args(spira_config::build::one_shot(profile))
         .envs(wrapper.env(store.as_ref()))
-        .current_dir(worktree)
-        // cargo's default target dir, or the session's warm slot (linked below): both are
-        // stable paths, and <worktree>/target/<p> is the one place SPIRA_ARTIFACTS may point.
-        .env_remove("CARGO_TARGET_DIR")
-        // A caller's CARGO_INCREMENTAL would split the compilation cache (sccache hashes
-        // every CARGO_* variable); the one-shot switch above says the same thing.
-        .env_remove("CARGO_INCREMENTAL")
-        .env_remove("CARGO_BUILD_TARGET_DIR")
-        .env_remove("SPIRA_ARTIFACTS")
         .stdin(Stdio::null())
-        .stdout(stdout_to_stderr)
-        // Its own process group, so a kill at the cutoff takes rustc with it.
-        .process_group(0);
-    if let Some(w) = &warm {
-        cargo_cmd.env("CARGO_TARGET_DIR", w);
-    }
+        .stdout(stdout_to_stderr);
     // rustc's RUSTC_WRAPPER=sccache auto-starts sccache's own server on first use, a
     // long-lived daemon that outlives this build; it must never inherit a caller's lock
     // fd this process did not open itself (sp-ohwg7).
@@ -294,6 +298,16 @@ mod tests {
         assert!(!is_oom(Some(9), Some(2), Some(2)));
         assert!(!is_oom(Some(15), Some(1), Some(2)));
         assert!(!is_oom(Some(9), None, Some(2)));
+    }
+
+    #[test]
+    fn a_warm_slot_is_passed_as_target_dir_never_as_an_environment_variable() {
+        let args = |c: &Command| c.get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
+        let cmd = cargo_build_command(Path::new("/w"), "dev", Some(Path::new("/warm/slot.3")));
+        assert!(args(&cmd).windows(2).any(|w| w == ["--target-dir", "/warm/slot.3"]), "{:?}", args(&cmd));
+        assert!(cmd.get_envs().all(|(k, v)| k != "CARGO_TARGET_DIR" || v.is_none()), "an env CARGO_TARGET_DIR splits the cache per slot");
+        let cold = cargo_build_command(Path::new("/w"), "dev", None);
+        assert!(!args(&cold).iter().any(|a| a == "--target-dir"));
     }
 
     #[test]

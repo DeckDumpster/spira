@@ -60,22 +60,49 @@ pub struct Profile {
     pub path: String,
     /// `RUST_TEST_THREADS` inside.
     pub test_threads: u32,
+    /// The compilation cache every branch's run shares; `None` compiles uncached.
+    pub cache: Option<Cache>,
+}
+
+/// A host-local sccache store and the binary that serves it. It is a directory, not the box's
+/// network store: the sandbox has no network, and each run's own server is gone with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cache {
+    pub dir: PathBuf,
+    pub sccache: PathBuf,
+}
+
+/// Where under home the sandbox's tools live: on its `PATH`, in this order.
+const TOOL_DIRS: [&str; 2] = [".local/lib/spira-env/bin", ".cargo/bin"];
+
+/// The store inside the target root. A dot name, so [`prune_targets`] never counts it a branch.
+pub const CACHE_DIR_NAME: &str = ".sccache";
+
+impl Cache {
+    /// The store under `root`, served by the `sccache` among `ro_under_home`'s bin directories;
+    /// `None` when there is no sccache to serve it.
+    pub fn under(root: &Path, home: &Path) -> Option<Cache> {
+        if root.as_os_str().is_empty() {
+            return None;
+        }
+        let sccache = TOOL_DIRS.iter().map(|d| home.join(d).join("sccache")).find(|p| p.is_file())?;
+        Some(Cache { dir: root.join(CACHE_DIR_NAME), sccache })
+    }
 }
 
 impl Profile {
-    /// The profile for `tree` with its target at `target`, from this process's home.
-    pub fn for_run(tree: &Path, target: &Path, home: &Path, test_threads: u32) -> Profile {
+    /// The profile for `tree` with its target at `target`, from this process's home. `root` is
+    /// the directory the targets live in, which also holds the shared compilation store.
+    pub fn for_run(tree: &Path, target: &Path, root: &Path, home: &Path, test_threads: u32) -> Profile {
         let under = |rel: &str| home.join(rel);
         let ro = [".rustup", ".cargo/bin", ".local/lib/spira-env"];
         let rw = [".cargo/registry", ".cargo/git"];
-        let path = [
-            under(".local/lib/spira-env/bin").display().to_string(),
-            under(".cargo/bin").display().to_string(),
-            "/usr/local/bin".into(),
-            "/usr/bin".into(),
-            "/bin".into(),
-        ]
-        .join(":");
+        let path = TOOL_DIRS
+            .iter()
+            .map(|d| under(d).display().to_string())
+            .chain(["/usr/local/bin".into(), "/usr/bin".into(), "/bin".into()])
+            .collect::<Vec<_>>()
+            .join(":");
         Profile {
             tree: tree.to_path_buf(),
             target: target.to_path_buf(),
@@ -85,13 +112,14 @@ impl Profile {
             rw_under_home: rw.iter().map(|r| under(r)).filter(|p| p.exists()).collect(),
             path,
             test_threads,
+            cache: Cache::under(root, home),
         }
     }
 
     /// The environment inside, in full: nothing of the caller's passes but these.
     pub fn env(&self) -> Vec<(String, String)> {
         let s = |p: &Path| p.display().to_string();
-        vec![
+        let mut env = vec![
             ("PATH".into(), self.path.clone()),
             ("HOME".into(), s(&self.home)),
             ("USER".into(), self.home.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
@@ -99,14 +127,24 @@ impl Profile {
             ("LANG".into(), "C.UTF-8".into()),
             ("CARGO_HOME".into(), s(&self.home.join(".cargo"))),
             ("RUSTUP_HOME".into(), s(&self.home.join(".rustup"))),
-            ("CARGO_TARGET_DIR".into(), s(&self.target)),
+            ("CARGO_TARGET_DIR".into(), TARGET_MOUNT.into()),
             ("CARGO_NET_OFFLINE".into(), "true".into()),
             ("CARGO_TERM_COLOR".into(), "never".into()),
             ("RUST_TEST_THREADS".into(), self.test_threads.to_string()),
             // The image's system-level git identity (spira/testenv/Containerfile), at the same
             // lowest priority, so a test's own repo identity still wins (sp-fdsfq1).
             ("GIT_CONFIG_SYSTEM".into(), s(&self.gitconfig())),
-        ]
+        ];
+        if let Some(c) = &self.cache {
+            env.extend([
+                ("RUSTC_WRAPPER".into(), s(&c.sccache)),
+                ("SCCACHE_DIR".into(), s(&c.dir)),
+                ("SCCACHE_IGNORE_SERVER_IO_ERROR".into(), "1".into()),
+                // sccache keys on every CARGO_* variable, and does not cache an incremental crate.
+                ("CARGO_INCREMENTAL".into(), "0".into()),
+            ]);
+        }
+        env
     }
 
     /// `bwrap`'s arguments up to (not including) the command. Order matters: a later mount
@@ -151,7 +189,10 @@ impl Profile {
         // is shared by every run of that branch, and the source paths cargo compiles in must still
         // name a real file when the next run's worktree lives somewhere else.
         a.extend(["--bind".into(), s(&self.tree), TREE_MOUNT.into()]);
-        a.extend(["--bind".into(), s(&self.target), s(&self.target)]);
+        a.extend(["--bind".into(), s(&self.target), TARGET_MOUNT.into()]);
+        if let Some(c) = &self.cache {
+            a.extend(["--bind".into(), s(&c.dir), s(&c.dir)]);
+        }
         a.extend(["--chdir".into(), TREE_MOUNT.into()]);
         a.push("--clearenv".into());
         for (k, v) in self.env() {
@@ -164,6 +205,10 @@ impl Profile {
 /// Where the run's tree is inside the sandbox, the same for every run: under the sandbox's own
 /// tmpfs /tmp, since the read-only root cannot take a new mountpoint.
 pub const TREE_MOUNT: &str = "/tmp/spira-sandbox-tree";
+
+/// Where the run's cargo target is inside the sandbox, the same for every branch: sccache keys on
+/// `CARGO_TARGET_DIR`, so one path is what lets branches share compiled dependencies.
+pub const TARGET_MOUNT: &str = "/tmp/spira-sandbox-target";
 
 /// The unit script as the sandbox sees it.
 pub fn mounted_script(script: &str) -> PathBuf {
@@ -238,7 +283,7 @@ pub fn prune_targets(root: &Path, current: &Path, keep: usize) -> Vec<PathBuf> {
         .into_iter()
         .flatten()
         .flatten()
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && !e.file_name().to_string_lossy().starts_with('.'))
         .map(|e| (e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), e.path()))
         .collect();
     dirs.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
@@ -274,6 +319,9 @@ pub struct Ran {
 /// Err: the sandbox could not be started at all (no bwrap, a refused namespace).
 pub fn run(bwrap: &str, profile: &Profile, script: &Path, out: &Path, deadline: Option<Duration>) -> Result<Ran, String> {
     fs::create_dir_all(&profile.target).map_err(|e| format!("cannot create {}: {e}", profile.target.display()))?;
+    if let Some(c) = &profile.cache {
+        fs::create_dir_all(&c.dir).map_err(|e| format!("cannot create {}: {e}", c.dir.display()))?;
+    }
     profile.write_gitconfig()?;
     let log = fs::File::create(out).map_err(|e| format!("cannot write {}: {e}", out.display()))?;
     let err = log.try_clone().map_err(|e| e.to_string())?;
@@ -339,7 +387,16 @@ mod tests {
             rw_under_home: vec!["/h/u/.cargo/registry".into()],
             path: "/h/u/.cargo/bin:/usr/bin".into(),
             test_threads: 4,
+            cache: None,
         }
+    }
+
+    fn cached() -> Profile {
+        Profile { cache: Some(Cache { dir: "/srv/t/.sccache".into(), sccache: "/h/u/.cargo/bin/sccache".into() }), ..profile() }
+    }
+
+    fn value(env: &[(String, String)], k: &str) -> Option<String> {
+        env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
     }
 
     fn pairs(a: &[String], flag: &str) -> Vec<(String, String)> {
@@ -433,5 +490,88 @@ mod tests {
         q.write_gitconfig().unwrap();
         let text = fs::read_to_string(q.gitconfig()).unwrap();
         assert!(text.contains("name = spirauser") && text.contains("email = spirauser@localhost"), "{text}");
+    }
+
+    #[test]
+    fn two_branches_see_the_same_target_path_so_their_compiled_dependencies_share_cache_keys() {
+        let other = Profile { target: "/srv/t/spira-unit-cargo-target-c".into(), ..cached() };
+        for p in [cached(), other] {
+            assert_eq!(value(&p.env(), "CARGO_TARGET_DIR").as_deref(), Some(TARGET_MOUNT));
+            assert!(pairs(&p.bwrap_args(), "--bind").contains(&(p.target.display().to_string(), TARGET_MOUNT.into())));
+        }
+    }
+
+    #[test]
+    fn a_cached_run_compiles_through_the_shared_store_and_may_write_only_that_store() {
+        let p = cached();
+        let env = p.env();
+        assert_eq!(value(&env, "RUSTC_WRAPPER").as_deref(), Some("/h/u/.cargo/bin/sccache"));
+        assert_eq!(value(&env, "SCCACHE_DIR").as_deref(), Some("/srv/t/.sccache"));
+        assert_eq!(value(&env, "CARGO_INCREMENTAL").as_deref(), Some("0"));
+        assert!(pairs(&p.bwrap_args(), "--bind").contains(&("/srv/t/.sccache".into(), "/srv/t/.sccache".into())));
+    }
+
+    #[test]
+    fn an_uncached_run_sets_no_wrapper_and_binds_no_store() {
+        let p = profile();
+        assert!(p.env().iter().all(|(k, _)| k != "RUSTC_WRAPPER" && k != "SCCACHE_DIR"));
+        assert!(pairs(&p.bwrap_args(), "--bind").iter().all(|(s, _)| !s.contains("sccache")));
+    }
+
+    #[test]
+    fn the_store_is_found_beside_the_toolchain_and_absent_without_an_sccache() {
+        let home = testkit::TempDir::new("sandbox-cache-home");
+        let root = testkit::TempDir::new("sandbox-cache-root");
+        assert_eq!(Cache::under(root.path(), home.path()), None);
+        fs::create_dir_all(home.path().join(".cargo/bin")).unwrap();
+        fs::write(home.path().join(".cargo/bin/sccache"), "").unwrap();
+        let c = Cache::under(root.path(), home.path()).unwrap();
+        assert_eq!(c.dir, root.path().join(CACHE_DIR_NAME));
+        assert_eq!(c.sccache, home.path().join(".cargo/bin/sccache"));
+        assert_eq!(Cache::under(Path::new(""), home.path()), None, "an empty root must not make a store in the cwd");
+    }
+
+    #[test]
+    fn pruning_never_removes_the_shared_store() {
+        let d = testkit::TempDir::new("sandbox-prune-store");
+        let store = d.path().join(CACHE_DIR_NAME);
+        fs::create_dir(&store).unwrap();
+        fs::File::open(&store).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(900)).unwrap();
+        let a = d.path().join("t-a");
+        let b = d.path().join("t-b");
+        fs::create_dir(&a).unwrap();
+        fs::create_dir(&b).unwrap();
+        assert!(prune_targets(d.path(), &a, 2).is_empty());
+        assert!(store.exists());
+    }
+
+    #[test]
+    fn a_run_profile_gets_the_store_in_the_target_root_and_the_sccache_it_finds() {
+        let home = testkit::TempDir::new("sandbox-run-home");
+        let root = testkit::TempDir::new("sandbox-run-root");
+        fs::create_dir_all(home.path().join(".cargo/bin")).unwrap();
+        fs::write(home.path().join(".cargo/bin/sccache"), "").unwrap();
+        let p = Profile::for_run(Path::new("/w"), &root.path().join("t"), root.path(), home.path(), 4);
+        assert_eq!(p.cache.as_ref().map(|c| c.dir.clone()), Some(root.path().join(CACHE_DIR_NAME)));
+        assert_eq!(value(&p.env(), "RUSTC_WRAPPER"), Some(home.path().join(".cargo/bin/sccache").display().to_string()));
+    }
+
+    #[test]
+    fn the_script_in_a_real_sandbox_sees_the_wrapper_the_store_and_the_fixed_target() {
+        if usable("bwrap").is_err() {
+            return;
+        }
+        let tree = testkit::TempDir::new("sandbox-real-tree");
+        let root = testkit::TempDir::new("sandbox-real-root");
+        let home = testkit::TempDir::new("sandbox-real-home");
+        fs::write(tree.path().join("probe.sh"), "echo \"$RUSTC_WRAPPER|$SCCACHE_DIR|$CARGO_TARGET_DIR|$CARGO_INCREMENTAL\"\nls -d \"$CARGO_TARGET_DIR\" \"$SCCACHE_DIR\"\n").unwrap();
+        let mut p = Profile::for_run(tree.path(), &root.path().join("t"), root.path(), home.path(), 1);
+        p.cache = Some(Cache { dir: root.path().join(CACHE_DIR_NAME), sccache: "/usr/bin/true".into() });
+        let out = root.path().join("out");
+        let ran = run("bwrap", &p, &Path::new(TREE_MOUNT).join("probe.sh"), &out, Some(Duration::from_secs(60))).unwrap();
+        let text = fs::read_to_string(&out).unwrap();
+        assert_eq!(ran.rc, Some(0), "{text}");
+        let store = root.path().join(CACHE_DIR_NAME).display().to_string();
+        assert!(text.contains(&format!("/usr/bin/true|{store}|{TARGET_MOUNT}|0")), "{text}");
     }
 }
