@@ -442,6 +442,7 @@ mod tests {
             drain_warn_mins: 15,
             idle_while_ready_n: 5,
             systemctl: "systemctl".into(),
+            units: std::sync::Arc::new(runtime::units::ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)))),
             prompt_file: None,
             lapsed_dir: None,
             lapsed_marker: None,

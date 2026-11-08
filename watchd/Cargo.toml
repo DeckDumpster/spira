@@ -9,6 +9,7 @@ inbox-rules = { path = "../inbox-rules" }
 libc = "0.2"
 mail = { path = "../mail" }
 regex = "1"
+runtime = { path = "../runtime" }
 sop = { path = "../sop" }
 spira-config = { path = "../spira-config" }
 tsd = { path = "../tsd" }

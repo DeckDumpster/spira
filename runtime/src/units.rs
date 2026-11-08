@@ -230,6 +230,9 @@ pub struct UnitDetail {
     pub invocation_id: Option<String>,
     /// `ExecMainStartTimestamp`, wall-clock milliseconds.
     pub exec_main_start_ms: Option<u64>,
+    /// `Environment=`, one `NAME=value` per entry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<String>,
 }
 
 impl UnitDetail {
@@ -700,6 +703,7 @@ fn run_detail(name: &str, started_ms: u64, pid: Option<u32>, ended: Option<(Exit
         n_restarts: Some(0),
         invocation_id: None,
         exec_main_start_ms: Some(started_ms),
+        environment: Vec::new(),
     }
 }
 
@@ -1702,6 +1706,15 @@ mod systemd {
             n_restarts: find(ty, "NRestarts").and_then(Val::as_u64).and_then(|n| u32::try_from(n).ok()),
             invocation_id: find(unit, "InvocationID").and_then(Val::as_bytes).filter(|b| b.iter().any(|x| *x != 0)).map(|b| b.iter().map(|x| format!("{x:02x}")).collect()),
             exec_main_start_ms: usec_ms(find(ty, "ExecMainStartTimestamp")),
+            environment: strings_of(find(ty, "Environment")),
+        }
+    }
+
+    fn strings_of(v: Option<&Val>) -> Vec<String> {
+        match v {
+            Some(Val::Var(inner)) => strings_of(Some(inner)),
+            Some(Val::Arr(items)) => items.iter().filter_map(|i| i.as_str().map(String::from)).collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -1913,6 +1926,7 @@ pub const UNITS_KEY: &str = "SPIRA_UNITS";
 pub enum Backend {
     Scripted(Arc<ScriptedUnits>),
     Process(Arc<ProcessUnits>),
+    Systemctl(Arc<crate::systemctl::SystemctlUnits>),
     #[cfg(target_os = "linux")]
     Systemd(Arc<SystemdUnits<unit_run::dbus::Conn>>),
 }
@@ -1922,6 +1936,7 @@ impl Backend {
         match self {
             Backend::Scripted(u) => u.clone(),
             Backend::Process(u) => u.clone(),
+            Backend::Systemctl(u) => u.clone(),
             #[cfg(target_os = "linux")]
             Backend::Systemd(u) => u.clone(),
         }
@@ -1931,6 +1946,7 @@ impl Backend {
         match self {
             Backend::Scripted(u) => u.clone(),
             Backend::Process(u) => u.clone(),
+            Backend::Systemctl(u) => u.clone(),
             #[cfg(target_os = "linux")]
             Backend::Systemd(u) => u.clone(),
         }
@@ -1948,6 +1964,7 @@ impl Backend {
         match self {
             Backend::Scripted(_) => "scripted",
             Backend::Process(_) => "process",
+            Backend::Systemctl(_) => "cli",
             #[cfg(target_os = "linux")]
             Backend::Systemd(_) => "systemd",
         }
@@ -1959,18 +1976,76 @@ pub fn from_env(clock: Arc<dyn Clock>) -> Result<Backend> {
     from_value(clock, std::env::var(UNITS_KEY).ok().as_deref())
 }
 
+/// The backend a host tool reads units through. A `SPIRA_SYSTEMCTL` override (a wrapper or a
+/// test stub) outranks the default `systemd`, which would otherwise bypass it onto the live
+/// user manager; `scripted` and `process` are chosen deliberately and stand.
+pub fn for_host(clock: Arc<dyn Clock>, units: Option<&str>, systemctl: Option<&str>) -> Result<Backend> {
+    let overridden = systemctl.is_some_and(|p| !p.trim().is_empty());
+    let value = match units.map(str::trim).filter(|v| !v.is_empty()) {
+        None | Some("systemd") if overridden => Some("cli"),
+        other => other,
+    };
+    match (value, systemctl.map(str::trim).filter(|p| !p.is_empty())) {
+        (Some("cli"), Some(program)) => Ok(Backend::Systemctl(Arc::new(crate::systemctl::SystemctlUnits::new(program)))),
+        _ => from_value(clock, value),
+    }
+}
+
+/// A backend that could not be opened: every read says why, so a probe reports "unknown"
+/// rather than an all-clear.
+struct Unreachable(String);
+
+impl Unreachable {
+    fn err<T>(&self) -> Result<T> {
+        Err(RuntimeError::new(self.0.clone()))
+    }
+}
+
+impl Units for Unreachable {
+    fn start(&self, _: &UnitSpec) -> Result<UnitHandle> {
+        self.err()
+    }
+    fn stop(&self, _: &UnitHandle) -> Result<()> {
+        self.err()
+    }
+    fn restart(&self, _: &UnitHandle) -> Result<()> {
+        self.err()
+    }
+    fn facts(&self, _: &UnitHandle) -> Result<UnitFacts> {
+        self.err()
+    }
+    fn list(&self, _: &str) -> Result<Vec<UnitDetail>> {
+        self.err()
+    }
+}
+
+/// A manager that answers every read with `why`.
+pub fn unreachable(why: &str) -> Arc<dyn Units> {
+    Arc::new(Unreachable(why.into()))
+}
+
+/// The unit manager a host tool reads: [`for_host`] over this process's `SPIRA_UNITS` and the
+/// caller's `SPIRA_SYSTEMCTL` override, or [`unreachable`] naming why it could not be opened.
+pub fn host(systemctl: Option<&str>) -> Arc<dyn Units> {
+    match for_host(Arc::new(crate::ports::WallClock), std::env::var(UNITS_KEY).ok().as_deref(), systemctl) {
+        Ok(backend) => backend.units(),
+        Err(e) => unreachable(&format!("unit manager unreachable: {e}")),
+    }
+}
+
 /// The backend `value` names; see [`UNITS_KEY`]. An unknown value is refused, naming it.
 pub fn from_value(clock: Arc<dyn Clock>, value: Option<&str>) -> Result<Backend> {
     match value.map(str::trim).filter(|v| !v.is_empty()) {
         Some("scripted") => Ok(Backend::Scripted(Arc::new(ScriptedUnits::new(clock)))),
         Some("process") => Ok(Backend::Process(Arc::new(ProcessUnits::new(clock)))),
+        Some("cli") => Ok(Backend::Systemctl(Arc::new(crate::systemctl::SystemctlUnits::system()))),
         #[cfg(target_os = "linux")]
         Some("systemd") | None => Ok(Backend::Systemd(Arc::new(SystemdUnits::connect(clock)?))),
         #[cfg(not(target_os = "linux"))]
         Some("systemd") => Err(RuntimeError::refused(format!("{UNITS_KEY}=systemd: systemd is Linux only"))),
         #[cfg(not(target_os = "linux"))]
         None => Ok(Backend::Process(Arc::new(ProcessUnits::new(clock)))),
-        Some(other) => Err(RuntimeError::refused(format!("{UNITS_KEY}={other}: not one of scripted, process, systemd"))),
+        Some(other) => Err(RuntimeError::refused(format!("{UNITS_KEY}={other}: not one of scripted, process, cli, systemd"))),
     }
 }
 
@@ -1981,6 +2056,24 @@ mod tests {
 
     fn spec(task: &str, key: &str, argv: &[&str]) -> UnitSpec {
         UnitSpec { task: task.into(), key: key.into(), argv: argv.iter().map(|s| s.to_string()).collect(), env: vec![], cwd: None }
+    }
+
+    #[test]
+    fn an_unreachable_manager_fails_every_read() {
+        let u = unreachable("no bus");
+        assert!(u.detail(&UnitHandle::named("a.service")).is_err());
+        assert!(u.list("spira-*").is_err());
+    }
+
+    #[test]
+    fn a_systemctl_override_outranks_the_default_backend_but_not_a_deliberate_one() {
+        let clock = || -> Arc<dyn Clock> { Arc::new(VirtualClock::new(0)) };
+        let kind = |units, sysctl| for_host(clock(), units, sysctl).map(|b| b.kind());
+        assert_eq!(kind(Some("systemd"), Some("/stub/units-cli")), Ok("cli"));
+        assert_eq!(kind(None, Some("/stub/units-cli")), Ok("cli"));
+        assert_eq!(kind(Some("scripted"), Some("/stub/units-cli")), Ok("scripted"));
+        assert_eq!(kind(Some("process"), Some("")), Ok("process"));
+        assert_eq!(kind(Some("cli"), None), Ok("cli"));
     }
 
     #[test]
@@ -2614,7 +2707,7 @@ mod tests {
             let f = Fake::default();
             let p = "/org/freedesktop/systemd1/unit/x";
             f.answer(&format!("GetAll {p} {UNIT}"), vec![dict(&[("LoadState", Val::S("loaded".into())), ("UnitFileState", Val::S("enabled".into())), ("ActiveState", Val::S("active".into())), ("SubState", Val::S("running".into())), ("InvocationID", Val::Arr(vec![Val::U(0xab); 16]))])]);
-            f.answer(&format!("GetAll {p} org.freedesktop.systemd1.Service"), vec![dict(&[("Result", Val::S("success".into())), ("MainPID", Val::U(42)), ("NRestarts", Val::U(2)), ("ExecMainStartTimestamp", Val::U(9_000_000))])]);
+            f.answer(&format!("GetAll {p} org.freedesktop.systemd1.Service"), vec![dict(&[("Result", Val::S("success".into())), ("MainPID", Val::U(42)), ("NRestarts", Val::U(2)), ("ExecMainStartTimestamp", Val::U(9_000_000)), ("Environment", Val::Arr(vec![Val::S("SPIRA_RELEASE=/r/abc".into()), Val::S("A=1".into())]))])]);
             let d = f.units().detail(&UnitHandle::named("spira-loom.service")).unwrap();
             assert_eq!(d, UnitDetail {
                 name: "spira-loom.service".into(),
@@ -2630,6 +2723,7 @@ mod tests {
                 n_restarts: Some(2),
                 invocation_id: Some("ab".repeat(16)),
                 exec_main_start_ms: Some(9_000),
+                environment: vec!["SPIRA_RELEASE=/r/abc".into(), "A=1".into()],
             });
             assert_eq!(f.units().facts(&UnitHandle::named("spira-loom.service")).unwrap(), d.facts());
         }

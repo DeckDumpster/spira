@@ -69,7 +69,7 @@ fn main() {
         }
         "status" => {
             let ctx = load_context();
-            let real = Real::new(ctx.systemctl.clone());
+            let real = Real::new(ctx.systemctl.clone(), ctx.systemctl_override.as_deref());
             let rows = need_rows(&ctx);
             let halted = std::path::Path::new(&ctx.run).join("world.halted").exists();
             print!("{}", commands::cmd_status(&rows, &real, &ctx, halted));
@@ -174,7 +174,7 @@ fn main() {
         }
         "restart" => {
             let ctx = load_context();
-            let real = Real::new(ctx.systemctl.clone());
+            let real = Real::new(ctx.systemctl.clone(), ctx.systemctl_override.as_deref());
             let rows = need_rows(&ctx);
             match commands::cmd_restart(&rows, &real, &ctx, rest.first().map(|s| s.as_str())) {
                 Ok(out) => {
@@ -190,7 +190,7 @@ fn main() {
                 std::process::exit(3);
             }
             let ctx = load_context();
-            let real = Real::new(ctx.systemctl.clone());
+            let real = Real::new(ctx.systemctl.clone(), ctx.systemctl_override.as_deref());
             let rows = need_rows(&ctx);
             match notify::cmd_notify(&rows, &real, &ctx) {
                 Ok(out) => {
@@ -209,7 +209,7 @@ fn main() {
                 std::process::exit(2);
             };
             let ctx = load_context();
-            let real = Real::new(ctx.systemctl.clone());
+            let real = Real::new(ctx.systemctl.clone(), ctx.systemctl_override.as_deref());
             let rows = need_rows(&ctx);
             match notify::cmd_page(&rows, &real, &ctx, row, text, fields) {
                 Ok(()) => 0,
@@ -221,7 +221,7 @@ fn main() {
         }
         "prune" => {
             let ctx = load_context();
-            let real = Real::new(ctx.systemctl.clone());
+            let real = Real::new(ctx.systemctl.clone(), ctx.systemctl_override.as_deref());
             let rows = need_rows(&ctx);
             let unit_dir = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join(".config/systemd/user");
             print!("{}", commands::cmd_prune(&rows, &real, &ctx, &unit_dir));

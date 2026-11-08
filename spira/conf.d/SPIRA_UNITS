@@ -1,8 +1,8 @@
 TYPE=string
 GROUP=runtime
-DOC=The unit manager backend runtime::units::from_env runs against: scripted, process or systemd.
-SCHEMA=The unit manager backend (`SPIRA_UNITS`): "scripted" (the test double), "process" (child processes) or "systemd" (transient units over D-Bus, Linux only). Any other value is refused, naming it.
+DOC=The unit manager backend runtime::units::from_env runs against: scripted, process, cli or systemd.
+SCHEMA=The unit manager backend (`SPIRA_UNITS`): "scripted" (the test double), "process" (child processes), "cli" (a unit-manager command-line program, `SPIRA_SYSTEMCTL` when set, for a wrapper or a stub) or "systemd" (transient units over D-Bus, Linux only). Any other value is refused, naming it.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # The unit manager backend runtime::units::from_env runs against: scripted, process or systemd.
+    # The unit manager backend runtime::units::from_env runs against: scripted, process, cli or systemd.
     : "${SPIRA_UNITS:=systemd}"
 SPIRA_CONF_DEFAULT_EOF

@@ -20,6 +20,7 @@ pub mod scheduler;
 pub mod socket;
 pub mod sources;
 pub mod status_board;
+pub mod systemctl;
 pub mod taskrig;
 pub mod units;
 pub mod usage;

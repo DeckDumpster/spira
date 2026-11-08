@@ -449,7 +449,7 @@ pub fn ask(input: &str) -> Result<String, String> {
 pub fn sop_match(input: &str) -> Result<String, String> {
     let offer: Offer = serde_json::from_str(input).map_err(|e| format!("{SOP_MATCH}: bad input: {e}"))?;
     let ctx = context()?;
-    let ops = watchd::ops::Real::new(ctx.systemctl.clone());
+    let ops = watchd::ops::Real::new(ctx.systemctl.clone(), ctx.systemctl_override.as_deref());
     let tried: Vec<Tried> = offer
         .candidates
         .iter()
@@ -479,7 +479,7 @@ pub fn sop_applied(input: &str) -> Result<String, String> {
         (None, Some(p)) => watchd::ops::Target::Pass(p),
         (None, None) => return Err(format!("{SOP_APPLIED}: refused: no bead or pass named")),
     };
-    watchd::ops::Real::new(context()?.systemctl).sop_applied(&a.slug, &target, &a.check, &a.why)?;
+    watchd::ops::Real::new(context()?.systemctl, None).sop_applied(&a.slug, &target, &a.check, &a.why)?;
     Ok(format!("{} recorded {}", a.slug, a.check))
 }
 
@@ -500,7 +500,7 @@ pub fn concierge_note(input: &str) -> Result<String, String> {
 /// `mail-health.sh` (watchd's FORK-EDGE): 0 and 1 are answers, 3 is "could not check".
 pub fn mail_health() -> Result<String, String> {
     use watchd::ops::Ops;
-    match watchd::ops::Real::new(context()?.systemctl).mail_health() {
+    match watchd::ops::Real::new(context()?.systemctl, None).mail_health() {
         3 => Err("watchd: mail-health.sh could not check".into()),
         code => Ok(code.to_string()),
     }

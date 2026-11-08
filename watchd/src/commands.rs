@@ -508,6 +508,7 @@ mod tests {
             bdq: String::new(),
             placeholders: Default::default(),
             systemctl: "systemctl".into(),
+            systemctl_override: None,
             instance: "prod".into(),
             now: 1_790_726_400,
         }
