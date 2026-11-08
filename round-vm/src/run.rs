@@ -3840,7 +3840,6 @@ mod tests {
         assert!(!REMOTE_SCRIPT[start..stop].contains("timeout -k 5 \"$cap\""), "no timer counts from before the first suite");
         assert!(REMOTE_SCRIPT.contains("round-vm: BARE-SUITES: PASS"));
         assert!(REMOTE_SCRIPT.contains("round-vm: OVER-CAP: guard=suites-cap elapsed=") && REMOTE_SCRIPT.contains("if [ -n \"$over_cap\" ]; then exit 124; fi"));
-        assert!(REMOTE_SCRIPT.contains("> \"$bare_rdir/round-fault-kind\""), "the script records the typed kind beside its stderr line");
         assert!(REMOTE_SCRIPT.contains("> \"$bare_rdir/round-fault-kind\"") && REMOTE_SCRIPT.contains("echo \"over-cap guard=suites-cap"), "the script records the typed kind beside its stderr line");
         assert_eq!(crate::vm_fault::FAULT_KIND_FILE, "round-fault-kind");
         assert!(REMOTE_SCRIPT[..unit_wait].contains("test_phase_bound \"$unit_pid\" \"$cap\""), "the unit phase's wait has its own guard, outside the cap clock");
@@ -3887,6 +3886,24 @@ mod tests {
         assert!(kept.starts_with("ROUND-FAULT: FAULT phase=release rc=2: "), "{kept}");
         assert!(kept.contains("round-vm: setup line 23\n") && !kept.contains("round-vm: setup line 22\n"), "the last 40 lines: {kept}");
         assert!(kept.contains("round-vm: built the round in 12s"), "{kept}");
+    }
+
+    #[test]
+    fn an_over_cap_kind_the_vm_left_reaches_the_results_and_a_stale_one_does_not_survive_the_next_pull() {
+        let fx = fixture();
+        let mut remote = FakeRemote::green();
+        remote.files.insert(REMOTE_RESULTS, vec![(crate::vm_fault::FAULT_KIND_FILE, "over-cap guard=suites-cap cap=900s\n")]);
+        let pulled = fx.cfg.state_dir.join(".pulled-cap-test");
+        let results = fx.cfg.run_dir.join("capped");
+        remote.pull("addr", REMOTE_RESULTS, &pulled).unwrap();
+        keep_top_files(&pulled, &results);
+        let kind = fs::read_to_string(results.join(crate::vm_fault::FAULT_KIND_FILE)).unwrap();
+        assert_eq!(kind, "over-cap guard=suites-cap cap=900s\n");
+        let clean = fx.cfg.state_dir.join(".pulled-clean-test");
+        FakeRemote::green().pull("addr", REMOTE_RESULTS, &clean).unwrap();
+        let _ = fs::remove_file(results.join(crate::vm_fault::FAULT_KIND_FILE));
+        keep_top_files(&clean, &results);
+        assert!(!results.join(crate::vm_fault::FAULT_KIND_FILE).exists());
     }
 
     #[test]
