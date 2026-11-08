@@ -296,8 +296,9 @@ pub fn write_if_changed(path: &Path, content: impl AsRef<[u8]>) -> std::io::Resu
 
 /// [`write_if_changed`] through a temp file and rename, so a reader never sees a partial file.
 pub fn replace_if_changed(path: &Path, content: &str) -> std::io::Result<bool> {
-    if std::fs::read(path).is_ok_and(|have| have == content.as_bytes()) {
-        return write_if_changed(path, content);
+    let same = std::fs::read(path).is_ok_and(|have| have == content.as_bytes());
+    if same && std::fs::OpenOptions::new().write(true).open(path).and_then(|f| f.set_modified(SystemTime::now())).is_ok() {
+        return Ok(false);
     }
     let tmp = path.with_extension(format!("tmp{}", std::process::id()));
     DATA_WRITES.with(|c| c.set(c.get() + 1));

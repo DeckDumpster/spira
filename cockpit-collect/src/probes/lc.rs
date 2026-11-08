@@ -60,10 +60,10 @@ fn last_good(dir: &std::path::Path, key: &str, now: i64, fetch: impl FnOnce() ->
         })
         .unwrap_or((0, now));
     let (n, since) = (n + 1, since);
-    let _ = std::fs::write(&fails, format!("{n} {since}"));
+    let _ = io::write_if_changed(&fails, format!("{n} {since}"));
     let raw = std::fs::read_to_string(&good).ok().filter(|_| n < FAIL_LIMIT && now - since < FAIL_WINDOW_SECS)?;
     let taken = std::fs::metadata(&good).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(now, |d| d.as_secs() as i64);
-    let _ = std::fs::write(&stale, (now - taken).max(0).to_string());
+    let _ = io::write_if_changed(&stale, (now - taken).max(0).to_string());
     Some(raw)
 }
 

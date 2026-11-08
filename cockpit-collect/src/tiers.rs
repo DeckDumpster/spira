@@ -254,6 +254,22 @@ mod tests {
     }
 
     #[test]
+    fn history_is_trimmed_only_past_its_slack_and_back_to_the_cap() {
+        let run = testkit::TempDir::new("hist-trim");
+        let p = run.path().join("cockpit-history.csv");
+        let rows = |_: usize| std::fs::read_to_string(&p).unwrap().lines().count() - 1;
+        for _ in 0..25 {
+            append_history(run.path());
+        }
+        assert_eq!(rows(0), 25, "below cap + slack nothing is trimmed");
+        {
+            let _env = testkit::env(&[("SPIRA_COCKPIT_HISTORY_MAX", Some("20"))]);
+            append_history(run.path());
+        }
+        assert_eq!(rows(0), 20, "past cap + slack it is cut back to the cap");
+    }
+
+    #[test]
     fn each_probe_answers_ok_timeout_or_error_and_an_overrun_is_skipped_then_stale() {
         let probes = |slow_ms| vec![("fast".to_string(), Duration::from_secs(5)), ("slow".to_string(), Duration::from_millis(slow_ms)), ("boom".to_string(), Duration::from_secs(5))];
         let got = observe_with(&probes(50), quick);
