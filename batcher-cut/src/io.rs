@@ -1348,13 +1348,7 @@ pub fn file_local_red_incident(
     );
     let _ = fs::remove_file(&tmp);
     let out = out?;
-    // THE LAST NON-EMPTY LINE, NOT THE WHOLE OUTPUT: incident.sh logs progress through the
-    // same stdout it returns the id on (landing.sh's base_incident hits the same seam).
-    let id = out.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).unwrap_or_default();
-    if id.is_empty() {
-        return Err(format!("incident.sh file: no id returned: {out}"));
-    }
-    Ok(id)
+    filed_id(&out)
 }
 
 /// File an Ops incident for a landing whose release was not activated. The members landed, so
@@ -1384,7 +1378,16 @@ pub fn file_deploy_fault_incident(env: &Env, repo: &Repo, head: &str) -> Result<
     );
     let _ = fs::remove_file(&tmp);
     let out = out?;
-    out.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).ok_or_else(|| format!("incident.sh file: no id returned: {out}"))
+    filed_id(&out)
+}
+
+/// The bead `incident file` answered with: its stdout is one JSON object, `{"id": <bead>|null}`.
+fn filed_id(out: &str) -> Result<String, String> {
+    let answer: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("incident.sh file: answer is not JSON ({e})"))?;
+    match answer.get("id").and_then(serde_json::Value::as_str) {
+        Some(id) if !id.is_empty() => Ok(id.to_string()),
+        _ => Err("incident.sh file: no id returned".to_string()),
+    }
 }
 
 fn hold_file(env: &Env, repo: &str) -> PathBuf {
@@ -1894,11 +1897,7 @@ pub fn file_orphan_round_incident(env: &Env, repo: &Repo, batch: &str, why: &str
     );
     let _ = fs::remove_file(&tmp);
     let out = out?;
-    let id = out.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).unwrap_or_default();
-    if id.is_empty() {
-        return Err(format!("incident.sh file: no id returned: {out}"));
-    }
-    Ok(id)
+    filed_id(&out)
 }
 
 /// The repo's local verdict as `write_local_verdict` recorded it: (verdict, at).
@@ -2200,11 +2199,7 @@ pub fn file_land_unverified_incident(env: &Env, repo: &Repo, head: &str, detail:
     );
     let _ = fs::remove_file(&tmp);
     let out = out?;
-    let id = out.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).unwrap_or_default();
-    if id.is_empty() {
-        return Err(format!("incident.sh file: no id returned: {out}"));
-    }
-    Ok(id)
+    filed_id(&out)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2715,6 +2710,15 @@ mod land_exit_tests {
         assert_eq!(implicated(out, &changed), vec!["sp-b".to_string()]);
         assert!(implicated("boom", &changed).is_empty());
         assert_eq!(implicated("boom", &changed[..1]), vec!["sp-a".to_string()]);
+    }
+
+    #[test]
+    fn a_filed_incident_is_the_id_in_the_typed_answer_not_the_last_line() {
+        assert_eq!(filed_id("{\"id\":\"sp-abc\"}\n"), Ok("sp-abc".to_string()));
+        assert!(filed_id("sp-abc\n").is_err(), "a bare line is not an answer");
+        assert!(filed_id("filed sp-abc\nnoted\n").is_err());
+        assert!(filed_id("{\"id\":null}").is_err(), "a skew filed nothing");
+        assert!(filed_id("").is_err());
     }
 
     #[test]
