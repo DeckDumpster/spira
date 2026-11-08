@@ -543,6 +543,27 @@ fn certify_submits_a_working_bead_before_the_verdict_lands() {
 }
 
 #[test]
+fn certify_by_queue_submit_walks_an_unclaimed_ready_bead_through_claim_and_submit() {
+    let mut f = Fake::default();
+    let tip = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
+    f.bead("sp-rd", BeadState::Ready);
+    let a = go(&mut f, "certify", &["sp-rd", tip, "pass", "queue-submit"]);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!((f.state("sp-rd"), f.beads["sp-rd"].tip.as_deref()), ("CERTIFIED", Some(tip)));
+    let kinds: Vec<String> = f.events.iter().map(|e| e.5.chars().skip(2).take_while(|c| c.is_alphabetic()).collect()).collect();
+    assert_eq!(kinds, ["Claim", "Submit", "GatePass"]);
+    assert!(f.beads["sp-rd"].holder.is_none(), "the walk leaves no claim behind");
+
+    f.bead("sp-keyed", BeadState::Ready);
+    let a = go(&mut f, "certify", &["sp-keyed", tip, "pass", "gate"]);
+    assert_eq!((a.code, f.state("sp-keyed")), (REFUSED, "READY"), "only queue submit gated this tip itself");
+
+    f.bead("sp-held", BeadState::Ready).holds.insert(lifecycle::bead::HoldKind::Wait);
+    let a = go(&mut f, "certify", &["sp-held", tip, "pass", "queue-submit"]);
+    assert_eq!((a.code, f.state("sp-held")), (REFUSED, "READY"), "a held bead is not walked past its hold");
+}
+
+#[test]
 fn certify_voids_a_stale_certification_first_and_leaves_a_current_one_alone() {
     let mut f = Fake::default();
     let r = f.bead("sp-s", BeadState::Certified);

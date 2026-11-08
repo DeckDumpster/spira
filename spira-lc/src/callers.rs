@@ -715,16 +715,28 @@ fn submit_kind(tip: &str) -> String {
     serde_json::to_string(&BeadEventKind::Submit { tip: tip.to_string() }).unwrap_or_default()
 }
 
+/// Only `queue submit` (which gated the branch tip itself) may move a SUBMITTED row's tip or walk an
+/// unclaimed READY row; a keyed worker pass at another tip stays a refused stale verdict.
+const BRANCH_TIP_DETAIL: &str = "queue-submit";
+
+fn claim_unheld_ready(m: &mut dyn Machine, id: &str, st: &str, ver: &str, row: &Value, actor: &str) -> Option<(String, String)> {
+    if !holds_of(row.get("bead").and_then(|b| b.get("holds"))).is_empty() {
+        return Some((st.to_string(), ver.to_string()));
+    }
+    let claim = BeadEventKind::Claim { holder: actor.to_string(), lease_until: 0, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None };
+    let _ = event(m, "bead", id, st, ver, actor, &serde_json::to_string(&claim).unwrap_or_default());
+    state_version(m, id).map(|(s, v, _)| (s, v))
+}
+
 /// Move the row as close to SUBMITTED-at-<tip> as an event can: WORKING advances by Submit (a
 /// REWORK row has no Submit, so a verdict for a bead that moved on is skipped, not refused),
 /// and a CERTIFIED row at another tip is voided by Submit (the tip invariant, as bead.rs's
 /// own Certified+Submit arm has it). None: the row is unreadable.
-/// Only `queue submit` (which gated the branch tip itself) may move a SUBMITTED row's tip; a keyed
-/// worker pass at another tip stays a refused stale verdict.
-const BRANCH_TIP_DETAIL: &str = "queue-submit";
-
 fn reach_submitted(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str, actor: &str) -> Option<(String, String)> {
     let (mut st, mut ver, row) = state_version(m, id)?;
+    if st == "READY" && outcome == "pass" && detail == BRANCH_TIP_DETAIL {
+        (st, ver) = claim_unheld_ready(m, id, &st, &ver, &row, actor)?;
+    }
     let resubmit = match st.as_str() {
         "WORKING" => true,
         "CERTIFIED" => bead_field(&row, "tip") != tip,
