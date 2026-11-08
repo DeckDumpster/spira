@@ -223,7 +223,7 @@ mod tests {
         let f = Fake { show: row("WORKING", Some("dwarf-old")), slay_rc: 0, calls: Mutex::default() };
         let (rc, sink) = go(&f);
         assert_eq!(rc, 0);
-        assert_eq!(progs(&f), a(&["spira-lc", "slay", "spira-lc", "systemd-run"]), "the old dwarf stops, and a world-stop checkpoint hold it left is lifted, before the new one starts");
+        assert_eq!(progs(&f), a(&["spira-lc", "slay", "spira-lc", "systemd-run"]), "the old dwarf stops and its leftover hold is lifted before the new one starts");
         let calls = f.calls.lock().unwrap();
         assert_eq!(calls[2].1, a(&["unhold", "sp-x", "wait", "dwarf"]));
         assert_eq!(calls[1].1, a(&["--bead", "sp-x", "--keep-work", "--why", "directed by concierge: loop fix"]));
