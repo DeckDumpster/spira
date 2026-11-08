@@ -33,6 +33,9 @@ use crate::{Result, RuntimeError};
 /// spira-lc's exit code for a request the journal looked at and refused.
 const REFUSED: i64 = 3;
 
+/// spira-lc's exit code for a request it could not answer: a store call that ran out its deadline.
+const CANNOT_TELL: i64 = 2;
+
 /// law-calls-have-deadlines: the service stops at 3 s, a client waits 5 s.
 const DEADLINE: Duration = Duration::from_secs(5);
 
@@ -296,15 +299,17 @@ pub fn lc_call_within(path: &std::path::Path, argv: &[&str], deadline: Duration)
     match code {
         0 => Ok(body),
         REFUSED => Err(RuntimeError::refused(body)),
+        CANNOT_TELL => Err(RuntimeError::cannot_tell(body)),
         _ => Err(RuntimeError::new(body)),
     }
 }
 
-/// `lc_call`'s exit code for a reply: 0, `REFUSED`, or 1 for a fault.
+/// `lc_call`'s exit code for a reply: 0, `REFUSED`, `CANNOT_TELL`, or 1 for a fault.
 fn exit_code(r: &Result<String>) -> i64 {
     match r {
         Ok(_) => 0,
         Err(e) if e.is_refused() => REFUSED,
+        Err(e) if e.is_cannot_tell() => CANNOT_TELL,
         Err(_) => 1,
     }
 }
