@@ -55,7 +55,7 @@ pub fn run(check: &str) -> Result<String, String> {
                 Some(b) => b,
                 None => spira_config::release_env::tool("release")?,
             };
-            let cfg = deploy_fault::Cfg { release_bin, repo: getenv("SPIRA_REPO").unwrap_or_default(), retry_secs: getenv_i64("SPIRA_DEPLOY_FAULT_RETRY_SECS", 1800), build_timeout_secs: getenv_i64("SPIRA_DEPLOY_FAULT_BUILD_TIMEOUT", 1800).max(1) as u64 };
+            let cfg = deploy_fault::Cfg { release_bin, repo: getenv("SPIRA_REPO").unwrap_or_default(), retry_secs: getenv_i64("SPIRA_DEPLOY_FAULT_RETRY_SECS", 1800), build_timeout_secs: getenv_i64("SPIRA_DEPLOY_FAULT_BUILD_TIMEOUT", 1800).max(1) as u64, releases: reg("SPIRA_RELEASES").ok().filter(|r| !r.is_empty()).map(PathBuf::from) };
             deploy_fault::run(n, &PathBuf::from(reg("SPIRA_QUEUE_DIR")?), &run, &reg("SPIRA_DB")?, &reg("SPIRA_HOME_REPO")?, &resolved_incident_sh(), &cfg);
         }
         "sccache-wedge-check" => {

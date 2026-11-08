@@ -230,8 +230,21 @@ fn settle_unit(w: &World, unit: &str) {
     }
 }
 
+/// The binary that activates `sha`: the release's own `bin/release`, which `release build`
+/// copied from the round's tested build of the same commit (sp-6ugk85). The round's build
+/// directory is not kept for the activation — a deferred activation runs after it is gone, and
+/// the round VM's build never leaves one on the host — so refusing for its absence left an
+/// accepted release unactivated. A release without one falls back to [`release_bin`].
+fn activation_bin(w: &World, plan: &Plan, sha: &str) -> Result<PathBuf, String> {
+    let own = plan.releases.join(sha).join("bin").join("release");
+    if super::simple::is_executable(&own) {
+        return Ok(own);
+    }
+    release_bin(plan.bins.as_deref(), || w.scripts.release_tool())
+}
+
 fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
-    let bin = release_bin(plan.bins.as_deref(), || w.scripts.release_tool())?;
+    let bin = activation_bin(w, plan, sha)?;
     let out = step(
         w,
         plan,

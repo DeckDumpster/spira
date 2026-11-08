@@ -3338,6 +3338,33 @@ fn land_local_activates_its_release_with_the_queue_lock_released() {
     assert_eq!(*t.scripts.lock_free_at_activate.borrow(), [true], "the queue lock is free while the release activates");
 }
 
+/// sp-6ugk85: a landing whose activation runs after the round's build directory is gone (a
+/// deferred activation, the round VM's build) activates the release from that release's own
+/// `bin/release`, which `release build` copied from the same tested build.
+#[test]
+fn activation_runs_the_built_releases_own_binary_when_the_round_build_has_none() {
+    let t = T::new(LandMode::QueueLocal);
+    let rel = t.s().releases.clone().unwrap();
+    let sha = "0ed1c65f3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    fs::create_dir_all(rel.join(sha).join("bin")).unwrap();
+    testkit::write_exe(rel.join(sha).join("bin/release"), "#!/bin/sh\n");
+    let gone = testkit::TempDir::new("queue-round-bins-gone");
+    let plan = crate::ops::deploy::Plan {
+        repo: PathBuf::from("/repo"),
+        landref: "local/main".into(),
+        releases: rel.clone(),
+        run: t.s().run.clone(),
+        bins: Some(gone.path().join("target/release")),
+        db: "db".into(),
+    };
+    let r = t.with_world(|w| crate::ops::deploy::activate(w, &plan, sha));
+    assert_eq!(r, Ok(()), "the release dir carries the activator");
+    let calls = t.scripts.release_calls.borrow();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(calls[0].0, rel.join(sha).join("bin/release").display().to_string());
+    assert!(calls[0].1.starts_with(&format!("activate {sha} ")), "{calls:?}");
+}
+
 #[test]
 fn land_local_of_another_repository_publishes_no_release() {
     // The fixture's harness is "harness"; landing "spira" is some other queue.local repo.
