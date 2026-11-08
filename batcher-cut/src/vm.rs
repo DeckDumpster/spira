@@ -210,6 +210,11 @@ fn clear_results(results: &Path, suites: &[String]) {
 }
 
 impl<'a> VmRunner<'a> {
+    fn scope_unit(&self) -> Option<String> {
+        let batch = self.batch.as_deref()?;
+        Some(runtime::units::round_scope_unit(&self.repo.name, batch, &format!("{}-{}", self.round, self.corpus_runs)))
+    }
+
     /// Names the round-vm scope after `batch`, so abandoning that batch stops it.
     pub fn in_batch(mut self, batch: Option<&str>) -> Self {
         self.batch = batch.map(str::to_string);
@@ -435,8 +440,7 @@ impl RoundRunner for VmRunner<'_> {
                 // batch-job: this runs whatever its caller names, as long as that takes
                 // FORK-EDGE: needs a Units scope start (a CPU-quota scope whose process stays this one's child, stderr to a file); round-vm inside it is the machine leg
                 let mut cmd = Command::new("systemd-run");
-                let unit = self.batch.as_deref().map(|b| runtime::units::round_scope_unit(&self.repo.name, b, &format!("{}-{}", self.round, self.corpus_runs)));
-                cmd.args(scope_args(std::env::var("ROUND_CPU_QUOTA").ok().as_deref(), unit.as_deref()));
+                cmd.args(scope_args(std::env::var("ROUND_CPU_QUOTA").ok().as_deref(), self.scope_unit().as_deref()));
                 cmd.arg("timeout");
                 cmd.arg("-k").arg("10").arg(self.env.wall_secs.to_string());
                 cmd.arg(&self.env.round_vm).arg("run").arg(&self.wt);
