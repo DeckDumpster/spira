@@ -185,6 +185,7 @@ pub fn holder_witnesses(run: &Path, id: &str, lc: &dyn ClaimProbe) -> Option<Str
         // No row: the machine answered that it has none, and a bead with no lifecycle row can
         // never be claimed — nobody is home (as for a branch whose bead never existed).
         Ok(None) => None,
+        Ok(Some(row)) if row.holds.iter().any(|h| h == "manual") => Some("a manual hold — a steward is working it outside the loop".to_string()),
         Ok(Some(row)) if row.working() => Some("WORKING — the lease has not been released".to_string()),
         Ok(Some(_)) => None,
     }
@@ -692,6 +693,19 @@ mod tests {
         assert_eq!(holder_witnesses(&run, "sp-w5", &FakeBd { state: Some(String::new()) }), None);
     }
 
+
+    #[test]
+    fn a_manual_hold_is_somebody_home_though_the_bead_is_unclaimed() {
+        struct Held(Vec<String>);
+        impl ClaimProbe for Held {
+            fn probe(&self, id: &str) -> Result<Option<spira_config::lc_state::Row>, String> {
+                Ok(Some(spira_config::lc_state::Row { bead_id: id.into(), state: "READY".into(), holds: self.0.clone(), ..Default::default() }))
+            }
+        }
+        let run = tempdir().path().to_path_buf();
+        assert!(holder_witnesses(&run, "sp-m1", &Held(vec!["manual".into()])).is_some());
+        assert_eq!(holder_witnesses(&run, "sp-m2", &Held(vec![])), None);
+    }
 
     #[test]
     fn stop_occupants_stops_the_unit_of_a_process_in_the_worktree_and_waits_for_it_to_leave() {
