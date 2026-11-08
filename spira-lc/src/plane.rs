@@ -55,11 +55,7 @@ impl<B: Backend> Plane<'_, B> {
                 let request = crate::control::served::request_id();
                 state::run(s, args, &state::Call { now: crate::db::now_epoch(), request: &request })
             }
-            Plane::Dolt(conn) => match args.first().map(String::as_str) {
-                Some("show") => crate::cmd_show(&args[1..], conn),
-                Some("list") => crate::cmd_list(&args[1..], conn),
-                other => (CANNOT_TELL, format!("plane read: {other:?} is not a read verb")),
-            },
+            Plane::Dolt(conn) => crate::dispatch(args, conn),
         }
     }
 
