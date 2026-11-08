@@ -191,15 +191,29 @@ pub fn retarget(sql: &str) -> Result<String, String> {
     let mut out = String::new();
     let mut last = 0;
     let mut reads_events = false;
+    let mut in_from = vec![false];
     for (i, (start, _, tok)) in toks.iter().enumerate() {
+        match tok {
+            Tok::Punct('(') => in_from.push(false),
+            Tok::Punct(')') => {
+                in_from.pop();
+                if in_from.is_empty() {
+                    return Err("unbalanced parentheses".into());
+                }
+            }
+            Tok::Punct(',') if in_from.last() == Some(&true) => return Err(FROM_EVENTS_ONLY.into()),
+            _ => {}
+        }
         let Tok::Word(w) = tok else { continue };
         let upper = w.to_ascii_uppercase();
         match upper.as_str() {
-            "JOIN" | "INTO" | "STRAIGHT_JOIN" | "OUTFILE" | "DUMPFILE" | "LOAD_FILE" => {
+            "WHERE" | "GROUP" | "ORDER" | "HAVING" | "UNION" | "LIMIT" | "WINDOW" => *in_from.last_mut().unwrap() = false,
+            "TABLE" | "VALUES" | "ROW" | "JOIN" | "INTO" | "STRAIGHT_JOIN" | "OUTFILE" | "DUMPFILE" | "LOAD_FILE" => {
                 return Err(format!("{upper} is not allowed; {FROM_EVENTS_ONLY}"));
             }
             "FROM" => {
                 let derived = matches!(toks.get(i + 1), Some((_, _, Tok::Punct('(')))) && word(i + 2).is_some_and(|t| t.eq_ignore_ascii_case("SELECT"));
+                *in_from.last_mut().unwrap() = true;
                 if derived {
                     continue;
                 }
@@ -348,6 +362,10 @@ mod tests {
             "SELECT a FROM events WHERE 1=0 UNION ALL SELECT id FROM spira.event",
             "SELECT a FROM events WHERE 1=0 UNION ALL SELECT id FROM (bead)",
             "SELECT a FROM events WHERE 1=0 UNION ALL SELECT id FROM dolt_log()",
+            "SELECT x FROM (SELECT a FROM events) t, bead",
+            "SELECT x FROM (SELECT a FROM events) t JOIN bead",
+            "SELECT a FROM events UNION TABLE bead",
+            "SELECT a FROM events UNION VALUES ROW(1)",
             "SELECT a FROM events /* x */ WHERE 1=0",
             "SELECT a FROM events INTO OUTFILE '/tmp/x'",
             "select a from events where 1=0 union all select id from bead",
@@ -356,6 +374,15 @@ mod tests {
             let why = retarget(q).expect_err(q);
             assert!(why.contains("facts [--ids"), "{q}: {why}");
         }
+    }
+
+    #[test]
+    fn the_verb_refuses_a_free_query_over_another_table_before_it_touches_the_store() {
+        let conn = Conn::unreachable();
+        let q = "SELECT a FROM events WHERE 1=0 UNION ALL SELECT lc_key FROM bead".to_string();
+        let (code, msg) = cmd_facts_query(&[q], &conn);
+        assert_eq!(code, REFUSED, "{msg}");
+        assert!(msg.contains("facts [--ids"), "{msg}");
     }
 
     #[test]
