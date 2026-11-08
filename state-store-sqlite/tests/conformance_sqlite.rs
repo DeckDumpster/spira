@@ -9,7 +9,7 @@ use runtime::ports::VirtualClock;
 use serde_json::json;
 use state_store::conformance::{self as suite, Rig, SCENARIOS};
 use state_store::{Backend, Contract, Error, Object, Request, Rev, Txn, Write};
-use state_store_sqlite::{BackupStep, Options, SqliteBackend};
+use state_store_sqlite::{Options, SqliteBackend};
 use testkit::TempDir;
 
 struct Sqlite {
@@ -343,7 +343,7 @@ fn bulk_load_reads_back_every_key_at_one_revision_and_the_next_txn_is_the_one_af
 }
 
 #[test]
-fn a_backup_taken_in_steps_while_commits_continue_matches_the_live_keys_at_its_revision() {
+fn a_snapshot_copy_matches_the_live_keys_at_its_revision_and_refuses_an_existing_file() {
     let dir = TempDir::new("sqlite-backup");
     let clock = VirtualClock::new(1_000);
     let c = contract(open(&dir.path().join("live.db")), &clock);
@@ -352,39 +352,58 @@ fn a_backup_taken_in_steps_while_commits_continue_matches_the_live_keys_at_its_r
         put(&c, &format!("b/{i:03}"), json!(big), &format!("seed{i}"));
     }
     let dest = dir.path().join("copy.db");
-    let mut steps = 0;
-    let rev = loop {
-        match c.backend().backup_step(&dest, 4).unwrap() {
-            BackupStep::Copying { .. } => {
-                steps += 1;
-                put(
-                    &c,
-                    &format!("b/{steps:03}"),
-                    json!(steps),
-                    &format!("during{steps}"),
-                );
-                put(
-                    &c,
-                    &format!("during/{steps:03}"),
-                    json!(steps),
-                    &format!("new{steps}"),
-                );
-            }
-            BackupStep::Done { rev } => break rev,
-        }
-    };
-    assert!(steps > 1, "the backup finished in one step");
+    let rev = c.backend().snapshot_to(&dest).unwrap();
     put(&c, "after/backup", json!(1), "after");
+    assert!(
+        c.backend().snapshot_to(&dest).is_err(),
+        "a copy never overwrites"
+    );
     let live = c.backend().clone();
     // A copy being verified keeps its revisions exactly: no jump on this open.
-    let copy = SqliteBackend::open(&dest, Options { jump_on_open: false, ..Options::default() }).unwrap();
+    let copy = SqliteBackend::open(
+        &dest,
+        Options {
+            jump_on_open: false,
+            ..Options::default()
+        },
+    )
+    .unwrap();
     assert_eq!(
         copy.head().unwrap(),
         rev,
         "the copy is tagged with the revision it captured"
     );
     assert_eq!(keys_at(&copy, "", rev), keys_at(&live, "", rev));
-    assert_eq!(keys_at(&copy, "during/", rev).len(), steps);
+}
+
+#[test]
+fn a_snapshot_copy_taken_while_another_thread_commits_holds_one_revision() {
+    let dir = TempDir::new("sqlite-backup-live");
+    let clock = VirtualClock::new(1_000);
+    let c = contract(open(&dir.path().join("live.db")), &clock);
+    let big = "x".repeat(2_000);
+    for i in 0..400 {
+        put(&c, &format!("b/{i:03}"), json!(big), &format!("seed{i}"));
+    }
+    let dest = dir.path().join("copy.db");
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let rev = std::thread::scope(|sc| {
+        let writer = sc.spawn(|| {
+            let mut n = 0;
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                n += 1;
+                put(&c, &format!("live/{n:05}"), json!(n), &format!("live{n}"));
+            }
+        });
+        let rev = c.backend().snapshot_to(&dest).unwrap();
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        writer.join().unwrap();
+        rev
+    });
+    let live = c.backend().clone();
+    let copy = SqliteBackend::open(&dest, Options { jump_on_open: false, ..Options::default() }).unwrap();
+    assert_eq!(copy.head().unwrap(), rev);
+    assert_eq!(keys_at(&copy, "", rev), keys_at(&live, "", rev));
 }
 
 #[test]

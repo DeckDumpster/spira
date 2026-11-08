@@ -1,5 +1,5 @@
 //! The shipper: on each tick it stages the revisions after the last staged one as one run, takes
-//! the hourly snapshot a few pages at a time on the writer connection, and uploads whatever is
+//! the hourly snapshot in one pass on its own read connection, and uploads whatever is
 //! queued, oldest first, stopping at the first refusal so a retry is the same object.
 //!
 //! `dir` holds the whole state, so a restart resumes where the last process stopped:
@@ -9,7 +9,7 @@
 //! - `queue/<kind>/<name>`: staged and not yet uploaded;
 //! - `sent/<kind>/<name>`: the local copy of each object exactly as it was uploaded, which the
 //!   drill restores, and `sums/<name>`: each snapshot's SHA-256 as it was staged;
-//! - `snapshot.partial`, `last-snapshot` and `last-snapshot-rev`: the backup in progress, and
+//! - `snapshot.partial`, `last-snapshot` and `last-snapshot-rev`: the copy in progress, and
 //!   when and at which revision the last one finished.
 //!
 //! Compaction is floored at the newest uploaded revision, so it never drops one not yet shipped.
@@ -25,7 +25,7 @@ use state_store::Backend;
 
 use super::put::Put;
 use super::revlog::{self, Run, REVLOG, SNAPSHOT};
-use crate::{BackupStep, SqliteBackend};
+use crate::SqliteBackend;
 
 /// Local snapshots kept in `sent/`; the runs older than the oldest of them are pruned.
 pub const KEEP_SNAPSHOTS: usize = 2;
@@ -35,8 +35,6 @@ pub struct ShipConfig {
     /// The most txns one run carries.
     pub max_mains: usize,
     pub snapshot_every_ms: u64,
-    /// Pages each tick copies of a snapshot in progress.
-    pub snapshot_pages: i32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -61,7 +59,6 @@ pub struct Shipper {
     clock: Arc<dyn Clock>,
     /// The oldest revision not yet off-box, and when a tick first saw it so.
     oldest: Option<(u64, u64)>,
-    copying: bool,
 }
 
 fn io(p: &Path) -> impl Fn(std::io::Error) -> String + '_ {
@@ -175,7 +172,6 @@ impl Shipper {
             put,
             clock,
             oldest: None,
-            copying: false,
         };
         let staged = s.staged_through()?;
         if head < staged {
@@ -307,24 +303,17 @@ impl Shipper {
         Ok(last.is_none_or(|l| now.saturating_sub(l) >= self.cfg.snapshot_every_ms))
     }
 
-    /// One step of the snapshot in progress, or the first step of a due one. A snapshot at the
-    /// revision of the last one is dropped: its name is taken, and the writer never overwrites.
+    /// The hourly snapshot, taken whole when due. A snapshot at the revision of the last one is
+    /// dropped: its name is taken, and the writer never overwrites.
     fn snapshot_step(&mut self, now: u64) -> Result<Option<u64>, String> {
-        if !self.copying && !self.snapshot_due(now)? {
+        if !self.snapshot_due(now)? {
             return Ok(None);
         }
         let partial = self.cfg.dir.join("snapshot.partial");
-        self.copying = true;
-        let step = self.backend.backup_step(&partial, self.cfg.snapshot_pages);
-        let rev = match step {
-            Ok(BackupStep::Copying { .. }) => return Ok(None),
-            Ok(BackupStep::Done { rev }) => rev,
-            Err(e) => {
-                self.copying = false;
-                return Err(format!("snapshot: {e}"));
-            }
-        };
-        self.copying = false;
+        let rev = self
+            .backend
+            .snapshot_to(&partial)
+            .map_err(|e| format!("snapshot: {e}"))?;
         let last = self.cfg.dir.join("last-snapshot");
         let last_rev = self.cfg.dir.join("last-snapshot-rev");
         if read_u64(&last_rev)? == Some(rev) {

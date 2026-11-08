@@ -54,7 +54,6 @@ fn ship_cfg(dir: &Path, snapshot_every_ms: u64) -> ShipConfig {
         dir: dir.join("lc-ship"),
         max_mains: 1_000,
         snapshot_every_ms,
-        snapshot_pages: 64,
     }
 }
 
@@ -486,12 +485,12 @@ fn a_restore_with_one_run_missing_refuses_naming_the_gap() {
 }
 
 #[test]
-fn a_snapshot_stepped_while_commits_run_opens_with_the_live_keys_at_its_revision() {
-    let dir = TempDir::new("ship-stepped");
+fn a_snapshot_of_a_store_larger_than_a_tick_copies_finishes_in_one_tick_and_holds_its_revision() {
+    let dir = TempDir::new("ship-onepass");
     let clock = VirtualClock::new(1_000);
     let c = suite::open(open(&dir.path().join("live.db")), &clock);
     let big = "x".repeat(2_000);
-    for i in 0..60 {
+    for i in 0..400 {
         put(
             &c,
             &format!("b/{i:03}"),
@@ -499,30 +498,18 @@ fn a_snapshot_stepped_while_commits_run_opens_with_the_live_keys_at_its_revision
             &format!("seed{i}"),
         );
     }
-    let mut cfg = ship_cfg(dir.path(), u64::MAX);
-    cfg.snapshot_pages = 4;
     let mut s = Shipper::open(
         c.backend().clone(),
-        cfg,
+        ship_cfg(dir.path(), u64::MAX),
         file_put(&dir.path().join("off")),
         Arc::new(clock.clone()),
     )
     .unwrap();
-    let mut ticks = 0;
-    let rev = loop {
-        let t = s.tick().unwrap();
-        if let Some(rev) = t.snapshot {
-            break rev;
-        }
-        ticks += 1;
-        put(
-            &c,
-            &format!("b/{ticks:03}"),
-            Object::new(json!(ticks)),
-            &format!("during{ticks}"),
-        );
-    };
-    assert!(ticks > 1, "the snapshot finished in one tick");
+    let rev = s
+        .tick()
+        .unwrap()
+        .snapshot
+        .expect("the first tick finishes the snapshot");
     put(&c, "after", Object::new(json!(1)), "after");
     s.tick().unwrap();
     let snap = s.sent(SNAPSHOT).join(revlog::snapshot_name(rev));

@@ -200,18 +200,6 @@ pub struct Checkpoint {
     pub checkpointed: i64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BackupStep {
-    Copying {
-        remaining: i32,
-        pages: i32,
-    },
-    /// The copy is complete and holds the store as of `rev`, which its own meta row records.
-    Done {
-        rev: u64,
-    },
-}
-
 /// A handle to one open store; clones share its connections.
 #[derive(Clone)]
 pub struct SqliteBackend(Arc<Inner>);
@@ -233,35 +221,12 @@ struct Inner {
 }
 
 struct Writer {
-    /// Declared before `conn`: a backup in progress is finished before its source closes.
-    backup: Option<Stepped>,
     conn: Connection,
 }
 
 struct Reader {
     conn: Mutex<Connection>,
     deadline: Arc<AtomicU64>,
-}
-
-/// A `sqlite3_backup` on the writer connection, kept across calls so a copy proceeds in steps
-/// between commits; SQLite folds the writer's own later commits into the pages already copied.
-struct Stepped {
-    dest_path: PathBuf,
-    raw: NonNull<ffi::sqlite3_backup>,
-    /// Open until `raw` is finished, which `Drop` does first.
-    _dest: Connection,
-}
-
-// SAFETY: `raw` is only touched under the writer mutex, alongside the writer connection it was
-// initialised on and `dest`, which this struct owns.
-unsafe impl Send for Stepped {}
-
-impl Drop for Stepped {
-    fn drop(&mut self) {
-        // SAFETY: `raw` came from sqlite3_backup_init and is finished exactly once, here, while
-        // both connections are still open.
-        unsafe { ffi::sqlite3_backup_finish(self.raw.as_ptr()) };
-    }
 }
 
 /// What a statement the progress handler stopped maps to, so `read` can tell it apart.
@@ -566,7 +531,7 @@ impl SqliteBackend {
         }
         Ok(SqliteBackend(Arc::new(Inner {
             path: path.to_path_buf(),
-            writer: Mutex::new(Writer { backup: None, conn }),
+            writer: Mutex::new(Writer { conn }),
             readers,
             next_reader: AtomicUsize::new(0),
             head: AtomicU64::new(head),
@@ -764,97 +729,57 @@ impl SqliteBackend {
         Ok(())
     }
 
-    /// Copies up to `pages` more pages of the store to `dest`, on the writer connection between
-    /// commits. The first call for a `dest` starts the copy (refusing a file already there),
-    /// later calls resume it, and the call that finishes it returns the revision it captured.
-    pub fn backup_step(&self, dest: &Path, pages: i32) -> Result<BackupStep> {
-        let mut w = lock(&self.0.writer);
-        let w = &mut *w;
-        match &w.backup {
-            Some(b) if b.dest_path != dest => {
-                return Err(Error::Backend(format!(
-                    "a backup to {} is in progress",
-                    b.dest_path.display()
-                )))
-            }
-            Some(_) => {}
-            None => {
-                if dest.exists() {
-                    return Err(Error::Backend(format!(
-                        "{} exists; a backup never overwrites",
-                        dest.display()
-                    )));
-                }
-                let dest_conn = connect(dest)?;
-                // SAFETY: both handles are open connections; the source is the writer, which
-                // outlives `Stepped` (it is declared after `backup` in `Writer`).
-                let raw = unsafe {
-                    ffi::sqlite3_backup_init(
-                        dest_conn.handle(),
-                        c"main".as_ptr(),
-                        w.conn.handle(),
-                        c"main".as_ptr(),
-                    )
-                };
-                let raw = NonNull::new(raw).ok_or_else(|| {
-                    Error::Backend(format!("{}: backup could not start", dest.display()))
-                })?;
-                w.backup = Some(Stepped {
-                    dest_path: dest.to_path_buf(),
-                    raw,
-                    _dest: dest_conn,
-                });
-            }
+    /// Copies the whole store to `dest` in one pass and returns the revision it holds. The copy
+    /// reads a single WAL snapshot on its own connection, so it neither holds the writer nor is
+    /// restarted by commits, and runs at disk speed. It never overwrites `dest`.
+    pub fn snapshot_to(&self, dest: &Path) -> Result<u64> {
+        if dest.exists() {
+            return Err(Error::Backend(format!(
+                "{} exists; a backup never overwrites",
+                dest.display()
+            )));
         }
-        let Some(b) = &w.backup else {
-            unreachable!("a backup was just ensured")
-        };
-        // SAFETY: `raw` is live until `Stepped` drops; the writer mutex is held.
-        let (rc, remaining, total) = unsafe {
-            let rc = ffi::sqlite3_backup_step(b.raw.as_ptr(), pages.max(1));
-            (
-                rc,
-                ffi::sqlite3_backup_remaining(b.raw.as_ptr()),
-                ffi::sqlite3_backup_pagecount(b.raw.as_ptr()),
-            )
-        };
-        match rc {
-            ffi::SQLITE_OK | ffi::SQLITE_BUSY | ffi::SQLITE_LOCKED => Ok(BackupStep::Copying {
-                remaining,
-                pages: total,
-            }),
-            ffi::SQLITE_DONE => {
-                w.backup = None;
-                Ok(BackupStep::Done {
-                    rev: meta(&w.conn, "head")?.unwrap_or(0),
-                })
-            }
-            rc => {
-                w.backup = None;
-                let _ = std::fs::remove_file(dest);
-                Err(Error::Backend(format!(
-                    "backup to {}: {}",
-                    dest.display(),
-                    ffi::code_to_str(rc)
-                )))
-            }
+        let result = self.copy_snapshot(dest);
+        if result.is_err() {
+            let _ = std::fs::remove_file(dest);
         }
+        result
     }
 
-    /// Abandons the backup in progress, if any, and removes its partial copy.
-    pub fn backup_abort(&self) -> Result<()> {
-        let mut w = lock(&self.0.writer);
-        let Some(b) = w.backup.take() else {
-            return Ok(());
-        };
-        let dest = b.dest_path.clone();
-        drop(b);
-        match std::fs::remove_file(&dest) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                Err(Error::Backend(format!("{}: {e}", dest.display())))
+    fn copy_snapshot(&self, dest: &Path) -> Result<u64> {
+        let src = Connection::open_with_flags(
+            &self.0.path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(db)?;
+        src.busy_timeout(Duration::from_millis(self.0.max_read_ms))
+            .map_err(db)?;
+        let _read = src.unchecked_transaction().map_err(db)?;
+        let rev = meta(&src, "head")?.unwrap_or(0);
+        let dest_conn = connect(dest)?;
+        // SAFETY: both handles are open connections that outlive the backup, which is finished
+        // before either closes.
+        unsafe {
+            let raw = NonNull::new(ffi::sqlite3_backup_init(
+                dest_conn.handle(),
+                c"main".as_ptr(),
+                src.handle(),
+                c"main".as_ptr(),
+            ))
+            .ok_or_else(|| {
+                Error::Backend(format!("{}: backup could not start", dest.display()))
+            })?;
+            let step = ffi::sqlite3_backup_step(raw.as_ptr(), -1);
+            let fin = ffi::sqlite3_backup_finish(raw.as_ptr());
+            if step != ffi::SQLITE_DONE || fin != ffi::SQLITE_OK {
+                return Err(Error::Backend(format!(
+                    "backup to {}: {}",
+                    dest.display(),
+                    ffi::code_to_str(if step == ffi::SQLITE_DONE { fin } else { step })
+                )));
             }
-            _ => Ok(()),
         }
+        Ok(rev)
     }
 
     /// Compaction never drops a revision above `rev`; it persists across opens.
