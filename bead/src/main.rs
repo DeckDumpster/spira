@@ -10,8 +10,8 @@ use std::process::{Command, Stdio};
 use spira_config::amendment;
 use bead::claimdesc::notify_live_dwarf;
 use bead::{
-    branch_candidate, branch_label, runes_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
-    awaits_dispatch, lane_check, stack_after_refusal, find_id_by_title, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, relates_only_targets, parse_list_ids, parse_show_row,
+    runes_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
+    lane_check, stack_after_refusal, find_id_by_title, lint_judge, parse_created_id, non_work_labels, parse_blocks_targets, relates_only_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
 
@@ -142,19 +142,18 @@ fn bdq_capture_with(home: &str, args: &[String], stderr: Stdio) -> (i32, String)
     }
 }
 
-/// Whether `id` carries the incident label. A bd parent cannot be blocked on its own child,
-/// so a remedy filed under an incident is wired as a plain blocks edge instead of a child.
-fn is_incident(home: &str, id: &str) -> bool {
-    let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
+/// The labels of `id`; empty when it cannot be read. A bd parent cannot be blocked on its own
+/// child, so a remedy filed under an incident is wired as a plain blocks edge instead.
+fn parent_labels(home: &str, id: &str) -> Vec<String> {
     let (_, out) = bdq_capture(home, &s(&["show", id, "--json"]));
-    parse_show_row(&out).map(|r| r.labels.contains(&incident_label)).unwrap_or(false)
+    parse_show_row(&out).map(|r| r.labels).unwrap_or_default()
 }
 
 /// `bdq_status` for a create: stdout is passed through unchanged, and when `incident` is
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
 #[allow(clippy::too_many_arguments)]
-fn bdq_create(home: &str, args: &[String], incident: Option<&str>, stack_after: Option<&str>, mirror: Option<(&str, i64)>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
+fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, stack_after: Option<&str>, mirror: Option<(&str, i64)>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
     if incident.is_none() && stack_after.is_none() && mirror.is_none() && !express {
         return bdq_status(home, args);
     }
@@ -187,7 +186,7 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, stack_after: 
             eprintln!("bead: file: created, but could not read its id to create its SUBMITTED lifecycle row; it is not claimable until one exists: spira-lc create-bead <id> --submitted-tip <sha>");
             return 1;
         }
-        if let Some(incident) = incident {
+        if let Some((incident, _)) = incident {
             eprintln!("bead: file: created a remedy for incident {incident} but could not read its id; add the edge: bd dep add {incident} <id>");
             return 1;
         }
@@ -218,12 +217,14 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, stack_after: 
             rc = 1;
         }
     }
-    if let Some(incident) = incident {
-        let r = bdq_status(home, &s(&["dep", "add", incident, &new_id, "--type", "blocks"]));
-        if r != 0 {
-            eprintln!("bead: file: {new_id} filed but the blocks edge {incident} -> {new_id} failed; add it: bd dep add {incident} {new_id}");
+    if let Some((incident, labels)) = incident {
+        if let Some((from, to)) = bead::remedy_edge(labels, &cfg_label("SPIRA_INCIDENT_LABEL"), &new_id, incident) {
+            let r = bdq_status(home, &s(&["dep", "add", &from, &to, "--type", "blocks"]));
+            if r != 0 {
+                eprintln!("bead: file: {new_id} filed but the blocks edge {from} -> {to} failed; add it: bd dep add {from} {to}");
+            }
+            rc |= r;
         }
-        rc |= r;
     }
     if let Some(base) = stack_after {
         let r = bdq_status(home, &s(&["dep", "add", &new_id, base, "--type", "blocks"]));
@@ -626,10 +627,13 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         }
     }
 
-    let incident_parent = match &parent {
-        Some(p) if is_incident(home, p) => parent.take(),
+    let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
+    let parent_labels = parent.as_deref().map(|p| parent_labels(home, p)).unwrap_or_default();
+    let incident_parent: Option<(String, Vec<String>)> = match &parent {
+        Some(_) if bead::is_incident(&parent_labels, &incident_label) => parent.take().map(|p| (p, parent_labels)),
         _ => None,
     };
+    let incident_parent = incident_parent.as_ref().map(|(p, l)| (p.as_str(), l.as_slice()));
 
     let repos = load_repos();
     if let Some(r) = &repo {
@@ -789,7 +793,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
 
         if let Some(base) = &stack_after {
             let (_, shown) = bdq_capture(home, &s(&["show", base, "--json"]));
-            let terminal = lc_done(&mut None, base);
+            let terminal = bead::lc_done(&BdqSource { home, ids: Vec::new() }, &mut None, base);
             if let Some(why) = stack_after_refusal(base, parse_show_row(&shown).as_ref(), terminal, &repo) {
                 eprintln!("bead: {why}");
                 return 2;
@@ -825,7 +829,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push("--no-inherit-labels".into());
         }
         let mirror_priority = priority.as_deref().and_then(bead::parse_priority_arg).unwrap_or(BD_DEFAULT_PRIORITY);
-        let rc = bdq_create(home, &bd_args, incident_parent.as_deref(), stack_after.as_deref(), Some((&title_for_mirror, mirror_priority)), express, tip.as_deref(), Some(repo.as_str()));
+        let rc = bdq_create(home, &bd_args, incident_parent, stack_after.as_deref(), Some((&title_for_mirror, mirror_priority)), express, tip.as_deref(), Some(repo.as_str()));
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_rune), ("repo", &repo), ("kind", "work")]);
         }
@@ -878,7 +882,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = bdq_create(home, &bd_args, incident_parent.as_deref(), None, None, express, None, None);
+        let rc = bdq_create(home, &bd_args, incident_parent, None, None, express, None, None);
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", ""), ("repo", repo.as_deref().unwrap_or("")), ("kind", &kind)]);
         }
@@ -1583,13 +1587,35 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
     0
 }
 
-/// Finished, by the lifecycle machine's own judgement (law-the-lifecycle-is-the-only-authority-on-
-/// bead-state): never bd's status. A bead the machine has no row for, or a state it cannot read,
-/// is treated as not finished, so the incident checks still run.
-fn lc_done(lc: &mut Option<Result<HashMap<String, spira_config::lc_state::Row>, String>>, id: &str) -> bool {
-    match lc.get_or_insert_with(|| spira_config::lc_state::list().map(spira_config::lc_state::index)) {
-        Ok(rows) => rows.get(id).is_some_and(|r| r.terminal()),
-        Err(_) => false,
+struct BdqSource<'a> {
+    home: &'a str,
+    ids: Vec<String>,
+}
+
+impl bead::LintSource for BdqSource<'_> {
+    fn ids(&self) -> Vec<String> {
+        self.ids.clone()
+    }
+    fn show(&self, id: &str) -> Option<bead::ShowRow> {
+        let (code, out) = bdq_capture(self.home, &s(&["show", id, "--json"]));
+        if code != 0 {
+            return None;
+        }
+        parse_show_row(&out)
+    }
+    fn blocks_targets(&self, id: &str) -> Option<Vec<String>> {
+        let (code, out) = bdq_capture(self.home, &s(&["dep", "list", id, "--type", "blocks", "--json"]));
+        (code == 0).then(|| parse_blocks_targets(&out))
+    }
+    fn relates_targets(&self, id: &str) -> Result<Vec<String>, String> {
+        let (code, out) = bdq_capture(self.home, &s(&["dep", "list", id, "--type", "relates-to", "--json"]));
+        if code != 0 {
+            return Err(" failed".into());
+        }
+        relates_only_targets(&[], &out).map_err(|e| format!(": {e}"))
+    }
+    fn lifecycle(&self) -> Result<HashMap<String, spira_config::lc_state::Row>, String> {
+        spira_config::lc_state::list().map(spira_config::lc_state::index)
     }
 }
 
@@ -1600,6 +1626,7 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
     } else {
         args.to_vec()
     };
+    let n = ids.iter().filter(|i| !i.is_empty()).count();
 
     let personas: Vec<(String, String)> = rune_names(home)
         .into_iter()
@@ -1608,186 +1635,26 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
             (f, labels)
         })
         .collect();
-    // NOTE: the scope exclusion here defaults to EMPTY, not "spira" — `_bead_lint` itself
-    // reads `${SPIRA_SCOPE_LABEL:-}`, a different default than `file`'s `schema.sh name
-    // scope` call. Preserved exactly; see DESIGN.md.
-    let scope_for_partitions = cfg_label("SPIRA_SCOPE_LABEL");
-    let partitions = runes_partitions(&personas, &scope_for_partitions);
-    let partitions_joined = partitions.join(" ");
-
-    let spec_partitions: Vec<Vec<String>> = rune_names(home)
+    // The scope exclusion here defaults to EMPTY, not "spira": `file` reads its own default.
+    let partitions = runes_partitions(&personas, &cfg_label("SPIRA_SCOPE_LABEL"));
+    let spec_partitions = rune_names(home)
         .into_iter()
         .filter(|f| requires_build_spec(home, f))
         .map(|f| rune_label(home, &f).split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
         .collect();
+    let cfg = bead::LintCfg {
+        partitions,
+        spec_partitions,
+        no_loop_label: cfg_label("SPIRA_NO_LOOP_LABEL"),
+        ask_label: cfg_label("SPIRA_ASK_LABEL"),
+        incident_label: cfg_label("SPIRA_INCIDENT_LABEL"),
+    };
 
-    let no_loop_label = cfg_label("SPIRA_NO_LOOP_LABEL");
-    let ask_label = cfg_label("SPIRA_ASK_LABEL");
-    let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
-
-    let mut n = 0u32;
-    let mut bad = 0u32;
-    let mut rc = 0;
-    let mut label_cache: HashMap<String, Vec<String>> = HashMap::new();
-    // The lifecycle rows, read once on the first work bead that needs one (sp-mve9i: whether a
-    // bead awaits dispatch is the machine's answer, not bd's status).
-    let mut lc: Option<Result<HashMap<String, spira_config::lc_state::Row>, String>> = None;
-
-    for id in &ids {
-        if id.is_empty() {
-            continue;
-        }
-        n += 1;
-        let (code, out) = bdq_capture(
-            home,
-            &["show".to_string(), id.clone(), "--json".to_string()],
-        );
-        // An empty answer does not parse as a row, so parse_show_row below refuses it too.
-        if code != 0 {
-            eprintln!("bead: {id}: unreadable (bd show failed)");
-            bad += 1;
-            rc = 1;
-            continue;
-        }
-        let row = match parse_show_row(&out) {
-            Some(r) => r,
-            None => {
-                eprintln!("bead: {id}: unreadable (bd show failed)");
-                bad += 1;
-                rc = 1;
-                continue;
-            }
-        };
-        let labels_joined = row.labels.join(" ");
-
-        if let Some(braw) = branch_label(&row.labels) {
-            let cand = branch_candidate(braw);
-            if !cand.is_empty() && cand != id {
-                let (scode, _) = bdq_capture(home, &s(&["show", cand, "--json"]));
-                if scode == 0 {
-                    eprintln!("bead: {id}: branch: label names {cand}, not itself");
-                    bad += 1;
-                    rc = 1;
-                }
-            }
-        }
-
-        // A dep list that failed is unreadable, never "no blockers" (sp-cxfgj5).
-        let (dcode, deps_out) =
-            bdq_capture(home, &s(&["dep", "list", id, "--type", "blocks", "--json"]));
-        if dcode != 0 {
-            eprintln!("bead: {id}: unreadable (bd dep list failed)");
-            bad += 1;
-            rc = 1;
-            continue;
-        }
-        let blocks_targets = parse_blocks_targets(&deps_out);
-        for oid in &blocks_targets {
-            label_cache.entry(oid.clone()).or_insert_with(|| {
-                let (_, oout) = bdq_capture(home, &s(&["show", oid, "--json"]));
-                parse_show_row(&oout).map(|r| r.labels).unwrap_or_default()
-            });
-        }
-
-        if !ask_label.is_empty() && row.labels.iter().any(|l| l == &ask_label) {
-            for oid in &blocks_targets {
-                if label_cache
-                    .get(oid)
-                    .map(|ls| ls.iter().any(|l| l == &ask_label))
-                    .unwrap_or(false)
-                {
-                    eprintln!(
-                        "bead: {id}: blocks edge to ask-labelled {oid} (asks must not block each other; use bd dep relate)"
-                    );
-                    bad += 1;
-                    rc = 1;
-                }
-            }
-        }
-        for oid in &blocks_targets {
-            if label_cache
-                .get(oid)
-                .map(|ls| ls.iter().any(|l| l == &incident_label))
-                .unwrap_or(false)
-            {
-                eprintln!(
-                    "bead: {id}: blocks edge to incident-labelled {oid} (alarms must not block work; use bd dep relate)"
-                );
-                bad += 1;
-                rc = 1;
-            }
-        }
-
-        let awaits = if PARTITION_CHECK_TYPES.contains(&row.issue_type.as_str()) {
-            let first = lc.is_none();
-            match lc.get_or_insert_with(|| spira_config::lc_state::list().map(spira_config::lc_state::index)) {
-                Ok(rows) => awaits_dispatch(rows.get(id.as_str())),
-                Err(e) => {
-                    // A lint that cannot read the state cannot pass the bead (law-a-control-
-                    // that-cannot-check-must-refuse); said once, counted per bead.
-                    if first {
-                        eprintln!("bead: lifecycle state unreadable ({e}) — the partition check cannot be judged");
-                    }
-                    bad += 1;
-                    rc = 1;
-                    false
-                }
-            }
-        } else {
-            false
-        };
-        if awaits && spec_partitions.iter().any(|p| bead::is_builder_bead(&row.labels, p)) && !bead::has_build_spec(&row.description) {
-            eprintln!("bead: {id}: no build spec: a builder bead needs a `{}` section naming what to build (or route it --for spike)", bead::BUILD_HEADING);
-            bad += 1;
-            rc = 1;
-        }
-        if row.labels.iter().any(|l| l == &incident_label) && !lc_done(&mut lc, id) {
-            let (rel_code, rel_out) =
-                bdq_capture(home, &s(&["dep", "list", id, "--type", "relates-to", "--json"]));
-            if rel_code != 0 {
-                eprintln!("bead: {id}: unreadable (bd dep list --type relates-to failed)");
-                bad += 1;
-                rc = 1;
-                continue;
-            }
-            let linked_only = match relates_only_targets(&blocks_targets, &rel_out) {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("bead: {id}: unreadable (bd dep list --type relates-to: {e})");
-                    bad += 1;
-                    rc = 1;
-                    continue;
-                }
-            };
-            for oid in linked_only {
-                let (_, oout) = bdq_capture(home, &s(&["show", &oid, "--json"]));
-                let Some(orow) = parse_show_row(&oout) else { continue };
-                if lc_done(&mut lc, &oid) || orow.labels.iter().any(|l| l == &incident_label) {
-                    continue;
-                }
-                eprintln!(
-                    "bead: {id}: open remedy {oid} is linked relates-to only (an incident with a fix in flight must block on it; use bd dep add {id} {oid})"
-                );
-                bad += 1;
-                rc = 1;
-            }
-        }
-
-        let (_, lines) = lint_judge(
-            &labels_joined,
-            awaits,
-            &row.issue_type,
-            &partitions_joined,
-            &no_loop_label,
-        );
-        for line in lines {
-            eprintln!("bead: {id}: {line}");
-            bad += 1;
-            rc = 1;
-        }
+    let (rc, lines) = bead::lint(&BdqSource { home, ids }, &cfg);
+    for l in &lines {
+        eprintln!("{l}");
     }
-
-    if bad == 0 {
+    if lines.is_empty() {
         println!("bead: {n} bead(s) checked, ok");
     }
     rc

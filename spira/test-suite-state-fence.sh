@@ -49,8 +49,8 @@ want   "testenv not on PATH: says so"  "not on PATH" "$_out"
 # CLOSED-BEAD QUARANTINE (D4/UC-safety-fences-28). A quarantine against a CLOSED bead
 # has no exit path: suites.sh hygiene requires land_state:LANDED to reactivate one, and
 # CLOSED is never LANDED. This is against a stub `bd show --json` rather than a real
-# create/close round-trip on a throwaway Dolt DB (test-bead-lint.sh pins the real `show
-# --json` shape); what is under test here is the fence's own branch on that shape, which
+# create/close round-trip on a throwaway Dolt DB (the `show --json` shape is the `bead`
+# crate's parser tests); what is under test here is the fence's own branch on that shape, which
 # a stub answers exactly as well.
 # ---------------------------------------------------------------------------
 printf '#!/usr/bin/env bash\nprintf %%s '"'"'{"status":"closed"}'"'"'\n' > "$_sd/spira/bin/bd"

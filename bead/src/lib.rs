@@ -17,7 +17,7 @@ pub mod identity;
 pub mod statute;
 pub mod latency;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use spira_config::convert::{repo_sections, ConvertWarnings};
 use spira_config::{Lane, RepoSection};
@@ -585,6 +585,135 @@ pub fn repos_section(repos: &BTreeMap<String, RepoSection>) -> String {
     out
 }
 
+// ---------------------------------------------------------------------------------------
+// lint: the loop over beads, behind a seam that hands it the facts it reads.
+// ---------------------------------------------------------------------------------------
+
+/// Everything `lint` reads about the store; `main.rs` backs it with `bd`, tests with rows.
+pub trait LintSource {
+    fn ids(&self) -> Vec<String>;
+    fn show(&self, id: &str) -> Option<ShowRow>;
+    /// `None` when the dep list could not be read: unreadable, never "no blockers".
+    fn blocks_targets(&self, id: &str) -> Option<Vec<String>>;
+    fn relates_targets(&self, id: &str) -> Result<Vec<String>, String>;
+    fn lifecycle(&self) -> Result<HashMap<String, spira_config::lc_state::Row>, String>;
+}
+
+pub struct LintCfg {
+    pub partitions: Vec<String>,
+    pub spec_partitions: Vec<Vec<String>>,
+    pub no_loop_label: String,
+    pub ask_label: String,
+    pub incident_label: String,
+}
+
+pub type Lifecycle = Option<Result<HashMap<String, spira_config::lc_state::Row>, String>>;
+
+/// Finished by the lifecycle machine's judgement, never bd status; an unreadable state counts as not finished.
+pub fn lc_done(src: &dyn LintSource, lc: &mut Lifecycle, id: &str) -> bool {
+    match lc.get_or_insert_with(|| src.lifecycle()) {
+        Ok(rows) => rows.get(id).is_some_and(|r| r.terminal()),
+        Err(_) => false,
+    }
+}
+
+/// Whether a bead carrying `labels` is an incident; the one comparison filing relies on.
+pub fn is_incident(labels: &[String], incident_label: &str) -> bool {
+    labels.iter().any(|l| l == incident_label)
+}
+
+/// The edge filing a remedy under `parent` adds: the incident blocks on the new bead, since a
+/// bd parent cannot be blocked on its own child. `None` under an ordinary parent.
+pub fn remedy_edge(parent_labels: &[String], incident_label: &str, new_id: &str, parent_id: &str) -> Option<(String, String)> {
+    is_incident(parent_labels, incident_label).then(|| (parent_id.to_string(), new_id.to_string()))
+}
+
+/// Judges every bead `src` lists; returns the exit code and the stderr lines, in order.
+pub fn lint(src: &dyn LintSource, cfg: &LintCfg) -> (i32, Vec<String>) {
+    let partitions_joined = cfg.partitions.join(" ");
+    let mut out: Vec<String> = Vec::new();
+    let mut label_cache: HashMap<String, Vec<String>> = HashMap::new();
+    let mut lc: Lifecycle = None;
+
+    for id in &src.ids() {
+        if id.is_empty() {
+            continue;
+        }
+        let Some(row) = src.show(id) else {
+            out.push(format!("bead: {id}: unreadable (bd show failed)"));
+            continue;
+        };
+        let labels_joined = row.labels.join(" ");
+
+        if let Some(braw) = branch_label(&row.labels) {
+            let cand = branch_candidate(braw);
+            if !cand.is_empty() && cand != id && src.show(cand).is_some() {
+                out.push(format!("bead: {id}: branch: label names {cand}, not itself"));
+            }
+        }
+
+        let Some(blocks) = src.blocks_targets(id) else {
+            out.push(format!("bead: {id}: unreadable (bd dep list failed)"));
+            continue;
+        };
+        for oid in &blocks {
+            label_cache
+                .entry(oid.clone())
+                .or_insert_with(|| src.show(oid).map(|r| r.labels).unwrap_or_default());
+        }
+        let blocked_has = |oid: &String, label: &str| label_cache.get(oid).is_some_and(|ls| ls.iter().any(|l| l == label));
+
+        if !cfg.ask_label.is_empty() && row.labels.contains(&cfg.ask_label) {
+            for oid in blocks.iter().filter(|o| blocked_has(o, &cfg.ask_label)) {
+                out.push(format!("bead: {id}: blocks edge to ask-labelled {oid} (asks must not block each other; use bd dep relate)"));
+            }
+        }
+        for oid in blocks.iter().filter(|o| blocked_has(o, &cfg.incident_label)) {
+            out.push(format!("bead: {id}: blocks edge to incident-labelled {oid} (alarms must not block work; use bd dep relate)"));
+        }
+
+        let awaits = if PARTITION_CHECK_TYPES.contains(&row.issue_type.as_str()) {
+            let first = lc.is_none();
+            match lc.get_or_insert_with(|| src.lifecycle()) {
+                Ok(rows) => awaits_dispatch(rows.get(id.as_str())),
+                Err(e) => {
+                    if first {
+                        out.push(format!("bead: lifecycle state unreadable ({e}) — the partition check cannot be judged"));
+                    }
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        if awaits && cfg.spec_partitions.iter().any(|p| is_builder_bead(&row.labels, p)) && !has_build_spec(&row.description) {
+            out.push(format!("bead: {id}: no build spec: a builder bead needs a `{BUILD_HEADING}` section naming what to build (or route it --for spike)"));
+        }
+        if row.labels.contains(&cfg.incident_label) && !lc_done(src, &mut lc, id) {
+            let related = match src.relates_targets(id) {
+                Ok(t) => t,
+                Err(e) => {
+                    out.push(format!("bead: {id}: unreadable (bd dep list --type relates-to{e})"));
+                    continue;
+                }
+            };
+            for oid in related.into_iter().filter(|o| !blocks.contains(o)) {
+                let Some(orow) = src.show(&oid) else { continue };
+                if lc_done(src, &mut lc, &oid) || orow.labels.contains(&cfg.incident_label) {
+                    continue;
+                }
+                out.push(format!("bead: {id}: open remedy {oid} is linked relates-to only (an incident with a fix in flight must block on it; use bd dep add {id} {oid})"));
+            }
+        }
+
+        let (_, lines) = lint_judge(&labels_joined, awaits, &row.issue_type, &partitions_joined, &cfg.no_loop_label);
+        for line in lines {
+            out.push(format!("bead: {id}: {line}"));
+        }
+    }
+    (i32::from(!out.is_empty()), out)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -1026,6 +1155,352 @@ mod tests {
         assert!(stack_after_refusal("sp-a", Some(&row("epic", "open", "repo:r")), false, "r").is_some());
         assert!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:r")), true, "r").is_some());
         assert!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:other")), false, "r").is_some());
+    }
+
+    // -- lint over a LintSource ----------------------------------------------------------
+
+    use spira_config::lc_state::Row as LcRow;
+
+    const INCIDENT: &str = "incident-test";
+    const ASK: &str = "needs-op-test";
+    const SPEC: &str = "Why.\n\n## Build\n\nThe change, in spira/x.\n";
+
+    #[derive(Default)]
+    struct Rows {
+        beads: Vec<(String, ShowRow)>,
+        blocks: Vec<(String, String)>,
+        relates: Vec<(String, String)>,
+        lc: Vec<(String, String)>,
+        lc_err: Option<String>,
+    }
+
+    impl Rows {
+        fn bead(mut self, id: &str, ty: &str, labels: &[&str], desc: &str) -> Self {
+            let row = ShowRow {
+                labels: labels.iter().map(|l| l.to_string()).collect(),
+                status: "open".into(),
+                issue_type: ty.into(),
+                description: desc.into(),
+            };
+            self.beads.push((id.into(), row));
+            self.lc.push((id.into(), "READY".into()));
+            self
+        }
+        fn state(mut self, id: &str, st: &str) -> Self {
+            self.lc.retain(|(i, _)| i != id);
+            self.lc.push((id.into(), st.into()));
+            self
+        }
+        fn blocks(mut self, from: &str, to: &str) -> Self {
+            self.blocks.push((from.into(), to.into()));
+            self
+        }
+        fn relates(mut self, from: &str, to: &str) -> Self {
+            self.relates.push((from.into(), to.into()));
+            self
+        }
+    }
+
+    fn edges(v: &[(String, String)], id: &str) -> Vec<String> {
+        v.iter().filter(|(f, _)| f == id).map(|(_, t)| t.clone()).collect()
+    }
+
+    impl LintSource for Rows {
+        fn ids(&self) -> Vec<String> {
+            self.beads.iter().filter(|(_, r)| r.issue_type != "event").map(|(i, _)| i.clone()).collect()
+        }
+        fn show(&self, id: &str) -> Option<ShowRow> {
+            self.beads.iter().find(|(i, _)| i == id).map(|(_, r)| r.clone())
+        }
+        fn blocks_targets(&self, id: &str) -> Option<Vec<String>> {
+            Some(edges(&self.blocks, id))
+        }
+        fn relates_targets(&self, id: &str) -> Result<Vec<String>, String> {
+            Ok(edges(&self.relates, id))
+        }
+        fn lifecycle(&self) -> Result<HashMap<String, LcRow>, String> {
+            if let Some(e) = &self.lc_err {
+                return Err(e.clone());
+            }
+            Ok(self
+                .lc
+                .iter()
+                .map(|(id, st)| {
+                    let row = LcRow {
+                        bead_id: id.clone(),
+                        state: st.clone(),
+                        holder: None,
+                        lease_until: None,
+                        holds: vec![],
+                        express: false,
+                        stack: vec![],
+                        phase: None,
+                        disposition: None,
+                        disposition_note: None,
+                        version: None,
+                    };
+                    (id.clone(), row)
+                })
+                .collect())
+        }
+    }
+
+    fn cfg() -> LintCfg {
+        LintCfg {
+            partitions: vec!["plan".into(), "incident-test".into()],
+            spec_partitions: vec![vec!["plan".into()]],
+            no_loop_label: NO_LOOP.into(),
+            ask_label: ASK.into(),
+            incident_label: INCIDENT.into(),
+        }
+    }
+
+    /// Lints `ids` (or `--all` when empty) and returns the exit code and the joined lines.
+    fn run(src: &Rows, ids: &[&str]) -> (i32, String) {
+        struct Only<'a>(&'a Rows, Vec<String>);
+        impl LintSource for Only<'_> {
+            fn ids(&self) -> Vec<String> { self.1.clone() }
+            fn show(&self, id: &str) -> Option<ShowRow> { self.0.show(id) }
+            fn blocks_targets(&self, id: &str) -> Option<Vec<String>> { self.0.blocks_targets(id) }
+            fn relates_targets(&self, id: &str) -> Result<Vec<String>, String> { self.0.relates_targets(id) }
+            fn lifecycle(&self) -> Result<HashMap<String, LcRow>, String> { self.0.lifecycle() }
+        }
+        let (rc, lines) = if ids.is_empty() {
+            lint(src, &cfg())
+        } else {
+            lint(&Only(src, ids.iter().map(|i| i.to_string()).collect()), &cfg())
+        };
+        (rc, lines.join("\n"))
+    }
+
+    #[test]
+    fn a_failed_dep_list_is_unreadable_not_no_blockers() {
+        struct DepsDown(Rows);
+        impl LintSource for DepsDown {
+            fn ids(&self) -> Vec<String> { self.0.ids() }
+            fn show(&self, id: &str) -> Option<ShowRow> { self.0.show(id) }
+            fn blocks_targets(&self, _: &str) -> Option<Vec<String>> { None }
+            fn relates_targets(&self, _: &str) -> Result<Vec<String>, String> { Err(" failed".into()) }
+            fn lifecycle(&self) -> Result<HashMap<String, LcRow>, String> { self.0.lifecycle() }
+        }
+        let src = DepsDown(Rows::default().bead("dep-a", "task", &["repo:spira", "plan"], SPEC));
+        let (rc, lines) = lint(&src, &cfg());
+        assert_eq!(rc, 1);
+        assert_eq!(lines, vec!["bead: dep-a: unreadable (bd dep list failed)".to_string()]);
+    }
+
+    #[test]
+    fn a_failed_relates_list_on_an_incident_is_unreadable_with_the_original_text() {
+        struct RelatesDown(Rows);
+        impl LintSource for RelatesDown {
+            fn ids(&self) -> Vec<String> { self.0.ids() }
+            fn show(&self, id: &str) -> Option<ShowRow> { self.0.show(id) }
+            fn blocks_targets(&self, id: &str) -> Option<Vec<String>> { self.0.blocks_targets(id) }
+            fn relates_targets(&self, _: &str) -> Result<Vec<String>, String> { Err(" failed".into()) }
+            fn lifecycle(&self) -> Result<HashMap<String, LcRow>, String> { self.0.lifecycle() }
+        }
+        let src = RelatesDown(Rows::default().bead("inc-a", "task", &["repo:spira", "plan", INCIDENT], SPEC));
+        let (_, lines) = lint(&src, &cfg());
+        assert!(lines.contains(&"bead: inc-a: unreadable (bd dep list --type relates-to failed)".to_string()), "{lines:?}");
+    }
+
+    fn mix() -> Rows {
+        Rows::default()
+            .bead("mix-claim", "task", &["repo:spira", "plan"], SPEC)
+            .bead("mix-noloop", "task", &["repo:spira", NO_LOOP], "")
+            .bead("mix-nopart", "task", &["repo:spira"], "")
+            .bead("mix-norepo", "task", &["plan"], SPEC)
+            .bead("mix-ev.1", "event", &[], "")
+            .bead("mix-brgood", "task", &["repo:spira", "plan", "branch:spira/mix-brgood"], SPEC)
+            .bead("mix-brbad", "task", &["repo:spira", "plan", "branch:spira/mix-brgood"], SPEC)
+            .bead("spec-none", "task", &["repo:spira", "plan"], "A routine deploy causes no failed requests.")
+            .bead("spec-empty", "task", &["repo:spira", "plan"], "Why.\n\n## Build\n\n## Acceptance\nx\n")
+            .bead("spec-done", "task", &["repo:spira", "plan"], "")
+            .state("spec-done", "LANDED")
+            .bead("spec-noloop", "task", &["repo:spira", NO_LOOP], "x")
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn all_exits_1_when_offenders_are_present() {
+        assert_eq!(run(&mix(), &[]).0, 1);
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn all_reports_exactly_the_offenders() {
+        let (_, out) = run(&mix(), &[]);
+        for want in [
+            "mix-nopart: no partition label",
+            "mix-norepo: no repo: label",
+            "mix-brbad: branch: label names mix-brgood, not itself",
+            "spec-none: no build spec",
+            "spec-empty: no build spec",
+        ] {
+            assert!(out.contains(want), "missing {want:?} in {out}");
+        }
+        for not in ["mix-claim", "mix-noloop", "mix-ev", "mix-brgood: branch:", "spec-done", "spec-noloop"] {
+            assert!(!out.contains(not), "{not:?} reported in {out}");
+        }
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn a_builder_bead_without_a_build_spec_exits_1_alone_and_with_one_exits_0() {
+        assert_eq!(run(&mix(), &["spec-none"]).0, 1);
+        assert_eq!(run(&mix(), &["mix-claim"]).0, 0);
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn an_unreadable_id_is_unreadable_not_a_label_defect() {
+        let (rc, out) = run(&mix(), &["mix-nonexistent"]);
+        assert_eq!(rc, 1);
+        assert!(out.contains("mix-nonexistent: unreadable"), "{out}");
+        assert!(!out.contains("no repo: label"), "{out}");
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn a_branch_label_naming_the_bead_itself_passes() {
+        assert_eq!(run(&mix(), &["mix-brgood"]).0, 0);
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn a_branch_label_naming_another_bead_exits_1_and_is_reported() {
+        let (rc, out) = run(&mix(), &["mix-brbad"]);
+        assert_eq!(rc, 1);
+        assert!(out.contains("mix-brbad: branch: label names mix-brgood, not itself"), "{out}");
+    }
+
+    fn asks() -> Rows {
+        Rows::default()
+            .bead("ask-a", "decision", &[ASK], "")
+            .bead("ask-b", "decision", &[ASK], "")
+            .blocks("ask-b", "ask-a")
+            .bead("ask-rel-a", "decision", &[ASK], "")
+            .bead("ask-rel-b", "decision", &[ASK], "")
+            .relates("ask-rel-b", "ask-rel-a")
+            .bead("ask-work", "task", &["repo:spira", "plan"], SPEC)
+            .bead("ask-target", "decision", &[ASK], "")
+            .blocks("ask-target", "ask-work")
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn a_blocks_edge_between_two_asks_is_flagged() {
+        let (rc, out) = run(&asks(), &[]);
+        assert_eq!(rc, 1);
+        assert!(out.contains("ask-b: blocks edge to ask-labelled ask-a"), "{out}");
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn relates_to_between_asks_and_a_work_bead_under_an_ask_are_not_flagged() {
+        let (_, out) = run(&asks(), &[]);
+        assert!(!out.contains("ask-rel-b: blocks edge"), "{out}");
+        assert!(!out.contains("ask-target: blocks edge"), "{out}");
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn the_non_blocking_end_of_a_flagged_ask_edge_passes_alone() {
+        assert_eq!(run(&asks(), &["ask-a"]).0, 0);
+    }
+
+    fn incidents() -> Rows {
+        Rows::default()
+            .bead("inc-alarm", "task", &[INCIDENT, "repo:spira", NO_LOOP], "")
+            .bead("inc-work", "task", &["repo:spira", "plan"], SPEC)
+            .blocks("inc-work", "inc-alarm")
+            .bead("inc-rel", "task", &["repo:spira", "plan"], SPEC)
+            .relates("inc-rel", "inc-alarm")
+            .bead("work-a", "task", &["repo:spira", "plan"], SPEC)
+            .bead("work-b", "task", &["repo:spira", "plan"], SPEC)
+            .blocks("work-b", "work-a")
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn a_blocks_edge_onto_an_incident_is_flagged_by_the_configured_label() {
+        let (rc, out) = run(&incidents(), &[]);
+        assert_eq!(rc, 1);
+        assert!(out.contains("inc-work: blocks edge to incident-labelled inc-alarm"), "{out}");
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn relates_to_an_incident_and_work_onto_work_are_not_flagged() {
+        let (_, out) = run(&incidents(), &[]);
+        assert!(!out.contains("inc-rel: blocks edge"), "{out}");
+        assert!(!out.contains("work-b: blocks edge"), "{out}");
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn the_alarm_alone_and_work_b_alone_pass() {
+        assert_eq!(run(&incidents(), &["inc-alarm"]).0, 0);
+        assert_eq!(run(&incidents(), &["work-b"]).0, 0);
+    }
+
+    fn remedies() -> Rows {
+        Rows::default()
+            .bead("rem-bad", "task", &[INCIDENT, "repo:spira", NO_LOOP], "")
+            .bead("rem-fix1", "task", &["repo:spira", "plan"], SPEC)
+            .relates("rem-bad", "rem-fix1")
+            .bead("rem-good", "task", &[INCIDENT, "repo:spira", NO_LOOP], "")
+            .bead("rem-fix2", "task", &["repo:spira", "plan"], SPEC)
+            .blocks("rem-good", "rem-fix2")
+            .relates("rem-good", "rem-fix2")
+            .bead("rem-done", "task", &[INCIDENT, "repo:spira", NO_LOOP], "")
+            .bead("rem-fix3", "task", &["repo:spira", "plan"], "")
+            .state("rem-fix3", "LANDED")
+            .relates("rem-done", "rem-fix3")
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn an_open_remedy_linked_relates_to_only_is_flagged() {
+        let (rc, out) = run(&remedies(), &["rem-bad"]);
+        assert_eq!(rc, 1);
+        assert!(out.contains("rem-bad: open remedy rem-fix1 is linked relates-to only"), "{out}");
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn a_blocks_linked_remedy_passes() {
+        assert_eq!(run(&remedies(), &["rem-good"]).0, 0);
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn a_relates_to_remedy_that_already_landed_passes() {
+        assert_eq!(run(&remedies(), &["rem-done"]).0, 0);
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn filing_a_remedy_under_an_incident_adds_the_blocks_edge() {
+        let labels = vec![INCIDENT.to_string(), "repo:spira".to_string()];
+        assert_eq!(remedy_edge(&labels, INCIDENT, "sp-new", "sp-inc"), Some(("sp-inc".to_string(), "sp-new".to_string())));
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn filing_under_an_ordinary_parent_adds_no_edge() {
+        let labels = vec!["repo:spira".to_string(), "plan".to_string()];
+        assert_eq!(remedy_edge(&labels, INCIDENT, "sp-new", "sp-par"), None);
+    }
+
+    // covers: UC-dispatch-04
+    #[test]
+    fn an_unreadable_lifecycle_state_fails_the_partition_check_and_is_said_once() {
+        let mut rows = mix();
+        rows.lc_err = Some("down".into());
+        let (rc, out) = run(&rows, &[]);
+        assert_eq!(rc, 1);
+        assert_eq!(out.matches("lifecycle state unreadable").count(), 1, "{out}");
     }
 }
 

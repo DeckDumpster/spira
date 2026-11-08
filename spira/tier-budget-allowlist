@@ -36,7 +36,6 @@ test-dwarf-launch-grammar.sh	T1	2.0
 test-dwarf-ledger.sh	T1	49.0
 test-dwarf-operator-wait.sh	T1	53.0
 test-dwarf-presession-death.sh	T1	44.0
-test-dwarf-prod-dirty.sh	T1	56.5
 test-dwarf-resume.sh	T1	50.5
 test-dwarf-sweep.sh	T1	41.0
 test-dwarf-wiki-dirty.sh	T1	49.0
@@ -57,7 +56,6 @@ test-batch-nocut-reason.sh	T1	8.0
 test-batch-repeat-refused-delivers.sh	T1	18.5
 test-bd-schema-stamp.sh	T1	2.5
 test-bead-file.sh	T1	27.0
-test-bead-lint.sh	T1	29.5
 test-beads-sparklines.sh	T1	3.0
 test-bin-manifest.sh	T1	3.0
 test-boundary.sh	T1	3.5
