@@ -696,3 +696,5 @@ testenv_max_runs
 bdi_capped
 bdi_max_ratio
 bdi_sysfs
+dwarf_build_base
+dwarf_build_budget_gib

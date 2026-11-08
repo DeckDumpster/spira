@@ -1,0 +1,10 @@
+TYPE=u64
+GROUP=dwarf
+DOC=GIB THE OWNED BUILD DIRECTORIES MAY HOLD TOGETHER (sp-ke0uk8). Over it, a new lease evicts IDLE directories, least recently used first, until under; a live one is counted but never trimmed or evicted.
+SCHEMA=GiB all owned build directories under dwarf_build_base may hold; over it idle ones are evicted least recently used first, live ones never (unset: 60).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # GIB THE OWNED BUILD DIRECTORIES MAY HOLD TOGETHER (sp-ke0uk8). Each is one workspace
+    # target (tens of GiB). Past this, a new lease evicts idle directories, least recently used
+    # first; a live directory is never trimmed or evicted, so live sessions may exceed it.
+    : "${SPIRA_DWARF_BUILD_BUDGET_GIB:=60}"
+SPIRA_CONF_DEFAULT_EOF

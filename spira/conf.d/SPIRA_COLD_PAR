@@ -1,8 +1,9 @@
 TYPE=u32
 GROUP=compile
-DOC=SPIRA_COLD_PAR — One cold build at a time, host-wide: a toolchain change recompiles every artifact.
-SCHEMA=Cold-build admission slots (gate/DESIGN-admission.md); a session whose first build is cold takes one before it starts. A pool size, never a per-job limit.
+DOC=DEPRECATED (sp-ke0uk8): no dwarf takes a cold-build slot any more; each building session owns its build directory, and dependencies come from sccache. Kept declared so the release that stops reading it lands; removed by a later release.
+SCHEMA=DEPRECATED (sp-ke0uk8): the retired cold-build admission pool. No session acquires it.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # Registered default: one cold full-workspace build at a time, host-wide.
+    # DEPRECATED (sp-ke0uk8): the cold-build pool is retired — no dwarf acquires it. Kept
+    # declared so the release that stops reading it is landable (sp-kylkad).
     : "${SPIRA_COLD_PAR:=1}"
 SPIRA_CONF_DEFAULT_EOF

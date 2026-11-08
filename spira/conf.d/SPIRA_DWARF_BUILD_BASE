@@ -1,0 +1,13 @@
+TYPE=string
+GROUP=dwarf
+DOC=WHERE EACH BUILDING DWARF'S ONE CARGO TARGET LIVES (sp-ke0uk8): owned build directories dir.N under this base on the compile disk, each leased by one session from claim to teardown, never touched while live. Required by building dwarves; doctor warns on a tmpfs.
+SCHEMA=The compile-disk directory holding the dwarves' owned build directories (dir.N, each leased by one session for its whole bead). Targets are whole workspaces (tens of GiB): never a tmpfs.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE EACH BUILDING DWARF'S ONE CARGO TARGET LIVES (sp-ke0uk8). A session that builds
+    # leases one directory under this base for its whole bead — its own cargo, testenv's unit
+    # run and `work checks` all build there — and the lease takes the most recently idled one,
+    # selectively cleaned (spira/target-clean.sh). The default is under the run directory so
+    # any box installs; a host with a compile disk points it there (this host: SSD-B,
+    # /srv/ssd-b/dwarf-build, set in the live config).
+    : "${SPIRA_DWARF_BUILD_BASE:=$SPIRA_RUN/dwarf-build}"
+SPIRA_CONF_DEFAULT_EOF

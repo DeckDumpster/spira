@@ -1,7 +1,10 @@
 TYPE=string
 GROUP=dwarf
-DOC=Directory on a tmpfs holding each dwarf session's warm CARGO_TARGET_DIR (slot.N). Required: a dwarf refuses to start without it, and doctor flags a base that is not a tmpfs.
-SCHEMA=REQUIRED: the tmpfs directory holding the dwarf warm build slots (slot.N). Incremental builds write ~50 MB/s; this keeps them off the store's disk. Nothing defaults it; `doctor` fails a base that is not a tmpfs.
+DOC=DEPRECATED (sp-ke0uk8): the RAM warm-slot pool is retired; dwarves build in owned directories under dwarf_build_base. Still declared so a release that stops reading it lands; only watch.warm_full reads it, and an empty value idles that watcher. Removed by a later release.
+SCHEMA=DEPRECATED (sp-ke0uk8): the retired RAM warm-slot base. No dwarf reads it; set it empty after cutover. Superseded by dwarf_build_base.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # DEPRECATED (sp-ke0uk8): the retired RAM warm-slot pool's base. No dwarf, testenv, doctor,
+    # ready.sh or install reads it; watch.warm_full idles when it is empty. Kept declared so the
+    # release that stops reading it is landable (sp-kylkad); a later release removes it.
     # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
 SPIRA_CONF_DEFAULT_EOF
