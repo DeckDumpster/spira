@@ -302,6 +302,12 @@ pub fn undrained(text: &str) -> bool {
     text.lines().any(|l| l.trim().replace(' ', "").eq_ignore_ascii_case("X-Spira-NoDrain=true"))
 }
 
+/// A service activation must not restart while it runs (sp-m9rruh): restarting it disturbs
+/// what the operator is using. When its code changed, activation names it STALE instead.
+pub fn no_restart(text: &str) -> bool {
+    text.lines().any(|l| l.trim().replace(' ', "").eq_ignore_ascii_case("X-Spira-NoRestart=true"))
+}
+
 /// A service whose `Exec*=` lines differ between two renderings.
 pub fn exec_changed(old: &str, new: &str) -> bool {
     exec_lines(old) != exec_lines(new)

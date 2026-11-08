@@ -52,6 +52,12 @@ pub trait Systemctl {
         None
     }
     fn restart(&self, unit: &str) -> Result<(), String>;
+    /// A path whose bytes are the executable the unit's main process runs now
+    /// (`/proc/<MainPID>/exe`, readable even when the release it came from was pruned), or
+    /// `None` when the unit has no main process or the fake does not model one (sp-m9rruh).
+    fn running_exe(&self, _unit: &str) -> Option<std::path::PathBuf> {
+        None
+    }
     /// `systemctl --user kill`: bypasses job control, for a unit that refuses a restart job.
     fn kill(&self, unit: &str) -> Result<(), String>;
     /// Names of the active units matching `glob` (`systemctl --user list-units
@@ -192,6 +198,10 @@ impl Systemctl for RealSystemctl {
     }
     fn start_budget(&self, unit: &str) -> Option<std::time::Duration> {
         self.run(&["show", unit, "-p", "RestartUSec", "-p", "TimeoutStartUSec"]).ok().and_then(|t| budget_from_show(&t))
+    }
+    fn running_exe(&self, unit: &str) -> Option<std::path::PathBuf> {
+        let pid: u32 = self.run(&["show", unit, "-p", "MainPID", "--value"]).ok()?.trim().parse().ok()?;
+        (pid > 0).then(|| std::path::PathBuf::from(format!("/proc/{pid}/exe")))
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
         let budget = self

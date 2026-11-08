@@ -536,6 +536,9 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
                 if !p.failed.is_empty() {
                     eprintln!("release: WARN: prune could not remove: {}", p.failed.join("; "));
                 }
+                if !s.stale.is_empty() {
+                    eprintln!("release: STALE: {} running unit(s) still on the previous release's code, not restarted by this activation:\n  {}", s.stale.len(), s.stale.join("\n  "));
+                }
             } else {
                 want(0)?;
                 let from = activate::current(&cfg);
