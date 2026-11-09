@@ -113,7 +113,7 @@ fn release_stale_opening(w: &World, c: &Ctx, path: &Path) -> i32 {
     if !live.iter().any(|b| b.kv.get(forge_batch::PHASE) == Some(forge_batch::OPENING)) {
         return OK;
     }
-    let Ok(ttl) = super::batch::lease_ttl(w, "verdict") else {
+    let Ok(ttl) = super::batch::lease_ttl(w, "verdict", "") else {
         return FAIL;
     };
     let Some(prs) = w.forge.queue_prs(&c.s.forge, path) else {

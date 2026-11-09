@@ -866,6 +866,17 @@ fn a_queue_local_verdict_with_an_unparsable_lease_ttl_releases_nothing_and_says_
 }
 
 #[test]
+fn a_queue_local_verdict_on_a_repo_with_no_batch_store_does_not_consult_the_forge_or_records() {
+    let t = T::new(LandMode::QueueLocal);
+    t.var("SPIRA_ROUND_LEASE_TTL_SECS", "soon");
+    t.forge.queue_prs_unreadable.set(true);
+    t.run(&["verdict", "spira"]);
+    assert!(!t.err().contains("LEASE_TTL"), "{}", t.err());
+    assert!(!t.err().contains("cannot list"), "{}", t.err());
+    assert!(!t.lc.has("abandon-batch"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
 fn settling_forge_leftovers_never_releases_a_stale_opening_record_whose_pr_the_forge_may_hold() {
     let t = local_world();
     seed(&t, "lost", "opening", 500, None);
