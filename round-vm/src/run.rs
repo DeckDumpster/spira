@@ -312,12 +312,16 @@ mkdir -p "$(dirname "$disk_out")"
 disk_report() {
     local phase="$1" label path bytes total=0 whole=yes graph
     graph="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null || true)"
-    for label in round-work tmpdir podman-graphroot cargo-target; do
+    for label in round-work tmpdir podman-graphroot cargo-target cargo-target-release round-scratch round-releases nix-store; do
         case "$label" in
             round-work) path="$HOME/round-work" ;;
             tmpdir) path="${TMPDIR:-/tmp}" ;;
             podman-graphroot) path="$graph" ;;
             cargo-target) path="$HOME/round-work/target" ;;
+            cargo-target-release) path="$HOME/round-work/target/release" ;;
+            round-scratch) path="$HOME/round-scratch" ;;
+            round-releases) path="$HOME/round-releases" ;;
+            nix-store) path=/nix ;;
         esac
         if [ -z "$path" ]; then
             bytes=unread path="(podman named no graph root)"
@@ -327,19 +331,50 @@ disk_report() {
             path="$path (du could not read all of it: a lower bound)"
         fi
         case "$bytes" in ''|*[!0-9]*) bytes=unread ;; esac
-        if [ "$bytes" = unread ]; then whole=no; elif [ "$label" != cargo-target ]; then total=$(( total + bytes )); fi
+        case "$label" in cargo-target*) ;; *) if [ "$bytes" = unread ]; then whole=no; else total=$(( total + bytes )); fi ;; esac
         echo "round-vm: DISK $phase $label $bytes $path" | tee -a "$disk_out" >&2
     done
     [ "$whole" = yes ] || total="$total+unread"
     echo "round-vm: DISK $phase total $total -" | tee -a "$disk_out" >&2
+    [ "$phase" != start ] || disk_start_total="${total%%+*}"
+}
+# The phase reports see only their instants; per-suite scratch rises and is cleaned between them.
+# The sampler keeps the largest growth of the filesystem since the pass began.
+disk_growth_file="$HOME/round-disk-growth"
+fs_used() { df -B1 --output=used "$HOME" 2>/dev/null | tail -n1 | tr -d ' '; }
+disk_sampler() {
+    local base="$1" now peak=0
+    while kill -0 "$$" 2>/dev/null; do
+        now="$(fs_used)"
+        case "$now" in ''|*[!0-9]*) ;; *) [ $(( now - base )) -le "$peak" ] || peak=$(( now - base )); echo "$peak" > "$disk_growth_file" ;; esac
+        sleep 5
+    done
 }
 # The pass's last report; coverage profiles go once the line report has read them, or once a red
-# unit tier means none will.
+# unit tier means none will. Its `peak` line is the pass's start total plus the largest growth sampled.
 disk_report_last() {
+    local growth
+    [ -z "${disk_sampler_pid:-}" ] || { kill "$disk_sampler_pid" 2>/dev/null; wait "$disk_sampler_pid" 2>/dev/null || true; }
     disk_report "$1"
     find "$HOME/round-work/target" \( -name '*.profraw' -o -name '*.profdata' \) -delete 2>/dev/null || true
+    growth="$(cat "$disk_growth_file" 2>/dev/null || true)"
+    case "$growth" in
+        ''|*[!0-9]*) echo "round-vm: DISK $1 peak unread -" | tee -a "$disk_out" >&2 ;;
+        *) case "${disk_start_total:-}" in
+            ''|*[!0-9]*) echo "round-vm: DISK $1 peak unread -" | tee -a "$disk_out" >&2 ;;
+            *) echo "round-vm: DISK $1 peak $(( disk_start_total + growth )) -" | tee -a "$disk_out" >&2 ;;
+        esac ;;
+    esac
+}
+# Suites read only the executables directly under target/release; its intermediates are its bulk.
+prune_release_intermediates() {
+    local d="$HOME/round-work/target/release"
+    rm -rf "$d/deps" "$d/build" "$d/.fingerprint" "$d/incremental" "$d/examples"
 }
 disk_report start
+rm -f "$disk_growth_file"
+disk_base="$(fs_used)"
+case "$disk_base" in ''|*[!0-9]*) ;; *) disk_sampler "$disk_base" & disk_sampler_pid=$! ;; esac
 phase spira-env
 nix_bin=/nix/var/nix/profiles/default/bin
 flake_ref="path:$HOME/round-work#spira-env"
@@ -617,6 +652,7 @@ release_red() {
 SPIRA_HOME="$HOME/round-work/spira" SPIRA_TOML="$SPIRA_TOML" target/release/spira-config validate > /dev/null 2> ~/round-release.err || release_red "config"
 rel_sha="$(SPIRA_HOME="$HOME/round-work/spira" target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases" 2> ~/round-release.err)" || release_red "build"
 SPIRA_HOME="$HOME/round-work/spira" target/release/release verify "$rel_sha" --no-pre-activate --releases "$HOME/round-releases" > /dev/null 2> ~/round-release.err || release_red "verify"
+prune_release_intermediates
 export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
 export SPIRA_REPO="$HOME/round-work"
 export PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -1927,6 +1963,29 @@ fn fence_seconds(results: &Path, started: u64) -> Vec<(String, u64)> {
     out
 }
 
+/// The pass's peak disk use, from the `disk-usage` file the round left in its results this pass.
+fn disk_peak(results: &Path, started: u64) -> Option<u64> {
+    fn walk(dir: &Path, depth: u32, since: std::time::SystemTime, best: &mut Option<u64>) {
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                if depth > 0 {
+                    walk(&path, depth - 1, since, best);
+                }
+            } else if path.file_name().is_some_and(|n| n == DISK_USAGE) && fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t >= since) {
+                *best = (*best).max(tsd::pass::disk_peak_bytes(&fs::read_to_string(&path).unwrap_or_default()));
+            }
+        }
+    }
+    let mut best = None;
+    walk(results, 3, std::time::UNIX_EPOCH + Duration::from_secs(started), &mut best);
+    best
+}
+
+/// What REMOTE_SCRIPT writes each phase's DISK lines to, in the pass's results.
+pub const DISK_USAGE: &str = "disk-usage";
+
 /// What REMOTE_SCRIPT records each fence's seconds in, at the top of the results.
 pub const FENCE_TIMES: &str = "fence-times";
 
@@ -1994,6 +2053,12 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         Some((n, m)) => (n.to_string(), m),
         None => (format!("t{started}"), Vec::new()),
     };
+    let results_root = args.results_dir.clone().unwrap_or_else(|| env.cfg.run_dir.join("batch-results"));
+    let disk_peak_b = disk_peak(&results_root, started);
+    match disk_peak_b {
+        Some(b) => eprintln!("round-vm run: DISK peak {:.2} GiB this pass", b as f64 / (1u64 << 30) as f64),
+        None => eprintln!("round-vm run: DISK peak unread: the pass left no disk-usage lines"),
+    }
     let record = tsd::pass::PassRecord {
         repo: args.round_repo.clone().unwrap_or_else(|| "-".into()),
         batch: batch.to_string(),
@@ -2008,7 +2073,8 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         suites_s,
         cause: tsd::pass::Cause::from_exit(code, lost.is_some()),
         detail: lost.unwrap_or_default(),
-        fences: fence_seconds(&args.results_dir.clone().unwrap_or_else(|| env.cfg.run_dir.join("batch-results")), started),
+        fences: fence_seconds(&results_root, started),
+        disk_peak_b,
     };
     match env.record.pass_record(&env.cfg.run_dir, &record) {
         Ok(()) => {
@@ -3082,9 +3148,87 @@ mod tests {
         for (label, path) in [("round-work", "\"$HOME/round-work\""), ("tmpdir", "\"${TMPDIR:-/tmp}\""), ("podman-graphroot", "\"$graph\""), ("cargo-target", "\"$HOME/round-work/target\"")] {
             assert!(func.contains(&format!("{label}) path={path}")), "{label} is measured at {path}: {func}");
         }
-        assert!(func.contains("[ \"$label\" != cargo-target ]; then total=$(( total + bytes ))"), "cargo-target lies inside round-work and is not added twice");
+        assert!(func.contains("case \"$label\" in cargo-target*) ;;"), "cargo-target lies inside round-work and is not added twice");
+        for (label, path) in [("round-scratch", "\"$HOME/round-scratch\""), ("round-releases", "\"$HOME/round-releases\""), ("nix-store", "/nix")] {
+            assert!(func.contains(&format!("{label}) path={path}")), "{label} is measured at {path}: {func}");
+        }
         assert!(func.contains("| tee -a \"$disk_out\" >&2"), "the stderr log and the results file carry the same lines");
         assert!(REMOTE_SCRIPT.contains("disk_out=\"$HOME/round-work/.runtime/spira/batch-results/disk-usage\""), "the lines land in the pass's results");
+    }
+
+    fn script_fn(name: &str) -> String {
+        let a = REMOTE_SCRIPT.find(&format!("{name}() {{")).unwrap_or_else(|| panic!("{name} is in the script"));
+        let end = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
+        REMOTE_SCRIPT[a..end].to_string()
+    }
+
+    #[test]
+    fn pruning_the_release_intermediates_keeps_the_executables_the_suites_and_fences_read() {
+        let d = TempDir::new();
+        let rel = d.path().join("round-work/target/release");
+        for sub in ["deps", "build", ".fingerprint", "incremental", "examples"] {
+            std::fs::create_dir_all(rel.join(sub)).unwrap();
+            std::fs::write(rel.join(sub).join("big.rlib"), vec![0u8; 4096]).unwrap();
+        }
+        std::fs::write(rel.join("release"), "bin").unwrap();
+        std::fs::write(rel.join("spira-lint.d"), "dep info").unwrap();
+        let script = format!("set -euo pipefail\n{}\nprune_release_intermediates\n", script_fn("prune_release_intermediates"));
+        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let mut left: Vec<String> = std::fs::read_dir(&rel).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["release", "spira-lint.d"]);
+        let prune = REMOTE_SCRIPT.find("\nprune_release_intermediates\n").unwrap();
+        assert!(REMOTE_SCRIPT.find("release verify \"$rel_sha\"").unwrap() < prune, "pruned only once the release is verified");
+        assert!(prune < REMOTE_SCRIPT.find("disk_report build").unwrap(), "the build report sees the pruned tree");
+        assert!(prune < REMOTE_SCRIPT.find("testenv --mode parallel").unwrap());
+    }
+
+    #[test]
+    fn the_last_report_names_the_pass_peak_as_the_start_total_plus_the_largest_growth_sampled() {
+        let d = TempDir::new();
+        let run = d.path().join("round-work/.runtime/spira/batch-results");
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::write(d.path().join("round-disk-growth"), "3000\n").unwrap();
+        let script = format!(
+            "set -uo pipefail\ndisk_out=\"$HOME/round-work/.runtime/spira/batch-results/disk-usage\"\ndisk_growth_file=\"$HOME/round-disk-growth\"\ndisk_start_total=1000\ndisk_report() {{ :; }}\n{}\ndisk_report_last suites\n",
+            script_fn("disk_report_last")
+        );
+        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let lines = std::fs::read_to_string(run.join("disk-usage")).unwrap();
+        assert_eq!(lines, "round-vm: DISK suites peak 4000 -\n");
+        assert_eq!(tsd::pass::disk_peak_bytes(&lines), Some(4000));
+        std::fs::remove_file(d.path().join("round-disk-growth")).unwrap();
+        std::fs::remove_file(run.join("disk-usage")).unwrap();
+        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
+        assert!(out.status.success());
+        assert_eq!(std::fs::read_to_string(run.join("disk-usage")).unwrap(), "round-vm: DISK suites peak unread -\n", "no sample is unread, never a zero");
+    }
+
+    #[test]
+    fn the_hosts_disk_peak_is_the_largest_total_or_peak_and_unread_is_none() {
+        let text = "round-vm: DISK start total 100 -\nround-vm: DISK build cargo-target 9999 /t\nround-vm: DISK build total 700+unread -\nround-vm: DISK suites peak 500 -\nround-vm: DISK suites total unread -\n";
+        assert_eq!(tsd::pass::disk_peak_bytes(text), Some(700));
+        assert_eq!(tsd::pass::disk_peak_bytes("round-vm: DISK suites peak unread -\n"), None);
+        let d = TempDir::new();
+        std::fs::create_dir_all(d.path().join("corpus")).unwrap();
+        std::fs::write(d.path().join("corpus").join(DISK_USAGE), text).unwrap();
+        assert_eq!(disk_peak(d.path(), 0), Some(700));
+        assert_eq!(disk_peak(d.path(), u64::MAX / 4), None, "a file older than the pass is a previous pass's");
+    }
+
+    #[test]
+    fn the_sampler_keeps_the_largest_growth_and_ends_with_the_script() {
+        let d = TempDir::new();
+        let script = format!(
+            "set -uo pipefail\ndisk_growth_file=\"$HOME/g\"\necho 0 > \"$HOME/n\"\nfs_used() {{ n=$(( $(cat \"$HOME/n\") + 1 )); echo $n > \"$HOME/n\"; case $n in 1) echo 1500;; 2) echo 9000;; *) echo 2000;; esac; }}\nsleep() {{ :; }}\n{}\ndisk_sampler 1000 &\np=$!\nwhile [ ! -s \"$disk_growth_file\" ] || [ \"$(cat \"$disk_growth_file\")\" -lt 8000 ]; do :; done\nkill $p; wait $p 2>/dev/null; cat \"$disk_growth_file\"\n",
+            script_fn("disk_sampler")
+        );
+        let out = std::process::Command::new("timeout").args(["20", "bash", "-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "8000", "the peak stays after growth falls back");
+        assert!(REMOTE_SCRIPT.contains("disk_sampler \"$disk_base\" & disk_sampler_pid=$!"), "the sampler runs beside the pass");
     }
 
     #[test]

@@ -1232,6 +1232,7 @@ fn record_pass(w: &World, c: &Ctx, b: &Batch, status: &str, out: &str) {
         cause,
         detail: format!("PR {}", b.pr),
         fences: Vec::new(),
+        disk_peak_b: None,
     };
     let written = rec.write(&c.s.run, &tsd::default_host(), &tsd::iso_utc(now));
     let marked = written.and_then(|()| {

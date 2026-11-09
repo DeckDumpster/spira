@@ -86,6 +86,7 @@ mod tests {
                 cause,
                 detail: String::new(),
                 fences: Vec::new(),
+                disk_peak_b: None,
             };
             push_pass_to(Some(&addr), &rec);
             let body = h.join().unwrap();

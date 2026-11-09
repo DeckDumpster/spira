@@ -37,6 +37,7 @@ pub struct PassLog {
     pub instance_type: String,
     pub setup_s: Option<i64>,
     pub suites_s: Option<i64>,
+    pub disk_peak_b: Option<u64>,
 }
 
 fn secs(token: &str) -> Option<i64> {
@@ -113,6 +114,7 @@ pub fn parse_pass_log(text: &str) -> PassLog {
             p.unit_failed.push(line.trim_end_matches(" ... FAILED").trim_start_matches("test ").to_string());
         }
     }
+    p.disk_peak_b = tsd::pass::disk_peak_bytes(text);
     p.suites = order.into_iter().filter_map(|n| by.remove(&n)).collect();
     p.suites.sort_by_key(|s| !is_red(&s.verdict));
     p
@@ -430,8 +432,9 @@ pub fn render_detail(d: &Detail, stale: Option<&str>) -> String {
     }
     for (name, l) in &d.logs {
         let (v, wall) = l.as_deref().map(|l| (l.verdict.as_str(), l.setup_s.zip(l.suites_s).map(|(a, b)| dur(a + b)).unwrap_or_default())).unwrap_or(("", String::new()));
+        let disk = l.as_deref().and_then(|l| l.disk_peak_b).map(|b| format!(" · disk peak {:.2} GiB", b as f64 / (1u64 << 30) as f64)).unwrap_or_default();
         let mark = if Some(name) == d.selected.as_ref() { " ◀" } else { "" };
-        out.push_str(&format!("<div><a href=\"/rounds/spira/{}?log={}\">{}</a> {} {}{}</div>", esc(id), esc(name), esc(name), badge(if v.is_empty() { "running" } else { v }), esc(&wall), mark));
+        out.push_str(&format!("<div><a href=\"/rounds/spira/{}?log={}\">{}</a> {} {}{}{}</div>", esc(id), esc(name), esc(name), badge(if v.is_empty() { "running" } else { v }), esc(&wall), esc(&disk), mark));
     }
     if let Some(l) = log {
         out.push_str(&format!("<h2>Suites <span class=dim>{} ran · {} red · {} skipped</span></h2>", l.ran.unwrap_or(l.suites.len() as i64), l.red.unwrap_or(0), l.skipped.unwrap_or(0)));
@@ -454,7 +457,7 @@ pub fn detail_json(d: &Detail) -> Value {
     let log_json = |l: &PassLog| {
         json!({
             "verdict": l.verdict, "ran": l.ran, "red": l.red, "skipped": l.skipped, "unit": l.unit, "unit_failed": l.unit_failed,
-            "bare": l.bare, "instance_type": l.instance_type, "setup_s": l.setup_s, "suites_s": l.suites_s,
+            "bare": l.bare, "instance_type": l.instance_type, "setup_s": l.setup_s, "suites_s": l.suites_s, "disk_peak_b": l.disk_peak_b,
             "suites": l.suites.iter().map(|s| json!({"suite": s.name, "verdict": s.verdict, "duration_s": s.duration_s, "first_fail": s.first_fail})).collect::<Vec<_>>(),
         })
     };
@@ -510,6 +513,28 @@ round-vm: setup 42s, suites 158s\n";
         assert_eq!(p.suites.iter().find(|s| s.name == "test-dwarf-launch-grammar.sh").unwrap().verdict, "skipped");
         assert_eq!((p.verdict.as_str(), p.ran, p.red, p.skipped), ("red", Some(470), Some(1), Some(9)));
         assert_eq!((p.setup_s, p.suites_s, p.instance_type.as_str()), (Some(42), Some(158), "c7i.8xlarge"));
+    }
+
+    #[test]
+    fn a_pass_logs_disk_peak_is_the_largest_total_or_peak_line_and_an_unread_one_is_none() {
+        let p = parse_pass_log(
+            "round-vm: DISK start total 100 -\nround-vm: DISK build round-work 9999 /x\nround-vm: DISK build total 7000+unread -\nround-vm: DISK suites peak 5000 -\nround-vm: DISK suites total 300 -\n",
+        );
+        assert_eq!(p.disk_peak_b, Some(7000));
+        assert_eq!(parse_pass_log("round-vm: DISK suites peak unread -\nround-vm: DISK start total unread -\n").disk_peak_b, None);
+    }
+
+    #[test]
+    fn the_round_detail_shows_each_passs_disk_peak_in_html_and_json_and_nothing_when_unread() {
+        let batch = json!({});
+        let read = Arc::new(parse_pass_log("round-vm: DISK suites peak 3221225472 -\n"));
+        let unread = Arc::new(parse_pass_log("round-vm: DISK suites peak unread -\n"));
+        let d = Detail { now: 0, batch: &batch, logs: vec![("a".into(), Some(read)), ("b".into(), Some(unread))], selected: None, tail: String::new() };
+        let html = render_detail(&d, None);
+        assert!(html.contains("disk peak 3.00 GiB"), "{html}");
+        assert_eq!(html.matches("disk peak").count(), 1, "an unread pass renders no figure");
+        let j = detail_json(&d).to_string();
+        assert!(j.contains("\"disk_peak_b\":3221225472") && j.contains("\"disk_peak_b\":null"), "{j}");
     }
 
     #[test]
