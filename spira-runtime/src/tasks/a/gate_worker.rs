@@ -529,10 +529,6 @@ pub fn on_outcome(carry: &Carry, effect: &str, input: &str, ok: bool, body: &str
     match (slot.state, effect, ok) {
         (State::Claimed, CLAIM, true) => acts.push(Act::new(TIP, sj.job.key()).with_input(input.to_string())),
         (State::Claimed, CLAIM, false) => *slot = Slot::default(),
-        (State::Claimed, TIP, false) | (State::Filing, COMPLETE, false) => {
-            acts.push(Act::new(RECOVER, sj.slot.to_string()).with_input(sj.slot.to_string()));
-            *slot = Slot::default();
-        }
         (State::Claimed, TIP, true) => match check_tip(&sj.job, Some(body.trim()).filter(|t| !t.is_empty())) {
             TipCheck::Proceed => {
                 acts.push(leg_act(pins, sj.slot, "warm", &sj.job));
@@ -665,6 +661,9 @@ pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
     let q = queue(e);
     spira_config::process::spec()?;
     let ticked = e.world.run_dir.join(spira_config::GATE_WORKER_TICKED);
+    if let Some(dir) = ticked.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
     let _ = std::fs::write(&ticked, "");
     let mut snap = pins(&pinned);
     snap.run_dir = e.world.run_dir.display().to_string();

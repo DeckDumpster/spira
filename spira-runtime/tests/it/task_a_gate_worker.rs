@@ -189,21 +189,3 @@ fn a_gate_leg_that_runs_long_is_never_recovered() {
     assert!(acts.iter().all(|a| a.effect != RECOVER), "{acts:?}");
     assert_eq!(next.slots[0].stall, None);
 }
-
-#[test]
-fn a_tip_read_that_fails_frees_the_slot_instead_of_holding_it_claimed() {
-    let j = job("spira", "a", false, 2, 10);
-    let input = serde_json::to_string(&SlotJob { slot: 0, job: j }).unwrap();
-    let (next, acts) = on_outcome(&Carry { slots: vec![held(State::Claimed, false, None)] }, TIP, &input, false, "", &idle());
-    assert!(acts.iter().any(|a| a.effect == RECOVER), "{acts:?}");
-    assert_eq!(next.slots[0], Slot::default());
-}
-
-#[test]
-fn a_verdict_filing_that_fails_frees_the_slot_instead_of_holding_it_filing() {
-    let j = job("spira", "a", false, 2, 10);
-    let input = serde_json::to_string(&Filing { slot: 0, job: j, ..Filing::default() }).unwrap();
-    let (next, acts) = on_outcome(&Carry { slots: vec![held(State::Filing, false, None)] }, COMPLETE, &input, false, "", &idle());
-    assert!(acts.iter().any(|a| a.effect == RECOVER), "{acts:?}");
-    assert_eq!(next.slots[0], Slot::default());
-}
