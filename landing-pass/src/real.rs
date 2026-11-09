@@ -723,18 +723,37 @@ impl RealBeads {
     }
 }
 
+/// Ids per `content show`: the service bounds each call, and one read of every id outran it.
+const SHOW_CHUNK: usize = 25;
+
+impl RealBeads {
+    /// A chunk the service gave up on (`deadline`) is read as two halves; one id that still
+    /// times out is an error.
+    fn show_into(&self, ids: &[String], out: &mut Vec<BeadRow>) -> Result<(), String> {
+        let raw = match self.show_raw(ids) {
+            Err(e) if ids.len() > 1 && e.contains("deadline") => {
+                let (a, b) = ids.split_at(ids.len() / 2);
+                self.show_into(a, out)?;
+                return self.show_into(b, out);
+            }
+            r => r?,
+        };
+        let v: serde_json::Value = serde_json::from_str(json_only(&raw)).map_err(|e| format!("bd show: not JSON ({e})"))?;
+        let items = match v {
+            serde_json::Value::Array(a) => a,
+            o @ serde_json::Value::Object(_) => vec![o],
+            _ => Vec::new(),
+        };
+        out.extend(items.iter().filter_map(|i| BeadRow::from_json(i, &self.home_repo)));
+        Ok(())
+    }
+}
+
 impl Beads for RealBeads {
     fn show(&self, ids: &[String]) -> Result<Vec<BeadRow>, String> {
         let mut out = Vec::new();
-        for chunk in ids.chunks(100) {
-            let raw = self.show_raw(chunk)?;
-            let v: serde_json::Value = serde_json::from_str(json_only(&raw)).map_err(|e| format!("bd show: not JSON ({e})"))?;
-            let items = match v {
-                serde_json::Value::Array(a) => a,
-                o @ serde_json::Value::Object(_) => vec![o],
-                _ => Vec::new(),
-            };
-            out.extend(items.iter().filter_map(|i| BeadRow::from_json(i, &self.home_repo)));
+        for chunk in ids.chunks(SHOW_CHUNK) {
+            self.show_into(chunk, &mut out)?;
         }
         self.join_states(&mut out)?;
         Ok(out)
@@ -1393,6 +1412,25 @@ mod store_tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].state, "SUBMITTED");
         assert_eq!(*s.seen.lock().unwrap(), vec!["content show sp-a --json", "show sp-a"]);
+    }
+
+    #[test]
+    fn a_read_of_many_beads_the_service_cuts_short_is_read_in_smaller_parts() {
+        let ids: Vec<String> = (0..240).map(|i| format!("sp-{i}")).collect();
+        let (s, c) = store(|a| {
+            if a[0] == "content" {
+                let n = a.len() - 3;
+                if n > 8 {
+                    return (2, "cannot tell: deadline".into());
+                }
+                let rows: Vec<String> = a[2..2 + n].iter().map(|i| format!("{{\"id\":\"{i}\",\"title\":\"t\",\"status\":\"open\",\"labels\":[]}}")).collect();
+                return (0, format!("[{}]", rows.join(",")));
+            }
+            (0, "[]".into())
+        });
+        let rows = beads(&c).show(&ids).unwrap();
+        assert_eq!(rows.len(), 240);
+        assert!(s.seen.lock().unwrap().iter().any(|l| l.starts_with("content show") && l.split(' ').count() <= 11));
     }
 
     #[test]
