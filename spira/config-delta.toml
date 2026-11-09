@@ -237,6 +237,7 @@ runtime_view_secs = 3
 runtime_reconciler_flow_secs = 1800
 batcher_orphan_redrive_secs = 600
 batcher_pause_lift_secs = 900
+unrounded_noverdict_grace_secs = 3600
 lc_store_path = ""
 lc_lock_ttl_min_ms = 1000
 lc_lifecycle_on_store = 1

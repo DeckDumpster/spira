@@ -500,6 +500,7 @@ impl<'a> Pass<'a> {
             return Flow::Next;
         }
         if self.beads.in_round(id) {
+            self.files.clear_unrounded(br);
             self.log(&format!("CHECK6 {id}: {br} is in a round — the round judges it, no per-bead gate"));
             return Flow::Next;
         }
@@ -580,6 +581,9 @@ impl<'a> Pass<'a> {
                     self.log(&format!("CHECK6 {id}: held — the base fails its own gate (suite {})", g.suite));
                     self.base_fail(w, br, id, bead, &tip, &g);
                 }
+                GateOutcome::NoVerdict if dead_run.is_none() && reason == "gate-not-found" && self.awaiting_first_cut(br) => {
+                    self.log(&format!("CHECK6 {id}: {br} has no per-bead gate and no round yet — not counted or escalated until the batcher has passed it over {}s", self.s.unrounded_grace));
+                }
                 GateOutcome::NoVerdict if dead_run.is_none() => {
                     let host_cause = matches!(reason.as_str(), "scratch-short" | "died" | "over-cap");
                     if host_cause {
@@ -656,6 +660,10 @@ impl<'a> Pass<'a> {
         }
         self.out.progress(&format!("certified {br} in {name} — gate passed, round and CI are the remaining judges"));
         Flow::Next
+    }
+
+    fn awaiting_first_cut(&self, br: &str) -> bool {
+        (self.files.unrounded_age(br, self.clock.now()) as i64) <= self.s.unrounded_grace
     }
 
     fn is_fix(&self, w: &Walk, br: &str) -> bool {
