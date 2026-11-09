@@ -2,7 +2,7 @@
 //! The Round AMI workflow is dispatched on a per-candidate branch of the tip and its verdict
 //! read back; the workflow itself skips a recipe that already has an image. Every I/O is a port.
 
-pub const RECIPE_PATHS: [&str; 7] = [
+pub const RECIPE_PATHS: [&str; 11] = [
     "round-vm/ami-setup.sh",
     "round-vm/src/template.rs",
     "round-vm/src/template.sh",
@@ -10,6 +10,10 @@ pub const RECIPE_PATHS: [&str; 7] = [
     "round-vm/ssm-commands.jq",
     ".github/workflows/round-ami-build.yml",
     "round-vm/wait-image.sh",
+    "rust-toolchain.toml",
+    "flake.nix",
+    "flake.lock",
+    "spira/testenv/Containerfile",
 ];
 
 pub const POLL_SECS: u64 = 60;
@@ -20,8 +24,9 @@ pub fn touches_recipe(changed: &[String]) -> bool {
     changed.iter().any(|p| RECIPE_PATHS.contains(&p.as_str()))
 }
 
-pub fn candidate_branch(bead: &str, tip: &str) -> String {
-    format!("spira-round-candidate/{bead}-{}", &tip[..tip.len().min(12)])
+/// `nonce` keeps a retry at the same tip from reading the previous attempt's run back.
+pub fn candidate_branch(bead: &str, tip: &str, nonce: u64) -> String {
+    format!("spira-round-candidate/{bead}-{}-{nonce}", &tip[..tip.len().min(12)])
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,12 +73,12 @@ pub enum Verdict {
 
 /// `Ok` when the diff leaves the recipe alone or its image build succeeded; `Err` is the
 /// refusal text. An unreadable diff or forge and a build that never finishes all refuse.
-pub fn gate(p: &dyn Ports, bead: &str, tip: &str, wait_secs: u64) -> Result<Verdict, String> {
+pub fn gate(p: &dyn Ports, bead: &str, tip: &str, nonce: u64, wait_secs: u64) -> Result<Verdict, String> {
     let changed = p.changed_paths().ok_or("cannot read the branch's diff against the landing ref")?;
     if !touches_recipe(&changed) {
         return Ok(Verdict::Skipped);
     }
-    let branch = candidate_branch(bead, tip);
+    let branch = candidate_branch(bead, tip, nonce);
     let began = p.now();
     let (mut pushed, mut dispatched, mut idle) = (false, false, 0u32);
     let out = loop {
@@ -172,53 +177,73 @@ mod tests {
             &["round-vm/ami-setup.sh", "README.md"],
             vec![Some(Build::NotStarted), Some(Build::Running("7".into())), Some(Build::Failure("7".into(), vec!["build / Build, image and tag".into()]))],
         );
-        let e = gate(&f, "sp-x", "0123456789abcdef", 5400).unwrap_err();
+        let e = gate(&f, "sp-x", "0123456789abcdef", 7, 5400).unwrap_err();
         assert!(e.contains("build / Build, image and tag"), "{e}");
         assert!(e.contains("ROUND_USER must name the unprivileged user"), "{e}");
         let calls = f.calls.borrow().join(";");
         assert_eq!(
             calls,
-            "push spira-round-candidate/sp-x-0123456789ab;dispatch spira-round-candidate/sp-x-0123456789ab;delete spira-round-candidate/sp-x-0123456789ab"
+            "push spira-round-candidate/sp-x-0123456789ab-7;dispatch spira-round-candidate/sp-x-0123456789ab-7;delete spira-round-candidate/sp-x-0123456789ab-7"
         );
     }
 
     #[test]
     fn a_successful_image_build_lets_the_submit_proceed() {
         let f = fake(&["round-vm/ssm-commands.jq"], vec![Some(Build::NotStarted), Some(Build::Success("8".into()))]);
-        assert_eq!(gate(&f, "sp-x", "abc", 5400), Ok(Verdict::Built("8".into())));
+        assert_eq!(gate(&f, "sp-x", "abc", 1, 5400), Ok(Verdict::Built("8".into())));
     }
 
     #[test]
     fn an_unrelated_branch_neither_pushes_nor_dispatches() {
         let f = fake(&["work/src/main.rs", "round-vm/src/cli.rs"], vec![None]);
-        assert_eq!(gate(&f, "sp-x", "abc", 5400), Ok(Verdict::Skipped));
+        assert_eq!(gate(&f, "sp-x", "abc", 1, 5400), Ok(Verdict::Skipped));
         assert!(f.calls.borrow().is_empty());
     }
 
     #[test]
     fn an_unreadable_forge_refuses_rather_than_passes() {
         let f = fake(&["round-vm/ami-setup.sh"], vec![None]);
-        assert!(gate(&f, "sp-x", "abc", 5400).unwrap_err().contains("forge cannot be read"));
+        assert!(gate(&f, "sp-x", "abc", 1, 5400).unwrap_err().contains("forge cannot be read"));
     }
 
     #[test]
     fn a_build_that_never_finishes_refuses_at_the_wait_bound() {
         let f = fake(&[".github/workflows/round-ami-build.yml"], vec![Some(Build::Running("9".into()))]);
-        assert!(gate(&f, "sp-x", "abc", 180).unwrap_err().contains("did not finish within 180s"));
+        assert!(gate(&f, "sp-x", "abc", 1, 180).unwrap_err().contains("did not finish within 180s"));
     }
 
     #[test]
     fn an_unreadable_diff_refuses() {
         let mut f = fake(&[], vec![None]);
         f.changed = None;
-        assert!(gate(&f, "sp-x", "abc", 1).is_err());
+        assert!(gate(&f, "sp-x", "abc", 1, 1).is_err());
     }
 
     #[test]
-    fn the_recipe_paths_include_every_file_the_issue_names() {
-        for p in ["round-vm/ami-setup.sh", "round-vm/src/template.rs", "round-vm/ssm-commands.jq", ".github/workflows/round-ami-build.yml"] {
+    fn every_path_the_workflow_builds_on_is_a_recipe_path() {
+        let workflow = include_str!("../../.github/workflows/round-ami-build.yml");
+        let listed: Vec<&str> = workflow.lines().skip_while(|l| l.trim() != "paths:").skip(1).map_while(|l| l.trim().strip_prefix("- ")).collect();
+        assert!(!listed.is_empty(), "the matcher found no paths in the workflow");
+        for p in listed {
+            assert!(touches_recipe(&[p.to_string()]), "{p} triggers the image build but not this gate");
+        }
+        for p in ["round-vm/src/template.rs", "round-vm/ssm-commands.jq"] {
             assert!(touches_recipe(&[p.to_string()]), "{p}");
         }
+    }
+
+    #[test]
+    fn a_dispatch_that_never_starts_refuses_and_removes_its_branch() {
+        let f = fake(&["flake.lock"], vec![Some(Build::NotStarted)]);
+        assert!(gate(&f, "sp-x", "abc", 1, 5400).unwrap_err().contains("never started"));
+        assert_eq!(f.calls.borrow().last().map(String::as_str), Some("delete spira-round-candidate/sp-x-abc-1"));
+    }
+
+    #[test]
+    fn a_timeout_removes_the_pushed_branch() {
+        let f = fake(&["flake.lock"], vec![Some(Build::NotStarted), Some(Build::Running("9".into()))]);
+        assert!(gate(&f, "sp-x", "abc", 1, 120).is_err());
+        assert!(f.calls.borrow().iter().any(|c| c.starts_with("delete ")));
     }
 
     #[test]

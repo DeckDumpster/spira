@@ -90,15 +90,15 @@ fn main() {
     };
     let actor = std::env::var("SPIRA_RUNE").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "dwarf".to_string());
 
+    if verb == "submit" && !checks_passed_at_tip() && checks(&[]) != 0 {
+        eprintln!("work submit: refused: the repository's done checks failed (output above) — fix them, commit, and run `work submit` again; `work checks` runs them alone");
+        { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
+    }
     if verb == "submit" {
         if let Err(e) = image_gate(&bound) {
             eprintln!("work submit: refused: {e} — fix the image recipe, commit, and run `work submit` again");
             { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
         }
-    }
-    if verb == "submit" && !checks_passed_at_tip() && checks(&[]) != 0 {
-        eprintln!("work submit: refused: the repository's done checks failed (output above) — fix them, commit, and run `work submit` again; `work checks` runs them alone");
-        { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
     }
 
     let tip = if verb == "submit" { read_tip(&bound) } else { None };
@@ -519,7 +519,7 @@ fn image_gate(bead: &str) -> Result<(), String> {
         started: std::time::Instant::now(),
     };
     let wait = spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_AMI_WAIT_SECS")?;
-    match work::image::gate(&ports, bead, &tip, wait)? {
+    match work::image::gate(&ports, bead, &tip, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0), wait)? {
         work::image::Verdict::Skipped => {}
         work::image::Verdict::Built(run) => println!("work submit: the round image recipe builds (run {run})"),
     }
