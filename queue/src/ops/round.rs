@@ -686,10 +686,11 @@ fn retire_marked(w: &World, c: &Ctx, ended: impl Fn(&str) -> bool, why: &str) {
         if id.is_empty() {
             continue;
         }
-        if w.lc
-            .bead_row(id)
-            .is_some_and(|r| r.holds.iter().any(|h| h == "ask"))
-        {
+        if w.lc.bead_row(id).is_some_and(|r| {
+            r.holds.iter().any(|h| h == "ask")
+                || r.tip.is_some()
+                || matches!(r.state.as_str(), "SUBMITTED" | "CERTIFIED" | "WORKING")
+        }) {
             continue;
         }
         match w.lib.bead_retire(id, &format!("Batch {batch} closed ({why}); the failure this mender bead was filed for ended with it.")) {

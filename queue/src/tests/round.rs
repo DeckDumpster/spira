@@ -811,7 +811,7 @@ fn a_mender_bead_holding_an_ask_is_not_retired_until_the_ask_is_lifted() {
         .unwrap()
         .push(crate::model::LcBeadRow {
             bead_id: "sp-m13".into(),
-            state: "WORKING".into(),
+            state: "READY".into(),
             holds: vec!["ask".into()],
             ..Default::default()
         });
@@ -841,6 +841,36 @@ fn a_mender_bead_holding_an_ask_is_not_retired_until_the_ask_is_lifted() {
     );
     assert!(t.lib.has("bead_close sp-m13"), "{:?}", t.lib.calls.borrow());
     assert!(marker(&t, "hand-4", "mender-1-gate-x.retired").exists());
+}
+
+#[test]
+fn abandoning_a_round_keeps_a_mender_that_holds_a_submitted_fix_for_the_next_cut() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-5"]),
+        0,
+        "{}",
+        t.err()
+    );
+    fs::write(marker(&t, "hand-5", "mender-1-gate-x"), "sp-m14\n").unwrap();
+    fs::write(marker(&t, "hand-5", "mender-1-gate-y"), "sp-m15\n").unwrap();
+    for (id, state, tip) in [("sp-m14", "SUBMITTED", Some("9b97f8d")), ("sp-m15", "READY", None)] {
+        t.lc.rows.borrow_mut().as_mut().unwrap().push(crate::model::LcBeadRow {
+            bead_id: id.into(),
+            state: state.into(),
+            tip: tip.map(String::from),
+            ..Default::default()
+        });
+    }
+    assert_eq!(
+        t.run(&["round", "abandon", "hand-5", "--reason", "base moved"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(!t.lib.has("bead_close sp-m14"), "{:?}", t.lib.calls.borrow());
+    assert!(!marker(&t, "hand-5", "mender-1-gate-x.retired").exists());
+    assert!(t.lib.has("bead_close sp-m15"), "{:?}", t.lib.calls.borrow());
 }
 
 #[test]
