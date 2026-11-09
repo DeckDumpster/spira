@@ -590,7 +590,7 @@ test_phase_bound() {
 # compile); empty when a test failed on its own.
 test_phase_class() {
     local log="$1" hung="$2" b d
-    if [ -s "$hung" ]; then echo "TIMEOUT binary=$(last_binary "$log")"; return; fi
+    if [ -s "$hung" ]; then echo "TIMEOUT binary=$(last_binary "$log" | sed -E 's/-[0-9a-f]{16}$//')"; return; fi
     d="$(grep -m1 -E "process didn't exit successfully: .*\(signal: [0-9]+" "$log")" || d=""
     if [ -n "$d" ]; then
         b="$(printf '%s' "$d" | sed -E 's/.*`([^`]*)`.*/\1/; s|.*/||; s/-[0-9a-f]{16}$//')"
@@ -3206,7 +3206,7 @@ mod tests {
     fn a_unit_phase_the_guard_killed_is_a_timeout_naming_the_binary_it_was_running() {
         let log = "     Running unittests src/lib.rs (target/debug/deps/slow-0123456789abcdef)\n";
         let out = red_phase_out(log, "round-vm: UNIT-TESTS: HUNG guard=unit-cap\n");
-        assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: TIMEOUT binary=slow-0123456789abcdef", "{out}");
+        assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: TIMEOUT binary=slow", "{out}");
     }
 
     #[test]
