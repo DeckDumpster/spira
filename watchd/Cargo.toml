@@ -12,6 +12,7 @@ regex = "1"
 runtime = { path = "../runtime" }
 sop = { path = "../sop" }
 spira-config = { path = "../spira-config" }
+spira-world = { path = "../spira-world" }
 tsd = { path = "../tsd" }
 
 [profile.release]

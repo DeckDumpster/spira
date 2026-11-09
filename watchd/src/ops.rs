@@ -372,7 +372,7 @@ pub fn inbox_pushes(text: &str, wake: &str, pattern: &str) -> bool {
 
 /// `inbox-append.sh`'s own line: `<UTC %FT%TZ> <text>`.
 pub fn inbox_line(epoch: i64, text: &str) -> String {
-    format!("{} {text}", crate::iso8601::format_utc(epoch))
+    inbox_rules::line(&spira_world::clock::utc_iso(epoch), text)
 }
 
 fn cmdline_has_arg(proc_root: &std::path::Path, pid: i32, target: &str) -> bool {
