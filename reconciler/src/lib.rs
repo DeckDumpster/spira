@@ -275,6 +275,18 @@ pub trait Host: Send + Sync {
     fn head_branch(&self, _path: &Path) -> Option<String> {
         None
     }
+    /// Live dwarves of `rune`; `None` when this host cannot count them without `strand`.
+    fn dwarf_count(&self, _rune: &str) -> Option<i64> {
+        None
+    }
+    /// Claimable beads under a partition; `None` when this host cannot count them without `spira-claim`.
+    fn ready_count(&self, _labels: &str, _exclude: &str) -> Option<i64> {
+        None
+    }
+    /// The tmux server: `Some(Some(identity))` when one answers, `Some(None)` when it is certainly down, `None` when only tmux can say.
+    fn tmux_server(&self) -> Option<Option<String>> {
+        None
+    }
 }
 
 /// What reading a ref without git came to.
@@ -283,7 +295,9 @@ pub enum Ref {
     Sha(String),
     /// No loose or packed ref by any spelling git would try.
     Absent,
-    /// Not tellable this way (a symbolic ref, a loose tag, an unreadable layout): ask git.
+    /// A loose ref naming an object that may be an annotated tag: peel it before trusting it.
+    Object(String),
+    /// Not tellable this way (a revision expression, an unreadable layout): ask git.
     Unknown,
 }
 
@@ -447,7 +461,32 @@ impl Config {
     }
 
     fn ref_read(&self, repo: &Path, name: &str) -> Ref {
-        self.host.as_ref().map_or(Ref::Unknown, |h| h.ref_sha(repo, name))
+        match self.host.as_ref().map_or(Ref::Unknown, |h| h.ref_sha(repo, name)) {
+            Ref::Object(object) => {
+                let peeled = self.remembered(Some(format!("peel:{}:{object}", repo.display())), || {
+                    Some(run_cmd(&self.seams.git, &["-C", &repo.to_string_lossy(), "rev-parse", "--verify", "--quiet", &format!("{object}^{{commit}}")]).trim().to_string()).filter(|sha| !sha.is_empty())
+                });
+                match peeled {
+                    Some(sha) if !sha.is_empty() => Ref::Sha(sha),
+                    _ => Ref::Unknown,
+                }
+            }
+            other => other,
+        }
+    }
+
+    fn dwarf_count(&self, rune: &str) -> i64 {
+        match self.host.as_ref().and_then(|h| h.dwarf_count(rune)) {
+            Some(n) => n,
+            None => count_of(&run_cmd(&self.seams.strand, &["dwarf-count", rune])),
+        }
+    }
+
+    fn ready_count(&self, labels: &str, exclude: &str) -> i64 {
+        match self.host.as_ref().and_then(|h| h.ready_count(labels, exclude)) {
+            Some(n) => n,
+            None => count_of(&run_cmd(&self.seams.spira_claim, &["ready-count", labels, exclude])),
+        }
     }
 
     fn ref_sha(&self, repo: &Path, name: &str) -> Option<String> {
@@ -1000,7 +1039,7 @@ fn count_of(out: &str) -> i64 {
 fn fleet_readings(cfg: &Config) -> FleetReadings {
     let words = |out: String| out.split_whitespace().map(String::from).collect::<Vec<_>>();
     let task_runes = words(cfg.config(&["rune", "task"]));
-    let live_of = |rune: &str| count_of(&run_cmd(&cfg.seams.strand, &["dwarf-count", rune]));
+    let live_of = |rune: &str| cfg.dwarf_count(rune);
 
     let lane_runes: Vec<String> = words(cfg.config(&["rune", "lane"])).into_iter().filter(|f| !task_runes.contains(f)).collect();
     let live_lanes: i64 = lane_runes.iter().map(|f| live_of(f)).sum();
@@ -1012,7 +1051,7 @@ fn fleet_readings(cfg: &Config) -> FleetReadings {
         if labels.is_empty() {
             continue;
         }
-        let ready = count_of(&run_cmd(&cfg.seams.spira_claim, &["ready-count", labels, exclude]));
+        let ready = cfg.ready_count(labels, exclude);
         let runes = cfg.config(&["rune", "for-labels", labels]);
         let runes: Vec<&str> = runes.split_whitespace().collect();
         let live = runes.iter().map(|f| live_of(f)).sum();
@@ -1090,6 +1129,10 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
 // absence of every @cockpit pane says `layout down` was run on purpose.
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// A satisfied cockpit is not asked of tmux again for this long while the same server answers: nothing on disk
+/// says a session or pane changed, so a killed session is found at most this late.
+const COCKPIT_RECHECK_SECS: u64 = 600;
+
 fn observe_cockpit(cfg: &Config) -> Check {
     // `layout down` records this: the operator dismissed the dashboards on purpose, and a
     // deliberate state is not a fault (law-a-deliberate-state-is-not-a-fault). `layout up`
@@ -1099,12 +1142,23 @@ fn observe_cockpit(cfg: &Config) -> Check {
         return Check { key: "cockpit".into(), raw: RawStatus::Satisfied, remedy: Remedy::Escalate };
     }
 
-    if !run_cmd_ok(&cfg.seams.tmux, &["list-sessions"]) {
+    let server = cfg.host.as_ref().and_then(|h| h.tmux_server());
+    let down = match &server {
+        Some(answer) => answer.is_none(),
+        None => !run_cmd_ok(&cfg.seams.tmux, &["list-sessions"]),
+    };
+    if down {
         return Check {
             key: "cockpit".into(),
             raw: RawStatus::Gap { desired: "tmux server up".into(), observed: "no server".into(), since_hint: None },
             remedy: rebuild_remedy(cfg),
         };
+    }
+    let satisfied = Check { key: "cockpit".into(), raw: RawStatus::Satisfied, remedy: Remedy::Escalate };
+    let held = server.flatten().map(|id| format!("cockpit:{id}:{}:{}", cfg.cockpit_sessions.join(","), cfg.cockpit_mail));
+    let recently = |at: &String| at.parse::<u64>().is_ok_and(|at| cfg.now_secs.saturating_sub(at) < COCKPIT_RECHECK_SECS);
+    if held.as_ref().is_some_and(|k| cfg.memo.lock().unwrap_or_else(|p| p.into_inner()).get(k).is_some_and(recently)) {
+        return satisfied;
     }
 
     let dash_session = match cfg.cockpit_sessions.first() {
@@ -1157,7 +1211,14 @@ fn observe_cockpit(cfg: &Config) -> Check {
         };
     }
 
-    Check { key: "cockpit".into(), raw: RawStatus::Satisfied, remedy: Remedy::Escalate }
+    if let Some(k) = held {
+        let mut memo = cfg.memo.lock().unwrap_or_else(|p| p.into_inner());
+        if memo.len() >= MEMO_MAX {
+            memo.clear();
+        }
+        memo.insert(k, cfg.now_secs.to_string());
+    }
+    satisfied
 }
 
 /// No server, or a session gone: only `rebuild` can make a cockpit from nothing.
@@ -1712,28 +1773,49 @@ fn epic_edge_pairs(out: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The JSON object a `plan` verb printed, skipping any notice lines before it.
+fn plan_json(out: &str) -> Result<serde_json::Value, String> {
+    out.char_indices()
+        .filter(|&(i, c)| c == '{' && (i == 0 || out.as_bytes()[i - 1] == b'\n'))
+        .find_map(|(i, _)| serde_json::from_str(&out[i..]).ok())
+        .ok_or_else(|| format!("plan: no JSON in {:?}", out.chars().take(120).collect::<String>()))
+}
+
+#[derive(Deserialize)]
+enum EdgeKind {
+    #[serde(rename = "blocks")]
+    Blocks,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Deserialize)]
+struct PlanEdge {
+    issue_id: String,
+    depends_on_id: String,
+    #[serde(rename = "type")]
+    kind: EdgeKind,
+}
+
+/// `<child> <epic>` per open epic with a `blocks` edge from a dependent, from the store's planning reads.
+fn epic_edges_read(cfg: &Config) -> Result<String, String> {
+    let epics = plan_json(&cfg.lc(&["plan", "items", "--type", "epic", "--open"])?)?;
+    let ids: Vec<&str> = epics["items"].as_array().into_iter().flatten().filter_map(|i| i["id"].as_str()).collect();
+    let mut out = String::new();
+    for chunk in ids.chunks(100) {
+        let edges = plan_json(&cfg.lc(&["plan", "edges", "--ids", &chunk.join(","), "--dependents"])?)?;
+        let edges: Vec<PlanEdge> = serde_json::from_value(edges["edges"].clone()).map_err(|e| format!("plan edges: {e}"))?;
+        for e in edges.iter().filter(|e| matches!(e.kind, EdgeKind::Blocks)) {
+            out.push_str(&format!("{} {}\n", e.issue_id, e.depends_on_id));
+        }
+    }
+    Ok(out)
+}
+
 fn observe_epic_edges(cfg: &Config) -> Vec<Check> {
-    let out = match spira_config::bounded::bounded(&cfg.seams.bead)
-        .args(["dep", "epic-edges"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-    {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
-        Ok(o) => {
-            return vec![Check {
-                key: "epic-blocks-edge".into(),
-                raw: RawStatus::Unobservable { reason: format!("{} dep epic-edges exited {}", cfg.seams.bead, o.status.code().unwrap_or(-1)) },
-                remedy: Remedy::Escalate,
-            }]
-        }
-        Err(e) => {
-            return vec![Check {
-                key: "epic-blocks-edge".into(),
-                raw: RawStatus::Unobservable { reason: format!("{}: {}", cfg.seams.bead, e) },
-                remedy: Remedy::Escalate,
-            }]
-        }
+    let out = match epic_edges_read(cfg) {
+        Ok(out) => out,
+        Err(reason) => return vec![Check { key: "epic-blocks-edge".into(), raw: RawStatus::Unobservable { reason }, remedy: Remedy::Escalate }],
     };
     epic_edge_pairs(&out)
         .into_iter()
@@ -1785,7 +1867,7 @@ fn lint_awaiting_activation(cfg: &Config, repo: &str, sha: &str) -> Option<RawSt
     let release = match cfg.ref_read(Path::new(repo), &active_release(cfg)) {
         Ref::Sha(sha) => sha,
         Ref::Absent => return None,
-        Ref::Unknown => run_cmd(git, &["-C", repo, "rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", active_release(cfg))]).trim().to_string(),
+        Ref::Unknown | Ref::Object(_) => run_cmd(git, &["-C", repo, "rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", active_release(cfg))]).trim().to_string(),
     };
     let release = release.as_str();
     if release.is_empty() {
@@ -1823,7 +1905,7 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
     let sha = match cfg.ref_read(&repo, MAIN_REF) {
         Ref::Sha(sha) => sha,
         Ref::Absent => String::new(),
-        Ref::Unknown => run_cmd(git, &["-C", &repo_str, "rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", MAIN_REF)]).trim().to_string(),
+        Ref::Unknown | Ref::Object(_) => run_cmd(git, &["-C", &repo_str, "rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", MAIN_REF)]).trim().to_string(),
     };
     if sha.is_empty() {
         return unobservable(format!("{} does not resolve in {}", MAIN_REF, repo_str));
@@ -2601,6 +2683,154 @@ mod tests {
     fn free_space_is_read_without_df() {
         assert!(free_pct("/").is_some_and(|p| (0..=100).contains(&p)));
         assert_eq!(free_pct("/no/such/path/at/all"), None);
+    }
+
+    /// A world answered entirely by the host. Every program a `Seams` names is a script that
+    /// records its name, so a launch is visible; `None` host means the pass launches.
+    struct Quiet {
+        asked: std::sync::Mutex<Vec<String>>,
+        server: Option<Option<String>>,
+    }
+
+    impl Host for Quiet {
+        fn unit_state(&self, _: &str, _: &str) -> Result<String, String> {
+            Ok("active".into())
+        }
+        fn list_enable(&self) -> String {
+            String::new()
+        }
+        fn free_pct(&self, _: &str) -> Option<i64> {
+            Some(90)
+        }
+        fn lc(&self, argv: &[&str]) -> Result<String, String> {
+            self.asked.lock().unwrap().push(argv.join(" "));
+            match argv {
+                ["plan", "items", ..] => Ok("notice\n{\"watermark\":1,\"items\":[{\"id\":\"sp-epic\"}]}".into()),
+                ["plan", "edges", ..] => Ok(r#"{"watermark":1,"edges":[{"issue_id":"sp-kid","depends_on_id":"sp-epic","type":"blocks"},{"issue_id":"sp-sub","depends_on_id":"sp-epic","type":"parent-child"}]}"#.into()),
+                _ => Err("unexpected".into()),
+            }
+        }
+        fn certified_list(&self, _: &Path) -> String {
+            String::new()
+        }
+        fn config(&self, argv: &[&str]) -> String {
+            match argv {
+                ["rune", "task"] => "builder\n".into(),
+                ["rune", "lane"] => "czar\n".into(),
+                ["rune", "partitions"] => "plan\tpoison\n".into(),
+                ["rune", "for-labels", _] => "builder\n".into(),
+                _ => String::new(),
+            }
+        }
+        fn stranded_runners(&self, _: &Path) -> String {
+            String::new()
+        }
+        fn send_mail(&self, _: &Mail) -> Result<(), String> {
+            Ok(())
+        }
+        fn dwarf_count(&self, rune: &str) -> Option<i64> {
+            Some(if rune == "builder" { 2 } else { 1 })
+        }
+        fn ready_count(&self, labels: &str, exclude: &str) -> Option<i64> {
+            assert_eq!((labels, exclude), ("plan", "poison"));
+            Some(5)
+        }
+        fn tmux_server(&self) -> Option<Option<String>> {
+            self.server.clone()
+        }
+        fn ref_sha(&self, _: &Path, name: &str) -> Ref {
+            match name {
+                "loose-tag" => Ref::Object("a".repeat(40)),
+                _ => Ref::Unknown,
+            }
+        }
+    }
+
+    /// A config whose every program is a script that appends its name and argv to the returned
+    /// log and answers as a healthy world would.
+    fn tripwired(dir: &Path, host: Option<Arc<dyn Host>>) -> (Config, PathBuf) {
+        let log = dir.join("launched");
+        let bin = dir.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let log_text = log.display().to_string();
+        let bin_text = bin.display().to_string();
+        let seams = Seams::resolving(|name| {
+            let script = format!("{bin_text}/{name}");
+            let body = format!("#!/bin/sh\necho \"{name} $*\" >> {log_text}\ncase \"$*\" in\n*list-panes*) echo health;;\n*rev-parse*) echo {SHA};;\n\"rune task\"*|\"rune for-labels\"*) echo builder;;\n\"rune lane\"*) echo czar;;\n\"rune partitions\"*) printf 'plan\\\\tpoison\\\\n';;\nesac\nexit 0\n", SHA = "c".repeat(40));
+            testkit::write_exe(&script, &body);
+            Ok(script)
+        })
+        .unwrap();
+        let mut cfg = test_config();
+        cfg.seams = seams;
+        cfg.host = host;
+        (cfg, log)
+    }
+
+    fn launched(log: &Path, program: &str) -> usize {
+        launches(log).lines().filter(|l| l.split(' ').next() == Some(program)).count()
+    }
+
+    fn launches(log: &Path) -> String {
+        fs::read_to_string(log).unwrap_or_default()
+    }
+
+    fn quiet(server: Option<Option<String>>) -> Arc<dyn Host> {
+        Arc::new(Quiet { asked: Default::default(), server })
+    }
+
+    #[test]
+    fn a_quiet_world_launches_no_program_over_ten_ticks_and_the_unhosted_pass_does() {
+        let dir = scratch_dir("quiet-ticks");
+        let (cfg, log) = tripwired(&dir, Some(quiet(Some(Some("7:1.0".into())))));
+        let mut cfg = cfg.with_memo(Arc::default());
+        for tick in 0..10 {
+            cfg.now_secs = 1_000 + tick * 60;
+            let fleet = fleet_readings(&cfg);
+            assert_eq!(fleet.live_total, 3);
+            assert_eq!(fleet.rows, vec![("plan".to_string(), 5, 2, true)]);
+            assert_eq!(observe_cockpit(&cfg).raw, RawStatus::Satisfied);
+            let edges = observe_epic_edges(&cfg);
+            assert_eq!(edges.len(), 1, "{edges:?}");
+            assert_eq!(edges[0].key, "epic-blocks:sp-kid:sp-epic");
+            assert_eq!(cfg.ref_read(Path::new("/r"), "loose-tag"), Ref::Sha("c".repeat(40)), "the peel is git's, once");
+        }
+        let seen = launches(&log);
+        assert_eq!(launched(&log, "git"), 1, "one peel for the one tag sha, never again: {seen}");
+        assert_eq!(launched(&log, "tmux"), cfg.cockpit_sessions.len() + 2, "one look at the sessions and the panes, on the first tick only: {seen}");
+        assert_eq!(seen.lines().count(), 1 + cfg.cockpit_sessions.len() + 2, "no strand, spira-claim or bead launch: {seen}");
+
+        let oracle_dir = scratch_dir("quiet-oracle");
+        let (bare, log) = tripwired(&oracle_dir, None);
+        let _ = fleet_readings(&bare);
+        let _ = observe_cockpit(&bare);
+        for program in ["strand", "spira-claim", "tmux"] {
+            assert!(launched(&log, program) > 0, "the unhosted pass must launch {program}: {}", launches(&log));
+        }
+    }
+
+    #[test]
+    fn a_healthy_cockpit_is_asked_of_tmux_once_per_window_and_a_down_server_is_never_held() {
+        let dir = scratch_dir("cockpit-window");
+        let (cfg, log) = tripwired(&dir, Some(quiet(Some(Some("7:1.0".into())))));
+        let mut cfg = cfg.with_memo(Arc::default());
+        for now in [0, 60, 599] {
+            cfg.now_secs = now;
+            let _ = observe_cockpit(&cfg);
+        }
+        let first = launched(&log, "tmux");
+        assert!(first >= 1, "the first sight of a server asks tmux");
+        cfg.now_secs = 601;
+        let _ = observe_cockpit(&cfg);
+        assert!(launched(&log, "tmux") > first, "a window later it asks again");
+
+        let down_dir = scratch_dir("cockpit-down");
+        let (down, log) = tripwired(&down_dir, Some(quiet(Some(None))));
+        let down = down.with_memo(Arc::default());
+        for _ in 0..3 {
+            assert!(matches!(observe_cockpit(&down).raw, RawStatus::Gap { observed, .. } if observed == "no server"));
+        }
+        assert_eq!(launches(&log), "", "a server the host knows is down needs no tmux to say so");
     }
 
     fn test_config() -> Config {

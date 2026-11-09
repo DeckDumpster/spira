@@ -1,5 +1,5 @@
 //! T4, second half: a task module launches no process. Every module under `src/watchers/`, the
-//! task table, any module under `src/tasks/`, and the world and forge they read through.
+//! task table, any module under `src/tasks/`, and the world, forge and reconcile host they read through.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -38,7 +38,8 @@ fn no_task_module_launches_a_process() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = rs_files(&src.join("watchers"));
     files.extend(rs_files(&src.join("tasks")));
-    files.extend([src.join("tasks.rs"), src.join("world.rs"), src.join("forge.rs")].into_iter().filter(|p| p.exists()));
+    files.extend([src.join("tasks.rs"), src.join("world.rs"), src.join("forge.rs"), src.join("reconcile_host.rs")].into_iter().filter(|p| p.exists()));
+    assert!(files.iter().any(|p| p.ends_with("reconcile_host.rs")), "the reconciler's host reads are scanned too");
     assert!(files.len() >= 17 && files.iter().any(|p| p.ends_with("watchers/asks.rs")) && files.iter().any(|p| p.ends_with("tasks.rs")), "the scan must find the task modules: {files:?}");
     let offenders: Vec<String> = files.iter().filter_map(|p| launcher(&fs::read_to_string(p).unwrap()).map(|l| format!("{}: {l}", p.display()))).collect();
     assert!(offenders.is_empty(), "task modules that launch a process: {offenders:?}");
