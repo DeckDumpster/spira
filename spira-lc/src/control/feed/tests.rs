@@ -310,6 +310,8 @@ fn event_seq_names_only_the_beads_with_an_applied_event_after_the_revision<B: Ba
         call(s, &["event-seq", "--head"]),
         serde_json::json!({ "seq": head, "keys": [] })
     );
+    let both: Vec<String> = ["event-seq", "--head", "--since", "1"].map(String::from).to_vec();
+    assert_ne!(verbs::run(s, &both).0, 0, "--head and --since together are refused");
 }
 
 /// Over-broad-scopes #10 (sp-ipwlic): one watch names several prefixes, so a watcher of three

@@ -127,6 +127,9 @@ fn history<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, Stri
 /// after N. `--head` names no ids and reads no events, for a caller that wants only the revision.
 fn event_seq<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
     if args.iter().any(|a| a == "--head") {
+        if flag(args, "--since").is_some() {
+            return Err("event-seq: --head and --since are alternatives".into());
+        }
         let seq = store.event_head().map_err(|e| format!("event-seq: {e}"))?;
         return Ok(json!({ "seq": seq, "keys": [] }).to_string());
     }
