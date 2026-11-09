@@ -83,7 +83,7 @@ pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
         return OK;
     };
     let mut rc = OK;
-    // A batch still opening may have a PR its record does not name yet: only the sweep settles it.
+    // A batch still opening is not reconciled here: the opening-record release settles it, adopting a PR the forge lists.
     if let Some(o) = open.as_ref().filter(|o| !o.is_opening()) {
         if let Some(r) = super::reconcile::step(w, c, path, o, &o.kv) {
             rc = r;
