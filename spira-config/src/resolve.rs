@@ -496,6 +496,7 @@ pub const EXPORT_KEYS: &[&str] = &[
     "SPIRA_TSD_KEEP_DAYS",
     "SPIRA_TSD_KEEP_DAYS_BY_FAMILY",
     "SPIRA_TZ",
+    "SPIRA_VICTORIALOGS_URL",
     "SPIRA_WIKI",
     "SPIRA_WIKI_HOOK",
     "SPIRA_WORKSPACES",
@@ -1072,6 +1073,12 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn the_victorialogs_url_is_exported_to_every_child_that_ships_or_counts() {
+        assert!(EXPORT_KEYS.contains(&"SPIRA_VICTORIALOGS_URL"));
+        assert!(EXPORT_KEYS.windows(2).all(|w| w[0] < w[1]), "the export list stays sorted and without repeats");
+    }
 
     #[test]
     fn resolve_or_say_returns_empty_on_a_missing_conf_d() {

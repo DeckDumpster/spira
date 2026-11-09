@@ -1237,3 +1237,25 @@ fn dwell_reports_the_newest_round_cut_per_repo_from_the_round_records_whatever_t
     let old = r.s.dwell(AT + 100_000, 3_600, None).unwrap();
     assert!(old.last.get("spira").is_none_or(|k| !k.contains_key("Deliver")), "a cut older than the window is not reported: {:?}", old.last);
 }
+
+#[test]
+fn a_cut_ships_each_step_it_committed_under_its_machine() {
+    use spira_otel::vlogs::fake::FakeLogs;
+    use std::time::Duration;
+    let logs = FakeLogs::start();
+    let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock()), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+    let r = Rig { s: Store::new(c, 1_000).with_shipper(spira_otel::vlogs::Shipper::start(&logs.url())), n: Cell::new(0) };
+    r.certified("sp-a", T1);
+    r.certified("sp-b", T2);
+    let members = two();
+    let Planned::Cascade(c) = r.s.plan_cut(&r.cut_spec(&members)).unwrap() else { panic!("the cut was turned away") };
+    r.s.run_planned(Planned::Cascade(c), &r.req(), "cut").unwrap();
+    let cut: Vec<(String, String)> = logs
+        .wait_until(|got| got.iter().filter(|rec| rec["stream"] == "lifecycle.delivery").count() >= 4, Duration::from_secs(5))
+        .into_iter()
+        .filter(|rec| rec["to"] == "IN_DELIVERY" || rec["stream"] == "lifecycle.delivery")
+        .map(|rec| (rec["stream"].as_str().unwrap().to_string(), rec["bead_id"].as_str().unwrap().to_string()))
+        .collect();
+    assert!(cut.iter().any(|(s, b)| s == "lifecycle.bead" && b == "sp-a"), "{cut:?}");
+    assert!(cut.iter().any(|(s, b)| s == "lifecycle.delivery" && b == "sp-b"), "the cut's delivery steps ship under their own machine: {cut:?}");
+}

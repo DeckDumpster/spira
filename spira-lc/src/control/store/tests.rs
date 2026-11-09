@@ -1036,7 +1036,7 @@ fn a_transition_the_store_commits_is_shipped_with_its_machine_states_bead_and_ac
     let got: Vec<serde_json::Value> = logs.wait_records(1, Duration::from_secs(5)).into_iter().filter(|r| r["event"] == "Claim").collect();
     assert_eq!(got.len(), 1, "{got:?}");
     let r = &got[0];
-    for (k, v) in [("kind_tag", "transition"), ("stream", "lifecycle"), ("machine", "bead"), ("from", "READY"), ("to", "WORKING"), ("bead_id", "sp-a"), ("actor", "dwarf-1")] {
+    for (k, v) in [("kind_tag", "transition"), ("stream", "lifecycle.bead"), ("machine", "bead"), ("from", "READY"), ("to", "WORKING"), ("bead_id", "sp-a"), ("actor", "dwarf-1")] {
         assert_eq!(r[k], v, "{k}: {r}");
     }
     assert_eq!(r["at"], 100);
@@ -1054,6 +1054,8 @@ fn a_refused_transition_and_a_retried_request_ship_nothing() {
     claimed("claim-1");
     claimed("claim-1");
     let _ = s.apply("sp-a", &ev(BeadState::Ready, 0, BeadEventKind::HolderDead, "reaper", 101), &req("refused-1"));
+    let renewed = s.apply("sp-a", &ev(BeadState::Working, 1, BeadEventKind::Renew { lease_until: 200 }, "dwarf-1", 103), &req("renew-1")).unwrap();
+    assert!(matches!(renewed, Outcome::Applied { .. }), "the renew is a legal event that leaves the state where it was");
     created(&s, "sp-b");
     s.claim("sp-b", &ev(BeadState::Ready, 0, claim("dwarf-2", 102), "dwarf-2", 102), &req("claim-b")).unwrap();
     let both = logs.wait_records(2, Duration::from_secs(5));
@@ -1061,4 +1063,5 @@ fn a_refused_transition_and_a_retried_request_ship_nothing() {
     let claims = logs.records().into_iter().filter(|r| r["event"] == "Claim" && r["bead_id"] == "sp-a").count();
     assert_eq!(claims, 1, "the retried request shipped once");
     assert!(logs.records().iter().all(|r| r["event"] != "HolderDead"), "a refused event is no transition");
+    assert!(logs.records().iter().all(|r| r["event"] != "Renew"), "an event that leaves the state where it was is no move, as the gantt reads it");
 }

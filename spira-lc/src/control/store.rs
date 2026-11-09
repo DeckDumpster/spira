@@ -227,7 +227,7 @@ impl<B: Backend> Store<B> {
     fn ship_transitions(&self, applied: &[Audit]) {
         let Some(shipper) = &self.shipper else { return };
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        for a in applied.iter().filter(|a| a.applied) {
+        for a in applied.iter().filter(|a| a.applied && a.from_state != a.to_state) {
             let at = u64::try_from(a.at).ok().filter(|&t| t > 0).unwrap_or(now);
             let bead = spira_otel::vlogs::bead_id(&a.lc_key).unwrap_or_default();
             shipper.ship(&spira_otel::vlogs::transition_record(&a.machine, &a.event, &a.from_state, &a.to_state, &bead, at, &a.actor));

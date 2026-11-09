@@ -141,14 +141,13 @@ fn post(addr: &str, body: &str) -> std::io::Result<()> {
     }
 }
 
-/// The stream and kind a lifecycle transition is shipped under; the counts read them back.
-pub const TRANSITION_STREAM: &str = "lifecycle";
+/// The kind a lifecycle transition is shipped under, on the stream `lifecycle.<machine>`; the counts read them back.
 pub const TRANSITION_KIND: &str = "transition";
 
 /// One lifecycle transition as shipped: `at` in epoch seconds.
 pub fn transition_record(machine: &str, event: &str, from: &str, to: &str, bead_id: &str, at: u64, actor: &str) -> Value {
     serde_json::json!({
-        "stream": TRANSITION_STREAM, "kind_tag": TRANSITION_KIND,
+        "stream": format!("lifecycle.{machine}"), "kind_tag": TRANSITION_KIND,
         "machine": machine, "event": event, "from": from, "to": to, "bead_id": bead_id, "at": at, "actor": actor,
     })
 }
@@ -358,6 +357,18 @@ pub mod fake {
             self.queries.lock().unwrap().clone()
         }
 
+        /// Records inserted once `done` holds of them, waiting up to `wait` for that.
+        pub fn wait_until(&self, done: impl Fn(&[Value]) -> bool, wait: Duration) -> Vec<Value> {
+            let end = Instant::now() + wait; // clock-safe: a cap on the wait for the shipper's own delivery
+            loop {
+                let got = self.records();
+                if done(&got) || Instant::now() >= end { // clock-safe: same cap
+                    return got;
+                }
+                std::thread::sleep(Duration::from_millis(5)); // clock-safe: polling a fixture listener for the shipper's delivery
+            }
+        }
+
         /// Records inserted, waiting up to `wait` for at least `n`.
         pub fn wait_records(&self, n: usize, wait: Duration) -> Vec<Value> {
             let end = Instant::now() + wait;
@@ -495,6 +506,8 @@ mod tests {
             assert_eq!(r[k], v, "{k}");
         }
         assert_eq!(r["at"], 7);
+        assert_eq!(r["stream"], "lifecycle.bead");
+        assert_eq!(transition_record("batch", "Cut", "OPEN", "CI_RUNNING", "", 7, "a")["stream"], "lifecycle.batch");
     }
 
     #[test]
