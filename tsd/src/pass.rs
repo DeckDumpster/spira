@@ -102,6 +102,21 @@ pub struct PassRecord {
     pub disk_peak_b: Option<u64>,
 }
 
+/// The largest byte count the pass's DISK lines (`round-vm: DISK <phase> <label> <bytes> <path>`) put on a
+/// `total` or `peak` label; an `unread` figure or the lower-bound suffix `+unread` never counts as a zero.
+pub fn disk_peak_bytes(text: &str) -> Option<u64> {
+    text.lines()
+        .filter_map(|l| {
+            let mut f = l.strip_prefix("round-vm: DISK ")?.split_whitespace();
+            let (_phase, label, bytes) = (f.next()?, f.next()?, f.next()?);
+            if label != "total" && label != "peak" {
+                return None;
+            }
+            bytes.split('+').next()?.parse::<u64>().ok()
+        })
+        .max()
+}
+
 impl PassRecord {
     pub fn validate(&self) -> Result<(), String> {
         for (name, v) in [("repo", &self.repo), ("batch", &self.batch), ("pass", &self.pass)] {
@@ -280,5 +295,25 @@ mod tests {
         let r = from_args(&a).unwrap();
         assert_eq!((r.cause, r.vcpus, r.members.len()), (Cause::VmLost, Some(8), 2));
         assert!(from_args(&["--repo".into(), "r".into()]).is_err());
+    }
+
+    #[test]
+    fn a_pass_records_its_disk_peak_through_its_row_and_an_unread_one_stays_null() {
+        let a: Vec<String> = "--repo r --batch b --pass 1 --where ec2 --cause green".split(' ').map(String::from).collect();
+        let mut r = from_args(&a).unwrap();
+        assert_eq!(r.disk_peak_b, None);
+        r.disk_peak_b = Some(4_000_000_000);
+        let row: serde_json::Map<String, Value> = r.fields().into_iter().collect();
+        assert_eq!(PassRecord::from_row(&Value::Object(row)).unwrap().disk_peak_b, Some(4_000_000_000));
+        r.disk_peak_b = None;
+        let row: serde_json::Map<String, Value> = r.fields().into_iter().collect();
+        assert_eq!(row["disk_peak_b"], Value::Null);
+    }
+
+    #[test]
+    fn the_disk_peak_is_the_largest_total_or_peak_and_unread_is_none() {
+        let text = "round-vm: DISK start total 100 -\nround-vm: DISK build cargo-target 9999 /t\nround-vm: DISK build total 700+unread -\nround-vm: DISK suites peak 500 -\nround-vm: DISK suites total unread -\n";
+        assert_eq!(disk_peak_bytes(text), Some(700));
+        assert_eq!(disk_peak_bytes("round-vm: DISK suites peak unread -\n"), None);
     }
 }

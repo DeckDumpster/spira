@@ -1964,21 +1964,6 @@ fn fence_seconds(results: &Path, started: u64) -> Vec<(String, u64)> {
     out
 }
 
-/// The largest byte count the pass's DISK lines (`round-vm: DISK <phase> <label> <bytes> <path>`) put on a
-/// `total` or `peak` label; an `unread` figure or the lower-bound suffix `+unread` never counts as a zero.
-pub fn disk_peak_bytes(text: &str) -> Option<u64> {
-    text.lines()
-        .filter_map(|l| {
-            let mut f = l.strip_prefix("round-vm: DISK ")?.split_whitespace();
-            let (_phase, label, bytes) = (f.next()?, f.next()?, f.next()?);
-            if label != "total" && label != "peak" {
-                return None;
-            }
-            bytes.split('+').next()?.parse::<u64>().ok()
-        })
-        .max()
-}
-
 /// The pass's peak disk use, from the `disk-usage` file the round left in its results this pass.
 fn disk_peak(results: &Path, started: u64) -> Option<u64> {
     fn walk(dir: &Path, depth: u32, since: std::time::SystemTime, best: &mut Option<u64>) {
@@ -1990,7 +1975,7 @@ fn disk_peak(results: &Path, started: u64) -> Option<u64> {
                     walk(&path, depth - 1, since, best);
                 }
             } else if path.file_name().is_some_and(|n| n == DISK_USAGE) && fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t >= since) {
-                *best = (*best).max(disk_peak_bytes(&fs::read_to_string(&path).unwrap_or_default()));
+                *best = (*best).max(tsd::pass::disk_peak_bytes(&fs::read_to_string(&path).unwrap_or_default()));
             }
         }
     }
@@ -3214,7 +3199,7 @@ mod tests {
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let lines = std::fs::read_to_string(run.join("disk-usage")).unwrap();
         assert_eq!(lines, "round-vm: DISK suites peak 4000 -\n");
-        assert_eq!(disk_peak_bytes(&lines), Some(4000));
+        assert_eq!(tsd::pass::disk_peak_bytes(&lines), Some(4000));
         std::fs::remove_file(d.path().join("round-disk-growth")).unwrap();
         std::fs::remove_file(run.join("disk-usage")).unwrap();
         let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
@@ -3225,13 +3210,26 @@ mod tests {
     #[test]
     fn the_hosts_disk_peak_is_the_largest_total_or_peak_and_unread_is_none() {
         let text = "round-vm: DISK start total 100 -\nround-vm: DISK build cargo-target 9999 /t\nround-vm: DISK build total 700+unread -\nround-vm: DISK suites peak 500 -\nround-vm: DISK suites total unread -\n";
-        assert_eq!(disk_peak_bytes(text), Some(700));
-        assert_eq!(disk_peak_bytes("round-vm: DISK suites peak unread -\n"), None);
+        assert_eq!(tsd::pass::disk_peak_bytes(text), Some(700));
+        assert_eq!(tsd::pass::disk_peak_bytes("round-vm: DISK suites peak unread -\n"), None);
         let d = TempDir::new();
         std::fs::create_dir_all(d.path().join("corpus")).unwrap();
         std::fs::write(d.path().join("corpus").join(DISK_USAGE), text).unwrap();
         assert_eq!(disk_peak(d.path(), 0), Some(700));
         assert_eq!(disk_peak(d.path(), u64::MAX / 4), None, "a file older than the pass is a previous pass's");
+    }
+
+    #[test]
+    fn the_sampler_keeps_the_largest_growth_and_ends_with_the_script() {
+        let d = TempDir::new();
+        let script = format!(
+            "set -uo pipefail\ndisk_growth_file=\"$HOME/g\"\necho 0 > \"$HOME/n\"\nfs_used() {{ n=$(( $(cat \"$HOME/n\") + 1 )); echo $n > \"$HOME/n\"; case $n in 1) echo 1500;; 2) echo 9000;; *) echo 2000;; esac; }}\nsleep() {{ :; }}\n{}\ndisk_sampler 1000 &\np=$!\nwhile [ ! -s \"$disk_growth_file\" ] || [ \"$(cat \"$disk_growth_file\")\" -lt 8000 ]; do :; done\nkill $p; wait $p 2>/dev/null; cat \"$disk_growth_file\"\n",
+            script_fn("disk_sampler")
+        );
+        let out = std::process::Command::new("timeout").args(["20", "bash", "-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "8000", "the peak stays after growth falls back");
+        assert!(REMOTE_SCRIPT.contains("disk_sampler \"$disk_base\" & disk_sampler_pid=$!"), "the sampler runs beside the pass");
     }
 
     #[test]

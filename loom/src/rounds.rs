@@ -106,11 +106,6 @@ pub fn parse_pass_log(text: &str) -> PassLog {
             p.bare = rest.trim().to_string();
         } else if let Some(rest) = line.strip_prefix("round-vm: EC2 instance type ") {
             p.instance_type = rest.split_whitespace().next().unwrap_or("").to_string();
-        } else if let Some(rest) = line.strip_prefix("round-vm: DISK ") {
-            let mut f = rest.split_whitespace().skip(1);
-            if let (Some("total" | "peak"), Some(bytes)) = (f.next(), f.next()) {
-                p.disk_peak_b = p.disk_peak_b.max(bytes.split('+').next().and_then(|b| b.parse().ok()));
-            }
         } else if let Some(rest) = line.strip_prefix("round-vm: setup ") {
             let mut parts = rest.split(',');
             p.setup_s = parts.next().and_then(|t| secs(t.trim()));
@@ -119,6 +114,7 @@ pub fn parse_pass_log(text: &str) -> PassLog {
             p.unit_failed.push(line.trim_end_matches(" ... FAILED").trim_start_matches("test ").to_string());
         }
     }
+    p.disk_peak_b = tsd::pass::disk_peak_bytes(text);
     p.suites = order.into_iter().filter_map(|n| by.remove(&n)).collect();
     p.suites.sort_by_key(|s| !is_red(&s.verdict));
     p
