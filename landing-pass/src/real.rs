@@ -732,16 +732,18 @@ impl RealBeads {
 
 /// Ids per `content show`: the service bounds each call, and one read of every id outran it.
 const SHOW_CHUNK: usize = 25;
+/// Halvings one chunk may take, so a store that answers nothing fails in a few calls, not one per id.
+const MAX_HALVINGS: u32 = 3;
 
 impl RealBeads {
     /// A chunk the store could not answer (exit 2, e.g. past its deadline) is read as two halves; one id that still
     /// times out is an error.
-    fn show_into(&self, ids: &[String], out: &mut Vec<BeadRow>) -> Result<(), String> {
+    fn show_into(&self, ids: &[String], out: &mut Vec<BeadRow>, halvings: u32) -> Result<(), String> {
         let raw = match self.show_call(ids) {
-            Err((rc, _)) if ids.len() > 1 && spira_config::lc_call::cannot_tell(rc) => {
+            Err((rc, _)) if ids.len() > 1 && halvings > 0 && spira_config::lc_call::cannot_tell(rc) => {
                 let (a, b) = ids.split_at(ids.len() / 2);
-                self.show_into(a, out)?;
-                return self.show_into(b, out);
+                self.show_into(a, out, halvings - 1)?;
+                return self.show_into(b, out, halvings - 1);
             }
             r => r.map_err(|(_, why)| why)?,
         };
@@ -760,7 +762,7 @@ impl Beads for RealBeads {
     fn show(&self, ids: &[String]) -> Result<Vec<BeadRow>, String> {
         let mut out = Vec::new();
         for chunk in ids.chunks(SHOW_CHUNK) {
-            self.show_into(chunk, &mut out)?;
+            self.show_into(chunk, &mut out, MAX_HALVINGS)?;
         }
         self.join_states(&mut out)?;
         Ok(out)
@@ -1436,8 +1438,17 @@ mod store_tests {
             (0, "[]".into())
         });
         let rows = beads(&c).show(&ids).unwrap();
-        assert_eq!(rows.len(), 240);
+        let got: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(got, ids.iter().map(String::as_str).collect::<Vec<_>>());
         assert!(s.seen.lock().unwrap().iter().any(|l| l.starts_with("content show") && l.split(' ').count() <= 11));
+    }
+
+    #[test]
+    fn a_store_that_answers_no_bead_read_fails_in_a_few_calls() {
+        let ids: Vec<String> = (0..240).map(|i| format!("sp-{i}")).collect();
+        let (s, c) = store(|_| (2, "cannot tell: deadline".into()));
+        beads(&c).show(&ids).unwrap_err();
+        assert!(s.seen.lock().unwrap().len() <= 8);
     }
 
     #[test]
