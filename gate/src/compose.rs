@@ -561,8 +561,9 @@ pub fn run_all(cmd: &str) -> String {
 /// no longer runs in front of it. `--all-targets` builds every lib and bin both ways and the
 /// test harnesses; the test phase reuses those harnesses (same profile, same mode).
 ///
-/// Every workspace binary is built first, as the round's build does: cargo builds another
-/// package's binary only when that package is built, and a test may exec one from the target dir.
+/// Only the named crates build: linking every workspace binary on each gate is what pushed the
+/// build phase to the gate cap, and a test reaches its own package's binaries through
+/// `CARGO_BIN_EXE_*`, which cargo builds with the test.
 pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2] {
     let p = pkgs(crates);
     let cfg = spira_config::build::one_shot_words("dwarf");
@@ -570,7 +571,7 @@ pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2
         (
             "build",
             format!(
-                "cargo build --profile dwarf {cfg} -j {jobs} --workspace --bins && cargo build --profile dwarf {cfg} -j {jobs} --all-targets{p}"
+                "cargo build --profile dwarf {cfg} -j {jobs} --all-targets{p}"
             ),
         ),
         (
@@ -1086,11 +1087,10 @@ mod tests {
     }
 
     #[test]
-    fn the_unit_build_builds_every_workspace_binary_and_tests_only_the_crates() {
+    fn the_unit_build_and_test_name_only_the_changed_crates() {
         let [b, t] = unit_commands(&["spira-runtime".into()], 4);
-        let (bins, targets) = b.1.split_once(" && ").expect("two build invocations");
-        assert!(bins.ends_with(" --workspace --bins"), "{}", b.1);
-        assert!(targets.ends_with(" --all-targets -p spira-runtime"), "{}", b.1);
+        assert!(!b.1.contains("--workspace") && !b.1.contains("&&"), "{}", b.1);
+        assert!(b.1.ends_with(" --all-targets -p spira-runtime"), "{}", b.1);
         assert!(!t.1.contains("--workspace") && !t.1.contains("spira-config"), "{}", t.1);
     }
 
@@ -1100,7 +1100,7 @@ mod tests {
         assert_eq!(b.0, "build");
         assert_eq!(
             b.1,
-            "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --workspace --bins && cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --all-targets -p gate -p queue"
+            "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --all-targets -p gate -p queue"
         );
         assert_eq!(t.0, "test");
         assert_eq!(
