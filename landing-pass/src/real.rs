@@ -755,7 +755,7 @@ impl Beads for RealBeads {
         }
         let Ok(c) = self.lc() else { return false };
         let (rc, so, _) = crate::lifecycle::run(&c, &["show", id]);
-        rc == 0 && crate::pr::delivery_of(so.trim().as_bytes()).is_some_and(|(state, _)| state == "BATCHED")
+        rc == 0 && crate::pr::delivery_of(so.trim().as_bytes()).is_some_and(|(state, _)| spira_config::lc_state::DeliveryState::from_str(&state) == Some(spira_config::lc_state::DeliveryState::Batched))
     }
     fn ask_open(&self, label: &str, subject: &str) -> bool {
         if subject.is_empty() {
