@@ -303,19 +303,22 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
     }
     let suite_of: BTreeMap<u64, String> = queue.iter().map(|j| (j.id, j.suite.clone())).collect();
     let base_jobs: BTreeSet<u64> = queue.iter().filter(|j| j.purpose == Purpose::Base).map(|j| j.id).collect();
-    let mut red_on_base = false;
+    let lone = members.len() == 1;
+    let mut base_green = false;
+    let mut faulted = false;
     let mut running = 0usize;
     let mut unproven: BTreeSet<String> = BTreeSet::new();
     while !queue.is_empty() || running > 0 {
         while running < budget.slots as usize {
             let Some(job) = queue.pop_front() else { break };
-            if unproven.contains(&job.suite) {
+            if unproven.contains(&job.suite) && !(lone && base_jobs.contains(&job.id)) {
                 continue;
             }
             match runner.launch(&job) {
                 Ok(()) => running += 1,
                 Err(e) => {
                     eprintln!("batcher: flip proof job {} ({}) not launched: {e}", job.id, job.suite);
+                    faulted = true;
                     unproven.insert(job.suite);
                 }
             }
@@ -325,7 +328,9 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
                 running = running.saturating_sub(1);
                 if r != JobResult::Green {
                     unproven.insert(suite.clone());
-                    red_on_base |= base_jobs.contains(&id) && r == JobResult::Red;
+                    faulted |= r == JobResult::Fault;
+                } else {
+                    base_green |= base_jobs.contains(&id);
                 }
             }
         }
@@ -335,22 +340,22 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
     }
     if !unproven.is_empty() {
         let reds: Vec<String> = unproven.into_iter().collect();
-        return Err(NotAFlip { reds, red_on_base });
+        return Err(NotAFlip { reds, member_owns: base_green && !faulted });
     }
     println!("batcher: flip proven, deleting from the round: {}", flaky.join(","));
     ops.delete_flips(flaky).map_err(NotAFlip::fault)
 }
 
-/// A flaky suite that did not prove green. With one member and the base green, the member is
-/// the only thing the red can belong to.
+/// A flaky suite that did not prove green. `member_owns`: the base ran green and no job faulted,
+/// so with one member the red can belong to no one else.
 struct NotAFlip {
     reds: Vec<String>,
-    red_on_base: bool,
+    member_owns: bool,
 }
 
 impl NotAFlip {
     fn fault(why: String) -> Self {
-        NotAFlip { reds: vec![why], red_on_base: true }
+        NotAFlip { reds: vec![why], member_owns: false }
     }
 
     fn reason(&self) -> String {
@@ -669,7 +674,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         if d.owners.is_empty() {
             if !d.flaky.is_empty() {
                 if let Err(red) = remove_flips(runner, ops, &d.flaky, &members, budget) {
-                    if let ([only], false) = (members.as_slice(), red.red_on_base) {
+                    if let ([only], true) = (members.as_slice(), red.member_owns) {
                         ops.eject(only, &red.reds, true);
                         return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
                     }
@@ -1287,11 +1292,21 @@ pub(crate) mod tests {
         });
         f.flaky.insert("test-04.sh".into());
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(6), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(&mut f, &mut ops, &corpus(6), vec![member("m1")], Budget { slots: 1, maxpar: 1 }).unwrap();
         assert_eq!(end, RoundEnd::Emptied("round emptied by ejection".into()), "{end:?}");
         assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-04.sh".to_string()])]);
         assert!(ops.deleted.is_empty());
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+    }
+
+    #[test]
+    fn a_one_member_round_red_on_the_base_too_blocks_instead_of_ejecting() {
+        let mut f = Fake::new(|s, tree| s == "test-04.sh" && tree.is_empty());
+        f.flaky.insert("test-04.sh".into());
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(6), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(ops.ejected.is_empty());
     }
 
     #[test]
