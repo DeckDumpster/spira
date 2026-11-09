@@ -705,6 +705,7 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
     if !run_id.is_empty() && fid.is_some() {
         let _ = write_atomic(&filed_marker, &format!("fix_forward={fid_s}\n"));
     }
+    let _ = std::fs::remove_file(c.queue_file("publish-fault-retries"));
     // Read by `publish`: holds off the next publish of this same head.
     let _ = write_atomic(
         &c.queue_file("publish-red"),
