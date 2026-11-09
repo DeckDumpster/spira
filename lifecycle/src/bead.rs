@@ -1565,6 +1565,9 @@ mod tests {
         assert!(edges.iter().all(|e| !e.from.is_terminal()), "terminal states have no exits");
         assert!(edges.iter().all(|e| e.from != e.to));
         assert!(has(BeadState::Open, "Promote", BeadState::Ready));
+        assert!(has(BeadState::Working, "Submit", BeadState::Submitted));
+        assert!(has(BeadState::Ready, "Resubmit", BeadState::Submitted));
+        assert!(has(BeadState::Certified, "Restack", BeadState::Submitted));
     }
 
     #[test]
