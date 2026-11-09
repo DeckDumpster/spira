@@ -2229,11 +2229,29 @@ mod tests {
         held.holds = vec!["ask".into()];
         let mut blocked = row("sp-blocked", "READY", 2);
         blocked.blocker = Some("sp-x".into());
-        let mut s = snap(vec![row("sp-unlaned", "READY", 0), blocked, held, row("sp-ranked", "READY", 9)]);
+        let mut held_old = row("sp-held-old", "READY", 0);
+        held_old.holds = vec!["ask".into()];
+        let mut s = snap(vec![row("sp-unlaned", "READY", 0), blocked, held, held_old, row("sp-asked", "READY", 3), row("sp-ranked", "READY", 9)]);
         s.claimable = Some(vec!["sp-ranked".into()]);
+        s.ask_label = "needs-ryan".into();
+        s.meta.insert("sp-asked".into(), Meta { labels: vec!["needs-ryan".into()], ..Default::default() });
         let v = view(&s);
         let ready = v.machine.iter().find(|m| m.name == "READY").unwrap();
-        assert_eq!(ready.beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["sp-ranked", "sp-held", "sp-blocked", "sp-unlaned"]);
+        assert_eq!(ready.beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["sp-ranked", "sp-held-old", "sp-held", "sp-blocked", "sp-asked", "sp-unlaned"]);
+    }
+
+    #[test]
+    fn rework_rows_are_listed_in_claim_order_too() {
+        let mut a = row("sp-new", "REWORK", 50);
+        a.rework = true;
+        let mut b = row("sp-old", "REWORK", 5);
+        b.rework = true;
+        let mut s = snap(vec![b, a]);
+        s.meta.insert("sp-old".into(), Meta { priority: Some(3), ..Default::default() });
+        s.meta.insert("sp-new".into(), Meta { priority: Some(1), ..Default::default() });
+        let v = view(&s);
+        let rw = v.machine.iter().find(|m| m.name == "REWORK").unwrap();
+        assert_eq!(rw.beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["sp-new", "sp-old"]);
     }
 
     #[test]
