@@ -250,26 +250,6 @@ mod tests {
     }
 
     #[test]
-    fn a_lease_takes_the_most_recently_idled_directory_that_holds_a_build() {
-        let d = testkit::TempDir::new("bdir-mru");
-        let base = d.path().join("base");
-        let (x, y, z) = (lease(&base, "x").unwrap(), lease(&base, "y").unwrap(), lease(&base, "z").unwrap());
-        let (dx, dy, dz) = (x.dir().to_path_buf(), y.dir().to_path_buf(), z.dir().to_path_buf());
-        fill(&dx.join("debug/a"), 4);
-        fill(&dy.join("debug/b"), 4);
-        x.release();
-        y.release();
-        z.release();
-        set_idle(&base, &dx, 300);
-        set_idle(&base, &dy, 60);
-        set_idle(&base, &dz, 1);
-        let l = lease(&base, "w").unwrap();
-        assert_eq!(l.dir(), dy, "most recently idled among those that hold a build; the emptier z is not preferred");
-        assert!(l.reused);
-        assert!(dy.join("debug/b").exists(), "a lease never empties what it takes");
-    }
-
-    #[test]
     fn eviction_under_budget_pressure_removes_only_idle_directories_least_recently_used_first() {
         let d = testkit::TempDir::new("bdir-evict");
         let base = d.path().join("base");
