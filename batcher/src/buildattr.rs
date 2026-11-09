@@ -120,6 +120,34 @@ fn one(e: &CompileError, members: &[MemberDiff]) -> Option<Action> {
     }
 }
 
+/// The paths whose change makes the round image build, as `round-ami-build.yml` triggers on them.
+pub const RECIPE_PATHS: [&str; 8] = [
+    "round-vm/ami-setup.sh",
+    "round-vm/src/template.sh",
+    "round-vm/src/recipe.rs",
+    "rust-toolchain.toml",
+    "flake.nix",
+    "flake.lock",
+    "spira/testenv/Containerfile",
+    ".github/workflows/round-ami-build.yml",
+];
+
+/// Whether the round's build output is the image build's failure rather than the compiler's.
+pub fn is_image_build_red(output: &str) -> bool {
+    output.lines().any(|l| l.contains("round image build") && l.contains("failed"))
+}
+
+/// The members whose diff touches the image recipe.
+pub fn recipe_touchers(members: &[MemberDiff]) -> Vec<&MemberDiff> {
+    members.iter().filter(|m| m.paths.iter().any(|p| RECIPE_PATHS.contains(&p.as_str()))).collect()
+}
+
+/// The last lines of the build output, as the evidence an image-build ejection carries.
+pub fn error_tail(output: &str) -> String {
+    let lines: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
+    lines[lines.len().saturating_sub(8)..].join(" | ")
+}
+
 /// One action per implicated member, or empty when any error maps to no single member.
 pub fn attribute(errors: &[CompileError], members: &[MemberDiff]) -> Vec<Action> {
     let mut out: Vec<Action> = Vec::new();

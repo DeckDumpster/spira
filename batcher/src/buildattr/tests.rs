@@ -89,3 +89,13 @@ fn several_errors_in_real_compiler_output_each_map_and_a_bare_summary_line_is_sk
     let members = vec![diff("p", &["a/src/one.rs"], "+1\n"), diff("q", &["b/src/two.rs"], "+2\n")];
     assert_eq!(attribute(&e, &members).len(), 2);
 }
+
+#[test]
+fn the_recipe_paths_are_the_ones_the_image_workflow_builds_on() {
+    let yml = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../.github/workflows/round-ami-build.yml")).unwrap();
+    let mut triggers: Vec<&str> = yml.lines().skip_while(|l| !l.contains("paths:")).skip(1).map_while(|l| l.trim().strip_prefix("- ")).collect();
+    let mut ours = super::RECIPE_PATHS.to_vec();
+    triggers.sort_unstable();
+    ours.sort_unstable();
+    assert_eq!(ours, triggers);
+}
