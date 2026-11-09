@@ -704,6 +704,7 @@ transitions_cut_bound
 transitions_deliver_bound
 transitions_activate_bound
 transitions_ask_bound
+transitions_heartbeat_bound
 transitions_release_repo
 dwarf_build_base
 dwarf_build_budget_gib
