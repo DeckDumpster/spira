@@ -992,8 +992,17 @@ fn judge_rows(a: &Args, env: &Env, st: &Store, only: Option<&BTreeSet<String>>) 
     entries.extend(carried.into_iter().map(|(id, carrier)| entry(&id, Kind::Carried, Some(carrier))));
     entries.extend(claimable.iter().map(|r| entry(&r.id, Kind::Claimable, None)));
     if env.config.control_store {
-        if let Err(e) = publish_readiness(st, &entries, only) {
-            eprintln!("spira-claim: readiness not published: {e}");
+        match publish_readiness(st, &entries, only) {
+            Ok(()) => {
+                let _ = st.clear_readiness_refused();
+            }
+            Err(e) => {
+                eprintln!("spira-claim: readiness not published: {e}");
+                spira_otel::run::event("readiness_publish_refused", &[]);
+                if let Err(page) = st.alert_readiness_refused(&e) {
+                    eprintln!("spira-claim: readiness refusal not paged: {page}");
+                }
+            }
         }
     }
     Ok((claimable, entries))
