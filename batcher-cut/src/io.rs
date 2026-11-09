@@ -99,6 +99,7 @@ pub struct Env {
     pub land_lock_wait: Duration,
     /// Seconds an open round may go undriven before the rounds loop re-drives it.
     pub orphan_redrive_after: u64,
+    pub pause_lift_after: u64,
     /// The Concierge's cut-pause file; a landing clears it unless it starts with `hold:`. `None` is off.
     pub land_unpause: Option<PathBuf>,
 }
@@ -3029,6 +3030,7 @@ pub fn lifecycle_tests_env(dir: &Path) -> Env {
         land_lock_attempts: 3,
         land_lock_wait: Duration::from_millis(1),
         orphan_redrive_after: 600,
+        pause_lift_after: 900,
         land_unpause: None,
     }
 }

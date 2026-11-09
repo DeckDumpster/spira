@@ -1,0 +1,6 @@
+TYPE=u64
+GROUP=batch
+DOC=SPIRA_BATCHER_PAUSE_LIFT_SECS — Seconds a red-round pause may hold a repo's cuts before the rounds loop lifts it itself, once; a second red stays paused for a person.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_BATCHER_PAUSE_LIFT_SECS:=900}"
+SPIRA_CONF_DEFAULT_EOF

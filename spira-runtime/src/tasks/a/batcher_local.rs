@@ -172,6 +172,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_GIT_EMAIL",
     "SPIRA_LC_TIMEOUT",
     "SPIRA_BATCHER_ORPHAN_REDRIVE_SECS",
+    "SPIRA_BATCHER_PAUSE_LIFT_SECS",
     "SPIRA_QUEUE_LOCK_WAIT",
     "SPIRA_BATCHER_ENABLE",
     "SPIRA_ROUNDS_PACING",
@@ -431,6 +432,8 @@ pub struct Pace {
     pub orphan_since_ms: u64,
     #[serde(default)]
     pub redriven: String,
+    #[serde(default)]
+    pub pause_lifts: u32,
 }
 
 impl Pace {
@@ -443,6 +446,7 @@ impl Pace {
             orphan: self.orphan.first().cloned().unwrap_or_default(),
             orphan_since: self.orphan_since_ms / 1000,
             redriven: self.redriven.clone(),
+            pause_lifts: self.pause_lifts,
         }
     }
 
@@ -457,6 +461,7 @@ impl Pace {
             refusals: refusals.to_vec(),
             orphan_since_ms: st.orphan_since * 1000,
             redriven: st.redriven.clone(),
+            pause_lifts: st.pause_lifts,
         }
     }
 }

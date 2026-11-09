@@ -98,6 +98,7 @@ pub fn env_from_cfg(home: PathBuf, run: PathBuf, round_vm: Option<PathBuf>) -> R
         land_lock_attempts: var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").and_then(|v| v.parse().ok()).unwrap_or(10),
         land_lock_wait: std::time::Duration::from_secs(var("SPIRA_BATCHER_LAND_LOCK_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30)),
         orphan_redrive_after: cfg_parse::<u64>("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS")?,
+        pause_lift_after: cfg_parse::<u64>("SPIRA_BATCHER_PAUSE_LIFT_SECS")?,
         land_unpause: var("SPIRA_BATCHER_LAND_UNPAUSE").filter(|v| !v.is_empty()).map(PathBuf::from),
     })
 }
