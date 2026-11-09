@@ -3,10 +3,14 @@ name = "spira-claim"
 version = "1.0.0"
 edition = "2021"
 description = "spira-claim — bead attempt accounting, the CHECK 4 poison decision, and epic-first claim selection (stacked-dependents aware), and `unpoison` — the one verb that writes (DESIGN.md §8)."
+autotests = false
 
 [lib]
 name = "spira_claim"
 path = "src/lib.rs"
+
+[features]
+integration = []
 
 [dependencies]
 bead = { path = "../bead" }
@@ -24,3 +28,13 @@ path = "src/main.rs"
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "bin_is_built"
+path = "tests/bin_is_built.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]

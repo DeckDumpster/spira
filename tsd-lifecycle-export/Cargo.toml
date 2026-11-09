@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "tsd-lifecycle-export — the one writer of the bead-stage family (held in the metrics store): projects the lifecycle event log (legacy bd events before cutover, spira_lifecycle.event after, and a one-time backfill) through the lifecycle crate's own state names."
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 lifecycle = { path = "../lifecycle" }

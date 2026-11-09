@@ -13,6 +13,9 @@ name = "cert-sweep"
 path = "src/main.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 tsd = { path = "../tsd" }

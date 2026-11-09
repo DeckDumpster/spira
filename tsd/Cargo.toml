@@ -3,6 +3,7 @@ name = "tsd"
 version = "1.0.0"
 edition = "2021"
 description = "tsd — append-only time-series writer for run/tsd/: the durable, engine-free contract every observation producer writes to (law-producers-stamp-their-own-clock)."
+autotests = false
 
 [lib]
 name = "tsd"
@@ -24,6 +25,9 @@ path = "src/read_main.rs"
 name = "tsd-fake-store"
 path = "src/fake_store_main.rs"
 
+[features]
+integration = []
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -37,3 +41,8 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+
+[[test]]
+name = "victoria"
+path = "tests/victoria.rs"
+required-features = ["integration"]

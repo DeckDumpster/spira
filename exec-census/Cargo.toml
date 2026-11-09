@@ -3,6 +3,7 @@ name = "exec-census"
 version = "1.0.0"
 edition = "2021"
 description = "exec-census — execs per minute by systemd unit, sampled from /proc and pushed over OTLP."
+autotests = false
 
 [lib]
 name = "exec_census"
@@ -12,6 +13,9 @@ path = "src/lib.rs"
 name = "exec-census"
 path = "src/main.rs"
 test = false
+
+[features]
+integration = []
 
 [dependencies]
 spira-config = { path = "../spira-config" }
@@ -25,3 +29,8 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+
+[[test]]
+name = "fixture"
+path = "tests/fixture.rs"
+required-features = ["integration"]

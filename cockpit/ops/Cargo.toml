@@ -3,6 +3,7 @@ name = "cockpit-ops"
 version = "1.0.0"
 edition = "2021"
 description = "Cockpit operator surface — the ops dashboard pane, the tmux layout it lives in, and the bead-answer plumbing beside it. Replaces cockpit/health.sh, cockpit/layout.sh, cockpit/rebuild.sh, cockpit/resolve.sh and cockpit/reply.sh (sp-llbmi)."
+autotests = false
 
 [lib]
 name = "cockpit_ops"
@@ -37,6 +38,9 @@ name = "reply"
 path = "src/reply_main.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 crossterm = "0.28"
 regex = "1"
@@ -60,3 +64,8 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]

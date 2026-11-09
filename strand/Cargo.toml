@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "strand — the stranded-work detector: work that exists and is not moving, with the reason and the one action that clears it. Replaces spira/strand.sh and strand-classify.py (sp-c7h4b)."
 
+[features]
+integration = []
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -3,6 +3,10 @@ name = "groomer"
 version = "1.0.0"
 edition = "2021"
 description = "groomer — graph hygiene operations for the Spira DAG: split-piece, supersede, close, correct-lane, depends-on-fix, unpoison (delegates to spira-claim), triage-poison, deadlocked, and the hard unwanted refusal. Replaces spira/groomer.sh and spira/groomer-litter-predicate.py."
+autotests = false
+
+[features]
+integration = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -19,3 +23,7 @@ name = "groomer"
 path = "src/main.rs"
 test = false
 
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]

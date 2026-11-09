@@ -12,6 +12,9 @@ path = "src/lib.rs"
 name = "gate-check"
 path = "src/main.rs"
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 serde_json = "1"

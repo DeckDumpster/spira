@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "hel — the Hel: delete the branch and worktree of every bead whose work has landed, and nothing else. Replaces spira/hel.sh (sp-arpjt)."
 
+[features]
+integration = []
+
 [dependencies]
 serde_json = "1"
 spira-config = { path = "../spira-config" }

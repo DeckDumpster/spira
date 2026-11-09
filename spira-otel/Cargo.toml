@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "spira-otel — one OTLP/JSON span per call, appended as a line to a daily-rotated file in the OpenTelemetry Collector file-exporter format."
 
+[features]
+integration = []
+
 [dependencies]
 # opentelemetry-proto "trace" pulls opentelemetry_sdk, which locks rand 0.9 (with getrandom 0.3, rand_chacha 0.9, rand_core 0.9) beside the 0.8 line.
 opentelemetry-proto = { version = "0.30", default-features = false, features = ["trace", "metrics", "logs", "gen-tonic-messages", "with-serde"] }

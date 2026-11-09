@@ -3,6 +3,10 @@ name = "test-plan"
 version = "1.0.0"
 edition = "2021"
 description = "test-plan — typed UC catalogue: schema, validate, coverage matrix, render."
+autotests = false
+
+[features]
+integration = []
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }
@@ -23,3 +27,7 @@ lto = true
 codegen-units = 1
 strip = true
 
+[[test]]
+name = "validate"
+path = "tests/validate.rs"
+required-features = ["integration"]

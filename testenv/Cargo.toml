@@ -4,6 +4,7 @@ version = "1.0.0"
 edition = "2021"
 default-run = "testenv"
 description = "testenv — the harness's test runner (replaces spira/testenv-batch.sh, sp-5odic): select suites for a tree, build that tree in place with cargo, run the suites in the fixture container, report a verdict, per-suite results and timings, and cache the verdict by tree."
+autotests = false
 
 [lib]
 name = "testenv"
@@ -29,6 +30,9 @@ name = "target-reap"
 path = "src/target_reap_main.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 serde = { version = "1", features = ["derive"] }
@@ -51,3 +55,13 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+
+[[test]]
+name = "lint_registry"
+path = "tests/lint_registry.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "test_sandbox"
+path = "tests/test_sandbox.rs"
+required-features = ["integration"]

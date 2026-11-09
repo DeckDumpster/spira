@@ -3,6 +3,7 @@ name = "gh-intake"
 version = "1.0.0"
 edition = "2021"
 description = "gh-intake — ingest public GitHub issues as beads, with author triage. Replaces spira/gh-intake.sh."
+autotests = false
 
 [lib]
 name = "gh_intake"
@@ -12,6 +13,9 @@ path = "src/lib.rs"
 name = "gh-intake"
 path = "src/main.rs"
 test = false
+
+[features]
+integration = []
 
 [dependencies]
 lifecycle = { path = "../lifecycle" }
@@ -24,3 +28,8 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]

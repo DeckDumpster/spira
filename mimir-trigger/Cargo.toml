@@ -8,6 +8,9 @@ description = "mimir-trigger — evaluate the Mimir trigger conditions (landing 
 name = "mimir-trigger"
 path = "src/main.rs"
 
+[features]
+integration = []
+
 [dependencies]
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }

@@ -1,6 +1,6 @@
 [[check]]
 name = "clippy"
-run = "cargo clippy {affected} --all-targets -- -D warnings"
+run = "cargo clippy {affected} --features integration --all-targets -- -D warnings"
 budget_ms = 900000
 
 [[check]]

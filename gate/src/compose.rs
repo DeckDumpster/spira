@@ -571,12 +571,12 @@ pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2
         (
             "build",
             format!(
-                "cargo build --profile dwarf {cfg} -j {jobs} --all-targets{p}"
+                "cargo build --profile dwarf {cfg} -j {jobs} --all-targets --features integration{p}"
             ),
         ),
         (
             "test",
-            format!("cargo test --profile dwarf {cfg} -j {jobs}{p} -- --test-threads={jobs}"),
+            format!("cargo test --profile dwarf {cfg} -j {jobs} --features integration{p} -- --test-threads={jobs}"),
         ),
     ]
 }
@@ -1090,7 +1090,7 @@ mod tests {
     fn the_unit_build_and_test_name_only_the_changed_crates() {
         let [b, t] = unit_commands(&["spira-runtime".into()], 4);
         assert!(!b.1.contains("--workspace") && !b.1.contains("&&"), "{}", b.1);
-        assert!(b.1.ends_with(" --all-targets -p spira-runtime"), "{}", b.1);
+        assert!(b.1.ends_with(" --all-targets --features integration -p spira-runtime"), "{}", b.1);
         assert!(!t.1.contains("--workspace") && !t.1.contains("spira-config"), "{}", t.1);
     }
 
@@ -1100,12 +1100,12 @@ mod tests {
         assert_eq!(b.0, "build");
         assert_eq!(
             b.1,
-            "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --all-targets -p gate -p queue"
+            "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --all-targets --features integration -p gate -p queue"
         );
         assert_eq!(t.0, "test");
         assert_eq!(
             t.1,
-            "cargo test --profile dwarf --config profile.dwarf.incremental=false -j 4 -p gate -p queue -- --test-threads=4"
+            "cargo test --profile dwarf --config profile.dwarf.incremental=false -j 4 --features integration -p gate -p queue -- --test-threads=4"
         );
     }
 

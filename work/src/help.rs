@@ -236,7 +236,7 @@ pub static ENTRIES: &[Entry] = &[
         verb: "crates",
         group: Group::Verify,
         does: "Prints the `-p` words for your diff: touched crates plus their direct dependents.",
-        when: "Before `cargo test`/`build`/`check`: `cargo test $(work crates)`. Empty output means nothing buildable changed. Never use `--workspace`.",
+        when: "Before `cargo test`/`build`/`check`: `cargo test $(work crates)`. Empty output means nothing buildable changed. Never use `--workspace`. That runs unit tests only: integration targets (`tests/`) are opt-in, so run the one you are changing with `cargo test -p <crate> --features integration --test <target> <name>`, never a whole integration suite.",
         args: &["[<base>]   (default local/main)"],
         checks: &["run it inside your worktree, where git and cargo can see the diff"],
         refusals: &[

@@ -3,6 +3,10 @@ name = "runtime"
 version = "0.1.0"
 edition = "2021"
 description = "runtime — the event/handler contract, the Journal trait, the scheduler, the in-process executor and the conformance suite every executor passes."
+autotests = false
+
+[features]
+integration = []
 
 [dependencies]
 lifecycle = { path = "../lifecycle" }
@@ -17,3 +21,8 @@ unit-run = { path = "../unit-run" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+required-features = ["integration"]

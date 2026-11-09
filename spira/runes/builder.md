@@ -33,6 +33,10 @@ holds at your tip, the work is done.
 5. **Write the test first and see it fail.** Test through the same entry point a real caller
    uses. Name each test for the behaviour it protects. Keep unit tests under a second by
    injecting clocks and processes.
+   Iterate on unit tests: `cargo test` runs only those, because the `tests/` targets are opt-in
+   (`--features integration`). When your change is to one integration test, run that one with
+   the opt-in and a name filter (`cargo test -p <crate> --features integration --test <target>
+   <name>`); never run a crate's whole integration suite, the gate and the round do.
 6. **Make the smallest change that makes it pass, then refactor.** Change what the work item
    needs. Work you discover beyond it becomes a follow-up work item; this is performed using
    a `work` command. Match the surrounding code's style and naming. Prefer deleting code to

@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "sentinel — the loop's heartbeat: one reconcile pass over the work graph (CHECK 1-8), the 15s call fast path. Replaces spira/sentinel.sh."
 
+[features]
+integration = []
+
 [dependencies]
 dwarf = { path = "../dwarf" }
 serde = { version = "1", features = ["derive"] }

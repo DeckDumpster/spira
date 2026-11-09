@@ -3,6 +3,7 @@ name = "rule"
 version = "0.1.0"
 edition = "2021"
 description = "rule — enact, retire, list, show a statute in one command (sp-g9mhe, replaces rule.sh)."
+autotests = false
 
 [lib]
 name = "rule"
@@ -12,6 +13,9 @@ path = "src/lib.rs"
 name = "rule"
 path = "src/main.rs"
 test = false
+
+[features]
+integration = []
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }
@@ -23,3 +27,8 @@ spira-lint = { path = "../spira-lint" }
 [dev-dependencies]
 testkit = { path = "../testkit" }
 bead = { path = "../bead" }
+
+[[test]]
+name = "code"
+path = "tests/code.rs"
+required-features = ["integration"]

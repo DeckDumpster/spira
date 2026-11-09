@@ -45,4 +45,4 @@ for d in "${_dirs[@]}"; do
   [ -x "$d/spira-config" ] || [ -f "$d/conf.sh" ] || unit_path="${unit_path:+$unit_path:}$d"
 done
 env -u SPIRA_RELEASE -u SPIRA_TOML -u SPIRA_HOME PATH="$unit_path" \
-    cargo test "${words[@]}" -j "$jobs" -- --test-threads="$threads" "${filters[@]}"
+    cargo test "${words[@]}" --features integration -j "$jobs" -- --test-threads="$threads" "${filters[@]}"

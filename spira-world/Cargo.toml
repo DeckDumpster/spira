@@ -3,6 +3,7 @@ name = "spira-world"
 version = "1.0.0"
 edition = "2021"
 description = "spira-world — stop/start/drain/resume the loop, the dwarf fleet ceiling, and slaying one dwarf cleanly. Replaces spira/world.sh, spira/dwarves.sh, spira/slay.sh."
+autotests = false
 
 [lib]
 name = "spira_world"
@@ -23,6 +24,9 @@ name = "slay"
 path = "src/bin/slay.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 spira-ctrl = { path = "../spira-ctrl" }
@@ -36,3 +40,13 @@ runtime = { path = "../runtime" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "world_planes"
+path = "tests/world_planes.rs"
+required-features = ["integration"]

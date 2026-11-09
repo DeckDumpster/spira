@@ -1697,3 +1697,18 @@ after it. A `batch-job: <why>` comment on the line or the one above exempts a tr
 Prompt files (`.md`) are not scanned; the serve side below is what names a dwarf's tool call.
 
 **Refuses** (exit 3): no file in scope.
+
+## Rule `integration-opt-in`
+
+**Intent.** A plain `cargo test` runs unit tests only; integration targets (`tests/`) run when
+asked for with `--features integration`. One crate's `tests/it` took ten minutes, and every
+builder's fix-and-retest loop paid it.
+
+**Scope.** The root `Cargo.toml`'s workspace members.
+
+**Violation.** A member that declares no `integration` feature (`--features integration` fails
+when any selected crate lacks it); a `[[test]]` without `required-features` naming `integration`;
+a `tests/*.rs` or `tests/*/main.rs` with no `[[test]]` entry; or `autotests` left on in a member
+that has such a target.
+
+**Refuses** (exit 3): the root names no members, or a member's manifest is unreadable or does not parse.
