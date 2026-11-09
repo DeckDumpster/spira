@@ -395,7 +395,8 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
             if is_operator {
                 repeat::repeat_release(repeat_guard.take().unwrap());
             }
-            return Err(format!("ask not sent — {e}{tracked}"));
+            let created = if tracked.is_empty() { String::new() } else { format!("ask bead {x_bead} was created but its mail was not delivered") };
+            return Err(format!("ask not sent — {e}{}{tracked}", if created.is_empty() { String::new() } else { format!("; {created}") }));
         }
     };
 
@@ -1081,6 +1082,37 @@ mod probe_tests {
         let err = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap_err();
         assert!(err.contains("ask not sent") && err.contains("store down"), "{err}");
         assert_eq!(mailbox_entries(t.path()), 0);
+    }
+
+    const ASK_LIST: &str = r#"[{"id":"sp-new1","title":"Grant it?","labels":["needs-x"]}]"#;
+
+    #[test]
+    fn an_ask_whose_create_reply_was_lost_but_whose_row_exists_is_sent() {
+        let t = testkit::TempDir::new("mail-ask-lost-reply");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::fail(2, ""), BdOut::ok(ASK_LIST), BdOut::ok("")]);
+        let out = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap();
+        assert_eq!(out.x_bead.as_deref(), Some("sp-new1"));
+        assert_eq!(mailbox_entries(t.path()), 1);
+        assert_eq!(*bd.ask_rows.borrow(), vec![("sp-new1".to_string(), String::new())]);
+    }
+
+    #[test]
+    fn an_ask_whose_create_reply_was_lost_and_whose_row_is_absent_refuses_and_says_nothing_was_recorded() {
+        let t = testkit::TempDir::new("mail-ask-lost-reply-absent");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::fail(2, ""), BdOut::ok("[]")]);
+        let err = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap_err();
+        assert!(err.contains("nothing was recorded"), "{err}");
+        assert_eq!(mailbox_entries(t.path()), 0);
+        assert!(bd.ask_rows.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_created_ask_whose_mail_fails_names_the_bead_and_says_the_mail_was_not_delivered() {
+        let t = testkit::TempDir::new("mail-ask-mail-fails");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok(""), BdOut::ok("")]);
+        let deliver: DeliverFn = &|_, _, _, _| Err("disk full".to_string());
+        let err = send_with(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into(), deliver).unwrap_err();
+        assert!(err.contains("sp-new1") && err.contains("mail was not delivered"), "{err}");
     }
 
     #[test]

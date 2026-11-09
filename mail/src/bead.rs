@@ -283,6 +283,9 @@ pub fn suit_reason(kind: &str, first_para: &str) -> String {
 /// as a `work-bead:<id>` label, so a path that answers or closes the ASK BEAD rather than
 /// replying to the mail — the cockpit pane's verdict, `resolve`, `verify-asks` — can still
 /// find the work bead whose `ask` hold the answer lifts (sp-v62vn follow-up).
+/// A store reply that says it could not tell whether the write happened.
+const CANNOT_TELL_EXIT: i32 = 2;
+
 pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, body: &str, ask_label: &str, work_bead: &str) -> Result<Option<String>, String> {
     if !db_configured {
         return Ok(None);
@@ -292,10 +295,19 @@ pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, bod
         labels.push_str(&format!(",{WORK_BEAD_LABEL}{work_bead}"));
     }
     let out = bd.run(&a(&["create", subject, "-l", &labels, "--type", "decision", "--body-file", "-", "--silent"]), Some(body));
-    let id = out.stdout.trim();
-    if out.code != 0 || id.is_empty() {
+    let read_back;
+    let id = if out.code == 0 && !out.stdout.trim().is_empty() {
+        out.stdout.trim()
+    } else if out.code == CANNOT_TELL_EXIT || out.code == 0 {
+        read_back = match open_duplicate_ask(bd, ask_label, subject, "") {
+            Ok(Some(id)) => id,
+            Ok(None) => return Err(format!("bead create failed {}; read back from the store: nothing was recorded", bd_failure_detail(&out))),
+            Err(e) => return Err(format!("bead create failed {}; the read-back also failed ({e}), so the ask may exist — look for it by subject before filing again", bd_failure_detail(&out))),
+        };
+        read_back.as_str()
+    } else {
         return Err(format!("bead create failed {}", bd_failure_detail(&out)));
-    }
+    };
     if let Err(e) = retry_until_deadline(|| bd.ensure_ask(id, work_bead)) {
         let closed = abandon_bead(bd, id, &format!("ask row not written: {e}"));
         return Err(format!("{id}: ask row not written: {e}; {closed}"));
