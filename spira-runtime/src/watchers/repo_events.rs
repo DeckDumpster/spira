@@ -192,7 +192,7 @@ impl Handler for RepoEvents {
 mod tests {
     use super::*;
 
-    /// `runtime_event.kind_body` is a MySQL TEXT column: 65,535 bytes.
+    /// A carry rides one state key and ships as one record; it stays under 64 KiB.
     const KIND_BODY_MAX: usize = 65_535;
 
     #[test]

@@ -239,17 +239,17 @@ fn an_append_reaches_the_listener_with_the_bead_id_from_its_stream_or_else_its_b
     let (_store, path, _dir) = serve();
     let (logs, ship) = shipper();
     let j = SocketJournal::new(&path, ship);
-    j.record(&ev("watch.sp-neicv8.tick", "no id here"));
+    j.record(&ev("watch.sp-abcde1.tick", "no id here"));
     j.record(&Event { id: EventId("e2".into()), ..ev("runtime.heartbeat", "closing sp-94ptu6.2 now") });
     j.record(&Event { id: EventId("e3".into()), ..ev("runtime.heartbeat", "nothing") });
     let got = logs.wait_records(3, Duration::from_secs(5));
     assert_eq!(got.len(), 3, "{got:?}");
     let by = |id: &str| got.iter().find(|r| r["event_id"] == id).unwrap().clone();
-    assert_eq!(by("e1")["bead_id"], "sp-neicv8", "the first sp- id in the stream name");
+    assert_eq!(by("e1")["bead_id"], "sp-abcde1", "the first sp- id in the stream name");
     assert_eq!(by("e2")["bead_id"], "sp-94ptu6.2", "else in the body");
     assert!(by("e3")["bead_id"].is_null());
     let r = by("e1");
-    for (k, v) in [("stream", "watch.sp-neicv8.tick"), ("kind_tag", "t"), ("cause", "c0"), ("correlation", "co"), ("body", "no id here")] {
+    for (k, v) in [("stream", "watch.sp-abcde1.tick"), ("kind_tag", "t"), ("cause", "c0"), ("correlation", "co"), ("body", "no id here")] {
         assert_eq!(r[k], v, "{k}");
     }
     assert_eq!(r["at"], 7);

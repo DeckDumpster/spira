@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn the_bead_id_is_the_first_sp_id_with_its_child_suffix() {
-        assert_eq!(bead_id("watch.sp-neicv8.x").as_deref(), Some("sp-neicv8"));
+        assert_eq!(bead_id("watch.sp-abcde1.x").as_deref(), Some("sp-abcde1"));
         assert_eq!(bead_id("see sp-94ptu6.2 and sp-abc").as_deref(), Some("sp-94ptu6.2"));
         assert_eq!(bead_id("wasp-xyz then sp-q1").as_deref(), Some("sp-q1"));
         assert_eq!(bead_id("no id, just sp- and spiral"), None);

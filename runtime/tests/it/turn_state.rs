@@ -1,4 +1,4 @@
-//! What a turn writes to the store (sp-neicv8): only the state keys that changed, the effects it
+//! What a turn writes to the store: only the state keys that changed, the effects it
 //! requested, the outcomes it handled and the schedule rows it made or fired; events are history
 //! and never reach it. An effect key admits one request in flight.
 

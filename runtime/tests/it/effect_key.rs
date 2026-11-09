@@ -1,4 +1,4 @@
-//! Every effect carries its idempotency key (sp-neicv8): a spec without one is not an effect.
+//! Every effect carries its idempotency key: a spec without one is not an effect.
 
 use runtime::event::EffectSpec;
 

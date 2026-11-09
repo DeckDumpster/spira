@@ -190,6 +190,7 @@ pub struct Engine {
     queue: VecDeque<(Event, bool)>,
     queued_ids: BTreeSet<EventId>,
     submitted: VecDeque<String>,
+    submitted_ids: BTreeSet<String>,
     seq: u64,
     timers: BTreeMap<String, ScheduleRow>,
     memory_only: BTreeSet<String>,
@@ -321,6 +322,7 @@ impl Engine {
             queue: VecDeque::new(),
             queued_ids: BTreeSet::new(),
             submitted: VecDeque::new(),
+            submitted_ids: BTreeSet::new(),
             seq: 0,
             timers: BTreeMap::new(),
             memory_only: BTreeSet::new(),
@@ -1100,12 +1102,14 @@ impl Engine {
 
 impl Executor for Engine {
     fn submit(&mut self, id: &str, stream: &str, kind: EventKind) -> Result<()> {
-        if self.submitted.iter().any(|s| s == id) {
+        if !self.submitted_ids.insert(id.into()) {
             return Ok(());
         }
         self.submitted.push_back(id.into());
         if self.submitted.len() > SUBMITTED_KEEP {
-            self.submitted.pop_front();
+            if let Some(old) = self.submitted.pop_front() {
+                self.submitted_ids.remove(&old);
+            }
         }
         let ev = Event {
             id: EventId(id.into()),

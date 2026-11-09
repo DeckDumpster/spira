@@ -389,7 +389,7 @@ mod tests {
         }
     }
 
-    /// The key `decide` gives an act is the key its effect is requested under (sp-neicv8).
+    /// The key `decide` gives an act is the key its effect is requested under.
     #[test]
     fn commands_passes_an_acts_key_through_to_its_effect() {
         let shape = Shape { name: "t", stream: "s", tick: "t.tick", state: "t.state", observe: "t.observe", observe_deadline_ms: 1 };
