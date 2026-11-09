@@ -578,6 +578,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v spira-admit)\""
 
 [[dep]]
+name = "spira-build-dir"
+tier = "release"
+purpose = "Spira's spira-build-dir binary, from the release's bin/ (leases a hand build its owned build directory)"
+version_min = ""
+version_probe = "readlink -f \"$(command -v spira-build-dir)\""
+
+[[dep]]
 name = "spira-lc"
 tier = "release"
 purpose = "Spira's spira-lc binary, from the release's bin/"

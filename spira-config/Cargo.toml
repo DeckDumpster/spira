@@ -30,6 +30,11 @@ path = "src/admit_main.rs"
 test = false
 
 [[bin]]
+name = "spira-build-dir"
+path = "src/build_dir_main.rs"
+test = false
+
+[[bin]]
 name = "tsd-prune"
 path = "src/tsd_prune_main.rs"
 test = false
