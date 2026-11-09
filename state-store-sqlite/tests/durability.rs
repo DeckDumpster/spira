@@ -460,9 +460,12 @@ fn the_drill_gives_its_verdict_when_one_read_of_the_keyspace_would_pass_max_read
             "the fixture's single full read must exceed the cap"
         );
     }
-    let rep = drill::fold_compare(&capped(&base), &runs, &capped(&out), Exclusions::CONTRACT).unwrap();
-    assert!(rep.passed(), "{}", drill::render(&rep));
-    assert!(rep.compared > 3, "{}", drill::render(&rep));
+    let paged = drill::fold_compare(&capped(&base), &runs, &capped(&out), Exclusions::CONTRACT).unwrap();
+    assert!(paged.passed(), "{}", drill::render(&paged));
+    let whole =
+        drill::fold_compare(&verify(&base), &runs, &verify(&out), Exclusions::CONTRACT).unwrap();
+    assert!(whole.compared > 3, "{}", drill::render(&whole));
+    assert_eq!(paged, whole);
 
     let key = "intents/claim/sp-1";
     tamper(&out, key, &flipped(c.backend(), key));
