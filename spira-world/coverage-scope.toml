@@ -1,0 +1,4 @@
+# Cutover mode: the bead's own gate reports any branch in it no test takes.
+[[scope]]
+path = "spira-world/src/cutover.rs"
+functions = ["read", "enter", "leave", "write", "Record::describe"]

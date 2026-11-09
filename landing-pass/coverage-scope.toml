@@ -1,0 +1,4 @@
+# The land lane: the bead's own gate reports any branch in it no test takes.
+[[scope]]
+path = "landing-pass/src/stops.rs"
+functions = ["landable"]

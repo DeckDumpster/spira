@@ -1,0 +1,4 @@
+# The scoped-stop lanes the actors read: the bead's own gate reports any branch in them no test takes.
+[[scope]]
+path = "spira-config/src/scoped_stop.rs"
+functions = ["parse_lanes", "stop_for", "stop_everywhere", "skip_line", "put_repo"]
