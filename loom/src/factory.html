@@ -1,0 +1,868 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Factory · Loom</title>
+<style>
+:root{
+  color-scheme: dark;
+  --bg:#10141a; --bar:#0b0e13; --card:#161b22; --line:#1d232b; --rule:#2a323d;
+  --fg:#d8dee9; --dim:#7d8896; --mute:#9aa5b1; --accent:#3b82c4;
+  --red:#ff6b6d; --redbg:#4a1f21; --stuckbg:#1e1416; --amber:#e0a43a; --amberbg:#3a2c12; --ok:#3aa57a; --blind:#8a93a0;
+  --lane:#0d1117; --lane2:#121820; --belt:#0a0d12;
+  --s-OPEN:#4a5568; --s-READY:#3b82c4; --s-WORKING:#3aa57a; --s-SUBMITTED:#8b6fd0; --s-CERTIFIED:#d6a032;
+  --s-IN_DELIVERY:#d9772b; --s-REWORK:#c25a8a; --s-LANDED:#2f6f4f;
+  --b-open:#5d7aa8; --b-ci:#2f9aa8; --b-green:#3aa57a; --b-attr:#c25a8a; --b-side:#7d8896;
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+body{margin:0;font:14px/1.35 var(--font);background:var(--bg);color:var(--fg)}
+a{color:inherit;text-decoration:none}
+.dim{color:var(--dim)} .red{color:var(--red)}
+main{padding-block:.2rem 2rem;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header.pg{padding:.6rem 0;border-bottom:1px solid var(--rule)}
+h1{font-size:1rem;margin:0;text-wrap:balance}
+h2{font-size:.95rem;margin:1.1rem 0 .4rem;text-wrap:balance}
+.badge{font-size:.75rem;padding:0 .35rem;border-radius:3px;background:var(--rule);white-space:nowrap}
+.badge.red{background:var(--redbg);color:var(--red)} .badge.amber{background:var(--amberbg);color:var(--amber)}
+.badge.blind{background:repeating-linear-gradient(135deg,#232a33 0 4px,#1a2028 4px 8px);color:var(--fg)}
+.badge.ok{background:#173226;color:#7fd3ac} .badge.dead{background:transparent;border:1px dashed var(--dim);color:var(--dim)}
+
+/* summary */
+.alarm{display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap;margin:.7rem 0 .2rem;padding:.55rem .7rem;background:var(--stuckbg);border:1px solid #5a2427;border-left:4px solid var(--red);border-radius:4px;cursor:pointer}
+.alarm:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+.alarm .t{flex:1 1 20rem;min-width:0;font-family:var(--mono);font-size:.82rem;overflow-wrap:anywhere}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(11.5rem,1fr));gap:.4rem;margin:.6rem 0}
+.kpi{padding:.45rem .6rem;background:var(--card);border:1px solid var(--line);border-radius:4px;min-width:0}
+.kpi .k{font-size:.72rem;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
+.kpi .v{font-size:1.15rem;font-weight:600;font-variant-numeric:tabular-nums}
+.kpi .s{font-size:.78rem;color:var(--mute)}
+.legend{display:flex;gap:.4rem 1rem;flex-wrap:wrap;font-size:.75rem;color:var(--mute);margin:.4rem 0}
+.legend span{display:inline-flex;align-items:center;gap:.3rem}
+.legend svg{flex:none}
+
+/* floor */
+.floorwrap{position:relative;overflow:auto;border:1px solid var(--line);border-radius:4px;background:var(--lane);cursor:grab}
+.floorwrap.drag{cursor:grabbing;user-select:none}
+.floorbar{display:flex;gap:.4rem;align-items:center;margin:.6rem 0 .3rem;font-size:.78rem;color:var(--dim)}
+.floorbar .sp{flex:1}
+.floorbar button{background:var(--card);color:var(--fg);border:1px solid var(--rule);border-radius:3px;min-width:2rem;padding:.2rem .5rem;font:inherit;cursor:pointer}
+.floorbar button:focus-visible{outline:2px solid var(--accent)}
+#floor{display:block}
+#floor text{font-family:var(--font);fill:var(--fg)}
+#floor .mono{font-family:var(--mono)}
+.node{cursor:pointer}
+.node:focus{outline:none}
+.node:focus-visible .frame,.node:hover .frame{stroke:var(--accent);stroke-width:2}
+.node.sel .frame{stroke:var(--accent);stroke-width:2.5}
+/* Motion has one meaning: the only thing that moves is a stalled station's alarm. */
+.stall-glow{animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.2}50%{opacity:.95}}
+@media (prefers-reduced-motion: reduce){.stall-glow{animation:none;opacity:.8}}
+
+/* phone list */
+#list{display:none}
+.lrow{display:flex;gap:.5rem;align-items:center;padding:.5rem .6rem;border-bottom:1px solid var(--line);cursor:pointer;min-width:0}
+.lrow:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.lrow.stall{background:var(--stuckbg)}
+.lrow .stripe{width:4px;align-self:stretch;border-radius:2px;flex:none}
+.lrow .nm{font-weight:600}
+.lrow .meta{font-size:.78rem;color:var(--mute);overflow-wrap:anywhere}
+.lrow .body{flex:1 1 auto;min-width:0}
+.lrow .num{font-variant-numeric:tabular-nums;font-weight:600;text-align:right;flex:none}
+.lanehd{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);padding:.7rem .6rem .25rem}
+@media (max-width:639px){
+  /* phone: the flow-order list first, then the floor in its own pannable box, then the numbers */
+  main{display:flex;flex-direction:column}
+  main>*{order:5}
+  header.pg{order:0} #alarms{order:1} #list{order:2} .floorhint{order:3} .floorbar{order:3} .floorwrap{order:3} #legend{order:4} #kpis{order:4}
+  #list{display:block;border:1px solid var(--line);border-radius:4px;background:var(--card);margin-top:.5rem}
+  .floorhint{display:block}
+  .floorwrap{height:60vh}
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+.floorhint{display:none;font-size:.78rem;color:var(--dim);margin:.4rem 0}
+
+/* drawer */
+#drawer{position:fixed;z-index:20;top:0;right:0;bottom:0;width:min(30rem,100%);background:var(--card);border-left:1px solid var(--rule);box-shadow:-12px 0 30px rgba(0,0,0,.45);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-right:env(safe-area-inset-right,0px)}
+#drawer[hidden]{display:none}
+#drawer .dh{display:flex;gap:.5rem;align-items:flex-start;padding:.7rem .8rem;border-bottom:1px solid var(--rule)}
+#drawer .dh h3{margin:0;font-size:1rem;flex:1;min-width:0;overflow-wrap:anywhere}
+#drawer .db{overflow-y:auto;padding:.2rem .8rem 1.2rem;flex:1;min-height:0}
+#drawer button.x{background:var(--rule);color:var(--fg);border:0;border-radius:3px;padding:.25rem .6rem;font:inherit;cursor:pointer}
+#drawer button.x:focus-visible{outline:2px solid var(--accent)}
+.kv{display:grid;grid-template-columns:7.5rem 1fr;gap:.2rem .6rem;font-size:.84rem;margin:.5rem 0}
+.kv dt{color:var(--dim)} .kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.kv code,.code{font-family:var(--mono);font-size:.8rem}
+.chips{display:flex;flex-wrap:wrap;gap:.25rem}
+.chip{font-size:.78rem;padding:.05rem .4rem;border:1px solid var(--rule);border-radius:3px;cursor:pointer;background:transparent;color:var(--fg);font-family:inherit}
+.chip:focus-visible{outline:2px solid var(--accent)}
+.sens{border:1px solid var(--line);border-radius:4px;padding:.4rem .55rem;margin:.3rem 0;font-size:.82rem}
+.sens .src{font-family:var(--mono);font-size:.75rem;color:var(--dim);overflow-wrap:anywhere}
+.sens .rd{font-family:var(--mono);font-size:.78rem;margin-top:.15rem;overflow-wrap:anywhere}
+.sens.STALL{border-color:#5a2427;background:var(--stuckbg)} .sens.BLIND{background:repeating-linear-gradient(135deg,#171c23 0 6px,#141920 6px 12px)}
+.comp{border:1px solid var(--line);border-radius:4px;padding:.4rem .55rem;margin:.3rem 0;font-size:.82rem}
+.comp .q{display:flex;gap:.4rem;flex-wrap:wrap;align-items:baseline;margin-top:.2rem;font-size:.8rem}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.82rem}
+th{text-align:left;font-weight:500;color:var(--dim);font-size:.72rem;letter-spacing:.05em;text-transform:uppercase;padding:.3rem .4rem;border-bottom:1px solid var(--rule)}
+td{padding:.3rem .4rem;border-bottom:1px solid var(--line);vertical-align:top;word-break:break-word}
+td.n{font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.parked td{color:var(--dim)}
+td .id{font-weight:600;white-space:nowrap}
+
+.floorbar{flex-wrap:wrap}
+.floorbar select{background:var(--card);color:var(--fg);border:1px solid var(--rule);border-radius:3px;padding:.2rem .4rem;font:inherit;max-width:100%}
+.chip.bad{font-size:.78rem;padding:.05rem .4rem;border-radius:3px;background:var(--redbg);color:var(--red);border:0;cursor:default}
+@media(max-width:639px){#drawer{top:auto;height:82%;width:100%;border-left:0;border-top:1px solid var(--rule);border-radius:10px 10px 0 0}}
+</style>
+<body>
+<main>
+  <header class="pg"><h1 id="pgtitle">Factory</h1> <span class="chip bad" id="offline" hidden>offline</span></header>
+
+  <div id="alarms"></div>
+  <div id="errors"></div>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="legend" id="legend"></div>
+
+  <div id="list" aria-label="Floor in flow order"></div>
+  <p class="floorhint">The full floor is below: drag to pan it, and zoom with the buttons.</p>
+  <div class="floorbar"><span>Floor</span><select id="repo" aria-label="Repo filter"></select><span class="dim">flow counts, 24 h: all repos</span><span class="sp"></span><button type="button" id="wrapbtn">Layout: auto</button><span id="zlabel"></span><button type="button" data-z="fit">Fit</button><button type="button" data-z="-" aria-label="Zoom out">−</button><button type="button" data-z="+" aria-label="Zoom in">+</button></div>
+  <div class="floorwrap" id="floorwrap"><svg id="floor" role="img" aria-label="Spira factory floor"></svg></div>
+</main>
+
+<aside id="drawer" hidden aria-label="Details"><div class="dh"><h3 id="dtitle"></h3><button class="x" id="dclose" type="button">Close</button></div><div class="db" id="dbody"></div></aside>
+
+<script>
+const RANK = { STALL: 5, BLIND: 4, OVER: 3, WAIT: 1, OK: 0, MISSING: -1 };
+const STATUS_COLOR = { STALL: "var(--red)", BLIND: "var(--blind)", OVER: "var(--amber)", WAIT: "var(--mute)", OK: "var(--mute)", DEAD: "var(--dim)", MISSING: "var(--dim)" };
+// The grid: every column is one node wide, every gutter and street the same size, so the floor reads evenly.
+const G = { LANEW: 4, BW: 88, SW: 112, NH: 92, GUT: 34, STREET: 30, TR: 6, RET: 20, BUS: 58 };
+const EDGE = { flow: "#56657a", back: "#8a76b0", signal: "#6b7685", dead: "#3b4452", stall: "#ff6b6d" };
+const MIN_SCALE = 0.72;
+
+function dur(s) { // watch.transitions' own format
+  if (s == null) return "–";
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  if (s < 86400) return Math.floor(s / 3600) + "h" + String(Math.floor(s % 3600 / 60)).padStart(2, "0") + "m";
+  return Math.floor(s / 86400) + "d" + String(Math.floor(s % 86400 / 3600)).padStart(2, "0") + "h";
+}
+const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const cut = (s, n) => (s = String(s ?? "")).length > n ? s.slice(0, n - 1) + "…" : s;
+const fmt = n => n == null ? "?" : Number(n).toLocaleString("en-US");
+
+const BEAD_STATES = new Set(["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK", "LANDED"]);
+const BATCH_VAR = { OPEN: "--b-open", CI_RUNNING: "--b-ci", GREEN: "--b-green", ATTRIBUTING: "--b-attr", LANDED: "--s-LANDED" };
+function beltVar(b) { // loom's bead-state colours, then the mockup's batch and side variables
+  if (b.machine === "bead") return BEAD_STATES.has(b.state) ? "--s-" + b.state : null;
+  if (b.machine === "batch") return BATCH_VAR[b.state] || null;
+  return b.machine === "ask" || b.machine === "mending" ? "--b-side" : null;
+}
+function nodesOf(F) {
+  const m = new Map();
+  F.belts.forEach((b, i) => m.set(b.id, { ...b, color: beltVar(b), type: "belt", order: i }));
+  F.stations.forEach((s, i) => m.set(s.id, { ...s, type: "station", order: 1000 + i }));
+  return m;
+}
+function sensorsAt(F, id) { return F.sensors.filter(s => s.at.includes(id)); }
+function worstSensor(F, id) {
+  let best = null;
+  for (const s of sensorsAt(F, id)) if (s.status !== "MISSING" && (best == null || RANK[s.status] > RANK[best.status])) best = s;
+  return best;
+}
+function statusOf(F, n) {
+  if (n.live === false || n.kind === "unreachable") return "DEAD";
+  if (F.blind) return "BLIND";
+  const w = worstSensor(F, n.id);
+  return w ? w.status : "OK";
+}
+
+// ---- auto-layout --------------------------------------------------------------------------
+// Columns: longest path over every edge that is not a path back (signals count, so a side loop
+// sits after the station that opens it), then each node is pulled right to just before its first
+// consumer. Rows: pinned rows first, then the first free row in declaration order. `col`/`row`
+// on a node are optional hints.
+// The edges that order the columns: every edge not marked as a path back, less the ones that close
+// a cycle (found depth-first from the sources), so a belt that feeds itself through a station
+// still lays out left to right.
+function forwardEdges(N, edges) {
+  const cand = edges.filter(e => e.kind !== "back"), out = new Map(), loops = new Set(), seen = new Map();
+  cand.forEach(e => { if (!out.has(e.from)) out.set(e.from, []); out.get(e.from).push(e); });
+  const entered = new Set(cand.map(e => e.to));
+  const visit = id => {
+    seen.set(id, 1);
+    for (const e of out.get(id) || []) { const st = seen.get(e.to); if (st === 1) loops.add(e); else if (!st) visit(e.to); }
+    seen.set(id, 2);
+  };
+  const ids = [...N.keys()];
+  for (const id of [...ids.filter(i => !entered.has(i)), ...ids]) if (!seen.has(id)) visit(id);
+  return cand.filter(e => !loops.has(e));
+}
+function layout(F, opts = {}) {
+  const N = nodesOf(F);
+  const edges = F.edges.filter(e => N.has(e.from) && N.has(e.to));
+  const fwd = forwardEdges(N, edges);
+  const col = new Map([...N].map(([id, n]) => [id, n.col ?? 0]));
+  for (let pass = 0; pass <= N.size; pass++) {
+    let moved = false;
+    for (const e of fwd) {
+      if (N.get(e.to).col != null) continue;
+      const c = col.get(e.from) + 1;
+      if (c > col.get(e.to)) { col.set(e.to, c); moved = true; }
+    }
+    if (!moved) break;
+  }
+  for (let pass = 0; pass <= N.size; pass++) {
+    let moved = false;
+    for (const [id, n] of N) {
+      if (n.col != null) continue;
+      const succ = fwd.filter(e => e.from === id).map(e => col.get(e.to));
+      if (!succ.length) continue;
+      const want = Math.min(...succ) - 1;
+      if (want > col.get(id)) { col.set(id, want); moved = true; }
+    }
+    if (!moved) break;
+  }
+  const ncols = Math.max(...col.values()) + 1;
+  const taken = new Set(), row = new Map();
+  const sorted = [...N.values()].sort((a, b) => (a.row != null ? 0 : 1) - (b.row != null ? 0 : 1) || a.order - b.order);
+  for (const n of sorted) {
+    let r = n.row ?? 0;
+    while (taken.has(n.lane + "|" + col.get(n.id) + "|" + r)) r++;
+    taken.add(n.lane + "|" + col.get(n.id) + "|" + r); row.set(n.id, r);
+  }
+  // Lanes are packed: each line keeps its own rows, in declaration order, but slides up into the
+  // rows the lines above leave empty, keeping one clear column between lines. So a short line
+  // does not leave a band of empty floor beside it.
+  const lanes = [], R0 = {}, occ = new Map();
+  let floorR = 0;
+  for (const L of F.lanes) {
+    const ids = [...N.keys()].filter(id => N.get(id).lane === L.id);
+    if (!ids.length) continue;
+    const rows = Math.max(...ids.map(id => row.get(id))) + 1;
+    const fits = r => ids.every(id => [-1, 0, 1].every(dc => !occ.has((r + row.get(id)) + "|" + (col.get(id) + dc))));
+    let r0 = floorR;
+    while (!fits(r0)) r0++;
+    lanes.push({ ...L, rows, R0: r0 }); R0[L.id] = r0;
+    for (const id of ids) occ.set((r0 + row.get(id)) + "|" + col.get(id), id);
+    floorR = r0 + 1; // a later line never starts above an earlier one
+  }
+  // Wrapping: a floor too wide for its box folds once, like a belt that snakes back under itself.
+  // It breaks at the column boundary the fewest belts cross, near the middle; the second half runs
+  // under the first, left to right again, and each half keeps only the rows it uses.
+  const band = new Map(), Rof = new Map();
+  for (const id of N.keys()) { band.set(id, 0); Rof.set(id, R0[N.get(id).lane] + row.get(id)); }
+  let wrapAt = null, bandR = null;
+  if (opts.wrap && ncols >= 8) {
+    let best = null;
+    for (let k = Math.round(ncols * 0.35); k <= Math.round(ncols * 0.65); k++) {
+      // count the belts that cross the break: edges from one source share a trunk, so count sources
+      const n = new Set(edges.filter(e => (col.get(e.from) < k) !== (col.get(e.to) < k)).map(e => e.from)).size;
+      const score = n * 100 + Math.abs(k - ncols / 2);
+      if (!best || score < best.score) best = { k, score };
+    }
+    wrapAt = best.k;
+    const used = b => [...new Set([...N.keys()].filter(id => (col.get(id) >= wrapAt ? 1 : 0) === b).map(id => Rof.get(id)))].sort((a, c) => a - c);
+    const u0 = used(0), u1 = used(1);
+    bandR = u0.length;
+    for (const id of N.keys()) {
+      const b = col.get(id) >= wrapAt ? 1 : 0;
+      band.set(id, b);
+      Rof.set(id, b ? u0.length + u1.indexOf(Rof.get(id)) : u0.indexOf(Rof.get(id)));
+      if (b) col.set(id, col.get(id) - wrapAt);
+    }
+  }
+  occ.clear();
+  for (const id of N.keys()) occ.set(Rof.get(id) + "|" + col.get(id), id);
+  const nC = Math.max(...col.values()) + 1;
+  // column widths: a station column is a station wide, a belt column a belt wide
+  const colW = Array.from({ length: nC }, (_, c) => Math.max(G.BW, ...[...N.values()].filter(n => col.get(n.id) === c).map(n => n.type === "station" ? G.SW : G.BW)));
+  const colX = []; let x = G.LANEW + G.GUT;
+  colW.forEach((w, c) => { colX[c] = x; x += w + G.GUT; });
+  const W = x;
+  const nR = Math.max(...Rof.values()) + 1;
+  const Lo = { N, edges, col, row, colW, colX, W, lanes, laneBy: Object.fromEntries(lanes.map(l => [l.id, l])), R0, occ, ncols: nC, nR, band, Rof, wrapAt, bandR };
+  // geometry is laid out twice: once to count the tracks each street needs, once for real
+  let tracks = {};
+  for (let pass = 0; pass < 2; pass++) {
+    geometry(Lo, tracks);
+    Lo.routes = route(Lo);
+    tracks = Lo.trackCount;
+  }
+  return Lo;
+}
+function geometry(Lo, tracks) {
+  const { N, colX, colW, col, row, nR } = Lo;
+  // street k runs above global row k (street nR is under the last row); each is as tall as its tracks
+  Lo.streetH = []; Lo.rowTop = [];
+  let y = 0;
+  for (let k = 0; k <= nR; k++) {
+    Lo.streetH[k] = Math.max(G.STREET, G.RET + (tracks["S:" + k] || 0) * G.TR) + (k === 0 ? 12 : 0);
+    y += Lo.streetH[k];
+    if (k < nR) { Lo.rowTop[k] = y; y += G.NH; }
+  }
+  Lo.H = y + G.BUS;
+  Lo.pos = new Map();
+  for (const [id, n] of N) {
+    const c = col.get(id), R = Lo.Rof.get(id);
+    const w = n.type === "station" ? G.SW : G.BW;
+    const top = Lo.rowTop[R];
+    Lo.pos.set(id, { x: colX[c] + (colW[c] - w) / 2, y: top, w, h: G.NH, cx: colX[c] + colW[c] / 2, cy: top + G.NH / 2, col: c, row: row.get(id), R, lane: n.lane, band: Lo.band.get(id) });
+  }
+}
+
+// ---- orthogonal routing -------------------------------------------------------------------
+// Every edge is a list of legs, alternating horizontal and vertical. A leg either sits at a fixed
+// coordinate (a port) or in a channel: a gutter between columns, a street between rows, or the
+// lane's return channel. Channels hand out tracks; edges that share a source or a target may share
+// a track, the way a splitter or a merge shares a belt, and nothing else may overlap.
+function route(Lo) {
+  const { N, edges, pos, occ, colX, colW, laneBy } = Lo;
+  const gutX = g => g < 0 ? G.LANEW + G.GUT / 2 : colX[g] + colW[g] + G.GUT / 2;
+  const streetY = k => (k < Lo.nR ? Lo.rowTop[k] : Lo.H - G.BUS) - Lo.streetH[k] / 2 + (k === 0 ? 6 : 0);
+  const streetCh = k => "S:" + k;
+  const clear = (R, c1, c2) => { for (let c = c1; c <= c2; c++) if (occ.has(R + "|" + c)) return false; return true; };
+  const H = (y, ch) => ({ o: "H", c: y, ch }), V = (x, ch) => ({ o: "V", c: x, ch });
+  const out = [], back = [];
+  for (const e of edges) {
+    const A = pos.get(e.from), B = pos.get(e.to), kind = e.kind || "flow";
+    const right = [A.x + A.w, A.cy], left = [B.x, B.cy];
+    const r = { e, kind, src: e.from + ">", dst: ">" + e.to };
+    if (B.col <= A.col || A.band !== B.band) { back.push(r); continue; } // includes the edges across the wrap
+    const gA = "g" + A.col, gB = "g" + (B.col - 1);
+    if (A.R === B.R && clear(A.R, A.col + 1, B.col - 1)) Object.assign(r, { start: right, end: left, legs: [H(A.cy)] });
+    else if (B.col === A.col + 1) Object.assign(r, { start: right, end: left, legs: [H(A.cy), V(gutX(A.col), gA), H(B.cy)] });
+    else if (clear(A.R, A.col + 1, B.col - 1)) Object.assign(r, { start: right, end: left, legs: [H(A.cy), V(gutX(B.col - 1), gB), H(B.cy)] });
+    else if (clear(B.R, A.col + 1, B.col - 1)) Object.assign(r, { start: right, end: left, legs: [H(A.cy), V(gutX(A.col), gA), H(B.cy)] });
+    else {
+      const k = B.R > A.R ? B.R : B.R + 1; // the street on B's side that faces A
+      Object.assign(r, { start: right, end: left, legs: [H(A.cy), V(gutX(A.col), gA), H(streetY(k), streetCh(k)), V(gutX(B.col - 1), gB), H(B.cy)] });
+    }
+    r.pts = ptsOf(r);
+    out.push(r);
+  }
+  // A path back leaves its source by the top, the bottom or the right, runs along a street, and
+  // enters its target by the top, the bottom or the left. Of the legal combinations it takes the
+  // one that crosses the fewest forward edges, then the shortest.
+  const fwdSegs = out.flatMap(r => r.pts.slice(1).map((p, i) => [r.pts[i], p]));
+  for (const r of back) {
+    const e = r.e, A = pos.get(e.from), B = pos.get(e.to);
+    // a forward belt across the wrap always runs in the street between the halves, so the snake reads as one belt
+    const ks = A.band < B.band && r.kind !== "back" ? [Lo.bandR] : [...new Set([A.R, A.R + 1, B.R, B.R + 1, Math.min(A.R, B.R), Math.max(A.R, B.R) + 1])];
+    let best = null;
+    for (const k of ks) {
+      const exits = [{ side: ">", start: [A.x + A.w, A.cy], legs: [H(A.cy), V(gutX(A.col), "g" + A.col)] }];
+      if (k === A.R) exits.push({ side: "t", start: [A.cx, A.y], legs: [V(A.cx)] });
+      if (k === A.R + 1) exits.push({ side: "b", start: [A.cx, A.y + A.h], legs: [V(A.cx)] });
+      const entries = [{ side: "<", end: [B.x, B.cy], legs: [V(gutX(B.col - 1), "g" + (B.col - 1)), H(B.cy)] }];
+      if (k === B.R) entries.push({ side: "t", end: [B.cx, B.y], legs: [V(B.cx)] });
+      if (k === B.R + 1) entries.push({ side: "b", end: [B.cx, B.y + B.h], legs: [V(B.cx)] });
+      for (const x of exits) for (const n of entries) {
+        const c = { ...r, src: e.from + x.side, dst: n.side + e.to, start: x.start, end: n.end, legs: [...x.legs, H(streetY(k), streetCh(k)), ...n.legs] };
+        c.pts = ptsOf(c);
+        let cross = 0, len = 0;
+        c.pts.slice(1).forEach((b, i) => { const a = c.pts[i]; len += Math.abs(b[0] - a[0]) + Math.abs(b[1] - a[1]); for (const [p, q] of fwdSegs) if (crosses(a, b, p, q)) cross++; });
+        const score = cross * 1e5 + len;
+        if (!best || score < best.score) best = { c, score };
+      }
+    }
+    out.push(best.c);
+  }
+  // track allocation per channel
+  const segs = [];
+  out.forEach(r => r.legs.forEach((l, i) => {
+    if (!l.ch) return;
+    const a = i === 0 ? (l.o === "H" ? r.start[0] : r.start[1]) : r.legs[i - 1].c;
+    const b = i === r.legs.length - 1 ? (l.o === "H" ? r.end[0] : r.end[1]) : r.legs[i + 1].c;
+    segs.push({ r, l, lo: Math.min(a, b), hi: Math.max(a, b) });
+  }));
+  const byCh = new Map();
+  segs.forEach(s => (byCh.get(s.l.ch) || byCh.set(s.l.ch, []).get(s.l.ch)).push(s));
+  Lo.trackCount = {};
+  for (const [ch, list] of byCh) {
+    // longest first, so trunks claim the inner tracks
+    list.sort((a, b) => (b.hi - b.lo) - (a.hi - a.lo) || a.lo - b.lo);
+    const tracks = [];
+    for (const s of list) {
+      let t = 0;
+      for (; t < tracks.length; t++) {
+        if (tracks[t].every(o => o.hi <= s.lo + 1 || o.lo >= s.hi - 1 || o.r.src === s.r.src || o.r.dst === s.r.dst)) break;
+      }
+      (tracks[t] || (tracks[t] = [])).push(s); s.t = t;
+    }
+    Lo.trackCount[ch] = tracks.length;
+    const n = tracks.length;
+    for (const s of list) {
+      s.l.c += (s.t - (n - 1) / 2) * G.TR; // centred in its gutter or street
+    }
+  }
+  for (const r of out) r.pts = ptsOf(r);
+  return out;
+}
+function ptsOf(r) {
+  const pts = [r.start];
+  for (let i = 0; i < r.legs.length - 1; i++) {
+    const a = r.legs[i], b = r.legs[i + 1];
+    pts.push(a.o === "H" ? [b.c, a.c] : [a.c, b.c]);
+  }
+  pts.push(r.end);
+  return pts.filter((p, i) => i === 0 || p[0] !== pts[i - 1][0] || p[1] !== pts[i - 1][1]);
+}
+function crosses(a, b, c, d) { // a proper crossing of one horizontal and one vertical segment
+  const h1 = a[1] === b[1], h2 = c[1] === d[1];
+  if (h1 === h2) return false;
+  const [H1, H2, V1, V2] = h1 ? [a, b, c, d] : [c, d, a, b];
+  return V1[0] > Math.min(H1[0], H2[0]) + .5 && V1[0] < Math.max(H1[0], H2[0]) - .5 && H1[1] > Math.min(V1[1], V2[1]) + .5 && H1[1] < Math.max(V1[1], V2[1]) - .5;
+}
+function rounded(pts, rad = 5) {
+  let d = `M${pts[0][0]},${pts[0][1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i - 1], [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
+    const d1 = Math.hypot(x1 - x0, y1 - y0), d2 = Math.hypot(x2 - x1, y2 - y1);
+    const rr = Math.min(rad, d1 / 2, d2 / 2);
+    if (rr < 0.5) { d += ` L${x1},${y1}`; continue; }
+    const ax = x1 - (x1 - x0) / d1 * rr, ay = y1 - (y1 - y0) / d1 * rr;
+    const bx = x1 + (x2 - x1) / d2 * rr, by = y1 + (y2 - y1) / d2 * rr;
+    d += ` L${ax},${ay} Q${x1},${y1} ${bx},${by}`;
+  }
+  const last = pts[pts.length - 1];
+  return d + ` L${last[0]},${last[1]}`;
+}
+// edge labels: on the edge's own (unshared) straight run nearest its target, clear of nodes and other labels
+function placeLabels(Lo, R) {
+  const boxes = [...Lo.pos.values()].map(p => [p.x - 2, p.y - 2, p.x + p.w + 2, p.y + p.h + 2]).concat(Lo.captions || []);
+  const hit = (b) => boxes.some(o => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]);
+  const runs = R.map(r => r.pts.slice(1).map((p, i) => [r.pts[i], p]));
+  const shared = (ri, a, b) => R.some((o, j) => j !== ri && runs[j].some(([c, d]) => {
+    if (a[1] === b[1] && c[1] === d[1] && Math.abs(a[1] - c[1]) < 1) return Math.min(a[0], b[0]) < Math.max(c[0], d[0]) - 1 && Math.max(a[0], b[0]) > Math.min(c[0], d[0]) + 1;
+    if (a[0] === b[0] && c[0] === d[0] && Math.abs(a[0] - c[0]) < 1) return Math.min(a[1], b[1]) < Math.max(c[1], d[1]) - 1 && Math.max(a[1], b[1]) > Math.min(c[1], d[1]) + 1;
+    return false;
+  }));
+  R.forEach((r, ri) => {
+    if (r.e.n == null || r.kind === "dead") return;
+    const txt = fmt(r.e.n) + (r.e.label ? " " + r.e.label : "");
+    const tw = txt.length * 5.5 + 6, th = 11;
+    const cands = runs[ri].slice().reverse();
+    let best = null;
+    for (const pass of [0, 1]) {
+      for (const [a, b] of cands) {
+        if (pass === 0 && shared(ri, a, b)) continue;
+        const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        let box;
+        const opts = [];
+        if (a[1] === b[1]) { if (len < tw + 4) continue; const mx = (a[0] + b[0]) / 2; opts.push([mx - tw / 2, a[1] - th - 1.5, mx + tw / 2, a[1] - 1.5], [mx - tw / 2, a[1] + 1.5, mx + tw / 2, a[1] + th + 1.5]); }
+        else { if (len < th + 6) continue; const my = (a[1] + b[1]) / 2; opts.push([a[0] + 3, my - th / 2, a[0] + 3 + tw, my + th / 2], [a[0] - 3 - tw, my - th / 2, a[0] - 3, my + th / 2]); }
+        best = opts.find(o => o[1] >= 0 && !hit(o)); if (best) break;
+      }
+      if (best) break;
+    }
+    if (best) { boxes.push(best); r.lab = { x: best[0], y: best[1], w: tw, h: th, txt }; }
+  });
+}
+
+// ---- SVG ----------------------------------------------------------------------------------
+function svgEl(tag, attrs, inner = "") {
+  return `<${tag} ${Object.entries(attrs).filter(([, v]) => v != null).map(([k, v]) => `${k}="${esc(v)}"`).join(" ")}>${inner}</${tag}>`;
+}
+const T = (x, y, s, a = {}) => svgEl("text", { x, y, ...a }, esc(s));
+const strokeW = e => e.kind === "signal" || e.kind === "dead" || !e.n ? 1 : Math.min(3.5, 1 + Math.log10(e.n + 1) * 1.1);
+
+function drawFloor(F, Lo) {
+  const { N, pos, lanes, W, H } = Lo;
+  // arrowheads are drawn in user space, so every head is the same size whatever the stroke width
+  const head = (id, fill) => `<marker id="${id}" viewBox="0 0 8 8" refX="7.5" refY="4" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0.5 L8,4 L0,7.5 z" fill="${fill}"/></marker>`;
+  let out = `<defs>${Object.entries(EDGE).map(([k, c]) => head("m-" + k, c)).join("")}
+    <pattern id="hazard" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="8" fill="#1a0f10"/><rect width="4" height="8" fill="#ff6b6d"/></pattern>
+    <pattern id="blindhatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#161b22"/><rect width="2" height="6" fill="#262e38"/></pattern>
+  </defs>`;
+  out += svgEl("rect", { x: 0, y: 0, width: W, height: H, fill: "var(--lane)" });
+  Lo.captions = [];
+  // each line is a tinted region per half: per column, from its first row to the last row it uses there
+  lanes.forEach((L, i) => {
+    for (const b of [0, 1]) {
+      const mine = [...pos.values()].filter(p => p.lane === L.id && p.band === b);
+      if (!mine.length) continue;
+      const c0 = Math.min(...mine.map(p => p.col)), c1 = Math.max(...mine.map(p => p.col)), rTop = Math.min(...mine.map(p => p.R));
+      const spans = Lo.edges.filter(e => [e.from, e.to].every(id => Lo.N.get(id).lane === L.id && Lo.band.get(id) === b)).map(e => [Lo.col.get(e.from), Lo.col.get(e.to)]);
+      let path = "";
+      for (let c = c0; c <= c1; c++) {
+        const here = mine.filter(p => p.col === c);
+        if (!here.length && !spans.some(([a, z]) => Math.min(a, z) < c && c < Math.max(a, z))) continue;
+        const rLast = here.length ? Math.max(...here.map(p => p.R)) : rTop;
+        const x0 = Lo.colX[c] - G.GUT / 2, x1 = Lo.colX[c] + Lo.colW[c] + G.GUT / 2;
+        const y0 = Lo.rowTop[rTop] - Lo.streetH[rTop] / 2 + 3, y1 = Lo.rowTop[rLast] + G.NH + Lo.streetH[rLast + 1] / 2 - 3;
+        path += `M${x0},${y0}H${x1}V${y1}H${x0}Z`;
+      }
+      out += svgEl("path", { d: path, fill: i % 2 ? "#141a22" : "#121820" });
+      const cap = L.label.toUpperCase() + (b ? " · continued" : "");
+      Lo.captions.push([Lo.colX[c0] - G.GUT / 2 + 4, Lo.rowTop[rTop] - 16, Lo.colX[c0] - G.GUT / 2 + 8 + cap.length * 6.6, Lo.rowTop[rTop] - 2]);
+      out += T(Lo.colX[c0] - G.GUT / 2 + 6, Lo.rowTop[rTop] - 6, cap, { "font-size": 9.5, "font-weight": 600, "letter-spacing": "0.12em", fill: "var(--dim)" });
+    }
+  });
+  const R = Lo.routes;
+  placeLabels(Lo, R);
+  const stallIds = new Set([...N.values()].filter(n => statusOf(F, n) === "STALL").map(n => n.id));
+  const order = { dead: 0, back: 1, signal: 2, flow: 3 };
+  const drawn = R.slice().sort((a, b) => order[a.kind] - order[b.kind] || (stallIds.has(a.e.to) ? 1 : 0) - (stallIds.has(b.e.to) ? 1 : 0));
+  for (const r of drawn) {
+    const into = stallIds.has(r.e.to) && r.kind === "flow";
+    const c = into ? "stall" : r.kind;
+    const dash = r.kind === "back" ? "5 3" : r.kind === "signal" ? "1.5 3.5" : r.kind === "dead" ? "4 4" : null;
+    out += svgEl("path", { class: "edge", "data-from": r.e.from, "data-to": r.e.to, "data-src": r.src, "data-dst": r.dst, d: rounded(r.pts), fill: "none", stroke: EDGE[c], "stroke-width": strokeW(r.e), "stroke-dasharray": dash, "marker-end": `url(#m-${c})`, "stroke-linejoin": "round" });
+  }
+  for (const r of R) if (r.lab) {
+    const into = stallIds.has(r.e.to) && r.kind === "flow";
+    out += svgEl("rect", { x: r.lab.x, y: r.lab.y, width: r.lab.w, height: r.lab.h, rx: 2, fill: "var(--lane)", opacity: 0.9 });
+    out += T(r.lab.x + 3, r.lab.y + 8.6, r.lab.txt, { "font-size": 9.5, fill: into ? "var(--red)" : r.kind === "back" ? "#b3a3d6" : "var(--mute)", class: "mono" });
+  }
+  for (const [id, n] of N) out += drawNode(F, n, pos.get(id));
+  // control bus: the lifecycle store every station writes through
+  const bus = F.sensors.filter(s => s.at.includes("*"));
+  const by = H - G.BUS;
+  out += svgEl("rect", { x: 0, y: by, width: W, height: G.BUS, fill: "var(--bar)" });
+  out += svgEl("line", { x1: G.LANEW, x2: W - 12, y1: by + 18, y2: by + 18, stroke: "#2a323d", "stroke-width": 6 });
+  out += T(14, by + 22, "CONTROL BUS", { "font-size": 10.5, "font-weight": 600, "letter-spacing": "0.1em", fill: "var(--dim)" });
+  out += T(G.LANEW, by + 42, "the lifecycle store: every station writes through it", { "font-size": 11, fill: "var(--mute)" });
+  bus.forEach((s, k) => {
+    const x = G.LANEW + 340 + k * 560;
+    out += svgEl("g", { class: "node", tabindex: 0, "data-sensor": s.id, role: "button", "aria-label": `${s.id} ${s.status}` },
+      svgEl("rect", { x, y: by + 33, width: 10, height: 10, rx: 2, fill: STATUS_COLOR[s.status] }) +
+      T(x + 16, by + 42, `${s.status} · ${cut(s.reading, 96)}`, { "font-size": 11, fill: "var(--fg)", class: "mono" }));
+  });
+  return out;
+}
+
+function drawNode(F, n, p) {
+  const st = statusOf(F, n), dead = st === "DEAD", stall = st === "STALL";
+  const ws = worstSensor(F, n.id);
+  const missing = sensorsAt(F, n.id).filter(s => s.status === "MISSING");
+  const col = n.color ? `var(${n.color})` : "var(--s-open)";
+  const X = p.x, Y = p.y, Wd = p.w, Ht = p.h;
+  let g = "";
+  // one line of sensor reading per node: only what is worth reading (WAIT on a belt repeats "oldest")
+  const sensorLine = (y) => {
+    if (!ws || ws.status === "WAIT" || ws.status === "OK") return "";
+    const fill = stall ? "var(--red)" : ws.status === "OVER" ? "var(--amber)" : ws.status === "BLIND" ? "var(--fg)" : "var(--mute)";
+    let s = "";
+    if (ws.status === "BLIND") s += svgEl("rect", { x: X + 5, y: y - 9, width: Wd - 10, height: 12, rx: 2, fill: "url(#blindhatch)", stroke: "var(--blind)", "stroke-width": 0.6 });
+    const pre = ws.status === "WAIT" || ws.status === "OK" ? "" : ws.status + " ";
+    s += T(X + 8, y, pre + cut(ws.short, Math.floor((Wd - 16) / 5.4) - pre.length), { "font-size": 9, "font-weight": stall ? 700 : 500, fill, class: "mono" });
+    return s;
+  };
+  const blindChip = () => F.blind || missing.length ? svgEl("g", {}, `<title>${esc(F.blind ? "no sensors read" : missing.map(s => s.short).join(" · "))}</title>` +
+      svgEl("rect", { x: X + Wd - 22, y: Y + 54, width: 16, height: 11, rx: 2, fill: "url(#blindhatch)", stroke: "#5b6472", "stroke-width": 0.7 }) +
+      T(X + Wd - 14, Y + 62.5, F.blind ? "?" : String(missing.length), { "font-size": 8.5, "text-anchor": "middle", fill: "var(--fg)" })) : "";
+  if (n.type === "station") {
+    if (stall) g += svgEl("rect", { x: X - 6, y: Y - 6, width: Wd + 12, height: Ht + 12, rx: 8, fill: "none", stroke: "var(--red)", "stroke-width": 3, class: "stall-glow" });
+    g += svgEl("rect", { class: "frame", x: X, y: Y, width: Wd, height: Ht, rx: 4,
+      fill: stall ? "var(--stuckbg)" : st === "BLIND" ? "url(#blindhatch)" : dead ? "var(--lane)" : "var(--card)",
+      stroke: stall ? "var(--red)" : st === "BLIND" ? "var(--blind)" : dead ? "#4a5568" : "#323b47", "stroke-width": stall ? 2 : 1, "stroke-dasharray": dead ? "4 3" : null });
+    if (stall) g += svgEl("rect", { x: X + 1, y: Y + 1, width: Wd - 2, height: 6, fill: "url(#hazard)" });
+    else if (n.offmachine) g += svgEl("rect", { x: X + 1, y: Y + 1, width: Wd - 2, height: 3, fill: "#5a6b80" });
+    g += T(X + 8, Y + 21, n.label, { "font-size": Math.min(12.5, (Wd - 14) / (n.label.length * 0.58)), "font-weight": 600, fill: dead ? "var(--dim)" : stall ? "#ffd7d8" : "var(--fg)" });
+    g += T(X + 8, Y + 34, cut(n.machine, Math.floor((Wd - 14) / 5.1)), { "font-size": 8.5, fill: "var(--dim)", class: "mono" });
+    if (dead) g += T(X + 8, Y + 54, "designed only", { "font-size": 9.5, fill: "var(--dim)" });
+    else {
+      g += T(X + 8, Y + 50, `${fmt(n.per24h)} /24h`, { "font-size": 11, fill: "var(--fg)", "font-weight": 600 });
+      const w = n.wait_s != null ? `wait ${dur(n.wait_s)}` : n.last_s != null ? `last fired ${dur(n.last_s)} ago` : "";
+      g += T(X + 8, Y + 62, w, { "font-size": 9.5, fill: stall ? "var(--red)" : "var(--mute)", "font-weight": stall ? 700 : 400 });
+      g += sensorLine(Y + 74);
+      // component tabs: the supply chains this station consumes; amber only when a queue is over
+      const comps = (n.components || []).map(id => F.components.find(c => c.id === id)).filter(Boolean);
+      let cx = X + 6;
+      comps.forEach(c => {
+        const over = (c.queues || []).some(q => q.status === "OVER");
+        const tag = c.tag || c.id.slice(0, 3), w2 = tag.length * 4.9 + 6;
+        if (cx + w2 > X + Wd - 4) return;
+        g += svgEl("rect", { x: cx, y: Y + Ht - 15, width: w2, height: 10, rx: 2, fill: "#1f2630", stroke: over ? "var(--amber)" : "#2f3844", "stroke-width": 0.8 });
+        g += T(cx + 3, Y + Ht - 7.5, tag, { "font-size": 7.8, fill: over ? "var(--amber)" : "var(--mute)", class: "mono" });
+        cx += w2 + 3;
+      });
+    }
+    g += blindChip();
+  } else {
+    const isDock = n.kind === "sink" || n.kind === "source" || n.kind === "offmachine";
+    const unreach = n.kind === "unreachable";
+    g += svgEl("rect", { class: "frame", x: X, y: Y, width: Wd, height: Ht, rx: isDock ? 12 : 3,
+      fill: unreach ? "var(--lane)" : isDock ? "#141a21" : "var(--belt)", stroke: unreach ? "#4a5568" : isDock ? "#323b47" : col, "stroke-width": unreach ? 1 : isDock ? 1 : 1.4, "stroke-dasharray": unreach ? "4 3" : null });
+    g += T(X + 8, Y + 17, cut(n.label, 13), { "font-size": 10.5, "font-weight": 700, "letter-spacing": "0.02em", fill: unreach ? "var(--dim)" : n.color ? col : "var(--mute)" });
+    if (unreach) g += T(X + 8, Y + 36, "never entered", { "font-size": 9.5, fill: "var(--dim)" });
+    else if (isDock) {
+      const v = n.in24h != null ? fmt(n.in24h) : fmt(n.now);
+      g += T(X + 8, Y + 44, v, { "font-size": 20, "font-weight": 600 });
+      g += T(X + 12 + v.length * 11.5, Y + 44, n.in24h != null ? "/24h" : "now", { "font-size": 9.5, fill: "var(--dim)" });
+      g += T(X + 8, Y + 60, n.kind === "offmachine" ? "off the machines" : n.kind, { "font-size": 9, fill: "var(--dim)" });
+      g += sensorLine(Y + 78);
+    } else {
+      g += T(X + 8, Y + 44, fmt(n.now), { "font-size": 20, "font-weight": 600 });
+      if (n.oldest_s) {
+        g += T(X + Wd - 7, Y + 32, "oldest", { "font-size": 8.5, fill: "var(--dim)", "text-anchor": "end" });
+        g += T(X + Wd - 7, Y + 44, dur(n.oldest_s), { "font-size": 10, fill: "var(--mute)", "text-anchor": "end" });
+      }
+      g += sensorLine(Y + 62);
+      // the conveyor: static treads, one pallet per item (grey when parked)
+      const ry = Y + Ht - 16;
+      g += svgEl("rect", { x: X + 5, y: ry, width: Wd - 10, height: 10, rx: 2, fill: "#151b23", stroke: col, "stroke-width": 0.8, opacity: 0.9 });
+      g += svgEl("line", { x1: X + 7, x2: X + Wd - 7, y1: ry + 5, y2: ry + 5, stroke: col, "stroke-width": 6, "stroke-dasharray": "2 4", opacity: 0.22 });
+      const parked = n.parts ? (n.parts.held || 0) + (n.parts.blocked || 0) + (n.parts.snoozed || 0) : 0;
+      const shown = Math.min(n.now || 0, 11), shownParked = Math.min(parked, Math.round(shown * parked / Math.max(1, n.now)));
+      for (let k = 0; k < shown; k++) {
+        const isParked = k >= shown - shownParked;
+        g += svgEl("rect", { x: X + 8 + k * 6.8, y: ry + 2, width: 5, height: 6, rx: 1, fill: isParked ? "#5b6472" : col, stroke: "#0b0e13", "stroke-width": 0.6 });
+      }
+      if ((n.now || 0) > shown) g += T(X + Wd - 8, ry + 8, "+", { "font-size": 9, fill: "var(--mute)", "text-anchor": "end" });
+    }
+    g += blindChip();
+  }
+  const aria = `${n.type} ${n.label}, ${st}${n.now != null ? ", " + n.now + " now" : ""}`;
+  return svgEl("g", { class: "node" + (stall ? " stalled" : ""), tabindex: 0, role: "button", "data-id": n.id, "aria-label": aria }, `<title>${esc(n.label + " — " + (ws ? ws.reading : st))}</title>` + g);
+}
+
+// ---- drill-down -----------------------------------------------------------------------------
+function claimKey(it) { // express > rework > P0 > P1 > … ; then oldest first
+  return [it.express ? 0 : 1, it.at.endsWith("REWORK") ? 0 : 1, it.p ?? 9, it.since ?? 0];
+}
+function byClaim(a, b) { const x = claimKey(a), y = claimKey(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; }
+const parkedOf = it => (it.holds && it.holds.length) || it.blocked;
+
+function itemsFor(F, Lo, n) {
+  if (n.type === "belt") return { list: F.items.filter(i => i.at === n.id), from: [n.id] };
+  const inBelts = Lo.edges.filter(e => e.to === n.id && (!e.kind || e.kind === "flow") && Lo.N.get(e.from).type === "belt").map(e => e.from);
+  return { list: F.items.filter(i => inBelts.includes(i.at)), from: inBelts };
+}
+
+function openDrawer(F, Lo, id, keep = false) {
+  const n = Lo.N.get(id); if (!n) return false;
+  OPEN = { node: id };
+  const scrolled = keep ? $("dbody").scrollTop : 0;
+  document.querySelectorAll(".node.sel").forEach(e => e.classList.remove("sel"));
+  document.querySelectorAll(`[data-id="${CSS.escape(id)}"]`).forEach(e => e.classList.add("sel"));
+  const st = statusOf(F, n);
+  const pill = st === "STALL" ? "red" : st === "OVER" ? "amber" : st === "BLIND" ? "blind" : st === "DEAD" ? "dead" : "ok";
+  $("dtitle").innerHTML = `${esc(n.label)} <span class="badge ${pill}">${st}</span> <span class="dim" style="font-weight:400;font-size:.8rem">${n.type === "station" ? "station" : n.kind || "belt"} · ${esc(n.id)}</span>`;
+  const link = id2 => { const m = Lo.N.get(id2); return m ? `<button class="chip" type="button" data-go="${esc(id2)}">${esc(m.label)}</button>` : esc(id2); };
+  const ins = Lo.edges.filter(e => e.to === id), outs = Lo.edges.filter(e => e.from === id);
+  const edgeChips = list => list.map(e => `${link(e.to === id ? e.from : e.to)}<span class="dim" style="font-size:.75rem"> ${e.n == null ? "?" : fmt(e.n)}${e.kind && e.kind !== "flow" ? " " + e.kind : ""}</span>`).join(" ") || "<span class=dim>none</span>";
+  let h = `<dl class="kv">`;
+  if (n.type === "station") {
+    h += `<dt>Machine</dt><dd><code>${esc(n.machine)}</code></dd>`;
+    h += `<dt>Events</dt><dd><code>${esc((n.events || []).join(" · ") || "none")}</code></dd>`;
+    h += `<dt>Throughput</dt><dd>${n.per24h == null ? "unmeasured" : fmt(n.per24h) + " in 24 h"}</dd>`;
+    if (n.wait_s != null) h += `<dt>Current wait</dt><dd>${dur(n.wait_s)} (oldest input item)</dd>`;
+    if (n.last_s != null) h += `<dt>Last fired</dt><dd>${dur(n.last_s)} ago</dd>`;
+    if (n.refusals) h += `<dt>Refusals</dt><dd>${esc(n.refusals)}</dd>`;
+  } else {
+    if (n.now != null) h += `<dt>Now</dt><dd>${fmt(n.now)}${n.parts ? " · " + Object.entries(n.parts).map(([k, v]) => `${k} ${fmt(v)}`).join(", ") : ""}</dd>`;
+    if (n.oldest_s) h += `<dt>Oldest</dt><dd>${dur(n.oldest_s)}</dd>`;
+    if (n.dwell) h += `<dt>Dwell p50 / p90</dt><dd>${dur(n.dwell[0])} / ${dur(n.dwell[1])}</dd>`;
+    if (n.in24h != null) h += `<dt>In 24 h</dt><dd>${fmt(n.in24h)}</dd>`;
+    if (n.sub) h += `<dt>Sub-phases</dt><dd>${esc(n.sub.join(" → "))}</dd>`;
+    if (n.cap) h += `<dt>Capacity</dt><dd>${esc(n.cap)}</dd>`;
+  }
+  h += `<dt>Inputs</dt><dd class="chips">${edgeChips(ins)}</dd><dt>Outputs</dt><dd class="chips">${edgeChips(outs)}</dd>`;
+  if (n.note) h += `<dt>Note</dt><dd>${esc(n.note)}</dd>`;
+  h += `</dl>`;
+  const sens = sensorsAt(F, id);
+  h += `<h2>Sensors</h2>` + (sens.length ? sens.map(s => `<div class="sens ${s.status}"><span class="badge ${s.status === "STALL" ? "red" : s.status === "OVER" ? "amber" : s.status === "BLIND" || s.status === "MISSING" ? "blind" : "ok"}">${s.status}</span> <b>${esc(s.short)}</b><div class="rd">${esc(s.reading)}</div><div class="src">${esc(s.kind)} · ${esc(s.src)}</div></div>`).join("") : `<p class="dim">${F.blind ? "No sensors were read, so nothing here is known to be well." : `No sensor covers this ${n.type}.`}</p>`);
+  const comps = (n.components || []).map(c => F.components.find(x => x.id === c)).filter(Boolean);
+  if (comps.length) {
+    h += `<h2>Supply chains</h2>` + comps.map(c => `<div class="comp"><b>${esc(c.label)}</b> <span class="dim">${esc(c.steps.join(" → "))}</span>${c.note ? `<div class="dim" style="font-size:.78rem">${esc(c.note)}</div>` : ""}${(c.queues || []).map(q => {
+      const diff = q.effective != null && q.config != null && String(q.effective) !== String(q.config);
+      return `<div class="q"><span>${esc(q.label)}</span>${q.config != null ? `<span class="badge">config ${esc(q.config)}</span>` : ""}${q.effective != null ? `<span class="badge ${diff ? "amber" : ""}">effective ${esc(q.effective)}</span>` : ""}${q.now ? `<span class="${q.status === "OVER" ? "" : "dim"}" style="${q.status === "OVER" ? "color:var(--amber)" : ""}">${esc(q.now)}</span>` : ""}${q.why ? `<span class="dim">· ${esc(q.why)}</span>` : ""}</div>`;
+    }).join("")}</div>`).join("");
+  }
+  const { list, from } = itemsFor(F, Lo, n);
+  const live = list.filter(i => !parkedOf(i)).sort(byClaim), parked = list.filter(parkedOf).sort(byClaim);
+  const total = from.reduce((s, b) => s + (Lo.N.get(b).now || 0), 0);
+  const isSink = n.kind === "sink" || n.kind === "offmachine";
+  h += `<h2>${n.type === "station" ? "Next at this station" : isSink ? "Arrived in the last 24 h" : "On this belt"} <span class="dim" style="font-weight:400">${n.type === "station" ? "from " + from.map(b => esc(Lo.N.get(b).label)).join(" + ") + " · " : ""}claim order: express › rework › P0 › P1 › …, then oldest</span></h2>`;
+  if (!list.length) h += `<p class="dim">${total ? `${total} on this belt, none listed${REPO ? " for " + esc(REPO) : ""}.` : isSink ? "Arrivals are not listed for a sink." : "Empty."}</p>`;
+  else {
+    h += `<div class="tbl"><table><thead><tr><th>#</th><th>id</th><th>title</th><th>P</th><th>age</th><th>flags</th></tr></thead><tbody>`;
+    [...live, ...parked].forEach((it, k) => {
+      const flags = [it.express && `<span class="badge red">express</span>`, it.at.endsWith("REWORK") && `<span class="badge" style="color:#e08ab0">rework</span>`,
+        ...(it.holds || []).map(x => `<span class="badge">held:${esc(x)}</span>`), it.blocked && `<span class="badge">blocked by ${esc(it.blocked)}</span>`,
+        it.phase && `<span class="badge">${esc(it.phase)}</span>`, it.sifted === false && `<span class="badge amber">unsifted</span>`, it.members && `<span class="badge">${it.members} members</span>`,
+        it.repo && `<span class="dim">${esc(it.repo)}</span>`].filter(Boolean).join(" ");
+      h += `<tr class="${parkedOf(it) ? "parked" : ""}"><td class="n">${parkedOf(it) ? "–" : k + 1}</td><td><span class="id">${esc(it.id)}</span></td><td>${esc(it.title)}</td><td class="n">${it.p != null ? "P" + it.p : ""}</td><td class="n">${it.since == null ? "–" : dur(F.meta.now - it.since)}</td><td>${flags}</td></tr>`;
+    });
+    h += `</tbody></table></div>`;
+    if (total > list.length && !REPO) h += `<p class="dim" style="font-size:.8rem">Showing ${list.length} of ${total}. Parked items (held, blocked) sit on the belt but are not claimable, so they rank last.</p>`;
+  }
+  $("dbody").innerHTML = h;
+  $("drawer").hidden = false;
+  if (keep) $("dbody").scrollTop = scrolled;
+  else $("dclose").focus({ preventScroll: true });
+  return true;
+}
+function closeDrawer() { OPEN = null; $("drawer").hidden = true; document.querySelectorAll(".node.sel").forEach(e => e.classList.remove("sel")); }
+
+// ---- page -----------------------------------------------------------------------------------
+let RAW = null, CUR = null, LO = null, OPEN = null;
+let REPO = "";
+let ZOOM = null; // null = fit the box (never below MIN_SCALE, never above 100 %)
+let WRAP = "auto";
+let FLOORK = 1;
+const $ = id => document.getElementById(id);
+const parkedItem = it => (it.holds && it.holds.length) || it.blocked != null;
+
+// The floor as the viewer asked to see it: the repo filter applies to items, the belts' counts and
+// ages, the stations' waits and the STALL sensors. 24 h flow counts are never filtered.
+function view(raw, repo) {
+  const now = raw.meta?.now ?? Math.floor(Date.now() / 1000);
+  const F = { ...raw, meta: { ...raw.meta, now }, blind: !Array.isArray(raw.sensors), sensors: Array.isArray(raw.sensors) ? raw.sensors : [] };
+  F.lanes ||= []; F.belts ||= []; F.stations ||= []; F.edges ||= []; F.items ||= []; F.components ||= [];
+  F.repos = [...new Set(F.items.map(i => i.repo).filter(Boolean))].sort();
+  if (!repo) return F;
+  F.items = F.items.filter(i => i.repo === repo);
+  F.sensors = F.sensors.filter(s => s.status !== "STALL" || !s.repo || s.repo === repo);
+  F.belts = F.belts.map(b => {
+    if (b.now == null) return b;
+    const here = F.items.filter(i => i.at === b.id);
+    const since = here.map(i => i.since).filter(s => s != null);
+    const parts = b.parts && { claimable: null, held: here.filter(i => i.holds?.length).length, blocked: here.filter(i => !i.holds?.length && i.blocked != null).length };
+    return { ...b, now: here.length, oldest_s: since.length ? now - Math.min(...since) : null, parts };
+  });
+  F.stations = F.stations.map(s => {
+    if (s.wait_s == null) return s;
+    const since = F.items.filter(i => !parkedItem(i) && (s.inputs || []).includes(i.at) && i.since != null).map(i => i.since);
+    return { ...s, wait_s: since.length ? now - Math.min(...since) : 0 };
+  });
+  return F;
+}
+
+function render() {
+  const F = CUR;
+  // one line when it fits the box at a readable scale, else two rows (or what the viewer picked)
+  LO = layout(F);
+  const avail = $("floorwrap").clientWidth - 2;
+  if (WRAP === "two" || (WRAP === "auto" && avail / LO.W < 0.8)) LO = layout(F, { wrap: true });
+  $("wrapbtn").textContent = { auto: "Layout: auto", one: "Layout: one line", two: "Layout: two rows" }[WRAP];
+  const svg = $("floor");
+  svg.setAttribute("viewBox", `0 0 ${LO.W} ${LO.H}`);
+  svg.innerHTML = drawFloor(F, LO);
+  sizeFloor();
+
+  const sel = $("repo");
+  sel.innerHTML = `<option value="">all repos</option>` + F.repos.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join("");
+  sel.value = REPO;
+
+  const all = [...LO.N.values()];
+  const stalls = all.filter(n => statusOf(F, n) === "STALL");
+  const blinds = all.filter(n => statusOf(F, n) === "BLIND");
+  const missing = F.sensors.filter(s => s.status === "MISSING").length;
+  const sensorsSay = F.blind ? `<span class="red">no sensors read</span>` : `${F.sensors.length} sensor${F.sensors.length === 1 ? "" : "s"} · <span class="${stalls.length ? "red" : "dim"}">${stalls.length} stalled</span> · ${blinds.length} blind`;
+  $("pgtitle").innerHTML = `Factory <span class="dim" style="font-weight:400">— ${F.stations.length} stations · ${F.belts.length} belts · ${sensorsSay}</span>`;
+  $("alarms").innerHTML = stalls.map(n => {
+    const s = worstSensor(F, n.id);
+    return `<div class="alarm" tabindex="0" role="button" data-id="${esc(n.id)}"><span class="badge red">P0 STALL</span><b>${esc(n.label)}</b><span class="t">${esc(s.reading)}</span><span class="dim" style="font-size:.78rem">${esc(s.src)}</span></div>`;
+  }).join("");
+  $("errors").innerHTML = (F.meta.errors || []).length ? `<div class="badge amber" style="white-space:normal">unread: ${esc(F.meta.errors.join(" · "))}</div>` : "";
+  const get = id => F.stations.find(s => s.id === id) || {};
+  const belt = id => F.belts.find(b => b.id === id) || {};
+  $("kpis").innerHTML = [
+    ["Output, 24 h", `${fmt(get("bead.land").per24h)} beads`, `landed in ${fmt(belt("batch.LANDED").in24h)} rounds`],
+    ["Releases live, 24 h", fmt(belt("rel.ACTIVATED").in24h), "all repos"],
+    ["Front half, 24 h", `${fmt(get("bead.claim").per24h)} → ${fmt(get("bead.build").per24h)}`, "claims to submits"],
+    ["Back half, 24 h", `${fmt(get("bead.cut").per24h)} → ${fmt(get("bead.land").per24h)}`, "deliveries to landings"],
+    ["Sensors now", F.blind ? "none read" : `${stalls.length} stall · ${blinds.length} blind`, F.blind ? "every node drawn blind" : `${missing} blind spots named, drawn hatched`],
+  ].map(([k, v, s]) => `<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
+
+  const sw = (svg) => `<svg width="26" height="10" aria-hidden="true">${svg}</svg>`;
+  $("legend").innerHTML = [
+    [sw(`<rect x="1" y="0.5" width="24" height="9" rx="2" fill="#0a0d12" stroke="#3b82c4"/><rect x="4" y="5" width="3" height="3" fill="#3b82c4"/><rect x="9" y="5" width="3" height="3" fill="#3b82c4"/>`), "belt = lifecycle state; a pallet per item, grey when parked"],
+    [sw(`<rect x="3" y="0.5" width="20" height="9" rx="2" fill="#161b22" stroke="#323b47"/>`), "station = transitions, by actor"],
+    [sw(`<path d="M1,5 H19" stroke="${EDGE.flow}" stroke-width="2.5"/><path d="M18,1.5 L25,5 L18,8.5z" fill="${EDGE.flow}"/>`), "flow; width 1–3.5 px by 24 h count"],
+    [sw(`<path d="M1,5 H19" stroke="${EDGE.back}" stroke-width="2" stroke-dasharray="5 3"/><path d="M18,1.5 L25,5 L18,8.5z" fill="${EDGE.back}"/>`), "path back"],
+    [sw(`<path d="M1,5 H19" stroke="${EDGE.signal}" stroke-dasharray="1.5 3.5"/><path d="M18,1.5 L25,5 L18,8.5z" fill="${EDGE.signal}"/>`), "cascade / signal"],
+    [sw(`<rect x="3" y="1" width="20" height="8" rx="2" fill="none" stroke="#4a5568" stroke-dasharray="3 2"/>`), "designed, no producer"],
+    [sw(`<rect x="1" y="0.5" width="24" height="9" fill="url(#lgHaz)" stroke="#ff6b6d"/><defs><pattern id="lgHaz" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#1a0f10"/><rect width="3" height="6" fill="#ff6b6d"/></pattern></defs>`), "<b class=red>STALL</b> — the only thing that moves"],
+    [sw(`<rect x="2" y="1" width="22" height="8" rx="2" fill="#1f2630" stroke="#e0a43a"/>`), "OVER (perf or pool)"],
+    [sw(`<rect x="2" y="1" width="22" height="8" rx="2" fill="url(#lgBl)" stroke="#8a93a0"/><defs><pattern id="lgBl" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" fill="#161b22"/><rect width="1.5" height="4" fill="#3a4452"/></pattern></defs>`), "BLIND, never all-clear; a hatched number counts blind spots"],
+  ].map(([i, t]) => `<span>${i}${t}</span>`).join("");
+
+  // phone: the floor as a list in flow order
+  let List = "";
+  for (const lane of LO.lanes) {
+    List += `<div class="lanehd">${esc(lane.label)}</div>`;
+    all.filter(n => n.lane === lane.id).sort((a, b) => LO.pos.get(a.id).col - LO.pos.get(b.id).col || LO.pos.get(a.id).row - LO.pos.get(b.id).row).forEach(n => {
+      const st = statusOf(F, n), ws = worstSensor(F, n.id);
+      const num = n.type === "station" ? fmt(n.per24h) : n.in24h != null ? fmt(n.in24h) : fmt(n.now);
+      const unit = n.type === "station" ? "/24h" : n.in24h != null ? "in /24h" : "now";
+      List += `<div class="lrow ${st === "STALL" ? "stall" : ""}" tabindex="0" role="button" data-id="${esc(n.id)}"><span class="stripe" style="background:${n.type === "belt" && n.color ? `var(${n.color})` : STATUS_COLOR[st]}"></span><div class="body"><span class="nm">${esc(n.label)}</span> <span class="dim" style="font-size:.75rem">${n.type === "station" ? "station" : n.kind || "belt"}</span>${st !== "OK" && st !== "WAIT" ? ` <span class="badge ${st === "STALL" ? "red" : st === "OVER" ? "amber" : st === "BLIND" ? "blind" : "dead"}">${st}</span>` : ""}<div class="meta">${n.type === "station" ? esc(n.machine) : n.oldest_s ? "oldest " + dur(n.oldest_s) : ""}${ws ? " · " + esc(ws.short) : ""}</div></div><div class="num">${num}<div class="dim" style="font-size:.7rem;font-weight:400">${unit}</div></div></div>`;
+    });
+  }
+  $("list").innerHTML = List;
+}
+
+function sensorDrawer(F, id) {
+  const sen = F.sensors.find(x => x.id === id);
+  if (!sen) return false;
+  OPEN = { sensor: id };
+  $("dtitle").innerHTML = `Control bus <span class="badge amber">${esc(sen.status)}</span>`;
+  $("dbody").innerHTML = `<div class="sens"><b>${esc(sen.short)}</b><div class="rd">${esc(sen.reading)}</div><div class="src">${esc(sen.src)}</div></div><p class="dim">Every transition on the floor is a compare-and-set on the lifecycle store, so its latency sits under every station.</p>`;
+  $("drawer").hidden = false;
+  return true;
+}
+
+// Draws the latest data; the open drawer, the zoom and the layout choice survive it.
+function draw() {
+  CUR = view(RAW, REPO);
+  if (REPO && !CUR.repos.includes(REPO)) { REPO = ""; CUR = view(RAW, REPO); }
+  render();
+  if (!OPEN) return;
+  const shown = OPEN.node ? openDrawer(CUR, LO, OPEN.node, true) : sensorDrawer(CUR, OPEN.sensor);
+  if (!shown) closeDrawer();
+}
+
+let failing = false;
+async function load() {
+  try {
+    const r = await fetch("/api/factory", { cache: "no-store" });
+    if (!r.ok) throw new Error(String(r.status));
+    RAW = await r.json();
+    failing = false;
+  } catch (e) {
+    failing = true;
+  }
+  $("offline").hidden = !failing;
+  if (RAW) draw();
+  else $("pgtitle").textContent = failing ? "Factory — no floor read yet" : "Factory";
+}
+function sizeFloor() {
+  const wrap = document.getElementById("floorwrap"), svg = document.getElementById("floor");
+  const avail = wrap.clientWidth - 2;
+  const k = ZOOM ?? Math.min(1, Math.max(avail / LO.W, MIN_SCALE));
+  svg.setAttribute("width", Math.round(LO.W * k)); svg.setAttribute("height", Math.round(LO.H * k));
+  document.getElementById("zlabel").textContent = Math.round(k * 100) + "%";
+  FLOORK = k;
+}
+document.querySelector(".floorbar").addEventListener("click", ev => {
+  if (ev.target.id === "wrapbtn") { WRAP = { auto: "one", one: "two", two: "auto" }[WRAP]; render(); return; }
+  const b = ev.target.closest("[data-z]"); if (!b) return;
+  const z = b.dataset.z;
+  ZOOM = z === "fit" ? null : Math.min(2, Math.max(0.3, FLOORK * (z === "+" ? 1.25 : 0.8)));
+  sizeFloor();
+});
+// drag to pan, mouse only (touch pans natively)
+(() => {
+  const w = document.getElementById("floorwrap"); let d = null;
+  w.addEventListener("pointerdown", ev => { if (ev.pointerType !== "mouse" || ev.button) return; d = { x: ev.clientX, y: ev.clientY, l: w.scrollLeft, t: w.scrollTop, moved: false }; });
+  window.addEventListener("pointermove", ev => { if (!d) return; const dx = ev.clientX - d.x, dy = ev.clientY - d.y; if (!d.moved && Math.hypot(dx, dy) < 4) return; d.moved = true; w.classList.add("drag"); w.scrollLeft = d.l - dx; w.scrollTop = d.t - dy; });
+  window.addEventListener("pointerup", () => { if (d && d.moved) { const stop = e => { e.stopPropagation(); }; w.addEventListener("click", stop, { capture: true, once: true }); } d = null; w.classList.remove("drag"); });
+})();
+
+$("repo").addEventListener("change", ev => { REPO = ev.target.value; draw(); });
+document.addEventListener("click", ev => {
+  const go = ev.target.closest("[data-go]"); if (go) { openDrawer(CUR, LO, go.dataset.go); return; }
+  const n = ev.target.closest("[data-id]"); if (n) { openDrawer(CUR, LO, n.dataset.id); return; }
+  const s = ev.target.closest("[data-sensor]"); if (s) { sensorDrawer(CUR, s.dataset.sensor); return; }
+  if (ev.target.id === "dclose") closeDrawer();
+});
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape") closeDrawer();
+  if ((ev.key === "Enter" || ev.key === " ") && ev.target.closest && ev.target.closest("[data-id],[data-sensor]")) { ev.preventDefault(); ev.target.closest("[data-id],[data-sensor]").dispatchEvent(new MouseEvent("click", { bubbles: true })); }
+});
+let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => CUR && (WRAP === "auto" ? render() : sizeFloor()), 80); });
+load();
+setInterval(load, 15000);
+</script>

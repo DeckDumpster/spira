@@ -1,0 +1,2428 @@
+{
+ "meta": {
+  "now": 1800000000,
+  "window_s": 86400,
+  "errors": []
+ },
+ "lanes": [
+  {
+   "id": "bead",
+   "label": "Bead line"
+  },
+  {
+   "id": "batch",
+   "label": "Batch line"
+  },
+  {
+   "id": "side",
+   "label": "Side loops"
+  },
+  {
+   "id": "dead",
+   "label": "Designed, never built"
+  }
+ ],
+ "belts": [
+  {
+   "id": "bead.OPEN",
+   "lane": "bead",
+   "kind": "source",
+   "label": "OPEN",
+   "machine": "bead",
+   "state": "OPEN",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "bead.LANDED",
+   "lane": "bead",
+   "kind": "sink",
+   "label": "LANDED",
+   "machine": "bead",
+   "state": "LANDED",
+   "now": null,
+   "oldest_s": null,
+   "in24h": 14,
+   "parts": null
+  },
+  {
+   "id": "bead.DROPPED",
+   "lane": "bead",
+   "kind": "sink",
+   "label": "DROPPED",
+   "machine": "bead",
+   "state": "DROPPED",
+   "now": null,
+   "oldest_s": null,
+   "in24h": 2,
+   "parts": null
+  },
+  {
+   "id": "bead.READY",
+   "lane": "bead",
+   "kind": "belt",
+   "label": "READY",
+   "machine": "bead",
+   "state": "READY",
+   "now": 5,
+   "oldest_s": 29600,
+   "in24h": null,
+   "parts": {
+    "claimable": null,
+    "held": 1,
+    "blocked": 1
+   }
+  },
+  {
+   "id": "bead.SUPERSEDED",
+   "lane": "bead",
+   "kind": "sink",
+   "label": "SUPERSEDED",
+   "machine": "bead",
+   "state": "SUPERSEDED",
+   "now": null,
+   "oldest_s": null,
+   "in24h": 0,
+   "parts": null
+  },
+  {
+   "id": "bead.WORKING",
+   "lane": "bead",
+   "kind": "belt",
+   "label": "WORKING",
+   "machine": "bead",
+   "state": "WORKING",
+   "now": 2,
+   "oldest_s": 44200,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "bead.DONE",
+   "lane": "bead",
+   "kind": "sink",
+   "label": "DONE",
+   "machine": "bead",
+   "state": "DONE",
+   "now": null,
+   "oldest_s": null,
+   "in24h": 4,
+   "parts": null
+  },
+  {
+   "id": "bead.SUBMITTED",
+   "lane": "bead",
+   "kind": "belt",
+   "label": "SUBMITTED",
+   "machine": "bead",
+   "state": "SUBMITTED",
+   "now": 3,
+   "oldest_s": 66100,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "bead.REWORK",
+   "lane": "bead",
+   "kind": "belt",
+   "label": "REWORK",
+   "machine": "bead",
+   "state": "REWORK",
+   "now": 1,
+   "oldest_s": 73400,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "bead.IN_DELIVERY",
+   "lane": "bead",
+   "kind": "belt",
+   "label": "IN_DELIVERY",
+   "machine": "bead",
+   "state": "IN_DELIVERY",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "bead.CERTIFIED",
+   "lane": "bead",
+   "kind": "belt",
+   "label": "CERTIFIED",
+   "machine": "bead",
+   "state": "CERTIFIED",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "batch.STAGED",
+   "lane": "dead",
+   "kind": "unreachable",
+   "label": "STAGED",
+   "machine": "batch",
+   "state": "STAGED",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "batch.DISCARDED",
+   "lane": "dead",
+   "kind": "unreachable",
+   "label": "DISCARDED",
+   "machine": "batch",
+   "state": "DISCARDED",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "batch.OPEN",
+   "lane": "batch",
+   "kind": "belt",
+   "label": "OPEN",
+   "machine": "batch",
+   "state": "OPEN",
+   "now": 1,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "batch.ABANDONED",
+   "lane": "batch",
+   "kind": "sink",
+   "label": "ABANDONED",
+   "machine": "batch",
+   "state": "ABANDONED",
+   "now": null,
+   "oldest_s": null,
+   "in24h": 2,
+   "parts": null
+  },
+  {
+   "id": "batch.CI_RUNNING",
+   "lane": "batch",
+   "kind": "belt",
+   "label": "CI_RUNNING",
+   "machine": "batch",
+   "state": "CI_RUNNING",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "batch.GREEN",
+   "lane": "batch",
+   "kind": "belt",
+   "label": "GREEN",
+   "machine": "batch",
+   "state": "GREEN",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "batch.ATTRIBUTING",
+   "lane": "batch",
+   "kind": "belt",
+   "label": "ATTRIBUTING",
+   "machine": "batch",
+   "state": "ATTRIBUTING",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "batch.REBUILDING",
+   "lane": "batch",
+   "kind": "belt",
+   "label": "REBUILDING",
+   "machine": "batch",
+   "state": "REBUILDING",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "batch.LANDED",
+   "lane": "batch",
+   "kind": "sink",
+   "label": "LANDED",
+   "machine": "batch",
+   "state": "LANDED",
+   "now": null,
+   "oldest_s": null,
+   "in24h": 1,
+   "parts": null
+  },
+  {
+   "id": "batch.LANDING",
+   "lane": "dead",
+   "kind": "unreachable",
+   "label": "LANDING",
+   "machine": "batch",
+   "state": "LANDING",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "batch.DEPLOYING",
+   "lane": "dead",
+   "kind": "unreachable",
+   "label": "DEPLOYING",
+   "machine": "batch",
+   "state": "DEPLOYING",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "batch.SETTLED",
+   "lane": "batch",
+   "kind": "sink",
+   "label": "SETTLED",
+   "machine": "batch",
+   "state": "SETTLED",
+   "now": null,
+   "oldest_s": null,
+   "in24h": 0,
+   "parts": null
+  },
+  {
+   "id": "ask.OPEN",
+   "lane": "side",
+   "kind": "source",
+   "label": "ASK OPEN",
+   "machine": "ask",
+   "state": "OPEN",
+   "now": 1,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "ask.ANSWERED",
+   "lane": "side",
+   "kind": "sink",
+   "label": "ASK ANSWERED",
+   "machine": "ask",
+   "state": "ANSWERED",
+   "now": null,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "ask.DEFAULT_TAKEN",
+   "lane": "side",
+   "kind": "sink",
+   "label": "ASK DEFAULT_TAKEN",
+   "machine": "ask",
+   "state": "DEFAULT_TAKEN",
+   "now": null,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "ask.WITHDRAWN",
+   "lane": "side",
+   "kind": "sink",
+   "label": "ASK WITHDRAWN",
+   "machine": "ask",
+   "state": "WITHDRAWN",
+   "now": null,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "mending.WAITING",
+   "lane": "side",
+   "kind": "source",
+   "label": "MEND WAITING",
+   "machine": "mending",
+   "state": "WAITING",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "mending.ENVIRONMENT",
+   "lane": "side",
+   "kind": "sink",
+   "label": "MEND ENVIRONMENT",
+   "machine": "mending",
+   "state": "ENVIRONMENT",
+   "now": null,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "mending.FLAKY",
+   "lane": "side",
+   "kind": "sink",
+   "label": "MEND FLAKY",
+   "machine": "mending",
+   "state": "FLAKY",
+   "now": null,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "mending.MENDED",
+   "lane": "side",
+   "kind": "sink",
+   "label": "MEND MENDED",
+   "machine": "mending",
+   "state": "MENDED",
+   "now": null,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "mending.MENDING",
+   "lane": "side",
+   "kind": "belt",
+   "label": "MEND MENDING",
+   "machine": "mending",
+   "state": "MENDING",
+   "now": 0,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "mending.RETURNED",
+   "lane": "side",
+   "kind": "sink",
+   "label": "MEND RETURNED",
+   "machine": "mending",
+   "state": "RETURNED",
+   "now": null,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "mending.UNSURE",
+   "lane": "side",
+   "kind": "sink",
+   "label": "MEND UNSURE",
+   "machine": "mending",
+   "state": "UNSURE",
+   "now": null,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  },
+  {
+   "id": "rel.ACTIVATED",
+   "lane": "batch",
+   "kind": "offmachine",
+   "label": "RELEASE LIVE",
+   "machine": "release",
+   "state": "ACTIVATED",
+   "now": null,
+   "oldest_s": null,
+   "in24h": 0,
+   "parts": null
+  },
+  {
+   "id": "pub.MERGED",
+   "lane": "batch",
+   "kind": "offmachine",
+   "label": "ON ORIGIN",
+   "machine": "publish",
+   "state": "MERGED",
+   "now": null,
+   "oldest_s": null,
+   "in24h": null,
+   "parts": null
+  }
+ ],
+ "stations": [
+  {
+   "id": "bead.file",
+   "lane": "bead",
+   "label": "file",
+   "machine": "bead.sh \u00b7 intake.* \u00b7 concierge",
+   "events": [],
+   "per24h": null,
+   "wait_s": null,
+   "last_s": null,
+   "live": true,
+   "components": [
+    "intent"
+   ],
+   "creates": "bead.READY",
+   "inputs": [],
+   "outputs": [
+    "bead.READY"
+   ]
+  },
+  {
+   "id": "bead.promote",
+   "lane": "bead",
+   "label": "promote",
+   "machine": "bead.sh",
+   "events": [
+    "bead.Promote"
+   ],
+   "per24h": 0,
+   "wait_s": 0,
+   "last_s": null,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "bead.OPEN"
+   ],
+   "outputs": [
+    "bead.READY"
+   ]
+  },
+  {
+   "id": "bead.claim",
+   "lane": "bead",
+   "label": "claim",
+   "machine": "dwarf \u2192 spira-lc CAS",
+   "events": [
+    "bead.Claim"
+   ],
+   "per24h": 49,
+   "wait_s": 73400,
+   "last_s": 600,
+   "live": true,
+   "components": [
+    "dwarf-session",
+    "stack-proposal"
+   ],
+   "creates": null,
+   "inputs": [
+    "bead.READY",
+    "bead.REWORK"
+   ],
+   "outputs": [
+    "bead.WORKING"
+   ]
+  },
+  {
+   "id": "bead.build",
+   "lane": "bead",
+   "label": "build + submit",
+   "machine": "dwarf + work submit broker",
+   "events": [
+    "bead.Phase",
+    "bead.Renew",
+    "bead.Disposition",
+    "bead.Submit"
+   ],
+   "per24h": 12,
+   "wait_s": 44200,
+   "last_s": 600,
+   "live": true,
+   "components": [
+    "worktree",
+    "build-dir",
+    "compile",
+    "model-session",
+    "checks",
+    "submit-proof"
+   ],
+   "creates": null,
+   "inputs": [
+    "bead.WORKING",
+    "bead.CERTIFIED"
+   ],
+   "outputs": [
+    "bead.SUBMITTED"
+   ]
+  },
+  {
+   "id": "bead.unclaim",
+   "lane": "bead",
+   "label": "unclaim / reap",
+   "machine": "dwarf \u00b7 sentinel-pass",
+   "events": [
+    "bead.Release",
+    "bead.HolderDead"
+   ],
+   "per24h": 35,
+   "wait_s": 44200,
+   "last_s": 600,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "bead.WORKING"
+   ],
+   "outputs": [
+    "bead.READY"
+   ]
+  },
+  {
+   "id": "bead.finish",
+   "lane": "bead",
+   "label": "persona finish",
+   "machine": "lane dwarf",
+   "events": [
+    "bead.Done"
+   ],
+   "per24h": 4,
+   "wait_s": 44200,
+   "last_s": 600,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "bead.READY",
+    "bead.WORKING"
+   ],
+   "outputs": [
+    "bead.DONE"
+   ]
+  },
+  {
+   "id": "bead.gate",
+   "lane": "bead",
+   "label": "tip gate",
+   "machine": "gate.worker \u2190 sentinel-pass",
+   "events": [
+    "bead.GatePass",
+    "bead.GateInfra"
+   ],
+   "per24h": 0,
+   "wait_s": 66100,
+   "last_s": null,
+   "live": true,
+   "components": [
+    "gate-verdict"
+   ],
+   "creates": null,
+   "inputs": [
+    "bead.SUBMITTED"
+   ],
+   "outputs": [
+    "bead.CERTIFIED"
+   ]
+  },
+  {
+   "id": "bead.sift",
+   "lane": "bead",
+   "label": "sift",
+   "machine": "task:sift \u00b7 60 s",
+   "events": [
+    "bead.Sifted"
+   ],
+   "per24h": 11,
+   "wait_s": null,
+   "last_s": 600,
+   "live": true,
+   "components": [
+    "base-fetch"
+   ],
+   "creates": null,
+   "inputs": [],
+   "outputs": []
+  },
+  {
+   "id": "bead.sendback",
+   "lane": "bead",
+   "label": "send back",
+   "machine": "queue eject --red \u00b7 concierge",
+   "events": [
+    "bead.GateRed"
+   ],
+   "per24h": 3,
+   "wait_s": 66100,
+   "last_s": 600,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "bead.SUBMITTED",
+    "bead.CERTIFIED"
+   ],
+   "outputs": [
+    "bead.REWORK"
+   ]
+  },
+  {
+   "id": "bead.cut",
+   "lane": "bead",
+   "label": "round open",
+   "machine": "queue round open \u2190 batcher.local",
+   "events": [
+    "bead.Deliver",
+    "batch.MemberAdded"
+   ],
+   "per24h": 20,
+   "wait_s": 66100,
+   "last_s": 600,
+   "live": true,
+   "components": [
+    "round-tree",
+    "base",
+    "queue-lock"
+   ],
+   "creates": "batch.OPEN",
+   "inputs": [
+    "bead.SUBMITTED",
+    "bead.CERTIFIED"
+   ],
+   "outputs": [
+    "bead.IN_DELIVERY",
+    "batch.OPEN"
+   ]
+  },
+  {
+   "id": "bead.release",
+   "lane": "bead",
+   "label": "release from round",
+   "machine": "batch cascade \u00b7 reconciler",
+   "events": [
+    "bead.Requeued",
+    "bead.Returned"
+   ],
+   "per24h": 9,
+   "wait_s": 0,
+   "last_s": 600,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "bead.IN_DELIVERY"
+   ],
+   "outputs": [
+    "bead.SUBMITTED",
+    "bead.CERTIFIED",
+    "bead.REWORK"
+   ]
+  },
+  {
+   "id": "bead.land",
+   "lane": "bead",
+   "label": "land",
+   "machine": "queue round land \u2190 batcher.local",
+   "events": [
+    "bead.Delivered",
+    "batch.FastForward@GREEN"
+   ],
+   "per24h": 15,
+   "wait_s": 73400,
+   "last_s": 600,
+   "live": true,
+   "components": [
+    "land-lock"
+   ],
+   "creates": null,
+   "inputs": [
+    "bead.WORKING",
+    "bead.IN_DELIVERY",
+    "bead.REWORK",
+    "batch.GREEN"
+   ],
+   "outputs": [
+    "bead.LANDED",
+    "batch.LANDED"
+   ]
+  },
+  {
+   "id": "bead.retire",
+   "lane": "bead",
+   "label": "retire",
+   "machine": "concierge \u00b7 reconciler \u00b7 reclassify",
+   "events": [
+    "bead.Drop",
+    "bead.Supersede",
+    "bead.ContentOnBase"
+   ],
+   "per24h": 2,
+   "wait_s": 15000,
+   "last_s": 600,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "bead.READY"
+   ],
+   "outputs": [
+    "bead.LANDED",
+    "bead.DROPPED",
+    "bead.SUPERSEDED"
+   ]
+  },
+  {
+   "id": "batch.pass",
+   "lane": "batch",
+   "label": "pass",
+   "machine": "round-vm run \u2190 CERTIFY leg",
+   "events": [
+    "batch.CiStarted",
+    "batch.PassStarted",
+    "batch.SuitesStarted",
+    "batch.Failed"
+   ],
+   "per24h": 1,
+   "wait_s": 0,
+   "last_s": 3000,
+   "live": true,
+   "components": [
+    "round-vm",
+    "pass-run"
+   ],
+   "creates": null,
+   "inputs": [
+    "batch.OPEN",
+    "batch.ATTRIBUTING",
+    "batch.REBUILDING"
+   ],
+   "outputs": [
+    "batch.CI_RUNNING"
+   ]
+  },
+  {
+   "id": "batch.abandon",
+   "lane": "batch",
+   "label": "abandon",
+   "machine": "batcher-cut \u00b7 reconciler",
+   "events": [
+    "batch.Abandon"
+   ],
+   "per24h": 2,
+   "wait_s": 0,
+   "last_s": 5000,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "batch.OPEN",
+    "batch.CI_RUNNING",
+    "batch.GREEN",
+    "batch.ATTRIBUTING",
+    "batch.REBUILDING"
+   ],
+   "outputs": [
+    "batch.ABANDONED"
+   ]
+  },
+  {
+   "id": "batch.verdict",
+   "lane": "batch",
+   "label": "verdict",
+   "machine": "queue round pass-verdict",
+   "events": [
+    "batch.PassGreen",
+    "batch.PassRed",
+    "batch.PassIncomplete",
+    "batch.PassPreempted"
+   ],
+   "per24h": 2,
+   "wait_s": 0,
+   "last_s": 2000,
+   "live": true,
+   "components": [
+    "pass-verdict"
+   ],
+   "creates": null,
+   "inputs": [
+    "batch.CI_RUNNING"
+   ],
+   "outputs": [
+    "batch.GREEN",
+    "batch.ATTRIBUTING"
+   ]
+  },
+  {
+   "id": "batch.eject",
+   "lane": "batch",
+   "label": "eject / rebuild",
+   "machine": "queue round eject \u2190 EJECT",
+   "events": [
+    "batch.Eject",
+    "batch.PassRebuilt"
+   ],
+   "per24h": 1,
+   "wait_s": 0,
+   "last_s": 6500,
+   "live": true,
+   "components": [
+    "attribution"
+   ],
+   "creates": null,
+   "inputs": [
+    "batch.GREEN",
+    "batch.ATTRIBUTING"
+   ],
+   "outputs": [
+    "batch.OPEN"
+   ]
+  },
+  {
+   "id": "ask.close",
+   "lane": "side",
+   "label": "answer ask",
+   "machine": "concierge \u00b7 close-ask",
+   "events": [
+    "ask.Answer",
+    "ask.TakeDefault",
+    "ask.Withdraw"
+   ],
+   "per24h": null,
+   "wait_s": 0,
+   "last_s": null,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "ask.OPEN"
+   ],
+   "outputs": [
+    "ask.ANSWERED",
+    "ask.DEFAULT_TAKEN",
+    "ask.WITHDRAWN"
+   ]
+  },
+  {
+   "id": "mending.pickup",
+   "lane": "side",
+   "label": "mend pickup",
+   "machine": "mender dwarf",
+   "events": [
+    "mending.Pickup"
+   ],
+   "per24h": null,
+   "wait_s": 0,
+   "last_s": null,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "mending.WAITING"
+   ],
+   "outputs": [
+    "mending.MENDING"
+   ]
+  },
+  {
+   "id": "mending.settle",
+   "lane": "side",
+   "label": "mend settle",
+   "machine": "queue round mended|return",
+   "events": [
+    "mending.Mended",
+    "mending.Environment",
+    "mending.Flaky",
+    "mending.Unsure",
+    "mending.Return",
+    "mending.Expire"
+   ],
+   "per24h": null,
+   "wait_s": 0,
+   "last_s": null,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "mending.WAITING",
+    "mending.MENDING"
+   ],
+   "outputs": [
+    "mending.ENVIRONMENT",
+    "mending.FLAKY",
+    "mending.MENDED",
+    "mending.RETURNED",
+    "mending.UNSURE"
+   ]
+  },
+  {
+   "id": "batch.stage",
+   "lane": "dead",
+   "label": "stage / promote",
+   "machine": "(no producer)",
+   "events": [
+    "batch.Promote",
+    "batch.Discard"
+   ],
+   "per24h": 0,
+   "wait_s": 0,
+   "last_s": null,
+   "live": false,
+   "components": [],
+   "creates": "batch.STAGED",
+   "inputs": [
+    "batch.STAGED"
+   ],
+   "outputs": [
+    "batch.DISCARDED",
+    "batch.OPEN",
+    "batch.STAGED"
+   ]
+  },
+  {
+   "id": "batch.landStarted",
+   "lane": "dead",
+   "label": "land start",
+   "machine": "(no producer)",
+   "events": [
+    "batch.LandStarted",
+    "batch.LandAborted"
+   ],
+   "per24h": 0,
+   "wait_s": 0,
+   "last_s": null,
+   "live": false,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "batch.GREEN",
+    "batch.LANDING"
+   ],
+   "outputs": [
+    "batch.LANDING",
+    "batch.GREEN"
+   ]
+  },
+  {
+   "id": "batch.deploy",
+   "lane": "dead",
+   "label": "deploy",
+   "machine": "(no producer)",
+   "events": [
+    "batch.FastForward@LANDING",
+    "batch.Deployed",
+    "batch.DeployFaulted"
+   ],
+   "per24h": 0,
+   "wait_s": 0,
+   "last_s": null,
+   "live": false,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "batch.LANDING",
+    "batch.DEPLOYING"
+   ],
+   "outputs": [
+    "batch.DEPLOYING",
+    "batch.LANDED"
+   ]
+  },
+  {
+   "id": "bead.Resubmit",
+   "lane": "bead",
+   "label": "Resubmit",
+   "machine": "bead machine",
+   "events": [
+    "bead.Resubmit"
+   ],
+   "per24h": 0,
+   "wait_s": 15000,
+   "last_s": null,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "bead.READY"
+   ],
+   "outputs": [
+    "bead.SUBMITTED"
+   ]
+  },
+  {
+   "id": "bead.BaseWithdrawn",
+   "lane": "bead",
+   "label": "BaseWithdrawn",
+   "machine": "bead machine",
+   "events": [
+    "bead.BaseWithdrawn"
+   ],
+   "per24h": 0,
+   "wait_s": 66100,
+   "last_s": null,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "bead.SUBMITTED",
+    "bead.CERTIFIED"
+   ],
+   "outputs": [
+    "bead.REWORK"
+   ]
+  },
+  {
+   "id": "bead.Restack",
+   "lane": "bead",
+   "label": "Restack",
+   "machine": "bead machine",
+   "events": [
+    "bead.Restack"
+   ],
+   "per24h": 0,
+   "wait_s": 0,
+   "last_s": null,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "bead.CERTIFIED"
+   ],
+   "outputs": [
+    "bead.SUBMITTED"
+   ]
+  },
+  {
+   "id": "batch.Green",
+   "lane": "batch",
+   "label": "Green",
+   "machine": "batch machine",
+   "events": [
+    "batch.Green"
+   ],
+   "per24h": 0,
+   "wait_s": 0,
+   "last_s": null,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "batch.CI_RUNNING"
+   ],
+   "outputs": [
+    "batch.GREEN"
+   ]
+  },
+  {
+   "id": "batch.Red",
+   "lane": "batch",
+   "label": "Red",
+   "machine": "batch machine",
+   "events": [
+    "batch.Red"
+   ],
+   "per24h": 0,
+   "wait_s": 0,
+   "last_s": null,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "batch.CI_RUNNING"
+   ],
+   "outputs": [
+    "batch.ATTRIBUTING"
+   ]
+  },
+  {
+   "id": "batch.BaseMoved",
+   "lane": "batch",
+   "label": "BaseMoved",
+   "machine": "batch machine",
+   "events": [
+    "batch.BaseMoved"
+   ],
+   "per24h": 0,
+   "wait_s": 0,
+   "last_s": null,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "batch.GREEN"
+   ],
+   "outputs": [
+    "batch.REBUILDING"
+   ]
+  },
+  {
+   "id": "batch.Settle",
+   "lane": "batch",
+   "label": "Settle",
+   "machine": "batch machine",
+   "events": [
+    "batch.Settle"
+   ],
+   "per24h": 0,
+   "wait_s": 0,
+   "last_s": null,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "batch.ATTRIBUTING"
+   ],
+   "outputs": [
+    "batch.SETTLED"
+   ]
+  },
+  {
+   "id": "batch.Rebuilt",
+   "lane": "batch",
+   "label": "Rebuilt",
+   "machine": "batch machine",
+   "events": [
+    "batch.Rebuilt"
+   ],
+   "per24h": 0,
+   "wait_s": 0,
+   "last_s": null,
+   "live": true,
+   "components": [],
+   "creates": null,
+   "inputs": [
+    "batch.REBUILDING"
+   ],
+   "outputs": [
+    "batch.CI_RUNNING"
+   ]
+  }
+ ],
+ "edges": [
+  {
+   "from": "bead.file",
+   "to": "bead.READY",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.OPEN",
+   "to": "bead.promote",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.promote",
+   "to": "bead.READY",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.READY",
+   "to": "bead.claim",
+   "n": 40,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.REWORK",
+   "to": "bead.claim",
+   "n": 9,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.claim",
+   "to": "bead.WORKING",
+   "n": 49,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.WORKING",
+   "to": "bead.build",
+   "n": 12,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.CERTIFIED",
+   "to": "bead.build",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.build",
+   "to": "bead.SUBMITTED",
+   "n": 12,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.build",
+   "to": "ask.OPEN",
+   "n": null,
+   "kind": "signal",
+   "label": "asks"
+  },
+  {
+   "from": "bead.WORKING",
+   "to": "bead.unclaim",
+   "n": 35,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.unclaim",
+   "to": "bead.READY",
+   "n": 35,
+   "kind": "back",
+   "label": null
+  },
+  {
+   "from": "bead.READY",
+   "to": "bead.finish",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.WORKING",
+   "to": "bead.finish",
+   "n": 4,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.finish",
+   "to": "bead.DONE",
+   "n": 4,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.SUBMITTED",
+   "to": "bead.gate",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.gate",
+   "to": "bead.CERTIFIED",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.SUBMITTED",
+   "to": "bead.sendback",
+   "n": 3,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.CERTIFIED",
+   "to": "bead.sendback",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.sendback",
+   "to": "bead.REWORK",
+   "n": 3,
+   "kind": "back",
+   "label": null
+  },
+  {
+   "from": "bead.SUBMITTED",
+   "to": "bead.cut",
+   "n": 20,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.CERTIFIED",
+   "to": "bead.cut",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.cut",
+   "to": "bead.IN_DELIVERY",
+   "n": 20,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.cut",
+   "to": "batch.OPEN",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.IN_DELIVERY",
+   "to": "bead.release",
+   "n": 9,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.release",
+   "to": "bead.SUBMITTED",
+   "n": 9,
+   "kind": "back",
+   "label": null
+  },
+  {
+   "from": "bead.release",
+   "to": "bead.CERTIFIED",
+   "n": 0,
+   "kind": "back",
+   "label": null
+  },
+  {
+   "from": "bead.release",
+   "to": "bead.REWORK",
+   "n": 0,
+   "kind": "back",
+   "label": null
+  },
+  {
+   "from": "bead.WORKING",
+   "to": "bead.land",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.IN_DELIVERY",
+   "to": "bead.land",
+   "n": 14,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.REWORK",
+   "to": "bead.land",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.GREEN",
+   "to": "bead.land",
+   "n": 1,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.land",
+   "to": "bead.LANDED",
+   "n": 14,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.land",
+   "to": "batch.LANDED",
+   "n": 1,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.READY",
+   "to": "bead.retire",
+   "n": 2,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.retire",
+   "to": "bead.LANDED",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.retire",
+   "to": "bead.DROPPED",
+   "n": 2,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.retire",
+   "to": "bead.SUPERSEDED",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.OPEN",
+   "to": "batch.pass",
+   "n": 1,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.ATTRIBUTING",
+   "to": "batch.pass",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.REBUILDING",
+   "to": "batch.pass",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.pass",
+   "to": "batch.CI_RUNNING",
+   "n": 1,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.pass",
+   "to": "mending.WAITING",
+   "n": null,
+   "kind": "signal",
+   "label": "Failed"
+  },
+  {
+   "from": "batch.OPEN",
+   "to": "batch.abandon",
+   "n": 2,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.CI_RUNNING",
+   "to": "batch.abandon",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.GREEN",
+   "to": "batch.abandon",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.ATTRIBUTING",
+   "to": "batch.abandon",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.REBUILDING",
+   "to": "batch.abandon",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.abandon",
+   "to": "batch.ABANDONED",
+   "n": 2,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.abandon",
+   "to": "bead.release",
+   "n": null,
+   "kind": "signal",
+   "label": "members"
+  },
+  {
+   "from": "batch.CI_RUNNING",
+   "to": "batch.verdict",
+   "n": 2,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.verdict",
+   "to": "batch.GREEN",
+   "n": 1,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.verdict",
+   "to": "batch.ATTRIBUTING",
+   "n": 1,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.GREEN",
+   "to": "batch.eject",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.ATTRIBUTING",
+   "to": "batch.eject",
+   "n": 1,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.eject",
+   "to": "batch.OPEN",
+   "n": 1,
+   "kind": "back",
+   "label": null
+  },
+  {
+   "from": "ask.OPEN",
+   "to": "ask.close",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "ask.close",
+   "to": "ask.ANSWERED",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "ask.close",
+   "to": "ask.DEFAULT_TAKEN",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "ask.close",
+   "to": "ask.WITHDRAWN",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "mending.WAITING",
+   "to": "mending.pickup",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "mending.pickup",
+   "to": "mending.MENDING",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "mending.WAITING",
+   "to": "mending.settle",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "mending.MENDING",
+   "to": "mending.settle",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "mending.settle",
+   "to": "mending.ENVIRONMENT",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "mending.settle",
+   "to": "mending.FLAKY",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "mending.settle",
+   "to": "mending.MENDED",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "mending.settle",
+   "to": "mending.RETURNED",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "mending.settle",
+   "to": "mending.UNSURE",
+   "n": null,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.STAGED",
+   "to": "batch.stage",
+   "n": 0,
+   "kind": "dead",
+   "label": null
+  },
+  {
+   "from": "batch.stage",
+   "to": "batch.DISCARDED",
+   "n": 0,
+   "kind": "dead",
+   "label": null
+  },
+  {
+   "from": "batch.stage",
+   "to": "batch.OPEN",
+   "n": 0,
+   "kind": "dead",
+   "label": null
+  },
+  {
+   "from": "batch.stage",
+   "to": "batch.STAGED",
+   "n": null,
+   "kind": "dead",
+   "label": null
+  },
+  {
+   "from": "batch.GREEN",
+   "to": "batch.landStarted",
+   "n": 0,
+   "kind": "dead",
+   "label": null
+  },
+  {
+   "from": "batch.LANDING",
+   "to": "batch.landStarted",
+   "n": 0,
+   "kind": "dead",
+   "label": null
+  },
+  {
+   "from": "batch.landStarted",
+   "to": "batch.LANDING",
+   "n": 0,
+   "kind": "dead",
+   "label": null
+  },
+  {
+   "from": "batch.landStarted",
+   "to": "batch.GREEN",
+   "n": 0,
+   "kind": "dead",
+   "label": null
+  },
+  {
+   "from": "batch.LANDING",
+   "to": "batch.deploy",
+   "n": 0,
+   "kind": "dead",
+   "label": null
+  },
+  {
+   "from": "batch.DEPLOYING",
+   "to": "batch.deploy",
+   "n": 0,
+   "kind": "dead",
+   "label": null
+  },
+  {
+   "from": "batch.deploy",
+   "to": "batch.DEPLOYING",
+   "n": 0,
+   "kind": "dead",
+   "label": null
+  },
+  {
+   "from": "batch.deploy",
+   "to": "batch.LANDED",
+   "n": 0,
+   "kind": "dead",
+   "label": null
+  },
+  {
+   "from": "bead.READY",
+   "to": "bead.Resubmit",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.Resubmit",
+   "to": "bead.SUBMITTED",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.SUBMITTED",
+   "to": "bead.BaseWithdrawn",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.CERTIFIED",
+   "to": "bead.BaseWithdrawn",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.BaseWithdrawn",
+   "to": "bead.REWORK",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.CERTIFIED",
+   "to": "bead.Restack",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "bead.Restack",
+   "to": "bead.SUBMITTED",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.CI_RUNNING",
+   "to": "batch.Green",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.Green",
+   "to": "batch.GREEN",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.CI_RUNNING",
+   "to": "batch.Red",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.Red",
+   "to": "batch.ATTRIBUTING",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.GREEN",
+   "to": "batch.BaseMoved",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.BaseMoved",
+   "to": "batch.REBUILDING",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.ATTRIBUTING",
+   "to": "batch.Settle",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.Settle",
+   "to": "batch.SETTLED",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.REBUILDING",
+   "to": "batch.Rebuilt",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.Rebuilt",
+   "to": "batch.CI_RUNNING",
+   "n": 0,
+   "kind": "flow",
+   "label": null
+  },
+  {
+   "from": "batch.LANDED",
+   "to": "rel.ACTIVATED",
+   "n": 0,
+   "kind": "flow",
+   "label": "release"
+  },
+  {
+   "from": "batch.LANDED",
+   "to": "pub.MERGED",
+   "n": null,
+   "kind": "flow",
+   "label": "publish PR"
+  }
+ ],
+ "items": [
+  {
+   "id": "fx-003",
+   "at": "bead.READY",
+   "kind": "bead",
+   "p": 2,
+   "express": true,
+   "since": 1799985000,
+   "holds": [],
+   "blocked": null,
+   "phase": null,
+   "repo": "beta",
+   "title": "Fixture bead three"
+  },
+  {
+   "id": "fx-011",
+   "at": "bead.REWORK",
+   "kind": "bead",
+   "p": 1,
+   "express": false,
+   "since": 1799926600,
+   "holds": [],
+   "blocked": null,
+   "phase": null,
+   "repo": "beta",
+   "title": "Fixture bead one"
+  },
+  {
+   "id": "fx-010",
+   "at": "bead.SUBMITTED",
+   "kind": "bead",
+   "p": 0,
+   "express": false,
+   "since": 1799933900,
+   "holds": [],
+   "blocked": null,
+   "phase": null,
+   "repo": "beta",
+   "title": "Fixture bead ten"
+  },
+  {
+   "id": "fx-007",
+   "at": "bead.WORKING",
+   "kind": "bead",
+   "p": 0,
+   "express": false,
+   "since": 1799955800,
+   "holds": [],
+   "blocked": null,
+   "phase": null,
+   "repo": "beta",
+   "title": "Fixture bead seven"
+  },
+  {
+   "id": "fx-001",
+   "at": "bead.READY",
+   "kind": "bead",
+   "p": 0,
+   "express": false,
+   "since": 1799999600,
+   "holds": [],
+   "blocked": null,
+   "phase": null,
+   "repo": "alpha",
+   "title": "Fixture bead one"
+  },
+  {
+   "id": "fx-008",
+   "at": "bead.SUBMITTED",
+   "kind": "bead",
+   "p": 1,
+   "express": false,
+   "since": 1799948500,
+   "holds": [],
+   "blocked": null,
+   "phase": null,
+   "repo": "alpha",
+   "title": "Fixture bead eight"
+  },
+  {
+   "id": "fx-002",
+   "at": "bead.READY",
+   "kind": "bead",
+   "p": 1,
+   "express": false,
+   "since": 1799992300,
+   "holds": [],
+   "blocked": null,
+   "phase": null,
+   "repo": "alpha",
+   "title": "Fixture bead two"
+  },
+  {
+   "id": "fx-009",
+   "at": "bead.SUBMITTED",
+   "kind": "bead",
+   "p": 2,
+   "express": false,
+   "since": 1799941200,
+   "holds": [],
+   "blocked": null,
+   "phase": null,
+   "repo": "alpha",
+   "title": "Fixture bead nine"
+  },
+  {
+   "id": "fx-006",
+   "at": "bead.WORKING",
+   "kind": "bead",
+   "p": 2,
+   "express": false,
+   "since": 1799963100,
+   "holds": [],
+   "blocked": null,
+   "phase": null,
+   "repo": "alpha",
+   "title": "Fixture bead six"
+  },
+  {
+   "id": "fx-ask-1",
+   "at": "ask.OPEN",
+   "kind": "ask",
+   "p": null,
+   "express": false,
+   "since": null,
+   "holds": [],
+   "blocked": null,
+   "phase": null,
+   "repo": null,
+   "title": null
+  },
+  {
+   "id": "fx-round-1",
+   "at": "batch.OPEN",
+   "kind": "batch",
+   "p": null,
+   "express": false,
+   "since": null,
+   "holds": [],
+   "blocked": null,
+   "phase": null,
+   "repo": "alpha",
+   "title": "alpha round \u00b7 pass 0 \u00b7 2 members"
+  },
+  {
+   "id": "fx-004",
+   "at": "bead.READY",
+   "kind": "bead",
+   "p": 0,
+   "express": false,
+   "since": 1799977700,
+   "holds": [
+    "manual"
+   ],
+   "blocked": null,
+   "phase": null,
+   "repo": "beta",
+   "title": "Fixture bead four"
+  },
+  {
+   "id": "fx-005",
+   "at": "bead.READY",
+   "kind": "bead",
+   "p": 1,
+   "express": false,
+   "since": 1799970400,
+   "holds": [],
+   "blocked": "fx-001",
+   "phase": null,
+   "repo": "alpha",
+   "title": "Fixture bead five"
+  }
+ ],
+ "components": [
+  {
+   "id": "intent",
+   "label": "intent",
+   "tag": null,
+   "steps": [
+    "concierge",
+    "intake.gh",
+    "intake.filings",
+    "trigger.groom"
+   ],
+   "queues": []
+  },
+  {
+   "id": "dwarf-session",
+   "label": "dwarf session",
+   "tag": "dwf",
+   "steps": [
+    "sentinel-call",
+    "unit.start",
+    "dwarf start",
+    "rune-ready \u2192 rank"
+   ],
+   "queues": [
+    {
+     "label": "fleet ceiling",
+     "key": "SPIRA_MAX_LIVE_DWARVES",
+     "config": 4
+    },
+    {
+     "label": "lane cap",
+     "key": "SPIRA_LANES_MAX_LIVE",
+     "config": null
+    },
+    {
+     "label": "call cadence",
+     "key": null,
+     "config": null
+    }
+   ]
+  },
+  {
+   "id": "stack-proposal",
+   "label": "stack proposal",
+   "tag": "stk",
+   "steps": [
+    "spira-claim stack"
+   ],
+   "queues": [
+    {
+     "label": "stack_max_depth",
+     "key": "SPIRA_STACK_MAX_DEPTH",
+     "config": null
+    }
+   ]
+  },
+  {
+   "id": "worktree",
+   "label": "worktree + base",
+   "tag": "wt",
+   "steps": [
+    "fetch land ref",
+    "worktree",
+    "fixture + brief"
+   ],
+   "queues": []
+  },
+  {
+   "id": "build-dir",
+   "label": "build directory",
+   "tag": "cold",
+   "steps": [
+    "warm pick",
+    "cold judge",
+    "cold-build slot",
+    "jitter"
+   ],
+   "queues": [
+    {
+     "label": "cold-build slot",
+     "key": "SPIRA_COLD_PAR",
+     "config": null
+    },
+    {
+     "label": "warm slots",
+     "key": null,
+     "config": null
+    }
+   ]
+  },
+  {
+   "id": "compile",
+   "label": "compile admission",
+   "tag": "cc",
+   "steps": [
+    "round yield",
+    "stagger",
+    "compile lease",
+    "sccache"
+   ],
+   "queues": [
+    {
+     "label": "compile_par",
+     "key": "SPIRA_COMPILE_PAR",
+     "config": 3
+    }
+   ]
+  },
+  {
+   "id": "model-session",
+   "label": "model session",
+   "tag": "llm",
+   "steps": [
+    "claude code, rune model"
+   ],
+   "queues": []
+  },
+  {
+   "id": "checks",
+   "label": "checks verdict",
+   "tag": "chk",
+   "steps": [
+    "work checks (clippy, spira-lint)",
+    "work review"
+   ],
+   "queues": [
+    {
+     "label": "checks budget",
+     "key": null,
+     "config": null
+    }
+   ]
+  },
+  {
+   "id": "submit-proof",
+   "label": "submit proof",
+   "tag": "prf",
+   "steps": [
+    "broker refusals",
+    "testenv lint",
+    "owed",
+    "proof tiers"
+   ],
+   "queues": [
+    {
+     "label": "unit pool",
+     "key": null,
+     "config": null
+    },
+    {
+     "label": "test pool",
+     "key": "SPIRA_TEST_PAR",
+     "config": null
+    }
+   ]
+  },
+  {
+   "id": "gate-verdict",
+   "label": "gate verdict",
+   "tag": "gate",
+   "steps": [
+    "landing-pass enqueue",
+    "gate.worker \u2192 gate.sh"
+   ],
+   "queues": [
+    {
+     "label": "certify_par",
+     "key": "SPIRA_CERTIFY_PAR",
+     "config": null
+    }
+   ]
+  },
+  {
+   "id": "base-fetch",
+   "label": "base fetch",
+   "tag": "base",
+   "steps": [
+    "task:sift fetch"
+   ],
+   "queues": []
+  },
+  {
+   "id": "round-tree",
+   "label": "round tree",
+   "tag": "tree",
+   "steps": [
+    "observe",
+    "select",
+    "fetch base",
+    "assemble"
+   ],
+   "queues": [
+    {
+     "label": "rounds per repo",
+     "key": "SPIRA_QUEUE_ROUNDS_MAX",
+     "config": null
+    },
+    {
+     "label": "pool filter",
+     "key": null,
+     "config": null
+    }
+   ]
+  },
+  {
+   "id": "base",
+   "label": "base commit",
+   "tag": "sha",
+   "steps": [
+    "land ref"
+   ],
+   "queues": []
+  },
+  {
+   "id": "queue-lock",
+   "label": "queue lock",
+   "tag": "lck",
+   "steps": [
+    "flock, non-blocking"
+   ],
+   "queues": [
+    {
+     "label": "queue_lock_wait",
+     "key": "SPIRA_QUEUE_LOCK_WAIT",
+     "config": null
+    }
+   ]
+  },
+  {
+   "id": "land-lock",
+   "label": "land lock",
+   "tag": "lck",
+   "steps": [
+    "queue lock",
+    "lock.activate"
+   ],
+   "queues": [
+    {
+     "label": "activate lock",
+     "key": null,
+     "config": null
+    }
+   ]
+  },
+  {
+   "id": "round-vm",
+   "label": "round VM",
+   "tag": "vm",
+   "steps": [
+    "EC2 acquire",
+    "boot"
+   ],
+   "queues": [
+    {
+     "label": "EC2 capacity",
+     "key": null,
+     "config": null
+    }
+   ]
+  },
+  {
+   "id": "pass-run",
+   "label": "pass run",
+   "tag": "run",
+   "steps": [
+    "release build",
+    "lint + fences",
+    "tiers",
+    "suites",
+    "salvage"
+   ],
+   "queues": [
+    {
+     "label": "round_certify_wall_secs",
+     "key": "SPIRA_ROUND_CERTIFY_WALL_SECS",
+     "config": null
+    },
+    {
+     "label": "batcher_wall_secs",
+     "key": "SPIRA_BATCHER_WALL_SECS",
+     "config": null
+    }
+   ]
+  },
+  {
+   "id": "pass-verdict",
+   "label": "pass verdict",
+   "tag": "res",
+   "steps": [
+    "suite results"
+   ],
+   "queues": []
+  },
+  {
+   "id": "attribution",
+   "label": "attribution verdict",
+   "tag": "attr",
+   "steps": [
+    "batcher attribute on a further VM"
+   ],
+   "queues": []
+  },
+  {
+   "id": "release-chain",
+   "label": "release machine",
+   "tag": "rel",
+   "steps": [
+    "build",
+    "cut \u2192 accepted",
+    "activate"
+   ],
+   "queues": [
+    {
+     "label": "lock.activate",
+     "key": null,
+     "config": null
+    }
+   ]
+  },
+  {
+   "id": "publish-pr",
+   "label": "publish PR",
+   "tag": "pr",
+   "steps": [
+    "queue.step",
+    "publish",
+    "queue verdict"
+   ],
+   "queues": [
+    {
+     "label": "publish cadence",
+     "key": null,
+     "config": null
+    }
+   ]
+  }
+ ],
+ "sensors": [
+  {
+   "id": "transitions.cut",
+   "kind": "transitions",
+   "at": [
+    "bead.cut"
+   ],
+   "status": "STALL",
+   "repo": "alpha",
+   "short": "no Cut 2h07m",
+   "since": 1799992380,
+   "reading": "STALL SUBMITTED\u2192IN_DELIVERY (alpha): SUBMITTED 3 oldest 2h02m; no Cut for >2h07m (bound 1h00m)",
+   "src": "watch.transitions"
+  }
+ ]
+}

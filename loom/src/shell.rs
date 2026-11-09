@@ -1,13 +1,14 @@
-//! The layout the detail pages share: top bar, the same five sections as the overview, one stylesheet.
+//! The layout the detail pages share: top bar, the same sections as the overview, one stylesheet.
 
 use crate::stuck::esc;
 
-pub const SECTIONS: [(&str, &str, &str); 5] = [
+pub const SECTIONS: [(&str, &str, &str); 6] = [
     ("overview", "Overview", "/"),
     ("dwarves", "Dwarves", "/dwarves"),
     ("rounds", "Rounds", "/rounds"),
     ("stuck", "Stuck", "/stuck"),
     ("units", "Units", "/units"),
+    ("factory", "Factory", "/factory"),
 ];
 
 const BAR_SLOT: &str = "<!--lm-bar-->";
@@ -105,6 +106,14 @@ mod tests {
         assert_eq!(t.matches("aria-current").count(), 1);
         assert!(t.contains("<a href=\"/stuck\" class=on"));
         assert_eq!(tabs("nowhere").matches("aria-current").count(), 0, "positive control: an unknown section marks nothing");
+    }
+
+    #[test]
+    fn the_factory_tab_is_marked_current_on_the_factory_page() {
+        let t = tabs("factory");
+        assert!(t.contains("<a href=\"/factory\" class=on aria-current=page>Factory</a>"), "{t}");
+        assert_eq!(t.matches("aria-current").count(), 1);
+        assert_eq!(SECTIONS.len(), 6);
     }
 
     #[test]
