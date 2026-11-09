@@ -38,10 +38,10 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
 }
 
-/// `git` that reads no global or system config and commits under a fixed identity.
+/// `git` that reads no global or system config, trusts any directory's owner (a sandbox maps the tree's owner to nobody), and commits under a fixed identity.
 fn git(dir: &Path, args: &[&str]) -> String {
     let o = Command::new("git")
-        .arg("-C")
+        .args(["-c", "safe.directory=*", "-C"])
         .arg(dir)
         .args(args)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
