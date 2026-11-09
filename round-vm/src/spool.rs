@@ -25,6 +25,8 @@ pub enum Build {
     Dwarf,
     /// In `~/round-work` after the corpus: an incremental release build whose binaries land.
     Round,
+    /// Only whether the job's tree builds as a workspace; no suite runs and no binaries land.
+    Workspace,
 }
 
 impl Build {
@@ -33,6 +35,7 @@ impl Build {
             Build::Artifacts => "artifacts",
             Build::Dwarf => "dwarf",
             Build::Round => "round",
+            Build::Workspace => "workspace",
         }
     }
     pub fn parse(s: &str) -> Option<Build> {
@@ -40,6 +43,7 @@ impl Build {
             "artifacts" => Some(Build::Artifacts),
             "dwarf" => Some(Build::Dwarf),
             "round" => Some(Build::Round),
+            "workspace" => Some(Build::Workspace),
             _ => None,
         }
     }
@@ -103,6 +107,15 @@ round)
     rm -rf "$HOME/round-bins"; mkdir -p "$HOME/round-bins"
     find target/release -maxdepth 1 -type f -executable -exec cp {} "$HOME/round-bins/" \; 2>/dev/null
     exit "$rc" ;;
+workspace)
+    d="$HOME/attr/$job"
+    rm -rf "$d"; mkdir -p "$HOME/attr"
+    git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
+    cd "$d" || exit 2
+    CARGO_TARGET_DIR="$HOME/attr-target" cargo build -q --profile release --workspace --config profile.release.incremental=false >&2 || { cd "$HOME" && rm -rf "$d"; exit 4; }
+    echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/workspace-build.result"
+    cd "$HOME" && rm -rf "$d"
+    exit 0 ;;
 artifacts|dwarf)
     d="$HOME/attr/$job"
     rm -rf "$d"; mkdir -p "$HOME/attr"
@@ -392,6 +405,16 @@ mod tests {
         assert!(parse_request("j7", "branch=b\nsuites=s\nbuild=warp\n").is_err());
         assert!(parse_request("j7", "suites=s\nbuild=dwarf\n").is_err());
         assert!(parse_request("../x", "branch=b\nsuites=s\nbuild=dwarf\n").is_err());
+    }
+
+    #[test]
+    fn a_workspace_build_request_is_parsed_and_its_script_exits_4_on_a_failed_build_and_0_with_a_result() {
+        let r = parse_request("b1", "branch=spira/batcher-attr/x-b1\nsuites=workspace\nbuild=workspace\n").unwrap();
+        assert_eq!(r.build, Build::Workspace);
+        assert_eq!(Build::Workspace.word(), "workspace");
+        let arm = REMOTE_ATTR_SCRIPT.split("workspace)").nth(1).and_then(|a| a.split("exit 0 ;;").next()).unwrap();
+        assert!(arm.contains("cargo build") && arm.contains("--workspace") && arm.contains("exit 4"), "{arm}");
+        assert!(arm.contains("workspace-build.result"), "a success leaves a result so the job is not read as lost: {arm}");
     }
 
     #[test]
