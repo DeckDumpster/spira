@@ -218,14 +218,15 @@ fn live_dwarves(active: &BTreeMap<String, String>, rune: &str) -> i64 {
         .count() as i64
 }
 
-/// The default tmux socket's identity (inode and change time) when a server accepts a connection on it;
-/// `None` otherwise, which leaves the question to tmux itself, as a down server is tmux's to name.
+/// The default tmux socket's identity (inode and change time) when the socket exists; `None`
+/// otherwise, which leaves the question to tmux itself, as a down server is tmux's to name. A stale
+/// socket is no harm: it is only an identity to hold a healthy answer under, and a held answer is
+/// only ever one tmux gave.
 fn tmux_server_identity() -> Option<String> {
-    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
     let dir = std::env::var_os("TMUX_TMPDIR").filter(|d| !d.is_empty()).map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
     let socket = dir.join(format!("tmux-{}", unsafe { libc::getuid() })).join("default");
-    std::os::unix::net::UnixStream::connect(&socket).ok()?;
-    let meta = fs::metadata(&socket).ok()?;
+    let meta = fs::metadata(&socket).ok().filter(|m| m.file_type().is_socket())?;
     Some(format!("{}:{}.{}", meta.ino(), meta.ctime(), meta.ctime_nsec()))
 }
 
