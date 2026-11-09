@@ -17,7 +17,7 @@ const HOUR: u64 = 3_600;
 const T0: u64 = 10 * 86_400;
 
 fn config() -> Config {
-    Config { period_s: 300, working_min: 2, submit_bound_s: 90 * MIN, cut_bound_s: 45 * MIN, deliver_bound_s: 60 * MIN, activate_bound_s: 15 * MIN, ask_bound_s: 60 * MIN, release_repo: "spira".into() }
+    Config { period_s: 300, working_min: 2, submit_bound_s: 90 * MIN, cut_bound_s: 45 * MIN, deliver_bound_s: 60 * MIN, activate_bound_s: 15 * MIN, ask_bound_s: 60 * MIN, release_repo: "spira".into(), round_max_open: 1 }
 }
 
 fn bead(id: &str, repo: &str, state: &str, since: u64) -> Bead {
@@ -38,6 +38,7 @@ fn healthy(now: u64) -> Snapshot {
         last: last("spira", &[("Claim", now - 10 * MIN), ("Submit", now - 5 * MIN), ("Cut", now - 15 * MIN), ("Delivered", now - 20 * MIN)]),
         activated_at: Some(now - 10 * MIN),
         landed_after: BTreeMap::new(),
+        open_rounds: Some(0),
     }
 }
 
@@ -236,4 +237,76 @@ fn work_spread_thinly_across_repos_stalls_as_all_repos() {
     s.last = last("alpha", &[("Submit", now - 2 * HOUR)]);
     let found: Vec<String> = stalls_of(&s, now).into_iter().map(|x| x.key()).collect();
     assert_eq!(found, ["WORKING→SUBMITTED *"], "one WORKING each is under the per-repo floor; together they are two");
+}
+
+fn edges(s: &Snapshot, now: u64) -> Vec<String> {
+    stalls_of(s, now).into_iter().map(|x| x.key()).collect()
+}
+
+#[test]
+fn work_that_entered_delivery_minutes_ago_after_a_long_quiet_spell_raises_no_stall() {
+    let now = T0;
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-d1", "spira", "IN_DELIVERY", now - 4 * MIN)];
+    s.last = last("spira", &[("Delivered", now - 2 * HOUR), ("Cut", now - 2 * MIN)]);
+    assert!(!edges(&s, now).iter().any(|k| k.starts_with("IN_DELIVERY→LANDED")), "{:?}", edges(&s, now));
+}
+
+#[test]
+fn work_in_delivery_past_the_bound_with_no_delivered_raises_the_stall() {
+    let now = T0;
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-d1", "spira", "IN_DELIVERY", now - 61 * MIN)];
+    s.last = last("spira", &[("Delivered", now - 3 * HOUR)]);
+    assert!(edges(&s, now).contains(&"IN_DELIVERY→LANDED spira".to_string()));
+}
+
+#[test]
+fn submitted_work_behind_a_full_set_of_open_rounds_is_queued_not_stalled() {
+    let now = T0;
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-s1", "spira", "SUBMITTED", now - 10 * MIN)];
+    s.last = last("spira", &[("Cut", now - 50 * MIN)]);
+    s.open_rounds = Some(1);
+    assert!(!edges(&s, now).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "{:?}", edges(&s, now));
+    s.open_rounds = Some(0);
+    assert!(edges(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()), "a free round slot and no Cut is a stall");
+    s.open_rounds = None;
+    assert!(edges(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()), "rounds that cannot be counted do not excuse the wait");
+}
+
+#[test]
+fn a_bead_that_leaves_delivery_for_landed_refreshes_the_last_delivered_time() {
+    let now = T0;
+    let mut before = healthy(now);
+    before.beads = vec![bead("sp-d1", "-", "IN_DELIVERY", now - 3 * MIN), bead("sp-d2", "-", "IN_DELIVERY", now - 3 * HOUR)];
+    before.last = last("-", &[("Delivered", now - 80 * MIN)]);
+    let c = config();
+    let (carry, _) = decide(&Carry::default(), &before, now * 1000, &c);
+    let mut after = before.clone();
+    after.beads.remove(0);
+    let t2 = now + 5 * MIN;
+    let (carry, acts) = decide(&carry, &after, t2 * 1000, &c);
+    let pages: Vec<&str> = acts.iter().map(|a| a.input.as_str()).filter(|l| l.contains("P0 STALL")).collect();
+    assert!(pages.is_empty(), "sp-d2 is 3h old but a bead landed this period: {pages:?}");
+    assert!(carry.stalled.is_empty());
+}
+
+#[test]
+fn a_bead_returned_to_rework_is_not_a_landing_and_a_blind_period_keeps_what_was_seen() {
+    let now = T0;
+    let c = config();
+    let mut before = healthy(now);
+    before.beads = vec![bead("sp-d1", "spira", "IN_DELIVERY", now - 3 * HOUR)];
+    before.last = last("spira", &[("Delivered", now - 80 * MIN)]);
+    let (carry, _) = decide(&Carry::default(), &before, now * 1000, &c);
+    let (carry, _) = decide(&carry, &blind("down"), (now + 5 * MIN) * 1000, &c);
+    let mut back = before.clone();
+    back.beads = vec![bead("sp-d1", "spira", "REWORK", now)];
+    let (carry, _) = decide(&carry, &back, (now + 10 * MIN) * 1000, &c);
+    assert!(carry.delivered.is_empty(), "a bead still waiting elsewhere did not land: {carry:?}");
+    let mut gone = before.clone();
+    gone.beads.clear();
+    let (carry, _) = decide(&Carry { in_delivery: [("sp-d1".to_string(), "spira".to_string())].into(), ..Carry::default() }, &gone, (now + 15 * MIN) * 1000, &c);
+    assert_eq!(carry.delivered.get("spira"), Some(&(now + 15 * MIN)));
 }

@@ -844,7 +844,9 @@ impl World {
             Ok(v) => v,
             Err(e) => return answer(&wt::blind(&format!("spira-lc dwell: {e}"))),
         };
-        answer(&wt::snapshot_of(&dwell, activated).unwrap_or_else(|e| wt::blind(&e)))
+        let mut snap = wt::snapshot_of(&dwell, activated).unwrap_or_else(|e| wt::blind(&e));
+        snap.open_rounds = self.open_rounds();
+        answer(&snap)
     }
 
     pub fn round_record_partition(&self) -> install::round_records::Partition {

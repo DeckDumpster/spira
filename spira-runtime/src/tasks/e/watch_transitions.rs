@@ -14,8 +14,9 @@
 //!
 //! - WORKING→SUBMITTED: WORKING ≥ `SPIRA_TRANSITIONS_WORKING_MIN` and no Submit inside
 //!   `SPIRA_TRANSITIONS_SUBMIT_BOUND` seconds.
-//! - SUBMITTED→IN_DELIVERY: SUBMITTED + CERTIFIED > 0 and no Cut inside `SPIRA_TRANSITIONS_CUT_BOUND`.
-//! - IN_DELIVERY→LANDED: IN_DELIVERY > 0 and no Delivered inside `SPIRA_TRANSITIONS_DELIVER_BOUND`.
+//! - SUBMITTED→IN_DELIVERY: SUBMITTED + CERTIFIED > 0, a round slot free (fewer than `SPIRA_ROUND_MAX_OPEN` open), and no Cut inside `SPIRA_TRANSITIONS_CUT_BOUND`.
+//! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
+//!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
 //! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed work after the
 //!   newest activation, and the oldest such landing is older than `SPIRA_TRANSITIONS_ACTIVATE_BOUND`.
 //! - ASK→ANSWERED: an ask held unanswered longer than `SPIRA_TRANSITIONS_ASK_BOUND`.
@@ -50,6 +51,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_TRANSITIONS_ACTIVATE_BOUND",
     "SPIRA_TRANSITIONS_ASK_BOUND",
     "SPIRA_TRANSITIONS_RELEASE_REPO",
+    "SPIRA_ROUND_MAX_OPEN",
 ];
 /// The period when the key does not resolve; the handler then refuses, so this only sizes the
 /// row's declared cadence.
@@ -71,6 +73,7 @@ pub struct Config {
     pub activate_bound_s: u64,
     pub ask_bound_s: u64,
     pub release_repo: String,
+    pub round_max_open: u64,
 }
 
 impl Config {
@@ -88,6 +91,7 @@ impl Config {
             activate_bound_s: cfg_parse("SPIRA_TRANSITIONS_ACTIVATE_BOUND")?,
             ask_bound_s: cfg_parse("SPIRA_TRANSITIONS_ASK_BOUND")?,
             release_repo: cfg("SPIRA_TRANSITIONS_RELEASE_REPO")?,
+            round_max_open: cfg_parse("SPIRA_ROUND_MAX_OPEN")?,
         })
     }
 
@@ -141,6 +145,9 @@ pub struct Snapshot {
     /// Per repo, the oldest Delivered after `activated_at`.
     #[serde(default)]
     pub landed_after: BTreeMap<String, u64>,
+    /// Rounds in flight; `None` when they could not be counted.
+    #[serde(default)]
+    pub open_rounds: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +155,12 @@ pub struct Carry {
     pub blind: bool,
     /// The `<edge> <scope>` stalls already paged and not yet drained.
     pub stalled: BTreeSet<String>,
+    /// The repo of each bead seen IN_DELIVERY last period.
+    #[serde(default)]
+    pub in_delivery: BTreeMap<String, String>,
+    /// Per repo, when a bead was last seen to leave delivery for good.
+    #[serde(default)]
+    pub delivered: BTreeMap<String, u64>,
 }
 
 /// One state's waiting work: count and ages, seconds.
@@ -280,10 +293,11 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
         if t["WORKING"].count as u64 >= cfg.working_min.max(1) && quiet(snap, &scope, "Submit", now, cfg.submit_bound_s) {
             push("WORKING→SUBMITTED", evidence(snap, &scope, now, &["WORKING"], "Submit", cfg.submit_bound_s));
         }
-        if t["SUBMITTED"].count + t["CERTIFIED"].count > 0 && quiet(snap, &scope, "Cut", now, cfg.cut_bound_s) {
+        let slot_free = snap.open_rounds.is_none_or(|open| open < cfg.round_max_open.max(1));
+        if t["SUBMITTED"].count + t["CERTIFIED"].count > 0 && slot_free && quiet(snap, &scope, "Cut", now, cfg.cut_bound_s) {
             push("SUBMITTED→IN_DELIVERY", evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s));
         }
-        if t["IN_DELIVERY"].count > 0 && quiet(snap, &scope, "Delivered", now, cfg.deliver_bound_s) {
+        if t["IN_DELIVERY"].oldest >= cfg.deliver_bound_s && quiet(snap, &scope, "Delivered", now, cfg.deliver_bound_s) {
             push("IN_DELIVERY→LANDED", evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", cfg.deliver_bound_s));
         }
         let ask = t["ASK"];
@@ -322,7 +336,7 @@ pub fn snapshot_of(dwell: &serde_json::Value, activated_at: Option<u64>) -> Resu
         last.insert(repo.clone(), by);
     }
     let landed_after = dwell["landed_after"].as_object().into_iter().flatten().filter_map(|(r, t)| Some((r.clone(), n(t)?))).collect();
-    Ok(Snapshot { readable: true, why: String::new(), horizon, beads, last, activated_at, landed_after })
+    Ok(Snapshot { readable: true, why: String::new(), horizon, beads, last, activated_at, landed_after, open_rounds: None })
 }
 
 fn say(now_ms: u64, line: &str) -> EffectSpec {
@@ -332,6 +346,16 @@ fn say(now_ms: u64, line: &str) -> EffectSpec {
 /// A snapshot that is not there: the store or the release records could not be read.
 pub fn blind(why: &str) -> Snapshot {
     Snapshot { readable: false, why: why.into(), ..Default::default() }
+}
+
+/// `snap` with each repo's Delivered time no older than `seen`: a landing the audit read missed.
+fn with_delivered(snap: &Snapshot, seen: &BTreeMap<String, u64>) -> Snapshot {
+    let mut out = snap.clone();
+    for (repo, at) in seen {
+        let slot = out.last.entry(repo.clone()).or_default().entry("Delivered".into()).or_insert(*at);
+        *slot = (*slot).max(*at);
+    }
+    out
 }
 
 pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
@@ -347,6 +371,15 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
         return (next, acts);
     }
     next.blind = false;
+    next.delivered = carry.delivered.iter().filter(|(_, at)| **at >= snap.horizon).map(|(r, at)| (r.clone(), *at)).collect();
+    for (id, repo) in &carry.in_delivery {
+        if !snap.beads.iter().any(|b| &b.id == id) {
+            next.delivered.insert(repo.clone(), now);
+        }
+    }
+    next.in_delivery = snap.beads.iter().filter(|b| b.state == "IN_DELIVERY").map(|b| (b.id.clone(), b.repo.clone())).collect();
+    let amended = with_delivered(snap, &next.delivered);
+    let snap = &amended;
     acts.push(say(now_ms, &table_line(snap, now, cfg)));
     let found = stalls(snap, now, cfg);
     let keys: BTreeSet<String> = found.iter().map(Stall::key).collect();
