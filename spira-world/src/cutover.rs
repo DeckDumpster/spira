@@ -199,6 +199,12 @@ mod tests {
     }
 
     #[test]
+    fn cutover_lanes_are_every_scoped_stop_lane_but_rounds() {
+        let want: Vec<&str> = scoped_stop::LANES.iter().copied().filter(|l| *l != "rounds").collect();
+        assert_eq!(LANES.to_vec(), want);
+    }
+
+    #[test]
     fn cutover_mode_stops_every_non_round_lane_on_every_repo_records_why_and_lifts_the_stamp() {
         let w = W::new("cutover-enter");
         let rec = w.enter(&[]).unwrap();
