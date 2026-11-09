@@ -515,7 +515,7 @@ fn a_land_re_driven_after_it_landed_is_landed_not_red() {
     let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
     let (carry, acts) = on_outcome(&landing(), LAND, true, &serde_json::to_string(&Landed::default()).unwrap(), &land, NOW);
     assert!(!acts.iter().any(|a| a.effect == ABANDON), "{acts:?}");
-    assert!(carry.repos.get("spira").is_none(), "the round is finished, not held red: {:?}", carry.repos);
+    assert!(!carry.repos.contains_key("spira"), "the round is finished, not held red: {:?}", carry.repos);
 }
 
 /// At most once per base change: base-moved again on the same base is a red, abandoned.
