@@ -416,10 +416,6 @@ fn slot_input(slot: usize, job: &Job) -> String {
     serde_json::to_string(&SlotJob { slot, job: job.clone() }).unwrap_or_default()
 }
 
-/// What the probe's snapshot moves each slot to. An idle slot claims the next job while host
-/// admission has room; a slot whose leg ended moves on: a warm leg to the gate leg, a gate leg
-/// to filing; a slot whose leg is gone with no status, after a restart, gives its claim back.
-/// The CLAIM, TIP, DISCARD and COMPLETE outcomes move a slot in `on_outcome`.
 /// A slot waiting on an effect outcome or a leg-start answer resolves in seconds; one that has not
 /// moved for `STUCK_MS` lost its outcome and would otherwise hold its slot, and the gate, forever.
 fn watchdog(slot: &mut Slot, now_ms: u64) -> bool {
@@ -442,6 +438,10 @@ fn watchdog(slot: &mut Slot, now_ms: u64) -> bool {
     now_ms.saturating_sub(since) > STUCK_MS
 }
 
+/// What the probe's snapshot moves each slot to. An idle slot claims the next job while host
+/// admission has room; a slot whose leg ended moves on: a warm leg to the gate leg, a gate leg
+/// to filing; a slot whose leg is gone with no status, after a restart, gives its claim back.
+/// The CLAIM, TIP, DISCARD and COMPLETE outcomes move a slot in `on_outcome`.
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
     let mut acts = vec![];
