@@ -9,9 +9,29 @@ use crate::db::Conn;
 /// The only views `ops-view` will name; the argument is matched, never interpolated.
 pub const VIEWS: [&str; 6] = ["ops_live", "ops_round", "ops_recent", "ops_edges", "ops_dwell", "ops_dwell_p95"];
 
-/// Every applied state change of the last day, read from the event time index.
-pub const GANTT_SQL: &str = "SELECT seq, lc_key AS bead_id, from_state, to_state, at FROM event \
-     WHERE machine = 'bead' AND applied = 1 AND at >= UNIX_TIMESTAMP() - 86400 AND from_state <> to_state";
+/// The machines `ops-gantt` reads events of, and the machines `ops-graph` draws.
+pub const GANTT_MACHINES: [&str; 2] = ["bead", "batch"];
+pub const GRAPH_MACHINES: [&str; 4] = ["bead", "batch", "ask", "mending"];
+
+/// Every applied state change of the last day, read from the event time index. `{machine}` is
+/// replaced only by a name from [`GANTT_MACHINES`].
+pub const GANTT_SQL: &str = "SELECT seq, lc_key AS bead_id, event, from_state, to_state, at FROM event \
+     WHERE machine = '{machine}' AND applied = 1 AND at >= UNIX_TIMESTAMP() - 86400 AND from_state <> to_state";
+
+fn gantt_sql(machine: &'static str) -> String {
+    GANTT_SQL.replace("{machine}", machine)
+}
+
+/// The `--machine` named in `args`, matched against `allowed`; `default` when the flag is absent.
+fn machine_arg(verb: &str, args: &[String], allowed: &[&'static str]) -> Result<&'static str, (i32, String)> {
+    let Some(at) = args.iter().position(|a| a == "--machine") else {
+        return Ok(allowed[0]);
+    };
+    args.get(at + 1)
+        .and_then(|m| allowed.iter().find(|a| **a == m.as_str()))
+        .copied()
+        .ok_or_else(|| (2, format!("{verb}: --machine takes one of {}", allowed.join(" | "))))
+}
 
 /// Terminal beads of the last day, one index range per state.
 fn terminal_sql() -> String {
@@ -35,7 +55,7 @@ pub fn cmd_ops_snapshot(_args: &[String], conn: &Conn) -> (i32, String) {
     ];
     let mut out = serde_json::Map::new();
     out.insert("now".into(), serde_json::json!(crate::db::now_epoch()));
-    out.insert("graph".into(), serde_json::from_str(&graph_json()).unwrap_or(Value::Null));
+    out.insert("graph".into(), serde_json::from_str(&graph_json("bead")).unwrap_or(Value::Null));
     for (key, sql) in &queries {
         match conn.query(sql) {
             Ok(rows) => out.insert((*key).into(), Value::Array(rows)),
@@ -63,10 +83,14 @@ pub fn cmd_ops_view(args: &[String], conn: &Conn) -> (i32, String) {
 
 /// The stuck page's bars: the day's transitions plus the clock they are measured against.
 pub fn cmd_ops_gantt(args: &[String], conn: &Conn) -> (i32, String) {
-    if args.first().map(String::as_str) == Some("--print-sql") {
-        return (0, GANTT_SQL.to_string());
+    let machine = match machine_arg("ops-gantt", args, &GANTT_MACHINES) {
+        Ok(m) => m,
+        Err(refusal) => return refusal,
+    };
+    if args.iter().any(|a| a == "--print-sql") {
+        return (0, gantt_sql(machine));
     }
-    match conn.query(GANTT_SQL) {
+    match conn.query(&gantt_sql(machine)) {
         Ok(rows) => (0, serde_json::json!({ "now": crate::db::now_epoch(), "events": rows }).to_string()),
         Err(e) => (2, format!("cannot tell: {e:?}")),
     }
@@ -109,14 +133,27 @@ pub fn cmd_ops_bead(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
-/// The bead machine's legal moves, read from its own transition table.
-pub fn cmd_ops_graph(_args: &[String], _conn: &Conn) -> (i32, String) {
-    (0, graph_json())
+/// A machine's legal moves, read from its own transition table; the bead machine's with no flag.
+pub fn cmd_ops_graph(args: &[String], _conn: &Conn) -> (i32, String) {
+    match machine_arg("ops-graph", args, &GRAPH_MACHINES) {
+        Ok(machine) => (0, graph_json(machine)),
+        Err(refusal) => refusal,
+    }
 }
 
-/// States spelled as the `bead.state` column holds them, so a pane joins edges to view rows.
-fn graph_json() -> String {
-    let edges: Vec<Value> = lifecycle::bead::legal_edges().iter().map(|e| serde_json::json!({"from": e.from.as_str(), "event": e.event, "to": e.to.as_str()})).collect();
+/// States spelled as the machine's state column holds them, so a pane joins edges to view rows.
+fn graph_json(machine: &str) -> String {
+    macro_rules! edges_of {
+        ($m:ident) => {
+            lifecycle::$m::legal_edges().iter().map(|e| serde_json::json!({"from": e.from.as_str(), "event": e.event, "to": e.to.as_str()})).collect::<Vec<Value>>()
+        };
+    }
+    let edges = match machine {
+        "batch" => edges_of!(batch),
+        "ask" => edges_of!(ask),
+        "mending" => edges_of!(mending),
+        _ => edges_of!(bead),
+    };
     Value::Array(edges).to_string()
 }
 
@@ -133,7 +170,7 @@ mod tests {
 
     #[test]
     fn the_graph_is_json_edges_with_state_names_and_events() {
-        let out = graph_json();
+        let out = graph_json("bead");
         let edges: Vec<Value> = serde_json::from_str(&out).unwrap();
         let has = |f: &str, ev: &str, t: &str| edges.iter().any(|e| e["from"] == f && e["event"] == ev && e["to"] == t);
         assert!(has("READY", "Claim", "WORKING"), "{out}");
@@ -141,6 +178,35 @@ mod tests {
         assert!(has("CERTIFIED", "GateRed", "REWORK"), "{out}");
         let terminal = ["LANDED", "DROPPED", "SUPERSEDED", "DONE"];
         assert!(!edges.iter().any(|e| terminal.iter().any(|t| e["from"] == *t)), "no exit from a terminal state: {out}");
+    }
+
+    #[test]
+    fn ops_graph_machine_answers_that_machines_edges() {
+        let edges = |args: &[&str]| -> Vec<Value> {
+            let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+            let (rc, out) = cmd_ops_graph(&args, &Conn::unreachable());
+            assert_eq!(rc, 0, "{out}");
+            serde_json::from_str(&out).unwrap()
+        };
+        let has = |edges: &[Value], f: &str, ev: &str, t: &str| edges.iter().any(|e| e["from"] == f && e["event"] == ev && e["to"] == t);
+        let batch = edges(&["--machine", "batch"]);
+        assert!(has(&batch, "OPEN", "Abandon", "ABANDONED") && has(&batch, "GREEN", "FastForward", "LANDED"));
+        assert!(has(&edges(&["--machine", "ask"]), "OPEN", "Answer", "ANSWERED"));
+        assert!(has(&edges(&["--machine", "mending"]), "WAITING", "Pickup", "MENDING"));
+        assert_eq!(edges(&[]), edges(&["--machine", "bead"]), "no flag answers as the bead machine");
+        let (rc, out) = cmd_ops_graph(&["--machine".into(), "delivery".into()], &Conn::unreachable());
+        assert_eq!(rc, 2, "{out}");
+    }
+
+    #[test]
+    fn the_gantt_query_selects_the_event_and_filters_by_the_machine_asked_for() {
+        assert!(gantt_sql("bead").contains("event, from_state") && gantt_sql("bead").contains("machine = 'bead'"));
+        let print = |args: &[&str]| cmd_ops_gantt(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>(), &Conn::unreachable());
+        assert!(print(&["--print-sql"]).1.contains("machine = 'bead'"), "no flag reads the bead machine");
+        assert!(print(&["--machine", "batch", "--print-sql"]).1.contains("machine = 'batch'"));
+        let (rc, out) = print(&["--machine", "bead' OR 1=1 --", "--print-sql"]);
+        assert_eq!(rc, 2, "{out}");
+        assert_eq!(print(&["--machine", "ask", "--print-sql"]).0, 2, "only machines the event log carries bead facts for");
     }
 
     #[test]
