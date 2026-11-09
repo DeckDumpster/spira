@@ -23,7 +23,7 @@ pub const MAX_AGE: &str = "15m";
 pub const SLOT_WAIT_SECS: u64 = 300;
 /// This many passes in a row ending with no verdict is a lane fault.
 pub const LANE_BLOCKED_PASSES: u32 = 3;
-pub const DISTANCE: &str = "max(0, green_unlanded_minutes) / 5 + repeat_identity_open + lanes_blocked";
+pub const DISTANCE: &str = "max(0, green_unlanded_minutes) / 5 + repeat_identity_open + 2 * lanes_blocked";
 
 fn level(v: f64) -> Value {
     json!({ "value": v, "window": "level" })

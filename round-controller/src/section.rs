@@ -34,7 +34,7 @@ pub const MAX_AGE: &str = "15m";
 /// Levels only: stuck runners lose their lease and come back as orphans, so they are counted
 /// there (round-controller/liveness).
 pub const DISTANCE: &str =
-    "max(0, green_unlanded_minutes) / 5 + repeat_identity_open + orphans_not_redriven + lanes_blocked";
+    "max(0, green_unlanded_minutes) / 5 + repeat_identity_open + orphans_not_redriven + 2 * lanes_blocked";
 const DAY_MS: u64 = 86_400_000;
 
 /// One typed condition as built: raised with its reason, or not.
