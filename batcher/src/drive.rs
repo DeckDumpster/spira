@@ -281,7 +281,7 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
     flaky: &[String],
     members: &[Member],
     budget: Budget,
-) -> Result<(), String> {
+) -> Result<(), NotAFlip> {
     let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
     let mut queue: VecDeque<Job> = VecDeque::new();
     let mut next = FLIP_JOB_BASE;
@@ -302,6 +302,8 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
         }
     }
     let suite_of: BTreeMap<u64, String> = queue.iter().map(|j| (j.id, j.suite.clone())).collect();
+    let base_jobs: BTreeSet<u64> = queue.iter().filter(|j| j.purpose == Purpose::Base).map(|j| j.id).collect();
+    let mut red_on_base = false;
     let mut running = 0usize;
     let mut unproven: BTreeSet<String> = BTreeSet::new();
     while !queue.is_empty() || running > 0 {
@@ -323,6 +325,7 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
                 running = running.saturating_sub(1);
                 if r != JobResult::Green {
                     unproven.insert(suite.clone());
+                    red_on_base |= base_jobs.contains(&id) && r == JobResult::Red;
                 }
             }
         }
@@ -332,11 +335,27 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
     }
     if !unproven.is_empty() {
         let reds: Vec<String> = unproven.into_iter().collect();
-        ops.incident("unattributed", &reds);
-        return Err(format!("red that is not a flip: {}", reds.join(",")));
+        return Err(NotAFlip { reds, red_on_base });
     }
     println!("batcher: flip proven, deleting from the round: {}", flaky.join(","));
-    ops.delete_flips(flaky)
+    ops.delete_flips(flaky).map_err(NotAFlip::fault)
+}
+
+/// A flaky suite that did not prove green. With one member and the base green, the member is
+/// the only thing the red can belong to.
+struct NotAFlip {
+    reds: Vec<String>,
+    red_on_base: bool,
+}
+
+impl NotAFlip {
+    fn fault(why: String) -> Self {
+        NotAFlip { reds: vec![why], red_on_base: true }
+    }
+
+    fn reason(&self) -> String {
+        format!("red that is not a flip: {}", self.reds.join(","))
+    }
 }
 
 pub struct Mended {
@@ -649,8 +668,13 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         }
         if d.owners.is_empty() {
             if !d.flaky.is_empty() {
-                if let Err(why) = remove_flips(runner, ops, &d.flaky, &members, budget) {
-                    return Ok(RoundEnd::Blocked(why));
+                if let Err(red) = remove_flips(runner, ops, &d.flaky, &members, budget) {
+                    if let ([only], false) = (members.as_slice(), red.red_on_base) {
+                        ops.eject(only, &red.reds, true);
+                        return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
+                    }
+                    ops.incident("unattributed", &red.reds);
+                    return Ok(RoundEnd::Blocked(red.reason()));
                 }
             }
             return Ok(RoundEnd::Land { members, attribution_secs: worst });
@@ -1250,6 +1274,24 @@ pub(crate) mod tests {
         let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
         assert_eq!(end, RoundEnd::Emptied("round emptied by ejection".into()));
         assert_eq!(ops.ejected.len(), 1);
+    }
+
+    const RERUNS_GREEN: i32 = 6;
+
+    #[test]
+    fn a_one_member_round_red_on_a_suite_that_reproduces_ejects_the_member_and_never_blocks() {
+        let calls = std::cell::Cell::new(0);
+        let mut f = Fake::new(move |s, tree| {
+            calls.set(calls.get() + 1);
+            s == "test-04.sh" && tree.contains("m1") && calls.get() > RERUNS_GREEN
+        });
+        f.flaky.insert("test-04.sh".into());
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(6), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(end, RoundEnd::Emptied("round emptied by ejection".into()), "{end:?}");
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-04.sh".to_string()])]);
+        assert!(ops.deleted.is_empty());
+        assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
     #[test]
