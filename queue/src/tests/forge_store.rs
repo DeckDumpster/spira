@@ -731,6 +731,19 @@ fn a_queue_local_verdict_adopts_a_stale_opening_record_whose_pr_the_forge_lists(
 }
 
 #[test]
+fn a_queue_local_verdict_leaves_a_stale_opening_record_when_the_forge_cannot_list_its_prs() {
+    let t = forge_world();
+    seed(&t, "lost", "opening", 1, None);
+    t.forge.queue_prs_unreadable.set(true);
+    t.lib.r.borrow_mut().mode = LandMode::QueueLocal;
+    t.clock.now.set(1_000_000);
+    assert_ne!(t.run(&["verdict", "spira"]), 0);
+    assert!(t.err().contains("the forge cannot list its spira/queue/* PRs"), "{}", t.err());
+    assert_eq!(record(&t, "lost").0, "OPEN");
+    assert!(!t.lc.has("abandon-batch"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
 fn the_sweep_changes_nothing_when_the_forge_cannot_list_its_prs() {
     let t = forge_world();
     seed(&t, "lost", "opening", 1, None);

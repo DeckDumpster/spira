@@ -1479,7 +1479,7 @@ pub(super) fn sweep_locked(w: &World, c: &super::Ctx, path: &std::path::Path) ->
         w.lib.cancel_runs(&c.s.forge, path, branch);
         delete_branch(w, c, path, branch);
     }
-    rc.max(sweep_opening(w, c, path, ttl, &live, Some(&prs)))
+    rc.max(sweep_opening(w, c, path, ttl, &live, &prs))
 }
 
 /// `SPIRA_ROUND_LEASE_TTL_SECS` as seconds; the refusal is already said.
@@ -1498,14 +1498,14 @@ pub(super) fn lease_ttl(w: &World, label: &str) -> Result<u64, ()> {
 }
 
 /// A record left `opening` past `ttl` with no live lease is adopted when its PR is in `prs`, and
-/// released otherwise; `prs` is `None` where no forge holds PRs, so every such record is released.
+/// released otherwise; `prs` is what the forge lists, so the caller must have read it.
 pub(super) fn sweep_opening(
     w: &World,
     c: &super::Ctx,
     path: &std::path::Path,
     ttl: u64,
     live: &[crate::batches::BatchRecord],
-    prs: Option<&[(String, String)]>,
+    prs: &[(String, String)],
 ) -> i32 {
     use super::forge_batch::{OPEN, OPENING, PHASE};
     const LABEL: &str = "batch sweep";
@@ -1535,7 +1535,7 @@ pub(super) fn sweep_opening(
             Ok(None) => {}
         }
         let branch = b.kv.get("branch").unwrap_or("");
-        match prs.and_then(|prs| prs.iter().find(|(_, br)| br == branch)) {
+        match prs.iter().find(|(_, br)| br == branch) {
             Some((pr, _)) => {
                 let mut kv = b.kv.clone();
                 kv.remove("pr");

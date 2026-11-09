@@ -98,7 +98,7 @@ pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
 }
 
 /// A stale opening record is adopted when the forge lists its PR (a mode switch can leave one) and
-/// released otherwise, including where the forge cannot answer, as a repo with no forge holds none.
+/// released when it lists none; a forge that cannot answer leaves the record.
 fn release_stale_opening(w: &World, c: &Ctx, path: &Path) -> i32 {
     if !forge_batch::on_store(w) {
         return OK;
@@ -116,8 +116,11 @@ fn release_stale_opening(w: &World, c: &Ctx, path: &Path) -> i32 {
     let Ok(ttl) = super::batch::lease_ttl(w, "verdict") else {
         return FAIL;
     };
-    let prs = w.forge.queue_prs(&c.s.forge, path);
-    super::batch::sweep_opening(w, c, path, ttl, &live, prs.as_deref())
+    let Some(prs) = w.forge.queue_prs(&c.s.forge, path) else {
+        w.err(format!("verdict {}: the forge cannot list its spira/queue/* PRs — opening records left as they are", c.r.name));
+        return FAIL;
+    };
+    super::batch::sweep_opening(w, c, path, ttl, &live, &prs)
 }
 
 fn local_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
