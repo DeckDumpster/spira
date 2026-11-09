@@ -1615,6 +1615,7 @@ pub(crate) mod tests {
         let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
         assert_eq!(land_ids(end), vec!["m1", "m2"]);
         assert_eq!(ops.sequenced, vec![("m3".to_string(), vec!["m1".to_string()])]);
+        assert!(ops.eject_evidence[0].1.contains("fails to build only with m1 merged"), "{:?}", ops.eject_evidence);
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
