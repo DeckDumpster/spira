@@ -124,7 +124,7 @@ fn local_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
         Acquire::Held(g) => {
             let released = release_stale_opening(w, c, path);
             let (rc, out) = settle_locked(w, c, path);
-            let r = (if rc == OK { released } else { rc }, out);
+            let r = (rc.max(released), out);
             drop(g);
             r
         }
