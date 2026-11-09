@@ -18,6 +18,10 @@ const BOOT_BODY: &str = "boot";
 /// The newest keys kept: older runs have left the window the forge lists (30 per repository).
 /// The carry rides one journal event, so the whole list must fit `kind_body`.
 pub const KEEP: usize = 600;
+/// The most bytes the serialized carry may reach, under the store's 65,535-byte column: key length
+/// varies with the repository name, so a count alone does not hold the record under it.
+pub const CARRY_BYTES: usize = 48 * 1024;
+const WHY_CHARS: usize = 200;
 const TITLE_CHARS: usize = 80;
 const OBSERVE_DEADLINE_MS: u64 = 60_000;
 const DEADLINE_MS: u64 = 10_000;
@@ -98,7 +102,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<String>) {
     for (slug, found) in &snap.repos {
         match found {
             Err(why) => {
-                let m = format!("REPO-EVENTS FAILED: {slug}: {why}; its finished runs cannot be seen");
+                let m = format!("REPO-EVENTS FAILED: {slug}: {}; its finished runs cannot be seen", why.chars().take(WHY_CHARS).collect::<String>());
                 if !carry.failed.contains(&m) {
                     say.push(m.clone());
                 }
@@ -122,6 +126,13 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<String>) {
     }
     next.runs.drain(..next.runs.len().saturating_sub(KEEP));
     next.failed = failed;
+    let mut size = serde_json::to_string(&next).map_or(0, |b| b.len());
+    let mut oldest = 0;
+    while size > CARRY_BYTES && oldest + 1 < next.runs.len() {
+        size -= serde_json::to_string(&next.runs[oldest]).map_or(0, |k| k.len()) + 1;
+        oldest += 1;
+    }
+    next.runs.drain(..oldest);
     (next, say)
 }
 
@@ -188,6 +199,20 @@ mod tests {
         let carry = Carry { seeded: true, runs, adopted, failed: vec![] };
         let body = serde_json::to_string(&carry).unwrap();
         assert!(body.len() < KIND_BODY_MAX, "a full carry is {} bytes; kind_body holds {KIND_BODY_MAX}", body.len());
+    }
+
+    #[test]
+    fn the_carry_is_cut_by_bytes_for_the_longest_slugs_and_failure_reasons() {
+        let slug = format!("{}/{}", "o".repeat(100), "r".repeat(155));
+        let runs = (0..KEEP as u64).map(|i| format!("run|{slug}|{}|action_required", 90_000_000_000 + i)).collect();
+        let carry = Carry { seeded: true, runs, adopted: vec![], failed: vec![] };
+        let fresh = (0..30).map(|i| run(100 + i, "CI", "success", "main")).collect();
+        let down = ("o/down".to_string(), Err("x".repeat(100_000)));
+        let snap = Snapshot { seed: vec![], repos: vec![(slug.clone(), Ok(fresh)), down] };
+        let (c, _) = decide(&carry, &snap);
+        let body = serde_json::to_string(&c).unwrap();
+        assert!(body.len() <= CARRY_BYTES, "{} bytes", body.len());
+        assert!(c.runs.len() < KEEP && c.runs.last().unwrap().ends_with("|100|success"), "oldest keys go first: {}", c.runs.len());
     }
 
     fn run(id: u64, wf: &str, concl: &str, br: &str) -> Run {
