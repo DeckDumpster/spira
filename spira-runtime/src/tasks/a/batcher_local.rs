@@ -508,7 +508,7 @@ pub struct RepoCarry {
     /// Consecutive observes that did not list the carried leg's unit.
     #[serde(default)]
     pub leg_missing: u32,
-    /// The base the standing pause was first seen on: a landing past it lifts the pause.
+    /// The base the red round was cut on, recorded when its pause is written: a landing past it lifts the pause.
     #[serde(default)]
     pub paused_on: Option<String>,
     /// Why this repo's last pass cut nothing while members waited, named
