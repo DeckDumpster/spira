@@ -464,6 +464,16 @@ mod tests {
     }
 
     #[test]
+    fn the_unit_probe_runs_the_command_the_round_runs_its_unit_phase_with() {
+        let flags = ["--profile unittest --workspace", "profile.unittest.incremental=false"];
+        let unit_arm = REMOTE_ATTR_SCRIPT.split("\nunit)").nth(1).and_then(|a| a.split("exit 0 ;;").next()).expect("a unit arm");
+        let round_cmd = crate::run::REMOTE_SCRIPT.split("unit_cargo() {").nth(1).and_then(|a| a.split("\n}\n").next()).expect("unit_cargo");
+        for f in flags {
+            assert!(unit_arm.contains(f) && round_cmd.contains(f), "{f}: the probe and the round must bisect the same run");
+        }
+    }
+
+    #[test]
     fn a_unit_job_exits_5_when_the_tests_fail_and_0_with_a_result_when_they_pass() {
         let r = parse_request("u1", "branch=spira/batcher-attr/x-u1\nsuites=unit\nbuild=unit\n").unwrap();
         assert_eq!(r.build, Build::Unit);
