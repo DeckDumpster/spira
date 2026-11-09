@@ -1,1 +1,7 @@
 version = 1
+
+[[retired]]
+slug = "law-throughput-floor"
+reason = "Ryan ruled on sp-qlliks (2026-11-08): fire on a stall and start diagnosis and repair, not a halt on a daily rate"
+replaced_by = "law-a-landing-stall-starts-a-repair"
+on = "2026-11-08"
