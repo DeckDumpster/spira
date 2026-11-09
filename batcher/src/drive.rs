@@ -429,11 +429,17 @@ fn eject_build_culprits<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O
     if actions.is_empty() {
         actions = bisect_build(runner, members).unwrap_or_default();
     }
+    apply_build_actions(ops, members, &actions)
+}
+
+/// Ejects or sequences the members `actions` name, and the members stacked on them, and
+/// re-cuts the rest; `None` when there is nothing to name or nobody left.
+fn apply_build_actions<O: RoundOps>(ops: &mut O, members: &[Member], actions: &[Action]) -> Result<Option<Vec<Member>>, String> {
     if actions.is_empty() {
         return Ok(None);
     }
     let mut out: BTreeMap<Id, Vec<String>> = BTreeMap::new();
-    for a in &actions {
+    for a in actions {
         let (Action::Eject { id, .. } | Action::Sequence { id, .. }) = a;
         out.insert(id.clone(), vec![WORKSPACE_BUILD.to_string()]);
     }
@@ -480,22 +486,11 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                 let diffs = ops.diffs(&members.iter().map(|m| m.id.clone()).collect::<Vec<_>>());
                 match buildattr::recipe_touchers(&diffs)[..] {
                     [owner] => {
-                        let evidence = format!("the round image build failed and this member changes its recipe: {}", buildattr::error_tail(&output));
-                        let mut out: BTreeMap<Id, Vec<String>> = BTreeMap::from([(owner.id.clone(), vec![WORKSPACE_BUILD.to_string()])]);
-                        with_dependents(&members, &mut out);
-                        for m in &members {
-                            if m.id == owner.id {
-                                ops.eject_on(m, WORKSPACE_BUILD, &evidence, true);
-                            } else if out.contains_key(&m.id) {
-                                ops.eject(m, &[WORKSPACE_BUILD.to_string()], false);
-                            }
-                        }
-                        let survivors: Vec<Member> = members.iter().filter(|m| !out.contains_key(&m.id)).cloned().collect();
-                        let rebuilt = if survivors.is_empty() { vec![] } else { ops.rebuild(&survivors)? };
-                        if !rebuilt.is_empty() {
-                            println!("batcher: the round image build failed — {} left, re-cutting {} member(s)", owner.id, rebuilt.len());
+                        let line = format!("the round image build failed and this member changes its recipe: {}", buildattr::error_tail(&output));
+                        if let Some(next) = apply_build_actions(ops, &members, &[Action::Eject { id: owner.id.clone(), line }])? {
+                            println!("batcher: the round image build failed — {} left, re-cutting {} member(s)", owner.id, next.len());
                             runner.stop_main()?;
-                            members = rebuilt;
+                            members = next;
                             continue;
                         }
                     }
@@ -1320,6 +1315,28 @@ pub(crate) mod tests {
         assert_eq!(f.main_kind.len(), 2, "one retry of the same members");
         assert!(ops.ejected.is_empty());
         assert_eq!(ops.incidents, vec![("workspace-build".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
+    }
+
+    #[test]
+    fn an_image_build_red_with_two_recipe_touching_members_ejects_neither_and_files() {
+        let mut f = Fake::new(|_, _| false);
+        f.compiler = Some(image_broken_while("m1"));
+        let mut ops = Ops { diffs: vec![md("m1", "flake.nix", "+a\n"), md("m2", "rust-toolchain.toml", "+b\n")], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(ops.ejected.is_empty());
+        assert_eq!(ops.incidents.len(), 1);
+    }
+
+    #[test]
+    fn an_image_build_red_whose_recipe_toucher_is_the_only_member_ejects_it_and_files() {
+        let mut f = Fake::new(|_, _| false);
+        f.compiler = Some(image_broken_while("m1"));
+        let mut ops = Ops { diffs: vec![md("m1", "flake.nix", "+a\n")], ..Ops::default() };
+        let only = vec![three()[0].clone()];
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), only, Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert_eq!(ops.ejected.len(), 1);
     }
 
     #[test]
