@@ -148,6 +148,7 @@ PRE_WT="$TMP/ready-worktree"
 mkdir -p "$PRE_WT"
 git -C "$PRE_WT" init -q
 git -C "$PRE_WT" -c user.email=dwarf@spira.local -c user.name=dwarf commit -q --allow-empty -m "fixture commit"
+git -C "$PRE_WT" branch local/main
 out="$(cd "$PRE_WT" && work_as "$BID" submit 2>&1)"; rc=$?
 wantrc "submit from READY: refused (exit 3), never a silent exit 0" "3" "$rc"
 want "submit from READY: the refusal names READY" "READY" "$out"
@@ -167,6 +168,7 @@ DWARF_WT="$TMP/dwarf-worktree"
 mkdir -p "$DWARF_WT"
 git -C "$DWARF_WT" init -q
 git -C "$DWARF_WT" -c user.email=dwarf@spira.local -c user.name=dwarf commit -q --allow-empty -m "fixture commit"
+git -C "$DWARF_WT" branch local/main
 real_tip="$(git -C "$DWARF_WT" rev-parse HEAD)"
 out="$(cd "$DWARF_WT" && work_as "$BID" submit 2>&1)"; rc=$?
 is "submit: exits 0 (applied)" "0" "$rc"
