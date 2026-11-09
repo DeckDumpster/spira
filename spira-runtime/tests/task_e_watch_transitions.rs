@@ -17,7 +17,7 @@ const HOUR: u64 = 3_600;
 const T0: u64 = 10 * 86_400;
 
 fn config() -> Config {
-    Config { period_s: 300, working_min: 2, submit_bound_s: 90 * MIN, cut_bound_s: 45 * MIN, deliver_bound_s: 60 * MIN, activate_bound_s: 15 * MIN, ask_bound_s: 60 * MIN, release_repo: "spira".into(), heartbeat_bound_s: 120, round_max_open: 1 }
+    Config { period_s: 300, working_min: 2, submit_bound_s: 90 * MIN, cut_bound_s: 45 * MIN, deliver_bound_s: 60 * MIN, activate_bound_s: 15 * MIN, ask_bound_s: 60 * MIN, release_repo: "spira".into(), heartbeat_bound_s: 120 }
 }
 
 fn bead(id: &str, repo: &str, state: &str, since: u64) -> Bead {
@@ -421,4 +421,18 @@ fn a_certified_bead_past_a_non_default_bound_is_quiet_for_that_bound_after_a_del
     assert!(!five_minute_cut_bound(&s, now).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")));
     s.last = last("spira", &[("Delivered", now - 6 * MIN)]);
     assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
+}
+
+#[test]
+fn a_submitted_bead_waiting_twenty_minutes_behind_an_open_round_is_queued_even_with_spare_round_slots() {
+    let now = T0;
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-s1", "spira", "SUBMITTED", now - 20 * MIN)];
+    s.last = last("spira", &[("Cut", now - 24 * MIN), ("Delivered", now - 3 * HOUR)]);
+    s.open_rounds = Some(1);
+    let cfg = Config { cut_bound_s: 5 * MIN, ..config() };
+    let keys = |s: &Snapshot| spira_runtime::tasks::e::watch_transitions::stalls(s, now, &cfg).into_iter().map(|x| x.key()).collect::<Vec<_>>();
+    assert!(!keys(&s).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "{:?}", keys(&s));
+    s.open_rounds = Some(0);
+    assert!(keys(&s).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()), "no round open and the wait past the bound pages");
 }

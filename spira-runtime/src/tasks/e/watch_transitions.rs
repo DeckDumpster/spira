@@ -14,7 +14,7 @@
 //!
 //! - WORKING→SUBMITTED: WORKING ≥ `SPIRA_TRANSITIONS_WORKING_MIN` and no Submit inside
 //!   `SPIRA_TRANSITIONS_SUBMIT_BOUND` seconds.
-//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead has itself waited `SPIRA_TRANSITIONS_CUT_BOUND`, a round slot is free (fewer than `SPIRA_ROUND_MAX_OPEN` open), and no Delivered inside the bound. The wait of a bead queued behind full rounds is not a stall, and a slot only just freed by a Delivered has not been free that long.
+//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead has itself waited `SPIRA_TRANSITIONS_CUT_BOUND`, no round is open on the repo, and no Delivered inside the bound. A bead waiting behind an open round is queued, not stalled, and the round that just closed has not been closed that long.
 //! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
 //!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
 //! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed work after the
@@ -58,7 +58,6 @@ pub const KEYS: &[&str] = &[
     "SPIRA_TRANSITIONS_ASK_BOUND",
     "SPIRA_TRANSITIONS_RELEASE_REPO",
     "SPIRA_TRANSITIONS_HEARTBEAT_BOUND",
-    "SPIRA_ROUND_MAX_OPEN",
 ];
 /// The period when the key does not resolve; the handler then refuses, so this only sizes the
 /// row's declared cadence.
@@ -83,7 +82,6 @@ pub struct Config {
     pub ask_bound_s: u64,
     pub release_repo: String,
     pub heartbeat_bound_s: u64,
-    pub round_max_open: u64,
 }
 
 impl Config {
@@ -102,7 +100,6 @@ impl Config {
             ask_bound_s: cfg_parse("SPIRA_TRANSITIONS_ASK_BOUND")?,
             release_repo: cfg("SPIRA_TRANSITIONS_RELEASE_REPO")?,
             heartbeat_bound_s: cfg_parse("SPIRA_TRANSITIONS_HEARTBEAT_BOUND")?,
-            round_max_open: cfg_parse("SPIRA_ROUND_MAX_OPEN")?,
         })
     }
 
@@ -334,8 +331,8 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
             let found = match edge {
                 "WORKING→SUBMITTED" => (t["WORKING"].count as u64 >= cfg.working_min.max(1) && quiet(snap, &scope, "Submit", now, cfg.submit_bound_s)).then(|| evidence(snap, &scope, now, &["WORKING"], "Submit", cfg.submit_bound_s)),
                 "SUBMITTED→IN_DELIVERY" => {
-                    let slot_free = snap.open_rounds.is_none_or(|open| open < cfg.round_max_open.max(1));
-                    (slot_free && quiet(snap, &scope, "Delivered", now, cfg.cut_bound_s) && t["SUBMITTED"].oldest.max(t["CERTIFIED"].oldest) >= cfg.cut_bound_s).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s))
+                    let round_open = snap.open_rounds.is_some_and(|open| open > 0);
+                    (!round_open && quiet(snap, &scope, "Delivered", now, cfg.cut_bound_s) && t["SUBMITTED"].oldest.max(t["CERTIFIED"].oldest) >= cfg.cut_bound_s).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s))
                 }
                 "IN_DELIVERY→LANDED" => (t["IN_DELIVERY"].oldest >= cfg.deliver_bound_s && quiet(snap, &scope, "Delivered", now, cfg.deliver_bound_s)).then(|| evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", cfg.deliver_bound_s)),
                 "LANDED→ACTIVATED" if scope == cfg.release_repo => snap.landed_after.get(&scope).copied().filter(|l| now.saturating_sub(*l) >= cfg.activate_bound_s).map(|landed| {
