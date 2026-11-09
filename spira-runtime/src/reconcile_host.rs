@@ -223,9 +223,13 @@ fn live_dwarves(active: &BTreeMap<String, String>, rune: &str) -> i64 {
 /// socket is no harm: it is only an identity to hold a healthy answer under, and a held answer is
 /// only ever one tmux gave.
 fn tmux_server_identity() -> Option<String> {
-    use std::os::unix::fs::{FileTypeExt, MetadataExt};
     let dir = std::env::var_os("TMUX_TMPDIR").filter(|d| !d.is_empty()).map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
-    let socket = dir.join(format!("tmux-{}", unsafe { libc::getuid() })).join("default");
+    tmux_socket_identity(&dir.join(format!("tmux-{}", unsafe { libc::getuid() })))
+}
+
+fn tmux_socket_identity(socket_dir: &Path) -> Option<String> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let socket = socket_dir.join("default");
     let meta = fs::metadata(&socket).ok().filter(|m| m.file_type().is_socket())?;
     Some(format!("{}:{}.{}", meta.ino(), meta.ctime(), meta.ctime_nsec()))
 }
@@ -439,6 +443,18 @@ mod tests {
         assert_eq!(live_dwarves(&active, "builder"), 2);
         assert_eq!(live_dwarves(&active, "other"), 1);
         assert_eq!(live_dwarves(&active, "nobody"), 0);
+    }
+
+    #[test]
+    fn a_tmux_socket_has_an_identity_and_a_missing_or_plain_file_has_none() {
+        let d = testkit::TempDir::new("host-tmux");
+        assert_eq!(tmux_socket_identity(&d.join("tmux-1")), None, "no directory, no server");
+        fs::create_dir_all(d.join("tmux-1")).unwrap();
+        fs::write(d.join("tmux-1/default"), "").unwrap();
+        assert_eq!(tmux_socket_identity(&d.join("tmux-1")), None, "a plain file is not a server");
+        fs::remove_file(d.join("tmux-1/default")).unwrap();
+        let _listener = std::os::unix::net::UnixListener::bind(d.join("tmux-1/default")).unwrap();
+        assert!(tmux_socket_identity(&d.join("tmux-1")).is_some());
     }
 
     #[test]
