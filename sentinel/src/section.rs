@@ -113,10 +113,10 @@ pub fn measure(r: &Reading) -> Fleet {
     let day_from = r.now.saturating_sub(DAY);
     let ended: Vec<&Run> = r.runs.iter().filter(|run| !run.open && run.end > day_from && run.end <= r.now).collect();
     let landed = landed_in(r.rows, r.now, DAY);
-    let spent: u64 = ended.iter().map(|run| run.end - run.start).sum();
     let state_of: BTreeMap<&str, &str> = r.rows.iter().map(|row| (row.bead_id.as_str(), row.state.as_str())).collect();
     let (mut work, mut lost) = (0u64, 0u64);
     for run in &ended {
+        // A run on a bead with no lifecycle row is not builder work on a bead (an ops sweep).
         let Some(state) = state_of.get(run.bead.as_str()) else { continue };
         let secs = run.end - run.start;
         work += secs;
@@ -126,7 +126,7 @@ pub fn measure(r: &Reading) -> Fleet {
     }
     Fleet {
         utilisation_1h: utilisation,
-        minutes_per_landed_24h: (landed > 0).then(|| spent as f64 / 60.0 / landed as f64),
+        minutes_per_landed_24h: (landed > 0).then(|| work as f64 / 60.0 / landed as f64),
         never_submitted_share_24h: (work > 0).then(|| lost as f64 / work as f64),
         live: r.live,
         ceiling: r.ceiling,
@@ -281,27 +281,29 @@ pub fn open_intents(snap: &Value) -> Vec<(String, Intent)> {
 fn apply_one(p: &Ports, key: &str, i: &Intent, f: &Fleet) -> Result<String, String> {
     let ceiling = p.config.get(fleet::CEILING_KEY)?;
     let max = p.config.get(fleet::CEILING_MAX_KEY)?;
-    let ack = |result: &str, reason: Option<&str>| {
+    let ack = |result: &str, reason: Option<&str>, measurement: Option<&Value>| {
         let mut a = argv(&["intent", "ack", key, "--actor", fleet::OWNER, "--result", result]);
         if let Some(r) = reason {
             a.extend(argv(&["--reason", r]));
         }
+        if let Some(m) = measurement {
+            a.extend(argv(&["--measurement", &m.to_string()]));
+        }
         a
     };
     let (args, word) = match decide(i, ceiling, max) {
-        Step::AlreadyApplied => (ack("already-applied", None), "already-applied"),
-        Step::Refuse(why) => (ack("refused", Some(&why)), "refused"),
+        Step::AlreadyApplied => (ack("already-applied", None, None), "already-applied"),
+        Step::Refuse(why) => (ack("refused", Some(&why), None), "refused"),
         Step::Set(to) => {
             p.config.set(fleet::CEILING_KEY, to)?;
-            (p.record)(&format!(
-                "{key} {} {} -> {to}: utilisation_1h={:.3} minutes_per_landed_24h={} claimable_ready={}",
-                i.action,
-                i.from,
-                f.utilisation_1h,
-                f.minutes_per_landed_24h.map_or("-".into(), |m| format!("{m:.1}")),
-                f.claimable_ready
-            ));
-            (ack("applied", None), "applied")
+            let measured = json!({
+                fleet::UTILISATION: f.utilisation_1h,
+                fleet::MINUTES_PER_LANDED: f.minutes_per_landed_24h,
+                fleet::NEVER_SUBMITTED: f.never_submitted_share_24h,
+                "claimable_ready": f.claimable_ready,
+            });
+            (p.record)(&format!("{key} {} {} -> {to}: {measured}", i.action, i.from));
+            (ack("applied", None, Some(&measured)), "applied")
         }
     };
     lc_ok(p, &format!("ack {key}"), &args)?;
@@ -406,6 +408,7 @@ mod tests {
         assert_eq!(decide(&i, 3, 4), Step::Set(2));
         assert_eq!(decide(&i, 2, 4), Step::AlreadyApplied);
         assert!(matches!(decide(&i, 4, 4), Step::Refuse(m) if m.starts_with("stale")));
+        assert!(matches!(decide(&i, 9, 4), Step::Refuse(m) if m.starts_with("stale")), "a moved ceiling is stale before it is out of bounds");
     }
 
     fn host_section(shedding: bool) -> Value {
@@ -449,5 +452,18 @@ mod tests {
             { "key": "not-an-intent-key", "intent": intent(fleet::RAISE, Value::Null) },
         ]});
         assert_eq!(open_intents(&snap).iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["intents/DwarfFleet/fleet/1"]);
+    }
+
+    #[test]
+    fn the_dwarf_ledgers_own_writer_is_what_the_reader_reads() {
+        let dir = testkit::TempDir::new("fleet-ledger");
+        let l = dwarf::ledger::Ledger { path: dir.join("dwarf-ledger.log"), dry: false };
+        l.born(100, "builder", 4242);
+        l.done(700, "builder", "sp-a", 0, "open", &dwarf::ledger::SessionFields { wall_s: Some(600), ..Default::default() });
+        l.born(800, "builder", 4343);
+        let text = std::fs::read_to_string(dir.join("dwarf-ledger.log")).unwrap();
+        let runs = runs(&text, 1000, &|pid| pid == 4343);
+        let spans: Vec<_> = runs.iter().map(|r| (r.bead.as_str(), r.start, r.end, r.open)).collect();
+        assert_eq!(spans, [("sp-a", 100, 700, false), ("", 800, 1000, true)]);
     }
 }

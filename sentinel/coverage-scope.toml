@@ -3,3 +3,7 @@
 [[scope]]
 path = "sentinel/src/section.rs"
 functions = ["Run::secs_within", "runs", "landed_in", "measure", "term", "condition", "target_of", "status_of", "section_body", "decide", "open_intents", "apply_one", "sync_knobs", "previous", "host_shedding", "run"]
+
+[[scope]]
+path = "sentinel/src/call.rs"
+functions = ["SpiraConfig::call", "SpiraConfig::get", "SpiraConfig::set", "LcPort::call"]

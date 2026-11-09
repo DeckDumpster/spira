@@ -92,6 +92,7 @@ fn day() -> Shape {
     runs.push((200, 18, "b11"));
     runs.push((300, 66, "b12"));
     runs.push((400, 66, "b13"));
+    runs.push((500, 30, "sweep"));
     let mut rows: Vec<(&str, &str, u64)> = landed.iter().enumerate().map(|(i, b)| (*b, "LANDED", 100 + 60 * i as u64)).collect();
     rows.extend([("b11", "SUBMITTED", 190), ("b12", "WORKING", 290), ("b13", "READY", 390)]);
     (runs, rows)
@@ -246,7 +247,7 @@ fn a_raise_steps_the_ceiling_by_one_and_a_rerun_after_a_crash_between_set_and_ac
 
     let steps = p.steps.borrow();
     assert_eq!(steps.len(), 1);
-    assert!(steps[0].contains("utilisation_1h=") && steps[0].contains("claimable_ready=7"), "{steps:?}");
+    assert!(steps[0].contains("\"utilisation_1h\"") && steps[0].contains("\"claimable_ready\":7"), "{steps:?}");
     for action in [fleet::RAISE, fleet::LOWER] {
         assert_eq!(r.knob(&format!("knobs/DwarfFleet/fleet/{action}")), json!(5), "both knobs mirror the ceiling");
     }
@@ -262,7 +263,9 @@ fn a_raise_is_applied_once_and_acked_applied() {
     let rep = p.run(&[], &[], 4, 7).unwrap();
     assert_eq!(rep.acked, [(key.clone(), "applied".to_string())]);
     assert_eq!((c.live.get(), c.sets.borrow().len()), (5, 1));
-    assert_eq!(ack_of(&r, &key)["result"], "applied");
+    let ack = ack_of(&r, &key);
+    assert_eq!(ack["result"], "applied");
+    assert_eq!(ack["measurement"], json!({ "utilisation_1h": 0.0, "minutes_per_landed_24h": null, "never_submitted_share_24h": null, "claimable_ready": 7 }));
 }
 
 #[test]

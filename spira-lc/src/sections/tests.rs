@@ -156,6 +156,28 @@ fn intent(id: &str, token: &str, from: Value, to: Value) -> Value {
 }
 
 #[test]
+fn knob_init_leaves_a_knob_alone_unless_the_owner_overwrites_it_with_a_new_value() {
+    let r = rig();
+    let init = |value: &str, overwrite: bool| {
+        let mut a = vec!["intent", "knob-init", "knobs/Probe/a/drain", "--actor", "probe"];
+        if overwrite {
+            a.push("--overwrite");
+        }
+        a.extend(["--json", value]);
+        r.ok(&a, None)
+    };
+    assert_eq!(init("4", false)["initialized"], true);
+    assert_eq!(init("5", false)["initialized"], false, "without --overwrite an existing knob stands");
+    assert_eq!(r.knob("knobs/Probe/a/drain"), json!(4));
+    let head = r.head();
+    assert_eq!(init("4", true)["initialized"], false, "an overwrite to the value it holds writes nothing");
+    assert_eq!(r.head(), head);
+    assert_eq!(init("5", true)["initialized"], true);
+    assert_eq!(r.knob("knobs/Probe/a/drain"), json!(5));
+    assert_eq!(r.refused(&["intent", "knob-init", "knobs/Probe/a/drain", "--actor", "intruder", "--overwrite", "--json", "6"], None), "actor");
+}
+
+#[test]
 fn only_the_owner_writes_status_and_only_compose_writes_spec() {
     let r = rig();
     let head = r.head();

@@ -143,5 +143,7 @@ mod tests {
             json!({ "value": 0.85, "statute": "law-a-concurrency-ceiling-names-its-measurement" })
         );
         assert!(check_spec(&json!({ "utilisation": { "value": 0.85, "statute": "x" } })).is_err());
+        let target = s["spec"][UTILISATION_SPEC]["value"].as_f64().unwrap();
+        assert!(DISTANCE.contains(&target.to_string()), "the distance literal {DISTANCE:?} follows the spec's {target}");
     }
 }

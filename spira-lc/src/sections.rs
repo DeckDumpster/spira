@@ -588,7 +588,8 @@ fn ack_result(args: &[String]) -> Result<AckResult, Answer> {
     }
 }
 
-/// `intent ack <key> --actor <owner> --result applied|already-applied|refused [--reason R]`:
+/// `intent ack <key> --actor <owner> --result applied|already-applied|refused [--reason R]
+/// [--measurement <json>]`:
 /// once, and nothing but `ack`.
 fn intent_ack<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> (Answer, String) {
     let key = match positional(args, "<intent key>") {
@@ -604,6 +605,9 @@ fn intent_ack<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> 
             at: rfc3339(call.now_ms),
             result,
             observed_rev: head,
+            measurement: flag(args, "--measurement")
+                .map(|m| serde_json::from_str(&m).map_err(|e| refuse("--measurement", "schema", format!("is not JSON: {e}"))))
+                .transpose()?,
         });
         let t = Txn::new()
             .when(Compare::ModRev(key.clone(), Some(item.mod_rev)))
@@ -716,6 +720,7 @@ fn intent_apply<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -
             at: rfc3339(call.now_ms),
             result,
             observed_rev: head,
+            measurement: None,
         });
         let mut t = Txn::new()
             .when(Compare::ModRev(key.clone(), Some(item.mod_rev)))

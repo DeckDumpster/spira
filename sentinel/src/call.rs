@@ -944,6 +944,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_ceiling_is_read_and_set_through_the_spira_config_program_against_the_one_file() {
+        use crate::host::{Out, Spec};
+        use crate::tests::{FakeClock, FakeRunner, FakeSink, RunnerServices};
+        use reconciler_engine::goodput_pass::Lc;
+        use sentinel::section::Config;
+
+        let r = FakeRunner::new();
+        r.on(|s: &Spec| (s.args.first().map(String::as_str) == Some("get")).then(|| Out { rc: 0, stdout: "4\n".into(), stderr: String::new() }));
+        r.on(|s: &Spec| (s.args.first().map(String::as_str) == Some("set") && s.args[2] == "7").then(|| Out { rc: 1, stdout: String::new(), stderr: "refused".into() }));
+        r.on(|s: &Spec| (s.prog == "lc-bin").then(|| Out { rc: 0, stdout: "{\"ok\":1}".into(), stderr: String::new() }));
+        let (sink, clock) = (FakeSink::default(), FakeClock(std::cell::Cell::new(0)));
+        let rec = RunnerServices(&r);
+        let h = crate::host::Host::new(&r, &clock, &sink, &rec);
+        let cfg = SpiraConfig { h: &h, bin: "spira-config".into(), file: "/etc/layer.toml".into() };
+        assert_eq!(cfg.get("spira.max_live_dwarves"), Ok(4));
+        assert_eq!(cfg.set("spira.max_live_dwarves", 5), Ok(()));
+        assert!(cfg.set("spira.max_live_dwarves", 7).unwrap_err().contains("exited 1"));
+        assert_eq!(r.lines(), ["spira-config get spira.max_live_dwarves /etc/layer.toml", "spira-config set spira.max_live_dwarves 5 /etc/layer.toml", "spira-config set spira.max_live_dwarves 7 /etc/layer.toml"]);
+
+        r.on(|s: &Spec| (s.prog == "spira-config").then(|| Out { rc: 0, stdout: "four".into(), stderr: String::new() }));
+        assert!(cfg.get("spira.max_live_dwarves").unwrap_err().contains("not a whole number"));
+
+        let lc = LcPort { h: &h, bin: "lc-bin" };
+        assert_eq!(lc.call(&["section".into(), "snapshot".into()]).1["ok"], 1);
+    }
+
+    #[test]
     fn parse_cache_reads_claims_own_bucket_lines_and_skips_noise() {
         assert_eq!(
             parse_cache("builder 0\nops 3\njunk\nx notanumber\n"),
