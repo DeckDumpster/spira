@@ -9,6 +9,7 @@
 pub mod brain;
 pub mod candidates;
 pub mod config;
+pub mod covered;
 pub mod digest;
 pub mod lock;
 pub mod prompt;

@@ -107,7 +107,15 @@ key naming its source span in the transcript (`t41-44: single-deliverable questi
     {{ARCHIVIST}} claim {{SESSION}} "<key>"
 
 first. Exit 0 means file it now; exit 3 means an earlier run already did — file nothing and move
-on. Work through the digest in turn order and run `{{ARCHIVIST}} progress {{SESSION}} <turn>`
+on.
+
+**For an ask to the operator, claim with the question.**
+
+    {{ARCHIVIST}} claim {{SESSION}} "<key>" --ask "<the question>" [--bead <id>]
+
+Besides the earlier-run check, it refuses (exit 4, file nothing, say nothing) a question an open
+ask already holds, or that the session's own transcript shows it filed or was answered within the
+hour. A live session files its own asks; you are only the net under it. Work through the digest in turn order and run `{{ARCHIVIST}} progress {{SESSION}} <turn>`
 once everything up to that turn is filed or deliberately skipped.
 
 {{FILED}}
@@ -219,6 +227,7 @@ wrote is not committed.
     session      {{SESSION}}
     carrying     {{CTX}} tokens at turn {{TURNS}}
     reason       {{WHY}}
+    liveness     {{LIVENESS}}
     archived up to turn {{FROM_TURN}} by an earlier pass (0 means this is the first)
 
 ## Read it with the digest, never with Read

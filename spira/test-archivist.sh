@@ -646,5 +646,45 @@ has "the brief forbids taking an ask's default" "$briefed" "never take its defau
 stripped="${briefed//work relate <rollup> <ask>/}"
 hasnt "positive control: stripping the phrase removes it" "$stripped" "work relate <rollup> <ask>"
 
+# ==========================================================================================
+echo
+echo "an ask the open store or the live session already holds is not filed again"
+# ==========================================================================================
+mkdir -p "$T/bin" "$T/projects/p"
+tl_config SPIRA_ASK_LABEL=needs-ryan
+cat > "$T/bin/work" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$WORK_ARGS"
+cat "$WORK_OPEN"
+STUB
+chmod +x "$T/bin/work"
+WORK_ARGS="$T/work-args"; WORK_OPEN="$T/open-asks.json"
+aclaim() {  # aclaim <session> <key> <question>
+    env -i SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" HOME="$T/home" PATH="$T/bin:$PATH" SPIRA_CONF="$NONE" \
+        WORK_ARGS="$WORK_ARGS" WORK_OPEN="$WORK_OPEN" "$ARC" claim "$1" "$2" --ask "$3" 2>&1
+}
+printf '[{"id":"sp-e1k1gt","title":"Approve kit-catalog v2 rollout","description":"the v2 catalog"}]' > "$WORK_OPEN"
+cat > "$T/projects/p/conc-1.jsonl" <<'JSONL'
+{"type":"assistant","timestamp":"2026-10-30T10:00:00Z","message":{"id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"mail send operator --subject \"approve kit-catalog v2 rollout\" --kind question"}}]}}
+{"type":"user","timestamp":"2026-10-30T10:00:01Z","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","content":"filed sp-e1k1gt"}]}}
+JSONL
+aclaim quiet-1 "t0: retention" "How many days should closed-ask mail be retained?" >/dev/null; rc=$?
+if [ "$rc" = 0 ]; then ok "an unrelated open ask does not block a different question"; else bad "unrelated open ask blocks" "exit $rc"; fi
+aclaim quiet-1 "t1: kit-catalog" "Approve the kit-catalog v2 rollout?" >/dev/null; rc=$?
+if [ "$rc" = 4 ]; then ok "a question open in the store is not filed (exit 4), the session has no transcript"; else bad "a question open in the store is not filed" "exit $rc"; fi
+has "the open asks are listed by the configured ask label" "$(cat "$WORK_ARGS")" "--label needs-ryan"
+
+printf '[]' > "$WORK_OPEN"
+aclaim conc-1 "t2: kit-catalog again" "Approve the kit-catalog v2 rollout?" >/dev/null; rc=$?
+if [ "$rc" = 4 ]; then ok "a question the transcript shows filed with an id is not filed (exit 4)"; else bad "transcript-filed question" "exit $rc"; fi
+
+aclaim conc-1 "t3: retention" "How many days should closed-ask mail be retained?" >/dev/null; rc=$?
+if [ "$rc" = 0 ]; then ok "a genuinely unrecorded question is still filed (exit 0)"; else bad "unrecorded question" "exit $rc"; fi
+aclaim conc-1 "t3: retention" "How many days should closed-ask mail be retained?" >/dev/null; rc=$?
+if [ "$rc" = 3 ]; then ok "the same key claimed twice is refused (exit 3)"; else bad "repeat claim" "exit $rc"; fi
+
+has "the brief tells the archivist to claim an ask with its question" "$briefed" '--ask "<the question>"'
+has "the brief carries the session's liveness" "$briefed" "{{LIVENESS}}"
+
 echo
 tl_summary

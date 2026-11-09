@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::brain;
 use crate::candidates::{self, Candidate};
 use crate::config::Env;
+use crate::covered;
 use crate::lock::{self, Acquire};
 use crate::prompt;
 use crate::seam::{AgentSpec, Seam};
@@ -87,6 +88,44 @@ pub fn claim(arc: &Path, sid: &str, key: &str) -> Result<bool, String> {
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(filed_path(arc, sid)).map_err(|e| e.to_string())?;
     writeln!(f, "{key}").map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+pub struct AskQuery<'a> {
+    pub question: &'a str,
+    pub beads: &'a [String],
+}
+
+pub enum AskClaim {
+    File,
+    AlreadyFiled,
+    Held(String),
+}
+
+/// `archivist claim <session> <key> --ask <question>` — the claim, refused when the question
+/// is already held. The key is still recorded, so a rerun
+/// does not ask again. An unreadable transcript is not evidence of anything; only the open
+/// asks are then consulted.
+pub fn claim_ask(
+    arc: &Path,
+    sid: &str,
+    key: &str,
+    ask: &AskQuery,
+    open_asks_json: &str,
+    transcript: Option<&Path>,
+    now: i64,
+) -> Result<AskClaim, String> {
+    if !claim(arc, sid, key)? {
+        return Ok(AskClaim::AlreadyFiled);
+    }
+    let asks = covered::open_asks(open_asks_json);
+    if let Some(id) = covered::held_by_open_ask(ask.question, ask.beads, &asks) {
+        return Ok(AskClaim::Held(format!("{id} is already open")));
+    }
+    let text = transcript.and_then(|t| std::fs::read_to_string(t).ok()).unwrap_or_default();
+    match covered::covered_by_transcript(ask.question, &text, now) {
+        Some(why) => Ok(AskClaim::Held(why)),
+        None => Ok(AskClaim::File),
+    }
 }
 
 /// `archivist progress <session> <turn>` — everything up to `turn` is handled; the covered
@@ -243,6 +282,12 @@ pub fn prepare(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
     } else {
         format!("An earlier run already filed these; `archivist claim` refuses them again:\n\n{}", filed.iter().map(|k| format!("    {k}")).collect::<Vec<_>>().join("\n"))
     };
+    let sessions = Path::new(&cfg.token_projects).with_file_name("sessions");
+    let liveness = if covered::session_is_live(&sessions, Path::new("/proc"), sid) {
+        "LIVE: a client process holds this session right now. It has not been cleared and may still answer or file the things you find; never describe it as cleared."
+    } else {
+        "not live: no client process holds this session."
+    };
     let tp_disp = tp.to_string_lossy().into_owned();
     let at_s = at.to_string();
     let from_s = from.to_string();
@@ -263,6 +308,7 @@ pub fn prepare(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
             ("NOTIFY", "work ask"),
             ("WIKI", wiki_text.as_str()),
             ("FILED", filed_text.as_str()),
+            ("LIVENESS", liveness),
         ],
     );
 
