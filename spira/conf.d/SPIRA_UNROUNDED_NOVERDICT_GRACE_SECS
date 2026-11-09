@@ -1,0 +1,6 @@
+TYPE=u64
+GROUP=landing
+DOC=SPIRA_UNROUNDED_NOVERDICT_GRACE_SECS — Seconds the batcher may pass over a SUBMITTED bead in no round before a missing per-bead gate on it is escalated as NO_VERDICT; a bead awaiting its first cut stays quiet.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_UNROUNDED_NOVERDICT_GRACE_SECS:=3600}"
+SPIRA_CONF_DEFAULT_EOF

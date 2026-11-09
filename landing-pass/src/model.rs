@@ -116,6 +116,9 @@ pub struct Settings {
     /// `SPIRA_GATE_BACKOFF` (default 300s): after the host could not give a gate room, the
     /// same tip is not queued again for this long.
     pub gate_backoff: i64,
+    /// `SPIRA_UNROUNDED_NOVERDICT_GRACE_SECS` (default 3600s): a SUBMITTED bead in no round is
+    /// not escalated for a missing per-bead gate until the batcher has passed it over this long.
+    pub unrounded_grace: i64,
     /// `SPIRA_REBASE_DECOMPOSE_FILES` (default 4): a rebase-loop branch touching this many
     /// files or more gets "split it" advice instead of "rebase it again".
     pub rebase_decompose_files: u32,
@@ -169,6 +172,7 @@ impl Settings {
             noverdict_max: 3,
             noverdict_class_window: 86_400,
             gate_backoff: 300,
+            unrounded_grace: 3600,
             rebase_decompose_files: 4,
             rebase_generated_files: String::new(),
             repo_map_ok: true,

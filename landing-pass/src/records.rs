@@ -105,6 +105,26 @@ impl Files {
         self.run.join("gate-backoff").join(branch_key(branch))
     }
 
+    fn unrounded_file(&self, branch: &str) -> PathBuf {
+        self.run.join("unrounded-since").join(branch_key(branch))
+    }
+
+    /// Seconds `branch` has been seen in no round: the first sighting is stamped, later ones age from it.
+    pub fn unrounded_age(&self, branch: &str, now: u64) -> u64 {
+        let file = self.unrounded_file(branch);
+        if let Some(at) = fs::read_to_string(&file).ok().and_then(|t| t.trim().parse::<u64>().ok()) {
+            return now.saturating_sub(at);
+        }
+        let _ = fs::create_dir_all(self.run.join("unrounded-since"));
+        let _ = atomic_write(&file, &format!("{now}\n"));
+        0
+    }
+
+    /// `branch` is in a round: the next time it is in none, its wait starts again.
+    pub fn clear_unrounded(&self, branch: &str) {
+        let _ = fs::remove_file(self.unrounded_file(branch));
+    }
+
     /// Note that the gate could not judge `branch` at `tip` for want of the host's room.
     pub fn back_off(&self, branch: &str, tip: &str, now: u64) {
         let _ = fs::create_dir_all(self.run.join("gate-backoff"));

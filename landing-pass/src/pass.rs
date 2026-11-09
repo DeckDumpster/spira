@@ -500,6 +500,7 @@ impl<'a> Pass<'a> {
             return Flow::Next;
         }
         if self.beads.in_round(id) {
+            self.files.clear_unrounded(br);
             self.log(&format!("CHECK6 {id}: {br} is in a round — the round judges it, no per-bead gate"));
             return Flow::Next;
         }
@@ -585,7 +586,12 @@ impl<'a> Pass<'a> {
                     if host_cause {
                         self.files.back_off(br, &tip, self.clock.now());
                     }
-                    self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
+                    let awaiting_first_cut = reason == "gate-not-found" && (self.files.unrounded_age(br, self.clock.now()) as i64) <= self.s.unrounded_grace;
+                    if awaiting_first_cut {
+                        self.log(&format!("CHECK6 {id}: {br} has no per-bead gate and no round yet — not escalated until the batcher has passed it over {}s", self.s.unrounded_grace));
+                    } else {
+                        self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
+                    }
                     if !moved && self.files.bump_infra(br, &tip) >= self.s.noverdict_max.max(1) && !host_cause {
                         self.files.defer_to_round(br, &tip);
                         self.log(&format!("CHECK6 {id}: {br} at {tip} deferred to round: no gate verdict {} time(s) running", self.s.noverdict_max.max(1)));
