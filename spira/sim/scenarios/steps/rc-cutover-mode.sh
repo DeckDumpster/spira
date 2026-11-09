@@ -49,12 +49,17 @@ fi
 export PATH="$stub:$rel/bin:$PATH"
 
 # world stop journals a scheduler halt on the runtime's control socket; this world runs no
-# scheduler, so a stand-in answers there until the walk is done.
+# scheduler, so a stand-in (nc answering every request with exit 0) listens there until the walk is done.
 world_home="$SIM_WORLD/home"
 ctl="$world_home/spira/run/runtime-control.sock"
 if [ "$phase" != done ] && [ ! -S "$ctl" ]; then
     mkdir -p "$(dirname "$ctl")" || exit 9
-    nohup python3 -I "$here/rc-cutover-control.py" "$ctl" "$phase_file" 200 >"$SIM_WORLD/cutover-control.err" 2>&1 </dev/null &
+    ( trap "" HUP; end=$((SECONDS + 200))
+      while [ "$(cat "$phase_file" 2>/dev/null)" != done ] && [ "$SECONDS" -lt "$end" ]; do
+          rm -f "$ctl"
+          printf '{"exit_code":0,"len":0}\n' | timeout 2 nc -lU "$ctl" >/dev/null 2>&1
+      done
+      rm -f "$ctl" ) >"$SIM_WORLD/cutover-control.err" 2>&1 </dev/null &
     for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$ctl" ] && break; sleep 0.2; done
     [ -S "$ctl" ] || { cat "$SIM_WORLD/cutover-control.err" >&2; fail "the stand-in control socket did not come up"; }
 fi
