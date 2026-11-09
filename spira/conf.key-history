@@ -405,6 +405,7 @@ forge_workflow
 forge_workflows
 round_vm_ec2_ami
 round_vm_ec2_boot_tries
+round_vm_no_output_secs
 round_vm_ec2_host_addr
 round_vm_ec2_instance_profile
 round_vm_ec2_instance_type

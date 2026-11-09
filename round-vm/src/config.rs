@@ -73,6 +73,9 @@ pub struct Config {
     /// A progress phase with no change for this long reports itself stalled.
     pub vm_budget_secs: u64,
     pub build_budget_secs: u64,
+    /// How long after the batch starts the VM may show no sign of the round script before
+    /// the pass is a VM fault.
+    pub no_output: Duration,
 }
 
 /// Every value `Config::build` needs, already resolved by the caller — `cfg`/`cfg_parse` for
@@ -113,6 +116,7 @@ pub(crate) struct Fields {
     pub post_guard_secs: u64,
     pub vm_budget_secs: u64,
     pub build_budget_secs: u64,
+    pub no_output_secs: u64,
 }
 
 /// [`cfg`], refused with this binary's own "round-vm: " prefix (its existing error idiom —
@@ -264,6 +268,7 @@ impl Config {
             post_guard_secs: num_env("SPIRA_ROUND_VM_POST_GUARD_SECS", 600)?,
             vm_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_VM_SECS", 300)?,
             build_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_BUILD_SECS", 600)?,
+            no_output_secs: must_cfg_parse("SPIRA_ROUND_VM_NO_OUTPUT_SECS")?,
         }))
     }
 
@@ -305,6 +310,7 @@ impl Config {
             post_guard_secs: f.post_guard_secs,
             vm_budget_secs: f.vm_budget_secs,
             build_budget_secs: f.build_budget_secs,
+            no_output: Duration::from_secs(f.no_output_secs),
         }
     }
 }
@@ -431,6 +437,7 @@ mod tests {
             post_guard_secs: 600,
             vm_budget_secs: 300,
             build_budget_secs: 600,
+            no_output_secs: 180,
         }
     }
 

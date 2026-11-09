@@ -119,6 +119,17 @@ red one is also a `fence-<name>.result` (status `red`) and ends the pass before 
 suite. The seconds reach the pass record as `fence_s` and the
 `spira_cert_pass_fence_seconds` series. Nothing runs the fences on the host.
 
+#### A VM that never starts the round
+
+While the batch's ssh runs, `run` looks every `stream_every` for the round script's log on the VM
+(`round-script.log`, not empty). None within `SPIRA_ROUND_VM_NO_OUTPUT_SECS` (180) of the batch
+starting is a VM fault of its own: `run` stops the ssh, keeps the tail of the VM's cloud-init
+output and kernel log as `vm-boot.tail` (never the user-data, which carries secrets), writes
+`round-fault.out` (`FAULT vm-no-output: VM produced no output`), records the pass incomplete,
+destroys the VM and exits 77. `queue round certify` passes 77 through, counts it on the round per
+head and holds it against no member; `round-recert` certifies once more, on a fresh VM, and a second
+77 parks the round and pages. A repository CI entry (`--ci-entry`) is not watched.
+
 #### The pass record
 
 A `run` with `--round-batch` appends exactly one row to `$SPIRA_RUN/tsd/cert-pass.jsonl` however

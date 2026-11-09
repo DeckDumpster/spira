@@ -38,6 +38,10 @@ pub const PREEMPTED: i32 = 5;
 /// at fault, the pass is run again.
 pub const VM_LOST: i32 = 75;
 
+/// round-vm's exit, and certify's, when the VM answered ssh and never started the round: no
+/// verdict, no member at fault, and the driver runs the pass once more on a fresh VM.
+pub const VM_NO_OUTPUT: i32 = 77;
+
 const PREEMPT_POLLS: u32 = 120;
 
 pub(super) const BUILD_RED: &str = "workspace-build";
@@ -2640,6 +2644,49 @@ fn lost_vm_pass(w: &World, label: &str, batch: &str, err: &str) -> i32 {
     VM_LOST
 }
 
+const NO_OUTPUT_KEY: &str = "vm-no-output";
+
+/// Whether the round's latest pass ended on a VM that never started it: the fault is the VM's, so
+/// the round holds no red to weigh against its members.
+fn vm_never_started(kv: &Kv) -> bool {
+    kv.get(NO_OUTPUT_KEY).and_then(|v| v.split_once(':')).is_some_and(|(head, _)| Some(head) == kv.get("head"))
+}
+
+/// A pass whose VM produced no output is counted on the round, per head, and held against no
+/// member. The second on one head is paged: a fresh VM did the same.
+fn no_output_pass(w: &World, label: &str, c: &Ctx, batch: &str, err: &str) -> i32 {
+    let why = format!("{NO_OUTPUT_KEY}: VM produced no output");
+    warn_unrecorded(w, label, batch, "the incomplete pass", pass_verdict_event(w, batch, &Verdict::Incomplete(&why), false));
+    w.err(format!("queue.sh {label}: certify rc={VM_NO_OUTPUT}: INCOMPLETE reason={why}; the round is not judged, no member is implicated\n{}", tail(err, 20)));
+    w.out(format!("fault={NO_OUTPUT_KEY}"));
+    let _g = match lock(w, label, c) {
+        Ok(g) => g,
+        Err(_) => return VM_NO_OUTPUT,
+    };
+    let Ok(mut kv) = load(w, label, c, batch) else {
+        return VM_NO_OUTPUT;
+    };
+    let head = kv.get("head").unwrap_or("").to_string();
+    let n = kv.get(NO_OUTPUT_KEY).and_then(|v| v.split_once(':')).filter(|(h, _)| *h == head).and_then(|(_, n)| n.parse::<u32>().ok()).unwrap_or(0) + 1;
+    set(&mut kv, NO_OUTPUT_KEY, &format!("{head}:{n}"));
+    if save(w, label, c, &kv).is_err() {
+        return VM_NO_OUTPUT;
+    }
+    if n == 2 {
+        w.lib.notify(
+            &c.s.mailbox,
+            &c.r.name,
+            &format!("Round {batch} parked: its VM produced no output twice on {head}"),
+            &format!(
+                "Round {batch} of {} ended {n} passes running on {head} with a VM that answered ssh and never started the round, on a fresh VM each time. No member is implicated and nobody was ejected; the round is parked open. The VM's boot log is in the round's results ({}). The image or the provider is the cause.",
+                c.r.name,
+                rounds_dir(c).join(format!("{batch}.results")).display()
+            ),
+        );
+    }
+    VM_NO_OUTPUT
+}
+
 /// The pass of `batch` ended without a verdict: remember it, and eject each member that has now
 /// been aboard for [`FAULTED_PASSES_RED`] such passes. When every member of a multi-member pass
 /// qualifies, nothing separates them from the host, so none is ejected. Returns [`FAULT`] either way.
@@ -3045,6 +3092,9 @@ fn certify_pass(
         if out.rc == VM_LOST {
             return lost_vm_pass(w, label, batch, &out.err);
         }
+        if out.rc == VM_NO_OUTPUT {
+            return no_output_pass(w, label, c, batch, &out.err);
+        }
         // UNIT FIRST (sp-cddf76): each test phase's red is a record, not an exit code. A unit red
         // ends the pass before any suite, so a pass with no suite results is judged red on it,
         // not as a machinery fault; an integration red is one more red beside the suites'.
@@ -3168,6 +3218,7 @@ fn certify_pass(
         raise_unreported_reds(w, c, batch, &kv, &reds);
         let mut judged = kv.clone();
         judged.remove("over-cap");
+    judged.remove(NO_OUTPUT_KEY);
         set(&mut judged, "red", &reds.join(","));
         let ride = Ride::with(w, &judged);
         let recorded = (if reds != [BUILD_RED] {
@@ -3219,6 +3270,7 @@ fn certify_pass(
     }
     let mut judged = kv.clone();
     judged.remove("over-cap");
+    judged.remove(NO_OUTPUT_KEY);
     set(&mut judged, "ran", &ran.to_string());
     let ride = Ride::with(w, &judged);
     let greened = suites_started(w, batch, false)
@@ -4469,7 +4521,7 @@ const ABANDON_CONSIDERED_ENV: &str = "QUEUE_ABANDON_CONSIDERED";
 /// the lifecycle records it on the round's abandon event. Returns the reason to record.
 fn considered_abandon(w: &World, label: &str, kv: &Kv, reason: String) -> Result<String, i32> {
     let members = kv.members();
-    let Some(red) = kv.get("red").filter(|r| !r.is_empty() && members.len() > 1) else {
+    let Some(red) = kv.get("red").filter(|r| !r.is_empty() && members.len() > 1 && !vm_never_started(kv)) else {
         return Ok(reason);
     };
     if let Some(why) = w.var(ABANDON_CONSIDERED_ENV) {

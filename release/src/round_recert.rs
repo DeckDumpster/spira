@@ -24,6 +24,8 @@ pub const QUERY_DEADLINE_SECS: u64 = 120;
 pub const CONTENTION_WAIT_SECS: u64 = 15;
 pub const CONTENTION_TRIES: u32 = 20;
 pub const LAND_DEPLOY_FAULT_EXIT: i32 = 3;
+use round_controller::judge::VM_NO_OUTPUT;
+const NO_OUTPUT_PARKED: &str = "VM produced no output on two fresh VMs running";
 
 /// A round whose record is still listed but whose lifecycle has ended is not one to drive.
 const ENDED: [&str; 4] = ["landed", "settled", "abandoned", "discarded"];
@@ -408,8 +410,17 @@ fn drive_pass(sys: &dyn Sys, batch: &str, repo: &str, mut keeper: Option<&mut Ke
         k.head = Some(round.head.clone());
     }
     println!("round-recert: driving {batch} ({}) at {}", round.phase, round.head);
-    let cert = verb(sys, &mut keeper, "certify", batch, repo, CERTIFY_DEADLINE_SECS);
+    let mut cert = verb(sys, &mut keeper, "certify", batch, repo, CERTIFY_DEADLINE_SECS);
     println!("{}", tail(&cert.text, 4));
+    if cert.code == Some(VM_NO_OUTPUT) {
+        println!("round-recert: {batch}: the round VM produced no output; certifying once more on a fresh VM");
+        cert = verb(sys, &mut keeper, "certify", batch, repo, CERTIFY_DEADLINE_SECS);
+        println!("{}", tail(&cert.text, 4));
+        if cert.code == Some(VM_NO_OUTPUT) {
+            println!("round-recert: {batch} is parked: {NO_OUTPUT_PARKED} (certify rc={VM_NO_OUTPUT}) — round left open");
+            return 1;
+        }
+    }
     if cert.code != Some(0) {
         println!("{}", not_green_line(batch, &cert));
         return 1;
@@ -727,6 +738,29 @@ mod tests {
         };
         assert_eq!(drive(&fake, "r-1", "spira", None), 1);
         assert!(fake.answers.borrow().is_empty());
+    }
+
+    fn drive_answers(certifies: &[(i32, &str)]) -> Fake {
+        let out = |code, text: &str| Out { code: Some(code), text: text.to_string() };
+        let mut answers = vec![out(0, "batch_id=r-1\nphase=certifying\nhead=aaa\nround=open\n")];
+        answers.extend(certifies.iter().map(|(c, t)| out(*c, t)));
+        Fake { answers: RefCell::new(answers), slept: RefCell::new(vec![]) }
+    }
+
+    #[test]
+    fn a_vm_that_produced_no_output_is_certified_once_more_and_a_second_parks_the_round() {
+        let once = drive_answers(&[(VM_NO_OUTPUT, "fault=vm-no-output\n"), (1, "red=unit-tests\n")]);
+        assert_eq!(drive(&once, "r-1", "spira", None), 1);
+        assert!(once.answers.borrow().is_empty(), "the re-drive ran certify again and judged what it said");
+        let twice = drive_answers(&[(VM_NO_OUTPUT, "fault=vm-no-output\n"), (VM_NO_OUTPUT, "fault=vm-no-output\n")]);
+        assert_eq!(drive(&twice, "r-1", "spira", None), 1);
+        assert!(twice.answers.borrow().is_empty(), "never a third certify");
+    }
+
+    #[test]
+    fn a_second_certify_after_a_no_output_vm_that_is_green_goes_on_to_land() {
+        let fake = drive_answers(&[(VM_NO_OUTPUT, ""), (0, ""), (0, "landed\n"), (0, "round=none\n")]);
+        assert_eq!(drive(&fake, "r-1", "spira", None), 0);
     }
 
     struct Recorder(RefCell<Vec<(String, Vec<String>)>>);

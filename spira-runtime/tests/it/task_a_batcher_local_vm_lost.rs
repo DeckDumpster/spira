@@ -55,3 +55,21 @@ fn a_red_certify_is_still_judged_red() {
     let (_, acts) = on_ran_with(&carry, &ran, &RanOutput::captured(b"verdict=red\nred=test-a.sh\n", b""), NOW).unwrap();
     assert!(names(&acts).contains(&ABANDON), "{acts:?}");
 }
+
+fn no_output(carry: &Carry) -> (Carry, Vec<Act>) {
+    let leg = carry.repos["spira"].leg.clone().expect("a carried leg");
+    let ran = UnitRan { handle: UnitHandle::of(NAME, &leg).unwrap(), exit: Exit::Code(77), duration_ms: 1 };
+    on_ran_with(carry, &ran, &RanOutput::captured(b"fault=vm-no-output\n", b"queue.sh round certify: certify rc=77: INCOMPLETE reason=vm-no-output: VM produced no output\n"), NOW).expect("the carried leg's end moves the machine")
+}
+
+#[test]
+fn a_round_whose_vm_produced_no_output_is_certified_once_more_and_a_second_parks_it_open() {
+    let (again, acts) = no_output(&certifying("spira.r9.certify.1"));
+    assert_eq!(names(&acts), [CERTIFY], "a VM that never started the round re-certifies on a fresh VM: {acts:?}");
+    assert_ne!(again.repos["spira"].leg.as_deref(), Some("spira.r9.certify.1"));
+
+    let (parked, acts) = no_output(&again);
+    assert!(!names(&acts).contains(&ABANDON) && !names(&acts).contains(&EJECT) && !names(&acts).contains(&CERTIFY), "{acts:?}");
+    let rc = parked.repos.get("spira").cloned().unwrap_or_default();
+    assert_eq!((rc.state, rc.batch, rc.pace.infra), (State::Idle, None, 1), "an Infra fault, not a red");
+}

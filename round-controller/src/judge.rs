@@ -18,10 +18,11 @@ use crate::ports::{
 };
 
 /// certify's exits (`queue round certify`): the corpus could not be judged; `round preempt`
-/// stopped the pass; the round VM died under it.
+/// stopped the pass; the round VM died under it; the round VM answered ssh and never started the round.
 pub const FAULT: i32 = 4;
 pub const PREEMPTED: i32 = 5;
 pub const VM_LOST: i32 = 75;
+pub const VM_NO_OUTPUT: i32 = 77;
 
 /// The fault reasons certify reports for a pass cut off by a cap.
 pub const OVER_CAP: &str = "over-cap";
@@ -138,7 +139,7 @@ pub enum Typed {
 pub fn type_pass(pass: &PassResult) -> Typed {
     match pass.exit {
         PREEMPTED => Typed::Preempted,
-        VM_LOST => Typed::Fault(Cause::Vm),
+        VM_LOST | VM_NO_OUTPUT => Typed::Fault(Cause::Vm),
         FAULT => Typed::Fault(match pass.reason.as_deref() {
             Some(OVER_CAP) => Cause::OverCap,
             Some(FENCES_CAP) => Cause::FencesCap,

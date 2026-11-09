@@ -772,6 +772,7 @@ fn only_an_answered_pass_is_a_verdict() {
         (judge::FAULT, "fault=over-cap\n", true),
         (judge::PREEMPTED, "", true),
         (judge::VM_LOST, "", true),
+        (judge::VM_NO_OUTPUT, "", true),
         (101, "", false),
     ] {
         assert_eq!(is_verdict(&end(exit, out)), yes, "exit {exit} {out:?}");
