@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS runtime_event (
     event_id    VARCHAR(255) NOT NULL UNIQUE,
     stream      VARCHAR(128) NOT NULL,
     kind_tag    VARCHAR(64) NOT NULL,
-    kind_body   TEXT NOT NULL,
+    kind_body   LONGTEXT NOT NULL,
     at          BIGINT NOT NULL,
     cause       VARCHAR(255) NULL,
     correlation VARCHAR(255) NOT NULL
@@ -224,7 +224,7 @@ CREATE TABLE IF NOT EXISTS runtime_schedule (
     at          BIGINT NOT NULL,
     stream      VARCHAR(128) NOT NULL,
     kind_tag    VARCHAR(64) NOT NULL,
-    kind_body   TEXT NOT NULL,
+    kind_body   LONGTEXT NOT NULL,
     cause       VARCHAR(255) NULL,
     correlation VARCHAR(255) NOT NULL,
     fired       TINYINT(1) NOT NULL DEFAULT 0
