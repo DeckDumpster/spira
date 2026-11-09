@@ -424,7 +424,7 @@ fn a_certified_bead_past_a_non_default_bound_is_quiet_for_that_bound_after_a_del
 }
 
 #[test]
-fn a_submitted_bead_waiting_twenty_minutes_behind_an_open_round_is_queued_even_with_spare_round_slots() {
+fn a_submitted_bead_waiting_twenty_minutes_behind_an_open_round_is_queued_not_stalled() {
     let now = T0;
     let mut s = healthy(now);
     s.beads = vec![bead("sp-s1", "spira", "SUBMITTED", now - 20 * MIN)];
