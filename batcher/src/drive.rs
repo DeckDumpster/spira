@@ -1045,6 +1045,18 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_red_attribution_could_not_rerun_stays_unattributed_when_two_members_touch_the_suite() {
+        let mut f = Fake::new(breaks("m2", "test-01.sh"));
+        f.refuses_removals = true;
+        let touch = vec!["m1".to_string(), "m2".to_string()];
+        let mut ops = Ops { touch: BTreeMap::from([("test-01.sh".to_string(), touch)]), ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(ops.ejected.is_empty());
+        assert_eq!(ops.judged.len(), 1);
+    }
+
+    #[test]
     fn a_red_no_single_member_owns_preempts_nothing() {
         let mut f = Fake::new(|s, tree| s == "test-00.sh" && tree.len() >= 2);
         f.maxpar = 4;
