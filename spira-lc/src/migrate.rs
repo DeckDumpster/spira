@@ -1137,7 +1137,7 @@ mod tests {
         st.tables.insert("mending".into());
         st.tables.insert("mend".into());
         st.columns.insert(("mending".into(), "awaiting_ask".into()));
-        for t in ["runtime_event", "runtime_applied", "runtime_cursor", "runtime_schedule", "runtime_poison", "runtime_effect", "planning_watermark"] {
+        for t in ["runtime_event", "runtime_applied", "runtime_cursor", "runtime_schedule", "runtime_poison", "runtime_effect", "runtime_effect_0038", "runtime_task_state", "planning_watermark"] {
             st.tables.insert(t.into());
         }
         st.widths.insert("lc_key".into(), 256);
@@ -1151,6 +1151,8 @@ mod tests {
         st.indexes.insert("runtime_event_stream_idx".into());
         st.indexes.insert("runtime_event_cause_idx".into());
         st.indexes.insert("runtime_effect_open_idx".into());
+        st.indexes.insert("runtime_effect_request_idx".into());
+        st.indexes.insert("runtime_effect_unresolved_idx".into());
         st.columns.insert(("ops_live".into(), "blocker".into()));
         st.columns.insert(("ops_edges".into(), "last_at".into()));
         for v in ["ops_live", "ops_recent", "ops_dwell"] {

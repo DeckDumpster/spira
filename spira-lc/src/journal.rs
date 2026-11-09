@@ -379,8 +379,9 @@ mod tests {
     #[test]
     fn appends_to_append_only_tables_need_no_update_grant() {
         let src = include_str!("journal.rs");
-        let bad = src.lines().filter(|l| l.contains("INSERT INTO runtime_poison") && l.contains("DUPLICATE KEY")).count();
-        assert_eq!(bad, 0, "runtime_poison is granted SELECT, INSERT only; ON DUPLICATE KEY UPDATE is denied");
+        let table = "runtime_poison";
+        let bad = src.lines().filter(|l| l.contains(&format!("INSERT INTO {table}")) && l.contains("DUPLICATE KEY")).count();
+        assert_eq!(bad, 0, "{table} is granted SELECT, INSERT only; ON DUPLICATE KEY UPDATE is denied");
     }
 
     /// The runtime checks a write against these widths before it sends it (runtime/src/socket.rs).
