@@ -556,7 +556,7 @@ impl World {
 
     /// Brings `bead-stage` up to the lifecycle log, launching its exporter only when the log is ahead of it.
     fn flow_export(&self) -> Result<(), String> {
-        let logged = self.lc_json(&["event-seq"])?["seq"].as_u64().ok_or("event-seq: no seq")?;
+        let logged = self.lc_json(&["event-seq", "--head"])?["seq"].as_u64().ok_or("event-seq: no seq")?;
         let checkpoint = self.run_dir.join("tsd").join(".bead-stage-checkpoint-lifecycle.json");
         let exported = fs::read_to_string(checkpoint).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["last_seq"].as_u64()).unwrap_or(0);
         if logged <= exported {

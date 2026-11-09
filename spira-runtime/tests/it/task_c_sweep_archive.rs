@@ -86,3 +86,15 @@ fn t7_one_pass_stores_at_most_a_bounded_batch_so_the_carry_fits_one_journal_reco
     let record = serde_json::to_string(&carry).unwrap();
     assert!(record.len() < 64 * 1024, "the carry is one journal record and must stay under the store's string limit: {} bytes", record.len());
 }
+
+#[test]
+fn t8_a_pass_of_long_transcript_paths_is_bounded_by_the_carry_bytes_not_by_the_count() {
+    let h = t::handler::<H>(SET);
+    let sources: Vec<Source> = (0..5000).map(|i| src(&format!("-home-ryan-spira-brain/{i:036}/subagents/agent-{}{i:06}.jsonl", "a".repeat(300)), 10, 1)).collect();
+    let snap = Snapshot { sources, index: BTreeMap::new(), projects_dir_exists: true, projects_dir_configured: false };
+    let (carry, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap), TICK).unwrap();
+    assert!(!acts.is_empty(), "a pass stores something");
+    assert_eq!(acts.len(), carry.rels.len());
+    let record = serde_json::to_string(&carry).unwrap();
+    assert!(record.len() < 64 * 1024, "the carry is one journal record and must stay under the store's string limit: {} bytes", record.len());
+}
