@@ -1711,6 +1711,16 @@ pub fn round_open_or_refused(env: &Env, repo: &Repo, wt: &Path, members: &[Membe
     Ok(OpenOutcome::Opened(batch))
 }
 
+/// The suites to name when the repository's own ci is red: the ones its testenv declares, which
+/// is the only vocabulary `queue round eject --suites` accepts. A tree declaring none is judged
+/// as a whole, which the verb knows as `testenv`.
+pub fn ci_red_suites(wt: &Path) -> Vec<String> {
+    match gate::own::known_suites(wt) {
+        Ok(known) if !known.is_empty() => known,
+        _ => vec!["testenv".to_string()],
+    }
+}
+
 /// `queue round eject`: `owner` is a member whose own tip reddened `suites`; a collateral
 /// member leaves uncharged. The batcher rebuilds the round tree itself, so the verb does not.
 pub fn round_eject(env: &Env, repo: &Repo, batch: &str, id: &str, suites: &[String], first_fails: &[(String, String)], owner: bool) -> Result<(), String> {
@@ -3138,5 +3148,31 @@ mod forge_release_tests {
         assert_eq!(kind(Some(CERTIFY_LOST_RC), "INCOMPLETE reason=vm-lost"), CutKind::Infra);
         assert_eq!(kind(Some(3), "certify exited 4 in words only"), CutKind::Other);
         assert_eq!(kind(None, ""), CutKind::Other);
+    }
+}
+
+#[cfg(test)]
+mod ci_red_suites_tests {
+    use super::ci_red_suites;
+
+    fn tree(toml: Option<&str>) -> testkit::TempDir {
+        let d = testkit::TempDir::new("batcher-ci-red");
+        if let Some(t) = toml {
+            std::fs::create_dir_all(d.path().join(".spira")).unwrap();
+            std::fs::write(d.path().join(".spira/testenv.toml"), t).unwrap();
+        }
+        d
+    }
+
+    #[test]
+    fn a_ci_red_names_the_suites_the_repos_testenv_declares_not_a_literal_ci() {
+        let d = tree(Some("[tier.gate]\ncommand = \"true\"\n"));
+        assert_eq!(ci_red_suites(d.path()), vec!["gate".to_string()]);
+    }
+
+    #[test]
+    fn a_ci_red_on_a_tree_declaring_no_suite_names_the_whole_testenv_run() {
+        assert_eq!(ci_red_suites(tree(Some("ci_entry = \"make\"\n")).path()), vec!["testenv".to_string()]);
+        assert_eq!(ci_red_suites(tree(None).path()), vec!["testenv".to_string()]);
     }
 }
