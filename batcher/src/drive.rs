@@ -264,10 +264,9 @@ fn red_main<O: RoundOps + ?Sized>(a: &mut Attributor, ops: &O, suite: &str, ids:
 }
 
 /// Drops the suites that exist only through a member that has left the tree.
-fn present_on<O: RoundOps>(ops: &O, suites: Vec<String>, before: &[Member], after: &[Member]) -> Vec<String> {
-    let ids = |ms: &[Member]| ms.iter().map(|m| m.id.clone()).collect::<Vec<Id>>();
-    let (before, after) = (ids(before), ids(after));
-    suites.into_iter().filter(|s| ops.adding(s, &before).is_empty() || !ops.adding(s, &after).is_empty()).collect()
+fn present_on<O: RoundOps>(ops: &O, suites: Vec<String>, start: &[Id], now: &[Member]) -> Vec<String> {
+    let now: Vec<Id> = now.iter().map(|m| m.id.clone()).collect();
+    suites.into_iter().filter(|s| ops.adding(s, start).is_empty() || !ops.adding(s, &now).is_empty()).collect()
 }
 
 const FLIP_JOB_BASE: u64 = 1 << 40;
@@ -524,6 +523,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     starting: Vec<Member>,
     budget: Budget,
 ) -> Result<RoundEnd, String> {
+    let start: Vec<Id> = starting.iter().map(|m| m.id.clone()).collect();
     let mut members = starting;
     let mut suites = corpus.to_vec();
     let mut kind = MainKind::Corpus;
@@ -534,6 +534,10 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     let mut image_retried = false;
     let t0 = runner.now();
     for iteration in 0..bound {
+        suites = present_on(&*ops, suites, &start, &members);
+        if suites.is_empty() {
+            return Ok(RoundEnd::Land { members, attribution_secs: worst });
+        }
         let s = match drive(runner, &*ops, kind, &suites, &members, budget) {
             Ok(s) => s,
             Err(e) => match eject_runner_abort(ops, &members, &e)? {
@@ -681,14 +685,11 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                     if next.is_empty() {
                         return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
                     }
-                    let before = std::mem::replace(&mut members, if retry && left.is_empty() { next } else { ops.rebuild(&next)? });
+                    members = if retry && left.is_empty() { next } else { ops.rebuild(&next)? };
                     if members.is_empty() {
                         return Ok(RoundEnd::Emptied("round emptied rebuilding the tree after the menders".into()));
                     }
-                    suites = present_on(&*ops, m.suites, &before, &members);
-                    if suites.is_empty() {
-                        return Ok(RoundEnd::Land { members, attribution_secs: worst });
-                    }
+                    suites = m.suites;
                     kind = MainKind::Verify;
                     continue;
                 }
@@ -714,7 +715,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         if survivors.is_empty() {
             return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
         }
-        let before = std::mem::replace(&mut members, ops.rebuild(&survivors)?);
+        members = ops.rebuild(&survivors)?;
         if members.is_empty() {
             return Ok(RoundEnd::Emptied("round emptied rebuilding the tree after ejection".into()));
         }
@@ -722,10 +723,6 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             Some(p) => (p.rerun, MainKind::Corpus),
             None => (d.owned_suites(), MainKind::Verify),
         };
-        suites = present_on(&*ops, suites, &before, &members);
-        if suites.is_empty() {
-            return Ok(RoundEnd::Land { members, attribution_secs: worst });
-        }
     }
     Ok(RoundEnd::Blocked(format!("still ejecting after {bound} iterations")))
 }
@@ -788,6 +785,8 @@ pub(crate) mod tests {
         pub probes: Vec<Vec<String>>,
         /// A runner that cannot build a tree with members taken out: every such job fails to launch.
         pub refuses_removals: bool,
+        /// Suite → the members whose diff adds it: a run naming it on a tree holding none of them dies as round-vm does.
+        pub added_by: BTreeMap<String, Vec<String>>,
     }
 
     pub type BuildFn = Box<dyn Fn(&BTreeSet<String>) -> Option<String>>;
@@ -823,6 +822,7 @@ pub(crate) mod tests {
                 bisects: false,
                 probes: vec![],
                 refuses_removals: false,
+                added_by: BTreeMap::new(),
             }
         }
         fn verdict(&mut self, suite: &str, tree: &BTreeSet<String>) -> bool {
@@ -857,6 +857,9 @@ pub(crate) mod tests {
             self.reported.clear();
             self.main_ended = None;
             let tree: BTreeSet<String> = self.members.iter().cloned().collect();
+            if let Some(s) = suites.iter().find(|s| self.added_by.get(*s).is_some_and(|a| !a.iter().any(|m| tree.contains(m)))) {
+                return Err(format!("round-vm: suite list mismatch, not a harness fault — batch: unknown suite: {s}"));
+            }
             self.filtered = self.filter.as_ref().and_then(|f| f(&tree));
             if self.filtered.is_some() {
                 return Ok(());
@@ -1121,6 +1124,39 @@ pub(crate) mod tests {
         assert!(f.main_kind.iter().skip(1).all(|(_, s)| !s.contains(&"test-01.sh".to_string())), "{:?}", f.main_kind);
         assert!(ops.incidents.is_empty() && ops.judged.is_empty());
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m2"]), "{end:?}");
+    }
+
+    #[test]
+    fn a_three_member_round_whose_only_red_suite_member_b_adds_ejects_b_with_no_subset_run_and_no_pause() {
+        let mut f = Fake::new(breaks("m2", "test-01.sh"));
+        f.added_by = adds("test-01.sh", &["m2"]);
+        let mut ops = Ops { adds: adds("test-01.sh", &["m2"]), ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-01.sh".to_string()])]);
+        assert!(f.jobs.is_empty(), "a rerun on a member subset ran: {:?}", f.jobs.iter().map(|(j, _, _)| j).collect::<Vec<_>>());
+        assert!(ops.incidents.is_empty() && ops.judged.is_empty());
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2), "{end:?}");
+    }
+
+    #[test]
+    fn a_member_that_leaves_for_a_lint_red_takes_the_suite_it_adds_out_of_the_next_corpus() {
+        let mut f = Fake::new(|_, _| false);
+        f.added_by = adds("test-01.sh", &["m2"]);
+        f.filter = Some(lint_naming("m2"));
+        let mut ops = Ops { adds: adds("test-01.sh", &["m2"]), ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2), "{end:?}");
+        assert!(f.main_kind[1].1.iter().all(|s| s != "test-01.sh"), "{:?}", f.main_kind);
+    }
+
+    #[test]
+    fn a_member_that_leaves_for_a_build_red_takes_the_suite_it_adds_out_of_the_next_corpus() {
+        let mut f = Fake::new(|_, _| false);
+        f.added_by = adds("test-01.sh", &["m2"]);
+        f.compiler = Some(broken_by(&["m2"]));
+        let mut ops = Ops { adds: adds("test-01.sh", &["m2"]), diffs: vec![md("m1", "doc/x.md", "+p\n"), md("m2", "lc/src/callers.rs", "+x\n"), md("m3", "doc/y.md", "+q\n")], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2), "{end:?}");
     }
 
     #[test]
