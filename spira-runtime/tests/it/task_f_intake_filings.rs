@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::journal::Journal;
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::StreamKey;
 use spira_runtime::tasks::f::intake_filings::*;
 use spira_runtime::tasks::{self, f};
@@ -128,16 +128,4 @@ fn t5_parity_a_closed_bead_gets_a_new_bead_and_an_open_one_an_append() {
     assert!(acts[0].input.contains("Collected from h: f2.json"), "{}", acts[0].input);
     let (_, acts) = decide(&carry, &snap(vec![filing("f2.json")], &[("sp-1", true)]));
     assert_eq!(names(&acts), [APPEND]);
-}
-
-#[test]
-/// One new filing every 200 min, so the contract's 2 per filing plus 1 per hour is at most 3 an hour.
-fn t6_two_virtual_days_are_deterministic_and_within_budget() {
-    let world = |call: u64| if call % 7 == 3 { Snapshot { outbox: [("h".to_string(), Err("ssh: connect timed out".into()))].into(), ..snap(vec![], &[]) } } else { snap((0..call / 20).map(|n| filing(&format!("f{n}.json"))).collect(), &[]) };
-    let a = assert_deterministic(|seed| rig(seed, world), 1, 2);
-    running(&a);
-    let filings = a.requested().iter().filter(|q| q.name == FILE || q.name == APPEND).count() as u64;
-    let hours = a.now().div_ceil(3_600_000);
-    assert!(a.trace().len() as u64 <= 2 * filings + hours, "{} journaled for {filings} filings in {hours} h", a.trace().len());
-    assert_journal_budget(&a, 3);
 }

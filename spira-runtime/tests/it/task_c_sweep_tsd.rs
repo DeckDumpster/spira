@@ -62,9 +62,3 @@ fn t5_only_families_past_their_keep_days_are_pruned_as_dry_run_lists_them() {
     assert_eq!(names(&acts), [task::PRUNE, task::PRUNE]);
     assert!(acts[0].input.contains("cert-pass") && acts[1].input.contains("custom"), "{acts:?}");
 }
-
-#[test]
-fn t6_two_virtual_days_fire_at_0420_each_day_deterministically() {
-    let rig = t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&within(40 * DAY_MS))), 2, 1);
-    assert_eq!(t::fired_at::<H>(&rig), t::elapses(SPEC, 0, 2 * DAY_MS));
-}

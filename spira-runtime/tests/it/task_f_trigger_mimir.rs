@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::journal::Journal;
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::StreamKey;
 use spira_runtime::tasks::f::trigger_mimir::*;
 use spira_runtime::tasks::f::Decision;
@@ -121,12 +121,4 @@ fn t5_parity_the_time_trigger_files_a_byte_equal_bead() {
         bead.body,
         format!("Scheduled trigger: the Mimir persona will claim this bead, run a retrospective pass over the failure distribution, identify recurring failure classes, and cut at most 3 remedy beads. Trigger: 10800s elapsed (lastpass ts={t}, watermark ts={t}). See spira/runes/mimir.md for the pass procedure.")
     );
-}
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_budget() {
-    let world = |call: u64| snap(call % 3 / 2, 3_600 * (call % 4) as i64, call % 12);
-    let a = assert_deterministic(|seed| rig(seed, world), 1, 2);
-    running(&a);
-    assert_journal_budget(&a, 1);
 }

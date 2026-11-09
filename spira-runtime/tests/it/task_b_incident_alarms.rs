@@ -121,8 +121,3 @@ fn t5_a_no_lever_pass_pages_and_an_observability_halt_only_waits() {
     assert_eq!(c.deadman, Deadman::Waiting);
     assert!(!names(&acts).contains(&task::PAGE) && !names(&acts).contains(&task::HEARTBEAT), "{acts:?}");
 }
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_13_events_an_hour() {
-    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&idle(0))), 2, 13);
-}

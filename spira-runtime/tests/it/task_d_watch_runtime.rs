@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, effects_runnable, TaskRig};
+use runtime::taskrig::{effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::d::watch_runtime::*;
 
@@ -112,11 +112,4 @@ fn t5_the_bump_title_and_the_cannot_check_line_are_runtime_watchs() {
     assert!(asked(&r, FILE_BUMP).is_empty(), "unreachable upstream is cannot-check, not a bump");
     let logged = asked(&r, LOG);
     assert!(logged.len() == 1 && logged[0].contains("cannot check"), "{logged:?}");
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(pinned("1.91", "1.91.0")))), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 1);
 }

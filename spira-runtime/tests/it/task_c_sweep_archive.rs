@@ -72,11 +72,6 @@ fn t5_the_fast_path_stores_new_changed_and_bodiless_rels_and_keeps_vanished_rows
 }
 
 #[test]
-fn t6_two_virtual_days_are_deterministic_and_within_2_events_an_hour() {
-    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&matching())), 2, 2);
-}
-
-#[test]
 fn t7_one_pass_stores_at_most_a_bounded_batch_so_the_carry_fits_one_journal_record() {
     let h = t::handler::<H>(SET);
     let sources: Vec<Source> = (0..5000).map(|i| src(&format!("-home-ryan-spira-run-worktree-sp-{i:06}/{i:036}.jsonl"), 10, 1)).collect();

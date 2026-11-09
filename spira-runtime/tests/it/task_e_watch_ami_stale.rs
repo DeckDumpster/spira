@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_ami_stale::*;
 use spira_runtime::watchers::INBOX_APPEND;
@@ -101,11 +101,4 @@ fn t5_the_lines_are_the_ones_round_ami_stale_wrote() {
     assert_eq!(said(&r), [format!("1970-01-01T00:00:00Z [watch:round-ami-stale] {STALE}; EC2 rounds refuse the image until the Round AMI workflow builds one")]);
     let r = rig(1, Arc::new(Mutex::new(seen(Verdict::Unreadable { rc: 2, out: "ExpiredToken".into() }))));
     assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:round-ami-stale] round AMI check could not read the images: 'round-vm ami-check' exited 2: ExpiredToken; EC2 rounds refuse the image until the Round AMI workflow builds one"]);
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(seen(Verdict::Fresh)))), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 2);
 }

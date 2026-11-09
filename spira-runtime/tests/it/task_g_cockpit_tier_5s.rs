@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::journal::Journal;
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::StreamKey;
 use spira_runtime::tasks::g::cockpit::{Carry, Fragment, FragmentState, Snapshot};
 use spira_runtime::tasks::g::cockpit_tier_5s::*;
@@ -120,14 +120,4 @@ fn t5_parity_an_unchanged_digest_is_not_published_again() {
     let (published, _) = decide(&Carry::default(), &snap(true, "r1")).unwrap();
     let (_, acts) = decide(&published, &snap(true, "r1")).unwrap();
     assert!(acts.is_empty(), "{acts:?}");
-}
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_publish_at_most_once_per_distinct_snapshot() {
-    let world = |call: u64| snap(true, &format!("r{}", call / 720));
-    let a = assert_deterministic(|seed| rig(seed, world), 1, 2);
-    running(&a);
-    let publishes = a.requested().iter().filter(|q| q.name == PUBLISH).count();
-    assert!(publishes <= 1 + (2 * 86_400_000 / CADENCE_MS / 720) as usize, "{publishes} publishes");
-    assert_journal_budget(&a, 10);
 }

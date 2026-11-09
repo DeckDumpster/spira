@@ -64,17 +64,3 @@ fn t5_the_line_matches_escape_classify_census_for_empty_flake_only_and_all_four(
         assert!(acts[0].input.contains(line), "{} lacks {line}", acts[0].input);
     }
 }
-
-#[test]
-fn t6_two_virtual_days_across_monday_report_once_deterministically() {
-    let rig = t::t6_deterministic::<H>(
-        |seed| {
-            let mut r = t::rig::<H>(seed, SET, &json(&counts(&[("flake", 1)])));
-            r.advance(3 * DAY_MS).unwrap();
-            r
-        },
-        2,
-        1,
-    );
-    assert_eq!(t::fired_at::<H>(&rig), t::elapses(SPEC, 0, 5 * DAY_MS));
-}

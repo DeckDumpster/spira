@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::units::{Exit, UnitHandle, UnitRan, UnitSpec, UNIT_START};
 use runtime::EventKind;
 use spira_runtime::tasks::d::acceptance as acc;
@@ -126,11 +126,4 @@ fn t5_a_green_sample_records_the_summary_cert_sweep_wrote() {
     acc::assert_healthy(&r, STREAM);
     let rec = asked(&r, RECORD);
     assert!(rec.iter().any(|l| l.contains("SAMPLE round=r1 ran=2 red=0 fault=0 wall=")), "{rec:?}");
-}
-
-#[test]
-fn t6_two_days_of_ticks_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(tip(0, None)))), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 6);
 }

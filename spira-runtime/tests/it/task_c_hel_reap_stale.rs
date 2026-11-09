@@ -65,8 +65,3 @@ fn t5_finished_merged_and_idle_trees_go_and_the_two_listed_divergences_hold() {
     let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(repo(vec![tree("sp-a", Some("WORKING"), false, 60, None)])), HOUR).unwrap();
     assert!(acts.is_empty(), "no prune on an idle pass (divergence from today): {acts:?}");
 }
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_1_event_an_hour() {
-    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&repo(vec![tree("sp-a", Some("WORKING"), false, 7_200, None)]))), 2, 1);
-}

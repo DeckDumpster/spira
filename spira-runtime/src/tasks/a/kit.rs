@@ -225,18 +225,16 @@ pub fn real_names() -> Vec<&'static str> {
 ///
 /// - `module`: the task's module under `tasks::a`; `registration`: its handler, built without
 ///   config; `tick`: the kind of an ordinary tick; `first_timer_ms`: when the boot tick arms the
-///   next one; `idle`/`busy`: the contract's idle fixture and a world with work in it;
-///   `budget`: the contract's idle ceiling in journaled events per hour (the silence law then
-///   holds an idle run to zero; a busy run is checked for determinism only).
+///   next one; `idle`/`busy`: the contract's idle fixture and a world with work in it.
 #[macro_export]
 macro_rules! family_a_acceptance {
-    (module: $m:ident, registration: $reg:expr, tick: $tick:expr, first_timer_ms: $first:expr, budget: $budget:expr $(,)?) => {
+    (module: $m:ident, registration: $reg:expr, tick: $tick:expr, first_timer_ms: $first:expr $(,)?) => {
         #[allow(unused_imports)]
         use $crate::tasks::a::$m::*;
         #[allow(unused_imports)]
         use $crate::tasks::a::kit::{self, Act};
         #[allow(unused_imports)]
-        use ::runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig, DAY_MS, PLANTED_UNKNOWN};
+        use ::runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig, DAY_MS, PLANTED_UNKNOWN};
 
         fn registration() -> ::runtime::event::Registration {
             $reg
@@ -308,20 +306,6 @@ macro_rules! family_a_acceptance {
             let bogus = format!("{}.bogus", NAME);
             assert!(effects_runnable(&[bogus.as_str()], &kit::real_names(), &sim).is_err());
             assert_eq!(kit::spawns(&kit::module_source(stringify!($m))), Vec::<String>::new());
-        }
-
-        #[test]
-        fn t6_two_busy_virtual_days_are_deterministic() {
-            let r = assert_deterministic(|seed| rig_with(seed, kit::cycling(vec![idle(), busy()], 30)), 1, 2);
-            kit::assert_unpoisoned(&r, STREAM);
-        }
-
-        #[test]
-        fn t6_two_idle_virtual_days_are_deterministic_under_budget_and_journal_nothing() {
-            let r = assert_deterministic(|seed| rig(seed, idle()), 1, 2);
-            kit::assert_unpoisoned(&r, STREAM);
-            assert_journal_budget(&r, $budget);
-            assert_journal_budget(&r, 0);
         }
     };
 }

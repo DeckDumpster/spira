@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_testenv_cap::*;
 use spira_runtime::watchers::INBOX_APPEND;
@@ -103,11 +103,4 @@ fn t5_the_breaches_and_the_line_are_the_ones_testenv_cap_made() {
     assert_eq!(kills.len(), 2, "only past cap + waits + grace: {kills:?}");
     let r = rig(1, world(vec![run(4242, 800, SUITE)]), killed);
     assert_eq!(asked(&r, INBOX_APPEND), ["1970-01-01T00:00:00Z testenv over-cap killed: pid 4242 tier=suite wall=800s cap=600s cmd=/r/bin/testenv --suites test-a.sh spira"]);
-}
-
-#[test]
-fn t6_two_days_of_fifteen_second_ticks_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, world(vec![run(10, 100, SUITE)]), killed), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 1);
 }

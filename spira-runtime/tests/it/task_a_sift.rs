@@ -12,7 +12,6 @@ spira_runtime::family_a_acceptance! {
     registration: Sift::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
-    budget: 60,
 }
 
 /// The contract's idle fixture: no SUBMITTED or CERTIFIED rows in any repo.

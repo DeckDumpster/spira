@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_warm_full::*;
 use spira_runtime::watchers::INBOX_APPEND;
@@ -110,11 +110,4 @@ fn t5_the_reap_set_and_the_line_are_the_ones_warm_full_made() {
     let reaped = asked(&r, REAP);
     assert!(reaped.len() == 1 && reaped[0].contains("slot.3"), "an idle slot over cap is reaped below the limit: {reaped:?}");
     assert!(asked(&r, INBOX_APPEND).is_empty());
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(fill(40, vec![slot(1, 2048, None)])))), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 4);
 }

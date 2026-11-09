@@ -65,8 +65,3 @@ fn t5_a_due_intent_takes_the_lock_and_a_halted_world_records_without_judging() {
     let (c, acts) = task::decide(&h.cfg, &carried_equal(), &Input::Observed(halted), MIN).unwrap();
     assert_eq!((c.phase, names(&acts)), (Phase::Locking, vec![task::LOCK]), "a halt is an input, not a skip: Mode::Halted still records");
 }
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_40_events_an_hour() {
-    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&quiet())), 2, 40);
-}

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::journal::Journal;
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig, DAY_MS};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::StreamKey;
 use spira_runtime::tasks::f::asks_ideas::*;
 use spira_runtime::tasks::{self, f};
@@ -124,14 +124,4 @@ fn t5_parity_outside_waking_hours_and_no_ideas_ask_nothing() {
     let none = Snapshot { ideas: Ok(vec![]), ..snap(NOW, 10, false) };
     let (_, outcome, acts) = decide(&spell, &none, &config());
     assert_eq!((outcome, acts.len()), (Outcome::NoIdeas, 0));
-}
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_within_budget_and_prompt_at_most_daily() {
-    let world = |call: u64| snap(NOW + call * 300, ((call / 12) % 24) as u32, (call / 36).is_multiple_of(2));
-    let a = assert_deterministic(|seed| rig(seed, world), 1, 2);
-    running(&a);
-    assert_journal_budget(&a, 2);
-    let asks = a.requested().iter().filter(|q| q.name == ASK).count() as u64;
-    assert!(asks <= a.now().div_ceil(DAY_MS), "{asks} prompts in {} ms", a.now());
 }

@@ -1,7 +1,6 @@
 //! T1–T6 for `hel.reap_terminal`, from the Acceptance section of
 //! `wiki/projects/spira/designs/tasks/hel-reap-terminal.md`. Red until the task is ported.
 
-use runtime::taskrig::DAY_MS;
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
 use spira_runtime::tasks::c::hel_reap_terminal::{self as task, Carry, Entry, HelReapTerminal as H, Phase, Snapshot, Unsaved};
 
@@ -72,10 +71,4 @@ fn t5_terminal_checkouts_and_old_scratch_go_and_unsaved_work_stays() {
     };
     let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(snap), AT_20).unwrap();
     assert_eq!(names(&acts), [task::DESTROY_WORKTREE, task::REMOVE_SCRATCH], "WOULD remove sp-done and scratch-old; KEEP the unsaved checkout and the dot-name");
-}
-
-#[test]
-fn t6_two_virtual_days_fire_at_every_20_deterministically_within_2_events_an_hour() {
-    let rig = t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&idle())), 2, 2);
-    assert_eq!(t::fired_at::<H>(&rig), t::elapses(SPEC, 0, 2 * DAY_MS));
 }

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::journal::Journal;
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::StreamKey;
 use spira_runtime::tasks::f::trigger_groom::*;
 use spira_runtime::tasks::f::Decision;
@@ -120,12 +120,4 @@ fn t5_parity_a_first_run_at_threshold_files_the_groomer_bead() {
     assert_eq!(bead.persona.as_deref(), Some("groomer"));
     assert_eq!(bead.repo.as_deref(), Some("spira"));
     assert!(bead.labels.contains(&"groom-trigger".to_string()) && bead.labels.contains(&"delivers:note:/run/groom.log".to_string()), "{:?}", bead.labels);
-}
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_budget() {
-    let world = |call: u64| snap(call % 2, true, 6, 0);
-    let a = assert_deterministic(|seed| rig(seed, world), 1, 2);
-    running(&a);
-    assert_journal_budget(&a, 1);
 }

@@ -14,7 +14,6 @@ spira_runtime::family_a_acceptance! {
     registration: GateWorker::new(2, BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
-    budget: 0,
 }
 
 fn job(repo: &str, branch: &str, fix: bool, priority: u8, enqueued_ms: u64) -> Job {

@@ -14,7 +14,6 @@ spira_runtime::family_a_acceptance! {
     // The row's 2-min cadence: the row has no first-boot delay, so the boot tick arms the pass
     // one cadence later (the old timer's OnBootSec=180 s is not modelled).
     first_timer_ms: CADENCE_MS,
-    budget: 60,
 }
 
 const NOW: u64 = 1_793_000_000_000;

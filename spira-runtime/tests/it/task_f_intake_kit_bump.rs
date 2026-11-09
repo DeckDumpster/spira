@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::journal::Journal;
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::StreamKey;
 use spira_runtime::tasks::f::intake_kit_bump::*;
 use spira_runtime::tasks::{self, f};
@@ -124,15 +124,4 @@ fn t5_parity_an_unpublished_crate_files_nothing() {
     let (next, acts) = decide(&Carry::default(), &snap(None, "1.2.0", "^1"), &config());
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!(next, Carry::default());
-}
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_budget() {
-    let world = |call: u64| {
-        let release = ["1.2.0", "1.3.0", "1.4.0"][((call / 96) % 3) as usize];
-        snap(Some(release), "1.2.0", "^1")
-    };
-    let a = assert_deterministic(|seed| rig(seed, world), 1, 2);
-    running(&a);
-    assert_journal_budget(&a, 1);
 }

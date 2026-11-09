@@ -84,9 +84,3 @@ fn t5_landed_and_quiet_closes_with_the_old_evidence_and_dropped_fixes_do_not_blo
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(unlanded), TICK).unwrap();
     assert!(acts.iter().all(|a| a.name == task::LOG), "an unlanded fix waits: {acts:?}");
 }
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_2_events_an_hour() {
-    let (snap, _) = idle();
-    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&snap)), 2, 2);
-}

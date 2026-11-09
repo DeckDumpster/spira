@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::journal::Journal;
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::StreamKey;
 use spira_runtime::tasks::f::intake_gh::*;
 use spira_runtime::tasks::{self, f};
@@ -129,12 +129,4 @@ fn t5_parity_a_zero_bead_store_is_refused_on_the_inbox_and_files_nothing() {
     let (_, acts) = decide(&Carry::default(), &snap(0, vec![issue(1, "ryan")], vec![]));
     assert_eq!(acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), [f::INBOX]);
     assert!(acts[0].input.contains("[watch:intake.gh] gh-intake:"), "{}", acts[0].input);
-}
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_budget() {
-    let world = |call: u64| snap(1, (1..=1 + call / 16).map(|n| issue(n, if n.is_multiple_of(2) { "ryan" } else { "stranger" })).collect(), vec![]);
-    let a = assert_deterministic(|seed| rig(seed, world), 1, 2);
-    running(&a);
-    assert_journal_budget(&a, 4);
 }

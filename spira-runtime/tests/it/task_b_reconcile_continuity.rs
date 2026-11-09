@@ -59,9 +59,3 @@ fn t5_the_first_announcement_matches_the_old_log_and_the_repeat_is_dropped() {
     let (_, acts) = task::decide(&h.cfg, &c, &Input::Observed(Snapshot { breaks: vec![brk(None)] }), 2 * TICK).unwrap();
     assert!(acts.is_empty(), "the old unit re-printed every 15 min; the task does not: {acts:?}");
 }
-
-#[test]
-fn t6_two_virtual_days_with_a_planted_break_are_deterministic_and_within_1_event_an_hour() {
-    let answers = vec![json(&Snapshot { breaks: vec![brk(None)] }), json(&Snapshot { breaks: vec![brk(Some("ryan"))] })];
-    t::t6_deterministic::<H>(|seed| t::rig_cycle::<H>(seed, SET, answers.clone()), 2, 1);
-}

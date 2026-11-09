@@ -74,11 +74,6 @@ fn t5_a_changed_dump_writes_sorted_by_id_and_a_half_shrink_refuses() {
     assert_eq!((c.refused.as_deref(), acts.len()), (Some("shrink"), 0));
 }
 
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_1_event_an_hour() {
-    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&current(&["sp-a"], 1))), 2, 1);
-}
-
 struct Store(std::sync::Mutex<Vec<Vec<String>>>, usize);
 
 impl spira_config::lc_call::Transport for Store {

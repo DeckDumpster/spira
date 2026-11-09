@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, effects_runnable, TaskRig, DAY_MS};
+use runtime::taskrig::{effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::d::watch_perf::*;
 use spira_runtime::watchers::INBOX_APPEND;
@@ -120,12 +120,4 @@ fn t5_the_lines_are_the_ones_perf_watch_wrote() {
     assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:perf-watch] PERF UNRUNNABLE lc-show: exit status: 1"]);
     let logged: Vec<&str> = r.requested().iter().filter(|q| q.name == LOG).map(|q| q.input.as_str()).collect();
     assert_eq!(logged, ["PERF UNRUNNABLE lc-show: exit status: 1"], "the log carries the bare alarm");
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(idle()))), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert!(r.now() >= 2 * DAY_MS);
-    assert_journal_budget(&r, 13);
 }

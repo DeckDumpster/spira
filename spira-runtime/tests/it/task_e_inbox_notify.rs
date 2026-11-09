@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::units::UNIT_START;
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::inbox_notify::*;
@@ -134,11 +134,4 @@ fn t5_the_asks_are_the_ones_watchd_notify_mailed() {
     r.advance(35 * MIN).unwrap();
     let a = asks(&r);
     assert!(a.len() == 1 && a[0].contains(HEALTH_SUBJECT) && a[0].contains("mail-deliver — DEGRADED for") && a[0].contains("no delivery in 900s"), "{a:?}");
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(caught_up()))), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 1);
 }

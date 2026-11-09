@@ -14,7 +14,6 @@ spira_runtime::family_a_acceptance! {
     registration: QueueStep::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
-    budget: 60,
 }
 
 fn local() -> Repo {

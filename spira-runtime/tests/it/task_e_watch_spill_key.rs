@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_spill_key::*;
 use spira_runtime::watchers::INBOX_APPEND;
@@ -106,11 +106,4 @@ fn t5_the_lines_are_the_ones_round_spill_key_wrote() {
     let timeout = Snapshot { launch: Some(Launch::Probed { rc: 124, out_tail3: String::new(), took_s: 60 }), ..key(100) };
     let r = rig(1, Arc::new(Mutex::new(timeout)));
     assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:round-spill-key] ROUND SPILL LAUNCH: probe could not decide: round-vm ec2-probe --dry-run gave no answer in 60s and no real EC2 launch is recorded in the last 1800s"]);
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(off()))), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 1);
 }

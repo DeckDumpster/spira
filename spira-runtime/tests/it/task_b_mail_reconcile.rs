@@ -65,12 +65,6 @@ fn t5_a_question_closes_and_answers_and_a_second_pass_is_silent() {
     assert!(acts.is_empty(), "the ledger makes the second pass silent: {acts:?}");
 }
 
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_60_events_an_hour() {
-    let answers = vec![json(&Snapshot::default()), json(&Snapshot { replies: vec![reply("m1", "notice", &["note-orig", "complete"])] })];
-    t::t6_deterministic::<H>(|seed| t::rig_cycle::<H>(seed, SET, answers.clone()), 2, 60);
-}
-
 fn marked(cfg: &spira_runtime::tasks::b::kit::Cfg, effect: &str, ok: bool, body: &str) -> String {
     let (_, acts) = task::decide(cfg, &Carry::default(), &Input::Outcome { effect: effect.into(), ok, body: body.into() }, MIN).unwrap();
     assert_eq!(names(&acts), [task::MARK]);

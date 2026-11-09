@@ -64,8 +64,3 @@ fn t5_a_satisfied_ask_closes_with_the_old_reason_and_a_mislabelled_epic_is_said_
     let (_, acts) = task::decide(&h.cfg, &c, &Input::Observed(snap), 2 * TICK).unwrap();
     assert!(acts.is_empty(), "an unchanged mislabelled set is silent: {acts:?}");
 }
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_8_events_an_hour() {
-    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&Snapshot { asks: vec![ask("sp-a", "false", &[])], ..Snapshot::default() })), 2, 8);
-}

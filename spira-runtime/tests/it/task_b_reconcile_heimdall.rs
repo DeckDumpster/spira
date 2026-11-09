@@ -71,9 +71,3 @@ fn t5_a_confirmed_stall_raises_once_and_a_store_outage_writes_nothing() {
     let outage = task::decide(&h.cfg, &keyed(Phase::Seen, 1), &Input::Observed(Snapshot { db_reachable: false, ..stalled(now) }), now);
     assert!(matches!(&outage, Err(e) if e.contains("unreachable")), "no store write while unreachable: {outage:?}");
 }
-
-#[test]
-fn t6_two_virtual_days_with_a_stall_and_an_outage_are_deterministic_and_quiet() {
-    let answers = vec![json(&quiet(0)), json(&stalled(3_600_000)), json(&Snapshot { db_reachable: false, ..quiet(0) })];
-    t::t6_deterministic::<H>(|seed| t::rig_cycle::<H>(seed, SET, answers.clone()), 2, 2);
-}

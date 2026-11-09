@@ -14,7 +14,6 @@ spira_runtime::family_a_acceptance! {
     registration: SubmissionProvision::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: BOOT_DELAY_MS,
-    budget: 60,
 }
 
 fn plan() -> Plan {

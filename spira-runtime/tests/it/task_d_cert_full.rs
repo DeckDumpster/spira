@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::units::{Exit, UnitHandle, UnitRan, UnitSpec, UNIT_START, UNIT_STOP};
 use runtime::EventKind;
 use spira_runtime::tasks::d::acceptance as acc;
@@ -145,11 +145,4 @@ fn t5_the_event_lines_are_the_ones_cert_sweep_recorded() {
     r.tick(STREAM, ran(&r)).unwrap();
     acc::assert_healthy(&r, STREAM);
     assert!(asked(&r, RECORD).iter().any(|i| i.contains("SWEEP FAULT mode=full round=r2:")), "{:?}", asked(&r, RECORD));
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(certified()))), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 1);
 }

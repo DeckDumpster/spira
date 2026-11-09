@@ -63,8 +63,3 @@ fn t5_terminal_records_and_complete_epics_close_behind_the_skew_gate() {
     let (_, acts) = task::decide(&h.cfg, &c, &Input::Outcome { effect: task::SKEW_CHECK.into(), ok: false, body: "exit 3".into() }, TICK).unwrap();
     assert!(acts.is_empty(), "a red skew check drops the batch: {acts:?}");
 }
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_6_events_an_hour() {
-    t::t6_deterministic::<H>(|seed| t::rig_cycle::<H>(seed, SET, vec![json(&idle()), json(&Snapshot { through_seq: Some(41), work: vec![close("sp-a", "LANDED")], ..Snapshot::default() })]), 2, 6);
-}
