@@ -341,6 +341,9 @@ pub trait Scripts {
     /// Stops every live unit and scope the legs of `batch` in `repo` run in and waits for each to
     /// exit: the names it stopped. `Err` when one outlived the wait or the units cannot be read.
     fn stop_round_legs(&self, repo: &str, batch: &str) -> Result<Vec<String>, String>;
+    /// Whether any unit or scope the legs of `batch` in `repo` run in is live; true when the
+    /// units cannot be read, as a round that may be running is not abandoned.
+    fn round_legs_live(&self, repo: &str, batch: &str) -> bool;
     /// A user unit's `ActiveState` (`systemctl --user show -p ActiveState --value`); empty when unreadable.
     fn unit_active_state(&self, unit: &str) -> String;
     /// `round-vm run <tree> --results-dir <results> --base <base> --round-batch <batch> --round-repo <repo>` under `timeout <wall_secs>`: the full
@@ -652,8 +655,9 @@ pub trait Lc {
         Err("churn-facts is not available on this lifecycle".into())
     }
     /// `requeue-orphans --apply`: return every bead IN_DELIVERY that no open batch names, and
-    /// abandon a batch that never began.
-    fn requeue_orphans(&self, _actor: &str) -> Result<String, (i32, String)> {
+    /// abandon a batch that never began. `running(repo, batch)` says whether a leg unit or
+    /// round-vm process of that round is live; such a round has begun and is left open.
+    fn requeue_orphans(&self, _actor: &str, _running: &dyn Fn(&str, &str) -> bool) -> Result<String, (i32, String)> {
         Ok(String::new())
     }
     /// `certify <bead> <tip> pass <detail> <actor>`: record a gate pass at `tip`.

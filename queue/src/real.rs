@@ -1077,6 +1077,12 @@ impl Scripts for RealScripts {
         let cgroup = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
         runtime::units::stop_round_legs(&units, repo, batch, &|name| cgroup.contains(name))
     }
+    fn round_legs_live(&self, repo: &str, batch: &str) -> bool {
+        runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock))
+            .map_err(|e| e.0)
+            .and_then(|u| runtime::units::live_round_units(&u, repo, batch, &|_| false))
+            .map_or(true, |live| !live.is_empty())
+    }
     fn unit_active_state(&self, unit: &str) -> String {
         #[cfg(target_os = "linux")]
         {
@@ -1864,8 +1870,23 @@ impl Lc for RealLc {
             Err((rc, out.trim().to_string()))
         }
     }
-    fn requeue_orphans(&self, actor: &str) -> Result<String, (i32, String)> {
-        let (rc, out) = self.run(&["requeue-orphans", "--actor", actor, "--apply"]);
+    fn requeue_orphans(&self, actor: &str, running: &dyn Fn(&str, &str) -> bool) -> Result<String, (i32, String)> {
+        let (rc, out) = self.run(&["requeue-orphans", "--actor", actor]);
+        if rc != 0 {
+            return Err((rc, out.trim().to_string()));
+        }
+        let seen: serde_json::Value = serde_json::from_str(&out).unwrap_or_default();
+        let live: Vec<String> = seen
+            .get("repos")
+            .and_then(|r| r.as_object())
+            .into_iter()
+            .flatten()
+            .filter(|(batch, repo)| repo.as_str().is_some_and(|repo| running(repo, batch)))
+            .map(|(batch, _)| batch.clone())
+            .collect();
+        let mut argv = vec!["requeue-orphans", "--actor", actor, "--apply"];
+        argv.extend(live.iter().flat_map(|b| ["--live-round", b.as_str()]));
+        let (rc, out) = self.run(&argv);
         if rc == 0 {
             Ok(out)
         } else {

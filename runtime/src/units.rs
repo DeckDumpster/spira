@@ -611,16 +611,22 @@ fn is_live(state: UnitState) -> bool {
     matches!(state, UnitState::Active | UnitState::Activating | UnitState::Deactivating)
 }
 
-/// Stops every live unit and scope of `round`'s legs in `repo` and waits until each has exited;
-/// returns the names it stopped. `Err` names the units that outlived the wait, or the
-/// listing or stop that failed: an abandon must not go on to free a tree a leg still writes. A unit whose name
-/// `spare` accepts (the caller's own) is left running.
-pub fn stop_round_legs(units: &dyn Units, repo: &str, round: &str, spare: &dyn Fn(&str) -> bool) -> std::result::Result<Vec<String>, String> {
+/// The live units and scopes of `round`'s legs in `repo`, less those `spare` accepts.
+pub fn live_round_units(units: &dyn Units, repo: &str, round: &str, spare: &dyn Fn(&str) -> bool) -> std::result::Result<Vec<String>, String> {
     let mut live: Vec<String> = vec![];
     for glob in [round_leg_glob(repo, round), round_scope_glob(repo, round)] {
         let listed = units.list(&glob).map_err(|e| format!("cannot list {glob}: {}", e.0))?;
         live.extend(listed.into_iter().filter(|d| is_live(d.state) && !spare(&d.name)).map(|d| d.name));
     }
+    Ok(live)
+}
+
+/// Stops every live unit and scope of `round`'s legs in `repo` and waits until each has exited;
+/// returns the names it stopped. `Err` names the units that outlived the wait, or the
+/// listing or stop that failed: an abandon must not go on to free a tree a leg still writes. A unit whose name
+/// `spare` accepts (the caller's own) is left running.
+pub fn stop_round_legs(units: &dyn Units, repo: &str, round: &str, spare: &dyn Fn(&str) -> bool) -> std::result::Result<Vec<String>, String> {
+    let live = live_round_units(units, repo, round, spare)?;
     for name in &live {
         units.stop(&UnitHandle::named(name)).map_err(|e| format!("cannot stop {name}: {}", e.0))?;
     }

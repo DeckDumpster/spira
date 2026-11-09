@@ -300,7 +300,7 @@ fn promote<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
     )
 }
 
-/// `requeue-orphans --actor A [--apply] [--stale-secs N]`.
+/// `requeue-orphans --actor A [--apply] [--stale-secs N] [--live-round BATCH]...`.
 fn requeue_orphans<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let Some(actor) = flag(args, "--actor") else {
         return (CANNOT_TELL, "requeue-orphans: --actor is required".into());
@@ -316,8 +316,13 @@ fn requeue_orphans<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -
             )
         }
     };
+    let live: std::collections::BTreeSet<String> = args
+        .windows(2)
+        .filter(|w| w[0] == "--live-round")
+        .map(|w| w[1].clone())
+        .collect();
     let req = Request::new(call.request, &actor, "lc.requeue-orphans");
-    match store.requeue_orphans(&actor, apply, stale_secs, call.now, &req) {
+    match store.requeue_orphans(&actor, apply, stale_secs, call.now, &live, &req) {
         Ok(o) => {
             let out = json!({
                 "orphans": o.orphans,
@@ -326,6 +331,8 @@ fn requeue_orphans<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -
                 "requeued": o.requeued,
                 "failed": o.failed,
                 "leased": o.leased,
+                "running": o.running,
+                "repos": o.repos,
             });
             let code = if o.failed.is_empty() { 0 } else { REFUSED };
             (code, out.to_string())
