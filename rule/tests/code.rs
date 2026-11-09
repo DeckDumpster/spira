@@ -191,3 +191,12 @@ fn law_submission_runs_queue_submit_with_no_call_timeout_so_the_gate_survives() 
     let args: Vec<_> = c.get_args().collect();
     assert_eq!(args, ["submit", "spira/sp-x", "spira"]);
 }
+
+#[test]
+fn the_enact_bead_lookup_asks_spira_lc_for_a_verb_it_serves() {
+    let dir = testkit::TempDir::new("rule-fake-lc");
+    testkit::write_exe(dir.path().join("spira-lc"), "#!/bin/sh\n[ \"$1 $2\" = \"content list\" ] || { echo \"usage: spira-lc show <bead-id> | show-batch ...\" >&2; exit 2; }\necho '[]'\n");
+    let path = format!("{}:{}", dir.path().display(), std::env::var("PATH").unwrap_or_default());
+    let _env = testkit::env(&[("PATH", Some(&path))]);
+    assert_eq!(rule::code::open_bead_labelled("law-enact:x"), Ok(None));
+}
