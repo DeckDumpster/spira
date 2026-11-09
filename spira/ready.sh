@@ -59,7 +59,7 @@ _sched_unit="$(spira_unit runtime service)"
 if [ "$_sched_unit" = "?" ]; then
     UNKN "scheduler — unit not found (SPIRA_INSTANCE=${SPIRA_INSTANCE:-prod})" \
          "install.sh may not have run, or SPIRA_INSTANCE does not match what was installed."
-elif "$SC" --user is-active --quiet "$_sched_unit" 2>/dev/null; then
+elif ready_wait_scheduler "$_sched_unit" "${SPIRA_READY_SCHEDULER_WAIT_S:-60}"; [ "$("$SC" --user is-active "$_sched_unit" 2>/dev/null)" = active ]; then
     PASS "scheduler unit active — $_sched_unit"
 else
     _sched_state="$("$SC" --user is-active "$_sched_unit" 2>/dev/null || true)"

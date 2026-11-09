@@ -49,3 +49,17 @@ ready_verdict() {
     printf '%d pass, %d WARN, %d skip — armed: loop is ready to receive work.\n' "$pass" "$warn" "$skip"
     return 0
 }
+
+# ready_wait_scheduler <unit> <seconds> — wait until the scheduler answers on its control
+# socket while its unit is still starting; 0 once it answers, 1 at the deadline or when the
+# unit is not starting.
+ready_scheduler_answers() { timeout 5 world scheduler-status >/dev/null 2>&1; }
+ready_wait_scheduler() {
+    local unit="$1" max="$2" waited=0 state
+    while ! ready_scheduler_answers; do
+        [ "$waited" -lt "$max" ] || return 1
+        state="$("$SC" --user is-active "$unit" 2>/dev/null)"
+        case "$state" in activating|active|reloading) ;; *) return 1 ;; esac
+        sleep 1; waited=$((waited + 1))
+    done
+}
