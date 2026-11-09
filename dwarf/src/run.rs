@@ -544,7 +544,8 @@ impl<'a> Run<'a> {
         };
         let mut stacks = std::collections::BTreeMap::new();
         let (won, logs, unreachable) = claim::lc_claim_loop(ids, resumable, tier, who, |id| {
-            self.d.exec.exec("spira-lc", &s(&["unclaim", id, &holder]), None, None);
+            let rc = self.d.exec.exec("spira-lc", &s(&["unclaim", id, &holder]), None, None).code;
+            rc <= 1
         }, |id| {
             let p = self.stack_proposal(id, who);
             if let Some(reason) = p.reason.as_deref().filter(|r| !p.claimable && r.starts_with("Blocked")) {
