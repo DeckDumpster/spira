@@ -141,15 +141,28 @@ fn is_sha(s: &str) -> bool {
 }
 
 /// The commit a ref names, from its loose file or `packed-refs` (the peeled line when a tag has one).
-/// A loose tag or a symbolic ref is `Unknown`: the file may name a tag object, or another ref.
+/// A symbolic ref is followed; a loose tag is an `Object`, since the file may name a tag object.
 fn read_ref(common: &Path, name: &str) -> Ref {
+    read_ref_at(common, name, 0)
+}
+
+const SYMREF_DEPTH: usize = 5;
+
+fn read_ref_at(common: &Path, name: &str, depth: usize) -> Ref {
     let packed = fs::read_to_string(common.join("packed-refs")).unwrap_or_default();
     let spellings = [format!("refs/{name}"), format!("refs/heads/{name}"), format!("refs/remotes/{name}"), format!("refs/tags/{name}")];
     for candidate in spellings.iter().chain(std::iter::once(&name.to_string())) {
         if candidate.starts_with("refs/") {
             if let Ok(text) = fs::read_to_string(common.join(candidate)) {
                 let sha = text.trim();
-                return if is_sha(sha) && !candidate.starts_with("refs/tags/") { Ref::Sha(sha.to_string()) } else { Ref::Unknown };
+                if let Some(target) = sha.strip_prefix("ref:") {
+                    return if depth < SYMREF_DEPTH { read_ref_at(common, target.trim(), depth + 1) } else { Ref::Unknown };
+                }
+                return match (is_sha(sha), candidate.starts_with("refs/tags/")) {
+                    (true, false) => Ref::Sha(sha.to_string()),
+                    (true, true) => Ref::Object(sha.to_string()),
+                    _ => Ref::Unknown,
+                };
             }
         }
         let mut lines = packed.lines().peekable();
@@ -193,6 +206,32 @@ fn spira_branches(repo: &Path) -> Option<Vec<String>> {
         }
     }
     Some(out.into_iter().collect())
+}
+
+/// Dwarves of `rune` the unit snapshot shows live, as `strand dwarf-count` counts them from `list-units`.
+fn live_dwarves(active: &BTreeMap<String, String>, rune: &str) -> i64 {
+    active
+        .iter()
+        .filter(|(name, state)| {
+            runtime::units::is_live_dwarf(name, runtime::units::state_of_word(state)) && runtime::units::counts_toward_caps(name) && runtime::units::is_dwarf_of(name, rune, rune)
+        })
+        .count() as i64
+}
+
+/// The default tmux socket's identity (inode and change time) when the socket exists; `None`
+/// otherwise, which leaves the question to tmux itself, as a down server is tmux's to name. A stale
+/// socket is no harm: it is only an identity to hold a healthy answer under, and a held answer is
+/// only ever one tmux gave.
+fn tmux_server_identity() -> Option<String> {
+    let dir = std::env::var_os("TMUX_TMPDIR").filter(|d| !d.is_empty()).map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
+    tmux_socket_identity(&dir.join(format!("tmux-{}", unsafe { libc::getuid() })))
+}
+
+fn tmux_socket_identity(socket_dir: &Path) -> Option<String> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let socket = socket_dir.join("default");
+    let meta = fs::metadata(&socket).ok().filter(|m| m.file_type().is_socket())?;
+    Some(format!("{}:{}.{}", meta.ino(), meta.ctime(), meta.ctime_nsec()))
 }
 
 pub fn send_mail(env: Option<&mail::env::Env>, m: &Mail) -> Result<(), String> {
@@ -299,6 +338,20 @@ impl Host for RuntimeHost {
         git_dirs(repo).filter(|(_, common)| common.join("refs").is_dir()).map_or(Ref::Unknown, |(_, common)| read_ref(&common, name))
     }
 
+    fn dwarf_count(&self, rune: &str) -> Option<i64> {
+        Some(live_dwarves(&self.units().ok()?.active, rune))
+    }
+
+    fn ready_count(&self, labels: &str, exclude: &str) -> Option<i64> {
+        let argv = ["ready-count".to_string(), labels.to_string(), exclude.to_string()];
+        let out = spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok());
+        Some(out.out.trim().parse().unwrap_or(0))
+    }
+
+    fn tmux_server(&self) -> Option<Option<String>> {
+        tmux_server_identity().map(Some)
+    }
+
     fn head_branch(&self, path: &Path) -> Option<String> {
         let head = fs::read_to_string(git_dirs(path)?.0.join("HEAD")).ok()?;
         let head = head.trim();
@@ -349,12 +402,59 @@ mod tests {
         let sha = |n: &str| host.ref_sha(d.path(), n);
         assert_eq!(sha("local/main"), Ref::Sha(a.clone()));
         assert_eq!(sha("refs/heads/local/main"), Ref::Sha(a));
-        assert_eq!(sha("packed"), Ref::Sha(b));
+        assert_eq!(sha("packed"), Ref::Sha(b.clone()));
         assert_eq!(sha("r-1"), Ref::Sha(c), "a packed tag answers with the commit it peels to");
-        assert_eq!(sha("loose"), Ref::Unknown, "a loose tag may be the tag object, so git is asked");
+        assert_eq!(sha("loose"), Ref::Object(b), "a loose tag may be the tag object, so it is peeled before it is trusted");
         assert_eq!(sha("nonesuch"), Ref::Absent, "no spelling git would try names it");
         assert_eq!(sha("HEAD~1"), Ref::Unknown, "a revision expression is git's to read");
         assert_eq!(RuntimeHost::new(World::default(), Forge::default(), None, d.join("elsewhere"), String::new(), 0, 0, String::new(), Default::default()).ref_sha(&d.join("elsewhere"), "x"), Ref::Unknown);
+    }
+
+    #[test]
+    fn a_loose_tag_is_an_object_to_peel_and_a_symbolic_ref_is_followed() {
+        let d = testkit::TempDir::new("host-symref");
+        let git = d.join(".git");
+        fs::create_dir_all(git.join("refs/heads")).unwrap();
+        fs::create_dir_all(git.join("refs/remotes/origin")).unwrap();
+        fs::create_dir_all(git.join("refs/tags")).unwrap();
+        let a = "a".repeat(40);
+        fs::write(git.join("refs/heads/main"), format!("{a}\n")).unwrap();
+        fs::write(git.join("refs/remotes/origin/HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(git.join("refs/heads/loop"), "ref: refs/heads/loop\n").unwrap();
+        fs::write(git.join("refs/tags/loose"), format!("{a}\n")).unwrap();
+        assert_eq!(read_ref(&git, "origin/HEAD"), Ref::Sha(a.clone()));
+        assert_eq!(read_ref(&git, "loose"), Ref::Object(a));
+        assert_eq!(read_ref(&git, "loop"), Ref::Unknown, "a symbolic cycle is git's to name");
+    }
+
+    #[test]
+    fn dwarves_of_a_rune_are_the_live_counted_units_of_that_name_only() {
+        let units = |l: &[(&str, &str)]| l.iter().map(|(n, s)| (n.to_string(), s.to_string())).collect::<BTreeMap<_, _>>();
+        let active = units(&[
+            ("spira-dwarf-builder-1.service", "active"),
+            ("spira-dwarf-builder-2.service", "activating"),
+            ("spira-dwarf-builder-3.service", "inactive"),
+            ("spira-dwarf-builder-4.service", "failed"),
+            ("spira-dwarf-builder-directed-5.service", "active"),
+            ("spira-dwarf-builderx-6.service", "active"),
+            ("spira-dwarf-other-7.service", "active"),
+            ("unrelated.service", "active"),
+        ]);
+        assert_eq!(live_dwarves(&active, "builder"), 2);
+        assert_eq!(live_dwarves(&active, "other"), 1);
+        assert_eq!(live_dwarves(&active, "nobody"), 0);
+    }
+
+    #[test]
+    fn a_tmux_socket_has_an_identity_and_a_missing_or_plain_file_has_none() {
+        let d = testkit::TempDir::new("host-tmux");
+        assert_eq!(tmux_socket_identity(&d.join("tmux-1")), None, "no directory, no server");
+        fs::create_dir_all(d.join("tmux-1")).unwrap();
+        fs::write(d.join("tmux-1/default"), "").unwrap();
+        assert_eq!(tmux_socket_identity(&d.join("tmux-1")), None, "a plain file is not a server");
+        fs::remove_file(d.join("tmux-1/default")).unwrap();
+        let _listener = std::os::unix::net::UnixListener::bind(d.join("tmux-1/default")).unwrap();
+        assert!(tmux_socket_identity(&d.join("tmux-1")).is_some());
     }
 
     #[test]
