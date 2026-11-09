@@ -1421,6 +1421,17 @@ fn edge_probes() -> Vec<BeadEventKind> {
     ]
 }
 
+/// Every event name the machine has: the probes' and the three no probe moves a row with.
+pub fn event_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = Vec::new();
+    for name in edge_probes().iter().map(kind_name).chain(["Reply", "AskWithdrawn", "Reclassify"]) {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
 /// Every `(state, event, to)` the machine accepts that moves a row to a different state,
 /// read by applying each probe to each state through [`apply`] — so a drawn graph is the code's
 /// own table. A move whose target depends on the row's holds, stack or reason is found only
@@ -1583,6 +1594,18 @@ mod tests {
             let out = apply(&row(state), &ev(state, 0, BeadEventKind::Promote));
             assert!(!out.applied, "{state:?} took a Promote");
             assert_eq!(out.row.state, state);
+        }
+    }
+
+    #[test]
+    fn event_names_hold_every_variant_once_under_its_serde_tag() {
+        let names = event_names();
+        assert_eq!(names.iter().collect::<BTreeSet<_>>().len(), names.len(), "{names:?}");
+        for kind in edge_probes() {
+            assert!(names.contains(&kind_name(&kind)));
+        }
+        for kind in [BeadEventKind::Reply { message_id: "m".into() }, BeadEventKind::AskWithdrawn] {
+            assert!(names.contains(&kind_name(&kind)));
         }
     }
 

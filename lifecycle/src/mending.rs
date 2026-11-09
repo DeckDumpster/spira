@@ -5,7 +5,7 @@
 
 use crate::{Outcome, Refusal, Version};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum MendingState {
     Waiting,
     Mending,
@@ -219,6 +219,87 @@ pub fn apply(row: &MendingRow, ev: &MendingEvent) -> Outcome<MendingRow> {
     }
 }
 
+/// Every state the machine has, in declaration order.
+pub const STATES: [MendingState; 7] = [
+    MendingState::Waiting,
+    MendingState::Mending,
+    MendingState::Mended,
+    MendingState::Environment,
+    MendingState::Flaky,
+    MendingState::Returned,
+    MendingState::Unsure,
+];
+
+/// One legal move of the mending machine: `event` takes a row in `from` to `to`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+pub struct LegalEdge {
+    pub from: MendingState,
+    pub event: &'static str,
+    pub to: MendingState,
+}
+
+fn kind_name(kind: &MendingEventKind) -> &'static str {
+    match kind {
+        MendingEventKind::Pickup { .. } => "Pickup",
+        MendingEventKind::TriageEnded { .. } => "TriageEnded",
+        MendingEventKind::Diagnosis { .. } => "Diagnosis",
+        MendingEventKind::Mended { .. } => "Mended",
+        MendingEventKind::Environment { .. } => "Environment",
+        MendingEventKind::Flaky { .. } => "Flaky",
+        MendingEventKind::Unsure { .. } => "Unsure",
+        MendingEventKind::Return { .. } => "Return",
+        MendingEventKind::Await { .. } => "Await",
+        MendingEventKind::Resume { .. } => "Resume",
+        MendingEventKind::Expire { .. } => "Expire",
+    }
+}
+
+const PROBE_DEADLINE: i64 = 100;
+
+/// One probe per event variant. Outcomes land before [`PROBE_DEADLINE`] and `Expire` after it.
+fn event_probes() -> Vec<MendingEventKind> {
+    vec![
+        MendingEventKind::Pickup { at: 0, deadline_s: PROBE_DEADLINE as u64 },
+        MendingEventKind::TriageEnded { at: 50 },
+        MendingEventKind::Diagnosis { text: "d".into() },
+        MendingEventKind::Mended { at: 50 },
+        MendingEventKind::Environment { at: 50 },
+        MendingEventKind::Flaky { at: 50 },
+        MendingEventKind::Unsure { at: 50 },
+        MendingEventKind::Return { at: 50, diagnosis: "d".into() },
+        MendingEventKind::Await { ask: "sp-ask".into() },
+        MendingEventKind::Resume { at: 50, deadline_s: PROBE_DEADLINE as u64 },
+        MendingEventKind::Expire { at: PROBE_DEADLINE * 2 },
+    ]
+}
+
+/// Every event name the machine has, in probe order.
+pub fn event_names() -> Vec<&'static str> {
+    event_probes().iter().map(kind_name).collect()
+}
+
+/// Every `(state, event, to)` the machine accepts that moves a row to a different state, read by
+/// applying each probe to each state through [`apply`], as the actor that may settle an unpicked failure.
+pub fn legal_edges() -> Vec<LegalEdge> {
+    let mut edges = std::collections::BTreeSet::new();
+    for state in STATES {
+        for awaiting_ask in [None, Some("sp-ask".to_string())] {
+            let mut row = MendingRow::failed("b-edge", 1, "suite");
+            row.state = state;
+            row.deadline = Some(PROBE_DEADLINE);
+            row.awaiting_ask = awaiting_ask;
+            for kind in event_probes() {
+                let ev = MendingEvent { expect: state, version: row.version, kind, actor: "concierge".into() };
+                let out = apply(&row, &ev);
+                if out.applied && out.row.state != state {
+                    edges.insert(LegalEdge { from: state, event: kind_name(&ev.kind), to: out.row.state });
+                }
+            }
+        }
+    }
+    edges.into_iter().collect()
+}
+
 /// Mends one bead may carry in total; a further failure returns it instead.
 pub const MEND_CAP_PER_BEAD: usize = 2;
 
@@ -311,6 +392,18 @@ pub fn required_checks(paths: &[String], crate_of: impl Fn(&str) -> Option<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legal_edges_are_the_machines_own_moves() {
+        let edges = legal_edges();
+        let has = |f: MendingState, e: &str, t: MendingState| edges.iter().any(|x| x.from == f && x.event == e && x.to == t);
+        assert!(has(MendingState::Waiting, "Pickup", MendingState::Mending));
+        assert!(has(MendingState::Mending, "Mended", MendingState::Mended));
+        assert!(has(MendingState::Mending, "Expire", MendingState::Returned));
+        assert!(has(MendingState::Waiting, "Flaky", MendingState::Flaky));
+        assert!(edges.iter().all(|e| !e.from.is_terminal() && e.from != e.to));
+        assert!(event_names().contains(&"Await"));
+    }
 
     fn picked(at: i64) -> MendingRow {
         let r = MendingRow::failed("b1", 1, "test-x.sh");

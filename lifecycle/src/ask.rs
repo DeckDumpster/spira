@@ -5,7 +5,7 @@
 
 use crate::{Outcome, Refusal, Version};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum AskState {
     Open,
     /// The operator's own answer, in his words, through a channel (pane, mail, chat).
@@ -130,9 +130,61 @@ pub fn apply(row: &AskRow, ev: &AskEvent) -> Outcome<AskRow> {
     Outcome::applied(next)
 }
 
+/// One legal move of the ask machine: `event` takes a row in `from` to `to`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+pub struct LegalEdge {
+    pub from: AskState,
+    pub event: &'static str,
+    pub to: AskState,
+}
+
+/// Every state the machine has, in declaration order.
+pub const STATES: [AskState; 4] = [AskState::Open, AskState::Answered, AskState::DefaultTaken, AskState::Withdrawn];
+
+fn event_probes() -> Vec<AskEventKind> {
+    vec![
+        AskEventKind::Answer { quote: "q".into(), channel: "pane".into() },
+        AskEventKind::TakeDefault { quote: "q".into() },
+        AskEventKind::Withdraw { quote: "q".into() },
+    ]
+}
+
+/// Every event name the machine has.
+pub fn event_names() -> Vec<&'static str> {
+    event_probes().iter().map(AskEventKind::name).collect()
+}
+
+/// Every `(state, event, to)` the machine accepts, read by applying each probe to each state through [`apply`].
+pub fn legal_edges() -> Vec<LegalEdge> {
+    let mut edges = Vec::new();
+    for state in STATES {
+        let mut row = AskRow::open("sp-edge", None);
+        row.state = state;
+        for kind in event_probes() {
+            let ev = AskEvent { expect: state, version: row.version, kind, actor: "probe".into() };
+            let out = apply(&row, &ev);
+            if out.applied && out.row.state != state {
+                edges.push(LegalEdge { from: state, event: ev.kind.name(), to: out.row.state });
+            }
+        }
+    }
+    edges
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legal_edges_are_the_machines_own_moves() {
+        let edges = legal_edges();
+        let has = |f: AskState, e: &str, t: AskState| edges.iter().any(|x| x.from == f && x.event == e && x.to == t);
+        assert!(has(AskState::Open, "Answer", AskState::Answered));
+        assert!(has(AskState::Open, "TakeDefault", AskState::DefaultTaken));
+        assert!(has(AskState::Open, "Withdraw", AskState::Withdrawn));
+        assert_eq!(edges.len(), 3, "a closed ask has no exit: {edges:?}");
+        assert_eq!(event_names(), ["Answer", "TakeDefault", "Withdraw"]);
+    }
 
     fn ev(kind: AskEventKind) -> AskEvent {
         AskEvent { expect: AskState::Open, version: 0, kind, actor: "concierge".into() }

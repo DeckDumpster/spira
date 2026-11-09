@@ -6,7 +6,7 @@
 
 use crate::{Outcome, Refusal, Version};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum BatchState {
     /// Assembled behind a running round and not yet cut: its members are untouched.
     Staged,
@@ -439,53 +439,137 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
     }
 }
 
+/// Every state the machine has, in declaration order.
+pub const STATES: [BatchState; 12] = [
+    BatchState::Staged,
+    BatchState::Open,
+    BatchState::CiRunning,
+    BatchState::Green,
+    BatchState::Landing,
+    BatchState::Deploying,
+    BatchState::Attributing,
+    BatchState::Rebuilding,
+    BatchState::Landed,
+    BatchState::Settled,
+    BatchState::Abandoned,
+    BatchState::Discarded,
+];
+
+/// One legal move of the batch machine: `event` takes a row in `from` to `to`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+pub struct LegalEdge {
+    pub from: BatchState,
+    pub event: &'static str,
+    pub to: BatchState,
+}
+
+/// The event's name as `event.event` logs it (the serde variant tag). Exhaustive, so a new
+/// variant does not compile until it is named here and probed in [`event_probes`].
+fn kind_name(kind: &BatchEventKind) -> &'static str {
+    match kind {
+        BatchEventKind::MemberAdded { .. } => "MemberAdded",
+        BatchEventKind::CiStarted { .. } => "CiStarted",
+        BatchEventKind::PassStarted { .. } => "PassStarted",
+        BatchEventKind::SuitesStarted { .. } => "SuitesStarted",
+        BatchEventKind::PassGreen { .. } => "PassGreen",
+        BatchEventKind::PassRed { .. } => "PassRed",
+        BatchEventKind::PassIncomplete { .. } => "PassIncomplete",
+        BatchEventKind::PassPreempted { .. } => "PassPreempted",
+        BatchEventKind::Failed { .. } => "Failed",
+        BatchEventKind::PassRebuilt { .. } => "PassRebuilt",
+        BatchEventKind::Green => "Green",
+        BatchEventKind::Red => "Red",
+        BatchEventKind::BaseMoved => "BaseMoved",
+        BatchEventKind::Rebuilt => "Rebuilt",
+        BatchEventKind::FastForward { .. } => "FastForward",
+        BatchEventKind::LandStarted => "LandStarted",
+        BatchEventKind::LandAborted { .. } => "LandAborted",
+        BatchEventKind::Deployed => "Deployed",
+        BatchEventKind::DeployFaulted { .. } => "DeployFaulted",
+        BatchEventKind::Attributed { .. } => "Attributed",
+        BatchEventKind::Settle => "Settle",
+        BatchEventKind::Abandon { .. } => "Abandon",
+        BatchEventKind::Eject { .. } => "Eject",
+        BatchEventKind::Promote { .. } => "Promote",
+        BatchEventKind::Discard { .. } => "Discard",
+    }
+}
+
+/// One probe per event variant, plus `PassStarted` for a second pass.
+fn event_probes() -> Vec<BatchEventKind> {
+    vec![
+        BatchEventKind::MemberAdded { bead_id: "sp-1".into(), tip: "t1".into() },
+        BatchEventKind::CiStarted { run: "run1".into() },
+        BatchEventKind::PassStarted { n: 1, head: "h".into() },
+        BatchEventKind::PassStarted { n: 2, head: "h".into() },
+        BatchEventKind::SuitesStarted { n: 1 },
+        BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1 },
+        BatchEventKind::PassRed { n: 1, red_suites: vec!["test-x.sh".into()], suites_s: 1, build_s: 1 },
+        BatchEventKind::PassIncomplete { n: 1, reason: "cap".into() },
+        BatchEventKind::PassPreempted { n: 1, done: 3, total: 9, red_suites: vec![] },
+        BatchEventKind::Failed { suite: "test-x.sh".into(), n: 1 },
+        BatchEventKind::PassRebuilt { head: "h2".into() },
+        BatchEventKind::Green,
+        BatchEventKind::Red,
+        BatchEventKind::BaseMoved,
+        BatchEventKind::Rebuilt,
+        BatchEventKind::FastForward { sha: "sha1".into() },
+        BatchEventKind::LandStarted,
+        BatchEventKind::LandAborted { reason: "base moved".into() },
+        BatchEventKind::Deployed,
+        BatchEventKind::DeployFaulted { why: "unit failed".into() },
+        BatchEventKind::Attributed { bead_id: "sp-1".into(), outcome: "requeue".into() },
+        BatchEventKind::Settle,
+        BatchEventKind::Abandon { reason: "r".into() },
+        BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "manual".into() },
+        BatchEventKind::Promote { head: "h3".into(), base: "b3".into() },
+        BatchEventKind::Discard { reason: "n red".into() },
+    ]
+}
+
+/// Every event name the machine has, in probe order.
+pub fn event_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = Vec::new();
+    for kind in event_probes() {
+        let name = kind_name(&kind);
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// Every `(state, event, to)` the machine accepts that moves a row to a different state,
+/// read by applying each probe to each state through [`apply`]. A move whose target depends on
+/// the row's pass or phase is found only for the row shapes probed.
+pub fn legal_edges() -> Vec<LegalEdge> {
+    let mut edges = std::collections::BTreeSet::new();
+    for state in STATES {
+        for (pass, phase) in [(0, None), (1, Some(BatchPhase::Build)), (1, Some(BatchPhase::Suites))] {
+            let mut row = BatchRow::cut("b-edge", "repo", "head", "base");
+            row.state = state;
+            row.pass = pass;
+            row.phase = phase;
+            for kind in event_probes() {
+                let ev = BatchEvent { expect: state, version: row.version, kind, actor: "probe".into() };
+                let out = apply(&row, &ev);
+                if out.applied && out.row.state != state {
+                    edges.insert(LegalEdge { from: state, event: kind_name(&ev.kind), to: out.row.state });
+                }
+            }
+        }
+    }
+    edges.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALL_STATES: [BatchState; 12] = [
-        BatchState::Staged,
-        BatchState::Open,
-        BatchState::CiRunning,
-        BatchState::Green,
-        BatchState::Landing,
-        BatchState::Deploying,
-        BatchState::Attributing,
-        BatchState::Rebuilding,
-        BatchState::Landed,
-        BatchState::Settled,
-        BatchState::Abandoned,
-        BatchState::Discarded,
-    ];
+    const ALL_STATES: [BatchState; 12] = STATES;
 
     fn kinds() -> Vec<BatchEventKind> {
-        vec![
-            BatchEventKind::MemberAdded { bead_id: "sp-1".into(), tip: "t1".into() },
-            BatchEventKind::CiStarted { run: "run1".into() },
-            BatchEventKind::PassStarted { n: 1, head: "h".into() },
-            BatchEventKind::SuitesStarted { n: 1 },
-            BatchEventKind::PassGreen { n: 1, suites_s: 1, build_s: 1 },
-            BatchEventKind::PassRed { n: 1, red_suites: vec!["test-x.sh".into()], suites_s: 1, build_s: 1 },
-            BatchEventKind::PassIncomplete { n: 1, reason: "cap".into() },
-            BatchEventKind::PassPreempted { n: 1, done: 3, total: 9, red_suites: vec![] },
-            BatchEventKind::Failed { suite: "test-x.sh".into(), n: 1 },
-            BatchEventKind::PassRebuilt { head: "h2".into() },
-            BatchEventKind::Green,
-            BatchEventKind::Red,
-            BatchEventKind::BaseMoved,
-            BatchEventKind::Rebuilt,
-            BatchEventKind::FastForward { sha: "sha1".into() },
-            BatchEventKind::LandStarted,
-            BatchEventKind::LandAborted { reason: "base moved".into() },
-            BatchEventKind::Deployed,
-            BatchEventKind::DeployFaulted { why: "unit failed".into() },
-            BatchEventKind::Attributed { bead_id: "sp-1".into(), outcome: "requeue".into() },
-            BatchEventKind::Settle,
-            BatchEventKind::Abandon { reason: "r".into() },
-            BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "manual".into() },
-            BatchEventKind::Promote { head: "h3".into(), base: "b3".into() },
-            BatchEventKind::Discard { reason: "n red".into() },
-        ]
+        event_probes()
     }
 
     fn ev(expect: BatchState, version: Version, kind: BatchEventKind) -> BatchEvent {
@@ -496,6 +580,29 @@ mod tests {
         let mut r = BatchRow::cut("b1", "spira", "head1", "base1");
         r.state = state;
         r
+    }
+
+    #[test]
+    fn legal_edges_are_the_machines_own_moves() {
+        let edges = legal_edges();
+        let has = |f: BatchState, e: &str, t: BatchState| edges.iter().any(|x| x.from == f && x.event == e && x.to == t);
+        assert!(has(BatchState::Open, "Abandon", BatchState::Abandoned));
+        assert!(has(BatchState::Green, "FastForward", BatchState::Landed));
+        assert!(has(BatchState::CiRunning, "PassGreen", BatchState::Green));
+        assert!(has(BatchState::Attributing, "PassRebuilt", BatchState::Open));
+        assert!(!has(BatchState::Open, "MemberAdded", BatchState::Open), "a move that stays put is not an edge");
+        assert!(edges.iter().all(|e| !e.from.is_terminal() && e.from != e.to));
+    }
+
+    #[test]
+    fn every_event_name_is_its_serde_tag_and_listed() {
+        let names = event_names();
+        for kind in event_probes() {
+            let tag = serde_json::to_value(&kind).unwrap();
+            let tag = tag.as_str().map(str::to_string).or_else(|| tag.as_object().and_then(|o| o.keys().next().cloned())).unwrap();
+            assert_eq!(kind_name(&kind), tag);
+            assert!(names.contains(&kind_name(&kind)));
+        }
     }
 
     #[test]
