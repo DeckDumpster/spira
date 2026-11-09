@@ -460,6 +460,21 @@ fn apply_build_actions<O: RoundOps>(ops: &mut O, members: &[Member], actions: &[
     Ok((!rebuilt.is_empty()).then_some(rebuilt))
 }
 
+/// A red the reruns could not attribute belongs to the member when exactly one member's diff
+/// touches the suite; one that touches none or several stays unattributed.
+fn own_by_touch<O: RoundOps>(ops: &O, d: &mut Decision, members: &[Member]) {
+    let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
+    for suite in std::mem::take(&mut d.unattributed) {
+        match ops.touching(&suite, &ids)[..] {
+            [ref owner] => {
+                println!("batcher: red {suite} could not be attributed by rerun; only {owner}'s diff touches it");
+                d.owners.entry(owner.clone()).or_default().push(suite);
+            }
+            _ => d.unattributed.push(suite),
+        }
+    }
+}
+
 /// The whole round: corpus with concurrent attribution; then, while anyone was ejected, the
 /// owners' suites (only those) on the survivors' release build, attributed the same way.
 pub fn attribute_round<R: RoundRunner, O: RoundOps>(
@@ -523,7 +538,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             members = next;
             continue;
         }
-        let d = s.decision;
+        let mut d = s.decision;
         let preempt = s.preempt;
         if !d.records.is_empty() {
             println!(
@@ -562,6 +577,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             ops.incident("integration", &integration);
             return Ok(RoundEnd::Blocked(format!("integration red survived the in-round fix: {}", integration.join(","))));
         }
+        own_by_touch(&*ops, &mut d, &members);
         if !d.unattributed.is_empty() {
             if !retried && d.owners.is_empty() {
                 retried = true;
@@ -708,6 +724,8 @@ pub(crate) mod tests {
         /// Whether the fake can build a member subset, and each subset it was asked to build.
         pub bisects: bool,
         pub probes: Vec<Vec<String>>,
+        /// A runner that cannot build a tree with members taken out: every such job fails to launch.
+        pub refuses_removals: bool,
     }
 
     pub type BuildFn = Box<dyn Fn(&BTreeSet<String>) -> Option<String>>;
@@ -741,6 +759,7 @@ pub(crate) mod tests {
                 build_failed: None,
                 bisects: false,
                 probes: vec![],
+                refuses_removals: false,
             }
         }
         fn verdict(&mut self, suite: &str, tree: &BTreeSet<String>) -> bool {
@@ -829,6 +848,9 @@ pub(crate) mod tests {
             Ok(())
         }
         fn launch(&mut self, job: &Job) -> Result<(), String> {
+            if self.refuses_removals && !job.removal.is_empty() {
+                return Err("no tree without those members".into());
+            }
             self.first_launch.get_or_insert(self.t);
             let tree: BTreeSet<String> = self.members.iter().filter(|m| !job.removal.contains(m)).cloned().collect();
             let green = self.verdict(&job.suite, &tree);
@@ -1009,6 +1031,17 @@ pub(crate) mod tests {
         assert!(ops.preempts.is_empty() && ops.ejected.is_empty());
         assert_eq!(ops.incidents, vec![("base".to_string(), vec!["test-00.sh".to_string()])]);
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3));
+    }
+
+    #[test]
+    fn a_red_attribution_could_not_rerun_is_owned_by_the_one_member_whose_diff_the_suite_covers() {
+        let mut f = Fake::new(breaks("m2", "test-01.sh"));
+        f.refuses_removals = true;
+        let mut ops = Ops { touch: BTreeMap::from([("test-01.sh".to_string(), vec!["m2".to_string()])]), ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-01.sh".to_string()])]);
+        assert!(ops.judged.is_empty() && ops.incidents.is_empty());
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1"]), "{end:?}");
     }
 
     #[test]
