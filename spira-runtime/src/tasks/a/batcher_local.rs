@@ -22,13 +22,13 @@
 //!
 //! ## Decide
 //!
-//! Pure, no IO. Reuses: `screen::cut_pool` (`batcher-cut/src/screen.rs:50`), `base_fix_lane`, `select_round`, `refuse_blocked`, `cap_round(MAX_CUT_MEMBERS)`, `should_cut`, `topo_order`, `stack_sequencing`, `combine`, `round_key`, `stale_retry_due`, `terminal_ready` (`batcher/src/core.rs:44-717`); attribution `drive::attribute_round` (`batcher/src/drive.rs:296`) driven by legs instead of a blocking runner; pacing `pace::hold / classify / advance / orphan_step` (`batcher-cut/src/pace.rs:59-131`), which move into the task. Carry: per repo the pace `State` (infra count, backoff, paged/orphan ids), refusal window, base-moved (sha, at), conflict streaks, held round keys, the machine state below. Fixtures: `batcher/src/core/tests.rs`, `batcher/src/attrib/tests.rs`, `pace.rs` tests, `e2e.rs`.
+//! Pure, no IO. Reuses: `screen::cut_pool` (`batcher-cut/src/screen.rs:50`), `base_fix_lane`, `select_round`, `refuse_blocked`, `cap_round(MAX_CUT_MEMBERS)`, `should_cut`, `topo_order`, `stack_sequencing`, `combine`, `round_key`, `stale_retry_due`, `terminal_ready` (`batcher/src/core.rs:44-717`); attribution `drive::attribute_round` (`batcher/src/drive.rs:296`) driven by legs instead of a blocking runner; pacing `pace::hold / classify / advance / orphan_step` (`batcher-cut/src/pace.rs:59-131`), which move into the task. Carry: per repo the pace `State` (infra count, paged/orphan ids), refusal window, base-moved (sha, at), conflict streaks, held round keys, the machine state below. Fixtures: `batcher/src/core/tests.rs`, `batcher/src/attrib/tests.rs`, `pace.rs` tests, `e2e.rs`.
 //!
 //! **States:** `Idle`, `Held`, `Orphan`, `Assembling`, `Opened`, `Corpus`, `Attributing`, `Mending`, `Certifying`, `Landing`, `Promoting`, `Done`.
 //!
 //! | State | Event | → State |
 //! |---|---|---|
-//! | Idle | observe: stopped / paused / backoff (`pace.rs:77`) | Held (no write) |
+//! | Idle | observe: stopped / paused (`pace.rs:77`) | Held (no write) |
 //! | Idle | observe: open round, driven | Idle |
 //! | Idle | observe: open round, undriven | Orphan (`orphan_step`: Wait / Redrive once / then `abandon` naming why, pace Infra) |
 //! | Idle | observe: `should_cut` = None | Idle (silent) |
@@ -304,7 +304,7 @@ pub enum State {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Trigger {
-    /// observe: stopped, paused or in backoff.
+    /// observe: stopped or paused.
     Stopped,
     /// observe: hold lifted (not in the contract's table, which gives `Held` no exit).
     Released,
@@ -422,7 +422,6 @@ pub struct Pace {
     pub infra: u32,
     #[serde(default)]
     pub no_vm: u32,
-    pub backoff_until_ms: Option<u64>,
     /// The open round already paged as stranded (`paged_open`), at most one.
     pub paged: Vec<String>,
     /// The open round seen undriven (`orphan`), at most one.
@@ -441,7 +440,6 @@ impl Pace {
         pace::State {
             infra: self.infra,
             no_vm: self.no_vm,
-            backoff_until: self.backoff_until_ms.map_or(0, |ms| ms / 1000),
             paged_open: self.paged.first().cloned().unwrap_or_default(),
             orphan: self.orphan.first().cloned().unwrap_or_default(),
             orphan_since: self.orphan_since_ms / 1000,
@@ -455,7 +453,6 @@ impl Pace {
         Pace {
             infra: st.infra,
             no_vm: st.no_vm,
-            backoff_until_ms: (st.backoff_until > 0).then_some(st.backoff_until * 1000),
             paged: one(&st.paged_open),
             orphan: one(&st.orphan),
             refusals: refusals.to_vec(),
@@ -843,7 +840,6 @@ fn hold_why(h: &pace::Hold, repo: &str, r: &Repo) -> String {
             "paused by a red round ({}) — the next landing on {repo} lifts it, or rm run/rounds-pace/{repo}/pause",
             r.paused.as_deref().unwrap_or("").trim()
         ),
-        pace::Hold::Backoff(until) => format!("backing off after a harness fault until {}", batcher_cut::io::utc_stamp(*until)),
     }
 }
 
@@ -952,7 +948,7 @@ impl Machine<'_> {
     /// `Done`: the pace advances on the round's outcome, its pages and pause are written, and the
     /// machine is Idle with the round forgotten.
     fn finish(&mut self, outcome: pace::Outcome, detail: &str) {
-        let (st, fx) = pace::advance(&self.rc.pace.core(), &outcome, self.repo, self.now_ms / 1000, detail);
+        let (st, fx) = pace::advance(&self.rc.pace.core(), &outcome, self.repo, detail);
         self.rc.pace = Pace::of(&st, &self.rc.pace.refusals);
         if fx.pause || fx.stop {
             let leg = Leg { why: detail.to_string(), key: format!("{}:rounds", self.repo), bead: if fx.stop { "stop".into() } else { "pause".into() }, ..Leg::on(self.repo) };
@@ -1071,10 +1067,9 @@ impl Machine<'_> {
         if live.len() >= policy.max_open {
             return;
         }
-        let now_s = self.now_ms / 1000;
         let st = self.rc.pace.core();
         let paused = self.pause_in_force(repo);
-        if let Some(h) = pace::hold(paused, repo.stopped, &st, now_s) {
+        if let Some(h) = pace::hold(paused, repo.stopped) {
             self.rc.skip_why = Some(hold_why(&h, self.repo, repo));
             self.go(Trigger::Stopped);
             return;
@@ -1134,7 +1129,6 @@ impl Machine<'_> {
     /// An open round this task does not drive: while it stands the repo cuts nothing. Undriven
     /// long enough it is re-driven, then a person is paged.
     fn foreign(&mut self, policy: &Policy, open: &Round, repo: &Repo, st: &pace::State) {
-        let now_s = self.now_ms / 1000;
         if open.driven {
             self.go(Trigger::OpenRoundDriven);
             if !st.orphan.is_empty() {
@@ -1145,6 +1139,7 @@ impl Machine<'_> {
         self.go(Trigger::OpenRoundUndriven);
         let unfit = if repo.open_round.as_ref().is_some_and(|r| r.id == open.id) { repo.unfit.clone() } else { open.unfit.clone() };
         let fit = unfit.map_or(Ok(()), Err);
+        let now_s = self.now_ms / 1000;
         let (mut next, verdict) = pace::orphan_step(st, &open.id, now_s, policy.orphan_wait_s, fit);
         let leg = Leg { batch: open.id.clone(), wt: open.worktree.clone(), ..Leg::on(self.repo) };
         match verdict {
@@ -1153,7 +1148,7 @@ impl Machine<'_> {
             pace::Orphan::Incident(why) => {
                 let why = format!("round {} had no driver: {why}", open.id);
                 self.acts.push(Leg { key: format!("{}:{}", self.repo, open.id), why: why.clone(), bead: NO_DRIVER.into(), ..leg }.act(ABANDON));
-                let (after, fx) = pace::advance(&next, &pace::Outcome::Infra, self.repo, now_s, &why);
+                let (after, fx) = pace::advance(&next, &pace::Outcome::Infra, self.repo, &why);
                 next = after;
                 for p in &fx.pages {
                     self.acts.push(Act::new(INBOX_APPEND, p.clone()).with_input(page_line(self.now_ms, p)));

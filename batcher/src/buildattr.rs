@@ -142,6 +142,23 @@ pub fn recipe_touchers(members: &[MemberDiff]) -> Vec<&MemberDiff> {
     members.iter().filter(|m| m.paths.iter().any(|p| RECIPE_PATHS.contains(&p.as_str()))).collect()
 }
 
+const RUNNER_PATHS: [&str; 2] = ["round-vm/", "testenv/"];
+
+/// The members whose diff touches the code that runs the suites in the round VM.
+pub fn runner_touchers(members: &[MemberDiff]) -> Vec<&MemberDiff> {
+    members.iter().filter(|m| m.paths.iter().any(|p| RUNNER_PATHS.iter().any(|r| p.starts_with(r)))).collect()
+}
+
+/// Whether the runner's failure text shows testenv killed by a signal (exit 128+n), which is
+/// outside its contract and so never a verdict.
+pub fn is_signal_death(err: &str) -> bool {
+    let after = |key: &str| err.match_indices(key).any(|(i, _)| {
+        let n: String = err[i + key.len()..].chars().take_while(char::is_ascii_digit).collect();
+        n.parse::<u32>().is_ok_and(|rc| (129..=192).contains(&rc))
+    });
+    after("PHASE-FAILED phase=suites rc=") || after("the remote runner exited ")
+}
+
 /// The last lines of the build output, as the evidence an image-build ejection carries.
 pub fn error_tail(output: &str) -> String {
     let lines: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();

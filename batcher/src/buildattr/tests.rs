@@ -99,3 +99,12 @@ fn the_recipe_paths_are_the_ones_the_image_workflow_builds_on() {
     ours.sort_unstable();
     assert_eq!(ours, triggers);
 }
+
+#[test]
+fn only_a_signal_exit_of_the_runner_is_a_signal_death() {
+    assert!(is_signal_death("round-vm: PHASE-FAILED phase=suites rc=134"));
+    assert!(is_signal_death("the remote runner exited 139, outside testenv's contract"));
+    assert!(!is_signal_death("round-vm: PHASE-FAILED phase=suites rc=2"));
+    assert!(!is_signal_death("round-vm: PHASE-FAILED phase=build rc=134"));
+    assert!(!is_signal_death("the remote runner exited 101, outside testenv's contract"));
+}

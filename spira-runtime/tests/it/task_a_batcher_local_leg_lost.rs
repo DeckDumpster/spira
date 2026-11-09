@@ -100,9 +100,15 @@ fn a_round_open_with_no_driver_after_its_one_redrive_is_abandoned_not_paged() {
     let wait = Policy::default().orphan_wait_s * 1000;
     let mut all: Vec<String> = vec![];
     let mut t = NOW;
+    let mut abandoned = false;
     while t < NOW + 3 * wait {
-        let (c, acts) = decide(&carry, &snap(t, None));
+        let mut snapshot = snap(t, None);
+        if abandoned {
+            snapshot.repos.get_mut("spira").unwrap().open_round = None;
+        }
+        let (c, acts) = decide(&carry, &snapshot);
         carry = c;
+        abandoned |= names(&acts).contains(&ABANDON);
         all.extend(names(&acts).iter().map(|s| s.to_string()));
         t += TICK;
     }
@@ -126,12 +132,15 @@ fn each_leg_gets_its_own_restart_a_corpus_restart_does_not_spend_the_certify_leg
 
 #[test]
 fn a_round_certify_would_refuse_is_abandoned_after_the_wait_not_left_open() {
-    let repo = Repo { open_round: Some(Round { id: "r9".into(), worktree: "/w".into(), ..Round::default() }), unfit: Some("the round worktree is moved".into()), ..Repo::default() };
+    let mut repo = Repo { open_round: Some(Round { id: "r9".into(), worktree: "/w".into(), ..Round::default() }), unfit: Some("the round worktree is moved".into()), ..Repo::default() };
     let mut acts = vec![];
     let (mut carry, mut t) = (Carry::default(), NOW);
     while t <= NOW + (Policy::default().orphan_wait_s + 60) * 1000 {
         let (c, a) = decide(&carry, &Snapshot { repos: [("spira".to_string(), repo.clone())].into(), now_ms: t });
         carry = c;
+        if names(&a).contains(&ABANDON) {
+            repo.open_round = None;
+        }
         acts.extend(a);
         t += TICK;
     }

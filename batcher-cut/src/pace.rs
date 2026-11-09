@@ -13,9 +13,8 @@ use spira_config::scoped_stop;
 pub const PACE_OWNER: &str = "batcher";
 
 pub const STALE_AMI_MARKER: &str = "round AMI is stale";
-pub const BACKOFF_SECS: u64 = 600;
 pub const STOP_AFTER: u32 = 2;
-pub const NO_VM_PAGE_AFTER: u32 = 3;
+pub const NO_VM_STOP_AFTER: u32 = 3;
 pub const REFUSAL_WINDOW_SECS: u64 = 1800;
 pub const REFUSAL_STOP_AFTER: u32 = 2;
 pub const PAUSE_LIFTS_MAX: u32 = 1;
@@ -24,7 +23,6 @@ pub const PAUSE_LIFTS_MAX: u32 = 1;
 pub struct State {
     pub infra: u32,
     pub no_vm: u32,
-    pub backoff_until: u64,
     pub paged_open: String,
     pub orphan: String,
     pub orphan_since: u64,
@@ -87,7 +85,6 @@ pub enum Outcome {
 pub enum Hold {
     Paused,
     Stopped,
-    Backoff(u64),
 }
 
 #[derive(Default, PartialEq, Debug)]
@@ -116,19 +113,17 @@ pub fn pause_expired(st: &State, held_for: u64, lift_after: u64) -> bool {
     held_for >= lift_after && st.pause_lifts < PAUSE_LIFTS_MAX
 }
 
-pub fn hold(paused: bool, stopped: bool, st: &State, now: u64) -> Option<Hold> {
+pub fn hold(paused: bool, stopped: bool) -> Option<Hold> {
     if stopped {
         Some(Hold::Stopped)
     } else if paused {
         Some(Hold::Paused)
-    } else if st.backoff_until > now {
-        Some(Hold::Backoff(st.backoff_until))
     } else {
         None
     }
 }
 
-pub fn advance(st: &State, outcome: &Outcome, repo: &str, now: u64, detail: &str) -> (State, Effects) {
+pub fn advance(st: &State, outcome: &Outcome, repo: &str, detail: &str) -> (State, Effects) {
     let mut next = st.clone();
     let mut fx = Effects::default();
     match outcome {
@@ -146,10 +141,10 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, now: u64, detail: &str
         }
         Outcome::StaleImage => {}
         Outcome::NoVm => {
-            next.backoff_until = now + BACKOFF_SECS;
             next.no_vm += 1;
-            if next.no_vm == NO_VM_PAGE_AFTER {
-                fx.pages.push(format!("NO ROUND VM {repo}: {} consecutive rounds could not run, retrying with backoff ({detail})", next.no_vm));
+            if next.no_vm >= NO_VM_STOP_AFTER {
+                fx.stop = true;
+                fx.pages.push(format!("ROUNDS STOPPED {repo}: {} consecutive rounds could not run — no round VM, look before lifting the stop ({detail})", next.no_vm));
             }
         }
         Outcome::OpenFailed => {
@@ -157,7 +152,6 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, now: u64, detail: &str
         }
         Outcome::Infra => {
             next.infra += 1;
-            next.backoff_until = now + BACKOFF_SECS;
             if next.infra >= STOP_AFTER {
                 fx.stop = true;
                 fx.pages.push(format!(
@@ -245,7 +239,6 @@ impl Files {
         State {
             infra: kv.get("infra").and_then(|v| v.parse().ok()).unwrap_or(0),
             no_vm: kv.get("no_vm").and_then(|v| v.parse().ok()).unwrap_or(0),
-            backoff_until: kv.get("backoff_until").and_then(|v| v.parse().ok()).unwrap_or(0),
             paged_open: kv.get("paged_open").cloned().unwrap_or_default(),
             orphan: kv.get("orphan").cloned().unwrap_or_default(),
             orphan_since: kv.get("orphan_since").and_then(|v| v.parse().ok()).unwrap_or(0),
@@ -256,8 +249,8 @@ impl Files {
     pub fn save(&self, st: &State) -> Result<(), String> {
         fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
         let body = format!(
-            "infra={}\nno_vm={}\nbackoff_until={}\npaged_open={}\norphan={}\norphan_since={}\nredriven={}\npause_lifts={}\n",
-            st.infra, st.no_vm, st.backoff_until, st.paged_open, st.orphan, st.orphan_since, st.redriven, st.pause_lifts
+            "infra={}\nno_vm={}\npaged_open={}\norphan={}\norphan_since={}\nredriven={}\npause_lifts={}\n",
+            st.infra, st.no_vm, st.paged_open, st.orphan, st.orphan_since, st.redriven, st.pause_lifts
         );
         fs::write(self.dir.join("state"), body).map_err(|e| format!("rounds-pace state: {e}"))
     }
@@ -361,7 +354,7 @@ pub fn paced(
             page(sm, &format!("PAUSE LIFTED {} after {}s — cutting again; a second red stays paused", sm.repo, sm.now.saturating_sub(since)))?;
         }
     }
-    if let Some(h) = hold(files.pause_file().exists(), files.stopped(), &st, sm.now) {
+    if let Some(h) = hold(files.pause_file().exists(), files.stopped()) {
         println!("batcher rounds: {}: held ({h:?}) — no cut", sm.repo);
         return Ok(());
     }
@@ -400,7 +393,7 @@ pub fn paced(
     let v = verdict();
     let outcome = classify(&res, v.as_ref().map(|(s, at)| (s.as_str(), *at)), sm.now);
     let detail = res.as_ref().err().map(|e| e.msg.clone()).unwrap_or_default();
-    let (next, fx) = advance(&st, &outcome, sm.repo, sm.now, &detail);
+    let (next, fx) = advance(&st, &outcome, sm.repo, &detail);
     st = next;
     if fx.pause {
         files.stamp_pause(sm.now)?;
@@ -443,11 +436,12 @@ mod tests {
     }
 
     #[test]
-    fn a_round_with_no_vm_backs_off_without_a_pause_or_a_stop() {
+    fn a_round_with_no_vm_never_pauses_and_the_third_in_a_row_stops_and_pages() {
         let mut st = State::default();
-        for i in 0..5 {
-            let (next, fx) = advance(&st, &Outcome::NoVm, "r", 1000 + i, "acquire failed");
-            assert_eq!((fx.pause, fx.stop, fx.pages.len(), next.infra, next.backoff_until), (false, false, usize::from(i == 2), 0, 1000 + i + BACKOFF_SECS));
+        for i in 0..5u32 {
+            let (next, fx) = advance(&st, &Outcome::NoVm, "r", "acquire failed");
+            let brake = i + 1 >= NO_VM_STOP_AFTER;
+            assert_eq!((fx.pause, fx.stop, fx.pages.len(), next.infra), (false, brake, usize::from(brake), 0));
             st = next;
         }
     }
@@ -569,16 +563,14 @@ mod tests {
     }
 
     #[test]
-    fn a_round_with_no_verdicts_backs_off_and_the_second_in_a_row_stops_and_pages() {
+    fn a_round_with_no_verdicts_is_cut_again_at_once_and_the_second_in_a_row_stops_and_pages() {
         let t = dir("infra");
         let d = t.path();
         let infra = || Err(CutError::new(CutKind::Infra, "round left no verdicts"));
         run(d, "a", 1000, None, None, infra());
         assert_eq!(inbox(d), "");
-        let ran = run(d, "a", 1000 + BACKOFF_SECS - 1, None, None, infra());
-        assert!(!ran, "inside the backoff there is no retry");
-        let ran = run(d, "a", 1000 + BACKOFF_SECS, None, None, infra());
-        assert!(ran);
+        let ran = run(d, "a", 1001, None, None, infra());
+        assert!(ran, "no wait after a harness fault");
         assert!(Files::new(d, "a").stopped());
         assert!(inbox(d).contains("ROUNDS STOPPED a: 2 consecutive"));
         let ran = run(d, "a", 9_000_000, None, None, Ok(()));
@@ -599,8 +591,8 @@ mod tests {
     #[test]
     fn an_open_failed_outcome_pages_every_time_and_does_not_pause() {
         let (st, mut pages) = (State::default(), 0);
-        for at in [1000, 1100] {
-            let (next, fx) = advance(&st, &Outcome::OpenFailed, "a", at, "x");
+        for _ in [1000, 1100] {
+            let (next, fx) = advance(&st, &Outcome::OpenFailed, "a", "x");
             assert!(!fx.pause && !fx.stop && next == st);
             pages += fx.pages.iter().filter(|p| p.starts_with("OPEN FAILED a")).count();
         }
@@ -744,7 +736,7 @@ mod tests {
         let env = || Err(CutError::new(CutKind::Infra, "refused — cannot certify the round: no VM"));
         let mut attempts = 0;
         for i in 0..10u64 {
-            if run(d, "a", 1000 + i * (BACKOFF_SECS + 1), None, None, env()) {
+            if run(d, "a", 1000 + i, None, None, env()) {
                 attempts += 1;
             }
         }

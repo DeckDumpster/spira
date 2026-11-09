@@ -134,6 +134,7 @@ pub trait RoundOps {
 /// The round-level pseudo-suite name a --with-bins build failure (exit 4) reports under —
 /// never a real `test-*.sh` file, so it can't collide with one a suite selection would pick.
 pub const WORKSPACE_BUILD: &str = "workspace-build";
+pub const RUNNER_ABORT: &str = "runner-abort";
 
 /// Ids of the settled-owner reruns start here, clear of the attributor's own.
 const RERUN_ID_BASE: u64 = 1 << 40;
@@ -429,26 +430,26 @@ fn eject_build_culprits<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O
     if actions.is_empty() {
         actions = bisect_build(runner, members).unwrap_or_default();
     }
-    apply_build_actions(ops, members, &actions)
+    apply_build_actions(ops, members, &actions, WORKSPACE_BUILD)
 }
 
 /// Ejects or sequences the members `actions` name, and the members stacked on them, and
 /// re-cuts the rest; `None` when there is nothing to name or nobody left.
-fn apply_build_actions<O: RoundOps>(ops: &mut O, members: &[Member], actions: &[Action]) -> Result<Option<Vec<Member>>, String> {
+fn apply_build_actions<O: RoundOps>(ops: &mut O, members: &[Member], actions: &[Action], filter: &str) -> Result<Option<Vec<Member>>, String> {
     if actions.is_empty() {
         return Ok(None);
     }
     let mut out: BTreeMap<Id, Vec<String>> = BTreeMap::new();
     for a in actions {
         let (Action::Eject { id, .. } | Action::Sequence { id, .. }) = a;
-        out.insert(id.clone(), vec![WORKSPACE_BUILD.to_string()]);
+        out.insert(id.clone(), vec![filter.to_string()]);
     }
     with_dependents(members, &mut out);
     for m in members {
         match actions.iter().find(|a| matches!(a, Action::Eject { id, .. } | Action::Sequence { id, .. } if *id == m.id)) {
-            Some(Action::Eject { line, .. }) => ops.eject_on(m, WORKSPACE_BUILD, line, true),
+            Some(Action::Eject { line, .. }) => ops.eject_on(m, filter, line, true),
             Some(Action::Sequence { behind, line, .. }) => ops.sequence(m, behind, line),
-            None if out.contains_key(&m.id) => ops.eject(m, &[WORKSPACE_BUILD.to_string()], false),
+            None if out.contains_key(&m.id) => ops.eject(m, &[filter.to_string()], false),
             None => {}
         }
     }
@@ -458,6 +459,18 @@ fn apply_build_actions<O: RoundOps>(ops: &mut O, members: &[Member], actions: &[
     }
     let rebuilt = ops.rebuild(&survivors)?;
     Ok((!rebuilt.is_empty()).then_some(rebuilt))
+}
+
+/// A main run that died on a signal in a tree where exactly one member changes the code that
+/// runs the suites is that member's red: it leaves, with the failure as its evidence.
+fn eject_runner_abort<O: RoundOps>(ops: &mut O, members: &[Member], err: &str) -> Result<Option<Vec<Member>>, String> {
+    if !buildattr::is_signal_death(err) {
+        return Ok(None);
+    }
+    let diffs = ops.diffs(&members.iter().map(|m| m.id.clone()).collect::<Vec<_>>());
+    let [owner] = buildattr::runner_touchers(&diffs)[..] else { return Ok(None) };
+    let line = format!("testenv was killed by a signal in a round where this member changes round-vm/ or testenv/: {}", buildattr::error_tail(err));
+    apply_build_actions(ops, members, &[Action::Eject { id: owner.id.clone(), line }], RUNNER_ABORT)
 }
 
 /// A red the reruns could not attribute belongs to the member when exactly one member's diff
@@ -494,7 +507,18 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     let mut image_retried = false;
     let t0 = runner.now();
     for iteration in 0..bound {
-        let s = drive(runner, &*ops, kind, &suites, &members, budget)?;
+        let s = match drive(runner, &*ops, kind, &suites, &members, budget) {
+            Ok(s) => s,
+            Err(e) => match eject_runner_abort(ops, &members, &e)? {
+                Some(next) => {
+                    println!("batcher: testenv died on a signal — its one runner-touching member left, re-cutting {} member(s)", next.len());
+                    let _ = runner.stop_main();
+                    members = next;
+                    continue;
+                }
+                None => return Err(e),
+            },
+        };
         if s.end == MainEnd::WorkspaceBuild {
             let output = runner.build_output();
             if buildattr::is_image_build_red(&output) {
@@ -502,7 +526,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                 match buildattr::recipe_touchers(&diffs)[..] {
                     [owner] => {
                         let line = format!("the round image build failed and this member changes its recipe: {}", buildattr::error_tail(&output));
-                        if let Some(next) = apply_build_actions(ops, &members, &[Action::Eject { id: owner.id.clone(), line }])? {
+                        if let Some(next) = apply_build_actions(ops, &members, &[Action::Eject { id: owner.id.clone(), line }], WORKSPACE_BUILD)? {
                             println!("batcher: the round image build failed — {} left, re-cutting {} member(s)", owner.id, next.len());
                             runner.stop_main()?;
                             members = next;
@@ -721,6 +745,8 @@ pub(crate) mod tests {
         /// A compiler: the error text for a tree holding these members, if it does not build.
         pub compiler: Option<BuildFn>,
         pub build_failed: Option<String>,
+        /// A runner that dies with this text while the member is in the tree.
+        pub aborts_with: Option<(String, String)>,
         /// Whether the fake can build a member subset, and each subset it was asked to build.
         pub bisects: bool,
         pub probes: Vec<Vec<String>>,
@@ -757,6 +783,7 @@ pub(crate) mod tests {
                 filtered: None,
                 compiler: None,
                 build_failed: None,
+                aborts_with: None,
                 bisects: false,
                 probes: vec![],
                 refuses_removals: false,
@@ -815,6 +842,11 @@ pub(crate) mod tests {
         }
         fn poll_main(&mut self) -> Result<MainPoll, String> {
             let mut p = MainPoll::default();
+            if let Some((m, text)) = &self.aborts_with {
+                if self.members.contains(m) {
+                    return Err(text.clone());
+                }
+            }
             if self.build_failed.is_some() {
                 p.done = Some(MainEnd::WorkspaceBuild);
                 return Ok(p);
@@ -1333,6 +1365,31 @@ pub(crate) mod tests {
 
     fn image_broken_while(culprit: &'static str) -> BuildFn {
         Box::new(move |tree| tree.contains(culprit).then(|| IMAGE_RED.to_string()))
+    }
+
+    const ABORT: &str = "round-vm: PHASE-FAILED phase=suites rc=134\nround-vm run: the remote runner exited 134, outside testenv's contract (0-4) — no verdict";
+
+    #[test]
+    fn testenv_killed_by_a_signal_ejects_the_one_member_that_changes_the_round_vm() {
+        let mut f = Fake::new(|_, _| false);
+        f.aborts_with = Some(("m2".into(), ABORT.into()));
+        let mut ops = Ops { diffs: vec![md("m1", "doc/x.md", "+p\n"), md("m2", "round-vm/src/run.rs", "+x\n"), md("m3", "doc/y.md", "+q\n")], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![RUNNER_ABORT.to_string()])]);
+        assert!(ops.eject_evidence[0].1.contains("rc=134"), "{:?}", ops.eject_evidence);
+    }
+
+    #[test]
+    fn testenv_killed_by_a_signal_with_no_or_several_runner_touching_members_stays_a_harness_fault() {
+        for diffs in [vec![md("m1", "doc/x.md", "+p\n")], vec![md("m1", "round-vm/a.rs", "+p\n"), md("m2", "testenv/b.rs", "+p\n")]] {
+            let mut f = Fake::new(|_, _| false);
+            f.aborts_with = Some(("m1".into(), ABORT.into()));
+            let mut ops = Ops { diffs, ..Ops::default() };
+            let err = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap_err();
+            assert!(err.contains("rc=134"), "{err}");
+            assert!(ops.ejected.is_empty());
+        }
     }
 
     #[test]
