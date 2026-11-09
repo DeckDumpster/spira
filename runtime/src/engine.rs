@@ -230,11 +230,51 @@ fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
         .unwrap_or_else(|| "handler panicked".into())
 }
 
+/// How `Engine::open` treats a journal that cannot tell: ask again after `first_ms`, doubling,
+/// until the waits sum to exactly `bound_ms` (the last wait is cut short to fit), then fail naming `store`.
+/// The bound counts waits only; each ask is separately bounded by the socket's own deadline.
+#[derive(Clone)]
+pub struct BootRetry {
+    pub first_ms: u64,
+    pub bound_ms: u64,
+    pub store: String,
+    pub sleep: Arc<dyn Fn(u64) + Send + Sync>,
+}
+
+impl BootRetry {
+    /// Ask once: the policy of a caller that has no store to wait for.
+    pub fn once() -> Self {
+        BootRetry { first_ms: 0, bound_ms: 0, store: String::new(), sleep: Arc::new(|_| {}) }
+    }
+
+    fn read<T>(&self, mut ask: impl FnMut() -> Result<T>) -> Result<T> {
+        let (mut wait, mut waited) = (self.first_ms, 0);
+        loop {
+            match ask() {
+                Err(e) if e.is_cannot_tell() => {
+                    if wait == 0 || waited >= self.bound_ms {
+                        return Err(RuntimeError::new(format!("{}: still cannot tell after {waited} ms of retries: {}", self.store, e.0)));
+                    }
+                    let wait_now = wait.min(self.bound_ms - waited);
+                    (self.sleep)(wait_now);
+                    waited += wait_now;
+                    wait = wait.saturating_mul(2);
+                }
+                other => return other,
+            }
+        }
+    }
+}
+
 impl Engine {
+    pub fn open(journal: Arc<dyn Journal>, clock: Arc<dyn Clock>, regs: Vec<Registration>, seed: u64) -> Result<Self> {
+        Self::open_with(journal, clock, regs, seed, BootRetry::once())
+    }
+
     /// Rebuild from the journal without reading its history: the effects still waiting for an
     /// outcome, the schedule rows not yet fired, and the end of the journal. A stream's newest
     /// `WINDOW` events are loaded when its first event is dispatched, memory-only or not.
-    pub fn open(journal: Arc<dyn Journal>, clock: Arc<dyn Clock>, regs: Vec<Registration>, seed: u64) -> Result<Self> {
+    pub fn open_with(journal: Arc<dyn Journal>, clock: Arc<dyn Clock>, regs: Vec<Registration>, seed: u64, retry: BootRetry) -> Result<Self> {
         let mut e = Engine {
             journal,
             clock,
@@ -278,21 +318,21 @@ impl Engine {
             queued: BTreeSet::new(),
             rss: TurnRss::default(),
         };
-        let cursor = e.journal.cursor()?;
+        let cursor = retry.read(|| e.journal.cursor())?;
         e.cursor = cursor;
         e.saved_cursor = cursor;
-        let (halted, held) = e.halt_state(cursor)?;
+        let (halted, held) = retry.read(|| e.halt_state(cursor))?;
         e.halted = halted;
         for h in held {
-            if !e.journal.applied(RELEASE, &h.id)? {
+            if !retry.read(|| e.journal.applied(RELEASE, &h.id))? {
                 e.held += 1;
             }
         }
-        for (_, ev) in e.journal.unresolved_effects()? {
+        for (_, ev) in retry.read(|| e.journal.unresolved_effects())? {
             e.track_effect(&ev)?;
         }
-        e.check_applied_below = e.journal.end()?;
-        for row in e.journal.pending_schedules()? {
+        e.check_applied_below = retry.read(|| e.journal.end())?;
+        for row in retry.read(|| e.journal.pending_schedules())? {
             e.scheduler.insert(row);
         }
         Ok(e)

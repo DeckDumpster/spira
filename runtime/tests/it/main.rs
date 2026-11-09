@@ -12,6 +12,7 @@ mod memory_only;
 mod no_unit_children;
 mod observe_mode;
 mod open_bounded;
+mod open_retries;
 mod queued_deadline;
 mod status;
 mod unit_ran;
