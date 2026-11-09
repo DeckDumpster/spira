@@ -423,11 +423,7 @@ mod tests {
         fs::create_dir_all(&bin).unwrap();
         fs::create_dir_all(&home).unwrap();
         fs::write(home.join("round-launcher.env"), "").unwrap();
-        let stub = |name: &str, body: &str| {
-            let p = bin.join(name);
-            fs::write(&p, format!("#!/bin/bash\n{body}\n")).unwrap();
-            std::process::Command::new("chmod").arg("+x").arg(&p).status().unwrap();
-        };
+        let stub = |name: &str, body: &str| testkit::write_exe(bin.join(name), &format!("#!/bin/bash\n{body}\n"));
         stub("git", "for a; do last=$a; done; mkdir -p \"$last\"");
         stub("cargo", &format!("exit {cargo_rc}"));
         let status = std::process::Command::new("/bin/bash")
