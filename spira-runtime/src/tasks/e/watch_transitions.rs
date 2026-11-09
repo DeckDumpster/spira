@@ -14,7 +14,7 @@
 //!
 //! - WORKING→SUBMITTED: WORKING ≥ `SPIRA_TRANSITIONS_WORKING_MIN` and no Submit inside
 //!   `SPIRA_TRANSITIONS_SUBMIT_BOUND` seconds.
-//! - SUBMITTED→IN_DELIVERY: SUBMITTED + CERTIFIED > 0, a round slot free (fewer than `SPIRA_ROUND_MAX_OPEN` open), and no Cut inside `SPIRA_TRANSITIONS_CUT_BOUND`.
+//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead has itself waited `SPIRA_TRANSITIONS_CUT_BOUND` and a round slot is free (fewer than `SPIRA_ROUND_MAX_OPEN` open). The wait of a bead queued behind full rounds is not a stall.
 //! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
 //!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
 //! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed work after the
@@ -335,7 +335,7 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
                 "WORKING→SUBMITTED" => (t["WORKING"].count as u64 >= cfg.working_min.max(1) && quiet(snap, &scope, "Submit", now, cfg.submit_bound_s)).then(|| evidence(snap, &scope, now, &["WORKING"], "Submit", cfg.submit_bound_s)),
                 "SUBMITTED→IN_DELIVERY" => {
                     let slot_free = snap.open_rounds.is_none_or(|open| open < cfg.round_max_open.max(1));
-                    (t["SUBMITTED"].count + t["CERTIFIED"].count > 0 && slot_free && quiet(snap, &scope, "Cut", now, cfg.cut_bound_s)).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s))
+                    (slot_free && t["SUBMITTED"].oldest.max(t["CERTIFIED"].oldest) >= cfg.cut_bound_s).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s))
                 }
                 "IN_DELIVERY→LANDED" => (t["IN_DELIVERY"].oldest >= cfg.deliver_bound_s && quiet(snap, &scope, "Delivered", now, cfg.deliver_bound_s)).then(|| evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", cfg.deliver_bound_s)),
                 "LANDED→ACTIVATED" if scope == cfg.release_repo => snap.landed_after.get(&scope).copied().filter(|l| now.saturating_sub(*l) >= cfg.activate_bound_s).map(|landed| {
