@@ -90,14 +90,24 @@ impl Report {
 
 const PAGE: usize = 1_000;
 
+/// Every key at `at`, read in pages. A page the store ends for passing `max_read_ms` is read
+/// again at half the size, down to one key, and the size recovers by doubling after each page that fits, so no single read is held across the keyspace.
 fn all_keys(b: &SqliteBackend, at: u64) -> Result<Vec<(String, Version)>, String> {
     let mut out = Vec::new();
     let mut after: Option<String> = None;
+    let mut size = PAGE;
     loop {
-        let page = b
-            .gc_range(after.as_deref(), PAGE, at)
-            .map_err(|e| e.to_string())?;
-        let full = page.len() == PAGE;
+        let page = match b.gc_range(after.as_deref(), size, at) {
+            Ok(page) => page,
+            Err(e) if size > 1 && crate::is_read_ended(&e) => {
+                size /= 2;
+                continue;
+            }
+            Err(e) => return Err(e.to_string()),
+        };
+        let was = size;
+        size = (size * 2).min(PAGE);
+        let full = page.len() == was;
         after = page.last().map(|(k, _)| k.clone());
         out.extend(page);
         if !full {

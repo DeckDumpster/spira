@@ -427,6 +427,52 @@ fn a_flipped_byte_in_a_restored_value_fails_the_drill_naming_the_key() {
     }
 }
 
+/// A clock that moves one millisecond per reading, so a read costs what it touches: the fixture
+/// whose one full-keyspace read passes `max_read_ms` while a short page does not.
+struct Ticking(std::sync::atomic::AtomicU64);
+
+impl runtime::ports::Clock for Ticking {
+    fn now_ms(&self) -> u64 {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+fn capped(path: &Path) -> SqliteBackend {
+    let opts = Options {
+        max_read_ms: 4,
+        clock: Arc::new(Ticking(Default::default())),
+        jump_on_open: false,
+        ..Options::default()
+    };
+    SqliteBackend::open(path, opts).unwrap()
+}
+
+#[test]
+fn the_drill_gives_its_verdict_when_one_read_of_the_keyspace_would_pass_max_read_ms() {
+    let dir = TempDir::new("drill-capped");
+    let clock = VirtualClock::new(1_000);
+    let (c, s) = shipped_store(dir.path(), &clock);
+    let (out, base, runs) = restored_copy(dir.path(), &s);
+    {
+        let b = capped(&base);
+        assert!(
+            b.range("", None, usize::MAX, b.head().unwrap()).is_err(),
+            "the fixture's single full read must exceed the cap"
+        );
+    }
+    let paged = drill::fold_compare(&capped(&base), &runs, &capped(&out), Exclusions::CONTRACT).unwrap();
+    assert!(paged.passed(), "{}", drill::render(&paged));
+    let whole =
+        drill::fold_compare(&verify(&base), &runs, &verify(&out), Exclusions::CONTRACT).unwrap();
+    assert!(whole.compared > 3, "{}", drill::render(&whole));
+    assert_eq!(paged, whole);
+
+    let key = "intents/claim/sp-1";
+    tamper(&out, key, &flipped(c.backend(), key));
+    let rep = drill::fold_compare(&capped(&base), &runs, &capped(&out), Exclusions::CONTRACT).unwrap();
+    assert_eq!(rep.mismatches, [Mismatch::Value { key: key.into() }], "{}", drill::render(&rep));
+}
+
 #[test]
 fn a_live_key_no_audited_write_produced_fails_the_drill_under_any_other_prefix() {
     let dir = TempDir::new("drill-unfolded");

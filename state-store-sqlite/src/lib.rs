@@ -162,6 +162,13 @@ fn migrate(conn: &Connection) -> Result<()> {
 /// means a rewound store never reissues a revision a client was already handed.
 pub const JUMP: u64 = 1_000;
 
+const READ_ENDED: &str = "read ended: held past max_read_ms";
+
+/// Whether `e` is a read the store ended for outliving `max_read_ms`.
+pub fn is_read_ended(e: &Error) -> bool {
+    matches!(e, Error::Backend(m) if m.starts_with(READ_ENDED))
+}
+
 /// How often, in SQLite VM steps, a running read checks its deadline.
 const PROGRESS_STEPS: i32 = 1_000;
 
@@ -644,10 +651,7 @@ impl SqliteBackend {
         let deadline = inner.clock.now_ms().saturating_add(inner.max_read_ms);
         reader.deadline.store(deadline, Ordering::SeqCst);
         let ended = || {
-            Error::Backend(format!(
-                "read ended: held past max_read_ms ({} ms)",
-                inner.max_read_ms
-            ))
+            Error::Backend(format!("{READ_ENDED} ({} ms)", inner.max_read_ms))
         };
         let check = || {
             if inner.clock.now_ms() > deadline {
