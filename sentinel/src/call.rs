@@ -53,7 +53,14 @@ impl<'a> Sentinel<'a> {
         let ledger = std::fs::read_to_string(self.cfg.run.join("dwarf-ledger.log")).unwrap_or_default();
         let alive = |pid: u32| unsafe { libc::kill(pid as i32, 0) == 0 };
         let runs = sentinel::section::runs(&ledger, now, &alive);
-        let config = SpiraConfig { h: self.h, bin: "spira-config".into(), file };
+        let bin = match spira_config::release_env::tool("spira-config") {
+            Ok(b) => b,
+            Err(e) => {
+                self.log(&format!("fleet section: {e} — not publishing"));
+                return;
+            }
+        };
+        let config = SpiraConfig { h: self.h, bin, file };
         let lc = LcPort { h: self.h, bin: &self.cfg.lc_bin };
         let step_log = self.cfg.run.join("fleet-steps.log");
         let record = |line: &str| {

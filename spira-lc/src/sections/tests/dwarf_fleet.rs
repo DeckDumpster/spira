@@ -84,7 +84,9 @@ fn row(bead: &str, state: &str, now: u64, landed_ago_min: u64) -> LcRow {
 
 /// 2026-10-29..10-31: ten beads landed in the day behind `now`, twelve minutes-of-work runs on
 /// them, one submitted and not yet landed, and two runs that never submitted.
-fn day() -> (Vec<(u64, u64, &'static str)>, Vec<(&'static str, &'static str, u64)>) {
+type Shape = (Vec<(u64, u64, &'static str)>, Vec<(&'static str, &'static str, u64)>);
+
+fn day() -> Shape {
     let landed = ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9", "b10"];
     let mut runs: Vec<(u64, u64, &str)> = landed.iter().enumerate().map(|(i, b)| (120 + 60 * i as u64, 45, *b)).collect();
     runs.push((200, 18, "b11"));
