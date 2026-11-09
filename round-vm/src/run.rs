@@ -366,8 +366,7 @@ disk_report_last() {
         esac ;;
     esac
 }
-# Suites run only the executables directly under target/release; the compiler's intermediates
-# there are the release build's largest part and nothing reads them once the release is verified.
+# Suites read only the executables directly under target/release; its intermediates are its bulk.
 prune_release_intermediates() {
     local d="$HOME/round-work/target/release"
     rm -rf "$d/deps" "$d/build" "$d/.fingerprint" "$d/incremental" "$d/examples"
