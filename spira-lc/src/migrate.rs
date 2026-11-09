@@ -162,13 +162,21 @@ pub fn classify(sql: &str) -> Stmt {
     }
     if up(1) == "TABLE" && toks.len() > 5 && up(3) == "MODIFY" && !sql.contains(',') {
         let at = if up(4) == "COLUMN" { 5 } else { 4 };
-        let width = toks.get(at + 1).map(|t| t.to_ascii_uppercase()).and_then(|t| t.strip_prefix("VARCHAR(")?.split(')').next()?.parse::<u32>().ok());
+        let width = toks.get(at + 1).map(|t| t.to_ascii_uppercase()).and_then(|t| {
+            if t.trim_end_matches(',') == "LONGTEXT" {
+                return Some(LONGTEXT_WIDTH);
+            }
+            t.strip_prefix("VARCHAR(")?.split(')').next()?.parse::<u32>().ok()
+        });
         if let Some(width) = width {
             return Stmt::WidenColumn { table: ident(toks[2]), column: ident(toks[at]), width, sql: sql.to_string() };
         }
     }
     Stmt::UnguardedAlter(sql.to_string())
 }
+
+/// `CHARACTER_MAXIMUM_LENGTH` of a LONGTEXT column (TEXT reports 65535).
+const LONGTEXT_WIDTH: u32 = u32::MAX;
 
 /// Every statement of every file, in apply order, or the first refusal (file, statement).
 pub fn plan(files: &[(String, String)]) -> Result<Vec<(String, Stmt)>, String> {
@@ -177,7 +185,7 @@ pub fn plan(files: &[(String, String)]) -> Result<Vec<(String, Stmt)>, String> {
         for s in split_statements(text) {
             match classify(&s) {
                 Stmt::UnguardedAlter(sql) => {
-                    return Err(format!("{name}: refusing an ALTER that cannot be applied idempotently (only `ALTER TABLE t ADD COLUMN c ...` and `ALTER TABLE t MODIFY c VARCHAR(n) ...` are guarded): {sql}"));
+                    return Err(format!("{name}: refusing an ALTER that cannot be applied idempotently (only `ALTER TABLE t ADD COLUMN c ...` and `ALTER TABLE t MODIFY c VARCHAR(n) ...` or `... LONGTEXT` are guarded): {sql}"));
                 }
                 st => out.push((name.clone(), st)),
             }
@@ -837,6 +845,20 @@ mod tests {
     }
 
     #[test]
+    fn a_longtext_modify_is_a_widening_applied_only_while_the_column_is_text() {
+        let sql = "ALTER TABLE runtime_event MODIFY COLUMN kind_body LONGTEXT NOT NULL";
+        let step = classify(sql);
+        assert_eq!(step, Stmt::WidenColumn { table: "runtime_event".into(), column: "kind_body".into(), width: 4294967295, sql: sql.into() });
+        assert_eq!(is_applied(&service(&migrated()), &step), Ok(true));
+        let text = migrated();
+        text.borrow_mut().widths.insert("kind_body".into(), 65535);
+        assert_eq!(is_applied(&service(&text), &step), Ok(false));
+        for refused in ["ALTER TABLE t MODIFY c TEXT NOT NULL", "ALTER TABLE t MODIFY c MEDIUMTEXT NOT NULL", "ALTER TABLE t MODIFY a LONGTEXT, MODIFY b LONGTEXT"] {
+            assert!(matches!(classify(refused), Stmt::UnguardedAlter(_)), "{refused}");
+        }
+    }
+
+    #[test]
     fn the_mending_key_columns_are_widened_and_a_widened_store_skips_them() {
         let widened: Vec<_> = real_steps().into_iter().filter_map(|(_, s)| match s { Stmt::WidenColumn { table, column, width, .. } => Some((table, column, width)), _ => None }).collect();
         assert!(widened.contains(&("event".into(), "lc_key".into(), 256)), "{widened:?}");
@@ -1120,6 +1142,7 @@ mod tests {
         st.widths.insert("lc_key".into(), 256);
         st.widths.insert("batch_id".into(), 64);
         st.widths.insert("suite".into(), 160);
+        st.widths.insert("kind_body".into(), LONGTEXT_WIDTH);
         st.users.insert("spira_lc".into());
         st.users.insert("spira_lc_ro".into());
         st.indexes.insert("bead_dep_target_idx".into());
