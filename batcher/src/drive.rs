@@ -649,11 +649,14 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                     if next.is_empty() {
                         return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
                     }
-                    members = if retry && left.is_empty() { next } else { ops.rebuild(&next)? };
+                    let before = std::mem::replace(&mut members, if retry && left.is_empty() { next } else { ops.rebuild(&next)? });
                     if members.is_empty() {
                         return Ok(RoundEnd::Emptied("round emptied rebuilding the tree after the menders".into()));
                     }
-                    suites = m.suites;
+                    suites = present_on(&*ops, m.suites, &before, &members);
+                    if suites.is_empty() {
+                        return Ok(RoundEnd::Land { members, attribution_secs: worst });
+                    }
                     kind = MainKind::Verify;
                     continue;
                 }

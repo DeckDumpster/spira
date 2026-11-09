@@ -1761,8 +1761,9 @@ pub fn sequence_edges(env: &Env, id: &str, behind: &[String]) -> Result<(), Stri
 }
 
 /// Whether `tip` adds `path`, which `base_sha` lacks.
-pub fn adds_path(repo: &Repo, base_sha: &str, tip: &str, path: &str) -> bool {
-    run(Command::new("git").arg("-C").arg(&repo.path).args(["diff", "--name-only", "--diff-filter=A", &format!("{base_sha}...{tip}"), "--", path]), "git diff added paths")
+pub fn adds_path(dir: &Path, base_sha: &str, tip: &str, path: &str) -> bool {
+    run(Command::new("git").arg("-C").arg(dir).args(["diff", "--name-only", "--diff-filter=A", &format!("{base_sha}...{tip}"), "--", path]), "git diff added paths")
+        .map_err(|e| eprintln!("batcher: cannot tell whether {tip} adds {path}: {e}"))
         .is_ok_and(|out| out.lines().any(|l| l == path))
 }
 
@@ -3180,5 +3181,30 @@ mod ci_red_suites_tests {
     fn a_ci_red_on_a_tree_declaring_no_suite_names_the_whole_testenv_run() {
         assert_eq!(ci_red_suites(tree(Some("ci_entry = \"make\"\n")).path()), vec!["testenv".to_string()]);
         assert_eq!(ci_red_suites(tree(None).path()), vec!["testenv".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod adds_path_tests {
+    use super::adds_path;
+
+    #[test]
+    fn a_tip_adds_only_the_file_it_creates_not_one_it_edits() {
+        let root = testkit::TempDir::new("adds-path");
+        let d = root.path();
+        testkit::git(d, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir_all(d.join("spira")).unwrap();
+        std::fs::write(d.join("spira/test-old.sh"), "a\n").unwrap();
+        testkit::git(d, &["add", "."]);
+        testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
+        let base = testkit::git(d, &["rev-parse", "HEAD"]);
+        std::fs::write(d.join("spira/test-new.sh"), "b\n").unwrap();
+        std::fs::write(d.join("spira/test-old.sh"), "c\n").unwrap();
+        testkit::git(d, &["add", "."]);
+        testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "tip"]);
+        let tip = testkit::git(d, &["rev-parse", "HEAD"]);
+        assert!(adds_path(d, base.trim(), tip.trim(), "spira/test-new.sh"));
+        assert!(!adds_path(d, base.trim(), tip.trim(), "spira/test-old.sh"));
+        assert!(!adds_path(d, base.trim(), "no-such-ref", "spira/test-new.sh"));
     }
 }
