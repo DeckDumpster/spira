@@ -139,6 +139,12 @@ a bead (`work submit` from its worktree), then `queue open-batch <repo> --member
 forge refuses a second open PR from this installation on a repo; a deliberate second one needs
 `QUEUE_SECOND_PR_CONSIDERED="<why>"` in the environment, and the forge logs the reason.
 
+**A hand build, or a builder subagent you brief, never makes its own worktree target.** Its brief
+says: `export CARGO_TARGET_DIR="$(spira-build-dir lease --who <label> --root <worktree>)"` before
+any cargo command. That leases a directory from the pool dwarves build in (warm reuse, selective
+clean, idle-only eviction) and holds it until that shell exits. Never a fixed directory, never
+`<worktree>/target`.
+
 **The break-glass build path is a dwarf.** When the loop cannot build its own fix (the world is
 halted or drained, the caps are full, the scheduler is the bug), direct a real dwarf onto that one
 bead: `dwarf direct <rune> <bead-id> --by concierge --reason "<why the normal path was bypassed>"`.
