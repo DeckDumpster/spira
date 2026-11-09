@@ -108,3 +108,10 @@ fn only_a_signal_exit_of_the_runner_is_a_signal_death() {
     assert!(!is_signal_death("round-vm: PHASE-FAILED phase=build rc=134"));
     assert!(!is_signal_death("the remote runner exited 101, outside testenv's contract"));
 }
+
+#[test]
+fn runner_touchers_match_the_directories_and_not_their_lookalikes() {
+    let ds = [diff("a", &["round-vm/src/run.rs"], ""), diff("b", &["testenv/src/x.rs"], ""), diff("c", &["round-vm-extra/x"], ""), diff("d", &["doc/round-vm/x"], "")];
+    let ids: Vec<&str> = runner_touchers(&ds).iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(ids, ["a", "b"]);
+}

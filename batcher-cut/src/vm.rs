@@ -792,6 +792,13 @@ mod tests {
     }
 
     #[test]
+    fn a_testenv_abort_in_the_vm_reaches_the_attribution_as_a_signal_death() {
+        let err = "/root/round-script.sh: line 742: 37305 Aborted (core dumped) testenv --mode parallel\nround-vm: PHASE-FAILED phase=suites rc=134\nround-vm run: the remote runner exited 134, outside testenv's contract (0-4) — no verdict\n";
+        let e = corpus_end(2, err, 600, 0, 5).unwrap_err();
+        assert!(batcher::buildattr::is_signal_death(&e), "{e}");
+    }
+
+    #[test]
     fn a_pass_that_lost_its_vm_before_any_suite_reported_is_an_infrastructure_fault_not_a_cap_breach() {
         let err = "round-vm run: 103 192.168.13.252 warm\nssh: connect failed, exit 255\n";
         let e = corpus_end(124, err, 900, 0, 444).unwrap_err();
