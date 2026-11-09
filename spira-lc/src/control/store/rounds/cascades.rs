@@ -28,9 +28,14 @@ pub struct Orphans {
     pub failed: Vec<String>,
     /// Rounds that never began but whose holder's lease is live: theirs, not the sweep's.
     pub leased: Vec<String>,
+    /// Rounds that never began on the record but whose leg unit or round-vm process is live.
+    pub running: Vec<String>,
+    /// The repo of each round in `phantom_batches`, for the caller's process probe: a dry run
+    /// (no live set) lists every round the probe must be asked about.
+    pub repos: std::collections::BTreeMap<String, String>,
 }
 
-const NEVER_BEGAN_CHECKED: &str = "no PR, run, pass, phase or ejected member";
+const NEVER_BEGAN_CHECKED: &str = "no PR, run, pass, phase, ejected member or live leg unit or round-vm process";
 
 const FINISHED: [BatchState; 3] = [
     BatchState::Landed,
@@ -433,13 +438,16 @@ impl<B: Backend> Store<B> {
     /// a round that opened and never began (OPEN, no run, pass or phase, cut more than
     /// `stale_secs` before `now`). With `apply`, each such round is abandoned and each other
     /// orphan released in its own txn. A delivery live outside a round is no orphan, and a round
-    /// whose lease is live is its holder's: it is listed `leased` and left alone.
+    /// whose lease is live is its holder's: it is listed `leased` and left alone. `live` names
+    /// the rounds the caller saw a leg unit or round-vm process running for, which the store
+    /// cannot see: each is begun, listed `running` and left alone.
     pub fn requeue_orphans(
         &self,
         actor: &str,
         apply: bool,
         stale_secs: i64,
         now: i64,
+        live: &BTreeSet<String>,
         req: &Request,
     ) -> Result<Orphans> {
         let (records, _) = self.records()?;
@@ -479,15 +487,24 @@ impl<B: Backend> Store<B> {
             if self.has_ejected_member(r)? {
                 continue;
             }
-            if self.round_leased(key)? {
+            if live.contains(&r.row.batch_id) {
+                out.running.push(r.row.batch_id.clone());
+            } else if self.round_leased(key)? {
                 out.leased.push(r.row.batch_id.clone());
             } else {
                 phantoms.push(r);
             }
         }
         out.leased.sort();
+        out.running.sort();
         phantoms.sort_by(|a, b| a.row.batch_id.cmp(&b.row.batch_id));
         out.phantom_batches = phantoms.iter().map(|r| r.row.batch_id.clone()).collect();
+        out.repos = rounds
+            .iter()
+            .map(|(_, r)| &r.value)
+            .filter(|r| out.phantom_batches.contains(&r.row.batch_id))
+            .map(|r| (r.row.batch_id.clone(), r.row.repo.clone()))
+            .collect();
         let phantom_members: BTreeSet<&str> = phantoms
             .iter()
             .flat_map(|r| r.members.iter().map(|m| m.bead_id.as_str()))

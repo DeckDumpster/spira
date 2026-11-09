@@ -611,16 +611,22 @@ fn is_live(state: UnitState) -> bool {
     matches!(state, UnitState::Active | UnitState::Activating | UnitState::Deactivating)
 }
 
-/// Stops every live unit and scope of `round`'s legs in `repo` and waits until each has exited;
-/// returns the names it stopped. `Err` names the units that outlived the wait, or the
-/// listing or stop that failed: an abandon must not go on to free a tree a leg still writes. A unit whose name
-/// `spare` accepts (the caller's own) is left running.
-pub fn stop_round_legs(units: &dyn Units, repo: &str, round: &str, spare: &dyn Fn(&str) -> bool) -> std::result::Result<Vec<String>, String> {
+/// The live units and scopes of `round`'s legs in `repo`, less those `spare` accepts.
+pub fn live_round_units(units: &dyn Units, repo: &str, round: &str, spare: &dyn Fn(&str) -> bool) -> std::result::Result<Vec<String>, String> {
     let mut live: Vec<String> = vec![];
     for glob in [round_leg_glob(repo, round), round_scope_glob(repo, round)] {
         let listed = units.list(&glob).map_err(|e| format!("cannot list {glob}: {}", e.0))?;
         live.extend(listed.into_iter().filter(|d| is_live(d.state) && !spare(&d.name)).map(|d| d.name));
     }
+    Ok(live)
+}
+
+/// Stops every live unit and scope of `round`'s legs in `repo` and waits until each has exited;
+/// returns the names it stopped. `Err` names the units that outlived the wait, or the
+/// listing or stop that failed: an abandon must not go on to free a tree a leg still writes. A unit whose name
+/// `spare` accepts (the caller's own) is left running.
+pub fn stop_round_legs(units: &dyn Units, repo: &str, round: &str, spare: &dyn Fn(&str) -> bool) -> std::result::Result<Vec<String>, String> {
+    let live = live_round_units(units, repo, round, spare)?;
     for name in &live {
         units.stop(&UnitHandle::named(name)).map_err(|e| format!("cannot stop {name}: {}", e.0))?;
     }
@@ -2281,6 +2287,20 @@ mod tests {
             assert!(is_live(u.facts(h).unwrap().state), "{} must keep running", h.name);
         }
         assert!(stop_round_legs(&u, "spira", "spira-A", &|_| false).unwrap().is_empty(), "nothing left to stop");
+    }
+
+    #[test]
+    fn a_live_round_scope_or_leg_unit_is_listed_and_a_neighbours_is_not() {
+        let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
+        let live = UnitFacts { state: UnitState::Active, main_pid: Some(7), exit: None, since_ms: Some(0) };
+        let scope = format!("{}.scope", round_scope_unit("spira", "spira-A", "7-1"));
+        u.install(&scope, live.clone());
+        u.install(&format!("{}.scope", round_scope_unit("spira", "spira-B", "7-1")), live);
+        assert_eq!(live_round_units(&u, "spira", "spira-A", &|_| false).unwrap(), vec![scope]);
+        assert!(live_round_units(&u, "spira", "spira-C", &|_| false).unwrap().is_empty());
+        u.script("batcher.local", 3_600_000, Exit::Code(0));
+        let leg = u.start(&spec("batcher.local", &format!("{}.attribute2", round_stem("spira", "spira-C")), &["x"])).unwrap();
+        assert_eq!(live_round_units(&u, "spira", "spira-C", &|_| false).unwrap(), vec![leg.name]);
     }
 
     #[test]

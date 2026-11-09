@@ -152,7 +152,7 @@ pub fn converge_orphans(w: &World) {
     if !w.lc.available() {
         return;
     }
-    if let Err((rc, out)) = w.lc.requeue_orphans("queue.sh") {
+    if let Err((rc, out)) = w.lc.requeue_orphans("queue.sh", &|repo, batch| w.scripts.round_legs_live(repo, batch)) {
         w.err(format!(
             "queue.sh: orphan sweep did not complete (rc={rc}): {out}"
         ));

@@ -1377,6 +1377,15 @@ fn open_whose_cut_is_refused_sweeps_orphans() {
 }
 
 #[test]
+fn the_orphan_sweep_is_told_which_rounds_have_a_live_leg() {
+    let t = round_world();
+    t.scripts.round_legs.borrow_mut().push(("spira".into(), "hand-1".into(), "spira-run-batcher.local-leg-attribute2.service".into()));
+    t.lc.cut_refused.set(Some("refused"));
+    t.run(&["round", "open", "--members", "sp-a,sp-b"]);
+    assert!(t.lc.has("requeue-orphans saw hand-1 running"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
 fn open_admits_a_submitted_member_its_full_suite_certifies() {
     // law-a-round-is-feature-first-then-catch-all: a round takes SUBMITTED beads directly.
     let t = round_world();

@@ -713,6 +713,9 @@ impl Scripts for FScripts {
         *self.round_legs.borrow_mut() = rest;
         Ok(mine.into_iter().map(|(_, _, u)| u).collect())
     }
+    fn round_legs_live(&self, repo: &str, batch: &str) -> bool {
+        self.round_legs.borrow().iter().any(|(r, b, _)| r == repo && b == batch)
+    }
     fn unit_active_state(&self, unit: &str) -> String {
         self.unit_asked.borrow_mut().push(unit.to_string());
         let mut q = self.unit_states.borrow_mut();
@@ -1070,8 +1073,11 @@ impl Lc for FLc {
     fn rounds_door(&self) -> Option<&dyn crate::batches::Door> {
         self.store.get().map(|d| d as &dyn crate::batches::Door)
     }
-    fn requeue_orphans(&self, _: &str) -> Result<String, (i32, String)> {
+    fn requeue_orphans(&self, _: &str, running: &dyn Fn(&str, &str) -> bool) -> Result<String, (i32, String)> {
         self.calls.borrow_mut().push("requeue-orphans".into());
+        if running("spira", "hand-1") {
+            self.calls.borrow_mut().push("requeue-orphans saw hand-1 running".into());
+        }
         Ok(String::new())
     }
     fn probe(&self) -> Result<(), String> {

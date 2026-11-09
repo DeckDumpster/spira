@@ -652,11 +652,11 @@ fn a_round_that_opened_and_never_began_is_abandoned_and_its_members_requeued() {
     open_round(&r);
     let req = r.req();
     let early =
-        r.s.requeue_orphans("test", true, 1800, AT + 60, &req)
+        r.s.requeue_orphans("test", true, 1800, AT + 60, &none(), &req)
             .unwrap();
     assert!(early.phantom_batches.is_empty() && early.orphans.is_empty());
     let late =
-        r.s.requeue_orphans("test", false, 1800, AT + 3600, &req)
+        r.s.requeue_orphans("test", false, 1800, AT + 3600, &none(), &req)
             .unwrap();
     assert_eq!(
         (late.phantom_batches.as_slice(), late.orphans.as_slice()),
@@ -671,7 +671,7 @@ fn a_round_that_opened_and_never_began_is_abandoned_and_its_members_requeued() {
         "a dry run writes nothing"
     );
     let applied =
-        r.s.requeue_orphans("test", true, 1800, AT + 3600, &r.req())
+        r.s.requeue_orphans("test", true, 1800, AT + 3600, &none(), &r.req())
             .unwrap();
     assert_eq!(
         (applied.abandoned, applied.requeued, applied.failed),
@@ -699,7 +699,7 @@ fn a_round_with_an_ejected_member_and_no_phase_write_is_not_abandoned_as_never_b
     let (p, _) = r.s.plan_eject("b-1", "sp-a", &ev, AT, &r.req()).unwrap();
     r.s.run_planned(p, &r.req(), "eject").unwrap();
     let applied =
-        r.s.requeue_orphans("test", true, 1800, AT + 3600, &r.req())
+        r.s.requeue_orphans("test", true, 1800, AT + 3600, &none(), &r.req())
             .unwrap();
     assert!(
         applied.phantom_batches.is_empty() && applied.abandoned.is_empty(),
@@ -707,6 +707,52 @@ fn a_round_with_an_ejected_member_and_no_phase_write_is_not_abandoned_as_never_b
     );
     assert_eq!(round_state(&r), BatchState::Open);
     assert_eq!(r.state("sp-b"), BeadState::InDelivery);
+}
+
+fn none() -> std::collections::BTreeSet<String> {
+    Default::default()
+}
+
+#[test]
+fn a_round_with_a_live_leg_unit_is_begun_and_not_abandoned_as_never_began() {
+    let r = Rig::new();
+    open_round(&r);
+    let live: std::collections::BTreeSet<String> = ["b-1".to_string()].into();
+    let applied =
+        r.s.requeue_orphans("test", true, 1800, AT + 3600, &live, &r.req())
+            .unwrap();
+    assert_eq!(applied.running, vec!["b-1".to_string()]);
+    assert!(
+        applied.phantom_batches.is_empty()
+            && applied.abandoned.is_empty()
+            && applied.requeued.is_empty()
+            && applied.orphans.is_empty(),
+        "{applied:?}"
+    );
+    assert_eq!(round_state(&r), BatchState::Open);
+    assert_eq!(r.state("sp-a"), BeadState::InDelivery);
+    let dry =
+        r.s.requeue_orphans("test", false, 1800, AT + 3600, &none(), &r.req())
+            .unwrap();
+    assert_eq!(dry.repos.get("b-1").map(String::as_str), Some("spira"));
+}
+
+#[test]
+fn the_requeue_orphans_command_leaves_the_round_it_is_told_is_live() {
+    let r = Rig::new();
+    open_round(&r);
+    let later = |argv: &[&str]| {
+        let args: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        let req = r.req();
+        state::run(&r.s, &args, &Call { now: AT + 3600, request: &req.id })
+    };
+    let (rc, dry) = later(&["requeue-orphans", "--actor", "test"]);
+    assert_eq!(rc, 0, "{dry}");
+    assert!(dry.contains(r#""repos":{"b-1":"spira"}"#), "{dry}");
+    let (rc, out) = later(&["requeue-orphans", "--actor", "test", "--apply", "--live-round", "b-1"]);
+    assert_eq!(rc, 0, "{out}");
+    assert!(out.contains(r#""running":["b-1"]"#) && out.contains(r#""abandoned":[]"#), "{out}");
+    assert_eq!(round_state(&r), BatchState::Open);
 }
 
 #[test]
@@ -717,7 +763,7 @@ fn requeue_orphans_leaves_a_leased_round_that_never_began_open_and_lists_it_leas
         .lock("round/spira/b-1", 600_000, &r.req())
         .unwrap();
     let applied =
-        r.s.requeue_orphans("test", true, 1800, AT + 3600, &r.req())
+        r.s.requeue_orphans("test", true, 1800, AT + 3600, &none(), &r.req())
             .unwrap();
     assert_eq!(applied.leased, vec!["b-1".to_string()]);
     assert!(
