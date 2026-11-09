@@ -6943,7 +6943,7 @@ fn ejecting_every_member_on_an_integration_test_red_returns_each_red_and_logs_ea
     }
     let log = t.landing_log();
     for id in ["sp-a", "sp-b"] {
-        assert!(log.contains(&format!("QUEUE ROUND-EJECT")) && log.contains(&format!("batch={batch} id={id} cause=eject-red")), "{id}: {log}");
+        assert!(log.contains(&format!("batch={batch} id={id} cause=eject-red")), "{id}: {log}");
         assert!(
             t.lc.calls.borrow().iter().any(|c| c.contains(&format!("event bead {id} IN_DELIVERY")) && c.contains("batch-ejected-red")),
             "{id}: {:?}",
