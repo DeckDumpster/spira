@@ -1349,6 +1349,13 @@ impl Lc for FLc {
         match self.event_refused.get() {
             Some(why) => Err((1, why.into())),
             None => {
+                if kind.contains("batch-ejected-red") {
+                    if let Ok(rows) = self.rows.borrow_mut().as_mut() {
+                        if let Some(r) = rows.iter_mut().find(|r| r.bead_id == bead) {
+                            r.ejected_red_tip = r.tip.clone();
+                        }
+                    }
+                }
                 if kind.contains("\"GateRed\"") && !self.event_ignored.get() {
                     self.bead_rows
                         .borrow_mut()

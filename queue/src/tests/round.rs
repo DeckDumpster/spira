@@ -6952,4 +6952,8 @@ fn ejecting_every_member_on_an_integration_test_red_returns_each_red_and_logs_ea
         assert!(t.lib.has(&format!("bead_reopen {id} eject-red unit-tests")), "{id}");
     }
     assert!(t.lc.has(&format!("abandon-batch {batch} OPEN")));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 1, "{}", t.err());
+    for (id, tip) in [("sp-a", "ta"), ("sp-b", "tb")] {
+        assert!(t.err().contains(&format!("{id}: {tip} is a recorded ejected-red tip")), "{}", t.err());
+    }
 }
