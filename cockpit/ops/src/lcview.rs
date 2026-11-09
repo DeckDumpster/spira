@@ -1327,9 +1327,10 @@ pub fn view(s: &Snapshot) -> View {
         } else {
             rows.sort_by_key(|r| r.since);
         }
+        let cap = if matches!(st.name.as_str(), "READY" | "REWORK") { usize::MAX } else { 40 };
         st.beads = rows
             .iter()
-            .take(40)
+            .take(cap)
             .map(|r| {
                 let note = if PLACED.contains(&st.name.as_str()) {
                     place(r, &idx).1
@@ -1561,6 +1562,18 @@ pub fn view(s: &Snapshot) -> View {
                 it.claim = claim_of(r);
             }
         }
+        let rank = |it: &Item| -> (u8, usize) {
+            match it.claim.as_str() {
+                c if c.starts_with('#') => (0, nx.iter().position(|n| n.id == it.id).unwrap_or(usize::MAX)),
+                c if c.starts_with("held") => (1, 0),
+                c if c.starts_with("blocked") => (2, 0),
+                c if c.starts_with("ask") => (3, 0),
+                _ => (4, 0),
+            }
+        };
+        st.beads.sort_by_key(rank);
+        let ranked = st.beads.iter().filter(|it| rank(it).0 == 0).count();
+        st.beads.truncate(ranked.max(40));
     }
 
     let mut rc: Vec<&Row> = s.rows.iter().collect();
@@ -2177,6 +2190,50 @@ mod tests {
         assert_eq!(v.next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), vec!["sp-high", "sp-low"]);
         let f = plain(&render(&v, 120));
         assert!(f.contains("2 claimable") && f.contains("claimable 2"), "{f}");
+    }
+
+    #[test]
+    fn the_ready_list_is_in_claim_order_with_every_ranked_row_before_the_rest() {
+        let mut rows = vec![];
+        let mut held = row("sp-held", "READY", 1);
+        held.holds = vec!["ask".into()];
+        rows.push(held);
+        rows.push(row("sp-unlaned", "READY", 2));
+        let mut ids = vec![];
+        for i in 0..45 {
+            let id = format!("sp-p2-{i:02}");
+            rows.push(row(&id, "READY", 10 + i));
+            ids.push(id);
+        }
+        rows.push(row("sp-p0", "READY", 500));
+        rows.push(row("sp-p1", "READY", 400));
+        let mut s = snap(rows);
+        s.claimable = Some(ids.iter().cloned().chain(["sp-p0".into(), "sp-p1".into()]).collect());
+        for id in &ids {
+            s.meta.insert(id.clone(), Meta { priority: Some(2), ..Default::default() });
+        }
+        s.meta.insert("sp-p0".into(), Meta { priority: Some(0), ..Default::default() });
+        s.meta.insert("sp-p1".into(), Meta { priority: Some(1), ..Default::default() });
+        let v = view(&s);
+        let ready = v.machine.iter().find(|m| m.name == "READY").unwrap();
+        let got: Vec<&str> = ready.beads.iter().map(|b| b.id.as_str()).collect();
+        assert_eq!(&got[..3], ["sp-p0", "sp-p1", "sp-p2-00"]);
+        assert_eq!(got.iter().filter(|i| i.starts_with("sp-p")).count(), 47, "no ranked row is cut off");
+        assert_eq!(got.len(), 47, "the unranked tail yields to the ranked rows");
+        assert_eq!(ready.beads[0].claim, "#1");
+    }
+
+    #[test]
+    fn ready_rows_after_the_ranked_ones_run_held_then_blocked_then_unclaimable() {
+        let mut held = row("sp-held", "READY", 1);
+        held.holds = vec!["ask".into()];
+        let mut blocked = row("sp-blocked", "READY", 2);
+        blocked.blocker = Some("sp-x".into());
+        let mut s = snap(vec![row("sp-unlaned", "READY", 0), blocked, held, row("sp-ranked", "READY", 9)]);
+        s.claimable = Some(vec!["sp-ranked".into()]);
+        let v = view(&s);
+        let ready = v.machine.iter().find(|m| m.name == "READY").unwrap();
+        assert_eq!(ready.beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["sp-ranked", "sp-held", "sp-blocked", "sp-unlaned"]);
     }
 
     #[test]
