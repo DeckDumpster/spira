@@ -5666,6 +5666,7 @@ fn a_round_reheaded_after_an_eject_builds_a_new_image_instead_of_reusing_the_fai
         t.err()
     );
 
+    *t.scripts.recipe_tree.borrow_mut() = Some("survivors-recipe-sha".into());
     *t.forge.ami_results.borrow_mut() = vec![
         Some(AmiBuild::NotStarted),
         Some(AmiBuild::Success("42".into())),
@@ -5682,6 +5683,17 @@ fn a_round_reheaded_after_an_eject_builds_a_new_image_instead_of_reusing_the_fai
         .cloned()
         .collect();
     assert_eq!(dispatched.len(), 2, "a new head gets its own image build: {dispatched:?}");
+    let read: Vec<String> = t
+        .forge
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("ami-result "))
+        .cloned()
+        .collect();
+    let second = dispatched.iter().last().unwrap().replace("ami-dispatch ", "ami-result ");
+    assert!(read.contains(&second), "{read:?}");
+    assert!(second.contains("survivors-re"), "{second}");
     assert!(t.scripts.calls.borrow().join("\n").contains("ami=ami-new"));
 }
 
