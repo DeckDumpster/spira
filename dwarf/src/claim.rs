@@ -378,7 +378,7 @@ mod tests {
     fn lc_claim_loop_takes_the_first_applied_and_never_steals_a_refused_one() {
         let ids = vec!["sp-held".to_string(), "sp-down".into(), "sp-ok".into(), "sp-never".into()];
         let mut tried = Vec::new();
-        let (c, logs, unreachable) = lc_claim_loop(&ids, &["sp-ok".into()], Some("P1/P2"), "builder/eitri", |_| (), |id| {
+        let (c, logs, unreachable) = lc_claim_loop(&ids, &["sp-ok".into()], Some("P1/P2"), "builder/eitri", |_| true, |id| {
             tried.push(id.to_string());
             match id {
                 "sp-held" => LC_REFUSED,
