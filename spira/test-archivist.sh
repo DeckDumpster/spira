@@ -668,8 +668,10 @@ cat > "$T/projects/p/conc-1.jsonl" <<'JSONL'
 {"type":"assistant","timestamp":"2026-10-30T10:00:00Z","message":{"id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"mail send operator --subject \"approve kit-catalog v2 rollout\" --kind question"}}]}}
 {"type":"user","timestamp":"2026-10-30T10:00:01Z","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","content":"filed sp-e1k1gt"}]}}
 JSONL
-aclaim conc-1 "t1: kit-catalog" "Approve the kit-catalog v2 rollout?" >/dev/null; rc=$?
-if [ "$rc" = 4 ]; then ok "a question open in the store is not filed (exit 4)"; else bad "a question open in the store is not filed" "exit $rc"; fi
+aclaim quiet-1 "t0: retention" "How many days should closed-ask mail be retained?" >/dev/null; rc=$?
+if [ "$rc" = 0 ]; then ok "an unrelated open ask does not block a different question"; else bad "unrelated open ask blocks" "exit $rc"; fi
+aclaim quiet-1 "t1: kit-catalog" "Approve the kit-catalog v2 rollout?" >/dev/null; rc=$?
+if [ "$rc" = 4 ]; then ok "a question open in the store is not filed (exit 4), the session has no transcript"; else bad "a question open in the store is not filed" "exit $rc"; fi
 has "the open asks are listed by the configured ask label" "$(cat "$WORK_ARGS")" "--label needs-ryan"
 
 printf '[]' > "$WORK_OPEN"
