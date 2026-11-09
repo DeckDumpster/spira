@@ -45,6 +45,7 @@ scenario!(
     scenario_harness_smoke,
     scenario_hung_child,
     scenario_prior_runner_alive,
+    scenario_prior_runner_alive_slot,
     scenario_launch_fails,
     scenario_launch_collision,
     scenario_one_proxmox_slot,

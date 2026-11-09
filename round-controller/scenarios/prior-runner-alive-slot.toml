@@ -1,0 +1,69 @@
+description = "a Proxmox slot whose holder lapsed without releasing it while its runner unit is still active, held for fifty passes: the slot is pool-wide, so PriorRunnerAlive is raised on the repo owning the batch that runner drives, and the alarms component pages once for it"
+repos = ["lane", "other"]
+
+[run]
+epoch = 1800000000
+passes = 50
+every_secs = 30
+
+[lease]
+ttl_secs = 600
+pass_wall_max_secs = 4000
+redrive_retries = 2
+ec2_max_lifetime_secs = 8000
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 70
+certify = 30
+
+[[store]]
+key = "lanes/lane"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[git]]
+repo = "lane"
+landing = "base-0"
+
+[[store]]
+key = "lanes/other"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[git]]
+repo = "other"
+landing = "base-0"
+
+[[store]]
+key = "batches/lane/s1"
+data = { batch_id = "s1", repo = "lane", state = "CiRunning", head = "s1-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-s", tip = "s1" }] }
+
+[[store]]
+key = "slots/proxmox/0"
+data = { holder = "round-controller", unit = "round-controller-run-s1-7-0", vm = "vm-7", released = false }
+
+[[unit]]
+name = "round-controller-run-s1-7-0"
+state = "active"
+
+[[expect]]
+name = "one-page-for-the-unproven-slot-holder"
+count = "pages:PriorRunnerAlive"
+equals = 1
+
+[[expect]]
+name = "the-page-names-the-slot-and-its-runner"
+count = "page-text:slot proxmox/0's last holder round-controller lapsed"
+equals = 1
+
+[[expect]]
+name = "no-other-page"
+count = "pages"
+equals = 1
+
+[[expect]]
+name = "inverted-no-page"
+count = "pages:PriorRunnerAlive"
+equals = 0
+inverted = true

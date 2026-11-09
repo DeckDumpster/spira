@@ -35,6 +35,21 @@ pub fn hand_unit_name(batch: &str, token: Rev) -> Result<String, String> {
     unit_name(batch, token).map(|u| u.replacen("round-controller-run-", "round-recert-", 1))
 }
 
+/// Whether `unit` is a runner of `batch`, under any lease token and either driver.
+pub fn unit_drives(unit: &str, batch: &str) -> bool {
+    [unit_name(batch, Rev::new(0, 0)), hand_unit_name(batch, Rev::new(0, 0))]
+        .into_iter()
+        .flatten()
+        .any(|zero| {
+            let stem = zero.strip_suffix("0-0").unwrap_or(&zero);
+            unit.strip_prefix(stem).is_some_and(|t| {
+                t.split_once('-').is_some_and(|(a, b)| {
+                    [a, b].iter().all(|w| !w.is_empty() && w.bytes().all(|c| c.is_ascii_digit()))
+                })
+            })
+        })
+}
+
 /// A lease's past holder: the runner launched for `batch` under `token`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Holder {
@@ -172,6 +187,20 @@ mod tests {
             batch: "b1".into(),
             token: Rev::new(7, 0),
         }
+    }
+
+    #[test]
+    fn a_unit_drives_its_own_batch_under_any_token_and_no_batch_that_only_shares_a_prefix() {
+        for batch in ["b1", "b0", "b0-0", "b"] {
+            for t in [Rev::new(7, 0), Rev::new(10, 3)] {
+                assert!(unit_drives(&unit_name(batch, t).unwrap(), batch), "{batch}");
+                assert!(unit_drives(&hand_unit_name(batch, t).unwrap(), batch), "{batch}");
+            }
+        }
+        let long = unit_name("b-1", Rev::new(7, 0)).unwrap();
+        assert!(!unit_drives(&long, "b"));
+        assert!(!unit_drives(&unit_name("b0", Rev::new(7, 0)).unwrap(), "b"));
+        assert!(!unit_drives("round-controller-run-b1-7", "b1"));
     }
 
     #[test]
