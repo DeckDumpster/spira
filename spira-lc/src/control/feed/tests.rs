@@ -314,6 +314,32 @@ fn event_seq_names_only_the_beads_with_an_applied_event_after_the_revision<B: Ba
     assert_ne!(verbs::run(s, &both).0, 0, "--head and --since together are refused");
 }
 
+/// A store carrying many beads' history answers `event-seq --since <recent>` from the events
+/// after the revision alone: the range statements step over the recent rows, not the history.
+#[test]
+fn event_seq_since_a_recent_revision_reads_only_the_recent_events_of_a_loaded_store() {
+    let dir = TempDir::new("spira-lc-feed-loaded");
+    let clock = VirtualClock::new(0);
+    let opts = Options {
+        clock: Arc::new(clock.clone()),
+        ..Options::default()
+    };
+    let b = SqliteBackend::open(&dir.path().join("control.db"), opts).unwrap();
+    let s = store(b.clone(), &clock);
+    for i in 0..300 {
+        create(&s, &format!("sp-{i}"));
+        toggle(&s, &format!("sp-{i}"), 1);
+    }
+    let since = s.contract().head().unwrap();
+    toggle(&s, "sp-7", 2);
+    toggle(&s, "sp-9", 2);
+    b.take_read_steps();
+    let e = call(&s, &["event-seq", "--since", &since.to_string()]);
+    assert_eq!(e["keys"], serde_json::json!(["sp-7", "sp-9"]));
+    let steps = b.take_read_steps();
+    assert!(steps < 5_000, "event-seq --since a recent revision stepped {steps} over a loaded store");
+}
+
 /// Over-broad-scopes #10 (sp-ipwlic): one watch names several prefixes, so a watcher of three
 /// keyspaces need not watch `""`; events under none of them never reach it.
 fn a_watch_of_several_prefixes_delivers_each_and_nothing_else<B: Backend>(s: &Store<B>) {
