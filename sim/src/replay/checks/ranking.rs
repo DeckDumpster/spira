@@ -163,6 +163,7 @@ pub fn the_held_out_lanes_rank_above_every_healthy_section() {
             let at = gaps.iter().position(|g| g.section == section).unwrap();
             let healthy = gaps.iter().position(|g| p.blocked.get(&g.section).is_none_or(|b| *b == 0.0) && !g.open);
             blocked += 1;
+            assert!(gaps[at].open, "{lane} at {}: blocked, but its gap is not open (distance {})", p.at, gaps[at].distance);
             assert!(healthy.is_none_or(|h| at < h), "{lane} at {}: ranked {at}, a healthy section {healthy:?}", p.at);
         }
         assert!(blocked > 100, "{lane} stands blocked for hours: {blocked} passes");

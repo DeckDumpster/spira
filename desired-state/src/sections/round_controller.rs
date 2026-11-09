@@ -241,7 +241,7 @@ mod tests {
             },
             "status": status,
             "flow": { "consumes": ["vm-pool/slots", "gate/verdicts", "lifecycle/submitted"], "produces": ["lifecycle/landed"] },
-            "distance": { "fn": "max(0, green_unlanded_minutes) / 5 + repeat_identity_open + lanes_blocked", "open": 1.0, "close": 0.5 },
+            "distance": { "fn": "max(0, green_unlanded_minutes) / 5 + repeat_identity_open + 2 * lanes_blocked", "open": 1.0, "close": 0.5 },
             "actions": [
                 { "name": "hold-member", "class": "local", "step": "one member at one tip", "moves": "repeat_identity_open",
                   "addresses": ["RepeatIdentity"], "expected_effect": -1.0, "horizon": "10m" },

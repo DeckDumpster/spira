@@ -270,7 +270,13 @@ fn a_fault_on_the_lane_s_own_ref_and_image_blocks_it_and_every_fault_is_listed()
         "faults/lane/base-0/sha256:img-0",
         json!({ "cause": { "cause": "image", "digest": "sha256:img-0" }, "since": EPOCH_MS }),
     );
-    assert_eq!(level_of(&built(&b), "lanes_blocked"), 1.0);
+    let blocked = built(&b);
+    assert_eq!(level_of(&blocked, "lanes_blocked"), 1.0);
+    let sec = section("lane", &blocked, None, EPOCH_MS);
+    let kind = spira_desired_state::section::admit_publish(&sec).expect("admitted");
+    let d = sec.distance_value(kind).unwrap().unwrap();
+    let open = sec.distance.as_ref().unwrap().open;
+    assert!(d > open, "a blocked lane with nothing else wrong opens its gap: {d} vs open {open}");
     b.seed("faults/lane/x/y", json!("garbled"));
     assert_eq!(build(&b.ports(), "lane").unwrap_err().word(), "unreadable");
 }
