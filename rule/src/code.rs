@@ -598,13 +598,13 @@ fn enact_bead_label(key: &str) -> String {
     format!("law-enact:{key}")
 }
 
-/// The id of the bead carrying `label`, from `spira-lc content-rows` whose lifecycle state is still with the builder.
-fn open_bead_labelled(label: &str) -> Result<Option<String>, String> {
-    let out = spira_config::bounded::bounded("spira-lc").args(["content-rows", "--label", label]).stdin(Stdio::null()).output().map_err(|e| format!("rule: spira-lc: {e}"))?;
+/// The id of the bead carrying `label`, from `spira-lc content list` whose lifecycle state is still with the builder.
+pub fn open_bead_labelled(label: &str) -> Result<Option<String>, String> {
+    let out = spira_config::bounded::bounded("spira-lc").args(["content", "list", "--all", "--limit", "0", "--label", label, "--json"]).stdin(Stdio::null()).output().map_err(|e| format!("rule: spira-lc: {e}"))?;
     if !out.status.success() {
-        return Err(format!("rule: spira-lc content-rows: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(format!("rule: spira-lc content list: {}", String::from_utf8_lossy(&out.stderr).trim()));
     }
-    let rows: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("rule: spira-lc content-rows output is not JSON: {e}"))?;
+    let rows: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("rule: spira-lc content list output is not JSON: {e}"))?;
     for id in rows.as_array().into_iter().flatten().filter_map(|r| r.get("id")?.as_str()) {
         let past = spira_config::lc_state::row(id)?.is_some_and(|r| r.past_builder());
         if !past {
