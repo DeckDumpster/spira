@@ -385,6 +385,8 @@ fn publish_red_files_one_fix_forward_and_marks_the_head() {
 fn publish_red_naming_no_suite_still_files_one_bead_and_frees_the_lock() {
     let t = T::new(LandMode::QueueLocal);
     publish_record(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.rerun_decided.borrow_mut() = Some("no input changed".into());
     t.var("SPIRA_QUEUE_ACTOR", "concierge");
     t.forge.status.borrow_mut().push(Some("red\n".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 0);
@@ -407,6 +409,96 @@ fn publish_red_naming_no_suite_still_files_one_bead_and_frees_the_lock() {
         crate::lock::try_lock(&t.s().queue_dir, "spira"),
         crate::lock::Acquire::Held(_)
     ));
+}
+
+#[test]
+fn a_publish_red_naming_no_suite_is_an_infra_fault_rerun_not_a_fix_forward() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("red\nrun-id: 77\nfailed-step: Run suites\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert_eq!(count(&t.forge.calls, "workflow-rerun 77"), 1);
+    assert!(!has_call(&t.forge.calls, "pr-close"));
+    assert!(t.qfile("publish").exists());
+    assert!(!t.qfile("publish-red").exists());
+    assert!(!t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("create_bug")));
+}
+
+#[test]
+fn a_publish_red_naming_no_suite_that_is_still_nameless_past_the_budget_mails_and_files_nothing() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    for _ in 0..4 {
+        t.forge
+            .status
+            .borrow_mut()
+            .push(Some("red\nrun-id: 77\nfailed-step: Run suites\n".into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    }
+    assert_eq!(count(&t.forge.calls, "workflow-rerun 77"), 2);
+    assert!(!t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("create_bug")));
+    assert!(t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("notify spira publish PR 77: CI harness fault")));
+}
+
+#[test]
+fn a_publish_red_that_names_a_suite_or_a_test_is_never_rerun() {
+    for red in [
+        "red\nred-suite: test-a.sh\n",
+        "red\nrun-id: 77\nstep-log: FAILED tests/test_x.py::t - boom\n",
+    ] {
+        let t = T::new(LandMode::QueueLocal);
+        publish_record(&t);
+        *t.forge.run.borrow_mut() = Some("77".into());
+        t.forge.status.borrow_mut().push(Some(red.into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+        assert_eq!(count(&t.forge.calls, "workflow-rerun"), 0);
+        assert!(t
+            .lib
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("create_bug")));
+    }
+}
+
+#[test]
+fn a_nameless_publish_red_whose_rerun_is_refused_is_mailed_not_filed() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.rerun_refused.borrow_mut() = true;
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("red\nrun-id: 77\nfailed-step: Run suites\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.err().contains("re-run of the gate run could not start"));
+    assert!(!t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("create_bug")));
 }
 
 #[test]
@@ -1555,6 +1647,8 @@ fn a_publish_red_from_a_non_suite_step_carries_the_step_and_log_tail_and_files_o
     let t = T::new(LandMode::QueueLocal);
     let red = "red\nrun-id: 38071344778\nfailed-step: stage / Stage the build as a release\nstep-log: release: cannot create /x: Permission denied (os error 13)\nstep-log: ##[error]Process completed with exit code 1.\n";
     publish_record(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.rerun_decided.borrow_mut() = Some("no input changed".into());
     t.forge.status.borrow_mut().push(Some(red.into()));
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     let bug = t

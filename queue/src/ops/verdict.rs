@@ -332,6 +332,9 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
             w.out(format!("verdict {name}: publish PR {pr} green — {remote}/{forge_branch} fast-forwarded to {head}"));
             OK
         }
+        "red" if red_suites_csv(&out).is_empty() && test_red_csv(&out).is_empty() => {
+            publish_fault(w, c, path, &kv, &pr, &out)
+        }
         "red" => RED,
         "harness_fault" if tagged(&out, "missing-workflow: ").is_empty() => {
             publish_fault(w, c, path, &kv, &pr, &out)
