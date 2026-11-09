@@ -97,17 +97,18 @@ pub struct Rowless {
     pub title: String,
 }
 
-/// What the repair effect is asked: the snapshot to carry through and the beads to give a row.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// The most beads one repair effect is asked to give a row, so its input stays a few KiB however long the list; the rest wait a pass.
+pub const REPAIR_BATCH: usize = 100;
+
+/// What the repair effect is asked: the ids of the beads to give a row. It re-reads what else it needs.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repair {
-    pub snapshot: Snapshot,
-    pub todo: Vec<Rowless>,
+    pub ids: Vec<String>,
 }
 
-/// What the repair effect hands back: the snapshot it was given and the beads it gave a row.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// What the repair effect hands back: the beads it gave a row.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repaired {
-    pub snapshot: Snapshot,
     pub ids: Vec<String>,
 }
 
@@ -181,12 +182,12 @@ fn cut(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
-pub fn rowless(p: &BeadSweep, snap: &Snapshot) -> Vec<Rowless> {
+pub fn rowless(ask_label: &str, snap: &Snapshot) -> Vec<Rowless> {
     let rows: BTreeSet<&str> = snap.rows.iter().map(|r| r.id.as_str()).collect();
     let term: BTreeSet<&str> = snap.terminal.iter().map(|(i, _)| i.as_str()).collect();
     snap.content
         .iter()
-        .filter(|b| is_ours(p, b, &rows, &term) && is_open(Kind::Ask, &b.status))
+        .filter(|b| is_ours(ask_label, b, &rows, &term) && is_open(Kind::Ask, &b.status))
         .map(|b| Rowless {
             id: b.id.clone(),
             priority: b.priority,
@@ -196,8 +197,8 @@ pub fn rowless(p: &BeadSweep, snap: &Snapshot) -> Vec<Rowless> {
         .collect()
 }
 
-fn is_ours(p: &BeadSweep, b: &Bead, rows: &BTreeSet<&str>, term: &BTreeSet<&str>) -> bool {
-    !rows.contains(b.id.as_str()) && !term.contains(b.id.as_str()) && !matches!(b.issue_type.as_deref(), Some("epic" | "event" | "proposal")) && !b.labels.contains(&p.ask_label)
+fn is_ours(ask_label: &str, b: &Bead, rows: &BTreeSet<&str>, term: &BTreeSet<&str>) -> bool {
+    !rows.contains(b.id.as_str()) && !term.contains(b.id.as_str()) && !matches!(b.issue_type.as_deref(), Some("epic" | "event" | "proposal")) && !b.labels.iter().any(|l| l == ask_label)
 }
 
 /// The SUSPECT lines of one pass, in the order the sweep prints them.
@@ -219,7 +220,7 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, now: f64) -> Vec<String> {
             *e = e.min(since);
         }
     }
-    let mut out: Vec<String> = snap.content.iter().filter(|b| is_ours(p, b, &row_ids, &term_ids)).map(|b| format!("{} ROWLESS open bead with no lifecycle row", b.id)).collect();
+    let mut out: Vec<String> = snap.content.iter().filter(|b| is_ours(&p.ask_label, b, &row_ids, &term_ids)).map(|b| format!("{} ROWLESS open bead with no lifecycle row", b.id)).collect();
     for (&i, r) in &rows {
         let st = r.state.as_str();
         let labels: &[String] = content.get(i).map(|b| b.labels.as_slice()).unwrap_or_default();
@@ -289,11 +290,10 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, now: f64) -> Vec<String> {
 }
 
 pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, repaired: &[String], now: f64) -> (Carry, Vec<String>) {
-    let orphans = rowless(p, snap);
     let mut say = vec![];
     for id in repaired {
-        if let Some(r) = orphans.iter().find(|r| &r.id == id) {
-            say.push(format!("REPAIRED {id} open bead had no lifecycle row; created it (priority {}, repo {})", r.priority, r.repo.as_deref().unwrap_or("none")));
+        if let Some(b) = snap.content.iter().find(|b| &b.id == id) {
+            say.push(format!("REPAIRED {id} open bead had no lifecycle row; created it (priority {}, repo {})", b.priority, b.labels.iter().find_map(|l| l.strip_prefix("repo:")).unwrap_or("none")));
         }
     }
     let now_set: Vec<String> = suspects(p, snap, now).into_iter().filter(|l| !repaired.iter().any(|id| l.starts_with(&format!("SUSPECT {id} ROWLESS")))).collect();
@@ -350,15 +350,19 @@ impl Handler for BeadSweep {
         match super::answered_effect(view, ev).as_deref() {
             Some(OBSERVE) => {
                 let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else { return vec![] };
-                let todo = rowless(self, &snap);
-                if todo.is_empty() {
+                let repaired = super::answered_spec(view, ev).map(|s| s.input).filter(|i| !i.is_empty());
+                if let Some(ids) = repaired {
+                    return self.finish(ctx, view, ev, &snap, &serde_json::from_str::<Repaired>(&ids).unwrap_or_default().ids);
+                }
+                let ids: Vec<String> = rowless(&self.ask_label, &snap).into_iter().take(REPAIR_BATCH).map(|r| r.id).collect();
+                if ids.is_empty() {
                     return self.finish(ctx, view, ev, &snap, &[]);
                 }
-                let input = serde_json::to_string(&Repair { snapshot: snap, todo }).unwrap_or_default();
+                let input = serde_json::to_string(&Repair { ids }).unwrap_or_default();
                 vec![Command::Effect(EffectSpec { name: REPAIR.into(), input, deadline_ms: DEADLINE_MS })]
             }
             Some(REPAIR) => match serde_json::from_str::<Repaired>(&ev.kind.body) {
-                Ok(r) => self.finish(ctx, view, ev, &r.snapshot, &r.ids),
+                Ok(r) => vec![Command::Probe(EffectSpec { name: OBSERVE.into(), input: serde_json::to_string(&r).unwrap_or_default(), deadline_ms: DEADLINE_MS })],
                 Err(_) => vec![],
             },
             _ => vec![],
@@ -404,5 +408,54 @@ mod tests {
         let snap = Snapshot { content: vec![bead], ..Snapshot::default() };
         assert_eq!(decide(&p, &Carry::default(), &snap, &[], 0.0).1, ["SUSPECT sp-o ROWLESS open bead with no lifecycle row"]);
         assert_eq!(decide(&p, &Carry::default(), &snap, &["sp-o".into()], 0.0).1, ["REPAIRED sp-o open bead had no lifecycle row; created it (priority 2, repo none)"]);
+    }
+
+    fn at(view: &mut Projection, id: &str, at: u64, kind: EventKind, cause: Option<&str>) -> Event {
+        let ev = Event { id: EventId(id.into()), stream: StreamKey(STREAM.into()), kind, at, cause: cause.map(|c| EventId(c.into())), correlation: CorrelationId(id.into()) };
+        view.push(&ev);
+        ev
+    }
+
+    #[test]
+    fn a_pass_over_thirteen_thousand_beads_requests_effects_that_fit_a_journal_record() {
+        let p = sweep();
+        let beads: Vec<Bead> = (0..13_000).map(|i| Bead { id: format!("sp-{i:06}"), status: "open".into(), priority: 2, title: "t".repeat(20), labels: vec!["repo:spira".into(); 3], ..Bead::default() }).collect();
+        let rows = beads[..12_950].iter().map(|b| Row { id: b.id.clone(), state: "READY".into(), ..Row::default() }).collect();
+        let snap = Snapshot { rows, content: beads, ..Snapshot::default() };
+        let body = serde_json::to_string(&snap).unwrap();
+        assert!(body.len() > 350_000);
+        let (mut view, ctx) = (Projection::default(), Ctx::new(0, 0));
+
+        let tick = at(&mut view, "t", 1_000, EventKind::new(TICK, ""), None);
+        let [Command::Probe(observe), _] = &p.handle(&ctx, &view, &tick)[..] else { panic!("one look and the next tick") };
+        let req = at(&mut view, "r1", 1_000, EventKind::new(EFFECT_REQUESTED, &serde_json::json!({ "spec": observe, "deadline_at": 2 }).to_string()), Some("t"));
+        let seen = at(&mut view, "o1", 1_001, EventKind::new(EFFECT_SUCCEEDED, &body), Some(&req.id.0));
+        let cmds = p.handle(&ctx, &view, &seen);
+        let [Command::Effect(repair)] = &cmds[..] else { panic!("one repair") };
+        assert_eq!(repair.name, REPAIR);
+        assert!(repair.input.len() < 8 * 1024, "{} bytes", repair.input.len());
+        assert_eq!(serde_json::from_str::<Repair>(&repair.input).unwrap().ids.len(), 50);
+
+        let req = at(&mut view, "r2", 1_001, EventKind::new(EFFECT_REQUESTED, &serde_json::json!({ "spec": repair, "deadline_at": 2 }).to_string()), Some("o1"));
+        let done = at(&mut view, "o2", 1_002, EventKind::new(EFFECT_SUCCEEDED, &serde_json::to_string(&Repaired { ids: vec!["sp-012999".into()] }).unwrap()), Some(&req.id.0));
+        let cmds = p.handle(&ctx, &view, &done);
+        let [Command::Probe(look)] = &cmds[..] else { panic!("one more look") };
+        assert!(look.input.len() < 8 * 1024);
+
+        let req = at(&mut view, "r3", 1_002, EventKind::new(EFFECT_REQUESTED, &serde_json::json!({ "spec": look, "deadline_at": 2 }).to_string()), Some("o2"));
+        let again = at(&mut view, "o3", 1_003, EventKind::new(EFFECT_SUCCEEDED, &body), Some(&req.id.0));
+        let cmds = p.handle(&ctx, &view, &again);
+        assert!(cmds.iter().all(|c| !matches!(c, Command::Effect(e) if e.name == REPAIR)), "a second look finishes the pass");
+        let said: Vec<&str> = cmds.iter().filter_map(|c| match c { Command::Effect(e) => Some(e.input.as_str()), _ => None }).collect();
+        assert!(said.iter().any(|m| m.contains("REPAIRED sp-012999 ") && m.contains("repo spira")), "{said:?}");
+        assert!(said.iter().all(|m| m.len() < 8 * 1024));
+    }
+
+    #[test]
+    fn a_repair_asks_for_ids_and_no_more_than_a_batch_of_them() {
+        let p = sweep();
+        let content = (0..REPAIR_BATCH + 30).map(|i| Bead { id: format!("sp-{i}"), status: "open".into(), ..Bead::default() }).collect();
+        let ids: Vec<String> = rowless(&p.ask_label, &Snapshot { content, ..Snapshot::default() }).into_iter().take(REPAIR_BATCH).map(|r| r.id).collect();
+        assert_eq!(ids.len(), REPAIR_BATCH);
     }
 }
