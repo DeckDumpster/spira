@@ -25,6 +25,7 @@ fn rig(forge: Arc<Mutex<Vec<Run>>>, seed_keys: Vec<String>) -> TaskRig {
         Ok(serde_json::to_string(&Snapshot { seed, repos: vec![(SLUG.into(), Ok(forge.lock().unwrap().clone()))] }).unwrap())
     }).double(INBOX_APPEND, |_| Ok(String::new()));
     r.tick(stream, kind).unwrap();
+    r.advance(45_000).unwrap();
     r
 }
 
@@ -62,4 +63,20 @@ fn a_restart_does_not_report_a_run_again_when_a_legacy_seed_is_on_disk() {
     restart(&mut r);
     r.advance(45_000).unwrap();
     assert_eq!(reports(&r), 2, "a restart re-reported finished runs");
+}
+
+fn polls(r: &TaskRig) -> usize {
+    r.requested().iter().filter(|q| q.name == OBSERVE).count()
+}
+
+#[test]
+fn a_restart_waits_an_interval_before_polling_and_then_polls_once_per_interval() {
+    let mut r = rig(Arc::new(Mutex::new(vec![run(1)])), vec![]);
+    let before = polls(&r);
+    restart(&mut r);
+    assert_eq!(polls(&r), before, "a restart polled at once");
+    r.advance(45_000).unwrap();
+    let first = polls(&r) - before;
+    r.advance(45_000).unwrap();
+    assert_eq!((first, polls(&r) - before - first), (1, 1), "a restart left a second tick chain running");
 }
