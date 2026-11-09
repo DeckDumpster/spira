@@ -179,6 +179,7 @@ CREATE INDEX IF NOT EXISTS bead_state_since_idx ON bead (state, since);
 CREATE INDEX IF NOT EXISTS batch_state_idx ON batch (state);
 CREATE INDEX IF NOT EXISTS event_at_idx ON event (machine, applied, at, from_state, to_state, event, refusal);
 CREATE INDEX IF NOT EXISTS event_applied_seq_idx ON event (applied, seq);
+CREATE INDEX IF NOT EXISTS event_gantt_idx ON event (machine, applied, at, from_state, to_state, event, lc_key);
 
 -- The runtime's journal (the `runtime` crate); migrations/0030-runtime-journal.sql for an existing database.
 CREATE TABLE IF NOT EXISTS runtime_event (

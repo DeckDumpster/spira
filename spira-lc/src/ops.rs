@@ -210,6 +210,21 @@ mod tests {
     }
 
     #[test]
+    fn the_gantt_read_is_covered_by_one_event_index_so_a_day_of_transitions_touches_no_table_row() {
+        let migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/../lifecycle/migrations");
+        let indexes: Vec<String> = std::fs::read_dir(migrations)
+            .unwrap()
+            .flat_map(|f| std::fs::read_to_string(f.unwrap().path()).unwrap().lines().map(String::from).collect::<Vec<_>>())
+            .filter(|l| l.starts_with("CREATE INDEX") && l.contains(" ON event ("))
+            .collect();
+        let selected = ["lc_key", "event", "from_state", "to_state", "at"];
+        let sql = gantt_sql("bead");
+        assert!(selected.iter().all(|c| sql.contains(c)), "{sql}");
+        let covers = |ix: &String| selected.iter().all(|c| ix.contains(&format!("{c},")) || ix.contains(&format!("{c})")));
+        assert!(indexes.iter().any(|ix| covers(ix) && ix.contains("(machine, applied, at,")), "no event index covers the gantt read: {indexes:?}");
+    }
+
+    #[test]
     fn ops_view_refuses_anything_but_its_views_before_any_sql() {
         for v in VIEWS {
             assert_eq!(view_arg(&[v.to_string()]), Ok(v));
