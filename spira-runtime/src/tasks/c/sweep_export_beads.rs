@@ -109,7 +109,7 @@ pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STA
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Snapshot {
-    /// `content list --all --json`, one value per bead (each has an `id`).
+    /// `content list --id <chunk> --all --limit 0 --json` per chunk, one value per bead (each has an `id`).
     pub content: Vec<serde_json::Value>,
     pub lifecycle: BTreeMap<String, String>,
     pub memories: BTreeMap<String, String>,

@@ -25,12 +25,8 @@ mkdir -p "$(dirname "$OUT")" || exit 1
 WORK="$(mktemp -d)" || exit 1
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
+timeout 300 spira-lc content list --all --json >"$WORK/content.json" || { echo "export-beads: content list failed" >&2; exit 1; } # batch-job: full-store dump on a timer
 timeout 120 spira-lc list-all >"$WORK/state.tsv" || { echo "export-beads: lifecycle list failed" >&2; exit 1; } # batch-job: full-store dump on a timer
-# Content is read in id chunks: one whole-store dump is a sort the store spills to its temp spool.
-: >"$WORK/content.ndjson"
-while IFS= read -r chunk; do
-    timeout 60 spira-lc content list --id "$chunk" --all --limit 0 --json >>"$WORK/content.ndjson" || { echo "export-beads: content list failed" >&2; exit 1; } # batch-job: chunked full-store dump on a timer
-done < <(grep '^sp-' "$WORK/state.tsv" | cut -f1 | xargs -n 200 | tr ' ' ',')
 timeout 60 spira-lc content memories --json >"$WORK/memories.json" || echo '{}' >"$WORK/memories.json" # batch-job: full-store dump on a timer
 # Both planes' planning watermarks, so a reader can tell how far apart the two reads were.
 watermarks="$(timeout 5 spira-lc plane-watermarks --manifest 2>&1)" || watermarks="Planning watermarks: unreadable ($watermarks)."
@@ -41,13 +37,7 @@ previous=0
 python3 -I - "$WORK" "$previous" >"$WORK/new.jsonl" <<'PY' || exit 1
 import json, sys
 work, previous = sys.argv[1], int(sys.argv[2])
-dec = json.JSONDecoder()
-raw, issues_all = open(work + "/content.ndjson").read(), []
-while raw.strip():
-    page, end = dec.raw_decode(raw.lstrip())
-    issues_all += page
-    raw = raw.lstrip()[end:]
-issues = [i for i in issues_all if str(i.get("id", "")).startswith("sp-")]
+issues = [i for i in json.load(open(work + "/content.json")) if str(i.get("id", "")).startswith("sp-")]
 if not issues:
     sys.exit("export-beads: the content store returned no sp- bead — refusing to write")
 if previous and len(issues) * 2 < previous:
