@@ -42,6 +42,11 @@ pub fn await_settled(sc: &dyn Systemctl, units: &[String], cap: std::time::Durat
     out
 }
 
+/// The `SPIRA_RELEASE` value in a NUL-separated process environment.
+pub fn release_of_environ(environ: &[u8]) -> Option<String> {
+    environ.split(|b| *b == 0).find_map(|kv| kv.strip_prefix(b"SPIRA_RELEASE=")).map(|v| String::from_utf8_lossy(v).into_owned())
+}
+
 pub trait Systemctl {
     fn daemon_reload(&self) -> Result<(), String>;
     fn state(&self, unit: &str) -> Result<UnitState, String>;
@@ -56,6 +61,12 @@ pub trait Systemctl {
     /// (`/proc/<MainPID>/exe`, readable even when the release it came from was pruned), or
     /// `None` when the unit has no main process or the fake does not model one (sp-m9rruh).
     fn running_exe(&self, _unit: &str) -> Option<std::path::PathBuf> {
+        None
+    }
+    /// The `SPIRA_RELEASE` the unit's main process started with (`/proc/<MainPID>/environ`),
+    /// which the unit file no longer shows once an activation rewrote it without restarting
+    /// the process (sp-sv2lw2). `None` when unreadable or the fake does not model one.
+    fn running_release(&self, _unit: &str) -> Option<String> {
         None
     }
     /// `systemctl --user kill`: bypasses job control, for a unit that refuses a restart job.
@@ -202,6 +213,13 @@ impl Systemctl for RealSystemctl {
     fn running_exe(&self, unit: &str) -> Option<std::path::PathBuf> {
         let pid: u32 = self.run(&["show", unit, "-p", "MainPID", "--value"]).ok()?.trim().parse().ok()?;
         (pid > 0).then(|| std::path::PathBuf::from(format!("/proc/{pid}/exe")))
+    }
+    fn running_release(&self, unit: &str) -> Option<String> {
+        let pid: u32 = self.run(&["show", unit, "-p", "MainPID", "--value"]).ok()?.trim().parse().ok()?;
+        if pid == 0 {
+            return None;
+        }
+        release_of_environ(&std::fs::read(format!("/proc/{pid}/environ")).ok()?)
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
         let budget = self
