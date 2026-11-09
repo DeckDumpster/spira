@@ -1174,8 +1174,8 @@ impl Machine<'_> {
         self.go(Trigger::OrphanStepped);
     }
 
-    /// The pause a red round wrote, if it still holds the repo. It is first seen on some base;
-    /// once a round lands past that base the red it guarded is behind the repo, so the pause is
+    /// The pause a red round wrote, if it still holds the repo. It carries the base its round was
+    /// cut on; once a round lands past that base the red it guarded is behind the repo, so the pause is
     /// lifted (removed, and the lift logged). An operator's `hold:` is never lifted here.
     fn pause_in_force(&mut self, repo: &Repo) -> bool {
         let Some(text) = repo.paused.as_deref() else {
