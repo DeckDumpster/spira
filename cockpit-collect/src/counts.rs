@@ -4,7 +4,7 @@
 use spira_otel::vlogs::{transitions_filter, Logs};
 
 const DAY_SECS: u64 = 86_400;
-const TERMINAL: &str = "in(\"LANDED\", \"SUPERSEDED\", \"DROPPED\", \"DONE\")";
+const TERMINAL: &str = "in(\"LANDED\", \"SUPERSEDED\", \"DROPPED\")";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DayCounts {

@@ -407,6 +407,9 @@ pub struct Snapshot {
     /// Every VM round-vm holds, from its own pool record: leased to a live run, or idle and warm.
     #[serde(default)]
     pub vm_runs: Vec<VmRun>,
+    /// The 24 h closed counts; `None` when VictoriaLogs could not be read (its error is in `errors`).
+    #[serde(default)]
+    pub closed: Option<Closed24h>,
     /// Sources that failed this pass, named in the frame — never a silent empty section.
     pub errors: Vec<String>,
     #[serde(default)]
@@ -567,6 +570,9 @@ pub struct SmEdge {
 pub struct SmState {
     pub name: String,
     pub count: usize,
+    /// The count could not be read (VictoriaLogs): shown as `?`, never as `count`.
+    #[serde(default)]
+    pub unknown: bool,
     /// The beads in this state, oldest first (LANDED: the last 24 h, newest first).
     #[serde(default)]
     pub beads: Vec<Item>,
@@ -598,6 +604,8 @@ pub struct SmMender {
 pub struct SmBatch {
     pub name: String,
     pub count: usize,
+    #[serde(default)]
+    pub unknown: bool,
     pub detail: String,
     pub red: bool,
 }
@@ -822,14 +830,14 @@ pub struct View {
     pub gather_ms: u64,
     pub failures: u64,
     /// FLOW: (state, count) in pipeline order, LANDED as its 24 h count.
-    pub flow: Vec<(String, usize)>,
+    pub flow: Vec<(String, Option<usize>)>,
     pub ready: usize,
     pub ready_held: usize,
     pub held_pct: usize,
     pub rework: usize,
-    pub dropped_24h: usize,
-    pub superseded_24h: usize,
-    pub landed_total: usize,
+    pub dropped_24h: Option<usize>,
+    pub superseded_24h: Option<usize>,
+    pub landed_total: Option<usize>,
     pub holds: Vec<HoldGroup>,
     pub base: String,
     pub drift: Vec<String>,
@@ -868,7 +876,36 @@ pub struct View {
 }
 
 const CHAIN: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"];
-const TERMINAL: [&str; 3] = ["SUPERSEDED", "DROPPED", "DONE"];
+const TERMINAL: [&str; 2] = ["SUPERSEDED", "DROPPED"];
+
+/// What the shipped transitions say happened in the last 24 h, counted by VictoriaLogs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Closed24h {
+    pub landed: usize,
+    pub dropped: usize,
+    pub superseded: usize,
+    pub batches_landed: usize,
+}
+
+const DAY_SECS: u64 = 86_400;
+
+/// A count as the pane prints it: `?` when it could not be read.
+pub fn shown(count: usize, unknown: bool) -> String {
+    if unknown { "?".into() } else { count.to_string() }
+}
+
+/// An optional count as the pane prints it.
+pub fn shown_opt(count: Option<usize>) -> String {
+    count.map_or("?".into(), |n| n.to_string())
+}
+
+/// The closed-in-24h counts: bead transitions into LANDED, DROPPED and SUPERSEDED, and batch
+/// transitions into LANDED. `Err` names why they could not be read; the caller shows them unknown.
+pub fn closed_24h(logs: &spira_otel::vlogs::Logs) -> Result<Closed24h, String> {
+    use spira_otel::vlogs::transitions_filter;
+    let into = |machine: &str, to: &str| logs.count(&transitions_filter(machine, Some(to), DAY_SECS)).map(|n| n as usize).map_err(|e| e.to_string());
+    Ok(Closed24h { landed: into("bead", "LANDED")?, dropped: into("bead", "DROPPED")?, superseded: into("bead", "SUPERSEDED")?, batches_landed: into("batch", "LANDED")? })
+}
 const NEEDS_REWORK_EXIT: [&str; 3] = ["SUBMITTED", "CERTIFIED", "IN_DELIVERY"];
 const OPEN_BATCH: [&str; 5] = ["OPEN", "CI_RUNNING", "GREEN", "ATTRIBUTING", "REBUILDING"];
 const REFUSED_SHOWN: usize = 4;
@@ -985,11 +1022,14 @@ fn placement_parts(s: &Snapshot, rows: &[&Row]) -> Vec<String> {
 fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
     let in_batch: std::collections::HashSet<&str> =
         s.batches.iter().filter(|b| OPEN_BATCH.contains(&b.state.as_str())).flat_map(|b| b.members.iter().map(String::as_str)).collect();
-    let day = |r: &Row| s.now - r.updated_at < 86_400;
     let mut out = Vec::new();
     for name in CHAIN.iter().copied().chain(["REWORK"]) {
         let rows: Vec<&Row> = s.rows.iter().filter(|r| r.state == name).collect();
-        let count = if name == "LANDED" { rows.iter().filter(|r| day(r)).count() } else { rows.len() };
+        let (count, unknown) = match (name, &s.closed) {
+            ("LANDED", Some(c)) => (c.landed, false),
+            ("LANDED", None) => (0, true),
+            _ => (rows.len(), false),
+        };
         let mut parts: Vec<String> = Vec::new();
         let mut red = false;
         if matches!(name, "READY" | "REWORK") {
@@ -1088,7 +1128,7 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
             edges.push(SmEdge { event: events.join("/"), events: detail, to: to.into(), rate_1h: rate, main: Some(to) == next });
         }
         let no_rework_exit = NEEDS_REWORK_EXIT.contains(&name) && !s.graph.is_empty() && !s.graph.iter().any(|g| g.from == name && g.to == "REWORK");
-        out.push(SmState { name: name.into(), count, detail: join_parts(parts), red, edges, no_rework_exit, beads: Vec::new() });
+        out.push(SmState { name: name.into(), count, unknown, detail: join_parts(parts), red, edges, no_rework_exit, beads: Vec::new() });
     }
     out
 }
@@ -1120,9 +1160,9 @@ fn batch_block(s: &Snapshot) -> Vec<SmBatch> {
         let oldest = bs.iter().map(|b| b.last_at).min();
         let red = st == "GREEN" && oldest.zip(green_limit).is_some_and(|(at, p)| s.now - at > p);
         let detail = if red { format!("stuck {}", age(s.now - oldest.unwrap_or(s.now))) } else { String::new() };
-        out.push(SmBatch { name: name.into(), count: bs.len(), detail, red });
+        out.push(SmBatch { name: name.into(), count: bs.len(), unknown: false, detail, red });
     }
-    out.push(SmBatch { name: "LANDED".into(), count: of("LANDED").iter().filter(|b| s.now - b.last_at < 86_400).count(), detail: "last 24h".into(), red: false });
+    out.push(SmBatch { name: "LANDED".into(), count: s.closed.as_ref().map_or(0, |c| c.batches_landed), unknown: s.closed.is_none(), detail: "last 24h".into(), red: false });
     out
 }
 
@@ -1300,21 +1340,21 @@ pub fn view(s: &Snapshot) -> View {
         ready_held,
         held_pct: ready_held * 100 / ready.len().max(1),
         rework: count("REWORK"),
-        dropped_24h: s.rows.iter().filter(|r| r.state == "DROPPED" && day(r)).count(),
-        superseded_24h: s.rows.iter().filter(|r| r.state == "SUPERSEDED" && day(r)).count(),
-        landed_total: count("LANDED"),
+        dropped_24h: s.closed.as_ref().map(|c| c.dropped),
+        superseded_24h: s.closed.as_ref().map(|c| c.superseded),
+        landed_total: s.closed.as_ref().map(|c| c.landed),
         base: s.base.clone(),
         epics: s.epics.clone(),
         inflight: s.inflight.clone(),
         ..Default::default()
     };
     v.flow = vec![
-        ("READY".into(), v.ready),
-        ("WORKING".into(), count("WORKING")),
-        ("SUBMITTED".into(), count("SUBMITTED")),
-        ("CERTIFIED".into(), count("CERTIFIED")),
-        ("IN_DELIVERY".into(), count("IN_DELIVERY")),
-        ("LANDED/24h".into(), s.rows.iter().filter(|r| r.state == "LANDED" && day(r)).count()),
+        ("READY".into(), Some(v.ready)),
+        ("WORKING".into(), Some(count("WORKING"))),
+        ("SUBMITTED".into(), Some(count("SUBMITTED"))),
+        ("CERTIFIED".into(), Some(count("CERTIFIED"))),
+        ("IN_DELIVERY".into(), Some(count("IN_DELIVERY"))),
+        ("LANDED/24h".into(), s.closed.as_ref().map(|c| c.landed)),
     ];
 
     v.machine = state_machine(s, &|id| s.on_base.contains_key(id));
@@ -1349,7 +1389,7 @@ pub fn view(s: &Snapshot) -> View {
     }
     v.terminal = TERMINAL
         .iter()
-        .map(|t| format!("{t} {}", s.rows.iter().filter(|r| r.state == *t && day(r)).count()))
+        .map(|t| format!("{t} {}", s.closed.as_ref().map_or("?".to_string(), |c| if *t == "DROPPED" { c.dropped } else { c.superseded }.to_string())))
         .collect::<Vec<_>>()
         .join(" · ");
     v.refused = refusals(s);
@@ -1629,7 +1669,7 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     let dot = |red: bool| if red { format!(" {RED}●{R}") } else { String::new() };
     for st in &v.machine {
         let c = if st.name == "REWORK" { YEL } else { "" };
-        out.push(format!("{c}{B}{:<14}{R}{B}{:>4}{R}{}{}", st.name, st.count, if st.detail.is_empty() { String::new() } else { format!("  {}", cut(&st.detail, dw)) }, dot(st.red)));
+        out.push(format!("{c}{B}{:<14}{R}{B}{:>4}{R}{}{}", st.name, shown(st.count, st.unknown), if st.detail.is_empty() { String::new() } else { format!("  {}", cut(&st.detail, dw)) }, dot(st.red)));
         for e in &st.edges {
             let glyph = if e.main { "│" } else { "└▶" };
             let label = if e.main { e.event.clone() } else { format!("{} ▶ {}", e.event, e.to) };
@@ -1673,7 +1713,7 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     out.push(String::new());
     out.push(format!("{B}BATCH{R}"));
     for b in &v.batch {
-        out.push(format!("  {:<12}{B}{:>3}{R}{}{}", b.name, b.count, if b.detail.is_empty() { String::new() } else { format!("  {}", b.detail) }, dot(b.red)));
+        out.push(format!("  {:<12}{B}{:>3}{R}{}{}", b.name, shown(b.count, b.unknown), if b.detail.is_empty() { String::new() } else { format!("  {}", b.detail) }, dot(b.red)));
     }
     if !v.menders.is_empty() {
         out.push(format!("{B}MENDERS{R}  {D}(running, under the pass){R}"));
@@ -1826,7 +1866,7 @@ mod tests {
         // The claim tool's answer a fixture assumes unless it says otherwise: every unheld
         // READY/REWORK bead is claimable.
         let claimable = rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "REWORK") && r.holds.is_empty()).map(|r| r.id.clone()).collect();
-        Snapshot { now: 100_000, release: "abc".into(), world: "plane work: RUNNING".into(), base: "local/main".into(), rows, ceiling: 6, claimable: Some(claimable), ..Default::default() }
+        Snapshot { now: 100_000, release: "abc".into(), world: "plane work: RUNNING".into(), base: "local/main".into(), rows, ceiling: 6, claimable: Some(claimable), closed: Some(Closed24h::default()), ..Default::default() }
     }
 
     fn frame_of(s: &Snapshot) -> String {
@@ -2298,7 +2338,7 @@ mod tests {
         let pane = plain(&render(&v, 120));
         for (st, n) in &v.flow {
             let line = v.machine.iter().find(|m| m.name == st.trim_end_matches("/24h")).map(|m| format!("{:<14}{:>4}", m.name, m.count));
-            assert!(line.is_some_and(|l| pane.contains(&l)), "pane lacks {st} {n}");
+            assert!(line.is_some_and(|l| pane.contains(&l)), "pane lacks {st} {n:?}");
         }
         assert_page_draws_the_tree(&v);
     }
@@ -2585,7 +2625,7 @@ LANDED           0  last 24h
 REWORK           0  claimable 0
   └▶ claim ▶ WORKING              0/h
 
-terminal 24h    SUPERSEDED 0 · DROPPED 0 · DONE 0
+terminal 24h    SUPERSEDED 0 · DROPPED 0
 
 REFUSED (1h)
   none
@@ -2722,6 +2762,7 @@ BATCH
     #[test]
     fn a_batch_stuck_green_past_its_delivery_p95_is_a_stuck_dot() {
         let mut s = healthy();
+        s.closed = Some(Closed24h { batches_landed: 1, ..Default::default() });
         s.dwell.push(dwell("sp-x", "IN_DELIVERY", 99_000, 1_800));
         s.batches = vec![
             BatchRow { id: "r-1".into(), state: "GREEN".into(), last_at: 100_000 - 4 * 3600, members: vec![], ..Default::default() },
@@ -2732,21 +2773,58 @@ BATCH
         assert!(f.contains("LANDED 1 last 24h"), "{f}");
     }
 
+    fn closed_fixture(landed: u64, dropped: u64, superseded: u64, batches: u64) -> spira_otel::vlogs::fake::FakeLogs {
+        use spira_otel::vlogs::{fake::Script, transitions_filter};
+        let logs = spira_otel::vlogs::fake::FakeLogs::start();
+        for (machine, to, n) in [("bead", "LANDED", landed), ("bead", "DROPPED", dropped), ("bead", "SUPERSEDED", superseded), ("batch", "LANDED", batches)] {
+            logs.answer(&transitions_filter(machine, Some(to), 86_400), Script { status: 200, body: format!("{{\"n\":\"{n}\"}}\n"), hang: false });
+        }
+        logs
+    }
+
     #[test]
-    fn landed_24h_counts_the_landed_rows_and_lists_them_newest_first_with_their_round() {
+    fn closed_in_24h_equals_the_logsql_count_and_lists_the_landed_rows_newest_first_with_their_round() {
+        let logs = closed_fixture(7, 2, 3, 4);
         let mut s = healthy();
+        s.closed = Some(closed_24h(&spira_otel::vlogs::Logs::new(&logs.url()).unwrap()).unwrap());
         let now = s.now;
         for (i, id) in ["sp-l0", "sp-l1", "sp-l2"].iter().enumerate() {
             s.rows.push(row(id, "LANDED", now - 100 * (i as i64 + 1)));
         }
-        s.rows.push(row("sp-old", "LANDED", now - 2 * 86_400));
         s.batches = vec![BatchRow { id: "r-9".into(), repo: "spira".into(), state: "LANDED".into(), members: vec!["sp-l1".into()], ..Default::default() }];
         let v = view(&s);
         let landed = v.machine.iter().find(|m| m.name == "LANDED").unwrap();
-        assert_eq!(landed.count, 3);
+        assert_eq!((landed.count, landed.unknown), (7, false), "the count is the store's, not the rows listed");
         assert_eq!(landed.beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["sp-l0", "sp-l1", "sp-l2"]);
         assert_eq!(landed.beads[1].note, "spira · r-9");
-        assert!(v.flow.contains(&("LANDED/24h".to_string(), 3)));
+        assert!(v.flow.contains(&("LANDED/24h".to_string(), Some(7))));
+        assert_eq!((v.dropped_24h, v.superseded_24h, v.landed_total), (Some(2), Some(3), Some(7)));
+        assert_eq!(v.terminal, "SUPERSEDED 3 · DROPPED 2");
+        assert_eq!(v.batch.iter().find(|b| b.name == "LANDED").map(|b| b.count), Some(4));
+        let asked = logs.queries();
+        assert!(asked.iter().all(|q| q.starts_with("_time:86400s kind_tag:transition machine:")) && asked.iter().any(|q| q.contains("to:\"LANDED\"")), "{asked:?}");
+        assert!(plain(&render(&v, 120)).contains("terminal 24h    SUPERSEDED 3 · DROPPED 2"));
+    }
+
+    #[test]
+    fn an_unreadable_store_leaves_the_closed_counts_unknown_not_zero() {
+        let down = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", down.local_addr().unwrap());
+        drop(down);
+        let err = closed_24h(&spira_otel::vlogs::Logs::new(&url).unwrap()).unwrap_err();
+        assert!(err.contains("victorialogs-unreachable"), "{err}");
+        let mut s = healthy();
+        s.rows.push(row("sp-l0", "LANDED", s.now - 10));
+        s.closed = None;
+        s.errors.push(err);
+        let v = view(&s);
+        let landed = v.machine.iter().find(|m| m.name == "LANDED").unwrap();
+        assert!(landed.unknown && v.landed_total.is_none() && v.dropped_24h.is_none() && v.superseded_24h.is_none());
+        assert!(v.flow.contains(&("LANDED/24h".to_string(), None)));
+        assert_eq!(v.terminal, "SUPERSEDED ? · DROPPED ?");
+        assert!(v.batch.iter().find(|b| b.name == "LANDED").is_some_and(|b| b.unknown));
+        let pane = plain(&render(&v, 120));
+        assert!(pane.contains("LANDED") && pane.contains("source failed") && pane.contains("victorialogs-unreachable"), "{pane}");
     }
 
     #[test]

@@ -250,10 +250,10 @@ fn pipeline(p: &Page) -> String {
             b.push_str(&fold(&format!("st-{}", s.name), false, &summary, &format!("{}{edges}{rework}", items(&s.beads))));
         }
     }
-    let flow = v.flow.iter().map(|(s, n)| format!("{} {n}", esc(s))).collect::<Vec<_>>().join(" → ");
+    let flow = v.flow.iter().map(|(s, n)| format!("{} {}", esc(s), cockpit_ops::lcview::shown_opt(*n))).collect::<Vec<_>>().join(" → ");
     let mut more = format!(
         "<div class=\"row small dim\"><span class=t>{flow}</span><span>ready {} · held {} ({}%) · rework {}</span><span>24 h: dropped {} · superseded {} · landed all-time {}</span><span>terminal 24 h: {}</span></div>",
-        v.ready, v.ready_held, v.held_pct, v.rework, v.dropped_24h, v.superseded_24h, v.landed_total, esc(&v.terminal)
+        v.ready, v.ready_held, v.held_pct, v.rework, cockpit_ops::lcview::shown_opt(v.dropped_24h), cockpit_ops::lcview::shown_opt(v.superseded_24h), cockpit_ops::lcview::shown_opt(v.landed_total), esc(&v.terminal)
     );
     if v.next_unknown {
         more.push_str("<div class=\"row small amber\">up next: unknown — the dispatcher's verdicts are unreadable</div>");

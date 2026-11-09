@@ -254,6 +254,7 @@ dependencies = [
  "serde_json",
  "spira-claim",
  "spira-config",
+ "spira-otel",
  "spira-world",
  "testkit",
 ]
