@@ -388,3 +388,13 @@ fn a_bead_submitted_ten_minutes_ago_with_no_round_open_is_stalled() {
     let (s, now) = submitted_ago(10, 0, 6);
     assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
 }
+
+#[test]
+fn a_certified_bead_past_the_bound_with_a_free_slot_is_stalled_even_after_a_recent_cut() {
+    let now = T0;
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-c1", "spira", "CERTIFIED", now - 10 * MIN)];
+    s.last = last("spira", &[("Cut", now - MIN)]);
+    s.open_rounds = Some(0);
+    assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
+}
