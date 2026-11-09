@@ -228,7 +228,11 @@ impl Files {
     pub fn pause_since(&self) -> Option<u64> {
         let p = self.pause_file();
         let meta = fs::metadata(&p).ok()?;
-        let stamped = fs::read_to_string(&p).ok().and_then(|t| t.trim().parse().ok());
+        let text = fs::read_to_string(&p).unwrap_or_default();
+        if text.starts_with("hold:") {
+            return None;
+        }
+        let stamped = text.trim().strip_prefix("red:").and_then(|t| t.parse().ok());
         stamped.or_else(|| meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs()))
     }
     pub fn load(&self) -> State {
@@ -259,7 +263,7 @@ impl Files {
     }
     fn stamp_pause(&self, now: u64) -> Result<(), String> {
         let p = self.pause_file();
-        fs::create_dir_all(&self.dir).and_then(|_| fs::write(&p, format!("{now}\n"))).map_err(|e| format!("{}: {e}", p.display()))
+        fs::create_dir_all(&self.dir).and_then(|_| fs::write(&p, format!("red:{now}\n"))).map_err(|e| format!("{}: {e}", p.display()))
     }
 }
 
@@ -510,6 +514,16 @@ mod tests {
         run(d, "a", 1000 + LIFT, None, None, Ok(()));
         run(d, "a", 5000, None, Some(("red", 5000)), Ok(()));
         assert!(run(d, "a", 5000 + LIFT, None, None, Ok(())), "a green cycle between reds earns a fresh lift");
+    }
+
+    #[test]
+    fn an_operator_hold_is_never_lifted_by_the_clock() {
+        let t = dir("lift-hold");
+        let d = t.path();
+        fs::create_dir_all(d.join("rounds-pace/a")).unwrap();
+        fs::write(Files::new(d, "a").pause_file(), "hold: release freeze\n").unwrap();
+        assert!(!run(d, "a", u64::MAX / 2, None, None, Ok(())));
+        assert!(Files::new(d, "a").pause_file().exists());
     }
 
     #[test]
