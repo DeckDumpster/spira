@@ -38,7 +38,7 @@
 //!
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
 //! |---|---|---|---|---|
-//! | `sweep.archive.store` (one per changed rel) | host | 300 s per transcript | `archive/<rel>/<size>/<mtime>` | a source outside `$SPIRA_TOKEN_PROJECTS` (`:350-352`); an unreadable source (skipped, `:345-348`); the lock held > 900 s by the hook (`:75-77`) |
+//! | `sweep.archive.store` (one per changed rel, one in flight at a time) | host | 300 s per transcript | `archive/<rel>/<size>/<mtime>` | a source outside `$SPIRA_TOKEN_PROJECTS` (`:350-352`); an unreadable source (skipped, `:345-348`); the lock held > 900 s by the hook (`:75-77`) |
 //! | `sweep.archive.index` | host | 60 s | `archive/index/<sha of row set>` | — ; replaces the index only when the bytes differ (`:241-266`) |
 //!
 //! `store` = snapshot the first `size` bytes (`:168-181`), scan+sha256 (`:129-158`), compress to
@@ -153,6 +153,8 @@ pub const INDEX_TRANSITIONS: &[(Index, &str, Index)] = &[(Index::Current, "store
 #[serde(default)]
 pub struct Carry {
     pub rels: BTreeMap<String, Phase>,
+    /// Stores of the pass not yet requested: one is issued per completed store, so the host pool never holds the pass.
+    pub queue: Vec<Store>,
     pub index: Index,
 }
 
@@ -173,6 +175,13 @@ fn phase_name(p: Phase) -> String {
     serde_json::to_value(p).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
 }
 
+/// The next queued store, marked storing; the queue is kept reversed so this pops the pass in order.
+fn next_store(c: &mut Carry) -> Result<Option<Act>, String> {
+    let Some(body) = c.queue.pop() else { return Ok(None) };
+    c.rels.insert(body.rel.clone(), Phase::Storing);
+    Ok(Some(Act { name: STORE.into(), input: serde_json::to_string(&body).map_err(|e| e.to_string())?, deadline_ms: 300_000, probe: false }))
+}
+
 /// The fast path: store a source with no index row, a size or mtime change, or no body.
 pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
     let mut next = carry.clone();
@@ -183,20 +192,20 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
                 if s.projects_dir_configured {
                     return Err(format!("{NAME}: the configured transcript directory (SPIRA_TOKEN_PROJECTS) does not exist"));
                 }
-                return Ok((Carry { rels: BTreeMap::new(), index: carry.index }, vec![]));
+                return Ok((Carry { index: carry.index, ..Carry::default() }, vec![]));
             }
             next.rels.clear();
-            let mut acts = vec![];
+            next.queue.clear();
             let mut named = 0;
             for src in s.sources.iter().filter(|src| !s.index.get(&src.rel).is_some_and(|r| r.bytes == src.size && r.mtime == src.mtime && r.body_exists)).take(PASS_MAX) {
                 named += src.rel.len() + 16;
-                if named > PASS_CARRY_BYTES && !acts.is_empty() {
+                if named > PASS_CARRY_BYTES && !next.queue.is_empty() {
                     break;
                 }
-                next.rels.insert(src.rel.clone(), Phase::Storing);
-                let body = Store { rel: src.rel.clone(), size: src.size, mtime: src.mtime };
-                acts.push(Act { name: STORE.into(), input: serde_json::to_string(&body).map_err(|e| e.to_string())?, deadline_ms: 300_000, probe: false });
+                next.queue.push(Store { rel: src.rel.clone(), size: src.size, mtime: src.mtime });
             }
+            next.queue.reverse();
+            let acts = next_store(&mut next)?.into_iter().collect();
             Ok((next, acts))
         }
         Input::Outcome { effect, ok, body } if effect == STORE => {
@@ -211,6 +220,9 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
             next.rels.insert(rel.to_string(), if *ok { Phase::Stored } else { Phase::Changed });
             if *ok {
                 next.index = Index::Stale;
+            }
+            if let Some(act) = next_store(&mut next)? {
+                return Ok((next, vec![act]));
             }
             let in_flight = next.rels.values().any(|p| *p == Phase::Storing);
             if !in_flight && next.index == Index::Stale {

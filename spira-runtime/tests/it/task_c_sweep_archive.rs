@@ -62,9 +62,10 @@ fn t5_the_fast_path_stores_new_changed_and_bodiless_rels_and_keeps_vanished_rows
     snap.sources.push(src("r/new.jsonl", 5, 9));
     snap.index.get_mut("p/b.jsonl").unwrap().body_exists = false;
     snap.index.insert("gone/old.jsonl".into(), Row { bytes: 1, mtime: 1, body_exists: true });
-    let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap), TICK).unwrap();
-    assert_eq!(names(&acts), [task::STORE, task::STORE]);
-    assert!(acts.iter().any(|a| a.input.contains("r/new.jsonl")) && acts.iter().any(|a| a.input.contains("p/b.jsonl")), "{acts:?}");
+    let (c, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap), TICK).unwrap();
+    assert_eq!(names(&acts), [task::STORE]);
+    let all: Vec<&str> = c.rels.keys().map(String::as_str).chain(c.queue.iter().map(|q| q.rel.as_str())).collect();
+    assert!(all.contains(&"r/new.jsonl") && all.contains(&"p/b.jsonl") && all.len() == 2, "{all:?}");
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { projects_dir_exists: false, ..Snapshot::default() }), TICK).unwrap();
     assert!(acts.is_empty(), "a missing default projects dir stores nothing");
     assert!(task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { projects_dir_exists: false, projects_dir_configured: true, ..Snapshot::default() }), TICK).is_err(), "a configured one that is missing refuses");
@@ -81,8 +82,8 @@ fn t7_one_pass_stores_at_most_a_bounded_batch_so_the_carry_fits_one_journal_reco
     let sources: Vec<Source> = (0..5000).map(|i| src(&format!("-home-ryan-spira-run-worktree-sp-{i:06}/{i:036}.jsonl"), 10, 1)).collect();
     let snap = Snapshot { sources, index: BTreeMap::new(), projects_dir_exists: true, projects_dir_configured: false };
     let (carry, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap), TICK).unwrap();
-    assert_eq!(acts.len(), task::PASS_MAX, "one pass stores at most PASS_MAX transcripts; the next pass takes the rest");
-    assert_eq!(carry.rels.len(), task::PASS_MAX);
+    assert_eq!(acts.len(), 1);
+    assert_eq!(carry.rels.len() + carry.queue.len(), task::PASS_MAX, "one pass stores at most PASS_MAX transcripts; the next pass takes the rest");
     let record = serde_json::to_string(&carry).unwrap();
     assert!(record.len() < 64 * 1024, "the carry is one journal record and must stay under the store's string limit: {} bytes", record.len());
 }
@@ -93,8 +94,40 @@ fn t8_a_pass_of_long_transcript_paths_is_bounded_by_the_carry_bytes_not_by_the_c
     let sources: Vec<Source> = (0..5000).map(|i| src(&format!("-home-ryan-spira-brain/{i:036}/subagents/agent-{}{i:06}.jsonl", "a".repeat(300)), 10, 1)).collect();
     let snap = Snapshot { sources, index: BTreeMap::new(), projects_dir_exists: true, projects_dir_configured: false };
     let (carry, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap), TICK).unwrap();
-    assert!(!acts.is_empty(), "a pass stores something");
-    assert_eq!(acts.len(), carry.rels.len());
+    assert_eq!(acts.len(), 1, "a pass stores something");
+    assert!(carry.rels.len() + carry.queue.len() > 1 && carry.rels.len() + carry.queue.len() < task::PASS_MAX);
     let record = serde_json::to_string(&carry).unwrap();
     assert!(record.len() < 64 * 1024, "the carry is one journal record and must stay under the store's string limit: {} bytes", record.len());
+}
+
+#[test]
+fn t9_a_pass_of_200_changed_rels_never_has_more_than_one_store_in_flight() {
+    let h = t::handler::<H>(SET);
+    let sources: Vec<Source> = (0..task::PASS_MAX).map(|i| src(&format!("p/{i:04}.jsonl"), 10, 1)).collect();
+    let snap = Snapshot { sources, index: BTreeMap::new(), projects_dir_exists: true, projects_dir_configured: false };
+    let (mut carry, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap), TICK).unwrap();
+    let mut issued = 0;
+    let mut pending: Vec<String> = acts.iter().map(|a| serde_json::from_str::<task::Store>(&a.input).unwrap().rel).collect();
+    while let Some(rel) = pending.pop() {
+        issued += 1;
+        let (c, acts) = task::decide(&h.cfg, &carry, &Input::Outcome { effect: task::STORE.into(), ok: true, body: rel }, TICK).unwrap();
+        carry = c;
+        pending.extend(acts.iter().filter(|a| a.name == task::STORE).map(|a| serde_json::from_str::<task::Store>(&a.input).unwrap().rel));
+        assert!(pending.len() <= 1, "at most one store in flight, got {}", pending.len());
+    }
+    assert_eq!(issued, task::PASS_MAX);
+    assert!(carry.queue.is_empty());
+}
+
+#[test]
+fn t10_the_index_waits_for_the_queued_stores_not_just_the_one_in_flight() {
+    let h = t::handler::<H>(SET);
+    let mut grown = matching();
+    grown.sources[0].size = 15;
+    grown.sources[1].size = 25;
+    let (c, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(grown), TICK).unwrap();
+    assert_eq!(names(&acts), vec![task::STORE]);
+    let first = serde_json::from_str::<task::Store>(&acts[0].input).unwrap().rel;
+    let (_, acts) = task::decide(&h.cfg, &c, &Input::Outcome { effect: task::STORE.into(), ok: true, body: first }, TICK).unwrap();
+    assert_eq!(names(&acts), vec![task::STORE], "the next store, not the index");
 }
