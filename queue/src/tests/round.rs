@@ -249,6 +249,20 @@ fn a_red_round_eject_naming_no_suite_is_refused_and_one_naming_a_suite_records_i
 }
 
 #[test]
+fn a_repo_whose_testenv_knows_only_gate_refuses_ci_and_accepts_gate_and_the_whole_testenv_run() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let wt = PathBuf::from(&kv_of(&t, "round")["worktree"]);
+    fs::create_dir_all(wt.join(".spira")).unwrap();
+    fs::write(wt.join(".spira/testenv.toml"), "[tier.gate]\ncommand = \"true\"\n").unwrap();
+    let eject = |suites: &str| t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--no-rebuild", "--suites", suites]);
+    assert_eq!(eject("ci"), 1);
+    assert!(t.err().contains("known suites: gate"), "{}", t.err());
+    assert_eq!(eject("testenv"), 0, "{}", t.err());
+}
+
+#[test]
 fn an_eject_forcing_a_suite_testenv_does_not_know_is_refused_naming_the_known_ones_and_changes_nothing(
 ) {
     let t = round_world();
