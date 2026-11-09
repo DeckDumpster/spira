@@ -334,6 +334,28 @@ fn page(sm: &Seams, text: &str) -> Result<(), String> {
     writeln!(f, "{} [watch:rounds] {text}", (sm.stamp)(sm.now)).map_err(|e| format!("{}: {e}", sm.inbox.display()))
 }
 
+/// Pages the Concierge once per pause that has outlived `bound` seconds while the repo has work
+/// waiting; a lifted pause forgets the page so the next one pages afresh. A `hold:` pause is a
+/// person's decision and is never paged.
+pub fn page_stale_pause(files: &Files, sm: &Seams, bound: u64, waiting: impl FnOnce() -> bool) -> Result<(), String> {
+    let marker = files.dir.join("pause-paged");
+    let Some(since) = files.pause_since() else {
+        let _ = fs::remove_file(&marker);
+        return Ok(());
+    };
+    let age = sm.now.saturating_sub(since);
+    if age <= bound || fs::read_to_string(&marker).ok().as_deref() == Some(since.to_string().as_str()) || !waiting() {
+        return Ok(());
+    }
+    let text = fs::read_to_string(files.pause_file()).unwrap_or_default();
+    let reason = match text.trim() {
+        t if t.is_empty() || t.starts_with("red:") => "a red round",
+        t => t,
+    };
+    page(sm, &format!("PAUSE UNATTENDED {}: {reason}, held {age}s with work waiting — attribute and eject, then rm run/rounds-pace/{}/pause", sm.repo, sm.repo))?;
+    fs::write(&marker, since.to_string()).map_err(|e| format!("{}: {e}", marker.display()))
+}
+
 /// One repo's paced cut. Returns the cut's own result so a failure still fails the pass.
 pub fn paced(
     files: &Files,
@@ -433,6 +455,45 @@ mod tests {
     }
     fn inbox(d: &Path) -> String {
         fs::read_to_string(d.join("inbox.log")).unwrap_or_default()
+    }
+
+    fn stale_page(d: &Path, repo: &str, now: u64, work: bool) -> String {
+        let inbox = d.join("inbox.log");
+        let sm = Seams { repo, now, inbox: &inbox, stamp: &stamp, redrive_after: WAIT, pause_lift_after: LIFT };
+        page_stale_pause(&Files::new(d, repo), &sm, 3600, || work).unwrap();
+        inbox_of(d)
+    }
+    fn inbox_of(d: &Path) -> String {
+        inbox(d)
+    }
+
+    #[test]
+    fn a_pause_older_than_a_round_with_work_waiting_pages_once_naming_repo_reason_and_age() {
+        let t = dir("stale-page");
+        let d = t.path();
+        let files = Files::new(d, "pokebot");
+        fs::create_dir_all(d.join("rounds-pace/pokebot")).unwrap();
+        fs::write(files.pause_file(), "queue round certify judged the round red\n").unwrap();
+        let since = files.pause_since().unwrap();
+        assert_eq!(stale_page(d, "pokebot", since + 3600, true), "", "a pause no older than the bound is a round in flight");
+        assert_eq!(stale_page(d, "pokebot", since + 7200, false), "", "no work waiting, nothing is lost");
+        let out = stale_page(d, "pokebot", since + 7200, true);
+        assert_eq!(out.lines().count(), 1, "{out}");
+        assert!(out.contains("PAUSE UNATTENDED pokebot") && out.contains("certify judged the round red") && out.contains("7200s"), "{out}");
+        assert_eq!(stale_page(d, "pokebot", since + 9000, true).lines().count(), 1, "the same pause is paged once");
+        fs::remove_file(files.pause_file()).unwrap();
+        stale_page(d, "pokebot", since + 9500, true);
+        fs::write(files.pause_file(), "red:1\n").unwrap();
+        assert_eq!(stale_page(d, "pokebot", 1 + 7200, true).lines().count(), 2, "a new pause pages afresh");
+    }
+
+    #[test]
+    fn an_operator_hold_is_never_paged_as_unattended() {
+        let t = dir("stale-hold");
+        let d = t.path();
+        fs::create_dir_all(d.join("rounds-pace/a")).unwrap();
+        fs::write(Files::new(d, "a").pause_file(), "hold: release freeze\n").unwrap();
+        assert_eq!(stale_page(d, "a", u64::MAX / 2, true), "");
     }
 
     #[test]

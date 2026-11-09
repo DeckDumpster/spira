@@ -1217,6 +1217,21 @@ fn drive_pass(
     failed
 }
 
+/// Every registered repo's pause that has outlived one round's wall-clock bound with work waiting
+/// is paged to the Concierge, whatever the repo's land mode.
+fn page_stale_pauses(env_: &Env, repos: &[(String, String)]) {
+    let Ok(inbox) = cfg("SPIRA_CONCIERGE_INBOX") else { return };
+    let inbox = PathBuf::from(inbox);
+    let stamp = utc_stamp;
+    for (name, _) in repos {
+        let sm = pace::Seams { repo: name, now: now(), inbox: &inbox, stamp: &stamp, redrive_after: env_.orphan_redrive_after, pause_lift_after: env_.pause_lift_after };
+        let waiting = || find_repo(env_, name).and_then(|r| io::certified_pool(env_, &r)).map_or(true, |p| !p.is_empty());
+        if let Err(e) = pace::page_stale_pause(&pace::Files::new(&env_.run, name), &sm, env_.wall_secs, waiting) {
+            eprintln!("batcher rounds: {name}: could not page a stale pause: {e}");
+        }
+    }
+}
+
 /// A held forge repo with CERTIFIED work says so in the Concierge inbox, once per change of the
 /// waiting set, so a hold nobody remembers cannot sit on landable work in silence.
 fn page_held(env_: &Env, name: &str) {
@@ -1305,6 +1320,7 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
             page_held(&env_, name);
         }
     }
+    page_stale_pauses(&env_, &repos);
     let failed = drive_pass(&repos, reg.home_repo(), pass, on, |name, step| match step {
         Step::Verdict => {
             let armed = find_repo(&env_, name).and_then(|r| io::forge_arm_queue(&r));
