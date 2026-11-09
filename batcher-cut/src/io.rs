@@ -1301,7 +1301,7 @@ mod local_red_ref_tests {
 
 /// The first line of a suite's output that reports a failure, trimmed and bounded.
 pub fn first_fail_line(out: &str) -> Option<String> {
-    let l = out.lines().map(str::trim).find(|l| l.starts_with("FAIL") || l.contains("FAIL:") || l.starts_with("not ok"))?;
+    let l = out.lines().map(str::trim).find(|l| l.contains("-RED: SIGNAL ") || l.contains("-RED: TIMEOUT ") || l.contains("-RED: BUILD ") || l.starts_with("FAIL") || l.contains("FAIL:") || l.starts_with("not ok"))?;
     Some(l.chars().take(300).collect())
 }
 
@@ -1916,6 +1916,7 @@ pub struct OpenRound {
     pub members: Vec<String>,
     pub head: String,
     pub worktree: String,
+    pub phase: String,
     pub red: bool,
     pub age_secs: u64,
 }
@@ -1941,6 +1942,7 @@ fn open_rounds_of(out: &str) -> Vec<OpenRound> {
                 members: get("members").split_whitespace().map(|m| m.split(':').next().unwrap_or("").to_string()).collect(),
                 head: get("head"),
                 worktree: get("worktree"),
+                phase: if p.is_empty() { verb_value(out, "phase").unwrap_or_default() } else { get("phase") },
                 red: !get("red").is_empty(),
                 age_secs: get("wall_secs").parse().unwrap_or(0),
             })
@@ -1972,6 +1974,11 @@ fn git_head(dir: &Path) -> Option<String> {
 
 fn round_head_and_worktree(out: &str, batch: &str) -> Option<(String, String)> {
     open_rounds_of(out).into_iter().find(|r| r.id == batch).map(|r| (r.head, r.worktree))
+}
+
+/// Whether `batch` is open and still in phase `opened`: no certify has ever moved it on.
+pub fn round_is_opened(env: &Env, repo: &Repo, batch: &str) -> bool {
+    open_rounds(env, repo).is_ok_and(|rs| rs.iter().any(|r| r.id == batch && r.phase == "opened"))
 }
 
 /// `round-recert --batch <id> --repo <repo>`: starts the round's driver in its own unit and returns.
@@ -2850,10 +2857,20 @@ mod fail_line_tests {
     }
 
     #[test]
+    fn each_open_round_carries_its_own_phase() {
+        let out = "round=open\nphase=opened\nbatch_id=b1\nround2=open\nround2_phase=certifying\nround2_batch_id=b2\n";
+        let phases: Vec<_> = open_rounds_of(out).into_iter().map(|r| (r.id, r.phase)).collect();
+        assert_eq!(phases, [("b1".to_string(), "opened".to_string()), ("b2".to_string(), "certifying".to_string())]);
+    }
+
+    #[test]
     fn the_first_fail_line_is_found_and_absence_is_none() {
         assert_eq!(first_fail_line("ok 1\n  FAIL widget broke\nFAIL later\n").as_deref(), Some("FAIL widget broke"));
         assert_eq!(first_fail_line("not ok 3 - x\n").as_deref(), Some("not ok 3 - x"));
         assert_eq!(first_fail_line("all fine\nPASS\n"), None);
+        let signal = "UNIT-TESTS-RED: SIGNAL binary=crashy signal: 11, SIGSEGV\nUNIT-TESTS-CAUSE: exit status 101\n";
+        assert_eq!(first_fail_line(signal).as_deref(), Some("UNIT-TESTS-RED: SIGNAL binary=crashy signal: 11, SIGSEGV"), "a classified unit red is its own evidence");
+        assert!(first_fail_line("UNIT-TESTS-RED: TIMEOUT binary=slow\n").is_some() && first_fail_line("UNIT-TESTS-RED: BUILD binary=w\n").is_some());
         let d = testkit::TempDir::new("batcher-cut-failline");
         fs::write(d.join("test-a.sh.out"), "setup\nFAIL: boom\n").unwrap();
         assert_eq!(suite_first_fail(&d, "test-a.sh").as_deref(), Some("FAIL: boom"));

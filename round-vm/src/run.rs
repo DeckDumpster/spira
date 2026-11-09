@@ -585,16 +585,33 @@ test_phase_bound() {
     pkill -TERM -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null
     return 0
 }
+# A red with no failing test, classified by what happened: "<KIND> binary=<name> [detail]" with
+# KIND SIGNAL (a test binary killed), TIMEOUT (the guard killed the phase) or BUILD (cargo could not
+# compile); empty when a test failed on its own.
+test_phase_class() {
+    local log="$1" hung="$2" b d
+    if [ -s "$hung" ]; then echo "TIMEOUT binary=$(last_binary "$log")"; return; fi
+    d="$(grep -m1 -E "process didn't exit successfully: .*\(signal: [0-9]+" "$log")" || d=""
+    if [ -n "$d" ]; then
+        b="$(printf '%s' "$d" | sed -E 's/.*`([^`]*)`.*/\1/; s|.*/||; s/-[0-9a-f]{16}$//')"
+        echo "SIGNAL binary=$b $(printf '%s' "$d" | sed -E 's/.*\((signal: [^)]*)\).*/\1/')"
+        return
+    fi
+    d="$(grep -m1 -E '^error: could not compile `' "$log")" || d=""
+    [ -z "$d" ] || echo "BUILD binary=$(printf '%s' "$d" | sed -E 's/^error: could not compile `([^`]*)`.*/\1/')"
+}
 json_str() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\000-\037'; }
 # A red test phase's evidence: <out> (its cause, the failures and the log's tail) and <json>, the
 # verdict as a record the host judges the pass from, never an exit code:
 # {"stage","verdict":"red","ran_before_suites","cause","secs","last_binary","failed":[test names]}.
 test_phase_red() {
-    local stage="$1" log="$2" rc="$3" secs="$4" hung="$5" out="$6" json="$7" before="$8" cause last n first=1
+    local stage="$1" log="$2" rc="$3" secs="$4" hung="$5" out="$6" json="$7" before="$8" cause last n first=1 class
     if [ "$rc" -gt 128 ]; then cause="killed by signal $(( rc - 128 ))"; else cause="exit status $rc"; fi
     [ ! -s "$hung" ] || cause="$cause, hung past its guard"
     last="$(last_binary "$log")"
+    class="$(test_phase_class "$log" "$hung")"
     {
+        [ -z "$class" ] || echo "${stage^^}-RED: $class"
         echo "${stage^^}-CAUSE: $cause after ${secs}s; last binary=${last:-none-started}; failures=$(grep -c -E '^test .* FAILED|^test result: FAILED' "$log")"
         grep -E -A8 '^(test .* FAILED|---- |error(\[|:))|panicked at|^test result: FAILED|^failures:' "$log" | head -400
         echo "--- last output of the log ---"
@@ -3160,6 +3177,48 @@ mod tests {
         let a = REMOTE_SCRIPT.find(&format!("{name}() {{")).unwrap_or_else(|| panic!("{name} is in the script"));
         let end = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
         REMOTE_SCRIPT[a..end].to_string()
+    }
+
+    fn red_phase_out(log: &str, hung: &str) -> String {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("log"), log).unwrap();
+        std::fs::write(d.path().join("hung"), hung).unwrap();
+        let script = format!(
+            "set -uo pipefail\n{}\n{}\n{}\n{}\ncd \"$HOME\"\ntest_phase_red unit-tests log 101 7 hung out.txt unit.json true\ncat out.txt",
+            script_fn("last_binary"),
+            script_fn("test_phase_class"),
+            script_fn("json_str"),
+            script_fn("test_phase_red")
+        );
+        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap()
+    }
+
+    #[test]
+    fn a_test_binary_killed_by_a_signal_yields_a_red_naming_the_binary_and_the_signal() {
+        let log = "     Running unittests src/lib.rs (target/debug/deps/crashy-0123456789abcdef)\nerror: test failed, to rerun pass `-p crashy --lib`\n\nCaused by:\n  process didn't exit successfully: `/w/target/debug/deps/crashy-0123456789abcdef` (signal: 11, SIGSEGV: invalid memory reference)\n";
+        let out = red_phase_out(log, "");
+        assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: SIGNAL binary=crashy signal: 11, SIGSEGV: invalid memory reference", "{out}");
+    }
+
+    #[test]
+    fn a_unit_phase_the_guard_killed_is_a_timeout_naming_the_binary_it_was_running() {
+        let log = "     Running unittests src/lib.rs (target/debug/deps/slow-0123456789abcdef)\n";
+        let out = red_phase_out(log, "round-vm: UNIT-TESTS: HUNG guard=unit-cap\n");
+        assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: TIMEOUT binary=slow-0123456789abcdef", "{out}");
+    }
+
+    #[test]
+    fn a_unit_phase_cargo_could_not_compile_is_a_build_red_naming_the_target() {
+        let out = red_phase_out("error: could not compile `widget` (lib test) due to 1 previous error\n", "");
+        assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: BUILD binary=widget", "{out}");
+    }
+
+    #[test]
+    fn a_unit_phase_with_an_ordinary_failed_test_carries_no_class_line() {
+        let out = red_phase_out("test a::b ... FAILED\n", "");
+        assert!(out.starts_with("UNIT-TESTS-CAUSE:"), "{out}");
     }
 
     #[test]
