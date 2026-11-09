@@ -260,8 +260,9 @@ pub fn double_hold(exec: &dyn Exec, mine: &str, live: &dyn Fn(&str) -> bool) -> 
     }))
 }
 
-/// The lifecycle claim loop: one Claim event per ranked candidate until one applies. The row
-/// is the claim, so a refusal is the bead no longer READY/REWORK — another dwarf won it — and
+/// The lifecycle claim loop: one Claim event per ranked candidate until one applies. A refused
+/// candidate goes to `release` before the next is tried (false: cannot confirm, stop), so a
+/// claim that applied and was then refused is never left held. The row is the claim, so a refusal is the bead no longer READY/REWORK — another dwarf won it — and
 /// the next candidate is tried. Returns the claimed id, the log lines, and whether every
 /// attempt was "cannot tell" (a machine that never answered is not an idle queue).
 pub fn lc_claim_loop(
@@ -269,6 +270,7 @@ pub fn lc_claim_loop(
     resumable: &[String],
     tier: Option<&str>,
     who: &str,
+    mut release: impl FnMut(&str) -> bool,
     mut attempt: impl FnMut(&str) -> i32,
 ) -> (Option<String>, Vec<String>, bool) {
     let mut logs = Vec::new();
@@ -285,6 +287,10 @@ pub fn lc_claim_loop(
             }
             LC_REFUSED => {
                 answered = true;
+                if !release(id) {
+                    logs.push(format!("{who}: the refused candidate {id} could not be confirmed released — it may be held, so no other candidate is claimed"));
+                    return (None, logs, true);
+                }
                 logs.push(format!(
                     "{who}: the lifecycle machine refused ranked candidate {id} (no longer READY/REWORK, or its stack exceeds stack_max_depth) — trying the next ranked candidate"
                 ));
@@ -372,7 +378,7 @@ mod tests {
     fn lc_claim_loop_takes_the_first_applied_and_never_steals_a_refused_one() {
         let ids = vec!["sp-held".to_string(), "sp-down".into(), "sp-ok".into(), "sp-never".into()];
         let mut tried = Vec::new();
-        let (c, logs, unreachable) = lc_claim_loop(&ids, &["sp-ok".into()], Some("P1/P2"), "builder/eitri", |id| {
+        let (c, logs, unreachable) = lc_claim_loop(&ids, &["sp-ok".into()], Some("P1/P2"), "builder/eitri", |_| true, |id| {
             tried.push(id.to_string());
             match id {
                 "sp-held" => LC_REFUSED,
@@ -389,13 +395,58 @@ mod tests {
     }
 
     #[test]
+    fn a_claim_refused_after_it_applied_is_released_before_the_next_so_exactly_one_is_held() {
+        let me = "dwarf-nordri@1.2";
+        let st = Store::ready(&["sp-first", "sp-b", "sp-c"]);
+        let ids = vec!["sp-first".to_string(), "sp-b".into(), "sp-c".into()];
+        let (won, _, _) = lc_claim_loop(
+            &ids,
+            &[],
+            None,
+            "b/nordri",
+            |id| {
+                let mut rows = st.rows.lock().unwrap();
+                if rows[id] == ("WORKING".to_string(), me.to_string()) {
+                    rows.insert(id.to_string(), ("READY".into(), String::new()));
+                }
+                true
+            },
+            |id| {
+                let rc = st.claim(id, me);
+                if id == "sp-first" {
+                    return LC_REFUSED;
+                }
+                rc
+            },
+        );
+        assert_eq!(won.as_deref(), Some("sp-b"));
+        assert_eq!(
+            st.held_by(me),
+            vec!["sp-b"],
+            "the refused-after-applied claim is handed back"
+        );
+    }
+
+    #[test]
+    fn a_refused_claim_that_cannot_be_confirmed_released_claims_nothing_else() {
+        let ids = vec!["sp-a".to_string(), "sp-b".into()];
+        let mut tried = Vec::new();
+        let (c, logs, unreachable) = lc_claim_loop(&ids, &[], None, "b/x", |_| false, |id| {
+            tried.push(id.to_string());
+            LC_REFUSED
+        });
+        assert!(c.is_none() && unreachable, "{logs:?}");
+        assert_eq!(tried, vec!["sp-a"]);
+    }
+
+    #[test]
     fn lc_claim_loop_that_never_heard_the_machine_is_not_idle() {
         let ids = vec!["sp-a".to_string(), "sp-b".into()];
-        let (c, _, unreachable) = lc_claim_loop(&ids, &[], None, "b/x", |_| 2);
+        let (c, _, unreachable) = lc_claim_loop(&ids, &[], None, "b/x", |_| true, |_| 2);
         assert!(c.is_none() && unreachable);
-        let (c, _, unreachable) = lc_claim_loop(&ids, &[], None, "b/x", |_| LC_REFUSED);
+        let (c, _, unreachable) = lc_claim_loop(&ids, &[], None, "b/x", |_| true, |_| LC_REFUSED);
         assert!(c.is_none() && !unreachable, "refusals are an answer: idle");
-        let (c, _, unreachable) = lc_claim_loop(&[], &[], None, "b/x", |_| unreachable!());
+        let (c, _, unreachable) = lc_claim_loop(&[], &[], None, "b/x", |_| true, |_| unreachable!());
         assert!(c.is_none() && !unreachable);
     }
 
@@ -511,7 +562,7 @@ mod tests {
         let me = "dwarf-eitri@1.2";
         let st = Store { lost_reply: vec!["sp-a".into()], ..Store::ready(&["sp-a", "sp-b", "sp-c"]) };
         let ids = vec!["sp-a".to_string(), "sp-b".into(), "sp-c".into()];
-        let (won, _, unreachable) = lc_claim_loop(&ids, &[], None, "b/eitri", |id| {
+        let (won, _, unreachable) = lc_claim_loop(&ids, &[], None, "b/eitri", |_| true, |id| {
             let rc = st.claim(id, me);
             settle_claim(rc, &st, id, me, 3, Duration::ZERO, &no_sleep)
         });
@@ -528,7 +579,7 @@ mod tests {
         assert!(st.submit("sp-a", me).is_err(), "a REWORK row refuses a submit");
         assert!(verify_held(&st, "sp-a", me, 1, Duration::ZERO, &no_sleep).is_err(), "REWORK is not held");
         let ids = vec!["sp-a".to_string()];
-        let (won, logs, _) = lc_claim_loop(&ids, &["sp-a".into()], None, "b/eitri", |id| {
+        let (won, logs, _) = lc_claim_loop(&ids, &["sp-a".into()], None, "b/eitri", |_| true, |id| {
             let rc = st.claim(id, me);
             settle_claim(rc, &st, id, me, 1, Duration::ZERO, &no_sleep)
         });
@@ -560,7 +611,7 @@ mod tests {
         let me = "dwarf-eitri@1.2";
         let st = Store { lost_reply: vec!["sp-a".into()], cannot_tell_show: Mutex::new(u32::MAX), ..Store::ready(&["sp-a", "sp-b"]) };
         let ids = vec!["sp-a".to_string(), "sp-b".into()];
-        let (won, logs, unreachable) = lc_claim_loop(&ids, &[], None, "b/eitri", |id| {
+        let (won, logs, unreachable) = lc_claim_loop(&ids, &[], None, "b/eitri", |_| true, |id| {
             let rc = st.claim(id, me);
             settle_claim(rc, &st, id, me, 2, Duration::ZERO, &no_sleep)
         });
@@ -574,7 +625,7 @@ mod tests {
         let st = Store::ready(&["sp-b"]);
         st.rows.lock().unwrap().insert("sp-a".into(), ("WORKING".into(), "dwarf-other@9.9".into()));
         let ids = vec!["sp-a".to_string(), "sp-b".into()];
-        let (won, _, _) = lc_claim_loop(&ids, &[], None, "b/eitri", |id| {
+        let (won, _, _) = lc_claim_loop(&ids, &[], None, "b/eitri", |_| true, |id| {
             let rc = if id == "sp-a" { 2 } else { st.claim(id, me) };
             settle_claim(rc, &st, id, me, 3, Duration::ZERO, &no_sleep)
         });
