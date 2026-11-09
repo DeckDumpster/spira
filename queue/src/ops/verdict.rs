@@ -116,6 +116,13 @@ fn release_stale_opening(w: &World, c: &Ctx, path: &Path) -> i32 {
     let Ok(ttl) = super::batch::lease_ttl(w, "verdict", "") else {
         return FAIL;
     };
+    let now = w.clock.now();
+    let aged = |b: &crate::batches::BatchRecord| {
+        now.saturating_sub(b.kv.get("opened").and_then(|o| o.parse().ok()).unwrap_or(0)) >= ttl
+    };
+    if !live.iter().any(|b| b.kv.get(forge_batch::PHASE) == Some(forge_batch::OPENING) && aged(b)) {
+        return OK;
+    }
     let Some(prs) = w.forge.queue_prs(&c.s.forge, path) else {
         w.err(format!("verdict {}: the forge cannot list its spira/queue/* PRs — opening records left as they are", c.r.name));
         return FAIL;

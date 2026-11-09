@@ -889,3 +889,14 @@ fn settling_forge_leftovers_never_releases_a_stale_opening_record_whose_pr_the_f
     assert!(!t.lc.has("abandon-batch lost"), "{:?}", t.lc.calls.borrow());
     assert_eq!(record(&t, "lost").0, "OPEN");
 }
+
+#[test]
+fn a_queue_local_verdict_ignores_an_unreadable_forge_while_every_opening_record_is_inside_its_ttl() {
+    let t = local_world();
+    seed(&t, "fresh", "opening", 900, None);
+    t.forge.queue_prs_unreadable.set(true);
+    t.clock.now.set(900 + 10);
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}{}", t.out(), t.err());
+    assert!(!t.err().contains("cannot list"), "{}", t.err());
+    assert_eq!(record(&t, "fresh").0, "OPEN");
+}
