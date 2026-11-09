@@ -55,7 +55,7 @@ impl Handler for Overrides {
         }
         if ev.kind.tag == TICK {
             return vec![
-                Command::Effect(EffectSpec { name: APPLY.into(), input: String::new(), deadline_ms: DEADLINE_MS }),
+                Command::Effect(EffectSpec::by_input(APPLY, String::new(), DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
@@ -77,7 +77,7 @@ impl Handler for Overrides {
             cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
         }
         if let Some(m) = say {
-            cmds.push(Command::Effect(EffectSpec { name: INBOX_APPEND.into(), input: format!("{} [watch:{NAME}] {m}", iso8601(ev.at / 1000)), deadline_ms: 10_000 }));
+            cmds.push(Command::Effect(EffectSpec::by_input(INBOX_APPEND, format!("{} [watch:{NAME}] {m}", iso8601(ev.at / 1000)), 10_000)));
         }
         cmds
     }

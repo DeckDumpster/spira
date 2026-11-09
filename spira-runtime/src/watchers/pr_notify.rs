@@ -247,7 +247,7 @@ impl Handler for PrNotify {
         if ev.kind.tag == TICK {
             let input = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE)).unwrap_or_default();
             return vec![
-                Command::Probe(EffectSpec { name: OBSERVE.into(), input, deadline_ms: OBSERVE_DEADLINE_MS }),
+                Command::Probe(EffectSpec::by_input(OBSERVE, input, OBSERVE_DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
@@ -264,10 +264,10 @@ impl Handler for PrNotify {
             cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
         }
         for m in say.lines {
-            cmds.push(Command::Effect(EffectSpec { name: INBOX_APPEND.into(), input: format!("{} [watch:{NAME}] {m}", iso8601(now)), deadline_ms: DEADLINE_MS }));
+            cmds.push(Command::Effect(EffectSpec::by_input(INBOX_APPEND, format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS)));
         }
         for n in say.notes {
-            cmds.push(Command::Effect(EffectSpec { name: OPERATOR_NOTE.into(), input: serde_json::to_string(&n).unwrap_or_default(), deadline_ms: DEADLINE_MS }));
+            cmds.push(Command::Effect(EffectSpec::by_input(OPERATOR_NOTE, serde_json::to_string(&n).unwrap_or_default(), DEADLINE_MS)));
         }
         cmds
     }

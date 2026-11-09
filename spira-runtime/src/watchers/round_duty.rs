@@ -156,7 +156,7 @@ impl Handler for RoundDuty {
             let known = carried::<Carry>(view, &ev.stream, STATE).lines;
             let input = serde_json::to_string(&known).unwrap_or_default();
             return vec![
-                Command::Probe(EffectSpec { name: OBSERVE.into(), input, deadline_ms: DEADLINE_MS }),
+                Command::Probe(EffectSpec::by_input(OBSERVE, input, DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
@@ -175,7 +175,7 @@ impl Handler for RoundDuty {
         let now = ev.at / 1000;
         let (next, say) = decide(self, &carry, &snap, now);
         ctx.event().set("round_duty.said", say.len() as u64);
-        let mut cmds: Vec<Command> = say.into_iter().map(|m| Command::Effect(EffectSpec { name: INBOX_APPEND.into(), input: format!("{} [watch:{NAME}] {m}", iso8601(now)), deadline_ms: DEADLINE_MS })).collect();
+        let mut cmds: Vec<Command> = say.into_iter().map(|m| Command::Effect(EffectSpec::by_input(INBOX_APPEND, format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS))).collect();
         if next != carry {
             cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
         }

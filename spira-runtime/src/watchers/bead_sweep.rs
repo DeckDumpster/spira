@@ -328,7 +328,7 @@ impl BeadSweep {
         ctx.event().set("bead-sweep.said", say.len() as u64);
         let mut cmds = vec![Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default()))];
         for m in say {
-            cmds.push(Command::Effect(EffectSpec { name: INBOX_APPEND.into(), input: format!("{} [watch:{NAME}] {m}", iso8601(ev.at / 1000)), deadline_ms: DEADLINE_MS }));
+            cmds.push(Command::Effect(EffectSpec::by_input(INBOX_APPEND, format!("{} [watch:{NAME}] {m}", iso8601(ev.at / 1000)), DEADLINE_MS)));
         }
         cmds
     }
@@ -345,7 +345,7 @@ impl Handler for BeadSweep {
         }
         if ev.kind.tag == TICK {
             return vec![
-                Command::Probe(EffectSpec { name: OBSERVE.into(), input: String::new(), deadline_ms: DEADLINE_MS }),
+                Command::Probe(EffectSpec::by_input(OBSERVE, String::new(), DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
@@ -366,10 +366,10 @@ impl Handler for BeadSweep {
                     return self.finish(ctx, view, ev, &snap, &[]);
                 }
                 let input = serde_json::to_string(&Repair { ids }).unwrap_or_default();
-                vec![Command::Effect(EffectSpec { name: REPAIR.into(), input, deadline_ms: DEADLINE_MS })]
+                vec![Command::Effect(EffectSpec::by_input(REPAIR, input, DEADLINE_MS))]
             }
             Some(REPAIR) => match serde_json::from_str::<Repaired>(&ev.kind.body) {
-                Ok(r) => vec![Command::Probe(EffectSpec { name: OBSERVE.into(), input: serde_json::to_string(&r).unwrap_or_default(), deadline_ms: DEADLINE_MS })],
+                Ok(r) => vec![Command::Probe(EffectSpec::by_input(OBSERVE, serde_json::to_string(&r).unwrap_or_default(), DEADLINE_MS))],
                 Err(_) => vec![],
             },
             _ => vec![],

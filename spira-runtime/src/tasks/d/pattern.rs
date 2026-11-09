@@ -18,7 +18,7 @@ use crate::watchers::{answers_observe, carried, iso8601};
 
 /// The tick's commands: the observe probe, then the next tick at `next_at`.
 pub fn tick(ev: &Event, observe: &str, input: String, deadline_ms: u64, next_at: u64) -> Vec<Command> {
-    vec![Command::Probe(EffectSpec { name: observe.into(), input, deadline_ms }), Command::Timer { at: next_at, kind: EventKind::new(&ev.kind.tag, "") }]
+    vec![Command::Probe(EffectSpec::by_input(observe, input, deadline_ms)), Command::Timer { at: next_at, kind: EventKind::new(&ev.kind.tag, "") }]
 }
 
 /// The snapshot `ev` carries when it is the succeeded answer to this stream's `observe` probe.

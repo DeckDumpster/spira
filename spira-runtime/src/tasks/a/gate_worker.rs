@@ -569,7 +569,7 @@ impl Handler for GateWorker {
             return vec![];
         }
         if ev.kind.tag == TICK || ev.kind.tag == GATE_QUEUED || own_leg_ran {
-            let mut out = vec![Command::Probe(EffectSpec { name: OBSERVE.into(), input: serde_json::to_string(&carry).unwrap_or_default(), deadline_ms: OBSERVE_DEADLINE_MS })];
+            let mut out = vec![Command::Probe(EffectSpec::by_input(OBSERVE, serde_json::to_string(&carry).unwrap_or_default(), OBSERVE_DEADLINE_MS))];
             if ev.kind.tag == TICK {
                 out.push(Command::Timer { at: self.cadence.next_after(ev.at), kind: EventKind::new(TICK, "") });
             }

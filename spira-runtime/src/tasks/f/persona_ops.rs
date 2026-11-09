@@ -210,7 +210,7 @@ pub struct BriefAsk {
 }
 
 fn spec<T: Serialize>(name: &str, body: &T, deadline_ms: u64) -> EffectSpec {
-    EffectSpec { name: name.into(), input: serde_json::to_string(body).unwrap_or_default(), deadline_ms }
+    EffectSpec::by_input(name, serde_json::to_string(body).unwrap_or_default(), deadline_ms)
 }
 
 fn ledger(carry: &Carry, what: &str, detail: &str, rc: Option<i32>) -> EffectSpec {
@@ -242,7 +242,7 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
     let s = carry.state;
     let go = |on: &str| step(s, on);
     let out = match input {
-        Input::Tick => (with(carry, go("tick")?), vec![EffectSpec { name: OBSERVE.into(), input: String::new(), deadline_ms: OBSERVE_DEADLINE_MS }]),
+        Input::Tick => (with(carry, go("tick")?), vec![EffectSpec::by_input(OBSERVE, String::new(), OBSERVE_DEADLINE_MS)]),
         Input::Observed(snap) => {
             if snap.halted || !snap.rune_present || snap.prompt_head.trim() == NOMINAL {
                 (Carry { state: go("skip")?, ..Carry::default() }, vec![])
@@ -257,7 +257,7 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
                 (Carry { state: go("busy")?, ..Carry::default() }, vec![ledger(carry, "awake", why, None)])
             } else {
                 let next = with(carry, go("go")?);
-                (next, vec![EffectSpec { name: INTAKE_INSTALL.into(), input: String::new(), deadline_ms: PREPARE_DEADLINE_MS }, EffectSpec { name: INCIDENT_DRAIN.into(), input: String::new(), deadline_ms: PREPARE_DEADLINE_MS }])
+                (next, vec![EffectSpec::by_input(INTAKE_INSTALL, String::new(), PREPARE_DEADLINE_MS), EffectSpec::by_input(INCIDENT_DRAIN, String::new(), PREPARE_DEADLINE_MS)])
             }
         }
         Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == LEDGER || effect == INTAKE_INSTALL || effect == UNIT_STOP => (carry.clone(), vec![]),

@@ -185,7 +185,7 @@ fn lib_filing(f: &Filing) -> filings_collect::Filing {
 }
 
 fn effect(name: &str, input: String, deadline_ms: u64) -> EffectSpec {
-    EffectSpec { name: name.into(), input, deadline_ms }
+    EffectSpec::by_input(name, input, deadline_ms)
 }
 
 fn alarm(carry: &mut Carry, acts: &mut Vec<EffectSpec>, at: &str, reason: &str) {

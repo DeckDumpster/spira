@@ -215,11 +215,11 @@ pub struct Unverifiable {
 }
 
 fn act<T: Serialize>(name: &str, body: &T, deadline_ms: u64) -> EffectSpec {
-    EffectSpec { name: name.into(), input: serde_json::to_string(body).unwrap_or_default(), deadline_ms }
+    EffectSpec::by_input(name, serde_json::to_string(body).unwrap_or_default(), deadline_ms)
 }
 
 fn refusal(now: u64, msg: &str) -> EffectSpec {
-    EffectSpec { name: INBOX.into(), input: format!("{} [watch:{NAME}] gh-intake: {msg}", iso8601(now)), deadline_ms: INBOX_DEADLINE_MS }
+    EffectSpec::by_input(INBOX, format!("{} [watch:{NAME}] gh-intake: {msg}", iso8601(now)), INBOX_DEADLINE_MS)
 }
 
 fn find<'a>(store: &'a [KnownRef], ext_ref: &str) -> Option<&'a KnownRef> {

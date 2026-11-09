@@ -91,7 +91,7 @@ impl Handler for InboxKeeper {
         }
         if ev.kind.tag == TICK {
             return vec![
-                Command::Probe(EffectSpec { name: OBSERVE.into(), input: String::new(), deadline_ms: DEADLINE_MS }),
+                Command::Probe(EffectSpec::by_input(OBSERVE, String::new(), DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
@@ -110,7 +110,7 @@ impl Handler for InboxKeeper {
         ctx.event().set("inbox_keeper.woke", u64::from(say.is_some()));
         let mut cmds = vec![];
         if say.is_some() {
-            cmds.push(Command::Effect(EffectSpec { name: CONCIERGE_WAKE.into(), input: WAKE_LINE.into(), deadline_ms: WAKE_DEADLINE_MS }));
+            cmds.push(Command::Effect(EffectSpec::by_input(CONCIERGE_WAKE, WAKE_LINE, WAKE_DEADLINE_MS)));
         }
         let mut next = Carry { persisted_seen: carry.persisted_seen, ..next };
         let behind = next.last_seen.unwrap_or(0).saturating_sub(carry.persisted_seen) >= self.stall_secs / SEEN_SAVES_PER_STALL;

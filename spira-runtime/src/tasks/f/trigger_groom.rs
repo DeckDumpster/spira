@@ -171,7 +171,7 @@ pub struct Filing {
 
 /// The file effect a trigger asks for when `decide` files.
 pub fn file_effect(name: &str, bead: Bead, dedup: String, deadline_ms: u64) -> Command {
-    Command::Effect(EffectSpec { name: name.into(), input: serde_json::to_string(&Filing { bead, dedup }).unwrap_or_default(), deadline_ms })
+    Command::Effect(EffectSpec::by_input(name, serde_json::to_string(&Filing { bead, dedup }).unwrap_or_default(), deadline_ms))
 }
 
 /// The file runner every trigger shares: re-count the open triggers, refuse through `guard`

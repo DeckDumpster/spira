@@ -91,6 +91,16 @@ pub struct EffectSpec {
     pub key: String,
 }
 
+impl EffectSpec {
+    /// An effect whose identity is its input: the key is the name and a digest of the input, so
+    /// the same request in flight twice is one, and a different input is another.
+    pub fn by_input(name: impl Into<String>, input: impl Into<String>, deadline_ms: u64) -> Self {
+        let (name, input) = (name.into(), input.into());
+        let key = format!("{name}/{:016x}", fnv1a(&input));
+        EffectSpec { name, input, deadline_ms, key }
+    }
+}
+
 /// The body of an [`EMIT_SHADOWED`] event: where the emit would have gone, and what.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowedEmit {

@@ -156,7 +156,7 @@ pub fn decide(snap: &Snapshot, cfg: &Config) -> Vec<EffectSpec> {
         .map(|f| {
             let title = rule::audit::finding_title(f);
             let filing = Filing { body: rule::audit::bead_body(&title), title, persona: persona.clone(), repo: snap.repo.clone() };
-            EffectSpec { name: FILE_BEAD.into(), input: serde_json::to_string(&filing).unwrap_or_default(), deadline_ms: FILE_DEADLINE_MS }
+            EffectSpec::by_input(FILE_BEAD, serde_json::to_string(&filing).unwrap_or_default(), FILE_DEADLINE_MS)
         })
         .collect()
 }

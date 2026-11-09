@@ -288,7 +288,7 @@ impl Handler for ReconcilerFlow {
         if ev.kind.tag == TICK {
             let now = ev.at / 1000;
             return vec![
-                Command::Probe(EffectSpec { name: OBSERVE.into(), input: serde_json::to_string(&self.params(now)).unwrap_or_default(), deadline_ms: OBSERVE_DEADLINE_MS }),
+                Command::Probe(EffectSpec::by_input(OBSERVE, serde_json::to_string(&self.params(now)).unwrap_or_default(), OBSERVE_DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
@@ -310,10 +310,10 @@ impl Handler for ReconcilerFlow {
             cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&pass.carry).unwrap_or_default())));
         }
         for m in &pass.mails {
-            cmds.push(Command::Effect(EffectSpec { name: MAIL.into(), input: serde_json::to_string(m).unwrap_or_default(), deadline_ms: ACT_DEADLINE_MS }));
+            cmds.push(Command::Effect(EffectSpec::by_input(MAIL, serde_json::to_string(m).unwrap_or_default(), ACT_DEADLINE_MS)));
         }
         let statuses = Statuses { ts: super::iso8601(now), rows: pass.statuses };
-        cmds.push(Command::Probe(EffectSpec { name: STATUS.into(), input: serde_json::to_string(&statuses).unwrap_or_default(), deadline_ms: ACT_DEADLINE_MS }));
+        cmds.push(Command::Probe(EffectSpec::by_input(STATUS, serde_json::to_string(&statuses).unwrap_or_default(), ACT_DEADLINE_MS)));
         cmds
     }
 }

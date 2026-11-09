@@ -175,9 +175,9 @@ pub fn decide(carry: &Carry, snap: &Snapshot, config: &BTreeMap<String, String>)
             Some(o) if &o.target == release => {}
             Some(o) => {
                 next.bumps.insert(name.clone(), (o.id.clone(), release.clone()));
-                acts.push(EffectSpec { name: AMEND.into(), input: serde_json::to_string(&bump(String::new(), Some(o.id))).unwrap_or_default(), deadline_ms: STORE_DEADLINE_MS });
+                acts.push(EffectSpec::by_input(AMEND, serde_json::to_string(&bump(String::new(), Some(o.id))).unwrap_or_default(), STORE_DEADLINE_MS));
             }
-            None => acts.push(EffectSpec { name: FILE.into(), input: serde_json::to_string(&bump(kit_bump::title(&lib, &crate_name, release, !admits), None)).unwrap_or_default(), deadline_ms: STORE_DEADLINE_MS }),
+            None => acts.push(EffectSpec::by_input(FILE, serde_json::to_string(&bump(kit_bump::title(&lib, &crate_name, release, !admits), None)).unwrap_or_default(), STORE_DEADLINE_MS)),
         }
     }
     (next, acts)

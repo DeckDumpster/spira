@@ -31,7 +31,7 @@ impl Handler for Owned {
         match ev.kind.tag.as_str() {
             "go" => {
                 let spec = UnitSpec { task: self.task.clone(), key: "k".into(), argv: vec!["/bin/true".into()], env: vec![], cwd: None };
-                vec![Command::Effect(EffectSpec { name: UNIT_START.into(), input: serde_json::to_string(&spec).unwrap(), deadline_ms: 5_000 })]
+                vec![Command::Effect(EffectSpec::by_input(UNIT_START, serde_json::to_string(&spec).unwrap(), 5_000))]
             }
             UNIT_RAN => UnitRan::from_event_kind(&ev.kind).and_then(|r| r.key_for(&self.task)).map(|k| vec![Command::Emit(EventKind::new("done", &k))]).unwrap_or_default(),
             _ => vec![],

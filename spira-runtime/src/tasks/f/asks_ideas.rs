@@ -206,7 +206,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, config: &BTreeMap<String, String>)
     let acts = ports
         .sent
         .into_inner()
-        .map(|(subject, default, body)| EffectSpec { name: ASK.into(), input: serde_json::to_string(&Ask { subject, default, body, tz: config.get("SPIRA_IDEAS_TZ").cloned().unwrap_or_default() }).unwrap_or_default(), deadline_ms: ASK_DEADLINE_MS })
+        .map(|(subject, default, body)| EffectSpec::by_input(ASK, serde_json::to_string(&Ask { subject, default, body, tz: config.get("SPIRA_IDEAS_TZ").cloned().unwrap_or_default() }).unwrap_or_default(), ASK_DEADLINE_MS))
         .into_iter()
         .collect();
     (next, outcome, acts)

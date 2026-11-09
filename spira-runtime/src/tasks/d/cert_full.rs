@@ -332,7 +332,7 @@ impl Handler for CertFull {
             if carry.phase != Phase::WaitRound {
                 return vec![];
             }
-            return vec![Command::Probe(EffectSpec { name: OBSERVE.into(), input: String::new(), deadline_ms: OBSERVE_DEADLINE_MS })];
+            return vec![Command::Probe(EffectSpec::by_input(OBSERVE, String::new(), OBSERVE_DEADLINE_MS))];
         }
         let config = match &self.config {
             Ok(c) => c,
