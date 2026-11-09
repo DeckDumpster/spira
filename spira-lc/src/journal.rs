@@ -3,6 +3,7 @@
 //! Every write is idempotent on its key; an event or schedule row is one JSON argument.
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::db::{Conn, DbError};
 use crate::rows::escape;
@@ -30,6 +31,20 @@ const ID_MAX: usize = 255;
 const STREAM_MAX: usize = 128;
 const TAG_MAX: usize = 64;
 const HANDLER_MAX: usize = 128;
+/// `kind_body` is a TEXT column, in bytes.
+const KIND_BODY_MAX: usize = 65_535;
+const HEAD_KEPT: usize = 4_096;
+
+/// The body as stored: itself when it fits the column, else a JSON stub naming its length and
+/// SHA-256 with the head it began with. An over-long body is recorded, not refused.
+fn stored_body(body: &str) -> String {
+    if body.len() <= KIND_BODY_MAX {
+        return body.to_string();
+    }
+    let cut = (0..=HEAD_KEPT).rev().find(|i| body.is_char_boundary(*i)).unwrap_or(0);
+    let digest: String = Sha256::digest(body.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    json!({ "truncated": { "bytes": body.len(), "sha256": digest }, "head": &body[..cut] }).to_string()
+}
 
 fn text(v: &Value, k: &str) -> String {
     v.get(k).and_then(Value::as_str).unwrap_or("").to_string()
@@ -107,7 +122,7 @@ pub fn append_sql(ev: &Value) -> Result<String, String> {
         "INSERT INTO runtime_event (event_id, stream, kind_tag, kind_body, at, cause, correlation) SELECT {id}, {}, {}, {}, {}, {}, {} FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM runtime_event WHERE event_id = {id})",
         lit(field(ev, "stream")?),
         lit(field(kind, "tag")?),
-        lit(field(kind, "body")?),
+        lit(&stored_body(field(kind, "body")?)),
         number(ev, "at")?,
         opt_lit(ev, "cause"),
         lit(field(ev, "correlation")?),
@@ -153,7 +168,7 @@ pub fn schedule_sql(row: &Value) -> Result<String, String> {
         number(row, "at")?,
         lit(field(row, "stream")?),
         lit(field(kind, "tag")?),
-        lit(field(kind, "body")?),
+        lit(&stored_body(field(kind, "body")?)),
         opt_lit(row, "cause"),
         lit(field(row, "correlation")?),
     ))
@@ -542,6 +557,28 @@ mod tests {
         for (name, max) in [("ID_MAX", ID_MAX), ("STREAM_MAX", STREAM_MAX), ("TAG_MAX", TAG_MAX), ("HANDLER_MAX", HANDLER_MAX)] {
             assert!(src.contains(&format!("const {name}: usize = {max};")), "runtime/src/socket.rs {name} differs from {max}");
         }
+    }
+
+    fn body_of(sql: &str) -> String {
+        let stored = sql.split("'t', '").nth(1).unwrap().split("', 1, ").next().unwrap().to_string();
+        stored.replace("\\\\", "\\").replace("\\'", "'")
+    }
+
+    #[test]
+    fn a_body_over_the_column_is_stored_as_a_digest_and_head_never_dropped() {
+        let big = format!("{{\"runs\":[\"{}é\"]}}", "r".repeat(KIND_BODY_MAX + 10));
+        let sql = append_sql(&json!({"id": "e", "stream": "s", "kind": {"tag": "t", "body": big}, "at": 1, "cause": null, "correlation": "c"})).unwrap();
+        let stored = body_of(&sql);
+        assert!(stored.len() <= KIND_BODY_MAX, "{} bytes", stored.len());
+        let v: Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(v["truncated"]["bytes"], big.len());
+        assert_eq!(v["truncated"]["sha256"].as_str().unwrap().len(), 64);
+        assert!(big.starts_with(v["head"].as_str().unwrap()));
+        let at_limit = "x".repeat(KIND_BODY_MAX);
+        let sql = append_sql(&json!({"id": "e", "stream": "s", "kind": {"tag": "t", "body": at_limit}, "at": 1, "cause": null, "correlation": "c"})).unwrap();
+        assert_eq!(body_of(&sql), at_limit, "a body that fits is stored as sent");
+        let row = json!({"id": "r", "at": 1, "stream": "s", "kind": {"tag": "t", "body": big}, "cause": null, "correlation": "c"});
+        assert!(schedule_sql(&row).unwrap().contains("truncated"), "a schedule row's body is held to the column too");
     }
 
     #[test]

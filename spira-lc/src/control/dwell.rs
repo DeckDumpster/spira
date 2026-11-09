@@ -10,12 +10,15 @@
 //!   and reads back in revision chunks only until the index is older than `--window` seconds or
 //!   [`MAX_SCANNED`] audits have been read in the call. `horizon` is the oldest time the index
 //!   reached, so a kind not seen is known only to be older than it.
+//!   `Deliver` is also the newest cut round's `opened_at` per repo, read from the round records
+//!   every cut writes, so a cut is seen whatever the audit scan covered.
 //! - **landed_after**: with `--landed-after T`, per repo, the oldest Delivered newer than `T`.
 //!
 //! The answer is complete or it names its horizon; it never reads an empty log as "no events".
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use lifecycle::batch::BatchState;
 use lifecycle::bead::{BeadState, HoldKind};
 use serde::Serialize;
 use serde_json::Value;
@@ -223,6 +226,14 @@ impl<B: Backend> Store<B> {
         }
         idx.delivered.values_mut().for_each(|ats| ats.retain(|at| *at >= now - DELIVERED_KEPT_S));
         d.last = idx.last_since(floor);
+        for (_, round) in self.batches()? {
+            let (cut, repo) = (round.value.opened_at, round.value.row.repo.clone());
+            if round.value.row.state == BatchState::Staged || cut < floor {
+                continue;
+            }
+            let newest = d.last.entry(repo).or_default().entry("Deliver".into()).or_insert(cut);
+            *newest = (*newest).max(cut);
+        }
         if let Some(t) = landed_after {
             d.landed_after = idx.landed_after(t, floor);
         }
