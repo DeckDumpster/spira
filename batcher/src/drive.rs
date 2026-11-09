@@ -1093,6 +1093,17 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_stacked_dependent_carrying_the_added_suite_does_not_share_the_blame_with_its_prerequisite() {
+        let mut f = Fake::new(breaks("m1", "test-01.sh"));
+        let mut dep = member("m2");
+        dep.stack.insert("m1".into(), "m1-tip".into());
+        let mut ops = Ops { adds: adds("test-01.sh", &["m1", "m2"]), ..Ops::default() };
+        attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), dep], Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(ops.ejected.first(), Some(&("m1".to_string(), vec!["test-01.sh".to_string()])), "{:?}", ops.ejected);
+        assert!(f.jobs.iter().all(|(j, _, _)| j.suite != "test-01.sh" || j.removal.is_empty()), "a rerun lacked the adder");
+    }
+
+    #[test]
     fn a_red_suite_two_members_add_is_bisected_between_those_two_only() {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
         let mut ops = Ops { adds: adds("test-01.sh", &["m1", "m2"]), ..Ops::default() };
