@@ -813,3 +813,44 @@ fn an_opening_record_inside_one_lease_ttl_on_a_queue_local_repo_is_left_to_its_o
     t.run(&["verdict", "spira"]);
     assert_eq!(record(&t, "fresh").0, "OPEN", "{}{}", t.out(), t.err());
 }
+
+#[test]
+fn a_queue_local_verdict_releases_every_stale_opening_record_but_a_leased_one() {
+    let t = local_world();
+    seed(&t, "a-lost", "opening", 500, None);
+    seed(&t, "b-leased", "opening", 500, None);
+    seed(&t, "c-lost", "opening", 500, None);
+    t.lc.leases.borrow_mut().insert(
+        "spira/b-leased".into(),
+        Ok(Some(RoundLease { holder: Some("rc-1".into()), token: "9-0".into(), ttl_left_secs: 60 })),
+    );
+    t.clock.now.set(900);
+    t.run(&["verdict", "spira"]);
+    let states: Vec<_> = ["a-lost", "b-leased", "c-lost"].iter().map(|i| record(&t, i).0).collect();
+    assert_eq!(states, ["ABANDONED", "OPEN", "ABANDONED"], "{}{}", t.out(), t.err());
+}
+
+#[test]
+fn a_queue_local_verdict_with_an_unparsable_lease_ttl_releases_nothing_and_says_which_command() {
+    let t = local_world();
+    t.var("SPIRA_ROUND_LEASE_TTL_SECS", "soon");
+    seed(&t, "stale", "opening", 500, None);
+    t.clock.now.set(900);
+    assert_eq!(t.run(&["verdict", "spira"]), 1);
+    assert_eq!(record(&t, "stale").0, "OPEN");
+    assert!(t.err().contains("queue.sh verdict: SPIRA_ROUND_LEASE_TTL_SECS does not parse"), "{}", t.err());
+}
+
+#[test]
+fn settling_forge_leftovers_never_releases_a_stale_opening_record_whose_pr_the_forge_may_hold() {
+    let t = local_world();
+    seed(&t, "lost", "opening", 500, None);
+    t.clock.now.set(900);
+    t.with_world(|w| {
+        let c = crate::ops::resolve(w, "test", None).unwrap();
+        let path = c.r.path.clone().unwrap();
+        crate::ops::verdict::settle_forge_leftovers(w, &c, &path);
+    });
+    assert!(!t.lc.has("abandon-batch lost"), "{:?}", t.lc.calls.borrow());
+    assert_eq!(record(&t, "lost").0, "OPEN");
+}

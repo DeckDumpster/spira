@@ -1444,7 +1444,7 @@ pub(super) fn sweep_locked(w: &World, c: &super::Ctx, path: &std::path::Path) ->
         w.err(format!("queue.sh {LABEL}: {} still holds a batch recorded before the batch machine moved to the control store — nothing swept; it is settled through it (`queue verdict {name}`, or `queue abandon {name}`), which removes it", legacy.display()));
         return FAIL;
     }
-    let Ok(ttl) = lease_ttl(w) else {
+    let Ok(ttl) = lease_ttl(w, LABEL) else {
         return FAIL;
     };
     let live = match super::forge_batch::live(w, c) {
@@ -1483,16 +1483,15 @@ pub(super) fn sweep_locked(w: &World, c: &super::Ctx, path: &std::path::Path) ->
 }
 
 /// `SPIRA_ROUND_LEASE_TTL_SECS` as seconds; the refusal is already said.
-pub(super) fn lease_ttl(w: &World) -> Result<u64, ()> {
-    const LABEL: &str = "batch sweep";
+pub(super) fn lease_ttl(w: &World, label: &str) -> Result<u64, ()> {
     match w.env.config(LEASE_TTL_KEY).map(|v| v.trim().parse::<u64>()) {
         Ok(Ok(t)) => Ok(t),
         Ok(Err(e)) => {
-            w.err(format!("queue.sh {LABEL}: {LEASE_TTL_KEY} does not parse as seconds ({e}) — nothing swept"));
+            w.err(format!("queue.sh {label}: {LEASE_TTL_KEY} does not parse as seconds ({e}) — nothing swept"));
             Err(())
         }
         Err(e) => {
-            w.err(format!("queue.sh {LABEL}: {LEASE_TTL_KEY} does not resolve ({e}) — nothing swept"));
+            w.err(format!("queue.sh {label}: {LEASE_TTL_KEY} does not resolve ({e}) — nothing swept"));
             Err(())
         }
     }

@@ -89,9 +89,6 @@ pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
             rc = r;
         }
     }
-    if open.as_ref().is_some_and(|o| o.is_opening() && matches!(o.at, forge_batch::At::Store(_))) {
-        rc = rc.max(release_stale_opening(w, c, path));
-    }
     if matches!(forge_batch::read(w, c), Ok(None)) {
         for f in leftovers {
             let _ = std::fs::remove_file(c.queue_file(f));
@@ -100,25 +97,34 @@ pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
     rc
 }
 
-/// No forge holds a PR for a batch left opening here, so a stale one is only ever released.
+/// A queue.local repo holds no PR for a batch left opening, so a stale one is only ever released.
 fn release_stale_opening(w: &World, c: &Ctx, path: &Path) -> i32 {
-    let Ok(ttl) = super::batch::lease_ttl(w) else {
-        return FAIL;
-    };
-    match forge_batch::live(w, c) {
-        Ok(live) => super::batch::sweep_opening(w, c, path, ttl, &live, None),
+    if !forge_batch::on_store(w) {
+        return OK;
+    }
+    let live = match forge_batch::live(w, c) {
+        Ok(live) => live,
         Err(e) => {
             w.err(format!("verdict {}: cannot tell which batches are open: {e}", c.r.name));
-            FAIL
+            return FAIL;
         }
+    };
+    if !live.iter().any(|b| b.kv.get(forge_batch::PHASE) == Some(forge_batch::OPENING)) {
+        return OK;
     }
+    let Ok(ttl) = super::batch::lease_ttl(w, "verdict") else {
+        return FAIL;
+    };
+    super::batch::sweep_opening(w, c, path, ttl, &live, None)
 }
 
 fn local_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
     let name = c.r.name.as_str();
     let (rc, out) = match lock::try_lock_as(&c.s.queue_dir, name, "verdict") {
         Acquire::Held(g) => {
-            let r = settle_locked(w, c, path);
+            let released = release_stale_opening(w, c, path);
+            let (rc, out) = settle_locked(w, c, path);
+            let r = (if rc == OK { released } else { rc }, out);
             drop(g);
             r
         }
