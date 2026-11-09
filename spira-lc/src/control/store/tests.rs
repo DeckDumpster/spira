@@ -1023,3 +1023,39 @@ fn records_are_listed_from_one_snapshot_with_its_rev_and_without_other_kinds() {
         .unwrap();
     assert_eq!(first.value, records[1].value);
 }
+
+#[test]
+fn a_transition_the_store_commits_is_shipped_with_its_machine_states_bead_and_actor() {
+    use spira_otel::vlogs::fake::FakeLogs;
+    use std::time::Duration;
+    let logs = FakeLogs::start();
+    let (b, clock) = (MemBackend::new(), VirtualClock::new(0));
+    let s = open(&b, &clock).with_shipper(spira_otel::vlogs::Shipper::start(&logs.url()));
+    created(&s, "sp-a");
+    s.claim("sp-a", &ev(BeadState::Ready, 0, claim("dwarf-1", 102), "dwarf-1", 100), &req("claim-1")).unwrap();
+    let got: Vec<serde_json::Value> = logs.wait_records(1, Duration::from_secs(5)).into_iter().filter(|r| r["event"] == "Claim").collect();
+    assert_eq!(got.len(), 1, "{got:?}");
+    let r = &got[0];
+    for (k, v) in [("kind_tag", "transition"), ("stream", "lifecycle"), ("machine", "bead"), ("from", "READY"), ("to", "WORKING"), ("bead_id", "sp-a"), ("actor", "dwarf-1")] {
+        assert_eq!(r[k], v, "{k}: {r}");
+    }
+    assert_eq!(r["at"], 100);
+}
+
+#[test]
+fn a_refused_transition_and_a_retried_request_ship_nothing() {
+    use spira_otel::vlogs::fake::FakeLogs;
+    use std::time::Duration;
+    let logs = FakeLogs::start();
+    let (b, clock) = (MemBackend::new(), VirtualClock::new(0));
+    let s = open(&b, &clock).with_shipper(spira_otel::vlogs::Shipper::start(&logs.url()));
+    created(&s, "sp-a");
+    let claimed = |id: &str| s.claim("sp-a", &ev(BeadState::Ready, 0, claim("dwarf-1", 102), "dwarf-1", 100), &req(id)).unwrap();
+    claimed("claim-1");
+    claimed("claim-1");
+    let _ = s.apply("sp-a", &ev(BeadState::Ready, 0, BeadEventKind::HolderDead, "reaper", 101), &req("refused-1"));
+    std::thread::sleep(Duration::from_millis(300));
+    let claims = logs.records().into_iter().filter(|r| r["event"] == "Claim").count();
+    assert_eq!(claims, 1, "the retried request shipped once");
+    assert!(logs.records().iter().all(|r| r["event"] != "HolderDead"), "a refused event is no transition");
+}
