@@ -472,6 +472,10 @@ async fn stuck_api_route(State(loom): State<Arc<Loom>>) -> Response {
         .expect("a response with a valid status and headers")
 }
 
+async fn factory_page_route(State(loom): State<Arc<Loom>>) -> Response {
+    html_response(StatusCode::OK, shell::wrap_foreign(include_str!("factory.html"), "factory", &page_bar(&loom)))
+}
+
 async fn factory_api_route(State(loom): State<Arc<Loom>>) -> Response {
     let (status, body) = match loom.factory().await {
         Ok(floor) => (StatusCode::OK, floor.to_string()),
@@ -880,6 +884,7 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/api/lifecycle", get(lifecycle_api_route))
         .route("/stuck", get(stuck_page_route))
         .route("/api/stuck", get(stuck_api_route))
+        .route("/factory", get(factory_page_route))
         .route("/api/factory", get(factory_api_route))
         .route("/stuck/{id}", get(stuck_bead_redirect))
         .route("/beads/{id}", get(stuck_bead_route))
@@ -1003,6 +1008,17 @@ mod in_process_tests {
         let second = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap();
         assert_eq!(healthy.0.load(Ordering::SeqCst), reads, "the second viewer is served from the held build");
         assert_eq!(first, second);
+    }
+
+    #[tokio::test]
+    async fn the_factory_page_carries_the_bar_the_tabs_and_the_fetch_of_the_factory_json() {
+        let loom = Arc::new(Loom::new(test_config()));
+        let res = factory_page_route(State(loom)).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let html = String::from_utf8(axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(html.contains("class=lm-top"), "the bar");
+        assert!(html.contains("<a href=\"/factory\" class=on aria-current=page>Factory</a>"), "the tabs, Factory current");
+        assert!(html.contains("fetch(\"/api/factory\""), "the page reads the factory JSON itself");
     }
 
     #[test]
