@@ -57,7 +57,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 /// A directory holding an already-built `spira-config`: beside this test binary's own
-/// (`<target>/debug`), else on PATH, where the gate stages its artifacts. Nothing is built here.
+/// (`<target>/debug`), else on PATH, where testenv puts the prebuilt floor (`spira-config` is required of it). Nothing is built here.
 fn release_bin() -> &'static Path {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
     BIN.get_or_init(|| {
