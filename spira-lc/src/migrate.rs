@@ -243,7 +243,7 @@ pub enum Probe {
     NoRowMatches(String),
     /// `ALTER TABLE t MODIFY c VARCHAR(n)`: applied when `t.c` is already at least `n` characters wide.
     Width { table: String, column: String, width: u32 },
-    /// `CREATE TABLE [IF NOT EXISTS] t`: applied when `information_schema.tables` lists `t`.
+    /// `CREATE TABLE [IF NOT EXISTS] t` and `RENAME TABLE s TO t`: applied when `information_schema.tables` lists `t`.
     Table(String),
     /// `CREATE [UNIQUE] INDEX i ON t`: applied when `information_schema.statistics` lists it.
     Index { table: String, index: String },
@@ -437,6 +437,7 @@ pub fn probe_for(st: &Stmt) -> Probe {
             let at = if up(2) == "IF" && up(3) == "NOT" && up(4) == "EXISTS" { 5 } else { 2 };
             toks.get(at).map(|t| t.split('(').next().unwrap_or("")).and_then(plain_ident).map_or(Probe::Unprobeable, Probe::Table)
         }
+        ("RENAME", "TABLE") if up(3) == "TO" => toks.get(4).and_then(|t| plain_ident(t.trim_end_matches(';'))).map_or(Probe::Unprobeable, Probe::Table),
         ("CREATE", "OR") if up(2) == "REPLACE" && up(3) == "VIEW" => match (toks.get(4).and_then(|t| plain_ident(t)), last_select_alias(sql)) {
             (Some(view), Some(column)) => Probe::ViewColumn { view, column },
             _ => Probe::Unprobeable,
@@ -1375,6 +1376,7 @@ mod tests {
         assert!(!service_can_apply(GRANTS_SQL, &Stmt::Plain("UPDATE bead JOIN t ON 1 SET since = 1".into())), "no WHERE: refused");
         assert_eq!(probe_for(&Stmt::Plain("DELETE FROM t WHERE b = 1".into())), Probe::NoRowMatches("SELECT 1 FROM t WHERE b = 1 LIMIT 1".into()));
         assert_eq!(probe_for(&Stmt::Plain("CREATE TABLE IF NOT EXISTS t2 (a INT)".into())), Probe::Table("t2".into()));
+        assert_eq!(probe_for(&Stmt::Plain("RENAME TABLE runtime_effect TO runtime_effect_0038".into())), Probe::Table("runtime_effect_0038".into()), "a rename is applied once its target exists");
         assert_eq!(probe_for(&Stmt::Plain("CREATE VIEW v1 AS SELECT 1".into())), Probe::View("v1".into()));
         assert_eq!(
             probe_for(&Stmt::Plain("CREATE OR REPLACE VIEW v1 AS SELECT a AS x, (SELECT 1 FROM t) AS y FROM u JOIN (SELECT 2 AS z) q".into())),

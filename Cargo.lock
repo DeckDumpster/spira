@@ -1656,6 +1656,7 @@ dependencies = [
  "serde",
  "serde_json",
  "socket2",
+ "spira-otel",
  "testkit",
  "tokio",
  "unit-run",

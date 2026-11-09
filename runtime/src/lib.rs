@@ -9,9 +9,7 @@ pub mod engine;
 pub mod event;
 pub mod heartbeat;
 pub mod host;
-pub mod file_journal;
 pub mod journal;
-pub mod lease;
 pub mod marker;
 pub mod offload;
 pub mod pools;
@@ -28,7 +26,7 @@ pub mod wide;
 
 pub use engine::{Engine, Executor, Outcome, PendingEffect};
 pub use event::*;
-pub use journal::{FaultyJournal, Journal, Lease, LeaseTable, MemJournal, Offset, Poison, ScheduleRow};
+pub use journal::{Boot, EffectRow, FaultyJournal, Journal, MemJournal, Poison, ScheduleRow, StateRow, Turn};
 pub use marker::{FileMarker, Mark, Marker, MemMarker, NullMarker};
 pub use wide::{Fields, MemSink, NullSink, Value, Wide, WideSink};
 

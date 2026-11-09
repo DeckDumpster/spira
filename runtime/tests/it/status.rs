@@ -29,7 +29,7 @@ impl Handler for Builder {
         &["build"]
     }
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
-        vec![Command::Effect(EffectSpec { name: ev.kind.body.clone(), input: String::new(), deadline_ms: 10_000 })]
+        vec![Command::Effect(EffectSpec { name: ev.kind.body.clone(), input: String::new(), deadline_ms: 10_000, key: ev.kind.body.clone() })]
     }
 }
 

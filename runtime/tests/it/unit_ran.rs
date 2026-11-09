@@ -27,7 +27,7 @@ impl Handler for Machine {
         match ev.kind.tag.as_str() {
             "go" if ev.kind.body == self.task => {
                 let spec = UnitSpec { task: self.task.into(), key: self.key.into(), argv: vec![format!("/bin/{}", self.task)], env: vec![], cwd: None };
-                vec![Command::Effect(EffectSpec { name: UNIT_START.into(), input: serde_json::to_string(&spec).unwrap(), deadline_ms: 5_000 })]
+                vec![Command::Effect(EffectSpec { name: UNIT_START.into(), input: serde_json::to_string(&spec).unwrap(), deadline_ms: 5_000, key: UNIT_START.into() })]
             }
             UNIT_RAN => match UnitRan::from_event_kind(&ev.kind).and_then(|r| r.key_for(self.task).map(|k| (k, r.exit))) {
                 Some((k, exit)) => vec![Command::Emit(EventKind::new("done", &format!("{}:{k}:{exit:?}@{}", self.task, ctx.now())))],
@@ -153,7 +153,7 @@ impl Handler for Owned {
         match ev.kind.tag.as_str() {
             "go" => {
                 let spec = UnitSpec { task: self.task.into(), key: "k".into(), argv: vec![format!("/bin/{}", self.task)], env: vec![], cwd: None };
-                vec![Command::Effect(EffectSpec { name: UNIT_START.into(), input: serde_json::to_string(&spec).unwrap(), deadline_ms: 5_000 })]
+                vec![Command::Effect(EffectSpec { name: UNIT_START.into(), input: serde_json::to_string(&spec).unwrap(), deadline_ms: 5_000, key: UNIT_START.into() })]
             }
             UNIT_RAN => match UnitRan::from_event_kind(&ev.kind).and_then(|r| r.key_for(self.task)) {
                 Some(k) => vec![Command::Emit(EventKind::new("done", &format!("{}:{k}", self.task)))],

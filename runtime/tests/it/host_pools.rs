@@ -20,7 +20,7 @@ impl Handler for Builds {
     }
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         match ev.kind.tag.as_str() {
-            "build" => vec![Command::Effect(EffectSpec { name: "suite".into(), input: ev.kind.body.clone(), deadline_ms: 60_000 })],
+            "build" => vec![Command::Effect(EffectSpec { name: "suite".into(), input: ev.kind.body.clone(), deadline_ms: 60_000, key: format!("suite/{}", ev.kind.body) })],
             _ => vec![Command::Emit(EventKind::new("built", &ev.kind.body))],
         }
     }

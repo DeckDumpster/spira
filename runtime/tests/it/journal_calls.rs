@@ -1,40 +1,29 @@
-//! sp-rkb6wl: the scheduler's journal costs one store round-trip per engine turn, however many
-//! handlers consume the turn's event, over the real socket client against a store that speaks
-//! spira-lc's `journal` verbs. The conformance suite runs over the same client.
+//! The scheduler's store costs one round-trip per engine turn, however many handlers consume the
+//! turn's event, over the real socket client against a store that speaks spira-lc's `journal`
+//! verbs; every event is shipped to VictoriaLogs ahead of the turn. The conformance suite runs
+//! over the same client.
 
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use runtime::conformance::{run_all, InProcessRig, Rig};
 use runtime::engine::{Engine, Executor, Outcome};
-use runtime::journal::{Journal, MemJournal, Poison, ScheduleRow};
+use runtime::journal::{Boot, Journal, MemJournal, Poison, Turn};
 use runtime::ports::{Clock, VirtualClock};
 use runtime::socket::{answer, SocketJournal};
 use runtime::*;
+use spira_otel::vlogs::fake::FakeLogs;
+use spira_otel::vlogs::Shipper;
 use testkit::TempDir;
 
-/// What the store speaks: `group` (sp-4du857) is spira-lc's verb for every staged write plus one
-/// op, `batch` (sp-rkb6wl) its older verb for marks and the cursor only; a store at a lower level
-/// stands in for an older service.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Level {
-    Plain,
-    Batch,
-    Group,
-}
-
-/// A store answering `journal <op>` over a `MemJournal`, counting requests and the write
-/// transactions among them: a request that writes anything is one transaction, as spira-lc runs it.
+/// A store answering `journal <op>` over a `MemJournal`, counting requests and the turns among them.
 pub(crate) struct Store {
     pub(crate) mem: Arc<MemJournal>,
     calls: AtomicUsize,
-    txns: AtomicUsize,
-    wrote: std::sync::atomic::AtomicBool,
-    level: Level,
-    /// Told after each request is answered.
-    heard: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    turns: AtomicUsize,
     /// The next request is answered as spira-lc answers a store call past its deadline.
     pub(crate) deadline_next: std::sync::atomic::AtomicBool,
 }
@@ -54,102 +43,83 @@ impl Store {
             return Err(RuntimeError::cannot_tell("cannot tell: deadline"));
         }
         assert_eq!(argv.first().map(String::as_str), Some("journal"));
-        self.wrote.store(false, Ordering::SeqCst);
-        let r = self.op(&argv[1..]);
-        if self.wrote.load(Ordering::SeqCst) {
-            self.txns.fetch_add(1, Ordering::SeqCst);
-        }
-        if let Some(tx) = &*self.heard.lock().unwrap() {
-            let _ = tx.send(());
-        }
-        r
-    }
-
-    fn write(&self) {
-        self.wrote.store(true, Ordering::SeqCst);
-    }
-
-    fn staged(&self, staged: &serde_json::Value) -> Result<()> {
         let j = &*self.mem;
-        for w in staged["writes"].as_array().cloned().unwrap_or_default() {
-            self.write();
-            if let Some(ev) = w.get("append") {
-                j.append(&de::<Event>(&ev.to_string())?)?;
-            } else if let Some(row) = w.get("schedule") {
-                j.schedule(&de::<ScheduleRow>(&row.to_string())?)?;
-            } else if let Some(id) = w.get("fired").and_then(|v| v.as_str()) {
-                j.mark_fired(id)?;
-            } else {
-                return Err(RuntimeError::refused(format!("journal: unknown write {w}")));
+        Ok(match argv[1].as_str() {
+            "turn" => {
+                self.turns.fetch_add(1, Ordering::SeqCst);
+                j.commit(&de::<Turn>(&argv[2])?)?;
+                String::new()
             }
-        }
-        for p in staged["applied"].as_array().cloned().unwrap_or_default() {
-            self.write();
-            j.mark_applied(p[0].as_str().unwrap(), &EventId(p[1].as_str().unwrap().into()))?;
-        }
-        if let Some(c) = staged["cursor"].as_u64() {
-            self.write();
-            j.set_cursor(c)?;
-        }
-        Ok(())
-    }
-
-    fn op(&self, a: &[String]) -> Result<String> {
-        let j = &*self.mem;
-        let n = |i: usize| a[i].parse::<u64>().unwrap();
-        Ok(match a.first().map(String::as_str).unwrap_or("") {
-            op @ ("batch" | "group") if self.level >= if op == "group" { Level::Group } else { Level::Batch } => {
-                let staged: serde_json::Value = de(&a[1])?;
-                assert!(op == "group" || staged.get("writes").is_none(), "batch carries marks and the cursor only");
-                self.staged(&staged)?;
-                return if a.len() > 2 { self.op(&a[2..]) } else { Ok(String::new()) };
-            }
-            "append" => {
-                self.write();
-                j.append(&de::<Event>(&a[1])?)?.to_string()
-            }
-            "read" => json(&j.read_from(n(1), n(2) as usize)?),
-            "stream" => json(&j.read_stream(&StreamKey(a[1].clone()), n(2), n(3) as usize)?),
-            "end" => j.end()?.to_string(),
-            "open-effects" => json(&j.unresolved_effects()?),
-            "applied" => (j.applied(&a[1], &EventId(a[2].clone()))? as u8).to_string(),
-            "mark-applied" => {
-                self.write();
-                j.mark_applied(&a[1], &EventId(a[2].clone())).map(|_| String::new())?
-            }
-            "cursor" => j.cursor()?.to_string(),
-            "set-cursor" => {
-                self.write();
-                j.set_cursor(n(1)).map(|_| String::new())?
-            }
-            "schedule" => {
-                self.write();
-                j.schedule(&de::<ScheduleRow>(&a[1])?).map(|_| String::new())?
-            }
-            "due" => json(&j.pending_schedules()?),
-            "mark-fired" => {
-                self.write();
-                j.mark_fired(&a[1]).map(|_| String::new())?
-            }
+            "state" => json(&j.boot()?.state),
+            "open-effects" => json(&j.boot()?.effects),
+            "due" => json(&j.boot()?.schedules),
             "poison" => {
-                self.write();
-                j.poison(&de::<Poison>(&a[1])?).map(|_| String::new())?
+                j.poison(&de::<Poison>(&argv[2])?)?;
+                String::new()
             }
-            "poisoned" => json(&j.poisoned(&StreamKey(a[1].clone()))?),
+            "poisoned" => json(&j.poisoned(&StreamKey(argv[2].clone()))?),
             op => return Err(RuntimeError::refused(format!("journal: unknown op {op:?}"))),
         })
     }
 }
 
 /// The store, its socket, and the directory holding it (removed when dropped).
-pub(crate) fn serve(level: Level) -> (Arc<Store>, PathBuf, TempDir) {
+pub(crate) fn serve() -> (Arc<Store>, PathBuf, TempDir) {
     let dir = TempDir::new("rkb6wl");
     let path = dir.path().join("lc.sock");
     let listener = UnixListener::bind(&path).unwrap();
-    let store = Arc::new(Store { mem: MemJournal::new(), calls: AtomicUsize::new(0), txns: AtomicUsize::new(0), wrote: Default::default(), level, heard: Mutex::new(None), deadline_next: Default::default() });
+    let store = Arc::new(Store { mem: MemJournal::new(), calls: AtomicUsize::new(0), turns: AtomicUsize::new(0), deadline_next: Default::default() });
     let s = Arc::clone(&store);
     std::thread::spawn(move || answer(&listener, &|argv| s.respond(argv)));
     (store, path, dir)
+}
+
+/// A socket journal shipping to a fake VictoriaLogs, whose records are its history.
+struct Observed {
+    inner: SocketJournal,
+    logs: FakeLogs,
+    recorded: AtomicUsize,
+}
+
+impl Observed {
+    fn new(path: &std::path::Path) -> Self {
+        let logs = FakeLogs::start();
+        Observed { inner: SocketJournal::new(path, Shipper::start(&logs.url())), logs, recorded: AtomicUsize::new(0) }
+    }
+}
+
+impl Journal for Observed {
+    fn record(&self, ev: &Event) {
+        self.recorded.fetch_add(1, Ordering::SeqCst);
+        self.inner.record(ev)
+    }
+    fn boot(&self) -> Result<Boot> {
+        self.inner.boot()
+    }
+    fn commit(&self, turn: &Turn) -> Result<()> {
+        self.inner.commit(turn)
+    }
+    fn poison(&self, p: &Poison) -> Result<()> {
+        self.inner.poison(p)
+    }
+    fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>> {
+        self.inner.poisoned(stream)
+    }
+    fn history(&self) -> Vec<Event> {
+        let want = self.recorded.load(Ordering::SeqCst);
+        self.logs
+            .wait_records(want, Duration::from_secs(5))
+            .into_iter()
+            .map(|r| Event {
+                id: EventId(r["event_id"].as_str().unwrap().into()),
+                stream: StreamKey(r["stream"].as_str().unwrap().into()),
+                kind: EventKind::new(r["kind_tag"].as_str().unwrap(), r["body"].as_str().unwrap()),
+                at: r["at"].as_u64().unwrap(),
+                cause: r["cause"].as_str().map(|c| EventId(c.into())),
+                correlation: CorrelationId(r["correlation"].as_str().unwrap().into()),
+            })
+            .collect()
+    }
 }
 
 /// On `tick`, one observe effect and its next tick; an outcome changes nothing.
@@ -162,7 +132,10 @@ impl Handler for Ticker {
         if ev.kind.tag != "tick" {
             return vec![];
         }
-        vec![Command::Effect(EffectSpec { name: "observe".into(), input: String::new(), deadline_ms: 5_000 }), Command::Schedule { at: ev.at + 5_000, kind: EventKind::new("tick", "") }]
+        vec![
+            Command::Effect(EffectSpec { name: "observe".into(), input: String::new(), deadline_ms: 5_000, key: "observe".into() }),
+            Command::Schedule { at: ev.at + 5_000, kind: EventKind::new("tick", "") },
+        ]
     }
 }
 
@@ -186,11 +159,18 @@ fn regs(watchers: usize) -> Vec<Registration> {
     r
 }
 
+fn shipper() -> (FakeLogs, Shipper) {
+    let logs = FakeLogs::start();
+    let s = Shipper::start(&logs.url());
+    (logs, s)
+}
+
 /// The store calls of each turn in which an outcome arrives: the driver's `complete` and the
 /// `run_until_idle` that dispatches it to every consumer.
 fn outcome_turns(store: &Store, path: &std::path::Path, watchers: usize) -> Vec<usize> {
     let clock = VirtualClock::new(0);
-    let mut x = Engine::open(Arc::new(SocketJournal::new(path)), Arc::new(clock.clone()), regs(watchers), 1).unwrap();
+    let (_logs, ship) = shipper();
+    let mut x = Engine::open(Arc::new(SocketJournal::new(path, ship)), Arc::new(clock.clone()), regs(watchers), 1).unwrap();
     x.submit("boot", "task.ticker", EventKind::new("tick", "")).unwrap();
     x.run_until_idle().unwrap();
     let mut per_turn = vec![];
@@ -208,143 +188,128 @@ fn outcome_turns(store: &Store, path: &std::path::Path, watchers: usize) -> Vec<
 }
 
 #[test]
-fn an_outcome_turn_costs_a_fixed_number_of_store_calls_however_many_handlers_consume_it() {
+fn an_outcome_turn_costs_one_store_call_however_many_handlers_consume_it() {
     for watchers in [7, 0] {
-        let (store, path, _dir) = serve(Level::Group);
+        let (store, path, _dir) = serve();
         let turns = outcome_turns(&store, &path, watchers);
         assert!(turns.len() >= 700, "a virtual hour of 5 s ticks: {} outcome turns", turns.len());
         let worst = turns.iter().copied().max().unwrap();
-        assert!(worst <= 2, "with {watchers} watchers an outcome turn made {worst} store calls (want <= 2: the turn's read, carrying the outcome, and its per-pump poison check); turns {:?}", &turns[..5]);
+        assert!(worst <= 2, "with {watchers} watchers an outcome turn made {worst} store calls (want <= 2: the turn's commit and a poison check); turns {:?}", &turns[..5]);
+        assert!(turns.iter().filter(|&&n| n == 2).count() <= 15, "the poison check is asked once per recheck window, not per turn: {:?}", &turns[..5]);
     }
 }
 
 #[test]
-fn a_clean_stop_leaves_the_cursor_and_marks_durable_and_a_crash_replays_nothing_twice() {
-    let (store, path, _dir) = serve(Level::Group);
-    outcome_turns(&store, &path, 3);
-    let (cursor, end) = (store.mem.cursor().unwrap(), store.mem.end().unwrap());
-    assert_eq!(cursor, end, "the engine's drop sent what it staged");
-
-    let (store, path, _dir) = serve(Level::Group);
+fn a_restart_finds_the_effect_a_crash_left_unanswered_and_nothing_else() {
+    let (store, path, _dir) = serve();
     let clock = VirtualClock::new(0);
-    let mut x = Engine::open(Arc::new(SocketJournal::new(&path)), Arc::new(clock.clone()), regs(3), 1).unwrap();
+    let (_logs, ship) = shipper();
+    let mut x = Engine::open(Arc::new(SocketJournal::new(&path, ship)), Arc::new(clock.clone()), regs(3), 1).unwrap();
     x.submit("boot", "task.ticker", EventKind::new("tick", "")).unwrap();
     x.run_until_idle().unwrap();
     let key = x.pending_effects()[0].key.clone();
-    x.complete(&key, Outcome::Succeeded("ok".into())).unwrap();
-    x.run_until_idle().unwrap();
     std::mem::forget(x);
-    let events = store.mem.end().unwrap();
-    let mut y = Engine::open(Arc::new(SocketJournal::new(&path)), Arc::new(clock.clone()), regs(3), 1).unwrap();
+    let turns = store.turns.load(Ordering::SeqCst);
+    let (_logs, ship) = shipper();
+    let mut y = Engine::open(Arc::new(SocketJournal::new(&path, ship)), Arc::new(clock.clone()), regs(3), 1).unwrap();
     y.run_until_idle().unwrap();
-    assert!(y.pending_effects().iter().all(|p| p.key != key), "an answered effect is not issued again");
-    assert_eq!(store.mem.end().unwrap(), events, "the replay appends nothing");
+    assert_eq!(y.pending_effects().iter().map(|p| p.key.clone()).collect::<Vec<_>>(), vec![key], "the unanswered effect is found, once");
+    assert_eq!(store.turns.load(Ordering::SeqCst), turns, "the restart commits nothing");
+    assert_eq!(store.mem.boot().unwrap().schedules.len(), 1, "and the next tick's row is waiting");
 }
 
-#[test]
-fn an_older_store_without_group_or_batch_still_gets_every_write() {
-    for level in [Level::Batch, Level::Plain] {
-        let (store, path, _dir) = serve(level);
-        let turns = outcome_turns(&store, &path, 3);
-        assert!(turns.len() >= 700);
-        assert_eq!(store.mem.cursor().unwrap(), store.mem.end().unwrap());
-        assert_eq!(store.mem.pending_schedules().unwrap().len(), 1, "every tick fired but the next");
-    }
-}
-
-/// Every conformance scenario over the socket client: crash and restart still re-issue an
-/// unresolved effect exactly once, and replays add nothing.
+/// Every conformance scenario over the socket client, with the fake VictoriaLogs as the history.
 #[test]
 fn the_conformance_suite_holds_over_the_socket_journal() {
     let dirs: Arc<Mutex<Vec<TempDir>>> = Arc::default();
     let rig = InProcessRig(move || {
-        let (_, path, dir) = serve(Level::Group);
+        let (_, path, dir) = serve();
         dirs.lock().unwrap().push(dir);
-        Arc::new(SocketJournal::new(path)) as Arc<dyn Journal>
+        Arc::new(Observed::new(&path)) as Arc<dyn Journal>
     });
     run_all(&rig as &dyn Rig);
 }
 
-fn ev(i: usize) -> Event {
-    Event { id: EventId(format!("e{i}")), stream: StreamKey("s".into()), kind: EventKind::new("t", "b"), at: i as u64, cause: None, correlation: CorrelationId(format!("c{i}")) }
+fn ev(stream: &str, body: &str) -> Event {
+    Event { id: EventId("e1".into()), stream: StreamKey(stream.into()), kind: EventKind::new("t", body), at: 7, cause: Some(EventId("c0".into())), correlation: CorrelationId("co".into()) }
 }
 
-fn row(id: &str) -> ScheduleRow {
-    ScheduleRow { id: id.into(), at: 9, stream: StreamKey("s".into()), kind: EventKind::new("tick", ""), cause: None, correlation: CorrelationId("c".into()) }
-}
-
-/// sp-4du857: the records, schedule rows and marks staged between two requests commit in one
-/// transaction, in the order they were made, and a clean stop sends what is still staged.
 #[test]
-fn records_staged_between_requests_commit_as_one_transaction_in_order() {
-    let (store, path, _dir) = serve(Level::Group);
-    let j = SocketJournal::new(&path);
-    for i in 0..10 {
-        j.record(&ev(i)).unwrap();
+fn an_append_reaches_the_listener_with_the_bead_id_from_its_stream_or_else_its_body() {
+    let (_store, path, _dir) = serve();
+    let (logs, ship) = shipper();
+    let j = SocketJournal::new(&path, ship);
+    j.record(&ev("watch.sp-neicv8.tick", "no id here"));
+    j.record(&Event { id: EventId("e2".into()), ..ev("runtime.heartbeat", "closing sp-94ptu6.2 now") });
+    j.record(&Event { id: EventId("e3".into()), ..ev("runtime.heartbeat", "nothing") });
+    let got = logs.wait_records(3, Duration::from_secs(5));
+    assert_eq!(got.len(), 3, "{got:?}");
+    let by = |id: &str| got.iter().find(|r| r["event_id"] == id).unwrap().clone();
+    assert_eq!(by("e1")["bead_id"], "sp-neicv8", "the first sp- id in the stream name");
+    assert_eq!(by("e2")["bead_id"], "sp-94ptu6.2", "else in the body");
+    assert!(by("e3")["bead_id"].is_null());
+    let r = by("e1");
+    for (k, v) in [("stream", "watch.sp-neicv8.tick"), ("kind_tag", "t"), ("cause", "c0"), ("correlation", "co"), ("body", "no id here")] {
+        assert_eq!(r[k], v, "{k}");
     }
-    j.schedule(&row("r1")).unwrap();
-    j.schedule(&row("r2")).unwrap();
-    j.mark_fired("r1").unwrap();
-    j.mark_applied("h", &EventId("e0".into())).unwrap();
-    j.set_cursor(3).unwrap();
-    assert_eq!(store.calls.load(Ordering::SeqCst), 0, "nothing is sent until a request or a flush");
-    j.flush().unwrap();
-    assert_eq!((store.calls.load(Ordering::SeqCst), store.txns.load(Ordering::SeqCst)), (1, 1), "one request, one transaction");
-    let ids: Vec<String> = store.mem.read_from(0, 100).unwrap().into_iter().map(|(_, e)| e.id.0).collect();
-    assert_eq!(ids, (0..10).map(|i| format!("e{i}")).collect::<Vec<_>>(), "journal order is record order");
-    assert_eq!(store.mem.pending_schedules().unwrap(), vec![row("r2")], "r1 was scheduled before it was fired");
-    assert!(store.mem.applied("h", &EventId("e0".into())).unwrap());
-    assert_eq!(store.mem.cursor().unwrap(), 3);
-
-    j.record(&ev(10)).unwrap();
-    let read = j.read_from(0, 100).unwrap();
-    assert_eq!(read.len(), 11, "a read sees what was recorded before it");
-    assert_eq!(store.txns.load(Ordering::SeqCst), 2, "the read carried the record in its own transaction");
-
-    j.record(&ev(11)).unwrap();
-    drop(j);
-    assert_eq!(store.mem.read_from(0, 100).unwrap().len(), 12, "dropping the journal sends what it staged");
+    assert_eq!(r["at"], 7);
+    let target = &logs.insert_targets()[0];
+    assert!(target.contains("_stream_fields=stream,kind_tag") && target.contains("_time_field=at") && target.contains("_msg_field=kind_tag"), "{target}");
 }
 
-/// A record the store would refuse (here an id past its 255 characters) is never staged: it is
-/// sent at once, so its refusal reaches the caller that made it.
-#[test]
-fn a_record_past_the_stores_widths_is_sent_alone_at_once() {
-    let (store, path, _dir) = serve(Level::Group);
-    let j = SocketJournal::new(&path);
-    j.record(&Event { id: EventId("i".repeat(256)), ..ev(0) }).unwrap();
-    assert_eq!(store.calls.load(Ordering::SeqCst), 1);
-    j.record(&ev(1)).unwrap();
-    assert_eq!(store.calls.load(Ordering::SeqCst), 1);
+struct Echo;
+impl Handler for Echo {
+    fn interests(&self) -> &[EventKindTag] {
+        &["ping"]
+    }
+    fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+        vec![Command::Emit(EventKind::new("pong", ""))]
+    }
 }
 
-/// The crash-loss window: a staged write with no request after it is sent by the flusher, not
-/// left for a request that may never come. When it is due is `Staged::due` (socket.rs's tests).
 #[test]
-fn a_staged_write_reaches_the_store_from_the_flusher_with_no_request_after_it() {
-    let (store, path, _dir) = serve(Level::Group);
-    let (tx, rx) = std::sync::mpsc::channel();
-    *store.heard.lock().unwrap() = Some(tx);
-    let j = SocketJournal::flushing(&path, std::time::Duration::from_millis(20));
-    j.record(&ev(0)).unwrap();
-    j.mark_applied("h", &EventId("e0".into())).unwrap();
-    rx.recv_timeout(std::time::Duration::from_secs(10)).expect("the flusher sent a request"); // clock-safe: a cap on the wait for the store's own signal
-    assert_eq!(store.mem.end().unwrap(), 1, "the flusher sent the record");
-    assert!(store.mem.applied("h", &EventId("e0".into())).unwrap(), "in the same transaction");
-    assert_eq!(store.txns.load(Ordering::SeqCst), 1);
+fn an_event_is_shipped_before_the_turn_that_made_it_commits() {
+    let (store, path, _dir) = serve();
+    let (logs, ship) = shipper();
+    let mut x = Engine::open(Arc::new(SocketJournal::new(&path, ship)), Arc::new(VirtualClock::new(5)), vec![Registration::new("echo", Echo)], 1).unwrap();
+    x.submit("p1", "s", EventKind::new("ping", "")).unwrap();
+    x.run_until_idle().unwrap();
+    assert_eq!(store.turns.load(Ordering::SeqCst), 1);
+    let shipped: Vec<String> = logs.wait_records(2, Duration::from_secs(5)).iter().map(|r| r["kind_tag"].as_str().unwrap().to_string()).collect();
+    assert_eq!(shipped, ["ping", "pong"]);
+}
+
+#[test]
+fn a_full_shipping_queue_is_counted_on_the_status_and_the_sink_and_never_blocks_the_engine() {
+    let (_store, path, _dir) = serve();
+    let hung = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let ship = Shipper::with_capacity(&format!("http://{}", hung.local_addr().unwrap()), 2);
+    let sink = MemSink::new();
+    let mut x = Engine::open(Arc::new(SocketJournal::new(&path, ship)), Arc::new(VirtualClock::new(5)), vec![Registration::new("echo", Echo)], 1).unwrap().with_sink(sink.clone());
+    let began = Instant::now();
+    for i in 0..60 {
+        x.submit(&format!("p{i}"), "s", EventKind::new("ping", "")).unwrap();
+    }
+    x.run_until_idle().unwrap();
+    assert!(began.elapsed() < Duration::from_secs(2), "the engine ran at the speed of its own store, not the shipper's: {:?}", began.elapsed());
+    let status = x.status();
+    assert!(status.ship.is_some_and(|s| s.dropped >= 50 && s.failed == 0), "{:?}", status.ship);
+    let v = serde_json::to_value(&status).unwrap();
+    assert!(v["ship.dropped"].as_u64().unwrap() >= 50 && v["ship.failed"] == 0, "{v}");
+    assert!(sink.records().iter().any(|r| matches!(r.get("ship.dropped"), Some(Value::Int(n)) if *n > 0)), "the wide events carry the count");
 }
 
 /// The scheduler's turns over the socket: an outcome turn commits once, a tick turn (its schedule
-/// fired, an effect asked for, the next tick scheduled) twice, where each write was its own
-/// transaction before.
+/// fired, an effect asked for, the next tick scheduled) once.
 #[test]
-fn an_engine_turn_commits_its_writes_in_at_most_one_transaction_per_read() {
-    let (store, path, _dir) = serve(Level::Group);
+fn an_engine_turn_commits_in_one_transaction() {
+    let (store, path, _dir) = serve();
     let clock = VirtualClock::new(0);
-    let mut x = Engine::open(Arc::new(SocketJournal::new(&path)), Arc::new(clock.clone()), regs(3), 1).unwrap();
+    let (_logs, ship) = shipper();
+    let mut x = Engine::open(Arc::new(SocketJournal::new(&path, ship)), Arc::new(clock.clone()), regs(3), 1).unwrap();
     x.submit("boot", "task.ticker", EventKind::new("tick", "")).unwrap();
     x.run_until_idle().unwrap();
-    let txns = || store.txns.load(Ordering::SeqCst);
+    let txns = || store.turns.load(Ordering::SeqCst);
     let (mut outcome, mut tick) = (vec![], vec![]);
     while clock.now_ms() < 600_000 {
         for p in x.pending_effects() {
@@ -360,7 +325,5 @@ fn an_engine_turn_commits_its_writes_in_at_most_one_transaction_per_read() {
     }
     assert!(outcome.len() >= 100 && tick.len() >= 100);
     assert!(outcome.iter().all(|&n| n <= 1), "outcome turns: {:?}", &outcome[..10]);
-    assert!(tick.iter().all(|&n| n <= 2), "tick turns: {:?}", &tick[..10]);
-    drop(x);
-    assert_eq!(store.mem.cursor().unwrap(), store.mem.end().unwrap(), "a clean stop sent the last turn's marks and cursor");
+    assert!(tick.iter().all(|&n| n <= 1), "tick turns: {:?}", &tick[..10]);
 }

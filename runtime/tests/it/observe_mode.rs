@@ -17,8 +17,8 @@ impl Handler for Task {
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         if ev.kind.tag == "start" {
             vec![
-                Command::Effect(EffectSpec { name: "write".into(), input: ev.kind.body.clone(), deadline_ms: 1000 }),
-                Command::Probe(EffectSpec { name: "read".into(), input: String::new(), deadline_ms: 1000 }),
+                Command::Effect(EffectSpec { name: "write".into(), input: ev.kind.body.clone(), deadline_ms: 1000, key: "write".into() }),
+                Command::Probe(EffectSpec { name: "read".into(), input: String::new(), deadline_ms: 1000, key: "read".into() }),
             ]
         } else {
             vec![Command::Emit(EventKind::new("observed", &ev.kind.body))]

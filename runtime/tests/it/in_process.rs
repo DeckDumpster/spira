@@ -18,12 +18,16 @@ mod conformance {
         ($($name:ident),*) => { $( #[test] fn $name() { super_::$name(&rig()); } )* };
     }
     s!(
-        redelivery_of_any_event,
+        a_duplicate_submit_dispatches_once,
+        a_failed_commit_is_sent_again_and_the_turn_lands_once,
+        a_restart_finds_an_unanswered_effect_and_does_not_request_it_again,
+        determinism_under_one_seed,
+        a_fired_schedule_row_is_not_fired_by_the_next_process,
         out_of_order_effect_outcomes,
         effect_deadline_times_out,
         handler_panic_quarantines_its_stream_only,
         schedule_rows_survive_restart_and_fire_once,
-        observe_shadows_writes_runs_probes_and_never_replays_them,
+        observe_shadows_writes_and_runs_probes,
         halt_holds_writes_runs_probes_and_resume_releases_once_in_order,
         a_handlers_writes_are_seen_before_its_streams_next_event,
         an_outcome_is_offered_only_to_the_task_that_asked,
@@ -57,11 +61,11 @@ mod ids {
             e.run_until_idle().unwrap();
             clock.advance(60_000);
         }
-        let events = journal.read_from(0, 1000).unwrap();
-        let beats = events.iter().filter(|(_, ev)| ev.kind.tag == "heartbeat").count();
+        let events = journal.log();
+        let beats = events.iter().filter(|ev| ev.kind.tag == "heartbeat").count();
         assert!(beats >= 40, "the beats keep firing: {beats}");
-        assert!(events.iter().all(|(_, ev)| ev.id.0.chars().count() <= EVENT_ID_MAX && ev.cause.as_ref().is_none_or(|c| c.0.chars().count() <= EVENT_ID_MAX)));
-        assert!(journal.pending_schedules().unwrap().iter().all(|r| r.id.chars().count() <= EVENT_ID_MAX));
+        assert!(events.iter().all(|ev| ev.id.0.chars().count() <= EVENT_ID_MAX && ev.cause.as_ref().is_none_or(|c| c.0.chars().count() <= EVENT_ID_MAX)));
+        assert!(journal.boot().unwrap().schedules.iter().all(|r| r.id.chars().count() <= EVENT_ID_MAX));
     }
 
     #[test]
@@ -94,51 +98,15 @@ mod ids {
             let sink = MemSink::new();
             let mut e = Engine::open(faulty.clone(), Arc::new(VirtualClock::new(1)), vec![Registration::new("echo", Echo)], 0).unwrap().with_sink(sink.clone());
             e.submit("e1", "s", EventKind::new("echo", "")).unwrap();
-            if refuse { faulty.refuse_next("append") } else { faulty.fail_next("append") }
+            if refuse { faulty.refuse_next("commit") } else { faulty.fail_next("commit") }
             (e.run_until_idle(), inner, sink)
         };
         let (r, inner, sink) = run(true);
         r.unwrap();
         assert!(inner.poisoned(&StreamKey("s".into())).unwrap().is_some(), "the stream is quarantined");
-        assert_eq!(inner.cursor().unwrap(), 1, "the cursor advanced past the refused event");
-        assert!(sink.records().iter().any(|r| r.get("outcome") == Some(&Value::from("refused"))), "the dispatch wide event says refused");
+        assert!(sink.records().iter().any(|r| r.get("unit") == Some(&Value::from("quarantine"))), "the quarantine wide event says so");
         let (r, inner, _) = run(false);
         assert!(r.is_err() && inner.poisoned(&StreamKey("s".into())).unwrap().is_none(), "a fault propagates and quarantines nothing");
-    }
-}
-
-mod cursor {
-    use runtime::ports::VirtualClock;
-    use runtime::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
-
-    struct Count(Arc<AtomicUsize>);
-    impl Handler for Count {
-        fn interests(&self) -> &[EventKindTag] {
-            &["ping"]
-        }
-        fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
-            self.0.fetch_add(1, Ordering::SeqCst);
-            vec![]
-        }
-    }
-
-    #[test]
-    fn a_cursor_write_lost_to_a_crash_replays_without_running_a_handler_twice() {
-        let mem = MemJournal::new();
-        let faulty = FaultyJournal::new(mem.clone());
-        let runs = Arc::new(AtomicUsize::new(0));
-        let open = |j: Arc<dyn Journal>| Engine::open(j, Arc::new(VirtualClock::new(1)), vec![Registration::new("count", Count(runs.clone()))], 0).unwrap();
-        let mut e = open(faulty.clone());
-        e.submit("p1", "s", EventKind::new("ping", "")).unwrap();
-        faulty.fail_next("set_cursor");
-        assert!(e.run_until_idle().is_err());
-        assert_eq!(mem.cursor().unwrap(), 0);
-        let mut again = open(mem.clone());
-        again.run_until_idle().unwrap();
-        assert_eq!(runs.load(Ordering::SeqCst), 1);
-        assert_eq!(mem.cursor().unwrap(), 1);
     }
 }
 

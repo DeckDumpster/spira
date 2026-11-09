@@ -38,7 +38,7 @@ impl Handler for Heartbeat {
         ctx.event().set("heartbeat.advanced", advanced);
         let mut cmds = vec![];
         if advanced {
-            cmds.push(Command::Probe(EffectSpec { name: PING.into(), input: foreign.to_string(), deadline_ms: self.ping_deadline_ms }));
+            cmds.push(Command::Probe(EffectSpec { name: PING.into(), input: foreign.to_string(), deadline_ms: self.ping_deadline_ms, key: PING.into() }));
         }
         cmds.push(Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(HEARTBEAT, &foreign.max(seen).to_string()) });
         cmds

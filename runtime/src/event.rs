@@ -15,7 +15,7 @@ pub struct StreamKey(pub String);
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CorrelationId(pub String);
 
-/// The widest id the journal stores (`runtime_event.event_id`).
+/// The widest id the store keeps (`runtime_effect.request_id`).
 pub const EVENT_ID_MAX: usize = 255;
 
 /// One short of the column, so no derived id is exactly `EVENT_ID_MAX` chars: that width
@@ -36,14 +36,6 @@ pub fn derive_id(plain: String) -> String {
     }
     let head: String = plain.chars().take(KEPT).collect();
     format!("{head}#{:016x}", fnv1a(&plain))
-}
-
-/// Whether `id` is one a handler wrote while handling `parent`: an id derived from the parent's
-/// (`{parent}/{handler}/{i}`, kept to its first `KEPT` chars when long) and not its outcome's.
-pub(crate) fn written_by_handler_of(parent: &EventId, id: &EventId) -> bool {
-    let p = &parent.0;
-    let head = if p.chars().count() < KEPT { format!("{p}/") } else { p.chars().take(KEPT).collect() };
-    id.0.starts_with(&head) && id.0 != derive_id(format!("{p}/outcome"))
 }
 
 pub type EventKindTag = &'static str;
@@ -78,8 +70,7 @@ impl EventKind {
     }
 }
 
-/// An append-only fact owned by one stream. `at` is event time in milliseconds: a handler
-/// that reads it on replay reads the same value.
+/// An append-only fact owned by one stream. `at` is event time in milliseconds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     pub id: EventId,
@@ -95,6 +86,9 @@ pub struct EffectSpec {
     pub name: String,
     pub input: String,
     pub deadline_ms: u64,
+    /// The act's idempotency key within its task (the contract's Act table names it): one
+    /// request per `(task, key)` is in flight at a time.
+    pub key: String,
 }
 
 /// The body of an [`EMIT_SHADOWED`] event: where the emit would have gone, and what.
@@ -104,15 +98,16 @@ pub struct ShadowedEmit {
     pub kind: EventKind,
 }
 
-/// `Emit`, `EmitTo`, `Effect` and `Schedule` are journaled and survive a restart. `Note`, `Probe` and
-/// `Timer` live in the engine's memory only: a restart forgets them, so they are for work the
-/// next poll repeats anyway, and a handler that must not lose a fact emits it.
+/// `Emit` on a task's own stream is carried across a restart, `Effect` and `Schedule` are kept
+/// until answered or fired; every other event lives in the engine's memory only, shipped to the
+/// event history and forgotten by a restart. `Note`, `Probe` and `Timer` are not even shipped, so
+/// they are for work the next poll repeats anyway, and a handler that must not lose a fact emits it.
 pub enum Command {
     Emit(EventKind),
     /// An event on another stream: how one task wakes another. Its id is the causing event's,
-    /// the handler, the command's index and the target stream, so a replayed handler appends
-    /// nothing twice. A halt does not hold it (it is not an effect); under `Observe` it is
-    /// journaled as [`EMIT_SHADOWED`] on the handler's own stream and never delivered.
+    /// the handler, the command's index and the target stream. A halt does not hold it (it is not
+    /// an effect); under `Observe` it is recorded as [`EMIT_SHADOWED`] on the handler's own
+    /// stream and never delivered.
     EmitTo { stream: StreamKey, kind: EventKind },
     Effect(EffectSpec),
     Schedule { at: u64, kind: EventKind },
@@ -123,7 +118,7 @@ pub enum Command {
 }
 
 /// What a handler may read besides the event: time and randomness, both pinned to the
-/// (event, handler) pair so a redelivery or a replay sees the same values.
+/// (event, handler) pair so a redelivery sees the same values.
 pub struct Ctx {
     now: u64,
     offset: u64,
@@ -140,7 +135,7 @@ impl Ctx {
         Ctx { now, offset, rng: std::cell::RefCell::new(SeededRng::new(seed)), wide }
     }
 
-    /// The journal offset of the event being handled.
+    /// The place of the event being handled in this process's dispatch order.
     pub fn offset(&self) -> u64 {
         self.offset
     }
@@ -163,7 +158,7 @@ impl Ctx {
     }
 }
 
-/// Every event the handlers have seen, per stream, in journal order — up to and including
+/// Every event the handlers have seen, per stream, in dispatch order — up to and including
 /// the one being handled.
 #[derive(Default, Clone, Debug)]
 pub struct Projection {

@@ -25,11 +25,11 @@ impl Handler for Asks {
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         if ev.kind.tag == "go" {
             let (name, ms) = ev.kind.body.split_once(':').unwrap();
-            return vec![Command::Effect(EffectSpec { name: name.into(), input: name.into(), deadline_ms: ms.parse().unwrap() })];
+            return vec![Command::Effect(EffectSpec { name: name.into(), input: name.into(), deadline_ms: ms.parse().unwrap(), key: name.into() })];
         }
         if ev.kind.tag == "fan" {
             let (n, name) = ev.kind.body.split_once(':').unwrap();
-            return (0..n.parse::<usize>().unwrap()).map(|i| Command::Effect(EffectSpec { name: name.into(), input: i.to_string(), deadline_ms: 30_000 })).collect();
+            return (0..n.parse::<usize>().unwrap()).map(|i| Command::Effect(EffectSpec { name: name.into(), input: i.to_string(), deadline_ms: 30_000, key: format!("{name}/{i}") })).collect();
         }
         let name = ev.stream.0.trim_start_matches("s-");
         vec![Command::Emit(EventKind::new("outcome", &format!("{}:{name}", ev.kind.tag)))]
