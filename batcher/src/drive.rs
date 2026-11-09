@@ -1363,6 +1363,18 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_mender_pass_that_returns_the_adder_does_not_verify_the_suite_it_adds_on_the_tree_without_it() {
+        use crate::mender::{Left, Next};
+        let mut f = Fake::new(|s, tree| s == "test-03.sh" && tree.contains("m1") && tree.contains("m3"));
+        f.added_by = adds("test-03.sh", &["m3"]);
+        let mut ops = Ops::default();
+        ops.menders = vec![Next::Pass { members: vec![member("m1"), member("m2")], left: vec![Left { id: "m3".into(), why: "returned".into() }], retry: false }];
+        ops.adds = adds("test-03.sh", &["m3"]);
+        let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 8, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2), "{end:?}");
+    }
+
+    #[test]
     fn a_page_from_the_menders_stops_the_round() {
         use crate::mender::Next;
         let mut f = Fake::new(|s, tree| s == "test-01.sh" && tree.contains("m1") && tree.contains("m3"));
