@@ -965,6 +965,23 @@ mod tests {
     }
 
     #[test]
+    fn every_limit_key_is_a_registered_config_key() {
+        let conf_d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+        for key in LIMIT_KEYS {
+            assert!(conf_d.join(key).is_file(), "{key} is not registered in spira/conf.d");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_event_qualified_by_its_from_state_takes_only_the_moves_out_of_that_state() {
+        let f = floor(script(batch_graph(), &quiet(), json!([]))).await.unwrap();
+        let land = by_id(&f, "stations", "bead.land");
+        assert_eq!(ids(&land["inputs"]), ["bead.IN_DELIVERY", "batch.GREEN"]);
+        assert_eq!(ids(&land["outputs"]), ["bead.LANDED", "batch.LANDED"]);
+        assert_eq!(ids(&by_id(&f, "stations", "batch.deploy")["inputs"]), ["batch.LANDING", "batch.DEPLOYING"]);
+    }
+
+    #[test]
     fn every_component_a_station_names_exists_and_every_limit_key_is_read() {
         let ids: BTreeSet<&str> = COMPONENTS.iter().map(|c| c.id).collect();
         for st in STATIONS {

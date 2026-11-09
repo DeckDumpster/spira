@@ -205,12 +205,15 @@ impl Loom {
 
     /// The factory floor: the held build, or a fresh one. A failed build is not held.
     pub async fn factory(&self) -> Result<Value, String> {
+        self.factory_via(|| spira_config::lc_call::LcClient::for_bin(&self.cfg.lc)).await
+    }
+
+    async fn factory_via(&self, client: impl FnOnce() -> Result<spira_config::lc_call::LcClient, String>) -> Result<Value, String> {
         let mut held = self.factory_cell.lock().await;
         if let Some((_, v)) = held.as_ref().filter(|(at, _)| at.elapsed() < self.cfg.cache) {
             return Ok(v.clone());
         }
-        let client = spira_config::lc_call::LcClient::for_bin(&self.cfg.lc)?;
-        let mut reads = factory::gather(client, self.cfg.budget, &self.cfg.run).await;
+        let mut reads = factory::gather(client()?, self.cfg.budget, &self.cfg.run).await;
         reads.limits = self.cfg.limits.clone();
         let floor = factory::build(&reads, now_s())?;
         *held = Some((std::time::Instant::now(), floor.clone()));
@@ -937,6 +940,63 @@ mod in_process_tests {
         assert_eq!(lc_answer_json(c.clone(), &["ops-gantt"], Duration::from_secs(2)).await.unwrap(), json!({"edges": []}));
         let e = lc_answer_json(c, &["show-ask", "sp-x"], Duration::from_secs(2)).await.unwrap_err();
         assert!(e.contains("exited 3") && e.contains("no such ask"), "{e}");
+    }
+
+    fn test_config() -> Config {
+        Config {
+            lc: "spira-lc".into(),
+            path: String::new(),
+            budget: Duration::from_secs(2),
+            cache: Duration::from_secs(60),
+            addr: String::new(),
+            run: "/nonexistent-run".into(),
+            instance: "test".into(),
+            systemctl: "systemctl".into(),
+            metrics_endpoint: None,
+            broker: String::new(),
+            desired_dir: String::new(),
+            units_install: String::new(),
+            queue: String::new(),
+            limits: std::collections::BTreeMap::from([("SPIRA_COMPILE_PAR".to_string(), "9".to_string())]),
+        }
+    }
+
+    struct Counted(std::sync::atomic::AtomicUsize, Vec<(&'static str, i32, String)>);
+
+    impl Transport for Counted {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            let key = argv.join(" ");
+            let edge = |from: &str, event: &str, to: &str| json!([{"from": from, "event": event, "to": to}]).to_string();
+            let (code, out) = match key.as_str() {
+                "ops-graph --machine bead" => (0, edge("READY", "Claim", "WORKING")),
+                "ops-graph --machine batch" => (0, edge("OPEN", "Abandon", "ABANDONED")),
+                "ops-graph --machine ask" => (0, edge("OPEN", "Answer", "ANSWERED")),
+                "ops-graph --machine mending" => (0, edge("WAITING", "Pickup", "MENDING")),
+                "ops-gantt --machine bead" | "ops-gantt --machine batch" => (0, json!({"now": 1, "events": []}).to_string()),
+                "list --live" | "list --batches" | "list-asks" | "mending list --live" => (0, "[]".to_string()),
+                other => return Err(format!("unscripted {other}")),
+            };
+            let (code, out) = self.1.iter().find(|(k, _, _)| *k == key).map(|(_, c, o)| (*c, o.clone())).unwrap_or((code, out));
+            Ok(Reply { code, out, err: String::new() })
+        }
+    }
+
+    #[tokio::test]
+    async fn the_factory_is_held_for_the_cache_and_a_failed_build_is_not_held() {
+        let loom = Loom::new(test_config());
+        let refused = Arc::new(Counted(Default::default(), vec![("ops-graph --machine ask", 3, "refused".into())]));
+        let e = loom.factory_via(|| Ok(LcClient::over(refused.clone(), true))).await.unwrap_err();
+        assert!(e.contains("ops-graph --machine ask"), "{e}");
+
+        let healthy = Arc::new(Counted(Default::default(), vec![]));
+        let first = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap();
+        let reads = healthy.0.load(Ordering::SeqCst);
+        assert!(reads >= 10, "the refusal left nothing held, so the healthy build read afresh: {reads}");
+        assert_eq!(first["components"].as_array().unwrap().iter().find(|c| c["id"] == "compile").unwrap()["queues"][0]["config"], 9, "limits come from the config");
+        let second = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap();
+        assert_eq!(healthy.0.load(Ordering::SeqCst), reads, "the second viewer is served from the held build");
+        assert_eq!(first, second);
     }
 
     #[test]
