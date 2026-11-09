@@ -430,11 +430,15 @@ mod tests {
     fn a_full_queue_drops_and_counts_without_blocking() {
         let hung = TcpListener::bind("127.0.0.1:0").unwrap();
         let s = Shipper::with_capacity(&format!("http://{}", hung.local_addr().unwrap()), 2);
-        let began = Instant::now();
-        for i in 0..50 {
-            s.ship(&json!({"i": i}));
-        }
-        assert!(began.elapsed() < Duration::from_secs(1), "{:?}", began.elapsed());
+        let (done, finished) = std::sync::mpsc::channel();
+        let shipping = s.clone();
+        std::thread::spawn(move || {
+            for i in 0..50 {
+                shipping.ship(&json!({"i": i}));
+            }
+            let _ = done.send(());
+        });
+        finished.recv_timeout(Duration::from_secs(5)).expect("fifty ships returned while the listener never answered"); // clock-safe: a cap on the wait for the shipping thread's own signal
         assert!(s.counts().dropped() >= 40, "dropped {}", s.counts().dropped());
     }
 
@@ -446,13 +450,17 @@ mod tests {
         let url = format!("http://{}", l.local_addr().unwrap());
         drop(l);
         let s = Shipper::start(&url);
+        let failed_at_least = |n: u64| {
+            let end = Instant::now() + Duration::from_secs(5); // clock-safe: a cap on the wait for the shipper's own count
+            while s.counts().failed() < n && Instant::now() < end { // clock-safe: same cap
+                std::thread::yield_now();
+            }
+            s.counts().failed()
+        };
         s.ship(&json!({"i": 1}));
-        let end = Instant::now() + Duration::from_secs(3);
-        while s.counts().failed() == 0 && Instant::now() < end {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        std::thread::sleep(Duration::from_millis(200));
-        assert_eq!(s.counts().failed(), 1);
+        assert_eq!(failed_at_least(1), 1);
+        s.ship(&json!({"i": 2}));
+        assert_eq!(failed_at_least(2), 2, "one failure per POST: the first was not sent again before the second");
         assert_eq!(s.counts().dropped(), 0);
     }
 

@@ -1054,8 +1054,11 @@ fn a_refused_transition_and_a_retried_request_ship_nothing() {
     claimed("claim-1");
     claimed("claim-1");
     let _ = s.apply("sp-a", &ev(BeadState::Ready, 0, BeadEventKind::HolderDead, "reaper", 101), &req("refused-1"));
-    std::thread::sleep(Duration::from_millis(300));
-    let claims = logs.records().into_iter().filter(|r| r["event"] == "Claim").count();
+    created(&s, "sp-b");
+    s.claim("sp-b", &ev(BeadState::Ready, 0, claim("dwarf-2", 102), "dwarf-2", 102), &req("claim-b")).unwrap();
+    let both = logs.wait_records(2, Duration::from_secs(5));
+    assert!(both.iter().any(|r| r["bead_id"] == "sp-b"), "the shipper is first in, first out: once sp-b's claim is here, everything before it is: {both:?}");
+    let claims = logs.records().into_iter().filter(|r| r["event"] == "Claim" && r["bead_id"] == "sp-a").count();
     assert_eq!(claims, 1, "the retried request shipped once");
     assert!(logs.records().iter().all(|r| r["event"] != "HolderDead"), "a refused event is no transition");
 }
