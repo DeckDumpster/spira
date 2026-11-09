@@ -2981,6 +2981,7 @@ name = "work"
 version = "1.0.0"
 dependencies = [
  "bead",
+ "forge",
  "gate",
  "habits",
  "rule",

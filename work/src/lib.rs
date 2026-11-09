@@ -4,6 +4,7 @@
 //! so every rule below is covered without a fixture.
 
 pub mod help;
+pub mod image;
 pub mod review;
 pub mod trusted;
 use help::{refusal, R};
