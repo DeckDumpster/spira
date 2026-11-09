@@ -184,7 +184,10 @@ struct Fake {
     never_lands: bool,
     history_gap: bool,
     seed_no_rows: bool,
-    lc_create_fails: bool,
+    /// How many `spira-lc create-bead` asks are refused before the store answers.
+    lc_create_refusals: Cell<u32>,
+    /// `list-unit-files spira-*` matches nothing: the manager exits 1 with nothing on stdout.
+    no_unit_files: bool,
     history_late: Cell<u32>,
     rows: RefCell<Vec<String>>,
     no_cutover_script: bool,
@@ -216,7 +219,8 @@ impl Fake {
             never_lands: false,
             history_gap: false,
             seed_no_rows: false,
-            lc_create_fails: false,
+            lc_create_refusals: Cell::new(0),
+            no_unit_files: false,
             history_late: Cell::new(0),
             rows: RefCell::new(Vec::new()),
             no_cutover_script: false,
@@ -264,6 +268,7 @@ impl Fake {
             ("systemctl", ["--user", "list-unit-files", "spira-runtime*-watch*.service", ..]) => ok("[]"),
             ("systemctl", ["--user", "list-unit-files", "spira-runtime*.service", ..]) => ok(r#"[{"unit_file":"spira-runtime-t.service","state":"enabled"}]"#),
             ("systemctl", ["--user", "list-unit-files", "spira-*.service", ..]) => ok(r#"[{"unit_file":"spira-archive-t.service","state":"static"},{"unit_file":"spira-loom-t.service","state":"enabled"}]"#),
+            ("systemctl", ["--user", "list-unit-files", "spira-*", ..]) if self.no_unit_files => Out { rc: 1, text: String::new(), out: String::new() },
             ("systemctl", ["--user", "list-unit-files", "spira-*", ..]) => ok(r#"[{"unit_file":"spira-a.service","state":"enabled"},{"unit_file":"spira-b.timer","state":"enabled"}]"#),
             ("systemctl", ["--user", "show", "-p", "Type", "--value", u]) => ok(if u.contains("archive") { "oneshot\n" } else { "simple\n" }),
             ("systemctl", ["--user", "list-units", "--state=active", ..]) => ok("spira-sentinel-t.timer loaded active waiting\n"),
@@ -311,7 +316,8 @@ impl Fake {
             ("spira-config", ["repo", "names"]) => ok(&self.land_modes.iter().map(|(n, _)| format!("{n}\n")).collect::<String>()),
             ("spira-config", ["repo", "land", n]) => ok(&format!("{}\n", self.land_modes.iter().find(|(x, _)| x == n).map_or("", |(_, m)| m))),
             ("spira-lc", ["create-bead", id]) => {
-                if self.lc_create_fails {
+                if self.lc_create_refusals.get() > 0 {
+                    self.lc_create_refusals.set(self.lc_create_refusals.get() - 1);
                     return Out { rc: 2, text: "cannot tell: connecting to the socket: Connection refused\n".into(), out: String::new() };
                 }
                 self.rows.borrow_mut().push(id.to_string());
@@ -575,4 +581,37 @@ fn a_predecessor_with_the_sentinel_unit_is_kicked_as_before() {
     let log = lines(&f);
     assert!(log.iter().any(|l| l == "systemctl --user start spira-sentinel-t.service"), "{log:?}");
     assert!(!log.iter().any(|l| l.contains("scheduler-status")), "{log:?}");
+}
+
+#[test]
+fn a_bead_whose_lifecycle_row_is_late_is_still_filed() {
+    let b = Box_::new();
+    let f = b.fake();
+    f.lc_create_refusals.set(3);
+    let r = Run::new(&f, b.opts(&[]));
+    let labels = phases::Labels { plan: "plan".into(), scope: "scope".into() };
+    let (id, out) = r.file_probe("t", "d", &labels);
+    assert!(id.is_some(), "{out}");
+    assert_eq!(f.rows.borrow().len(), 1);
+}
+
+#[test]
+fn a_bead_whose_lifecycle_row_never_comes_is_not_filed_and_says_why() {
+    let b = Box_::new();
+    let f = b.fake();
+    f.lc_create_refusals.set(u32::MAX);
+    let r = Run::new(&f, b.opts(&[]));
+    let labels = phases::Labels { plan: "plan".into(), scope: "scope".into() };
+    let (id, out) = r.file_probe("t", "d", &labels);
+    assert!(id.is_none());
+    assert!(out.contains("Connection refused"), "{out}");
+}
+
+#[test]
+fn no_matching_unit_files_is_an_empty_list_not_an_error() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.no_unit_files = true;
+    let r = Run::new(&f, b.opts(&[]));
+    assert_eq!(r.unit_files("spira-*"), Ok(vec![]));
 }
