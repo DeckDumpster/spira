@@ -930,7 +930,7 @@ impl<'w, W: World> Trial<'w, W> {
         }
         if parse::missing_built_binary(&out) || !w.target_intact(&tree) {
             return v(NOVERDICT, "target-vanished", format!(
-                "gate: {name}'s build output was removed after this gate built it — the host's sweep, not a fault in {br}.\n{}",
+                "gate: {name}'s a binary its build produced is missing at test time — the harness's target, not a fault in {br}.\n{}",
                 parse::tail_bytes(&out, 4000)));
         }
         if parse::cache_transport_failure(&out) {
@@ -1228,7 +1228,7 @@ impl<'w, W: World> Trial<'w, W> {
         }
         if parse::missing_built_binary(&base_out) || !w.target_intact(&tree) {
             return v(NOVERDICT, "target-vanished", format!(
-                "gate: {name}'s build output was removed after this gate built it — the host's sweep; it judged neither {base} nor {br}.\n{}",
+                "gate: {name}'s a binary its build produced is missing at test time — the harness's target; it judged neither {base} nor {br}.\n{}",
                 parse::tail_bytes(&base_out, 4000)));
         }
         if parse::cache_transport_failure(&base_out) {

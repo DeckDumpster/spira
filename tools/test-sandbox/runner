@@ -94,9 +94,13 @@ a=(--die-with-parent --new-session --unshare-user --unshare-pid --unshare-ipc --
    --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run)
 # A binary outside the workspace and target (rustdoc's doctests, under TMPDIR) is bound in
 # read-only: before the home tmpfs when it holds a home, after the shadows when under one.
+# A harness in deps/ or examples/ execs its package's binaries from the profile directory above it
+# (CARGO_BIN_EXE_*), so that directory is what comes in, not deps/ alone.
+bindroot="$bindir"
+case "${bindir##*/}" in deps | examples) bindroot="${bindir%/*}" ;; esac
 late_bin=""
 if ! under "$bindir/" "$workspace" && ! { [ -n "$target" ] && under "$bindir" "$target"; }; then
-    if under_tree "$bindir"; then late_bin=1; else a+=(--ro-bind "$bindir" "$bindir"); fi
+    if under_tree "$bindir"; then late_bin=1; else a+=(--ro-bind "$bindroot" "$bindroot"); fi
 fi
 # Each shadow goes on before what is bound back beneath it.
 shadows=()
@@ -119,7 +123,7 @@ if [ -f "$workspace/.git" ]; then
 fi
 a+=(--bind "$workspace" "$workspace")
 if [ -n "$target" ] && ! under "$target" "$workspace"; then a+=(--bind "$target" "$target"); fi
-if [ -n "$late_bin" ]; then a+=(--ro-bind "$bindir" "$bindir"); fi
+if [ -n "$late_bin" ]; then a+=(--ro-bind "$bindroot" "$bindroot"); fi
 a+=(--chdir "$PWD")
 
 # testenv's system git identity (GIT_IDENTITY), lowest priority, on the sandbox's /run.
