@@ -350,6 +350,39 @@ fn sp_8nlvra_a_landing_past_the_paused_base_lifts_the_pause_and_cuts() {
     assert_eq!((rc.state, rc.paused_on.clone(), rc.skip_why.clone()), (State::Assembling, None, None));
 }
 
+/// A round that landed between the pause being written and the batcher first seeing it still
+/// lifts it: the base is recorded when the pause is written, not when it is first seen.
+#[test]
+fn sp_56d3l3_a_pause_remembers_the_base_its_red_round_was_cut_on_so_a_landing_lifts_it() {
+    let mut carry = driving(State::Attributing, "spira.a2");
+    let (after, acts) = on_ran_with(&carry, &ran_of("spira.a2"), &runtime::units::RanOutput::captured(batcher_cut::attribute::Attribution::Blocked("unattributed red test-x.sh".into()).line().as_bytes(), b""), NOW).expect("its own leg");
+    assert!(acts.iter().any(|a| a.effect == PAUSE), "a blocked attribution pauses: {acts:?}");
+    assert_eq!(after.repos["spira"].paused_on.as_deref(), Some("b1"));
+    carry = after;
+    let (carry, acts) = decide(&carry, &paused("b2"));
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert_eq!(names, [PAUSE, FETCH, ASSEMBLE], "{acts:?}");
+    assert_eq!(carry.repos["spira"].paused_on, None);
+}
+
+fn ran_of(leg: &str) -> runtime::units::UnitRan {
+    runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, leg).unwrap(), exit: runtime::units::Exit::Code(0), duration_ms: 1 }
+}
+
+/// A round the attribution emptied by ejecting every member holds no red: it is abandoned and
+/// writes no pause.
+#[test]
+fn sp_56d3l3_a_round_emptied_by_its_own_ejects_is_abandoned_without_a_pause() {
+    use batcher_cut::attribute::Attribution;
+    for outcome in [Attribution::Emptied("unit-tests red ejected every member".into()), Attribution::Land { members: vec![], attribution_secs: None, mended: false }] {
+        let out = runtime::units::RanOutput::captured(outcome.line().as_bytes(), b"");
+        let (carry, acts) = on_ran_with(&driving(State::Attributing, "spira.a2"), &ran_of("spira.a2"), &out, NOW).expect("its own leg");
+        let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+        assert!(names.contains(&ABANDON) && !names.contains(&PAUSE), "{outcome:?}: {names:?}");
+        assert_eq!(carry.repos.get("spira").and_then(|r| r.paused_on.clone()), None);
+    }
+}
+
 /// An operator's deliberate hold (`hold:`) is never lifted by a landing.
 #[test]
 fn sp_8nlvra_a_deliberate_hold_survives_a_landing() {

@@ -954,6 +954,10 @@ impl Machine<'_> {
     fn finish(&mut self, outcome: pace::Outcome, detail: &str) {
         let (st, fx) = pace::advance(&self.rc.pace.core(), &outcome, self.repo, self.now_ms / 1000, detail);
         self.rc.pace = Pace::of(&st, &self.rc.pace.refusals);
+        if fx.pause {
+            let on = if self.rc.landing_base.is_empty() { &self.rc.base } else { &self.rc.landing_base };
+            self.rc.paused_on = Some(on.clone()).filter(|b| !b.is_empty());
+        }
         if fx.pause || fx.stop {
             let leg = Leg { why: detail.to_string(), key: format!("{}:rounds", self.repo), bead: if fx.stop { "stop".into() } else { "pause".into() }, ..Leg::on(self.repo) };
             self.acts.push(leg.act(PAUSE));
@@ -977,6 +981,12 @@ impl Machine<'_> {
             refused: rc.refused,
             ..RepoCarry::default()
         };
+    }
+
+    /// A round whose every member was ejected holds no red: it is abandoned and the pace is not told.
+    fn emptied(&mut self, why: &str) {
+        self.abandon_naming(why, Vec::new());
+        self.finish(pace::Outcome::Quiet, "");
     }
 
     fn red(&mut self, why: &str) {
@@ -1238,7 +1248,11 @@ impl Machine<'_> {
                 }
                 Some(Attribution::Land { .. }) => {
                     self.go(Trigger::RerunBlocked);
-                    self.red("attribution ejected every member — nothing is left to land");
+                    self.emptied("attribution ejected every member — nothing is left to land");
+                }
+                Some(Attribution::Emptied(why)) => {
+                    self.go(Trigger::RerunBlocked);
+                    self.emptied(&why);
                 }
                 Some(Attribution::Fault(why)) => {
                     self.go(Trigger::RerunBlocked);

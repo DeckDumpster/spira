@@ -353,11 +353,11 @@ fn with_dependents(members: &[Member], out: &mut BTreeMap<Id, Vec<String>>) {
 /// A filter's red names its owners: they leave with the red as their evidence and the survivors
 /// run the corpus again. A red naming no member cannot be attributed: it is filed (which holds
 /// this membership) instead of re-cut. `None` means the round is blocked.
-fn eject_filter_owners<O: RoundOps>(ops: &mut O, f: &FilterRed, members: &[Member]) -> Result<Option<Vec<Member>>, String> {
+fn eject_filter_owners<O: RoundOps>(ops: &mut O, f: &FilterRed, members: &[Member]) -> Result<FilterEject, String> {
     let named: Vec<&(Id, String)> = f.named.iter().filter(|(id, _)| members.iter().any(|m| &m.id == id)).collect();
     if named.is_empty() {
         ops.incident("unattributed", std::slice::from_ref(&f.name));
-        return Ok(None);
+        return Ok(FilterEject::Unnamed);
     }
     let mut out: BTreeMap<Id, Vec<String>> = named.iter().map(|(id, _)| (id.clone(), vec![f.name.clone()])).collect();
     with_dependents(members, &mut out);
@@ -371,10 +371,16 @@ fn eject_filter_owners<O: RoundOps>(ops: &mut O, f: &FilterRed, members: &[Membe
     }
     let survivors: Vec<Member> = members.iter().filter(|m| !out.contains_key(&m.id)).cloned().collect();
     if survivors.is_empty() {
-        return Ok(None);
+        return Ok(FilterEject::Emptied);
     }
     let rebuilt = ops.rebuild(&survivors)?;
-    Ok((!rebuilt.is_empty()).then_some(rebuilt))
+    Ok(if rebuilt.is_empty() { FilterEject::Emptied } else { FilterEject::Survivors(rebuilt) })
+}
+
+enum FilterEject {
+    Unnamed,
+    Emptied,
+    Survivors(Vec<Member>),
 }
 
 /// The smallest `k` for which the first `k` of `members` fail to build, given that all of them do.
@@ -531,8 +537,10 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         }
         if let Some(f) = &s.filter {
             println!("batcher: {} red before any suite ran, naming {} member(s)", f.name, f.named.len());
-            let Some(next) = eject_filter_owners(ops, f, &members)? else {
-                return Ok(RoundEnd::Blocked(format!("{} red names no member that can be ejected", f.name)));
+            let next = match eject_filter_owners(ops, f, &members)? {
+                FilterEject::Survivors(next) => next,
+                FilterEject::Emptied => return Ok(RoundEnd::Emptied(format!("{} red ejected every member", f.name))),
+                FilterEject::Unnamed => return Ok(RoundEnd::Blocked(format!("{} red names no member that can be ejected", f.name))),
             };
             runner.stop_main()?;
             members = next;
