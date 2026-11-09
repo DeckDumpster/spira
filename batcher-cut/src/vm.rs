@@ -132,6 +132,15 @@ pub fn build_probe_result(rc: i32) -> Option<bool> {
     }
 }
 
+/// What a `build=unit` job's exit code says: 0 the unit tests passed, 5 they did not, anything else is a fault.
+pub fn unit_probe_result(rc: i32) -> Option<bool> {
+    match rc {
+        0 => Some(true),
+        5 => Some(false),
+        _ => None,
+    }
+}
+
 pub struct VmRunner<'a> {
     env: &'a Env,
     repo: &'a Repo,
@@ -207,7 +216,8 @@ fn filter_red_in(results: &Path, members: &[Member], changed: &BTreeMap<Id, Vec<
     Some(FilterRed { name, named })
 }
 
-const TEST_PHASES: [(&str, &str); 2] = [("unit.json", "unit-tests"), ("integration.json", "integration-tests")];
+const UNIT_TESTS: &str = "unit-tests";
+const TEST_PHASES: [(&str, &str); 2] = [("unit.json", UNIT_TESTS), ("integration.json", "integration-tests")];
 
 fn phase_red(results: &Path, json: &str) -> bool {
     fs::read_to_string(results.join(json))
@@ -252,6 +262,34 @@ fn clear_results(results: &Path, suites: &[String]) {
 }
 
 impl<'a> VmRunner<'a> {
+    /// Runs the `build` job (`workspace` or `unit`) on the base plus exactly `subset`; `verdict`
+    /// reads its exit code. `None` when the probe faulted.
+    fn probe_subset(&mut self, subset: &[Member], build: &str, verdict: fn(i32) -> Option<bool>) -> Option<bool> {
+        self.build_n += 1;
+        let job = format!("b{}", self.build_n);
+        let removal: Vec<Id> = self.members.iter().filter(|m| !subset.iter().any(|s| s.id == m.id)).map(|m| m.id.clone()).collect();
+        let tried = subset.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(",");
+        let branch = self.tree_without(self.branch(&job), &job, &removal).inspect_err(|e| eprintln!("batcher: {build} probe tree not built: {e}")).ok()?;
+        self.request(&job, &branch, &[build.to_string()], build).inspect_err(|e| eprintln!("batcher: {e}")).ok()?;
+        let done = self.spool.join("res").join(format!("{job}.done"));
+        let deadline = epoch() + self.env.wall_secs;
+        let rc = loop {
+            if let Some(rc) = read_rc(&done) {
+                break rc;
+            }
+            if self.child_exited().is_some() || epoch() >= deadline {
+                eprintln!("batcher: {build} probe of [{tried}] got no answer from round-vm");
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        };
+        let built = verdict(rc);
+        if built.is_none() {
+            eprintln!("batcher: {build} probe of [{tried}] faulted (rc {rc})");
+        }
+        built
+    }
+
     fn scope_unit(&self) -> Option<String> {
         let batch = self.batch.as_deref()?;
         Some(runtime::units::round_scope_unit(&self.repo.name, batch, &format!("{}-{}", self.round, self.corpus_runs)))
@@ -530,29 +568,15 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn builds(&mut self, subset: &[Member]) -> Option<bool> {
-        self.build_n += 1;
-        let job = format!("b{}", self.build_n);
-        let removal: Vec<Id> = self.members.iter().filter(|m| !subset.iter().any(|s| s.id == m.id)).map(|m| m.id.clone()).collect();
-        let tried = subset.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(",");
-        let branch = self.tree_without(self.branch(&job), &job, &removal).inspect_err(|e| eprintln!("batcher: build probe tree not built: {e}")).ok()?;
-        self.request(&job, &branch, &["workspace".to_string()], "workspace").inspect_err(|e| eprintln!("batcher: {e}")).ok()?;
-        let done = self.spool.join("res").join(format!("{job}.done"));
-        let deadline = epoch() + self.env.wall_secs;
-        let rc = loop {
-            if let Some(rc) = read_rc(&done) {
-                break rc;
-            }
-            if self.child_exited().is_some() || epoch() >= deadline {
-                eprintln!("batcher: build probe of [{tried}] got no answer from round-vm");
-                return None;
-            }
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        };
-        let built = build_probe_result(rc);
-        if built.is_none() {
-            eprintln!("batcher: build probe of [{tried}] faulted (rc {rc})");
+        self.probe_subset(subset, "workspace", build_probe_result)
+    }
+
+    fn filter_green(&mut self, name: &str, subset: &[Member]) -> Option<bool> {
+        if name == UNIT_TESTS {
+            self.probe_subset(subset, "unit", unit_probe_result)
+        } else {
+            None
         }
-        built
     }
 
     fn stop_main(&mut self) -> Result<(), String> {
@@ -698,6 +722,15 @@ mod tests {
         assert_eq!(build_for(&["a".to_string()], &changed), "artifacts");
         assert_eq!(build_for(&["a".to_string(), "b".to_string()], &changed), "dwarf");
         assert_eq!(build_for(&["unknown".to_string()], &changed), "dwarf", "unknown paths are never neutral");
+    }
+
+    #[test]
+    fn a_unit_probe_reads_rc_5_as_red_and_a_fault_as_no_answer() {
+        assert_eq!(unit_probe_result(0), Some(true));
+        assert_eq!(unit_probe_result(5), Some(false));
+        for rc in [1, 2, 4, 124, 137] {
+            assert_eq!(unit_probe_result(rc), None, "rc {rc}");
+        }
     }
 
     #[test]

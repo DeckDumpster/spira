@@ -69,6 +69,11 @@ pub trait RoundRunner {
     fn builds(&mut self, _members: &[Member]) -> Option<bool> {
         None
     }
+    /// Whether filter `name` is green with exactly `members` merged onto the base; `None` when the
+    /// runner cannot run that filter on a subset or the run faulted.
+    fn filter_green(&mut self, _name: &str, _members: &[Member]) -> Option<bool> {
+        None
+    }
 }
 
 /// A filter's red. `named` is each member the filter's own output blames, with the line that does;
@@ -373,12 +378,21 @@ fn with_dependents(members: &[Member], out: &mut BTreeMap<Id, Vec<String>>) {
 
 /// A filter's red names its owners: they leave with the red as their evidence and the survivors
 /// run the corpus again. A red naming no member cannot be attributed: it is filed (which holds
-/// this membership) instead of re-cut. `None` means the round is blocked.
-fn eject_filter_owners<O: RoundOps>(ops: &mut O, f: &FilterRed, members: &[Member]) -> Result<FilterEject, String> {
+/// this membership) instead of re-cut — unless the runner can run the filter on member subsets,
+/// which bisects the members.
+fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O, f: &FilterRed, members: &[Member]) -> Result<FilterEject, String> {
     let named: Vec<&(Id, String)> = f.named.iter().filter(|(id, _)| members.iter().any(|m| &m.id == id)).collect();
     if named.is_empty() {
-        ops.incident("unattributed", std::slice::from_ref(&f.name));
-        return Ok(FilterEject::Unnamed);
+        let red = format!("{} red", f.name);
+        let actions = bisect_members(&red, &mut |m| runner.filter_green(&f.name, m), members).unwrap_or_default();
+        if actions.is_empty() {
+            ops.incident("unattributed", std::slice::from_ref(&f.name));
+            return Ok(FilterEject::Unnamed);
+        }
+        return Ok(match apply_build_actions(ops, members, &actions, &f.name)? {
+            Some(next) => FilterEject::Survivors(next),
+            None => FilterEject::Emptied,
+        });
     }
     let mut out: BTreeMap<Id, Vec<String>> = named.iter().map(|(id, _)| (id.clone(), vec![f.name.clone()])).collect();
     with_dependents(members, &mut out);
@@ -405,11 +419,11 @@ enum FilterEject {
 }
 
 /// The smallest `k` for which the first `k` of `members` fail to build, given that all of them do.
-fn first_failing_prefix<R: RoundRunner>(runner: &mut R, members: &[Member]) -> Option<usize> {
+fn first_failing_prefix(green: &mut dyn FnMut(&[Member]) -> Option<bool>, members: &[Member]) -> Option<usize> {
     let (mut lo, mut hi) = (0, members.len());
     while hi - lo > 1 {
         let mid = (lo + hi) / 2;
-        if runner.builds(&members[..mid])? {
+        if green(&members[..mid])? {
             lo = mid;
         } else {
             hi = mid;
@@ -418,32 +432,31 @@ fn first_failing_prefix<R: RoundRunner>(runner: &mut R, members: &[Member]) -> O
     Some(hi)
 }
 
-/// Builds member subsets to find what breaks a workspace whose errors map to no file: the last
-/// member of the shortest failing prefix is in the culprit set, and either breaks the build alone
-/// or with one earlier partner, found by the same search. The later one is held behind the earlier.
-/// `None` when the runner cannot build subsets, or the red needs three members or more.
-fn bisect_build<R: RoundRunner>(runner: &mut R, members: &[Member]) -> Option<Vec<Action>> {
-    let k = first_failing_prefix(runner, members)?;
+/// Finds by prefix search what turns `red` on when no output names a member: one member alone,
+/// or a pair, whose later member is held behind the earlier. `None` for three or more, or when
+/// the runner cannot probe subsets.
+fn bisect_members(red: &str, green: &mut dyn FnMut(&[Member]) -> Option<bool>, members: &[Member]) -> Option<Vec<Action>> {
+    let k = first_failing_prefix(green, members)?;
     let last = &members[k - 1];
-    let line = |what: &str| format!("the workspace fails to build {what} (bisected by building member subsets)");
-    if !runner.builds(std::slice::from_ref(last))? {
+    let line = |what: &str| format!("{red} {what} (bisected by running member subsets)");
+    if !green(std::slice::from_ref(last))? {
         return Some(vec![Action::Eject { id: last.id.clone(), line: line(&format!("with only {} merged", last.id)) }]);
     }
     let with_last = |n: usize| -> Vec<Member> { members[..n].iter().chain(std::iter::once(last)).cloned().collect() };
     let (mut lo, mut hi) = (0, k - 1);
     while hi - lo > 1 {
         let mid = (lo + hi) / 2;
-        if runner.builds(&with_last(mid))? {
+        if green(&with_last(mid))? {
             lo = mid;
         } else {
             hi = mid;
         }
     }
-    let partner = &members[hi - 1];
-    if runner.builds(&[partner.clone(), last.clone()])? {
+    let partner = members.get(hi.checked_sub(1)?)?;
+    if green(&[partner.clone(), last.clone()])? {
         return None;
     }
-    Some(vec![Action::Sequence { id: last.id.clone(), behind: vec![partner.id.clone()], line: line(&format!("with {} and {} merged", partner.id, last.id)) }])
+    Some(vec![Action::Sequence { id: last.id.clone(), behind: vec![partner.id.clone()], line: line(&format!("only with {} merged", partner.id)) }])
 }
 
 /// A workspace-build red whose compiler errors map to members: owners leave with the error as
@@ -454,7 +467,7 @@ fn eject_build_culprits<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O
     let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
     let mut actions = buildattr::attribute(&buildattr::compile_errors(&runner.build_output()), &ops.diffs(&ids));
     if actions.is_empty() {
-        actions = bisect_build(runner, members).unwrap_or_default();
+        actions = bisect_members("the workspace fails to build", &mut |m| runner.builds(m), members).unwrap_or_default();
     }
     apply_build_actions(ops, members, &actions, WORKSPACE_BUILD)
 }
@@ -586,7 +599,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         }
         if let Some(f) = &s.filter {
             println!("batcher: {} red before any suite ran, naming {} member(s)", f.name, f.named.len());
-            let next = match eject_filter_owners(ops, f, &members)? {
+            let next = match eject_filter_owners(runner, ops, f, &members)? {
                 FilterEject::Survivors(next) => next,
                 FilterEject::Emptied => return Ok(RoundEnd::Emptied(format!("{} red ejected every member", f.name))),
                 FilterEject::Unnamed => return Ok(RoundEnd::Blocked(format!("{} red names no member that can be ejected", f.name))),
@@ -911,6 +924,11 @@ pub(crate) mod tests {
             let tree: BTreeSet<String> = members.iter().map(|m| m.id.clone()).collect();
             self.probes.push(tree.iter().cloned().collect());
             self.bisects.then(|| self.compiler.as_ref().and_then(|c| c(&tree)).is_none())
+        }
+        fn filter_green(&mut self, _name: &str, members: &[Member]) -> Option<bool> {
+            let tree: BTreeSet<String> = members.iter().map(|m| m.id.clone()).collect();
+            self.probes.push(tree.iter().cloned().collect());
+            self.bisects.then(|| self.filter.as_ref().is_none_or(|f| f(&tree).is_none()))
         }
         fn stop_main(&mut self) -> Result<(), String> {
             self.stopped += 1;
@@ -1653,6 +1671,7 @@ pub(crate) mod tests {
         let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
         assert_eq!(land_ids(end), vec!["m1", "m2"]);
         assert_eq!(ops.sequenced, vec![("m3".to_string(), vec!["m1".to_string()])]);
+        assert!(ops.eject_evidence[0].1.contains("fails to build only with m1 merged"), "{:?}", ops.eject_evidence);
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
@@ -1681,6 +1700,62 @@ pub(crate) mod tests {
         attribute_round(&mut f, &mut ops, &corpus(3), ms, Budget { slots: 6, maxpar: 2 }).unwrap();
         assert_eq!(ops.sequenced, vec![("m7".to_string(), vec!["m2".to_string()])]);
         assert!(f.probes.len() <= 9, "{:?}", f.probes);
+    }
+
+    fn unit_red_together(culprits: &'static [&'static str]) -> FilterFn {
+        Box::new(move |tree| {
+            culprits.iter().all(|c| tree.contains(*c)).then(|| FilterRed { name: "unit-tests".into(), named: vec![] })
+        })
+    }
+
+    #[test]
+    fn a_unit_test_red_only_a_pair_causes_holds_the_later_member_behind_the_earlier_and_lands_the_rest() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(unit_red_together(&["m1", "m3"]));
+        f.bisects = true;
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m2"]);
+        assert_eq!(ops.sequenced, vec![("m3".to_string(), vec!["m1".to_string()])]);
+        assert!(ops.eject_evidence[0].1.contains("red only with m1"), "{:?}", ops.eject_evidence);
+        assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+    }
+
+    #[test]
+    fn a_unit_test_red_one_member_causes_alone_ejects_that_member() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(unit_red_together(&["m2"]));
+        f.bisects = true;
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["unit-tests".to_string()])]);
+        assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+    }
+
+    #[test]
+    fn a_unit_test_red_that_does_not_reproduce_on_the_lone_first_member_is_filed_not_a_panic() {
+        let seen = std::cell::Cell::new(0);
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(Box::new(move |_| {
+            seen.set(seen.get() + 1);
+            (seen.get() == 1).then(|| FilterRed { name: "unit-tests".into(), named: vec![] })
+        }));
+        f.bisects = true;
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+    }
+
+    #[test]
+    fn a_unit_test_red_that_needs_three_members_is_still_filed() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(unit_red_together(&["m1", "m2", "m3"]));
+        f.bisects = true;
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert_eq!(ops.incidents, vec![("unattributed".to_string(), vec!["unit-tests".to_string()])]);
     }
 
     #[test]
