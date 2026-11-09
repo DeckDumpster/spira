@@ -886,6 +886,35 @@ fn abandoning_a_round_keeps_a_mender_that_holds_a_submitted_fix_for_the_next_cut
 }
 
 #[test]
+fn a_later_round_event_keeps_a_submitted_mender_of_a_batch_already_closed() {
+    let t = round_world();
+    t.lc.rows.borrow_mut().as_mut().unwrap().push(crate::model::LcBeadRow {
+        bead_id: "sp-m19".into(),
+        state: "SUBMITTED".into(),
+        tip: Some("cc".into()),
+        ..Default::default()
+    });
+    t.lc.batch_states
+        .borrow_mut()
+        .insert("old-2".into(), ("ABANDONED".into(), "2".into()));
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-6"]),
+        0,
+        "{}",
+        t.err()
+    );
+    fs::write(marker(&t, "old-2", "mender-1-gate-x"), "sp-m19\n").unwrap();
+    assert_eq!(
+        t.run(&["round", "abandon", "hand-6", "--reason", "base moved"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(!t.lib.has("bead_close sp-m19"), "{:?}", t.lib.calls.borrow());
+    assert!(!marker(&t, "old-2", "mender-1-gate-x.retired").exists());
+}
+
+#[test]
 fn a_later_round_event_retires_the_mender_beads_of_batches_already_closed() {
     let t = round_world();
     assert_eq!(
