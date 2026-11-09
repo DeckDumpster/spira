@@ -429,11 +429,17 @@ fn eject_build_culprits<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O
     if actions.is_empty() {
         actions = bisect_build(runner, members).unwrap_or_default();
     }
+    apply_build_actions(ops, members, &actions)
+}
+
+/// Ejects or sequences the members `actions` name, and the members stacked on them, and
+/// re-cuts the rest; `None` when there is nothing to name or nobody left.
+fn apply_build_actions<O: RoundOps>(ops: &mut O, members: &[Member], actions: &[Action]) -> Result<Option<Vec<Member>>, String> {
     if actions.is_empty() {
         return Ok(None);
     }
     let mut out: BTreeMap<Id, Vec<String>> = BTreeMap::new();
-    for a in &actions {
+    for a in actions {
         let (Action::Eject { id, .. } | Action::Sequence { id, .. }) = a;
         out.insert(id.clone(), vec![WORKSPACE_BUILD.to_string()]);
     }
@@ -470,10 +476,35 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     let mut fixed = false;
     let bound = members.len() as u32 + 2;
     let mut retried = false;
+    let mut image_retried = false;
     let t0 = runner.now();
     for iteration in 0..bound {
         let s = drive(runner, &*ops, kind, &suites, &members, budget)?;
         if s.end == MainEnd::WorkspaceBuild {
+            let output = runner.build_output();
+            if buildattr::is_image_build_red(&output) {
+                let diffs = ops.diffs(&members.iter().map(|m| m.id.clone()).collect::<Vec<_>>());
+                match buildattr::recipe_touchers(&diffs)[..] {
+                    [owner] => {
+                        let line = format!("the round image build failed and this member changes its recipe: {}", buildattr::error_tail(&output));
+                        if let Some(next) = apply_build_actions(ops, &members, &[Action::Eject { id: owner.id.clone(), line }])? {
+                            println!("batcher: the round image build failed — {} left, re-cutting {} member(s)", owner.id, next.len());
+                            runner.stop_main()?;
+                            members = next;
+                            continue;
+                        }
+                    }
+                    [] if !image_retried => {
+                        image_retried = true;
+                        println!("batcher: the round image build failed and no member changes its recipe — a harness fault, retrying once");
+                        runner.stop_main()?;
+                        continue;
+                    }
+                    _ => {}
+                }
+                ops.incident("workspace-build", &[WORKSPACE_BUILD.to_string()]);
+                return Ok(RoundEnd::Blocked("the round's image build failed".into()));
+            }
             if let Some(next) = eject_build_culprits(runner, ops, &members)? {
                 println!("batcher: the round's workspace failed to build — culprits left, re-cutting {} member(s)", next.len());
                 runner.stop_main()?;
@@ -1251,6 +1282,72 @@ pub(crate) mod tests {
         assert_eq!(ops.ejected, vec![("m2".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
         assert!(ops.eject_evidence[0].1.contains("callers.rs:726"), "{:?}", ops.eject_evidence);
         assert!(ops.incidents.is_empty(), "a mapped build red writes no pause: {:?}", ops.incidents);
+    }
+
+    const IMAGE_RED: &str = "build-error: round image build 42553374751 failed at build / Build, image and tag\nround image setup failed rc=1\n";
+
+    fn image_broken_while(culprit: &'static str) -> BuildFn {
+        Box::new(move |tree| tree.contains(culprit).then(|| IMAGE_RED.to_string()))
+    }
+
+    #[test]
+    fn an_image_build_red_ejects_the_one_member_whose_diff_touches_the_image_recipe_without_a_pause() {
+        let mut f = Fake::new(|_, _| false);
+        f.compiler = Some(image_broken_while("m2"));
+        let mut ops = Ops {
+            diffs: vec![md("m1", "doc/x.md", "+p\n"), md("m2", ".github/workflows/round-ami-build.yml", "+x\n"), md("m3", "doc/y.md", "+q\n")],
+            ..Ops::default()
+        };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
+        assert!(ops.eject_evidence[0].1.contains("round image setup failed rc=1"), "{:?}", ops.eject_evidence);
+        assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+    }
+
+    #[test]
+    fn an_image_build_red_no_member_touches_the_recipe_for_is_retried_once_then_filed() {
+        let mut f = Fake::new(|_, _| false);
+        f.compiler = Some(image_broken_while("m1"));
+        let mut ops = Ops { diffs: vec![md("m1", "doc/x.md", "+p\n")], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert_eq!(f.main_kind.len(), 2, "one retry of the same members");
+        assert!(ops.ejected.is_empty());
+        assert_eq!(ops.incidents, vec![("workspace-build".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
+    }
+
+    #[test]
+    fn an_image_build_red_with_two_recipe_touching_members_ejects_neither_and_files() {
+        let mut f = Fake::new(|_, _| false);
+        f.compiler = Some(image_broken_while("m1"));
+        let mut ops = Ops { diffs: vec![md("m1", "flake.nix", "+a\n"), md("m2", "rust-toolchain.toml", "+b\n")], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(ops.ejected.is_empty());
+        assert_eq!(ops.incidents.len(), 1);
+    }
+
+    #[test]
+    fn an_image_build_red_whose_recipe_toucher_is_the_only_member_ejects_it_and_files() {
+        let mut f = Fake::new(|_, _| false);
+        f.compiler = Some(image_broken_while("m1"));
+        let mut ops = Ops { diffs: vec![md("m1", "flake.nix", "+a\n")], ..Ops::default() };
+        let only = vec![three()[0].clone()];
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), only, Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert_eq!(ops.ejected.len(), 1);
+    }
+
+    #[test]
+    fn an_image_build_red_that_clears_on_the_retry_lands_every_member() {
+        let mut f = Fake::new(|_, _| false);
+        let tried = std::cell::Cell::new(false);
+        f.compiler = Some(Box::new(move |_| (!tried.replace(true)).then(|| IMAGE_RED.to_string())));
+        let mut ops = Ops { diffs: vec![md("m1", "doc/x.md", "+p\n")], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+        assert!(ops.ejected.is_empty() && ops.incidents.is_empty());
     }
 
     #[test]
