@@ -15,6 +15,7 @@ use super::{run, Call};
 
 mod alarms_pass;
 mod assemble;
+mod dwarf_fleet;
 mod goodput_pass;
 
 const FLOOR_MS: u64 = 1_000;

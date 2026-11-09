@@ -26,17 +26,48 @@ impl<'a> Sentinel<'a> {
     /// dwarf's `select --blockers machine` applies — never the `bd ready` set, which counts a
     /// SUBMITTED bead and its dependents. A machine that cannot answer writes no cache, so
     /// `rune_ready` asks again and fails closed.
-    pub fn export_ready_cache(&self) {
+    pub fn export_ready_cache(&self) -> Option<u64> {
         let o = self.h.claim(&["bulk-ready-by-rune".into()]);
         if !o.ok() {
-            return;
+            return None;
         }
         let counts = parse_cache(&o.stdout);
         if counts.is_empty() && !self.ctx.runes.is_empty() {
-            return;
+            return None;
         }
         if let Some(p) = self.temp_file("ready-cache", &render_cache(&counts)) {
             self.h.set_env("SPIRA_READY_CACHE", &p.to_string_lossy());
+        }
+        Some(counts.iter().map(|(_, n)| *n as u64).sum())
+    }
+
+    /// Steps the ceiling for each open DwarfFleet intent and publishes the section, once per call
+    /// pass, ahead of the calls it bounds. A failure is logged and never stops the calls.
+    pub fn fleet_section(&self, ready: Option<u64>) {
+        let (Some(ready), Some(rows)) = (ready, self.lc_rows()) else { return };
+        let Some(file) = spira_config::process::spec().ok().and_then(|s| s.rsplit(':').next().map(str::to_string)) else {
+            self.log("fleet section: SPIRA_TOML names no config file — not publishing");
+            return;
+        };
+        let now = self.h.now().max(0) as u64;
+        let ledger = std::fs::read_to_string(self.cfg.run.join("dwarf-ledger.log")).unwrap_or_default();
+        let alive = |pid: u32| unsafe { libc::kill(pid as i32, 0) == 0 };
+        let runs = sentinel::section::runs(&ledger, now, &alive);
+        let config = SpiraConfig { h: self.h, bin: "spira-config".into(), file };
+        let lc = LcPort { h: self.h, bin: &self.cfg.lc_bin };
+        let step_log = self.cfg.run.join("fleet-steps.log");
+        let record = |line: &str| {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&step_log) {
+                let _ = writeln!(f, "{} {line}", crate::host::utc(now as i64));
+            }
+        };
+        let ports = sentinel::section::Ports { lc: &lc, config: &config, record: &record };
+        let live = self.live_total() as u64;
+        match sentinel::section::run(&ports, now, &runs, &rows, live, ready) {
+            Ok(r) if !r.acked.is_empty() => self.log(&format!("fleet section: acked {} step(s)", r.acked.len())),
+            Ok(_) => {}
+            Err(e) => self.log(&format!("fleet section: {e}")),
         }
     }
 
@@ -73,7 +104,8 @@ impl<'a> Sentinel<'a> {
         // The ready set is spira-claim's, inside bulk-ready-by-rune: the machine's READY rows,
         // never a bd ready query (sp-uqrdn stopped the sentinel's own; sp-v62vn retired
         // spira-claim's). test-call-fast-path D asserts zero.
-        self.export_ready_cache();
+        let ready = self.export_ready_cache();
+        self.fleet_section(ready);
         self.ck7_call_pass();
         crate::temps::cleanup_under(&self.cfg.run);
         self.h.unset_env("SPIRA_READY_CACHE");
@@ -82,6 +114,48 @@ impl<'a> Sentinel<'a> {
             self.acted.get()
         ));
         0
+    }
+}
+
+/// `max_live_dwarves` and `max_dwarves` through the `spira-config` program, never a file edit.
+struct SpiraConfig<'a> {
+    h: &'a crate::host::Host<'a>,
+    bin: String,
+    file: String,
+}
+
+impl SpiraConfig<'_> {
+    fn call(&self, args: &[&str]) -> Result<String, String> {
+        let o = self.h.run(Spec::new(self.bin.clone(), args).err(Io::Null));
+        if o.ok() {
+            Ok(o.stdout.trim().to_string())
+        } else {
+            Err(format!("`spira-config {}` exited {}", args.join(" "), o.rc))
+        }
+    }
+}
+
+impl sentinel::section::Config for SpiraConfig<'_> {
+    fn get(&self, key: &str) -> Result<u64, String> {
+        let v = self.call(&["get", key, &self.file])?;
+        v.parse().map_err(|_| format!("{key} is {v:?}, not a whole number"))
+    }
+
+    fn set(&self, key: &str, value: u64) -> Result<(), String> {
+        self.call(&["set", key, &value.to_string(), &self.file]).map(|_| ())
+    }
+}
+
+struct LcPort<'a> {
+    h: &'a crate::host::Host<'a>,
+    bin: &'a str,
+}
+
+impl reconciler_engine::goodput_pass::Lc for LcPort<'_> {
+    fn call(&self, args: &[String]) -> (i32, serde_json::Value) {
+        let o = self.h.lc(self.bin, args);
+        let v = serde_json::from_str(&o.stdout).unwrap_or_else(|_| serde_json::json!({ "stderr": o.stderr }));
+        (o.rc, v)
     }
 }
 

@@ -36,3 +36,7 @@ functions = ["section_specs", "publish_specs"]
 [[scope]]
 path = "desired-state/src/sections/lifecycle.rs"
 functions = ["check_spec", "check_status"]
+
+[[scope]]
+path = "desired-state/src/sections/dwarf_fleet.rs"
+functions = ["check_spec", "check_status"]

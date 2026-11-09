@@ -38,3 +38,4 @@ opentelemetry-proto = { version = "0.30", default-features = false, features = [
 testkit = { path = "../testkit" }
 reconciler-engine = { path = "../reconciler-engine" }
 incident = { path = "../incident" }
+sentinel = { path = "../sentinel" }

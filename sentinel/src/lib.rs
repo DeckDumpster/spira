@@ -10,6 +10,7 @@ pub mod pass_checks;
 pub mod pilgrimage;
 pub mod plan;
 pub mod reflect;
+pub mod section;
 pub mod tower;
 
 /// The lifecycle events the checks write.
