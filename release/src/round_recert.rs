@@ -312,6 +312,9 @@ pub fn start(sys: &dyn Sys, l: &Launch, batch: &str, repo: &str, pools: Option<&
         repo.into(),
     ]
     .to_vec();
+    let at = args.iter().position(|a| a == &l.exe.display().to_string()).unwrap_or(args.len());
+    let vtime = spira_config::vtime::passthrough().into_iter().map(|(k, v)| format!("--setenv={k}={v}"));
+    args.splice(at..at, vtime);
     args.extend(hold.as_ref().map(Hold::args).unwrap_or_default());
     let o = sys.exec("systemd-run", &args, QUERY_DEADLINE_SECS);
     if o.code == Some(0) {
@@ -793,6 +796,28 @@ mod tests {
         let calls = rec.0.borrow();
         let run = calls.iter().find(|(p, _)| p == "systemd-run").expect("systemd-run was called");
         assert!(run.1.join(" ").ends_with("/rel/bin/release round-recert --drive --batch b --repo r"), "{:?}", run.1);
+    }
+
+    fn started_argv(rec: &Recorder) -> Vec<String> {
+        let l = Launch { exe: Path::new("/rel/bin/release"), toml: "t.toml" };
+        assert!(matches!(start(rec, &l, "b", "r", None), Ok(Started::Started(_))));
+        let calls = rec.0.borrow();
+        calls.iter().find(|(p, _)| p == "systemd-run").expect("systemd-run was called").1.clone()
+    }
+
+    #[test]
+    fn the_unit_carries_the_virtual_clock_before_the_command() {
+        let _env = testkit::env(&[("SPIRA_NOW", Some("1700000000"))]);
+        let argv = started_argv(&Recorder(RefCell::new(vec![])));
+        let at = argv.iter().position(|a| a == "--setenv=SPIRA_NOW=1700000000").expect("SPIRA_NOW is passed to the unit");
+        assert!(at < argv.iter().position(|a| a == "/rel/bin/release").unwrap(), "{argv:?}");
+    }
+
+    #[test]
+    fn the_unit_carries_no_virtual_clock_when_none_is_set() {
+        let _env = testkit::env(&[("SPIRA_NOW", None)]);
+        let argv = started_argv(&Recorder(RefCell::new(vec![])));
+        assert!(!argv.iter().any(|a| a.starts_with("--setenv=SPIRA_NOW")), "{argv:?}");
     }
 
     /// systemd answering nothing about the driver's unit is "cannot tell", never "not running":
