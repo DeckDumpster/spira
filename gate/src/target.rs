@@ -132,6 +132,7 @@ pub fn prepare(
     lim: &Limits,
     free_mib: &dyn Fn(&Path) -> Option<u64>,
     mem_mib: &dyn Fn() -> u64,
+    held: &dyn Fn(&str) -> bool,
 ) -> Result<Prepared, String> {
     let name = tree
         .file_name()
@@ -148,7 +149,7 @@ pub fn prepare(
         if n == name {
             continue;
         }
-        if !trees_dir.join(&n).is_dir() && !pinned(&e.path()) {
+        if !trees_dir.join(&n).is_dir() && !pinned(&e.path()) && !held(&n) {
             let _ = fs::remove_dir_all(e.path());
             out.orphans.push(n);
         } else if trees_dir.join(&n).is_dir() {
@@ -171,7 +172,7 @@ pub fn prepare(
         if total <= cap && !short_of_floor {
             break;
         }
-        if !lock_free(&trees_dir.join(format!("{n}.lock"))) || pinned(&p) {
+        if !lock_free(&trees_dir.join(format!("{n}.lock"))) || pinned(&p) || held(&n) {
             continue;
         }
         let _ = fs::remove_dir_all(&p);
@@ -277,18 +278,42 @@ pub fn release_tree(tree: &Path, keep_release: bool) -> u64 {
     bytes / (1024 * 1024)
 }
 
+/// True when a live gate admission slot names the branch whose gate tree is `name`
+/// (`.gate.<repo>.<tree_key(branch)>`). The slot is held for the whole gate, so unlike the
+/// tree lock it survives a lock file that was moved or recreated.
+pub fn held_by_gate(run: &Path, name: &str) -> bool {
+    spira_config::admission::gate_occupancy(run, 0)
+        .holders
+        .iter()
+        .any(|l| name.ends_with(&format!(".{}", crate::parse::tree_key(&l.who))))
+}
+
+/// True when every build directory `prepare` linked in `tree` still resolves. A tree with no
+/// links (built in place, no tmpfs) is intact.
+pub fn intact(tree: &Path) -> bool {
+    LINKED.iter().all(|d| {
+        let link = tree.join("target").join(d);
+        !fs::symlink_metadata(&link).is_ok_and(|m| m.file_type().is_symlink()) || link.exists()
+    })
+}
+
 /// Backstop for crashed gates: remove every `root/<name>` untouched for `max_age` that no
-/// gate holds (`trees_dir/<name>.lock` free and `busy` false). Returns the names removed (or,
-/// with `dry`, that would be).
+/// gate holds (`trees_dir/<name>.lock` free, no admission slot naming it, `busy` false).
+/// Returns the names removed (or, with `dry`, that would be). A `trees_dir` that is not a
+/// directory proves no lock free, so nothing is removed.
 pub fn reap_stale(
     root: &Path,
     trees_dir: &Path,
     max_age: std::time::Duration,
     dry: bool,
     busy: &dyn Fn(&Path) -> bool,
+    held: &dyn Fn(&str) -> bool,
 ) -> Vec<String> {
     let now = std::time::SystemTime::now();
     let mut out = Vec::new();
+    if !trees_dir.is_dir() {
+        return out;
+    }
     let Ok(rd) = fs::read_dir(root) else { return out };
     for e in rd.flatten() {
         let n = e.file_name().to_string_lossy().into_owned();
@@ -296,7 +321,7 @@ pub fn reap_stale(
         if !p.is_dir() || now.duration_since(mtime(&p)).unwrap_or_default() < max_age {
             continue;
         }
-        if !lock_free(&trees_dir.join(format!("{n}.lock"))) || pinned(&p) || busy(&p) || busy(&trees_dir.join(&n)) {
+        if !lock_free(&trees_dir.join(format!("{n}.lock"))) || pinned(&p) || busy(&p) || busy(&trees_dir.join(&n)) || held(&n) {
             continue;
         }
         if !dry {
@@ -361,7 +386,7 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
         write_mib(&tree.join("target/dwarf/deps/libx.rlib"), 2);
-        let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
         assert_eq!(p.dir, root.join(".gate.harness.b"));
         assert_eq!(p.disk_freed_mib, 2);
         for d in LINKED {
@@ -371,7 +396,7 @@ mod tests {
         }
         // cargo writes through the link; a second prepare leaves it (and the bytes) alone.
         write_mib(&tree.join("target/dwarf/deps/liby.rlib"), 1);
-        let p2 = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        let p2 = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
         assert_eq!(p2.disk_freed_mib, 0);
         assert!(root.join(".gate.harness.b/dwarf/deps/liby.rlib").is_file());
         // `target` itself stays a real directory: git ignores `target/` in every revision.
@@ -385,13 +410,13 @@ mod tests {
         let tree = trees.join(".gate.harness.h");
         fs::create_dir_all(tree.join("spira")).unwrap();
         fs::write(tree.join("spira/lib.sh"), "").unwrap();
-        let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
         // Where current_exe() lands for a binary run through target/release: the tmpfs side.
         let exe = p.dir.join("release").join("groomer");
         assert!(exe.parent().unwrap().join("../spira/lib.sh").is_file(), "<exe>/../spira/lib.sh must resolve");
         assert_eq!(fs::read_link(p.dir.join("spira")).unwrap(), tree.join("spira"));
         // Idempotent: a second prepare leaves the link as it is.
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
         assert_eq!(fs::read_link(p.dir.join("spira")).unwrap(), tree.join("spira"));
     }
 
@@ -402,9 +427,9 @@ mod tests {
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
         std::os::unix::fs::symlink("/nonexistent", tree.join("target")).unwrap();
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
         fs::remove_dir_all(root.join(".gate.harness.b")).unwrap(); // evicted by another trial
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
         assert!(tree.join("target/dwarf").is_dir(), "the link resolves again");
     }
 
@@ -426,7 +451,7 @@ mod tests {
         write_mib(&root.join(".gate.harness.gone/dwarf/x"), 1); // its tree was swept
         let tree = trees.join(".gate.harness.new");
         fs::create_dir_all(&tree).unwrap();
-        let p = prepare(&root, &trees, &tree, &lim(5), &roomy, &mem).unwrap();
+        let p = prepare(&root, &trees, &tree, &lim(5), &roomy, &mem, &|_| false).unwrap();
         assert_eq!(p.orphans, vec![".gate.harness.gone".to_string()]);
         assert_eq!(p.evicted, vec![".gate.harness.old".to_string()], "held is skipped, old goes, then under the cap");
         assert!(root.join(".gate.harness.held/dwarf/x").is_file());
@@ -440,12 +465,12 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
-        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 4096, min_mem_mib: 1, shed_free_mib: 0 }, &|_| Some(100), &mem).unwrap_err();
+        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 4096, min_mem_mib: 1, shed_free_mib: 0 }, &|_| Some(100), &mem, &|_| false).unwrap_err();
         assert!(e.contains("100 MiB free") && e.contains("refusing to build on the disk"), "{e}");
-        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 1, min_mem_mib: 4096, shed_free_mib: 0 }, &roomy, &|| 12).unwrap_err();
+        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 1, min_mem_mib: 4096, shed_free_mib: 0 }, &roomy, &|| 12, &|_| false).unwrap_err();
         assert!(e.contains("MemAvailable is 12 MiB"), "{e}");
         assert!(!tree.join("target").exists(), "nothing linked, nothing built");
-        assert!(prepare(&root, &trees, &tree, &lim(100), &|_| None, &mem).is_err(), "an unreadable root refuses");
+        assert!(prepare(&root, &trees, &tree, &lim(100), &|_| None, &mem, &|_| false).is_err(), "an unreadable root refuses");
     }
 
     #[test]
@@ -497,7 +522,7 @@ mod tests {
             Some(if n < 2 { 50 } else { 300 })
         };
         let lim_floor = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 200 };
-        let p = prepare(&root, &trees, &tree, &lim_floor, &short, &mem).unwrap();
+        let p = prepare(&root, &trees, &tree, &lim_floor, &short, &mem, &|_| false).unwrap();
         assert_eq!(p.evicted, vec![".gate.harness.old".to_string()], "held is skipped despite being the LRU; old alone clears the floor");
         assert!(root.join(".gate.harness.held/dwarf/x").is_file());
         assert!(root.join(".gate.harness.mid/dwarf/x").is_file());
@@ -507,7 +532,7 @@ mod tests {
         let tree2 = trees.join(".gate.harness.new2");
         fs::create_dir_all(&tree2).unwrap();
         let lim_ok = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 10 };
-        let p2 = prepare(&root, &trees, &tree2, &lim_ok, &|_| Some(50u64), &mem).unwrap();
+        let p2 = prepare(&root, &trees, &tree2, &lim_ok, &|_| Some(50u64), &mem, &|_| false).unwrap();
         assert!(p2.evicted.is_empty(), "50 MiB free already clears a 10 MiB floor — nothing to shed");
         drop(f);
     }
@@ -517,7 +542,7 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
         write_mib(&tree.join("target/dwarf/x"), 2);
         write_mib(&tree.join("target/release/y"), 1);
         assert_eq!(release_tree(&tree, true), 2);
@@ -549,13 +574,67 @@ mod tests {
         };
         let busy = |p: &Path| p.ends_with("busy");
         let two_h = std::time::Duration::from_secs(2 * 3600);
-        assert_eq!(reap_stale(&root, &trees, two_h, true, &busy), vec!["stale".to_string()]);
+        assert_eq!(reap_stale(&root, &trees, two_h, true, &busy, &|_| false), vec!["stale".to_string()]);
         assert!(root.join("stale").exists(), "dry run removes nothing");
-        assert_eq!(reap_stale(&root, &trees, two_h, false, &busy), vec!["stale".to_string()]);
+        assert_eq!(reap_stale(&root, &trees, two_h, false, &busy, &|_| false), vec!["stale".to_string()]);
         assert!(!root.join("stale").exists());
         for n in ["held", "busy", "fresh"] {
             assert!(root.join(n).join("dwarf/x").is_file(), "{n} kept");
         }
+    }
+
+    #[test]
+    fn a_target_a_live_gate_slot_names_is_never_reaped_or_evicted_whatever_its_lock_says() {
+        use std::os::unix::io::AsRawFd;
+        let s = Scratch::new("slot");
+        let (run, root, trees) = (s.1.join("run"), s.1.join("root"), s.1.join("worktree"));
+        let slots = spira_config::admission::Pool::Gate.dir(&run);
+        fs::create_dir_all(&slots).unwrap();
+        fs::create_dir_all(&trees).unwrap();
+        let f = fs::File::create(slots.join("slot.1.lock")).unwrap();
+        assert_eq!(unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+        fs::write(slots.join("slot.1.holder"), spira_config::admission::gate_holder_line(std::process::id(), 0, "spira/sp-a1", 1)).unwrap();
+        assert!(held_by_gate(&run, ".gate.harness.spira-sp-a1"));
+        assert!(!held_by_gate(&run, ".gate.harness.spira-sp-b2"));
+
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 3600);
+        let held = |n: &str| held_by_gate(&run, n);
+        for n in [".gate.harness.spira-sp-a1", ".gate.harness.spira-sp-b2"] {
+            write_mib(&root.join(n).join("dwarf/x"), 1);
+            fs::File::open(root.join(n)).unwrap().set_modified(old).unwrap();
+        }
+        let two_h = std::time::Duration::from_secs(2 * 3600);
+        assert_eq!(reap_stale(&root, &trees, two_h, false, &|_| false, &held), vec![".gate.harness.spira-sp-b2".to_string()]);
+        assert!(root.join(".gate.harness.spira-sp-a1/dwarf/x").is_file(), "the slot holder's target survives");
+
+        let tree = trees.join(".gate.harness.spira-sp-c3");
+        fs::create_dir_all(&tree).unwrap();
+        prepare(&root, &trees, &tree, &lim(0), &roomy, &mem, &held).unwrap();
+        assert!(root.join(".gate.harness.spira-sp-a1/dwarf/x").is_file(), "a cap-evicting trial skips it too");
+        drop(f);
+    }
+
+    #[test]
+    fn a_sweep_that_cannot_find_the_trees_dir_removes_nothing() {
+        let s = Scratch::new("notrees");
+        let root = s.1.join("root");
+        write_mib(&root.join("stale/dwarf/x"), 1);
+        fs::File::open(root.join("stale")).unwrap().set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(9 * 3600)).unwrap();
+        assert!(reap_stale(&root, &s.1.join("nowhere"), std::time::Duration::from_secs(60), false, &|_| false, &|_| false).is_empty());
+        assert!(root.join("stale/dwarf/x").is_file());
+    }
+
+    #[test]
+    fn intact_sees_a_build_dir_whose_tmpfs_side_was_removed() {
+        let s = Scratch::new("intact");
+        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
+        let tree = trees.join(".gate.harness.b");
+        fs::create_dir_all(&tree).unwrap();
+        assert!(intact(&tree), "no links, built in place");
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        assert!(intact(&tree));
+        fs::remove_dir_all(root.join(".gate.harness.b/dwarf")).unwrap();
+        assert!(!intact(&tree));
     }
 
     #[test]
@@ -567,7 +646,7 @@ mod tests {
         }
         for n in ["pin", "plain"] {
             let t = trees.join(format!(".gate.harness.{n}"));
-            prepare(&root, &trees, &t, &lim(1000), &roomy, &mem).unwrap();
+            prepare(&root, &trees, &t, &lim(1000), &roomy, &mem, &|_| false).unwrap();
             write_mib(&t.join("target/release/y"), 2);
             release_tree(&t, true);
         }
@@ -576,11 +655,11 @@ mod tests {
         for n in ["pin", "plain"] {
             fs::File::open(root.join(format!(".gate.harness.{n}"))).unwrap().set_modified(old).unwrap();
         }
-        let p = prepare(&root, &trees, &trees.join(".gate.harness.new"), &lim(1), &roomy, &mem).unwrap();
+        let p = prepare(&root, &trees, &trees.join(".gate.harness.new"), &lim(1), &roomy, &mem, &|_| false).unwrap();
         assert_eq!(p.evicted, vec![".gate.harness.plain".to_string()]);
         assert!(root.join(".gate.harness.pin/release/y").is_file(), "pinned release kept");
         let two_s = std::time::Duration::from_secs(0);
-        assert!(reap_stale(&root, &trees, two_s, true, &|_| false).iter().all(|n| n != ".gate.harness.pin"), "reaper spares a pin");
+        assert!(reap_stale(&root, &trees, two_s, true, &|_| false, &|_| false).iter().all(|n| n != ".gate.harness.pin"), "reaper spares a pin");
         let stale = std::time::SystemTime::now() - PIN_MAX_AGE - std::time::Duration::from_secs(60);
         fs::File::open(root.join(".gate.harness.pin/release").join(PIN)).unwrap().set_modified(stale).unwrap();
         assert!(!pinned(&root.join(".gate.harness.pin")), "an old pin expires");
@@ -598,7 +677,7 @@ mod tests {
         release_tree(&tree, false);
         assert!(slot.join("deps/libz.rlib").is_file(), "release_tree cleared a warm slot through a stale link");
         std::os::unix::fs::symlink(&slot, tree.join("target/dwarf")).unwrap();
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
         assert_eq!(fs::read_link(tree.join("target/dwarf")).unwrap(), root.join(".gate.harness.w/dwarf"), "relinked to the tmpfs");
         assert!(slot.join("deps/libz.rlib").is_file(), "prepare cleared a warm slot through a stale link");
     }

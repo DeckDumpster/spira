@@ -246,6 +246,12 @@ pub fn cache_transport_failure(out: &str) -> bool {
             .any(|m| lower.contains(m))
 }
 
+/// A test that could not find a binary cargo built for it: the output names a
+/// `CARGO_BIN_EXE_*` path that is missing. Never the branch's red.
+pub fn missing_built_binary(out: &str) -> bool {
+    out.lines().any(|l| l.contains("CARGO_BIN_EXE_") && (l.contains("is_file()") || l.contains("NotFound") || l.contains("No such file")))
+}
+
 /// Whose fault a failed branch trial is (`gate_attribute`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Attribution {
@@ -430,6 +436,13 @@ mod tests {
     #[test]
     fn a_word_not_ending_in_sh_is_not_a_suite() {
         assert!(red_suites("cargo RED\nfoo.shx RED").is_empty());
+    }
+
+    #[test]
+    fn a_missing_cargo_bin_exe_path_is_found_and_other_failures_are_not() {
+        assert!(missing_built_binary("assertion failed: Path::new(env!(\"CARGO_BIN_EXE_spira-claim\")).is_file()"));
+        assert!(!missing_built_binary("assertion failed: x.is_file()"));
+        assert!(!missing_built_binary("error[E0308]: mismatched types"));
     }
 
     #[test]

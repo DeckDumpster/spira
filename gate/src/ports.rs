@@ -166,6 +166,9 @@ pub trait World {
     /// Put the gate tree's build directories on tmpfs (sp-z61hj, target.rs): Ok(a line for the
     /// trial's stderr), Err(the refusal — short of room; never a fall back to the disk).
     fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits) -> Result<String, String>;
+    /// False when a build directory `target_on_tmpfs` linked no longer resolves: something
+    /// else removed the output this trial built.
+    fn target_intact(&self, tree: &Path) -> bool;
     /// Drop the tmpfs build output of a finished trial (target::release_tree); `keep_release`
     /// spares `release` for a caller that still has to stage it.
     fn release_target(&self, tree: &Path, keep_release: bool);

@@ -116,6 +116,8 @@ struct Fake {
     target_err: RefCell<Option<String>>,
     /// The real move deletes a pre-tmpfs `target/gate-tools` from the disk; set to model it.
     target_clears_tools: Cell<bool>,
+    /// Another process removed the tree's build output after it was built.
+    target_swept: Cell<bool>,
     targets: RefCell<Vec<PathBuf>>,
     released: RefCell<Vec<(PathBuf, bool)>>,
     // ---- the base-suite cache (sp-kqger)
@@ -262,6 +264,7 @@ impl Fake {
             wrapper: RefCell::new(Ok(spira_config::build::Wrapper::Sccache(PathBuf::from("/box/.cargo/bin/sccache")))),
             wrapper_asked: RefCell::new(Vec::new()),
             target_err: RefCell::new(None),
+            target_swept: Cell::new(false),
             target_clears_tools: Cell::new(false),
             targets: RefCell::new(Vec::new()),
             released: RefCell::new(Vec::new()),
@@ -503,6 +506,9 @@ impl World for Fake {
             Some(e) => Err(e),
             None => Ok(format!("gate: build on tmpfs at /tmp/t/{}", tree.file_name().unwrap().to_string_lossy())),
         }
+    }
+    fn target_intact(&self, _: &Path) -> bool {
+        !self.target_swept.get()
     }
     fn release_target(&self, tree: &Path, keep_release: bool) {
         self.released.borrow_mut().push((tree.to_path_buf(), keep_release));
@@ -3269,6 +3275,27 @@ fn a_build_that_loses_sccache_is_no_verdict_but_a_compile_error_is_red() {
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nerror[E0308]: mismatched types".into()));
     assert_eq!(f.run(), FAIL, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
+}
+
+/// A test binary the gate built and something else removed is the host's fault: the red text
+/// may name `CARGO_BIN_EXE_*` or only say NotFound, and the branch is not blamed for either.
+#[test]
+fn a_gate_whose_built_binaries_vanished_is_no_verdict_never_branch_red() {
+    let missing = "test-a.sh RED\nthread 'main' panicked at spira-claim/tests/bin_is_built.rs:7:5:\nassertion failed: Path::new(env!(\"CARGO_BIN_EXE_spira-claim\")).is_file()";
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, missing.into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=target-vanished"), "{}", f.verdict_line());
+
+    let f = Fake::new();
+    f.target_swept.set(true);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nspira-runtime runs: Os { code: 2, kind: NotFound }".into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=target-vanished"), "{}", f.verdict_line());
+
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nspira-runtime runs: Os { code: 2, kind: NotFound }".into()));
+    assert_eq!(f.run(), FAIL, "a NotFound with the target intact is the branch's own: {}", f.stderr());
 }
 
 /// The tools phase and the unit phases are one-shot builds: no incremental cache, by a

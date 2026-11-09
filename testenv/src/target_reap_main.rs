@@ -106,8 +106,9 @@ fn main() -> ExitCode {
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
     let explicit = var("SPIRA_GATE_TARGET_ROOT").unwrap_or_default();
     let max_age = var("SPIRA_GATE_TARGET_MAX_AGE_MIN").and_then(|v| v.parse::<u64>().ok()).unwrap_or(120);
+    let held_fn = |name: &str| gate::target::held_by_gate(Path::new(&run), name);
     if let Some(root) = gate::target::root(&explicit, &run, gate::target::on_tmpfs(Path::new("/tmp"))) {
-        let gone = gate::target::reap_stale(&root, &dir, std::time::Duration::from_secs(max_age * 60), dry, &busy_fn);
+        let gone = gate::target::reap_stale(&root, &dir, std::time::Duration::from_secs(max_age * 60), dry, &busy_fn, &held_fn);
         println!(
             "target-reap: {} {} stale gate target dir(s) under {}{}",
             if dry { "would remove" } else { "removed" },

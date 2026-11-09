@@ -62,9 +62,13 @@ fn probe() {
     println!("NET_IFS {}", ifs.join(","));
     let git = std::env::var("GIT_CONFIG_SYSTEM").map(fs::read_to_string);
     println!("GIT_IDENTITY {git:?}");
+    let exe = std::env::current_exe().unwrap();
+    let sibling = exe.parent().and_then(|d| d.parent()).map(|p| p.join("sibling-bin"));
+    println!("SIBLING_BIN {:?}", sibling.map(|p| p.is_file()));
 }
 EOF
 mkdir -p "$TMP/target/debug/deps"
+: > "$TMP/target/debug/sibling-bin"
 # Building the probe is setup, not a case: on a loaded round VM the compile alone has taken 40s
 # and more, so inside a case it sat on the per-case deadline (law-no-wall-clock-budgets-in-the-
 # corpus). The deadline is off for the compile only and comes back as it was, so every case below
@@ -105,6 +109,7 @@ want "the caller's ~/.local/bin is not there" "NotFound" "$(field LOCAL_BIN "$ou
 is "no SPIRA_ key of the caller's gets in, SPIRA_HOME is the workspace's own" "SPIRA_HOME" "$(field SPIRA_KEYS "$out")"
 is "SPIRA_HOME names the workspace's spira directory" "$WORKSPACE/spira" "$(field SPIRA_HOME "$out")"
 is "there is no network but loopback" "" "$(field NET_IFS "$out")"
+is "a binary cargo built beside deps/ is there for a harness to exec (CARGO_BIN_EXE_*)" "Some(true)" "$(field SIBLING_BIN "$out")"
 want "the sandbox carries testenv's system git identity" 'email = spirauser@localhost' "$(field GIT_IDENTITY "$out")"
 
 # Without bwrap it refuses, naming why, and runs nothing — in a root where the binary could
