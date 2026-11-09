@@ -1756,7 +1756,7 @@ pub mod edge {
     /// PATH onto it, HOME and the one config spec. A transient unit inherits none of the
     /// runtime's environment, so without `SPIRA_TOML` round-vm refuses at once (exit 2) and the
     /// round is abandoned before it runs. A variable the leg already set is kept.
-    pub fn leg_env(mut vars: Vec<(String, String)>, release: &str, home: &str, toml: &str, runtime_path: &str) -> Vec<(String, String)> {
+    pub fn leg_env(vars: Vec<(String, String)>, release: &str, home: &str, toml: &str, runtime_path: &str) -> Vec<(String, String)> {
         let tail = if runtime_path.is_empty() { "/usr/local/bin:/usr/bin:/bin" } else { runtime_path };
         let base = [
             ("SPIRA_RELEASE", release.to_string()),
@@ -1764,9 +1764,14 @@ pub mod edge {
             ("HOME", home.to_string()),
             ("SPIRA_TOML", toml.to_string()),
         ];
+        let base: Vec<(String, String)> = base.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        with_defaults(vars, &base)
+    }
+
+    pub fn with_defaults(mut vars: Vec<(String, String)>, base: &[(String, String)]) -> Vec<(String, String)> {
         for (k, v) in base {
             if !vars.iter().any(|(have, _)| have == k) {
-                vars.push((k.to_string(), v));
+                vars.push((k.clone(), v.clone()));
             }
         }
         vars

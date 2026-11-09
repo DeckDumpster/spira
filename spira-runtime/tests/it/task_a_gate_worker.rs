@@ -121,3 +121,21 @@ fn t3_its_own_leg_unit_ran_is_heard() {
     let reg = registration();
     assert!(reg.handler.interests().contains(&runtime::units::UNIT_RAN), "gate.worker listens for its legs' ends");
 }
+
+/// A transient unit inherits no environment: the gate leg must carry the release on PATH or
+/// `gate.sh` is not found and every bead gets NO_VERDICT.
+#[test]
+fn a_gate_leg_carries_the_release_on_path() {
+    let base_env = spira_runtime::tasks::a::batcher_local::edge::leg_env(vec![], "/rel", "/home/x", "/rel/conf", "/usr/bin");
+    let snap = Snapshot { base_env, ..idle() };
+    let slot = Slot { state: State::Warming, job: Some(job("spira", "a", false, 2, 10)), ..Slot::default() };
+    let failed_warm = runtime::units::UnitSpec { task: NAME.into(), key: "0/warm/spira/a-tip".into(), argv: vec![], env: vec![], cwd: None };
+    let (_, acts) = on_outcome(&Carry { slots: vec![slot] }, UNIT_START, &serde_json::to_string(&failed_warm).unwrap(), false, "", &snap);
+    let leg = acts.iter().find(|a| a.effect == UNIT_START).expect("a failed warm leg moves on to the gate leg");
+    let spec: runtime::units::UnitSpec = serde_json::from_str(&leg.input).unwrap();
+    let get = |k: &str| spec.env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+    assert!(get("PATH").unwrap_or_default().starts_with("/rel/bin:/rel/spira:"), "PATH {:?}", get("PATH"));
+    assert_eq!(get("SPIRA_RELEASE").as_deref(), Some("/rel"));
+    assert_eq!(get("SPIRA_TOML").as_deref(), Some("/rel/conf"));
+    assert!(get("SPIRA_GATE_BEAD").is_some(), "the gate's own variables stay");
+}

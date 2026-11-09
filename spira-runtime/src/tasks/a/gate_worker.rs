@@ -189,6 +189,9 @@ pub struct Snapshot {
     pub run_dir: String,
     #[serde(default)]
     pub now_ms: u64,
+    /// The base environment a transient unit does not inherit: release, PATH, HOME, config spec.
+    #[serde(default)]
+    pub base_env: Vec<(String, String)>,
 }
 
 /// One leg as the probe found it: still running, or ended with its status (`None`: it ended
@@ -394,6 +397,7 @@ fn leg_act(snap: &Snapshot, slot: usize, leg: &str, job: &Job) -> Act {
         argv.extend(["gate.sh", &job.branch, &job.repo].map(String::from));
         env = vec![("SPIRA_GATE_LOCK_WAIT".to_string(), snap.lock_wait.to_string()), ("SPIRA_GATE_BEAD".to_string(), job.bead.clone())];
     }
+    let env = super::batcher_local::edge::with_defaults(env, &snap.base_env);
     let spec = runtime::units::UnitSpec { task: NAME.into(), key: leg_key(slot, leg, job), argv, env, cwd: None };
     Act::new(UNIT_START, spec.key.clone()).with_input(serde_json::to_string(&spec).unwrap_or_default())
 }
@@ -512,7 +516,8 @@ pub fn pins(pinned: &BTreeMap<String, String>) -> Snapshot {
     let timeout = pinned.get("SPIRA_GATE_TIMEOUT").map(String::as_str);
     let gate_timeout = timeout.and_then(|t| t.trim().parse().ok()).filter(|t| *t > 0).unwrap_or(2_700);
     let lock_wait = gate_worker::lock_wait(timeout, pinned.get("SPIRA_GATE_LOCK_WAIT").map(String::as_str).filter(|v| !v.trim().is_empty()));
-    Snapshot { run_dir: pinned.get("SPIRA_RUN").cloned().unwrap_or_default(), gate_timeout, lock_wait, ..Snapshot::default() }
+    let base_env = super::batcher_local::edge::base_env(vec![], &spira_config::process::spec().unwrap_or_default());
+    Snapshot { run_dir: pinned.get("SPIRA_RUN").cloned().unwrap_or_default(), gate_timeout, lock_wait, base_env, ..Snapshot::default() }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
