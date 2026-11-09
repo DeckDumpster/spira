@@ -2276,16 +2276,18 @@ enum Image {
 
 const IMAGE_UNJUDGED: i32 = 3;
 
-fn candidate_branch(batch: &str, sha: &str) -> String {
+fn candidate_branch(batch: &str, recipe: &str, head: &str) -> String {
     format!(
-        "spira-round-candidate/{batch}-{}",
-        &sha[..sha.len().min(12)]
+        "spira-round-candidate/{batch}-{}-{}",
+        &recipe[..recipe.len().min(12)],
+        &head[..head.len().min(12)]
     )
 }
 
 /// A round whose head changes the recipe certifies on an image built from that head: the head
 /// is pushed under a per-candidate branch, the Round AMI workflow is dispatched on it, and the
 /// pass waits up to `round_ami_wait_secs` for the image. A recipe already imaged is not rebuilt.
+/// The branch names the head, so a failed build is never read back for a different head.
 fn candidate_image(
     w: &World,
     label: &str,
@@ -2322,7 +2324,7 @@ fn candidate_image(
             "the repository has no publish remote to push the candidate image build to".into(),
         );
     };
-    let branch = candidate_branch(batch, &tree);
+    let branch = candidate_branch(batch, &tree, head);
     let began = w.clock.now();
     let mut dispatched = false;
     let mut idle = 0u32;
