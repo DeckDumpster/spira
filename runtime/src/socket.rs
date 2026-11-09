@@ -49,17 +49,6 @@ const HANDLER_MAX: usize = 128;
 /// answers the caller that made it. `kind_body` is a 65,535-byte TEXT column.
 const STAGE_MAX_BYTES: usize = 8 * 1024;
 
-/// The store's `kind_body` column, in bytes; a record over it is refused here, naming it, rather
-/// than by a store error that the scheduler takes for a fault and exits on.
-pub const KIND_BODY_MAX: usize = 65_535;
-
-fn within_column(stream: &StreamKey, kind: &EventKind) -> Result<()> {
-    if kind.body.len() <= KIND_BODY_MAX {
-        return Ok(());
-    }
-    Err(RuntimeError::refused(format!("journal: record on stream {} of kind {} has a {}-byte body, over the {KIND_BODY_MAX}-byte column; carry a reference, not the data", stream.0, kind.tag, kind.body.len())))
-}
-
 /// Staged records past which the next one sends them at once: one engine batch of reads.
 pub const MAX_STAGED: usize = 256;
 
@@ -358,12 +347,10 @@ fn enc<T: serde::Serialize>(v: &T) -> Result<String> {
 
 impl Journal for SocketJournal {
     fn append(&self, ev: &Event) -> Result<Offset> {
-        within_column(&ev.stream, &ev.kind)?;
         self.number(&["append", &enc(ev)?])
     }
 
     fn record(&self, ev: &Event) -> Result<()> {
-        within_column(&ev.stream, &ev.kind)?;
         let body = enc(ev)?;
         let fits = fits(&ev.id.0, ID_MAX) && fits(&ev.stream.0, STREAM_MAX) && fits_kind(&ev.kind) && fits_opt(ev.cause.as_ref()) && fits(&ev.correlation.0, ID_MAX);
         if !fits || body.len() > STAGE_MAX_BYTES {
@@ -418,7 +405,6 @@ impl Journal for SocketJournal {
     }
 
     fn schedule(&self, row: &ScheduleRow) -> Result<()> {
-        within_column(&row.stream, &row.kind)?;
         let body = enc(row)?;
         let fits = fits(&row.id, ID_MAX) && fits(&row.stream.0, STREAM_MAX) && fits_kind(&row.kind) && fits_opt(row.cause.as_ref()) && fits(&row.correlation.0, ID_MAX);
         if !fits || body.len() > STAGE_MAX_BYTES {
@@ -505,15 +491,14 @@ mod tests {
     }
 
     #[test]
-    fn a_record_over_the_column_is_refused_naming_its_stream_and_kind_before_any_send() {
+    fn a_record_over_the_column_is_sent_for_the_store_to_clip_not_refused_here() {
         let j = SocketJournal::new("/nonexistent/lc.sock");
-        let at = |body: String| Event { id: EventId("e".into()), stream: StreamKey("watch.x".into()), kind: EventKind::new("x.kind", &body), at: 1, cause: None, correlation: CorrelationId("c".into()) };
-        for r in [j.record(&at("x".repeat(KIND_BODY_MAX + 1))), j.append(&at("x".repeat(KIND_BODY_MAX + 1))).map(|_| ())] {
-            let e = r.unwrap_err();
-            assert!(e.is_refused() && e.0.contains("watch.x") && e.0.contains("x.kind"), "{e}");
+        let big = "x".repeat(65_536);
+        let ev = Event { id: EventId("e".into()), stream: StreamKey("watch.x".into()), kind: EventKind::new("x.kind", &big), at: 1, cause: None, correlation: CorrelationId("c".into()) };
+        let row = ScheduleRow { id: "r".into(), at: 1, stream: StreamKey("watch.x".into()), kind: EventKind::new("x.kind", &big), cause: None, correlation: CorrelationId("c".into()) };
+        for r in [j.record(&ev), j.append(&ev).map(|_| ()), j.schedule(&row)] {
+            assert!(!r.unwrap_err().is_refused());
         }
-        let row = ScheduleRow { id: "r".into(), at: 1, stream: StreamKey("watch.x".into()), kind: EventKind::new("x.kind", &"x".repeat(KIND_BODY_MAX + 1)), cause: None, correlation: CorrelationId("c".into()) };
-        assert!(j.schedule(&row).unwrap_err().is_refused());
     }
 
     #[test]
