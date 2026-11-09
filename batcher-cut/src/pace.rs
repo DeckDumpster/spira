@@ -458,12 +458,9 @@ mod tests {
     }
 
     fn stale_page(d: &Path, repo: &str, now: u64, work: bool) -> String {
-        let inbox = d.join("inbox.log");
-        let sm = Seams { repo, now, inbox: &inbox, stamp: &stamp, redrive_after: WAIT, pause_lift_after: LIFT };
+        let log = d.join("inbox.log");
+        let sm = Seams { repo, now, inbox: &log, stamp: &stamp, redrive_after: WAIT, pause_lift_after: LIFT };
         page_stale_pause(&Files::new(d, repo), &sm, 3600, || work).unwrap();
-        inbox_of(d)
-    }
-    fn inbox_of(d: &Path) -> String {
         inbox(d)
     }
 

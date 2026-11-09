@@ -1225,7 +1225,13 @@ fn page_stale_pauses(env_: &Env, repos: &[(String, String)]) {
     let stamp = utc_stamp;
     for (name, _) in repos {
         let sm = pace::Seams { repo: name, now: now(), inbox: &inbox, stamp: &stamp, redrive_after: env_.orphan_redrive_after, pause_lift_after: env_.pause_lift_after };
-        let waiting = || find_repo(env_, name).and_then(|r| io::certified_pool(env_, &r)).map_or(true, |p| !p.is_empty());
+        let waiting = || match find_repo(env_, name).and_then(|r| io::certified_pool(env_, &r)) {
+            Ok(pool) => !pool.is_empty(),
+            Err(e) => {
+                eprintln!("batcher rounds: {name}: pool unreadable, a stale pause is not paged this pass: {e}");
+                false
+            }
+        };
         if let Err(e) = pace::page_stale_pause(&pace::Files::new(&env_.run, name), &sm, env_.wall_secs, waiting) {
             eprintln!("batcher rounds: {name}: could not page a stale pause: {e}");
         }
