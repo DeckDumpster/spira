@@ -662,31 +662,38 @@ impl RealBeads {
     }
 
     fn show_raw(&self, ids: &[String]) -> Result<String, String> {
+        self.show_call(ids).map_err(|(_, why)| why)
+    }
+
+    /// `show_raw` with the store's exit code kept on failure (a fixture failure is exit 1).
+    fn show_call(&self, ids: &[String]) -> Result<String, (i32, String)> {
+        let fail = |rc: i32, why: String| (rc, why);
         if let Some(fx) = &self.fixture {
             let mut c = command("bdsim");
             c.arg(fx).arg("show").args(ids).arg("--json").stdin(Stdio::null());
             let (rc, so, _) = run_capture(c);
-            return if rc == 0 { Ok(String::from_utf8_lossy(&so).into_owned()) } else { Err(format!("bdsim exited {rc}")) };
+            return if rc == 0 { Ok(String::from_utf8_lossy(&so).into_owned()) } else { Err(fail(rc, format!("bdsim exited {rc}"))) };
         }
         // The store's `content show`, in-process over the lifecycle socket (no `bdq` child).
-        let lc = self.lc()?.within(std::time::Duration::from_secs(self.timeout));
+        let lc = self.lc().map_err(|e| fail(spira_config::lc_call::CANNOT_TELL, e))?.within(std::time::Duration::from_secs(self.timeout));
         let mut argv: Vec<&str> = vec!["content", "show"];
         argv.extend(ids.iter().map(String::as_str));
         argv.push("--json");
-        let mut last = String::new();
+        let (mut last, mut last_rc) = (String::new(), 1);
         for _try in 0..2 {
             let (rc, so, se) = crate::lifecycle::run(&lc, &argv);
             if rc == 0 {
                 return Ok(so);
             }
             last = se;
+            last_rc = rc;
             // A pooled connection the server already dropped: the query never ran, retrying
             // is as safe as the first attempt.
             if !last.contains("invalid connection") {
                 break;
             }
         }
-        Err(format!("bd show failed: {}", last.lines().next().unwrap_or("")))
+        Err((last_rc, format!("bd show failed: {}", last.lines().next().unwrap_or(""))))
     }
 
     /// The open asks: their control-plane records (`spira-lc list-asks`), each titled from its
@@ -727,16 +734,16 @@ impl RealBeads {
 const SHOW_CHUNK: usize = 25;
 
 impl RealBeads {
-    /// A chunk the service gave up on (`deadline`) is read as two halves; one id that still
+    /// A chunk the store could not answer (exit 2, e.g. past its deadline) is read as two halves; one id that still
     /// times out is an error.
     fn show_into(&self, ids: &[String], out: &mut Vec<BeadRow>) -> Result<(), String> {
-        let raw = match self.show_raw(ids) {
-            Err(e) if ids.len() > 1 && e.contains("deadline") => {
+        let raw = match self.show_call(ids) {
+            Err((rc, _)) if ids.len() > 1 && spira_config::lc_call::cannot_tell(rc) => {
                 let (a, b) = ids.split_at(ids.len() / 2);
                 self.show_into(a, out)?;
                 return self.show_into(b, out);
             }
-            r => r?,
+            r => r.map_err(|(_, why)| why)?,
         };
         let v: serde_json::Value = serde_json::from_str(json_only(&raw)).map_err(|e| format!("bd show: not JSON ({e})"))?;
         let items = match v {
