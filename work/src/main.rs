@@ -505,12 +505,20 @@ impl work::image::Ports for ImagePorts {
 }
 
 /// Refuses a submit whose branch changes the round image recipe and does not build the image.
-/// Unresolvable configuration is not read as "no recipe change": the gate only skips on a diff
-/// that leaves the recipe alone, and the diff is read first.
+/// The diff is read before any image configuration, so a branch that leaves the recipe alone
+/// never depends on it; with no landing ref there is no diff to read and nothing to gate.
 fn image_gate(bead: &str) -> Result<(), String> {
     let root = git_line(&["rev-parse", "--show-toplevel"]).ok_or("not inside a git worktree")?;
     let tip = git_line(&["rev-parse", "HEAD"]).ok_or("cannot read HEAD")?;
+    if git_line(&["rev-parse", "--verify", "--quiet", work::CHECKS_BASE]).is_none() {
+        return Ok(());
+    }
     let cfg = spira_config::process::cfg;
+    let touched = git_line(&["diff", "--name-only", "--no-renames", &format!("{}...{tip}", work::CHECKS_BASE)])
+        .map(|o| o.lines().map(String::from).collect::<Vec<_>>());
+    if touched.as_deref().is_some_and(|c| !work::image::touches_recipe(c)) {
+        return Ok(());
+    }
     let ports = ImagePorts {
         root: root.into(),
         tip: tip.clone(),
