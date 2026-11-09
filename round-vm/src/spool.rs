@@ -126,7 +126,7 @@ unit)
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
     env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
-        cargo test -q --profile unittest --workspace --no-fail-fast --lib --bins --config profile.unittest.incremental=false >&2
+        cargo test -q --profile unittest --workspace --features integration --no-fail-fast --lib --bins --config profile.unittest.incremental=false >&2
     rc=$?
     cd "$HOME" && rm -rf "$d"
     [ "$rc" -eq 101 ] && exit 5
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn the_unit_probe_runs_the_command_the_round_runs_its_unit_phase_with() {
-        let flags = ["--profile unittest --workspace", "profile.unittest.incremental=false"];
+        let flags = ["--profile unittest --workspace --features integration", "profile.unittest.incremental=false"];
         let unit_arm = REMOTE_ATTR_SCRIPT.split("\nunit)").nth(1).and_then(|a| a.split("exit 0 ;;").next()).expect("a unit arm");
         let round_cmd = crate::run::REMOTE_SCRIPT.split("unit_cargo() {").nth(1).and_then(|a| a.split("\n}\n").next()).expect("unit_cargo");
         for f in flags {

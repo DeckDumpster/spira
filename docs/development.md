@@ -140,7 +140,7 @@ cargo test -p <crate> --features integration --test <target> <test-name>
 
 Never run a crate's whole integration suite while iterating (spira-runtime's `tests/it` alone is
 about ten minutes). The gate (`gate/src/compose.rs`), the round's unit tier
-(`spira/unit-tests.sh`), `work checks` clippy and `make test` pass the opt-in, so coverage there
+(`spira/unit-tests.sh` and round-vm's `unit_cargo`), `work checks` clippy and `make test` pass the opt-in, so coverage there
 is unchanged.
 
 - **Suites** are `spira/test-*.sh`, found by glob. Each carries `# tier: T0..T4` and a
