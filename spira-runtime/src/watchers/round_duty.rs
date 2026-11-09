@@ -1,5 +1,5 @@
-//! ROUND DUE, ROUND RESULT, ROUND NO VERDICTS, ROUNDS STOPPED ON PURPOSE and ROUND STATE UNKNOWN
-//! for the round owner. Each tick asks the world for one snapshot; the decision over snapshot and
+//! ROUND DUE, ROUND RESULT, ROUND NO VERDICTS, ROUNDS STOPPED ON PURPOSE and ROUND STATE UNKNOWN,
+//! ROUND NOT CUTTING and ROUND OPENED UNADVANCED for the round owner. Each tick asks the world for one snapshot; the decision over snapshot and
 //! carried state is `decide`, which does no IO.
 
 use std::collections::BTreeMap;
@@ -24,6 +24,7 @@ pub struct RoundDuty {
     pub max_open: u64,
     pub remind_secs: u64,
     pub idle_cut_secs: u64,
+    pub lease_ttl_secs: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -40,10 +41,14 @@ pub enum RoundState {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub certified: u64,
+    pub submitted: u64,
+    pub submitted_by_repo: String,
     pub by_repo: String,
     pub stopped: String,
     pub state: RoundState,
     pub open: u64,
+    /// Rounds still at phase `opened`: the batch and the epoch second it opened.
+    pub unadvanced: Vec<(String, u64)>,
     pub lines: BTreeMap<String, u64>,
     pub fresh: Vec<(String, String)>,
 }
@@ -56,6 +61,9 @@ pub struct Carry {
     pub last_c: Option<u64>,
     pub last_change: u64,
     pub last_stopped: String,
+    pub starved_since: Option<u64>,
+    pub last_starved: u64,
+    pub last_unadvanced: u64,
     pub lines: BTreeMap<String, u64>,
 }
 
@@ -86,6 +94,13 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
         c.last_change = now;
     }
     let idle = now.saturating_sub(c.last_change);
+    let stale: Vec<String> = snap.unadvanced.iter().filter(|(_, at)| now.saturating_sub(*at) >= cfg.lease_ttl_secs).map(|(b, at)| format!("{b} (opened {}s ago)", now.saturating_sub(*at))).collect();
+    if stale.is_empty() {
+        c.last_unadvanced = 0;
+    } else if now.saturating_sub(c.last_unadvanced) >= cfg.remind_secs {
+        say.push(format!("ROUND OPENED UNADVANCED: {} still at phase opened past one round lease TTL ({}s) — no driver has advanced it; drive it or abandon it", stale.join(", "), cfg.lease_ttl_secs));
+        c.last_unadvanced = now;
+    }
     if snap.state == RoundState::Unknown {
         if now.saturating_sub(c.last_unknown) >= cfg.remind_secs {
             say.push("ROUND STATE UNKNOWN: 'queue round status' gave no usable answer — cannot tell whether a round is running, so no round is called due".into());
@@ -94,6 +109,18 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
         return (c, say);
     }
     c.last_unknown = 0;
+    let pool = certified + snap.submitted;
+    if snap.state == RoundState::None && pool >= 1 {
+        let since = *c.starved_since.get_or_insert(now);
+        let waited = now.saturating_sub(since);
+        if waited >= cfg.idle_cut_secs && now.saturating_sub(c.last_starved) >= cfg.remind_secs {
+            say.push(format!("ROUND NOT CUTTING: {} submitted and {certified} certified unheld beads waiting [submitted {}; certified {}] with no round open for {waited}s — nothing is cutting a round", snap.submitted, snap.submitted_by_repo, snap.by_repo));
+            c.last_starved = now;
+        }
+    } else {
+        c.starved_since = None;
+        c.last_starved = 0;
+    }
     let may_cut = snap.state == RoundState::None || (snap.state == RoundState::Open && snap.open < cfg.max_open);
     if may_cut && (certified >= cfg.min || (certified >= 1 && idle >= cfg.idle_cut_secs)) {
         if now.saturating_sub(c.last_due) >= cfg.remind_secs {
@@ -161,7 +188,7 @@ mod tests {
     use super::*;
 
     fn cfg() -> RoundDuty {
-        RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900 }
+        RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300 }
     }
 
     fn snap(state: RoundState, certified: u64) -> Snapshot {
@@ -196,6 +223,38 @@ mod tests {
         assert_eq!(say, ["ROUND DUE: 1 certified waiting [spira=1] (idle 0s), 0 of 1 rounds open — cut the next round"]);
         assert!(decide(&cfg(), &c, &snap(RoundState::None, 1), 1100).1.is_empty());
         assert_eq!(decide(&cfg(), &c, &snap(RoundState::None, 1), 1600).1.len(), 1);
+    }
+
+    #[test]
+    fn submitted_beads_with_no_round_open_raise_not_cutting_once_the_wait_passes_and_then_per_reminder() {
+        let s = Snapshot { submitted: 6, submitted_by_repo: "spira=6".into(), ..snap(RoundState::None, 0) };
+        let (c, say) = decide(&cfg(), &Carry::default(), &s, 1000);
+        assert!(say.is_empty(), "a fresh submission is the batcher's next tick, not an outage: {say:?}");
+        let (c, say) = decide(&cfg(), &c, &s, 1900);
+        assert_eq!(say.len(), 1, "{say:?}");
+        assert!(say[0].starts_with("ROUND NOT CUTTING: 6 submitted") && say[0].contains("spira=6") && say[0].contains("900s"), "{say:?}");
+        assert!(decide(&cfg(), &c, &s, 2000).1.is_empty());
+        assert_eq!(decide(&cfg(), &c, &s, 2500).1.len(), 1);
+    }
+
+    #[test]
+    fn a_round_opening_or_the_pool_emptying_restarts_the_not_cutting_wait() {
+        let s = Snapshot { submitted: 1, ..snap(RoundState::None, 0) };
+        let (c, _) = decide(&cfg(), &Carry::default(), &s, 1000);
+        let (c, _) = decide(&cfg(), &c, &snap(RoundState::Open, 0), 1500);
+        assert_eq!(c.starved_since, None);
+        assert!(decide(&cfg(), &c, &s, 1900).1.is_empty());
+    }
+
+    #[test]
+    fn a_round_left_at_opened_past_one_lease_ttl_raises_the_alarm_and_a_younger_one_does_not() {
+        let open = |at| Snapshot { open: 1, unadvanced: vec![("b-1".into(), at)], ..snap(RoundState::Open, 0) };
+        assert!(decide(&cfg(), &Carry::default(), &open(800), 1000).1.is_empty());
+        let (c, say) = decide(&cfg(), &Carry::default(), &open(600), 1000);
+        assert_eq!(say.len(), 1, "{say:?}");
+        assert!(say[0].starts_with("ROUND OPENED UNADVANCED: b-1 (opened 400s ago)") && say[0].contains("300s"), "{say:?}");
+        assert!(decide(&cfg(), &c, &open(600), 1100).1.is_empty());
+        assert_eq!(decide(&cfg(), &c, &open(600), 1700).1.len(), 1);
     }
 
     #[test]

@@ -137,22 +137,24 @@ impl World {
         map_rows(&text).into_iter().find(|r| r.name == self.home_repo).map(|r| PathBuf::from(r.path)).ok_or_else(|| format!("repo map has no row for {}", self.home_repo))
     }
 
-    /// Unheld certified beads of one repo; `None` when the lifecycle did not answer.
-    fn certified(&self, repo: &str) -> Option<u64> {
-        let rows: Value = serde_json::from_str(&self.lc(&["list", "--state", "CERTIFIED", "--repo", repo])?).ok()?;
+    /// Unheld beads of one repo in `state`; `None` when the lifecycle did not answer.
+    fn unheld(&self, repo: &str, state: &str) -> Option<u64> {
+        let rows: Value = serde_json::from_str(&self.lc(&["list", "--state", state, "--repo", repo])?).ok()?;
         let held = |r: &Value| r["holds"].as_array().is_some_and(|h| !h.is_empty());
         Some(rows.as_array()?.iter().filter(|r| r.get("bead_id").is_some() && !held(r)).count() as u64)
     }
 
-    /// The rounds the lifecycle still holds open for the home repo, from the queue's records.
-    fn open_rounds(&self) -> Option<u64> {
+    /// The rounds the lifecycle still holds open for the home repo, from the queue's records, and
+    /// of those the ones still at phase `opened` with the epoch second they opened.
+    fn open_round_facts(&self) -> Option<(u64, Vec<(String, u64)>)> {
         let rows = fs::read_to_string(&self.repo_map).ok().map(|t| map_rows(&t))?;
         let home = rows.iter().find(|r| r.name == self.home_repo)?;
         let dir = self.queue_dir.join(&home.name);
         let mut live = 0;
+        let mut unadvanced = vec![];
         let entries = match fs::read_dir(&dir) {
             Ok(e) => e,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(0),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some((0, vec![])),
             Err(_) => return None,
         };
         let mut records: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n == "round" || n.starts_with("round."))).collect();
@@ -160,12 +162,22 @@ impl World {
         for p in records {
             let Ok(text) = fs::read_to_string(&p) else { continue };
             let Some(batch) = kv_get(&text, "batch_id").filter(|b| !b.is_empty()) else { continue };
-            let dead = self.lc(&["show-batch", &batch]).and_then(|b| serde_json::from_str::<Value>(&b).ok()).is_some_and(|v| matches!(v["state"].as_str(), Some("ABANDONED" | "DISCARDED")));
-            if !dead {
-                live += 1;
+            let state = self.lc(&["show-batch", &batch]).and_then(|b| serde_json::from_str::<Value>(&b).ok()).and_then(|v| v["state"].as_str().map(str::to_string));
+            if matches!(state.as_deref(), Some("ABANDONED" | "DISCARDED")) {
+                continue;
+            }
+            live += 1;
+            if state.as_deref() == Some("OPEN") {
+                if let Some(at) = kv_get(&text, "opened").and_then(|o| o.parse::<u64>().ok()) {
+                    unadvanced.push((batch, at));
+                }
             }
         }
-        Some(live)
+        Some((live, unadvanced))
+    }
+
+    fn open_rounds(&self) -> Option<u64> {
+        self.open_round_facts().map(|f| f.0)
     }
 
     fn results(&self, known: &BTreeMap<String, u64>) -> (BTreeMap<String, u64>, Vec<(String, String)>) {
@@ -188,30 +200,38 @@ impl World {
     pub fn round_snapshot(&self, input: &str) -> Result<String, String> {
         let known: BTreeMap<String, u64> = serde_json::from_str(input).unwrap_or_default();
         let rows = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
-        let (mut certified, mut by_repo, mut stopped) = (0, vec![], vec![]);
+        let (mut certified, mut submitted, mut by_repo, mut submitted_by_repo, mut stopped) = (0, 0, vec![], vec![], vec![]);
         for r in rows.iter().filter(|r| r.land == "queue.local") {
             if lane_stopped(&self.run_dir, &r.name, "rounds") {
                 stopped.push(r.name.clone());
                 continue;
             }
-            let n = self.certified(&r.name).ok_or_else(|| format!("lifecycle did not answer for {}", r.name))?;
+            let answer = |state| self.unheld(&r.name, state).ok_or_else(|| format!("lifecycle did not answer for {}", r.name));
+            let (n, m) = (answer("CERTIFIED")?, answer("SUBMITTED")?);
             if n > 0 {
                 certified += n;
                 by_repo.push(format!("{}={n}", r.name));
             }
+            if m > 0 {
+                submitted += m;
+                submitted_by_repo.push(format!("{}={m}", r.name));
+            }
         }
-        let open = self.open_rounds();
+        let open = self.open_round_facts();
         let (lines, fresh) = self.results(&known);
         let snap = Snapshot {
             certified,
             by_repo: by_repo.join(" "),
             stopped: stopped.join(","),
-            state: match open {
+            submitted,
+            submitted_by_repo: submitted_by_repo.join(" "),
+            state: match &open {
                 None => RoundState::Unknown,
-                Some(0) => RoundState::None,
+                Some((0, _)) => RoundState::None,
                 Some(_) => RoundState::Open,
             },
-            open: open.unwrap_or(0),
+            open: open.as_ref().map_or(0, |o| o.0),
+            unadvanced: open.map(|o| o.1).unwrap_or_default(),
             lines,
             fresh,
         };
