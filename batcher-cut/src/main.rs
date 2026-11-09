@@ -31,7 +31,7 @@
 //! reproduction.
 
 use batcher::drive;
-use batcher_cut::{endpass, io, order, pace, screen, vm};
+use batcher_cut::{endpass, io, order, pace, redtip, screen, vm};
 mod telemetry;
 
 use std::collections::BTreeMap;
@@ -189,6 +189,16 @@ fn cut(o: &Opts) -> Result<(), pace::CutError> {
     let _parked = io::park_queue_lock(lock);
 
     let screened = screen::cut_pool(io::certified_pool(&env_, &repo)?, &io::sifted_tips(&env_)?);
+    let (screened, withheld) = redtip::withhold(&env_.run, &repo.name, screened);
+    for (id, tip, first) in &withheld {
+        println!("batcher {}: {id} left out: its tip {tip} is unchanged since a red attributed to it", repo.name);
+        if *first {
+            let note = format!("Left out of every round until its branch has a new commit: a red was attributed to spira/{id} at {tip} and the tip has not changed since.");
+            if let Err(e) = io::bead_note(&env_, id, &note) {
+                eprintln!("batcher {}: {id} not noted: {e}", repo.name);
+            }
+        }
+    }
     let (pool, kind) = batcher::core::select_round(batcher::core::base_fix_lane(screened));
     let (pool, mut refused) = batcher::core::refuse_blocked(pool);
     let (pool, full) = batcher::core::cap_round(pool, state_store::limits::MAX_CUT_MEMBERS);
@@ -333,6 +343,9 @@ impl LiveOps<'_> {
 
 impl LiveOps<'_> {
     fn eject_with(&mut self, member: &Member, suites: &[String], fails: &[(String, String)], owner: bool) {
+        if owner {
+            redtip::record(&self.env.run, &self.repo.name, &member.id, &member.tip);
+        }
         match self.batch {
             Some(batch) => {
                 if let Err(e) = io::round_eject(self.env, self.repo, batch, &member.id, suites, fails, owner) {
@@ -799,6 +812,9 @@ fn finish_local_round(
                 }
                 let ci = io::ci_red_suites(wt);
                 for id in &guilty {
+                    if let Some(m) = stable.members.iter().find(|m| m.id == *id) {
+                        redtip::record(&env_.run, &repo.name, id, &m.tip);
+                    }
                     let paths = changed.iter().find(|(m, _)| m == id).map(|(_, p)| p.as_slice()).unwrap_or_default();
                     let first = text.lines().find(|l| paths.iter().any(|p| l.contains(p.as_str()))).unwrap_or_default().trim().to_string();
                     let fails = if first.is_empty() { Vec::new() } else { vec![(ci[0].clone(), first)] };
