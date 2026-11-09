@@ -153,3 +153,57 @@ fn a_warm_leg_carries_the_release_on_path_and_a_leg_variable_wins() {
     let kept = spira_runtime::tasks::a::batcher_local::edge::with_defaults(vec![("PATH".into(), "/mine".into())], &snap.base_env);
     assert_eq!(kept.iter().filter(|(k, _)| k == "PATH").map(|(_, v)| v.as_str()).collect::<Vec<_>>(), ["/mine"]);
 }
+
+fn held(state: State, leg_started: bool, since_ms: Option<u64>) -> Slot {
+    Slot { state, job: Some(job("spira", "a", false, 2, 10)), started_ms: Some(0), leg_started, stall: since_ms.map(|s| Stall { state, leg_started, since_ms: s }) }
+}
+
+fn at(now_ms: u64) -> Snapshot {
+    Snapshot { now_ms, ..idle() }
+}
+
+#[test]
+fn a_slot_that_never_leaves_claimed_is_recovered_and_the_worker_gates_the_next_job() {
+    let stuck = Carry { slots: vec![held(State::Claimed, false, Some(1_000)), Slot::default()] };
+    let (next, acts) = decide(&stuck, &at(1_000 + STUCK_MS + 1));
+    assert!(acts.iter().any(|a| a.effect == RECOVER && a.input == "0"), "the stuck slot is recovered: {acts:?}");
+    assert_eq!(next.slots[0], Slot::default());
+    let (_, acts) = decide(&next, &Snapshot { inbox: vec![job("spira", "b", false, 2, 20)], now_ms: 1_000 + STUCK_MS + 2, ..idle() });
+    assert!(acts.iter().any(|a| a.effect == CLAIM), "the freed slot gates the next SUBMITTED bead: {acts:?}");
+}
+
+#[test]
+fn a_stuck_slot_is_first_seen_then_recovered_not_recovered_on_sight() {
+    let carry = Carry { slots: vec![held(State::Filing, false, None)] };
+    let (next, acts) = decide(&carry, &at(500_000));
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(next.slots[0].stall.as_ref().map(|s| s.since_ms), Some(500_000));
+    let (_, acts) = decide(&next, &at(500_000 + STUCK_MS - 1));
+    assert!(acts.is_empty(), "inside the bound: {acts:?}");
+}
+
+#[test]
+fn a_gate_leg_that_runs_long_is_never_recovered() {
+    let carry = Carry { slots: vec![held(State::Gating, true, None)] };
+    let (next, acts) = decide(&carry, &at(10 * STUCK_MS));
+    assert!(acts.iter().all(|a| a.effect != RECOVER), "{acts:?}");
+    assert_eq!(next.slots[0].stall, None);
+}
+
+#[test]
+fn a_tip_read_that_fails_frees_the_slot_instead_of_holding_it_claimed() {
+    let j = job("spira", "a", false, 2, 10);
+    let input = serde_json::to_string(&SlotJob { slot: 0, job: j }).unwrap();
+    let (next, acts) = on_outcome(&Carry { slots: vec![held(State::Claimed, false, None)] }, TIP, &input, false, "", &idle());
+    assert!(acts.iter().any(|a| a.effect == RECOVER), "{acts:?}");
+    assert_eq!(next.slots[0], Slot::default());
+}
+
+#[test]
+fn a_verdict_filing_that_fails_frees_the_slot_instead_of_holding_it_filing() {
+    let j = job("spira", "a", false, 2, 10);
+    let input = serde_json::to_string(&Filing { slot: 0, job: j, ..Filing::default() }).unwrap();
+    let (next, acts) = on_outcome(&Carry { slots: vec![held(State::Filing, false, None)] }, COMPLETE, &input, false, "", &idle());
+    assert!(acts.iter().any(|a| a.effect == RECOVER), "{acts:?}");
+    assert_eq!(next.slots[0], Slot::default());
+}
