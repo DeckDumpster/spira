@@ -153,6 +153,11 @@ pub fn transition_record(machine: &str, event: &str, from: &str, to: &str, bead_
     })
 }
 
+/// The LogsQL filter for every transition within the last `window_secs`.
+pub fn transitions_window(window_secs: u64) -> String {
+    format!("_time:{window_secs}s kind_tag:{TRANSITION_KIND}")
+}
+
 /// The LogsQL filter for transitions of `machine` within the last `window_secs`, optionally into state `to`.
 pub fn transitions_filter(machine: &str, to: Option<&str>, window_secs: u64) -> String {
     let quote = |v: &str| format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""));
@@ -218,6 +223,16 @@ impl Logs {
         for row in self.rows(&format!("{filter} | stats by ({by}) count() as n"))? {
             let key = row.get(by).and_then(Value::as_str).unwrap_or("").to_string();
             out.insert(key, number(&row, "n")?);
+        }
+        Ok(out)
+    }
+
+    /// How many records match `filter`, per combination of the fields `by`; a record lacking a field counts under "".
+    pub fn count_groups(&self, filter: &str, by: &[&str]) -> Result<Vec<(BTreeMap<String, String>, u64)>, LogsError> {
+        let mut out = vec![];
+        for row in self.rows(&format!("{filter} | stats by ({}) count() as n", by.join(", ")))? {
+            let keys = by.iter().map(|k| (k.to_string(), row.get(*k).and_then(Value::as_str).unwrap_or("").to_string())).collect();
+            out.push((keys, number(&row, "n")?));
         }
         Ok(out)
     }

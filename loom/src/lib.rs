@@ -51,6 +51,8 @@ pub struct Config {
     pub systemctl: String,
     /// The metrics store the units page reads executions from, from `SPIRA_METRICS_ENDPOINT`.
     pub metrics_endpoint: Option<String>,
+    /// Where the 24 h counts are read, from `SPIRA_VICTORIALOGS_URL`; unset refuses to start.
+    pub victorialogs_url: String,
     /// The `broker` the forge batch pages read CI detail through. Overridable in tests.
     pub broker: String,
     /// The materialised desired-state directory, from `SPIRA_DESIRED_DIR`: the declared unit set the units page scopes to.
@@ -84,6 +86,7 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "systemctl".to_string()),
             metrics_endpoint: cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty()),
+            victorialogs_url: cfg("SPIRA_VICTORIALOGS_URL").ok().filter(|e| !e.trim().is_empty()).ok_or("loom: SPIRA_VICTORIALOGS_URL is unset; refusing to start without the store its counts are read from")?,
             broker: match std::env::var("SPIRA_BROKER").ok().filter(|s| !s.is_empty()) {
                 Some(b) => b,
                 None => spira_config::release_env::tool("broker")?,
@@ -217,7 +220,7 @@ impl Loom {
             return Ok(v.clone());
         }
         let now = now_s();
-        let sensing = factory::Sensing { transitions: self.cfg.transitions.clone(), tsd_endpoint: self.cfg.metrics_endpoint.clone(), now };
+        let sensing = factory::Sensing { victorialogs_url: self.cfg.victorialogs_url.clone(), transitions: self.cfg.transitions.clone(), tsd_endpoint: self.cfg.metrics_endpoint.clone(), now };
         let mut reads = factory::gather(client()?, self.cfg.budget, &self.cfg.run, &sensing).await;
         reads.limits = self.cfg.limits.clone();
         let floor = factory::build(&reads, now)?;
@@ -963,6 +966,7 @@ mod in_process_tests {
             instance: "test".into(),
             systemctl: "systemctl".into(),
             metrics_endpoint: None,
+            victorialogs_url: String::new(),
             broker: String::new(),
             desired_dir: String::new(),
             units_install: String::new(),
