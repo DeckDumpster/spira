@@ -13,7 +13,6 @@
 
 use crate::filter::Filter;
 use crate::fs_ops;
-use crate::iso8601;
 use crate::lock;
 use crate::manifest::{Kind, Row};
 use crate::paths;
