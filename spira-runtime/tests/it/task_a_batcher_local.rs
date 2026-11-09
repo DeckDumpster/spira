@@ -508,6 +508,16 @@ fn sp_tjrjca_a_green_round_refused_base_moved_is_certified_again_and_landed() {
     assert!(!acts.iter().any(|a| a.effect == ABANDON), "{acts:?}");
 }
 
+/// The activation restart re-drives LAND on a round that already landed; the queue answers it
+/// ok, and that lands the round — no abandon, no red pause.
+#[test]
+fn a_land_re_driven_after_it_landed_is_landed_not_red() {
+    let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
+    let (carry, acts) = on_outcome(&landing(), LAND, true, &serde_json::to_string(&Landed::default()).unwrap(), &land, NOW);
+    assert!(!acts.iter().any(|a| a.effect == ABANDON), "{acts:?}");
+    assert!(!carry.repos.contains_key("spira"), "the round is finished, not held red: {:?}", carry.repos);
+}
+
 /// At most once per base change: base-moved again on the same base is a red, abandoned.
 #[test]
 fn sp_tjrjca_base_moved_twice_on_one_base_is_red() {

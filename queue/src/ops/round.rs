@@ -4194,6 +4194,24 @@ fn land(w: &World, batch: &str, repo: Option<&str>, token: Option<&str>) -> i32 
     }
 }
 
+/// The head the landing log records for `batch`'s ROUND-LAND when it is on the landing ref: a
+/// land driven again after it ran (its outcome unread) is answered, not refused for a round that
+/// ended by landing.
+fn landed_head(w: &World, c: &Ctx, path: &Path, batch: &str) -> Option<String> {
+    if unrecorded_marker(c, batch).exists() {
+        return None;
+    }
+    let log = fs::read_to_string(c.s.run.join("landing.log")).ok()?;
+    let (repo, id) = (format!(" repo={} ", c.r.name), format!(" batch={batch} "));
+    let head = log
+        .lines()
+        .filter(|l| l.starts_with("QUEUE ROUND-LAND ") && l.contains(&repo) && l.contains(&id))
+        .filter_map(|l| l.split(" head=").nth(1)?.split(' ').next())
+        .next_back()?;
+    let base = c.r.landref.clone()?;
+    w.git.is_ancestor(path, head, &base).then(|| head.to_string())
+}
+
 /// `Err` is a refusal that landed nothing; `Ok` is the exit of a land that ran.
 fn land_round(
     w: &World,
@@ -4208,6 +4226,10 @@ fn land_round(
     reconcile_ended(w, &c);
     if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
         return Err(refused(FAIL));
+    }
+    if let Some(head) = landed_head(w, &c, &path, batch) {
+        w.out(format!("queue.sh {label}: round {batch} already landed at {head}"));
+        return Ok(OK);
     }
     LeaseCheck::Check(token)
         .guard(w, label, &c, batch)
