@@ -97,7 +97,8 @@ pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
     rc
 }
 
-/// A queue.local repo holds no PR for a batch left opening, so a stale one is only ever released.
+/// A stale opening record is adopted when the forge lists its PR (a mode switch can leave one) and
+/// released otherwise, including where the forge cannot answer, as a repo with no forge holds none.
 fn release_stale_opening(w: &World, c: &Ctx, path: &Path) -> i32 {
     if !forge_batch::on_store(w) {
         return OK;
@@ -115,7 +116,8 @@ fn release_stale_opening(w: &World, c: &Ctx, path: &Path) -> i32 {
     let Ok(ttl) = super::batch::lease_ttl(w, "verdict") else {
         return FAIL;
     };
-    super::batch::sweep_opening(w, c, path, ttl, &live, None)
+    let prs = w.forge.queue_prs(&c.s.forge, path);
+    super::batch::sweep_opening(w, c, path, ttl, &live, prs.as_deref())
 }
 
 fn local_pass(w: &World, c: &Ctx, path: &Path) -> i32 {

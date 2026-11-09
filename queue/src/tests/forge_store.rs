@@ -709,14 +709,25 @@ fn a_settled_batch_the_machine_has_not_ended_is_ended_on_its_record_and_reads_as
 }
 
 #[test]
-fn a_queue_local_verdict_releases_a_stale_forge_batch_still_opening_without_asking_the_forge() {
+fn a_queue_local_verdict_releases_a_stale_forge_batch_still_opening_when_no_pr_exists() {
     let t = forge_world();
     seed(&t, "left", "opening", 1, None);
     t.lib.r.borrow_mut().mode = LandMode::QueueLocal;
     t.clock.now.set(1_000_000);
     t.run(&["verdict", "spira"]);
     assert!(t.lc.has("abandon-batch left"), "{:?}", t.lc.calls.borrow());
-    assert!(forge_calls(&t).is_empty(), "{:?}", forge_calls(&t));
+}
+
+#[test]
+fn a_queue_local_verdict_adopts_a_stale_opening_record_whose_pr_the_forge_lists() {
+    let t = forge_world();
+    seed(&t, "left", "opening", 1, None);
+    t.forge.queue_prs.borrow_mut().push(("12".into(), "spira/queue/left".into()));
+    t.lib.r.borrow_mut().mode = LandMode::QueueLocal;
+    t.clock.now.set(1_000_000);
+    t.run(&["verdict", "spira"]);
+    assert!(!t.lc.has("abandon-batch"), "{:?}", t.lc.calls.borrow());
+    assert_eq!(record(&t, "left").1.get("forge.phase"), Some("open"));
 }
 
 #[test]
