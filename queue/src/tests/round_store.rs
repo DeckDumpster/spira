@@ -403,17 +403,11 @@ fn open_whose_cut_reply_is_lost_never_leaves_a_round_without_its_worktree() {
     let d = t.lc.store.get().unwrap();
     let held = batches::open_batches(d, "spira").unwrap();
     assert!(!t.err().contains("cut refused"), "a lost reply is not a refusal: {}", t.err());
-    for b in &held {
-        let wt = std::path::PathBuf::from(b.kv.get("worktree").unwrap_or(""));
-        assert!(
-            wt.exists(),
-            "round {} is recorded and its worktree is gone: {}",
-            b.id,
-            t.err()
-        );
-        assert_eq!(rc, 0, "a round that exists is reported opened: {}", t.err());
-    }
-    assert!(!held.is_empty() || rc != 0, "no record and rc 0 is neither outcome");
+    assert_eq!(held.len(), 1, "the cut wrote the round and open reports it: {}", t.err());
+    assert_eq!(rc, 0, "a round that exists is reported opened: {}", t.err());
+    let wt = std::path::PathBuf::from(held[0].kv.get("worktree").unwrap_or(""));
+    assert!(wt.exists(), "round {} is recorded and its worktree is gone", held[0].id);
+    assert_eq!(held[0].kv.get("head"), t.out().lines().find_map(|l| l.strip_prefix("head=")));
 }
 
 #[test]
