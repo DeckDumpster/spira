@@ -1285,7 +1285,8 @@ pub(crate) mod tests {
         let mut ops = Ops::default();
         let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
-        assert_eq!(ops.ejected.len(), 1);
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-01.sh".to_string()])]);
+        assert_eq!(ops.owner_flags, vec![("m1".to_string(), true)]);
         assert!(ops.judged.is_empty());
     }
 
@@ -1863,6 +1864,7 @@ pub(crate) mod tests {
         let end = attribute_round(&mut f, &mut ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
         assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["integration-tests".to_string()])]);
+        assert_eq!(ops.owner_flags, vec![("m1".to_string(), true)]);
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
