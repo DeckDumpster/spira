@@ -671,6 +671,9 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
         _ => reads.mending.is_ok(),
     };
 
+    // Rounds in flight, as the batch machine's own edges say: those of the watched repo not yet at a terminal belt.
+    let open_rounds = reads.transitions.as_ref().ok().map(|(cfg, _)| items.iter().filter(|i| i.kind == "batch" && i.repo.as_deref() == Some(cfg.release_repo.as_str())).count() as u64);
+
     // Belts as JSON.
     let in24h_releases = reads.releases.as_ref().ok().map(|rs| rs.iter().flat_map(|r| r.events.iter()).filter(|e| e.to == release::machine::ReleaseState::Activated && e.at as i64 >= now - DAY).count() as i64);
     let mut belts_json: Vec<Value> = Vec::new();
@@ -785,7 +788,7 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
         "edges": edges_json,
         "items": items.iter().map(Item::json).collect::<Vec<_>>(),
         "components": components,
-        "sensors": sensors(reads, now, &stations, &edges, &|id| belt_exists(id), &|st| outs(st)),
+        "sensors": sensors(reads, now, open_rounds, &stations, &edges, &|id| belt_exists(id), &|st| outs(st)),
     }))
 }
 
@@ -820,31 +823,32 @@ fn strings(ids: &[&str]) -> Vec<String> {
     ids.iter().map(|s| s.to_string()).collect()
 }
 
-fn secs(v: &Value) -> Option<u64> {
-    v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).filter(|x| *x >= 0.0).map(|x| x as u64)
+fn secs(v: &Value) -> Option<f64> {
+    v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).filter(|x| *x >= 0.0)
 }
 
-/// The nearest-rank `pct` percentile of sorted `v`.
-fn rank(v: &[u64], pct: usize) -> u64 {
-    v[(pct * v.len()).div_ceil(100).clamp(1, v.len()) - 1]
+/// A mean in ms that keeps its fraction under 10, so a fast verb never reads as zero.
+fn mean_ms(total: i64, n: i64) -> String {
+    let m = total as f64 / n as f64;
+    if m >= 10.0 { format!("{}", m.round()) } else { format!("{m:.1}") }
 }
 
 fn tsd_reading(rows: &[Value], wait_field: &str) -> Result<(String, String), String> {
     if rows.is_empty() {
         return Err("no row in the last 24 h".into());
     }
-    let mut waits: Vec<u64> = rows.iter().filter_map(|r| secs(&r[wait_field])).collect();
-    waits.sort_unstable();
+    let waits: Vec<f64> = rows.iter().filter_map(|r| secs(&r[wait_field])).collect();
     if waits.is_empty() {
         return Err(format!("{} rows in the last 24 h, none carrying {wait_field}", rows.len()));
     }
-    let waited = waits.iter().filter(|w| **w > 0).count();
-    Ok((format!("{} in 24 h", rows.len()), format!("{} in 24 h · {waited} waited · {wait_field} p50 {} s · p90 {} s", rows.len(), rank(&waits, 50), rank(&waits, 90))))
+    let waited = waits.iter().filter(|w| **w > 0.0).count();
+    let at = |p: f64| tsd::query::quantile(&waits, p).map_or(0, |q| q.round() as u64);
+    Ok((format!("{} in 24 h", rows.len()), format!("{} in 24 h · {waited} waited · {wait_field} p50 {} s · p90 {} s", rows.len(), at(0.5), at(0.9))))
 }
 
 /// Every sensor of the floor. Nothing here is a zero that was not read: what cannot be read is
 /// BLIND and says why, what is not measured at all is MISSING.
-fn sensors(reads: &Reads, now: i64, stations: &[Built], edges: &[Edge], belt_exists: &dyn Fn(&str) -> bool, outs: &dyn Fn(&Built) -> Vec<String>) -> Vec<Value> {
+fn sensors(reads: &Reads, now: i64, open_rounds: Option<u64>, stations: &[Built], edges: &[Edge], belt_exists: &dyn Fn(&str) -> bool, outs: &dyn Fn(&Built) -> Vec<String>) -> Vec<Value> {
     let mut out: Vec<Sensor> = Vec::new();
     let anywhere = |ids: Vec<String>| if ids.is_empty() { vec![BUS.to_string()] } else { ids };
     let at_edge = |machine: &str, from: &str, to: &str| -> Vec<String> {
@@ -852,7 +856,10 @@ fn sensors(reads: &Reads, now: i64, stations: &[Built], edges: &[Edge], belt_exi
     };
     let feeders = || anywhere(stations.iter().filter(|st| st.live && outs(st).iter().any(|o| o == RELEASE_FEED)).map(|st| st.id.clone()).collect());
 
-    let rows_at = |name: &str| if name == "ASK" { "ask.OPEN".to_string() } else { format!("bead.{name}") };
+    let row_at = |name: &str| {
+        let belt = if name == "ASK" { "ask.OPEN".to_string() } else { format!("bead.{name}") };
+        if belt_exists(&belt) { belt } else { BUS.to_string() }
+    };
     let edge_at = |edge: &str| match edge {
         "LANDED→ACTIVATED" => feeders(),
         "ASK→ANSWERED" => at_edge("ask", "OPEN", "ANSWERED"),
@@ -864,18 +871,21 @@ fn sensors(reads: &Reads, now: i64, stations: &[Built], edges: &[Edge], belt_exi
         Ok(_) => None,
     };
     if let Some(why) = &blind_why {
-        for name in wt::ROWS.iter().filter(|n| belt_exists(&rows_at(n))) {
-            out.push(Sensor::new(format!("wt.{name}"), "transitions", vec![rows_at(name)], "BLIND", "watch.transitions").says("BLIND", format!("BLIND {name}: {why}")));
+        for name in wt::ROWS {
+            out.push(Sensor::new(format!("wt.{name}"), "transitions", vec![row_at(name)], "BLIND", "watch.transitions").says("BLIND", format!("BLIND {name}: {why}")));
         }
         for edge in wt::EDGES {
             out.push(Sensor::new(format!("wt.{edge}"), "transitions", edge_at(edge), "BLIND", "watch.transitions").says("BLIND", format!("BLIND {edge}: {why}")));
         }
     } else if let Ok((cfg, snap)) = &reads.transitions {
         let now = now.max(0) as u64;
+        let mut snap = snap.clone();
+        snap.open_rounds = open_rounds.filter(|_| reads.batches.is_ok());
+        let snap = &snap;
         let table = wt::table(snap, wt::ALL, now);
-        for name in wt::ROWS.iter().filter(|n| belt_exists(&rows_at(n))) {
+        for name in wt::ROWS {
             let reading = wt::row_text(name, &table[name]);
-            out.push(Sensor::new(format!("wt.{name}"), "transitions", vec![rows_at(name)], "WAIT", "watch.transitions").says(reading.clone(), reading));
+            out.push(Sensor::new(format!("wt.{name}"), "transitions", vec![row_at(name)], "WAIT", "watch.transitions").says(reading.clone(), reading));
         }
         let stalled = wt::stalls(snap, now, cfg);
         for edge in wt::EDGES {
@@ -901,13 +911,13 @@ fn sensors(reads: &Reads, now: i64, stations: &[Built], edges: &[Edge], belt_exi
                 named.insert(*verb);
                 let id = format!("perf.{verb}");
                 match verbs.and_then(|v| v.get(*verb)).and_then(|v| Some((num(&v["count"])?, num(&v["total_ms"])?))).filter(|(n, _)| *n > 0) {
-                    Some((n, ms)) => out.push(Sensor::new(id, "perf", strings(at), "OK", "spira-lc stats").says(format!("mean {} ms", ms / n), format!("{n} calls · mean {} ms", ms / n))),
+                    Some((n, ms)) => out.push(Sensor::new(id, "perf", strings(at), "OK", "spira-lc stats").says(format!("mean {} ms", mean_ms(ms, n)), format!("{n} calls · mean {} ms", mean_ms(ms, n)))),
                     None => out.push(Sensor::new(id, "perf", strings(at), "BLIND", "spira-lc stats").says("no calls", format!("BLIND: no {verb} call counted since lc-serve started"))),
                 }
             }
             for (verb, v) in verbs.into_iter().flatten().filter(|(k, _)| !named.contains(k.as_str())) {
                 if let (Some(n), Some(ms)) = (num(&v["count"]).filter(|n| *n > 0), num(&v["total_ms"])) {
-                    out.push(Sensor::new(format!("perf.{verb}"), "perf", vec![BUS.into()], "OK", "spira-lc stats").says(format!("mean {} ms", ms / n), format!("{verb}: {n} calls · mean {} ms", ms / n)));
+                    out.push(Sensor::new(format!("perf.{verb}"), "perf", vec![BUS.into()], "OK", "spira-lc stats").says(format!("mean {} ms", mean_ms(ms, n)), format!("{verb}: {n} calls · mean {} ms", mean_ms(ms, n))));
                 }
             }
             let writes = &stats["writes"];
@@ -1296,6 +1306,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn submitted_work_behind_a_full_set_of_open_rounds_is_queued_not_a_stall_sensor() {
+        let run = run_with_a_release();
+        let dwell = json!({"beads": [{"id": "sp-a", "repo": "spira", "state": "SUBMITTED", "since": NOW - 7200}], "horizon": NOW - 4200, "last": {"spira": {}}, "landed_after": {}});
+        let round = |id: &str| json!({"batch_id": id, "state": "OPEN", "repo": "spira", "members": ["sp-x"], "pass": 1, "opened_at": NOW - 60});
+        let mut answers = script(batch_graph(), &quiet(), json!([]));
+        answers.retain(|a| a.0 != "list --batches");
+        answers.push(ok("list --batches", json!([round("b-1"), round("b-2")]).to_string()));
+        answers.push(ok(&dwell_key(), dwell.to_string()));
+        let f = floor_with(answers, run.path().to_str().unwrap(), &sensing()).await.unwrap();
+        assert!(of_kind(&f, "transitions").iter().all(|s| s["status"] != "STALL"), "{:?}", of_kind(&f, "transitions"));
+    }
+
+    #[tokio::test]
     async fn a_refused_dwell_makes_every_transitions_sensor_blind_and_names_the_refusal() {
         let run = run_with_a_release();
         let mut answers = script(batch_graph(), &quiet(), json!([]));
@@ -1345,12 +1368,13 @@ mod tests {
     #[tokio::test]
     async fn a_stats_answer_is_the_count_and_mean_at_the_stations_its_verb_is_declared_for() {
         let mut answers = script(batch_graph(), &quiet(), json!([]));
-        let stats = json!({"verbs": {"work": {"count": 4, "total_ms": 4000}, "renew": {"count": 2, "total_ms": 30}}, "callers": [], "writes": {"writes": 9, "commits": 3, "groups": 2}});
+        let stats = json!({"verbs": {"work": {"count": 4, "total_ms": 4000}, "renew": {"count": 2, "total_ms": 30}, "peek": {"count": 10, "total_ms": 4}}, "callers": [], "writes": {"writes": 9, "commits": 3, "groups": 2}});
         answers.push(ok("stats", stats.to_string()));
         let f = floor(answers).await.unwrap();
         let work = sensor(&f, "perf.work");
         assert_eq!((work["reading"].as_str(), work["at"].clone(), work["status"].as_str()), (Some("4 calls · mean 1000 ms"), json!(["bead.build"]), Some("OK")));
         assert_eq!(sensor(&f, "perf.renew")["at"], json!(["*"]));
+        assert_eq!(sensor(&f, "perf.peek")["reading"], "peek: 10 calls · mean 0.4 ms", "a fast verb is not a zero mean");
         assert_eq!(sensor(&f, "perf.claim-verdicts")["status"], "BLIND", "a verb never called is not a zero");
         assert!(sensor(&f, "perf.writes")["reading"].as_str().unwrap().starts_with("9 writes · 3 commits · 2 groups"));
     }
@@ -1373,7 +1397,7 @@ mod tests {
         let rows: Vec<Value> = [0, 0, 5, 10].iter().map(|w| json!({"pool": "build", "waited_secs": w, "held_secs": 3})).collect();
         let (short, reading) = tsd_reading(&rows, "waited_secs").unwrap();
         assert_eq!(short, "4 in 24 h");
-        assert_eq!(reading, "4 in 24 h · 2 waited · waited_secs p50 0 s · p90 10 s");
+        assert_eq!(reading, "4 in 24 h · 2 waited · waited_secs p50 3 s · p90 9 s");
         assert!(tsd_reading(&[], "waited_secs").unwrap_err().contains("no row"));
         assert!(tsd_reading(&[json!({"pool": "build"})], "waited_secs").unwrap_err().contains("waited_secs"));
     }
