@@ -1084,6 +1084,15 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_red_suite_no_member_adds_is_still_attributed_by_rerun_after_an_adder_is_ejected() {
+        let mut f = Fake::new(|s, tree| (s == "test-01.sh" && tree.iter().any(|m| m == "m1")) || (s == "test-02.sh" && tree.iter().any(|m| m == "m2")));
+        let mut ops = Ops { adds: adds("test-01.sh", &["m1"]), ..Ops::default() };
+        attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        let ejected: Vec<&str> = ops.ejected.iter().map(|(m, _)| m.as_str()).collect();
+        assert_eq!(ejected, ["m1", "m2"], "{:?}", ops.ejected);
+    }
+
+    #[test]
     fn a_red_suite_two_members_add_is_bisected_between_those_two_only() {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
         let mut ops = Ops { adds: adds("test-01.sh", &["m1", "m2"]), ..Ops::default() };
