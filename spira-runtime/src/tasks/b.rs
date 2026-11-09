@@ -553,18 +553,6 @@ pub mod kit {
         pub fn fired_at<T: Stub>(rig: &TaskRig) -> Vec<u64> {
             rig.requested().iter().filter(|q| q.name == T::SPEC.probe).map(|q| q.at).collect()
         }
-
-        /// Every elapse of `spec` in `(from, to]`.
-        pub fn elapses(spec: &str, from: u64, to: u64) -> Vec<u64> {
-            let c = Calendar::parse(spec).unwrap();
-            let mut out = vec![];
-            let mut at = c.next_after(from);
-            while at <= to {
-                out.push(at);
-                at = c.next_after(at);
-            }
-            out
-        }
     }
 
     #[cfg(test)]
