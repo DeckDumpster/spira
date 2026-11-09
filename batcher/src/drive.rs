@@ -1367,9 +1367,8 @@ pub(crate) mod tests {
         use crate::mender::{Left, Next};
         let mut f = Fake::new(|s, tree| s == "test-03.sh" && tree.contains("m1") && tree.contains("m3"));
         f.added_by = adds("test-03.sh", &["m3"]);
-        let mut ops = Ops::default();
-        ops.menders = vec![Next::Pass { members: vec![member("m1"), member("m2")], left: vec![Left { id: "m3".into(), why: "returned".into() }], retry: false }];
-        ops.adds = adds("test-03.sh", &["m3"]);
+        let menders = vec![Next::Pass { members: vec![member("m1"), member("m2")], left: vec![Left { id: "m3".into(), why: "returned".into() }], retry: false }];
+        let mut ops = Ops { menders, adds: adds("test-03.sh", &["m3"]), ..Ops::default() };
         let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 8, maxpar: 2 }).unwrap();
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2), "{end:?}");
     }
