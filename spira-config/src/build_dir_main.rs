@@ -1,9 +1,9 @@
 //! spira-build-dir — lease an owned build directory for a hand build, from the pool dwarves use.
 //!
-//!   spira-build-dir lease --who <label> [--pid <pid>] [--root <tree>]
+//!   spira-build-dir lease --who <label> --pid <pid> [--root <tree>]
 //!
 //! Prints the directory for `CARGO_TARGET_DIR`; progress goes to stderr. The lease is held by a
-//! detached holder until `--pid` (default: the caller's parent) exits, then the tree at `--root`
+//! detached holder until `--pid` exits (pass the builder shell's `$$`), then the tree at `--root`
 //! (default: the current directory) is recorded as the one the directory holds and the directory
 //! goes idle. The selective clean runs before the path is printed.
 
@@ -15,7 +15,7 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
 const POLL: Duration = Duration::from_millis(500);
-const USAGE: &str = "usage: spira-build-dir lease --who <label> [--pid <pid>] [--root <tree>]";
+const USAGE: &str = "usage: spira-build-dir lease --who <label> --pid <pid> [--root <tree>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -42,8 +42,7 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 
 fn lease(args: &[String]) -> Result<(), String> {
     let who = flag(args, "--who").filter(|w| !w.is_empty()).ok_or(USAGE)?;
-    let pid =
-        flag(args, "--pid").unwrap_or_else(|| std::os::unix::process::parent_id().to_string());
+    let pid = flag(args, "--pid").ok_or(USAGE)?;
     pid.parse::<i32>()
         .map_err(|_| format!("--pid {pid:?} is not a process id"))?;
     let root = match flag(args, "--root") {
