@@ -1302,7 +1302,7 @@ mod tests {
         answers.push((dwell_key(), 3, "refused: store sealed".into()));
         let f = floor_with(answers, run.path().to_str().unwrap(), &sensing()).await.unwrap();
         let all = of_kind(&f, "transitions");
-        assert!(all.len() >= wt::EDGES.len() + 1, "{all:?}");
+        assert!(all.len() > wt::EDGES.len(), "{all:?}");
         for s in all {
             assert_eq!(s["status"], "BLIND", "{s}");
             assert!(s["reading"].as_str().unwrap().contains("store sealed"), "{s}");
