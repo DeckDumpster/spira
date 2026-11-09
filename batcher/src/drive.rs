@@ -408,7 +408,10 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
     let named: Vec<&(Id, String)> = f.named.iter().filter(|(id, _)| members.iter().any(|m| &m.id == id)).collect();
     if named.is_empty() {
         let red = format!("{} red", f.name);
-        let actions = bisect_members(&red, &mut |m| runner.filter_green(&f.name, m), members).unwrap_or_default();
+        let mut actions = bisect_members(&red, &mut |m| runner.filter_green(&f.name, m), members).unwrap_or_default();
+        if actions.is_empty() {
+            actions = sole_member_culprit(&red, members);
+        }
         if actions.is_empty() {
             ops.incident("unattributed", std::slice::from_ref(&f.name));
             return Ok(FilterEject::Unnamed);
@@ -434,6 +437,14 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
     }
     let rebuilt = ops.rebuild(&survivors)?;
     Ok(if rebuilt.is_empty() { FilterEject::Emptied } else { FilterEject::Survivors(rebuilt) })
+}
+
+/// A round of one member has no one else to blame: a red nothing else names is that member's.
+fn sole_member_culprit(red: &str, members: &[Member]) -> Vec<Action> {
+    match members {
+        [only] => vec![Action::Eject { id: only.id.clone(), line: format!("{red} in a round whose only member is {}", only.id) }],
+        _ => vec![],
+    }
 }
 
 enum FilterEject {
@@ -683,6 +694,14 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                     kind = MainKind::Verify;
                     continue;
                 }
+            }
+            let red = format!("unattributed red {}", d.unattributed.join(","));
+            let alone = sole_member_culprit(&red, &members);
+            if !alone.is_empty() {
+                let suites = d.unattributed.join(",");
+                println!("batcher: {suites} red names no member; the round's only member is the culprit");
+                apply_build_actions(ops, &members, &alone, &suites)?;
+                return Ok(RoundEnd::Emptied(format!("{suites} red ejected the only member")));
             }
             let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
             ops.judge(&d.unattributed, &ids);
@@ -1260,6 +1279,17 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn sp_evwve7_an_unattributed_red_in_a_one_member_round_ejects_that_member() {
+        let mut f = Fake::new(breaks("m1", "test-01.sh"));
+        f.refuses_removals = true;
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(ops.ejected.len(), 1);
+        assert!(ops.judged.is_empty());
+    }
+
+    #[test]
     fn a_red_no_single_member_owns_preempts_nothing() {
         let mut f = Fake::new(|s, tree| s == "test-00.sh" && tree.len() >= 2);
         f.maxpar = 4;
@@ -1823,6 +1853,17 @@ pub(crate) mod tests {
         let end = attribute_round(&mut f, &mut ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
         assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["spira-lint".to_string()])]);
+    }
+
+    #[test]
+    fn sp_evwve7_a_filter_red_naming_no_member_ejects_the_only_member_of_the_round() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(Box::new(|_| Some(FilterRed { name: "integration-tests".into(), named: vec![] })));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["integration-tests".to_string()])]);
+        assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
     #[test]
