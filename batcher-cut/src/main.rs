@@ -1264,7 +1264,7 @@ fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), pace::CutError> {
     let repo = find_repo(env_, name)?;
     let inbox = PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?);
     let stamp = utc_stamp;
-    let sm = pace::Seams { repo: name, now: now(), inbox: &inbox, stamp: &stamp, redrive_after: env_.orphan_redrive_after };
+    let sm = pace::Seams { repo: name, now: now(), inbox: &inbox, stamp: &stamp, redrive_after: env_.orphan_redrive_after, pause_lift_after: env_.pause_lift_after };
     let (fit, redrive, incident) = (
         |id: &str| io::round_certifiable(env_, &repo, id),
         |id: &str| io::redrive_round(&repo, id),

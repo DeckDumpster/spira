@@ -18,6 +18,7 @@ pub const STOP_AFTER: u32 = 2;
 pub const NO_VM_PAGE_AFTER: u32 = 3;
 pub const REFUSAL_WINDOW_SECS: u64 = 1800;
 pub const REFUSAL_STOP_AFTER: u32 = 2;
+pub const PAUSE_LIFTS_MAX: u32 = 1;
 
 #[derive(Default, Clone, PartialEq, Debug)]
 pub struct State {
@@ -28,6 +29,7 @@ pub struct State {
     pub orphan: String,
     pub orphan_since: u64,
     pub redriven: String,
+    pub pause_lifts: u32,
 }
 
 /// Why a cut failed, decided where the failure is produced; the pacing reads the kind and never
@@ -108,6 +110,12 @@ pub fn classify(result: &Result<(), CutError>, verdict: Option<(&str, u64)>, pas
     }
 }
 
+/// Whether a pause that has stood `held_for` seconds is the owner's to lift: past its bound, and
+/// not already lifted once without a green cut in between.
+pub fn pause_expired(st: &State, held_for: u64, lift_after: u64) -> bool {
+    held_for >= lift_after && st.pause_lifts < PAUSE_LIFTS_MAX
+}
+
 pub fn hold(paused: bool, stopped: bool, st: &State, now: u64) -> Option<Hold> {
     if stopped {
         Some(Hold::Stopped)
@@ -127,12 +135,14 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, now: u64, detail: &str
         Outcome::Quiet => {
             next.infra = 0;
             next.no_vm = 0;
+            next.pause_lifts = 0;
         }
         Outcome::Red => {
             next.infra = 0;
             next.no_vm = 0;
             fx.pause = true;
-            fx.pages.push(format!("ROUND RED {repo} — attribute and eject, then rm the pause file ({detail})"));
+            let again = if st.pause_lifts > 0 { " (lifted once and red again — the clock will not lift it)" } else { "" };
+            fx.pages.push(format!("ROUND RED {repo}{again} — attribute and eject, then rm the pause file ({detail})"));
         }
         Outcome::StaleImage => {}
         Outcome::NoVm => {
@@ -214,6 +224,17 @@ impl Files {
     pub fn pause_file(&self) -> PathBuf {
         self.dir.join("pause")
     }
+    /// When the pause was set: the stamp it carries, else (a hand-made file) its mtime.
+    pub fn pause_since(&self) -> Option<u64> {
+        let p = self.pause_file();
+        let meta = fs::metadata(&p).ok()?;
+        let text = fs::read_to_string(&p).unwrap_or_default();
+        if text.starts_with("hold:") {
+            return None;
+        }
+        let stamped = text.trim().strip_prefix("red:").and_then(|t| t.parse().ok());
+        stamped.or_else(|| meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs()))
+    }
     pub fn load(&self) -> State {
         let kv: BTreeMap<String, String> = fs::read_to_string(self.dir.join("state"))
             .unwrap_or_default()
@@ -229,18 +250,20 @@ impl Files {
             orphan: kv.get("orphan").cloned().unwrap_or_default(),
             orphan_since: kv.get("orphan_since").and_then(|v| v.parse().ok()).unwrap_or(0),
             redriven: kv.get("redriven").cloned().unwrap_or_default(),
+            pause_lifts: kv.get("pause_lifts").and_then(|v| v.parse().ok()).unwrap_or(0),
         }
     }
     pub fn save(&self, st: &State) -> Result<(), String> {
         fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
         let body = format!(
-            "infra={}\nno_vm={}\nbackoff_until={}\npaged_open={}\norphan={}\norphan_since={}\nredriven={}\n",
-            st.infra, st.no_vm, st.backoff_until, st.paged_open, st.orphan, st.orphan_since, st.redriven
+            "infra={}\nno_vm={}\nbackoff_until={}\npaged_open={}\norphan={}\norphan_since={}\nredriven={}\npause_lifts={}\n",
+            st.infra, st.no_vm, st.backoff_until, st.paged_open, st.orphan, st.orphan_since, st.redriven, st.pause_lifts
         );
         fs::write(self.dir.join("state"), body).map_err(|e| format!("rounds-pace state: {e}"))
     }
-    fn touch(&self, p: PathBuf) -> Result<(), String> {
-        fs::create_dir_all(&self.dir).and_then(|_| fs::write(&p, "")).map_err(|e| format!("{}: {e}", p.display()))
+    fn stamp_pause(&self, now: u64) -> Result<(), String> {
+        let p = self.pause_file();
+        fs::create_dir_all(&self.dir).and_then(|_| fs::write(&p, format!("red:{now}\n"))).map_err(|e| format!("{}: {e}", p.display()))
     }
 }
 
@@ -310,6 +333,7 @@ pub struct Seams<'a> {
     pub inbox: &'a Path,
     pub stamp: &'a dyn Fn(u64) -> String,
     pub redrive_after: u64,
+    pub pause_lift_after: u64,
 }
 
 fn page(sm: &Seams, text: &str) -> Result<(), String> {
@@ -328,6 +352,15 @@ pub fn paced(
     cut: impl FnOnce() -> Result<(), CutError>,
 ) -> Result<(), CutError> {
     let mut st = files.load();
+    if let Some(since) = files.pause_since() {
+        if pause_expired(&st, sm.now.saturating_sub(since), sm.pause_lift_after) {
+            fs::remove_file(files.pause_file()).map_err(|e| format!("{}: {e}", files.pause_file().display()))?;
+            st.pause_lifts += 1;
+            files.save(&st)?;
+            println!("batcher rounds: {}: pause held {}s past its {}s bound — lifted, cutting", sm.repo, sm.now.saturating_sub(since), sm.pause_lift_after);
+            page(sm, &format!("PAUSE LIFTED {} after {}s — cutting again; a second red stays paused", sm.repo, sm.now.saturating_sub(since)))?;
+        }
+    }
     if let Some(h) = hold(files.pause_file().exists(), files.stopped(), &st, sm.now) {
         println!("batcher rounds: {}: held ({h:?}) — no cut", sm.repo);
         return Ok(());
@@ -370,7 +403,7 @@ pub fn paced(
     let (next, fx) = advance(&st, &outcome, sm.repo, sm.now, &detail);
     st = next;
     if fx.pause {
-        files.touch(files.pause_file())?;
+        files.stamp_pause(sm.now)?;
     }
     if fx.stop {
         files.stop_rounds(&format!("{} consecutive rounds produced no verdicts ({detail})", st.infra), sm.now)?;
@@ -395,7 +428,7 @@ mod tests {
     }
     fn run(d: &Path, repo: &str, now: u64, open: Option<&str>, verdict: Option<(&str, u64)>, res: Result<(), CutError>) -> bool {
         let inbox = d.join("inbox.log");
-        let sm = Seams { repo, now, inbox: &inbox, stamp: &stamp, redrive_after: WAIT };
+        let sm = Seams { repo, now, inbox: &inbox, stamp: &stamp, redrive_after: WAIT, pause_lift_after: LIFT };
         let cut_ran = Cell::new(false);
         let none = Orphans { fit: &|_| Ok(()), redrive: &|_| Ok(()), incident: &|_, _| Ok(String::new()) };
         let r = paced(&Files::new(d, repo), &sm, || Ok(open.map(String::from)), |_| false, || verdict.map(|(s, a)| (s.to_string(), a)), &none, || {
@@ -443,11 +476,63 @@ mod tests {
         assert!(ran);
         assert!(Files::new(d, "a").pause_file().exists());
         assert!(inbox(d).contains("T1000 [watch:rounds] ROUND RED a"));
-        let ran = run(d, "a", 2000, None, None, Ok(()));
+        let ran = run(d, "a", 1000 + LIFT - 1, None, None, Ok(()));
         assert!(!ran, "paused repo must not cut");
         fs::remove_file(Files::new(d, "a").pause_file()).unwrap();
         let ran = run(d, "a", 3000, None, None, Ok(()));
         assert!(ran, "rm of the pause file lifts it");
+    }
+
+    #[test]
+    fn a_pause_held_past_its_bound_is_lifted_and_the_repo_cut_without_a_person() {
+        let t = dir("lift");
+        let d = t.path();
+        assert!(run(d, "a", 1000, None, Some(("red", 1000)), Ok(())));
+        assert!(!run(d, "a", 1000 + LIFT - 1, None, None, Ok(())), "inside the bound the pause holds");
+        assert!(run(d, "a", 1000 + LIFT, None, None, Ok(())), "at the bound the owner lifts it and cuts");
+        assert!(!Files::new(d, "a").pause_file().exists());
+        assert!(inbox(d).contains("PAUSE LIFTED a"));
+    }
+
+    #[test]
+    fn a_round_red_again_after_the_auto_lift_stays_paused_for_a_person() {
+        let t = dir("lift-twice");
+        let d = t.path();
+        run(d, "a", 1000, None, Some(("red", 1000)), Ok(()));
+        run(d, "a", 1000 + LIFT, None, Some(("red", 1000 + LIFT)), Ok(()));
+        assert!(Files::new(d, "a").pause_file().exists());
+        assert!(inbox(d).contains("lifted once and red again"));
+        assert!(!run(d, "a", 1000 + 10 * LIFT, None, None, Ok(())), "a second red is not lifted by the clock");
+        assert!(Files::new(d, "a").pause_file().exists());
+    }
+
+    #[test]
+    fn a_quiet_cut_after_the_auto_lift_restores_the_next_lift() {
+        let t = dir("lift-reset");
+        let d = t.path();
+        run(d, "a", 1000, None, Some(("red", 1000)), Ok(()));
+        run(d, "a", 1000 + LIFT, None, None, Ok(()));
+        run(d, "a", 5000, None, Some(("red", 5000)), Ok(()));
+        assert!(run(d, "a", 5000 + LIFT, None, None, Ok(())), "a green cycle between reds earns a fresh lift");
+    }
+
+    #[test]
+    fn an_operator_hold_is_never_lifted_by_the_clock() {
+        let t = dir("lift-hold");
+        let d = t.path();
+        fs::create_dir_all(d.join("rounds-pace/a")).unwrap();
+        fs::write(Files::new(d, "a").pause_file(), "hold: release freeze\n").unwrap();
+        assert!(!run(d, "a", u64::MAX / 2, None, None, Ok(())));
+        assert!(Files::new(d, "a").pause_file().exists());
+    }
+
+    #[test]
+    fn a_hand_made_pause_file_with_no_stamp_ages_from_its_mtime() {
+        let t = dir("lift-hand");
+        let d = t.path();
+        fs::create_dir_all(d.join("rounds-pace/a")).unwrap();
+        fs::write(Files::new(d, "a").pause_file(), "").unwrap();
+        assert!(!run(d, "a", 1, None, None, Ok(())), "an unstamped pause is not lifted at once");
     }
 
     #[test]
@@ -523,12 +608,13 @@ mod tests {
     }
 
     const WAIT: u64 = 300;
+    const LIFT: u64 = 700;
 
     type Calls = std::cell::RefCell<Vec<String>>;
 
     fn orphan_pass(d: &Path, now: u64, id: &str, driven: bool, fit: Result<(), String>, calls: &Calls) -> bool {
         let inbox_p = d.join("inbox.log");
-        let sm = Seams { repo: "a", now, inbox: &inbox_p, stamp: &stamp, redrive_after: WAIT };
+        let sm = Seams { repo: "a", now, inbox: &inbox_p, stamp: &stamp, redrive_after: WAIT, pause_lift_after: LIFT };
         let (fit_f, redrive_f, incident_f) = (
             |_: &str| fit.clone(),
             |id: &str| {
