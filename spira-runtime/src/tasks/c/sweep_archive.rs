@@ -198,7 +198,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
             next.queue.clear();
             let mut named = 0;
             for src in s.sources.iter().filter(|src| !s.index.get(&src.rel).is_some_and(|r| r.bytes == src.size && r.mtime == src.mtime && r.body_exists)).take(PASS_MAX) {
-                named += src.rel.len() + 16;
+                named += src.rel.len() + 80;
                 if named > PASS_CARRY_BYTES && !next.queue.is_empty() {
                     break;
                 }
@@ -214,7 +214,10 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
             match carry.rels.get(rel) {
                 Some(Phase::Storing) => {}
                 Some(p) => return Err(format!("{NAME}: {rel} is in state {}, not storing", phase_name(*p))),
-                None if !*ok => return Ok((next, vec![])),
+                None if !*ok => {
+                    let acts = next_store(&mut next)?.into_iter().collect();
+                    return Ok((next, acts));
+                }
                 None => return Err(format!("{NAME}: {rel} has no store in flight")),
             }
             next.rels.insert(rel.to_string(), if *ok { Phase::Stored } else { Phase::Changed });
