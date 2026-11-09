@@ -398,3 +398,27 @@ fn a_certified_bead_past_the_bound_with_a_free_slot_is_stalled_even_after_a_rece
     s.open_rounds = Some(0);
     assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
 }
+
+#[test]
+fn an_old_bead_is_not_stalled_just_after_the_round_ahead_of_it_closed() {
+    let now = T0;
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-s1", "spira", "SUBMITTED", now - 3 * HOUR)];
+    s.last = last("spira", &[("Delivered", now - 2 * MIN)]);
+    s.open_rounds = Some(0);
+    assert!(!edges(&s, now).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "{:?}", edges(&s, now));
+    s.last = last("spira", &[("Delivered", now - 46 * MIN)]);
+    assert!(edges(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()), "the slot has been free past the bound");
+}
+
+#[test]
+fn a_certified_bead_past_a_non_default_bound_is_quiet_for_that_bound_after_a_delivered() {
+    let now = T0;
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-c1", "spira", "CERTIFIED", now - 3 * HOUR)];
+    s.last = last("spira", &[("Delivered", now - 2 * MIN)]);
+    s.open_rounds = Some(0);
+    assert!(!five_minute_cut_bound(&s, now).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")));
+    s.last = last("spira", &[("Delivered", now - 6 * MIN)]);
+    assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
+}
