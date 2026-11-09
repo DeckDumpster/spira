@@ -525,6 +525,19 @@ round-vm: setup 42s, suites 158s\n";
     }
 
     #[test]
+    fn the_round_detail_shows_each_passs_disk_peak_in_html_and_json_and_nothing_when_unread() {
+        let batch = json!({});
+        let read = Arc::new(parse_pass_log("round-vm: DISK suites peak 3221225472 -\n"));
+        let unread = Arc::new(parse_pass_log("round-vm: DISK suites peak unread -\n"));
+        let d = Detail { now: 0, batch: &batch, logs: vec![("a".into(), Some(read)), ("b".into(), Some(unread))], selected: None, tail: String::new() };
+        let html = render_detail(&d, None);
+        assert!(html.contains("disk peak 3.00 GiB"), "{html}");
+        assert_eq!(html.matches("disk peak").count(), 1, "an unread pass renders no figure");
+        let j = detail_json(&d).to_string();
+        assert!(j.contains("\"disk_peak_b\":3221225472") && j.contains("\"disk_peak_b\":null"), "{j}");
+    }
+
+    #[test]
     fn a_failed_unit_run_names_the_failing_tests() {
         let p = parse_pass_log("VERDICT GREEN ran=3 skipped=0\nround-vm: UNIT-TESTS: FAIL (unit run rc=101):\ntest a::b ... FAILED\ntest a::c ... ok\n");
         assert_eq!(p.verdict, "green");
