@@ -1037,6 +1037,16 @@ fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
         }
         finish(w, c, &b.id, End::Abandoned("swept"), &format!("ended: {} on the lifecycle; record swept", b.state));
     }
+    let Some(repo) = &c.r.path else {
+        return;
+    };
+    for b in all.iter().filter(|b| !b.is_terminal() && ended(&b.kv).is_none() && Some(b.id.as_str()) != spare) {
+        let wt = worktree_of(&b.kv);
+        if wt.as_os_str().is_empty() || running_marker(c, &b.id).exists() || wt.exists() {
+            continue;
+        }
+        close_abandoned(w, "sweep", c, repo, &b.kv, "the round's worktree is missing, so it cannot certify", "worktree-missing");
+    }
 }
 
 pub(super) fn load(w: &World, label: &str, c: &Ctx, batch: &str) -> Result<Kv, i32> {
@@ -1829,13 +1839,26 @@ fn open(
         carried = ride.carried.get();
         cut
     };
+    let mut carried = carried;
     if let Err((rc, out)) = cut {
-        w.err(format!(
-            "queue.sh {label}: spira-lc cut refused for {batch} (rc={rc}): {out}"
-        ));
-        converge_orphans(w);
-        w.git.worktree_remove(&path, &wt);
-        return FAIL;
+        match cut_outcome(w, &c, &batch) {
+            CutOutcome::Exists(stored) => carried = stored,
+            CutOutcome::Absent => {
+                w.err(format!(
+                    "queue.sh {label}: spira-lc cut refused for {batch} (rc={rc}): {out}"
+                ));
+                converge_orphans(w);
+                w.git.worktree_remove(&path, &wt);
+                return FAIL;
+            }
+            CutOutcome::Unknown(e) => {
+                w.err(format!(
+                    "queue.sh {label}: cannot tell whether round {batch} was cut (rc={rc}): {out}; nor read it back: {e} — its worktree {} is kept; `queue round status` says whether it exists",
+                    wt.display()
+                ));
+                return FAIL;
+            }
+        }
     }
 
     if !carried && save(w, label, &c, &kv).is_err() {
@@ -1867,6 +1890,33 @@ fn open(
     ));
     w.out(format!("base_chain={}", first_parent_chain(w, &path, &base_sha, &landed_sha)));
     OK
+}
+
+enum CutOutcome {
+    /// The round is on the store; `true` when it holds the queue's fields too.
+    Exists(bool),
+    Absent,
+    Unknown(String),
+}
+
+/// A cut that returned an error may still have written the round: ask the store, a few times, so
+/// the caller is never told "refused" for a round that exists.
+fn cut_outcome(w: &World, c: &Ctx, batch: &str) -> CutOutcome {
+    if w.lc.rounds_door().is_none() {
+        return CutOutcome::Absent;
+    }
+    let mut last = String::new();
+    for attempt in 0..super::DEADLINE_TRIES {
+        if attempt > 0 {
+            w.clock.sleep(u64::from(attempt));
+        }
+        match w.lc.batch(&c.r.name, batch) {
+            Ok(Some(b)) => return CutOutcome::Exists(!worktree_of(&b.kv).as_os_str().is_empty()),
+            Ok(None) => return CutOutcome::Absent,
+            Err(e) => last = e,
+        }
+    }
+    CutOutcome::Unknown(last)
 }
 
 /// Why a round cannot be stacked on, or `None` when it is live and still certifying: a red one

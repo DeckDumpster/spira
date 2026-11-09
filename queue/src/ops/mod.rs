@@ -152,7 +152,17 @@ pub fn converge_orphans(w: &World) {
     if !w.lc.available() {
         return;
     }
-    if let Err((rc, out)) = w.lc.requeue_orphans("queue.sh", &|repo, batch| w.scripts.round_legs_live(repo, batch)) {
+    let mut last = Ok(String::new());
+    for attempt in 0..DEADLINE_TRIES {
+        if attempt > 0 {
+            w.clock.sleep(u64::from(attempt));
+        }
+        last = w.lc.requeue_orphans("queue.sh", &|repo, batch| w.scripts.round_legs_live(repo, batch));
+        if !matches!(&last, Err(e) if timed_out(e)) {
+            break;
+        }
+    }
+    if let Err((rc, out)) = last {
         w.err(format!(
             "queue.sh: orphan sweep did not complete (rc={rc}): {out}"
         ));

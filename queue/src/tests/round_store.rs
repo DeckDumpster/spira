@@ -392,3 +392,33 @@ fn with_the_store_an_abandoned_rounds_sweep_spares_the_next_rounds_tree_at_the_s
         t.err()
     );
 }
+
+#[test]
+fn open_whose_cut_reply_is_lost_never_leaves_a_round_without_its_worktree() {
+    let t = round_world();
+    t.lc.store.get_or_init(MemDoor::default);
+    t.git.materialise.set(true);
+    t.lc.cut_reply_lost.set(true);
+    let rc = t.run(&["round", "open", "--members", "sp-a,sp-b"]);
+    let d = t.lc.store.get().unwrap();
+    let held = batches::open_batches(d, "spira").unwrap();
+    assert!(!t.err().contains("cut refused"), "a lost reply is not a refusal: {}", t.err());
+    assert_eq!(held.len(), 1, "the cut wrote the round and open reports it: {}", t.err());
+    assert_eq!(rc, 0, "a round that exists is reported opened: {}", t.err());
+    let wt = std::path::PathBuf::from(held[0].kv.get("worktree").unwrap_or(""));
+    assert!(wt.exists(), "round {} is recorded and its worktree is gone", held[0].id);
+    assert_eq!(held[0].kv.get("head"), t.out().lines().find_map(|l| l.strip_prefix("head=")));
+}
+
+#[test]
+fn the_sweep_reclaims_an_open_round_whose_worktree_is_missing() {
+    let t = round_world();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    d.put_round("spira", "spira-lost", "OPEN", &[("sp-a", "ta")], 10);
+    let mut kv = batches::batch(d, "spira", "spira-lost").unwrap().unwrap().kv;
+    kv.push("worktree", "/wt/spira-lost");
+    batches::save(d, "spira", &kv).unwrap();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b"]), 0, "{}", t.err());
+    let (state, _) = t.lc.batch_state("spira-lost").unwrap();
+    assert_eq!(state, "ABANDONED", "{}", t.err());
+}

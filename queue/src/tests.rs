@@ -49,6 +49,8 @@ struct FGit {
     /// The base the last worktree was cut at, and whether a merge then names it in the head it makes.
     cut_on: RefCell<String>,
     heads_name_their_base: Cell<bool>,
+    /// A worktree add makes its directory and a worktree remove deletes it, as the real git does.
+    materialise: Cell<bool>,
 }
 
 impl FGit {
@@ -178,9 +180,15 @@ impl Git for FGit {
             .borrow_mut()
             .insert(format!("{}:HEAD", p.display()), sha.into());
         *self.cut_on.borrow_mut() = sha.into();
+        if self.materialise.get() {
+            let _ = std::fs::create_dir_all(p);
+        }
         true
     }
     fn worktree_remove(&self, _: &Path, p: &Path) {
+        if self.materialise.get() {
+            let _ = std::fs::remove_dir_all(p);
+        }
         self.calls
             .borrow_mut()
             .push(format!("worktree-remove {}", p.display()));
@@ -950,6 +958,8 @@ struct FLc {
     promote_refused: Cell<Option<&'static str>>,
     cut_refused: Cell<Option<&'static str>>,
     cut_refuses_member: Cell<Option<&'static str>>,
+    /// Every cut applies, then answers that its reply was lost; no later read of the batch row answers.
+    cut_reply_lost: Cell<bool>,
     /// The next write of this verb (cut, abandon-batch, eject-member) applies, then reports a deadline.
     deadline_after_write: Cell<Option<&'static str>>,
     /// Per-batch answers to `show-batch`, ahead of `batch_view`.
@@ -1008,6 +1018,7 @@ impl Default for FLc {
             promote_refused: Cell::new(None),
             cut_refused: Cell::new(None),
             cut_refuses_member: Cell::new(None),
+            cut_reply_lost: Cell::new(false),
             deadline_after_write: Cell::new(None),
             retired_keys: Cell::new(false),
             no_batch_row: Cell::new(false),
@@ -1086,7 +1097,7 @@ impl Lc for FLc {
     }
     fn batch_state(&self, id: &str) -> Option<(String, String)> {
         self.calls.borrow_mut().push(format!("show-batch {id}"));
-        if self.no_batch_row.get() {
+        if self.no_batch_row.get() || self.cut_reply_lost.get() {
             return None;
         }
         if let Some((_, state, version)) = self.store.get().and_then(|d| d.find(id)) {
@@ -1148,6 +1159,9 @@ impl Lc for FLc {
         if let Some(d) = self.store.get() {
             let ms: Vec<(&str, &str)> = members.split(',').filter_map(|m| m.split_once(':')).collect();
             d.cut_round(repo, id, "OPEN", &ms, 0, round);
+        }
+        if self.cut_reply_lost.get() {
+            return Err((2, "cannot tell: the lifecycle service took the request but its reply was lost (no reply)".into()));
         }
         if self.deadline_after_write.get() == Some("cut") {
             self.deadline_after_write.set(None);
