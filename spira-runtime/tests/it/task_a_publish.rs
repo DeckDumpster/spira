@@ -188,3 +188,16 @@ fn an_adopted_publish_pr_settles_and_a_failed_adoption_is_retried() {
     let deadline = ACTS.iter().find(|(e, _)| *e == RECORD).map(|(_, d)| *d).unwrap_or_default();
     assert!(deadline >= OBSERVE_DEADLINE_MS, "an adoption fetches and reads the range's members: {deadline} ms is too short");
 }
+
+#[test]
+fn the_carry_stays_under_the_journal_column_for_the_longest_repo_names_and_the_rest_wait() {
+    let held = Repo { round_holds_hypervisor: true, ..busy().repos["spira"].clone() };
+    let name = |i: usize| format!("{i:04}-{}", "r".repeat(250));
+    let snap = Snapshot { repos: (0..600).map(|i| (name(i), held.clone())).collect(), world_running: true };
+    let (carry, _) = decide(&Carry::default(), &snap);
+    let bytes = serde_json::to_string(&carry).unwrap().len();
+    assert!(bytes < 65_535 && !carry.repos.is_empty() && carry.repos.len() < 600, "{} repos, {bytes} bytes", carry.repos.len());
+    let (again, _) = decide(&carry, &snap);
+    assert!(carry.repos.keys().all(|k| again.repos.contains_key(k)), "a carried repo keeps its entry");
+    assert!(serde_json::to_string(&again).unwrap().len() < 65_535);
+}

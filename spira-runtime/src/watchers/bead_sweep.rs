@@ -99,6 +99,8 @@ pub struct Rowless {
 
 /// The most beads one repair effect is asked to give a row, so its input stays a few KiB however long the list; the rest wait a pass.
 pub const REPAIR_BATCH: usize = 100;
+/// The most bytes of ids one repair effect is asked, well under the store's 65,535-byte column however long the ids.
+pub const REPAIR_BYTES: usize = 16 * 1024;
 
 /// What the repair effect is asked: the ids of the beads to give a row. It re-reads what else it needs.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -354,7 +356,12 @@ impl Handler for BeadSweep {
                 if let Some(ids) = repaired {
                     return self.finish(ctx, view, ev, &snap, &serde_json::from_str::<Repaired>(&ids).unwrap_or_default().ids);
                 }
-                let ids: Vec<String> = rowless(&self.ask_label, &snap).into_iter().take(REPAIR_BATCH).map(|r| r.id).collect();
+                let mut spent = "{\"ids\":[]}".len();
+                let ids: Vec<String> = rowless(&self.ask_label, &snap).into_iter().take(REPAIR_BATCH).map(|r| r.id).take_while(|id| {
+                    let next = spent + serde_json::to_string(id).map_or(0, |j| j.len()) + 1;
+                    let first = spent == "{\"ids\":[]}".len();
+                    (next <= REPAIR_BYTES || first).then(|| spent = next).is_some()
+                }).collect();
                 if ids.is_empty() {
                     return self.finish(ctx, view, ev, &snap, &[]);
                 }
@@ -414,6 +421,21 @@ mod tests {
         let ev = Event { id: EventId(id.into()), stream: StreamKey(STREAM.into()), kind, at, cause: cause.map(|c| EventId(c.into())), correlation: CorrelationId(id.into()) };
         view.push(&ev);
         ev
+    }
+
+    #[test]
+    fn a_repair_of_the_longest_ids_is_cut_by_bytes_and_still_names_one_bead() {
+        let p = sweep();
+        let beads: Vec<Bead> = (0..REPAIR_BATCH).map(|i| Bead { id: format!("{i:03}\"{}\\", "b".repeat(250)), status: "open".into(), ..Bead::default() }).collect();
+        let snap = Snapshot { content: beads, ..Snapshot::default() };
+        let (mut view, ctx) = (Projection::default(), Ctx::new(0, 0));
+        let tick = at(&mut view, "t", 1_000, EventKind::new(TICK, ""), None);
+        let [Command::Probe(observe), _] = &p.handle(&ctx, &view, &tick)[..] else { panic!("one look and the next tick") };
+        let req = at(&mut view, "r1", 1_000, EventKind::new(EFFECT_REQUESTED, &serde_json::json!({ "spec": observe, "deadline_at": 2 }).to_string()), Some("t"));
+        let seen = at(&mut view, "o1", 1_001, EventKind::new(EFFECT_SUCCEEDED, &serde_json::to_string(&snap).unwrap()), Some(&req.id.0));
+        let [Command::Effect(repair)] = &p.handle(&ctx, &view, &seen)[..] else { panic!("one repair") };
+        let ids = serde_json::from_str::<Repair>(&repair.input).unwrap().ids;
+        assert!(repair.input.len() <= REPAIR_BYTES && !ids.is_empty() && ids.len() < REPAIR_BATCH, "{} ids, {} bytes", ids.len(), repair.input.len());
     }
 
     #[test]

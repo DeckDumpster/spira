@@ -65,6 +65,10 @@ pub fn spawn_control(path: &std::path::Path, control: status::Control) -> Result
         .map_err(|e| format!("control thread: {e}"))
 }
 
+/// The most bytes a record journaled as one carry may serialize to: three quarters of the store's
+/// 65,535-byte column, the rest left for an entry that grows once carried.
+pub const CARRY_BYTES: usize = 48 * 1024;
+
 /// The gap between one task's first tick and the next at boot, so the tasks do not all fire
 /// at the same instant and fill every class at once.
 pub const BOOT_STAGGER_MS: u64 = 250;

@@ -633,6 +633,11 @@ fn store(carry: &mut Carry, repo: &str, rc: RepoCarry) {
     }
 }
 
+/// A repo not yet carried waits a pass rather than push the record past [`crate::CARRY_BYTES`].
+pub fn admits<T: Serialize>(carry: &T) -> bool {
+    serde_json::to_string(carry).is_ok_and(|s| s.len() <= crate::CARRY_BYTES)
+}
+
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     decide_with(&Policy::default(), carry, snap, 0)
 }
@@ -646,7 +651,12 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot, now_ms: u64)
     for (name, repo) in snap.repos.iter().filter(|(_, r)| r.lc_ok) {
         let mut m = Machine { repo: name, mode: repo.mode.clone(), rc: carry.repos.get(name).cloned().unwrap_or_default(), acts: vec![], now_ms };
         m.observe(policy, repo);
+        let before = next.clone();
         store(&mut next, name, m.rc);
+        if !carry.repos.contains_key(name) && !admits(&next) {
+            next = before;
+            continue;
+        }
         acts.extend(m.acts);
     }
     (next, acts)

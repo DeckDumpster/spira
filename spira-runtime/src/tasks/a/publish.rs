@@ -130,6 +130,7 @@ use serde::{Deserialize, Serialize};
 
 use super::batcher_local::{handle_p2, interests, table_step, On, P2};
 use super::kit::{self, Act, Cadence, Shape};
+use super::queue_step::admits;
 
 pub const NAME: &str = "publish";
 pub const STREAM: &str = "task.publish";
@@ -614,7 +615,12 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, V
     for (name, repo) in &snap.repos {
         let mut m = Machine { repo: name, rc: carry.repos.get(name).cloned().unwrap_or_default(), acts: vec![] };
         m.observe(policy, repo);
+        let before = next.clone();
         store(&mut next, name, m.rc);
+        if !carry.repos.contains_key(name) && !admits(&next) {
+            next = before;
+            continue;
+        }
         acts.extend(m.acts);
     }
     (next, acts)
