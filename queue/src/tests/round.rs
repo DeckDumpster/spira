@@ -6927,3 +6927,33 @@ fn open_admits_a_text_only_member_that_has_fallen_behind_the_landing_ref() {
     assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
     assert!(!t.err().contains("text-only"), "{}", t.err());
 }
+
+#[test]
+fn ejecting_every_member_on_an_integration_test_red_returns_each_red_and_logs_each() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    for id in ["sp-a", "sp-b"] {
+        assert_eq!(
+            t.run(&["round", "eject", &batch, id, "--reason", "integration red", "--no-rebuild", "--suites", "integration-tests"]),
+            0,
+            "{id}: {}",
+            t.err()
+        );
+    }
+    let log = t.landing_log();
+    for id in ["sp-a", "sp-b"] {
+        assert!(log.contains(&format!("batch={batch} id={id} cause=eject-red")), "{id}: {log}");
+        assert!(
+            t.lc.calls.borrow().iter().any(|c| c.contains(&format!("event bead {id} IN_DELIVERY")) && c.contains("batch-ejected-red")),
+            "{id}: {:?}",
+            t.lc.calls.borrow()
+        );
+        assert!(t.lib.has(&format!("bead_reopen {id} eject-red unit-tests")), "{id}");
+    }
+    assert!(t.lc.has(&format!("abandon-batch {batch} OPEN")));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 1, "{}", t.err());
+    for (id, tip) in [("sp-a", "ta"), ("sp-b", "tb")] {
+        assert!(t.err().contains(&format!("{id}: {tip} is a recorded ejected-red tip")), "{}", t.err());
+    }
+}
