@@ -1,0 +1,54 @@
+# The world twin of one page for a refused eject held across passes: a round whose progress holds
+# an eject the verb refused, in the world's control store, then twenty round-controller passes
+# (each raising the condition on the repo's section) and twenty alarms passes over the published
+# section. The epoch is behind the real clock because the store refuses a section stamped ahead of
+# it. The step counts the pages in the world's mailboxes: one, not one a pass.
+epoch = 1790000000
+horizon = 1300000
+real_actors = ["round-controller"]
+
+[[step]]
+name = "write-held-eject"
+at = 0
+command = "sh spira/sim/scenarios/steps/rc-eject-refused-pages.sh write"
+
+[[step]]
+name = "one-page"
+at = 1290000
+command = "sh spira/sim/scenarios/steps/rc-eject-refused-pages.sh check"
+
+[[actor]]
+name = "rc-pass"
+command = "round-controller pass"
+first = 20000
+every = 60000
+duration_min = 1000
+duration_max = 2000
+
+[[actor]]
+name = "alarms-pass"
+command = "incident alarms-pass"
+first = 50000
+every = 60000
+duration_min = 1000
+duration_max = 2000
+
+[[invariant]]
+name = "a_step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit <> 0"
+
+[[invariant]]
+name = "rc_pass_exited_nonzero"
+sql = "SELECT seq, exit FROM events WHERE actor = 'rc-pass' AND kind = 'complete' AND exit <> 0"
+
+[[invariant]]
+name = "alarms_pass_exited_nonzero"
+sql = "SELECT seq, exit FROM events WHERE actor = 'alarms-pass' AND kind = 'complete' AND exit <> 0"
+
+[[expect]]
+name = "twenty_passes_ran"
+sql = "SELECT 1 FROM events WHERE actor = 'alarms-pass' AND kind = 'complete' AND exit = 0 HAVING count(*) >= 20"
+
+[[expect]]
+name = "one_page_for_the_held_eject"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'one-page' AND exit = 0"
