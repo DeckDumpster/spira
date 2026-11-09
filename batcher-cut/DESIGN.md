@@ -177,7 +177,7 @@ flake or base red. The end-to-end proof (`e2e`, `#[ignore]`: `cargo test -p batc
 ## Red tips (law-a-retry-must-change-an-input)
 
 Every owner ejection, and the repository-ci eject, first records the member's tip under
-`<run>/red-tips/<repo>/<id>` (`redtip::record`), whether or not the eject is then accepted. A cut
+`<run>/batcher-red-tips/<repo>/<id>` (`redtip::record`), whether or not the eject is then accepted. A cut
 leaves out a member whose tip equals the recorded one (`redtip::withhold`) and files one bead note
 for it; a new commit changes the tip and readmits it. Tests: `redtip::tests`.
 

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use batcher::core::Member;
 
 fn file(run: &Path, repo: &str, id: &str) -> PathBuf {
-    run.join("red-tips").join(repo).join(id)
+    run.join("batcher-red-tips").join(repo).join(id)
 }
 
 fn read(run: &Path, repo: &str, id: &str) -> Option<(String, bool)> {
@@ -30,17 +30,21 @@ pub fn record(run: &Path, repo: &str, id: &str, tip: &str) {
     }
 }
 
+/// Marks `id`'s record filed, once its note has been left.
+pub fn mark_filed(run: &Path, repo: &str, id: &str, tip: &str) {
+    if let Err(e) = fs::write(file(run, repo, id), format!("{tip} filed\n")) {
+        eprintln!("batcher {repo}: {id} not marked filed ({e}); it will be noted again");
+    }
+}
+
 /// Splits `pool` into the members to cut and the ids withheld because their tip is the one a red
-/// was attributed to. A withheld id comes back with `true` the first time only, which is when it is filed.
+/// was attributed to. A withheld id comes back with `true` the first time only, which is when it is to be filed.
 pub fn withhold(run: &Path, repo: &str, pool: Vec<Member>) -> (Vec<Member>, Vec<(String, String, bool)>) {
     let mut kept = Vec::new();
     let mut withheld = Vec::new();
     for m in pool {
         match read(run, repo, &m.id) {
             Some((tip, filed)) if tip == m.tip => {
-                if !filed {
-                    let _ = fs::write(file(run, repo, &m.id), format!("{tip} filed\n"));
-                }
                 withheld.push((m.id, tip, !filed));
             }
             _ => kept.push(m),
@@ -65,6 +69,7 @@ mod tests {
         let (kept, out) = withhold(run.path(), "r", pool());
         assert_eq!(kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-b"]);
         assert_eq!(out, [("sp-a".to_string(), "t1".to_string(), true)]);
+        mark_filed(run.path(), "r", "sp-a", "t1");
         let (_, again) = withhold(run.path(), "r", pool());
         assert_eq!(again, [("sp-a".to_string(), "t1".to_string(), false)], "filed once, not every cut");
     }

@@ -194,8 +194,9 @@ fn cut(o: &Opts) -> Result<(), pace::CutError> {
         println!("batcher {}: {id} left out: its tip {tip} is unchanged since a red attributed to it", repo.name);
         if *first {
             let note = format!("Left out of every round until its branch has a new commit: a red was attributed to spira/{id} at {tip} and the tip has not changed since.");
-            if let Err(e) = io::bead_note(&env_, id, &note) {
-                eprintln!("batcher {}: {id} not noted: {e}", repo.name);
+            match io::bead_note(&env_, id, &note) {
+                Ok(()) => redtip::mark_filed(&env_.run, &repo.name, id, tip),
+                Err(e) => eprintln!("batcher {}: {id} not noted: {e}", repo.name),
             }
         }
     }
