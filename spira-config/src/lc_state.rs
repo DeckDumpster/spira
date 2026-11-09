@@ -19,6 +19,7 @@ use crate::lc_call::LcClient;
 use crate::lifecycle_row::lc_bin;
 
 pub use lifecycle::batch::BatchState;
+pub use lifecycle::delivery::DeliveryState;
 
 /// The `wait` hold's reason that makes it a timed snooze: `snooze-until:<epoch seconds>`.
 pub const SNOOZE_PREFIX: &str = "snooze-until:";

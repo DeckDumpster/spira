@@ -749,6 +749,14 @@ impl Beads for RealBeads {
             _ => "-".into(),
         }
     }
+    fn in_round(&self, id: &str) -> bool {
+        if self.lc_bin.is_none() && self.client.is_none() {
+            return false;
+        }
+        let Ok(c) = self.lc() else { return false };
+        let (rc, so, _) = crate::lifecycle::run(&c, &["show", id]);
+        rc == 0 && crate::pr::delivery_of(so.trim().as_bytes()).is_some_and(|(state, _)| spira_config::lc_state::DeliveryState::from_str(&state) == Some(spira_config::lc_state::DeliveryState::Batched))
+    }
     fn ask_open(&self, label: &str, subject: &str) -> bool {
         if subject.is_empty() {
             return false;
@@ -1380,6 +1388,21 @@ mod store_tests {
 
     fn beads(c: &LcClient) -> RealBeads {
         RealBeads { home: PathBuf::from("/nonexistent"), bdq: String::new(), timeout: 5, home_repo: "spira".into(), fixture: None, lc_bin: None, client: Some(c.clone()) }
+    }
+
+    #[test]
+    fn a_bead_whose_delivery_is_batched_is_in_a_round_and_any_other_is_not() {
+        let (_, c) = store(|a| match a.join(" ").as_str() {
+            "show sp-a" => (0, "{\"bead\":{\"bead_id\":\"sp-a\",\"state\":\"SUBMITTED\"},\"delivery\":{\"state\":\"BATCHED\",\"version\":3}}".into()),
+            "show sp-b" => (0, "{\"bead\":{\"bead_id\":\"sp-b\",\"state\":\"SUBMITTED\"},\"delivery\":{\"state\":\"QUEUED\",\"version\":1}}".into()),
+            "show sp-c" => (0, "{\"bead\":{\"bead_id\":\"sp-c\",\"state\":\"SUBMITTED\"},\"delivery\":null}".into()),
+            _ => (1, String::new()),
+        });
+        let b = beads(&c);
+        assert!(b.in_round("sp-a"));
+        assert!(!b.in_round("sp-b"));
+        assert!(!b.in_round("sp-c"));
+        assert!(!b.in_round("sp-gone"));
     }
 
     #[test]

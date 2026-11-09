@@ -499,6 +499,10 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: {br} at {tip} was deferred to round — not gated again"));
             return Flow::Next;
         }
+        if self.beads.in_round(id) {
+            self.log(&format!("CHECK6 {id}: {br} is in a round — the round judges it, no per-bead gate"));
+            return Flow::Next;
+        }
         if self.s.gate_worker {
             return self.certify_queued(w, br, id, bead, &tip);
         }
