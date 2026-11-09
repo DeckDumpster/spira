@@ -1893,6 +1893,21 @@ pub fn ami_result(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
     ok(lines)
 }
 
+/// The last `tail` lines of a Round AMI run's failed-step log; `?` when the forge cannot be read.
+pub fn ami_log(gh: &dyn Gh, repo: &Path, run: &str, tail: usize) -> Out {
+    if run.is_empty() {
+        warn!("forge: ami-log: run id required");
+        return fail(vec![]);
+    }
+    let r = gh.call(Some(repo), &["run", "view", run, "--log-failed"]);
+    if r.code != 0 {
+        return ok(vec!["?".into()]);
+    }
+    let text = r.text();
+    let lines: Vec<&str> = text.lines().collect();
+    ok(lines[lines.len().saturating_sub(tail)..].iter().map(|l| l.to_string()).collect())
+}
+
 fn passthrough(r: &GhOut) -> Vec<String> {
     let t = r.text();
     if t.is_empty() {

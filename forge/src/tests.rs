@@ -1756,6 +1756,24 @@ fn ami_result_names_the_failing_step_of_a_failed_candidate_build() {
     );
 }
 
+#[test]
+fn ami_log_is_the_tail_of_the_failed_steps_log() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["run", "view", "9", "--log-failed"],
+        0,
+        "build\tBuild, image and tag\tone\nbuild\tBuild, image and tag\ttwo\nbuild\tBuild, image and tag\tthree\n",
+    );
+    assert_eq!(
+        ami_log(&gh, repo(), "9", 2).lines,
+        vec![
+            "build\tBuild, image and tag\ttwo".to_string(),
+            "build\tBuild, image and tag\tthree".to_string()
+        ]
+    );
+    assert_eq!(ami_log(&FakeGh::default(), repo(), "9", 2).lines, vec!["?".to_string()]);
+}
+
 // ── the library seam ─────────────────────────────────────────────────────────────────────
 
 #[test]

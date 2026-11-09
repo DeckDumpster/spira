@@ -64,6 +64,7 @@ terms). Body payloads that were `stdin` in bash (`pr-create`) stay stdin.
 | `dispatch` | `<ref> <suites-csv>` | triggers a Gate run restricted to `suites-csv`; silent |
 | `ami-runs` | — | the id of each Round AMI run not yet completed, one per line; `?` when unreadable |
 | `ami-dispatch` | `<ref>` | triggers the Round AMI workflow on `ref`; silent |
+| `ami-log` | `<run-id> [<lines>]` | the last lines (default 40) of the run's failed-step log; `?` when unreadable |
 | `fail-lines` | `<run-id> <suites-space-sep>` | `fail-line: <suite>: <text>` |
 | `pr-close` | `<pr-number>` | silent |
 | `pr-comment` | `<pr-number> <body>` | silent |

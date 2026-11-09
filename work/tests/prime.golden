@@ -190,6 +190,7 @@ Arguments:
   --met "<measured value and where>" | --contradicted "<evidence>" | --short "<value>" with --follow-on <id> or --escalation <id>   (only when the description carries a `Target:` line)
 Checks:
   - the tip is read from your branch, never taken from you
+  - a branch whose diff touches the round image recipe has its Round AMI build dispatched and awaited; a failed build refuses, naming the step and its last log lines
   - a bead with a `Target:` line is submitted with a verdict; a submission without one is refused by the broker
   - a --short verdict names a follow-on or escalation you filed
 Refusals:

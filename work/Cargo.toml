@@ -10,6 +10,7 @@ spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 habits = { path = "../habits" }
 gate = { path = "../gate" }
+forge = { path = "../forge" }
 bead = { path = "../bead" }
 rule = { path = "../rule" }
 

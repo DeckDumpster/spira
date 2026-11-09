@@ -90,6 +90,12 @@ fn main() {
     };
     let actor = std::env::var("SPIRA_RUNE").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "dwarf".to_string());
 
+    if verb == "submit" {
+        if let Err(e) = image_gate(&bound) {
+            eprintln!("work submit: refused: {e} — fix the image recipe, commit, and run `work submit` again");
+            { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
+        }
+    }
     if verb == "submit" && !checks_passed_at_tip() && checks(&[]) != 0 {
         eprintln!("work submit: refused: the repository's done checks failed (output above) — fix them, commit, and run `work submit` again; `work checks` runs them alone");
         { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
@@ -443,6 +449,81 @@ fn law(args: &[String]) -> i32 {
             REFUSED
         }
     }
+}
+
+struct ImagePorts {
+    root: std::path::PathBuf,
+    tip: String,
+    forge: std::path::PathBuf,
+    remote: String,
+    started: std::time::Instant,
+}
+
+impl ImagePorts {
+    fn git(&self, args: &[&str]) -> Result<String, String> {
+        let o = spira_config::bounded::bounded("git").args(args).current_dir(&self.root).output().map_err(|e| e.to_string())?;
+        if o.status.success() {
+            Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+        } else {
+            Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
+        }
+    }
+    fn forge(&self, verb: &str, args: &[&str]) -> forge::client::Reply {
+        forge::client::run(&forge::client::route_of(&self.forge), verb, &self.root, args, None)
+    }
+}
+
+impl work::image::Ports for ImagePorts {
+    fn changed_paths(&self) -> Option<Vec<String>> {
+        let out = self.git(&["diff", "--name-only", "--no-renames", &format!("{}...{}", work::CHECKS_BASE, self.tip)]).ok()?;
+        Some(out.lines().map(String::from).collect())
+    }
+    fn push(&self, branch: &str) -> Result<(), String> {
+        self.git(&["push", &self.remote, &format!("{}:refs/heads/{branch}", self.tip)]).map(drop)
+    }
+    fn delete(&self, branch: &str) {
+        let _ = self.git(&["push", &self.remote, &format!(":refs/heads/{branch}")]);
+    }
+    fn dispatch(&self, branch: &str) -> Result<(), String> {
+        let r = self.forge("ami-dispatch", &[branch]);
+        if r.ok() { Ok(()) } else { Err(format!("the forge refused the dispatch: {}", r.err.trim())) }
+    }
+    fn result(&self, branch: &str) -> Option<work::image::Build> {
+        work::image::Build::parse(&self.forge("ami-result", &[branch]).stdout()?)
+    }
+    fn log_tail(&self, run: &str, lines: usize) -> Vec<String> {
+        let tail = lines.to_string();
+        let out = self.forge("ami-log", &[run, &tail]).stdout().unwrap_or_default();
+        out.lines().filter(|l| l.trim() != "?").map(String::from).collect()
+    }
+    fn now(&self) -> u64 {
+        self.started.elapsed().as_secs()
+    }
+    fn sleep(&self, secs: u64) {
+        std::thread::sleep(Duration::from_secs(secs)); // waits-on: the Round AMI run on the candidate branch; cap SPIRA_ROUND_AMI_WAIT_SECS
+    }
+}
+
+/// Refuses a submit whose branch changes the round image recipe and does not build the image.
+/// Unresolvable configuration is not read as "no recipe change": the gate only skips on a diff
+/// that leaves the recipe alone, and the diff is read first.
+fn image_gate(bead: &str) -> Result<(), String> {
+    let root = git_line(&["rev-parse", "--show-toplevel"]).ok_or("not inside a git worktree")?;
+    let tip = git_line(&["rev-parse", "HEAD"]).ok_or("cannot read HEAD")?;
+    let cfg = spira_config::process::cfg;
+    let ports = ImagePorts {
+        root: root.into(),
+        tip: tip.clone(),
+        forge: cfg("SPIRA_FORGE")?.into(),
+        remote: cfg("SPIRA_PUBLISH_REMOTE")?,
+        started: std::time::Instant::now(),
+    };
+    let wait = spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_AMI_WAIT_SECS")?;
+    match work::image::gate(&ports, bead, &tip, wait)? {
+        work::image::Verdict::Skipped => {}
+        work::image::Verdict::Built(run) => println!("work submit: the round image recipe builds (run {run})"),
+    }
+    Ok(())
 }
 
 /// `work checks [--list]`: the repository's `[[check]]` rows from `.spira/checks.toml`, run in
