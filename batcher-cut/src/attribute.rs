@@ -70,6 +70,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sp_56d3l3_an_emptied_outcome_reads_back_as_emptied_not_blocked() {
+        let emptied = Attribution::Emptied("unit-tests red ejected every member".into());
+        assert_eq!(Attribution::parse(&emptied.line()), Some(emptied));
+    }
+
+    #[test]
     fn an_outcome_reads_back_from_the_last_line_among_other_output() {
         let land = Attribution::Land { members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], attribution_secs: Some(42), mended: true };
         let out = format!("batcher spira: red test-x.sh → owner sp-c\n{}\nnoise after\n", land.line());

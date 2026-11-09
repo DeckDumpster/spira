@@ -1490,6 +1490,16 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn sp_56d3l3_a_lint_red_that_ejects_the_only_member_ends_emptied_not_blocked() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(lint_naming("m1"));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["spira-lint".to_string()])]);
+    }
+
+    #[test]
     fn a_lint_red_naming_no_member_is_filed_once_and_does_not_run_the_corpus_again() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(Box::new(|_| Some(FilterRed { name: "spira-lint".into(), named: vec![] })));
