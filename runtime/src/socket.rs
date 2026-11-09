@@ -32,9 +32,6 @@ use crate::{Result, RuntimeError};
 
 /// spira-lc's exit code for a request the journal looked at and refused.
 const REFUSED: i64 = 3;
-/// …and for one it could not answer (a deadline), which is safe to ask again.
-const CANNOT_TELL: i64 = 2;
-
 /// spira-lc's exit code for a request it could not answer: a store call that ran out its deadline.
 const CANNOT_TELL: i64 = 2;
 
@@ -453,7 +450,6 @@ impl Journal for SocketJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn a_closed_connection_with_no_reply_is_a_cannot_tell() {
