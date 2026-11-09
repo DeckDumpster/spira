@@ -6767,6 +6767,20 @@ fn a_round_cut_before_its_base_moved_refuses_land_as_base_moved() {
 }
 
 #[test]
+fn land_driven_again_on_a_landed_round_answers_landed_instead_of_no_open_round() {
+    let (t, batch) = certified_round();
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    t.git.ancestor("merged-tb", "local/main");
+    let landed_calls = t.lc.calls.borrow().iter().filter(|c| c.starts_with("land ") || c.starts_with("event ")).count();
+    let (rc, e) = err_of(&t, || t.run(&["round", "land", &batch]));
+    assert_eq!(rc, 0, "{e}");
+    assert!(!e.contains("no open round"), "{e}");
+    assert!(t.out().contains(&format!("round {batch} already landed at merged-tb")), "{}", t.out());
+    let after = t.lc.calls.borrow().iter().filter(|c| c.starts_with("land ") || c.starts_with("event ")).count();
+    assert_eq!(after, landed_calls, "a repeat land records nothing");
+}
+
+#[test]
 fn a_preflight_red_ejects_every_recipe_changing_member_and_names_them() {
     let (t, _) = preflight_red_round(&["ta", "tb"]);
     assert!(t.lib.has("bead_reopen sp-a eject-red") && t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
