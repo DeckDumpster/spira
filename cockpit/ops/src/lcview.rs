@@ -2233,8 +2233,8 @@ mod tests {
         held_old.holds = vec!["ask".into()];
         let mut s = snap(vec![row("sp-unlaned", "READY", 0), blocked, held, held_old, row("sp-asked", "READY", 3), row("sp-ranked", "READY", 9)]);
         s.claimable = Some(vec!["sp-ranked".into()]);
-        s.ask_label = "needs-ryan".into();
-        s.meta.insert("sp-asked".into(), Meta { labels: vec!["needs-ryan".into()], ..Default::default() });
+        s.ask_label = "asks-the-operator".into();
+        s.meta.insert("sp-asked".into(), Meta { labels: vec!["asks-the-operator".into()], ..Default::default() });
         let v = view(&s);
         let ready = v.machine.iter().find(|m| m.name == "READY").unwrap();
         assert_eq!(ready.beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["sp-ranked", "sp-held-old", "sp-held", "sp-blocked", "sp-asked", "sp-unlaned"]);
