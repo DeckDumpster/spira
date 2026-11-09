@@ -845,30 +845,9 @@ impl World {
             window_s: u64,
         }
         let p: P = serde_json::from_str(input).map_err(|e| format!("transitions params unparsed: {e}"))?;
-        let answer = |s: &wt::Snapshot| serde_json::to_string(s).map_err(|e| e.to_string());
-        let releases = match release::machine::all(&self.run_dir.join("release")) {
-            Ok(r) => r,
-            Err(e) => return answer(&wt::blind(&format!("release machine records: {e}"))),
-        };
-        if releases.is_empty() {
-            return answer(&wt::blind("no release machine record under run/release/machine"));
-        }
-        let activated = releases.iter().flat_map(|r| r.events.iter()).filter(|e| e.to == release::machine::ReleaseState::Activated).map(|e| e.at).max();
-        let window = p.window_s.to_string();
-        let mut argv = vec!["dwell", "--window", window.as_str()];
-        let after = activated.map(|a| a.to_string());
-        if let Some(a) = after.as_deref() {
-            argv.extend(["--landed-after", a]);
-        }
-        let dwell = match self.lc_json(&argv) {
-            Ok(v) => v,
-            Err(e) => return answer(&wt::blind(&format!("spira-lc dwell: {e}"))),
-        };
-        let mut snap = wt::snapshot_of(&dwell, activated).unwrap_or_else(|e| wt::blind(&e));
+        let mut snap = wt::observe(&self.run_dir, &|argv| self.lc_json(argv), p.window_s);
         snap.open_rounds = self.open_rounds();
-        let progress = fs::read_to_string(self.run_dir.join("round-progress.json")).ok().and_then(|t| wt::round_owner(&t));
-        snap.owners.extend(progress.map(|o| (wt::DELIVERY_EDGE.to_string(), o)));
-        answer(&snap)
+        serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 
     pub fn round_record_partition(&self) -> install::round_records::Partition {

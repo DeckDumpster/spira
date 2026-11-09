@@ -1023,6 +1023,7 @@ dependencies = [
  "spira-config",
  "spira-desired-state",
  "spira-otel",
+ "spira-runtime",
  "store-view",
  "testkit",
  "tokio",
