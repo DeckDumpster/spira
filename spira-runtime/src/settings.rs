@@ -190,6 +190,7 @@ impl Settings {
             max_open: secs("SPIRA_ROUND_MAX_OPEN")?,
             remind_secs: secs("SPIRA_ROUND_DUE_REMIND")?,
             idle_cut_secs: secs("SPIRA_ROUND_IDLE_CUT")?,
+            lease_ttl_secs: secs("SPIRA_ROUND_LEASE_TTL_SECS")?,
         };
         let home_repo = get("SPIRA_HOME_REPO")?;
         if home_repo.is_empty() {
