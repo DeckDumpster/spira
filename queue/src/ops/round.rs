@@ -56,6 +56,15 @@ pub(super) const UNIT_RED: &str = "unit-tests";
 /// Either is red on the `unit-tests` step, the testenv suite that runs both for a tip.
 pub(super) const TEST_PHASES: [(&str, &str); 2] = [("unit.json", "unit-tests"), ("integration.json", "integration-tests")];
 
+/// The testenv step a red test phase is charged to: both phases are red on `unit-tests`.
+fn test_phase_step(suite: &str) -> &str {
+    if TEST_PHASES.iter().any(|(_, stage)| *stage == suite) {
+        UNIT_RED
+    } else {
+        suite
+    }
+}
+
 /// A test phase the round VM recorded red.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PhaseRed {
@@ -3543,6 +3552,14 @@ fn eject(
     lease: LeaseCheck,
 ) -> i32 {
     let label = "round eject";
+    let mut named: Vec<&str> = Vec::new();
+    for s in suites.split(',').map(test_phase_step) {
+        if !named.contains(&s) {
+            named.push(s);
+        }
+    }
+    let suites = named.join(",");
+    let suites = suites.as_str();
     if red && !harness_fault && suites.trim().is_empty() {
         w.err(format!("queue.sh {label}: --red names no failing check — pass --suites <csv> naming the suite or step that failed, so the resubmit can be held to proving it"));
         return USAGE;
