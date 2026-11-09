@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS runtime_event (
 CREATE INDEX IF NOT EXISTS runtime_event_stream_idx ON runtime_event (stream, seq);
 CREATE INDEX IF NOT EXISTS runtime_event_cause_idx ON runtime_event (cause, kind_tag);
 
--- The 0038 effect table, renamed aside by migrations/0040 and no longer written; a fresh
+-- The 0038 effect table, renamed aside by migrations/0041 and no longer written; a fresh
 -- database carries it so that migration finds its rename already done.
 CREATE TABLE IF NOT EXISTS runtime_effect_0038 (
     event_id VARCHAR(255) NOT NULL PRIMARY KEY,
@@ -206,7 +206,7 @@ CREATE TABLE IF NOT EXISTS runtime_effect_0038 (
 
 CREATE INDEX IF NOT EXISTS runtime_effect_open_idx ON runtime_effect_0038 (resolved, seq);
 
--- What the runtime keeps across a restart (migrations/0040-runtime-task-state.sql): each row
+-- What the runtime keeps across a restart (migrations/0041-runtime-task-state.sql): each row
 -- upserted in place, the effect keyed by the act's idempotency key.
 CREATE TABLE IF NOT EXISTS runtime_effect (
     task         VARCHAR(128) NOT NULL,
