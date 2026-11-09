@@ -19,6 +19,8 @@ tsd = { path = "../tsd" }
 mail = { path = "../mail" }
 strand = { path = "../strand" }
 watchtower = { path = "../watchtower" }
+spira-desired-state = { path = "../desired-state" }
+reconciler-engine = { path = "../reconciler-engine" }
 
 [[bin]]
 name = "sentinel"

@@ -1,0 +1,17 @@
+# The DwarfFleet section's spec: dwarf utilisation while READY work waits. Not part of the
+# default document, which every install composes and publishes: a section spec reaches the
+# control store, so it is applied when the fleet section is armed
+# (`spira compose desired-state/examples/default.toml desired-state/examples/dwarf-fleet.toml`).
+
+[producer]
+producer = "spira-default"
+version = "1"
+time = "2026-11-01T00:00:00Z"
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "DwarfFleet"
+[resources.metadata]
+name = "fleet"
+[resources.spec]
+utilisation_while_ready = { value = 0.85, statute = "law-a-concurrency-ceiling-names-its-measurement" }

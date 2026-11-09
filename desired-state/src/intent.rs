@@ -65,6 +65,10 @@ pub struct Ack {
     pub at: String,
     pub result: AckResult,
     pub observed_rev: u64,
+    /// What the owner measured when it took the step, for an owner whose step a statute asks to
+    /// name its measurement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement: Option<Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

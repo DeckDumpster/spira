@@ -588,7 +588,8 @@ fn ack_result(args: &[String]) -> Result<AckResult, Answer> {
     }
 }
 
-/// `intent ack <key> --actor <owner> --result applied|already-applied|refused [--reason R]`:
+/// `intent ack <key> --actor <owner> --result applied|already-applied|refused [--reason R]
+/// [--measurement <json>]`:
 /// once, and nothing but `ack`.
 fn intent_ack<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> (Answer, String) {
     let key = match positional(args, "<intent key>") {
@@ -604,6 +605,9 @@ fn intent_ack<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> 
             at: rfc3339(call.now_ms),
             result,
             observed_rev: head,
+            measurement: flag(args, "--measurement")
+                .map(|m| serde_json::from_str(&m).map_err(|e| refuse("--measurement", "schema", format!("is not JSON: {e}"))))
+                .transpose()?,
         });
         let t = Txn::new()
             .when(Compare::ModRev(key.clone(), Some(item.mod_rev)))
@@ -716,6 +720,7 @@ fn intent_apply<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -
             at: rfc3339(call.now_ms),
             result,
             observed_rev: head,
+            measurement: None,
         });
         let mut t = Txn::new()
             .when(Compare::ModRev(key.clone(), Some(item.mod_rev)))
@@ -741,7 +746,8 @@ fn intent_apply<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -
 }
 
 /// `intent knob-init <knob> --actor <owner> --json <value>`: the owner sets its own knob's first
-/// value, so the selector has a `from` to step. A knob that exists is answered as it stands.
+/// value, so the selector has a `from` to step. A knob that exists is answered as it stands,
+/// unless `--overwrite` says the owner's own state moved and the knob mirrors it.
 fn knob_init<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> (Answer, String) {
     let knob = match positional(args, "<knob key>") {
         Ok(k) => k,
@@ -763,11 +769,13 @@ fn knob_init<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> (
             return Err(refuse("actor", "ownership", format!("only {:?} sets a {} knob, not {actor:?}", kind.owner, kind.name)));
         }
         let value = body(args)?;
-        if let Some(cur) = store.get(&knob).map_err(cannot)? {
-            return Ok(Answer::Ok(json!({ "knob": knob, "initialized": false, "value": cur.value.data })));
+        let overwrite = args.iter().any(|a| a == "--overwrite");
+        let cur = store.get(&knob).map_err(cannot)?;
+        if let Some(c) = cur.as_ref().filter(|c| !overwrite || c.value.data == value) {
+            return Ok(Answer::Ok(json!({ "knob": knob, "initialized": false, "value": c.value.data })));
         }
         let t = Txn::new()
-            .when(Compare::ModRev(knob.clone(), None))
+            .when(Compare::ModRev(knob.clone(), cur.as_ref().map(|c| c.mod_rev)))
             .put(&knob, Object::new(value.clone()));
         let req = Request::new(call.request, &actor, "lc.intent.knob-init");
         match store.txn(&t, &req).map_err(cannot)? {
