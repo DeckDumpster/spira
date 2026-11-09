@@ -275,6 +275,9 @@ pub fn suit_reason(kind: &str, first_para: &str) -> String {
     first_para.to_string()
 }
 
+/// A store reply that says it could not tell whether the write happened.
+const CANNOT_TELL_EXIT: i32 = 2;
+
 /// Creates the tracking decision bead a question/decision send wires itself to, and opens its
 /// row on the ask machine (never the bead machine: an ask is not claimable work). `None` if
 /// the store is unconfigured; a failed create is an `Err`, so no ask is ever sent without its id.
@@ -283,9 +286,6 @@ pub fn suit_reason(kind: &str, first_para: &str) -> String {
 /// as a `work-bead:<id>` label, so a path that answers or closes the ASK BEAD rather than
 /// replying to the mail — the cockpit pane's verdict, `resolve`, `verify-asks` — can still
 /// find the work bead whose `ask` hold the answer lifts (sp-v62vn follow-up).
-/// A store reply that says it could not tell whether the write happened.
-const CANNOT_TELL_EXIT: i32 = 2;
-
 pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, body: &str, ask_label: &str, work_bead: &str) -> Result<Option<String>, String> {
     if !db_configured {
         return Ok(None);
