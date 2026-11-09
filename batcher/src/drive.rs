@@ -433,10 +433,9 @@ fn first_failing_prefix(green: &mut dyn FnMut(&[Member]) -> Option<bool>, member
     Some(hi)
 }
 
-/// Probes member subsets to find what turns `red` on when no output names a member: the last
-/// member of the shortest red prefix is in the culprit set, and either turns it on alone or with
-/// one earlier partner, found by the same search. The later one is held behind the earlier.
-/// `None` when the runner cannot probe subsets, or the red needs three members or more.
+/// Finds by prefix search what turns `red` on when no output names a member: one member alone,
+/// or a pair, whose later member is held behind the earlier. `None` for three or more, or when
+/// the runner cannot probe subsets.
 fn bisect_members(red: &str, green: &mut dyn FnMut(&[Member]) -> Option<bool>, members: &[Member]) -> Option<Vec<Action>> {
     let k = first_failing_prefix(green, members)?;
     let last = &members[k - 1];
