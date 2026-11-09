@@ -161,7 +161,7 @@ pub fn cmd_tail(rows: &[Row], run: &str, conf_file: &str, actionable: &str, now:
 
     let total = fs_ops::total_lines(&lf);
     let cursor_pos = fs_ops::read_pos(&cf, total);
-    let stamp = iso8601::format_utc(now);
+    let stamp = spira_world::clock::utc_iso(now);
     let start_line = if args.from_start {
         eprintln!("watchd: '{}' resuming from line 0 of {total} — from the start, cursor stays at {cursor_pos} ({stamp})", row.name);
         0

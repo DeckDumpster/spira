@@ -205,7 +205,7 @@ pub fn cmd_page(rows: &[Row], ops: &dyn Ops, ctx: &Context, name: &str, text: &s
     let cursor = paths::cursorfile(&ctx.run, name);
     let before = fs_ops::total_lines(&lf);
     let caught_up = fs_ops::read_pos(&cursor, before) == before;
-    let line = format!("[{}] {text} | {incident}", iso8601::format_utc(ctx.now));
+    let line = format!("[{}] {text} | {incident}", spira_world::clock::utc_iso(ctx.now));
     fs_ops::append_line(&lf, &line).map_err(|e| format!("watchd page: cannot write {}: {e}", lf.display()))?;
 
     if let Verdict::Escalate(note) = sop_run::attempt(ops, ctx, name, &key, &payload) {
