@@ -10,7 +10,7 @@
 //        tsd-read by-group <family> <group> <field> [<hours>]
 //        tsd-read count-by <family> <group> [<hours>]
 //        tsd-read tests [<hours>]                 the live test inventory: total, per-day added/removed, slowest, flakiest
-//        tsd-read test <id> [<hours>]             one test's runs, p50/p90, pass/red/flip rates, measured coverage
+//        tsd-read test <id> [<hours>]             one test's runs, p50/p90, pass/red/flip rates, measured coverage (`covered`, once a run exported it)
 //        tsd-read moved <family>                  exit 0 when the family lives in the metrics store
 //        tsd-read rows <family> [<hours>]        the family's rows, one JSON object per line
 //
