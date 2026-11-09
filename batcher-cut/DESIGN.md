@@ -174,6 +174,13 @@ flake or base red. The end-to-end proof (`e2e`, `#[ignore]`: `cargo test -p batc
 --ignored --nocapture`) runs a real fixture repo with three members, real git trees, the real
 `VmRunner` and spool, and a stub round-vm that runs tiny fixture suites locally.
 
+## Red tips (law-a-retry-must-change-an-input)
+
+Every owner ejection, and the repository-ci eject, first records the member's tip under
+`<run>/batcher-red-tips/<repo>/<id>` (`redtip::record`), whether or not the eject is then accepted. A cut
+leaves out a member whose tip equals the recorded one (`redtip::withhold`) and files one bead note
+for it; a new commit changes the tip and readmits it. Tests: `redtip::tests`.
+
 ## Staged rounds
 
 A queue.local cut stages the next round while the open one's suites run. Once the VM
