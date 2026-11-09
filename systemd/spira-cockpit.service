@@ -10,9 +10,7 @@ Wants=lc-serve.service
 # sp-kt4l3: `spira/cockpit.sh` and `spira/collect.sh` are retired; this unit now runs the
 # `cockpit-collect` crate's own tiered supervisor (`cockpit-collect collect`).
 Description=Spira cockpit collector (snapshot for the ops pane)
-# Activation never restarts this unit (sp-m9rruh): a restart disturbs the operator's panes, so
-# when its code changes activation reports it STALE, and the operator restarts it (sp-a1thwt).
-X-Spira-NoRestart=true
+X-Spira-NoRestart=a restart disturbs the operator's panes; restart it at a safe point
 Documentation=file://@SPIRA_PROD_ROOT@/cockpit-collect/DESIGN.md
 StartLimitIntervalSec=300
 StartLimitBurst=5

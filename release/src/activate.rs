@@ -200,10 +200,10 @@ pub struct Switched {
     /// unit is a fact about its config, not about whether this activation's own restarts
     /// came up.
     pub retired: Vec<String>,
-    /// Running services left on the previous release's code, each with why (sp-m9rruh): one
-    /// whose template opts out of a restart on activation (`X-Spira-NoRestart=true`), or a
-    /// running oneshot still on its previous pass when the drain wait ran out. Never silent:
-    /// `release activate` names every one as STALE.
+    /// Running services left on the previous release's code, each with why (sp-m9rruh): only
+    /// one whose template gives a reason for never being restarted by activation
+    /// (`X-Spira-NoRestart=<reason>`), or whose restart failed after the drain wait ran out.
+    /// Never silent: `release activate` names every one as STALE.
     pub stale: Vec<String>,
 }
 
@@ -335,10 +335,9 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
         };
         eprintln!("release: {unit}: {why}");
         if long_running {
-            if units::no_restart(new) {
-                out.stale.push(format!("{unit} ({why}; its unit says X-Spira-NoRestart, so restart it at a safe point)"));
-            } else {
-                out.restarted.push(unit.clone());
+            match units::never_restart(new) {
+                Some(reason) => out.stale.push(left_running(unit, &why, &reason)),
+                None => out.restarted.push(unit.clone()),
             }
         } else {
             if st.kind == "oneshot" && is_up(&st.active) && !units::undrained(new) {
@@ -378,13 +377,41 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
     for s in units::path_shadows(&cfg.unit_dir, &rel, &cfg.releases) {
         eprintln!("release: WARN: {s}");
     }
-    for u in drain(ctx, &draining) {
-        out.stale.push(format!("{u} (still on its previous pass after the {}s drain wait; its next start runs {sha})", ctx.drain.as_secs()));
+    let still_running = drain(ctx, &draining);
+    let (to_restart, left) = split_by_exemption(&still_running, |u| rendered.iter().find(|r| &r.0 == u).and_then(|r| units::never_restart(&r.2)));
+    let why = format!("still on its previous pass after the {}s drain wait", ctx.drain.as_secs());
+    for (u, reason) in left {
+        out.stale.push(left_running(&u, &why, &reason));
+    }
+    for u in to_restart {
+        eprintln!("release: restarting {u}: {why}");
+        match ctx.sc.reset_failed(&u).and_then(|()| restart_unit(ctx.sc, &u)) {
+            Ok(()) => out.restarted.push(u),
+            Err(e) => out.stale.push(format!("{u} ({why}; restarting it failed: {e}; its next start runs {sha})")),
+        }
     }
     for s in &out.stale {
         eprintln!("release: STALE: {s}");
     }
     Ok(out)
+}
+
+fn left_running(unit: &str, why: &str, reason: &str) -> String {
+    format!("{unit} ({why}; never restarted by activation: {reason})")
+}
+
+/// Units split into those activation restarts and those it leaves, each left unit with the
+/// reason its template gives.
+fn split_by_exemption(units: &[String], reason: impl Fn(&String) -> Option<String>) -> (Vec<String>, Vec<(String, String)>) {
+    let mut restart = Vec::new();
+    let mut left = Vec::new();
+    for u in units {
+        match reason(u) {
+            Some(r) => left.push((u.clone(), r)),
+            None => restart.push(u.clone()),
+        }
+    }
+    (restart, left)
 }
 
 fn revive_failed(ctx: &Ctx, out: &mut Switched) {
@@ -805,7 +832,8 @@ pub fn status(cfg: &Config) -> Result<String, String> {
 
 #[cfg(test)]
 mod restart_tests {
-    use super::{live_reason, restart_reason, Roots};
+    use super::{left_running, live_reason, restart_reason, split_by_exemption, Roots};
+    use crate::units;
     use std::fs;
     use std::path::Path;
 
@@ -903,5 +931,22 @@ mod restart_tests {
         let pruned = Roots { releases: &rel, old: Some(&a1), new: &rel.join("c3") };
         let exe = b2.join("bin/spira-lc");
         assert!(live_reason(&unit("c3"), &unit("c3"), &pruned, Some(&exe)).is_some_and(|w| w.contains("cannot")), "unreadable new program");
+    }
+
+    /// sp-sv2lw2: a stale unit is restarted unless its template states a reason for never
+    /// being restarted; a bare boolean is no reason, and a left unit is named with its reason.
+    #[test]
+    fn a_stale_unit_is_restarted_unless_its_template_gives_a_reason_to_leave_it() {
+        let texts = [
+            ("plain.service", "[Unit]\nDescription=x\n"),
+            ("cockpit.service", "[Unit]\nX-Spira-NoRestart=a restart disturbs the operator's panes\n"),
+            ("bare.service", "[Unit]\nX-Spira-NoRestart=true\n"),
+        ];
+        let stale: Vec<String> = texts.iter().map(|t| t.0.to_string()).collect();
+        let (restart, left) = split_by_exemption(&stale, |u| texts.iter().find(|t| t.0 == u).and_then(|t| units::never_restart(t.1)));
+        assert_eq!(restart, vec!["plain.service", "bare.service"]);
+        assert_eq!(left, vec![("cockpit.service".to_string(), "a restart disturbs the operator's panes".to_string())]);
+        let named = left_running(&left[0].0, "its unit changed", &left[0].1);
+        assert!(named.contains("cockpit.service") && named.contains("operator's panes"), "{named}");
     }
 }

@@ -302,10 +302,16 @@ pub fn undrained(text: &str) -> bool {
     text.lines().any(|l| l.trim().replace(' ', "").eq_ignore_ascii_case("X-Spira-NoDrain=true"))
 }
 
-/// A service activation must not restart while it runs (sp-m9rruh): restarting it disturbs
-/// what the operator is using. When its code changed, activation names it STALE instead.
-pub fn no_restart(text: &str) -> bool {
-    text.lines().any(|l| l.trim().replace(' ', "").eq_ignore_ascii_case("X-Spira-NoRestart=true"))
+/// Why activation must leave this service running (`X-Spira-NoRestart=<reason>`, sp-sv2lw2):
+/// restarting it disturbs what the operator is using. A line with no reason, or only a
+/// boolean, is no exemption: the unit is restarted like any other.
+pub fn never_restart(text: &str) -> Option<String> {
+    text.lines()
+        .filter_map(|l| l.trim().split_once('='))
+        .find(|(k, _)| k.trim().eq_ignore_ascii_case("X-Spira-NoRestart"))
+        .map(|(_, v)| v.trim())
+        .filter(|v| !v.is_empty() && !["true", "yes", "on", "1", "false", "no", "off", "0"].contains(&v.to_ascii_lowercase().as_str()))
+        .map(str::to_string)
 }
 
 /// A service whose `Exec*=` lines differ between two renderings.
