@@ -248,6 +248,17 @@ impl Store {
         }
     }
 
+    /// Raises the alert for a refused readiness publish; the store counts each return as a flap.
+    pub fn alert_readiness_refused(&self, why: &str) -> Result<(), String> {
+        let message = format!("readiness not published\n\n{why}");
+        self.lc_verb(&["condition", "set", READINESS_ALERT, "--type", "Alert", "--reason", "Firing", "--message", &message, "--status", "True", "--owner", "heimdall"], &[0])
+    }
+
+    /// Clears that alert once a publish is accepted; nothing firing is a no-op.
+    pub fn clear_readiness_refused(&self) -> Result<(), String> {
+        self.lc_verb(&["condition", "clear", READINESS_ALERT, "--reason", "Cleared", "--message", "readiness published again", "--owner", "heimdall"], &[0])
+    }
+
     /// Hands one pass's verdicts to the lifecycle store, which keeps them on the bead rows.
     pub fn lc_claim_verdicts(&self, file: &spira_claim::verdicts::VerdictFile) -> Result<(), String> {
         let r = self.lc.call_stdin(&["claim-verdicts"], &file.payload()).map_err(|e| format!("spira-lc claim-verdicts: {e}"))?;
@@ -286,6 +297,9 @@ impl Store {
 fn first_reason(r: &Ran) -> &str {
     r.stderr.lines().chain(r.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("no output")
 }
+
+/// The condition key a refused readiness publish raises.
+pub const READINESS_ALERT: &str = "claim-readiness-refused";
 
 pub fn sql_quote(s: &str) -> String {
     format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))

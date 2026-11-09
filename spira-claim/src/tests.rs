@@ -138,6 +138,15 @@ mod published {
         }
     }
 
+    struct Refusing(Service);
+
+    impl Transport for Refusing {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, d: Duration) -> Result<Reply, String> {
+            let r = self.0.exchange(argv, stdin, d)?;
+            Ok(if argv[0] == "publish-readiness" { Reply { code: 3, out: String::new(), err: "refused: no payload".into() } } else { r })
+        }
+    }
+
     trait Pipe: Sized {
         fn pipe<T>(self, f: impl FnOnce(Self) -> T) -> T {
             f(self)
@@ -187,6 +196,39 @@ mod published {
         let (seen, entries) = judged(false);
         assert!(published(&seen).is_none());
         assert_eq!(entries.len(), 1);
+    }
+
+    fn store_over(t: Arc<dyn Transport>) -> Store {
+        Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(t, true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) }
+    }
+
+    fn judge_over(t: Arc<dyn Transport>) {
+        let mut stdin = std::io::empty();
+        let none = |_: &str| None;
+        let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+        let env = Env { stdin: &mut stdin, config, lookup: &none };
+        judge_rows(&Args::parse(&[]).unwrap(), &env, &store_over(t), None).unwrap();
+    }
+
+    #[test]
+    fn a_refused_readiness_publish_raises_the_alert_that_pages() {
+        let svc = Arc::new(Refusing(Service(Mutex::new(Vec::new()))));
+        judge_over(svc.clone());
+        let seen = svc.0 .0.lock().unwrap().clone();
+        let raised = seen.iter().find(|c| c[0] == "condition" && c[1] == "set").unwrap_or_else(|| panic!("no alert raised: {seen:?}"));
+        assert_eq!(raised[2], store::READINESS_ALERT);
+        assert!(raised.windows(2).any(|w| w == ["--status", "True"]) && raised.windows(2).any(|w| w == ["--owner", "heimdall"]), "{raised:?}");
+        assert!(raised.iter().any(|a| a.contains("refused: no payload")), "{raised:?}");
+        assert!(!seen.iter().any(|c| c[0] == "condition" && c[1] == "clear"));
+    }
+
+    #[test]
+    fn an_accepted_readiness_publish_clears_the_alert() {
+        let svc = Arc::new(Service(Mutex::new(Vec::new())));
+        judge_over(svc.clone());
+        let seen = svc.0.lock().unwrap().clone();
+        assert!(seen.iter().any(|c| c[0] == "condition" && c[1] == "clear" && c[2] == store::READINESS_ALERT), "{seen:?}");
+        assert!(!seen.iter().any(|c| c[0] == "condition" && c[1] == "set"));
     }
 
     #[test]
