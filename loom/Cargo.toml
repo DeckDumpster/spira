@@ -16,6 +16,7 @@ runtime = { path = "../runtime" }
 spira-otel = { path = "../spira-otel" }
 spira-desired-state = { path = "../desired-state" }
 cockpit-ops = { path = "../cockpit/ops" }
+release = { path = "../release" }
 # axum for the routing, tokio for the process deadline. The deadline is not decoration: a
 # query that overruns is KILLED rather than awaited, and `kill_on_drop` on a tokio child is
 # what makes dropping the timed-out future actually end the `bd` process.
@@ -27,6 +28,7 @@ serde_json = "1"
 [dev-dependencies]
 testkit = { path = "../testkit" }
 spira-claim = { path = "../spira-claim" }
+lifecycle = { path = "../lifecycle" }
 
 [profile.release]
 opt-level = "z"

@@ -1015,6 +1015,8 @@ version = "1.0.0"
 dependencies = [
  "axum",
  "cockpit-ops",
+ "lifecycle",
+ "release",
  "runtime",
  "serde_json",
  "spira-claim",

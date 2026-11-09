@@ -3,6 +3,7 @@
 //! the collector's snapshot files; none reads `bd`.
 
 pub mod dwarves;
+pub mod factory;
 pub mod forge_rounds;
 pub mod next;
 pub mod now;
@@ -58,6 +59,8 @@ pub struct Config {
     pub units_install: String,
     /// The `queue` whose `batch show` is a forge repo's open batch.
     pub queue: String,
+    /// The registered config keys the factory page's queues show, as configured.
+    pub limits: std::collections::BTreeMap<String, String>,
 }
 
 impl Config {
@@ -89,6 +92,7 @@ impl Config {
                 None => spira_config::release_env::tool("units-install")?,
             },
             queue: spira_config::release_env::tool("queue")?,
+            limits: factory::LIMIT_KEYS.iter().map(|k| cfg(k).map(|v| (k.to_string(), v)).map_err(|e| format!("loom: {e}"))).collect::<Result<_, _>>()?,
         })
     }
 }
@@ -108,6 +112,8 @@ pub struct Loom {
     forge_ci: forge_rounds::Cache,
     /// `spira-lc` batch reads by query, each held for `cfg.cache`; a failed refresh serves the last good read, marked stale.
     batches_cell: Mutex<std::collections::HashMap<String, (std::time::Instant, Value)>>,
+    /// The built factory floor, held for `cfg.cache`; the lock is kept across the rebuild so concurrent viewers share one.
+    factory_cell: Mutex<Option<(std::time::Instant, Value)>>,
 }
 
 impl Loom {
@@ -121,6 +127,7 @@ impl Loom {
             units_syncing: AtomicBool::new(false),
             forge_ci: forge_rounds::Cache::default(),
             batches_cell: Mutex::new(Default::default()),
+            factory_cell: Mutex::new(None),
         }
     }
 
@@ -194,6 +201,20 @@ impl Loom {
                 None => Err(e),
             },
         }
+    }
+
+    /// The factory floor: the held build, or a fresh one. A failed build is not held.
+    pub async fn factory(&self) -> Result<Value, String> {
+        let mut held = self.factory_cell.lock().await;
+        if let Some((_, v)) = held.as_ref().filter(|(at, _)| at.elapsed() < self.cfg.cache) {
+            return Ok(v.clone());
+        }
+        let client = spira_config::lc_call::LcClient::for_bin(&self.cfg.lc)?;
+        let mut reads = factory::gather(client, self.cfg.budget, &self.cfg.run).await;
+        reads.limits = self.cfg.limits.clone();
+        let floor = factory::build(&reads, now_s())?;
+        *held = Some((std::time::Instant::now(), floor.clone()));
+        Ok(floor)
     }
 
     /// Serve the ops dashboard, refreshing first if the held snapshot has aged out (5 s TTL).
@@ -433,6 +454,19 @@ async fn stuck_page_route(State(loom): State<Arc<Loom>>) -> Response {
 async fn stuck_api_route(State(loom): State<Arc<Loom>>) -> Response {
     let (status, body) = match stuck_rows(&loom).await {
         Ok((now, rows)) => (StatusCode::OK, json!({ "now": now, "rows": rows.iter().map(stuck::row_json).collect::<Vec<_>>() }).to_string()),
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, json!({ "error": e }).to_string()),
+    };
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(body.into())
+        .expect("a response with a valid status and headers")
+}
+
+async fn factory_api_route(State(loom): State<Arc<Loom>>) -> Response {
+    let (status, body) = match loom.factory().await {
+        Ok(floor) => (StatusCode::OK, floor.to_string()),
         Err(e) => (StatusCode::SERVICE_UNAVAILABLE, json!({ "error": e }).to_string()),
     };
     Response::builder()
@@ -838,6 +872,7 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/api/lifecycle", get(lifecycle_api_route))
         .route("/stuck", get(stuck_page_route))
         .route("/api/stuck", get(stuck_api_route))
+        .route("/api/factory", get(factory_api_route))
         .route("/stuck/{id}", get(stuck_bead_redirect))
         .route("/beads/{id}", get(stuck_bead_route))
         .route("/units", get(units_page_route))
