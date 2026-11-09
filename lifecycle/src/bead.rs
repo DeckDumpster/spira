@@ -1379,6 +1379,9 @@ fn kind_name(kind: &BeadEventKind) -> &'static str {
     }
 }
 
+const TIP: &str = "1111111111111111111111111111111111111111";
+const OTHER_TIP: &str = "2222222222222222222222222222222222222222";
+
 /// The probe events: one per variant, plus the variants whose target depends on the evidence
 /// (`Requeued` with the row's tip or another). `Reclassify` is the classifier's own correction
 /// of a finished row, not a move of the flow, and is left out.
@@ -1387,33 +1390,33 @@ fn edge_probes() -> Vec<BeadEventKind> {
         BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None },
         BeadEventKind::Release,
         BeadEventKind::HolderDead,
-        BeadEventKind::Submit { tip: "t1".into() },
-        BeadEventKind::Submit { tip: "other".into() },
+        BeadEventKind::Submit { tip: TIP.into() },
+        BeadEventKind::Submit { tip: OTHER_TIP.into() },
         BeadEventKind::Done { delivers: "d".into() },
-        BeadEventKind::GatePass { tip: "t1".into(), gate_key: "k".into() },
-        BeadEventKind::GateRed { tip: "t1".into(), reason: GateRedReason::SuitesFailed },
-        BeadEventKind::GateInfra { tip: "t1".into() },
+        BeadEventKind::GatePass { tip: TIP.into(), gate_key: "k".into() },
+        BeadEventKind::GateRed { tip: TIP.into(), reason: GateRedReason::SuitesFailed },
+        BeadEventKind::GateInfra { tip: TIP.into() },
         BeadEventKind::Deliver,
         BeadEventKind::Delivered { merge_sha: "s".into(), proof: "p".into() },
         BeadEventKind::Returned { reason: ReturnedReason::PushRejected },
-        BeadEventKind::Requeued { tip: "t1".into() },
-        BeadEventKind::Requeued { tip: "other".into() },
+        BeadEventKind::Requeued { tip: TIP.into() },
+        BeadEventKind::Requeued { tip: OTHER_TIP.into() },
         BeadEventKind::ContentOnBase { proof: "p".into() },
         BeadEventKind::Supersede { by: "sp-2".into() },
         BeadEventKind::Drop { reason: DropReason::Unwanted },
         BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted, detail: None },
         BeadEventKind::Unhold { kind: HoldKind::Poison, break_glass: BreakGlass::default() },
-        BeadEventKind::BaseWithdrawn { prereq: "sp-prereq".into(), tip: "t1".into() },
+        BeadEventKind::BaseWithdrawn { prereq: "sp-prereq".into(), tip: TIP.into() },
         BeadEventKind::PrereqLanded { prereq: "sp-prereq".into() },
         BeadEventKind::Renew { lease_until: 2 },
         BeadEventKind::Phase { phase: DwarfPhase::Building },
         BeadEventKind::Disposition { status: DispositionStatus::Slain, note: "n".into() },
         BeadEventKind::Express,
         BeadEventKind::Unexpress,
-        BeadEventKind::Sifted { tip: "t1".into() },
-        BeadEventKind::Restack { tip: "t1".into(), stack: Stack::from([("sp-base".to_string(), "t0".to_string())]), stack_depth: 1 },
-        BeadEventKind::Absolve { tip: "t1".into(), break_glass: BreakGlass::default() },
-        BeadEventKind::Resubmit { tip: "t1".into(), break_glass: BreakGlass::default() },
+        BeadEventKind::Sifted { tip: TIP.into() },
+        BeadEventKind::Restack { tip: TIP.into(), stack: Stack::from([("sp-base".to_string(), "t0".to_string())]), stack_depth: 1 },
+        BeadEventKind::Absolve { tip: TIP.into(), break_glass: BreakGlass::default() },
+        BeadEventKind::Resubmit { tip: TIP.into(), break_glass: BreakGlass { reason: "r".into(), evidence: "e".into(), evidence_tip: TIP.into() } },
         BeadEventKind::Promote,
     ]
 }
@@ -1441,12 +1444,12 @@ pub fn legal_edges() -> Vec<LegalEdge> {
         for from_submitted in [false, true] {
             let mut row = BeadRow::filed("sp-edge");
             row.state = state;
-            row.tip = Some("t1".into());
+            row.tip = Some(TIP.into());
             row.gate_key = Some("k".into());
             row.holder = Some("h".into());
             row.lease_until = Some(1);
             row.reason = from_submitted.then(|| FROM_SUBMITTED.to_string());
-            row.stack.insert("sp-prereq".into(), "t1".into());
+            row.stack.insert("sp-prereq".into(), TIP.into());
             for kind in edge_probes() {
                 let ev = BeadEvent { expect: state, version: row.version, kind, actor: "h".into(), at: Some(0) };
                 let out = apply(&row, &ev);
@@ -1565,6 +1568,10 @@ mod tests {
         assert!(edges.iter().all(|e| !e.from.is_terminal()), "terminal states have no exits");
         assert!(edges.iter().all(|e| e.from != e.to));
         assert!(has(BeadState::Open, "Promote", BeadState::Ready));
+        assert!(has(BeadState::Working, "Submit", BeadState::Submitted));
+        assert!(has(BeadState::Ready, "Resubmit", BeadState::Submitted));
+        assert!(has(BeadState::Certified, "Restack", BeadState::Submitted));
+        assert!(has(BeadState::Certified, "Submit", BeadState::Submitted));
     }
 
     #[test]
