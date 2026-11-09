@@ -85,9 +85,12 @@ pub(crate) mod verdict_run {
             0
         }
     }
-    struct Mute;
+    #[derive(Default)]
+    struct Mute(Mutex<Vec<String>>);
     impl Sink for Mute {
-        fn out(&self, _: &str) {}
+        fn out(&self, line: &str) {
+            self.0.lock().unwrap().push(line.to_string());
+        }
         fn err(&self, _: &str) {}
     }
 
@@ -112,12 +115,17 @@ pub(crate) mod verdict_run {
 
     #[allow(clippy::too_many_arguments)]
     fn with_run_over<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &Seams, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
+        with_run_sink(vars, bd, git, exec, clock, seam, &Mute::default(), claimed_raw, f)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn with_run_sink<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &Seams, sink: &dyn Sink, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
         let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("/home/spira"));
         let rune = Rune::from_vars("builder", &Default::default());
         let env = Env::new(Default::default(), Default::default());
         let stop = Arc::new(Stop::default());
         let mut r = Run {
-            d: Deps { bd, seam, git: &git, exec, launcher: &NoLaunch, sink: &Mute, env: &env, clock, sleep: &|_| {} },
+            d: Deps { bd, seam, git: &git, exec, launcher: &NoLaunch, sink, env: &env, clock, sleep: &|_| {} },
             ledger: Ledger { path: PathBuf::from("/nonexistent/ledger"), dry: true },
             conf,
             rune,
@@ -269,6 +277,41 @@ pub(crate) mod verdict_run {
         assert_eq!(*bd.0.lock().unwrap(), vec!["show sp-x --json".to_string()], "a directed call with no held row reads once and keeps it");
     }
 
+
+    /// `Run::decline()` in a world whose run directory is `run` and whose registry maps `repos`.
+    fn decline(run: &Path, repos: &[&str]) -> (Option<i32>, Vec<String>) {
+        let map = spira_config::process::fixture_repo_map(run, repos);
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_REPO".into(), "/shared".into());
+        vars.insert("SPIRA_ALLOW_PROD_DIRTY".into(), String::new());
+        vars.insert("SPIRA_RUN".into(), run.display().to_string());
+        vars.insert("SPIRA_REPO_MAP".into(), map.display().to_string());
+        vars.insert("SPIRA_HOME_REPO".into(), repos[0].to_string());
+        let sink = Mute::default();
+        let rc = with_run_sink(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &sink, "", |r| r.decline());
+        let lines = sink.0.lock().unwrap().clone();
+        (rc, lines)
+    }
+
+    fn stop_lane(run: &Path, repo: &str, lane: &str) {
+        spira_config::scoped_stop::pause_repo(run, repo, &[lane.to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+    }
+
+    #[test]
+    fn a_dwarf_declines_only_when_the_dwarves_lane_is_stopped_on_every_registered_repo() {
+        let d = testkit::TempDir::new("dwarf-dwarves-lane");
+        let repos = ["fixture", "other"];
+        assert_eq!(decline(d.path(), &repos).0, None, "nothing stopped: the dwarf goes on");
+        stop_lane(d.path(), "fixture", "rounds");
+        stop_lane(d.path(), "other", "rounds");
+        assert_eq!(decline(d.path(), &repos).0, None, "another lane's stop is no decline");
+        stop_lane(d.path(), "fixture", "dwarves");
+        assert_eq!(decline(d.path(), &repos).0, None, "one repo still takes dwarves");
+        stop_lane(d.path(), "other", "dwarves");
+        let (rc, lines) = decline(d.path(), &repos);
+        assert_eq!(rc, Some(0));
+        assert!(lines.iter().any(|l| l.contains("builder: skipped — the dwarves lane of fixture is stopped on purpose by cutover-mode") && l.contains("world stop")), "{lines:?}");
+    }
 
     // covers: UC-dwarf-execution-16
     #[test]

@@ -1,0 +1,9 @@
+# The remedies lane the reconciler honours: the bead's own gate reports any branch in it no test takes.
+
+[[scope]]
+path = "reconciler/src/lib.rs"
+functions = ["held", "run_pass"]
+
+[[scope]]
+path = "reconciler/src/goodput_pass.rs"
+functions = ["config"]

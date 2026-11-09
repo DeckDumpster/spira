@@ -208,8 +208,8 @@ impl<'a> Sentinel<'a> {
             return false;
         }
         let repos: Vec<&str> = self.ctx.repos.iter().map(|r| r.name.as_str()).collect();
-        if let Some(stop) = spira_config::scoped_stop::stop_everywhere(&self.cfg.run, &repos, "claims") {
-            self.log(&format!("{prefix} {}", spira_config::scoped_stop::skip_line(f, "claims", &stop)));
+        if let Some(why) = spira_config::scoped_stop::skip_if_stopped(&self.cfg.run, &repos, f, "claims") {
+            self.log(&format!("{prefix} {why}"));
             return false;
         }
         true

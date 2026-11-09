@@ -571,11 +571,6 @@ fn forge_shown(forge: &str, args: &[&str]) {
 
 const CZAR_LANE: &str = "czar";
 
-/// The line a pass logs when it skips because the czar lane is stopped on every repo.
-fn czar_lane_stopped(stop: Option<spira_config::scoped_stop::RepoStop>) -> Option<String> {
-    stop.map(|s| spira_config::scoped_stop::skip_line("czar pass", CZAR_LANE, &s))
-}
-
 fn run_pass() -> Result<(), String> {
     let cfg = Config::from_process(Seams::production());
 
@@ -584,7 +579,7 @@ fn run_pass() -> Result<(), String> {
         log_print("czar pass: skipped — world is halted");
         return Ok(());
     }
-    if let Some(why) = czar_lane_stopped(spira_config::scoped_stop::stop_everywhere_registered(&cfg.spira_run, CZAR_LANE)) {
+    if let Some(why) = spira_config::scoped_stop::skip_if_stopped_registered(&cfg.spira_run, "czar pass", CZAR_LANE) {
         log_print(&why);
         return Ok(());
     }
@@ -1742,13 +1737,20 @@ mod lane_tests {
     use super::*;
 
     #[test]
-    fn a_czar_lane_stopped_on_every_repo_skips_the_pass() {
+    fn a_pass_with_the_czar_lane_stopped_on_every_registered_repo_takes_no_lock() {
         let d = testkit::TempDir::new("czar-pass-lane");
-        let repos = ["spira".to_string(), "other".to_string()];
-        spira_config::scoped_stop::pause_repo(d.path(), "spira", &["czar".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
-        assert_eq!(czar_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, CZAR_LANE)), None, "the other repo still runs");
-        spira_config::scoped_stop::pause_repo(d.path(), "other", &["czar".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
-        let why = czar_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, CZAR_LANE)).expect("stopped everywhere");
-        assert!(why.starts_with("czar pass: skipped") && why.contains("world stop"), "{why}");
+        let run = d.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let edits = spira_config::process::fixture_world_env(d.path(), &run, &["spira", "other"]);
+        let edits: Vec<(&str, Option<&str>)> = edits.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let _env = testkit::env(&edits);
+        let stop = |repo: &str| spira_config::scoped_stop::pause_repo(&run, repo, &["czar".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+        stop("spira");
+        stop("other");
+        assert_eq!(run_pass(), Ok(()));
+        assert!(!run.join("czar-pass.lock").exists(), "a stopped pass went on to take its lock");
+        std::fs::write(run.join("world.halted"), "").unwrap();
+        assert_eq!(run_pass(), Ok(()));
+        assert!(!run.join("czar-pass.lock").exists(), "a halted pass went on to take its lock");
     }
 }

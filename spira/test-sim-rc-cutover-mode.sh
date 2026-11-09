@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tier: T2
 # requires: testenv
-# covers: spira/sim/scenarios/rc-cutover-mode.toml spira/sim/scenarios/steps/rc-cutover-mode.sh spira/sim/scenarios/steps/rc-cutover-actor.sh spira/sim/scenarios/steps/runbook.sh docs/runbooks/rounds.md spira/sim/** spira/sim-scenario-lib.sh spira-world/src/** spira-config/src/scoped_stop.rs sentinel/src/call.rs landing-pass/src/** czar-pass/src/** reconciler/src/** queue/src/** release/src/round_recert.rs round-controller/src/** sim/actors.toml spira/lib.sh
+# covers: spira/sim/scenarios/rc-cutover-mode.toml spira/sim/scenarios/steps/rc-cutover-mode.sh spira/sim/scenarios/steps/rc-cutover-actor.sh spira/sim/scenarios/steps/runbook.sh docs/runbooks/rounds.md spira/sim/** spira/sim-scenario-lib.sh spira-world/src/** spira-config/src/scoped_stop.rs sentinel/src/call.rs landing-pass/src/** czar-pass/src/** reconciler/src/** dwarf/src/run.rs heimdall/src/** watchtower/src/main.rs queue/src/** release/src/round_recert.rs round-controller/src/** sim/actors.toml spira/lib.sh
 # lane: sim
 # pids: 400
 #

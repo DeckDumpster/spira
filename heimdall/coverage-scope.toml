@@ -1,0 +1,5 @@
+# The heimdall lane the actors here honour: the bead's own gate reports any branch in it no test takes.
+
+[[scope]]
+path = "heimdall/src/main.rs"
+functions = ["pass"]

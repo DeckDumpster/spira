@@ -255,6 +255,16 @@ pub fn skip_line(actor: &str, lane: &str, s: &RepoStop) -> String {
     format!("{actor}: skipped — the {lane} lane of {} is stopped on purpose by {} ({}); lifts on: {}", s.repo, s.owner, s.reason, s.until)
 }
 
+/// The line an actor logs when `lane` is stopped on every repo in `repos`, `None` while any runs.
+pub fn skip_if_stopped<S: AsRef<str>>(run: &Path, repos: &[S], actor: &str, lane: &str) -> Option<String> {
+    stop_everywhere(run, repos, lane).map(|s| skip_line(actor, lane, &s))
+}
+
+/// [`skip_if_stopped`] over this process's registered repos.
+pub fn skip_if_stopped_registered(run: &Path, actor: &str, lane: &str) -> Option<String> {
+    stop_everywhere_registered(run, lane).map(|s| skip_line(actor, lane, &s))
+}
+
 /// Writes `stop` as the whole record for its repo, replacing any there: how a lifted overlay
 /// puts back the stop it was laid over.
 pub fn put_repo(run: &Path, stop: &RepoStop) -> Result<(), String> {
@@ -426,6 +436,23 @@ mod tests {
         assert!(line.contains("cutover-mode") && line.contains("world stop") && line.contains("land lane of spira"), "{line}");
     }
 
+
+    #[test]
+    fn a_process_reads_a_stop_over_its_own_registered_repos() {
+        let d = testkit::TempDir::new("scoped-stop-registered");
+        let run = d.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let edits = crate::process::fixture_world_env(d.path(), &run, &["spira", "other"]);
+        let edits: Vec<(&str, Option<&str>)> = edits.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let _env = testkit::env(&edits);
+        pause_repo(&run, "spira", &lanes("czar"), "o", "r", "u", 1).unwrap();
+        assert!(stop_everywhere_registered(&run, "czar").is_none(), "the other registered repo still runs");
+        assert!(skip_if_stopped_registered(&run, "czar pass", "czar").is_none());
+        pause_repo(&run, "other", &lanes("czar"), "o", "r", "u", 1).unwrap();
+        let line = skip_if_stopped_registered(&run, "czar pass", "czar").expect("stopped on both registered repos");
+        assert!(line.starts_with("czar pass: skipped") && line.contains("czar lane of spira"), "{line}");
+        assert!(skip_if_stopped_registered(&run, "reconciler", "remedies").is_none(), "another lane is no stop");
+    }
     #[test]
     fn put_repo_replaces_the_record_whole() {
         let d = testkit::TempDir::new("scoped-stop-put");

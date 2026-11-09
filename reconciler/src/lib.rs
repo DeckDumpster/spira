@@ -2453,12 +2453,7 @@ pub fn world_halted(cfg: &Config) -> bool {
     cfg.spira_run.join("world.halted").exists()
 }
 
-const REMEDIES_LANE: &str = "remedies";
-
-/// The line a pass logs when it skips because the remedies lane is stopped on every repo.
-fn remedies_lane_stopped(stop: Option<spira_config::scoped_stop::RepoStop>) -> Option<String> {
-    stop.map(|s| spira_config::scoped_stop::skip_line("reconciler", REMEDIES_LANE, &s))
-}
+pub const REMEDIES_LANE: &str = "remedies";
 
 /// Why a pass must take no step: the world is halted, or the remedies lane is stopped on every
 /// registered repo (cutover mode holds it while the halt stamp is lifted).
@@ -2466,7 +2461,7 @@ fn held(cfg: &Config) -> Option<String> {
     if world_halted(cfg) {
         return Some("reconciler: skipped — world is halted".to_string());
     }
-    remedies_lane_stopped(spira_config::scoped_stop::stop_everywhere_registered(&cfg.spira_run, REMEDIES_LANE))
+    spira_config::scoped_stop::skip_if_stopped_registered(&cfg.spira_run, "reconciler", REMEDIES_LANE)
 }
 
 /// One pass's reads: the groups, the suspensions due for a reminder, and the hold sweep (which
@@ -2933,7 +2928,7 @@ mod tests {
         assert!(pass(&[]).iter().any(|a| matches!(a, Act::Mail { .. })));
     }
 
-    fn test_config() -> Config {
+    pub(super) fn test_config() -> Config {
         Config {
             seams: Seams::bare(),
             spira_run: PathBuf::from("/tmp"),
@@ -2990,14 +2985,48 @@ mod tests {
 mod lane_tests {
     use super::*;
 
+    fn world(tag: &str) -> (testkit::TempDir, PathBuf, Vec<(&'static str, Option<String>)>) {
+        let d = testkit::TempDir::new(tag);
+        let run = d.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let mut edits = spira_config::process::fixture_world_env(d.path(), &run, &["spira", "other"]);
+        let release = d.path().join("release");
+        std::fs::create_dir_all(release.join("bin")).unwrap();
+        for tool in ["forge", "units-install", "spira-config", "spira-claim", "strand", "queue-helpers", "queue", "spira-lc", "bead", "target-reap", "rebuild", "layout", "spira-lint", "lifecycle-guard"] {
+            testkit::write_exe(release.join("bin").join(tool), "#!/bin/sh\n");
+        }
+        edits.retain(|(k, _)| *k != "SPIRA_RELEASE");
+        edits.push(("SPIRA_RELEASE", Some(release.display().to_string())));
+        (d, run, edits)
+    }
+
+    fn stop(run: &Path, repo: &str) {
+        spira_config::scoped_stop::pause_repo(run, repo, &[REMEDIES_LANE.to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+    }
+
     #[test]
-    fn a_remedies_lane_stopped_on_every_repo_skips_the_pass() {
-        let d = testkit::TempDir::new("reconciler-lane");
-        let repos = ["spira".to_string(), "other".to_string()];
-        spira_config::scoped_stop::pause_repo(d.path(), "spira", &["remedies".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
-        assert_eq!(remedies_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, REMEDIES_LANE)), None, "the other repo still runs");
-        spira_config::scoped_stop::pause_repo(d.path(), "other", &["remedies".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
-        let why = remedies_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, REMEDIES_LANE)).expect("stopped everywhere");
+    fn a_pass_holds_only_when_the_remedies_lane_is_stopped_on_every_registered_repo() {
+        let (_d, run, edits) = world("reconciler-held");
+        let edits: Vec<(&str, Option<&str>)> = edits.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let _env = testkit::env(&edits);
+        let cfg = Config { spira_run: run.clone(), ..tests::test_config() };
+        assert_eq!(held(&cfg), None);
+        stop(&run, "spira");
+        assert_eq!(held(&cfg), None, "the other repo still takes remedies");
+        stop(&run, "other");
+        let why = held(&cfg).expect("stopped on both");
         assert!(why.starts_with("reconciler: skipped") && why.contains("world stop"), "{why}");
+    }
+
+    #[test]
+    fn run_pass_stamps_and_takes_no_lock_while_the_remedies_lane_is_stopped_everywhere() {
+        let (_d, run, edits) = world("reconciler-run-pass");
+        let edits: Vec<(&str, Option<&str>)> = edits.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let _env = testkit::env(&edits);
+        stop(&run, "spira");
+        stop(&run, "other");
+        assert_eq!(run_pass(), Ok(()));
+        assert!(paths::pass_stamp(&run).exists(), "a held pass still stamps");
+        assert!(!run.join("reconciler.lock").exists(), "a held pass went on to take its lock");
     }
 }

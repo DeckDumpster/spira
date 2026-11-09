@@ -171,7 +171,7 @@ fn pass() -> i32 {
     };
 
     if !report {
-        if let Some(why) = gather::lane_skip(spira_config::scoped_stop::stop_everywhere_registered(&run_dir, gather::LANE)) {
+        if let Some(why) = spira_config::scoped_stop::skip_if_stopped_registered(&run_dir, "heimdall", gather::LANE) {
             sink.out(&util::log_line(now, &why));
             return 0;
         }
