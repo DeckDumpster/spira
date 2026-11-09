@@ -332,6 +332,9 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
             w.out(format!("verdict {name}: publish PR {pr} green — {remote}/{forge_branch} fast-forwarded to {head}"));
             OK
         }
+        "red" if red_suites_csv(&out).is_empty() && test_red_csv(&out).is_empty() => {
+            publish_fault(w, c, path, &kv, &pr, &out)
+        }
         "red" => RED,
         "harness_fault" if tagged(&out, "missing-workflow: ").is_empty() => {
             publish_fault(w, c, path, &kv, &pr, &out)
@@ -702,6 +705,7 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
     if !run_id.is_empty() && fid.is_some() {
         let _ = write_atomic(&filed_marker, &format!("fix_forward={fid_s}\n"));
     }
+    let _ = std::fs::remove_file(c.queue_file("publish-fault-retries"));
     // Read by `publish`: holds off the next publish of this same head.
     let _ = write_atomic(
         &c.queue_file("publish-red"),
