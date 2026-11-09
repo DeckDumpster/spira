@@ -19,7 +19,7 @@ use testkit::TempDir;
 /// op, `batch` (sp-rkb6wl) its older verb for marks and the cursor only; a store at a lower level
 /// stands in for an older service.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Level {
+pub(crate) enum Level {
     Plain,
     Batch,
     Group,
@@ -27,14 +27,16 @@ enum Level {
 
 /// A store answering `journal <op>` over a `MemJournal`, counting requests and the write
 /// transactions among them: a request that writes anything is one transaction, as spira-lc runs it.
-struct Store {
-    mem: Arc<MemJournal>,
+pub(crate) struct Store {
+    pub(crate) mem: Arc<MemJournal>,
     calls: AtomicUsize,
     txns: AtomicUsize,
     wrote: std::sync::atomic::AtomicBool,
     level: Level,
     /// Told after each request is answered.
     heard: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    /// The next request is answered as spira-lc answers a store call past its deadline.
+    pub(crate) deadline_next: std::sync::atomic::AtomicBool,
 }
 
 fn json<T: serde::Serialize>(v: &T) -> String {
@@ -48,6 +50,9 @@ fn de<T: serde::de::DeserializeOwned>(s: &str) -> Result<T> {
 impl Store {
     fn respond(&self, argv: &[String]) -> Result<String> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.deadline_next.swap(false, Ordering::SeqCst) {
+            return Err(RuntimeError::cannot_tell("cannot tell: deadline"));
+        }
         assert_eq!(argv.first().map(String::as_str), Some("journal"));
         self.wrote.store(false, Ordering::SeqCst);
         let r = self.op(&argv[1..]);
@@ -137,11 +142,11 @@ impl Store {
 }
 
 /// The store, its socket, and the directory holding it (removed when dropped).
-fn serve(level: Level) -> (Arc<Store>, PathBuf, TempDir) {
+pub(crate) fn serve(level: Level) -> (Arc<Store>, PathBuf, TempDir) {
     let dir = TempDir::new("rkb6wl");
     let path = dir.path().join("lc.sock");
     let listener = UnixListener::bind(&path).unwrap();
-    let store = Arc::new(Store { mem: MemJournal::new(), calls: AtomicUsize::new(0), txns: AtomicUsize::new(0), wrote: Default::default(), level, heard: Mutex::new(None) });
+    let store = Arc::new(Store { mem: MemJournal::new(), calls: AtomicUsize::new(0), txns: AtomicUsize::new(0), wrote: Default::default(), level, heard: Mutex::new(None), deadline_next: Default::default() });
     let s = Arc::clone(&store);
     std::thread::spawn(move || answer(&listener, &|argv| s.respond(argv)));
     (store, path, dir)
