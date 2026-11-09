@@ -1,7 +1,7 @@
 // Looks at loom's Factory page at 390, 1440 and 1920 px and prints one line per width.
 //   node factory-probe.mjs <page-url> [fixture.json]
 // With a fixture, /api/factory is answered from it. PROBE_OUT is where the PNGs go (default .);
-// PROBE_WRAP=one|two sets the Layout button before the capture and tags the file names.
+// PROBE_WRAP=one|two sets the Layout button first, for the one-line capture. The 390 width also writes a full-page PNG.
 // The numbers are computed from the drawn SVG and the page's running animations. Nothing here asserts.
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';

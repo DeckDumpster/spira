@@ -177,13 +177,10 @@ function statusOf(F, n) {
 }
 
 // ---- auto-layout --------------------------------------------------------------------------
-// Columns: longest path over every edge that is not a path back (signals count, so a side loop
-// sits after the station that opens it), then each node is pulled right to just before its first
-// consumer. Rows: pinned rows first, then the first free row in declaration order. `col`/`row`
-// on a node are optional hints.
-// The edges that order the columns: every edge not marked as a path back, less the ones that close
-// a cycle (found depth-first from the sources), so a belt that feeds itself through a station
-// still lays out left to right.
+// Columns are the longest path over the forward edges, then each node is pulled right to just before
+// its first consumer; rows are declaration order. Optional `col`/`row` on a node pin it.
+// Forward edges: every edge not marked back, less any that closes a cycle, so a belt feeding itself
+// through a station still lays out left to right.
 function forwardEdges(N, edges) {
   const cand = edges.filter(e => e.kind !== "back"), out = new Map(), loops = new Set(), seen = new Map();
   cand.forEach(e => { if (!out.has(e.from)) out.set(e.from, []); out.get(e.from).push(e); });
@@ -230,9 +227,7 @@ function layout(F, opts = {}) {
     while (taken.has(n.lane + "|" + col.get(n.id) + "|" + r)) r++;
     taken.add(n.lane + "|" + col.get(n.id) + "|" + r); row.set(n.id, r);
   }
-  // Lanes are packed: each line keeps its own rows, in declaration order, but slides up into the
-  // rows the lines above leave empty, keeping one clear column between lines. So a short line
-  // does not leave a band of empty floor beside it.
+  // Each lane keeps its rows but slides up into the rows the lanes above leave empty.
   const lanes = [], R0 = {}, occ = new Map();
   let floorR = 0;
   for (const L of F.lanes) {
@@ -246,9 +241,7 @@ function layout(F, opts = {}) {
     for (const id of ids) occ.set((r0 + row.get(id)) + "|" + col.get(id), id);
     floorR = r0 + 1; // a later line never starts above an earlier one
   }
-  // Wrapping: a floor too wide for its box folds once, like a belt that snakes back under itself.
-  // It breaks at the column boundary the fewest belts cross, near the middle; the second half runs
-  // under the first, left to right again, and each half keeps only the rows it uses.
+  // A floor too wide for its box folds once, at the middle column boundary the fewest belts cross.
   const band = new Map(), Rof = new Map();
   for (const id of N.keys()) { band.set(id, 0); Rof.set(id, R0[N.get(id).lane] + row.get(id)); }
   let wrapAt = null, bandR = null;
@@ -311,10 +304,8 @@ function geometry(Lo, tracks) {
 }
 
 // ---- orthogonal routing -------------------------------------------------------------------
-// Every edge is a list of legs, alternating horizontal and vertical. A leg either sits at a fixed
-// coordinate (a port) or in a channel: a gutter between columns, a street between rows, or the
-// lane's return channel. Channels hand out tracks; edges that share a source or a target may share
-// a track, the way a splitter or a merge shares a belt, and nothing else may overlap.
+// An edge is alternating horizontal and vertical legs, each at a port or in a channel (gutter or
+// street). Channels hand out tracks; only edges sharing a source or a target may share one.
 function route(Lo) {
   const { N, edges, pos, occ, colX, colW, laneBy } = Lo;
   const gutX = g => g < 0 ? G.LANEW + G.GUT / 2 : colX[g] + colW[g] + G.GUT / 2;
@@ -340,9 +331,7 @@ function route(Lo) {
     r.pts = ptsOf(r);
     out.push(r);
   }
-  // A path back leaves its source by the top, the bottom or the right, runs along a street, and
-  // enters its target by the top, the bottom or the left. Of the legal combinations it takes the
-  // one that crosses the fewest forward edges, then the shortest.
+  // A path back takes the street and port combination that crosses the fewest forward edges, then the shortest.
   const fwdSegs = out.flatMap(r => r.pts.slice(1).map((p, i) => [r.pts[i], p]));
   for (const r of back) {
     const e = r.e, A = pos.get(e.from), B = pos.get(e.to);
@@ -705,11 +694,10 @@ let FLOORK = 1;
 const $ = id => document.getElementById(id);
 const parkedItem = it => (it.holds && it.holds.length) || it.blocked != null;
 
-// The floor as the viewer asked to see it: the repo filter applies to items, the belts' counts and
-// ages, the stations' waits and the STALL sensors. 24 h flow counts are never filtered.
+// The repo filter narrows items, belt counts and ages, station waits and STALL sensors; 24 h flows stay all-repo.
 function view(raw, repo) {
   const now = raw.meta?.now ?? Math.floor(Date.now() / 1000);
-  const F = { ...raw, meta: { ...raw.meta, now }, blind: !Array.isArray(raw.sensors), sensors: Array.isArray(raw.sensors) ? raw.sensors : [] };
+  const F = { ...raw, meta: { ...raw.meta, now }, blind: !Array.isArray(raw.sensors) || !raw.sensors.length, sensors: Array.isArray(raw.sensors) ? raw.sensors : [] };
   F.lanes ||= []; F.belts ||= []; F.stations ||= []; F.edges ||= []; F.items ||= []; F.components ||= [];
   F.repos = [...new Set(F.items.map(i => i.repo).filter(Boolean))].sort();
   if (!repo) return F;
