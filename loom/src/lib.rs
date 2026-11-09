@@ -61,6 +61,8 @@ pub struct Config {
     pub queue: String,
     /// The registered config keys the factory page's queues show, as configured.
     pub limits: std::collections::BTreeMap<String, String>,
+    /// The bounds `watch.transitions` judges by, pinned once; the refusal when they cannot be.
+    pub transitions: Result<spira_runtime::tasks::e::watch_transitions::Config, String>,
 }
 
 impl Config {
@@ -93,6 +95,7 @@ impl Config {
             },
             queue: spira_config::release_env::tool("queue")?,
             limits: factory::LIMIT_KEYS.iter().map(|k| cfg(k).map(|v| (k.to_string(), v)).map_err(|e| format!("loom: {e}"))).collect::<Result<_, _>>()?,
+            transitions: spira_runtime::tasks::e::watch_transitions::Config::pinned(),
         })
     }
 }
@@ -213,9 +216,11 @@ impl Loom {
         if let Some((_, v)) = held.as_ref().filter(|(at, _)| at.elapsed() < self.cfg.cache) {
             return Ok(v.clone());
         }
-        let mut reads = factory::gather(client()?, self.cfg.budget, &self.cfg.run).await;
+        let now = now_s();
+        let sensing = factory::Sensing { transitions: self.cfg.transitions.clone(), tsd_endpoint: self.cfg.metrics_endpoint.clone(), now };
+        let mut reads = factory::gather(client()?, self.cfg.budget, &self.cfg.run, &sensing).await;
         reads.limits = self.cfg.limits.clone();
-        let floor = factory::build(&reads, now_s())?;
+        let floor = factory::build(&reads, now)?;
         *held = Some((std::time::Instant::now(), floor.clone()));
         Ok(floor)
     }
@@ -958,6 +963,7 @@ mod in_process_tests {
             units_install: String::new(),
             queue: String::new(),
             limits: std::collections::BTreeMap::from([("SPIRA_COMPILE_PAR".to_string(), "9".to_string())]),
+            transitions: Err("not pinned in this test".into()),
         }
     }
 

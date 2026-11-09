@@ -9,6 +9,8 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use spira_config::lc_call::LcClient;
 
+use spira_runtime::tasks::e::watch_transitions as wt;
+
 use crate::stuck::num;
 
 pub const MACHINES: [&str; 4] = ["bead", "batch", "ask", "mending"];
@@ -30,6 +32,23 @@ pub const LIMIT_KEYS: [&str; 11] = [
     "SPIRA_QUEUE_LOCK_WAIT",
     "SPIRA_ROUND_CERTIFY_WALL_SECS",
     "SPIRA_BATCHER_WALL_SECS",
+];
+
+/// Where each `spira-lc stats` verb is drawn; a verb not named here sits on the control bus.
+const VERB_STATIONS: &[(&str, &[&str])] = &[("claim-verdicts", &["bead.claim"]), ("work", &["bead.build"])];
+/// The tsd families read, and where each is drawn; the second is the field that holds the wait.
+const TSD_SENSORS: &[(&str, &str, &[&str])] = &[("admission", "waited_secs", &["bead.build"]), ("cert-pass", "capacity_wait_s", &["batch.pass", "batch.CI_RUNNING"])];
+const BUS: &str = "*";
+const RELEASE_FEED: &str = "batch.LANDED";
+const NO_BATCH_WATCH: &str = "no watch.transitions sensor on the batch machine";
+/// What the model names that nothing measures: id, where, short, reading.
+const BLIND_SPOTS: &[(&str, &[&str], &str, &str)] = &[
+    ("miss.birth", &["bead.file"], "arrival rate", "filing writes no event, so the arrival rate into READY cannot be measured"),
+    ("miss.session", &["bead.build"], "wait vs work", "cold-slot wait, warm pick and jitter sit inside phase session; nothing separates waiting from working"),
+    ("miss.pool", &["bead.cut"], "why not cut", "the pool filter is silent: why a SUBMITTED bead is not in a round is not recorded"),
+    ("miss.release", &["bead.unclaim"], "why released", "Release carries no evidence, so why a session ended unsubmitted is not on the row"),
+    ("miss.attr", &["batch.eject"], "Attributed", "Attributed is never written; per-member attribution is invisible on the batch machine"),
+    ("miss.ctrl", &["batch.pass", "bead.cut"], "controller", "batcher.local controller state (Assembling…Done) lives in a runtime stream with no CLI reader"),
 ];
 
 struct StationDef {
@@ -207,6 +226,17 @@ pub struct Reads {
     pub mending: Read,
     pub releases: Result<Vec<release::machine::Release>, String>,
     pub limits: BTreeMap<String, String>,
+    /// The bounds and the snapshot `watch.transitions` judges; the refusal when the bounds are refused.
+    pub transitions: Result<(wt::Config, wt::Snapshot), String>,
+    pub stats: Read,
+    pub tsd: BTreeMap<&'static str, Result<Vec<Value>, String>>,
+}
+
+/// What the sensors are read with.
+pub struct Sensing {
+    pub transitions: Result<wt::Config, String>,
+    pub tsd_endpoint: Option<String>,
+    pub now: i64,
 }
 
 async fn read(client: &LcClient, args: &[&str], budget: Duration) -> Read {
@@ -214,11 +244,36 @@ async fn read(client: &LcClient, args: &[&str], budget: Duration) -> Read {
 }
 
 /// Every read the floor is built from, all at once.
-pub async fn gather(client: LcClient, budget: Duration, run: &str) -> Reads {
+pub async fn gather(client: LcClient, budget: Duration, run: &str, sensing: &Sensing) -> Reads {
     let c = &client;
     let release_dir = std::path::Path::new(run).join("release");
     let releases = async move { tokio::task::spawn_blocking(move || release::machine::all(&release_dir)).await.map_err(|e| format!("release records: {e}"))? };
-    let (g_bead, g_batch, g_ask, g_mending, t_bead, t_batch, live, batches, asks, mending, releases) = tokio::join!(
+    let observed = async {
+        let cfg = sensing.transitions.clone()?;
+        let (lc, run, window) = (client.within(budget), std::path::PathBuf::from(run), cfg.window_s());
+        let snap = tokio::task::spawn_blocking(move || {
+            let ask = |argv: &[&str]| -> Result<Value, String> {
+                let r = lc.call(argv).map_err(|e| e.to_string())?;
+                if r.code != 0 {
+                    return Err(format!("exited {}: {}", r.code, r.why().chars().take(300).collect::<String>()));
+                }
+                serde_json::from_str(&r.out).map_err(|e| e.to_string())
+            };
+            wt::observe(&run, &ask, window)
+        })
+        .await
+        .map_err(|e| format!("watch.transitions observe: {e}"))?;
+        Ok((cfg, snap))
+    };
+    let tsd_rows = |family: &'static str| {
+        let endpoint = sensing.tsd_endpoint.clone();
+        let (from, to) = ((sensing.now - DAY).max(0) as u64, sensing.now.max(0) as u64);
+        async move {
+            let read = tokio::task::spawn_blocking(move || tsd::store::Reader::new(endpoint.as_deref()).and_then(|r| r.rows_between(family, from, to)).map_err(|e| e.to_string()));
+            read.await.map_err(|e| e.to_string()).and_then(|r| r)
+        }
+    };
+    let (g_bead, g_batch, g_ask, g_mending, t_bead, t_batch, live, batches, asks, mending, releases, transitions, stats, admission, cert_pass) = tokio::join!(
         read(c, &["ops-graph", "--machine", "bead"], budget),
         read(c, &["ops-graph", "--machine", "batch"], budget),
         read(c, &["ops-graph", "--machine", "ask"], budget),
@@ -230,6 +285,10 @@ pub async fn gather(client: LcClient, budget: Duration, run: &str) -> Reads {
         read(c, &["list-asks"], budget),
         read(c, &["mending", "list", "--live"], budget),
         releases,
+        observed,
+        read(c, &["stats"], budget),
+        tsd_rows("admission"),
+        tsd_rows("cert-pass"),
     );
     Reads {
         graphs: BTreeMap::from([("bead", g_bead), ("batch", g_batch), ("ask", g_ask), ("mending", g_mending)]),
@@ -240,6 +299,9 @@ pub async fn gather(client: LcClient, budget: Duration, run: &str) -> Reads {
         mending,
         releases,
         limits: BTreeMap::new(),
+        transitions,
+        stats,
+        tsd: BTreeMap::from([("admission", admission), ("cert-pass", cert_pass)]),
     }
 }
 
@@ -631,7 +693,7 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
             "in24h": in24h, "parts": parts,
         }));
     }
-    if belt_exists("batch.LANDED") {
+    if belt_exists(RELEASE_FEED) {
         belts_json.push(json!({"id": "rel.ACTIVATED", "lane": "batch", "kind": "offmachine", "label": "RELEASE LIVE", "machine": "release", "state": "ACTIVATED",
             "now": null, "oldest_s": null, "in24h": in24h_releases, "parts": null}));
         belts_json.push(json!({"id": "pub.MERGED", "lane": "batch", "kind": "offmachine", "label": "ON ORIGIN", "machine": "publish", "state": "MERGED",
@@ -689,9 +751,9 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
             edges_json.push(json!({"from": st.id, "to": to, "n": null, "kind": live_kind("signal"), "label": label}));
         }
     }
-    if belt_exists("batch.LANDED") {
-        edges_json.push(json!({"from": "batch.LANDED", "to": "rel.ACTIVATED", "n": in24h_releases, "kind": "flow", "label": "release"}));
-        edges_json.push(json!({"from": "batch.LANDED", "to": "pub.MERGED", "n": null, "kind": "flow", "label": "publish PR"}));
+    if belt_exists(RELEASE_FEED) {
+        edges_json.push(json!({"from": RELEASE_FEED, "to": "rel.ACTIVATED", "n": in24h_releases, "kind": "flow", "label": "release"}));
+        edges_json.push(json!({"from": RELEASE_FEED, "to": "pub.MERGED", "n": null, "kind": "flow", "label": "publish PR"}));
     }
 
     let lanes = json!([
@@ -723,7 +785,157 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
         "edges": edges_json,
         "items": items.iter().map(Item::json).collect::<Vec<_>>(),
         "components": components,
+        "sensors": sensors(reads, now, &stations, &edges, &|id| belt_exists(id), &|st| outs(st)),
     }))
+}
+
+struct Sensor {
+    id: String,
+    kind: &'static str,
+    at: Vec<String>,
+    status: &'static str,
+    short: String,
+    reading: String,
+    src: &'static str,
+    repo: Option<String>,
+}
+
+impl Sensor {
+    fn new(id: impl Into<String>, kind: &'static str, at: Vec<String>, status: &'static str, src: &'static str) -> Sensor {
+        Sensor { id: id.into(), kind, at, status, short: String::new(), reading: String::new(), src, repo: None }
+    }
+
+    fn says(mut self, short: impl Into<String>, reading: impl Into<String>) -> Sensor {
+        self.short = short.into();
+        self.reading = reading.into();
+        self
+    }
+
+    fn json(&self) -> Value {
+        json!({"id": self.id, "kind": self.kind, "at": self.at, "status": self.status, "short": self.short, "reading": self.reading, "src": self.src, "repo": self.repo})
+    }
+}
+
+fn strings(ids: &[&str]) -> Vec<String> {
+    ids.iter().map(|s| s.to_string()).collect()
+}
+
+fn secs(v: &Value) -> Option<u64> {
+    v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).filter(|x| *x >= 0.0).map(|x| x as u64)
+}
+
+/// The nearest-rank `pct` percentile of sorted `v`.
+fn rank(v: &[u64], pct: usize) -> u64 {
+    v[(pct * v.len()).div_ceil(100).clamp(1, v.len()) - 1]
+}
+
+fn tsd_reading(rows: &[Value], wait_field: &str) -> Result<(String, String), String> {
+    if rows.is_empty() {
+        return Err("no row in the last 24 h".into());
+    }
+    let mut waits: Vec<u64> = rows.iter().filter_map(|r| secs(&r[wait_field])).collect();
+    waits.sort_unstable();
+    if waits.is_empty() {
+        return Err(format!("{} rows in the last 24 h, none carrying {wait_field}", rows.len()));
+    }
+    let waited = waits.iter().filter(|w| **w > 0).count();
+    Ok((format!("{} in 24 h", rows.len()), format!("{} in 24 h · {waited} waited · {wait_field} p50 {} s · p90 {} s", rows.len(), rank(&waits, 50), rank(&waits, 90))))
+}
+
+/// Every sensor of the floor. Nothing here is a zero that was not read: what cannot be read is
+/// BLIND and says why, what is not measured at all is MISSING.
+fn sensors(reads: &Reads, now: i64, stations: &[Built], edges: &[Edge], belt_exists: &dyn Fn(&str) -> bool, outs: &dyn Fn(&Built) -> Vec<String>) -> Vec<Value> {
+    let mut out: Vec<Sensor> = Vec::new();
+    let anywhere = |ids: Vec<String>| if ids.is_empty() { vec![BUS.to_string()] } else { ids };
+    let at_edge = |machine: &str, from: &str, to: &str| -> Vec<String> {
+        anywhere(stations.iter().filter(|st| st.legal.iter().any(|&i| edges[i].machine == machine && edges[i].from == from && edges[i].to == to)).map(|st| st.id.clone()).collect())
+    };
+    let feeders = || anywhere(stations.iter().filter(|st| st.live && outs(st).iter().any(|o| o == RELEASE_FEED)).map(|st| st.id.clone()).collect());
+
+    let rows_at = |name: &str| if name == "ASK" { "ask.OPEN".to_string() } else { format!("bead.{name}") };
+    let edge_at = |edge: &str| match edge {
+        "LANDED→ACTIVATED" => feeders(),
+        "ASK→ANSWERED" => at_edge("ask", "OPEN", "ANSWERED"),
+        _ => edge.split_once('→').map_or_else(|| vec![BUS.to_string()], |(from, to)| at_edge("bead", from, to)),
+    };
+    let blind_why = match &reads.transitions {
+        Err(e) => Some(e.clone()),
+        Ok((_, snap)) if !snap.readable => Some(snap.why.clone()),
+        Ok(_) => None,
+    };
+    if let Some(why) = &blind_why {
+        for name in wt::ROWS.iter().filter(|n| belt_exists(&rows_at(n))) {
+            out.push(Sensor::new(format!("wt.{name}"), "transitions", vec![rows_at(name)], "BLIND", "watch.transitions").says("BLIND", format!("BLIND {name}: {why}")));
+        }
+        for edge in wt::EDGES {
+            out.push(Sensor::new(format!("wt.{edge}"), "transitions", edge_at(edge), "BLIND", "watch.transitions").says("BLIND", format!("BLIND {edge}: {why}")));
+        }
+    } else if let Ok((cfg, snap)) = &reads.transitions {
+        let now = now.max(0) as u64;
+        let table = wt::table(snap, wt::ALL, now);
+        for name in wt::ROWS.iter().filter(|n| belt_exists(&rows_at(n))) {
+            let reading = wt::row_text(name, &table[name]);
+            out.push(Sensor::new(format!("wt.{name}"), "transitions", vec![rows_at(name)], "WAIT", "watch.transitions").says(reading.clone(), reading));
+        }
+        let stalled = wt::stalls(snap, now, cfg);
+        for edge in wt::EDGES {
+            let at = edge_at(edge);
+            let found: Vec<&wt::Stall> = stalled.iter().filter(|s| s.edge == edge).collect();
+            if found.is_empty() {
+                out.push(Sensor::new(format!("wt.{edge}"), "transitions", at.clone(), "WAIT", "watch.transitions").says("WAIT", format!("WAIT {edge}: inside its bound")));
+            }
+            for s in found {
+                let mut sensor = Sensor::new(format!("wt.{edge}:{}", s.scope), "transitions", at.clone(), "STALL", "watch.transitions").says(format!("STALL {}", s.scope), format!("STALL {edge} ({}): {}", s.scope, s.evidence));
+                sensor.repo = Some(s.scope.clone());
+                out.push(sensor);
+            }
+        }
+    }
+
+    match &reads.stats {
+        Err(e) => out.push(Sensor::new("perf.stats", "perf", vec![BUS.into()], "BLIND", "spira-lc stats").says("BLIND", format!("BLIND: {e}"))),
+        Ok(stats) => {
+            let verbs = stats["verbs"].as_object();
+            let mut named = BTreeSet::new();
+            for (verb, at) in VERB_STATIONS {
+                named.insert(*verb);
+                let id = format!("perf.{verb}");
+                match verbs.and_then(|v| v.get(*verb)).and_then(|v| Some((num(&v["count"])?, num(&v["total_ms"])?))).filter(|(n, _)| *n > 0) {
+                    Some((n, ms)) => out.push(Sensor::new(id, "perf", strings(at), "OK", "spira-lc stats").says(format!("mean {} ms", ms / n), format!("{n} calls · mean {} ms", ms / n))),
+                    None => out.push(Sensor::new(id, "perf", strings(at), "BLIND", "spira-lc stats").says("no calls", format!("BLIND: no {verb} call counted since lc-serve started"))),
+                }
+            }
+            for (verb, v) in verbs.into_iter().flatten().filter(|(k, _)| !named.contains(k.as_str())) {
+                if let (Some(n), Some(ms)) = (num(&v["count"]).filter(|n| *n > 0), num(&v["total_ms"])) {
+                    out.push(Sensor::new(format!("perf.{verb}"), "perf", vec![BUS.into()], "OK", "spira-lc stats").says(format!("mean {} ms", ms / n), format!("{verb}: {n} calls · mean {} ms", ms / n)));
+                }
+            }
+            let writes = &stats["writes"];
+            match (num(&writes["writes"]), num(&writes["commits"]), num(&writes["groups"])) {
+                (Some(w), Some(c), Some(g)) => out.push(Sensor::new("perf.writes", "perf", vec![BUS.into()], "OK", "spira-lc stats").says(format!("{w} writes"), format!("{w} writes · {c} commits · {g} groups since lc-serve started"))),
+                _ => out.push(Sensor::new("perf.writes", "perf", vec![BUS.into()], "BLIND", "spira-lc stats").says("BLIND", "BLIND: stats answered no write counters")),
+            }
+        }
+    }
+
+    for (family, wait_field, at) in TSD_SENSORS {
+        let sensor = Sensor::new(format!("tsd.{family}"), "tsd", strings(at), "OK", "tsd");
+        let read = reads.tsd.get(family).ok_or_else(|| "not read".to_string()).and_then(|r| r.clone()).and_then(|rows| tsd_reading(&rows, wait_field));
+        out.push(match read {
+            Ok((short, reading)) => sensor.says(short, format!("{family}: {reading}")),
+            Err(e) => Sensor { status: "BLIND", ..sensor.says("BLIND", format!("BLIND {family}: {e}")) },
+        });
+    }
+
+    let non_terminal: BTreeSet<&str> = edges.iter().filter(|e| e.machine == "batch").map(|e| e.from.as_str()).collect();
+    for state in non_terminal {
+        let id = format!("batch.{state}");
+        out.push(Sensor::new(format!("miss.{id}"), "missing", vec![id], "MISSING", "(none)").says("no sensor", NO_BATCH_WATCH));
+    }
+    for (id, at, short, reading) in BLIND_SPOTS {
+        out.push(Sensor::new(*id, "missing", strings(at), "MISSING", "(none)").says(*short, *reading));
+    }
+    out.iter().map(Sensor::json).collect()
 }
 
 #[cfg(test)]
@@ -800,10 +1012,56 @@ mod tests {
         json!({"bead_id": id, "state": state, "priority": p.map(|p| p.to_string()), "since": since.to_string(), "express": "0", "holds": "[]", "blocked_by": [], "repo": "spira", "title": id, "claim_verdict": null})
     }
 
+    fn bounds() -> wt::Config {
+        wt::Config {
+            period_s: 300,
+            working_min: 1,
+            submit_bound_s: 3600,
+            cut_bound_s: 600,
+            deliver_bound_s: 3600,
+            activate_bound_s: 3600,
+            ask_bound_s: 3600,
+            release_repo: "spira".into(),
+            heartbeat_bound_s: 300,
+            round_max_open: 2,
+        }
+    }
+
+    fn sensing() -> Sensing {
+        Sensing { transitions: Ok(bounds()), tsd_endpoint: None, now: NOW }
+    }
+
     async fn floor(answers: Vec<(String, i32, String)>) -> Result<Value, String> {
+        floor_with(answers, "/nonexistent-run", &sensing()).await
+    }
+
+    async fn floor_with(answers: Vec<(String, i32, String)>, run: &str, sensing: &Sensing) -> Result<Value, String> {
         let client = LcClient::over(Arc::new(Answers(answers)), true);
-        let reads = gather(client, Duration::from_secs(2), "/nonexistent-run").await;
+        let reads = gather(client, Duration::from_secs(2), run, sensing).await;
         build(&reads, NOW)
+    }
+
+    /// A run directory holding one release activated at `NOW - 100`.
+    fn run_with_a_release() -> testkit::TempDir {
+        let t = testkit::TempDir::new("loom-factory-sensors");
+        let mut r = release::machine::Release::new("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        for (to, at) in [(release::machine::ReleaseState::Cut, 1), (release::machine::ReleaseState::Accepted, 2), (release::machine::ReleaseState::Published, 3), (release::machine::ReleaseState::Activated, NOW as u64 - 100)] {
+            r.record(to, "t", at).unwrap();
+        }
+        release::machine::save(&t.path().join("release"), &r).unwrap();
+        t
+    }
+
+    fn dwell_key() -> String {
+        format!("dwell --window {} --landed-after {}", bounds().window_s(), NOW - 100)
+    }
+
+    fn sensor<'a>(f: &'a Value, id: &str) -> &'a Value {
+        by_id(f, "sensors", id)
+    }
+
+    fn of_kind<'a>(f: &'a Value, kind: &str) -> Vec<&'a Value> {
+        f["sensors"].as_array().unwrap().iter().filter(|s| s["kind"] == kind).collect()
     }
 
     fn quiet() -> Value {
@@ -996,7 +1254,7 @@ mod tests {
     #[tokio::test]
     async fn a_queue_reads_the_limit_its_registered_key_carries() {
         let client = LcClient::over(Arc::new(Answers(script(batch_graph(), &quiet(), json!([])))), true);
-        let mut reads = gather(client, Duration::from_secs(2), "/nonexistent-run").await;
+        let mut reads = gather(client, Duration::from_secs(2), "/nonexistent-run", &sensing()).await;
         reads.limits.insert("SPIRA_COMPILE_PAR".into(), "7".into());
         let f = build(&reads, NOW).unwrap();
         let compile = by_id(&f, "components", "compile");
@@ -1013,9 +1271,110 @@ mod tests {
         }
         release::machine::save(&t.path().join("release"), &r).unwrap();
         let client = LcClient::over(Arc::new(Answers(script(batch_graph(), &quiet(), json!([])))), true);
-        let reads = gather(client, Duration::from_secs(2), t.path().to_str().unwrap()).await;
+        let reads = gather(client, Duration::from_secs(2), t.path().to_str().unwrap(), &sensing()).await;
         let f = build(&reads, NOW).unwrap();
         assert_eq!(by_id(&f, "belts", "rel.ACTIVATED")["in24h"], 1);
         assert!(by_id(&f, "belts", "pub.MERGED")["in24h"].is_null());
+    }
+
+    #[tokio::test]
+    async fn submitted_work_with_no_cut_inside_the_bound_is_a_stall_sensor_at_round_open_for_its_repo() {
+        let run = run_with_a_release();
+        let dwell = json!({"beads": [{"id": "sp-a", "repo": "spira", "state": "SUBMITTED", "since": NOW - 7200}], "horizon": NOW - 4200, "last": {"spira": {}}, "landed_after": {}});
+        let mut answers = script(batch_graph(), &quiet(), json!([]));
+        answers.push(ok(&dwell_key(), dwell.to_string()));
+        let f = floor_with(answers, run.path().to_str().unwrap(), &sensing()).await.unwrap();
+        let stalls: Vec<&Value> = of_kind(&f, "transitions").into_iter().filter(|s| s["status"] == "STALL").collect();
+        assert_eq!(stalls.len(), 1, "{stalls:?}");
+        assert_eq!((stalls[0]["repo"].as_str(), stalls[0]["at"].clone()), (Some("spira"), json!(["bead.cut"])));
+        assert!(stalls[0]["reading"].as_str().unwrap().contains("no Cut"), "{}", stalls[0]["reading"]);
+        assert_eq!(sensor(&f, "wt.SUBMITTED")["status"], "WAIT");
+        assert!(sensor(&f, "wt.SUBMITTED")["reading"].as_str().unwrap().starts_with("SUBMITTED 1 oldest 2h00m"));
+        assert_eq!(sensor(&f, "wt.WORKING→SUBMITTED")["status"], "WAIT");
+        assert_eq!(sensor(&f, "wt.LANDED→ACTIVATED")["at"], json!(["bead.land"]));
+        assert_eq!(sensor(&f, "wt.ASK→ANSWERED")["at"], json!(["ask.close"]));
+    }
+
+    #[tokio::test]
+    async fn a_refused_dwell_makes_every_transitions_sensor_blind_and_names_the_refusal() {
+        let run = run_with_a_release();
+        let mut answers = script(batch_graph(), &quiet(), json!([]));
+        answers.push((dwell_key(), 3, "refused: store sealed".into()));
+        let f = floor_with(answers, run.path().to_str().unwrap(), &sensing()).await.unwrap();
+        let all = of_kind(&f, "transitions");
+        assert!(all.len() >= wt::EDGES.len() + 1, "{all:?}");
+        for s in all {
+            assert_eq!(s["status"], "BLIND", "{s}");
+            assert!(s["reading"].as_str().unwrap().contains("store sealed"), "{s}");
+        }
+    }
+
+    #[tokio::test]
+    async fn pinned_bounds_that_are_refused_make_every_transitions_sensor_blind_and_name_the_key() {
+        let refused = Sensing { transitions: Err("SPIRA_TRANSITIONS_CUT_BOUND: unset".into()), ..sensing() };
+        let f = floor_with(script(batch_graph(), &quiet(), json!([])), "/nonexistent-run", &refused).await.unwrap();
+        let all = of_kind(&f, "transitions");
+        assert!(!all.is_empty());
+        assert!(all.iter().all(|s| s["status"] == "BLIND" && s["reading"].as_str().unwrap().contains("SPIRA_TRANSITIONS_CUT_BOUND")), "{all:?}");
+    }
+
+    #[tokio::test]
+    async fn no_release_record_is_blind_not_an_empty_wait() {
+        let f = floor(script(batch_graph(), &quiet(), json!([]))).await.unwrap();
+        assert_eq!(sensor(&f, "wt.READY")["status"], "BLIND");
+    }
+
+    #[tokio::test]
+    async fn every_non_terminal_batch_belt_has_a_missing_sensor_including_one_for_an_added_state() {
+        let grown = graph(&[("OPEN", "CiStarted", "CI_RUNNING"), ("CI_RUNNING", "Hold", "HELD"), ("HELD", "PassGreen", "GREEN"), ("GREEN", "FastForward", "LANDED")]);
+        let f = floor(script(grown, &quiet(), json!([]))).await.unwrap();
+        let missing: BTreeSet<&str> = of_kind(&f, "missing").into_iter().map(|s| s["id"].as_str().unwrap()).collect();
+        let belts = f["belts"].as_array().unwrap();
+        let non_terminal: Vec<&str> = belts.iter().filter(|b| b["machine"] == "batch" && b["kind"] != "sink").map(|b| b["id"].as_str().unwrap()).collect();
+        assert!(non_terminal.contains(&"batch.HELD"), "{non_terminal:?}");
+        for id in non_terminal {
+            let s = sensor(&f, &format!("miss.{id}"));
+            assert_eq!((s["status"].as_str(), s["reading"].as_str(), s["at"].clone()), (Some("MISSING"), Some(NO_BATCH_WATCH), json!([id])));
+        }
+        assert!(!missing.contains("miss.batch.LANDED"), "a terminal belt has nothing to watch");
+        for (id, ..) in BLIND_SPOTS {
+            assert!(missing.contains(id), "{id}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stats_answer_is_the_count_and_mean_at_the_stations_its_verb_is_declared_for() {
+        let mut answers = script(batch_graph(), &quiet(), json!([]));
+        let stats = json!({"verbs": {"work": {"count": 4, "total_ms": 4000}, "renew": {"count": 2, "total_ms": 30}}, "callers": [], "writes": {"writes": 9, "commits": 3, "groups": 2}});
+        answers.push(ok("stats", stats.to_string()));
+        let f = floor(answers).await.unwrap();
+        let work = sensor(&f, "perf.work");
+        assert_eq!((work["reading"].as_str(), work["at"].clone(), work["status"].as_str()), (Some("4 calls · mean 1000 ms"), json!(["bead.build"]), Some("OK")));
+        assert_eq!(sensor(&f, "perf.renew")["at"], json!(["*"]));
+        assert_eq!(sensor(&f, "perf.claim-verdicts")["status"], "BLIND", "a verb never called is not a zero");
+        assert!(sensor(&f, "perf.writes")["reading"].as_str().unwrap().starts_with("9 writes · 3 commits · 2 groups"));
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_stats_and_an_unreadable_tsd_are_blind_and_name_why() {
+        let f = floor(script(batch_graph(), &quiet(), json!([]))).await.unwrap();
+        assert_eq!(sensor(&f, "perf.stats")["status"], "BLIND");
+        assert!(sensor(&f, "perf.stats")["reading"].as_str().unwrap().contains("stats"));
+        for family in ["admission", "cert-pass"] {
+            let s = sensor(&f, &format!("tsd.{family}"));
+            assert_eq!(s["status"], "BLIND", "{s}");
+            assert!(s["reading"].as_str().unwrap().len() > "BLIND admission: ".len(), "{s}");
+        }
+        assert_eq!(sensor(&f, "tsd.cert-pass")["at"], json!(["batch.pass", "batch.CI_RUNNING"]));
+    }
+
+    #[test]
+    fn a_tsd_reading_is_the_count_how_many_waited_and_the_wait_percentiles() {
+        let rows: Vec<Value> = [0, 0, 5, 10].iter().map(|w| json!({"pool": "build", "waited_secs": w, "held_secs": 3})).collect();
+        let (short, reading) = tsd_reading(&rows, "waited_secs").unwrap();
+        assert_eq!(short, "4 in 24 h");
+        assert_eq!(reading, "4 in 24 h · 2 waited · waited_secs p50 0 s · p90 10 s");
+        assert!(tsd_reading(&[], "waited_secs").unwrap_err().contains("no row"));
+        assert!(tsd_reading(&[json!({"pool": "build"})], "waited_secs").unwrap_err().contains("waited_secs"));
     }
 }
