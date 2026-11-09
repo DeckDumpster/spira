@@ -198,8 +198,14 @@ impl PendingActivation {
         let _serial = crate::lock::activation_lock(&self.queue_dir, &self.repo);
         if let Some(tip) = w.git.rev_parse(&self.plan.repo, &self.base) {
             if tip != self.head && w.git.is_ancestor(&self.plan.repo, &self.head, &tip) {
-                let why = format!("{} already moved past {} to {tip}; that landing's release carries this one", self.base, self.head);
-                w.out(format!("queue.sh land-local: release {} not activated: {why}", self.sha));
+                let why = format!(
+                    "{} already moved past {} to {tip}; that landing's release carries this one",
+                    self.base, self.head
+                );
+                w.out(format!(
+                    "queue.sh land-local: release {} not activated: {why}",
+                    self.sha
+                ));
                 if let Some(pin) = &self.pin {
                     let _ = fs::remove_file(pin);
                 }
@@ -547,15 +553,26 @@ fn record_land(w: &World, run: &Path, repo: &str, m: &Member) {
     if m.tip.is_empty() {
         return;
     }
-    let reverts = w
-        .bd
-        .show(std::slice::from_ref(&m.id))
-        .ok()
-        .and_then(|rows| rows.into_iter().find(|r| r.id == m.id))
-        .and_then(|r| r.labels.iter().find_map(|l| l.strip_prefix("reverts:").map(str::to_string)));
-    let rec = tsd::land::LandRecord { repo: repo.into(), bead: m.id.clone(), commit: m.tip.clone(), reverts };
+    let reverts =
+        w.bd.show(std::slice::from_ref(&m.id))
+            .ok()
+            .and_then(|rows| rows.into_iter().find(|r| r.id == m.id))
+            .and_then(|r| {
+                r.labels
+                    .iter()
+                    .find_map(|l| l.strip_prefix("reverts:").map(str::to_string))
+            });
+    let rec = tsd::land::LandRecord {
+        repo: repo.into(),
+        bead: m.id.clone(),
+        commit: m.tip.clone(),
+        reverts,
+    };
     if let Err(e) = rec.write(run, &tsd::default_host(), &tsd::iso_utc(w.clock.now())) {
-        w.err(format!("queue.sh land-local: {}: the landing is not recorded for goodput: {e}", m.id));
+        w.err(format!(
+            "queue.sh land-local: {}: the landing is not recorded for goodput: {e}",
+            m.id
+        ));
     }
 }
 

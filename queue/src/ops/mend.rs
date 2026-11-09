@@ -88,13 +88,18 @@ pub fn run(
         ),
         "await-ask" => {
             let Some(a) = ask else {
-                w.err(format!("queue.sh {label}: --ask <id> is required: the open ask the mend waits on"));
+                w.err(format!(
+                    "queue.sh {label}: --ask <id> is required: the open ask the mend waits on"
+                ));
                 return USAGE;
             };
             if idents(w, &label, &[("ask id", a)]).is_err() {
                 return FAIL;
             }
-            report(send(serde_json::json!({"Await": {"ask": a}})), "awaiting its ask")
+            report(
+                send(serde_json::json!({"Await": {"ask": a}})),
+                "awaiting its ask",
+            )
         }
         "return" => {
             if diagnosis.is_empty() {

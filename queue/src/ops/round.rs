@@ -9,8 +9,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::batch::lc_return;
-use super::round_files;
 use super::land::land_local_deferring;
+use super::round_files;
 use super::stage;
 use super::{
     actor, batch_abandoned, converge_orphans, czar_ok, idents, landing_log, lc_abandon, lc_cas,
@@ -54,7 +54,10 @@ pub(super) const UNIT_RED: &str = "unit-tests";
 /// The round VM's two test phases (sp-cddf76), each leaving its red as a record: the unit phase
 /// (tests inside src/) before any suite, the integration phase (tests/ and doc-tests) beside them.
 /// Either is red on the `unit-tests` step, the testenv suite that runs both for a tip.
-pub(super) const TEST_PHASES: [(&str, &str); 2] = [("unit.json", "unit-tests"), ("integration.json", "integration-tests")];
+pub(super) const TEST_PHASES: [(&str, &str); 2] = [
+    ("unit.json", "unit-tests"),
+    ("integration.json", "integration-tests"),
+];
 
 /// A test phase the round VM recorded red.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,8 +76,15 @@ impl PhaseRed {
         if !self.failed.is_empty() {
             lines.push(format!("unit-tests-failed={}", self.failed.join(",")));
         }
-        let when = if self.before_suites { "before the suites" } else { "beside the suites" };
-        lines.push(format!("unit-tests-cause={}: {} ({when}, after {}s)", self.stage, self.cause, self.secs));
+        let when = if self.before_suites {
+            "before the suites"
+        } else {
+            "beside the suites"
+        };
+        lines.push(format!(
+            "unit-tests-cause={}: {} ({when}, after {}s)",
+            self.stage, self.cause, self.secs
+        ));
         lines
     }
 }
@@ -85,11 +95,19 @@ pub(super) fn phase_reds(results: &std::path::Path) -> Vec<PhaseRed> {
     TEST_PHASES
         .iter()
         .filter_map(|(file, stage)| {
-            let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(results.join(file)).ok()?).ok()?;
+            let v: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(results.join(file)).ok()?).ok()?;
             (v["stage"] == *stage && v["verdict"] == "red").then(|| PhaseRed {
                 stage: stage.to_string(),
                 before_suites: v["ran_before_suites"].as_bool().unwrap_or(false),
-                failed: v["failed"].as_array().map(|a| a.iter().filter_map(|n| n.as_str().map(String::from)).collect()).unwrap_or_default(),
+                failed: v["failed"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|n| n.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 cause: v["cause"].as_str().unwrap_or("").to_string(),
                 secs: v["secs"].as_u64().unwrap_or(0),
             })
@@ -197,7 +215,14 @@ pub fn run(w: &World, r: &Round) -> i32 {
             reason,
             lease_token,
             cause,
-        } => abandon(w, batch, repo.as_deref(), reason, lease_token.as_deref(), cause),
+        } => abandon(
+            w,
+            batch,
+            repo.as_deref(),
+            reason,
+            lease_token.as_deref(),
+            cause,
+        ),
         Round::SweepLocks { repo, all } => sweep_locks(w, repo.as_deref(), *all),
         Round::Preempt {
             batch,
@@ -316,7 +341,13 @@ fn start_pass(w: &World, batch: &str, head: &str, strict: bool) -> Result<(), (i
 }
 
 /// [`start_pass`], the event carrying `ride`'s fields.
-fn start_pass_with(w: &World, batch: &str, head: &str, strict: bool, ride: &Ride) -> Result<(), (i32, String)> {
+fn start_pass_with(
+    w: &World,
+    batch: &str,
+    head: &str,
+    strict: bool,
+    ride: &Ride,
+) -> Result<(), (i32, String)> {
     pass_event_with(w, batch, ride, |s, n, _| {
         (strict || matches!(s, "OPEN" | "REBUILDING" | "ATTRIBUTING"))
             .then(|| serde_json::json!({"PassStarted": {"n": n + 1, "head": head}}).to_string())
@@ -734,9 +765,7 @@ fn pass_verdict(
         .map(String::from)
         .collect();
     if verdict == "incomplete" && why.trim().is_empty() {
-        w.err(
-            "queue.sh round pass-verdict: --reason is required for an incomplete pass",
-        );
+        w.err("queue.sh round pass-verdict: --reason is required for an incomplete pass");
         return USAGE;
     }
     if verdict == "red" && red.is_empty() {
@@ -922,7 +951,10 @@ fn report_ended(w: &World, label: &str, c: &Ctx) {
                 w.err(format!("queue.sh {label}: round {} ended ({}) but spira-lc holds it {} — it is not open; round open and round land retry recording its end", b.id, ended(&b.kv).unwrap_or(""), b.state));
             }
         }
-        Err(e) => w.err(format!("queue.sh {label}: cannot tell which ended rounds spira-lc still holds for {}: {e}", c.r.name)),
+        Err(e) => w.err(format!(
+            "queue.sh {label}: cannot tell which ended rounds spira-lc still holds for {}: {e}",
+            c.r.name
+        )),
     }
 }
 
@@ -932,7 +964,10 @@ fn reconcile_ended(w: &World, c: &Ctx) {
     let all = match ended_rounds(w, c) {
         Ok(all) => all,
         Err(e) => {
-            w.err(format!("queue.sh: cannot tell which ended rounds spira-lc still holds for {}: {e}", c.r.name));
+            w.err(format!(
+                "queue.sh: cannot tell which ended rounds spira-lc still holds for {}: {e}",
+                c.r.name
+            ));
             return;
         }
     };
@@ -1027,7 +1062,10 @@ fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
         .filter(|b| !b.is_terminal() || Some(b.id.as_str()) == spare)
         .map(|b| worktree_of(&b.kv))
         .collect();
-    for b in all.iter().filter(|b| b.is_terminal() && Some(b.id.as_str()) != spare) {
+    for b in all
+        .iter()
+        .filter(|b| b.is_terminal() && Some(b.id.as_str()) != spare)
+    {
         let wt = worktree_of(&b.kv);
         let has_tree = !wt.as_os_str().is_empty() && wt.exists();
         if !has_tree && !running_marker(c, &b.id).exists() {
@@ -1036,17 +1074,34 @@ fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
         if let (Some(repo), true) = (&c.r.path, has_tree && !held.contains(&wt)) {
             w.git.worktree_remove(repo, &wt);
         }
-        finish(w, c, &b.id, End::Abandoned("swept"), &format!("ended: {} on the lifecycle; record swept", b.state));
+        finish(
+            w,
+            c,
+            &b.id,
+            End::Abandoned("swept"),
+            &format!("ended: {} on the lifecycle; record swept", b.state),
+        );
     }
     let Some(repo) = &c.r.path else {
         return;
     };
-    for b in all.iter().filter(|b| !b.is_terminal() && ended(&b.kv).is_none() && Some(b.id.as_str()) != spare) {
+    for b in all
+        .iter()
+        .filter(|b| !b.is_terminal() && ended(&b.kv).is_none() && Some(b.id.as_str()) != spare)
+    {
         let wt = worktree_of(&b.kv);
         if wt.as_os_str().is_empty() || running_marker(c, &b.id).exists() || wt.exists() {
             continue;
         }
-        close_abandoned(w, "sweep", c, repo, &b.kv, "the round's worktree is missing, so it cannot certify", "worktree-missing");
+        close_abandoned(
+            w,
+            "sweep",
+            c,
+            repo,
+            &b.kv,
+            "the round's worktree is missing, so it cannot certify",
+            "worktree-missing",
+        );
     }
 }
 
@@ -1140,7 +1195,6 @@ pub(super) fn set(kv: &mut Kv, k: &str, v: &str) {
     kv.push(k, v);
 }
 
-
 pub(super) fn phase_of(w: &World, batch: &str) -> String {
     match w.lc.batch_state(batch) {
         Some((s, _)) => match s.as_str() {
@@ -1186,7 +1240,14 @@ pub enum End<'a> {
 }
 
 /// The cause kinds, each as it opens the cause field.
-pub const END_KINDS: [&str; 6] = ["landed", "deploy-fault", "red:", "fault:", "held:", "abandoned:"];
+pub const END_KINDS: [&str; 6] = [
+    "landed",
+    "deploy-fault",
+    "red:",
+    "fault:",
+    "held:",
+    "abandoned:",
+];
 
 /// A word reduced to one lower-case token of `[a-z0-9._-]`; empty becomes `unspecified`.
 pub fn cause_word(w: &str) -> String {
@@ -1194,7 +1255,13 @@ pub fn cause_word(w: &str) -> String {
         .trim()
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "._-".contains(c) {
+                c
+            } else {
+                '-'
+            }
+        })
         .take(40)
         .collect();
     let t = t.trim_matches('-').to_string();
@@ -1229,7 +1296,13 @@ pub(super) fn finish(w: &World, c: &Ctx, batch: &str, end: End, detail: &str) {
         .append(true)
         .open(dir.join(format!("{batch}.result")))
     {
-        let _ = writeln!(f, "{} {} {}", tsd::iso_utc(w.clock.now()), end.cause(), one_line(detail));
+        let _ = writeln!(
+            f,
+            "{} {} {}",
+            tsd::iso_utc(w.clock.now()),
+            end.cause(),
+            one_line(detail)
+        );
     }
     let _ = fs::remove_file(running_marker(c, batch));
 }
@@ -1241,7 +1314,9 @@ fn sweep_locks(w: &World, repo: Option<&str>, all: bool) -> i32 {
         match w.lib.repos() {
             Ok(n) => n,
             Err(e) => {
-                w.err(format!("queue.sh {label}: cannot list the registered repositories: {e}"));
+                w.err(format!(
+                    "queue.sh {label}: cannot list the registered repositories: {e}"
+                ));
                 return FAIL;
             }
         }
@@ -1263,14 +1338,19 @@ fn sweep_locks(w: &World, repo: Option<&str>, all: bool) -> i32 {
         };
         let (mut removed, mut kept) = (0, 0);
         for batch in crate::lock::certify_lock_batches(&c.s.queue_dir, &c.r.name) {
-            let ended = w.lc.batch_state(&batch).is_some_and(|(s, _)| super::reconcile::terminal(&s));
+            let ended =
+                w.lc.batch_state(&batch)
+                    .is_some_and(|(s, _)| super::reconcile::terminal(&s));
             if ended && crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, &batch) {
                 removed += 1;
             } else {
                 kept += 1;
             }
         }
-        w.out(format!("queue.sh {label}: {}: removed {removed} certify lock(s) of ended rounds, kept {kept}", c.r.name));
+        w.out(format!(
+            "queue.sh {label}: {}: removed {removed} certify lock(s) of ended rounds, kept {kept}",
+            c.r.name
+        ));
     }
     rc
 }
@@ -1445,7 +1525,11 @@ pub struct Skip {
 }
 
 fn skip(id: &str, kind: &'static str, why: String) -> Skip {
-    Skip { id: id.to_string(), kind, why }
+    Skip {
+        id: id.to_string(),
+        kind,
+        why,
+    }
 }
 
 /// The typed record a refused open prints on stdout for each member it did not admit, one per
@@ -1603,16 +1687,26 @@ fn open(
     let mut below = parent.as_ref().map(|(p, _, _)| p.clone());
     let mut seen: Vec<String> = Vec::new();
     while let Some(p) = below.take().filter(|p| !seen.contains(p)) {
-        let Some(kv) = open_now.iter().find(|kv| kv.get("batch_id") == Some(p.as_str())) else {
+        let Some(kv) = open_now
+            .iter()
+            .find(|kv| kv.get("batch_id") == Some(p.as_str()))
+        else {
             break;
         };
         if let Some(why) = unstackable(w, kv) {
             let newest = parent.as_ref().map_or("", |(n, _, _)| n.as_str());
-            let via = if p == newest { String::new() } else { format!(", under the newest open round {newest},") };
+            let via = if p == newest {
+                String::new()
+            } else {
+                format!(", under the newest open round {newest},")
+            };
             w.err(format!("queue.sh {label}: open round {p}{via} is {why} — a round is cut only on {base} or on a live round still certifying; refused, nothing changed"));
             return FAIL;
         }
-        below = kv.get("parent").filter(|q| !q.is_empty()).map(str::to_string);
+        below = kv
+            .get("parent")
+            .filter(|q| !q.is_empty())
+            .map(str::to_string);
         seen.push(p);
     }
     let base_sha = parent
@@ -1639,10 +1733,14 @@ fn open(
     let mut admitted: Vec<Member> = Vec::new();
     for m in wanted {
         if let Some(by) = super::integrate::carried_by(w, &c, &m.id) {
-            skips.push(skip(&m.id, "integration", format!(
-                "{}: carried by integration {by} — lands with it, not admitted",
-                m.id
-            )));
+            skips.push(skip(
+                &m.id,
+                "integration",
+                format!(
+                    "{}: carried by integration {by} — lands with it, not admitted",
+                    m.id
+                ),
+            ));
             continue;
         }
         match w.lc.bead_row(&m.id) {
@@ -1713,10 +1811,14 @@ fn open(
     let mut collided: Vec<(Member, String)> = Vec::new();
     for m in admitted {
         if !super::simple::lint_passed(w, label, &path, &m.tip, false) {
-            skips.push(skip(&m.id, "lint", format!(
-                "{}: {} fails its compile-and-lint check — not admitted",
-                m.id, m.tip
-            )));
+            skips.push(skip(
+                &m.id,
+                "lint",
+                format!(
+                    "{}: {} fails its compile-and-lint check — not admitted",
+                    m.id, m.tip
+                ),
+            ));
             continue;
         }
         if merge_member(w, &c, &wt, &m.id, &m.tip) {
@@ -1724,10 +1826,14 @@ fn open(
         } else {
             w.git.merge_abort(&wt);
             if w.lib.base_conflict(&path, &landed_sha, &m.tip) {
-                skips.push(skip(&m.id, "base-conflict", match return_to_rework(w, &m) {
-                    Ok(()) => format!("{}: conflicts with base — returned to rework", m.id),
-                    Err(e) => format!("{}: conflicts with base ({e})", m.id),
-                }));
+                skips.push(skip(
+                    &m.id,
+                    "base-conflict",
+                    match return_to_rework(w, &m) {
+                        Ok(()) => format!("{}: conflicts with base — returned to rework", m.id),
+                        Err(e) => format!("{}: conflicts with base ({e})", m.id),
+                    },
+                ));
             } else {
                 let onto = w
                     .git
@@ -1887,9 +1993,14 @@ fn open(
     w.out(format!("base={base_sha}"));
     w.out(format!(
         "base_of={}",
-        parent.as_ref().map_or_else(|| base.clone(), |(p, _, _)| format!("round {p}"))
+        parent
+            .as_ref()
+            .map_or_else(|| base.clone(), |(p, _, _)| format!("round {p}"))
     ));
-    w.out(format!("base_chain={}", first_parent_chain(w, &path, &base_sha, &landed_sha)));
+    w.out(format!(
+        "base_chain={}",
+        first_parent_chain(w, &path, &base_sha, &landed_sha)
+    ));
     OK
 }
 
@@ -1927,7 +2038,14 @@ fn unstackable(w: &World, kv: &Kv) -> Option<String> {
         return Some(format!("red ({red})"));
     }
     match w.lc.batch_state(kv.get("batch_id").unwrap_or("")) {
-        Some((s, _)) if matches!(s.as_str(), "OPEN" | "CI_RUNNING" | "REBUILDING" | "GREEN" | "LANDING" | "DEPLOYING") => None,
+        Some((s, _))
+            if matches!(
+                s.as_str(),
+                "OPEN" | "CI_RUNNING" | "REBUILDING" | "GREEN" | "LANDING" | "DEPLOYING"
+            ) =>
+        {
+            None
+        }
         Some((s, _)) => Some(s),
         None => Some("of a state spira-lc could not say".into()),
     }
@@ -1935,7 +2053,8 @@ fn unstackable(w: &World, kv: &Kv) -> Option<String> {
 
 /// `base` and its first parents, newest first, down to the first commit `landed` already holds.
 fn first_parent_chain(w: &World, path: &Path, base: &str, landed: &str) -> String {
-    let range: BTreeMap<String, String> = match w.git.log_range(path, &format!("{landed}..{base}")) {
+    let range: BTreeMap<String, String> = match w.git.log_range(path, &format!("{landed}..{base}"))
+    {
         Ok(v) => v
             .into_iter()
             .map(|c| (c.sha, c.parents.into_iter().next().unwrap_or_default()))
@@ -1960,7 +2079,10 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
     let open = match live_records(w, &c) {
         Ok(open) => open,
         Err(e) => {
-            w.err(format!("queue.sh {label}: cannot tell which rounds are open for {}: {e}", c.r.name));
+            w.err(format!(
+                "queue.sh {label}: cannot tell which rounds are open for {}: {e}",
+                c.r.name
+            ));
             return FAIL;
         }
     };
@@ -2047,7 +2169,8 @@ pub fn suite_statuses(dir: &Path, found: &mut Vec<(String, String)>, depth: u32)
 /// Whether the entry itself wrote an `ok` verdict to `ci.result`: it finished green, so a fault in
 /// the run around it is the machinery's, not the candidate's.
 fn ci_result_ok(results: &Path) -> bool {
-    fs::read_to_string(results.join("ci.result")).is_ok_and(|t| t.split_whitespace().next() == Some("ok"))
+    fs::read_to_string(results.join("ci.result"))
+        .is_ok_and(|t| t.split_whitespace().next() == Some("ok"))
 }
 
 /// Names the suites whose verdict cannot be read: a word that is neither passing nor blocking
@@ -2059,7 +2182,9 @@ pub(crate) fn unjudgeable(wt: &Path, found: &[(String, String)]) -> Option<Strin
         .filter(|(_, s)| !PASSING.contains(&s.as_str()) && !BLOCKING.contains(&s.as_str()))
         .map(|(n, s)| format!("{n} (verdict {s:?})"))
         .collect();
-    let ended_early = found.iter().any(|(n, s)| s == "red" && (n == LINT_RED || n.starts_with(FENCE_RED_PREFIX)));
+    let ended_early = found
+        .iter()
+        .any(|(n, s)| s == "red" && (n == LINT_RED || n.starts_with(FENCE_RED_PREFIX)));
     if let (Ok(rd), false) = (fs::read_dir(wt.join("spira")), ended_early) {
         for name in rd
             .flatten()
@@ -2088,7 +2213,10 @@ pub(crate) fn unjudgeable(wt: &Path, found: &[(String, String)]) -> Option<Strin
 /// and the unit tests passed is judged on its results.
 fn wall_complete(wt: &Path, found: &[(String, String)], err: &str) -> bool {
     // Both test phases (sp-cddf76): the unit phase passed before the suites, the integration phase beside them.
-    !found.is_empty() && unjudgeable(wt, found).is_none() && err.contains("UNIT-TESTS: PASS") && err.contains("INTEGRATION-TESTS: PASS")
+    !found.is_empty()
+        && unjudgeable(wt, found).is_none()
+        && err.contains("UNIT-TESTS: PASS")
+        && err.contains("INTEGRATION-TESTS: PASS")
 }
 
 const FAULT_KIND_FILE: &str = "round-fault-kind";
@@ -2097,7 +2225,13 @@ const FAULT_KIND_FILE: &str = "round-fault-kind";
 /// cap is named by that file, never by what round-vm printed.
 fn over_cap_detail(results: &Path) -> Option<String> {
     let text = fs::read_to_string(results.join(FAULT_KIND_FILE)).ok()?;
-    Some(text.lines().next()?.strip_prefix("over-cap")?.trim().to_string())
+    Some(
+        text.lines()
+            .next()?
+            .strip_prefix("over-cap")?
+            .trim()
+            .to_string(),
+    )
 }
 
 fn over_cap_why(detail: &str, cap: u64) -> String {
@@ -2112,7 +2246,11 @@ fn over_cap_why(detail: &str, cap: u64) -> String {
 fn result_dirs(dir: &Path) -> Vec<PathBuf> {
     let mut dirs = vec![dir.to_path_buf()];
     if let Ok(rd) = fs::read_dir(dir) {
-        let mut subs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        let mut subs: Vec<PathBuf> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
         subs.sort();
         dirs.extend(subs);
     }
@@ -2127,17 +2265,22 @@ fn batch_over_cap(results: &Path, rc: i32) -> bool {
         .find_map(|d| fs::read_to_string(d.join("run.events")).ok())
         .and_then(|t| {
             t.lines()
-                .filter_map(|l| l.split_once(' ').and_then(|(_, r)| r.strip_prefix("verdict ")))
+                .filter_map(|l| {
+                    l.split_once(' ')
+                        .and_then(|(_, r)| r.strip_prefix("verdict "))
+                })
                 .next_back()
                 .map(|v| v.trim().to_string())
         });
-    verdict.as_deref() == Some("FAULT over-cap") || (matches!(rc, 124 | 137) && over_cap_detail(results).is_some())
+    verdict.as_deref() == Some("FAULT over-cap")
+        || (matches!(rc, 124 | 137) && over_cap_detail(results).is_some())
 }
 
 fn suite_cap_s(results: &Path) -> Option<String> {
     result_dirs(results).iter().find_map(|d| {
         let t = fs::read_to_string(d.join("runner.meta")).ok()?;
-        t.lines().find_map(|l| l.strip_prefix("suite_cap_s=").map(|v| v.trim().to_string()))
+        t.lines()
+            .find_map(|l| l.strip_prefix("suite_cap_s=").map(|v| v.trim().to_string()))
     })
 }
 
@@ -2411,11 +2554,10 @@ fn candidate_image(
                 ));
             }
             Some(AmiBuild::NotStarted) if !dispatched => {
-                if !w.lib.push(
-                    path,
-                    &remote,
-                    &format!("{head}:refs/heads/{branch}"),
-                ) {
+                if !w
+                    .lib
+                    .push(path, &remote, &format!("{head}:refs/heads/{branch}"))
+                {
                     break Image::Unjudged(format!("could not push {branch}"));
                 }
                 if !w.forge.ami_dispatch(&c.s.forge, &home_path, &branch) {
@@ -2444,11 +2586,7 @@ fn candidate_image(
         w.clock.sleep(AmiWait::POLL_SECS); // waits-on: the Round AMI run on the candidate branch; cap round_ami_wait_secs
     };
     if !matches!(verdict, Image::Unjudged(_)) {
-        let _ = w.lib.push(
-            path,
-            &remote,
-            &format!(":refs/heads/{branch}"),
-        );
+        let _ = w.lib.push(path, &remote, &format!(":refs/heads/{branch}"));
     }
     verdict
 }
@@ -2486,17 +2624,42 @@ pub(super) const ROUND_FAULT_FILE: &str = "round-fault.out";
 pub(super) fn round_fault(results: &Path) -> Option<RoundFault> {
     let text = fs::read_to_string(results.join(ROUND_FAULT_FILE)).ok()?;
     let mut lines = text.lines();
-    let cause = lines.next()?.strip_prefix("ROUND-FAULT: ")?.trim().to_string();
+    let cause = lines
+        .next()?
+        .strip_prefix("ROUND-FAULT: ")?
+        .trim()
+        .to_string();
     let rest: Vec<&str> = lines.collect();
-    let settings_key = rest.first().and_then(|l| l.strip_prefix("settings-key: ")).map(|k| k.trim().to_string());
-    let tail = rest.iter().skip_while(|l| !l.starts_with("--- ")).skip(1).copied().collect::<Vec<_>>().join("\n");
-    Some(RoundFault { cause, settings_key, tail })
+    let settings_key = rest
+        .first()
+        .and_then(|l| l.strip_prefix("settings-key: "))
+        .map(|k| k.trim().to_string());
+    let tail = rest
+        .iter()
+        .skip_while(|l| !l.starts_with("--- "))
+        .skip(1)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(RoundFault {
+        cause,
+        settings_key,
+        tail,
+    })
 }
 
 /// A setting the round VM refused is the fault of the member whose diff adds its key: present
 /// at the member's tip and absent at the landing ref. Each such member is ejected with the
 /// fault; when none is, the harness is named and no member is counted against.
-fn settings_refused(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, f: &RoundFault, key: &str) -> i32 {
+fn settings_refused(
+    w: &World,
+    label: &str,
+    c: &Ctx,
+    path: &Path,
+    batch: &str,
+    f: &RoundFault,
+    key: &str,
+) -> i32 {
     let Some(base) = c.r.landref.as_deref() else {
         w.err(format!("queue.sh {label}: cannot resolve the landing ref of {} to attribute {key} — the fault is counted against no member", c.r.name));
         return FAULT;
@@ -2510,13 +2673,25 @@ fn settings_refused(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, f
         }
     };
     let has = |rev: &str| {
-        w.git.grep_files(path, rev, key, "**").iter().any(|f| w.git.file_at(path, rev, f).is_some_and(|t| names_key(&t, key)))
+        w.git.grep_files(path, rev, key, "**").iter().any(|f| {
+            w.git
+                .file_at(path, rev, f)
+                .is_some_and(|t| names_key(&t, key))
+        })
     };
-    let holders: Vec<Member> = if has(base) { Vec::new() } else { members.into_iter().filter(|m| has(&m.tip)).collect() };
+    let holders: Vec<Member> = if has(base) {
+        Vec::new()
+    } else {
+        members.into_iter().filter(|m| has(&m.tip)).collect()
+    };
     // A member stacked on another carries that one's key at its tip without adding it.
     let adders: Vec<Member> = holders
         .iter()
-        .filter(|m| !holders.iter().any(|o| o.id != m.id && o.tip != m.tip && w.git.is_ancestor(path, &o.tip, &m.tip)))
+        .filter(|m| {
+            !holders
+                .iter()
+                .any(|o| o.id != m.id && o.tip != m.tip && w.git.is_ancestor(path, &o.tip, &m.tip))
+        })
         .cloned()
         .collect();
     if adders.is_empty() {
@@ -2526,12 +2701,27 @@ fn settings_refused(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, f
     }
     for m in adders {
         let reason = format!("{}'s diff adds {key}, which the round VM refused: {}\nThe VM script's log, last lines:\n{}", m.id, f.cause, f.tail);
-        let rc = eject(w, batch, &m.id, Some(&c.r.name), &Text::Arg(reason), UNIT_RED, true, false, true, "", LeaseCheck::Inside);
+        let rc = eject(
+            w,
+            batch,
+            &m.id,
+            Some(&c.r.name),
+            &Text::Arg(reason),
+            UNIT_RED,
+            true,
+            false,
+            true,
+            "",
+            LeaseCheck::Inside,
+        );
         if rc == OK {
             note_pass_end(c, std::slice::from_ref(&m.id), PassEnd::Ejected);
             w.out(format!("fault-owner={}", m.id));
         } else {
-            w.err(format!("queue.sh {label}: could not eject {}, whose diff adds the refused {key} (rc={rc})", m.id));
+            w.err(format!(
+                "queue.sh {label}: could not eject {}, whose diff adds the refused {key} (rc={rc})",
+                m.id
+            ));
         }
     }
     FAULT
@@ -2541,7 +2731,8 @@ fn settings_refused(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, f
 fn names_key(text: &str, key: &str) -> bool {
     let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
     text.match_indices(key).any(|(i, _)| {
-        !text[..i].chars().next_back().is_some_and(word) && !text[i + key.len()..].chars().next().is_some_and(word)
+        !text[..i].chars().next_back().is_some_and(word)
+            && !text[i + key.len()..].chars().next().is_some_and(word)
     })
 }
 
@@ -2585,7 +2776,9 @@ pub(crate) fn failure_excerpt(text: &str) -> String {
                 keep[i] = true;
             }
             inside = false;
-        } else if (t.starts_with("error: ") && t.contains("failed") && !t.starts_with("error: could not compile"))
+        } else if (t.starts_with("error: ")
+            && t.contains("failed")
+            && !t.starts_with("error: could not compile"))
             || (t.starts_with("error: could not compile") && t.contains("test"))
         {
             keep[i] = true;
@@ -2657,7 +2850,11 @@ fn note_pass_end(c: &Ctx, ids: &[String], end: PassEnd) {
         return;
     }
     let _ = fs::create_dir_all(rounds_dir(c));
-    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(ledger_of(c)) {
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(ledger_of(c))
+    {
         let _ = writeln!(f, "{} {}", end.word(), ids.join(","));
     }
 }
@@ -2692,7 +2889,13 @@ fn ids_of(kv: &Kv) -> Vec<String> {
 
 fn lost_vm_pass(w: &World, label: &str, batch: &str, err: &str) -> i32 {
     let why = "vm-lost: the round VM died under the pass";
-    warn_unrecorded(w, label, batch, "the incomplete pass", pass_verdict_event(w, batch, &Verdict::Incomplete(why), false));
+    warn_unrecorded(
+        w,
+        label,
+        batch,
+        "the incomplete pass",
+        pass_verdict_event(w, batch, &Verdict::Incomplete(why), false),
+    );
     w.err(format!("queue.sh {label}: certify rc={VM_LOST}: INCOMPLETE reason={why}; the round is not judged\n{}", tail(err, 20)));
     VM_LOST
 }
@@ -2702,14 +2905,22 @@ const NO_OUTPUT_KEY: &str = "vm-no-output";
 /// Whether the round's latest pass ended on a VM that never started it: the fault is the VM's, so
 /// the round holds no red to weigh against its members.
 fn vm_never_started(kv: &Kv) -> bool {
-    kv.get(NO_OUTPUT_KEY).and_then(|v| v.split_once(':')).is_some_and(|(head, _)| Some(head) == kv.get("head"))
+    kv.get(NO_OUTPUT_KEY)
+        .and_then(|v| v.split_once(':'))
+        .is_some_and(|(head, _)| Some(head) == kv.get("head"))
 }
 
 /// A pass whose VM produced no output is counted on the round, per head, and held against no
 /// member. The second on one head is paged: a fresh VM did the same.
 fn no_output_pass(w: &World, label: &str, c: &Ctx, batch: &str, err: &str) -> i32 {
     let why = format!("{NO_OUTPUT_KEY}: VM produced no output");
-    warn_unrecorded(w, label, batch, "the incomplete pass", pass_verdict_event(w, batch, &Verdict::Incomplete(&why), false));
+    warn_unrecorded(
+        w,
+        label,
+        batch,
+        "the incomplete pass",
+        pass_verdict_event(w, batch, &Verdict::Incomplete(&why), false),
+    );
     w.err(format!("queue.sh {label}: certify rc={VM_NO_OUTPUT}: INCOMPLETE reason={why}; the round is not judged, no member is implicated\n{}", tail(err, 20)));
     w.out(format!("fault={NO_OUTPUT_KEY}"));
     let _g = match lock(w, label, c) {
@@ -2720,7 +2931,13 @@ fn no_output_pass(w: &World, label: &str, c: &Ctx, batch: &str, err: &str) -> i3
         return VM_NO_OUTPUT;
     };
     let head = kv.get("head").unwrap_or("").to_string();
-    let n = kv.get(NO_OUTPUT_KEY).and_then(|v| v.split_once(':')).filter(|(h, _)| *h == head).and_then(|(_, n)| n.parse::<u32>().ok()).unwrap_or(0) + 1;
+    let n = kv
+        .get(NO_OUTPUT_KEY)
+        .and_then(|v| v.split_once(':'))
+        .filter(|(h, _)| *h == head)
+        .and_then(|(_, n)| n.parse::<u32>().ok())
+        .unwrap_or(0)
+        + 1;
     set(&mut kv, NO_OUTPUT_KEY, &format!("{head}:{n}"));
     if save(w, label, c, &kv).is_err() {
         return VM_NO_OUTPUT;
@@ -2752,8 +2969,11 @@ fn faulted_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 
         }
     };
     note_pass_end(c, &ids, PassEnd::Faulted);
-    let suspects: Vec<(&String, usize)> =
-        ids.iter().map(|id| (id, faulted_run(c, id))).filter(|(_, n)| *n >= FAULTED_PASSES_RED).collect();
+    let suspects: Vec<(&String, usize)> = ids
+        .iter()
+        .map(|id| (id, faulted_run(c, id)))
+        .filter(|(_, n)| *n >= FAULTED_PASSES_RED)
+        .collect();
     if suspects.len() == ids.len() && ids.len() > 1 {
         return FAULT;
     }
@@ -2762,11 +2982,25 @@ fn faulted_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 
             "{id} was aboard {n} consecutive passes of {} that ended without a verdict, and no pass without it faulted: the member is the cause, not the infrastructure.\nThe latest pass: {why}",
             c.r.name
         );
-        let rc = eject(w, batch, id, Some(&c.r.name), &Text::Arg(reason), UNIT_RED, true, false, true, "", LeaseCheck::Inside);
+        let rc = eject(
+            w,
+            batch,
+            id,
+            Some(&c.r.name),
+            &Text::Arg(reason),
+            UNIT_RED,
+            true,
+            false,
+            true,
+            "",
+            LeaseCheck::Inside,
+        );
         if rc == OK {
             note_pass_end(c, std::slice::from_ref(id), PassEnd::Ejected);
         } else {
-            w.err(format!("queue.sh {label}: could not eject {id}, {n} faulted passes running (rc={rc})"));
+            w.err(format!(
+                "queue.sh {label}: could not eject {id}, {n} faulted passes running (rc={rc})"
+            ));
         }
     }
     FAULT
@@ -2813,13 +3047,23 @@ pub(super) fn certify(
         }
     };
     let mut over = None;
-    let mut rc = certify_pass(w, label, &c, &path, batch, attest, attested_ran, rehead, &mut over);
+    let mut rc = certify_pass(
+        w,
+        label,
+        &c,
+        &path,
+        batch,
+        attest,
+        attested_ran,
+        rehead,
+        &mut over,
+    );
     while let Some(unreached) = over.take() {
         let _g = match lock(w, label, &c) {
-        Ok(g) => g,
-        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
-        Err(rc) => return rc,
-    };
+            Ok(g) => g,
+            // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+            Err(rc) => return rc,
+        };
         let Ok(mut kv) = load(w, label, &c, batch) else {
             return FAIL;
         };
@@ -2837,7 +3081,17 @@ pub(super) fn certify(
             w.err(format!("queue.sh {label}: FAULT over-cap round={batch} head={head} unreached={unreached} — no member is implicated; re-certifying once"));
             w.out(format!("fault=over-cap unreached={unreached}"));
             drop(_g);
-            rc = certify_pass(w, label, &c, &path, batch, None, attested_ran, None, &mut over);
+            rc = certify_pass(
+                w,
+                label,
+                &c,
+                &path,
+                batch,
+                None,
+                attested_ran,
+                None,
+                &mut over,
+            );
             continue;
         };
         w.err(format!("queue.sh {label}: CAPACITY FAULT over-cap twice round={batch} head={head} unreached={first},{unreached} — no member is implicated, nobody is ejected; the round stays open"));
@@ -2885,10 +3139,10 @@ fn certify_pass(
 
     let (head, wt, run_id, pass) = {
         let _g = match lock(w, label, c) {
-        Ok(g) => g,
-        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
-        Err(rc) => return rc,
-    };
+            Ok(g) => g,
+            // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+            Err(rc) => return rc,
+        };
         let Ok(mut kv) = load(w, label, c, batch) else {
             return FAIL;
         };
@@ -3047,7 +3301,9 @@ fn certify_pass(
                 pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
             );
             let shown = tail(&format!("{}{}", out.out, out.err), 40);
-            w.err(format!("queue.sh {label}: {why}; the round is not judged\n{shown}"));
+            w.err(format!(
+                "queue.sh {label}: {why}; the round is not judged\n{shown}"
+            ));
             return faulted_pass(w, label, c, batch, &format!("{why}\n{shown}"));
         }
     } else if attest.is_none() {
@@ -3208,10 +3464,15 @@ fn certify_pass(
                 pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
             );
             let shown = tail(&out.err, 20);
-            w.err(format!("queue.sh {label}: {why}; the round is not judged\n{shown}"));
+            w.err(format!(
+                "queue.sh {label}: {why}; the round is not judged\n{shown}"
+            ));
             if let Some(f) = vm_named.as_ref().filter(|f| f.cause == why) {
                 w.out(format!("fault={}", one_line(&f.cause)));
-                w.err(format!("queue.sh {label}: the VM script's log, last lines:\n{}", f.tail));
+                w.err(format!(
+                    "queue.sh {label}: the VM script's log, last lines:\n{}",
+                    f.tail
+                ));
                 if let Some(key) = &f.settings_key {
                     return settings_refused(w, label, c, path, batch, f, key);
                 }
@@ -3257,7 +3518,9 @@ fn certify_pass(
     let already_green = reds.is_empty() && phase_of(w, batch) == "green";
     // round-vm records a red that ended the pass before its suites (lint, a fence) itself.
     let judged_red = !reds.is_empty()
-        && reds.iter().all(|r| r == LINT_RED || r.starts_with(FENCE_RED_PREFIX))
+        && reds
+            .iter()
+            .all(|r| r == LINT_RED || r.starts_with(FENCE_RED_PREFIX))
         && phase_of(w, batch) == "attributing"
         && pass.is_some()
         && w.lc.batch_pass(batch).map(|(n, _)| n) == pass;
@@ -3271,7 +3534,7 @@ fn certify_pass(
         raise_unreported_reds(w, c, batch, &kv, &reds);
         let mut judged = kv.clone();
         judged.remove("over-cap");
-    judged.remove(NO_OUTPUT_KEY);
+        judged.remove(NO_OUTPUT_KEY);
         set(&mut judged, "red", &reds.join(","));
         let ride = Ride::with(w, &judged);
         let recorded = (if reds != [BUILD_RED] {
@@ -3279,7 +3542,9 @@ fn certify_pass(
         } else {
             Ok(())
         })
-        .and_then(|()| pass_verdict_event_with(w, batch, &Verdict::Red(&reds, timings), false, &ride));
+        .and_then(|()| {
+            pass_verdict_event_with(w, batch, &Verdict::Red(&reds, timings), false, &ride)
+        });
         if let Err((rc, e)) = recorded {
             w.err(format!("queue.sh {label}: REFUSED — the red pass of round {batch} was not recorded on spira-lc (rc={rc}): {e}"));
             return FAULT;
@@ -3339,17 +3604,7 @@ fn certify_pass(
         return FAIL;
     }
     let wall = timings.suites_s + timings.build_s;
-    finish_green(
-        w,
-        label,
-        c,
-        path,
-        batch,
-        &head,
-        &who,
-        &run_id,
-        (ran, wall),
-    )
+    finish_green(w, label, c, path, batch, &head, &who, &run_id, (ran, wall))
 }
 
 /// A red image preflight is the recipe change's: every member whose diff touches a round-recipe
@@ -3372,7 +3627,8 @@ fn eject_recipe_changers(w: &World, label: &str, c: &Ctx, path: &Path, batch: &s
         return;
     }
     let results = rounds_dir(c).join(format!("{batch}.results"));
-    let Some(output) = suite_output(&results, PREFLIGHT_RED, 0).filter(|o| !o.trim().is_empty()) else {
+    let Some(output) = suite_output(&results, PREFLIGHT_RED, 0).filter(|o| !o.trim().is_empty())
+    else {
         w.err(format!("queue.sh {label}: {PREFLIGHT_RED} is red but left no output in {} — nothing names the evidence, so nobody is ejected; attribute it by hand", results.display()));
         return;
     };
@@ -3392,12 +3648,26 @@ fn eject_recipe_changers(w: &World, label: &str, c: &Ctx, path: &Path, batch: &s
             "{PREFLIGHT_RED} went red in round {batch}, and {id} changes the round recipe ({}).\n\n{evidence}",
             touched.join(", ")
         );
-        let rc = eject(w, batch, &id, Some(&c.r.name), &Text::Arg(reason), PREFLIGHT_RED, true, false, true, "", LeaseCheck::Inside);
+        let rc = eject(
+            w,
+            batch,
+            &id,
+            Some(&c.r.name),
+            &Text::Arg(reason),
+            PREFLIGHT_RED,
+            true,
+            false,
+            true,
+            "",
+            LeaseCheck::Inside,
+        );
         if rc == OK {
             note_pass_end(c, std::slice::from_ref(&id), PassEnd::Ejected);
             ejected.push(id);
         } else {
-            w.err(format!("queue.sh {label}: could not eject {id} for the red {PREFLIGHT_RED} (rc={rc})"));
+            w.err(format!(
+                "queue.sh {label}: could not eject {id} for the red {PREFLIGHT_RED} (rc={rc})"
+            ));
         }
     }
     if !ejected.is_empty() {
@@ -3752,7 +4022,13 @@ fn eject(
         }
         drop_or_warn(w, label, &c, batch, "emptied");
         remove_unheld_tree(w, &c, &path, &wt, batch);
-        finish(w, &c, batch, End::Abandoned("emptied"), &format!("{id} ejected, no member remains"));
+        finish(
+            w,
+            &c,
+            batch,
+            End::Abandoned("emptied"),
+            &format!("{id} ejected, no member remains"),
+        );
         stage::discard_behind(w, &c, &path, batch, &format!("round {batch} was emptied"));
         w.out(format!(
             "queue.sh {label}: ejected {id}; the round {batch} has no member left and is closed"
@@ -3780,7 +4056,9 @@ fn eject(
         label,
         batch,
         "the rebuilt head",
-        pass_event_with(w, batch, &ride, |s, _, _| (s == "ATTRIBUTING").then_some(rebuilt)),
+        pass_event_with(w, batch, &ride, |s, _, _| {
+            (s == "ATTRIBUTING").then_some(rebuilt)
+        }),
     );
     if ride.save_rest(w, label, &c, &kv).is_err() {
         return FAIL;
@@ -3817,12 +4095,17 @@ fn carry_mends(
     let members = kv.members();
     let beads: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
     let recorded = w.lc.mend_tips(&beads).map_err(|e| {
-        w.err(format!("queue.sh {label}: cannot read the recorded mends: {e}"));
+        w.err(format!(
+            "queue.sh {label}: cannot read the recorded mends: {e}"
+        ));
     })?;
     let carried: Vec<Member> = members
         .iter()
         .map(|m| Member {
-            tip: recorded.get(&m.id).cloned().unwrap_or_else(|| m.tip.clone()),
+            tip: recorded
+                .get(&m.id)
+                .cloned()
+                .unwrap_or_else(|| m.tip.clone()),
             ..m.clone()
         })
         .collect();
@@ -3832,7 +4115,9 @@ fn carry_mends(
     let old_head = kv.get("head").unwrap_or("").to_string();
     let base = kv.get("base").unwrap_or("").to_string();
     let new_head = assemble(w, c, path, wt, &base, &carried, &old_head).map_err(|why| {
-        w.err(format!("queue.sh {label}: cannot rebuild the round with its mended tips: {why} — refused"));
+        w.err(format!(
+            "queue.sh {label}: cannot rebuild the round with its mended tips: {why} — refused"
+        ));
     })?;
     set(kv, "members", &render_members(&carried));
     set(kv, "head", &new_head);
@@ -3843,7 +4128,9 @@ fn carry_mends(
         label,
         batch,
         "the rebuilt head",
-        pass_event_with(w, batch, &ride, |s, _, _| (s == "ATTRIBUTING").then_some(rebuilt)),
+        pass_event_with(w, batch, &ride, |s, _, _| {
+            (s == "ATTRIBUTING").then_some(rebuilt)
+        }),
     );
     w.out(format!(
         "queue.sh {label}: round {batch} rebuilt at {new_head} with its mended tips"
@@ -3909,10 +4196,10 @@ fn preempt(
 
     let (wt, head, tips) = {
         let _g = match lock(w, label, &c) {
-        Ok(g) => g,
-        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
-        Err(rc) => return rc,
-    };
+            Ok(g) => g,
+            // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+            Err(rc) => return rc,
+        };
         let Ok(kv) = load(w, label, &c, batch) else {
             return FAIL;
         };
@@ -3984,10 +4271,10 @@ fn preempt(
 
     {
         let _g = match lock(w, label, &c) {
-        Ok(g) => g,
-        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
-        Err(rc) => return rc,
-    };
+            Ok(g) => g,
+            // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+            Err(rc) => return rc,
+        };
         let Ok(mut kv) = load(w, label, &c, batch) else {
             return FAIL;
         };
@@ -4235,7 +4522,10 @@ fn land(w: &World, batch: &str, repo: Option<&str>, token: Option<&str>) -> i32 
             rc
         }
         Err((why, rc)) if text.is_empty() => {
-            w.io.err(&format!("{}: queue.sh round land: {batch} not landed\n", why.word()));
+            w.io.err(&format!(
+                "{}: queue.sh round land: {batch} not landed\n",
+                why.word()
+            ));
             why.exit(rc)
         }
         Err((why, rc)) => {
@@ -4260,7 +4550,9 @@ fn landed_head(w: &World, c: &Ctx, path: &Path, batch: &str) -> Option<String> {
         .filter_map(|l| l.split(" head=").nth(1)?.split(' ').next())
         .next_back()?;
     let base = c.r.landref.clone()?;
-    w.git.is_ancestor(path, head, &base).then(|| head.to_string())
+    w.git
+        .is_ancestor(path, head, &base)
+        .then(|| head.to_string())
 }
 
 /// `Err` is a refusal that landed nothing; `Ok` is the exit of a land that ran.
@@ -4279,7 +4571,9 @@ fn land_round(
         return Err(refused(FAIL));
     }
     if let Some(head) = landed_head(w, &c, &path, batch) {
-        w.out(format!("queue.sh {label}: round {batch} already landed at {head}"));
+        w.out(format!(
+            "queue.sh {label}: round {batch} already landed at {head}"
+        ));
         return Ok(OK);
     }
     LeaseCheck::Check(token)
@@ -4366,7 +4660,13 @@ fn land_round(
         Some(super::deploy::Outcome::Fault(_)) => (super::DEPLOY_FAULT, End::DeployFault),
         _ => (rc, End::Landed),
     };
-    finish(w, &c, batch, end, &format!("{head} members={}", csv(&members)));
+    finish(
+        w,
+        &c,
+        batch,
+        end,
+        &format!("{head} members={}", csv(&members)),
+    );
     if !recorded {
         w.err(format!("queue.sh {label}: round {batch} has NO batch landing record; the release is live — exiting non-zero"));
         return Ok(if rc == OK { FAIL } else { rc });
@@ -4376,7 +4676,10 @@ fn land_round(
 
 /// The parent a stacked round waited on has ended: its certify lock goes once spira-lc says so.
 fn settled_parent(w: &World, c: &Ctx, parent: &str) {
-    if w.lc.batch_state(parent).is_some_and(|(s, _)| super::reconcile::terminal(&s)) {
+    if w.lc
+        .batch_state(parent)
+        .is_some_and(|(s, _)| super::reconcile::terminal(&s))
+    {
         crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, parent);
     }
 }
@@ -4544,7 +4847,14 @@ fn requeue_stranded(w: &World, label: &str, id: &str, tip: &str) -> Option<Strin
     None
 }
 
-fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Option<&str>, cause: &str) -> i32 {
+fn abandon(
+    w: &World,
+    batch: &str,
+    repo: Option<&str>,
+    reason: &Text,
+    token: Option<&str>,
+    cause: &str,
+) -> i32 {
     let label = "round abandon";
     let reason = read_text(w, reason).unwrap_or_default();
     if reason.trim().is_empty() {
@@ -4596,11 +4906,17 @@ const ABANDON_CONSIDERED_ENV: &str = "QUEUE_ABANDON_CONSIDERED";
 /// the lifecycle records it on the round's abandon event. Returns the reason to record.
 fn considered_abandon(w: &World, label: &str, kv: &Kv, reason: String) -> Result<String, i32> {
     let members = kv.members();
-    let Some(red) = kv.get("red").filter(|r| !r.is_empty() && members.len() > 1 && !vm_never_started(kv)) else {
+    let Some(red) = kv
+        .get("red")
+        .filter(|r| !r.is_empty() && members.len() > 1 && !vm_never_started(kv))
+    else {
         return Ok(reason);
     };
     if let Some(why) = w.var(ABANDON_CONSIDERED_ENV) {
-        return Ok(format!("{ABANDON_CONSIDERED_ENV}: {} — {reason}", one_line(&why)));
+        return Ok(format!(
+            "{ABANDON_CONSIDERED_ENV}: {} — {reason}",
+            one_line(&why)
+        ));
     }
     let batch = kv.get("batch_id").unwrap_or("");
     let ids: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
@@ -4618,7 +4934,10 @@ fn considered_abandon(w: &World, label: &str, kv: &Kv, reason: String) -> Result
 /// holds the queue lock; `Err` when any could not be voided.
 fn void_stacked(w: &World, label: &str, c: &Ctx, path: &Path, parent: &str) -> Result<(), i32> {
     let children: Vec<Kv> = match live_records(w, c) {
-        Ok(open) => open.into_iter().filter(|kv| kv.get("parent") == Some(parent)).collect(),
+        Ok(open) => open
+            .into_iter()
+            .filter(|kv| kv.get("parent") == Some(parent))
+            .collect(),
         Err(e) => {
             w.err(format!("queue.sh {label}: cannot tell which rounds are stacked on the closed round {parent}: {e} — void them by hand"));
             return Err(FAIL);
@@ -4637,7 +4956,15 @@ fn void_stacked(w: &World, label: &str, c: &Ctx, path: &Path, parent: &str) -> R
     rc
 }
 
-fn close_abandoned(w: &World, label: &str, c: &Ctx, path: &Path, kv: &Kv, reason: &str, cause: &str) -> i32 {
+fn close_abandoned(
+    w: &World,
+    label: &str,
+    c: &Ctx,
+    path: &Path,
+    kv: &Kv,
+    reason: &str,
+    cause: &str,
+) -> i32 {
     let batch = kv.get("batch_id").unwrap_or("");
     let members = kv.members();
     let stopped = match w.scripts.stop_round_legs(&c.r.name, batch) {
@@ -4650,7 +4977,10 @@ fn close_abandoned(w: &World, label: &str, c: &Ctx, path: &Path, kv: &Kv, reason
     let reason = &match stopped.is_empty() {
         true => reason.to_string(),
         false => {
-            w.out(format!("queue.sh {label}: stopped {} of round {batch}", stopped.join(" ")));
+            w.out(format!(
+                "queue.sh {label}: stopped {} of round {batch}",
+                stopped.join(" ")
+            ));
             format!("{reason} — stopped {}", stopped.join(" "))
         }
     };

@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 use super::round::{
     assemble, certify, csv, finish, handle_of, live_records, local_ctx, lock, mark_running,
-    phase_of, phase_reds, record_of, rounds_dir, set, suite_statuses, tail, Ride,
-    unjudgeable, BLOCKING, BUILD_RED, LC_ACTOR, UNIT_RED,
+    phase_of, phase_reds, record_of, rounds_dir, set, suite_statuses, tail, unjudgeable, Ride,
+    BLOCKING, BUILD_RED, LC_ACTOR, UNIT_RED,
 };
 use super::{
     actor, idents, landing_log, lc_cas, read_text, require_lc, Ctx, World, FAIL, OK, USAGE,
@@ -303,10 +303,10 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
     }
     let (batch, head, wt) = {
         let _g = match lock(w, label, &c) {
-        Ok(g) => g,
-        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
-        Err(rc) => return rc,
-    };
+            Ok(g) => g,
+            // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+            Err(rc) => return rc,
+        };
         let Some(mut kv) = staged_record(&c) else {
             w.err(format!(
                 "queue.sh {label}: no staged round for {}",
@@ -317,7 +317,9 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
         let parent = kv.get("parent").unwrap_or("").to_string();
         match record_of(w, &c, &parent) {
             Err(e) => {
-                w.err(format!("queue.sh {label}: cannot tell whether {parent} is still open: {e} — refused"));
+                w.err(format!(
+                    "queue.sh {label}: cannot tell whether {parent} is still open: {e} — refused"
+                ));
                 return FAIL;
             }
             Ok(Some(_)) if phase_of(w, &parent) == "green" => {}
@@ -501,7 +503,13 @@ pub(super) fn discard_staged(
         .worktree_remove(path, &PathBuf::from(kv.get("worktree").unwrap_or("")));
     w.git.branch_delete_sanctioned(path, &branch_of(&batch));
     crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, &batch);
-    finish(w, c, &batch, super::round::End::Abandoned("discarded"), reason);
+    finish(
+        w,
+        c,
+        &batch,
+        super::round::End::Abandoned("discarded"),
+        reason,
+    );
     landing_log(
         &c.s.run,
         &format!(
@@ -583,10 +591,10 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
     let repo_name = c.r.name.clone();
     let (batch, head, members, attested_from) = {
         let _g = match lock(w, label, &c) {
-        Ok(g) => g,
-        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
-        Err(rc) => return rc,
-    };
+            Ok(g) => g,
+            // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+            Err(rc) => return rc,
+        };
         let Some(kv) = staged_record(&c) else {
             w.err(format!("queue.sh {label}: no staged round for {repo_name}"));
             return FAIL;
@@ -596,7 +604,9 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
         let running = match record_of(w, &c, &parent) {
             Ok(r) => r,
             Err(e) => {
-                w.err(format!("queue.sh {label}: cannot tell whether {parent} is still open: {e} — refused"));
+                w.err(format!(
+                    "queue.sh {label}: cannot tell whether {parent} is still open: {e} — refused"
+                ));
                 return FAIL;
             }
         };
@@ -700,7 +710,9 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
         round.push("actor", &actor(w));
         round.push("opened", &now);
         let ride = Ride::with(w, &round);
-        if let Err((rc, out)) = ride.sent(w.lc.promote(&batch, &head, &base_sha, LC_ACTOR, ride.fields())) {
+        if let Err((rc, out)) =
+            ride.sent(w.lc.promote(&batch, &head, &base_sha, LC_ACTOR, ride.fields()))
+        {
             w.err(format!("queue.sh {label}: spira-lc promote refused for {batch} (rc={rc}): {out} — the staged round is left as it was"));
             return FAIL;
         }
@@ -728,7 +740,10 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
         w.git.branch_delete_sanctioned(&path, &branch_of(&batch));
         mark_running(&c, &batch);
         landing_log(&c.s.run, &format!("QUEUE ROUND-PROMOTE {now} repo={repo_name} batch={batch} head={head} base={base_sha} members={}", csv(&admitted)));
-        let members: Vec<_> = admitted.iter().map(|m| serde_json::json!({"id": m.id, "tip": m.tip})).collect();
+        let members: Vec<_> = admitted
+            .iter()
+            .map(|m| serde_json::json!({"id": m.id, "tip": m.tip}))
+            .collect();
         (batch, head, members, attested_from)
     };
 

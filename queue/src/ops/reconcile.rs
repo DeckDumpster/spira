@@ -4,10 +4,10 @@
 
 use std::path::Path;
 
+use super::forge_batch::Open;
 use super::{idents, landing_log, lc_abandon, Ctx, World, FAIL, OK};
 use crate::ident::bounded_text;
 use crate::model::Member;
-use super::forge_batch::Open;
 use crate::records::{one_line, Kv};
 
 const ALERT_KEY: &str = "reconcile_alert";
@@ -283,7 +283,10 @@ fn abandon(
     archived.push("reason", &one_line(why));
     archived.push("actor", "reconcile");
     let archive = format!("closed-pr{pr}-{}", w.clock.stamp());
-    if file.archive(w, c, &archived, &archive, "abandoned").is_err() {
+    if file
+        .archive(w, c, &archived, &archive, "abandoned")
+        .is_err()
+    {
         return cannot_act(w, c, file, kv, "the open record could not be archived");
     }
     landing_log(

@@ -190,7 +190,12 @@ pub(super) fn file(
         .filter(|l| !l.is_empty())
         .map(|l| format!("{l},"))
         .unwrap_or_default();
-    let Some(plan) = w.env.config("SPIRA_PLAN_LABEL").ok().filter(|l| !l.is_empty()) else {
+    let Some(plan) = w
+        .env
+        .config("SPIRA_PLAN_LABEL")
+        .ok()
+        .filter(|l| !l.is_empty())
+    else {
         w.err(format!(
             "queue.sh {label}: WARNING — the integration bead for {list} was not filed: SPIRA_PLAN_LABEL is unset, so no builder could claim it; the collision stays on today's path"
         ));

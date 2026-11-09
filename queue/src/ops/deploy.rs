@@ -85,7 +85,10 @@ fn args(v: &[&str]) -> Vec<String> {
 /// commit that is about to ship, so a fix to how releases are BUILT can deploy itself. A
 /// bin-dir without one is a refusal, never another release's binary. With no bin-dir, the
 /// declared release's own (`$SPIRA_RELEASE`).
-fn release_bin(bins: Option<&Path>, declared: impl FnOnce() -> Result<PathBuf, String>) -> Result<PathBuf, String> {
+fn release_bin(
+    bins: Option<&Path>,
+    declared: impl FnOnce() -> Result<PathBuf, String>,
+) -> Result<PathBuf, String> {
     match bins {
         Some(dir) => {
             let candidate = dir.join("release");
@@ -286,13 +289,24 @@ mod release_bin_tests {
 
     #[test]
     fn a_bin_dir_without_a_release_binary_refuses_naming_it() {
-        let e = release_bin(Some(Path::new("/nonexistent/bins")), || Ok(PathBuf::from("/unused"))).unwrap_err();
-        assert!(e.contains("no release binary at /nonexistent/bins/release"), "{e}");
+        let e = release_bin(Some(Path::new("/nonexistent/bins")), || {
+            Ok(PathBuf::from("/unused"))
+        })
+        .unwrap_err();
+        assert!(
+            e.contains("no release binary at /nonexistent/bins/release"),
+            "{e}"
+        );
     }
 
     #[test]
     fn no_bin_dir_runs_the_declared_releases_own_binary() {
-        assert_eq!(release_bin(None, || Ok(PathBuf::from("/r/bin/release"))).unwrap(), PathBuf::from("/r/bin/release"));
-        assert!(release_bin(None, || Err("SPIRA_RELEASE is not set".into())).unwrap_err().contains("SPIRA_RELEASE"));
+        assert_eq!(
+            release_bin(None, || Ok(PathBuf::from("/r/bin/release"))).unwrap(),
+            PathBuf::from("/r/bin/release")
+        );
+        assert!(release_bin(None, || Err("SPIRA_RELEASE is not set".into()))
+            .unwrap_err()
+            .contains("SPIRA_RELEASE"));
     }
 }

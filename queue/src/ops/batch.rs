@@ -314,7 +314,10 @@ pub fn eject(
     if let Some(o) = &open {
         if let Err(e) = o.remove(w, &c, "ejected") {
             failed = true;
-            w.err(format!("queue.sh eject: the batch record ({}) could not be closed: {e}", o.place()));
+            w.err(format!(
+                "queue.sh eject: the batch record ({}) could not be closed: {e}",
+                o.place()
+            ));
         }
     }
 
@@ -499,8 +502,13 @@ fn abandon_locked(
             "dry-run: would cancel non-completed Gate run(s) for branch {branch}"
         ));
         match &open.at {
-            super::forge_batch::At::File(_) => w.out(format!("dry-run: archive path: {}", c.queue_file(&archive).display())),
-            super::forge_batch::At::Store(id) => w.out(format!("dry-run: would end batch record {id}")),
+            super::forge_batch::At::File(_) => w.out(format!(
+                "dry-run: archive path: {}",
+                c.queue_file(&archive).display()
+            )),
+            super::forge_batch::At::Store(id) => {
+                w.out(format!("dry-run: would end batch record {id}"))
+            }
         }
         w.out(format!(
             "dry-run: audit line (landing.log): QUEUE ABANDON {} repo={} pr={pr} actor={actor} members={audit} reason={reason_clean}",
@@ -560,7 +568,9 @@ fn abandon_locked(
     archived.push("reason", &reason_clean);
     archived.push("actor", actor);
     if let Err(e) = open.archive(w, c, &archived, &archive, "abandoned") {
-        w.err(format!("queue.sh {label}: failed to archive open record: {e}"));
+        w.err(format!(
+            "queue.sh {label}: failed to archive open record: {e}"
+        ));
         return FAIL;
     }
     landing_log(
@@ -890,12 +900,28 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
             return FAIL;
         }
         let Some(head) = w.git.rev_parse(&path, given) else {
-            w.err(format!("queue.sh open-batch: cannot resolve the head {given} — nothing cut"));
+            w.err(format!(
+                "queue.sh open-batch: cannot resolve the head {given} — nothing cut"
+            ));
             return FAIL;
         };
-        let members: Vec<Member> = admitted.into_iter().map(|(id, tip)| Member { id, tip }).collect();
+        let members: Vec<Member> = admitted
+            .into_iter()
+            .map(|(id, tip)| Member { id, tip })
+            .collect();
         let provisional = provisional.join(" ");
-        return publish(w, &c, &path, a, &members, &head, None, &base_sha, &actor, &provisional);
+        return publish(
+            w,
+            &c,
+            &path,
+            a,
+            &members,
+            &head,
+            None,
+            &base_sha,
+            &actor,
+            &provisional,
+        );
     }
     let wt =
         c.s.run
@@ -952,7 +978,18 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
         .cloned()
         .collect::<Vec<_>>()
         .join(" ");
-    publish(w, &c, &path, a, &members, &head, Some(&wt), &base_sha, &actor, &provisional)
+    publish(
+        w,
+        &c,
+        &path,
+        a,
+        &members,
+        &head,
+        Some(&wt),
+        &base_sha,
+        &actor,
+        &provisional,
+    )
 }
 
 /// The rest of `batch open` once its members and head are settled: the dry run, the forge's
@@ -1051,13 +1088,17 @@ fn publish(
         given => match read_text(w, given) {
             Ok(b) => b,
             Err(e) => {
-                w.err(format!("queue.sh open-batch: cannot read the PR body: {e} — nothing pushed"));
+                w.err(format!(
+                    "queue.sh open-batch: cannot read the PR body: {e} — nothing pushed"
+                ));
                 w.git.branch_delete(path, &batch_br);
                 return FAIL;
             }
         },
     };
-    let lc_id = a.name.map_or_else(|| format!("{name}-{stamp}"), str::to_string);
+    let lc_id = a
+        .name
+        .map_or_else(|| format!("{name}-{stamp}"), str::to_string);
     let csv = members
         .iter()
         .map(Member::render)
@@ -1137,11 +1178,20 @@ impl PrRequest<'_> {
         if !w.lib.push(self.path, self.remote, &spec) {
             return Err(format!("could not push {}", self.branch));
         }
-        let pr = match w.forge.pr_create(&c.s.forge, self.path, self.branch, self.base_branch, self.title, self.body) {
+        let pr = match w.forge.pr_create(
+            &c.s.forge,
+            self.path,
+            self.branch,
+            self.base_branch,
+            self.title,
+            self.body,
+        ) {
             Ok(pr) => pr,
             Err(e) => {
                 let on_branch = w.forge.queue_prs(&c.s.forge, self.path).and_then(|prs| {
-                    prs.into_iter().find(|(_, b)| b == self.branch).map(|(n, _)| n)
+                    prs.into_iter()
+                        .find(|(_, b)| b == self.branch)
+                        .map(|(n, _)| n)
                 });
                 match on_branch {
                     Some(n) => {
@@ -1181,12 +1231,25 @@ fn open_on_store(
     use super::forge_batch::{ARMED, OPEN, OPENING, PHASE};
     let name = c.r.name.as_str();
     rec.push(PHASE, OPENING);
-    if let Err((rc, out)) = cut_settled(w, lc_id, name, p.head, base_sha, csv, "queue.sh", Some(&rec)) {
-        w.err(format!("queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out} — no PR opened"));
+    if let Err((rc, out)) = cut_settled(
+        w,
+        lc_id,
+        name,
+        p.head,
+        base_sha,
+        csv,
+        "queue.sh",
+        Some(&rec),
+    ) {
+        w.err(format!(
+            "queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out} — no PR opened"
+        ));
         w.git.branch_delete(p.path, p.branch);
         return Err(());
     }
-    w.out(format!("queue.sh open-batch: {lc_id} recorded on the control store (forge.phase=opening)"));
+    w.out(format!(
+        "queue.sh open-batch: {lc_id} recorded on the control store (forge.phase=opening)"
+    ));
     let left_opening = |why: &str| {
         w.err(format!("queue.sh open-batch: {why} — batch {lc_id} stays forge.phase=opening; `queue batch sweep --repo {name}` adopts its PR or releases it once its lease TTL has passed"));
     };
@@ -1273,7 +1336,9 @@ fn open_with_file(
         undo("open-batch could not record the batch it cut");
         return Err(());
     }
-    w.out(format!("queue.sh open-batch: {lc_id} cut on spira-lc (version={version})"));
+    w.out(format!(
+        "queue.sh open-batch: {lc_id} cut on spira-lc (version={version})"
+    ));
     Ok((pr, armed))
 }
 
@@ -1283,14 +1348,19 @@ pub fn batch_show(w: &World, repo: Option<&str>) -> i32 {
     let Ok(c) = resolve(w, "batch show", repo) else {
         return FAIL;
     };
-    match super::forge_batch::read(w, &c).and_then(|o| o.map(|o| super::forge_batch::shown(&c, &o)).transpose()) {
+    match super::forge_batch::read(w, &c)
+        .and_then(|o| o.map(|o| super::forge_batch::shown(&c, &o)).transpose())
+    {
         Ok(Some(kv)) => {
             w.io.out(&kv.render());
             OK
         }
         Ok(None) => OK,
         Err(e) => {
-            w.err(format!("queue.sh batch show: cannot tell whether {} has an open batch: {e}", c.r.name));
+            w.err(format!(
+                "queue.sh batch show: cannot tell whether {} has an open batch: {e}",
+                c.r.name
+            ));
             FAIL
         }
     }
@@ -1304,11 +1374,19 @@ pub fn batch_show_ended(w: &World, repo: Option<&str>, n: usize) -> i32 {
     };
     match super::forge_batch::ended(w, &c, n) {
         Ok(records) => {
-            w.io.out(&records.iter().map(|kv| format!("{}\n", kv.render())).collect::<String>());
+            w.io.out(
+                &records
+                    .iter()
+                    .map(|kv| format!("{}\n", kv.render()))
+                    .collect::<String>(),
+            );
             OK
         }
         Err(e) => {
-            w.err(format!("queue.sh batch show: cannot read {}'s ended batches: {e}", c.r.name));
+            w.err(format!(
+                "queue.sh batch show: cannot read {}'s ended batches: {e}",
+                c.r.name
+            ));
             FAIL
         }
     }
@@ -1370,28 +1448,39 @@ pub(super) fn sweep_locked(w: &World, c: &super::Ctx, path: &std::path::Path) ->
     let ttl = match w.env.config(LEASE_TTL_KEY).map(|v| v.trim().parse::<u64>()) {
         Ok(Ok(t)) => t,
         Ok(Err(e)) => {
-            w.err(format!("queue.sh {LABEL}: {LEASE_TTL_KEY} does not parse as seconds ({e}) — nothing swept"));
+            w.err(format!(
+                "queue.sh {LABEL}: {LEASE_TTL_KEY} does not parse as seconds ({e}) — nothing swept"
+            ));
             return FAIL;
         }
         Err(e) => {
-            w.err(format!("queue.sh {LABEL}: {LEASE_TTL_KEY} does not resolve ({e}) — nothing swept"));
+            w.err(format!(
+                "queue.sh {LABEL}: {LEASE_TTL_KEY} does not resolve ({e}) — nothing swept"
+            ));
             return FAIL;
         }
     };
     let live = match super::forge_batch::live(w, c) {
         Ok(l) => l,
         Err(e) => {
-            w.err(format!("queue.sh {LABEL}: cannot tell which batches {name} has open: {e} — nothing swept"));
+            w.err(format!(
+                "queue.sh {LABEL}: cannot tell which batches {name} has open: {e} — nothing swept"
+            ));
             return FAIL;
         }
     };
     let Some(prs) = w.forge.queue_prs(&c.s.forge, path) else {
-        w.err(format!("queue.sh {LABEL}: the forge cannot list {name}'s spira/queue/* PRs — nothing swept"));
+        w.err(format!(
+            "queue.sh {LABEL}: the forge cannot list {name}'s spira/queue/* PRs — nothing swept"
+        ));
         return FAIL;
     };
     let mut rc = OK;
     for (pr, branch) in &prs {
-        if live.iter().any(|b| b.kv.get("branch") == Some(branch.as_str())) {
+        if live
+            .iter()
+            .any(|b| b.kv.get("branch") == Some(branch.as_str()))
+        {
             continue;
         }
         if idents(w, LABEL, &[("pr", pr), ("branch", branch)]).is_err() {
@@ -1412,7 +1501,10 @@ pub(super) fn sweep_locked(w: &World, c: &super::Ctx, path: &std::path::Path) ->
         }
         match w.lc.round_lease(name, &b.id) {
             Err(e) => {
-                w.err(format!("queue.sh {LABEL}: cannot tell whether batch {} is leased: {e} — left as it is", b.id));
+                w.err(format!(
+                    "queue.sh {LABEL}: cannot tell whether batch {} is leased: {e} — left as it is",
+                    b.id
+                ));
                 rc = FAIL;
                 continue;
             }
@@ -1441,7 +1533,10 @@ pub(super) fn sweep_locked(w: &World, c: &super::Ctx, path: &std::path::Path) ->
                 }
             }
             None => {
-                let why = bounded_text(&format!("batch open left {} opening for {age}s with no PR on {branch}", b.id));
+                let why = bounded_text(&format!(
+                    "batch open left {} opening for {age}s with no PR on {branch}",
+                    b.id
+                ));
                 match lc_abandon(w, &b.id, "queue.sh", &why) {
                     Ok(()) => {
                         w.out(format!("queue.sh {LABEL}: released batch {} — no PR exists on {branch}; its members go back to the pool", b.id));

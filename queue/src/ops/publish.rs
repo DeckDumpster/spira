@@ -222,10 +222,11 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
     }
 
     if push_mode {
-        if !w
-            .lib
-            .push(&path, &remote, &format!("{head_sha}:refs/heads/{forge_branch}"))
-        {
+        if !w.lib.push(
+            &path,
+            &remote,
+            &format!("{head_sha}:refs/heads/{forge_branch}"),
+        ) {
             w.err(format!(
                 "queue.sh publish: could not push {head_sha} to {remote}/{forge_branch}"
             ));
@@ -485,7 +486,10 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
         }
     };
     if c.r.publish_mode == PublishMode::Push {
-        w.out(format!("{} publish-settle {name}: publish mode is push -> Open", w.clock.now()));
+        w.out(format!(
+            "{} publish-settle {name}: publish mode is push -> Open",
+            w.clock.now()
+        ));
         return publish_with(w, Some(&name), true);
     }
     let pfile = c.queue_file("publish");
@@ -740,7 +744,11 @@ fn progress_live(run: &std::path::Path, now: u64) -> Option<Place> {
     if !live || now.saturating_sub(at) >= PROGRESS_FRESH_SECS {
         return None;
     }
-    Some(if v["place"].as_str() == Some("ec2") { Place::Ec2 } else { Place::Local })
+    Some(if v["place"].as_str() == Some("ec2") {
+        Place::Ec2
+    } else {
+        Place::Local
+    })
 }
 
 fn observe(w: &World, c: &Ctx, path: &std::path::Path, kv: &Kv) -> Pr {

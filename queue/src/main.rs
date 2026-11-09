@@ -37,7 +37,13 @@ fn main() -> ExitCode {
     // spira-lc and the forge are configured by conf.sh; resolve once for them.
     let (bd, lc) = match queue::ports::Lib::context(&lib, None) {
         Ok((s, _)) => (
-            RealBd { lc: s.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string()).and_then(|b| spira_config::lc_call::LcClient::for_bin(&b.to_string_lossy())) },
+            RealBd {
+                lc: s
+                    .lc_bin
+                    .as_ref()
+                    .ok_or_else(|| "no spira-lc program".to_string())
+                    .and_then(|b| spira_config::lc_call::LcClient::for_bin(&b.to_string_lossy())),
+            },
             RealLc::configured(s.lc_bin.clone()),
         ),
         Err(e) => {

@@ -224,13 +224,17 @@ fn land_by_lint(w: &World, c: &Ctx, path: &std::path::Path, id: &str, tip: &str)
     };
     let verdicts = super::land::verdicts_dir(w, &c.s);
     if let Err(e) = gate::cert::write(&verdicts, &cert) {
-        w.err(format!("queue.sh submit: cannot record the lint-only certificate: {e} — refused"));
+        w.err(format!(
+            "queue.sh submit: cannot record the lint-only certificate: {e} — refused"
+        ));
         return Some(FAIL);
     }
     if lc_certify(w, id, tip).is_err() {
         return Some(FAIL);
     }
-    w.out(format!("queue.sh submit: {id} is text-only: lands by lint, no round"));
+    w.out(format!(
+        "queue.sh submit: {id} is text-only: lands by lint, no round"
+    ));
     Some(super::land::land_local(
         w,
         Some(&c.r.name),
@@ -257,7 +261,9 @@ fn checks_proven(
     let mut unverified = Vec::new();
     for check in proof::unproven(run, id, tip) {
         if super::round::ROUND_ONLY_STEPS.contains(&check.as_str()) || check.starts_with("fence-") {
-            notes.push(format!("queue.sh {verb}: {check} passes only in the round that carries {tip}"));
+            notes.push(format!(
+                "queue.sh {verb}: {check} passes only in the round that carries {tip}"
+            ));
             continue;
         }
         let first_check = !proof::recorded(run, id, tip, &check);
@@ -289,7 +295,10 @@ fn checks_proven(
         notes.extend(failed);
         w.err(format!("queue.sh {verb}: {id} was ejected for failing checks that still do not pass at {tip} — refused:\n  {}", notes.join("\n  ")));
         if !unverified.is_empty() {
-            w.err(format!("queue.sh {verb}: checks not verified:\n  {}", unverified.join("\n  ")));
+            w.err(format!(
+                "queue.sh {verb}: checks not verified:\n  {}",
+                unverified.join("\n  ")
+            ));
         }
     } else {
         notes.extend(unverified);
@@ -878,7 +887,10 @@ pub fn rework(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) 
     let rounds = match super::round::live_records(w, &c) {
         Ok(r) => r,
         Err(e) => {
-            w.err(format!("queue.sh rework: cannot tell which rounds are open for {}: {e} — refused", c.r.name));
+            w.err(format!(
+                "queue.sh rework: cannot tell which rounds are open for {}: {e} — refused",
+                c.r.name
+            ));
             return FAIL;
         }
     };

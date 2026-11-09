@@ -157,7 +157,9 @@ pub fn converge_orphans(w: &World) {
         if attempt > 0 {
             w.clock.sleep(u64::from(attempt));
         }
-        last = w.lc.requeue_orphans("queue.sh", &|repo, batch| w.scripts.round_legs_live(repo, batch));
+        last = w.lc.requeue_orphans("queue.sh", &|repo, batch| {
+            w.scripts.round_legs_live(repo, batch)
+        });
         if !matches!(&last, Err(e) if timed_out(e)) {
             break;
         }

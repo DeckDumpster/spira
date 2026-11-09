@@ -379,7 +379,8 @@ fn parse_batch_open(cmd: &str, args: &[String]) -> Result<Cmd, Usage> {
     let mut w = Walk { cmd, args, i: 0 };
     let (mut repo, mut members, mut skip_pregate, mut dry_run, mut replace, mut reason) =
         (None, Text::None, false, false, false, Text::None);
-    let (mut head, mut body, mut name, mut lease_token, mut owner) = (None, Text::None, None, None, None);
+    let (mut head, mut body, mut name, mut lease_token, mut owner) =
+        (None, Text::None, None, None, None);
     while let Some(t) = w.next() {
         match t {
             Tok::Opt(k, v) if members_opt(&mut w, k, v.clone(), &mut members) => {}
@@ -398,7 +399,9 @@ fn parse_batch_open(cmd: &str, args: &[String]) -> Result<Cmd, Usage> {
         }
     }
     if lease_token.is_some() && name.is_none() {
-        return Err(Usage(format!("queue.sh {cmd}: --lease-token needs --name: the lease is on the batch it names")));
+        return Err(Usage(format!(
+            "queue.sh {cmd}: --lease-token needs --name: the lease is on the batch it names"
+        )));
     }
     if head.is_some() && members.is_none() {
         return Err(Usage(format!("queue.sh {cmd}: --head needs --members: the head is the merge of exactly the members named")));
@@ -529,9 +532,14 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
         }),
         "sweep-locks" => {
             if all == repo_opt.is_some() || pos.next().is_some() {
-                return Err(Usage("queue.sh round sweep-locks: give exactly one of --repo <repo> or --all".into()));
+                return Err(Usage(
+                    "queue.sh round sweep-locks: give exactly one of --repo <repo> or --all".into(),
+                ));
             }
-            Ok(Round::SweepLocks { repo: repo_opt, all })
+            Ok(Round::SweepLocks {
+                repo: repo_opt,
+                all,
+            })
         }
         "preempt" => {
             if eject.split(',').all(str::is_empty) {
@@ -747,7 +755,11 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
                         Tok::Opt("repo", v) => repo = Some(w.value(v)),
                         Tok::Opt("ended", v) if verb == "show" => {
                             let n = w.value(v);
-                            ended = Some(n.parse::<usize>().map_err(|_| Usage(format!("queue.sh batch show: --ended takes a count, not {n:?}")))?);
+                            ended = Some(n.parse::<usize>().map_err(|_| {
+                                Usage(format!(
+                                    "queue.sh batch show: --ended takes a count, not {n:?}"
+                                ))
+                            })?);
                         }
                         Tok::Opt(k, _) => return Err(w.unknown(k)),
                         Tok::Pos(p) => repo = Some(p.to_string()),

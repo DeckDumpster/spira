@@ -78,7 +78,9 @@ pub fn tally(log: &str) -> Stats {
 
 pub fn render(s: &Stats) -> String {
     let avg = s.cost.checked_div(s.members).unwrap_or(0);
-    let pct = (s.local_red * 100).checked_div(s.local_batches).unwrap_or(0);
+    let pct = (s.local_red * 100)
+        .checked_div(s.local_batches)
+        .unwrap_or(0);
     format!(
         "caught:          {}\nescaped:         {}\nbatches:         {} ({} members)\nlocal_red_rate:  {}/{} ({}%)\ncost:            {}s avg per branch\n",
         s.caught, s.escaped, s.batches, s.members, s.local_red, s.local_batches, pct, avg

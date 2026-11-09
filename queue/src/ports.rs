@@ -518,7 +518,13 @@ pub trait Lc {
         batches::save(self.rounds_door().ok_or(NO_STORE)?, repo, kv)
     }
     /// [`Lc::save_batch`] only while field `field` of the record still reads `expect`.
-    fn save_batch_if(&self, repo: &str, kv: &Kv, field: &str, expect: &str) -> Result<bool, String> {
+    fn save_batch_if(
+        &self,
+        repo: &str,
+        kv: &Kv,
+        field: &str,
+        expect: &str,
+    ) -> Result<bool, String> {
         batches::save_if(self.rounds_door().ok_or(NO_STORE)?, repo, kv, field, expect)
     }
     /// `show-batch` → (state, version); None when the batch row does not exist.
@@ -657,7 +663,11 @@ pub trait Lc {
     /// `requeue-orphans --apply`: return every bead IN_DELIVERY that no open batch names, and
     /// abandon a batch that never began. `running(repo, batch)` says whether a leg unit or
     /// round-vm process of that round is live; such a round has begun and is left open.
-    fn requeue_orphans(&self, _actor: &str, _running: &dyn Fn(&str, &str) -> bool) -> Result<String, (i32, String)> {
+    fn requeue_orphans(
+        &self,
+        _actor: &str,
+        _running: &dyn Fn(&str, &str) -> bool,
+    ) -> Result<String, (i32, String)> {
         Ok(String::new())
     }
     /// `certify <bead> <tip> pass <detail> <actor>`: record a gate pass at `tip`.

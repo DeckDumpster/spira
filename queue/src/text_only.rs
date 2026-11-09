@@ -14,10 +14,7 @@ fn matches(entry: &str, path: &str) -> bool {
 /// True when `paths` is non-empty and every path matches an `allow` entry. A diff that names
 /// no path, or an empty list, is never text: it fails closed into the round.
 pub fn is_text_only(paths: &[String], allow: &[String]) -> bool {
-    !paths.is_empty()
-        && paths
-            .iter()
-            .all(|p| allow.iter().any(|e| matches(e, p)))
+    !paths.is_empty() && paths.iter().all(|p| allow.iter().any(|e| matches(e, p)))
 }
 
 pub fn parse_allow(declared: &str) -> Vec<String> {
@@ -40,7 +37,10 @@ mod tests {
     #[test]
     fn a_diff_of_declared_directories_and_extensions_is_text() {
         let allow = v(&["law/", "*.md", "NOTES"]);
-        assert!(is_text_only(&v(&["law/1-general/x.toml", "a/b.md", "NOTES"]), &allow));
+        assert!(is_text_only(
+            &v(&["law/1-general/x.toml", "a/b.md", "NOTES"]),
+            &allow
+        ));
     }
 
     #[test]

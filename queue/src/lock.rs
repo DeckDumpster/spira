@@ -21,8 +21,15 @@ pub struct Guard {
 /// A verb's hold of a repo's queue lock: taken, then given back after `held`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Hold {
-    Taken { repo: String, verb: String },
-    Released { repo: String, verb: String, held: Duration },
+    Taken {
+        repo: String,
+        verb: String,
+    },
+    Released {
+        repo: String,
+        verb: String,
+        held: Duration,
+    },
 }
 
 struct Taken {
@@ -146,7 +153,12 @@ pub enum Acquire {
 pub fn activation_lock(queue_dir: &Path, repo: &str) -> Option<File> {
     let dir = queue_dir.join(repo);
     let _ = fs::create_dir_all(&dir);
-    let f = OpenOptions::new().create(true).write(true).truncate(false).open(dir.join("lock.activate")).ok()?;
+    let f = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(dir.join("lock.activate"))
+        .ok()?;
     // SAFETY: flock on a descriptor we own; no memory is shared with the kernel call.
     (unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } == 0).then_some(f)
 }
@@ -193,7 +205,8 @@ pub fn remove_certify_lock(queue_dir: &Path, repo: &str, batch: &str) -> bool {
     let Ok(f) = OpenOptions::new().write(true).open(&path) else {
         return false;
     };
-    let mine = certify_holder(queue_dir, repo, batch).starts_with(&format!("pid={} ", std::process::id()));
+    let mine =
+        certify_holder(queue_dir, repo, batch).starts_with(&format!("pid={} ", std::process::id()));
     // SAFETY: flock on a descriptor we own; no memory is shared with the kernel call.
     let free = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
     (free || mine) && fs::remove_file(&path).is_ok()
@@ -277,12 +290,17 @@ mod tests {
     fn a_dropped_lock_is_free_while_a_forked_copy_of_its_descriptor_lives() {
         let d = tmpdir("lockfork");
         for take in [try_lock as fn(&Path, &str) -> Acquire, try_step_lock] {
-            let Acquire::Held(g) = take(&d, "spira") else { panic!("not held") };
+            let Acquire::Held(g) = take(&d, "spira") else {
+                panic!("not held")
+            };
             // SAFETY: dup of a descriptor we own; closed below.
             let copy = unsafe { libc::dup(g.f.as_raw_fd()) };
             assert!(copy >= 0);
             drop(g);
-            assert!(matches!(take(&d, "spira"), Acquire::Held(_)), "the copy kept the lock");
+            assert!(
+                matches!(take(&d, "spira"), Acquire::Held(_)),
+                "the copy kept the lock"
+            );
             // SAFETY: closing the duplicate made above.
             unsafe { libc::close(copy) };
         }
@@ -303,7 +321,10 @@ mod tests {
         let d = tmpdir("lockhold");
         take_holds();
         let g = try_lock_as(&d, "spira", "round open");
-        assert!(matches!(try_lock_as(&d, "spira", "round abandon"), Acquire::Busy));
+        assert!(matches!(
+            try_lock_as(&d, "spira", "round abandon"),
+            Acquire::Busy
+        ));
         assert_eq!(
             take_holds(),
             [Hold::Taken {
@@ -399,12 +420,25 @@ mod tests {
         drop(try_certify_lock(&d, "spira", "r-1"));
         let held = try_certify_lock(&d, "spira", "r-2");
         let ours = try_certify_lock(&d, "spira", "r-3");
-        fs::write(d.join("spira/certify-r-2.lock"), "pid=1 verb=round certify\n").unwrap();
+        fs::write(
+            d.join("spira/certify-r-2.lock"),
+            "pid=1 verb=round certify\n",
+        )
+        .unwrap();
         assert_eq!(certify_lock_batches(&d, "spira"), ["r-1", "r-2", "r-3"]);
         assert!(remove_certify_lock(&d, "spira", "r-1"), "a free lock goes");
-        assert!(!remove_certify_lock(&d, "spira", "r-2"), "another holder's lock stays");
-        assert!(remove_certify_lock(&d, "spira", "r-3"), "this process's own certify ended the round");
-        assert!(!remove_certify_lock(&d, "spira", "r-9"), "no file, nothing removed");
+        assert!(
+            !remove_certify_lock(&d, "spira", "r-2"),
+            "another holder's lock stays"
+        );
+        assert!(
+            remove_certify_lock(&d, "spira", "r-3"),
+            "this process's own certify ended the round"
+        );
+        assert!(
+            !remove_certify_lock(&d, "spira", "r-9"),
+            "no file, nothing removed"
+        );
         assert_eq!(certify_lock_batches(&d, "spira"), ["r-2"]);
         drop((held, ours));
     }
