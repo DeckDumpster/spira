@@ -216,3 +216,34 @@ fn an_orphan_whose_launches_have_failed_the_allowed_times_in_a_row_is_redrive_ex
     assert_eq!(got[0].key, "o1");
     assert!(got[0].raised.as_deref().unwrap().contains("systemd-run: exit 1"));
 }
+
+fn slot_holder(b: &Bench, unit: &str) {
+    let p = b.ports();
+    let mut g = crate::slots::grant(&p, &[crate::slots::Pool::Proxmox], "round-controller").unwrap();
+    g.record_holder(&p, unit, Some("vm-7")).unwrap();
+    b.clock.advance(p.leases.ttl_ms);
+}
+
+#[test]
+fn a_lapsed_slot_holder_not_shown_dead_is_prior_runner_alive_on_the_repo_owning_its_batch() {
+    let b = Bench::new();
+    round(&b, "s1", "CiRunning", json!({}));
+    slot_holder(&b, "round-controller-run-s1-7-0");
+    b.units.set("round-controller-run-s1-7-0", UnitState::Running("active".into()));
+    let got = of(&b, PRIOR_RUNNER_ALIVE);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].key, "slot/proxmox/0/round-controller-run-s1-7-0");
+    assert!(got[0].raised.as_deref().unwrap().contains("active"));
+    let other = raise(&b.ports(), "elsewhere").unwrap();
+    assert!(other.iter().all(|c| c.type_ != PRIOR_RUNNER_ALIVE || c.raised.is_none()));
+}
+
+#[test]
+fn a_lapsed_slot_holder_shown_dead_or_a_slot_released_raises_nothing() {
+    let b = Bench::new();
+    round(&b, "s1", "CiRunning", json!({}));
+    slot_holder(&b, "round-controller-run-s1-7-0");
+    b.units.set("round-controller-run-s1-7-0", UnitState::Stopped("inactive".into()));
+    b.vms.set("round-controller-run-s1-7-0", crate::death::VmFact::NoVm);
+    assert!(of(&b, PRIOR_RUNNER_ALIVE).is_empty());
+}

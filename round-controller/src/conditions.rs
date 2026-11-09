@@ -20,6 +20,7 @@ use crate::ports::Ports;
 use crate::refusal::{self, Refusal, STANDING_TTL_SECS};
 use crate::resources::{round_key, Round};
 use crate::section::Cond;
+use crate::slots;
 use crate::stack::{self, Live};
 
 fn raised(type_: &'static str, key: String, reason: String) -> Cond {
@@ -235,7 +236,31 @@ fn orphaned(p: &Ports, repo: &str) -> Result<Vec<Cond>, Refusal> {
             out.push(raised(PRIOR_RUNNER_ALIVE, id, format!("{}'s old runner is not shown dead: {why}", o.batch)));
         }
     }
+    out.extend(unproven_slot_holders(p, repo)?);
     Ok(out)
+}
+
+/// Slots are pool-wide, so a lapsed holder belongs to the repo whose batch its unit drives.
+fn unproven_slot_holders(p: &Ports, repo: &str) -> Result<Vec<Cond>, Refusal> {
+    let held = slots::unproven(p).map_err(|e| Refusal::unreadable("slots/", e))?;
+    if held.is_empty() {
+        return Ok(Vec::new());
+    }
+    let prefix = format!("batches/{repo}/");
+    let (items, _) = p.store.list(&[prefix.as_str()], &Selector::Everything).map_err(|e| Refusal::unreadable(&prefix, e))?;
+    let batches: Vec<&str> =
+        items.iter().filter_map(|i| i.key.strip_prefix(&prefix)).filter(|b| !b.contains('/')).collect();
+    Ok(held
+        .into_iter()
+        .filter_map(|h| {
+            let batch = batches.iter().find(|b| crate::death::unit_drives(&h.unit, b))?;
+            Some(raised(
+                PRIOR_RUNNER_ALIVE,
+                format!("slot/{}/{}", h.slot, h.unit),
+                format!("slot {}'s last holder {} lapsed without releasing it, and its runner {} for {batch} is not shown dead: {}", h.slot, h.holder, h.unit, h.why),
+            ))
+        })
+        .collect())
 }
 
 #[cfg(test)]

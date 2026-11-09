@@ -6,7 +6,7 @@
 use std::fmt;
 
 use serde_json::{json, Value};
-use state_store::{Compare, Error, Fence, Object, Request, Rev, Txn, LOCKS_PREFIX};
+use state_store::{Compare, Error, Fence, Object, Request, Rev, Selector, Txn, LOCKS_PREFIX};
 
 use crate::death::{prove_runner_dead, Proof};
 use crate::lease::{holder_of, LeaseError, Resource};
@@ -257,6 +257,61 @@ pub fn grant_for_hand(p: &Ports, holder: &str) -> Result<SlotGrant, NoSlot> {
     grant(p, &HAND_PREFERENCE, holder)
 }
 
+fn prove_last(p: &Ports, r: &Record) -> Proof {
+    match &r.unit {
+        None => Proof::Dead {
+            evidence: format!("{} recorded no unit, so launched none", r.holder),
+        },
+        Some(u) => prove_runner_dead(p, u, || p.vms.vm_of_slot(u, r.vm.as_deref())),
+    }
+}
+
+/// A lapsed slot whose last holder is not shown dead, with the unit it recorded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnprovenSlot {
+    pub slot: Slot,
+    pub holder: String,
+    pub unit: String,
+    pub why: String,
+}
+
+/// Every slot on record that `grant` would refuse as unproven, whichever pool is open now.
+pub fn unproven(p: &Ports) -> Result<Vec<UnprovenSlot>, String> {
+    let (items, _) = p
+        .store
+        .list(&["slots/"], &Selector::Everything)
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for i in items {
+        let Some((pool, n)) = i.key.strip_prefix("slots/").and_then(|k| k.split_once('/')) else {
+            continue;
+        };
+        let (Some(pool), Ok(n)) = (Pool::from_word(pool), n.parse::<u32>()) else {
+            continue;
+        };
+        let slot = Slot { pool, n };
+        let Some(r) = Record::of(&i.value.data).filter(|r| !r.released && r.unit.is_some()) else {
+            continue;
+        };
+        let res = Resource {
+            lock: slot.lock(),
+            record: None,
+        };
+        if holder_of(p, &res)?.is_some() {
+            continue;
+        }
+        if let Proof::Unknown { why } = prove_last(p, &r) {
+            out.push(UnprovenSlot {
+                slot,
+                holder: r.holder,
+                unit: r.unit.unwrap_or_default(),
+                why,
+            });
+        }
+    }
+    Ok(out)
+}
+
 fn take(p: &Ports, slot: Slot, holder: &str) -> Result<SlotGrant, Taken> {
     let unreadable = |why: String| Taken::Unreadable { why };
     let res = Resource {
@@ -281,17 +336,14 @@ fn take(p: &Ports, slot: Slot, holder: &str) -> Result<SlotGrant, Taken> {
     }
     let evidence = match last.filter(|r| !r.released) {
         None => None,
-        Some(r) => Some(match &r.unit {
-            None => format!("{} recorded no unit, so launched none", r.holder),
-            Some(u) => match prove_runner_dead(p, u, || p.vms.vm_of_slot(u, r.vm.as_deref())) {
-                Proof::Dead { evidence } => evidence,
-                Proof::Unknown { why } => {
-                    return Err(Taken::Unproven {
-                        holder: r.holder,
-                        why,
-                    })
-                }
-            },
+        Some(r) => Some(match prove_last(p, &r) {
+            Proof::Dead { evidence } => evidence,
+            Proof::Unknown { why } => {
+                return Err(Taken::Unproven {
+                    holder: r.holder,
+                    why,
+                })
+            }
         }),
     };
     let record = Record {

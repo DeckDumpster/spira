@@ -35,6 +35,21 @@ pub fn hand_unit_name(batch: &str, token: Rev) -> Result<String, String> {
     unit_name(batch, token).map(|u| u.replacen("round-controller-run-", "round-recert-", 1))
 }
 
+/// Whether `unit` is a runner of `batch`, under any lease token and either driver.
+pub fn unit_drives(unit: &str, batch: &str) -> bool {
+    [unit_name(batch, Rev::new(0, 0)), hand_unit_name(batch, Rev::new(0, 0))]
+        .into_iter()
+        .flatten()
+        .any(|zero| {
+            let stem = zero.trim_end_matches("0-0");
+            unit.strip_prefix(stem).is_some_and(|t| {
+                t.split_once('-').is_some_and(|(a, b)| {
+                    [a, b].iter().all(|w| !w.is_empty() && w.bytes().all(|c| c.is_ascii_digit()))
+                })
+            })
+        })
+}
+
 /// A lease's past holder: the runner launched for `batch` under `token`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Holder {
