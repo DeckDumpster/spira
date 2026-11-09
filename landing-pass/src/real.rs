@@ -749,6 +749,16 @@ impl Beads for RealBeads {
             _ => "-".into(),
         }
     }
+    fn in_round(&self, id: &str) -> bool {
+        if self.lc_bin.is_none() && self.client.is_none() {
+            return false;
+        }
+        let Ok(c) = self.lc() else { return false };
+        let (rc, so, _) = crate::lifecycle::run(&c, &["show", id]);
+        rc == 0
+            && serde_json::from_str::<serde_json::Value>(so.trim())
+                .is_ok_and(|v| v.pointer("/delivery/state").and_then(|s| s.as_str()) == Some("BATCHED"))
+    }
     fn ask_open(&self, label: &str, subject: &str) -> bool {
         if subject.is_empty() {
             return false;

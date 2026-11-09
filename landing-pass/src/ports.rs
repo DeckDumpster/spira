@@ -16,6 +16,9 @@ pub trait Beads {
     fn bead_lc_state(&self, id: &str) -> String;
     /// lib.sh `ask_already_open <subject>` (sp-31hjr, family C): true when an OPEN ask
     /// already carries `subject` in its title. `label` is `SPIRA_ASK_LABEL`.
+    /// The bead's delivery is in a live round (`spira-lc show`: delivery state BATCHED): the
+    /// round, not a per-bead gate, judges it. False when it cannot be told.
+    fn in_round(&self, id: &str) -> bool;
     fn ask_open(&self, label: &str, subject: &str) -> bool;
     /// lib.sh `bead_context <id>` (sp-31hjr): a human-readable block for a mail body.
     /// `now` is a unix epoch second.

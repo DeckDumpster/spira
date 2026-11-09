@@ -414,6 +414,9 @@ mod tests {
         fn bead_lc_state(&self, id: &str) -> String {
             self.status.borrow().get(id).cloned().unwrap_or_else(|| "SUBMITTED".into())
         }
+        fn in_round(&self, _id: &str) -> bool {
+            false
+        }
         fn ask_open(&self, _label: &str, _subject: &str) -> bool {
             false
         }

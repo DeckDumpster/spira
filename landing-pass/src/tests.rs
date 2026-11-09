@@ -38,6 +38,7 @@ struct FakeBeads {
     /// Lifecycle state seen by a re-read (`bead_lc_state`), when it differs from the scan.
     reread: RefCell<HashMap<String, String>>,
     fail: Cell<bool>,
+    batched: RefCell<HashSet<String>>,
 }
 
 impl Beads for FakeBeads {
@@ -53,6 +54,9 @@ impl Beads for FakeBeads {
             return lc_word(s);
         }
         self.rows.borrow().get(id).map(|b| b.state.clone()).unwrap_or_else(|| "-".into())
+    }
+    fn in_round(&self, id: &str) -> bool {
+        self.batched.borrow().contains(id)
     }
     fn ask_open(&self, _label: &str, _subject: &str) -> bool {
         false
@@ -786,6 +790,20 @@ fn repeated_no_verdicts_on_one_tip_defer_it_to_the_round() {
     assert!(h.logged("deferred to round: no gate verdict"));
     h.run();
     assert!(h.logged("was deferred to round"));
+}
+
+#[test]
+fn a_submitted_bead_in_a_round_with_no_gate_is_not_escalated_as_unjudgeable() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.beads.batched.borrow_mut().insert("sp-a".into());
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=gate-not-found branch=b repo=spira suite=-\n".into()));
+    for _ in 0..=h.s.noverdict_max {
+        h.run();
+    }
+    assert!(!h.lib.has("noverdict"), "the round judges it; a missing per-bead gate is not a fault");
+    assert!(!h.lib.has("reopen"));
+    assert!(h.logged("is in a round — the round judges it, no per-bead gate"));
 }
 
 fn retip(h: &H, br: &str, tip: &str) {
