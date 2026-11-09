@@ -808,10 +808,13 @@ fn a_submitted_bead_in_a_round_with_no_gate_is_not_escalated_as_unjudgeable() {
 
 #[test]
 fn a_submitted_bead_in_no_round_with_no_gate_is_escalated_only_after_the_grace() {
-    let h = H::new(LandMode::Queue);
+    let mut h = H::new(LandMode::Queue);
+    h.s.unrounded_grace = 7;
     h.closed("sp-a", "t1");
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=gate-not-found branch=b repo=spira suite=-\n".into()));
-    h.run();
+    for _ in 0..=h.s.noverdict_max {
+        h.run();
+    }
     assert!(!h.lib.has("noverdict"), "inside the grace the bead is still awaiting its first cut");
     h.clock.t.set(h.clock.t.get() + h.s.unrounded_grace as u64 + 1);
     h.run();
@@ -819,8 +822,18 @@ fn a_submitted_bead_in_no_round_with_no_gate_is_escalated_only_after_the_grace()
 }
 
 #[test]
-fn a_bead_that_was_in_a_round_starts_its_unrounded_wait_again() {
+fn a_missing_gate_is_the_only_no_verdict_the_unrounded_grace_quiets() {
     let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=lock-timeout branch=b repo=spira suite=-\n".into()));
+    h.run();
+    assert!(h.lib.has("noverdict sp-a spira lock-timeout NO_VERDICT"));
+}
+
+#[test]
+fn a_bead_that_was_in_a_round_starts_its_unrounded_wait_again() {
+    let mut h = H::new(LandMode::Queue);
+    h.s.unrounded_grace = 7;
     h.closed("sp-a", "t1");
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=gate-not-found branch=b repo=spira suite=-\n".into()));
     h.run();
