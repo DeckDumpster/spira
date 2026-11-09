@@ -152,6 +152,9 @@ pub fn runner_touchers(members: &[MemberDiff]) -> Vec<&MemberDiff> {
 /// Whether the runner's failure text shows testenv killed by a signal (exit 128+n), which is
 /// outside its contract and so never a verdict.
 pub fn is_signal_death(err: &str) -> bool {
+    if err.contains("over-cap") {
+        return false;
+    }
     let after = |key: &str| err.match_indices(key).any(|(i, _)| {
         let n: String = err[i + key.len()..].chars().take_while(char::is_ascii_digit).collect();
         n.parse::<u32>().is_ok_and(|rc| (129..=192).contains(&rc))

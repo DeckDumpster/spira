@@ -106,6 +106,7 @@ fn only_a_signal_exit_of_the_runner_is_a_signal_death() {
     assert!(is_signal_death("the remote runner exited 139, outside testenv's contract"));
     assert!(!is_signal_death("round-vm: PHASE-FAILED phase=suites rc=2"));
     assert!(!is_signal_death("round-vm: PHASE-FAILED phase=build rc=134"));
+    assert!(!is_signal_death("round-vm: harness fault — over-cap: exceeded the 600s wall bound (OVER-CAP) PHASE-FAILED phase=suites rc=137"));
     assert!(!is_signal_death("the remote runner exited 101, outside testenv's contract"));
 }
 
