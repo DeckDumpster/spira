@@ -1331,6 +1331,15 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn bisecting_an_unmapped_pair_in_eight_members_builds_at_most_two_searches_and_a_check() {
+        let (mut f, mut ops) = unmapped_build_red(&["m2", "m7"], 8);
+        let ms: Vec<Member> = (1..=8).map(|i| Member { id: format!("m{i}"), ..three()[0].clone() }).collect();
+        attribute_round(&mut f, &mut ops, &corpus(3), ms, Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(ops.sequenced, vec![("m7".to_string(), vec!["m2".to_string()])]);
+        assert!(f.probes.len() <= 9, "{:?}", f.probes);
+    }
+
+    #[test]
     fn a_lint_red_naming_no_member_is_filed_once_and_does_not_run_the_corpus_again() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(Box::new(|_| Some(FilterRed { name: "spira-lint".into(), named: vec![] })));

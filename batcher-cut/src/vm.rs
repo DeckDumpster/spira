@@ -123,6 +123,15 @@ pub fn install_probe_result(rc: i32) -> JobResult {
     }
 }
 
+/// What a `build=workspace` job's exit code says: 0 built, 4 did not, anything else is a fault.
+pub fn build_probe_result(rc: i32) -> Option<bool> {
+    match rc {
+        0 => Some(true),
+        4 => Some(false),
+        _ => None,
+    }
+}
+
 pub struct VmRunner<'a> {
     env: &'a Env,
     repo: &'a Repo,
@@ -539,14 +548,11 @@ impl RoundRunner for VmRunner<'_> {
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
         };
-        match rc {
-            0 => Some(true),
-            4 => Some(false),
-            c => {
-                eprintln!("batcher: build probe of [{tried}] faulted (rc {c})");
-                None
-            }
+        let built = build_probe_result(rc);
+        if built.is_none() {
+            eprintln!("batcher: build probe of [{tried}] faulted (rc {rc})");
         }
+        built
     }
 
     fn stop_main(&mut self) -> Result<(), String> {
@@ -692,6 +698,15 @@ mod tests {
         assert_eq!(build_for(&["a".to_string()], &changed), "artifacts");
         assert_eq!(build_for(&["a".to_string(), "b".to_string()], &changed), "dwarf");
         assert_eq!(build_for(&["unknown".to_string()], &changed), "dwarf", "unknown paths are never neutral");
+    }
+
+    #[test]
+    fn a_build_probe_reads_rc_4_as_not_building_and_a_fault_as_no_answer() {
+        assert_eq!(build_probe_result(0), Some(true));
+        assert_eq!(build_probe_result(4), Some(false));
+        for rc in [1, 2, 3, 124, 137] {
+            assert_eq!(build_probe_result(rc), None, "rc {rc}");
+        }
     }
 
     #[test]

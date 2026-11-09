@@ -417,6 +417,35 @@ mod tests {
         assert!(arm.contains("workspace-build.result"), "a success leaves a result so the job is not read as lost: {arm}");
     }
 
+    fn workspace_job_rc(cargo_rc: i32) -> (i32, bool) {
+        let d = TempDir::new();
+        let (bin, home) = (d.path().join("bin"), d.path().join("home"));
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        fs::write(home.join("round-launcher.env"), "").unwrap();
+        let stub = |name: &str, body: &str| {
+            let p = bin.join(name);
+            fs::write(&p, format!("#!/bin/bash\n{body}\n")).unwrap();
+            std::process::Command::new("chmod").arg("+x").arg(&p).status().unwrap();
+        };
+        stub("git", "for a; do last=$a; done; mkdir -p \"$last\"");
+        stub("cargo", &format!("exit {cargo_rc}"));
+        let status = std::process::Command::new("/bin/bash")
+            .args(["-c", REMOTE_ATTR_SCRIPT, "bash", "h", "9430", "j1", "attr-j1", "workspace", "workspace", ""])
+            .env_clear()
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("HOME", &home)
+            .status()
+            .unwrap();
+        (status.code().unwrap(), home.join("attr-results/j1/workspace-build.result").exists())
+    }
+
+    #[test]
+    fn a_workspace_job_exits_4_when_cargo_fails_and_0_with_a_result_when_it_builds() {
+        assert_eq!(workspace_job_rc(101), (4, false));
+        assert_eq!(workspace_job_rc(0), (0, true));
+    }
+
     #[test]
     fn the_attr_command_keeps_empty_arguments_in_place() {
         let j = AttrJob {
