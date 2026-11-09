@@ -57,7 +57,7 @@ if [ "$phase" != done ] && [ ! -S "$ctl" ]; then
     ( trap "" HUP; end=$((SECONDS + 200))
       while [ "$(cat "$phase_file" 2>/dev/null)" != done ] && [ "$SECONDS" -lt "$end" ]; do
           rm -f "$ctl"
-          printf '{"exit_code":0,"len":0}\n' | timeout 2 nc -lU "$ctl" >/dev/null 2>&1
+          printf '{"exit_code":0,"len":0}\n' | timeout 2 nc -lU "$ctl" >/dev/null
       done
       rm -f "$ctl" ) >"$SIM_WORLD/cutover-control.err" 2>&1 </dev/null &
     for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$ctl" ] && break; sleep 0.2; done
