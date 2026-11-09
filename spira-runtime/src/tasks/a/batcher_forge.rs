@@ -104,7 +104,7 @@ use batcher_cut::attribute::Attribution;
 use runtime::units::{Exit, RanOutput, UnitRan};
 use serde::{Deserialize, Serialize};
 
-use super::batcher_local::{P2, digest, green, handle_p2, interests, page_line, select, table_step, unit_key, Assembled, On, Leg, Policy, ATTRIBUTE, LEG_GRACE_MS};
+use super::batcher_local::{P2, digest, green, handle_p2, interests, page_line, select, table_step, unit_key, Assembled, On, Leg, Policy, ATTRIBUTE, leg_deadline_ms};
 use super::kit::{self, Act, Cadence, Shape};
 
 pub use super::batcher_local::Member;
@@ -381,7 +381,7 @@ impl Machine<'_> {
             }
             // A leg's end arrives as its own `unit.ran` (`on_ran`); one past its wall and grace
             // with none is judged lost here.
-            State::Corpus | State::Attributing if self.now_ms.saturating_sub(self.rc.leg_at_ms) > policy.wall_ms + LEG_GRACE_MS => self.leg_ended(Exit::Unknown),
+            State::Corpus | State::Attributing if self.now_ms.saturating_sub(self.rc.leg_at_ms) > leg_deadline_ms(policy, self.rc.state == State::Attributing, self.rc.members.len()) => self.leg_ended(Exit::Unknown),
             _ => {}
         }
     }

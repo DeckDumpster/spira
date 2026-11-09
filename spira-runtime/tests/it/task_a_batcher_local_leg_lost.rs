@@ -147,3 +147,32 @@ fn running_legs_are_this_task_s_active_units_by_key() {
     let listed = [named(NAME, "spira.r9.corpus1", UnitState::Active), named(NAME, "spira.r9.corpus2", UnitState::Failed), named("sentinel-call", "x.y", UnitState::Active)];
     assert_eq!(running_legs(&listed), ["spira.r9.corpus1"]);
 }
+
+fn attributing(at: u64) -> Carry {
+    let mut carry = corpus("spira.r9.attribute.2", at);
+    carry.repos.get_mut("spira").unwrap().state = State::Attributing;
+    carry
+}
+
+#[test]
+fn an_attribution_leg_still_listed_past_one_walls_grace_is_not_judged_lost() {
+    let past_one_wall = Policy::default().wall_ms + LEG_GRACE_MS + TICK;
+    let (carry, acts) = decide(&attributing(NOW), &snap(NOW + past_one_wall, Some(vec!["spira.r9.attribute.2".into()])));
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Attributing);
+}
+
+#[test]
+fn an_attribution_leg_is_judged_lost_past_its_iterations_deadline() {
+    let p = Policy::default();
+    let past_all = p.wall_ms * 3 + LEG_GRACE_MS + TICK;
+    let (_, acts) = decide(&attributing(NOW), &snap(NOW + past_all, Some(vec!["spira.r9.attribute.2".into()])));
+    assert_eq!(names(&acts).first(), Some(&ABANDON), "{acts:?}");
+}
+
+#[test]
+fn a_corpus_leg_is_judged_lost_one_wall_and_grace_after_it_started() {
+    let past_one_wall = Policy::default().wall_ms + LEG_GRACE_MS + TICK;
+    let (_, acts) = decide(&corpus("spira.r9.corpus.1", NOW), &snap(NOW + past_one_wall, Some(vec!["spira.r9.corpus.1".into()])));
+    assert_eq!(names(&acts), [CORPUS], "lost, so the round goes to attribution: {acts:?}");
+}

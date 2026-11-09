@@ -749,6 +749,13 @@ pub fn running_legs(listed: &[runtime::units::UnitDetail]) -> Vec<String> {
 
 /// How long past its wall a leg with no `unit.ran` is given before it is judged lost.
 pub const LEG_GRACE_MS: u64 = 120_000;
+/// How long past its start a leg with no `unit.ran` is judged lost: a wall and grace, and for
+/// the attribution one wall for each of the corpus runs it may make (`members + 2`).
+pub fn leg_deadline_ms(policy: &Policy, attributing: bool, members: usize) -> u64 {
+    let runs = if attributing { members as u64 + 2 } else { 1 };
+    policy.wall_ms * runs + LEG_GRACE_MS
+}
+
 /// How long a started leg may go unlisted before it counts as missing.
 pub const LEG_START_GRACE_MS: u64 = 30_000;
 /// Consecutive observes that must miss the leg before it is started again or the round abandoned.
@@ -989,7 +996,7 @@ impl Machine<'_> {
             return;
         }
         match self.rc.state {
-            State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > policy.wall_ms + LEG_GRACE_MS => self.leg_ended(Exit::Unknown),
+            State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > leg_deadline_ms(policy, self.rc.state == State::Attributing, self.rc.members.len()) => self.leg_ended(Exit::Unknown),
             State::Corpus | State::Attributing | State::Certifying => self.watch_leg(repo),
             State::Certified if !self.below => {
                 self.go(Trigger::LowerEnded);
