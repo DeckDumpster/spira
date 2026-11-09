@@ -266,7 +266,7 @@ fn work_in_delivery_past_the_bound_with_no_delivered_raises_the_stall() {
 fn submitted_work_behind_a_full_set_of_open_rounds_is_queued_not_stalled() {
     let now = T0;
     let mut s = healthy(now);
-    s.beads = vec![bead("sp-s1", "spira", "SUBMITTED", now - 10 * MIN)];
+    s.beads = vec![bead("sp-s1", "spira", "SUBMITTED", now - 50 * MIN)];
     s.last = last("spira", &[("Cut", now - 50 * MIN)]);
     s.open_rounds = Some(1);
     assert!(!edges(&s, now).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "{:?}", edges(&s, now));
@@ -355,4 +355,46 @@ fn a_round_progress_file_becomes_the_owner_and_a_stalled_detail_is_its_failure()
     assert_eq!(bad.failed.as_deref(), Some("stalled: no progress in 300s"));
     assert_eq!(round_owner(r#"{"detail":"x"}"#), None, "no updated_at is no heartbeat");
     assert_eq!(round_owner("not json"), None);
+}
+
+fn five_minute_cut_bound(s: &Snapshot, now: u64) -> Vec<String> {
+    let cfg = Config { cut_bound_s: 5 * MIN, ..config() };
+    spira_runtime::tasks::e::watch_transitions::stalls(s, now, &cfg).into_iter().map(|x| x.key()).collect()
+}
+
+fn submitted_ago(mins: u64, open: u64, cut_ago: u64) -> (Snapshot, u64) {
+    let now = T0;
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-s1", "spira", "SUBMITTED", now - mins * MIN)];
+    s.last = last("spira", &[("Cut", now - cut_ago * MIN)]);
+    s.open_rounds = Some(open);
+    (s, now)
+}
+
+#[test]
+fn a_bead_submitted_two_minutes_ago_is_not_stalled_by_a_cut_six_minutes_ago() {
+    let (s, now) = submitted_ago(2, 0, 6);
+    assert!(!five_minute_cut_bound(&s, now).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")));
+}
+
+#[test]
+fn a_bead_submitted_ten_minutes_ago_behind_the_full_open_rounds_is_not_stalled() {
+    let (s, now) = submitted_ago(10, 1, 6);
+    assert!(!five_minute_cut_bound(&s, now).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")));
+}
+
+#[test]
+fn a_bead_submitted_ten_minutes_ago_with_no_round_open_is_stalled() {
+    let (s, now) = submitted_ago(10, 0, 6);
+    assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
+}
+
+#[test]
+fn a_certified_bead_past_the_bound_with_a_free_slot_is_stalled_even_after_a_recent_cut() {
+    let now = T0;
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-c1", "spira", "CERTIFIED", now - 10 * MIN)];
+    s.last = last("spira", &[("Cut", now - MIN)]);
+    s.open_rounds = Some(0);
+    assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
 }
