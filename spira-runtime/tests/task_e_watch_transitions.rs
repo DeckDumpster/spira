@@ -248,7 +248,7 @@ fn work_that_entered_delivery_minutes_ago_after_a_long_quiet_spell_raises_no_sta
     let now = T0;
     let mut s = healthy(now);
     s.beads = vec![bead("sp-d1", "spira", "IN_DELIVERY", now - 4 * MIN)];
-    s.last = last("spira", &[("Delivered", now - 72 * MIN), ("Cut", now - 2 * MIN)]);
+    s.last = last("spira", &[("Delivered", now - 2 * HOUR), ("Cut", now - 2 * MIN)]);
     assert!(!edges(&s, now).iter().any(|k| k.starts_with("IN_DELIVERY→LANDED")), "{:?}", edges(&s, now));
 }
 
@@ -290,4 +290,23 @@ fn a_bead_that_leaves_delivery_for_landed_refreshes_the_last_delivered_time() {
     let pages: Vec<&str> = acts.iter().map(|a| a.input.as_str()).filter(|l| l.contains("P0 STALL")).collect();
     assert!(pages.is_empty(), "sp-d2 is 3h old but a bead landed this period: {pages:?}");
     assert!(carry.stalled.is_empty());
+}
+
+#[test]
+fn a_bead_returned_to_rework_is_not_a_landing_and_a_blind_period_keeps_what_was_seen() {
+    let now = T0;
+    let c = config();
+    let mut before = healthy(now);
+    before.beads = vec![bead("sp-d1", "spira", "IN_DELIVERY", now - 3 * HOUR)];
+    before.last = last("spira", &[("Delivered", now - 80 * MIN)]);
+    let (carry, _) = decide(&Carry::default(), &before, now * 1000, &c);
+    let (carry, _) = decide(&carry, &blind("down"), (now + 5 * MIN) * 1000, &c);
+    let mut back = before.clone();
+    back.beads = vec![bead("sp-d1", "spira", "REWORK", now)];
+    let (carry, _) = decide(&carry, &back, (now + 10 * MIN) * 1000, &c);
+    assert!(carry.delivered.is_empty(), "a bead still waiting elsewhere did not land: {carry:?}");
+    let mut gone = before.clone();
+    gone.beads.clear();
+    let (carry, _) = decide(&Carry { in_delivery: [("sp-d1".to_string(), "spira".to_string())].into(), ..Carry::default() }, &gone, (now + 15 * MIN) * 1000, &c);
+    assert_eq!(carry.delivered.get("spira"), Some(&(now + 15 * MIN)));
 }
