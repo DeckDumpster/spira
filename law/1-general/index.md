@@ -26,7 +26,7 @@ Placeholder Part until the table of contents is approved.
 - §1.22 law-bisect-by-time-first — When rounds fail regardless of their members, the cause is on main: look first at the last change that landed before the first failure, not at the members in the failing round.
 - §1.23 law-the-direct-path-wins — If Ryan would do it in one terminal in N minutes, the Concierge does it in N or less; the mechanism that should have done it gets a bead afterwards, never first.
 - §1.24 law-faster-over-safer — Every decision in the system biases toward faster over safer.
-- §1.25 law-throughput-floor — When the beads landed across all repos over the trailing 24 hours falls below 150, the world is stopped, the root cause is analysed, and a solution is proposed to Ryan before anything else is worked.
+- §1.25 law-throughput-floor — Landing throughput is measured, never enforced by halting: a goodput rate below the 150/day floor is a standing question to Ryan, a landing stall files an express P0 incident, and neither stops the world.
 - §1.26 law-batcher-earns-the-round-by-parity — A replacement for the round machinery cuts over with the world stopped, for every registered repo at once, once its 2026-10-31 replay passes in the simulator, its coverage gate passes, and one real round per repo lands on it; no shadow run and no per-repo handover.
 - §1.27 law-tests-are-the-unit-of-measure — Spira measures tests, never suites.
 - §1.28 law-bead-facts-come-from-the-lifecycle — Every fact about work has one owner and is read from it through spira-lc, never copied into the other plane.
