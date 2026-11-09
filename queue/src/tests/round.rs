@@ -880,8 +880,13 @@ fn abandoning_a_round_keeps_a_mender_that_holds_a_submitted_fix_for_the_next_cut
     for kept in ["sp-m14", "sp-m16", "sp-m17", "sp-m18"] {
         assert!(!t.lib.has(&format!("bead_close {kept}")), "{:?}", t.lib.calls.borrow());
     }
+    let rows = t.lc.rows.borrow();
+    let state = |id: &str| rows.as_ref().unwrap().iter().find(|r| r.bead_id == id).unwrap().state.clone();
+    assert_eq!(state("sp-m14"), "SUBMITTED");
+    assert_eq!(state("sp-m16"), "CERTIFIED");
+    assert_eq!(state("sp-m17"), "WORKING");
     assert!(!marker(&t, "hand-5", "mender-1-gate-x.retired").exists());
-    assert!(t.lib.has("bead_close sp-m15"), "{:?}", t.lib.calls.borrow());
+    assert!(t.lib.has("bead_close sp-m15"),"{:?}", t.lib.calls.borrow());
     assert!(marker(&t, "hand-5", "mender-1-gate-y.retired").exists());
 }
 
