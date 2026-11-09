@@ -1571,6 +1571,7 @@ mod tests {
         assert!(has(BeadState::Working, "Submit", BeadState::Submitted));
         assert!(has(BeadState::Ready, "Resubmit", BeadState::Submitted));
         assert!(has(BeadState::Certified, "Restack", BeadState::Submitted));
+        assert!(has(BeadState::Certified, "Submit", BeadState::Submitted));
     }
 
     #[test]
