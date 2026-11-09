@@ -214,10 +214,10 @@ impl Run<'_> {
     pub(super) fn unit_files(&self, glob: &str) -> Result<Vec<UnitFile>, String> {
         let o = self.systemctl(&["list-unit-files", glob, "--output=json"]);
         // list-unit-files exits 1 when nothing matches; that is an empty list, not a failure.
-        if o.rc == 1 && (o.out.trim().is_empty() || o.out.trim() == "[]") {
-            return Ok(vec![]);
+        if o.rc == 1 {
+            return Ok(unit_files_of(&o.out).unwrap_or_default());
         }
-        if o.rc != 0 {
+        if o.rc > 1 {
             return Err(format!("systemctl list-unit-files {glob} exited {}", o.rc));
         }
         unit_files_of(&o.out)

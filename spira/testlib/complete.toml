@@ -366,6 +366,7 @@ loom_budget_ms = 1500
 loom_cache_s = "15"
 loom_ready_grace = "20"
 loop_stall_secs = "3000"
+ready_scheduler_wait_s = "60"
 mimir_label = "mimir-sweep"
 mimir_landing_interval = "25"
 mimir_max_beads = "3"

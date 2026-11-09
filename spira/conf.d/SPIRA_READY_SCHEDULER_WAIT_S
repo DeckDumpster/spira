@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=ready
+DOC=Seconds ready.sh waits for a starting scheduler to answer on its control socket.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # ready.sh waits this long for a scheduler unit that is still starting to answer.
+    : "${SPIRA_READY_SCHEDULER_WAIT_S:=60}"
+SPIRA_CONF_DEFAULT_EOF
