@@ -27,6 +27,8 @@ pub enum Build {
     Round,
     /// Only whether the job's tree builds as a workspace; no suite runs and no binaries land.
     Workspace,
+    /// Only whether the job's tree passes the workspace unit tests; exit 5 when it does not.
+    Unit,
 }
 
 impl Build {
@@ -36,6 +38,7 @@ impl Build {
             Build::Dwarf => "dwarf",
             Build::Round => "round",
             Build::Workspace => "workspace",
+            Build::Unit => "unit",
         }
     }
     pub fn parse(s: &str) -> Option<Build> {
@@ -44,6 +47,7 @@ impl Build {
             "dwarf" => Some(Build::Dwarf),
             "round" => Some(Build::Round),
             "workspace" => Some(Build::Workspace),
+            "unit" => Some(Build::Unit),
             _ => None,
         }
     }
@@ -115,6 +119,17 @@ workspace)
     CARGO_TARGET_DIR="$HOME/attr-target" cargo build -q --profile release --workspace --config profile.release.incremental=false >&2 || { cd "$HOME" && rm -rf "$d"; exit 4; }
     echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/workspace-build.result"
     cd "$HOME" && rm -rf "$d"
+    exit 0 ;;
+unit)
+    d="$HOME/attr/$job"
+    rm -rf "$d"; mkdir -p "$HOME/attr"
+    git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
+    cd "$d" || exit 2
+    CARGO_TARGET_DIR="$HOME/attr-target" cargo test -q --profile unittest --workspace --lib --bins --no-fail-fast --config profile.unittest.incremental=false >&2
+    rc=$?
+    cd "$HOME" && rm -rf "$d"
+    [ "$rc" -eq 0 ] || exit 5
+    echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/unit-tests.result"
     exit 0 ;;
 artifacts|dwarf)
     d="$HOME/attr/$job"
@@ -417,7 +432,7 @@ mod tests {
         assert!(arm.contains("workspace-build.result"), "a success leaves a result so the job is not read as lost: {arm}");
     }
 
-    fn workspace_job_rc(cargo_rc: i32) -> (i32, bool) {
+    fn attr_job_rc(build: &str, cargo_rc: i32, result: &str) -> (i32, bool) {
         let d = TempDir::new();
         let (bin, home) = (d.path().join("bin"), d.path().join("home"));
         fs::create_dir_all(&bin).unwrap();
@@ -427,13 +442,25 @@ mod tests {
         stub("git", "for a; do last=$a; done; mkdir -p \"$last\"");
         stub("cargo", &format!("exit {cargo_rc}"));
         let status = std::process::Command::new("/bin/bash")
-            .args(["-c", REMOTE_ATTR_SCRIPT, "bash", "h", "9430", "j1", "attr-j1", "workspace", "workspace", ""])
+            .args(["-c", REMOTE_ATTR_SCRIPT, "bash", "h", "9430", "j1", "attr-j1", build, build, ""])
             .env_clear()
             .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
             .env("HOME", &home)
             .status()
             .unwrap();
-        (status.code().unwrap(), home.join("attr-results/j1/workspace-build.result").exists())
+        (status.code().unwrap(), home.join("attr-results/j1").join(result).exists())
+    }
+
+    fn workspace_job_rc(cargo_rc: i32) -> (i32, bool) {
+        attr_job_rc("workspace", cargo_rc, "workspace-build.result")
+    }
+
+    #[test]
+    fn a_unit_job_exits_5_when_the_tests_fail_and_0_with_a_result_when_they_pass() {
+        let r = parse_request("u1", "branch=spira/batcher-attr/x-u1\nsuites=unit\nbuild=unit\n").unwrap();
+        assert_eq!(r.build, Build::Unit);
+        assert_eq!(attr_job_rc("unit", 101, "unit-tests.result"), (5, false));
+        assert_eq!(attr_job_rc("unit", 0, "unit-tests.result"), (0, true));
     }
 
     #[test]
