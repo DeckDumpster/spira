@@ -99,3 +99,20 @@ fn the_recipe_paths_are_the_ones_the_image_workflow_builds_on() {
     ours.sort_unstable();
     assert_eq!(ours, triggers);
 }
+
+#[test]
+fn only_a_signal_exit_of_the_runner_is_a_signal_death() {
+    assert!(is_signal_death("round-vm: PHASE-FAILED phase=suites rc=134"));
+    assert!(is_signal_death("the remote runner exited 139, outside testenv's contract"));
+    assert!(!is_signal_death("round-vm: PHASE-FAILED phase=suites rc=2"));
+    assert!(!is_signal_death("round-vm: PHASE-FAILED phase=build rc=134"));
+    assert!(!is_signal_death("round-vm: harness fault — over-cap: exceeded the 600s wall bound (OVER-CAP) PHASE-FAILED phase=suites rc=137"));
+    assert!(!is_signal_death("the remote runner exited 101, outside testenv's contract"));
+}
+
+#[test]
+fn runner_touchers_match_the_directories_and_not_their_lookalikes() {
+    let ds = [diff("a", &["round-vm/src/run.rs"], ""), diff("b", &["testenv/src/x.rs"], ""), diff("c", &["round-vm-extra/x"], ""), diff("d", &["doc/round-vm/x"], "")];
+    let ids: Vec<&str> = runner_touchers(&ds).iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(ids, ["a", "b"]);
+}

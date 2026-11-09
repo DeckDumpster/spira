@@ -159,13 +159,14 @@ fn stale_round_pointer_a_stale_record_the_redrive_cannot_end_is_abandoned_after_
 
 /// A round whose corpus unit never starts (the start reports success, no unit runs, no
 /// `unit.ran` ever comes): the leg is started once more, then the round is abandoned and the
-/// pool is free again. Nothing leaves the round open.
+/// pool is cut again at once, with no wait. Nothing leaves the round open; a repeat is
+/// braked by count (pace tests), never by wall time.
 #[test]
 fn a_corpus_leg_that_never_runs_is_started_again_once_then_the_round_is_abandoned() {
     let script = Script { beads: vec![Bead::new("sp-lg01", 30_000)], max_concurrent: 1, until: 20 * MIN, ..Script::default() };
     let starts: Arc<Mutex<Vec<String>>> = Arc::default();
     let seen = starts.clone();
-    let (r, w) = run_keeping(34, script, move |d, _| {
+    let (r, _) = run_keeping(34, script, move |d, _| {
         d.double(bl::CORPUS, move |input| {
             seen.lock().unwrap_or_else(|e| e.into_inner()).push(leg(input)?.unit);
             Ok(String::new())
@@ -176,8 +177,9 @@ fn a_corpus_leg_that_never_runs_is_started_again_once_then_the_round_is_abandone
     assert!(starts.len() >= 2 && starts[0] != starts[1], "the corpus leg was started again under a new unit: {starts:?}");
     let (first, abandon) = (times(&r, bl::CORPUS)[0], times(&r, bl::ABANDON)[0]);
     assert!(abandon - first >= 60_000 && abandon - first < 5 * 60_000, "re-started within a minute, abandoned soon after: first {first}, abandon {abandon}");
-    assert_eq!(times(&r, bl::ABANDON).len(), 1, "abandoned once: {}", r.dump());
-    assert!(w.lc().round.is_none(), "no round is left open: {}", r.dump());
+    let abandons = times(&r, bl::ABANDON);
+    assert!(abandons.len() >= 2, "abandoned, then re-cut with no backoff and abandoned again: {}", r.dump());
+    assert!(abandons[1] - abandons[0] < 5 * 60_000, "the re-cut did not wait: {abandons:?}");
     assert_eq!(batcher_states(&r)[..5], ["Idle", "Assembling", "Opened", "Corpus", "Idle"], "{}", r.dump());
     assert_no_process(&r);
 }
