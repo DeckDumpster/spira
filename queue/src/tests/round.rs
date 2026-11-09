@@ -854,7 +854,16 @@ fn abandoning_a_round_keeps_a_mender_that_holds_a_submitted_fix_for_the_next_cut
     );
     fs::write(marker(&t, "hand-5", "mender-1-gate-x"), "sp-m14\n").unwrap();
     fs::write(marker(&t, "hand-5", "mender-1-gate-y"), "sp-m15\n").unwrap();
-    for (id, state, tip) in [("sp-m14", "SUBMITTED", Some("9b97f8d")), ("sp-m15", "READY", None)] {
+    for (n, id) in [("a", "sp-m16"), ("b", "sp-m17"), ("c", "sp-m18")] {
+        fs::write(marker(&t, "hand-5", &format!("mender-1-gate-{n}")), format!("{id}\n")).unwrap();
+    }
+    for (id, state, tip) in [
+        ("sp-m14", "SUBMITTED", Some("9b97f8d")),
+        ("sp-m15", "READY", None),
+        ("sp-m16", "CERTIFIED", Some("aa")),
+        ("sp-m17", "WORKING", None),
+        ("sp-m18", "READY", Some("bb")),
+    ] {
         t.lc.rows.borrow_mut().as_mut().unwrap().push(crate::model::LcBeadRow {
             bead_id: id.into(),
             state: state.into(),
@@ -868,7 +877,9 @@ fn abandoning_a_round_keeps_a_mender_that_holds_a_submitted_fix_for_the_next_cut
         "{}",
         t.err()
     );
-    assert!(!t.lib.has("bead_close sp-m14"), "{:?}", t.lib.calls.borrow());
+    for kept in ["sp-m14", "sp-m16", "sp-m17", "sp-m18"] {
+        assert!(!t.lib.has(&format!("bead_close {kept}")), "{:?}", t.lib.calls.borrow());
+    }
     assert!(!marker(&t, "hand-5", "mender-1-gate-x.retired").exists());
     assert!(t.lib.has("bead_close sp-m15"), "{:?}", t.lib.calls.borrow());
 }
