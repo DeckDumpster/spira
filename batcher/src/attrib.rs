@@ -167,6 +167,9 @@ struct SuiteState {
     /// Jobs of this suite queued or running.
     outstanding: BTreeSet<u64>,
     base_green: bool,
+    /// The members whose removal can make a suite that a member adds go green: reruns are
+    /// confined to them, and no run of the suite lacks every adder.
+    adders: Option<Vec<Id>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -271,6 +274,29 @@ impl Attributor {
         if !self.main_seen.insert(suite.to_string()) || green {
             return;
         }
+        self.register_red(suite, suspects, None, now);
+        self.enqueue(suite, vec![], Purpose::Plain, false);
+    }
+
+    /// A red main-run result for a suite that `adders` add to the base: it exists only in a
+    /// tree holding one of them. One root adder owns it outright; several are bisected among
+    /// themselves. A stacked dependent carries its prerequisite's file, so it is not a root.
+    pub fn on_main_added(&mut self, suite: &str, adders: &[Id], now: u64) {
+        if !self.main_seen.insert(suite.to_string()) {
+            return;
+        }
+        let roots: Vec<Id> = adders.iter().filter(|x| !adders.iter().any(|y| y != *x && self.shape.removal_of(y).contains(x))).cloned().collect();
+        self.register_red(suite, &roots, Some(roots.clone()), now);
+        match &roots[..] {
+            [only] => {
+                let removal = self.shape.removal_of(only);
+                self.add_owner(suite, only.clone(), removal, now);
+            }
+            _ => self.enqueue(suite, vec![], Purpose::Plain, false),
+        }
+    }
+
+    fn register_red(&mut self, suite: &str, suspects: &[Id], adders: Option<Vec<Id>>, now: u64) {
         self.reds.push(suite.to_string());
         self.suites.insert(
             suite.to_string(),
@@ -284,9 +310,9 @@ impl Attributor {
                 faults: BTreeMap::new(),
                 outstanding: BTreeSet::new(),
                 base_green: false,
+                adders,
             },
         );
-        self.enqueue(suite, vec![], Purpose::Plain, false);
     }
 
     pub fn on_main_done(&mut self, now: u64) {
@@ -390,13 +416,15 @@ impl Attributor {
     fn queue_attribution(&mut self, suite: &str, suspects: &[Id], all: &[Id]) {
         let mut seen: BTreeSet<Vec<Id>> = BTreeSet::new();
         let mut withouts = vec![];
-        for x in suspects.iter().chain(all.iter()) {
+        let adders = self.suites.get(suite).and_then(|st| st.adders.clone());
+        let candidates: &[Id] = if adders.is_some() { suspects } else { all };
+        for x in suspects.iter().chain(candidates.iter()) {
             let removal = self.shape.removal_of(x);
             if seen.insert(removal.clone()) {
                 withouts.push((x.clone(), removal));
             }
         }
-        if !seen.contains(all) {
+        if adders.is_none() && !seen.contains(all) {
             self.enqueue(suite, all.to_vec(), Purpose::Base, false);
         }
         for (x, removal) in withouts {

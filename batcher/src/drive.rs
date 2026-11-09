@@ -112,6 +112,10 @@ pub trait RoundOps {
     }
     /// `kind`: `base`, `unattributed`, `integration` or `workspace-build`.
     fn incident(&mut self, kind: &str, suites: &[String]);
+    /// The members whose diff adds the file `suite`, which the base lacks.
+    fn adding(&self, _suite: &str, _members: &[Id]) -> Vec<Id> {
+        vec![]
+    }
     /// The members whose diff touches `suite`.
     fn touching(&self, suite: &str, members: &[Id]) -> Vec<Id>;
     /// Commit the deletion of every proven flip into the round tree and re-run the checks
@@ -197,8 +201,11 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 if green {
                     green_suites.insert(suite.clone());
                 }
-                let order = if green { vec![] } else { ops.suspects(&suite, &ids) };
-                a.on_main_result(&suite, green, &order, now);
+                if !green {
+                    red_main(&mut a, ops, &suite, &ids, now);
+                } else {
+                    a.on_main_result(&suite, green, &[], now);
+                }
             }
         }
         if let Some(end) = poll.done {
@@ -214,7 +221,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 // Absence is never green: a selected suite with no result is red.
                 for s in suites {
                     if seen.insert(s.clone()) {
-                        a.on_main_result(s, false, &ops.suspects(s, &ids), now);
+                        red_main(&mut a, ops, s, &ids, now);
                     }
                 }
                 a.on_main_done(now);
@@ -246,6 +253,20 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
         }
         runner.wait();
     }
+}
+
+fn red_main<O: RoundOps + ?Sized>(a: &mut Attributor, ops: &O, suite: &str, ids: &[Id], now: u64) {
+    match ops.adding(suite, ids) {
+        adders if !adders.is_empty() => a.on_main_added(suite, &adders, now),
+        _ => a.on_main_result(suite, false, &ops.suspects(suite, ids), now),
+    }
+}
+
+/// Drops the suites that exist only through a member that has left the tree.
+fn present_on<O: RoundOps>(ops: &O, suites: Vec<String>, before: &[Member], after: &[Member]) -> Vec<String> {
+    let ids = |ms: &[Member]| ms.iter().map(|m| m.id.clone()).collect::<Vec<Id>>();
+    let (before, after) = (ids(before), ids(after));
+    suites.into_iter().filter(|s| ops.adding(s, &before).is_empty() || !ops.adding(s, &after).is_empty()).collect()
 }
 
 const FLIP_JOB_BASE: u64 = 1 << 40;
@@ -636,11 +657,14 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                     if next.is_empty() {
                         return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
                     }
-                    members = if retry && left.is_empty() { next } else { ops.rebuild(&next)? };
+                    let before = std::mem::replace(&mut members, if retry && left.is_empty() { next } else { ops.rebuild(&next)? });
                     if members.is_empty() {
                         return Ok(RoundEnd::Emptied("round emptied rebuilding the tree after the menders".into()));
                     }
-                    suites = m.suites;
+                    suites = present_on(&*ops, m.suites, &before, &members);
+                    if suites.is_empty() {
+                        return Ok(RoundEnd::Land { members, attribution_secs: worst });
+                    }
                     kind = MainKind::Verify;
                     continue;
                 }
@@ -666,7 +690,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         if survivors.is_empty() {
             return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
         }
-        members = ops.rebuild(&survivors)?;
+        let before = std::mem::replace(&mut members, ops.rebuild(&survivors)?);
         if members.is_empty() {
             return Ok(RoundEnd::Emptied("round emptied rebuilding the tree after ejection".into()));
         }
@@ -674,6 +698,10 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             Some(p) => (p.rerun, MainKind::Corpus),
             None => (d.owned_suites(), MainKind::Verify),
         };
+        suites = present_on(&*ops, suites, &before, &members);
+        if suites.is_empty() {
+            return Ok(RoundEnd::Land { members, attribution_secs: worst });
+        }
     }
     Ok(RoundEnd::Blocked(format!("still ejecting after {bound} iterations")))
 }
@@ -902,6 +930,8 @@ pub(crate) mod tests {
         pub judged: Vec<(Vec<String>, Vec<String>)>,
         /// Base shas the base will move to, one per `base_moved` call; empty means it never moves.
         pub moves: Vec<String>,
+        /// Suite → the members whose diff adds it.
+        pub adds: BTreeMap<String, Vec<String>>,
         /// The next pass the menders decide, once per red pass; empty means no mender owns it.
         pub menders: Vec<crate::mender::Next>,
         pub diffs: Vec<MemberDiff>,
@@ -951,6 +981,10 @@ pub(crate) mod tests {
         }
         fn incident(&mut self, kind: &str, suites: &[String]) {
             self.incidents.push((kind.into(), suites.to_vec()));
+        }
+        fn adding(&self, suite: &str, members: &[Id]) -> Vec<Id> {
+            let a = self.adds.get(suite).cloned().unwrap_or_default();
+            members.iter().filter(|m| a.contains(m)).cloned().collect()
         }
         fn touching(&self, suite: &str, members: &[Id]) -> Vec<Id> {
             let t = self.touch.get(suite).cloned().unwrap_or_default();
@@ -1039,6 +1073,52 @@ pub(crate) mod tests {
         assert!(ops.preempts.is_empty() && ops.ejected.is_empty());
         assert_eq!(ops.incidents, vec![("base".to_string(), vec!["test-00.sh".to_string()])]);
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3));
+    }
+
+    fn adds(suite: &str, who: &[&str]) -> BTreeMap<String, Vec<String>> {
+        BTreeMap::from([(suite.to_string(), who.iter().map(|w| w.to_string()).collect())])
+    }
+
+    #[test]
+    fn a_red_suite_only_one_member_adds_ejects_that_member_and_is_never_run_without_it() {
+        let mut f = Fake::new(breaks("m1", "test-01.sh"));
+        let mut ops = Ops { adds: adds("test-01.sh", &["m1"]), ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-01.sh".to_string()])]);
+        assert!(f.jobs.iter().all(|(j, _, _)| j.suite != "test-01.sh" || j.removal.is_empty()), "a rerun lacked the adder: {:?}", f.jobs.iter().map(|(j, _, _)| j).collect::<Vec<_>>());
+        assert!(f.main_kind.iter().skip(1).all(|(_, s)| !s.contains(&"test-01.sh".to_string())), "{:?}", f.main_kind);
+        assert!(ops.incidents.is_empty() && ops.judged.is_empty());
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m2"]), "{end:?}");
+    }
+
+    #[test]
+    fn a_red_suite_no_member_adds_is_still_attributed_by_rerun_after_an_adder_is_ejected() {
+        let mut f = Fake::new(|s, tree| (s == "test-01.sh" && tree.iter().any(|m| m == "m1")) || (s == "test-02.sh" && tree.iter().any(|m| m == "m2")));
+        let mut ops = Ops { adds: adds("test-01.sh", &["m1"]), ..Ops::default() };
+        attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        let ejected: Vec<&str> = ops.ejected.iter().map(|(m, _)| m.as_str()).collect();
+        assert_eq!(ejected, ["m1", "m2"], "{:?}", ops.ejected);
+    }
+
+    #[test]
+    fn a_stacked_dependent_carrying_the_added_suite_does_not_share_the_blame_with_its_prerequisite() {
+        let mut f = Fake::new(breaks("m1", "test-01.sh"));
+        let mut dep = member("m2");
+        dep.stack.insert("m1".into(), "m1-tip".into());
+        let mut ops = Ops { adds: adds("test-01.sh", &["m1", "m2"]), ..Ops::default() };
+        attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), dep], Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(ops.ejected.first(), Some(&("m1".to_string(), vec!["test-01.sh".to_string()])), "{:?}", ops.ejected);
+        assert!(f.jobs.iter().all(|(j, _, _)| j.suite != "test-01.sh" || j.removal.is_empty()), "a rerun lacked the adder");
+    }
+
+    #[test]
+    fn a_red_suite_two_members_add_is_bisected_between_those_two_only() {
+        let mut f = Fake::new(breaks("m2", "test-01.sh"));
+        let mut ops = Ops { adds: adds("test-01.sh", &["m1", "m2"]), ..Ops::default() };
+        attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-01.sh".to_string()])]);
+        let removals: Vec<Vec<String>> = f.jobs.iter().filter(|(j, _, _)| j.suite == "test-01.sh").map(|(j, _, _)| j.removal.clone()).collect();
+        assert!(removals.iter().all(|r| r.len() < 2 && !r.contains(&"m3".to_string())), "{removals:?}");
     }
 
     #[test]
