@@ -6781,6 +6781,18 @@ fn land_driven_again_on_a_landed_round_answers_landed_instead_of_no_open_round()
 }
 
 #[test]
+fn land_driven_again_refuses_when_the_record_is_not_on_the_landing_ref_or_names_another_batch() {
+    let (t, batch) = certified_round();
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    let (rc, e) = err_of(&t, || t.run(&["round", "land", &batch]));
+    assert_eq!(rc, 1, "a head off the landing ref is not landed: {e}");
+    assert!(e.contains("no open round"), "{e}");
+    t.git.ancestor("merged-tb", "local/main");
+    let (rc, e) = err_of(&t, || t.run(&["round", "land", "r-other"]));
+    assert_eq!(rc, 1, "another batch has no landing record: {e}");
+}
+
+#[test]
 fn a_preflight_red_ejects_every_recipe_changing_member_and_names_them() {
     let (t, _) = preflight_red_round(&["ta", "tb"]);
     assert!(t.lib.has("bead_reopen sp-a eject-red") && t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
