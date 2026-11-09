@@ -88,6 +88,9 @@ pub const INDEX: &str = "sweep.archive.index";
 /// record, so an unbounded pass overflowed the store's string limit and crashed the scheduler
 /// on every boot; the rest are stored by the next pass.
 pub const PASS_MAX: usize = 200;
+/// The most carry bytes one pass names, half the store's string limit: paths vary in length, so a
+/// count alone does not keep the record under it.
+pub const PASS_CARRY_BYTES: usize = 32 * 1024;
 pub const EFFECTS: &[&str] = &[OBSERVE, STORE, INDEX];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_SWEEP_ARCHIVE_SECS";
@@ -184,7 +187,12 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
             }
             next.rels.clear();
             let mut acts = vec![];
+            let mut named = 0;
             for src in s.sources.iter().filter(|src| !s.index.get(&src.rel).is_some_and(|r| r.bytes == src.size && r.mtime == src.mtime && r.body_exists)).take(PASS_MAX) {
+                named += src.rel.len() + 16;
+                if named > PASS_CARRY_BYTES && !acts.is_empty() {
+                    break;
+                }
                 next.rels.insert(src.rel.clone(), Phase::Storing);
                 let body = Store { rel: src.rel.clone(), size: src.size, mtime: src.mtime };
                 acts.push(Act { name: STORE.into(), input: serde_json::to_string(&body).map_err(|e| e.to_string())?, deadline_ms: 300_000, probe: false });

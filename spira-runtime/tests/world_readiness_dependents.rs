@@ -61,3 +61,31 @@ fn a_pass_whose_judgement_fails_fails_so_the_revision_is_not_taken() {
     let err = d.world.readiness_dependents(&input(Some(41))).unwrap_err();
     assert!(err.contains("republish-dependents"), "{err}");
 }
+
+fn serve(replies: fn(&[String]) -> Option<String>) -> (testkit::TempDir, std::path::PathBuf, Arc<Mutex<Vec<String>>>) {
+    let dir = testkit::TempDir::new("event-seq-head");
+    let path = dir.path().join("lc.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let log = sent.clone();
+    std::thread::spawn(move || {
+        runtime::socket::answer(&listener, &|argv| {
+            log.lock().unwrap().push(argv.join(" "));
+            replies(argv).ok_or_else(|| RuntimeError::new("the double has no such verb"))
+        })
+    });
+    (dir, path, sent)
+}
+
+#[test]
+fn reconcile_content_reads_only_the_head_of_the_event_log() {
+    let (dir, path, sent) = serve(|argv| match argv[0].as_str() {
+        "reconcile-content" => Some(String::new()),
+        "event-seq" => Some(serde_json::json!({ "seq": 7, "keys": [] }).to_string()),
+        _ => None,
+    });
+    let lc = spira_config::lc_call::LcClient::socket(path);
+    let out = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path()).unwrap();
+    assert!(out.contains("\"through_seq\":7"), "{out}");
+    assert_eq!(sent.lock().unwrap().last().unwrap(), "event-seq --head");
+}

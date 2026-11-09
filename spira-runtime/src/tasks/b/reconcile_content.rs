@@ -272,7 +272,7 @@ pub fn observe(lc: &spira_config::lc_call::LcClient, run_dir: &std::path::Path) 
         spira_config::lc_call::CANNOT_TELL if r.out.contains("would close") || r.out.contains("reconcile-content: ") => Some(r.why()),
         _ => return Err(format!("reconcile-content --dry-run: exit {}: {}", r.code, r.why())),
     };
-    let seq = lc.answer(&["event-seq"]).map_err(String::from)?;
+    let seq = lc.answer(&["event-seq", "--head"]).map_err(String::from)?;
     let through_seq = serde_json::from_str::<serde_json::Value>(seq.trim()).ok().and_then(|v| v["seq"].as_u64());
     serde_json::to_string(&Snapshot { world_halted: false, through_seq, work: parse_dry_run(&r.out), asks: vec![], epics: vec![], cannot_tell }).map_err(|e| e.to_string())
 }

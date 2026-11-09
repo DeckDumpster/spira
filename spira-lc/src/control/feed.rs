@@ -98,6 +98,11 @@ impl<B: Backend> Store<B> {
         Ok(out)
     }
 
+    /// The revision alone: no event is read.
+    pub fn event_head(&self) -> Result<u64> {
+        self.contract().head()
+    }
+
     /// The revision read at, and the ids with an applied bead event after `since` up to it.
     pub fn event_seq(&self, since: u64) -> Result<(u64, Vec<String>)> {
         let head = self.contract().head()?;

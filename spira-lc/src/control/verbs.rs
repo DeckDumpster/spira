@@ -123,8 +123,13 @@ fn history<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, Stri
     serde_json::to_string_pretty(&Value::Array(rows)).map_err(|e| e.to_string())
 }
 
-/// `event-seq [--since N]`: the revision read at and the bead ids with an applied event after N.
+/// `event-seq [--since N | --head]`: the revision read at and the bead ids with an applied event
+/// after N. `--head` names no ids and reads no events, for a caller that wants only the revision.
 fn event_seq<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
+    if args.iter().any(|a| a == "--head") {
+        let seq = store.event_head().map_err(|e| format!("event-seq: {e}"))?;
+        return Ok(json!({ "seq": seq, "keys": [] }).to_string());
+    }
     let since = number(args, "--since", 0).map_err(|e| format!("event-seq: {e}"))?;
     let (seq, keys) = store
         .event_seq(since)
