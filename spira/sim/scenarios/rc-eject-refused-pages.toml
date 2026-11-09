@@ -52,3 +52,7 @@ sql = "SELECT 1 FROM events WHERE actor = 'alarms-pass' AND kind = 'complete' AN
 [[expect]]
 name = "one_page_for_the_held_eject"
 sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'one-page' AND exit = 0"
+
+[[expect]]
+name = "twenty_controller_passes_ran"
+sql = "SELECT 1 FROM events WHERE actor = 'rc-pass' AND kind = 'complete' AND exit = 0 HAVING count(*) >= 20"
