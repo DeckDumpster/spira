@@ -265,4 +265,15 @@ mod record_tests_tests {
         assert_eq!(text.lines().count(), 1);
         assert!(text.contains("\"test\":\"a.sh::x\""), "{text}");
     }
+
+    #[test]
+    fn a_round_with_a_per_case_export_writes_the_covered_lines_onto_that_cases_row() {
+        let tmp = testkit::TempDir::new("gate-diag-cov");
+        let d = tmp.path().to_path_buf();
+        std::fs::write(d.join("results.jsonl"), "{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"pass\",\"seconds\":1}\n").unwrap();
+        std::fs::write(d.join(tsd::testrun::COVERAGE_EXPORT), "{\"suite\":\"a.sh\",\"case\":\"x\",\"covered\":[\"src/b.rs:7\"]}\n").unwrap();
+        record_tests(&d, Some(d.clone()));
+        let text = std::fs::read_to_string(d.join("tsd/test-run.jsonl")).unwrap();
+        assert!(text.contains("\"covered\":[\"src/b.rs:7\"]"), "{text}");
+    }
 }

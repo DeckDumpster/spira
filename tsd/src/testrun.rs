@@ -97,7 +97,7 @@ pub fn test_stats(rows: &[Value], test: &str) -> Value {
     let flips = runs.windows(2).filter(|w| status(w[0]) != status(w[1])).count();
     let secs: Vec<f64> = runs.iter().filter_map(|r| num(r, "seconds")).collect();
     let rate = |k: usize, d: usize| (d > 0).then(|| k as f64 / d as f64);
-    let covered = runs.iter().rev().find_map(|r| r.get("covered").filter(|c| c.is_array()));
+    let covered = runs.last().and_then(|r| r.get("covered")).filter(|c| c.is_array());
     let mut out = json!({
         "test": test,
         "runs": n,
@@ -209,6 +209,9 @@ mod tests {
         let s = test_stats(&rows, "a.sh::x");
         assert_eq!(s["covered"], json!(["src/b.rs:1", "src/b.rs:2"]));
         assert!(test_stats(&rows, "a.sh::y").get("covered").is_none());
+        let mut later = rows_of("r2", "2026-11-02T00:00:00Z", &[("a.sh", "x", "pass", 1.0)]);
+        later.extend(rows);
+        assert!(test_stats(&later, "a.sh::x").get("covered").is_none(), "an unmeasured latest run does not borrow an older run's lines");
     }
 
     #[test]
