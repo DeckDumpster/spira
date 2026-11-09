@@ -480,3 +480,12 @@ fn a_claim_judged_at_the_planning_watermark_it_finds_goes_through() {
     assert_eq!(code, 0, "{out}");
     assert_eq!(r.state("sp-a"), "WORKING");
 }
+
+#[test]
+fn a_payload_sent_on_stdin_is_published_with_exit_zero() {
+    let r = Rig::new();
+    let body = json!({ "computed_at": STAMP, "entries": [{ "id": "sp-a", "claimable": true }] }).to_string();
+    let argv = crate::cutover::inline_payload_from(vec!["publish-readiness".into()], &mut body.as_bytes());
+    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+    r.ok(&argv);
+}
