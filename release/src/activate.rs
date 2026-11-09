@@ -326,7 +326,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
             }
         };
         let long_running = is_up(&st.active) && st.kind != "oneshot";
-        let why = fixed.or_else(|| (long_running && unit != KILL_RESTARTED).then(|| live_reason(old, new, &roots, ctx.sc.running_exe(unit).as_deref())).flatten());
+        let why = fixed.or_else(|| (long_running && unit != KILL_RESTARTED).then(|| live_reason(old, new, &roots, ctx.sc.running_exe(unit).as_deref(), ctx.sc.running_release(unit).as_deref())).flatten());
         let Some(why) = why else {
             if *changed {
                 eprintln!("release: {unit} differs only in the release root and runs the same bytes; left running");
@@ -637,7 +637,12 @@ fn program_changed(old: &str, new: &str, roots: &Roots) -> Option<String> {
 /// release's registry for hours), or the executable its main process runs (`exe`, from
 /// [`Systemctl::running_exe`]) differs in bytes from the program its `ExecStart=` names — a
 /// process left behind by an earlier activation, whatever the unit file now says.
-fn live_reason(old: &str, new: &str, roots: &Roots, exe: Option<&Path>) -> Option<String> {
+fn live_reason(old: &str, new: &str, roots: &Roots, exe: Option<&Path>, started_under: Option<&str>) -> Option<String> {
+    if let Some(r) = started_under.map(|r| r.trim_end_matches('/').rsplit('/').next().unwrap_or(r)) {
+        if r != CURRENT && Some(r) != roots.new.file_name().and_then(|n| n.to_str()) {
+            return Some(format!("its process started under release {r}"));
+        }
+    }
     let cur = roots.current_prefix();
     let now = format!("{}/", roots.new.display());
     let env = |t: &str| t.lines().filter(|l| l.starts_with("Environment=")).map(|l| l.replace(&cur, &now)).collect::<Vec<_>>();
@@ -908,11 +913,11 @@ mod restart_tests {
         let unit = |home: &str| format!("[Service]\nEnvironment=SPIRA_HOME={home}/spira\nExecStart={cur}/bin/spira-lc serve\n");
         let pinned = unit(&a1.display().to_string());
         let now = unit(&b2.display().to_string());
-        assert!(live_reason(&pinned, &now, &roots, None).is_some_and(|w| w.contains("environment")), "SPIRA_HOME names a1");
-        assert_eq!(live_reason(&unit(&cur), &now, &roots, None), None, "current follows the flip");
+        assert!(live_reason(&pinned, &now, &roots, None, None).is_some_and(|w| w.contains("environment")), "SPIRA_HOME names a1");
+        assert_eq!(live_reason(&unit(&cur), &now, &roots, None, None), None, "current follows the flip");
         let exe = a1.join("bin/spira-lc");
-        assert!(live_reason(&now, &now, &roots, Some(&exe)).is_some_and(|w| w.contains("executable")), "the process runs a1's spira-lc");
-        assert_eq!(live_reason(&now, &now, &roots, Some(&b2.join("bin/spira-lc"))), None, "the process runs b2's bytes");
+        assert!(live_reason(&now, &now, &roots, Some(&exe), None).is_some_and(|w| w.contains("executable")), "the process runs a1's spira-lc");
+        assert_eq!(live_reason(&now, &now, &roots, Some(&b2.join("bin/spira-lc")), None), None, "the process runs b2's bytes");
     }
 
     /// sp-r1gmno: a running process whose executable cannot be read, or a program the unit
@@ -927,10 +932,10 @@ mod restart_tests {
         let roots = Roots { releases: &rel, old: Some(&a1), new: &b2 };
         let unit = |sha: &str| format!("[Service]\nExecStart={}/{sha}/bin/spira-lc serve\n", rel.display());
         let gone = t.path().join("no-such-exe");
-        assert!(live_reason(&unit("b2"), &unit("b2"), &roots, Some(&gone)).is_some_and(|w| w.contains("cannot")), "unreadable process executable");
+        assert!(live_reason(&unit("b2"), &unit("b2"), &roots, Some(&gone), None).is_some_and(|w| w.contains("cannot")), "unreadable process executable");
         let pruned = Roots { releases: &rel, old: Some(&a1), new: &rel.join("c3") };
         let exe = b2.join("bin/spira-lc");
-        assert!(live_reason(&unit("c3"), &unit("c3"), &pruned, Some(&exe)).is_some_and(|w| w.contains("cannot")), "unreadable new program");
+        assert!(live_reason(&unit("c3"), &unit("c3"), &pruned, Some(&exe), None).is_some_and(|w| w.contains("cannot")), "unreadable new program");
     }
 
     /// sp-sv2lw2: a stale unit is restarted unless its template states a reason for never
@@ -948,5 +953,20 @@ mod restart_tests {
         assert_eq!(left, vec![("cockpit.service".to_string(), "a restart disturbs the operator's panes".to_string())]);
         let named = left_running(&left[0].0, "its unit changed", &left[0].1);
         assert!(named.contains("cockpit.service") && named.contains("operator's panes"), "{named}");
+    }
+
+    /// sp-sv2lw2: an earlier activation rewrote the unit file and left the process; the file
+    /// now names the current release but the process started under another, so it is stale.
+    #[test]
+    fn a_process_started_under_another_release_is_stale_though_its_unit_file_is_current() {
+        let t = testkit::TempDir::new("release-started-under");
+        let rel = t.path().join("releases");
+        let (a1, b2) = (rel.join("a1"), rel.join("b2"));
+        let roots = Roots { releases: &rel, old: Some(&b2), new: &b2 };
+        let unit = format!("[Service]\nEnvironment=SPIRA_RELEASE={}\nExecStart=/prod/bin/unit-run watch\n", b2.display());
+        let started = |r: &Path| crate::systemctl::release_of_environ(format!("A=1\0SPIRA_RELEASE={}\0B=2\0", r.display()).as_bytes());
+        assert!(live_reason(&unit, &unit, &roots, None, started(&a1).as_deref()).is_some_and(|w| w.contains("a1")), "started under a1");
+        assert_eq!(live_reason(&unit, &unit, &roots, None, started(&b2).as_deref()), None, "started under b2");
+        assert_eq!(live_reason(&unit, &unit, &roots, None, started(&rel.join("current")).as_deref()), None, "current is judged by the executable");
     }
 }
