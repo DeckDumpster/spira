@@ -137,6 +137,7 @@ lc_backup_drill_wait_secs = 7200
 lc_backup_drill_poll_secs = 60
 lc_backup_sync_dir = ""
 otel_keep_days = 14
+victorialogs_url = "http://127.0.0.1:9428"
 ready_ttl_s = 60
 concierge_push_pattern = '\bP0\b|RED on|PAUSED|UNDRIVEN|unread (operator )?verdict'
 concierge_push_wake = "concierge.sh wake"

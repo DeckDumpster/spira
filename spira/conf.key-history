@@ -722,3 +722,4 @@ throughput_stall_secs
 batcher_pause_lift_secs
 unrounded_noverdict_grace_secs
 ready_scheduler_wait_s
+victorialogs_url
