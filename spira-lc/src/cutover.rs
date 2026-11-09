@@ -65,7 +65,7 @@ pub(crate) fn inline_payload_from(mut args: Vec<String>, input: &mut dyn std::io
     let verb = (args.first().map(String::as_str), args.get(1).map(String::as_str));
     let reads_stdin = matches!(
         verb,
-        (Some("batch-progress" | "claim-verdicts"), _)
+        (Some("batch-progress" | "claim-verdicts" | "publish-readiness"), _)
             | (Some("section"), Some("apply-spec" | "publish-status"))
             | (Some("intent"), Some("put"))
     );
@@ -329,3 +329,15 @@ pub fn cmd_event_continuity(args: &[String], conn: &Conn) -> (i32, String) {
     (code, crate::continuity::render(&report))
 }
 
+
+#[cfg(test)]
+mod inline_tests {
+    use super::inline_payload_from;
+
+    #[test]
+    fn publish_readiness_carries_its_stdin_body_as_json() {
+        let argv = vec!["publish-readiness".to_string()];
+        let out = inline_payload_from(argv, &mut r#"{"entries":[]}"#.as_bytes());
+        assert_eq!(out, ["publish-readiness", "--json", r#"{"entries":[]}"#]);
+    }
+}
