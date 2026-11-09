@@ -215,7 +215,7 @@ impl Run<'_> {
         let o = self.systemctl(&["list-unit-files", glob, "--output=json"]);
         // list-unit-files exits 1 when nothing matches; that is an empty list, not a failure.
         if o.rc == 1 {
-            return Ok(unit_files_of(&o.out).unwrap_or_default());
+            return if o.out.is_empty() { Ok(vec![]) } else { unit_files_of(&o.out) };
         }
         if o.rc > 1 {
             return Err(format!("systemctl list-unit-files {glob} exited {}", o.rc));
