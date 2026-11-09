@@ -64,6 +64,11 @@ pub trait RoundRunner {
     fn build_output(&mut self) -> String {
         String::new()
     }
+    /// Whether the workspace builds with exactly `members` merged onto the base; `None` when the
+    /// runner cannot build a subset or the build faulted.
+    fn builds(&mut self, _members: &[Member]) -> Option<bool> {
+        None
+    }
 }
 
 /// A filter's red. `named` is each member the filter's own output blames, with the line that does;
@@ -372,12 +377,58 @@ fn eject_filter_owners<O: RoundOps>(ops: &mut O, f: &FilterRed, members: &[Membe
     Ok((!rebuilt.is_empty()).then_some(rebuilt))
 }
 
+/// The smallest `k` for which the first `k` of `members` fail to build, given that all of them do.
+fn first_failing_prefix<R: RoundRunner>(runner: &mut R, members: &[Member]) -> Option<usize> {
+    let (mut lo, mut hi) = (0, members.len());
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if runner.builds(&members[..mid])? {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Some(hi)
+}
+
+/// Builds member subsets to find what breaks a workspace whose errors map to no file: the last
+/// member of the shortest failing prefix is in the culprit set, and either breaks the build alone
+/// or with one earlier partner, found by the same search. The later one is held behind the earlier.
+/// `None` when the runner cannot build subsets, or the red needs three members or more.
+fn bisect_build<R: RoundRunner>(runner: &mut R, members: &[Member]) -> Option<Vec<Action>> {
+    let k = first_failing_prefix(runner, members)?;
+    let last = &members[k - 1];
+    let line = |what: &str| format!("the workspace fails to build {what} (bisected by building member subsets)");
+    if !runner.builds(std::slice::from_ref(last))? {
+        return Some(vec![Action::Eject { id: last.id.clone(), line: line(&format!("with only {} merged", last.id)) }]);
+    }
+    let with_last = |n: usize| -> Vec<Member> { members[..n].iter().chain(std::iter::once(last)).cloned().collect() };
+    let (mut lo, mut hi) = (0, k - 1);
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if runner.builds(&with_last(mid))? {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let partner = &members[hi - 1];
+    if runner.builds(&[partner.clone(), last.clone()])? {
+        return None;
+    }
+    Some(vec![Action::Sequence { id: last.id.clone(), behind: vec![partner.id.clone()], line: line(&format!("with {} and {} merged", partner.id, last.id)) }])
+}
+
 /// A workspace-build red whose compiler errors map to members: owners leave with the error as
-/// their evidence, a member lacking what another adds is held behind it, the rest re-cut.
-/// `None` when no member can be named, which leaves the red to be filed.
+/// their evidence, a member lacking what another adds is held behind it, the rest re-cut. An
+/// error that maps to no file is bisected by building member subsets. `None` when no member can
+/// be named, which leaves the red to be filed.
 fn eject_build_culprits<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O, members: &[Member]) -> Result<Option<Vec<Member>>, String> {
     let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
-    let actions = buildattr::attribute(&buildattr::compile_errors(&runner.build_output()), &ops.diffs(&ids));
+    let mut actions = buildattr::attribute(&buildattr::compile_errors(&runner.build_output()), &ops.diffs(&ids));
+    if actions.is_empty() {
+        actions = bisect_build(runner, members).unwrap_or_default();
+    }
     if actions.is_empty() {
         return Ok(None);
     }
@@ -623,6 +674,9 @@ pub(crate) mod tests {
         /// A compiler: the error text for a tree holding these members, if it does not build.
         pub compiler: Option<BuildFn>,
         pub build_failed: Option<String>,
+        /// Whether the fake can build a member subset, and each subset it was asked to build.
+        pub bisects: bool,
+        pub probes: Vec<Vec<String>>,
     }
 
     pub type BuildFn = Box<dyn Fn(&BTreeSet<String>) -> Option<String>>;
@@ -654,6 +708,8 @@ pub(crate) mod tests {
                 filtered: None,
                 compiler: None,
                 build_failed: None,
+                bisects: false,
+                probes: vec![],
             }
         }
         fn verdict(&mut self, suite: &str, tree: &BTreeSet<String>) -> bool {
@@ -729,6 +785,11 @@ pub(crate) mod tests {
         }
         fn build_output(&mut self) -> String {
             self.build_failed.clone().unwrap_or_default()
+        }
+        fn builds(&mut self, members: &[Member]) -> Option<bool> {
+            let tree: BTreeSet<String> = members.iter().map(|m| m.id.clone()).collect();
+            self.probes.push(tree.iter().cloned().collect());
+            self.bisects.then(|| self.compiler.as_ref().and_then(|c| c(&tree)).is_none())
         }
         fn stop_main(&mut self) -> Result<(), String> {
             self.stopped += 1;
@@ -1217,6 +1278,65 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
         assert_eq!(ops.incidents, vec![("workspace-build".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
         assert!(ops.ejected.is_empty());
+    }
+
+    fn unmapped_build_red(broken: &'static [&'static str], n: usize) -> (Fake, Ops) {
+        let mut f = Fake::new(|_, _| false);
+        f.compiler = Some(broken_by(broken));
+        f.bisects = true;
+        let ops = Ops { diffs: (1..=n).map(|i| md(&format!("m{i}"), "doc/x.md", "+p\n")).collect(), ..Ops::default() };
+        (f, ops)
+    }
+
+    fn land_ids(end: RoundEnd) -> Vec<String> {
+        let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
+        members.iter().map(|m| m.id.clone()).collect()
+    }
+
+    #[test]
+    fn an_unmapped_workspace_build_red_that_one_member_breaks_alone_ejects_that_member_by_bisection() {
+        let (mut f, mut ops) = unmapped_build_red(&["m2"], 3);
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
+        assert!(ops.eject_evidence[0].1.contains("bisected"), "{:?}", ops.eject_evidence);
+        assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+    }
+
+    #[test]
+    fn an_unmapped_workspace_build_red_that_only_a_pair_breaks_holds_the_later_member_behind_the_earlier() {
+        let (mut f, mut ops) = unmapped_build_red(&["m1", "m3"], 3);
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m2"]);
+        assert_eq!(ops.sequenced, vec![("m3".to_string(), vec!["m1".to_string()])]);
+        assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+    }
+
+    #[test]
+    fn an_unmapped_workspace_build_red_that_needs_three_members_is_still_filed() {
+        let (mut f, mut ops) = unmapped_build_red(&["m1", "m2", "m3"], 3);
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert_eq!(ops.incidents, vec![("workspace-build".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
+        assert!(ops.ejected.is_empty() && ops.sequenced.is_empty());
+    }
+
+    #[test]
+    fn bisecting_an_unmapped_workspace_build_red_builds_few_subsets() {
+        let (mut f, mut ops) = unmapped_build_red(&["m7"], 8);
+        let ms: Vec<Member> = (1..=8).map(|i| Member { id: format!("m{i}"), ..three()[0].clone() }).collect();
+        attribute_round(&mut f, &mut ops, &corpus(3), ms, Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(ops.ejected.iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), vec!["m7"]);
+        assert!(f.probes.len() <= 4, "{:?}", f.probes);
+    }
+
+    #[test]
+    fn bisecting_an_unmapped_pair_in_eight_members_builds_at_most_two_searches_and_a_check() {
+        let (mut f, mut ops) = unmapped_build_red(&["m2", "m7"], 8);
+        let ms: Vec<Member> = (1..=8).map(|i| Member { id: format!("m{i}"), ..three()[0].clone() }).collect();
+        attribute_round(&mut f, &mut ops, &corpus(3), ms, Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(ops.sequenced, vec![("m7".to_string(), vec!["m2".to_string()])]);
+        assert!(f.probes.len() <= 9, "{:?}", f.probes);
     }
 
     #[test]

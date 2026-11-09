@@ -123,6 +123,15 @@ pub fn install_probe_result(rc: i32) -> JobResult {
     }
 }
 
+/// What a `build=workspace` job's exit code says: 0 built, 4 did not, anything else is a fault.
+pub fn build_probe_result(rc: i32) -> Option<bool> {
+    match rc {
+        0 => Some(true),
+        4 => Some(false),
+        _ => None,
+    }
+}
+
 pub struct VmRunner<'a> {
     env: &'a Env,
     repo: &'a Repo,
@@ -142,6 +151,7 @@ pub struct VmRunner<'a> {
     main: Main,
     jobs: BTreeMap<u64, (String, String)>,
     verify_n: u32,
+    build_n: u32,
     corpus_runs: u32,
     batch: Option<String>,
 }
@@ -280,6 +290,7 @@ impl<'a> VmRunner<'a> {
             main: Main::None,
             jobs: BTreeMap::new(),
             verify_n: 0,
+            build_n: 0,
             corpus_runs: 0,
             batch: None,
         })
@@ -328,12 +339,18 @@ impl<'a> VmRunner<'a> {
             io::set_branch(self.repo, &branch, &head);
             return Ok(branch);
         }
-        let wt = self.env.run.join("worktree").join(format!(".batcher-attr-{}-{}", self.repo.name, job.id));
+        self.tree_without(branch, &job.id.to_string(), &job.removal)
+    }
+
+    /// `branch` at the round's base plus every member not in `removal`, merged in round order in
+    /// a scratch worktree named by `key`.
+    fn tree_without(&self, branch: String, key: &str, removal: &[Id]) -> Result<String, String> {
+        let wt = self.env.run.join("worktree").join(format!(".batcher-attr-{}-{key}", self.repo.name));
         io::worktree_reset(self.repo, &wt, &self.base_sha)?;
         let mut result = Ok(());
-        for m in self.members.iter().filter(|m| !job.removal.contains(&m.id)) {
+        for m in self.members.iter().filter(|m| !removal.contains(&m.id)) {
             if io::merge_member(self.env, &wt, &m.id, &m.tip) == MergeResult::Conflict {
-                result = Err(format!("{} does not merge without {}", m.id, job.removal.join(",")));
+                result = Err(format!("{} does not merge without {}", m.id, removal.join(",")));
                 break;
             }
         }
@@ -512,6 +529,32 @@ impl RoundRunner for VmRunner<'_> {
         self.stderr_text()
     }
 
+    fn builds(&mut self, subset: &[Member]) -> Option<bool> {
+        self.build_n += 1;
+        let job = format!("b{}", self.build_n);
+        let removal: Vec<Id> = self.members.iter().filter(|m| !subset.iter().any(|s| s.id == m.id)).map(|m| m.id.clone()).collect();
+        let tried = subset.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(",");
+        let branch = self.tree_without(self.branch(&job), &job, &removal).inspect_err(|e| eprintln!("batcher: build probe tree not built: {e}")).ok()?;
+        self.request(&job, &branch, &["workspace".to_string()], "workspace").inspect_err(|e| eprintln!("batcher: {e}")).ok()?;
+        let done = self.spool.join("res").join(format!("{job}.done"));
+        let deadline = epoch() + self.env.wall_secs;
+        let rc = loop {
+            if let Some(rc) = read_rc(&done) {
+                break rc;
+            }
+            if self.child_exited().is_some() || epoch() >= deadline {
+                eprintln!("batcher: build probe of [{tried}] got no answer from round-vm");
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        };
+        let built = build_probe_result(rc);
+        if built.is_none() {
+            eprintln!("batcher: build probe of [{tried}] faulted (rc {rc})");
+        }
+        built
+    }
+
     fn stop_main(&mut self) -> Result<(), String> {
         let Some(mut child) = self.child.take() else { return Ok(()) };
         if child.try_wait().map_err(|e| format!("round-vm: {e}"))?.is_none() {
@@ -655,6 +698,15 @@ mod tests {
         assert_eq!(build_for(&["a".to_string()], &changed), "artifacts");
         assert_eq!(build_for(&["a".to_string(), "b".to_string()], &changed), "dwarf");
         assert_eq!(build_for(&["unknown".to_string()], &changed), "dwarf", "unknown paths are never neutral");
+    }
+
+    #[test]
+    fn a_build_probe_reads_rc_4_as_not_building_and_a_fault_as_no_answer() {
+        assert_eq!(build_probe_result(0), Some(true));
+        assert_eq!(build_probe_result(4), Some(false));
+        for rc in [1, 2, 3, 124, 137] {
+            assert_eq!(build_probe_result(rc), None, "rc {rc}");
+        }
     }
 
     #[test]
