@@ -358,7 +358,7 @@ impl Handler for BeadSweep {
                 }
                 let mut spent = "{\"ids\":[]}".len();
                 let ids: Vec<String> = rowless(&self.ask_label, &snap).into_iter().take(REPAIR_BATCH).map(|r| r.id).take_while(|id| {
-                    let next = spent + id.len() + 3;
+                    let next = spent + serde_json::to_string(id).map_or(0, |j| j.len()) + 1;
                     let first = spent == "{\"ids\":[]}".len();
                     (next <= REPAIR_BYTES || first).then(|| spent = next).is_some()
                 }).collect();
@@ -426,7 +426,7 @@ mod tests {
     #[test]
     fn a_repair_of_the_longest_ids_is_cut_by_bytes_and_still_names_one_bead() {
         let p = sweep();
-        let beads: Vec<Bead> = (0..REPAIR_BATCH).map(|i| Bead { id: format!("{i:03}{}", "b".repeat(252)), status: "open".into(), ..Bead::default() }).collect();
+        let beads: Vec<Bead> = (0..REPAIR_BATCH).map(|i| Bead { id: format!("{i:03}\"{}\\", "b".repeat(250)), status: "open".into(), ..Bead::default() }).collect();
         let snap = Snapshot { content: beads, ..Snapshot::default() };
         let (mut view, ctx) = (Projection::default(), Ctx::new(0, 0));
         let tick = at(&mut view, "t", 1_000, EventKind::new(TICK, ""), None);

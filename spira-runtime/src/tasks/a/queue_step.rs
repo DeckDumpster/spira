@@ -633,12 +633,9 @@ fn store(carry: &mut Carry, repo: &str, rc: RepoCarry) {
     }
 }
 
-/// The most bytes a per-repo carry may serialize to, under the store's 65,535-byte column: a repo
-/// not yet carried waits a pass rather than push the record past it.
-pub const CARRY_BYTES: usize = 48 * 1024;
-
+/// A repo not yet carried waits a pass rather than push the record past [`crate::CARRY_BYTES`].
 pub fn admits<T: Serialize>(carry: &T) -> bool {
-    serde_json::to_string(carry).is_ok_and(|s| s.len() <= CARRY_BYTES)
+    serde_json::to_string(carry).is_ok_and(|s| s.len() <= crate::CARRY_BYTES)
 }
 
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
