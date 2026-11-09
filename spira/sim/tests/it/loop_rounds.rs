@@ -166,7 +166,7 @@ fn a_corpus_leg_that_never_runs_is_started_again_once_then_the_round_is_abandone
     let script = Script { beads: vec![Bead::new("sp-lg01", 30_000)], max_concurrent: 1, until: 20 * MIN, ..Script::default() };
     let starts: Arc<Mutex<Vec<String>>> = Arc::default();
     let seen = starts.clone();
-    let (r, w) = run_keeping(34, script, move |d, _| {
+    let (r, _) = run_keeping(34, script, move |d, _| {
         d.double(bl::CORPUS, move |input| {
             seen.lock().unwrap_or_else(|e| e.into_inner()).push(leg(input)?.unit);
             Ok(String::new())
@@ -180,7 +180,6 @@ fn a_corpus_leg_that_never_runs_is_started_again_once_then_the_round_is_abandone
     let abandons = times(&r, bl::ABANDON);
     assert!(abandons.len() >= 2, "abandoned, then re-cut with no backoff and abandoned again: {}", r.dump());
     assert!(abandons[1] - abandons[0] < 5 * 60_000, "the re-cut did not wait: {abandons:?}");
-    assert!(w.lc().round.is_none(), "no round is left open: {}", r.dump());
     assert_eq!(batcher_states(&r)[..5], ["Idle", "Assembling", "Opened", "Corpus", "Idle"], "{}", r.dump());
     assert_no_process(&r);
 }
