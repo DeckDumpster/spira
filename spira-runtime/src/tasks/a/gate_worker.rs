@@ -664,6 +664,8 @@ pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
     let par: usize = pinned["SPIRA_CERTIFY_PAR"].trim().parse().map_err(|_| "SPIRA_CERTIFY_PAR must be a positive integer".to_string())?;
     let q = queue(e);
     spira_config::process::spec()?;
+    let ticked = e.world.run_dir.join(spira_config::GATE_WORKER_TICKED);
+    let _ = std::fs::write(&ticked, "");
     let mut snap = pins(&pinned);
     snap.run_dir = e.world.run_dir.display().to_string();
     snap.inbox = q.queued().iter().map(task_job).collect();

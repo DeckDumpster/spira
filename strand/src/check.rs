@@ -80,6 +80,31 @@ fn ungated_submitted(run_dir: &Path, rows: &[spira_config::lc_state::Row]) -> st
         .collect()
 }
 
+pub const WORKER_SILENT_S: u64 = 120;
+
+/// A row when SUBMITTED beads wait ungated and gate.worker has not observed for `WORKER_SILENT_S`.
+/// A host with no stamp at all has never run the worker, which is silence too.
+fn worker_silent(run_dir: &Path, ungated: &std::collections::HashSet<String>) -> Option<PartRow> {
+    if ungated.is_empty() {
+        return None;
+    }
+    let quiet = fs::metadata(run_dir.join(spira_config::GATE_WORKER_TICKED)).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs());
+    if quiet.is_some_and(|s| s <= WORKER_SILENT_S) {
+        return None;
+    }
+    let since = quiet.map_or("never".to_string(), |s| format!("{}m ago", s / 60));
+    Some(PartRow {
+        part: "gate-worker".into(),
+        row: Row::new(
+            "gate-worker-silent",
+            "gate.worker",
+            Disposition::Escalate,
+            format!("{} SUBMITTED bead(s) ungated and gate.worker last ticked {since}", ungated.len()),
+            "check the runtime: its gate.worker task is not ticking".into(),
+        ),
+    })
+}
+
 /// Classify every partition against the live store. Err means an input could not be read,
 /// and the caller must neither report "nothing stranded" nor rewrite the episode state (R7).
 pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
@@ -161,6 +186,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
         };
         rows.extend(p.classify().into_iter().map(|row| PartRow { part: labels.clone(), row }));
     }
+    rows.extend(worker_silent(&run_dir, &ungated));
     if cfg.labels.is_none() {
         let claimable: std::collections::HashSet<String> = lc_rows
             .iter()
@@ -699,5 +725,20 @@ mod ungated_submitted_tests {
         assert_eq!(ungated_submitted(&run, &rows).len(), 2, "the matcher must be able to find an ungated bead");
         fs::write(run.join("gate-deferred/spira-sp-b"), "tip\n").unwrap();
         assert_eq!(ungated_submitted(&run, &rows), ["sp-a".to_string()].into_iter().collect());
+    }
+
+    #[test]
+    fn ungated_work_with_a_worker_that_has_not_ticked_is_reported_and_a_fresh_tick_is_not() {
+        let run = testkit::TempDir::new("strand-worker-silent");
+        let ungated: std::collections::HashSet<String> = ["sp-a".to_string()].into_iter().collect();
+        assert!(worker_silent(&run, &Default::default()).is_none(), "no ungated work, nothing to report");
+        assert_eq!(worker_silent(&run, &ungated).map(|r| r.row.kind), Some("gate-worker-silent".into()), "never ticked");
+        fs::create_dir_all(run.join("gate-worker")).unwrap();
+        let stamp = run.join(spira_config::GATE_WORKER_TICKED);
+        fs::write(&stamp, "").unwrap();
+        assert!(worker_silent(&run, &ungated).is_none(), "ticked just now");
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(WORKER_SILENT_S + 60);
+        fs::File::options().write(true).open(&stamp).unwrap().set_modified(old).unwrap();
+        assert!(worker_silent(&run, &ungated).is_some(), "ticked over two minutes ago");
     }
 }
