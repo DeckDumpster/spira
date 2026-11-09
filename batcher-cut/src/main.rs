@@ -449,6 +449,11 @@ impl drive::RoundOps for LiveOps<'_> {
         }
     }
 
+    fn adding(&self, suite: &str, members: &[batcher::core::Id]) -> Vec<batcher::core::Id> {
+        let path = format!("spira/{suite}");
+        members.iter().filter(|m| self.tips.get(*m).is_some_and(|t| io::adds_path(self.repo, &self.start_sha, t, &path))).cloned().collect()
+    }
+
     fn touching(&self, suite: &str, members: &[batcher::core::Id]) -> Vec<batcher::core::Id> {
         let text = std::fs::read_to_string(self.wt.join("spira").join(suite)).unwrap_or_default();
         let covers = suite_select::header::covers_of(&text);

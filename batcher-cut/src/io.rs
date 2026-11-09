@@ -1760,6 +1760,12 @@ pub fn sequence_edges(env: &Env, id: &str, behind: &[String]) -> Result<(), Stri
     Ok(())
 }
 
+/// Whether `tip` adds `path`, which `base_sha` lacks.
+pub fn adds_path(repo: &Repo, base_sha: &str, tip: &str, path: &str) -> bool {
+    run(Command::new("git").arg("-C").arg(&repo.path).args(["diff", "--name-only", "--diff-filter=A", &format!("{base_sha}...{tip}"), "--", path]), "git diff added paths")
+        .is_ok_and(|out| out.lines().any(|l| l == path))
+}
+
 /// The lines `tip` adds over `base_sha`, as `git diff` prints them.
 pub fn added_lines(repo: &Repo, base_sha: &str, tip: &str) -> String {
     run(Command::new("git").arg("-C").arg(&repo.path).args(["diff", "-U0", &format!("{base_sha}...{tip}")]), "git diff added lines")
