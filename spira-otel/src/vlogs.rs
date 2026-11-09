@@ -141,6 +141,28 @@ fn post(addr: &str, body: &str) -> std::io::Result<()> {
     }
 }
 
+/// The stream and kind a lifecycle transition is shipped under; the counts read them back.
+pub const TRANSITION_STREAM: &str = "lifecycle";
+pub const TRANSITION_KIND: &str = "transition";
+
+/// One lifecycle transition as shipped: `at` in epoch seconds.
+pub fn transition_record(machine: &str, event: &str, from: &str, to: &str, bead_id: &str, at: u64, actor: &str) -> Value {
+    serde_json::json!({
+        "stream": TRANSITION_STREAM, "kind_tag": TRANSITION_KIND,
+        "machine": machine, "event": event, "from": from, "to": to, "bead_id": bead_id, "at": at, "actor": actor,
+    })
+}
+
+/// The LogsQL filter for transitions of `machine` within the last `window_secs`, optionally into state `to`.
+pub fn transitions_filter(machine: &str, to: Option<&str>, window_secs: u64) -> String {
+    let quote = |v: &str| format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""));
+    let mut q = format!("_time:{window_secs}s kind_tag:{TRANSITION_KIND} machine:{}", quote(machine));
+    if let Some(to) = to {
+        q.push_str(&format!(" to:{}", quote(to)));
+    }
+    q
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogsError {
     NotConfigured,
@@ -436,6 +458,17 @@ mod tests {
         drop(down);
         assert!(matches!(Logs::new(&url).unwrap().count("x"), Err(LogsError::Unreachable(_))));
         assert_eq!(Logs::new("").err(), Some(LogsError::NotConfigured));
+    }
+
+    #[test]
+    fn a_transition_filter_quotes_its_values_and_a_record_carries_the_fields_it_filters_on() {
+        assert_eq!(transitions_filter("bead", Some("CLOSED"), 86_400), "_time:86400s kind_tag:transition machine:\"bead\" to:\"CLOSED\"");
+        assert_eq!(transitions_filter("a\"b", None, 60), "_time:60s kind_tag:transition machine:\"a\\\"b\"");
+        let r = transition_record("bead", "Claim", "READY", "WORKING", "sp-a", 7, "dwarf-x");
+        for (k, v) in [("machine", "bead"), ("from", "READY"), ("to", "WORKING"), ("bead_id", "sp-a"), ("actor", "dwarf-x"), ("kind_tag", "transition")] {
+            assert_eq!(r[k], v, "{k}");
+        }
+        assert_eq!(r["at"], 7);
     }
 
     #[test]
