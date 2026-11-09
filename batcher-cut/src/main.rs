@@ -1275,7 +1275,8 @@ fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), pace::CutError> {
         |id: &str| io::redrive_round(&repo, id),
         |id: &str, why: &str| io::file_orphan_round_incident(env_, &repo, id, why),
     );
-    let orphans = pace::Orphans { fit: &fit, redrive: &redrive, incident: &incident };
+    let opened = |id: &str| io::round_is_opened(env_, &repo, id);
+    let orphans = pace::Orphans { fit: &fit, redrive: &redrive, incident: &incident, opened: &opened };
     pace::paced(&pace::Files::new(&env_.run, name), &sm, || io::open_round_id(env_, &repo), |id| io::certify_driven(env_, name, id), || io::read_local_verdict(env_, name), &orphans, || cut(one))
 }
 

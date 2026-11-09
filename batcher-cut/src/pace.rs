@@ -203,6 +203,7 @@ pub struct Orphans<'a> {
     pub fit: &'a dyn Fn(&str) -> Result<(), String>,
     pub redrive: &'a dyn Fn(&str) -> Result<(), String>,
     pub incident: &'a dyn Fn(&str, &str) -> Result<String, String>,
+    pub opened: &'a dyn Fn(&str) -> bool,
 }
 
 pub struct Files {
@@ -366,7 +367,8 @@ pub fn paced(
             }
             return Ok(());
         }
-        let (mut next, step) = orphan_step(&st, &id, sm.now, sm.redrive_after, (orphans.fit)(&id));
+        let wait = if st.redriven != id && (orphans.opened)(&id) { 0 } else { sm.redrive_after };
+        let (mut next, step) = orphan_step(&st, &id, sm.now, wait, (orphans.fit)(&id));
         match step {
             Orphan::Wait => println!("batcher rounds: {}: round {id} is open with no driver — not re-cut", sm.repo),
             Orphan::Redrive => match (orphans.redrive)(&id) {
@@ -423,7 +425,7 @@ mod tests {
         let inbox = d.join("inbox.log");
         let sm = Seams { repo, now, inbox: &inbox, stamp: &stamp, redrive_after: WAIT, pause_lift_after: LIFT };
         let cut_ran = Cell::new(false);
-        let none = Orphans { fit: &|_| Ok(()), redrive: &|_| Ok(()), incident: &|_, _| Ok(String::new()) };
+        let none = Orphans { fit: &|_| Ok(()), redrive: &|_| Ok(()), incident: &|_, _| Ok(String::new()), opened: &|_| false };
         let r = paced(&Files::new(d, repo), &sm, || Ok(open.map(String::from)), |_| false, || verdict.map(|(s, a)| (s.to_string(), a)), &none, || {
             cut_ran.set(true);
             res
@@ -605,6 +607,10 @@ mod tests {
     type Calls = std::cell::RefCell<Vec<String>>;
 
     fn orphan_pass(d: &Path, now: u64, id: &str, driven: bool, fit: Result<(), String>, calls: &Calls) -> bool {
+        orphan_pass_in(d, now, id, driven, fit, calls, false)
+    }
+
+    fn orphan_pass_in(d: &Path, now: u64, id: &str, driven: bool, fit: Result<(), String>, calls: &Calls, opened: bool) -> bool {
         let inbox_p = d.join("inbox.log");
         let sm = Seams { repo: "a", now, inbox: &inbox_p, stamp: &stamp, redrive_after: WAIT, pause_lift_after: LIFT };
         let (fit_f, redrive_f, incident_f) = (
@@ -618,7 +624,8 @@ mod tests {
                 Ok("sp-inc".to_string())
             },
         );
-        let o = Orphans { fit: &fit_f, redrive: &redrive_f, incident: &incident_f };
+        let opened_f = |_: &str| opened;
+        let o = Orphans { fit: &fit_f, redrive: &redrive_f, incident: &incident_f, opened: &opened_f };
         let cut = Cell::new(false);
         paced(&Files::new(d, "a"), &sm, || Ok(Some(id.into())), |_| driven, || None, &o, || {
             cut.set(true);
@@ -637,6 +644,16 @@ mod tests {
         assert!(calls.borrow().is_empty(), "not before the wait: {:?}", calls.borrow());
         assert!(!orphan_pass(d, 1000 + WAIT, "b-1", false, Ok(()), &calls));
         assert_eq!(*calls.borrow(), vec!["redrive b-1".to_string()]);
+    }
+
+    #[test]
+    fn a_round_still_in_phase_opened_with_no_driver_gets_its_certify_on_the_first_tick_and_only_once() {
+        let t = dir("orphan-opened");
+        let (d, calls) = (t.path(), Calls::default());
+        assert!(!orphan_pass_in(d, 1000, "b-1", false, Ok(()), &calls, true));
+        assert_eq!(*calls.borrow(), vec!["redrive b-1".to_string()], "no wait for a round nobody has driven");
+        orphan_pass_in(d, 1001, "b-1", false, Ok(()), &calls, true);
+        assert_eq!(calls.borrow().len(), 1, "a certify that has not yet moved the phase is not an incident: {:?}", calls.borrow());
     }
 
     #[test]
