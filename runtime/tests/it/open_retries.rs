@@ -148,3 +148,12 @@ fn a_held_release_check_rides_out_a_cannot_tell() {
     Engine::open_with(j, Arc::new(VirtualClock::new(0)), vec![], 0, retry(&slept, 60_000)).unwrap();
     assert_eq!(*slept.lock().unwrap(), vec![100, 200]);
 }
+
+#[test]
+fn the_waits_spend_the_whole_bound_with_a_shortened_last_wait() {
+    let slept = Arc::new(Mutex::new(Vec::new()));
+    let r = Engine::open_with(Unsure::new(usize::MAX), Arc::new(VirtualClock::new(0)), vec![], 0, retry(&slept, 1_000));
+    assert!(r.is_err());
+    let v = slept.lock().unwrap().clone();
+    assert_eq!(v.iter().sum::<u64>(), 1_000, "{v:?}");
+}

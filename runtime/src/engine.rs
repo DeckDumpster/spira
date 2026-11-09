@@ -231,7 +231,7 @@ fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
 }
 
 /// How `Engine::open` treats a journal that cannot tell: ask again after `first_ms`, doubling,
-/// until the waits sum to `bound_ms`, then fail naming `store`.
+/// until the waits sum to exactly `bound_ms` (the last wait is cut short to fit), then fail naming `store`.
 #[derive(Clone)]
 pub struct BootRetry {
     pub first_ms: u64,
@@ -251,11 +251,12 @@ impl BootRetry {
         loop {
             match ask() {
                 Err(e) if e.is_cannot_tell() => {
-                    if wait == 0 || waited + wait > self.bound_ms {
+                    if wait == 0 || waited >= self.bound_ms {
                         return Err(RuntimeError::new(format!("{}: still cannot tell after {waited} ms of retries: {}", self.store, e.0)));
                     }
-                    (self.sleep)(wait);
-                    waited += wait;
+                    let wait_now = wait.min(self.bound_ms - waited);
+                    (self.sleep)(wait_now);
+                    waited += wait_now;
                     wait = wait.saturating_mul(2);
                 }
                 other => return other,
