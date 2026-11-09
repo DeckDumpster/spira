@@ -738,6 +738,24 @@ fn a_round_with_a_live_leg_unit_is_begun_and_not_abandoned_as_never_began() {
 }
 
 #[test]
+fn the_requeue_orphans_command_leaves_the_round_it_is_told_is_live() {
+    let r = Rig::new();
+    open_round(&r);
+    let later = |argv: &[&str]| {
+        let args: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        let req = r.req();
+        state::run(&r.s, &args, &Call { now: AT + 3600, request: &req.id })
+    };
+    let (rc, dry) = later(&["requeue-orphans", "--actor", "test"]);
+    assert_eq!(rc, 0, "{dry}");
+    assert!(dry.contains(r#""repos":{"b-1":"spira"}"#), "{dry}");
+    let (rc, out) = later(&["requeue-orphans", "--actor", "test", "--apply", "--live-round", "b-1"]);
+    assert_eq!(rc, 0, "{out}");
+    assert!(out.contains(r#""running":["b-1"]"#) && out.contains(r#""abandoned":[]"#), "{out}");
+    assert_eq!(round_state(&r), BatchState::Open);
+}
+
+#[test]
 fn requeue_orphans_leaves_a_leased_round_that_never_began_open_and_lists_it_leased() {
     let r = Rig::new();
     open_round(&r);

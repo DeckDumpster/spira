@@ -1875,7 +1875,9 @@ impl Lc for RealLc {
         if rc != 0 {
             return Err((rc, out.trim().to_string()));
         }
-        let seen: serde_json::Value = serde_json::from_str(&out).unwrap_or_default();
+        let Ok(seen) = serde_json::from_str::<serde_json::Value>(&out) else {
+            return Err((rc, format!("requeue-orphans dry run unreadable: {}", out.trim())));
+        };
         let live: Vec<String> = seen
             .get("repos")
             .and_then(|r| r.as_object())

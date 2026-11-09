@@ -30,7 +30,8 @@ pub struct Orphans {
     pub leased: Vec<String>,
     /// Rounds that never began on the record but whose leg unit or round-vm process is live.
     pub running: Vec<String>,
-    /// The repo of each round in `phantom_batches` and `running`, for the caller's process probe.
+    /// The repo of each round in `phantom_batches`, for the caller's process probe: a dry run
+    /// (no live set) lists every round the probe must be asked about.
     pub repos: std::collections::BTreeMap<String, String>,
 }
 

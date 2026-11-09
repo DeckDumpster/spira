@@ -2290,6 +2290,20 @@ mod tests {
     }
 
     #[test]
+    fn a_live_round_scope_or_leg_unit_is_listed_and_a_neighbours_is_not() {
+        let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
+        let live = UnitFacts { state: UnitState::Active, main_pid: Some(7), exit: None, since_ms: Some(0) };
+        let scope = format!("{}.scope", round_scope_unit("spira", "spira-A", "7-1"));
+        u.install(&scope, live.clone());
+        u.install(&format!("{}.scope", round_scope_unit("spira", "spira-B", "7-1")), live);
+        assert_eq!(live_round_units(&u, "spira", "spira-A", &|_| false).unwrap(), vec![scope]);
+        assert!(live_round_units(&u, "spira", "spira-C", &|_| false).unwrap().is_empty());
+        u.script("batcher.local", 3_600_000, Exit::Code(0));
+        let leg = u.start(&spec("batcher.local", &format!("{}.attribute2", round_stem("spira", "spira-C")), &["x"])).unwrap();
+        assert_eq!(live_round_units(&u, "spira", "spira-C", &|_| false).unwrap(), vec![leg.name]);
+    }
+
+    #[test]
     fn a_round_stop_spares_the_caller_own_unit() {
         let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
         u.script("batcher.local", 3_600_000, Exit::Code(0));
