@@ -47,7 +47,11 @@ pub fn withhold(run: &Path, repo: &str, pool: Vec<Member>) -> (Vec<Member>, Vec<
             Some((tip, filed)) if tip == m.tip => {
                 withheld.push((m.id, tip, !filed));
             }
-            _ => kept.push(m),
+            Some(_) => {
+                let _ = fs::remove_file(file(run, repo, &m.id));
+                kept.push(m);
+            }
+            None => kept.push(m),
         }
     }
     (kept, withheld)
@@ -80,7 +84,9 @@ mod tests {
         record(run.path(), "r", "sp-a", "t1");
         assert_eq!(withhold(run.path(), "r", vec![member("sp-a", "t9")]).0.len(), 1, "a changed tip is a changed input");
         assert_eq!(withhold(run.path(), "other", vec![member("sp-a", "t1")]).0.len(), 1);
+        assert!(!file(run.path(), "r", "sp-a").exists(), "a record the tip has moved past is dropped");
         record(run.path(), "r", "sp-a", "t9");
-        assert_eq!(withhold(run.path(), "r", vec![member("sp-a", "t1")]).0.len(), 1, "a later record replaces the earlier");
+        record(run.path(), "r", "sp-a", "t10");
+        assert_eq!(withhold(run.path(), "r", vec![member("sp-a", "t9")]).0.len(), 1, "a later record replaces the earlier");
     }
 }
