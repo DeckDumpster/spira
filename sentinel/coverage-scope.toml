@@ -8,7 +8,7 @@ functions = ["Run::secs_within", "runs", "landed_in", "measure", "term", "condit
 path = "sentinel/src/call.rs"
 functions = ["SpiraConfig::call", "SpiraConfig::get", "SpiraConfig::set", "LcPort::call"]
 
-# The claims lane the actors here honour: the bead's own gate reports any branch in it no test takes.
+# The claims lane the actors here honour.
 
 [[scope]]
 path = "sentinel/src/call.rs"

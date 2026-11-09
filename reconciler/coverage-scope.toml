@@ -1,4 +1,4 @@
-# The remedies lane the reconciler honours: the bead's own gate reports any branch in it no test takes.
+# The remedies lane the reconciler honours.
 
 [[scope]]
 path = "reconciler/src/lib.rs"

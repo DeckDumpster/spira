@@ -8,7 +8,7 @@ functions = ["free_share", "sample", "targets_of", "distance", "level", "conditi
 path = "watchtower/src/probes.rs"
 functions = ["psi_full_avg300"]
 
-# The heimdall lane the actors here honour: the bead's own gate reports any branch in it no test takes.
+# The heimdall lane the actors here honour.
 
 [[scope]]
 path = "watchtower/src/main.rs"
