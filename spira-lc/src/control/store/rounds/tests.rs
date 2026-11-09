@@ -1214,3 +1214,26 @@ fn create_bead_refuses_the_planning_fields_it_used_to_keep() {
     r.ok(&["create-bead", "sp-plan", "--ready"]);
     assert_eq!(r.lc(&["show", "sp-plan"]).0, 0);
 }
+
+fn record_round(r: &Rig, row: lifecycle::batch::BatchRow, opened_at: i64) {
+    let key = keys::batch(&row.repo, &row.batch_id);
+    let rec = crate::control::records::BatchRecord { row, members: vec![], opened_at, round: Default::default() };
+    let mut c = super::Cascade::new();
+    r.s.new_round(&mut c, &rec.row.repo, &rec.row.batch_id).unwrap().unwrap();
+    r.s.put_round(&mut c, &key, &rec).unwrap();
+    r.s.commit(c, &r.req(), "cut").unwrap();
+}
+
+#[test]
+fn dwell_reports_the_newest_round_cut_per_repo_from_the_round_records_whatever_the_audit_log_holds() {
+    let r = Rig::new();
+    open_round(&r);
+    record_round(&r, lifecycle::batch::BatchRow::cut("b-late", "spira", "H", "B"), AT + 30);
+    record_round(&r, lifecycle::batch::BatchRow::staged("b-staged", "spira", "H", "B", "b-1"), AT + 50);
+    record_round(&r, lifecycle::batch::BatchRow::cut("b-other", "other", "H", "B"), AT + 20);
+    let d = r.s.dwell(AT + 100, 3_600, None).unwrap();
+    assert_eq!(d.last["spira"]["Deliver"], AT + 30, "a staged round was not cut: {:?}", d.last);
+    assert_eq!(d.last["other"]["Deliver"], AT + 20, "{:?}", d.last);
+    let old = r.s.dwell(AT + 100_000, 3_600, None).unwrap();
+    assert!(old.last.get("spira").is_none_or(|k| !k.contains_key("Deliver")), "a cut older than the window is not reported: {:?}", old.last);
+}
