@@ -18,7 +18,7 @@
 //!
 //! "The release's bin" is the target directory this test binary was built into: cargo stages no
 //! release, so the honest equivalent is the workspace's own built binaries, spira-config among
-//! them (built here if this `cargo test` did not build it). It is both what the sim `cargo`
+//! them (found already built, never built here). It is both what the sim `cargo`
 //! copies when the job "builds" spira-config and, for the with-release run, a directory first
 //! on the runner's PATH.
 
@@ -56,25 +56,18 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&o.stdout).trim().to_string()
 }
 
-/// The workspace's built binaries, spira-config among them: `<target>/debug`, beside `sim`.
+/// A directory holding an already-built `spira-config`: beside this test binary's own
+/// (`<target>/debug`), else on PATH, where testenv puts the prebuilt floor (`spira-config` is required of it). Nothing is built here.
 fn release_bin() -> &'static Path {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
     BIN.get_or_init(|| {
-        let bin = Path::new(env!("CARGO_BIN_EXE_sim")).parent().unwrap().to_path_buf();
-        let target = bin.parent().unwrap();
-        // The cargo running this test (cargo test sets CARGO for it), not the one that compiled
-        // it: a cached compile carries another host's toolchain path (the round VM's
-        // integration run spawned a cargo that did not exist there).
-        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| env!("CARGO").into());
-        let o = Command::new(cargo)
-            .args(["build", "--offline", "-q", "-p", "spira-config", "--bin", "spira-config", "--target-dir"])
-            .arg(target)
-            .current_dir(root())
-            .output()
-            .expect("spawn cargo");
-        assert!(o.status.success(), "cargo build -p spira-config: {}", String::from_utf8_lossy(&o.stderr));
-        assert!(bin.join("spira-config").is_file(), "no spira-config in {}", bin.display());
-        bin
+        let beside = Path::new(env!("CARGO_BIN_EXE_sim")).parent().unwrap().to_path_buf();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let on_path = std::env::split_paths(&path);
+        std::iter::once(beside.clone())
+            .chain(on_path)
+            .find(|d| d.join("spira-config").is_file())
+            .unwrap_or_else(|| panic!("no built spira-config beside {} or on PATH", beside.display()))
     })
 }
 
