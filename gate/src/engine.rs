@@ -928,6 +928,11 @@ impl<'w, W: World> Trial<'w, W> {
                 "gate: {name}'s build ran out of scratch space mid-trial — the host's room, not a fault in {br}.\n{}",
                 parse::tail_bytes(&out, 4000)));
         }
+        if parse::missing_built_binary(&out) || !w.target_intact(&tree) {
+            return v(NOVERDICT, "target-vanished", format!(
+                "gate: {name}'s build output was removed after this gate built it — the host's sweep, not a fault in {br}.\n{}",
+                parse::tail_bytes(&out, 4000)));
+        }
         if parse::cache_transport_failure(&out) {
             return v(NOVERDICT, "build-cache-fault", format!(
                 "gate: {name}'s build lost its compiler cache (sccache transport error) — the host's cache server, not a fault in {br}.\n{}",
@@ -1219,6 +1224,11 @@ impl<'w, W: World> Trial<'w, W> {
         if spira_config::scratch::is_exhaustion(&base_out) {
             return v(NOVERDICT, "scratch-short", format!(
                 "gate: {name}'s base trial ran out of scratch space — the host's room; it judged neither {base} nor {br}.\n{}",
+                parse::tail_bytes(&base_out, 4000)));
+        }
+        if parse::missing_built_binary(&base_out) || !w.target_intact(&tree) {
+            return v(NOVERDICT, "target-vanished", format!(
+                "gate: {name}'s build output was removed after this gate built it — the host's sweep; it judged neither {base} nor {br}.\n{}",
                 parse::tail_bytes(&base_out, 4000)));
         }
         if parse::cache_transport_failure(&base_out) {

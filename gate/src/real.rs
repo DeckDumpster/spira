@@ -812,7 +812,8 @@ impl World for Real {
             return Ok(format!("gate: no tmpfs for the build (/tmp is not one and SPIRA_GATE_TARGET_ROOT is unset) — {} builds in the tree", tree.display()));
         };
         let trees = tree.parent().unwrap_or(Path::new("/"));
-        let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &target::mem_available_mib)?;
+        let held = |name: &str| target::held_by_gate(Path::new(run), name);
+        let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &target::mem_available_mib, &held)?;
         let mut line = format!("gate: build on tmpfs at {}", p.dir.display());
         if p.disk_freed_mib > 0 {
             line.push_str(&format!(" ({} MiB of build output moved off the disk)", p.disk_freed_mib));
@@ -821,6 +822,9 @@ impl World for Real {
             line.push_str(&format!("; removed {} orphaned and evicted {} least recently used target(s)", p.orphans.len(), p.evicted.len()));
         }
         Ok(line)
+    }
+    fn target_intact(&self, tree: &Path) -> bool {
+        crate::target::intact(tree)
     }
     fn release_target(&self, tree: &Path, keep_release: bool) {
         crate::target::release_tree(tree, keep_release);
