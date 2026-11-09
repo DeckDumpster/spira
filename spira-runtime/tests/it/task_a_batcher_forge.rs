@@ -138,3 +138,24 @@ fn t3_the_attribution_line_opens_or_blocks() {
     assert!(next.repos.get("spira").is_none_or(|r| r.state == State::Idle));
     assert!(acts.iter().any(|a| a.effect == VERDICT_WRITE && a.input.contains("red")), "{acts:?}");
 }
+
+fn attributing_with(n: usize) -> Carry {
+    let members = (0..n).map(|i| (format!("sp-{i}"), format!("t{i}"))).collect();
+    let rc = RepoCarry { state: State::Attributing, leg: Some("spira.a2".into()), leg_at_ms: NOW, members, run: 2, ..RepoCarry::default() };
+    Carry { repos: [("spira".to_string(), rc)].into() }
+}
+
+fn lost_after(n: usize, after_ms: u64) -> bool {
+    use spira_runtime::tasks::a::batcher_local::LEG_GRACE_MS;
+    let snapshot = Snapshot { enabled: true, repos: [("spira".to_string(), repo(vec![]))].into(), now_ms: NOW + after_ms + LEG_GRACE_MS };
+    let (next, _) = decide(&attributing_with(n), &snapshot);
+    next.repos.get("spira").is_none_or(|r| r.state != State::Attributing)
+}
+
+#[test]
+fn an_attribution_leg_is_given_one_wall_for_each_corpus_run_it_may_make() {
+    let wall = spira_runtime::tasks::a::batcher_local::Policy::default().wall_ms;
+    assert!(!lost_after(3, wall * 5 - 1), "three members allow five runs");
+    assert!(lost_after(3, wall * 5 + 1));
+    assert!(!lost_after(1, wall * 2), "past one wall, as the audit's 2099s iterations would be");
+}

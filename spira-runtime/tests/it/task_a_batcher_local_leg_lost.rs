@@ -176,3 +176,15 @@ fn a_corpus_leg_is_judged_lost_one_wall_and_grace_after_it_started() {
     let (_, acts) = decide(&corpus("spira.r9.corpus.1", NOW), &snap(NOW + past_one_wall, Some(vec!["spira.r9.corpus.1".into()])));
     assert_eq!(names(&acts), [CORPUS], "lost, so the round goes to attribution: {acts:?}");
 }
+
+#[test]
+fn an_attribution_leg_deadline_follows_the_member_count() {
+    let wall = Policy::default().wall_ms;
+    let mut carry = attributing(NOW);
+    carry.repos.get_mut("spira").unwrap().members = (0..3).map(|i| (format!("sp-{i}"), format!("t{i}"))).collect();
+    let listed = Some(vec!["spira.r9.attribute.2".to_string()]);
+    let (_, acts) = decide(&carry, &snap(NOW + wall * 5 - 1, listed.clone()));
+    assert!(acts.is_empty(), "three members allow five runs: {acts:?}");
+    let (_, acts) = decide(&carry, &snap(NOW + wall * 5 + LEG_GRACE_MS + 1, listed));
+    assert_eq!(names(&acts).first(), Some(&ABANDON), "{acts:?}");
+}
