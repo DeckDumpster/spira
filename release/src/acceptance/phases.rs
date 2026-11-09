@@ -211,8 +211,16 @@ impl Run<'_> {
     }
 
     /// The user manager's unit files matching the systemd glob `glob`.
-    fn unit_files(&self, glob: &str) -> Result<Vec<UnitFile>, String> {
-        unit_files_of(&self.systemctl_json(&["list-unit-files", glob])?)
+    pub(super) fn unit_files(&self, glob: &str) -> Result<Vec<UnitFile>, String> {
+        let o = self.systemctl(&["list-unit-files", glob, "--output=json"]);
+        // list-unit-files exits 1 when nothing matches; that is an empty list, not a failure.
+        if o.rc == 1 {
+            return if o.out.is_empty() { Ok(vec![]) } else { unit_files_of(&o.out) };
+        }
+        if o.rc > 1 {
+            return Err(format!("systemctl list-unit-files {glob} exited {}", o.rc));
+        }
+        unit_files_of(&o.out)
     }
 
     /// The user manager's loaded units matching `glob`, in `state` when given.
@@ -393,16 +401,24 @@ impl Run<'_> {
     }
 
     /// File a probe bead labelled for the builder predicate; its id.
-    fn file_probe(&self, title: &str, description: &str, labels: &Labels) -> (Option<String>, String) {
+    pub(super) fn file_probe(&self, title: &str, description: &str, labels: &Labels) -> (Option<String>, String) {
         let l = format!("acceptance,{},{},repo:{}", labels.plan, labels.scope, self.o.scratch_name());
         let out = self.h.run(&self.bd(&["create", "--title", title, "--description", description, "--label", &l, "--type", "task"]));
         let Some(id) = extract_bead_id(&out.text) else { return (None, out.text) };
         // File the way bead.sh does: the bead's lifecycle row is part of filing it. Under
         // the machine a rowless bead is never claimable, so the probe sat uncalled
         // (sp-6ka75); a row that cannot be created fails "bead filed", naming why.
-        let lc = self.h.run(&self.tool("spira-lc").args(["create-bead", &id]));
+        // The store answers late right after an install; create-bead is idempotent, so ask until it does.
+        let mut lc = self.h.run(&self.tool("spira-lc").args(["create-bead", &id]));
+        self.poll(30, 2, || {
+            if lc.rc == 0 {
+                return true;
+            }
+            lc = self.h.run(&self.tool("spira-lc").args(["create-bead", &id]));
+            lc.rc == 0
+        });
         if lc.rc != 0 {
-            return (None, format!("{}spira-lc create-bead {id} rc={}: {}", out.text, lc.rc, lc.text.trim_end()));
+            return (None, format!("{id} was created, but spira-lc create-bead rc={}: {}\n{}", lc.rc, lc.text.trim_end(), out.text));
         }
         (Some(id), out.text)
     }
@@ -541,9 +557,9 @@ git -C "$dir" commit -q -m "acceptance-fast-tier: acceptance probe"
 const FAST_TIER_BARE_LINT: &str = r#"cd "$1" && exec env -u SPIRA_GATE_BASE spira-lint --only plan-matrix"#;
 
 /// The builder partition labels the probe bead must carry.
-struct Labels {
-    plan: String,
-    scope: String,
+pub(super) struct Labels {
+    pub(super) plan: String,
+    pub(super) scope: String,
 }
 
 fn tarball_in(dir: &Path) -> Option<PathBuf> {
@@ -760,7 +776,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     );
     match &id {
         Some(i) => r.ok(&format!("phase A: bead filed ({i})")),
-        None => r.bad("phase A: bead filed", &format!("bd create output: {}", out.trim_end())),
+        None => r.bad("phase A: bead filed", out.trim_end()),
     }
     if let Some(id) = id {
         r.probe = Some(id.clone());
