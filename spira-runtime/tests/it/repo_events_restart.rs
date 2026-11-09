@@ -25,6 +25,7 @@ fn rig(forge: Arc<Mutex<Vec<Run>>>, seed_keys: Vec<String>) -> TaskRig {
         Ok(serde_json::to_string(&Snapshot { seed, repos: vec![(SLUG.into(), Ok(forge.lock().unwrap().clone()))] }).unwrap())
     }).double(INBOX_APPEND, |_| Ok(String::new()));
     r.tick(stream, kind).unwrap();
+    r.advance(45_000).unwrap();
     r
 }
 

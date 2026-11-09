@@ -13,6 +13,7 @@ pub const TICK: EventKindTag = "repo-events.tick";
 pub const STATE: EventKindTag = "repo-events.state";
 pub const OBSERVE: &str = "repo-events.observe";
 pub const NAME: &str = "repo-events";
+const BOOT_BODY: &str = "boot";
 
 /// The newest keys kept: older runs have left the window the forge lists (30 per repository).
 /// The carry rides one journal event, so the whole list must fit `kind_body`.
@@ -130,7 +131,7 @@ impl RepoEvents {
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
-        ("repo-events/boot", STREAM, EventKind::new(TICK, ""))
+        ("repo-events/boot", STREAM, EventKind::new(TICK, BOOT_BODY))
     }
 }
 
@@ -144,6 +145,9 @@ impl Handler for RepoEvents {
             return vec![];
         }
         if ev.kind.tag == TICK {
+            if ev.kind.body == BOOT_BODY {
+                return vec![Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") }];
+            }
             let input = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE)).unwrap_or_default();
             return vec![
                 Command::Probe(EffectSpec { name: OBSERVE.into(), input, deadline_ms: OBSERVE_DEADLINE_MS }),
@@ -262,6 +266,22 @@ mod tests {
         let (c, _) = decide(&c, &snap(vec![]));
         assert!(c.failed.is_empty());
         assert_eq!(decide(&c, &down).1.len(), 1);
+    }
+
+    #[test]
+    fn a_runtime_start_waits_one_interval_before_the_first_poll() {
+        use runtime::ports::VirtualClock;
+        use runtime::{Engine, Executor, MemJournal};
+        let clock = VirtualClock::new(1_800_000_000_000);
+        let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![RepoEvents { interval_ms: 1000 }.registration()], 0).unwrap();
+        let (id, stream, kind) = RepoEvents::boot();
+        e.submit(id, stream, kind).unwrap();
+        e.run_until_idle().unwrap();
+        let polls = |e: &Engine| e.pending_effects().iter().filter(|p| p.spec.name == OBSERVE).count();
+        assert_eq!(polls(&e), 0, "the boot tick polled at once");
+        clock.advance(1000);
+        e.run_until_idle().unwrap();
+        assert_eq!(polls(&e), 1);
     }
 
     #[test]
