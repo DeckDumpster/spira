@@ -232,6 +232,7 @@ fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
 
 /// How `Engine::open` treats a journal that cannot tell: ask again after `first_ms`, doubling,
 /// until the waits sum to exactly `bound_ms` (the last wait is cut short to fit), then fail naming `store`.
+/// The bound counts waits only; each ask is separately bounded by the socket's own deadline.
 #[derive(Clone)]
 pub struct BootRetry {
     pub first_ms: u64,
