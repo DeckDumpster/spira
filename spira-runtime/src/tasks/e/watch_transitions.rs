@@ -25,7 +25,7 @@
 //! (`Snapshot::owners`) is older than `SPIRA_TRANSITIONS_HEARTBEAT_BOUND`, was never seen, or
 //! carries a failed action. An owner beating with nothing failed is handling the expiry itself
 //! (the round driver abandoning a stalled pass, a requeue sweep), and the table line says so
-//! without waking anyone. IN_DELIVERY→LANDED reads the round-progress heartbeat.
+//! without waking anyone. Only IN_DELIVERY→LANDED has an owner heartbeat so far (round-progress, whose `stalled:` detail is `round-vm`'s own expiry report); every other edge is unowned and pages on its bound alone.
 //!
 //! Each edge is judged per repo, and over all repos together (scope `*`) where no one repo is
 //! stalled on it. A store or release
