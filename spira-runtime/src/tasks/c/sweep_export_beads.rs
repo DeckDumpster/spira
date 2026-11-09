@@ -24,7 +24,7 @@
 //!            watermarks: String, mirrored_count: usize, mirror_bytes_sha: String }
 //! ```
 //!
-//! - `content` = store verb `content list --all --json` (`:28`, 300 s); `lifecycle` = `list-all`
+//! - `content` = store verb `content list --id <chunk> --all --limit 0 --json`, one query per `CONTENT_CHUNK` lifecycle ids (300 s in all); `lifecycle` = `list-all`
 //!   (`:29`, 120 s); `memories` = `content memories --json` (`:30`, 60 s, absent → `{}`);
 //!   `watermarks` = `plane-watermarks --manifest` (`:32`, 5 s). All four through the in-process
 //!   `LcClient` (S7a), not the `spira-lc` CLI.
@@ -251,14 +251,17 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
     }
 }
 
+/// Beads read per content query: one unpaged dump of the whole store is a sort the store
+/// spills to its temp spool.
+pub const CONTENT_CHUNK: usize = 200;
+
 /// The runner of [`OBSERVE`]: the content, lifecycle and memory dumps and the planes'
 /// watermarks over the socket, and what is mirrored now.
 pub fn observe(lc: &LcClient, wiki: &str) -> Result<String, String> {
     if wiki.trim().is_empty() {
         return serde_json::to_string(&Snapshot { disabled: true, ..Snapshot::default() }).map_err(|e| e.to_string());
     }
-    let content: Vec<serde_json::Value> = serde_json::from_str(&lc.answer(&["content", "list", "--all", "--json"]).map_err(|e| format!("content list failed: {e}"))?).map_err(|e| format!("content list did not answer JSON: {e}"))?;
-    let lifecycle = lc
+    let lifecycle: BTreeMap<String, String> = lc
         .answer(&["list-all"])
         .map_err(|e| format!("lifecycle list failed: {e}"))?
         .lines()
@@ -268,6 +271,14 @@ pub fn observe(lc: &LcClient, wiki: &str) -> Result<String, String> {
             id.starts_with("sp-").then(|| (id.to_string(), state.to_string()))
         })
         .collect();
+    let ids: Vec<&str> = lifecycle.keys().map(String::as_str).collect();
+    let mut content: Vec<serde_json::Value> = Vec::with_capacity(ids.len());
+    for chunk in ids.chunks(CONTENT_CHUNK) {
+        let ids = chunk.join(",");
+        let page = lc.answer(&["content", "list", "--id", &ids, "--all", "--limit", "0", "--json"]).map_err(|e| format!("content list failed: {e}"))?;
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&page).map_err(|e| format!("content list did not answer JSON: {e}"))?;
+        content.extend(rows);
+    }
     let memories = lc
         .answer(&["content", "memories", "--json"])
         .ok()

@@ -78,3 +78,33 @@ fn t5_a_changed_dump_writes_sorted_by_id_and_a_half_shrink_refuses() {
 fn t6_two_virtual_days_are_deterministic_and_within_1_event_an_hour() {
     t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&current(&["sp-a"], 1))), 2, 1);
 }
+
+struct Store(std::sync::Mutex<Vec<Vec<String>>>, usize);
+
+impl spira_config::lc_call::Transport for Store {
+    fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+        self.0.lock().unwrap().push(argv.to_vec());
+        let out = match argv.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+            ["list-all"] => (0..self.1).map(|n| format!("sp-{n:05}\tOPEN\n")).collect(),
+            ["content", "list", "--id", ids, ..] => format!("[{}]", ids.split(',').map(|i| format!("{{\"id\":\"{i}\"}}")).collect::<Vec<_>>().join(",")),
+            ["content", "memories", ..] => "{}".into(),
+            _ => String::new(),
+        };
+        Ok(spira_config::lc_call::Reply { code: 0, out, err: String::new() })
+    }
+}
+
+#[test]
+fn the_probe_reads_content_in_bounded_id_chunks_never_one_whole_store_dump() {
+    let wiki = testkit::TempDir::new("export-beads-chunks");
+    let store = std::sync::Arc::new(Store(Default::default(), 2 * task::CONTENT_CHUNK + 1));
+    let lc = spira_config::lc_call::LcClient::over(store.clone(), true);
+    let snap: Snapshot = serde_json::from_str(&task::observe(&lc, wiki.path().to_str().unwrap()).unwrap()).unwrap();
+    assert_eq!(snap.content.len(), 2 * task::CONTENT_CHUNK + 1, "every bead is still read");
+    let content_lists: Vec<Vec<String>> = store.0.lock().unwrap().iter().filter(|a| a.starts_with(&["content".into(), "list".into()])).cloned().collect();
+    assert_eq!(content_lists.len(), 3);
+    for call in &content_lists {
+        assert_eq!(call[2], "--id", "{call:?}");
+        assert!(call[3].split(',').count() <= task::CONTENT_CHUNK, "a chunk is bounded");
+    }
+}
