@@ -806,6 +806,15 @@ fn a_submitted_bead_in_a_round_with_no_gate_is_not_escalated_as_unjudgeable() {
     assert!(h.logged("is in a round — the round judges it, no per-bead gate"));
 }
 
+#[test]
+fn a_submitted_bead_in_no_round_with_no_gate_is_still_counted_toward_escalation() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=gate-not-found branch=b repo=spira suite=-\n".into()));
+    h.run();
+    assert!(h.lib.has("noverdict sp-a spira gate-not-found NO_VERDICT"));
+}
+
 fn retip(h: &H, br: &str, tip: &str) {
     h.git.refs.borrow_mut().retain(|(b, _)| b != br);
     h.git.add(br, tip);
