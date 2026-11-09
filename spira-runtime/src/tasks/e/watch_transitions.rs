@@ -67,6 +67,8 @@ const DEADLINE_MS: u64 = 30_000;
 const TAG: &str = "transitions";
 /// The states tabled, in flow order; `ASK` is the ask-held row, orthogonal to state.
 pub const ROWS: [&str; 7] = ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK", "ASK"];
+/// The edges judged, in the order `stalls` judges them.
+pub const EDGES: [&str; 5] = ["WORKING→SUBMITTED", "SUBMITTED→IN_DELIVERY", "IN_DELIVERY→LANDED", "LANDED→ACTIVATED", "ASK→ANSWERED"];
 /// All repos together, as a scope.
 pub const ALL: &str = "*";
 
@@ -274,7 +276,7 @@ fn scopes(snap: &Snapshot) -> Vec<String> {
     std::iter::once(ALL.to_string()).chain(s).collect()
 }
 
-fn row_text(name: &str, r: &Row) -> String {
+pub fn row_text(name: &str, r: &Row) -> String {
     if r.count == 0 {
         return format!("{name} 0");
     }
@@ -328,31 +330,30 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
     let mut out = vec![];
     for scope in scopes(snap) {
         let t = table(snap, &scope, now);
-        let mut push = |edge: &'static str, evidence: String| {
-            if !owner_acting(snap, edge, now, cfg) {
+        for edge in EDGES {
+            let found = match edge {
+                "WORKING→SUBMITTED" => (t["WORKING"].count as u64 >= cfg.working_min.max(1) && quiet(snap, &scope, "Submit", now, cfg.submit_bound_s)).then(|| evidence(snap, &scope, now, &["WORKING"], "Submit", cfg.submit_bound_s)),
+                "SUBMITTED→IN_DELIVERY" => {
+                    let slot_free = snap.open_rounds.is_none_or(|open| open < cfg.round_max_open.max(1));
+                    (t["SUBMITTED"].count + t["CERTIFIED"].count > 0 && slot_free && quiet(snap, &scope, "Cut", now, cfg.cut_bound_s)).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s))
+                }
+                "IN_DELIVERY→LANDED" => (t["IN_DELIVERY"].oldest >= cfg.deliver_bound_s && quiet(snap, &scope, "Delivered", now, cfg.deliver_bound_s)).then(|| evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", cfg.deliver_bound_s)),
+                "LANDED→ACTIVATED" if scope == cfg.release_repo => snap.landed_after.get(&scope).copied().filter(|l| now.saturating_sub(*l) >= cfg.activate_bound_s).map(|landed| {
+                    let act = snap.activated_at.map_or("never".into(), iso8601);
+                    format!("oldest landing not yet active {} ago at {} (bound {}); last activation {act}; last Delivered {}", dur(now.saturating_sub(landed)), iso8601(landed), dur(cfg.activate_bound_s), last_at(snap, &scope, "Delivered"))
+                }),
+                "ASK→ANSWERED" => {
+                    let ask = t["ASK"];
+                    (ask.count > 0 && ask.oldest >= cfg.ask_bound_s).then(|| {
+                        let over = ages(snap, &scope, "ASK", now).into_iter().filter(|a| *a >= cfg.ask_bound_s).count();
+                        let ids: Vec<&str> = snap.beads.iter().filter(|b| b.ask_held && (scope == ALL || b.repo == scope) && now.saturating_sub(b.ask_since.unwrap_or(b.since)) >= cfg.ask_bound_s).map(|b| b.id.as_str()).collect();
+                        format!("{}; {over} held past {} unanswered: {}", row_text("ASK", &ask), dur(cfg.ask_bound_s), ids.join(" "))
+                    })
+                }
+                _ => None,
+            };
+            if let Some(evidence) = found.filter(|_| !owner_acting(snap, edge, now, cfg)) {
                 out.push(Stall { edge, scope: scope.clone(), evidence });
-            }
-        };
-        if t["WORKING"].count as u64 >= cfg.working_min.max(1) && quiet(snap, &scope, "Submit", now, cfg.submit_bound_s) {
-            push("WORKING→SUBMITTED", evidence(snap, &scope, now, &["WORKING"], "Submit", cfg.submit_bound_s));
-        }
-        let slot_free = snap.open_rounds.is_none_or(|open| open < cfg.round_max_open.max(1));
-        if t["SUBMITTED"].count + t["CERTIFIED"].count > 0 && slot_free && quiet(snap, &scope, "Cut", now, cfg.cut_bound_s) {
-            push("SUBMITTED→IN_DELIVERY", evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s));
-        }
-        if t["IN_DELIVERY"].oldest >= cfg.deliver_bound_s && quiet(snap, &scope, "Delivered", now, cfg.deliver_bound_s) {
-            push("IN_DELIVERY→LANDED", evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", cfg.deliver_bound_s));
-        }
-        let ask = t["ASK"];
-        if ask.count > 0 && ask.oldest >= cfg.ask_bound_s {
-            let over = ages(snap, &scope, "ASK", now).into_iter().filter(|a| *a >= cfg.ask_bound_s).count();
-            let ids: Vec<&str> = snap.beads.iter().filter(|b| b.ask_held && (scope == ALL || b.repo == scope) && now.saturating_sub(b.ask_since.unwrap_or(b.since)) >= cfg.ask_bound_s).map(|b| b.id.as_str()).collect();
-            push("ASK→ANSWERED", format!("{}; {over} held past {} unanswered: {}", row_text("ASK", &ask), dur(cfg.ask_bound_s), ids.join(" ")));
-        }
-        if scope == cfg.release_repo {
-            if let Some(landed) = snap.landed_after.get(&scope).copied().filter(|l| now.saturating_sub(*l) >= cfg.activate_bound_s) {
-                let act = snap.activated_at.map_or("never".into(), iso8601);
-                push("LANDED→ACTIVATED", format!("oldest landing not yet active {} ago at {} (bound {}); last activation {act}; last Delivered {}", dur(now.saturating_sub(landed)), iso8601(landed), dur(cfg.activate_bound_s), last_at(snap, &scope, "Delivered")));
             }
         }
     }
@@ -380,6 +381,34 @@ pub fn snapshot_of(dwell: &serde_json::Value, activated_at: Option<u64>) -> Resu
     }
     let landed_after = dwell["landed_after"].as_object().into_iter().flatten().filter_map(|(r, t)| Some((r.clone(), n(t)?))).collect();
     Ok(Snapshot { readable: true, why: String::new(), horizon, beads, last, activated_at, landed_after, open_rounds: None, owners: BTreeMap::new() })
+}
+
+/// The snapshot of the lifecycle control store (`dwell` through `lc`), the release machine
+/// records under `run_dir` and the running round's progress file. Anything unreadable, or no
+/// release ever recorded, is BLIND rather than an empty table.
+pub fn observe(run_dir: &std::path::Path, lc: &dyn Fn(&[&str]) -> Result<serde_json::Value, String>, window_s: u64) -> Snapshot {
+    let releases = match release::machine::all(&run_dir.join("release")) {
+        Ok(r) => r,
+        Err(e) => return blind(&format!("release machine records: {e}")),
+    };
+    if releases.is_empty() {
+        return blind("no release machine record under run/release/machine");
+    }
+    let activated = releases.iter().flat_map(|r| r.events.iter()).filter(|e| e.to == release::machine::ReleaseState::Activated).map(|e| e.at).max();
+    let window = window_s.to_string();
+    let mut argv = vec!["dwell", "--window", window.as_str()];
+    let after = activated.map(|a| a.to_string());
+    if let Some(a) = after.as_deref() {
+        argv.extend(["--landed-after", a]);
+    }
+    let dwell = match lc(&argv) {
+        Ok(v) => v,
+        Err(e) => return blind(&format!("spira-lc dwell: {e}")),
+    };
+    let mut snap = snapshot_of(&dwell, activated).unwrap_or_else(|e| blind(&e));
+    let progress = std::fs::read_to_string(run_dir.join("round-progress.json")).ok().and_then(|t| round_owner(&t));
+    snap.owners.extend(progress.map(|o| (DELIVERY_EDGE.to_string(), o)));
+    snap
 }
 
 fn say(now_ms: u64, line: &str) -> EffectSpec {
