@@ -301,6 +301,7 @@ mod tests {
             cause,
             detail: String::new(),
             fences: Vec::new(),
+            disk_peak_b: None,
         }
     }
 

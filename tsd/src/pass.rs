@@ -98,6 +98,8 @@ pub struct PassRecord {
     pub detail: String,
     /// Seconds each fence of the round took on the VM (`fence-<name>.result`), by name.
     pub fences: Vec<(String, u64)>,
+    /// Largest bytes the pass held on its VM's disk (round-work, TMPDIR, podman, scratch); `None` when unread.
+    pub disk_peak_b: Option<u64>,
 }
 
 impl PassRecord {
@@ -128,6 +130,7 @@ impl PassRecord {
             f("cause", self.cause.as_str().into()),
             f("detail", self.detail.clone().into()),
             f("fence_s", Value::Object(self.fences.iter().map(|(n, v)| (n.clone(), Value::from(*v))).collect())),
+            f("disk_peak_b", self.disk_peak_b.map_or(Value::Null, Value::from)),
         ]
     }
 
@@ -149,6 +152,7 @@ impl PassRecord {
             cause: Cause::parse(&s("cause")?)?,
             detail: s("detail").unwrap_or_default(),
             fences: row.get("fence_s").and_then(Value::as_object).map(|o| o.iter().filter_map(|(k, v)| v.as_u64().map(|n| (k.clone(), n))).collect()).unwrap_or_default(),
+            disk_peak_b: row.get("disk_peak_b").and_then(Value::as_u64),
         };
         rec.validate()?;
         Ok(rec)
