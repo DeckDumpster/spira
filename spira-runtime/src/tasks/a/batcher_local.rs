@@ -508,7 +508,7 @@ pub struct RepoCarry {
     /// Consecutive observes that did not list the carried leg's unit.
     #[serde(default)]
     pub leg_missing: u32,
-    /// The base the standing pause was first seen on: a landing past it lifts the pause.
+    /// The base the red round was cut on, recorded when its pause is written: a landing past it lifts the pause.
     #[serde(default)]
     pub paused_on: Option<String>,
     /// Why this repo's last pass cut nothing while members waited, named
@@ -954,6 +954,10 @@ impl Machine<'_> {
     fn finish(&mut self, outcome: pace::Outcome, detail: &str) {
         let (st, fx) = pace::advance(&self.rc.pace.core(), &outcome, self.repo, self.now_ms / 1000, detail);
         self.rc.pace = Pace::of(&st, &self.rc.pace.refusals);
+        if fx.pause {
+            let on = if self.rc.landing_base.is_empty() { &self.rc.base } else { &self.rc.landing_base };
+            self.rc.paused_on = Some(on.clone()).filter(|b| !b.is_empty());
+        }
         if fx.pause || fx.stop {
             let leg = Leg { why: detail.to_string(), key: format!("{}:rounds", self.repo), bead: if fx.stop { "stop".into() } else { "pause".into() }, ..Leg::on(self.repo) };
             self.acts.push(leg.act(PAUSE));
@@ -977,6 +981,12 @@ impl Machine<'_> {
             refused: rc.refused,
             ..RepoCarry::default()
         };
+    }
+
+    /// A round whose every member was ejected holds no red: it is abandoned and the pace is not told.
+    fn emptied(&mut self, why: &str) {
+        self.abandon_naming(why, Vec::new());
+        self.finish(pace::Outcome::Quiet, "");
     }
 
     fn red(&mut self, why: &str) {
@@ -1164,8 +1174,8 @@ impl Machine<'_> {
         self.go(Trigger::OrphanStepped);
     }
 
-    /// The pause a red round wrote, if it still holds the repo. It is first seen on some base;
-    /// once a round lands past that base the red it guarded is behind the repo, so the pause is
+    /// The pause a red round wrote, if it still holds the repo. It carries the base its round was
+    /// cut on; once a round lands past that base the red it guarded is behind the repo, so the pause is
     /// lifted (removed, and the lift logged). An operator's `hold:` is never lifted here.
     fn pause_in_force(&mut self, repo: &Repo) -> bool {
         let Some(text) = repo.paused.as_deref() else {
@@ -1238,7 +1248,11 @@ impl Machine<'_> {
                 }
                 Some(Attribution::Land { .. }) => {
                     self.go(Trigger::RerunBlocked);
-                    self.red("attribution ejected every member — nothing is left to land");
+                    self.emptied("attribution ejected every member — nothing is left to land");
+                }
+                Some(Attribution::Emptied(why)) => {
+                    self.go(Trigger::RerunBlocked);
+                    self.emptied(&why);
                 }
                 Some(Attribution::Fault(why)) => {
                     self.go(Trigger::RerunBlocked);

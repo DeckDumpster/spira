@@ -16,6 +16,8 @@ pub enum Attribution {
     Land { members: Vec<(String, String)>, attribution_secs: Option<u64>, mended: bool },
     /// Nothing lands; why.
     Blocked(String),
+    /// Every member was ejected: no red stands, and nothing is left to land.
+    Emptied(String),
     /// The harness failed (no VM, a dead container): the round was not judged, red or green.
     Fault(String),
 }
@@ -26,6 +28,7 @@ impl Attribution {
         let body = match self {
             Attribution::Land { members, attribution_secs, mended } => json!({ "end": "land", "members": members, "attribution_secs": attribution_secs, "mended": mended }),
             Attribution::Blocked(why) => json!({ "end": "blocked", "why": why }),
+            Attribution::Emptied(why) => json!({ "end": "emptied", "why": why }),
             Attribution::Fault(why) => json!({ "end": "fault", "why": why }),
         };
         format!("{PREFIX}{body}")
@@ -41,6 +44,7 @@ impl Attribution {
                 Some(Attribution::Land { members, attribution_secs: body.get("attribution_secs").and_then(Value::as_u64), mended: body.get("mended").and_then(Value::as_bool).unwrap_or(false) })
             }
             "blocked" => Some(Attribution::Blocked(body.get("why")?.as_str()?.to_string())),
+            "emptied" => Some(Attribution::Emptied(body.get("why")?.as_str()?.to_string())),
             "fault" => Some(Attribution::Fault(body.get("why")?.as_str()?.to_string())),
             _ => None,
         }
@@ -64,6 +68,12 @@ pub fn is_round_vm_fault(err: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sp_56d3l3_an_emptied_outcome_reads_back_as_emptied_not_blocked() {
+        let emptied = Attribution::Emptied("unit-tests red ejected every member".into());
+        assert_eq!(Attribution::parse(&emptied.line()), Some(emptied));
+    }
 
     #[test]
     fn an_outcome_reads_back_from_the_last_line_among_other_output() {
