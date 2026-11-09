@@ -18,3 +18,9 @@ kind = "Lifecycle"
 weight = 0.0
 unit = "landed per day per unit of distance"
 source = "the outcome, not a cause: its distance is the goodput gap every other weight is measured in"
+
+[[weight]]
+kind = "DwarfFleet"
+weight = 24.0
+unit = "landed per day per unit of distance"
+source = "throughput-bounds §3: each slot adds about +24 landed a day"

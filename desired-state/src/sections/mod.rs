@@ -6,6 +6,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 pub mod alarms;
+pub mod dwarf_fleet;
 pub mod lifecycle;
 pub mod probe;
 pub mod round_controller;
@@ -64,7 +65,7 @@ pub fn typed<T: DeserializeOwned>(v: &Value) -> Result<(), SchemaError> {
         .map_err(|e| (e.path().to_string(), e.inner().to_string()))
 }
 
-static KINDS: &[SectionKind] = &[alarms::KIND, lifecycle::KIND, probe::KIND, round_controller::KIND];
+static KINDS: &[SectionKind] = &[alarms::KIND, dwarf_fleet::KIND, lifecycle::KIND, probe::KIND, round_controller::KIND];
 
 pub fn registry() -> &'static [SectionKind] {
     KINDS
