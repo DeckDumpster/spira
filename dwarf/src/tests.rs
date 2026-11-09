@@ -298,6 +298,20 @@ pub(crate) mod verdict_run {
     }
 
     #[test]
+    fn a_slain_session_is_held_by_the_halt_stamp_and_not_by_a_dwarves_lane_stop() {
+        let d = testkit::TempDir::new("dwarf-checkpoint-stamp");
+        stop_lane(d.path(), "fixture", "dwarves");
+        let extra = [("SPIRA_RUN", d.path().display().to_string())];
+        let held = || with_run(&extra, vec![], |r| {
+            r.s.session_id = "sess".into();
+            r.checkpoint_across_stop()
+        }).0;
+        assert!(!held(), "a dwarves-lane stop with no stamp leaves the plain release standing");
+        std::fs::write(d.path().join("world.halted"), "").unwrap();
+        assert!(held(), "the halt stamp holds a slain session");
+    }
+
+    #[test]
     fn a_dwarf_declines_only_when_the_dwarves_lane_is_stopped_on_every_registered_repo() {
         let d = testkit::TempDir::new("dwarf-dwarves-lane");
         let repos = ["fixture", "other"];

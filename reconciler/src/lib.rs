@@ -3029,4 +3029,17 @@ mod lane_tests {
         assert!(paths::pass_stamp(&run).exists(), "a held pass still stamps");
         assert!(!run.join("reconciler.lock").exists(), "a held pass went on to take its lock");
     }
+
+    #[test]
+    fn observe_reports_halted_and_stamps_while_the_remedies_lane_is_stopped_everywhere() {
+        let (_d, run, edits) = world("reconciler-observe");
+        let edits: Vec<(&str, Option<&str>)> = edits.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let _env = testkit::env(&edits);
+        let cfg = Config { spira_run: run.clone(), ..tests::test_config() };
+        stop(&run, "spira");
+        stop(&run, "other");
+        let seen = observe(&cfg, &Default::default());
+        assert!(seen.halted && seen.groups.is_empty(), "a held pass observed nothing");
+        assert!(paths::pass_stamp(&run).exists(), "a held pass still stamps");
+    }
 }

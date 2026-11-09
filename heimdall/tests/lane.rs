@@ -55,4 +55,5 @@ fn a_report_reads_through_a_stopped_lane() {
     stop(&run, "other");
     let (_, out) = pass(&d, &run, &["--report"]);
     assert!(!out.contains("skipped — the heimdall lane"), "{out}");
+    assert!(out.contains("heimdall"), "a report said nothing: {out:?}");
 }

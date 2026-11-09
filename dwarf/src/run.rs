@@ -1557,10 +1557,11 @@ impl<'a> Run<'a> {
         args
     }
 
-    /// Reads the halt stamp, not the dwarves lane: `world stop` writes it before it slays and cutover mode lifts it only after.
     /// A slain session whose world is halted is held, not abandoned: the bead leaves WORKING
     /// but stays unclaimable until `world start` lifts the checkpoint hold. False when the
     /// session was never recorded or the hold was refused (the plain release then stands).
+    /// It reads the halt stamp and not the dwarves lane: `world stop` writes the stamp before it
+    /// slays, and cutover mode lifts it only after.
     pub(crate) fn checkpoint_across_stop(&self) -> bool {
         let id = &self.s.bead;
         if self.s.session_id.is_empty() || !self.run_dir().join("world.halted").is_file() {

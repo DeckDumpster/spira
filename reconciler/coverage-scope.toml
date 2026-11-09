@@ -2,7 +2,7 @@
 
 [[scope]]
 path = "reconciler/src/lib.rs"
-functions = ["held", "run_pass"]
+functions = ["held", "observe", "run_pass"]
 
 [[scope]]
 path = "reconciler/src/goodput_pass.rs"
