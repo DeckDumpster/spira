@@ -8,7 +8,9 @@ use std::path::PathBuf;
 /// The declared harness home (`SPIRA_HOME`, else `$SPIRA_RELEASE/spira`) when it holds `lib.sh`.
 /// Never `spira.prod` or a search beside this binary.
 pub fn harness_home() -> Option<PathBuf> {
-    spira_config::resolve::locate_home_for_process().ok().filter(|p| p.join("lib.sh").is_file())
+    spira_config::resolve::locate_home_for_process()
+        .ok()
+        .filter(|p| p.join("lib.sh").is_file())
 }
 
 pub fn value(key: &str) -> Result<String, String> {

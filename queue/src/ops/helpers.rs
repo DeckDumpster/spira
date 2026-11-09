@@ -24,7 +24,10 @@ use crate::real::{RealGit, RealLc};
 /// reconciler's mergeability check, cockpit-collect's "next up" pane) draws from.
 pub fn certified_list(repo: &Path) -> Result<Vec<(String, String, u64)>, String> {
     let lc = RealLc::configured(Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)));
-    Ok(certified_rows(&lc, &RealGit.branches(repo, "refs/heads/spira/")))
+    Ok(certified_rows(
+        &lc,
+        &RealGit.branches(repo, "refs/heads/spira/"),
+    ))
 }
 
 /// The CERTIFIED rows whose bead has a `spira/<id>` branch among `branches`.
@@ -317,7 +320,10 @@ fn refuse_unless_mail_is_test_owned() {
         .as_ref()
         .and_then(|p| std::fs::read(p).ok())
         .is_some_and(|b| b.windows(MARK.len()).any(|w| w == MARK));
-    assert!(stub, "a test would deliver mail through {found:?}, not a `mail` carrying the test-owned marker");
+    assert!(
+        stub,
+        "a test would deliver mail through {found:?}, not a `mail` carrying the test-owned marker"
+    );
 }
 
 /// Row 4 of the local/main design: is `forge_sha` an ancestor of `local_sha`? Under

@@ -30,7 +30,12 @@ pub trait Door {
     fn list(&self, prefix: &str) -> Result<Vec<Item>, String>;
     /// The items under `prefix` whose `data.state` is one of `states`, read through the store's
     /// state index; more than `limit` is an error, never a part of the set.
-    fn list_in_states(&self, prefix: &str, states: &[String], limit: usize) -> Result<Vec<Item>, String>;
+    fn list_in_states(
+        &self,
+        prefix: &str,
+        states: &[String],
+        limit: usize,
+    ) -> Result<Vec<Item>, String>;
     /// `kind` names the write in the request the call commits under.
     fn txn(&self, t: &Txn, kind: &str) -> Result<TxnResult, String>;
 }
@@ -67,7 +72,10 @@ fn open_spellings() -> Vec<String> {
     let mut out = Vec::new();
     for s in OPEN {
         debug_assert!(!s.is_terminal());
-        if let Some(v) = serde_json::to_value(s).ok().and_then(|v| v.as_str().map(str::to_string)) {
+        if let Some(v) = serde_json::to_value(s)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+        {
             out.push(v);
         }
         out.push(s.as_str().to_string());
@@ -91,7 +99,10 @@ pub fn key(repo: &str, id: &str) -> String {
 
 /// The round id of a round's own key in `repo`; `None` for a key beneath one (its progress).
 fn round_id<'a>(repo: &str, key: &'a str) -> Option<&'a str> {
-    let id = key.strip_prefix(PREFIX)?.strip_prefix(repo)?.strip_prefix('/')?;
+    let id = key
+        .strip_prefix(PREFIX)?
+        .strip_prefix(repo)?
+        .strip_prefix('/')?;
     (!id.is_empty() && !id.contains('/')).then_some(id)
 }
 
@@ -110,13 +121,26 @@ pub fn decode(item: &Item) -> Result<BatchRecord, String> {
     let mut kv = Kv::default();
     kv.push("batch_id", &id);
     kv.push("repo", &text(d, "repo").unwrap_or_default());
-    match d.get("round").and_then(Value::as_object).filter(|m| !m.is_empty()) {
+    match d
+        .get("round")
+        .and_then(Value::as_object)
+        .filter(|m| !m.is_empty())
+    {
         Some(own) => {
             let mut fields: Vec<(&String, &Value)> = own.iter().collect();
-            let rank = |k: &str| FIELD_ORDER.iter().position(|f| *f == k).unwrap_or(FIELD_ORDER.len());
+            let rank = |k: &str| {
+                FIELD_ORDER
+                    .iter()
+                    .position(|f| *f == k)
+                    .unwrap_or(FIELD_ORDER.len())
+            };
             fields.sort_by(|a, b| (rank(a.0), a.0).cmp(&(rank(b.0), b.0)));
             for (k, v) in fields {
-                kv.push(k, v.as_str().ok_or_else(|| undecodable(&format!("text for {k}")))?);
+                kv.push(
+                    k,
+                    v.as_str()
+                        .ok_or_else(|| undecodable(&format!("text for {k}")))?,
+                );
             }
         }
         None => machine_fields(d, &mut kv),
@@ -247,7 +271,13 @@ pub fn save(d: &dyn Door, repo: &str, kv: &Kv) -> Result<(), String> {
 
 /// [`save`], only while the record's field `field` still reads `expect`: `Ok(false)` when another
 /// writer moved that field first, so the caller's step is no longer the record's next one.
-pub fn save_if(d: &dyn Door, repo: &str, kv: &Kv, field: &str, expect: &str) -> Result<bool, String> {
+pub fn save_if(
+    d: &dyn Door,
+    repo: &str,
+    kv: &Kv,
+    field: &str,
+    expect: &str,
+) -> Result<bool, String> {
     let id = kv.get("batch_id").unwrap_or("");
     let k = key(repo, id);
     let own = fields(kv);
@@ -331,7 +361,14 @@ pub mod mem {
         }
 
         /// A round as spira-lc's cut writes it, in `state`.
-        pub fn put_round(&self, repo: &str, id: &str, state: &str, members: &[(&str, &str)], opened_at: i64) {
+        pub fn put_round(
+            &self,
+            repo: &str,
+            id: &str,
+            state: &str,
+            members: &[(&str, &str)],
+            opened_at: i64,
+        ) {
             self.cut_round(repo, id, state, members, opened_at, None);
         }
 
@@ -388,11 +425,19 @@ pub mod mem {
 
         /// The repo, state and version of round `id`, in whichever repo it was cut.
         pub fn find(&self, id: &str) -> Option<(String, String, String)> {
-            let (items, _) = self.store.list(&[PREFIX], &state_store::Selector::Everything).unwrap();
-            let d = &items.iter().find(|i| i.value.data["batch_id"] == id)?.value.data;
+            let (items, _) = self
+                .store
+                .list(&[PREFIX], &state_store::Selector::Everything)
+                .unwrap();
+            let d = &items
+                .iter()
+                .find(|i| i.value.data["batch_id"] == id)?
+                .value
+                .data;
             Some((
                 d["repo"].as_str()?.to_string(),
-                state_word(d["state"].as_str()?).map_or_else(|| d["state"].to_string(), str::to_string),
+                state_word(d["state"].as_str()?)
+                    .map_or_else(|| d["state"].to_string(), str::to_string),
                 d["version"].to_string(),
             ))
         }
@@ -411,7 +456,8 @@ pub mod mem {
         fn get(&self, key: &str) -> Result<Option<Item>, String> {
             self.up()?;
             let got = self.store.get(key).map_err(|e| e.to_string())?;
-            self.items_read.set(self.items_read.get() + usize::from(got.is_some()));
+            self.items_read
+                .set(self.items_read.get() + usize::from(got.is_some()));
             Ok(got)
         }
         fn list(&self, prefix: &str) -> Result<Vec<Item>, String> {
@@ -424,7 +470,12 @@ pub mod mem {
             self.items_read.set(self.items_read.get() + items.len());
             Ok(items)
         }
-        fn list_in_states(&self, prefix: &str, states: &[String], limit: usize) -> Result<Vec<Item>, String> {
+        fn list_in_states(
+            &self,
+            prefix: &str,
+            states: &[String],
+            limit: usize,
+        ) -> Result<Vec<Item>, String> {
             self.up()?;
             let at = self.store.head().map_err(|e| e.to_string())?;
             let mut items = Vec::new();
@@ -437,7 +488,9 @@ pub mod mem {
             }
             self.items_read.set(self.items_read.get() + items.len());
             if items.len() > limit {
-                return Err(format!("cannot tell: more than {limit} rounds under {prefix} are open"));
+                return Err(format!(
+                    "cannot tell: more than {limit} rounds under {prefix} are open"
+                ));
             }
             Ok(items)
         }
@@ -447,7 +500,9 @@ pub mod mem {
                 return Err(format!("cannot tell: the {kind} write was lost"));
             }
             self.kinds.borrow_mut().push(kind.to_string());
-            self.store.txn(t, &self.request(kind)).map_err(|e| e.to_string())
+            self.store
+                .txn(t, &self.request(kind))
+                .map_err(|e| e.to_string())
         }
     }
 }
@@ -467,17 +522,29 @@ mod tests {
         for terminal in ["LANDED", "SETTLED", "DISCARDED"] {
             d.put_round("spira", &format!("spira-{terminal}"), terminal, &[], 1);
         }
-        let open: Vec<String> = open_batches(&d, "spira").unwrap().into_iter().map(|b| b.id).collect();
+        let open: Vec<String> = open_batches(&d, "spira")
+            .unwrap()
+            .into_iter()
+            .map(|b| b.id)
+            .collect();
         assert_eq!(open, ["spira-3", "spira-2"]);
         let none = Unresolved("cannot tell: SPIRA_LC_LIFECYCLE_ON_STORE does not resolve".into());
-        assert!(open_batches(&none, "spira").unwrap_err().contains("does not resolve"));
+        assert!(open_batches(&none, "spira")
+            .unwrap_err()
+            .contains("does not resolve"));
         assert_eq!(batches(&d, "spira").unwrap().len(), 6);
     }
 
     #[test]
     fn a_round_the_queue_never_wrote_reads_as_the_machines_fields() {
         let d = MemDoor::default();
-        d.put_round("spira", "spira-1", "OPEN", &[("sp-a", "ta"), ("sp-b", "tb")], 10);
+        d.put_round(
+            "spira",
+            "spira-1",
+            "OPEN",
+            &[("sp-a", "ta"), ("sp-b", "tb")],
+            10,
+        );
         let b = batch(&d, "spira", "spira-1").unwrap().unwrap();
         assert_eq!(
             b.kv.render(),

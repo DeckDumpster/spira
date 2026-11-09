@@ -65,7 +65,10 @@ pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
     let open = match forge_batch::read(w, c) {
         Ok(o) => o,
         Err(e) => {
-            w.err(format!("verdict {}: cannot tell whether a forge batch is left open: {e}", c.r.name));
+            w.err(format!(
+                "verdict {}: cannot tell whether a forge batch is left open: {e}",
+                c.r.name
+            ));
             return FAIL;
         }
     };
@@ -903,7 +906,9 @@ fn forge_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
     let open = forge_batch::read(w, c);
     let mut rc = match &open {
         Err(e) => {
-            w.err(format!("verdict {name}: cannot tell whether {name} has an open batch: {e}"));
+            w.err(format!(
+                "verdict {name}: cannot tell whether {name} has an open batch: {e}"
+            ));
             FAIL
         }
         Ok(Some(o)) if o.is_opening() => {
@@ -1168,10 +1173,15 @@ fn record_forge_state(w: &World, c: &Ctx, b: &Batch, ci: &str, run: &str, meta: 
                 .map(|(k, v)| (format!("forge.{k}"), v.clone()))
                 .collect();
             let drop: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
-            let add: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+            let add: Vec<(&str, &str)> = fields
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
             rewrite(w, c, b, &drop, &add)
         }
-        forge_batch::At::File(_) => write_atomic(&c.queue_file(forge_batch::FORGE_STATE), &kv.render()),
+        forge_batch::At::File(_) => {
+            write_atomic(&c.queue_file(forge_batch::FORGE_STATE), &kv.render())
+        }
     };
     if let Err(e) = written {
         w.err(format!(
@@ -1237,7 +1247,9 @@ fn record_pass(w: &World, c: &Ctx, b: &Batch, status: &str, out: &str) {
     let written = rec.write(&c.s.run, &tsd::default_host(), &tsd::iso_utc(now));
     let marked = written.and_then(|()| {
         rewrite(
-            w, c, b,
+            w,
+            c,
+            b,
             &["pass_recorded", "passes"],
             &[
                 ("pass_recorded", &key),
@@ -1308,7 +1320,13 @@ fn pending(w: &World, c: &Ctx, b: &Batch) -> i32 {
     OK
 }
 
-fn rewrite(w: &World, c: &Ctx, b: &Batch, drop: &[&str], add: &[(&str, &str)]) -> Result<(), String> {
+fn rewrite(
+    w: &World,
+    c: &Ctx,
+    b: &Batch,
+    drop: &[&str],
+    add: &[(&str, &str)],
+) -> Result<(), String> {
     b.rec.rewrite(w, c, drop, add)
 }
 
@@ -1449,7 +1467,9 @@ fn harness_fault(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
             retries + 1
         ));
         if let Err(e) = rewrite(
-            w, c, b,
+            w,
+            c,
+            b,
             &["retries"],
             &[("retries", &(retries + 1).to_string())],
         ) {
@@ -1706,7 +1726,9 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
                 {
                     let members = b.members_str();
                     if let Err(e) = rewrite(
-                        w, c, b,
+                        w,
+                        c,
+                        b,
                         &["head", "members", "retries", "base"],
                         &[
                             ("head", &h),
@@ -1969,7 +1991,9 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
         w.forge.workflow_rerun(&c.s.forge, b.path, &run);
         w.out(format!("verdict {name}: PR {pr} red — {bo}no suite annotations (step: {}); re-running run {run} once", if step.is_empty() { "unknown" } else { &step }));
         return match rewrite(
-            w, c, b,
+            w,
+            c,
+            b,
             &["setup_rerun", "setup_step"],
             &[("setup_rerun", &now.to_string()), ("setup_step", &step)],
         ) {

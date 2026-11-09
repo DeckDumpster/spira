@@ -62,7 +62,10 @@ pub fn live(w: &World, c: &Ctx) -> Result<Vec<BatchRecord>, String> {
 pub fn read(w: &World, c: &Ctx) -> Result<Option<Open>, String> {
     let f = c.queue_file(FILE);
     if let Some(kv) = records::read_kv(&f)? {
-        return Ok(Some(Open { kv, at: At::File(f) }));
+        return Ok(Some(Open {
+            kv,
+            at: At::File(f),
+        }));
     }
     if !on_store(w) {
         return Ok(None);
@@ -91,7 +94,11 @@ pub fn shown(c: &Ctx, open: &Open) -> Result<Kv, String> {
         if state.get("batch_id").is_none() || state.get("batch_id") != kv.get("batch_id") {
             return Ok(kv);
         }
-        for (k, v) in state.lines.iter().filter(|(k, _)| k != "batch_id" && k != "pr") {
+        for (k, v) in state
+            .lines
+            .iter()
+            .filter(|(k, _)| k != "batch_id" && k != "pr")
+        {
             kv.push(&format!("forge.{k}"), v);
         }
     }
@@ -107,7 +114,9 @@ pub fn ended(w: &World, c: &Ctx, n: usize) -> Result<Vec<Kv>, String> {
         out.extend(
             w.lc.batches(&c.r.name)?
                 .into_iter()
-                .filter(|b| b.kv.get(PHASE).is_some() && (b.is_terminal() || b.kv.get(ENDED).is_some()))
+                .filter(|b| {
+                    b.kv.get(PHASE).is_some() && (b.is_terminal() || b.kv.get(ENDED).is_some())
+                })
                 .map(|b| with_id(&b.kv, &b.id)),
         );
     }
@@ -125,7 +134,11 @@ pub fn ended(w: &World, c: &Ctx, n: usize) -> Result<Vec<Kv>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(format!("{}: {e}", dir.display())),
     }
-    let opened = |kv: &Kv| kv.get("opened").and_then(|o| o.parse::<i64>().ok()).unwrap_or(0);
+    let opened = |kv: &Kv| {
+        kv.get("opened")
+            .and_then(|o| o.parse::<i64>().ok())
+            .unwrap_or(0)
+    };
     out.sort_by_key(|kv| std::cmp::Reverse(opened(kv)));
     out.truncate(n);
     Ok(out)
@@ -149,11 +162,11 @@ impl Open {
     pub fn reread(&self, w: &World, c: &Ctx) -> Result<Kv, String> {
         match &self.at {
             At::File(f) => Ok(records::read_kv(f)?.unwrap_or_default()),
-            At::Store(id) => w
-                .lc
-                .batch(&c.r.name, id)?
-                .map(|b| b.kv)
-                .ok_or_else(|| format!("the control store holds no batch {id} for {}", c.r.name)),
+            At::Store(id) => {
+                w.lc.batch(&c.r.name, id)?.map(|b| b.kv).ok_or_else(|| {
+                    format!("the control store holds no batch {id} for {}", c.r.name)
+                })
+            }
         }
     }
 
@@ -166,7 +179,13 @@ impl Open {
     }
 
     /// Re-reads the record, drops the fields `drop` and appends `add`.
-    pub fn rewrite(&self, w: &World, c: &Ctx, drop: &[&str], add: &[(&str, &str)]) -> Result<(), String> {
+    pub fn rewrite(
+        &self,
+        w: &World,
+        c: &Ctx,
+        drop: &[&str],
+        add: &[(&str, &str)],
+    ) -> Result<(), String> {
         let mut kv = self.reread(w, c)?;
         for k in drop {
             kv.remove(k);
@@ -183,7 +202,9 @@ impl Open {
     pub fn remove(&self, w: &World, c: &Ctx, cause: &str) -> Result<(), String> {
         match &self.at {
             At::File(f) => match std::fs::remove_file(f) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("{}: {e}", f.display())),
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    Err(format!("{}: {e}", f.display()))
+                }
                 _ => Ok(()),
             },
             At::Store(id) => {
@@ -203,11 +224,19 @@ impl Open {
 
     /// Closes the batch with `archived` as its last record: the file is moved to `archive` (in the
     /// repo's queue directory); on the store the record keeps `archived`'s fields and ends.
-    pub fn archive(&self, w: &World, c: &Ctx, archived: &Kv, archive: &str, cause: &str) -> Result<(), String> {
+    pub fn archive(
+        &self,
+        w: &World,
+        c: &Ctx,
+        archived: &Kv,
+        archive: &str,
+        cause: &str,
+    ) -> Result<(), String> {
         match &self.at {
             At::File(f) => {
                 write_atomic(f, &archived.render())?;
-                std::fs::rename(f, c.queue_file(archive)).map_err(|e| format!("{}: {e}", f.display()))
+                std::fs::rename(f, c.queue_file(archive))
+                    .map_err(|e| format!("{}: {e}", f.display()))
             }
             At::Store(_) => {
                 self.save(w, c, archived)?;

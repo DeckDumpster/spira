@@ -76,17 +76,16 @@ fn run_sort_rows(args: &[String]) -> ExitCode {
             (id, tip, epoch, is_trans)
         })
         .collect();
-    let express: std::collections::HashSet<String> = match queue::real::RealLc::configured(Some("spira-lc".into()))
-    .express_ids()
-    {
-        Ok(ids) => ids.into_iter().collect(),
-        Err(e) => {
-            eprintln!(
-                "queue-helpers sort-rows: express set unreadable ({e}) -- ranking without it"
-            );
-            Default::default()
-        }
-    };
+    let express: std::collections::HashSet<String> =
+        match queue::real::RealLc::configured(Some("spira-lc".into())).express_ids() {
+            Ok(ids) => ids.into_iter().collect(),
+            Err(e) => {
+                eprintln!(
+                    "queue-helpers sort-rows: express set unreadable ({e}) -- ranking without it"
+                );
+                Default::default()
+            }
+        };
     let (ranked, warning) = queue::ops::helpers::sort_rows(&with_trans, &prio_json, &express);
     if let Some(w) = warning {
         eprintln!("{w}");

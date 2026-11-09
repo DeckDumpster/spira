@@ -173,8 +173,6 @@ pub fn parse_kv0(answer: &str) -> std::collections::BTreeMap<String, String> {
 mod tests {
     use super::*;
 
-
-
     #[test]
     fn every_script_is_one_braced_command_with_no_nul() {
         for op in [

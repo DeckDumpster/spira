@@ -16,7 +16,9 @@ fn waiting(row: &LcBeadRow) -> bool {
     use lifecycle::reason::GateRedReason;
     match row.state.as_str() {
         "SUBMITTED" | "CERTIFIED" => true,
-        "REWORK" => row.reason.as_deref().and_then(GateRedReason::from_str) == Some(GateRedReason::NoRebase),
+        "REWORK" => {
+            row.reason.as_deref().and_then(GateRedReason::from_str) == Some(GateRedReason::NoRebase)
+        }
         _ => false,
     }
 }
@@ -374,7 +376,11 @@ mod tests {
     use super::*;
 
     fn row(state: &str, reason: Option<&str>) -> LcBeadRow {
-        LcBeadRow { state: state.into(), reason: reason.map(str::to_string), ..LcBeadRow::default() }
+        LcBeadRow {
+            state: state.into(),
+            reason: reason.map(str::to_string),
+            ..LcBeadRow::default()
+        }
     }
 
     /// law-lifecycle-state-is-not-text (sp-mijstw): a REWORK row waits for a rebase only when its
@@ -384,7 +390,10 @@ mod tests {
     fn only_a_no_rebase_gate_red_reason_waits_for_a_rebase() {
         assert!(waiting(&row("REWORK", Some("no-rebase"))));
         assert!(waiting(&row("SUBMITTED", None)) && waiting(&row("CERTIFIED", None)));
-        assert!(!waiting(&row("REWORK", Some("operator: was no-rebase, now a real red in src/a.rs"))));
+        assert!(!waiting(&row(
+            "REWORK",
+            Some("operator: was no-rebase, now a real red in src/a.rs")
+        )));
         assert!(!waiting(&row("REWORK", Some("suites-failed"))));
         assert!(!waiting(&row("REWORK", None)));
         assert!(!waiting(&row("WORKING", Some("no-rebase"))));

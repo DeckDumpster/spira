@@ -7,7 +7,10 @@ const T_ROUND: &str = "3333333333333333333333333333333333333333";
 
 pub(super) fn round_world() -> T {
     let t = T::new(LandMode::QueueLocal);
-    t.env.resolved.borrow_mut().insert("SPIRA_PLAN_LABEL".into(), "plan-fixture".into());
+    t.env
+        .resolved
+        .borrow_mut()
+        .insert("SPIRA_PLAN_LABEL".into(), "plan-fixture".into());
     t.git.set("refs/heads/local/main", "b0");
     t.git.set("refs/remotes/origin/main", "f0");
     for (id, tip) in [("sp-a", "ta"), ("sp-b", "tb"), ("sp-c", "tc")] {
@@ -53,7 +56,10 @@ pub(super) fn batch_of(t: &T) -> String {
 }
 
 fn certify_lock(t: &T, batch: &str) -> PathBuf {
-    t.s().queue_dir.join("spira").join(format!("certify-{batch}.lock"))
+    t.s()
+        .queue_dir
+        .join("spira")
+        .join(format!("certify-{batch}.lock"))
 }
 
 /// Every `.result` line opens `<UTC ISO-8601> <cause>`, the cause from the closed set.
@@ -62,9 +68,25 @@ fn result_lines(t: &T, batch: &str) -> Vec<(String, String, String)> {
     text.lines()
         .map(|l| {
             let mut f = l.splitn(3, ' ');
-            let (at, cause, detail) = (f.next().unwrap_or(""), f.next().unwrap_or(""), f.next().unwrap_or(""));
-            assert!(at.len() == 20 && at.ends_with('Z') && at.as_bytes()[10] == b'T', "no UTC stamp: {l:?}");
-            assert!(crate::ops::round::END_KINDS.iter().any(|k| if k.ends_with(':') { cause.starts_with(k) && cause.len() > k.len() } else { cause == *k }), "cause {cause:?} is not in the set: {l:?}");
+            let (at, cause, detail) = (
+                f.next().unwrap_or(""),
+                f.next().unwrap_or(""),
+                f.next().unwrap_or(""),
+            );
+            assert!(
+                at.len() == 20 && at.ends_with('Z') && at.as_bytes()[10] == b'T',
+                "no UTC stamp: {l:?}"
+            );
+            assert!(
+                crate::ops::round::END_KINDS
+                    .iter()
+                    .any(|k| if k.ends_with(':') {
+                        cause.starts_with(k) && cause.len() > k.len()
+                    } else {
+                        cause == *k
+                    }),
+                "cause {cause:?} is not in the set: {l:?}"
+            );
             (at.to_string(), cause.to_string(), detail.to_string())
         })
         .collect()
@@ -144,7 +166,10 @@ fn open_certify_land_is_one_round_the_whole_way() {
 
     assert!(certify_lock(&t, &batch).exists(), "certify left its lock");
     assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
-    assert!(!certify_lock(&t, &batch).exists(), "a landed round leaves no certify lock");
+    assert!(
+        !certify_lock(&t, &batch).exists(),
+        "a landed round leaves no certify lock"
+    );
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
     assert!(
         t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\"")
@@ -157,11 +182,18 @@ fn open_certify_land_is_one_round_the_whole_way() {
     assert!(!t.qfile("round").exists() && !marker(&t, &batch, "running").exists());
     assert_eq!(
         result_lines(&t, &batch),
-        [("1970-01-01T00:16:40Z".to_string(), "landed".to_string(), "merged-tb members=sp-a:ta,sp-b:tb".to_string())]
+        [(
+            "1970-01-01T00:16:40Z".to_string(),
+            "landed".to_string(),
+            "merged-tb members=sp-a:ta,sp-b:tb".to_string()
+        )]
     );
     let log = t.landing_log();
     assert!(
-        log.lines().any(|l| l.starts_with("QUEUE ROUND-LAND ") && l.ends_with(&format!(" repo=spira batch={batch} head=merged-tb members=sp-a:ta,sp-b:tb"))),
+        log.lines().any(|l| l.starts_with("QUEUE ROUND-LAND ")
+            && l.ends_with(&format!(
+                " repo=spira batch={batch} head=merged-tb members=sp-a:ta,sp-b:tb"
+            ))),
         "the landing log names the round's members (run-state-trail): {log}"
     );
 }
@@ -251,12 +283,33 @@ fn a_red_round_eject_naming_no_suite_is_refused_and_one_naming_a_suite_records_i
 #[test]
 fn a_repo_whose_testenv_knows_only_gate_refuses_ci_and_accepts_gate_and_the_whole_testenv_run() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     let wt = PathBuf::from(&kv_of(&t, "round")["worktree"]);
     fs::create_dir_all(wt.join(".spira")).unwrap();
-    fs::write(wt.join(".spira/testenv.toml"), "[tier.gate]\ncommand = \"true\"\n").unwrap();
-    let eject = |suites: &str| t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--no-rebuild", "--suites", suites]);
+    fs::write(
+        wt.join(".spira/testenv.toml"),
+        "[tier.gate]\ncommand = \"true\"\n",
+    )
+    .unwrap();
+    let eject = |suites: &str| {
+        t.run(&[
+            "round",
+            "eject",
+            &batch,
+            "sp-b",
+            "--reason",
+            "red",
+            "--no-rebuild",
+            "--suites",
+            suites,
+        ])
+    };
     assert_eq!(eject("ci"), 1);
     assert!(t.err().contains("known suites: gate"), "{}", t.err());
     assert_eq!(eject("testenv"), 0, "{}", t.err());
@@ -282,7 +335,10 @@ fn an_eject_forcing_a_suite_testenv_does_not_know_is_refused_naming_the_known_on
         1
     );
     let e = t.err();
-    assert!(e.contains("round steps: workspace-build spira-lint unit-tests"), "{e}");
+    assert!(
+        e.contains("round steps: workspace-build spira-lint unit-tests"),
+        "{e}"
+    );
     assert!(
         e.contains("round-vm") && e.contains("does not know") && e.contains("test-b.sh"),
         "{e}"
@@ -367,7 +423,11 @@ fn certified_round() -> (T, String) {
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
     let wt = PathBuf::from(&kv_of(&t, "round")["worktree"]);
     fs::create_dir_all(wt.join("target/release")).unwrap();
-    std::os::unix::fs::symlink(std::env::current_exe().unwrap(), wt.join("target/release/release")).unwrap();
+    std::os::unix::fs::symlink(
+        std::env::current_exe().unwrap(),
+        wt.join("target/release/release"),
+    )
+    .unwrap();
     release_in_force(&t);
     (t, batch)
 }
@@ -638,7 +698,11 @@ fn abandon_returns_the_members_and_closes_the_round() {
         t.err()
     );
     assert_eq!(batch_of(&t), "hand-1");
-    drop(crate::lock::try_certify_lock(&t.s().queue_dir, "spira", "hand-1"));
+    drop(crate::lock::try_certify_lock(
+        &t.s().queue_dir,
+        "spira",
+        "hand-1",
+    ));
     assert_eq!(
         t.run(&["round", "abandon", "hand-1"]),
         2,
@@ -652,7 +716,10 @@ fn abandon_returns_the_members_and_closes_the_round() {
     );
     assert!(t.lc.has("abandon-batch hand-1 OPEN 1 base moved"));
     assert!(!t.qfile("round").exists() && !marker(&t, "hand-1", "running").exists());
-    assert!(!certify_lock(&t, "hand-1").exists(), "an abandoned round leaves no certify lock");
+    assert!(
+        !certify_lock(&t, "hand-1").exists(),
+        "an abandoned round leaves no certify lock"
+    );
     assert_eq!(result_lines(&t, "hand-1")[0].1, "abandoned:hand");
     assert_eq!(result_lines(&t, "hand-1")[0].2, "base moved");
     assert!(!t.lc.has("land "), "an abandoned round lands nothing");
@@ -662,25 +729,78 @@ fn abandon_returns_the_members_and_closes_the_round() {
 #[test]
 fn abandoning_a_round_stops_its_running_legs_and_records_them_in_the_reason() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-1"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&[
+            "round",
+            "open",
+            "--members",
+            "sp-a:ta,sp-b:tb",
+            "--name",
+            "hand-1"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
     {
         let mut legs = t.scripts.round_legs.borrow_mut();
-        legs.push(("spira".into(), "hand-1".into(), "spira-run-batcher.local-leg-attribute2.service".into()));
-        legs.push(("spira".into(), "hand-2".into(), "spira-run-batcher.local-other-leg.service".into()));
+        legs.push((
+            "spira".into(),
+            "hand-1".into(),
+            "spira-run-batcher.local-leg-attribute2.service".into(),
+        ));
+        legs.push((
+            "spira".into(),
+            "hand-2".into(),
+            "spira-run-batcher.local-other-leg.service".into(),
+        ));
     }
-    assert_eq!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0, "{}", t.err());
-    let left: Vec<String> = t.scripts.round_legs.borrow().iter().map(|l| l.2.clone()).collect();
-    assert_eq!(left, ["spira-run-batcher.local-other-leg.service"], "only the abandoned round's leg stops");
+    assert_eq!(
+        t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let left: Vec<String> = t
+        .scripts
+        .round_legs
+        .borrow()
+        .iter()
+        .map(|l| l.2.clone())
+        .collect();
+    assert_eq!(
+        left,
+        ["spira-run-batcher.local-other-leg.service"],
+        "only the abandoned round's leg stops"
+    );
     assert!(t.lc.has("abandon-batch hand-1 OPEN 1 base moved — stopped spira-run-batcher.local-leg-attribute2.service"), "{:?}", t.lc.calls.borrow());
 }
 
 #[test]
 fn a_leg_that_outlives_its_stop_keeps_the_round_open() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-1"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&[
+            "round",
+            "open",
+            "--members",
+            "sp-a:ta,sp-b:tb",
+            "--name",
+            "hand-1"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
     t.scripts.round_legs_stubborn.set(true);
-    assert_ne!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0);
-    assert!(!t.lc.has("abandon-batch hand-1"), "a round whose leg still runs is not abandoned");
+    assert_ne!(
+        t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]),
+        0
+    );
+    assert!(
+        !t.lc.has("abandon-batch hand-1"),
+        "a round whose leg still runs is not abandoned"
+    );
     assert!(t.qfile("round").exists());
 }
 
@@ -690,7 +810,12 @@ fn red_round(t: &T, members: &str) -> String {
         ("test-a.sh".into(), "ok".into()),
         ("test-b.sh".into(), "red 1 2 fp p e 1".into()),
     ];
-    assert_eq!(t.run(&["round", "open", "--members", members]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", members]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(t);
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
     assert_eq!(kv_of(t, "round")["red"], "test-b.sh");
@@ -704,11 +829,15 @@ fn abandoning_a_red_round_of_two_members_with_no_eject_is_refused_naming_eject()
     let before = kv_of(&t, "round");
     assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "red"]), 1);
     assert!(
-        t.err().contains(&format!("queue round eject {batch}")) && t.err().contains("QUEUE_ABANDON_CONSIDERED"),
+        t.err().contains(&format!("queue round eject {batch}"))
+            && t.err().contains("QUEUE_ABANDON_CONSIDERED"),
         "{}",
         t.err()
     );
-    assert!(!t.lc.has("abandon-batch"), "a refused abandon changes nothing");
+    assert!(
+        !t.lc.has("abandon-batch"),
+        "a refused abandon changes nothing"
+    );
     assert_eq!(kv_of(&t, "round"), before);
 }
 
@@ -718,20 +847,44 @@ fn a_red_round_abandons_once_its_culprit_is_ejected() {
     let batch = red_round(&t, "sp-a:ta,sp-b:tb,sp-c:tc");
     seed_suite(&t, "test-b.sh");
     assert_eq!(
-        t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]),
+        t.run(&[
+            "round",
+            "eject",
+            &batch,
+            "sp-b",
+            "--reason",
+            "red",
+            "--red",
+            "--suites",
+            "test-b.sh"
+        ]),
         0,
         "{}",
         t.err()
     );
-    assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "base moved"]), 0, "{}", t.err());
-    assert!(t.lc.has(&format!("abandon-batch {batch}")), "{:?}", t.lc.calls.borrow());
+    assert_eq!(
+        t.run(&["round", "abandon", &batch, "--reason", "base moved"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.lc.has(&format!("abandon-batch {batch}")),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
 }
 
 #[test]
 fn a_red_round_of_one_member_abandons_as_before() {
     let t = round_world();
     let batch = red_round(&t, "sp-b:tb");
-    assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "red"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "abandon", &batch, "--reason", "red"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert_eq!(result_lines(&t, &batch)[0].1, "abandoned:hand");
 }
 
@@ -739,14 +892,22 @@ fn a_red_round_of_one_member_abandons_as_before() {
 fn an_abandon_of_a_red_round_under_the_override_records_why_on_the_rounds_events() {
     let t = round_world();
     let batch = red_round(&t, "sp-a:ta,sp-b:tb");
-    t.env
-        .vars
-        .borrow_mut()
-        .insert("QUEUE_ABANDON_CONSIDERED".into(), "both members clash on one file".into());
-    assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "red"]), 0, "{}", t.err());
+    t.env.vars.borrow_mut().insert(
+        "QUEUE_ABANDON_CONSIDERED".into(),
+        "both members clash on one file".into(),
+    );
+    assert_eq!(
+        t.run(&["round", "abandon", &batch, "--reason", "red"]),
+        0,
+        "{}",
+        t.err()
+    );
     let recorded = "QUEUE_ABANDON_CONSIDERED: both members clash on one file — red";
     assert!(
-        t.lc.calls.borrow().iter().any(|c| c.starts_with(&format!("abandon-batch {batch} ")) && c.ends_with(recorded)),
+        t.lc.calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with(&format!("abandon-batch {batch} ")) && c.ends_with(recorded)),
         "{:?}",
         t.lc.calls.borrow()
     );
@@ -811,7 +972,7 @@ fn a_mender_bead_holding_an_ask_is_not_retired_until_the_ask_is_lifted() {
         .unwrap()
         .push(crate::model::LcBeadRow {
             bead_id: "sp-m13".into(),
-            state: "WORKING".into(),
+            state: "READY".into(),
             holds: vec!["ask".into()],
             ..Default::default()
         });
@@ -841,6 +1002,165 @@ fn a_mender_bead_holding_an_ask_is_not_retired_until_the_ask_is_lifted() {
     );
     assert!(t.lib.has("bead_close sp-m13"), "{:?}", t.lib.calls.borrow());
     assert!(marker(&t, "hand-4", "mender-1-gate-x.retired").exists());
+}
+
+#[test]
+fn a_working_mender_that_also_holds_an_ask_is_kept_when_the_round_is_abandoned() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&[
+            "round",
+            "open",
+            "--members",
+            "sp-a:ta,sp-b:tb",
+            "--name",
+            "hand-6"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+    fs::write(marker(&t, "hand-6", "mender-1-gate-x"), "sp-m20\n").unwrap();
+    t.lc.rows
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .push(crate::model::LcBeadRow {
+            bead_id: "sp-m20".into(),
+            state: "WORKING".into(),
+            holds: vec!["ask".into()],
+            ..Default::default()
+        });
+    assert_eq!(
+        t.run(&["round", "abandon", "hand-6", "--reason", "base moved"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(
+        !t.lib.has("bead_close sp-m20"),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
+    assert!(!marker(&t, "hand-6", "mender-1-gate-x.retired").exists());
+}
+
+#[test]
+fn abandoning_a_round_keeps_a_mender_that_holds_a_submitted_fix_for_the_next_cut() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&[
+            "round",
+            "open",
+            "--members",
+            "sp-a:ta,sp-b:tb",
+            "--name",
+            "hand-5"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+    fs::write(marker(&t, "hand-5", "mender-1-gate-x"), "sp-m14\n").unwrap();
+    fs::write(marker(&t, "hand-5", "mender-1-gate-y"), "sp-m15\n").unwrap();
+    for (n, id) in [("a", "sp-m16"), ("b", "sp-m17"), ("c", "sp-m18")] {
+        fs::write(
+            marker(&t, "hand-5", &format!("mender-1-gate-{n}")),
+            format!("{id}\n"),
+        )
+        .unwrap();
+    }
+    for (id, state, tip) in [
+        ("sp-m14", "SUBMITTED", Some("9b97f8d")),
+        ("sp-m15", "READY", None),
+        ("sp-m16", "CERTIFIED", Some("aa")),
+        ("sp-m17", "WORKING", None),
+        ("sp-m18", "READY", Some("bb")),
+    ] {
+        t.lc.rows
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .push(crate::model::LcBeadRow {
+                bead_id: id.into(),
+                state: state.into(),
+                tip: tip.map(String::from),
+                ..Default::default()
+            });
+    }
+    assert_eq!(
+        t.run(&["round", "abandon", "hand-5", "--reason", "base moved"]),
+        0,
+        "{}",
+        t.err()
+    );
+    for kept in ["sp-m14", "sp-m16", "sp-m17", "sp-m18"] {
+        assert!(
+            !t.lib.has(&format!("bead_close {kept}")),
+            "{:?}",
+            t.lib.calls.borrow()
+        );
+    }
+    let rows = t.lc.rows.borrow();
+    let state = |id: &str| {
+        rows.as_ref()
+            .unwrap()
+            .iter()
+            .find(|r| r.bead_id == id)
+            .unwrap()
+            .state
+            .clone()
+    };
+    assert_eq!(state("sp-m14"), "SUBMITTED");
+    assert_eq!(state("sp-m16"), "CERTIFIED");
+    assert_eq!(state("sp-m17"), "WORKING");
+    assert!(!marker(&t, "hand-5", "mender-1-gate-x.retired").exists());
+    assert!(t.lib.has("bead_close sp-m15"), "{:?}", t.lib.calls.borrow());
+    assert!(marker(&t, "hand-5", "mender-1-gate-y.retired").exists());
+}
+
+#[test]
+fn a_later_round_event_keeps_a_submitted_mender_of_a_batch_already_closed() {
+    let t = round_world();
+    t.lc.rows
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .push(crate::model::LcBeadRow {
+            bead_id: "sp-m19".into(),
+            state: "SUBMITTED".into(),
+            tip: Some("cc".into()),
+            ..Default::default()
+        });
+    t.lc.batch_states
+        .borrow_mut()
+        .insert("old-2".into(), ("ABANDONED".into(), "2".into()));
+    assert_eq!(
+        t.run(&[
+            "round",
+            "open",
+            "--members",
+            "sp-a:ta,sp-b:tb",
+            "--name",
+            "hand-6"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+    fs::write(marker(&t, "old-2", "mender-1-gate-x"), "sp-m19\n").unwrap();
+    assert_eq!(
+        t.run(&["round", "abandon", "hand-6", "--reason", "base moved"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(
+        !t.lib.has("bead_close sp-m19"),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
+    assert!(!marker(&t, "old-2", "mender-1-gate-x.retired").exists());
 }
 
 #[test]
@@ -915,30 +1235,90 @@ fn abandon_of_a_batch_the_lifecycle_already_abandoned_drops_the_record() {
 #[test]
 fn abandon_carries_the_callers_cause_word_into_the_result_line() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta", "--name", "hand-2"]), 0, "{}", t.err());
-    assert_eq!(t.run(&["round", "abandon", "hand-2", "--reason", "it was blocked", "--cause", "Blocked Before Land"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta", "--name", "hand-2"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(
+        t.run(&[
+            "round",
+            "abandon",
+            "hand-2",
+            "--reason",
+            "it was blocked",
+            "--cause",
+            "Blocked Before Land"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
     let lines = result_lines(&t, "hand-2");
-    assert_eq!((lines[0].1.as_str(), lines[0].2.as_str()), ("abandoned:blocked-before-land", "it was blocked"));
-    assert_eq!(t.run(&["round", "land", "hand-2", "--cause", "x"]), 2, "only abandon takes a cause");
+    assert_eq!(
+        (lines[0].1.as_str(), lines[0].2.as_str()),
+        ("abandoned:blocked-before-land", "it was blocked")
+    );
+    assert_eq!(
+        t.run(&["round", "land", "hand-2", "--cause", "x"]),
+        2,
+        "only abandon takes a cause"
+    );
 }
 
 #[test]
 fn sweep_locks_removes_only_the_locks_of_batches_spira_lc_reports_terminal() {
     let t = round_world();
-    for (b, state) in [("r-landed", Some("LANDED")), ("r-settled", Some("SETTLED")), ("r-gone", Some("ABANDONED")), ("r-open", Some("CI_RUNNING")), ("r-staged", Some("DISCARDED"))] {
+    for (b, state) in [
+        ("r-landed", Some("LANDED")),
+        ("r-settled", Some("SETTLED")),
+        ("r-gone", Some("ABANDONED")),
+        ("r-open", Some("CI_RUNNING")),
+        ("r-staged", Some("DISCARDED")),
+    ] {
         drop(crate::lock::try_certify_lock(&t.s().queue_dir, "spira", b));
         if let Some(s) = state {
-            t.lc.batch_states.borrow_mut().insert(b.into(), (s.into(), "3".into()));
+            t.lc.batch_states
+                .borrow_mut()
+                .insert(b.into(), (s.into(), "3".into()));
         }
     }
-    assert_eq!(t.run(&["round", "sweep-locks"]), 2, "a repo or --all is required");
-    assert_eq!(t.run(&["round", "sweep-locks", "--repo", "spira", "--all"]), 2);
-    assert_eq!(t.run(&["round", "sweep-locks", "--repo", "spira"]), 0, "{}", t.err());
-    assert_eq!(crate::lock::certify_lock_batches(&t.s().queue_dir, "spira"), ["r-open"]);
-    assert!(t.out().contains("spira: removed 4 certify lock(s) of ended rounds, kept 1"), "{}", t.out());
-    drop(crate::lock::try_certify_lock(&t.s().queue_dir, "spira", "r-landed"));
+    assert_eq!(
+        t.run(&["round", "sweep-locks"]),
+        2,
+        "a repo or --all is required"
+    );
+    assert_eq!(
+        t.run(&["round", "sweep-locks", "--repo", "spira", "--all"]),
+        2
+    );
+    assert_eq!(
+        t.run(&["round", "sweep-locks", "--repo", "spira"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(
+        crate::lock::certify_lock_batches(&t.s().queue_dir, "spira"),
+        ["r-open"]
+    );
+    assert!(
+        t.out()
+            .contains("spira: removed 4 certify lock(s) of ended rounds, kept 1"),
+        "{}",
+        t.out()
+    );
+    drop(crate::lock::try_certify_lock(
+        &t.s().queue_dir,
+        "spira",
+        "r-landed",
+    ));
     assert_eq!(t.run(&["round", "sweep-locks", "--all"]), 0, "{}", t.err());
-    assert_eq!(crate::lock::certify_lock_batches(&t.s().queue_dir, "spira"), ["r-open"]);
+    assert_eq!(
+        crate::lock::certify_lock_batches(&t.s().queue_dir, "spira"),
+        ["r-open"]
+    );
 }
 
 #[test]
@@ -1201,7 +1581,10 @@ fn open_refuses_every_member_it_cannot_admit_in_one_message() {
         t.err()
     );
     let e = t.err();
-    assert!(e.contains("sp-a: x1 is not") && e.contains("sp-b: x2 is not"), "{e}");
+    assert!(
+        e.contains("sp-a: x1 is not") && e.contains("sp-b: x2 is not"),
+        "{e}"
+    );
 }
 
 #[test]
@@ -1331,8 +1714,7 @@ fn open_fails_and_does_not_claim_a_return_the_lifecycle_refused_or_ignored() {
             t.err()
         );
         assert!(
-            !t.lc.has("cut")
-                && !t.qfile("round").exists(),
+            !t.lc.has("cut") && !t.qfile("round").exists(),
             "{}",
             t.err()
         );
@@ -1393,10 +1775,18 @@ fn open_whose_cut_is_refused_sweeps_orphans() {
 #[test]
 fn the_orphan_sweep_is_told_which_rounds_have_a_live_leg() {
     let t = round_world();
-    t.scripts.round_legs.borrow_mut().push(("spira".into(), "hand-1".into(), "spira-run-batcher.local-leg-attribute2.service".into()));
+    t.scripts.round_legs.borrow_mut().push((
+        "spira".into(),
+        "hand-1".into(),
+        "spira-run-batcher.local-leg-attribute2.service".into(),
+    ));
     t.lc.cut_refused.set(Some("refused"));
     t.run(&["round", "open", "--members", "sp-a,sp-b"]);
-    assert!(t.lc.has("requeue-orphans saw hand-1 running"), "{:?}", t.lc.calls.borrow());
+    assert!(
+        t.lc.has("requeue-orphans saw hand-1 running"),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
 }
 
 #[test]
@@ -1489,12 +1879,7 @@ fn open_skips_a_submitted_member_whose_gate_is_fail_at_its_current_tip_and_only_
     );
     assert!(!t.qfile("round").exists());
     assert_eq!(
-        t.run(&[
-            "round",
-            "open",
-            "--members",
-            "sp-a,sp-old,sp-base,sp-nov"
-        ]),
+        t.run(&["round", "open", "--members", "sp-a,sp-old,sp-base,sp-nov"]),
         0,
         "{}",
         t.err()
@@ -1670,14 +2055,29 @@ const OVER_CAP_EVENTS: &str = "1 phase suites\n2 verdict FAULT over-cap\n";
 const KILLED_UNIT: &str = "UNIT-TESTS-CAUSE: exit status 101 (signal: 9, SIGKILL: kill)\n";
 
 fn over_cap_world(t: &T, once: bool) -> String {
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
     let capped = vec![
         ("run.events".to_string(), OVER_CAP_EVENTS.to_string()),
         ("unit-tests.out".to_string(), KILLED_UNIT.to_string()),
-        ("test-sim-claim-rank.sh.result".to_string(), "unreached 1 0 -\n".to_string()),
-        ("test-sim-dwarf-brief.sh.result".to_string(), "unreached 1 0 -\n".to_string()),
+        (
+            "test-sim-claim-rank.sh.result".to_string(),
+            "unreached 1 0 -\n".to_string(),
+        ),
+        (
+            "test-sim-dwarf-brief.sh.result".to_string(),
+            "unreached 1 0 -\n".to_string(),
+        ),
     ];
-    *(if once { t.scripts.round_vm_files_once.borrow_mut() } else { t.scripts.round_vm_files.borrow_mut() }) = capped;
+    *(if once {
+        t.scripts.round_vm_files_once.borrow_mut()
+    } else {
+        t.scripts.round_vm_files.borrow_mut()
+    }) = capped;
     *t.scripts.round_vm_meta.borrow_mut() = "suite_cap_s=600\n".into();
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
     batch_of(t)
@@ -1685,8 +2085,20 @@ fn over_cap_world(t: &T, once: bool) -> String {
 
 fn no_attribution(t: &T) {
     assert!(!t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
-    assert!(!t.lc.calls.borrow().iter().any(|c| c.contains("PassRed")), "{:?}", t.lc.calls.borrow());
-    assert!(!t.scripts.calls.borrow().iter().any(|c| c.contains("mender") || c.contains("path-attribute")), "{:?}", t.scripts.calls.borrow());
+    assert!(
+        !t.lc.calls.borrow().iter().any(|c| c.contains("PassRed")),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
+    assert!(
+        !t.scripts
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.contains("mender") || c.contains("path-attribute")),
+        "{:?}",
+        t.scripts.calls.borrow()
+    );
 }
 
 #[test]
@@ -1695,17 +2107,38 @@ fn an_over_cap_pass_with_a_killed_unit_test_ejects_nobody_and_recertifies_once()
         let t = round_world();
         let batch = over_cap_world(&t, true);
         *t.scripts.round_vm_queue.borrow_mut() = vec![
-            RunOut { rc: first_rc, out: String::new(), err: "libtest (signal: 9, SIGKILL: kill)\n".into() },
-            RunOut { rc: 0, out: String::new(), err: String::new() },
+            RunOut {
+                rc: first_rc,
+                out: String::new(),
+                err: "libtest (signal: 9, SIGKILL: kill)\n".into(),
+            },
+            RunOut {
+                rc: 0,
+                out: String::new(),
+                err: String::new(),
+            },
         ];
         let rc = t.run(&["round", "certify", &batch]);
         assert_eq!(rc, 0, "rc {first_rc}: {}", t.err());
-        let vm = t.scripts.calls.borrow().iter().filter(|c| c.starts_with("round-vm")).count();
+        let vm = t
+            .scripts
+            .calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("round-vm"))
+            .count();
         assert_eq!(vm, 2);
         let calls = t.lc.calls.borrow().join("\n");
         let inc = calls.find("PassIncomplete").expect("incomplete");
-        assert!(calls[inc..].contains("over-cap: FAULT over-cap unreached=2"), "{calls}");
-        assert!(inc < calls.rfind("PassStarted").unwrap() && calls.rfind("PassStarted").unwrap() < calls.find("PassGreen").unwrap(), "{calls}");
+        assert!(
+            calls[inc..].contains("over-cap: FAULT over-cap unreached=2"),
+            "{calls}"
+        );
+        assert!(
+            inc < calls.rfind("PassStarted").unwrap()
+                && calls.rfind("PassStarted").unwrap() < calls.find("PassGreen").unwrap(),
+            "{calls}"
+        );
         assert!(t.err().contains("FAULT over-cap round="), "{}", t.err());
         assert!(t.err().contains("unreached="), "{}", t.err());
         no_attribution(&t);
@@ -1716,22 +2149,61 @@ fn an_over_cap_pass_with_a_killed_unit_test_ejects_nobody_and_recertifies_once()
 fn a_second_over_cap_on_the_same_head_is_a_capacity_fault_and_ejects_nobody() {
     let t = round_world();
     let batch = over_cap_world(&t, false);
-    let over = RunOut { rc: 2, out: String::new(), err: "libtest (signal: 9, SIGKILL: kill)\n".into() };
+    let over = RunOut {
+        rc: 2,
+        out: String::new(),
+        err: "libtest (signal: 9, SIGKILL: kill)\n".into(),
+    };
     *t.scripts.round_vm_queue.borrow_mut() = vec![over.clone(), over.clone()];
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
-    let vms = |t: &T| t.scripts.calls.borrow().iter().filter(|c| c.starts_with("round-vm")).count();
+    let vms = |t: &T| {
+        t.scripts
+            .calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("round-vm"))
+            .count()
+    };
     assert_eq!(vms(&t), 2);
-    assert!(t.err().contains(&format!("CAPACITY FAULT over-cap twice round={batch} head=")), "{}", t.err());
-    assert!(t.out().contains("fault=capacity unreached=2,2"), "{}", t.out());
-    let paged = |t: &T| t.lib.calls.borrow().iter().filter(|c| c.starts_with("notify") && c.contains(&format!("Round {batch} over-cap twice"))).count();
+    assert!(
+        t.err().contains(&format!(
+            "CAPACITY FAULT over-cap twice round={batch} head="
+        )),
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.out().contains("fault=capacity unreached=2,2"),
+        "{}",
+        t.out()
+    );
+    let paged = |t: &T| {
+        t.lib
+            .calls
+            .borrow()
+            .iter()
+            .filter(|c| {
+                c.starts_with("notify") && c.contains(&format!("Round {batch} over-cap twice"))
+            })
+            .count()
+    };
     assert_eq!(paged(&t), 1);
-    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("mail-operator")));
+    assert!(!t
+        .scripts
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("mail-operator")));
     no_attribution(&t);
 
     *t.scripts.round_vm_queue.borrow_mut() = vec![over];
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
     assert_eq!(vms(&t), 3, "one more pass, no re-run");
-    assert!(t.err().contains("CAPACITY FAULT over-cap twice"), "{}", t.err());
+    assert!(
+        t.err().contains("CAPACITY FAULT over-cap twice"),
+        "{}",
+        t.err()
+    );
     assert_eq!(paged(&t), 1, "paged once per (batch, head)");
     no_attribution(&t);
 }
@@ -1739,7 +2211,12 @@ fn a_second_over_cap_on_the_same_head_is_a_capacity_fault_and_ejects_nobody() {
 #[test]
 fn a_pass_the_unit_tier_ended_before_any_suite_is_judged_red_on_unit_tests_not_faulted() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     *t.scripts.round_vm.borrow_mut() = RunOut {
         rc: 1,
@@ -1754,13 +2231,36 @@ fn a_pass_the_unit_tier_ended_before_any_suite_is_judged_red_on_unit_tests_not_f
         ),
         ("unit-tests.out".to_string(), "UNIT-TESTS-CAUSE: exit status 101 after 42s\n".to_string()),
     ];
-    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}{}", t.out(), t.err());
-    assert!(t.out().contains("unit-tests-failed=a::broken,b::also"), "{}", t.out());
-    assert!(t.out().contains("unit-tests-cause=unit-tests: exit status 101 (before the suites, after 42s)"), "{}", t.out());
-    assert!(!t.err().contains("left no verdicts") && !t.err().contains("not judged"), "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "certify", &batch]),
+        1,
+        "{}{}",
+        t.out(),
+        t.err()
+    );
+    assert!(
+        t.out().contains("unit-tests-failed=a::broken,b::also"),
+        "{}",
+        t.out()
+    );
+    assert!(
+        t.out().contains(
+            "unit-tests-cause=unit-tests: exit status 101 (before the suites, after 42s)"
+        ),
+        "{}",
+        t.out()
+    );
+    assert!(
+        !t.err().contains("left no verdicts") && !t.err().contains("not judged"),
+        "{}",
+        t.err()
+    );
     let events = events_of(&t, &batch);
     assert!(events.iter().any(|e| e.starts_with("{\"PassRed\"") && e.contains("\"red_suites\":[\"unit-tests\"]")), "{events:?}");
-    assert!(!events.iter().any(|e| e.contains("PassIncomplete")), "{events:?}");
+    assert!(
+        !events.iter().any(|e| e.contains("PassIncomplete")),
+        "{events:?}"
+    );
 }
 
 #[test]
@@ -1820,14 +2320,28 @@ fn certify_records_a_lint_or_fence_red_that_ended_the_pass_before_any_suite_ran(
 
 fn a_pass_ended_early_by(red: &str) {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
-    let spira = t.s().run.join("worktree").join(".round-spira").join("spira");
+    let spira = t
+        .s()
+        .run
+        .join("worktree")
+        .join(".round-spira")
+        .join("spira");
     fs::create_dir_all(&spira).unwrap();
     for s in ["test-a.sh", "test-b.sh"] {
         fs::write(spira.join(s), "").unwrap();
     }
-    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 1,
+        out: String::new(),
+        err: String::new(),
+    };
     *t.scripts.round_vm_results.borrow_mut() = vec![(red.into(), "red".into())];
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
     assert!(t.out().contains(&format!("red={red}")), "{}", t.out());
@@ -1845,11 +2359,24 @@ fn judged_red_world() -> (T, String) {
     let mut t = round_world();
     t.lib.s.verdict.mender_label = "mend-fixture".into();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
     assert_eq!(
-        t.run(&["round", "pass-verdict", &batch, "--verdict", "red", "--red-suites", "spira-lint"]),
+        t.run(&[
+            "round",
+            "pass-verdict",
+            &batch,
+            "--verdict",
+            "red",
+            "--red-suites",
+            "spira-lint"
+        ]),
         0,
         "{}",
         t.err()
@@ -1861,27 +2388,47 @@ fn judged_red_world() -> (T, String) {
 #[test]
 fn a_suites_boundary_after_the_pass_is_judged_is_ignored_and_exits_ok() {
     let (t, batch) = judged_red_world();
-    assert_eq!(t.run(&["round", "suites-started", &batch]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "suites-started", &batch]),
+        0,
+        "{}",
+        t.err()
+    );
     assert!(
-        t.out().contains("queue.sh round suites-started: ignored: pass 1 already has its verdict"),
+        t.out()
+            .contains("queue.sh round suites-started: ignored: pass 1 already has its verdict"),
         "{}",
         t.out()
     );
-    assert!(!t.out().contains("suites-started: recorded for"), "{}", t.out());
+    assert!(
+        !t.out().contains("suites-started: recorded for"),
+        "{}",
+        t.out()
+    );
     assert_eq!(round_phase(&t), "ATTRIBUTING");
 }
 
 #[test]
 fn a_failed_suite_after_the_pass_is_judged_is_ignored_files_no_mender_and_exits_ok() {
     let (t, batch) = judged_red_world();
-    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "spira-lint"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "failed", &batch, "--suite", "spira-lint"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert!(
-        t.out().contains("queue.sh round failed: ignored: pass 1 already has its verdict"),
+        t.out()
+            .contains("queue.sh round failed: ignored: pass 1 already has its verdict"),
         "{}",
         t.out()
     );
     assert!(
-        !t.lib.calls.borrow().iter().any(|c| c.starts_with("create_bug")),
+        !t.lib
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("create_bug")),
         "no MENDING row was opened, so no mender bead: {:?}",
         t.lib.calls.borrow()
     );
@@ -1905,37 +2452,83 @@ fn pass_start_from_attributing_starts_the_next_pass_without_a_rebuild() {
         Some("{\"PassStarted\":{\"n\":2,\"head\":\"merged-ta\"}}"),
         "{events:?}"
     );
-    assert!(!events.iter().any(|e| e.starts_with("{\"PassRebuilt\"")), "{events:?}");
+    assert!(
+        !events.iter().any(|e| e.starts_with("{\"PassRebuilt\"")),
+        "{events:?}"
+    );
 }
 
 #[test]
 fn certify_ends_red_on_a_lint_red_the_round_vm_recorded_and_re_drives_pass_two() {
     let t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
-    let spira = t.s().run.join("worktree").join(".round-spira").join("spira");
+    let spira = t
+        .s()
+        .run
+        .join("worktree")
+        .join(".round-spira")
+        .join("spira");
     fs::create_dir_all(&spira).unwrap();
     for s in ["test-a.sh", "test-b.sh"] {
         fs::write(spira.join(s), "").unwrap();
     }
-    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 1,
+        out: String::new(),
+        err: String::new(),
+    };
     *t.scripts.round_vm_results.borrow_mut() = vec![("spira-lint".into(), "red".into())];
-    *t.scripts.round_vm_records.borrow_mut() = Some((t.lc.batch_view.clone(), ("ATTRIBUTING".into(), 9, 1, String::new())));
+    *t.scripts.round_vm_records.borrow_mut() = Some((
+        t.lc.batch_view.clone(),
+        ("ATTRIBUTING".into(), 9, 1, String::new()),
+    ));
     t.lc.late_boundaries.set(true);
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
-    assert!(t.out().contains("red=spira-lint"), "{}\n{}", t.out(), t.err());
-    assert!(!t.err().contains("changed while it was being certified"), "{}", t.err());
+    assert!(
+        t.out().contains("red=spira-lint"),
+        "{}\n{}",
+        t.out(),
+        t.err()
+    );
+    assert!(
+        !t.err().contains("changed while it was being certified"),
+        "{}",
+        t.err()
+    );
     assert_eq!(round_phase(&t), "ATTRIBUTING");
 
     *t.scripts.round_vm_records.borrow_mut() = None;
     *t.scripts.round_vm.borrow_mut() = RunOut::default();
-    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into()), ("test-b.sh".into(), "ok".into())];
+    *t.scripts.round_vm_results.borrow_mut() = vec![
+        ("test-a.sh".into(), "ok".into()),
+        ("test-b.sh".into(), "ok".into()),
+    ];
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
     let events = events_of(&t, &batch);
-    assert!(events.iter().any(|e| e == "{\"PassStarted\":{\"n\":2,\"head\":\"merged-ta\"}}"), "{events:?}");
-    assert!(!events.iter().any(|e| e.starts_with("{\"PassRebuilt\"")), "{events:?}");
-    assert!(events.last().unwrap().starts_with("{\"PassGreen\":{\"n\":2"), "{events:?}");
+    assert!(
+        events
+            .iter()
+            .any(|e| e == "{\"PassStarted\":{\"n\":2,\"head\":\"merged-ta\"}}"),
+        "{events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| e.starts_with("{\"PassRebuilt\"")),
+        "{events:?}"
+    );
+    assert!(
+        events
+            .last()
+            .unwrap()
+            .starts_with("{\"PassGreen\":{\"n\":2"),
+        "{events:?}"
+    );
 }
 
 #[test]
@@ -2188,7 +2781,11 @@ fn held_only_inside_their_verb(verbs: &[VerbHolds]) -> Result<(), String> {
         if open != 0 {
             return Err(format!("{} returned still holding the lock", v.verb));
         }
-        if !v.holds.iter().any(|h| matches!(h, Hold::Taken { verb, .. } if verb == v.verb)) {
+        if !v
+            .holds
+            .iter()
+            .any(|h| matches!(h, Hold::Taken { verb, .. } if verb == v.verb))
+        {
             return Err(format!("{} took no lock of its own", v.verb));
         }
     }
@@ -2543,11 +3140,21 @@ fn suites_started_re_reads_and_survives_repeated_stale_versions() {
 fn a_repeated_suites_started_for_one_pass_is_a_no_op_success() {
     let t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
     for _ in 0..2 {
-        assert_eq!(t.run(&["round", "suites-started", &batch]), 0, "{}", t.err());
+        assert_eq!(
+            t.run(&["round", "suites-started", &batch]),
+            0,
+            "{}",
+            t.err()
+        );
     }
     assert_eq!(
         events_of(&t, &batch),
@@ -2562,10 +3169,20 @@ fn a_repeated_suites_started_for_one_pass_is_a_no_op_success() {
 fn suites_started_outside_the_build_phase_of_a_pass_still_refuses() {
     let t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
-    assert_eq!(t.run(&["round", "suites-started", &batch]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "suites-started", &batch]),
+        0,
+        "{}",
+        t.err()
+    );
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 9, 1, String::new()));
     t.lc.batch_event_refused.set(Some("SuitesStarted"));
     assert_ne!(t.run(&["round", "suites-started", &batch]), 0);
@@ -3104,11 +3721,23 @@ fn promotion_on_an_identical_tree_reuses_the_staged_pass() {
         t.lc.calls.borrow()
     );
     assert_eq!(vm_runs(&t), 2, "promotion ran no pass of its own");
-    let answer: serde_json::Value = serde_json::from_str(t.out().lines().rev().find(|l| !l.trim().is_empty()).unwrap()).unwrap();
+    let answer: serde_json::Value = serde_json::from_str(
+        t.out()
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(answer["attested"], true, "{}", t.out());
     assert_eq!(answer["batch"], s.as_str());
     assert_eq!(answer["head"], "merged-tb", "{}", t.out());
-    assert!(answer["members"].as_array().is_some_and(|m| !m.is_empty() && m.iter().all(|x| x["id"].is_string() && x["tip"].is_string())), "{answer}");
+    assert!(
+        answer["members"].as_array().is_some_and(|m| !m.is_empty()
+            && m.iter()
+                .all(|x| x["id"].is_string() && x["tip"].is_string())),
+        "{answer}"
+    );
     assert!(
         t.lc.calls
             .borrow()
@@ -3192,7 +3821,11 @@ fn promotion_onto_a_moved_base_gets_a_fresh_pass() {
 #[test]
 fn a_staged_pass_the_unit_tier_ended_before_any_suite_is_red_on_unit_tests() {
     let (t, _n, _s) = staged_behind_green();
-    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 1,
+        out: String::new(),
+        err: String::new(),
+    };
     *t.scripts.round_vm_results.borrow_mut() = vec![];
     *t.scripts.round_vm_files.borrow_mut() = vec![(
         "unit.json".to_string(),
@@ -3200,7 +3833,11 @@ fn a_staged_pass_the_unit_tier_ended_before_any_suite_is_red_on_unit_tests() {
     )];
     assert_eq!(t.run(&["round", "stage-test"]), 1, "{}{}", t.out(), t.err());
     assert_eq!(kv_of(&t, "round-staged")["phase"], "red");
-    assert!(t.out().contains("red=unit-tests") && t.out().contains("unit-tests-failed=a::broken"), "{}", t.out());
+    assert!(
+        t.out().contains("red=unit-tests") && t.out().contains("unit-tests-failed=a::broken"),
+        "{}",
+        t.out()
+    );
     assert!(!t.err().contains("left no verdicts"), "{}", t.err());
 }
 
@@ -3425,7 +4062,12 @@ fn a_mender_bead_gets_its_lifecycle_repo_at_creation() {
     let mut t = round_world();
     t.lib.s.verdict.mender_label = "mend-fixture".into();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
     assert_eq!(
@@ -3769,7 +4411,12 @@ fn certify_judges_a_wall_killed_run_whose_results_and_unit_tests_are_complete() 
 #[test]
 fn a_wall_killed_run_whose_integration_tests_never_reported_is_not_judged() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     *t.scripts.round_vm.borrow_mut() = RunOut {
         rc: 124,
@@ -3778,23 +4425,52 @@ fn a_wall_killed_run_whose_integration_tests_never_reported_is_not_judged() {
     };
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
-    assert!(!t.out().contains("GREEN"), "the unit phase alone does not complete the run: {}", t.out());
+    assert!(
+        !t.out().contains("GREEN"),
+        "the unit phase alone does not complete the run: {}",
+        t.out()
+    );
 }
 
 #[test]
 fn an_integration_red_beside_green_suites_is_judged_red_on_unit_tests() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
-    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: "round-vm: INTEGRATION-TESTS: FAIL (integration run rc=101):\n".into() };
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 1,
+        out: String::new(),
+        err: "round-vm: INTEGRATION-TESTS: FAIL (integration run rc=101):\n".into(),
+    };
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
     *t.scripts.round_vm_files.borrow_mut() = vec![(
         "integration.json".to_string(),
         "{\"stage\":\"integration-tests\",\"verdict\":\"red\",\"ran_before_suites\":false,\"cause\":\"exit status 101\",\"secs\":61,\"last_binary\":\"journal_dolt\",\"failed\":[\"replays_in_order\"]}\n".to_string(),
     )];
-    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}{}", t.out(), t.err());
-    assert!(t.out().contains("unit-tests-failed=replays_in_order"), "{}", t.out());
-    assert!(t.out().contains("unit-tests-cause=integration-tests: exit status 101 (beside the suites, after 61s)"), "{}", t.out());
+    assert_eq!(
+        t.run(&["round", "certify", &batch]),
+        1,
+        "{}{}",
+        t.out(),
+        t.err()
+    );
+    assert!(
+        t.out().contains("unit-tests-failed=replays_in_order"),
+        "{}",
+        t.out()
+    );
+    assert!(
+        t.out().contains(
+            "unit-tests-cause=integration-tests: exit status 101 (beside the suites, after 61s)"
+        ),
+        "{}",
+        t.out()
+    );
     let events = events_of(&t, &batch);
     assert!(events.iter().any(|e| e.starts_with("{\"PassRed\"") && e.contains("\"red_suites\":[\"unit-tests\"]")), "{events:?}");
 }
@@ -4491,7 +5167,14 @@ fn a_second_round_naming_a_member_of_an_open_round_is_refused_naming_it() {
 fn a_duplicate_identical_member_pair_opens_one_member() {
     let t = concurrent_world();
     assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a:ta,sp-a:ta,sp-b:tb", "--name", "r-1"]),
+        t.run(&[
+            "round",
+            "open",
+            "--members",
+            "sp-a:ta,sp-a:ta,sp-b:tb",
+            "--name",
+            "r-1"
+        ]),
         0,
         "{}",
         t.err()
@@ -4503,7 +5186,14 @@ fn a_duplicate_identical_member_pair_opens_one_member() {
 fn an_abbreviated_and_a_full_tip_of_one_id_are_one_member_at_the_longer() {
     let t = concurrent_world();
     assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a:t,sp-b:tb,sp-a:ta,sp-a", "--name", "r-1"]),
+        t.run(&[
+            "round",
+            "open",
+            "--members",
+            "sp-a:t,sp-b:tb,sp-a:ta,sp-a",
+            "--name",
+            "r-1"
+        ]),
         0,
         "{}",
         t.err()
@@ -4515,13 +5205,23 @@ fn an_abbreviated_and_a_full_tip_of_one_id_are_one_member_at_the_longer() {
 fn one_id_at_two_tips_is_refused_naming_both() {
     let t = concurrent_world();
     assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-a:tz", "--name", "r-1"]),
+        t.run(&[
+            "round",
+            "open",
+            "--members",
+            "sp-a:ta,sp-b:tb,sp-a:tz",
+            "--name",
+            "r-1"
+        ]),
         2,
         "{}",
         t.err()
     );
     let e = t.err();
-    assert!(e.contains("sp-a") && e.contains("ta") && e.contains("tz"), "{e}");
+    assert!(
+        e.contains("sp-a") && e.contains("ta") && e.contains("tz"),
+        "{e}"
+    );
     assert!(!t.qfile("round.r-1").exists());
 }
 
@@ -4693,7 +5393,11 @@ fn open_does_not_count_a_round_the_lifecycle_abandoned_while_status_hides_it() {
 fn stacked_pair(t: &T) {
     open_and_certify(t, "sp-a", "r-1");
     open_and_certify(t, "sp-b", "r-2");
-    assert_eq!(kv_of(t, "round.r-2")["parent"], "r-1", "r-2 is stacked on r-1");
+    assert_eq!(
+        kv_of(t, "round.r-2")["parent"],
+        "r-1",
+        "r-2 is stacked on r-1"
+    );
 }
 
 fn voided(t: &T, child: &str) {
@@ -4702,17 +5406,30 @@ fn voided(t: &T, child: &str) {
         "{:?}",
         t.lc.calls.borrow()
     );
-    assert!(!t.qfile(&format!("round.{child}")).exists() && !t.qfile("round").exists(), "no round record survives");
-    assert!(t.out().contains(&format!("voiding round {child}: it is stacked on round r-1")), "{}", t.out());
+    assert!(
+        !t.qfile(&format!("round.{child}")).exists() && !t.qfile("round").exists(),
+        "no round record survives"
+    );
+    assert!(
+        t.out().contains(&format!(
+            "voiding round {child}: it is stacked on round r-1"
+        )),
+        "{}",
+        t.out()
+    );
 }
 
 #[test]
 fn open_refuses_to_stack_on_an_open_round_that_went_red() {
     let t = concurrent_world();
-    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "red 1 2 fp p e 1".into())];
+    *t.scripts.round_vm_results.borrow_mut() =
+        vec![("test-a.sh".into(), "red 1 2 fp p e 1".into())];
     open_and_certify(&t, "sp-a", "r-1");
     assert_eq!(t.run(&["round", "certify", "r-1"]), 1);
-    assert_eq!(t.run(&["round", "open", "--members", "sp-b", "--name", "r-2"]), 1);
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-b", "--name", "r-2"]),
+        1
+    );
     assert!(
         t.err().contains("open round r-1 is red (test-a.sh)") && t.err().contains("refused"),
         "{}",
@@ -4733,8 +5450,16 @@ fn open_refuses_to_stack_on_a_live_round_whose_own_parent_went_red() {
     }
     kv.push("red", "test-a.sh");
     crate::records::write_atomic(&t.qfile("round"), &kv.render()).unwrap();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-c", "--name", "r-3"]), 1);
-    assert!(t.err().contains("open round r-1, under the newest open round r-2, is red"), "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-c", "--name", "r-3"]),
+        1
+    );
+    assert!(
+        t.err()
+            .contains("open round r-1, under the newest open round r-2, is red"),
+        "{}",
+        t.err()
+    );
     assert!(!t.lc.has("cut r-3"), "{:?}", t.lc.calls.borrow());
 }
 
@@ -4756,7 +5481,12 @@ fn open_prints_the_base_it_stacked_on_and_its_chain() {
 fn abandoning_a_round_voids_the_round_stacked_on_it() {
     let t = concurrent_world();
     stacked_pair(&t);
-    assert_eq!(t.run(&["round", "abandon", "r-1", "--reason", "red"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "abandon", "r-1", "--reason", "red"]),
+        0,
+        "{}",
+        t.err()
+    );
     voided(&t, "r-2");
 }
 
@@ -4764,7 +5494,12 @@ fn abandoning_a_round_voids_the_round_stacked_on_it() {
 fn ejecting_a_rounds_last_member_voids_the_round_stacked_on_it() {
     let t = concurrent_world();
     stacked_pair(&t);
-    assert_eq!(t.run(&["round", "eject", "r-1", "sp-a", "--reason", "red"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "eject", "r-1", "sp-a", "--reason", "red"]),
+        0,
+        "{}",
+        t.err()
+    );
     voided(&t, "r-2");
 }
 
@@ -4774,11 +5509,20 @@ fn a_stacked_round_whose_parent_was_abandoned_is_rebuilt_without_it_and_certifie
     two_green_stacked_rounds(&t);
     // The parent ended outside the queue's verbs, which would have voided the child; its record
     // and lock are left behind, and the child's settle removes them.
-    drop(crate::lock::try_certify_lock(&t.s().queue_dir, "spira", "r-1"));
-    t.lc.batch_states.borrow_mut().insert("r-1".into(), ("ABANDONED".into(), "9".into()));
+    drop(crate::lock::try_certify_lock(
+        &t.s().queue_dir,
+        "spira",
+        "r-1",
+    ));
+    t.lc.batch_states
+        .borrow_mut()
+        .insert("r-1".into(), ("ABANDONED".into(), "9".into()));
     tree_of(&t, "merged-tb");
     let runs = vm_runs(&t);
-    assert_eq!(t.run(&["round", "land", "r-2"]), crate::ops::LAND_BASE_MOVED);
+    assert_eq!(
+        t.run(&["round", "land", "r-2"]),
+        crate::ops::LAND_BASE_MOVED
+    );
     assert!(t.err().contains("it is not landed"), "{}", t.err());
     assert_eq!(
         t.landed_ref().as_deref(),
@@ -4796,7 +5540,10 @@ fn a_stacked_round_whose_parent_was_abandoned_is_rebuilt_without_it_and_certifie
     );
     assert!(!rec.contains_key("parent"));
     assert_eq!(round_phase(&t), "REBUILDING");
-    assert!(!certify_lock(&t, "r-1").exists(), "the settled parent leaves no certify lock");
+    assert!(
+        !certify_lock(&t, "r-1").exists(),
+        "the settled parent leaves no certify lock"
+    );
     t.git.ancestor("tb", "merged-tb");
     assert_eq!(t.run(&["round", "certify", "r-2"]), 0, "{}", t.err());
     assert_eq!(vm_runs(&t), runs + 1);
@@ -4816,7 +5563,10 @@ fn a_stacked_round_is_recut_on_the_head_its_parent_was_rebuilt_to() {
     }
     crate::records::write_atomic(&t.qfile("round"), &kv.render()).unwrap();
     tree_of(&t, "merged-tb@rebuilt-ta");
-    assert_eq!(t.run(&["round", "land", "r-2"]), crate::ops::LAND_BASE_MOVED);
+    assert_eq!(
+        t.run(&["round", "land", "r-2"]),
+        crate::ops::LAND_BASE_MOVED
+    );
     let rec = kv_of(&t, "round.r-2");
     assert_eq!(
         (
@@ -4933,7 +5683,10 @@ fn rework_returns_an_unbatched_submitted_bead_and_refuses_a_round_member() {
     );
     assert!(!t.lc.has("\"GateRed\""), "{:?}", t.lc.calls.borrow());
 
-    assert_eq!(t.run(&["rework", "sp-c", "--by=dwarf-x", "--reason=red"]), 1);
+    assert_eq!(
+        t.run(&["rework", "sp-c", "--by=dwarf-x", "--reason=red"]),
+        1
+    );
     assert_eq!(
         t.run(&["rework", "sp-c", "--by=concierge"]),
         2,
@@ -5011,7 +5764,10 @@ fn a_resubmit_check_that_did_not_run_is_reported_not_verified_never_as_still_fai
     let t = rework_world(&["manual"]);
     spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["test-x.sh".to_string()])
         .unwrap();
-    t.scripts.suite_rc.borrow_mut().insert("test-x.sh".into(), 2);
+    t.scripts
+        .suite_rc
+        .borrow_mut()
+        .insert("test-x.sh".into(), 2);
     let tip_arg = format!("--tip={T_FIX}");
     let args = [
         "resubmit",
@@ -5025,12 +5781,22 @@ fn a_resubmit_check_that_did_not_run_is_reported_not_verified_never_as_still_fai
     assert_eq!(t.run(&args), 1);
     assert!(t.err().contains("test-x.sh not verified at"), "{}", t.err());
     assert!(!t.err().contains("still do not pass"), "{}", t.err());
-    t.scripts.suite_rc.borrow_mut().insert("test-x.sh".into(), 5);
+    t.scripts
+        .suite_rc
+        .borrow_mut()
+        .insert("test-x.sh".into(), 5);
     assert_eq!(t.run(&args), 1);
     assert!(!t.err().contains("still do not pass"), "{}", t.err());
-    t.scripts.suite_rc.borrow_mut().insert("test-x.sh".into(), 1);
+    t.scripts
+        .suite_rc
+        .borrow_mut()
+        .insert("test-x.sh".into(), 1);
     assert_eq!(t.run(&args), 1);
-    assert!(!t.err().contains("still do not pass"), "a rc=1 FAULT is not a RED: {}", t.err());
+    assert!(
+        !t.err().contains("still do not pass"),
+        "a rc=1 FAULT is not a RED: {}",
+        t.err()
+    );
     let runs: Vec<String> = t
         .scripts
         .calls
@@ -5040,11 +5806,15 @@ fn a_resubmit_check_that_did_not_run_is_reported_not_verified_never_as_still_fai
         .cloned()
         .collect();
     assert!(runs[0].ends_with("first=true"), "{runs:?}");
-    assert!(runs[1..].iter().all(|c| c.ends_with("first=false")), "{runs:?}");
+    assert!(
+        runs[1..].iter().all(|c| c.ends_with("first=false")),
+        "{runs:?}"
+    );
 }
 
 #[test]
-fn a_resubmit_runs_each_ejected_suite_as_a_first_check_of_the_new_tip_and_admits_it_when_it_passes() {
+fn a_resubmit_runs_each_ejected_suite_as_a_first_check_of_the_new_tip_and_admits_it_when_it_passes()
+{
     let t = rework_world(&["manual"]);
     spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["test-x.sh".to_string()])
         .unwrap();
@@ -5161,11 +5931,18 @@ fn a_round_only_step_does_not_excuse_a_host_runnable_check_that_is_red() {
 }
 
 fn resubmit_args_for(tip_arg: &str) -> Vec<String> {
-    ["resubmit", "sp-a", tip_arg, "--by=concierge", "--reason=hand-built fix", "--evidence=cargo build 1/0"]
-        .iter()
-        .map(|s| s.to_string())
-        .chain(std::iter::once(ev_tip()))
-        .collect()
+    [
+        "resubmit",
+        "sp-a",
+        tip_arg,
+        "--by=concierge",
+        "--reason=hand-built fix",
+        "--evidence=cargo build 1/0",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .chain(std::iter::once(ev_tip()))
+    .collect()
 }
 
 #[test]
@@ -5190,7 +5967,11 @@ fn a_round_only_note_is_not_printed_for_a_resubmit_that_is_refused_later() {
         .unwrap();
     let args = resubmit_args_for(&format!("--tip={T_FIX}"));
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    t.lc.rows.borrow_mut().as_mut().unwrap().retain(|r| r.bead_id != "sp-a");
+    t.lc.rows
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .retain(|r| r.bead_id != "sp-a");
     t.lc_row("sp-a", "WORKING", "ta", 100);
     assert_eq!(t.run(&args), 1);
     assert!(t.err().contains("held by a live dwarf"), "{}", t.err());
@@ -5496,7 +6277,12 @@ fn a_single_ci_entry_pass_whose_ci_result_is_ok_is_green_whatever_the_run_exit_a
         err: "round-vm run: pass record could not be written".into(),
     };
     *t.scripts.repo_ci_status.borrow_mut() = Some("ok".into());
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     declare_own_testenv(&t);
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
@@ -5512,7 +6298,12 @@ fn a_red_ci_result_does_not_turn_a_faulted_run_into_a_judged_round() {
         err: "round-vm run: fault".into(),
     };
     *t.scripts.repo_ci_status.borrow_mut() = Some("red".into());
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     declare_own_testenv(&t);
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
@@ -5527,7 +6318,12 @@ fn an_ok_ci_result_does_not_turn_a_failing_run_exit_into_a_green_round() {
         err: "round-vm run: fault".into(),
     };
     *t.scripts.repo_ci_status.borrow_mut() = Some("ok".into());
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     declare_own_testenv(&t);
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
@@ -5675,11 +6471,19 @@ fn a_round_reheaded_after_an_eject_builds_a_new_image_instead_of_reusing_the_fai
     *t.scripts.recipe_release.borrow_mut() = Some("release-recipe".into());
     *t.scripts.recipe_tree.borrow_mut() = Some("candidate-recipe-sha".into());
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     *t.forge.ami_results.borrow_mut() = vec![
         Some(AmiBuild::NotStarted),
-        Some(AmiBuild::Failure("41".into(), vec!["build / Build, image and tag".into()])),
+        Some(AmiBuild::Failure(
+            "41".into(),
+            vec!["build / Build, image and tag".into()],
+        )),
     ];
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
     assert_eq!(
@@ -5705,7 +6509,11 @@ fn a_round_reheaded_after_an_eject_builds_a_new_image_instead_of_reusing_the_fai
         .filter(|c| c.starts_with("ami-dispatch "))
         .cloned()
         .collect();
-    assert_eq!(dispatched.len(), 2, "a new head gets its own image build: {dispatched:?}");
+    assert_eq!(
+        dispatched.len(),
+        2,
+        "a new head gets its own image build: {dispatched:?}"
+    );
     let read: Vec<String> = t
         .forge
         .calls
@@ -5714,7 +6522,11 @@ fn a_round_reheaded_after_an_eject_builds_a_new_image_instead_of_reusing_the_fai
         .filter(|c| c.starts_with("ami-result "))
         .cloned()
         .collect();
-    let second = dispatched.iter().last().unwrap().replace("ami-dispatch ", "ami-result ");
+    let second = dispatched
+        .iter()
+        .last()
+        .unwrap()
+        .replace("ami-dispatch ", "ami-result ");
     assert!(read.contains(&second), "{read:?}");
     assert!(second.contains("survivors-re"), "{second}");
     assert!(t.scripts.calls.borrow().join("\n").contains("ami=ami-new"));
@@ -5794,7 +6606,10 @@ fn open_admits_a_recipe_changing_member_with_the_ordinary_ones() {
         t.err()
     );
     let o = t.out();
-    assert!(o.contains("members=sp-a:ta sp-b:tb sp-c:tc") && !o.contains("solo:"), "{o}");
+    assert!(
+        o.contains("members=sp-a:ta sp-b:tb sp-c:tc") && !o.contains("solo:"),
+        "{o}"
+    );
 }
 
 const PREFLIGHT_OUT: &str = "round-image-preflight: recipe inputs touched: flake.nix\nround-image-preflight: RED rc=1 after 12s (image debian:12)\nround-image-preflight: failing setup line: + nix profile install .#round-deps\n";
@@ -5806,36 +6621,77 @@ fn preflight_red_round(recipe: &[&str]) -> (T, String) {
     for tip in recipe {
         t.git.stat("b0", tip, &[("flake.nix", 1, 1)]);
     }
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
-    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
-    *t.scripts.round_vm_results.borrow_mut() = vec![("fence-round-image-preflight".into(), "red".into())];
-    *t.scripts.round_vm_files.borrow_mut() = vec![("fence-round-image-preflight.out".into(), PREFLIGHT_OUT.into())];
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 1,
+        out: String::new(),
+        err: String::new(),
+    };
+    *t.scripts.round_vm_results.borrow_mut() =
+        vec![("fence-round-image-preflight".into(), "red".into())];
+    *t.scripts.round_vm_files.borrow_mut() = vec![(
+        "fence-round-image-preflight.out".into(),
+        PREFLIGHT_OUT.into(),
+    )];
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
-    assert!(t.out().contains("red=fence-round-image-preflight"), "{}", t.out());
+    assert!(
+        t.out().contains("red=fence-round-image-preflight"),
+        "{}",
+        t.out()
+    );
     (t, batch)
 }
 
 #[test]
 fn a_preflight_red_ejects_exactly_the_recipe_changing_member_with_the_fence_evidence() {
     let (t, _) = preflight_red_round(&["tb"]);
-    assert!(t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
-    assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
-    let comment = t.lib.calls.borrow().iter().find(|c| c.starts_with("comment sp-b")).cloned().unwrap_or_default();
     assert!(
-        comment.contains("failing setup line: + nix profile install .#round-deps") && comment.contains("flake.nix"),
+        t.lib.has("bead_reopen sp-b eject-red"),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
+    assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
+    let comment = t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .find(|c| c.starts_with("comment sp-b"))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        comment.contains("failing setup line: + nix profile install .#round-deps")
+            && comment.contains("flake.nix"),
         "{comment}"
     );
-    let members = kv_of(&t, "round").get("members").cloned().unwrap_or_default();
-    assert!(members.contains("sp-a") && !members.contains("sp-b"), "{members}");
+    let members = kv_of(&t, "round")
+        .get("members")
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        members.contains("sp-a") && !members.contains("sp-b"),
+        "{members}"
+    );
 }
 
 #[test]
 fn a_preflight_red_with_no_recipe_changing_member_ejects_nobody() {
     let (t, _) = preflight_red_round(&[]);
     assert!(!t.lib.has("bead_reopen"), "{:?}", t.lib.calls.borrow());
-    let members = kv_of(&t, "round").get("members").cloned().unwrap_or_default();
-    assert!(members.contains("sp-a") && members.contains("sp-b"), "{members}");
+    let members = kv_of(&t, "round")
+        .get("members")
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        members.contains("sp-a") && members.contains("sp-b"),
+        "{members}"
+    );
 }
 
 fn touches(t: &T, tip: &str, file: &str) {
@@ -6154,7 +7010,11 @@ fn a_recorded_mend_moves_the_next_pass_head_to_the_mended_tip() {
         kv["members"]
     );
     assert!(
-        t.git.calls.borrow().iter().any(|c| c.starts_with("merge ta2")),
+        t.git
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("merge ta2")),
         "the head is rebuilt from the mended tip: {:?}",
         t.git.calls.borrow()
     );
@@ -6176,27 +7036,49 @@ fn fault_next_pass(t: &T) {
         out: String::new(),
         err: String::new(),
     };
-    *t.scripts.round_vm_files.borrow_mut() = vec![("fixture-fault.out".into(), INSTALL_FAULT.into())];
+    *t.scripts.round_vm_files.borrow_mut() =
+        vec![("fixture-fault.out".into(), INSTALL_FAULT.into())];
 }
 
 #[test]
 fn a_member_in_two_consecutive_faulted_passes_is_ejected_with_the_fault_text() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     fault_next_pass(&t);
 
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
-    assert!(!t.lib.has("bead_reopen sp-a"), "one faulted pass still leaves the member in");
+    assert!(
+        !t.lib.has("bead_reopen sp-a"),
+        "one faulted pass still leaves the member in"
+    );
 
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
-    assert!(t.lib.has("bead_reopen sp-a eject-red"), "{:?}", t.lib.calls.borrow());
-    let comment = t.lib.calls.borrow().iter().find(|c| c.starts_with("comment sp-a")).cloned().unwrap_or_default();
+    assert!(
+        t.lib.has("bead_reopen sp-a eject-red"),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
+    let comment = t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .find(|c| c.starts_with("comment sp-a"))
+        .cloned()
+        .unwrap_or_default();
     assert!(
         comment.contains("units-install: no such unit") && comment.contains("2 consecutive passes"),
         "{comment}"
     );
-    assert!(kv_of(&t, "round").get("members").is_none_or(|m| !m.contains("sp-a")));
+    assert!(kv_of(&t, "round")
+        .get("members")
+        .is_none_or(|m| !m.contains("sp-a")));
 }
 
 const SETTINGS_FAULT: &str = "ROUND-FAULT: FAULT settings-refused phase=suites rc=2: batch: SPIRA_NEW_KEY is not declared — every key is required; refusing
@@ -6208,63 +7090,120 @@ VERDICT FAULT rc=2 ran=0 reason=settings-refused
 ";
 
 fn holds_key(t: &T, rev: &str, text: &str) {
-    t.git.greps.borrow_mut().insert(format!("{rev}:SPIRA_NEW_KEY"), vec!["spira/conf.d/new.toml".into()]);
-    t.git.files.borrow_mut().insert(format!("{rev}:spira/conf.d/new.toml"), text.into());
+    t.git.greps.borrow_mut().insert(
+        format!("{rev}:SPIRA_NEW_KEY"),
+        vec!["spira/conf.d/new.toml".into()],
+    );
+    t.git
+        .files
+        .borrow_mut()
+        .insert(format!("{rev}:spira/conf.d/new.toml"), text.into());
 }
 
 fn vm_names_the_fault(t: &T, file: &str) {
-    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 2, out: String::new(), err: String::new() };
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 2,
+        out: String::new(),
+        err: String::new(),
+    };
     *t.scripts.round_vm_files.borrow_mut() = vec![("round-fault.out".into(), file.into())];
 }
 
 #[test]
 fn a_pass_the_vm_ended_with_no_verdict_is_its_named_fault_with_the_logs_tail() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     vm_names_the_fault(&t, "ROUND-FAULT: FAULT phase=release rc=2: round-vm: cannot apply the head's config delta\n--- the last 40 lines of the VM's script log ---\nround-vm: built the round in 12s\nround-vm: cannot apply the head's config delta\n");
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
-    assert!(t.out().contains("fault=FAULT phase=release rc=2: round-vm: cannot apply the head's config delta"), "{}", t.out());
+    assert!(
+        t.out().contains(
+            "fault=FAULT phase=release rc=2: round-vm: cannot apply the head's config delta"
+        ),
+        "{}",
+        t.out()
+    );
     let err = t.err();
     assert!(err.contains("FAULT phase=release rc=2: round-vm: cannot apply the head's config delta; the round is not judged"), "{err}");
-    assert!(err.contains("round-vm: built the round in 12s"), "the log's tail is shown: {err}");
+    assert!(
+        err.contains("round-vm: built the round in 12s"),
+        "the log's tail is shown: {err}"
+    );
     assert!(!err.contains("round-vm exited 2"), "{err}");
 }
 
 #[test]
 fn a_settings_refusal_ejects_the_member_whose_diff_adds_the_key_and_no_other() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     holds_key(&t, "tb", "SPIRA_NEW_KEY = 1\n");
     holds_key(&t, "local/main", "SPIRA_NEW_KEY_ROOT = 1\n");
     vm_names_the_fault(&t, SETTINGS_FAULT);
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
     assert!(t.out().contains("fault-owner=sp-b"), "{}", t.out());
-    assert!(t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(
+        t.lib.has("bead_reopen sp-b eject-red"),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
     assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
-    let comment = t.lib.calls.borrow().iter().find(|c| c.starts_with("comment sp-b")).cloned().unwrap_or_default();
-    assert!(comment.contains("adds SPIRA_NEW_KEY") && comment.contains("reason=settings-refused"), "{comment}");
+    let comment = t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .find(|c| c.starts_with("comment sp-b"))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        comment.contains("adds SPIRA_NEW_KEY") && comment.contains("reason=settings-refused"),
+        "{comment}"
+    );
 }
 
 #[test]
 fn a_member_stacked_on_the_one_that_adds_the_key_is_not_ejected_for_it() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     holds_key(&t, "ta", "SPIRA_NEW_KEY = 1\n");
     holds_key(&t, "tb", "SPIRA_NEW_KEY = 1\n");
     t.git.ancestor("ta", "tb");
     vm_names_the_fault(&t, SETTINGS_FAULT);
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
-    assert!(t.lib.has("bead_reopen sp-a eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(
+        t.lib.has("bead_reopen sp-a eject-red"),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
     assert!(!t.lib.has("bead_reopen sp-b"), "{:?}", t.lib.calls.borrow());
 }
 
 #[test]
 fn a_settings_refusal_no_member_adds_names_the_harness_and_counts_against_none() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     holds_key(&t, "local/main", "SPIRA_NEW_KEY = 1\n");
     holds_key(&t, "ta", "SPIRA_NEW_KEY = 1\n");
@@ -6280,12 +7219,21 @@ fn a_settings_refusal_no_member_adds_names_the_harness_and_counts_against_none()
 #[test]
 fn a_green_pass_between_two_faults_makes_the_second_a_first_again() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     fault_next_pass(&t);
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
 
-    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 0, out: String::new(), err: String::new() };
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 0,
+        out: String::new(),
+        err: String::new(),
+    };
     *t.scripts.round_vm_files.borrow_mut() = vec![];
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
@@ -6295,7 +7243,12 @@ fn a_green_pass_between_two_faults_makes_the_second_a_first_again() {
 #[test]
 fn faulted_passes_with_the_same_members_aboard_blame_none_of_them() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     fault_next_pass(&t);
     for _ in 0..3 {
@@ -6307,14 +7260,27 @@ fn faulted_passes_with_the_same_members_aboard_blame_none_of_them() {
 #[test]
 fn a_round_vm_lost_mid_pass_exits_75_incomplete_and_never_counts_against_a_member() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
-    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 75, out: String::new(), err: "round-vm run: INCOMPLETE reason=vm-lost\n".into() };
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 75,
+        out: String::new(),
+        err: "round-vm run: INCOMPLETE reason=vm-lost\n".into(),
+    };
     for _ in 0..3 {
         assert_eq!(t.run(&["round", "certify", &batch]), 75, "{}", t.err());
         assert!(t.err().contains("reason=vm-lost"), "{}", t.err());
     }
-    assert!(!t.lib.has("bead_reopen sp-a"), "a lost VM is not the member's fault: {:?}", t.lib.calls.borrow());
+    assert!(
+        !t.lib.has("bead_reopen sp-a"),
+        "a lost VM is not the member's fault: {:?}",
+        t.lib.calls.borrow()
+    );
     assert!(!t.out().contains("red-output="), "never named a red");
 }
 
@@ -6325,18 +7291,47 @@ fn no_output_next_pass(t: &T) {
 #[test]
 fn a_round_vm_that_produced_no_output_exits_77_named_counts_on_the_round_and_pages_on_the_second() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     no_output_next_pass(&t);
-    let paged = |t: &T| t.lib.calls.borrow().iter().filter(|c| c.starts_with("notify") && c.contains(&format!("Round {batch} parked"))).count();
+    let paged = |t: &T| {
+        t.lib
+            .calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("notify") && c.contains(&format!("Round {batch} parked")))
+            .count()
+    };
     assert_eq!(t.run(&["round", "certify", &batch]), 77, "{}", t.err());
-    assert!(t.out().contains("fault=vm-no-output") && t.err().contains("VM produced no output"), "{} {}", t.out(), t.err());
-    assert!(kv_of(&t, "round")["vm-no-output"].ends_with(":1"), "{:?}", kv_of(&t, "round"));
+    assert!(
+        t.out().contains("fault=vm-no-output") && t.err().contains("VM produced no output"),
+        "{} {}",
+        t.out(),
+        t.err()
+    );
+    assert!(
+        kv_of(&t, "round")["vm-no-output"].ends_with(":1"),
+        "{:?}",
+        kv_of(&t, "round")
+    );
     assert_eq!(paged(&t), 0, "one fault is re-driven, not paged");
     assert_eq!(t.run(&["round", "certify", &batch]), 77, "{}", t.err());
-    assert!(kv_of(&t, "round")["vm-no-output"].ends_with(":2"), "{:?}", kv_of(&t, "round"));
+    assert!(
+        kv_of(&t, "round")["vm-no-output"].ends_with(":2"),
+        "{:?}",
+        kv_of(&t, "round")
+    );
     assert_eq!(paged(&t), 1, "the second fault parks the round and pages");
-    assert!(!t.lib.has("bead_reopen"), "a VM that never started the round is no member's fault: {:?}", t.lib.calls.borrow());
+    assert!(
+        !t.lib.has("bead_reopen"),
+        "a VM that never started the round is no member's fault: {:?}",
+        t.lib.calls.borrow()
+    );
     assert!(!t.out().contains("red-output="), "never named a red");
 }
 
@@ -6346,18 +7341,35 @@ fn a_red_round_whose_latest_pass_was_a_no_output_vm_abandons_without_the_overrid
     let batch = red_round(&t, "sp-a:ta,sp-b:tb");
     no_output_next_pass(&t);
     assert_eq!(t.run(&["round", "certify", &batch]), 77, "{}", t.err());
-    assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "vm"]), 0, "{}", t.err());
-    assert!(t.lc.has(&format!("abandon-batch {batch}")), "{:?}", t.lc.calls.borrow());
+    assert_eq!(
+        t.run(&["round", "abandon", &batch, "--reason", "vm"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.lc.has(&format!("abandon-batch {batch}")),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
 }
 
 #[test]
 fn a_red_pass_after_a_no_output_vm_clears_it_so_the_abandon_guard_holds_again() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     no_output_next_pass(&t);
     assert_eq!(t.run(&["round", "certify", &batch]), 77, "{}", t.err());
-    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into()), ("test-b.sh".into(), "red 1 2 fp p e 1".into())];
+    *t.scripts.round_vm_results.borrow_mut() = vec![
+        ("test-a.sh".into(), "ok".into()),
+        ("test-b.sh".into(), "red 1 2 fp p e 1".into()),
+    ];
     *t.scripts.round_vm.borrow_mut() = RunOut::default();
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
     assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "red"]), 1);
@@ -6625,7 +7637,10 @@ fn a_round_the_lifecycle_abandoned_is_closed_out_by_the_next_locked_verb() {
     );
     let lines = result_lines(&t, "r-gone");
     assert!(
-        lines.iter().any(|(_, cause, detail)| cause == "abandoned:swept" && detail.starts_with("ended: ABANDONED on the lifecycle")),
+        lines
+            .iter()
+            .any(|(_, cause, detail)| cause == "abandoned:swept"
+                && detail.starts_with("ended: ABANDONED on the lifecycle")),
         "the sweep closes the record out with a typed cause: {lines:?}"
     );
 }
@@ -6650,8 +7665,8 @@ fn err_of(t: &T, f: impl FnOnce() -> i32) -> (i32, String) {
 }
 
 #[test]
-fn a_round_leased_by_another_holder_refuses_every_verb_that_touches_it_naming_holder_token_and_ttl(
-) {
+fn a_round_leased_by_another_holder_refuses_every_verb_that_touches_it_naming_holder_token_and_ttl()
+{
     let (t, batch) = certified_round();
     seed_suite(&t, "test-b.sh");
     leased_by(&t, &batch, "round-recert", "7-0");
@@ -6660,11 +7675,27 @@ fn a_round_leased_by_another_holder_refuses_every_verb_that_touches_it_naming_ho
     let verbs: [&[&str]; 5] = [
         &["round", "abandon", &batch, "--reason", "batcher: stale"],
         &[
-            "round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh",
+            "round",
+            "eject",
+            &batch,
+            "sp-b",
+            "--reason",
+            "red",
+            "--red",
+            "--suites",
+            "test-b.sh",
         ],
         &["round", "land", &batch],
         &["round", "certify", &batch],
-        &["round", "preempt", &batch, "--eject", "sp-b", "--reason", "batcher: fresh"],
+        &[
+            "round",
+            "preempt",
+            &batch,
+            "--eject",
+            "sp-b",
+            "--reason",
+            "batcher: fresh",
+        ],
     ];
     for argv in verbs {
         let (rc, e) = err_of(&t, || t.run(argv));
@@ -6704,21 +7735,45 @@ fn the_holders_lease_token_lets_each_verb_through() {
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
 
     let t = round_world();
-    let open = ["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "r-1"];
+    let open = [
+        "round",
+        "open",
+        "--members",
+        "sp-a:ta,sp-b:tb",
+        "--name",
+        "r-1",
+    ];
     assert_eq!(t.run(&open), 0, "{}", t.err());
     seed_suite(&t, "test-b.sh");
     leased_by(&t, "r-1", "round-controller", "12-0");
     assert_eq!(
         t.run(&[
-            "round", "eject", "r-1", "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh",
-            "--lease-token", "12.0",
+            "round",
+            "eject",
+            "r-1",
+            "sp-b",
+            "--reason",
+            "red",
+            "--red",
+            "--suites",
+            "test-b.sh",
+            "--lease-token",
+            "12.0",
         ]),
         0,
         "the store's spelling of the token is the same token: {}",
         t.err()
     );
     assert_eq!(
-        t.run(&["round", "abandon", "r-1", "--reason", "hand", "--lease-token", "12-0"]),
+        t.run(&[
+            "round",
+            "abandon",
+            "r-1",
+            "--reason",
+            "hand",
+            "--lease-token",
+            "12-0"
+        ]),
         0,
         "{}",
         t.err()
@@ -6729,10 +7784,25 @@ fn the_holders_lease_token_lets_each_verb_through() {
 #[test]
 fn an_unleased_round_is_touched_as_before_and_a_lapsed_token_or_an_unread_lease_refuses() {
     let t = round_world();
-    let open = ["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "r-1"];
+    let open = [
+        "round",
+        "open",
+        "--members",
+        "sp-a:ta,sp-b:tb",
+        "--name",
+        "r-1",
+    ];
     assert_eq!(t.run(&open), 0, "{}", t.err());
     let (rc, e) = err_of(&t, || {
-        t.run(&["round", "abandon", "r-1", "--reason", "x", "--lease-token", "3-0"])
+        t.run(&[
+            "round",
+            "abandon",
+            "r-1",
+            "--reason",
+            "x",
+            "--lease-token",
+            "3-0",
+        ])
     });
     assert_eq!(rc, 1, "{e}");
     assert!(
@@ -6763,7 +7833,14 @@ fn an_unleased_round_is_touched_as_before_and_a_lapsed_token_or_an_unread_lease_
 #[test]
 fn an_eject_naming_the_testenv_run_of_a_repo_that_judges_itself_is_accepted() {
     let t = round_world();
-    let open = ["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "r-1"];
+    let open = [
+        "round",
+        "open",
+        "--members",
+        "sp-a:ta,sp-b:tb",
+        "--name",
+        "r-1",
+    ];
     assert_eq!(t.run(&open), 0, "{}", t.err());
     seed_suite(&t, "test-b.sh");
     let (rc, e) = err_of(&t, || {
@@ -6793,10 +7870,21 @@ fn each_land_refusal_exits_with_the_code_the_lander_acts_on() {
         leased_by(&t, b, "round-controller", "5-0");
     }
     let lander = |token| land_as_the_lander(&t, "r-2", Some(token));
-    assert_eq!(lander("5-0"), (crate::ops::LAND_STACKED, "stacked".into()), "{}", t.err());
-    assert_eq!(lander("6-0"), (1, "refused".into()), "another holder's lease");
+    assert_eq!(
+        lander("5-0"),
+        (crate::ops::LAND_STACKED, "stacked".into()),
+        "{}",
+        t.err()
+    );
+    assert_eq!(
+        lander("6-0"),
+        (1, "refused".into()),
+        "another holder's lease"
+    );
     // The parent ends outside the queue's verbs, which would have voided the child with it.
-    t.lc.batch_states.borrow_mut().insert("r-1".into(), ("ABANDONED".into(), "9".into()));
+    t.lc.batch_states
+        .borrow_mut()
+        .insert("r-1".into(), ("ABANDONED".into(), "9".into()));
     tree_of(&t, "merged-tb");
     assert_eq!(
         lander("5-0"),
@@ -6846,12 +7934,27 @@ fn land_driven_again_on_a_landed_round_answers_landed_instead_of_no_open_round()
     let (t, batch) = certified_round();
     assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
     t.git.ancestor("merged-tb", "local/main");
-    let landed_calls = t.lc.calls.borrow().iter().filter(|c| c.starts_with("land ") || c.starts_with("event ")).count();
+    let landed_calls =
+        t.lc.calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("land ") || c.starts_with("event "))
+            .count();
     let (rc, e) = err_of(&t, || t.run(&["round", "land", &batch]));
     assert_eq!(rc, 0, "{e}");
     assert!(!e.contains("no open round"), "{e}");
-    assert!(t.out().contains(&format!("round {batch} already landed at merged-tb")), "{}", t.out());
-    let after = t.lc.calls.borrow().iter().filter(|c| c.starts_with("land ") || c.starts_with("event ")).count();
+    assert!(
+        t.out()
+            .contains(&format!("round {batch} already landed at merged-tb")),
+        "{}",
+        t.out()
+    );
+    let after =
+        t.lc.calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("land ") || c.starts_with("event "))
+            .count();
     assert_eq!(after, landed_calls, "a repeat land records nothing");
 }
 
@@ -6870,7 +7973,11 @@ fn land_driven_again_refuses_when_the_record_is_not_on_the_landing_ref_or_names_
 #[test]
 fn a_preflight_red_ejects_every_recipe_changing_member_and_names_them() {
     let (t, _) = preflight_red_round(&["ta", "tb"]);
-    assert!(t.lib.has("bead_reopen sp-a eject-red") && t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(
+        t.lib.has("bead_reopen sp-a eject-red") && t.lib.has("bead_reopen sp-b eject-red"),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
     assert!(t.out().contains("ejected=sp-a,sp-b"), "{}", t.out());
 }
 
@@ -6884,39 +7991,87 @@ fn a_refused_open_prints_one_typed_record_per_member_it_did_not_admit() {
     t.lc_row("sp-int", "READY", "ti", 100);
     fs::create_dir_all(t.s().queue_dir.join("spira")).unwrap();
     fs::write(t.qfile("integrations"), "sp-int sp-a\n").unwrap();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        1,
+        "{}",
+        t.err()
+    );
     let o = t.out();
     let records: Vec<&str> = o.lines().filter(|l| l.starts_with("refused=")).collect();
     assert_eq!(records.len(), 1, "{o}");
-    assert!(records[0].starts_with("refused=sp-a kind=integration why=sp-a: carried by integration sp-int"), "{o}");
+    assert!(
+        records[0]
+            .starts_with("refused=sp-a kind=integration why=sp-a: carried by integration sp-int"),
+        "{o}"
+    );
 
     let t2 = round_world();
     touches(&t2, "ta", "child.rs");
     touches(&t2, "tc", "child.rs");
     t2.git.merge_fail.borrow_mut().insert("tc".into());
-    t2.git.rebase_fail.borrow_mut().insert("tc".into(), vec!["child.rs".into()]);
-    assert_eq!(t2.run(&["round", "open", "--members", "sp-a,sp-c"]), 1, "{}", t2.err());
+    t2.git
+        .rebase_fail
+        .borrow_mut()
+        .insert("tc".into(), vec!["child.rs".into()]);
+    assert_eq!(
+        t2.run(&["round", "open", "--members", "sp-a,sp-c"]),
+        1,
+        "{}",
+        t2.err()
+    );
     let o = t2.out();
-    assert!(o.lines().any(|l| l.starts_with("refused=sp-c kind=round-conflict why=sp-c: conflicts with the round") && l.contains("paths: child.rs")), "{o}");
-    assert!(!o.lines().any(|l| l.starts_with("refused=sp-a")), "the admissible member is not refused: {o}");
+    assert!(
+        o.lines().any(|l| l
+            .starts_with("refused=sp-c kind=round-conflict why=sp-c: conflicts with the round")
+            && l.contains("paths: child.rs")),
+        "{o}"
+    );
+    assert!(
+        !o.lines().any(|l| l.starts_with("refused=sp-a")),
+        "the admissible member is not refused: {o}"
+    );
 }
 
 #[test]
 fn open_skips_a_text_only_member_and_says_it_lands_by_lint() {
     let t = round_world();
-    t.git.stat("local/main", "ta", &[("law/1-general/x.toml", 2, 0)]);
+    t.git
+        .stat("local/main", "ta", &[("law/1-general/x.toml", 2, 0)]);
     t.git.ancestor("b0", "ta");
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "{}", t.err());
-    assert!(t.err().contains("sp-a: text-only: lands by lint"), "{}", t.err());
-    assert!(t.out().contains("refused=sp-a kind=text-only"), "{}", t.out());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        1,
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.err().contains("sp-a: text-only: lands by lint"),
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.out().contains("refused=sp-a kind=text-only"),
+        "{}",
+        t.out()
+    );
     assert!(!t.err().contains("sp-b:") && !t.qfile("round").exists());
 }
 
 #[test]
 fn open_admits_a_member_that_touches_a_source_file() {
     let t = round_world();
-    t.git.stat("local/main", "ta", &[("law/x.toml", 2, 0), ("queue/src/lib.rs", 1, 0)]);
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    t.git.stat(
+        "local/main",
+        "ta",
+        &[("law/x.toml", 2, 0), ("queue/src/lib.rs", 1, 0)],
+    );
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert!(!t.err().contains("text-only"), "{}", t.err());
 }
 
@@ -6924,7 +8079,12 @@ fn open_admits_a_member_that_touches_a_source_file() {
 fn open_admits_a_text_only_member_that_has_fallen_behind_the_landing_ref() {
     let t = round_world();
     t.git.stat("local/main", "ta", &[("law/x.toml", 2, 0)]);
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert!(!t.err().contains("text-only"), "{}", t.err());
 }
 

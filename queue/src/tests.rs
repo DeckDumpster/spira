@@ -13,12 +13,12 @@ use crate::ports::*;
 use crate::records::Kv;
 use crate::testutil::tmpdir;
 
+mod forge_store;
 mod rebase;
 mod round;
-mod forge_store;
 mod round_store;
-mod verdict;
 mod transport;
+mod verdict;
 
 // ------------------------------------------------------------------------------- fakes
 
@@ -145,7 +145,11 @@ impl Git for FGit {
     }
     fn grep_files(&self, _: &Path, rev: &str, needle: &str, _: &str) -> Vec<String> {
         let greps = self.greps.borrow();
-        greps.get(&format!("{rev}:{needle}")).or_else(|| greps.get(needle)).cloned().unwrap_or_default()
+        greps
+            .get(&format!("{rev}:{needle}"))
+            .or_else(|| greps.get(needle))
+            .cloned()
+            .unwrap_or_default()
     }
     fn branch_set(&self, _: &Path, name: &str, sha: &str, _force: bool) -> bool {
         self.calls.borrow_mut().push(format!("branch-set {name}"));
@@ -520,18 +524,24 @@ impl Scripts for FScripts {
         }
     }
     fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool) -> (i32, String) {
-        self.calls
-            .borrow_mut()
-            .push(format!("suite_run {check} {tip} {repo} first={first_check}"));
+        self.calls.borrow_mut().push(format!(
+            "suite_run {check} {tip} {repo} first={first_check}"
+        ));
         if let Some(rc) = self.suite_rc.borrow().get(check) {
-            return (*rc, if *rc == 5 {
+            return (
+                *rc,
+                if *rc == 5 {
                     "VERDICT EMPTY rc=5 ran=0 skipped=1".to_string()
                 } else {
                     format!("VERDICT FAULT rc={rc} ran=0 reason=preflight")
-                });
+                },
+            );
         }
         if self.suite_red.borrow().iter().any(|c| c == check) {
-            (1, format!("{check}: 2 failed\nVERDICT RED ran=1 red={check}"))
+            (
+                1,
+                format!("{check}: 2 failed\nVERDICT RED ran=1 red={check}"),
+            )
         } else {
             (0, format!("{check}: all passed"))
         }
@@ -703,11 +713,15 @@ impl Scripts for FScripts {
         fs::write(handle, "777").unwrap();
         fs::create_dir_all(results).unwrap();
         let out = self.repo_testenv.borrow().clone();
-        let status = self.repo_ci_status.borrow().clone().or_else(|| match out.rc {
-            0 => Some("ok".into()),
-            1 => Some("red".into()),
-            _ => None,
-        });
+        let status = self
+            .repo_ci_status
+            .borrow()
+            .clone()
+            .or_else(|| match out.rc {
+                0 => Some("ok".into()),
+                1 => Some("red".into()),
+                _ => None,
+            });
         if let Some(status) = status {
             fs::write(results.join("ci.result"), format!("{status} 1 1\n")).unwrap();
         }
@@ -717,12 +731,20 @@ impl Scripts for FScripts {
         if self.round_legs_stubborn.get() {
             return Err("1 still running after its stop".into());
         }
-        let (mine, rest): (Vec<_>, Vec<_>) = self.round_legs.borrow().iter().cloned().partition(|(r, b, _)| r == repo && b == batch);
+        let (mine, rest): (Vec<_>, Vec<_>) = self
+            .round_legs
+            .borrow()
+            .iter()
+            .cloned()
+            .partition(|(r, b, _)| r == repo && b == batch);
         *self.round_legs.borrow_mut() = rest;
         Ok(mine.into_iter().map(|(_, _, u)| u).collect())
     }
     fn round_legs_live(&self, repo: &str, batch: &str) -> bool {
-        self.round_legs.borrow().iter().any(|(r, b, _)| r == repo && b == batch)
+        self.round_legs
+            .borrow()
+            .iter()
+            .any(|(r, b, _)| r == repo && b == batch)
     }
     fn unit_active_state(&self, unit: &str) -> String {
         self.unit_asked.borrow_mut().push(unit.to_string());
@@ -746,7 +768,10 @@ impl Scripts for FScripts {
         if args[0] == "activate" {
             self.activated.set(true);
             if let Some(dir) = self.lock_probe.borrow().as_ref() {
-                let free = matches!(crate::lock::try_lock(dir, "spira"), crate::lock::Acquire::Held(_));
+                let free = matches!(
+                    crate::lock::try_lock(dir, "spira"),
+                    crate::lock::Acquire::Held(_)
+                );
                 self.lock_free_at_activate.borrow_mut().push(free);
             }
         }
@@ -1075,19 +1100,37 @@ impl Lc for FLc {
         self.calls.borrow_mut().push("available".into());
         self.available.get()
     }
-    fn save_batch_if(&self, repo: &str, kv: &Kv, field: &str, expect: &str) -> Result<bool, String> {
+    fn save_batch_if(
+        &self,
+        repo: &str,
+        kv: &Kv,
+        field: &str,
+        expect: &str,
+    ) -> Result<bool, String> {
         if self.cas_lost.get() {
             return Ok(false);
         }
-        crate::batches::save_if(self.rounds_door().ok_or("no store")?, repo, kv, field, expect)
+        crate::batches::save_if(
+            self.rounds_door().ok_or("no store")?,
+            repo,
+            kv,
+            field,
+            expect,
+        )
     }
     fn rounds_door(&self) -> Option<&dyn crate::batches::Door> {
         self.store.get().map(|d| d as &dyn crate::batches::Door)
     }
-    fn requeue_orphans(&self, _: &str, running: &dyn Fn(&str, &str) -> bool) -> Result<String, (i32, String)> {
+    fn requeue_orphans(
+        &self,
+        _: &str,
+        running: &dyn Fn(&str, &str) -> bool,
+    ) -> Result<String, (i32, String)> {
         self.calls.borrow_mut().push("requeue-orphans".into());
         if running("spira", "hand-1") {
-            self.calls.borrow_mut().push("requeue-orphans saw hand-1 running".into());
+            self.calls
+                .borrow_mut()
+                .push("requeue-orphans saw hand-1 running".into());
         }
         Ok(String::new())
     }
@@ -1157,7 +1200,10 @@ impl Lc for FLc {
             .borrow_mut()
             .get_or_insert(("OPEN".into(), 1, 0, String::new()));
         if let Some(d) = self.store.get() {
-            let ms: Vec<(&str, &str)> = members.split(',').filter_map(|m| m.split_once(':')).collect();
+            let ms: Vec<(&str, &str)> = members
+                .split(',')
+                .filter_map(|m| m.split_once(':'))
+                .collect();
             d.cut_round(repo, id, "OPEN", &ms, 0, round);
         }
         if self.cut_reply_lost.get() {
@@ -1272,8 +1318,12 @@ impl Lc for FLc {
         {
             return Err((1, "refused: IllegalTransition".into()));
         }
-        if let (true, Some((state, _, pass, _))) = (self.late_boundaries.get(), &*self.batch_view.borrow()) {
-            let boundary = ["{\"SuitesStarted\"", "{\"Failed\""].iter().any(|b| kind.starts_with(b));
+        if let (true, Some((state, _, pass, _))) =
+            (self.late_boundaries.get(), &*self.batch_view.borrow())
+        {
+            let boundary = ["{\"SuitesStarted\"", "{\"Failed\""]
+                .iter()
+                .any(|b| kind.starts_with(b));
             let n: u32 = kind
                 .split("\"n\":")
                 .nth(1)
@@ -1307,7 +1357,9 @@ impl Lc for FLc {
             };
             *view = (state.to_string(), view.1 + 1, pass, phase.to_string());
             self.store_step_with(id, &view.0, round);
-        } else if let (Some(_), Some((_, state, _))) = (round, self.store.get().and_then(|d| d.find(id))) {
+        } else if let (Some(_), Some((_, state, _))) =
+            (round, self.store.get().and_then(|d| d.find(id)))
+        {
             self.store_step_with(id, &state, round);
         }
         if self
@@ -3375,13 +3427,29 @@ fn land_local_activates_its_release_with_the_queue_lock_released() {
     testkit::write_exe(bins.path().join("target/release/release"), "#!/bin/sh\n");
     let wt = bins.path().display().to_string();
     assert_eq!(
-        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta", "--worktree", &wt]),
+        t.run(&[
+            "land-local",
+            "--head",
+            "h1",
+            "--members",
+            "sp-a:ta",
+            "--worktree",
+            &wt
+        ]),
         0,
         "{}",
         t.err()
     );
-    assert!(release_argv(&t).iter().any(|a| a.starts_with("activate ")), "{:?}", release_argv(&t));
-    assert_eq!(*t.scripts.lock_free_at_activate.borrow(), [true], "the queue lock is free while the release activates");
+    assert!(
+        release_argv(&t).iter().any(|a| a.starts_with("activate ")),
+        "{:?}",
+        release_argv(&t)
+    );
+    assert_eq!(
+        *t.scripts.lock_free_at_activate.borrow(),
+        [true],
+        "the queue lock is free while the release activates"
+    );
 }
 
 /// sp-ia61tg: a round build that ships other binaries but not `release` is refused before the
@@ -3397,10 +3465,29 @@ fn land_local_refuses_before_landing_when_the_round_build_lacks_release() {
     std::fs::create_dir_all(bins.path().join("target/release")).unwrap();
     testkit::write_exe(bins.path().join("target/release/other"), "#!/bin/sh\n");
     let wt = bins.path().display().to_string();
-    assert_ne!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta", "--worktree", &wt]), 0);
+    assert_ne!(
+        t.run(&[
+            "land-local",
+            "--head",
+            "h1",
+            "--members",
+            "sp-a:ta",
+            "--worktree",
+            &wt
+        ]),
+        0
+    );
     assert!(t.err().contains("no release binary at"), "{}", t.err());
-    assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("b0"), "the ref did not move");
-    assert!(!release_argv(&t).iter().any(|a| a.starts_with("activate ")), "{:?}", release_argv(&t));
+    assert_eq!(
+        t.git.get("refs/heads/local/main").as_deref(),
+        Some("b0"),
+        "the ref did not move"
+    );
+    assert!(
+        !release_argv(&t).iter().any(|a| a.starts_with("activate ")),
+        "{:?}",
+        release_argv(&t)
+    );
 }
 
 /// sp-6ugk85: a landing whose activation runs after the round's build directory is gone (a
@@ -3426,8 +3513,14 @@ fn activation_runs_the_built_releases_own_binary_when_the_round_build_has_none()
     assert_eq!(r, Ok(()), "the release dir carries the activator");
     let calls = t.scripts.release_calls.borrow();
     assert_eq!(calls.len(), 1, "{calls:?}");
-    assert_eq!(calls[0].0, rel.join(sha).join("bin/release").display().to_string());
-    assert!(calls[0].1.starts_with(&format!("activate {sha} ")), "{calls:?}");
+    assert_eq!(
+        calls[0].0,
+        rel.join(sha).join("bin/release").display().to_string()
+    );
+    assert!(
+        calls[0].1.starts_with(&format!("activate {sha} ")),
+        "{calls:?}"
+    );
 }
 
 #[test]
@@ -3488,7 +3581,10 @@ fn release_argv(t: &T) -> Vec<String> {
         .collect()
 }
 
-const _: () = assert!(crate::ops::deploy::LAND_DRAIN_WAIT_SECS > 0 && crate::ops::deploy::LAND_DRAIN_WAIT_SECS < 15 * 60);
+const _: () = assert!(
+    crate::ops::deploy::LAND_DRAIN_WAIT_SECS > 0
+        && crate::ops::deploy::LAND_DRAIN_WAIT_SECS < 15 * 60
+);
 
 // ----------------------------------------------------------------------------- publish
 
@@ -4230,7 +4326,10 @@ fn red_publish_awaiting_rerun(t: &T) {
     stale_publish(t, "harness_fault\n");
     t.git.set("refs/heads/local/main", "m3");
     *t.forge.run.borrow_mut() = Some("4242".into());
-    t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("harness_fault\n".into()));
 }
 
 #[test]
@@ -4255,7 +4354,11 @@ fn settle_supersedes_in_the_same_tick_while_the_live_round_pass_runs_on_ec2() {
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
     assert!(!t.out().contains("holds the hypervisor"), "{}", t.out());
     assert!(
-        t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-close")),
+        t.forge
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("pr-close")),
         "{:?}",
         t.forge.calls.borrow()
     );
@@ -4266,7 +4369,10 @@ fn settle_runs_after_the_deferral_bound_while_local_passes_run_back_to_back() {
     let t = T::new(LandMode::QueueLocal);
     red_publish_awaiting_rerun(&t);
     for _ in 0..3 {
-        t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+        t.forge
+            .status
+            .borrow_mut()
+            .push(Some("harness_fault\n".into()));
     }
     for tick in 1..=3 {
         live_progress(&t, "proxmox", 900);
@@ -4284,10 +4390,17 @@ fn settle_refuses_naming_the_key_when_the_deferral_bound_does_not_resolve() {
     let mut t = T::new(LandMode::QueueLocal);
     t.lib.s.publish_defer_max = None;
     red_publish_awaiting_rerun(&t);
-    t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("harness_fault\n".into()));
     live_progress(&t, "proxmox", 900);
     assert_ne!(t.run(&["publish-settle"]), 0, "{}", t.out());
-    assert!(t.err().contains("SPIRA_PUBLISH_SETTLE_DEFER_MAX"), "{}", t.err());
+    assert!(
+        t.err().contains("SPIRA_PUBLISH_SETTLE_DEFER_MAX"),
+        "{}",
+        t.err()
+    );
     assert_eq!(reruns(&t), 0);
 }
 
@@ -4296,7 +4409,10 @@ fn a_tick_that_does_not_defer_restarts_the_deferral_count() {
     let t = T::new(LandMode::QueueLocal);
     red_publish_awaiting_rerun(&t);
     for _ in 0..3 {
-        t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+        t.forge
+            .status
+            .borrow_mut()
+            .push(Some("harness_fault\n".into()));
     }
     live_progress(&t, "proxmox", 900);
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
@@ -4798,28 +4914,68 @@ fn queue_starts_no_spira_child_that_is_not_a_named_fork_edge() {
 }
 
 fn land_rows(t: &T) -> Vec<serde_json::Value> {
-    let text = std::fs::read_to_string(tsd::family_path(&t.s().run, tsd::land::FAMILY)).unwrap_or_default();
-    text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+    let text = std::fs::read_to_string(tsd::family_path(&t.s().run, tsd::land::FAMILY))
+        .unwrap_or_default();
+    text.lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
 }
 
 #[test]
 fn land_local_records_each_member_with_the_commit_its_reverts_label_names() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-b".into(), labels: vec!["repo:spira".into(), "reverts:abcdef0123456".into()], ..BeadRow::default() });
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-b".into(),
+        labels: vec!["repo:spira".into(), "reverts:abcdef0123456".into()],
+        ..BeadRow::default()
+    });
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
     let rows = land_rows(&t);
-    let got: Vec<_> = rows.iter().map(|r| (r["bead"].as_str().unwrap(), r["commit"].as_str().unwrap(), r["reverts"].as_str())).collect();
-    assert_eq!(got, vec![("sp-a", "ta", None), ("sp-b", "tb", Some("abcdef0123456"))]);
+    let got: Vec<_> = rows
+        .iter()
+        .map(|r| {
+            (
+                r["bead"].as_str().unwrap(),
+                r["commit"].as_str().unwrap(),
+                r["reverts"].as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![("sp-a", "ta", None), ("sp-b", "tb", Some("abcdef0123456"))]
+    );
 }
 
 #[test]
 fn land_local_takes_no_reverts_from_a_title_that_says_revert() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), title: Some("Revert \"x\" abcdef0123456".into()), labels: vec!["repo:spira".into()], ..BeadRow::default() });
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
-    assert_eq!(land_rows(&t).iter().map(|r| r["reverts"].is_null()).collect::<Vec<_>>(), vec![true]);
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-a".into(),
+        title: Some("Revert \"x\" abcdef0123456".into()),
+        labels: vec!["repo:spira".into()],
+        ..BeadRow::default()
+    });
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(
+        land_rows(&t)
+            .iter()
+            .map(|r| r["reverts"].is_null())
+            .collect::<Vec<_>>(),
+        vec![true]
+    );
 }
 
 // ------------------------------------------------------------------- text-only: lands by lint
@@ -4841,8 +4997,20 @@ fn submit_of_a_text_only_bead_lands_on_the_ref_by_lint_without_a_gate_or_round()
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("t1"));
     assert!(t.out().contains("sp-a landed at t1"), "{}", t.out());
-    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("lint t1")));
-    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("gate ")), "no gate ran");
+    assert!(t
+        .scripts
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("lint t1")));
+    assert!(
+        !t.scripts
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("gate ")),
+        "no gate ran"
+    );
     let p = gate::cert::path(&t.s().run.join("verdicts"), "spira", T_TEXT).unwrap();
     let cert = gate::cert::certifies(&fs::read_to_string(p).unwrap(), "spira", T_TEXT).unwrap();
     assert_eq!(cert.source, gate::cert::Source::LintOnly);
@@ -4852,7 +5020,10 @@ fn submit_of_a_text_only_bead_lands_on_the_ref_by_lint_without_a_gate_or_round()
 fn submit_of_a_text_only_bead_whose_lint_is_red_lands_nothing() {
     let t = T::new(LandMode::QueueLocal);
     text_branch(&t, &[("law/x.md", 1, 0)]);
-    t.scripts.lint_red.borrow_mut().insert("t1".into(), "law/x.md:1".into());
+    t.scripts
+        .lint_red
+        .borrow_mut()
+        .insert("t1".into(), "law/x.md:1".into());
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 1);
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
 }
@@ -4862,8 +5033,19 @@ fn submit_of_a_bead_touching_one_source_file_is_refused_by_the_classifier_and_ga
     let t = T::new(LandMode::QueueLocal);
     text_branch(&t, &[("law/x.md", 1, 0), ("queue/src/lib.rs", 1, 0)]);
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
-    assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing landed by lint");
-    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("gate ")), "the gate ran");
+    assert_eq!(
+        t.landed_ref().as_deref(),
+        Some("b0"),
+        "nothing landed by lint"
+    );
+    assert!(
+        t.scripts
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("gate ")),
+        "the gate ran"
+    );
     assert!(t.lc.has("certify sp-a t1"));
 }
 
@@ -4874,5 +5056,10 @@ fn a_text_only_tip_that_does_not_fast_forward_is_not_landed_by_lint() {
     t.git.anc.borrow_mut().clear();
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
-    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("gate ")));
+    assert!(t
+        .scripts
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("gate ")));
 }

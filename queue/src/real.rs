@@ -356,7 +356,11 @@ impl Bd for RealBd {
         let lc = self.lc.as_ref().map_err(Clone::clone)?;
         let mut out = Vec::new();
         for chunk in ids.chunks(100) {
-            let argv: Vec<&str> = ["content", "show"].into_iter().chain(chunk.iter().map(String::as_str)).chain(["--json"]).collect();
+            let argv: Vec<&str> = ["content", "show"]
+                .into_iter()
+                .chain(chunk.iter().map(String::as_str))
+                .chain(["--json"])
+                .collect();
             let r = lc.call(&argv).map_err(String::from)?;
             if r.code != 0 {
                 return Err(format!("content show exited {}: {}", r.code, r.why()));
@@ -522,8 +526,24 @@ pub fn context_kv(
         ("red_tracker_label", "SPIRA_RED_TRACKER_LABEL"),
         ("mender_label", "SPIRA_MENDER_LABEL"),
     ];
-    let upper: String = name.chars().map(|c| if c == '-' { '_' } else { c.to_ascii_uppercase() }).collect();
-    let suffix = if upper.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') { upper } else { String::new() };
+    let upper: String = name
+        .chars()
+        .map(|c| {
+            if c == '-' {
+                '_'
+            } else {
+                c.to_ascii_uppercase()
+            }
+        })
+        .collect();
+    let suffix = if upper
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
+        upper
+    } else {
+        String::new()
+    };
     let mut kv = BTreeMap::new();
     kv.insert("home".to_string(), home.display().to_string());
     for (field, key) in KEYS {
@@ -533,7 +553,9 @@ pub fn context_kv(
             .filter(|v| !v.is_empty());
         let v = match own {
             Some(v) => v,
-            None => value(key).ok_or_else(|| format!("{key} is not a registered config key (spira/conf.d) — refusing"))?,
+            None => value(key).ok_or_else(|| {
+                format!("{key} is not a registered config key (spira/conf.d) — refusing")
+            })?,
         };
         kv.insert(field.to_string(), v);
     }
@@ -543,7 +565,9 @@ pub fn context_kv(
 /// `spira_toml_resolve`: the spec, when every layer it names exists.
 pub(crate) fn toml_path_of(spec: Option<&str>) -> Option<PathBuf> {
     let spec = spec.filter(|s| !s.is_empty())?;
-    spec.split(':').all(|f| Path::new(f).is_file()).then(|| PathBuf::from(spec))
+    spec.split(':')
+        .all(|f| Path::new(f).is_file())
+        .then(|| PathBuf::from(spec))
 }
 
 impl Lib for RealLib {
@@ -573,15 +597,17 @@ impl Lib for RealLib {
         let round_ami_wait_secs =
             spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_AMI_WAIT_SECS")?;
         let rounds_max = spira_config::process::cfg_parse::<usize>("SPIRA_QUEUE_ROUNDS_MAX")?;
-        let text_only = crate::text_only::parse_allow(&spira_config::process::cfg("SPIRA_QUEUE_TEXT_ONLY")?);
+        let text_only =
+            crate::text_only::parse_allow(&spira_config::process::cfg("SPIRA_QUEUE_TEXT_ONLY")?);
         let publish_red_priority = spira_config::process::cfg("SPIRA_PUBLISH_RED_PRIORITY")?;
         let publish_red_escalate_after =
             spira_config::process::cfg_parse::<usize>("SPIRA_PUBLISH_RED_ESCALATE_AFTER")?;
-        let publish_defer_max = match spira_config::process::cfg_parse::<usize>("SPIRA_PUBLISH_SETTLE_DEFER_MAX") {
-            Ok(n) => Some(n),
-            Err(e) if e.contains("not a registered config key") => None,
-            Err(e) => return Err(e),
-        };
+        let publish_defer_max =
+            match spira_config::process::cfg_parse::<usize>("SPIRA_PUBLISH_SETTLE_DEFER_MAX") {
+                Ok(n) => Some(n),
+                Err(e) if e.contains("not a registered config key") => None,
+                Err(e) => return Err(e),
+            };
         let s = Settings {
             home: PathBuf::from(g("home")),
             run: PathBuf::from(g("run")),
@@ -871,7 +897,13 @@ pub const RESUBMIT_CHECK_REASON: &str = "resubmit check of a new tip, not a retr
 
 /// The first resubmit check of a tip is not a retry of the red that ejected the bead; a second
 /// check of the same tip is, and keeps testenv's repeat guard.
-fn suite_run_command(testenv: &str, check: &str, tip: &str, repo: &str, first_check: bool) -> Command {
+fn suite_run_command(
+    testenv: &str,
+    check: &str,
+    tip: &str,
+    repo: &str,
+    first_check: bool,
+) -> Command {
     // FORK-EDGE: machine leg testenv (suite run)
     let mut c = Command::new(testenv);
     if first_check {
@@ -888,12 +920,21 @@ pub fn czar_stage(class: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<(
     if class.is_empty() {
         return Err("czar-fence: class required".into());
     }
-    let var = format!("SPIRA_CZAR_STAGE_{}", class.to_uppercase().replace('-', "_"));
-    let stage = env(&var).filter(|s| !s.is_empty()).unwrap_or_else(|| "shadow".into());
+    let var = format!(
+        "SPIRA_CZAR_STAGE_{}",
+        class.to_uppercase().replace('-', "_")
+    );
+    let stage = env(&var)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "shadow".into());
     match stage.as_str() {
         "act" => Ok(()),
-        "shadow" => Err(format!("czar-fence: {class} is shadow — mutation refused ({var}=act to enable)")),
-        other => Err(format!("czar-fence: unknown stage {other} in {var} (shadow or act)")),
+        "shadow" => Err(format!(
+            "czar-fence: {class} is shadow — mutation refused ({var}=act to enable)"
+        )),
+        other => Err(format!(
+            "czar-fence: unknown stage {other} in {var} (shadow or act)"
+        )),
     }
 }
 
@@ -932,7 +973,13 @@ impl Scripts for RealScripts {
     }
     fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool) -> (i32, String) {
         match spira_config::release_env::tool("testenv") {
-            Ok(testenv) => run_combined(&mut suite_run_command(&testenv, check, tip, repo, first_check)),
+            Ok(testenv) => run_combined(&mut suite_run_command(
+                &testenv,
+                check,
+                tip,
+                repo,
+                first_check,
+            )),
             Err(e) => (2, e),
         }
     }
@@ -982,7 +1029,9 @@ impl Scripts for RealScripts {
         }
     }
     fn observe_flake(&self, suite: &str, sha: &str) {
-        let Ok(testenv) = spira_config::release_env::tool("testenv") else { return };
+        let Ok(testenv) = spira_config::release_env::tool("testenv") else {
+            return;
+        };
         // FORK-EDGE: machine leg testenv (suites observe-flake)
         let _ = ok(Command::new(testenv)
             .args(["suites", "observe-flake", suite, sha])
@@ -1073,7 +1122,9 @@ impl Scripts for RealScripts {
         }
     }
     fn stop_round_legs(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
-        let units = runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock)).map_err(|e| e.0)?;
+        let units =
+            runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock))
+                .map_err(|e| e.0)?;
         let cgroup = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
         runtime::units::stop_round_legs(&units, repo, batch, &|name| cgroup.contains(name))
     }
@@ -1086,8 +1137,16 @@ impl Scripts for RealScripts {
     fn unit_active_state(&self, unit: &str) -> String {
         #[cfg(target_os = "linux")]
         {
-            let units = runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock));
-            active_state_of(units.and_then(|u| runtime::units::Units::facts(&u, &runtime::units::UnitHandle::named(unit))).ok())
+            let units = runtime::units::SystemdUnits::connect(std::sync::Arc::new(
+                runtime::ports::WallClock,
+            ));
+            active_state_of(
+                units
+                    .and_then(|u| {
+                        runtime::units::Units::facts(&u, &runtime::units::UnitHandle::named(unit))
+                    })
+                    .ok(),
+            )
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -1134,12 +1193,7 @@ impl Scripts for RealScripts {
         // batch-job: one AWS describe-images read, hang-guarded at 60 s
         // FORK-EDGE: machine leg round-vm (ami-for)
         match Command::new("timeout")
-            .args([
-                "60",
-                round_vm.as_str(),
-                "ami-for",
-                sha,
-            ])
+            .args(["60", round_vm.as_str(), "ami-for", sha])
             .stdin(Stdio::null())
             .output()
         {
@@ -1181,7 +1235,21 @@ impl Scripts for RealScripts {
     fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)> {
         let rebase_stale = match spira_config::release_env::tool("rebase-stale") {
             Ok(r) => r,
-            Err(e) => return ids.iter().map(|id| (id.clone(), RunOut { rc: 127, out: String::new(), err: e.clone() })).collect(),
+            Err(e) => {
+                return ids
+                    .iter()
+                    .map(|id| {
+                        (
+                            id.clone(),
+                            RunOut {
+                                rc: 127,
+                                out: String::new(),
+                                err: e.clone(),
+                            },
+                        )
+                    })
+                    .collect()
+            }
         };
         let width = ids.len().clamp(1, REBASE_WIDTH);
         let next = std::sync::atomic::AtomicUsize::new(0);
@@ -1370,7 +1438,13 @@ const REBASE_WIDTH: usize = 4;
 pub struct RealForge;
 
 /// One forge verb on the configured `forge`.
-fn forge_call(forge: &Path, verb: &str, repo: &Path, args: &[&str], input: Option<&[u8]>) -> forge::client::Reply {
+fn forge_call(
+    forge: &Path,
+    verb: &str,
+    repo: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+) -> forge::client::Reply {
     forge::client::run(&forge::client::route_of(forge), verb, repo, args, input)
 }
 
@@ -1436,32 +1510,60 @@ impl Forge for RealForge {
         title: &str,
         body: &str,
     ) -> Result<String, String> {
-        let r = forge_call(forge, "pr-create", repo, &[head, base, title], Some(body.as_bytes()));
+        let r = forge_call(
+            forge,
+            "pr-create",
+            repo,
+            &[head, base, title],
+            Some(body.as_bytes()),
+        );
         if !r.ok() {
             return Err(forge_refusal(&r, true));
         }
         Ok(r.out.trim().to_string())
     }
     fn pr_automerge(&self, forge: &Path, repo: &Path, pr: &str) -> bool {
-        shown(forge_call(forge, "pr-automerge", repo, &[pr, "merge"], None)).ok()
+        shown(forge_call(
+            forge,
+            "pr-automerge",
+            repo,
+            &[pr, "merge"],
+            None,
+        ))
+        .ok()
     }
     fn pr_close(&self, forge: &Path, repo: &Path, pr: &str) {
         let _ = shown(forge_call(forge, "pr-close", repo, &[pr], None));
     }
     fn queue_prs(&self, forge: &Path, repo: &Path) -> Option<Vec<(String, String)>> {
-        Some(prs_on(&forge_call(forge, "pr-list-open", repo, &[], None).stdout()?, "spira/queue/"))
+        Some(prs_on(
+            &forge_call(forge, "pr-list-open", repo, &[], None).stdout()?,
+            "spira/queue/",
+        ))
     }
     fn publish_prs(&self, forge: &Path, repo: &Path) -> Option<Vec<(String, String)>> {
-        Some(prs_on(&forge_call(forge, "pr-list-open", repo, &[], None).stdout()?, "spira/publish/"))
+        Some(prs_on(
+            &forge_call(forge, "pr-list-open", repo, &[], None).stdout()?,
+            "spira/publish/",
+        ))
     }
     fn pr_comment(&self, forge: &Path, repo: &Path, pr: &str, line: &str) {
         let _ = shown(forge_call(forge, "pr-comment", repo, &[pr, line], None));
     }
     fn branch_protect(&self, forge: &Path, repo: &Path, branch: &str) -> bool {
-        said(&shown(forge_call(forge, "branch-protect", repo, &[branch], None))).ok()
+        said(&shown(forge_call(
+            forge,
+            "branch-protect",
+            repo,
+            &[branch],
+            None,
+        )))
+        .ok()
     }
     fn pr_state(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String> {
-        forge_call(forge, "pr-state", repo, &[pr], None).stdout().map(|s| s.trim().to_string())
+        forge_call(forge, "pr-state", repo, &[pr], None)
+            .stdout()
+            .map(|s| s.trim().to_string())
     }
     fn pr_merge_commit(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String> {
         forge_call(forge, "pr-merge-commit", repo, &[pr], None)
@@ -1479,16 +1581,26 @@ impl Forge for RealForge {
             .filter(|s| !s.is_empty())
     }
     fn run_metadata(&self, forge: &Path, repo: &Path, run: &str) -> String {
-        forge_call(forge, "run-metadata", repo, &[run], None).stdout().unwrap_or_default()
+        forge_call(forge, "run-metadata", repo, &[run], None)
+            .stdout()
+            .unwrap_or_default()
     }
     fn fail_lines(&self, forge: &Path, repo: &Path, run: &str, suites: &str) -> String {
-        forge_call(forge, "fail-lines", repo, &[run, suites], None).stdout().unwrap_or_default()
+        forge_call(forge, "fail-lines", repo, &[run, suites], None)
+            .stdout()
+            .unwrap_or_default()
     }
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str) {
         let _ = shown(forge_call(forge, "run-cancel", repo, &[run], None));
     }
     fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> Rerun {
-        rerun_of(said(&forge_call(forge, "workflow-rerun", repo, &[run], None)))
+        rerun_of(said(&forge_call(
+            forge,
+            "workflow-rerun",
+            repo,
+            &[run],
+            None,
+        )))
     }
     fn ami_runs(&self, forge: &Path, repo: &Path) -> Option<Vec<String>> {
         let text = forge_call(forge, "ami-runs", repo, &[], None).stdout()?;
@@ -1503,7 +1615,14 @@ impl Forge for RealForge {
         )
     }
     fn ami_dispatch(&self, forge: &Path, repo: &Path, ref_: &str) -> bool {
-        said(&shown(forge_call(forge, "ami-dispatch", repo, &[ref_], None))).ok()
+        said(&shown(forge_call(
+            forge,
+            "ami-dispatch",
+            repo,
+            &[ref_],
+            None,
+        )))
+        .ok()
     }
     fn ami_result(&self, forge: &Path, repo: &Path, branch: &str) -> Option<AmiBuild> {
         AmiBuild::parse(&forge_call(forge, "ami-result", repo, &[branch], None).stdout()?)
@@ -1523,7 +1642,11 @@ pub struct RealLc {
 /// `SPIRA_LC_TIMEOUT`, whole seconds as `timeout` read it.
 fn lc_timeout() -> Result<std::time::Duration, String> {
     let t = crate::conf::nonempty("SPIRA_LC_TIMEOUT")?;
-    let secs: u64 = t.trim().trim_end_matches('s').parse().map_err(|e| format!("SPIRA_LC_TIMEOUT = {t:?} does not parse: {e}"))?;
+    let secs: u64 = t
+        .trim()
+        .trim_end_matches('s')
+        .parse()
+        .map_err(|e| format!("SPIRA_LC_TIMEOUT = {t:?} does not parse: {e}"))?;
     Ok(std::time::Duration::from_secs(secs))
 }
 
@@ -1563,8 +1686,16 @@ impl RealLc {
             match c.call(args) {
                 Ok(r) if r.code == 0 => return Ok(r.out),
                 Ok(r) => {
-                    let why = if r.err.trim().is_empty() { r.out.trim() } else { r.err.trim() };
-                    last = format!("spira-lc {} exited {:?}: {why}", args.first().unwrap_or(&""), Some(r.code));
+                    let why = if r.err.trim().is_empty() {
+                        r.out.trim()
+                    } else {
+                        r.err.trim()
+                    };
+                    last = format!(
+                        "spira-lc {} exited {:?}: {why}",
+                        args.first().unwrap_or(&""),
+                        Some(r.code)
+                    );
                 }
                 Err(e) => last = format!("spira-lc {}: {e}", args.first().unwrap_or(&"")),
             }
@@ -1581,7 +1712,9 @@ impl RealLc {
         let what = format!("spira-lc rc {}", verb.word());
         let c = self.client()?;
         let body = serde_json::to_string(body).map_err(|e| format!("{what}: {e}"))?;
-        let r = c.call(&["rc", verb.word(), "--json", &body]).map_err(|e| format!("{what}: {e}"))?;
+        let r = c
+            .call(&["rc", verb.word(), "--json", &body])
+            .map_err(|e| format!("{what}: {e}"))?;
         state_store::wire::decode(r.code, &r.out).map_err(|e| format!("{what}: {e}"))
     }
 }
@@ -1612,12 +1745,19 @@ fn rc_request_id() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
-    format!("queue/{}/{nanos}/{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed))
+    format!(
+        "queue/{}/{nanos}/{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 impl crate::batches::Door for RealLc {
     fn get(&self, key: &str) -> Result<Option<state_store::Item>, String> {
-        self.rc(state_store::wire::Verb::Get, &state_store::wire::Get { key: key.into() })
+        self.rc(
+            state_store::wire::Verb::Get,
+            &state_store::wire::Get { key: key.into() },
+        )
     }
     fn list(&self, prefix: &str) -> Result<Vec<state_store::Item>, String> {
         let body = state_store::wire::List {
@@ -1629,7 +1769,12 @@ impl crate::batches::Door for RealLc {
         self.rc(state_store::wire::Verb::List, &body)
             .map(|l: state_store::wire::Listed| l.items)
     }
-    fn list_in_states(&self, prefix: &str, states: &[String], limit: usize) -> Result<Vec<state_store::Item>, String> {
+    fn list_in_states(
+        &self,
+        prefix: &str,
+        states: &[String],
+        limit: usize,
+    ) -> Result<Vec<state_store::Item>, String> {
         let body = state_store::wire::List {
             prefixes: vec![prefix.into()],
             selector: state_store::Selector::Everything,
@@ -1667,7 +1812,8 @@ impl Lc for RealLc {
         self.bin.is_some()
     }
     fn rounds_door(&self) -> Option<&dyn crate::batches::Door> {
-        static UNRESOLVED: std::sync::OnceLock<crate::batches::Unresolved> = std::sync::OnceLock::new();
+        static UNRESOLVED: std::sync::OnceLock<crate::batches::Unresolved> =
+            std::sync::OnceLock::new();
         match rounds_on_store() {
             Ok(true) => Some(self),
             Ok(false) => None,
@@ -1870,13 +2016,20 @@ impl Lc for RealLc {
             Err((rc, out.trim().to_string()))
         }
     }
-    fn requeue_orphans(&self, actor: &str, running: &dyn Fn(&str, &str) -> bool) -> Result<String, (i32, String)> {
+    fn requeue_orphans(
+        &self,
+        actor: &str,
+        running: &dyn Fn(&str, &str) -> bool,
+    ) -> Result<String, (i32, String)> {
         let (rc, out) = self.run(&["requeue-orphans", "--actor", actor]);
         if rc != 0 {
             return Err((rc, out.trim().to_string()));
         }
         let Ok(seen) = serde_json::from_str::<serde_json::Value>(&out) else {
-            return Err((rc, format!("requeue-orphans dry run unreadable: {}", out.trim())));
+            return Err((
+                rc,
+                format!("requeue-orphans dry run unreadable: {}", out.trim()),
+            ));
         };
         let live: Vec<String> = seen
             .get("repos")
@@ -2108,8 +2261,18 @@ impl Lc for RealLc {
     }
     fn round_lease(&self, repo: &str, batch: &str) -> Result<Option<RoundLease>, String> {
         let resource = format!("round/{repo}/{batch}");
-        let r = self.client()?.call(&["lock", "show", &resource]).map_err(|e| format!("spira-lc lock show {resource}: {e}"))?;
-        let said = || format!("spira-lc lock show {resource} exited {:?}: {} {}", Some(r.code), r.out.trim(), r.err.trim());
+        let r = self
+            .client()?
+            .call(&["lock", "show", &resource])
+            .map_err(|e| format!("spira-lc lock show {resource}: {e}"))?;
+        let said = || {
+            format!(
+                "spira-lc lock show {resource} exited {:?}: {} {}",
+                Some(r.code),
+                r.out.trim(),
+                r.err.trim()
+            )
+        };
         match r.code {
             0 => serde_json::from_str(r.out.trim())
                 .ok()
@@ -2264,12 +2427,17 @@ mod tests {
             let after = &part[part.find("(\"").unwrap() + 2..];
             read.push(&after[..after.find('"').unwrap()]);
         }
-        assert!(read.len() >= 8, "the scan must find the reads it is checking: {read:?}");
+        assert!(
+            read.len() >= 8,
+            "the scan must find the reads it is checking: {read:?}"
+        );
         for k in &read {
-            assert!(CONFIG_KEYS.contains(k), "{k} is read by context but not checked by check-config");
+            assert!(
+                CONFIG_KEYS.contains(k),
+                "{k} is read by context but not checked by check-config"
+            );
         }
     }
-
 
     #[test]
     fn a_resubmit_suite_check_passes_testenv_a_repeat_reason_flag() {
