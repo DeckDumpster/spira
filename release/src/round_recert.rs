@@ -297,12 +297,17 @@ pub fn start(sys: &dyn Sys, l: &Launch, batch: &str, repo: &str, pools: Option<&
             return Err(why);
         }
     }
+    let vtime = spira_config::vtime::passthrough().into_iter().map(|(k, v)| format!("--setenv={k}={v}"));
     let mut args: Vec<String> = [
         "--user".to_string(),
         format!("--unit={unit}"),
         "--collect".into(),
         "--quiet".into(),
         format!("--setenv=SPIRA_TOML={}", l.toml),
+    ]
+    .into_iter()
+    .chain(vtime)
+    .chain([
         l.exe.display().to_string(),
         "round-recert".into(),
         "--drive".into(),
@@ -310,11 +315,8 @@ pub fn start(sys: &dyn Sys, l: &Launch, batch: &str, repo: &str, pools: Option<&
         batch.into(),
         "--repo".into(),
         repo.into(),
-    ]
-    .to_vec();
-    let at = args.iter().position(|a| a == &l.exe.display().to_string()).unwrap_or(args.len());
-    let vtime = spira_config::vtime::passthrough().into_iter().map(|(k, v)| format!("--setenv={k}={v}"));
-    args.splice(at..at, vtime);
+    ])
+    .collect();
     args.extend(hold.as_ref().map(Hold::args).unwrap_or_default());
     let o = sys.exec("systemd-run", &args, QUERY_DEADLINE_SECS);
     if o.code == Some(0) {
@@ -807,17 +809,25 @@ mod tests {
 
     #[test]
     fn the_unit_carries_the_virtual_clock_before_the_command() {
-        let _env = testkit::env(&[("SPIRA_NOW", Some("1700000000"))]);
+        let _env = testkit::env(&[
+            ("SPIRA_NOW", Some("1700000000")),
+            ("GIT_AUTHOR_DATE", Some("1700000000 +0000")),
+            ("GIT_COMMITTER_DATE", Some("1700000001 +0000")),
+        ]);
         let argv = started_argv(&Recorder(RefCell::new(vec![])));
-        let at = argv.iter().position(|a| a == "--setenv=SPIRA_NOW=1700000000").expect("SPIRA_NOW is passed to the unit");
-        assert!(at < argv.iter().position(|a| a == "/rel/bin/release").unwrap(), "{argv:?}");
+        let exe = argv.iter().position(|a| a == "/rel/bin/release").unwrap();
+        for want in ["SPIRA_NOW=1700000000", "GIT_AUTHOR_DATE=1700000000 +0000", "GIT_COMMITTER_DATE=1700000001 +0000"] {
+            let at = argv.iter().position(|a| *a == format!("--setenv={want}")).unwrap_or_else(|| panic!("{want} is passed to the unit: {argv:?}"));
+            assert!(at < exe, "{argv:?}");
+        }
     }
 
     #[test]
     fn the_unit_carries_no_virtual_clock_when_none_is_set() {
-        let _env = testkit::env(&[("SPIRA_NOW", None)]);
+        let _env = testkit::env(&[("SPIRA_NOW", None), ("GIT_AUTHOR_DATE", None), ("GIT_COMMITTER_DATE", None)]);
         let argv = started_argv(&Recorder(RefCell::new(vec![])));
-        assert!(!argv.iter().any(|a| a.starts_with("--setenv=SPIRA_NOW")), "{argv:?}");
+        let want = ["--user", "--unit=round-recert-b", "--collect", "--quiet", "--setenv=SPIRA_TOML=t.toml", "/rel/bin/release", "round-recert", "--drive", "--batch", "b", "--repo", "r"];
+        assert_eq!(argv, want);
     }
 
     /// systemd answering nothing about the driver's unit is "cannot tell", never "not running":
