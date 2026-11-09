@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=runtime
+DOC=Seconds an edge owner's heartbeat may be silent before watch.transitions treats the owner as not acting on that edge's stall and pages it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_TRANSITIONS_HEARTBEAT_BOUND:=120}"
+SPIRA_CONF_DEFAULT_EOF

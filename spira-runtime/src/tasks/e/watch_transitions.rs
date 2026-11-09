@@ -21,6 +21,12 @@
 //!   newest activation, and the oldest such landing is older than `SPIRA_TRANSITIONS_ACTIVATE_BOUND`.
 //! - ASK→ANSWERED: an ask held unanswered longer than `SPIRA_TRANSITIONS_ASK_BOUND`.
 //!
+//! A stall pages only when its edge's owner is not acting on it: the owner's heartbeat
+//! (`Snapshot::owners`) is older than `SPIRA_TRANSITIONS_HEARTBEAT_BOUND`, was never seen, or
+//! carries a failed action. An owner beating with nothing failed is handling the expiry itself
+//! (the round driver abandoning a stalled pass, a requeue sweep), and the table line says so
+//! without waking anyone. Only IN_DELIVERY→LANDED has an owner heartbeat so far (round-progress, whose `stalled:` detail is `round-vm`'s own expiry report); every other edge is unowned and pages on its bound alone.
+//!
 //! Each edge is judged per repo, and over all repos together (scope `*`) where no one repo is
 //! stalled on it. A store or release
 //! record that cannot be read is `P0 BLIND`, paged once, and the period's table line says BLIND:
@@ -51,6 +57,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_TRANSITIONS_ACTIVATE_BOUND",
     "SPIRA_TRANSITIONS_ASK_BOUND",
     "SPIRA_TRANSITIONS_RELEASE_REPO",
+    "SPIRA_TRANSITIONS_HEARTBEAT_BOUND",
     "SPIRA_ROUND_MAX_OPEN",
 ];
 /// The period when the key does not resolve; the handler then refuses, so this only sizes the
@@ -73,6 +80,7 @@ pub struct Config {
     pub activate_bound_s: u64,
     pub ask_bound_s: u64,
     pub release_repo: String,
+    pub heartbeat_bound_s: u64,
     pub round_max_open: u64,
 }
 
@@ -91,6 +99,7 @@ impl Config {
             activate_bound_s: cfg_parse("SPIRA_TRANSITIONS_ACTIVATE_BOUND")?,
             ask_bound_s: cfg_parse("SPIRA_TRANSITIONS_ASK_BOUND")?,
             release_repo: cfg("SPIRA_TRANSITIONS_RELEASE_REPO")?,
+            heartbeat_bound_s: cfg_parse("SPIRA_TRANSITIONS_HEARTBEAT_BOUND")?,
             round_max_open: cfg_parse("SPIRA_ROUND_MAX_OPEN")?,
         })
     }
@@ -148,6 +157,36 @@ pub struct Snapshot {
     /// Rounds in flight; `None` when they could not be counted.
     #[serde(default)]
     pub open_rounds: Option<u64>,
+    /// Per edge, the owner that acts when the edge's bound expires.
+    #[serde(default)]
+    pub owners: BTreeMap<String, Owner>,
+}
+
+/// An edge owner's last sign of life, epoch seconds, and the action of its that failed, if one did.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Owner {
+    #[serde(default)]
+    pub beat: Option<u64>,
+    #[serde(default)]
+    pub failed: Option<String>,
+}
+
+/// The edge that the running round's progress file is the heartbeat of.
+pub const DELIVERY_EDGE: &str = "IN_DELIVERY→LANDED";
+
+/// The owner a `round-progress.json` body makes: it beats at `updated_at`, and a detail that
+/// reports the pass stalled is its action failing.
+pub fn round_owner(progress: &str) -> Option<Owner> {
+    let v: serde_json::Value = serde_json::from_str(progress).ok()?;
+    let beat = v["updated_at"].as_u64()?;
+    let failed = v["detail"].as_str().filter(|d| d.starts_with("stalled:")).map(str::to_string);
+    Some(Owner { beat: Some(beat), failed })
+}
+
+/// Whether `edge`'s owner beat inside the bound and has no failed action: an edge with no
+/// owner record is unowned, so never acting.
+fn owner_acting(snap: &Snapshot, edge: &str, now: u64, cfg: &Config) -> bool {
+    snap.owners.get(edge).is_some_and(|o| o.failed.is_none() && o.beat.is_some_and(|b| now.saturating_sub(b) < cfg.heartbeat_bound_s))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -289,7 +328,11 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
     let mut out = vec![];
     for scope in scopes(snap) {
         let t = table(snap, &scope, now);
-        let mut push = |edge: &'static str, evidence: String| out.push(Stall { edge, scope: scope.clone(), evidence });
+        let mut push = |edge: &'static str, evidence: String| {
+            if !owner_acting(snap, edge, now, cfg) {
+                out.push(Stall { edge, scope: scope.clone(), evidence });
+            }
+        };
         if t["WORKING"].count as u64 >= cfg.working_min.max(1) && quiet(snap, &scope, "Submit", now, cfg.submit_bound_s) {
             push("WORKING→SUBMITTED", evidence(snap, &scope, now, &["WORKING"], "Submit", cfg.submit_bound_s));
         }
@@ -336,7 +379,7 @@ pub fn snapshot_of(dwell: &serde_json::Value, activated_at: Option<u64>) -> Resu
         last.insert(repo.clone(), by);
     }
     let landed_after = dwell["landed_after"].as_object().into_iter().flatten().filter_map(|(r, t)| Some((r.clone(), n(t)?))).collect();
-    Ok(Snapshot { readable: true, why: String::new(), horizon, beads, last, activated_at, landed_after, open_rounds: None })
+    Ok(Snapshot { readable: true, why: String::new(), horizon, beads, last, activated_at, landed_after, open_rounds: None, owners: BTreeMap::new() })
 }
 
 fn say(now_ms: u64, line: &str) -> EffectSpec {

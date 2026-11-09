@@ -17,7 +17,7 @@ const HOUR: u64 = 3_600;
 const T0: u64 = 10 * 86_400;
 
 fn config() -> Config {
-    Config { period_s: 300, working_min: 2, submit_bound_s: 90 * MIN, cut_bound_s: 45 * MIN, deliver_bound_s: 60 * MIN, activate_bound_s: 15 * MIN, ask_bound_s: 60 * MIN, release_repo: "spira".into(), round_max_open: 1 }
+    Config { period_s: 300, working_min: 2, submit_bound_s: 90 * MIN, cut_bound_s: 45 * MIN, deliver_bound_s: 60 * MIN, activate_bound_s: 15 * MIN, ask_bound_s: 60 * MIN, release_repo: "spira".into(), heartbeat_bound_s: 120, round_max_open: 1 }
 }
 
 fn bead(id: &str, repo: &str, state: &str, since: u64) -> Bead {
@@ -39,6 +39,7 @@ fn healthy(now: u64) -> Snapshot {
         activated_at: Some(now - 10 * MIN),
         landed_after: BTreeMap::new(),
         open_rounds: Some(0),
+        owners: BTreeMap::new(),
     }
 }
 
@@ -309,4 +310,49 @@ fn a_bead_returned_to_rework_is_not_a_landing_and_a_blind_period_keeps_what_was_
     gone.beads.clear();
     let (carry, _) = decide(&Carry { in_delivery: [("sp-d1".to_string(), "spira".to_string())].into(), ..Carry::default() }, &gone, (now + 15 * MIN) * 1000, &c);
     assert_eq!(carry.delivered.get("spira"), Some(&(now + 15 * MIN)));
+}
+
+fn stuck_delivery(now: u64) -> Snapshot {
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-d1", "spira", "IN_DELIVERY", now - 2 * HOUR)];
+    s.last = last("spira", &[("Claim", now - 10 * MIN), ("Submit", now - 5 * MIN), ("Cut", now - 2 * HOUR), ("Delivered", now - 3 * HOUR)]);
+    s
+}
+
+fn owned(mut s: Snapshot, now: u64, beat_ago: u64, failed: Option<&str>) -> Snapshot {
+    s.owners.insert(DELIVERY_EDGE.into(), Owner { beat: Some(now - beat_ago), failed: failed.map(str::to_string) });
+    s
+}
+
+fn delivery_pages(s: &Snapshot, now: u64) -> usize {
+    stalls_of(s, now).iter().filter(|x| x.edge == DELIVERY_EDGE).count()
+}
+
+#[test]
+fn a_delivery_stall_with_the_round_beating_and_nothing_failed_is_not_paged() {
+    let now = T0;
+    assert_eq!(delivery_pages(&stuck_delivery(now), now), 1, "no owner heartbeat: paged as before");
+    assert_eq!(delivery_pages(&owned(stuck_delivery(now), now, 30, None), now), 0, "a fresh heartbeat means the owner is handling it");
+}
+
+#[test]
+fn a_delivery_stall_pages_when_the_round_heartbeat_has_gone_silent() {
+    let now = T0;
+    assert_eq!(delivery_pages(&owned(stuck_delivery(now), now, 121, None), now), 1);
+}
+
+#[test]
+fn a_delivery_stall_pages_when_the_round_reports_a_failed_action_despite_a_fresh_beat() {
+    let now = T0;
+    assert_eq!(delivery_pages(&owned(stuck_delivery(now), now, 5, Some("stalled: no progress in 300s")), now), 1);
+}
+
+#[test]
+fn a_round_progress_file_becomes_the_owner_and_a_stalled_detail_is_its_failure() {
+    let ok = round_owner(r#"{"phase":"vm","detail":"VM 109 ready","updated_at":1700}"#).unwrap();
+    assert_eq!(ok, Owner { beat: Some(1700), failed: None });
+    let bad = round_owner(r#"{"detail":"stalled: no progress in 300s","updated_at":1800}"#).unwrap();
+    assert_eq!(bad.failed.as_deref(), Some("stalled: no progress in 300s"));
+    assert_eq!(round_owner(r#"{"detail":"x"}"#), None, "no updated_at is no heartbeat");
+    assert_eq!(round_owner("not json"), None);
 }

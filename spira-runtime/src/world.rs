@@ -846,6 +846,8 @@ impl World {
         };
         let mut snap = wt::snapshot_of(&dwell, activated).unwrap_or_else(|e| wt::blind(&e));
         snap.open_rounds = self.open_rounds();
+        let progress = fs::read_to_string(self.run_dir.join("round-progress.json")).ok().and_then(|t| wt::round_owner(&t));
+        snap.owners.extend(progress.map(|o| (wt::DELIVERY_EDGE.to_string(), o)));
         answer(&snap)
     }
 
