@@ -89,12 +89,29 @@ pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
             rc = r;
         }
     }
+    if open.as_ref().is_some_and(|o| o.is_opening() && matches!(o.at, forge_batch::At::Store(_))) {
+        rc = rc.max(release_stale_opening(w, c, path));
+    }
     if matches!(forge_batch::read(w, c), Ok(None)) {
         for f in leftovers {
             let _ = std::fs::remove_file(c.queue_file(f));
         }
     }
     rc
+}
+
+/// No forge holds a PR for a batch left opening here, so a stale one is only ever released.
+fn release_stale_opening(w: &World, c: &Ctx, path: &Path) -> i32 {
+    let Ok(ttl) = super::batch::lease_ttl(w) else {
+        return FAIL;
+    };
+    match forge_batch::live(w, c) {
+        Ok(live) => super::batch::sweep_opening(w, c, path, ttl, &live, None),
+        Err(e) => {
+            w.err(format!("verdict {}: cannot tell which batches are open: {e}", c.r.name));
+            FAIL
+        }
+    }
 }
 
 fn local_pass(w: &World, c: &Ctx, path: &Path) -> i32 {

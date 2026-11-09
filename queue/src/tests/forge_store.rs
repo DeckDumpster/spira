@@ -709,14 +709,14 @@ fn a_settled_batch_the_machine_has_not_ended_is_ended_on_its_record_and_reads_as
 }
 
 #[test]
-fn a_queue_local_verdict_never_reconciles_a_forge_batch_still_opening() {
+fn a_queue_local_verdict_releases_a_stale_forge_batch_still_opening_without_asking_the_forge() {
     let t = forge_world();
     seed(&t, "left", "opening", 1, None);
     t.lib.r.borrow_mut().mode = LandMode::QueueLocal;
     t.clock.now.set(1_000_000);
     t.run(&["verdict", "spira"]);
-    assert!(!t.lc.has("abandon-batch left"), "{:?}", t.lc.calls.borrow());
-    assert_eq!(record(&t, "left").0, "OPEN");
+    assert!(t.lc.has("abandon-batch left"), "{:?}", t.lc.calls.borrow());
+    assert!(forge_calls(&t).is_empty(), "{:?}", forge_calls(&t));
 }
 
 #[test]
@@ -787,4 +787,29 @@ fn an_adoption_another_writer_beat_is_left_and_one_that_cannot_be_written_fails_
     assert!(!forge_calls(&t)
         .iter()
         .any(|c| c.starts_with("pr-close") || c.starts_with("pr-automerge")));
+}
+
+fn local_world() -> T {
+    let t = T::new(LandMode::QueueLocal);
+    t.lc.store.get_or_init(MemDoor::default);
+    t.var("SPIRA_ROUND_LEASE_TTL_SECS", "300");
+    t
+}
+
+#[test]
+fn a_stale_opening_record_on_a_queue_local_repo_is_released_by_the_verdict() {
+    let t = local_world();
+    seed(&t, "stale", "opening", 900, None);
+    t.clock.now.set(900 + 301);
+    t.run(&["verdict", "spira"]);
+    assert_eq!(record(&t, "stale").0, "ABANDONED", "{}{}", t.out(), t.err());
+}
+
+#[test]
+fn an_opening_record_inside_one_lease_ttl_on_a_queue_local_repo_is_left_to_its_opener() {
+    let t = local_world();
+    seed(&t, "fresh", "opening", 900, None);
+    t.clock.now.set(900 + 10);
+    t.run(&["verdict", "spira"]);
+    assert_eq!(record(&t, "fresh").0, "OPEN", "{}{}", t.out(), t.err());
 }
