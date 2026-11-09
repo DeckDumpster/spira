@@ -21,9 +21,9 @@ write)
 check)
     snap=$(spira-lc section snapshot 2>&1) || fail "section snapshot: $snap"
     printf '%s' "$snap" | grep -q 'EjectRefused' || fail "no EjectRefused condition on a published section: $(printf '%s' "$snap" | cut -c1-300)"
-    root="${SIM_WORLD:-.}/home/spira/run/mail"
-    pages=$(grep -rl 'ej-round' "$root" 2>/dev/null | wc -l)
-    [ "$pages" = 1 ] || fail "want exactly one page naming ej-round under $root, found $pages: $(grep -rl 'ej-round' "$root" 2>/dev/null)" ;;
+    sent=$(find "${SIM_WORLD:-.}/home" -path '*/new/*' -type f -exec grep -l 'ej-round' {} + 2>/dev/null)
+    pages=$(printf '%s' "$sent" | grep -c .)
+    [ "$pages" = 1 ] || fail "want exactly one delivered message naming ej-round, found $pages: $sent" ;;
 *)
     fail "usage: rc-eject-refused-pages.sh write|check" ;;
 esac
