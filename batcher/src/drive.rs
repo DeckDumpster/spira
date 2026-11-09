@@ -454,7 +454,7 @@ fn bisect_members(red: &str, green: &mut dyn FnMut(&[Member]) -> Option<bool>, m
             hi = mid;
         }
     }
-    let partner = &members[hi - 1];
+    let partner = members.get(hi.checked_sub(1)?)?;
     if green(&[partner.clone(), last.clone()])? {
         return None;
     }
@@ -1675,6 +1675,20 @@ pub(crate) mod tests {
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
         assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["unit-tests".to_string()])]);
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+    }
+
+    #[test]
+    fn a_unit_test_red_that_does_not_reproduce_on_the_lone_first_member_is_filed_not_a_panic() {
+        let seen = std::cell::Cell::new(0);
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(Box::new(move |_| {
+            seen.set(seen.get() + 1);
+            (seen.get() == 1).then(|| FilterRed { name: "unit-tests".into(), named: vec![] })
+        }));
+        f.bisects = true;
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
     }
 
     #[test]

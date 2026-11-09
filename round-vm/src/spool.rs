@@ -126,7 +126,7 @@ unit)
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
     env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
-        cargo test -q --profile unittest --workspace --no-fail-fast --config profile.unittest.incremental=false >&2
+        cargo test -q --profile unittest --workspace --no-fail-fast --lib --bins --config profile.unittest.incremental=false >&2
     rc=$?
     cd "$HOME" && rm -rf "$d"
     [ "$rc" -eq 101 ] && exit 5
@@ -453,7 +453,7 @@ mod tests {
         let ran = fs::read_to_string(home.join("cargo.args")).unwrap_or_default();
         let env = fs::read_to_string(home.join("cargo.env")).unwrap_or_default();
         if cargo_rc == 0 && build == "unit" {
-            assert!(ran.contains("--workspace") && !ran.contains("--lib"), "every test target of the workspace: {ran}");
+            assert!(ran.contains("--workspace") && ran.contains("--lib --bins"), "the unit phase's targets: {ran}");
             assert!(!env.contains("SPIRA_"), "a scrubbed environment: {env}");
         }
         (status.code().unwrap(), home.join("attr-results/j1").join(result).exists())
