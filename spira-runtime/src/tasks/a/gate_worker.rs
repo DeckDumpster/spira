@@ -516,7 +516,7 @@ pub fn pins(pinned: &BTreeMap<String, String>) -> Snapshot {
     let timeout = pinned.get("SPIRA_GATE_TIMEOUT").map(String::as_str);
     let gate_timeout = timeout.and_then(|t| t.trim().parse().ok()).filter(|t| *t > 0).unwrap_or(2_700);
     let lock_wait = gate_worker::lock_wait(timeout, pinned.get("SPIRA_GATE_LOCK_WAIT").map(String::as_str).filter(|v| !v.trim().is_empty()));
-    let base_env = super::batcher_local::edge::base_env(vec![], &spira_config::process::spec().unwrap_or_default());
+    let base_env = spira_config::process::spec().map(|toml| super::batcher_local::edge::base_env(vec![], &toml)).unwrap_or_default();
     Snapshot { run_dir: pinned.get("SPIRA_RUN").cloned().unwrap_or_default(), gate_timeout, lock_wait, base_env, ..Snapshot::default() }
 }
 
@@ -623,6 +623,7 @@ pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
     }
     let par: usize = pinned["SPIRA_CERTIFY_PAR"].trim().parse().map_err(|_| "SPIRA_CERTIFY_PAR must be a positive integer".to_string())?;
     let q = queue(e);
+    spira_config::process::spec()?;
     let mut snap = pins(&pinned);
     snap.run_dir = e.world.run_dir.display().to_string();
     snap.inbox = q.queued().iter().map(task_job).collect();
