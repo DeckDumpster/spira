@@ -1505,6 +1505,16 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_member_that_leaves_for_a_runner_abort_takes_the_suite_it_adds_out_of_the_next_corpus() {
+        let mut f = Fake::new(|_, _| false);
+        f.added_by = adds("test-01.sh", &["m2"]);
+        f.aborts_with = Some(("m2".into(), ABORT.into()));
+        let mut ops = Ops { adds: adds("test-01.sh", &["m2"]), diffs: vec![md("m1", "doc/x.md", "+p\n"), md("m2", "round-vm/src/run.rs", "+x\n"), md("m3", "doc/y.md", "+q\n")], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+    }
+
+    #[test]
     fn testenv_killed_by_a_signal_with_no_or_several_runner_touching_members_stays_a_harness_fault() {
         for diffs in [vec![md("m1", "doc/x.md", "+p\n")], vec![md("m1", "round-vm/a.rs", "+p\n"), md("m2", "testenv/b.rs", "+p\n")]] {
             let mut f = Fake::new(|_, _| false);
