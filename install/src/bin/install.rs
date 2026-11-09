@@ -236,6 +236,14 @@ fn set_dolt_metrics_disabled(path: &Path) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| format!("install {}: {e}", path.display()))
 }
 
+/// The flake reference for the release's `spira-env`. The root is resolved through its symlinks:
+/// nix copies a symlinked `path:` root into the store as a symlink, and a relative target (the
+/// `current` link to `spira-<name>`) then resolves against `/nix/store`, which pure evaluation refuses.
+fn spira_env_target(root: &Path) -> String {
+    let resolved = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    format!("path:{}#spira-env", resolved.display())
+}
+
 /// Builds the pinned tool environment (`flake.nix` at the release root) into
 /// `~/.local/lib/spira-env`; every unit's PATH and `dolt-beads.service`'s ExecStart resolve
 /// dolt and bd from it. Idempotent: an unchanged lock rebuilds to the same store path.
@@ -249,7 +257,7 @@ fn build_spira_env(dry: bool, home: &str, release_root: Option<&Path>) -> Result
         return Ok(());
     }
     let out = Path::new(home).join(spira_config::SPIRA_ENV_REL);
-    let target = format!("path:{}#spira-env", root.display());
+    let target = spira_env_target(root);
     if dry {
         would(&format!("run: nix build {target} -o {}", out.display()));
         return Ok(());
@@ -2063,6 +2071,16 @@ fn base64_no_pad(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod dependency_fetch_tests {
     use super::*;
+
+    #[test]
+    fn spira_env_target_names_the_release_directory_not_the_symlink_to_it() {
+        let td = testkit::TempDir::new("env-target");
+        let real = td.path().join("spira-daily");
+        std::fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink("spira-daily", td.path().join("current")).unwrap();
+        let want = format!("path:{}#spira-env", std::fs::canonicalize(&real).unwrap().display());
+        assert_eq!(spira_env_target(&td.path().join("current")), want);
+    }
 
     #[test]
     fn sccache_target_maps_known_arches_to_mozillas_release_triples() {
