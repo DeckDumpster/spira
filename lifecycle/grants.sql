@@ -84,7 +84,7 @@ GRANT SELECT ON spira_lifecycle.runtime_poison TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.runtime_effect TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.runtime_effect_0038 TO 'spira_lc_ro'@'%';
 
--- What the runtime keeps across a restart (migrations/0039-runtime-task-state.sql): upserted
+-- What the runtime keeps across a restart (migrations/0040-runtime-task-state.sql): upserted
 -- in place, never deleted, so no DELETE.
 GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.runtime_task_state TO 'spira_lc'@'%';
 GRANT SELECT ON spira_lifecycle.runtime_task_state TO 'spira_lc_ro'@'%';

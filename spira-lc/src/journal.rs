@@ -4,7 +4,6 @@
 //! the runtime reads the store once, at boot.
 
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
 use crate::db::{Conn, DbError};
 use crate::rows::escape;
@@ -31,20 +30,6 @@ const TAG_MAX: usize = 64;
 const HANDLER_MAX: usize = 128;
 const TASK_MAX: usize = 128;
 const KEY_MAX: usize = 255;
-/// `runtime_schedule.kind_body` is a TEXT column, in bytes.
-const KIND_BODY_MAX: usize = 65_535;
-const HEAD_KEPT: usize = 4_096;
-
-/// The body as stored: itself when it fits the column, else a JSON stub naming its length and
-/// SHA-256 with the head it began with. An over-long body is recorded, not refused.
-fn stored_body(body: &str) -> String {
-    if body.len() <= KIND_BODY_MAX {
-        return body.to_string();
-    }
-    let cut = (0..=HEAD_KEPT).rev().find(|i| body.is_char_boundary(*i)).unwrap_or(0);
-    let digest: String = Sha256::digest(body.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-    json!({ "truncated": { "bytes": body.len(), "sha256": digest }, "head": &body[..cut] }).to_string()
-}
 
 fn text(v: &Value, k: &str) -> String {
     v.get(k).and_then(Value::as_str).unwrap_or("").to_string()
@@ -124,7 +109,7 @@ pub fn schedule_sql(row: &Value) -> Result<String, String> {
         number(row, "at")?,
         lit(field(row, "stream")?),
         lit(field(kind, "tag")?),
-        lit(&stored_body(field(kind, "body")?)),
+        lit(field(kind, "body")?),
         opt_lit(row, "cause"),
         lit(field(row, "correlation")?),
     ))
@@ -391,21 +376,6 @@ mod tests {
         for (name, max) in [("ID_MAX", ID_MAX), ("STREAM_MAX", STREAM_MAX), ("TASK_MAX", TASK_MAX), ("KEY_MAX", KEY_MAX)] {
             assert!(src.contains(&format!("const {name}: usize = {max};")), "runtime/src/socket.rs {name} differs from {max}");
         }
-    }
-
-    #[test]
-    fn a_schedule_body_over_the_column_is_stored_as_a_digest_and_head_never_dropped() {
-        let big = format!("{{\"runs\":[\"{}é\"]}}", "r".repeat(KIND_BODY_MAX + 10));
-        let row = |body: &str| json!({"id": "r", "at": 1, "stream": "s", "kind": {"tag": "t", "body": body}, "cause": null, "correlation": "c"});
-        let sql = schedule_sql(&row(&big)).unwrap();
-        assert!(sql.contains("truncated") && sql.len() < KIND_BODY_MAX, "{} bytes", sql.len());
-        let stub = stored_body(&big);
-        let v: Value = serde_json::from_str(&stub).unwrap();
-        assert_eq!(v["truncated"]["bytes"], big.len());
-        assert_eq!(v["truncated"]["sha256"].as_str().unwrap().len(), 64);
-        assert!(big.starts_with(v["head"].as_str().unwrap()));
-        let at_limit = "x".repeat(KIND_BODY_MAX);
-        assert_eq!(stored_body(&at_limit), at_limit, "a body that fits is stored as sent");
     }
 
     #[test]
