@@ -990,7 +990,7 @@ mod tests {
     #[tokio::test]
     async fn activated_releases_of_the_last_day_are_the_release_exits_count() {
         let t = testkit::TempDir::new("loom-factory-releases");
-        let mut r = release::machine::Release::new("aaaa");
+        let mut r = release::machine::Release::new("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         for (to, at) in [(release::machine::ReleaseState::Cut, 1), (release::machine::ReleaseState::Accepted, 2), (release::machine::ReleaseState::Published, 3), (release::machine::ReleaseState::Activated, NOW as u64 - 100)] {
             r.record(to, "t", at).unwrap();
         }
