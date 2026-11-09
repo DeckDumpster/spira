@@ -93,7 +93,8 @@ fn record_tests(root: &std::path::Path, run: Option<PathBuf>) {
     let Ok(jsonl) = std::fs::read_to_string(root.join("results.jsonl")) else { return };
     let (ts, host) = (tsd::now_iso(), tsd::default_host());
     let path = tsd::family_path(&run, tsd::testrun::FAMILY);
-    for row in tsd::testrun::rows_from_results(&jsonl, &format!("{ts} {}", root.display()), &ts, &host) {
+    let coverage = std::fs::read_to_string(root.join(tsd::testrun::COVERAGE_EXPORT)).unwrap_or_default();
+    for row in tsd::testrun::rows_from_results(&jsonl, &coverage, &format!("{ts} {}", root.display()), &ts, &host) {
         if let Err(e) = tsd::append_line(&path, &row) {
             eprintln!("gate-diag: test-run rows not recorded: {e}");
             return;
@@ -263,5 +264,16 @@ mod record_tests_tests {
         let text = std::fs::read_to_string(d.join("tsd/test-run.jsonl")).unwrap();
         assert_eq!(text.lines().count(), 1);
         assert!(text.contains("\"test\":\"a.sh::x\""), "{text}");
+    }
+
+    #[test]
+    fn a_round_with_a_per_case_export_writes_the_covered_lines_onto_that_cases_row() {
+        let tmp = testkit::TempDir::new("gate-diag-cov");
+        let d = tmp.path().to_path_buf();
+        std::fs::write(d.join("results.jsonl"), "{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"pass\",\"seconds\":1}\n").unwrap();
+        std::fs::write(d.join(tsd::testrun::COVERAGE_EXPORT), "{\"suite\":\"a.sh\",\"case\":\"x\",\"covered\":[\"src/b.rs:7\"]}\n").unwrap();
+        record_tests(&d, Some(d.clone()));
+        let text = std::fs::read_to_string(d.join("tsd/test-run.jsonl")).unwrap();
+        assert!(text.contains("\"covered\":[\"src/b.rs:7\"]"), "{text}");
     }
 }

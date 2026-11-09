@@ -8,6 +8,8 @@ use serde_json::{json, Value};
 use crate::query::{num, quantile, text, ts_of};
 
 pub const FAMILY: &str = "test-run";
+/// The per-case line export a measuring run leaves beside `results.jsonl`.
+pub const COVERAGE_EXPORT: &str = "coverage-cases.jsonl";
 const VERDICT_CASE: &str = "(verdict)";
 const SECS_PER_DAY: u64 = 86_400;
 
@@ -28,7 +30,8 @@ fn outcome(status: &str) -> &'static str {
 
 /// The rows of one round from its `results.jsonl`. `(verdict)` rows are the retry
 /// classifier's, not tests, and a row with no suite or no case names nothing.
-pub fn rows_from_results(jsonl: &str, round: &str, ts: &str, host: &str) -> Vec<String> {
+pub fn rows_from_results(jsonl: &str, coverage: &str, round: &str, ts: &str, host: &str) -> Vec<String> {
+    let covered = covered_by_test(coverage);
     jsonl
         .lines()
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
@@ -37,16 +40,31 @@ pub fn rows_from_results(jsonl: &str, round: &str, ts: &str, host: &str) -> Vec<
             if suite.is_empty() || case.is_empty() || case == VERDICT_CASE {
                 return None;
             }
-            let fields = vec![
+            let id = test_id(suite, case);
+            let mut fields = vec![
                 ("round".to_string(), json!(round)),
-                ("test".to_string(), json!(test_id(suite, case))),
+                ("test".to_string(), json!(&id)),
                 ("suite".to_string(), json!(suite)),
                 ("status".to_string(), json!(outcome(text(&v, "status").unwrap_or("")))),
                 ("seconds".to_string(), json!(num(&v, "seconds").unwrap_or(0.0))),
             ];
+            if let Some(units) = covered.get(&id) {
+                fields.push(("covered".to_string(), json!(units)));
+            }
             crate::build_row(ts, host, FAMILY, &fields).ok()
         })
         .collect()
+}
+
+/// The per-case line export: one JSON object per line, `{"suite","case","covered":["path:line",..]}`,
+/// the lines that case alone executed. A case may appear in several lines; its units are unioned.
+fn covered_by_test(jsonl: &str) -> BTreeMap<String, Vec<String>> {
+    let mut by: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    for v in jsonl.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()) {
+        let (Some(suite), Some(case), Some(units)) = (text(&v, "suite"), text(&v, "case"), v.get("covered").and_then(Value::as_array)) else { continue };
+        by.entry(test_id(suite, case)).or_default().extend(units.iter().filter_map(Value::as_str).map(str::to_string));
+    }
+    by.into_iter().map(|(t, u)| (t, u.into_iter().collect())).collect()
 }
 
 struct Round<'a> {
@@ -79,7 +97,8 @@ pub fn test_stats(rows: &[Value], test: &str) -> Value {
     let flips = runs.windows(2).filter(|w| status(w[0]) != status(w[1])).count();
     let secs: Vec<f64> = runs.iter().filter_map(|r| num(r, "seconds")).collect();
     let rate = |k: usize, d: usize| (d > 0).then(|| k as f64 / d as f64);
-    json!({
+    let covered = runs.last().and_then(|r| r.get("covered")).filter(|c| c.is_array());
+    let mut out = json!({
         "test": test,
         "runs": n,
         "p50_s": quantile(&secs, 0.5),
@@ -87,7 +106,11 @@ pub fn test_stats(rows: &[Value], test: &str) -> Value {
         "pass_rate": rate(count("pass"), n),
         "red_rate": rate(count("fail"), n),
         "flip_rate": rate(flips, n.saturating_sub(1)),
-    })
+    });
+    if let Some(c) = covered {
+        out["covered"] = c.clone();
+    }
+    out
 }
 
 /// The live inventory: the latest round's test count, how many tests the last round of each
@@ -136,13 +159,13 @@ mod tests {
             .iter()
             .map(|(s, c, st, secs)| format!("{{\"suite\":\"{s}\",\"case\":\"{c}\",\"status\":\"{st}\",\"seconds\":{secs}}}\n"))
             .collect();
-        rows_from_results(&jsonl, round, ts, "h").iter().map(|l| serde_json::from_str(l).unwrap()).collect()
+        rows_from_results(&jsonl, "", round, ts, "h").iter().map(|l| serde_json::from_str(l).unwrap()).collect()
     }
 
     #[test]
     fn a_verdict_row_is_not_a_test_and_a_case_is_keyed_by_file_and_name() {
         let jsonl = "{\"suite\":\"a.sh\",\"case\":\"(verdict)\",\"status\":\"red-red\",\"seconds\":0}\n{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"ok\",\"seconds\":2}\n";
-        let rows = rows_from_results(jsonl, "r1", "2026-11-01T00:00:00Z", "h");
+        let rows = rows_from_results(jsonl, "", "r1", "2026-11-01T00:00:00Z", "h");
         assert_eq!(rows.len(), 1);
         let v: Value = serde_json::from_str(&rows[0]).unwrap();
         assert_eq!((v["test"].as_str(), v["suite"].as_str(), v["family"].as_str()), (Some("a.sh::x"), Some("a.sh"), Some(FAMILY)));
@@ -174,6 +197,21 @@ mod tests {
         assert_eq!((s["runs"].as_u64(), s["p50_s"].as_f64()), (Some(3), Some(2.0)));
         assert!((s["red_rate"].as_f64().unwrap() - 1.0 / 3.0).abs() < 1e-9);
         assert_eq!(s["flip_rate"].as_f64(), Some(1.0));
+    }
+
+    #[test]
+    fn a_case_row_carries_the_lines_only_that_case_executed() {
+        let results = "{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"ok\",\"seconds\":1}\n{\"suite\":\"a.sh\",\"case\":\"y\",\"status\":\"ok\",\"seconds\":1}\n";
+        let cov = "{\"suite\":\"a.sh\",\"case\":\"x\",\"covered\":[\"src/b.rs:2\",\"src/b.rs:1\"]}\n{\"suite\":\"a.sh\",\"case\":\"x\",\"covered\":[\"src/b.rs:1\"]}\n";
+        let rows: Vec<Value> = rows_from_results(results, cov, "r1", "2026-11-01T00:00:00Z", "h").iter().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(rows[0]["covered"], json!(["src/b.rs:1", "src/b.rs:2"]));
+        assert!(rows[1].get("covered").is_none(), "an unmeasured case carries no coverage, not an empty list");
+        let s = test_stats(&rows, "a.sh::x");
+        assert_eq!(s["covered"], json!(["src/b.rs:1", "src/b.rs:2"]));
+        assert!(test_stats(&rows, "a.sh::y").get("covered").is_none());
+        let mut later = rows_of("r2", "2026-11-02T00:00:00Z", &[("a.sh", "x", "pass", 1.0)]);
+        later.extend(rows);
+        assert!(test_stats(&later, "a.sh::x").get("covered").is_none(), "an unmeasured latest run does not borrow an older run's lines");
     }
 
     #[test]
