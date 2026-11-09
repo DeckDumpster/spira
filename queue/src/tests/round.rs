@@ -882,6 +882,7 @@ fn abandoning_a_round_keeps_a_mender_that_holds_a_submitted_fix_for_the_next_cut
     }
     assert!(!marker(&t, "hand-5", "mender-1-gate-x.retired").exists());
     assert!(t.lib.has("bead_close sp-m15"), "{:?}", t.lib.calls.borrow());
+    assert!(marker(&t, "hand-5", "mender-1-gate-y.retired").exists());
 }
 
 #[test]
