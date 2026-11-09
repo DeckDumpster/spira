@@ -662,31 +662,38 @@ impl RealBeads {
     }
 
     fn show_raw(&self, ids: &[String]) -> Result<String, String> {
+        self.show_call(ids).map_err(|(_, why)| why)
+    }
+
+    /// `show_raw` with the store's exit code kept on failure (a fixture failure is exit 1).
+    fn show_call(&self, ids: &[String]) -> Result<String, (i32, String)> {
+        let fail = |rc: i32, why: String| (rc, why);
         if let Some(fx) = &self.fixture {
             let mut c = command("bdsim");
             c.arg(fx).arg("show").args(ids).arg("--json").stdin(Stdio::null());
             let (rc, so, _) = run_capture(c);
-            return if rc == 0 { Ok(String::from_utf8_lossy(&so).into_owned()) } else { Err(format!("bdsim exited {rc}")) };
+            return if rc == 0 { Ok(String::from_utf8_lossy(&so).into_owned()) } else { Err(fail(rc, format!("bdsim exited {rc}"))) };
         }
         // The store's `content show`, in-process over the lifecycle socket (no `bdq` child).
-        let lc = self.lc()?.within(std::time::Duration::from_secs(self.timeout));
+        let lc = self.lc().map_err(|e| fail(spira_config::lc_call::CANNOT_TELL, e))?.within(std::time::Duration::from_secs(self.timeout));
         let mut argv: Vec<&str> = vec!["content", "show"];
         argv.extend(ids.iter().map(String::as_str));
         argv.push("--json");
-        let mut last = String::new();
+        let (mut last, mut last_rc) = (String::new(), 1);
         for _try in 0..2 {
             let (rc, so, se) = crate::lifecycle::run(&lc, &argv);
             if rc == 0 {
                 return Ok(so);
             }
             last = se;
+            last_rc = rc;
             // A pooled connection the server already dropped: the query never ran, retrying
             // is as safe as the first attempt.
             if !last.contains("invalid connection") {
                 break;
             }
         }
-        Err(format!("bd show failed: {}", last.lines().next().unwrap_or("")))
+        Err((last_rc, format!("bd show failed: {}", last.lines().next().unwrap_or(""))))
     }
 
     /// The open asks: their control-plane records (`spira-lc list-asks`), each titled from its
@@ -723,18 +730,39 @@ impl RealBeads {
     }
 }
 
+/// Ids per `content show`: the service bounds each call, and one read of every id outran it.
+const SHOW_CHUNK: usize = 25;
+/// Halvings one chunk may take, so a store that answers nothing fails in a few calls, not one per id.
+const MAX_HALVINGS: u32 = 3;
+
+impl RealBeads {
+    /// A chunk the store could not answer (exit 2, e.g. past its deadline) is read as two halves; one id that still
+    /// times out is an error.
+    fn show_into(&self, ids: &[String], out: &mut Vec<BeadRow>, halvings: u32) -> Result<(), String> {
+        let raw = match self.show_call(ids) {
+            Err((rc, _)) if ids.len() > 1 && halvings > 0 && spira_config::lc_call::cannot_tell(rc) => {
+                let (a, b) = ids.split_at(ids.len() / 2);
+                self.show_into(a, out, halvings - 1)?;
+                return self.show_into(b, out, halvings - 1);
+            }
+            r => r.map_err(|(_, why)| why)?,
+        };
+        let v: serde_json::Value = serde_json::from_str(json_only(&raw)).map_err(|e| format!("bd show: not JSON ({e})"))?;
+        let items = match v {
+            serde_json::Value::Array(a) => a,
+            o @ serde_json::Value::Object(_) => vec![o],
+            _ => Vec::new(),
+        };
+        out.extend(items.iter().filter_map(|i| BeadRow::from_json(i, &self.home_repo)));
+        Ok(())
+    }
+}
+
 impl Beads for RealBeads {
     fn show(&self, ids: &[String]) -> Result<Vec<BeadRow>, String> {
         let mut out = Vec::new();
-        for chunk in ids.chunks(100) {
-            let raw = self.show_raw(chunk)?;
-            let v: serde_json::Value = serde_json::from_str(json_only(&raw)).map_err(|e| format!("bd show: not JSON ({e})"))?;
-            let items = match v {
-                serde_json::Value::Array(a) => a,
-                o @ serde_json::Value::Object(_) => vec![o],
-                _ => Vec::new(),
-            };
-            out.extend(items.iter().filter_map(|i| BeadRow::from_json(i, &self.home_repo)));
+        for chunk in ids.chunks(SHOW_CHUNK) {
+            self.show_into(chunk, &mut out, MAX_HALVINGS)?;
         }
         self.join_states(&mut out)?;
         Ok(out)
@@ -1416,6 +1444,34 @@ mod store_tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].state, "SUBMITTED");
         assert_eq!(*s.seen.lock().unwrap(), vec!["content show sp-a --json", "show sp-a"]);
+    }
+
+    #[test]
+    fn a_read_of_many_beads_the_service_cuts_short_is_read_in_smaller_parts() {
+        let ids: Vec<String> = (0..240).map(|i| format!("sp-{i}")).collect();
+        let (s, c) = store(|a| {
+            if a[0] == "content" {
+                let n = a.len() - 3;
+                if n > 8 {
+                    return (2, "cannot tell: deadline".into());
+                }
+                let rows: Vec<String> = a[2..2 + n].iter().map(|i| format!("{{\"id\":\"{i}\",\"title\":\"t\",\"status\":\"open\",\"labels\":[]}}")).collect();
+                return (0, format!("[{}]", rows.join(",")));
+            }
+            (0, "[]".into())
+        });
+        let rows = beads(&c).show(&ids).unwrap();
+        let got: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(got, ids.iter().map(String::as_str).collect::<Vec<_>>());
+        assert!(s.seen.lock().unwrap().iter().any(|l| l.starts_with("content show") && l.split(' ').count() <= 11));
+    }
+
+    #[test]
+    fn a_store_that_answers_no_bead_read_fails_in_a_few_calls() {
+        let ids: Vec<String> = (0..240).map(|i| format!("sp-{i}")).collect();
+        let (s, c) = store(|_| (2, "cannot tell: deadline".into()));
+        beads(&c).show(&ids).unwrap_err();
+        assert!(s.seen.lock().unwrap().len() <= 8);
     }
 
     #[test]
