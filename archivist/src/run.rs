@@ -90,6 +90,11 @@ pub fn claim(arc: &Path, sid: &str, key: &str) -> Result<bool, String> {
     Ok(true)
 }
 
+pub struct AskQuery<'a> {
+    pub question: &'a str,
+    pub beads: &'a [String],
+}
+
 pub enum AskClaim {
     File,
     AlreadyFiled,
@@ -104,8 +109,7 @@ pub fn claim_ask(
     arc: &Path,
     sid: &str,
     key: &str,
-    question: &str,
-    beads: &[String],
+    ask: &AskQuery,
     open_asks_json: &str,
     transcript: Option<&Path>,
     now: i64,
@@ -114,11 +118,11 @@ pub fn claim_ask(
         return Ok(AskClaim::AlreadyFiled);
     }
     let asks = covered::open_asks(open_asks_json);
-    if let Some(id) = covered::held_by_open_ask(question, beads, &asks) {
+    if let Some(id) = covered::held_by_open_ask(ask.question, ask.beads, &asks) {
         return Ok(AskClaim::Held(format!("{id} is already open")));
     }
     let text = transcript.and_then(|t| std::fs::read_to_string(t).ok()).unwrap_or_default();
-    match covered::covered_by_transcript(question, &text, now) {
+    match covered::covered_by_transcript(ask.question, &text, now) {
         Some(why) => Ok(AskClaim::Held(why)),
         None => Ok(AskClaim::File),
     }

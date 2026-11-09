@@ -140,7 +140,7 @@ fn dispatch(cmd: &str, rest: &[String]) {
                 }
             };
             let tp = archivist::transcripts::find_transcript(Path::new(&cfg.token_projects), sid);
-            match run::claim_ask(&run_arc_dir(), sid, key, &question, &beads, &open, tp.as_deref(), run::now_epoch()) {
+            match run::claim_ask(&run_arc_dir(), sid, key, &run::AskQuery { question: &question, beads: &beads }, &open, tp.as_deref(), run::now_epoch()) {
                 Ok(run::AskClaim::File) => {}
                 Ok(run::AskClaim::AlreadyFiled) => {
                     eprintln!("archivist: already filed: {key}");
