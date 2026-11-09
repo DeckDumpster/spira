@@ -251,24 +251,8 @@ pub fn fixture_mode() -> bool {
 }
 
 pub const PANE_TTL_SECS: i64 = 60;
-const CLOSED_TTL_FACTOR: i64 = 2;
-const PANE_WINDOW_SECS: i64 = 86_400;
 const HISTORY_TTL_SECS: i64 = 600;
 const LOCK_WAIT_MS: u64 = 20_000;
-
-fn utc_stamp(epoch: i64) -> String {
-    let (days, rem) = (epoch.div_euclid(86_400), epoch.rem_euclid(86_400));
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
-}
 
 thread_local! {
     static DATA_WRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -375,11 +359,6 @@ fn with_labels(raw: Option<String>, labels: &str) -> Option<String> {
 
 const LIVE_ARGS: [&str; 4] = ["list", "--limit", "0", "--json"];
 
-fn closed_fetch(read: &dyn Fn(&[&str]) -> Option<String>, now: i64) -> Option<String> {
-    let since = utc_stamp(now - PANE_WINDOW_SECS);
-    read(&["list", "--all", "--closed-after", &since, "--limit", "100000", "--json"])
-}
-
 fn read_json(args: &[&str]) -> Option<String> {
     content(args).map(|s| json_only(&s).to_string())
 }
@@ -399,17 +378,6 @@ fn pane_ttl() -> i64 {
 /// The one unscoped read of live beads every label-scoped view is filtered from.
 fn live_base() -> Option<String> {
     base_read("live", pane_ttl(), || read_json(&LIVE_ARGS))
-}
-
-fn closed_base() -> Option<String> {
-    base_read("closed", pane_ttl() * CLOSED_TTL_FACTOR, || closed_fetch(&read_json, now()))
-}
-
-/// The beads the pane shows — live ones plus the last day's closures — that carry every label
-/// in `labels` (comma-separated, may be empty). Two shared store reads serve every probe in a
-/// refresh whatever labels they ask for; never `--all --limit 0`.
-pub fn pane_beads(labels: &str) -> Option<String> {
-    with_labels(merge_rows(&[live_base(), closed_base()]), labels)
 }
 
 /// Live beads only, what a default `list` answers; its own shared read, so no row's status is compared.
@@ -847,29 +815,19 @@ mod tests {
 #[cfg(test)]
 mod pane_read_tests {
     use super::*;
-    use std::cell::RefCell;
 
     #[test]
-    fn utc_stamp_is_rfc3339() {
-        assert_eq!(utc_stamp(1790726400), "2026-09-30T00:00:00Z");
-        assert_eq!(utc_stamp(0), "1970-01-01T00:00:00Z");
-    }
-
-    #[test]
-    fn a_pane_pass_is_one_live_and_one_closed_read_whatever_labels_probes_ask() {
+    fn twelve_probes_in_a_pane_pass_share_one_fetch() {
         let t = testkit::TempDir::new("pane-read");
-        let calls: RefCell<Vec<Vec<String>>> = RefCell::new(Vec::new());
-        let read = |a: &[&str]| {
-            calls.borrow_mut().push(a.iter().map(|s| s.to_string()).collect());
-            Some(r#"[{"id":"a","labels":["plan","spira"]}]"#.to_string())
-        };
+        let calls = std::cell::Cell::new(0);
         for probe in 0..12 {
-            let got = shared_read(&t.join("d"), "closed", 30, 1000 + probe, || closed_fetch(&read, 1000));
+            let got = shared_read(&t.join("d"), "live", 30, 1000 + probe, || {
+                calls.set(calls.get() + 1);
+                Some(r#"[{"id":"a","labels":["plan","spira"]}]"#.to_string())
+            });
             assert!(got.is_some());
         }
-        let calls = calls.borrow();
-        assert_eq!(calls.len(), 1, "twelve probes, one fetch: {calls:?}");
-        assert!(calls[0].iter().all(|a| a != "--label") && calls[0].iter().any(|a| a == "--closed-after"), "{calls:?}");
+        assert_eq!(calls.get(), 1);
     }
 
     #[test]

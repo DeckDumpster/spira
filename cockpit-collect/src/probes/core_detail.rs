@@ -330,7 +330,7 @@ fn inflow_section(out: &mut Kv, _run: &std::path::Path) {
     let win: i64 = std::env::var("SPIRA_INFLOW_WINDOW_MIN").ok().and_then(|v| v.parse().ok()).filter(|w| *w > 0).unwrap_or(60);
     let now = io::now();
     let found = if io::fixture_mode() {
-        io::json_rows(io::pane_beads("")).map(|rows| inflow_from_rows(&rows, now - win * 60))
+        io::json_rows(io::live_beads("")).map(|rows| inflow_from_rows(&rows, now - win * 60))
     } else {
         super::lc::verb(&["pane-facets", "inflow", "--window-secs", &(win * 60).to_string()]).and_then(|raw| inflow_from_server(&raw))
     };
@@ -450,7 +450,7 @@ fn throughput_section(out: &mut Kv, run: &std::path::Path, cfg: &Cfg) {
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
     let raw = io::history_beads(&label).unwrap_or_default();
     let landing_log = run.join("landing.log");
-    if let Some(sparklines) = crate::sparklines::render(&raw, landing_log.to_str().unwrap_or(""), crate::timeutil::now_secs()) {
+    if let Some(sparklines) = crate::sparklines::render(&raw, landing_log.to_str().unwrap_or(""), crate::timeutil::now_secs(), &crate::counts::from_config()) {
         for line in sparklines.lines() {
             if let Some((k, v)) = line.split_once('=') {
                 push(out, k, v.to_string());

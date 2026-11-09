@@ -4,7 +4,7 @@
 //! (systemd, `sop.sh`'s METRIC seam, the `test-cockpit-*.sh` suites) needs only its
 //! invocation repointed, never its assertions rewritten.
 
-use cockpit_collect::{io, metrics, probes, quoting, sparklines, supervisor, tiers, timeutil};
+use cockpit_collect::{counts, io, metrics, probes, quoting, sparklines, supervisor, tiers, timeutil};
 
 fn usage() -> i32 {
     eprintln!(
@@ -295,7 +295,7 @@ fn cmd_sparklines(args: &[String]) -> i32 {
     use std::io::Read;
     let mut stdin = String::new();
     let _ = std::io::stdin().read_to_string(&mut stdin);
-    if let Some(out) = sparklines::render(&stdin, args.first().map_or("", String::as_str), timeutil::now_secs()) {
+    if let Some(out) = sparklines::render(&stdin, args.first().map_or("", String::as_str), timeutil::now_secs(), &counts::from_config()) {
         print!("{out}");
     }
     0

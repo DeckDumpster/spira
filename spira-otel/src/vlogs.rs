@@ -193,6 +193,9 @@ fn encode(s: &str) -> String {
     s.bytes().map(|b| if b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.') { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
+/// One group of a `stats by` count: its field values and the count.
+pub type Group = (BTreeMap<String, String>, u64);
+
 /// The one LogsQL reader: `filter` is the part of a query before the `| stats`.
 pub struct Logs {
     addr: String,
@@ -228,7 +231,7 @@ impl Logs {
     }
 
     /// How many records match `filter`, per combination of the fields `by`; a record lacking a field counts under "".
-    pub fn count_groups(&self, filter: &str, by: &[&str]) -> Result<Vec<(BTreeMap<String, String>, u64)>, LogsError> {
+    pub fn count_groups(&self, filter: &str, by: &[&str]) -> Result<Vec<Group>, LogsError> {
         let mut out = vec![];
         for row in self.rows(&format!("{filter} | stats by ({}) count() as n", by.join(", ")))? {
             let keys = by.iter().map(|k| (k.to_string(), row.get(*k).and_then(Value::as_str).unwrap_or("").to_string())).collect();
