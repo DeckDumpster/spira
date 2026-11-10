@@ -314,15 +314,6 @@ fn register(a: &AddArgs, land_ref: &str, t: &Targets, did: &mut Vec<String>) -> 
     Ok(())
 }
 
-const LANES: [&str; 6] = [
-    "plan",
-    "incident",
-    "groom",
-    "mimir-sweep",
-    "spike",
-    "czar-trigger",
-];
-
 fn map_row_index(text: &str, name: &str) -> Option<(usize, repos::Row)> {
     text.lines()
         .enumerate()
@@ -378,11 +369,11 @@ pub fn set(name: &str, field: &str, value: &str, t: &Targets) -> Result<(String,
         "format" => std::mem::replace(&mut row.format, value.to_string()),
         "gate" => std::mem::replace(&mut row.gate, value.to_string()),
         "lanes" => {
-            if value.is_empty() || !value.split(',').all(|l| LANES.contains(&l)) {
-                return Err(format!(
-                    "repo set: lanes must be a comma list of {}, not {value:?}",
-                    LANES.join(", ")
-                ));
+            let word = |l: &str| {
+                !l.is_empty() && l.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+            };
+            if !value.split(',').all(word) {
+                return Err(format!("repo set: lanes must be a comma list of lane names, not {value:?}"));
             }
             std::mem::replace(&mut row.lanes, value.to_string())
         }
