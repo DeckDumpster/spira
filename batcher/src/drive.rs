@@ -283,7 +283,8 @@ const FLIP_JOB_BASE: u64 = 1 << 40;
 
 /// A flip is never shipped (law-a-test-that-flips-is-deleted): each flaky suite must run green
 /// alone twice on the round tree, alone on the base, and alone on every member that touches
-/// it; then it is deleted from the round. Any other result is a real red and blocks the round.
+/// it; then it is deleted from the round. A plain run that is red while its twin is green is
+/// the suite flipping again, which the law deletes; any other red blocks the round.
 fn remove_flips<R: RoundRunner, O: RoundOps>(
     runner: &mut R,
     ops: &mut O,
@@ -312,6 +313,9 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
     }
     let suite_of: BTreeMap<u64, String> = queue.iter().map(|j| (j.id, j.suite.clone())).collect();
     let base_jobs: BTreeSet<u64> = queue.iter().filter(|j| j.purpose == Purpose::Base).map(|j| j.id).collect();
+    let plain_jobs: BTreeSet<u64> = queue.iter().filter(|j| j.purpose == Purpose::Plain).map(|j| j.id).collect();
+    let mut plain_green: BTreeSet<String> = BTreeSet::new();
+    let mut plain_red: BTreeSet<String> = BTreeSet::new();
     let lone = members.len() == 1;
     let mut base_green = false;
     let mut faulted = false;
@@ -335,11 +339,21 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
         for (id, r) in runner.poll_jobs() {
             if let Some(suite) = suite_of.get(&id) {
                 running = running.saturating_sub(1);
-                if r != JobResult::Green {
-                    unproven.insert(suite.clone());
-                    faulted |= r == JobResult::Fault;
-                } else {
-                    base_green |= base_jobs.contains(&id);
+                let plain = plain_jobs.contains(&id);
+                match r {
+                    JobResult::Green => {
+                        base_green |= base_jobs.contains(&id);
+                        if plain {
+                            plain_green.insert(suite.clone());
+                        }
+                    }
+                    JobResult::Red if plain => {
+                        plain_red.insert(suite.clone());
+                    }
+                    _ => {
+                        unproven.insert(suite.clone());
+                        faulted |= r == JobResult::Fault;
+                    }
                 }
             }
         }
@@ -347,6 +361,7 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
             runner.wait();
         }
     }
+    unproven.extend(plain_red.into_iter().filter(|s| !plain_green.contains(s)));
     if !unproven.is_empty() {
         let reds: Vec<String> = unproven.into_iter().collect();
         return Err(NotAFlip { reds, member_owns: base_green && !faulted });
@@ -839,6 +854,8 @@ pub(crate) mod tests {
         pub dur: BTreeMap<String, u64>,
         pub red: RedFn,
         pub flaky: BTreeSet<String>,
+        /// Suites whose first flip-proof run on the whole round tree is red, once.
+        pub flips_again: BTreeSet<String>,
         pub members: Vec<String>,
         pub main: Vec<(String, u64, bool)>,
         pub main_kind: Vec<(MainKind, Vec<String>)>,
@@ -882,6 +899,7 @@ pub(crate) mod tests {
                 dur: BTreeMap::new(),
                 red: Box::new(red),
                 flaky: BTreeSet::new(),
+                flips_again: BTreeSet::new(),
                 members: vec![],
                 main: vec![],
                 main_kind: vec![],
@@ -1013,7 +1031,8 @@ pub(crate) mod tests {
             }
             self.first_launch.get_or_insert(self.t);
             let tree: BTreeSet<String> = self.members.iter().filter(|m| !job.removal.contains(m)).cloned().collect();
-            let green = self.verdict(&job.suite, &tree);
+            let flips_again = job.id >= FLIP_JOB_BASE && job.purpose == Purpose::Plain && self.flips_again.remove(&job.suite);
+            let green = !flips_again && self.verdict(&job.suite, &tree);
             self.jobs.push((job.clone(), self.t + self.job_secs, if green { JobResult::Green } else { JobResult::Red }));
             Ok(())
         }
@@ -1378,6 +1397,18 @@ pub(crate) mod tests {
         assert_eq!(proofs.len(), 4, "two alone, the base, one touching member: {proofs:?}");
         assert!(proofs.contains(&vec!["m1".to_string(), "m3".to_string()]), "the touching member alone: {proofs:?}");
         assert!(proofs.contains(&vec!["m1".to_string(), "m2".to_string(), "m3".to_string()]), "the base alone: {proofs:?}");
+    }
+
+    #[test]
+    fn a_flip_that_flips_again_in_one_proof_run_is_still_a_flip_and_does_not_block_the_round() {
+        let mut f = Fake::new(|_, _| false);
+        f.flaky.insert("test-04.sh".into());
+        f.flips_again.insert("test-04.sh".into());
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(6), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3), "{end:?}");
+        assert_eq!(ops.deleted, vec![vec!["test-04.sh".to_string()]]);
+        assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
     #[test]
