@@ -4899,6 +4899,10 @@ fn abandon(
         }
     };
     let (kv, reason) = match abandoned {
+        Some(_) if rounds_dir(&c).join(format!("{batch}.result")).exists() => {
+            w.out(format!("queue.sh {label}: round {batch} is already abandoned and closed — nothing written"));
+            return OK;
+        }
         Some(kv) => (kv, reason),
         None => match load(w, label, &c, batch) {
             Ok(kv) => match considered_abandon(w, label, &kv, reason) {
@@ -4973,6 +4977,18 @@ fn void_stacked(w: &World, label: &str, c: &Ctx, path: &Path, parent: &str) -> R
     rc
 }
 
+/// A driver still holding the round's certify lock was not stopped by the abandon; it ends at its
+/// next poll, when it reads the abandon marker.
+fn name_surviving_driver(w: &World, label: &str, c: &Ctx, batch: &str) {
+    if crate::lock::certify_held(&c.s.queue_dir, &c.r.name, batch) {
+        let holder = crate::lock::certify_holder(&c.s.queue_dir, &c.r.name, batch);
+        w.err(format!(
+            "queue.sh {label}: WARNING — a driver of round {batch} could not be stopped ({}); it ends at its next poll",
+            if holder.is_empty() { "holder unrecorded" } else { &holder }
+        ));
+    }
+}
+
 fn close_abandoned(
     w: &World,
     label: &str,
@@ -4984,9 +5000,11 @@ fn close_abandoned(
 ) -> i32 {
     let batch = kv.get("batch_id").unwrap_or("");
     let members = kv.members();
+    spira_config::round_ended::mark_abandoned(&c.s.run, batch);
     let stopped = match w.scripts.stop_round_legs(&c.r.name, batch) {
         Ok(units) => units,
         Err(e) => {
+            spira_config::round_ended::clear_abandoned(&c.s.run, batch);
             w.err(format!("queue.sh {label}: round {batch} still has a leg running ({e}) — the round stays open and its tree is kept"));
             return FAIL;
         }
@@ -5005,12 +5023,14 @@ fn close_abandoned(
     match lc_abandon(w, batch, LC_ACTOR, &why) {
         Ok(()) => {
             w.out(format!("queue.sh {label}: {batch} abandoned on spira-lc"));
+            name_surviving_driver(w, label, c, batch);
             crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, batch);
         }
         Err((1, out)) if out.is_empty() => w.err(format!(
             "queue.sh {label}: spira-lc has no batch row for {batch}"
         )),
         Err((rc, out)) => {
+            spira_config::round_ended::clear_abandoned(&c.s.run, batch);
             w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for {batch} (rc={rc}): {out} — the round stays open"));
             return FAIL;
         }

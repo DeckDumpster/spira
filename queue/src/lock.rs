@@ -198,6 +198,16 @@ pub fn certify_holder(queue_dir: &Path, repo: &str, batch: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Whether a process holds the batch's certify lock right now.
+pub fn certify_held(queue_dir: &Path, repo: &str, batch: &str) -> bool {
+    let path = queue_dir.join(repo).join(format!("certify-{batch}.lock"));
+    let Ok(f) = OpenOptions::new().write(true).open(&path) else {
+        return false;
+    };
+    // SAFETY: flock on a descriptor we own; no memory is shared with the kernel call.
+    unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) != 0 }
+}
+
 /// Deletes the certify lock of a round that has ended. A lock another process holds is kept:
 /// unlinking it would let a second certify take a fresh file beside the held one.
 pub fn remove_certify_lock(queue_dir: &Path, repo: &str, batch: &str) -> bool {

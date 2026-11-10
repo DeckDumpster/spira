@@ -373,6 +373,7 @@ impl CloneMembers for RoundEnd {
             }
             RoundEnd::Blocked(w) => format!("blocked: {w}"),
             RoundEnd::Emptied(w) => format!("emptied: {w}"),
+            RoundEnd::Abandoned => "abandoned".to_string(),
         }
     }
 }

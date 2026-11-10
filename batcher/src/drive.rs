@@ -22,6 +22,8 @@ pub struct MainPoll {
 pub enum MainEnd {
     /// The suites ran (green or red).
     Ran,
+    /// The round was abandoned while it ran; no verdict is owed.
+    Abandoned,
     /// The tree did not build (testenv rc 4): nothing to attribute suite by suite.
     WorkspaceBuild,
 }
@@ -56,6 +58,10 @@ pub trait RoundRunner {
     /// Seconds.
     fn now(&self) -> u64;
     fn wait(&mut self);
+    /// The round was abandoned: nothing drives it any more, and nothing more may be launched.
+    fn abandoned(&mut self) -> bool {
+        false
+    }
     /// The low-pass filter (lint, a fence) that ended the corpus pass before any suite ran, if one did.
     fn filter_red(&mut self) -> Option<FilterRed> {
         None
@@ -205,6 +211,11 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
     let mut green_suites = std::collections::BTreeSet::new();
     let mut main_end_at = None;
     loop {
+        if runner.abandoned() {
+            runner.stop_main()?;
+            let now = runner.now();
+            return Ok(Settled { preempt: None, decision: Decision::default(), end: MainEnd::Abandoned, main_end_at: now, settled_at: now, filter: None });
+        }
         let poll = runner.poll_main()?;
         let now = runner.now();
         for (suite, green) in poll.results {
@@ -243,6 +254,9 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
             a.on_job_result(id, r, now);
         }
         for job in a.next_jobs() {
+            if runner.abandoned() {
+                break;
+            }
             if let Err(e) = runner.launch(&job) {
                 eprintln!("batcher: attribution job {} ({} without {:?}) not launched: {e}", job.id, job.suite, job.removal);
                 a.on_job_result(job.id, JobResult::Fault, now);
@@ -402,6 +416,8 @@ pub enum RoundEnd {
     Blocked(String),
     /// Nothing lands, but every culprit was ejected: the pool holds only survivors to cut again.
     Emptied(String),
+    /// Someone else abandoned the round: it is over, and this driver writes no verdict.
+    Abandoned,
 }
 
 /// A member stacked on one that leaves leaves with it.
@@ -615,12 +631,16 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     let mut image_retried = false;
     let t0 = runner.now();
     for iteration in 0..bound {
+        if runner.abandoned() {
+            return Ok(RoundEnd::Abandoned);
+        }
         suites = present_on(&*ops, suites, &start, &members);
         if suites.is_empty() {
             return Ok(RoundEnd::Land { members, attribution_secs: worst });
         }
         let s = match drive(runner, &*ops, kind, &suites, &members, budget) {
             Ok(s) => s,
+            Err(_) if runner.abandoned() => return Ok(RoundEnd::Abandoned),
             Err(e) => match eject_runner_abort(runner, ops, &members, &e)? {
                 Some(next) if next.is_empty() => return Ok(RoundEnd::Emptied("testenv died on a signal and every member left".into())),
                 Some(next) => {
@@ -632,6 +652,9 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                 None => return Err(e),
             },
         };
+        if s.end == MainEnd::Abandoned {
+            return Ok(RoundEnd::Abandoned);
+        }
         if s.end == MainEnd::WorkspaceBuild {
             let output = runner.build_output();
             if buildattr::is_image_build_red(&output) {
@@ -884,6 +907,9 @@ pub(crate) mod tests {
         pub refuses_removals: bool,
         /// Suite → the members whose diff adds it: a run naming it on a tree holding none of them dies as round-vm does.
         pub added_by: BTreeMap<String, Vec<String>>,
+        /// The round is abandoned from this many main runs started, or from this time.
+        pub abandoned_after_starts: Option<usize>,
+        pub abandoned_at: Option<u64>,
     }
 
     pub type BuildFn = Box<dyn Fn(&BTreeSet<String>) -> Option<String>>;
@@ -921,6 +947,8 @@ pub(crate) mod tests {
                 probes: vec![],
                 refuses_removals: false,
                 added_by: BTreeMap::new(),
+                abandoned_after_starts: None,
+                abandoned_at: None,
             }
         }
         fn verdict(&mut self, suite: &str, tree: &BTreeSet<String>) -> bool {
@@ -1047,6 +1075,9 @@ pub(crate) mod tests {
         }
         fn now(&self) -> u64 {
             self.t
+        }
+        fn abandoned(&mut self) -> bool {
+            self.abandoned_after_starts.is_some_and(|n| self.main_kind.len() >= n) || self.abandoned_at.is_some_and(|t| self.t >= t)
         }
         fn wait(&mut self) {
             self.use_log.push((self.t, self.corpus_running(), self.jobs_running()));
@@ -1731,6 +1762,46 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
         assert_eq!(ops.owner_flags, vec![("m1".to_string(), true)]);
         assert!(f.probes.is_empty());
+    }
+
+    #[test]
+    fn an_abandoned_round_ends_within_one_poll_and_launches_no_further_leg() {
+        let mut f = Fake::new(breaks("m2", "test-00.sh"));
+        f.maxpar = 4;
+        f.dur.insert("test-00.sh".into(), 2);
+        f.abandoned_at = Some(1);
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(40), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(end, RoundEnd::Abandoned);
+        assert!(f.t <= 2, "ended at t={}, abandoned at t=1", f.t);
+        assert!(f.jobs.is_empty(), "no attribution job launched");
+        assert_eq!(f.main_kind.len(), 1);
+        assert_eq!(f.stopped, 1, "the running leg was stopped");
+        assert!(ops.ejected.is_empty() && ops.recorded.is_empty());
+    }
+
+    #[test]
+    fn a_round_abandoned_while_its_image_build_is_retried_starts_no_second_run() {
+        let mut f = Fake::new(|_, _| false);
+        f.compiler = Some(Box::new(|_| Some(IMAGE_RED.to_string())));
+        f.abandoned_after_starts = Some(1);
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(8), three(), Budget { slots: 4, maxpar: 2 }).unwrap();
+        assert_eq!(end, RoundEnd::Abandoned);
+        assert_eq!(f.main_kind.len(), 1, "the retry leg never started");
+        assert!(ops.incidents.is_empty(), "an abandoned round files nothing");
+    }
+
+    #[test]
+    fn a_runner_fault_on_an_abandoned_round_is_not_probed_for_a_culprit() {
+        let mut f = Fake::new(|_, _| false);
+        f.aborts_with = Some(("m1".into(), "testenv died on a signal".into()));
+        f.bisects = true;
+        f.abandoned_after_starts = Some(1);
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(8), three(), Budget { slots: 4, maxpar: 2 }).unwrap();
+        assert_eq!(end, RoundEnd::Abandoned);
+        assert!(f.probes.is_empty(), "no probe leg launched");
     }
 
     #[test]

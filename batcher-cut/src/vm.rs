@@ -957,6 +957,12 @@ impl RoundRunner for VmRunner<'_> {
     fn wait(&mut self) {
         std::thread::sleep(self.env.poll);
     }
+
+    fn abandoned(&mut self) -> bool {
+        self.batch
+            .as_deref()
+            .is_some_and(|b| spira_config::round_ended::is_ended(&self.env.run, b))
+    }
 }
 
 #[cfg(test)]
@@ -1419,5 +1425,46 @@ mod clear_results_tests {
                 && !sub.join("a.sh.result").exists()
         );
         assert!(d.join("b.sh.result").exists());
+    }
+}
+
+#[cfg(test)]
+mod abandon_tests {
+    use super::*;
+    use crate::io::{lifecycle_tests_env, Land, Repo};
+
+    fn repo(d: &std::path::Path) -> Repo {
+        Repo { name: "fx".into(), path: d.join("repo"), base: "main".into(), forge: PathBuf::new(), land: Land::Local }
+    }
+
+    #[test]
+    fn a_runner_reads_its_rounds_abandon_from_the_record_the_queue_writes() {
+        let d = testkit::TempDir::new("vm-abandoned");
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new())
+            .unwrap()
+            .in_batch(Some("b1"));
+        assert!(!r.abandoned());
+        spira_config::round_ended::mark_abandoned(d.path(), "b2");
+        assert!(!r.abandoned(), "another round's abandon is not this round's");
+        spira_config::round_ended::mark_abandoned(d.path(), "b1");
+        assert!(r.abandoned());
+    }
+
+    #[test]
+    fn a_driver_finding_its_round_ended_calls_queue_for_no_second_abandon() {
+        let d = testkit::TempDir::new("vm-no-second-abandon");
+        let mut env = lifecycle_tests_env(d.path());
+        let calls = d.path().join("queue-calls");
+        env.queue_bin = d.path().join("queue-stub");
+        testkit::write_exe(&env.queue_bin, &format!("#!/bin/sh\necho \"$@\" >> {}\n", calls.display()));
+        let repo = repo(d.path());
+        crate::io::round_abandon(&env, &repo, "b1", "x", "error");
+        assert!(calls.exists(), "an open round is abandoned through queue");
+        std::fs::remove_file(&calls).unwrap();
+        spira_config::round_ended::mark_abandoned(d.path(), "b1");
+        crate::io::round_abandon(&env, &repo, "b1", "x", "error");
+        assert!(!calls.exists(), "an ended round is never abandoned again");
     }
 }

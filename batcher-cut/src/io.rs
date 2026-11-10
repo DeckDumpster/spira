@@ -3054,6 +3054,10 @@ pub fn read_local_verdict(env: &Env, repo: &str) -> Option<(String, u64)> {
 /// The batcher abandons only after it has ejected every member it can implicate, so its abandon
 /// of a red round is a considered one; `queue round abandon` refuses any other.
 pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str) {
+    if spira_config::round_ended::is_ended(&env.run, batch) {
+        println!("batcher {}: round {batch} has already ended — no second abandon", repo.name);
+        return;
+    }
     let considered =
         format!("the batcher's {cause} abandon, after ejecting every member it could implicate");
     let vars = [("QUEUE_ABANDON_CONSIDERED", considered.as_str())];
@@ -3821,7 +3825,12 @@ fn drive_marker(env: &Env, repo: &str, batch: &str) -> Option<fs::File> {
         .truncate(false)
         .open(path)
         .ok()?;
-    (unsafe { flock(f.as_raw_fd(), LOCK_EX | LOCK_NB) } == 0).then_some(f)
+    if unsafe { flock(f.as_raw_fd(), LOCK_EX | LOCK_NB) } != 0 {
+        return None;
+    }
+    let _ = f.set_len(0);
+    let _ = (&f).write_all(format!("pid={} verb=batcher cut\n", std::process::id()).as_bytes());
+    Some(f)
 }
 
 /// Whether a `round certify` of `batch` is running, asked of the lock it holds for its whole run.
