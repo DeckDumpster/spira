@@ -142,6 +142,7 @@ fn post(addr: &str, body: &str) -> std::io::Result<()> {
 }
 
 /// The kind a lifecycle transition is shipped under, on the stream `lifecycle.<machine>`; the counts read them back.
+/// VictoriaLogs stores the `_msg_field` of an insert as `_msg`, so the kind is filtered as `_msg`, never as `kind_tag`.
 pub const TRANSITION_KIND: &str = "transition";
 
 /// One lifecycle transition as shipped: `at` in epoch seconds.
@@ -154,13 +155,13 @@ pub fn transition_record(machine: &str, event: &str, from: &str, to: &str, bead_
 
 /// The LogsQL filter for every transition within the last `window_secs`.
 pub fn transitions_window(window_secs: u64) -> String {
-    format!("_time:{window_secs}s kind_tag:{TRANSITION_KIND}")
+    format!("_time:{window_secs}s _msg:{TRANSITION_KIND}")
 }
 
 /// The LogsQL filter for transitions of `machine` within the last `window_secs`, optionally into state `to`.
 pub fn transitions_filter(machine: &str, to: Option<&str>, window_secs: u64) -> String {
     let quote = |v: &str| format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""));
-    let mut q = format!("_time:{window_secs}s kind_tag:{TRANSITION_KIND} machine:{}", quote(machine));
+    let mut q = format!("_time:{window_secs}s _msg:{TRANSITION_KIND} machine:{}", quote(machine));
     if let Some(to) = to {
         q.push_str(&format!(" to:{}", quote(to)));
     }
@@ -499,8 +500,8 @@ mod tests {
 
     #[test]
     fn a_transition_filter_quotes_its_values_and_a_record_carries_the_fields_it_filters_on() {
-        assert_eq!(transitions_filter("bead", Some("CLOSED"), 86_400), "_time:86400s kind_tag:transition machine:\"bead\" to:\"CLOSED\"");
-        assert_eq!(transitions_filter("a\"b", None, 60), "_time:60s kind_tag:transition machine:\"a\\\"b\"");
+        assert_eq!(transitions_filter("bead", Some("CLOSED"), 86_400), "_time:86400s _msg:transition machine:\"bead\" to:\"CLOSED\"");
+        assert_eq!(transitions_filter("a\"b", None, 60), "_time:60s _msg:transition machine:\"a\\\"b\"");
         let r = transition_record("bead", "Claim", "READY", "WORKING", "sp-a", 7, "dwarf-x");
         for (k, v) in [("machine", "bead"), ("from", "READY"), ("to", "WORKING"), ("bead_id", "sp-a"), ("actor", "dwarf-x"), ("kind_tag", "transition")] {
             assert_eq!(r[k], v, "{k}");
@@ -508,6 +509,15 @@ mod tests {
         assert_eq!(r["at"], 7);
         assert_eq!(r["stream"], "lifecycle.bead");
         assert_eq!(transition_record("batch", "Cut", "OPEN", "CI_RUNNING", "", 7, "a")["stream"], "lifecycle.batch");
+    }
+
+    #[test]
+    fn a_transition_filter_names_the_message_field_not_the_field_the_insert_path_renames() {
+        let msg_field = INSERT_PATH.split("_msg_field=").nth(1).unwrap();
+        assert_eq!(msg_field, "kind_tag");
+        for q in [transitions_filter("bead", None, 60), transitions_window(60)] {
+            assert!(q.contains(&format!("_msg:{TRANSITION_KIND}")) && !q.contains(&format!("{msg_field}:")), "{q}");
+        }
     }
 
     #[test]

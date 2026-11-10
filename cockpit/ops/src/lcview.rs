@@ -906,6 +906,15 @@ pub fn closed_24h(logs: &spira_otel::vlogs::Logs) -> Result<Closed24h, String> {
     let into = |machine: &str, to: &str| logs.count(&transitions_filter(machine, Some(to), DAY_SECS)).map(|n| n as usize).map_err(|e| e.to_string());
     Ok(Closed24h { landed: into("bead", "LANDED")?, dropped: into("bead", "DROPPED")?, superseded: into("bead", "SUPERSEDED")?, batches_landed: into("batch", "LANDED")? })
 }
+/// The applied bead moves of the last hour, per (from, to), counted by VictoriaLogs, as `ops_edges` rows.
+pub fn applied_edges_1h(logs: &spira_otel::vlogs::Logs) -> Result<Vec<EdgeRow>, String> {
+    use spira_otel::vlogs::transitions_filter;
+    let groups = logs.count_groups(&transitions_filter("bead", None, 3_600), &["from", "to"]).map_err(|e| e.to_string())?;
+    Ok(groups
+        .into_iter()
+        .map(|(k, n)| EdgeRow { kind: "applied".into(), from_state: k["from"].clone(), to_state: Some(k["to"].clone()), n_1h: n as i64, ..Default::default() })
+        .collect())
+}
 const NEEDS_REWORK_EXIT: [&str; 3] = ["SUBMITTED", "CERTIFIED", "IN_DELIVERY"];
 const OPEN_BATCH: [&str; 5] = ["OPEN", "CI_RUNNING", "GREEN", "ATTRIBUTING", "REBUILDING"];
 const REFUSED_SHOWN: usize = 4;
@@ -2774,10 +2783,10 @@ BATCH
     }
 
     fn closed_fixture(landed: u64, dropped: u64, superseded: u64, batches: u64) -> spira_otel::vlogs::fake::FakeLogs {
-        use spira_otel::vlogs::{fake::Script, transitions_filter};
+        use spira_otel::vlogs::fake::Script;
         let logs = spira_otel::vlogs::fake::FakeLogs::start();
         for (machine, to, n) in [("bead", "LANDED", landed), ("bead", "DROPPED", dropped), ("bead", "SUPERSEDED", superseded), ("batch", "LANDED", batches)] {
-            logs.answer(&transitions_filter(machine, Some(to), 86_400), Script { status: 200, body: format!("{{\"n\":\"{n}\"}}\n"), hang: false });
+            logs.answer(&format!("_time:86400s _msg:transition machine:\"{machine}\" to:\"{to}\""), Script { status: 200, body: format!("{{\"n\":\"{n}\"}}\n"), hang: false });
         }
         logs
     }
@@ -2802,8 +2811,27 @@ BATCH
         assert_eq!(v.terminal, "SUPERSEDED 3 · DROPPED 2");
         assert_eq!(v.batch.iter().find(|b| b.name == "LANDED").map(|b| b.count), Some(4));
         let asked = logs.queries();
-        assert!(asked.iter().all(|q| q.starts_with("_time:86400s kind_tag:transition machine:")) && asked.iter().any(|q| q.contains("to:\"LANDED\"")), "{asked:?}");
+        assert!(asked.iter().all(|q| q.starts_with("_time:86400s _msg:transition machine:")) && asked.iter().any(|q| q.contains("to:\"LANDED\"")), "{asked:?}");
         assert!(plain(&render(&v, 120)).contains("terminal 24h    SUPERSEDED 3 · DROPPED 2"));
+    }
+
+    #[test]
+    fn the_edge_rates_and_the_landed_count_read_transitions_as_the_insert_path_stores_them() {
+        use spira_otel::vlogs::fake::Script;
+        let logs = spira_otel::vlogs::fake::FakeLogs::start();
+        logs.answer("_time:3600s _msg:transition machine:\"bead\" | stats by (from, to)", Script { status: 200, body: "{\"from\":\"IN_DELIVERY\",\"to\":\"LANDED\",\"n\":\"10\"}\n{\"from\":\"READY\",\"to\":\"WORKING\",\"n\":\"4\"}\n".into(), hang: false });
+        logs.answer("_time:86400s _msg:transition machine:\"bead\" to:\"LANDED\"", Script { status: 200, body: "{\"n\":\"10\"}\n".into(), hang: false });
+        let reader = spira_otel::vlogs::Logs::new(&logs.url()).unwrap();
+        let mut s = healthy();
+        s.edges = applied_edges_1h(&reader).unwrap();
+        s.closed = Some(closed_24h(&reader).unwrap());
+        let f = plain(&render(&view(&s), 120));
+        let rate = |from: &str, to: &str| s.edges.iter().find(|e| e.from_state == from && e.to_state.as_deref() == Some(to)).map(|e| e.n_1h);
+        assert_eq!((rate("IN_DELIVERY", "LANDED"), rate("READY", "WORKING")), (Some(10), Some(4)));
+        assert!(squash(&f).contains("LANDED 10 last 24h"), "{f}");
+        let v = view(&s);
+        let working = v.machine.iter().find(|m| m.name == "READY").unwrap();
+        assert!(working.edges.iter().any(|e| e.to == "WORKING" && e.rate_1h == 4), "{:?}", working.edges);
     }
 
     #[test]
