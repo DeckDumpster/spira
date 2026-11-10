@@ -124,6 +124,7 @@ struct State {
     release: String,
     timeout: String,
     replayed: bool,
+    replay_note: String,
 }
 
 pub struct Trial<'w, W: World> {
@@ -483,6 +484,7 @@ impl<'w, W: World> Trial<'w, W> {
             {
                 self.s.suite = red.suite;
                 self.s.replayed = true;
+                self.s.replay_note = format!(" replayed=key:{}@{}", self.s.key, red.when);
                 return v(red.status, &red.reason, format!(
                     "gate: this exact tree was already judged red by {name}'s gate at {} ({}) — repeated, not re-run.\ngate: key {} — same tree, same changed files, same command, same harness.\n{}",
                     red.when, red.by, self.s.key, red.msg));
@@ -1692,7 +1694,7 @@ impl<'w, W: World> Trial<'w, W> {
         let Some(p) = crate::redcache::path(&self.s.verdict_dir, &self.s.key) else { return };
         let (Some(dir), Some(name)) = (p.parent(), p.file_name().and_then(|n| n.to_str())) else { return };
         w.mkdir_p(dir);
-        w.write_atomic(dir, name, &crate::redcache::render(vd.status, &vd.reason, &self.s.suite, &w.utc(), w.stamp(), &self.s.caller, &vd.msg));
+        w.write_atomic(dir, name, &crate::redcache::render(vd.status, &vd.reason, &self.s.suite, &w.utc(), w.stamp(), &self.s.caller, &self.s.branch_tip, &vd.msg));
     }
 
     fn certify(&self) {
@@ -1837,7 +1839,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.append(
                 &self.s.gate_log,
                 &format!(
-                    "{} {} {} waited={}s ran={}s rc={} {}{}{}\n",
+                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}\n",
                     w.utc(),
                     self.s.repo_name,
                     self.a.branch,
@@ -1846,6 +1848,7 @@ impl<'w, W: World> Trial<'w, W> {
                     vd.status,
                     vd.reason,
                     meter_suffix(&self.s.compose, &self.s.phases, self.s.queue_secs),
+                    self.s.replay_note,
                     if self.s.waited_ms > 0 { format!(" waited_ms={}", self.s.waited_ms) } else { String::new() }
                 ),
             );

@@ -629,6 +629,11 @@ impl World for Real {
     }
     fn harness_hash(&self) -> Option<String> {
         let mut buf = Vec::new();
+        // The release is immutable, so its identity covers every composer, fence and tool it
+        // carries — not only the gate binary a change may leave byte-identical.
+        if let Some(rel) = std::env::var_os(spira_config::RELEASE_ENV).and_then(|r| fs::canonicalize(r).ok()) {
+            buf.extend(rel.as_os_str().as_encoded_bytes());
+        }
         for f in ["gate.sh", "exclude.sh"] {
             if let Ok(mut h) = File::open(self.home.join(f)) {
                 let _ = h.read_to_end(&mut buf);

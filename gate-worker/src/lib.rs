@@ -185,7 +185,7 @@ impl Worker<'_> {
         if run.outcome == GateOutcome::NoVerdict {
             (self.log)(&format!("gate-worker: {} — not the branch's fault ({})", job.branch, run.reason_or("unspecified")));
         }
-        self.queue.complete(self.slot, &Done { job: job.clone(), run, started_ms, finished_ms }).is_ok()
+        self.queue.complete(self.slot, &Done { job: job.clone(), run, started_ms, finished_ms, gate: String::new() }).is_ok()
     }
 }
 
