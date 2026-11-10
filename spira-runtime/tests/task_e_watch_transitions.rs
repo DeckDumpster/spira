@@ -499,10 +499,10 @@ fn a_round_open_in_another_repo_does_not_suppress_this_repos_stall() {
 #[test]
 fn every_non_terminal_batch_state_counts_as_an_open_round_for_its_repo() {
     let row = |repo: &str, state: &str| serde_json::json!({"repo": repo, "state": state});
-    let mut rows: Vec<_> = ["OPEN", "CI_RUNNING", "REBUILDING", "GREEN", "LANDING", "DEPLOYING"].iter().map(|s| row("spira", s)).collect();
+    let mut rows: Vec<_> = ["OPEN", "CI_RUNNING", "ATTRIBUTING", "REBUILDING", "GREEN", "LANDING", "DEPLOYING"].iter().map(|s| row("spira", s)).collect();
     rows.extend([row("spira", "LANDED"), row("spira", "ABANDONED"), row("other", "SETTLED"), row("other", "DISCARDED"), row("other", "OPEN"), serde_json::json!({"state": "OPEN"})]);
     let open = spira_runtime::world::open_rounds_by_repo(&rows);
-    assert_eq!(open, BTreeMap::from([("spira".to_string(), 6), ("other".to_string(), 1)]));
+    assert_eq!(open, BTreeMap::from([("spira".to_string(), 7), ("other".to_string(), 1)]));
 }
 
 #[test]
@@ -525,4 +525,14 @@ fn the_all_repos_row_still_pages_when_no_round_is_open_and_work_waits_past_the_b
     thin.open_rounds = Some(rounds_in("spira", 1));
     let one: Vec<String> = spira_runtime::tasks::e::watch_transitions::stalls(&thin, now, &cfg).into_iter().map(|x| x.key()).collect();
     assert!(!one.contains(&"SUBMITTED→IN_DELIVERY spira".to_string()) && one.contains(&"SUBMITTED→IN_DELIVERY other".to_string()), "{one:?}");
+}
+
+#[test]
+fn a_round_in_any_phase_suppresses_the_stall_of_its_repo_and_the_all_repos_row() {
+    for phase in ["OPEN", "CI_RUNNING", "ATTRIBUTING", "REBUILDING", "GREEN"] {
+        let (mut s, now) = submitted_ago(20, 0, 24);
+        s.open_rounds = Some(spira_runtime::world::open_rounds_by_repo(&[serde_json::json!({"repo": "spira", "state": phase})]));
+        let keys = five_minute_cut_bound(&s, now);
+        assert!(!keys.iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "{phase}: {keys:?}");
+    }
 }
