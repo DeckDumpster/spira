@@ -65,7 +65,7 @@ impl Handler for ReadinessDependents {
         if ev.kind.tag == TICK {
             let input = serde_json::to_string(&Pass { through: carry.through, changed: 0 }).unwrap_or_default();
             return vec![
-                Command::Effect(EffectSpec { name: RUN.into(), input, deadline_ms: DEADLINE_MS }),
+                Command::Effect(EffectSpec::by_input(RUN, input, DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }

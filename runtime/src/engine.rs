@@ -1,6 +1,7 @@
-//! The in-process executor's core, synchronous and clock-agnostic: append first, then
-//! dispatch, then advance the cursor. Every id it writes is derived from the event that
-//! caused it, so a replay after a crash at any point appends nothing twice.
+//! The in-process executor's core, synchronous and clock-agnostic: one FIFO of events, each
+//! dispatched to its handlers, then one store transaction for the turn. Every id it writes is
+//! derived from the event that caused it. History is shipped, never read back; a restart finds
+//! only what the store kept (carried state, open effects, unfired schedule rows, the halt).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -10,7 +11,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::event::*;
-use crate::journal::{Journal, Offset, Poison, ScheduleRow};
+use crate::journal::{is_outcome, EffectRow, Journal, Poison, ScheduleRow, StateRow, Turn, CARRY_KEY, HALTED_KEY, HELD_KEY, SCHEDULER_TASK};
 use crate::marker::{Mark, Marker, NullMarker};
 use crate::offload::Busy;
 use crate::ports::Clock;
@@ -18,11 +19,7 @@ use crate::scheduler::Scheduler;
 use crate::wide::{Fields, NullSink, TurnRss, Value, Wide, WideSink};
 use crate::{Result, RuntimeError};
 
-const BATCH: usize = 256;
-
-type Rows = Vec<(Offset, Event)>;
-
-/// A stream's poison state is asked again after this long, or when the journal brings events.
+/// A stream's poison state is asked again after this long, or when events were dispatched.
 const POISON_RECHECK_MS: u64 = 300_000;
 
 /// Memory-only events a stream keeps in the projection; older ones are dropped.
@@ -57,6 +54,8 @@ impl Outcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingEffect {
     pub key: String,
+    /// The task that asked.
+    pub task: String,
     pub stream: StreamKey,
     pub spec: EffectSpec,
     pub deadline_at: u64,
@@ -73,10 +72,6 @@ struct RequestBody {
     task: Option<String>,
 }
 
-fn is_outcome(tag: &str) -> bool {
-    matches!(tag, EFFECT_SUCCEEDED | EFFECT_FAILED | EFFECT_TIMED_OUT)
-}
-
 #[derive(Serialize, Deserialize)]
 struct HeldBody {
     stream: StreamKey,
@@ -84,8 +79,8 @@ struct HeldBody {
     spec: EffectSpec,
 }
 
-/// The `applied` key under which a held write's release is recorded.
-const RELEASE: &str = "scheduler.release";
+/// The ids of submitted events remembered, so the same id submitted twice dispatches once.
+const SUBMITTED_KEEP: usize = 10_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum LastOutcome {
@@ -130,9 +125,20 @@ pub struct ClassStatus {
     pub refusals: u64,
 }
 
+/// What the event shipper has lost: a full queue drops, a failed POST counts, neither is retried.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct ShipStatus {
+    #[serde(rename = "ship.dropped")]
+    pub dropped: u64,
+    #[serde(rename = "ship.failed")]
+    pub failed: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SchedulerStatus {
     pub at: u64,
+    #[serde(flatten)]
+    pub ship: Option<ShipStatus>,
     pub halted: bool,
     pub held: usize,
     pub tasks: Vec<TaskStatus>,
@@ -178,21 +184,20 @@ pub struct Engine {
     attempts: BTreeMap<String, u32>,
     baseline: Vec<(String, Value)>,
     started: Instant,
-    cursor: Offset,
-    saved_cursor: Offset,
-    check_applied_below: Offset,
-    appended: bool,
     poison_seen: BTreeMap<StreamKey, bool>,
-    loaded: BTreeSet<StreamKey>,
-    local: VecDeque<Event>,
+    poison_cleared_at: u64,
+    /// Every event waiting for its handlers, in the order it was made; `true` is memory-only.
+    queue: VecDeque<(Event, bool)>,
+    queued_ids: BTreeSet<EventId>,
+    submitted: VecDeque<String>,
+    submitted_ids: BTreeSet<String>,
+    seq: u64,
     timers: BTreeMap<String, ScheduleRow>,
     memory_only: BTreeSet<String>,
     local_seq: u64,
-    foreign_poll_ms: u64,
-    next_read_at: u64,
-    poison_cleared_at: u64,
     halted: bool,
-    held: usize,
+    /// The writes held since the halt, each an [`EFFECT_HELD`] event, in the order they were held.
+    held: Vec<Event>,
     tracks: BTreeMap<String, Track>,
     owners: BTreeMap<String, String>,
     refusals: BTreeMap<String, u64>,
@@ -203,14 +208,36 @@ pub struct Engine {
     early: BTreeSet<EventId>,
     /// What the event being dispatched has had written on its stream so far; `true` is local.
     written: Vec<(Event, bool)>,
-    /// On a replay, what each event still to be dispatched had written on its stream before.
-    rewritten: BTreeMap<EventId, Vec<Event>>,
     /// The task that requested each effect not yet answered, as far as this run has seen.
     requesters: BTreeMap<String, String>,
     /// Effects an executor has taken and not yet started: waiting for a permit or a worker.
     /// Their deadline is not running, so `tick` never times them out.
     queued: BTreeSet<String>,
     rss: TurnRss,
+    /// Each task's newest own-stream emit per (stream, kind): the carry stored under [`CARRY_KEY`].
+    carries: BTreeMap<String, BTreeMap<(String, String), Event>>,
+    dirty_carry: BTreeSet<String>,
+    dirty_halt: bool,
+    /// What every state key last committed says, as [`carry_signature`] reads it: a key is
+    /// written only when this changes.
+    kept: BTreeMap<(String, String), String>,
+    /// The signatures of the state rows the turn in progress will commit.
+    staged: BTreeMap<(String, String), String>,
+    /// What the turn in progress will commit.
+    turn: Turn,
+    /// Requests whose row has committed: only these are offered to an executor.
+    committed: BTreeSet<String>,
+    /// The schedule row a fired event came from, and the request an outcome answers: both are
+    /// recorded in the turn that dispatches the event.
+    fire_of: BTreeMap<EventId, String>,
+    resolves: BTreeMap<EventId, String>,
+}
+
+/// What a carry says without the ids, causes and times of the events that carry it: the same
+/// state emitted again is no change, and writes nothing.
+fn carry_signature<'a>(events: impl Iterator<Item = &'a Event>) -> String {
+    let parts: Vec<(&str, &str, &str)> = events.map(|e| (e.stream.0.as_str(), e.kind.tag.as_str(), e.kind.body.as_str())).collect();
+    serde_json::to_string(&parts).unwrap_or_default()
 }
 
 fn mix(seed: u64, parts: &[&str]) -> u64 {
@@ -271,9 +298,8 @@ impl Engine {
         Self::open_with(journal, clock, regs, seed, BootRetry::once())
     }
 
-    /// Rebuild from the journal without reading its history: the effects still waiting for an
-    /// outcome, the schedule rows not yet fired, and the end of the journal. A stream's newest
-    /// `WINDOW` events are loaded when its first event is dispatched, memory-only or not.
+    /// Rebuild from what the store kept: each task's carry, the halt, the effects still waiting
+    /// for an outcome and the schedule rows not yet fired. No event is replayed.
     pub fn open_with(journal: Arc<dyn Journal>, clock: Arc<dyn Clock>, regs: Vec<Registration>, seed: u64, retry: BootRetry) -> Result<Self> {
         let mut e = Engine {
             journal,
@@ -291,21 +317,18 @@ impl Engine {
             attempts: BTreeMap::new(),
             baseline: vec![],
             started: Instant::now(),
-            cursor: 0,
-            saved_cursor: 0,
-            check_applied_below: 0,
-            appended: false,
             poison_seen: BTreeMap::new(),
-            loaded: BTreeSet::new(),
-            local: VecDeque::new(),
+            poison_cleared_at: 0,
+            queue: VecDeque::new(),
+            queued_ids: BTreeSet::new(),
+            submitted: VecDeque::new(),
+            submitted_ids: BTreeSet::new(),
+            seq: 0,
             timers: BTreeMap::new(),
             memory_only: BTreeSet::new(),
             local_seq: 0,
-            foreign_poll_ms: 0,
-            next_read_at: 0,
-            poison_cleared_at: 0,
             halted: false,
-            held: 0,
+            held: vec![],
             tracks: BTreeMap::new(),
             owners: BTreeMap::new(),
             refusals: BTreeMap::new(),
@@ -313,29 +336,60 @@ impl Engine {
             board: None,
             early: BTreeSet::new(),
             written: vec![],
-            rewritten: BTreeMap::new(),
             requesters: BTreeMap::new(),
             queued: BTreeSet::new(),
             rss: TurnRss::default(),
+            carries: BTreeMap::new(),
+            dirty_carry: BTreeSet::new(),
+            dirty_halt: false,
+            kept: BTreeMap::new(),
+            staged: BTreeMap::new(),
+            turn: Turn::default(),
+            committed: BTreeSet::new(),
+            fire_of: BTreeMap::new(),
+            resolves: BTreeMap::new(),
         };
-        let cursor = retry.read(|| e.journal.cursor())?;
-        e.cursor = cursor;
-        e.saved_cursor = cursor;
-        let (halted, held) = retry.read(|| e.halt_state(cursor))?;
-        e.halted = halted;
-        for h in held {
-            if !retry.read(|| e.journal.applied(RELEASE, &h.id))? {
-                e.held += 1;
-            }
+        let boot = retry.read(|| e.journal.boot())?;
+        for row in boot.state {
+            e.restore(&row)?;
         }
-        for (_, ev) in retry.read(|| e.journal.unresolved_effects())? {
-            e.track_effect(&ev)?;
+        for row in boot.effects {
+            e.restore_effect(row);
         }
-        e.check_applied_below = retry.read(|| e.journal.end())?;
-        for row in retry.read(|| e.journal.pending_schedules())? {
+        for row in boot.schedules {
             e.scheduler.insert(row);
         }
         Ok(e)
+    }
+
+    fn restore(&mut self, row: &StateRow) -> Result<()> {
+        let bad = |what: &str, err: serde_json::Error| RuntimeError::new(format!("kept {what} of {} is not readable: {err}", row.task));
+        match (row.task.as_str(), row.skey.as_str()) {
+            (SCHEDULER_TASK, HALTED_KEY) => self.halted = row.value == "1",
+            (SCHEDULER_TASK, HELD_KEY) => self.held = serde_json::from_str(&row.value).map_err(|e| bad(HELD_KEY, e))?,
+            (_, CARRY_KEY) => {
+                let events: Vec<Event> = serde_json::from_str(&row.value).map_err(|e| bad(CARRY_KEY, e))?;
+                for ev in events {
+                    self.projection.push(&ev);
+                    self.carry(&row.task, &ev.stream, &ev.kind);
+                    self.carries.entry(row.task.clone()).or_default().insert((ev.stream.0.clone(), ev.kind.tag.clone()), ev);
+                }
+            }
+            _ => {}
+        }
+        let sig = if row.skey == CARRY_KEY { carry_signature(self.carries.get(&row.task).map(|c| c.values()).into_iter().flatten()) } else { row.value.clone() };
+        self.kept.insert((row.task.clone(), row.skey.clone()), sig);
+        Ok(())
+    }
+
+    fn restore_effect(&mut self, row: EffectRow) {
+        let class = self.class_of(&row.spec);
+        self.refusals.entry(class).or_insert(0);
+        self.owners.insert(row.request_id.clone(), row.task.clone());
+        self.requesters.insert(row.request_id.clone(), row.task.clone());
+        self.committed.insert(row.request_id.clone());
+        let correlation = CorrelationId(row.request_id.clone());
+        self.pending.insert(row.request_id.clone(), PendingEffect { key: row.request_id, task: row.task, stream: row.stream, spec: row.spec, deadline_at: row.deadline_at, requested_at: row.requested_at, correlation });
     }
 
     /// Names the effector class of an effect, for `status`.
@@ -390,7 +444,11 @@ impl Engine {
             let c = self.class_of(&p.spec);
             classes.entry(c.clone()).or_insert_with(|| ClassStatus { class: c, depth: 0, refusals: 0 }).depth += 1;
         }
-        SchedulerStatus { at: self.clock.now_ms(), halted: self.halted, held: self.held, tasks, classes: classes.into_values().collect() }
+        SchedulerStatus { at: self.clock.now_ms(), ship: self.ship_status(), halted: self.halted, held: self.held.len(), tasks, classes: classes.into_values().collect() }
+    }
+
+    fn ship_status(&self) -> Option<ShipStatus> {
+        self.journal.shipped().map(|c| ShipStatus { dropped: c.dropped(), failed: c.failed() })
     }
 
     fn publish(&self) {
@@ -420,13 +478,6 @@ impl Engine {
         self
     }
 
-    /// Read the journal for events other writers appended at most this often, when this engine
-    /// appended nothing since the last read. 0, the default, reads on every pump.
-    pub fn with_foreign_poll(mut self, ms: u64) -> Self {
-        self.foreign_poll_ms = ms;
-        self
-    }
-
     /// Restarts a handler call may stall through before its stream is quarantined.
     pub fn with_stall_limit(mut self, limit: u32) -> Self {
         self.stall_limit = limit;
@@ -440,7 +491,7 @@ impl Engine {
         if let Some(m) = self.marker.take()? {
             let stalls = m.stalls + 1;
             self.suspects.insert((m.event.clone(), m.handler.clone()), stalls);
-            let w = self.unit("watchdog.restart", None, None);
+            let w = self.unit("watchdog.restart", None);
             w.set("event.id", m.event.0.as_str());
             w.set("event.stream", m.stream.0.as_str());
             w.set("handler", m.handler.as_str());
@@ -475,7 +526,7 @@ impl Engine {
         self.pending.values().filter(|p| !self.queued.contains(&p.key)).map(|p| (p.deadline_at, &p.key))
     }
 
-    fn unit(&self, unit: &str, ev: Option<&Event>, offset: Option<(Offset, Offset)>) -> Wide {
+    fn unit(&self, unit: &str, ev: Option<&Event>) -> Wide {
         let w = Wide::default();
         w.set("unit", unit);
         for (k, v) in &self.baseline {
@@ -493,9 +544,10 @@ impl Engine {
             }
             w.set("correlation.id", e.correlation.0.as_str());
         }
-        if let Some((off, last)) = offset {
-            w.set("journal.offset", off);
-            w.set("journal.lag", last - off);
+        w.set("dispatch.queued", self.queue.len() as u64);
+        if let Some(c) = self.journal.shipped() {
+            w.set("ship.dropped", c.dropped());
+            w.set("ship.failed", c.failed());
         }
         w
     }
@@ -510,11 +562,12 @@ impl Engine {
             let b: RequestBody = serde_json::from_str(&ev.kind.body).map_err(|e| RuntimeError::new(format!("bad effect request {}: {e}", ev.id.0)))?;
             let class = self.class_of(&b.spec);
             self.refusals.entry(class).or_insert(0);
+            let task = b.task.unwrap_or_default();
             self.pending.insert(
                 ev.id.0.clone(),
-                PendingEffect { key: ev.id.0.clone(), stream: ev.stream.clone(), spec: b.spec, deadline_at: b.deadline_at, requested_at: ev.at, correlation: ev.correlation.clone() },
+                PendingEffect { key: ev.id.0.clone(), task, stream: ev.stream.clone(), spec: b.spec, deadline_at: b.deadline_at, requested_at: ev.at, correlation: ev.correlation.clone() },
             );
-        } else if matches!(ev.kind.tag.as_str(), EFFECT_SUCCEEDED | EFFECT_FAILED | EFFECT_TIMED_OUT) {
+        } else if is_outcome(&ev.kind.tag) {
             if let Some(c) = &ev.cause {
                 self.pending.remove(&c.0);
                 self.queued.remove(&c.0);
@@ -523,69 +576,54 @@ impl Engine {
         Ok(())
     }
 
-    /// Whether the scheduler stood halted at `below`, and the writes held since the last resume.
-    fn halt_state(&self, mut below: Offset) -> Result<(bool, Vec<Event>)> {
-        let stream = StreamKey(HALT_STREAM.into());
-        let (mut halted, mut held) = (None, vec![]);
-        loop {
-            let page = self.journal.read_stream(&stream, below, WINDOW)?;
-            let Some(&(first, _)) = page.first() else { break };
-            let full = page.len() == WINDOW;
-            for (_, e) in page.into_iter().rev() {
-                match e.kind.tag.as_str() {
-                    SCHEDULER_RESUMED => {
-                        held.reverse();
-                        return Ok((halted.unwrap_or(false), held));
-                    }
-                    SCHEDULER_HALTED => {
-                        halted.get_or_insert(true);
-                    }
-                    EFFECT_HELD => held.push(e),
-                    _ => {}
-                }
-            }
-            if !full {
-                break;
-            }
-            below = first;
+    /// Request `spec` for `task`, once per `(task, key)` at a time: a second request while one is
+    /// in flight is refused and reported, not requested. `None` when refused.
+    fn request(&mut self, task: &str, stream: &StreamKey, id: String, spec: EffectSpec, cause: &Event, at: u64) -> Result<Option<Event>> {
+        let flying = self.pending.values().find(|p| p.task == task && p.spec.key == spec.key && p.key != id && !self.memory_only.contains(&p.key)).map(|p| p.key.clone());
+        if let Some(first) = flying {
+            let w = self.unit("effect.refused", Some(cause));
+            w.set("handler", task);
+            w.set("effect.kind", spec.name.as_str());
+            w.set("effect.key", spec.key.as_str());
+            w.set("effect.in_flight", first.as_str());
+            w.set("outcome", "refused");
+            self.finish(&w);
+            return Ok(None);
         }
-        held.reverse();
-        Ok((halted.unwrap_or(false), held))
+        let deadline_at = at.saturating_add(spec.deadline_ms);
+        let row = EffectRow { task: task.into(), ekey: spec.key.clone(), request_id: id.clone(), stream: stream.clone(), spec: spec.clone(), requested_at: at, deadline_at };
+        let body = serde_json::to_string(&RequestBody { spec, deadline_at, task: Some(task.into()) }).map_err(|e| RuntimeError::new(e.to_string()))?;
+        let req = self.append_derived(id, stream, EventKind::new(EFFECT_REQUESTED, &body), cause, at)?;
+        self.owners.insert(req.id.0.clone(), task.into());
+        self.requesters.insert(req.id.0.clone(), task.into());
+        self.track_effect(&req)?;
+        self.turn.effects.retain(|e| e.request_id != row.request_id);
+        self.turn.effects.push(row);
+        Ok(Some(req))
     }
 
-    /// Requests a held write once: a replay finds its release applied.
+    /// Requests a held write: it leaves the held list as it is requested.
     fn release(&mut self, held: &Event, at: u64) -> Result<()> {
-        if self.journal.applied(RELEASE, &held.id)? {
-            return Ok(());
-        }
         let b: HeldBody = serde_json::from_str(&held.kind.body).map_err(|e| RuntimeError::new(format!("bad held effect {}: {e}", held.id.0)))?;
-        let deadline_at = at.saturating_add(b.spec.deadline_ms);
-        let body = serde_json::to_string(&RequestBody { spec: b.spec, deadline_at, task: Some(b.task.clone()) }).map_err(|e| RuntimeError::new(e.to_string()))?;
-        let task = b.task;
-        let req = self.append_derived(derive_id(format!("{}/released", held.id.0)), &b.stream, EventKind::new(EFFECT_REQUESTED, &body), held, at)?;
-        self.requesters.insert(req.id.0.clone(), task.clone());
-        self.owners.insert(req.id.0.clone(), task);
-        self.track_effect(&req)?;
-        self.journal.mark_applied(RELEASE, &held.id)?;
-        self.held = self.held.saturating_sub(1);
+        self.request(&b.task, &b.stream, derive_id(format!("{}/released", held.id.0)), b.spec, held, at)?;
         Ok(())
     }
 
-    /// The halt stream is the engine's own: a halt holds every `Act` write from then on, a
-    /// resume releases what was held in the order it was held, and a write held after the
-    /// resume that ended its halt is released when it is read.
-    fn gate(&mut self, ev: &Event, off: Offset) -> Result<()> {
+    /// A halt holds every `Act` write on the `Work` plane from then on; a resume requests what
+    /// was held, in the order it was held.
+    fn gate(&mut self, ev: &Event) -> Result<()> {
         match ev.kind.tag.as_str() {
-            SCHEDULER_HALTED => self.halted = true,
+            SCHEDULER_HALTED => {
+                self.halted = true;
+                self.dirty_halt = true;
+            }
             SCHEDULER_RESUMED => {
                 self.halted = false;
-                for h in self.halt_state(off)?.1 {
+                self.dirty_halt = true;
+                for h in std::mem::take(&mut self.held) {
                     self.release(&h, ev.at)?;
                 }
-                self.held = 0;
             }
-            EFFECT_HELD if self.halted => self.held += 1,
-            EFFECT_HELD => self.release(ev, ev.at)?,
             _ => {}
         }
         Ok(())
@@ -596,7 +634,7 @@ impl Engine {
     }
 
     /// Halts the scheduler before its first effect when it is not already halted: a boot under
-    /// an outside halt must not run a Work effect in the gap before the halt is journaled.
+    /// an outside halt must not run a Work effect in the gap before the halt is dispatched.
     pub fn halt_at_boot(&mut self, why: &str) -> Result<()> {
         if self.halted {
             return Ok(());
@@ -604,6 +642,7 @@ impl Engine {
         let at = self.clock.now_ms();
         self.submit(&format!("boot-halt/{at}"), HALT_STREAM, EventKind::new(SCHEDULER_HALTED, why))?;
         self.halted = true;
+        self.dirty_halt = true;
         Ok(())
     }
 
@@ -631,11 +670,11 @@ impl Engine {
         Event { id, stream: stream.clone(), kind, at, cause: cause.map(|c| c.id.clone()), correlation }
     }
 
-    /// Hand `kind` to the handlers of `stream` now, without journaling it: the way a process
+    /// Hand `kind` to the handlers of `stream` now, without shipping it: the way a process
     /// re-arms its memory-only timers each time it starts.
     pub fn start(&mut self, stream: &str, kind: EventKind) {
         let ev = self.local_event(&StreamKey(stream.into()), kind, self.clock.now_ms(), None);
-        self.local.push_back(ev);
+        self.queue.push_back((ev, true));
     }
 
     /// The engine's clock now.
@@ -655,10 +694,23 @@ impl Engine {
         self.timers.insert(id.clone(), ScheduleRow { id, at, stream: StreamKey(stream.into()), kind, cause: None, correlation });
     }
 
+    /// Ship `ev` and queue it for its handlers.
+    fn enqueue(&mut self, ev: Event) {
+        if !self.queued_ids.insert(ev.id.clone()) {
+            return;
+        }
+        self.journal.record(&ev);
+        self.queue.push_back((ev, false));
+    }
+
+    fn enqueue_local(&mut self, ev: Event) {
+        self.queued_ids.insert(ev.id.clone());
+        self.queue.push_back((ev, true));
+    }
+
     fn append_derived(&mut self, id: String, stream: &StreamKey, kind: EventKind, cause: &Event, at: u64) -> Result<Event> {
         let ev = Event { id: EventId(id), stream: stream.clone(), kind, at, cause: Some(cause.id.clone()), correlation: cause.correlation.clone() };
-        self.journal.record(&ev)?;
-        self.appended = true;
+        self.enqueue(ev.clone());
         Ok(ev)
     }
 
@@ -673,6 +725,9 @@ impl Engine {
                 Command::Emit(kind) => {
                     self.carry(handler, &ev.stream, &kind);
                     let e = self.append_derived(id, &ev.stream, kind, ev, ev.at)?;
+                    if own {
+                        self.carried(handler, &e);
+                    }
                     self.wrote(own, e, false);
                 }
                 Command::EmitTo { stream, kind } => {
@@ -688,36 +743,40 @@ impl Engine {
                 }
                 Command::Effect(spec) if mode == Mode::Act && self.halted && reg.plane_of(&spec.name) == Plane::Work => {
                     let body = serde_json::to_string(&HeldBody { stream: ev.stream.clone(), task: handler.into(), spec }).map_err(|e| RuntimeError::new(e.to_string()))?;
-                    self.append_derived(id, &StreamKey(HALT_STREAM.into()), EventKind::new(EFFECT_HELD, &body), ev, ev.at)?;
+                    let held = self.append_derived(id, &StreamKey(HALT_STREAM.into()), EventKind::new(EFFECT_HELD, &body), ev, ev.at)?;
+                    if !self.held.iter().any(|h| h.id == held.id) {
+                        self.held.push(held);
+                        self.dirty_halt = true;
+                    }
+                }
+                Command::Effect(spec) if mode == Mode::Act => {
+                    if let Some(req) = self.request(handler, &ev.stream, id, spec, ev, ev.at)? {
+                        self.wrote(own, req, false);
+                    }
                 }
                 Command::Effect(spec) => {
                     let deadline_at = ev.at.saturating_add(spec.deadline_ms);
                     let body = serde_json::to_string(&RequestBody { spec, deadline_at, task: Some(handler.into()) }).map_err(|e| RuntimeError::new(e.to_string()))?;
-                    let tag = if mode == Mode::Act { EFFECT_REQUESTED } else { EFFECT_SHADOWED };
-                    let req = self.append_derived(id, &ev.stream, EventKind::new(tag, &body), ev, ev.at)?;
-                    if mode == Mode::Act {
-                        self.owners.insert(req.id.0.clone(), handler.into());
-                        self.requesters.insert(req.id.0.clone(), handler.into());
-                    }
-                    self.track_effect(&req)?;
+                    let req = self.append_derived(id, &ev.stream, EventKind::new(EFFECT_SHADOWED, &body), ev, ev.at)?;
                     self.wrote(own, req, false);
                 }
                 Command::Schedule { at, kind } => {
                     let row = ScheduleRow { id, at, stream: ev.stream.clone(), kind, cause: Some(ev.id.clone()), correlation: ev.correlation.clone() };
-                    self.journal.schedule(&row)?;
+                    self.turn.schedules.retain(|r| r.id != row.id);
+                    self.turn.schedules.push(row.clone());
                     self.scheduler.insert(row);
                 }
                 Command::Note(kind) => {
                     self.carry(handler, &ev.stream, &kind);
                     let note = self.local_event(&ev.stream, kind, ev.at, Some(ev));
-                    self.local.push_back(note.clone());
+                    self.enqueue_local(note.clone());
                     self.wrote(own, note, true);
                 }
                 Command::Probe(spec) => {
                     let deadline_at = ev.at.saturating_add(spec.deadline_ms);
                     let body = serde_json::to_string(&RequestBody { spec, deadline_at, task: Some(handler.into()) }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     let req = self.local_event(&ev.stream, EventKind::new(EFFECT_REQUESTED, &body), ev.at, Some(ev));
-                    self.projection.push_local(&req, LOCAL_KEEP, |id| self.pending.contains_key(&id.0) || self.local.iter().any(|q| q.cause.as_ref() == Some(id)));
+                    self.projection.push_local(&req, LOCAL_KEEP, |id| self.pending.contains_key(&id.0) || self.queue.iter().any(|(q, _)| q.cause.as_ref() == Some(id)));
                     self.memory_only.insert(req.id.0.clone());
                     self.owners.insert(req.id.0.clone(), handler.into());
                     self.requesters.insert(req.id.0.clone(), handler.into());
@@ -742,44 +801,47 @@ impl Engine {
         self.tracks.entry(handler.into()).or_default().state = Some(CarriedState { stream: stream.0.clone(), tag: kind.tag.clone(), body_len: kind.body.len() });
     }
 
+    /// The newest own-stream emit of each kind is the task's carry: what a restart hands back.
+    fn carried(&mut self, task: &str, e: &Event) {
+        self.carries.entry(task.into()).or_default().insert((e.stream.0.clone(), e.kind.tag.clone()), e.clone());
+        self.dirty_carry.insert(task.into());
+    }
+
     /// Push `ev` into the projection unless it is there already, offer it, then place what its
     /// handlers wrote on its stream right after it: per stream, a handler sees every event its
     /// stream's handlers wrote for an earlier event before it sees a later one, whatever the
     /// journal offsets. Nothing reorders appends; only the view is ordered by cause.
-    fn dispatch(&mut self, ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
-        if !self.loaded.contains(&ev.stream) {
-            self.load(&ev.stream, at.map_or(self.cursor, |a| a.0))?;
-        }
+    fn dispatch(&mut self, ev: &Event, local: bool) -> Result<()> {
+        self.seq += 1;
         if !self.early.remove(&ev.id) {
-            if at.is_some() {
-                self.projection.push(ev);
-            } else {
+            if local {
                 self.push_local(ev);
+            } else {
+                self.projection.push(ev);
             }
         }
-        if let (Some((off, _)), true) = (at, ev.stream.0 == HALT_STREAM) {
-            self.gate(ev, off)?;
+        if let Some(row) = self.fire_of.remove(&ev.id) {
+            self.turn.fired.push(row);
         }
-        let offered = if self.is_poisoned(&ev.stream)? { Ok(()) } else { self.offer(ev, at) };
-        self.place(ev);
+        if let Some(request) = self.resolves.remove(&ev.id) {
+            self.turn.resolved.push(request);
+        }
+        if !local && ev.stream.0 == HALT_STREAM {
+            self.gate(ev)?;
+        }
+        let offered = if self.is_poisoned(&ev.stream)? { Ok(()) } else { self.offer(ev) };
+        self.place();
         offered
     }
 
     fn push_local(&mut self, ev: &Event) {
-        let (pending, local) = (&self.pending, &self.local);
-        self.projection.push_local(ev, LOCAL_KEEP, |id| ev.cause.as_ref() == Some(id) || pending.contains_key(&id.0) || local.iter().any(|q| q.cause.as_ref() == Some(id)));
+        let (pending, queue) = (&self.pending, &self.queue);
+        self.projection.push_local(ev, LOCAL_KEEP, |id| ev.cause.as_ref() == Some(id) || pending.contains_key(&id.0) || queue.iter().any(|(q, _)| q.cause.as_ref() == Some(id)));
     }
 
-    /// What `ev`'s handlers wrote on its stream, this run or (on a replay) the run before, into
-    /// the projection in the order it was written.
-    fn place(&mut self, ev: &Event) {
-        let mut writes: Vec<(Event, bool)> = self.rewritten.remove(&ev.id).unwrap_or_default().into_iter().map(|e| (e, false)).collect();
-        for w in std::mem::take(&mut self.written) {
-            if !writes.iter().any(|(e, _)| e.id == w.0.id) {
-                writes.push(w);
-            }
-        }
-        for (e, local) in writes {
+    /// What `ev`'s handlers wrote on its stream, into the projection in the order it was written.
+    fn place(&mut self) {
+        for (e, local) in std::mem::take(&mut self.written) {
             if !self.early.insert(e.id.clone()) {
                 continue;
             }
@@ -791,60 +853,6 @@ impl Engine {
         }
     }
 
-    /// A stream's newest `WINDOW` events below `below`, in the order a run that dispatched them
-    /// placed them: each event, then what its handlers wrote on the stream. On a replay the
-    /// events still to be dispatched are read too, so a handler's writes for an event before
-    /// the crash are placed where that run placed them.
-    fn load(&mut self, stream: &StreamKey, below: Offset) -> Result<()> {
-        self.loaded.insert(stream.clone());
-        let (past, ahead) = self.read_window(stream, below)?;
-        if stream.0 == HALT_STREAM {
-            for (_, e) in &past {
-                self.projection.push(e);
-            }
-            return Ok(());
-        }
-        let ids: BTreeSet<&EventId> = past.iter().chain(&ahead).map(|(_, e)| &e.id).collect();
-        let mut writes: BTreeMap<EventId, Vec<(Offset, Event)>> = BTreeMap::new();
-        for (o, e) in past.iter().chain(&ahead) {
-            if let Some(c) = e.cause.as_ref().filter(|c| ids.contains(c) && written_by_handler_of(c, &e.id)) {
-                writes.entry(c.clone()).or_default().push((*o, e.clone()));
-            }
-        }
-        let mut placed: BTreeSet<EventId> = BTreeSet::new();
-        for (_, e) in &past {
-            if placed.insert(e.id.clone()) {
-                self.projection.push(e);
-            }
-            for (o, w) in writes.remove(&e.id).unwrap_or_default() {
-                if placed.insert(w.id.clone()) {
-                    self.projection.push(&w);
-                    if o >= below {
-                        self.early.insert(w.id.clone());
-                    }
-                }
-            }
-        }
-        for (c, ws) in writes {
-            self.rewritten.insert(c, ws.into_iter().map(|(_, w)| w).collect());
-        }
-        Ok(())
-    }
-
-    /// `stream`'s newest `WINDOW` events below `from`, and on a replay its events from `from`
-    /// to the end the journal had at open, in one read: that stretch holds at most as many of
-    /// the stream's events as it has offsets.
-    fn read_window(&self, stream: &StreamKey, from: Offset) -> Result<(Rows, Rows)> {
-        if from >= self.check_applied_below {
-            return Ok((self.journal.read_stream(stream, from, WINDOW)?, vec![]));
-        }
-        let stretch = usize::try_from(self.check_applied_below - from).unwrap_or(usize::MAX);
-        let mut past = self.journal.read_stream(stream, self.check_applied_below, WINDOW.saturating_add(stretch))?;
-        let ahead = past.split_off(past.partition_point(|(o, _)| *o < from));
-        let skip = past.len().saturating_sub(WINDOW);
-        Ok((past.split_off(skip), ahead))
-    }
-
     /// The task that requested the effect `ev` is the outcome of, when it is one and the
     /// request named its task.
     fn requester(&mut self, ev: &Event) -> Option<String> {
@@ -852,23 +860,19 @@ impl Engine {
             return None;
         }
         let cause = ev.cause.as_ref()?;
-        if let Some(t) = self.requesters.remove(&cause.0) {
-            return Some(t);
-        }
-        let req = self.projection.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED)?;
-        serde_json::from_str::<RequestBody>(&req.kind.body).ok()?.task
+        self.requesters.remove(&cause.0)
     }
 
     /// Offer `ev` to every handler interested in it, an outcome only to the task that asked
     /// for it (and those that watch every outcome).
-    fn offer(&mut self, ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
+    fn offer(&mut self, ev: &Event) -> Result<()> {
         let regs = std::mem::take(&mut self.regs);
-        let r = self.offer_to(&regs, ev, at);
+        let r = self.offer_to(&regs, ev);
         self.regs = regs;
         r
     }
 
-    fn offer_to(&mut self, regs: &[Registration], ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
+    fn offer_to(&mut self, regs: &[Registration], ev: &Event) -> Result<()> {
         let requester = self.requester(ev);
         for reg in regs {
             let (name, mode, handler) = (reg.name.as_str(), reg.mode, &reg.handler);
@@ -878,14 +882,11 @@ impl Engine {
             if requester.as_deref().is_some_and(|r| r != name) && !handler.watches_foreign_outcomes() {
                 continue;
             }
-            if at.is_some_and(|(off, _)| off < self.check_applied_below) && self.journal.applied(name, &ev.id)? {
-                continue;
-            }
             let stalls = if self.suspects.is_empty() { 0 } else { self.suspects.get(&(ev.id.clone(), name.to_string())).copied().unwrap_or(0) };
             if stalls >= self.stall_limit {
                 let message = format!("stalled {stalls} times in {name}");
                 self.quarantine(ev, name, &message)?;
-                let wide = self.dispatch_unit(ev, at, name, mode, stalls);
+                let wide = self.dispatch_unit(ev, name, mode, stalls);
                 wide.set("outcome", "quarantined");
                 self.finish(&wide);
                 return Ok(());
@@ -899,7 +900,7 @@ impl Engine {
                 }
             }
             self.busy.enter();
-            let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, name]), at.map_or(0, |(off, _)| off), Wide::default());
+            let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, name]), self.seq, Wide::default());
             let began = Instant::now();
             let view = &self.projection;
             let called = catch_unwind(AssertUnwindSafe(|| handler.handle(&ctx, view, ev)));
@@ -908,12 +909,9 @@ impl Engine {
             let elapsed = began.elapsed();
             let set = ctx.into_event();
             if stalls == 0 && set.is_empty() && matches!(&called, Ok(c) if c.is_empty()) {
-                if at.is_some() {
-                    self.journal.mark_applied(name, &ev.id)?;
-                }
                 continue;
             }
-            let wide = self.dispatch_unit(ev, at, name, mode, stalls);
+            let wide = self.dispatch_unit(ev, name, mode, stalls);
             wide.merge(set.take());
             wide.set("duration_us", elapsed.as_micros() as u64);
             match called {
@@ -923,7 +921,7 @@ impl Engine {
                     wide.set("commands.emit_to", count(|c| matches!(c, Command::EmitTo { .. })));
                     wide.set("commands.effect", count(|c| matches!(c, Command::Effect(_))));
                     wide.set("commands.schedule", count(|c| matches!(c, Command::Schedule { .. })));
-                    let done = self.apply(cmds, ev, reg).and_then(|()| if at.is_some() { self.journal.mark_applied(name, &ev.id) } else { Ok(()) });
+                    let done = self.apply(cmds, ev, reg);
                     if matches!(&done, Err(e) if e.is_refused()) {
                         let message = done.unwrap_err().0;
                         wide.set("outcome", "refused");
@@ -952,8 +950,8 @@ impl Engine {
     }
 
     /// The wide event of one handler call that did something.
-    fn dispatch_unit(&self, ev: &Event, at: Option<(Offset, Offset)>, name: &str, mode: Mode, stalls: u32) -> Wide {
-        let wide = self.unit("dispatch", Some(ev), at);
+    fn dispatch_unit(&self, ev: &Event, name: &str, mode: Mode, stalls: u32) -> Wide {
+        let wide = self.unit("dispatch", Some(ev));
         wide.set("handler", name);
         wide.set("task.mode", mode.as_str());
         if stalls > 0 {
@@ -974,7 +972,7 @@ impl Engine {
     fn quarantine(&mut self, ev: &Event, handler: &str, message: &str) -> Result<()> {
         self.poison_seen.insert(ev.stream.clone(), true);
         self.journal.poison(&Poison { stream: ev.stream.clone(), event: ev.id.clone(), handler: handler.into(), message: message.into() })?;
-        let w = self.unit("quarantine", Some(ev), None);
+        let w = self.unit("quarantine", Some(ev));
         w.set("handler", handler);
         w.set("quarantine.reason", message);
         w.set("outcome", "quarantined");
@@ -982,79 +980,86 @@ impl Engine {
         Ok(())
     }
 
-    /// Dispatch every journal event past the cursor; the number dispatched. The cursor is read
-    /// once at open and written once per pump: a crash in between replays events whose
-    /// `applied` mark makes the replay a no-op.
+    /// Dispatch every queued event, committing the store once after each: the number dispatched.
+    /// A turn that could not commit is sent again before the next event is taken.
     pub fn pump(&mut self) -> Result<usize> {
+        self.commit_turn()?;
         let mut n = 0;
-        let run = self.pump_all(&mut n);
-        let saved = self.save_cursor();
-        run.and(saved)?;
+        let now = self.clock.now_ms();
+        if now.saturating_sub(self.poison_cleared_at) >= POISON_RECHECK_MS {
+            self.poison_seen.clear();
+            self.poison_cleared_at = now;
+        }
+        while let Some((ev, local)) = self.queue.pop_front() {
+            if let Err(e) = self.dispatch(&ev, local) {
+                self.queue.push_front((ev, local));
+                return Err(e);
+            }
+            self.queued_ids.remove(&ev.id);
+            n += 1;
+            match self.commit_turn() {
+                Err(e) if e.is_refused() => self.discard_turn(&ev, &e.0)?,
+                other => other?,
+            }
+        }
         Ok(n)
     }
 
-    fn pump_all(&mut self, n: &mut usize) -> Result<()> {
-        loop {
-            let now = self.clock.now_ms();
-            if self.appended || now >= self.next_read_at {
-                let before = *n;
-                self.pump_batches(n)?;
-                if *n > before || now.saturating_sub(self.poison_cleared_at) >= POISON_RECHECK_MS {
-                    self.poison_seen.clear();
-                    self.poison_cleared_at = now;
-                }
-                self.appended = false;
-                self.next_read_at = now.saturating_add(self.foreign_poll_ms);
-            }
-            if self.local.is_empty() {
-                return Ok(());
-            }
-            self.appended = false;
-            while let Some(ev) = self.local.pop_front() {
-                if let Err(e) = self.dispatch(&ev, None) {
-                    self.local.push_front(ev);
-                    return Err(e);
-                }
-                *n += 1;
-            }
-            if !self.appended {
-                return Ok(());
+    /// The changed state keys, staged into the turn: each task's carry and the scheduler's halt.
+    fn stage_state(&mut self) {
+        let at = self.clock.now_ms();
+        let mut changed: Vec<(String, String, String, String)> = vec![];
+        for task in std::mem::take(&mut self.dirty_carry) {
+            let events: Vec<&Event> = self.carries.get(&task).map(|c| c.values().collect()).unwrap_or_default();
+            let sig = carry_signature(events.iter().copied());
+            changed.push((task, CARRY_KEY.into(), serde_json::to_string(&events).unwrap_or_default(), sig));
+        }
+        if std::mem::take(&mut self.dirty_halt) {
+            let halted = if self.halted { "1" } else { "0" }.to_string();
+            let held = serde_json::to_string(&self.held).unwrap_or_default();
+            changed.push((SCHEDULER_TASK.into(), HALTED_KEY.into(), halted.clone(), halted));
+            changed.push((SCHEDULER_TASK.into(), HELD_KEY.into(), held.clone(), held));
+        }
+        for (task, skey, value, sig) in changed {
+            let key = (task.clone(), skey.clone());
+            self.turn.state.retain(|r| !(r.task == task && r.skey == skey));
+            self.staged.remove(&key);
+            if self.kept.get(&key) != Some(&sig) {
+                self.turn.state.push(StateRow { task, skey, value, at });
+                self.staged.insert(key, sig);
             }
         }
     }
 
-    fn pump_batches(&mut self, n: &mut usize) -> Result<()> {
-        loop {
-            let batch = self.journal.read_from(self.cursor, BATCH)?;
-            if batch.is_empty() {
-                return Ok(());
-            }
-            let full = batch.len() == BATCH;
-            let last = batch.last().map_or(0, |(o, _)| *o);
-            self.appended = false;
-            for (off, ev) in batch {
-                if let Err(e) = self.dispatch(&ev, Some((off, last))) {
-                    self.check_applied_below = self.check_applied_below.max(last + 1);
-                    return Err(e);
-                }
-                self.cursor = off + 1;
-                *n += 1;
-            }
-            if !full && !self.appended {
-                return Ok(());
-            }
+    fn commit_turn(&mut self) -> Result<()> {
+        self.stage_state();
+        if self.turn.is_empty() {
+            return Ok(());
         }
-    }
-
-    fn save_cursor(&mut self) -> Result<()> {
-        if self.cursor != self.saved_cursor {
-            self.journal.set_cursor(self.cursor)?;
-            self.saved_cursor = self.cursor;
+        self.journal.commit(&self.turn)?;
+        let turn = std::mem::take(&mut self.turn);
+        self.committed.extend(turn.effects.iter().map(|e| e.request_id.clone()));
+        for s in turn.state {
+            let key = (s.task, s.skey);
+            if let Some(sig) = self.staged.remove(&key) {
+                self.kept.insert(key, sig);
+            }
         }
         Ok(())
     }
 
-    fn fire(&mut self, row: &ScheduleRow) -> Result<()> {
+    /// The store refused the turn: its effects are never requested, and the stream that made it is quarantined.
+    fn discard_turn(&mut self, ev: &Event, message: &str) -> Result<()> {
+        self.staged.clear();
+        for e in std::mem::take(&mut self.turn).effects {
+            self.pending.remove(&e.request_id);
+            self.owners.remove(&e.request_id);
+            self.requesters.remove(&e.request_id);
+        }
+        self.quarantine(ev, "scheduler", message)
+    }
+
+    fn fire(&mut self, row: &ScheduleRow) {
         let ev = Event {
             id: EventId(derive_id(format!("sched/{}", row.id))),
             stream: row.stream.clone(),
@@ -1063,24 +1068,15 @@ impl Engine {
             cause: row.cause.clone(),
             correlation: row.correlation.clone(),
         };
-        match self.journal.record(&ev) {
-            Ok(()) => self.appended = true,
-            Err(e) if e.is_refused() => self.quarantine(&ev, "scheduler", &e.0)?,
-            Err(e) => return Err(e),
-        }
-        self.journal.mark_fired(&row.id)
+        self.fire_of.insert(ev.id.clone(), row.id.clone());
+        self.enqueue(ev);
     }
 
     /// Fire the schedule rows now due and time out the effects past their deadline.
     pub fn tick(&mut self) -> Result<usize> {
         let mut n = 0;
-        let mut rows = self.scheduler.pop_due(self.clock.as_ref()).into_iter();
-        while let Some(row) = rows.next() {
-            if let Err(e) = self.fire(&row) {
-                self.scheduler.insert(row);
-                rows.for_each(|r| self.scheduler.insert(r));
-                return Err(e);
-            }
+        for row in self.scheduler.pop_due(self.clock.as_ref()) {
+            self.fire(&row);
             n += 1;
         }
         let now = self.clock.now_ms();
@@ -1089,7 +1085,7 @@ impl Engine {
         for (_, id) in due {
             if let Some(row) = self.timers.remove(&id) {
                 let ev = Event { cause: row.cause.clone(), correlation: row.correlation.clone(), ..self.local_event(&row.stream, row.kind.clone(), row.at, None) };
-                self.local.push_back(ev);
+                self.enqueue_local(ev);
                 n += 1;
             }
         }
@@ -1104,16 +1100,17 @@ impl Engine {
     }
 }
 
-/// What the journal staged for its next request is sent on the way out, so a clean stop leaves
-/// the cursor where this engine had it; a crash leaves it behind, and the replay re-derives it.
-impl Drop for Engine {
-    fn drop(&mut self) {
-        let _ = self.journal.flush();
-    }
-}
-
 impl Executor for Engine {
     fn submit(&mut self, id: &str, stream: &str, kind: EventKind) -> Result<()> {
+        if !self.submitted_ids.insert(id.into()) {
+            return Ok(());
+        }
+        self.submitted.push_back(id.into());
+        if self.submitted.len() > SUBMITTED_KEEP {
+            if let Some(old) = self.submitted.pop_front() {
+                self.submitted_ids.remove(&old);
+            }
+        }
         let ev = Event {
             id: EventId(id.into()),
             stream: StreamKey(stream.into()),
@@ -1122,8 +1119,7 @@ impl Executor for Engine {
             cause: None,
             correlation: CorrelationId(id.into()),
         };
-        self.journal.append(&ev)?;
-        self.appended = true;
+        self.enqueue(ev);
         Ok(())
     }
 
@@ -1141,7 +1137,7 @@ impl Executor for Engine {
     }
 
     fn pending_effects(&self) -> Vec<PendingEffect> {
-        self.pending.values().cloned().collect()
+        self.pending.values().filter(|p| self.committed.contains(&p.key) || self.memory_only.contains(&p.key)).cloned().collect()
     }
 
     fn complete(&mut self, key: &str, outcome: Outcome) -> Result<bool> {
@@ -1155,12 +1151,13 @@ impl Executor for Engine {
             correlation: p.correlation.clone(),
         };
         if self.memory_only.remove(key) {
-            self.local.push_back(ev.clone());
+            self.enqueue_local(ev.clone());
         } else {
-            self.journal.record(&ev)?;
-            self.appended = true;
+            self.resolves.insert(ev.id.clone(), key.into());
+            self.enqueue(ev.clone());
         }
         self.pending.remove(key);
+        self.committed.remove(key);
         self.queued.remove(key);
         if let Some(owner) = self.owners.remove(key) {
             self.tracks.entry(owner).or_default().outcome = Some(match outcome {
@@ -1169,7 +1166,7 @@ impl Executor for Engine {
                 Outcome::TimedOut => LastOutcome::TimedOut,
             });
         }
-        let w = self.unit("effect", Some(&ev), None);
+        let w = self.unit("effect", Some(&ev));
         w.set("effect.kind", p.spec.name.as_str());
         w.set("effect.idempotency_key", key);
         w.set("effect.deadline_at", p.deadline_at);

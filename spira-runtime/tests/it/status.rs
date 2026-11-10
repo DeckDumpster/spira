@@ -19,7 +19,7 @@ impl Handler for Ticker {
         vec![
             Command::Schedule { at: ev.at + 1000, kind: EventKind::new("tick", "") },
             Command::Emit(EventKind::new("ticked", "ok")),
-            Command::Effect(EffectSpec { name: "write".into(), input: String::new(), deadline_ms: 5000 }),
+            Command::Effect(EffectSpec::by_input("write", String::new(), 5000)),
         ]
     }
 }

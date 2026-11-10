@@ -9,6 +9,7 @@ pub mod metrics;
 pub mod oneshot;
 pub mod query;
 pub mod run;
+pub mod vlogs;
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;

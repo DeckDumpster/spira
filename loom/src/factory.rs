@@ -229,11 +229,32 @@ pub struct Reads {
     /// The bounds and the snapshot `watch.transitions` judges; the refusal when the bounds are refused.
     pub transitions: Result<(wt::Config, wt::Snapshot), String>,
     pub stats: Read,
+    /// The last 24 h of transitions counted in VictoriaLogs, per (machine, event, from, to).
+    pub counts: Result<Vec<Tally>, String>,
     pub tsd: BTreeMap<&'static str, Result<Vec<Value>, String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tally {
+    pub machine: String,
+    pub event: String,
+    pub from: String,
+    pub to: String,
+    pub n: i64,
+}
+
+fn read_counts(url: &str) -> Result<Vec<Tally>, String> {
+    let logs = spira_otel::vlogs::Logs::new(url).map_err(|e| e.to_string())?;
+    let groups = logs.count_groups(&spira_otel::vlogs::transitions_window(DAY as u64), &["machine", "event", "from", "to"]).map_err(|e| e.to_string())?;
+    Ok(groups
+        .into_iter()
+        .map(|(k, n)| Tally { machine: k["machine"].clone(), event: k["event"].clone(), from: k["from"].clone(), to: k["to"].clone(), n: n as i64 })
+        .collect())
 }
 
 /// What the sensors are read with.
 pub struct Sensing {
+    pub victorialogs_url: String,
     pub transitions: Result<wt::Config, String>,
     pub tsd_endpoint: Option<String>,
     pub now: i64,
@@ -265,6 +286,10 @@ pub async fn gather(client: LcClient, budget: Duration, run: &str, sensing: &Sen
         .map_err(|e| format!("watch.transitions observe: {e}"))?;
         Ok((cfg, snap))
     };
+    let counts = {
+        let url = sensing.victorialogs_url.clone();
+        async move { tokio::task::spawn_blocking(move || read_counts(&url)).await.map_err(|e| format!("victorialogs counts: {e}")).and_then(|r| r) }
+    };
     let tsd_rows = |family: &'static str| {
         let endpoint = sensing.tsd_endpoint.clone();
         let (from, to) = ((sensing.now - DAY).max(0) as u64, sensing.now.max(0) as u64);
@@ -273,7 +298,7 @@ pub async fn gather(client: LcClient, budget: Duration, run: &str, sensing: &Sen
             read.await.map_err(|e| e.to_string()).and_then(|r| r)
         }
     };
-    let (g_bead, g_batch, g_ask, g_mending, t_bead, t_batch, live, batches, asks, mending, releases, transitions, stats, admission, cert_pass) = tokio::join!(
+    let (g_bead, g_batch, g_ask, g_mending, t_bead, t_batch, live, batches, asks, mending, releases, transitions, stats, counts, admission, cert_pass) = tokio::join!(
         read(c, &["ops-graph", "--machine", "bead"], budget),
         read(c, &["ops-graph", "--machine", "batch"], budget),
         read(c, &["ops-graph", "--machine", "ask"], budget),
@@ -287,6 +312,7 @@ pub async fn gather(client: LcClient, budget: Duration, run: &str, sensing: &Sen
         releases,
         observed,
         read(c, &["stats"], budget),
+        counts,
         tsd_rows("admission"),
         tsd_rows("cert-pass"),
     );
@@ -301,6 +327,7 @@ pub async fn gather(client: LcClient, budget: Duration, run: &str, sensing: &Sen
         limits: BTreeMap::new(),
         transitions,
         stats,
+        counts,
         tsd: BTreeMap::from([("admission", admission), ("cert-pass", cert_pass)]),
     }
 }
@@ -316,7 +343,6 @@ struct Move {
     machine: &'static str,
     event: String,
     from: String,
-    to: String,
     at: i64,
 }
 
@@ -455,7 +481,7 @@ fn claim_order(items: &mut [Item]) {
 fn moves(machine: &'static str, v: &Value) -> Vec<Move> {
     rows(&v["events"])
         .into_iter()
-        .filter_map(|r| Some(Move { machine, event: text(&r["event"])?, from: text(&r["from_state"])?, to: text(&r["to_state"])?, at: num(&r["at"])? }))
+        .filter_map(|r| Some(Move { machine, event: text(&r["event"])?, from: text(&r["from_state"])?, at: num(&r["at"])? }))
         .collect()
 }
 
@@ -507,10 +533,6 @@ fn named(def: &StationDef) -> Built {
     }
 }
 
-fn count<'a>(rows: impl Iterator<Item = &'a Move>) -> i64 {
-    rows.count() as i64
-}
-
 /// Builds the floor from `reads` as of `now`. A failed `ops-graph` is the one read the floor
 /// cannot be drawn without; every other failed read is named in `meta.errors` and its numbers are null.
 pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
@@ -545,6 +567,11 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
     if let Err(e) = &reads.releases {
         errors.push(format!("release records: {e}"));
     }
+    if let Err(e) = &reads.counts {
+        errors.push(format!("24 h counts: {e}"));
+    }
+    let tallies: &[Tally] = reads.counts.as_deref().unwrap_or(&[]);
+    let counted_24h = reads.counts.is_ok();
 
     let gantt_ok = |m: &str| reads.gantts.get(m).is_some_and(Result::is_ok);
     let mut all_moves: Vec<Move> = Vec::new();
@@ -681,7 +708,7 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
         let machine = id.split_once('.').map_or("", |(m, _)| m);
         let here: Vec<&Item> = items.iter().filter(|i| &i.at == id).collect();
         let counted = *kind != "sink" && machine_read_ok(machine);
-        let in24h = (*kind == "sink" && gantt_ok(machine)).then(|| count(all_moves.iter().filter(|m| m.machine == machine && &m.to == state)));
+        let in24h = (*kind == "sink" && counted_24h).then(|| tallies.iter().filter(|t| t.machine == machine && &t.to == state).map(|t| t.n).sum::<i64>());
         let parts = (id == "bead.READY" && counted).then(|| {
             let claimable_known = here.iter().any(|i| i.verdict.is_some());
             let held = here.iter().filter(|i| !i.holds.is_empty()).count();
@@ -704,8 +731,8 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
     }
 
     // Stations and edges.
-    let tally = |refs: &[EventRef], pick: &dyn Fn(&Move) -> bool| -> Option<i64> {
-        refs.iter().any(|r| gantt_ok(r.machine)).then(|| count(all_moves.iter().filter(|m| refs.iter().any(|r| r.takes(m.machine, &m.event, &m.from)) && pick(m))))
+    let tally = |refs: &[EventRef], pick: &dyn Fn(&Tally) -> bool| -> Option<i64> {
+        counted_24h.then(|| tallies.iter().filter(|t| refs.iter().any(|r| r.takes(&t.machine, &t.event, &t.from)) && pick(t)).map(|t| t.n).sum())
     };
     let mut stations_json: Vec<Value> = Vec::new();
     let mut edges_json: Vec<Value> = Vec::new();
@@ -722,7 +749,7 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
         let outputs = outs(st);
         let matched: Vec<&Move> = all_moves.iter().filter(|m| refs.iter().any(|r| r.takes(m.machine, &m.event, &m.from))).collect();
         let readable = !refs.is_empty() && refs.iter().any(|r| gantt_ok(r.machine));
-        let per24h = readable.then_some(matched.len() as i64);
+        let per24h = if refs.is_empty() { None } else { tally(&refs, &|_| true) };
         let last_s = readable.then(|| matched.iter().map(|m| m.at).max().map(|at| now - at)).flatten();
 
         let flow_inputs_readable = !inputs.is_empty() && inputs.iter().all(|b| machine_read_ok(b.split_once('.').map_or("", |(m, _)| m)));
@@ -740,13 +767,13 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
         let live_kind = |k: &'static str| if st.live { k } else { "dead" };
         for b in &inputs {
             let (m, s) = b.split_once('.').unwrap_or(("", ""));
-            let n = tally(&refs, &|mv| mv.machine == m && mv.from == s);
+            let n = tally(&refs, &|t| t.machine == m && t.from == s);
             edges_json.push(json!({"from": b, "to": st.id, "n": n, "kind": live_kind("flow"), "label": null}));
         }
         for o in &outputs {
             let (m, s) = o.split_once('.').unwrap_or(("", ""));
             let created = st.creates.as_deref() == Some(o.as_str()) && !st.legal.iter().any(|&i| belt_id(edges[i].machine, &edges[i].to) == *o);
-            let n = if created { None } else { tally(&refs, &|mv| mv.machine == m && mv.to == s) };
+            let n = if created { None } else { tally(&refs, &|t| t.machine == m && t.to == s) };
             let kind = if st.back.contains(o) { live_kind("back") } else { live_kind("flow") };
             edges_json.push(json!({"from": st.id, "to": o, "n": n, "kind": kind, "label": null}));
         }
@@ -1037,7 +1064,21 @@ mod tests {
     }
 
     fn sensing() -> Sensing {
-        Sensing { transitions: Ok(bounds()), tsd_endpoint: None, now: NOW }
+        Sensing { victorialogs_url: String::new(), transitions: Ok(bounds()), tsd_endpoint: None, now: NOW }
+    }
+
+    use spira_otel::vlogs::fake::{FakeLogs, Script};
+
+    fn tally_lines(rows: &[(&str, &str, &str, &str, i64)]) -> String {
+        rows.iter().map(|(m, e, f, t, n)| json!({"machine": m, "event": e, "from": f, "to": t, "n": n.to_string()}).to_string() + "\n").collect()
+    }
+
+    /// A VictoriaLogs holding these 24 h transition counts, and the sensing that reads it.
+    fn counted(rows: &[(&str, &str, &str, &str, i64)]) -> (FakeLogs, Sensing) {
+        let logs = FakeLogs::start();
+        logs.answer("stats by", Script { status: 200, body: tally_lines(rows), hang: false });
+        let s = Sensing { victorialogs_url: logs.url(), ..sensing() };
+        (logs, s)
     }
 
     async fn floor(answers: Vec<(String, i32, String)>) -> Result<Value, String> {
@@ -1152,13 +1193,31 @@ mod tests {
     #[tokio::test]
     async fn unclaim_counts_release_and_holder_dead_rows_together() {
         let row = |seq: i64, event: &str, at: i64| json!({"seq": seq, "bead_id": "sp-a", "event": event, "from_state": "WORKING", "to_state": "READY", "at": at});
-        let gantt = json!({"now": NOW, "events": [row(1, "Release", NOW - 60), row(2, "Release", NOW - 600), row(3, "HolderDead", NOW - 6000), {"seq": 4, "bead_id": "sp-a", "event": "Submit", "from_state": "WORKING", "to_state": "SUBMITTED", "at": NOW - 5}]});
-        let f = floor(script(batch_graph(), &gantt, json!([]))).await.unwrap();
+        let gantt = json!({"now": NOW, "events": [row(1, "Release", NOW - 60), row(2, "Release", NOW - 600), row(3, "HolderDead", NOW - 6000)]});
+        let (_logs, s) = counted(&[("bead", "Release", "WORKING", "READY", 2), ("bead", "HolderDead", "WORKING", "READY", 1), ("bead", "Submit", "WORKING", "SUBMITTED", 1)]);
+        let f = floor_with(script(batch_graph(), &gantt, json!([])), "/nonexistent-run", &s).await.unwrap();
         let st = by_id(&f, "stations", "bead.unclaim");
         assert_eq!((st["per24h"].as_i64(), st["last_s"].as_i64()), (Some(3), Some(60)));
         let edge = f["edges"].as_array().unwrap().iter().find(|e| e["from"] == "bead.WORKING" && e["to"] == "bead.unclaim").unwrap();
         assert_eq!(edge["n"], 3);
         assert_eq!(by_id(&f, "stations", "bead.build")["per24h"], 1);
+    }
+
+    #[tokio::test]
+    async fn a_sinks_in24h_is_the_logsql_count_into_it_and_an_unreadable_store_is_null_with_an_error() {
+        let (logs, s) = counted(&[("bead", "Drop", "READY", "DROPPED", 2), ("bead", "Drop", "SUBMITTED", "DROPPED", 3)]);
+        let f = floor_with(script(batch_graph(), &quiet(), json!([])), "/nonexistent-run", &s).await.unwrap();
+        assert_eq!(by_id(&f, "belts", "bead.DROPPED")["in24h"], 5);
+        assert!(logs.queries().iter().any(|q| q.starts_with(&spira_otel::vlogs::transitions_window(86_400))), "{:?}", logs.queries());
+
+        let down = FakeLogs::start();
+        down.answer("stats by", Script { status: 503, body: "busy".into(), hang: false });
+        let s = Sensing { victorialogs_url: down.url(), ..sensing() };
+        let f = floor_with(script(batch_graph(), &quiet(), json!([])), "/nonexistent-run", &s).await.unwrap();
+        assert!(by_id(&f, "belts", "bead.DROPPED")["in24h"].is_null());
+        assert!(by_id(&f, "stations", "bead.build")["per24h"].is_null());
+        let errors = f["meta"]["errors"].as_array().unwrap();
+        assert!(errors.iter().any(|e| e.as_str().unwrap().starts_with("24 h counts")), "{errors:?}");
     }
 
     #[tokio::test]

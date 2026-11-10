@@ -27,10 +27,6 @@ use runtime::{Engine, EffectSpec, Journal, Marker, Registration, Value, WideSink
 
 pub use settings::Settings;
 
-/// No registration here consumes events other writers append, so the journal is read for them
-/// this often rather than on every wake.
-const FOREIGN_POLL_MS: u64 = 30_000;
-
 /// Every task in `tasks::all()`, in family order, each in the mode `SPIRA_TASK_MODES` gives it,
 /// on its row's plane, with its row's signal effects and the shared ones let through a halt.
 /// `Settings::from_lookup` refuses a table that does not name every task exactly.
@@ -39,7 +35,7 @@ pub fn registrations(s: &Settings) -> Vec<Registration> {
 }
 
 /// The control socket's submit: one `Submit` on the host's channel, answered once the host has
-/// journaled it or refused it.
+/// queued it or refused it.
 pub fn control_submit(tx: tokio::sync::mpsc::Sender<runtime::host::Submit>) -> status::SubmitFn {
     Arc::new(move |id: &str, stream: &str, kind: runtime::EventKind| {
         let (sub, reply) = runtime::host::Submit::with_reply(id, stream, kind);
@@ -105,7 +101,6 @@ pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runti
     engine
         .with_sink(sink)
         .with_baseline(vec![("runtime.version".into(), Value::from(env!("CARGO_PKG_VERSION"))), ("config.hash".into(), Value::from(s.hash()))])
-        .with_foreign_poll(FOREIGN_POLL_MS)
         .with_stall_limit(s.stall_limit)
         .with_marker(marker)
 }
@@ -326,7 +321,7 @@ mod own_unit_tests {
             &["start"]
         }
         fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
-            vec![Command::Effect(EffectSpec { name: "write".into(), input: String::new(), deadline_ms: 1000 })]
+            vec![Command::Effect(EffectSpec::by_input("write", String::new(), 1000))]
         }
     }
 

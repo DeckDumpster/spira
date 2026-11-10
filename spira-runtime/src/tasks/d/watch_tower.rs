@@ -251,7 +251,7 @@ pub fn is_nominal(s: &Snapshot, snap_stale_s: u64) -> bool {
 }
 
 fn spec(name: &str, input: String, deadline_ms: u64) -> EffectSpec {
-    EffectSpec { name: name.into(), input, deadline_ms }
+    EffectSpec::by_input(name, input, deadline_ms)
 }
 
 /// `is_nominal`, `render`, the 13 escalation predicates and the halt guard.

@@ -83,6 +83,8 @@ pub struct Store<B: Backend> {
     claim_floor_ms: u64,
     /// What [`Store::dwell`] has read of the audit log so far, kept for the store's life.
     pub(super) dwell_index: std::sync::Mutex<super::dwell::LastIndex>,
+    /// Where every applied transition is shipped once its txn commits.
+    shipper: Option<spira_otel::vlogs::Shipper>,
 }
 
 /// Ops a pass puts in one txn, leaving room under etcd's limit for the request and events keys.
@@ -212,6 +214,23 @@ impl<B: Backend> Store<B> {
             contract,
             claim_floor_ms,
             dwell_index: Default::default(),
+            shipper: None,
+        }
+    }
+
+    /// This store ships each transition it commits to VictoriaLogs, best effort.
+    pub fn with_shipper(mut self, shipper: spira_otel::vlogs::Shipper) -> Self {
+        self.shipper = Some(shipper);
+        self
+    }
+
+    fn ship_transitions(&self, applied: &[Audit]) {
+        let Some(shipper) = &self.shipper else { return };
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        for a in applied.iter().filter(|a| a.applied && a.from_state != a.to_state) {
+            let at = u64::try_from(a.at).ok().filter(|&t| t > 0).unwrap_or(now);
+            let bead = spira_otel::vlogs::bead_id(&a.lc_key).unwrap_or_default();
+            shipper.ship(&spira_otel::vlogs::transition_record(&a.machine, &a.event, &a.from_state, &a.to_state, &bead, at, &a.actor));
         }
     }
 
@@ -609,7 +628,11 @@ impl<B: Backend> Store<B> {
         for id in audited_ids(els) {
             t = t.or_put(&entry(id), Object::new(serde_json::json!({})));
         }
-        self.contract.txn(&t, &sub)
+        let r = self.contract.txn(&t, &sub)?;
+        if r.succeeded && !r.already_applied {
+            self.ship_transitions(then);
+        }
+        Ok(r)
     }
 
     /// `None` when there is no record; otherwise the answer `create` gives against it.

@@ -91,7 +91,11 @@ fn open(path: &str) -> Result<Store<Served>, String> {
         },
     )
     .map_err(|e| format!("{path}: {e}"))?;
-    Ok(Store::new(contract, floor))
+    let logs = spira_config::process::cfg("SPIRA_VICTORIALOGS_URL").map_err(|e| e.to_string())?;
+    if logs.trim().is_empty() {
+        return Err("SPIRA_VICTORIALOGS_URL is empty: every transition is shipped there and there is no fallback".into());
+    }
+    Ok(Store::new(contract, floor).with_shipper(spira_otel::vlogs::Shipper::start(&logs)))
 }
 
 fn opened(path: &str) -> Result<Arc<Store<Served>>, String> {

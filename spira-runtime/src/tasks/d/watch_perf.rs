@@ -156,7 +156,7 @@ fn to_lib(t: &Timing) -> perf_watch::Timing {
 }
 
 fn spec(name: &str, input: String, deadline_ms: u64) -> EffectSpec {
-    EffectSpec { name: name.into(), input, deadline_ms }
+    EffectSpec::by_input(name, input, deadline_ms)
 }
 
 /// `run_pass` with the probing lifted out: the next carry and the writes, among them each

@@ -66,7 +66,7 @@ impl Cadence {
 /// The P1 tick: one memory-only observe probe carrying `input`, and the next tick armed.
 pub fn on_tick(shape: &Shape, input: String, next_at: u64) -> Vec<Command> {
     vec![
-        Command::Probe(EffectSpec { name: shape.observe.into(), input, deadline_ms: shape.observe_deadline_ms }),
+        Command::Probe(EffectSpec::by_input(shape.observe, input, shape.observe_deadline_ms)),
         Command::Timer { at: next_at, kind: EventKind::new(shape.tick, "") },
     ]
 }
@@ -126,7 +126,7 @@ pub fn commands<C: Serialize + PartialEq>(shape: &Shape, table: &[(&str, u64)], 
             continue;
         }
         let deadline_ms = deadline(table, &a.effect).unwrap_or_else(|| panic!("{}: decide asked for {}, which its Act table does not name", shape.name, a.effect));
-        out.push(Command::Effect(EffectSpec { name: a.effect, input: a.input, deadline_ms }));
+        out.push(Command::Effect(EffectSpec { name: a.effect, input: a.input, deadline_ms, key: a.key }));
     }
     out
 }
@@ -387,6 +387,15 @@ mod tests {
         for (tag, wakes) in [(WORK_SUBMITTED, batcher_local::WAKES), (WORK_SUBMITTED, batcher_forge::WAKES), (batcher_forge::SETTLE_WANTED, queue_step::WAKES), (queue_step::PUBLISH_WANTED, super::super::publish::WAKES)] {
             assert!(wakes.contains(&tag), "{tag} is delivered where nobody listens");
         }
+    }
+
+    /// The key `decide` gives an act is the key its effect is requested under.
+    #[test]
+    fn commands_passes_an_acts_key_through_to_its_effect() {
+        let shape = Shape { name: "t", stream: "s", tick: "t.tick", state: "t.state", observe: "t.observe", observe_deadline_ms: 1 };
+        let out = commands(&shape, &[("t.do", 5)], &[], &0, &0, vec![Act::new("t.do", "t.do/sp-a").with_input("x")]);
+        let [Command::Effect(e)] = &out[..] else { panic!("one effect, and nothing else, was expected") };
+        assert_eq!(e.key, "t.do/sp-a", "the act's key is the effect's");
     }
 
     #[test]

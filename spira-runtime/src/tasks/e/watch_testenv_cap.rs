@@ -149,7 +149,7 @@ pub fn decide(snap: &Snapshot, cfg: &Config) -> Vec<EffectSpec> {
     testenv::cap::breaches(&procs, cfg.suite_cap_s, cfg.gate_cap_s, cfg.load_wait_s, cfg.slot_wait_s, GRACE_S, None)
         .into_iter()
         .map(|b| Kill { proc: from_cap(&b.proc), tier: b.tier.into(), cap_s: b.cap })
-        .map(|k| EffectSpec { name: KILL.into(), input: serde_json::to_string(&k).unwrap_or_default(), deadline_ms: ACT_DEADLINE_MS })
+        .map(|k| EffectSpec::by_input(KILL, serde_json::to_string(&k).unwrap_or_default(), ACT_DEADLINE_MS))
         .collect()
 }
 
@@ -164,7 +164,7 @@ pub fn killed(kill: &EffectSpec, outcome: &str, now_ms: u64, _cfg: &Config) -> V
         return vec![];
     }
     let Ok(k) = serde_json::from_str::<Kill>(&kill.input) else { return vec![] };
-    vec![EffectSpec { name: INBOX_APPEND.into(), input: line(&k, now_ms), deadline_ms: INBOX_DEADLINE_MS }, EffectSpec { name: METRIC.into(), input: k.tier, deadline_ms: ACT_DEADLINE_MS }]
+    vec![EffectSpec::by_input(INBOX_APPEND, line(&k, now_ms), INBOX_DEADLINE_MS), EffectSpec::by_input(METRIC, k.tier, ACT_DEADLINE_MS)]
 }
 
 /// The runs procfs shows, filtered to `testenv` runs (`cap::live`, `cap::is_run`).

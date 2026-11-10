@@ -351,6 +351,7 @@ lanes = "ops groomer mimir czar warden mender pilgrimage skuld"
 lanes_max_live = 2
 ffx_vocabulary_mode = "enforce"
 otel_keep_days = 14
+victorialogs_url = "http://127.0.0.1:19428"
 lc_password_file = "/fixture/userhome/.config/spira/spira-lc.credential"
 lc_snapshot = "/fixture/userhome/spira/run/bead-snapshot.json"
 lc_snapshot_secs = 2

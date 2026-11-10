@@ -135,7 +135,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, _cfg: &Config) -> (Ca
     if carry.said.as_deref() == Some(l.as_str()) {
         return (carry.clone(), vec![]);
     }
-    let say = EffectSpec { name: INBOX_APPEND.into(), input: pattern::inbox_line(now_ms, INBOX_TAG, &format!("{l}{SUFFIX}")), deadline_ms: INBOX_DEADLINE_MS };
+    let say = EffectSpec::by_input(INBOX_APPEND, pattern::inbox_line(now_ms, INBOX_TAG, &format!("{l}{SUFFIX}")), INBOX_DEADLINE_MS);
     (Carry { said: Some(l) }, vec![say])
 }
 

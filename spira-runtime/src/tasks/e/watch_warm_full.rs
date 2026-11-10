@@ -136,7 +136,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
         .slots
         .iter()
         .filter(|s| s.held_by.is_none() && s.mib > 0 && (pct >= LIMIT_PCT || cfg.cap_mib > 0 && s.mib > cfg.cap_mib))
-        .map(|s| EffectSpec { name: REAP.into(), input: serde_json::to_string(&Reap { base: base.clone(), slot: s.name.clone() }).unwrap_or_default(), deadline_ms: REAP_DEADLINE_MS })
+        .map(|s| EffectSpec::by_input(REAP, serde_json::to_string(&Reap { base: base.clone(), slot: s.name.clone() }).unwrap_or_default(), REAP_DEADLINE_MS))
         .collect();
     if !reap.is_empty() {
         // The script re-measured after reaping; this pct is stale, so the crossing waits a tick.
@@ -153,7 +153,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     let held = if held.is_empty() { String::new() } else { format!(" (held by:{held})") };
     let sizes = if sizes.is_empty() { "no slots".to_string() } else { sizes };
     let line = format!("dwarf warm tmpfs {base} is {pct}% full (limit {LIMIT_PCT}%): {sizes}; the slots a session holds cannot be emptied{held}");
-    (Carry { said: true }, vec![EffectSpec { name: INBOX_APPEND.into(), input: pattern::inbox_line(now_ms, INBOX_TAG, &line), deadline_ms: INBOX_DEADLINE_MS }])
+    (Carry { said: true }, vec![EffectSpec::by_input(INBOX_APPEND, pattern::inbox_line(now_ms, INBOX_TAG, &line), INBOX_DEADLINE_MS)])
 }
 
 /// One `watch.warm_full.reap`: the slot `slot` under `base`.

@@ -196,13 +196,40 @@ CREATE TABLE IF NOT EXISTS runtime_event (
 CREATE INDEX IF NOT EXISTS runtime_event_stream_idx ON runtime_event (stream, seq);
 CREATE INDEX IF NOT EXISTS runtime_event_cause_idx ON runtime_event (cause, kind_tag);
 
-CREATE TABLE IF NOT EXISTS runtime_effect (
+-- The 0038 effect table, renamed aside by migrations/0041 and no longer written; a fresh
+-- database carries it so that migration finds its rename already done.
+CREATE TABLE IF NOT EXISTS runtime_effect_0038 (
     event_id VARCHAR(255) NOT NULL PRIMARY KEY,
     seq      BIGINT NOT NULL,
     resolved TINYINT(1) NOT NULL DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS runtime_effect_open_idx ON runtime_effect (resolved, seq);
+CREATE INDEX IF NOT EXISTS runtime_effect_open_idx ON runtime_effect_0038 (resolved, seq);
+
+-- What the runtime keeps across a restart (migrations/0041-runtime-task-state.sql): each row
+-- upserted in place, the effect keyed by the act's idempotency key.
+CREATE TABLE IF NOT EXISTS runtime_effect (
+    task         VARCHAR(128) NOT NULL,
+    ekey         VARCHAR(255) NOT NULL,
+    request_id   VARCHAR(255) NOT NULL,
+    stream       VARCHAR(128) NOT NULL,
+    spec         LONGTEXT NOT NULL,
+    requested_at BIGINT NOT NULL,
+    deadline_at  BIGINT NOT NULL,
+    resolved     TINYINT(1) NOT NULL DEFAULT 0,
+    PRIMARY KEY (task, ekey)
+);
+
+CREATE INDEX IF NOT EXISTS runtime_effect_request_idx ON runtime_effect (request_id);
+CREATE INDEX IF NOT EXISTS runtime_effect_unresolved_idx ON runtime_effect (resolved);
+
+CREATE TABLE IF NOT EXISTS runtime_task_state (
+    task  VARCHAR(128) NOT NULL,
+    skey  VARCHAR(255) NOT NULL,
+    value LONGTEXT NOT NULL,
+    at    BIGINT NOT NULL,
+    PRIMARY KEY (task, skey)
+);
 
 CREATE TABLE IF NOT EXISTS runtime_applied (
     handler  VARCHAR(128) NOT NULL,

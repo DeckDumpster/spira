@@ -27,7 +27,7 @@ impl Alert {
     }
 
     pub fn effect(&self, name: &str, deadline_ms: u64) -> EffectSpec {
-        EffectSpec { name: name.into(), input: serde_json::to_string(self).unwrap_or_default(), deadline_ms }
+        EffectSpec::by_input(name, serde_json::to_string(self).unwrap_or_default(), deadline_ms)
     }
 }
 

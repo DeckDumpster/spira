@@ -105,7 +105,7 @@ fn decide_with_sample(carry: &Carry, snap: &Snapshot) -> Result<(Carry, Vec<Effe
     let moved = carry.digest != next.digest;
     if let Some(slots) = snap.fragments.get("cockpit.slots").filter(|f| moved && f.status == FragmentState::Ok) {
         let input: String = SAMPLED.iter().map(|(field, key)| format!("{field}={}\n", slots.kv.get(*key).map_or("?", String::as_str))).collect();
-        acts.push(EffectSpec { name: SLOTS_SAMPLE.into(), input, deadline_ms: 5_000 });
+        acts.push(EffectSpec::by_input(SLOTS_SAMPLE, input, 5_000));
     }
     Ok((next, acts))
 }

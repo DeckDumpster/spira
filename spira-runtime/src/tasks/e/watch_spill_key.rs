@@ -153,7 +153,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     let (mut next, mut acts) = (carry.clone(), vec![]);
     let mut once = |next: &mut Carry, key: String, message: String| {
         if next.said.insert(key) {
-            acts.push(EffectSpec { name: INBOX_APPEND.into(), input: pattern::inbox_line(now_ms, INBOX_TAG, &message), deadline_ms: INBOX_DEADLINE_MS });
+            acts.push(EffectSpec::by_input(INBOX_APPEND, pattern::inbox_line(now_ms, INBOX_TAG, &message), INBOX_DEADLINE_MS));
         }
     };
     let clear = |next: &mut Carry, prefix: &str| next.said.retain(|k| !k.starts_with(prefix));

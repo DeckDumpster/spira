@@ -35,9 +35,9 @@ pub trait EffectRunner: Send + Sync {
     }
 }
 
-/// An event from outside the engine. `reply`, when set, hears whether it was journaled: `Ok`
-/// once it is durable, `Err` when the journal refused or failed it. A dropped reply means the
-/// host stopped before the event was offered.
+/// An event from outside the engine. `reply`, when set, hears whether it was queued: `Ok` once
+/// it is, `Err` when the engine refused it. A dropped reply means the host stopped before the
+/// event was offered.
 pub struct Submit {
     pub id: String,
     pub stream: String,
@@ -63,7 +63,7 @@ impl std::fmt::Debug for Submit {
     }
 }
 
-/// Journals `s` and answers its reply. A refusal is answered and absorbed; a fault is answered
+/// Queues `s` and answers its reply. A refusal is answered and absorbed; a fault is answered
 /// and returned, since it may clear on restart.
 fn accept(engine: &mut Engine, s: Submit) -> Result<()> {
     // loop-safe: accept runs on the offload pool (Host) or under virtual time (VirtualDriver), never on the loop thread

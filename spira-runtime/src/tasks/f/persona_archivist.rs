@@ -268,7 +268,7 @@ pub struct Settle {
 }
 
 fn spec<T: Serialize>(name: &str, body: &T, deadline_ms: u64) -> EffectSpec {
-    EffectSpec { name: name.into(), input: serde_json::to_string(body).unwrap_or_default(), deadline_ms }
+    EffectSpec::by_input(name, serde_json::to_string(body).unwrap_or_default(), deadline_ms)
 }
 
 fn brief(ask: BriefAsk) -> EffectSpec {
@@ -309,7 +309,7 @@ pub fn decide(carry: &Carry, input: &Input, config: &BTreeMap<String, String>) -
     let wiki = config.get("SPIRA_WIKI").is_some_and(|w| !w.trim().is_empty());
     let unexpected = |effect: &str| Err(format!("{NAME}: {s:?} expects no outcome of {effect}"));
     match input {
-        Input::Tick => Ok((Carry { state: go("tick")?, ..carry.clone() }, vec![EffectSpec { name: OBSERVE.into(), input: String::new(), deadline_ms: OBSERVE_DEADLINE_MS }])),
+        Input::Tick => Ok((Carry { state: go("tick")?, ..carry.clone() }, vec![EffectSpec::by_input(OBSERVE, String::new(), OBSERVE_DEADLINE_MS)])),
         Input::Observed(snap) => {
             if snap.paused {
                 return Ok((Carry { state: go("paused")?, ..Carry::default() }, vec![spec(MARK, &serde_json::json!({}), HOST_DEADLINE_MS)]));

@@ -50,6 +50,7 @@ spira-claim = { path = "../../spira-claim" }
 mail = { path = "../../mail" }
 spira-world = { path = "../../spira-world" }
 runtime = { path = "../../runtime" }
+spira-otel = { path = "../../spira-otel" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }

@@ -260,7 +260,7 @@ impl Sweep {
     }
 
     fn effect(name: &str, input: String, deadline_ms: u64) -> Command {
-        Command::Effect(EffectSpec { name: name.into(), input, deadline_ms })
+        Command::Effect(EffectSpec::by_input(name, input, deadline_ms))
     }
 
     fn json<T: Serialize>(v: &T) -> String {
@@ -332,7 +332,7 @@ impl Sweep {
                 let leg = c.work.leg.as_mut().ok_or("no leg")?;
                 leg.tail = out.stdout_tail.clone().unwrap_or_default();
                 let look = Look { results_dir: Some(leg.results_dir.clone()), stdout: Some(leg.tail.clone()), commit: leg.commit.clone(), round: c.round.clone() };
-                Ok((c.clone(), vec![Command::Probe(EffectSpec { name: self.observe.into(), input: Self::json(&look), deadline_ms: OBSERVE_DEADLINE_MS })]))
+                Ok((c.clone(), vec![Command::Probe(EffectSpec::by_input(self.observe, Self::json(&look), OBSERVE_DEADLINE_MS))]))
             }
             Input::Silence(seq) => {
                 let live = c.phase == Phase::Running && c.work.leg.as_ref().is_some_and(|l| l.seq == *seq);
@@ -341,7 +341,7 @@ impl Sweep {
                 }
                 let leg = c.work.leg.as_ref().ok_or("no leg")?;
                 let look = Look { results_dir: Some(leg.results_dir.clone()), stdout: None, commit: leg.commit.clone(), round: c.round.clone() };
-                Ok((c.clone(), vec![Command::Probe(EffectSpec { name: self.observe.into(), input: Self::json(&look), deadline_ms: OBSERVE_DEADLINE_MS })]))
+                Ok((c.clone(), vec![Command::Probe(EffectSpec::by_input(self.observe, Self::json(&look), OBSERVE_DEADLINE_MS))]))
             }
             // The silence watch's answer: a leg that wrote nothing is stopped, as no verdict.
             Input::Observed((_, results)) if c.phase == Phase::Running => {

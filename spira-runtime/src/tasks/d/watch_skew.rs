@@ -215,7 +215,7 @@ impl SnapWorld<'_> {
     }
 
     fn act(&self, name: &str, input: String, deadline_ms: u64) {
-        self.acts.borrow_mut().push(EffectSpec { name: name.into(), input, deadline_ms });
+        self.acts.borrow_mut().push(EffectSpec::by_input(name, input, deadline_ms));
     }
 }
 

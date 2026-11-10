@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use runtime::conformance::trace;
 use runtime::host::{drive, Driver, EffectRunner, ServeOpts, Submit, VirtualDriver};
-use runtime::journal::{FaultyJournal, Journal};
+use runtime::journal::Journal;
 use runtime::offload::Pool;
 use runtime::pools::PoolCaps;
 use runtime::ports::{Clock, VirtualClock, WallClock};
@@ -27,7 +27,7 @@ impl Handler for Loop {
     fn handle(&self, ctx: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         match ev.kind.tag.as_str() {
             "ping" => vec![Command::Emit(EventKind::new("pong", &format!("{}@{}", ev.kind.body, ctx.now())))],
-            "work" => vec![Command::Effect(EffectSpec { name: "job".into(), input: ev.kind.body.clone(), deadline_ms: 5_000 })],
+            "work" => vec![Command::Effect(EffectSpec { name: "job".into(), input: ev.kind.body.clone(), deadline_ms: 5_000, key: "job".into() })],
             "tick" => vec![Command::Emit(EventKind::new("ticked", &ctx.now().to_string())), Command::Schedule { at: ev.at + DAY, kind: EventKind::new("tick", "") }],
             _ => vec![Command::Emit(EventKind::new("worked", &ev.kind.body))],
         }
@@ -92,20 +92,17 @@ fn same_seed_same_trace() {
 }
 
 #[test]
-fn a_reply_hears_acceptance_and_refusal() {
+fn a_reply_hears_acceptance_and_a_stopped_host_drops_it() {
     let (mem, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
-    let faulty = FaultyJournal::new(mem.clone());
     let (ok, mut ok_rx) = Submit::with_reply("ok", "s", EventKind::new("ping", "x"));
     let (no, mut no_rx) = Submit::with_reply("no", "s", EventKind::new("ping", "y"));
-    let mut v = VirtualDriver::new(engine(faulty.clone(), &clock, 1), clock.clone(), Arc::new(Jobs::default())).with_sources(scripted(&clock, vec![(10, ok), (20, no)])).unwrap();
+    let mut v = VirtualDriver::new(engine(mem.clone(), &clock, 1), clock.clone(), Arc::new(Jobs::default())).with_sources(scripted(&clock, vec![(10, ok), (20, no)])).unwrap();
     v.step(15).unwrap();
-    assert_eq!(ok_rx.try_recv(), Ok(Ok(())), "accepted once journaled");
+    assert_eq!(ok_rx.try_recv(), Ok(Ok(())), "accepted once queued");
     assert!(no_rx.try_recv().is_err(), "not yet offered");
-    faulty.refuse_next("append");
     v.run_until(30).unwrap();
-    let refused = no_rx.try_recv().expect("answered");
-    assert!(refused.is_err(), "a refused append is answered as a refusal: {refused:?}");
-    assert_eq!(bodies(&*mem, "ping").len(), 1);
+    assert_eq!(no_rx.try_recv(), Ok(Ok(())));
+    assert_eq!(bodies(&*mem, "ping").len(), 2);
 
     let (late, mut late_rx) = Submit::with_reply("late", "s", EventKind::new("ping", "z"));
     let v = VirtualDriver::new(engine(MemJournal::new(), &clock, 1), clock.clone(), Arc::new(Jobs::default())).with_sources(scripted(&clock, vec![(DAY, late)])).unwrap();

@@ -981,7 +981,7 @@ pub fn reflect(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let unit = units::UnitSpec { task: NAME.into(), key: format!("reflect-{:016x}", runtime::event::fnv1a(&spec.input)), argv, env, cwd: None };
     let props = units::UnitProps { output_append: Some(e.world.run_dir.join("reflect.log")), runtime_max_ms: Some((sentinel::reflect::AGENT_TIMEOUT_SECS + 60) * 1000), ..units::UnitProps::default() };
     let input = serde_json::to_string(&units::StartSpec { unit, props }).map_err(|e| e.to_string())?;
-    e.unit(&EffectSpec { name: units::UNIT_START.into(), input, deadline_ms: spec.deadline_ms })
+    e.unit(&EffectSpec::by_input(units::UNIT_START, input, spec.deadline_ms))
 }
 
 /// `sentinel-pass.stop_holder`: hel stops whatever still works in the bead's worktree.
@@ -1003,7 +1003,7 @@ pub fn landing_start(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let unit = units::UnitSpec { task: NAME.into(), key: LANDING_KEY.into(), argv: vec![landing.to_string_lossy().into_owned(), "land".into()], env, cwd: None };
     let props = landing_props(&write_of(&spec.input, LANDING_START)?, &e.world.run_dir);
     let input = serde_json::to_string(&units::StartSpec { unit, props }).map_err(|e| e.to_string())?;
-    e.unit(&EffectSpec { name: units::UNIT_START.into(), input, deadline_ms: spec.deadline_ms })
+    e.unit(&EffectSpec::by_input(units::UNIT_START, input, spec.deadline_ms))
 }
 
 /// The properties CHECK 6's `systemd-run` gave the landing leg (`sentinel/src/dispatch.rs`):

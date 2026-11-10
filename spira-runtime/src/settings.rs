@@ -31,6 +31,8 @@ pub struct Settings {
     pub metrics_endpoint: Option<String>,
     pub run_dir: PathBuf,
     pub lc_socket: PathBuf,
+    /// Where every event is shipped; required, so a runtime that could not ship refuses to start.
+    pub victorialogs_url: String,
     pub round_duty: RoundDuty,
     pub inbox_keeper: InboxKeeper,
     pub pr_notify: PrNotify,
@@ -88,6 +90,7 @@ impl Settings {
     /// world, the forge). A task's own keys are on its row in `tasks::all()`.
     pub const SERVICE_KEYS: &'static [&'static str] = &[
         "SPIRA_LC_SOCKET",
+        "SPIRA_VICTORIALOGS_URL",
         "SPIRA_LC_LIFECYCLE_ON_STORE",
         "SPIRA_RUN",
         "SPIRA_RUNTIME_STALL_LIMIT",
@@ -181,6 +184,10 @@ impl Settings {
         let socket = get("SPIRA_LC_SOCKET")?;
         if socket.is_empty() {
             return Err("SPIRA_LC_SOCKET is empty — the journal has no door to the store".into());
+        }
+        let victorialogs_url = get("SPIRA_VICTORIALOGS_URL")?;
+        if victorialogs_url.trim().is_empty() {
+            return Err("SPIRA_VICTORIALOGS_URL is empty — every event is shipped there and there is no fallback".into());
         }
         let run_dir = PathBuf::from(get("SPIRA_RUN")?);
         let secs = |key: &str| -> Result<u64, String> { num(key, &get(key)?) };
@@ -304,6 +311,7 @@ impl Settings {
             metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()),
             run_dir,
             lc_socket: PathBuf::from(socket),
+            victorialogs_url,
         };
         crate::modes::apply(crate::tasks::all().map(|t| (t.build)(&settings)).collect(), &settings.task_modes)?;
         Ok(settings)
@@ -386,6 +394,7 @@ mod tests {
                 "SPIRA_VIEW" => "/bin/view",
                 "SPIRA_VIEW_SESSION" => "pit",
                 "SPIRA_RUNTIME_SOCKET" => "/d/control.sock",
+                "SPIRA_VICTORIALOGS_URL" => "http://127.0.0.1:19428",
                 "SPIRA_POOL_CAP_STORE" => "41",
                 "SPIRA_POOL_CAP_UNIT" => "42",
                 "SPIRA_POOL_CAP_GIT" => "43",
@@ -609,6 +618,16 @@ mod tests {
         let refusing = move |k: &str| if k == "SPIRA_HOME_REPO" || k == "SPIRA_QUEUE_DIR" { Err(format!("{k} refused")) } else { base(k) };
         let e = Settings::from_lookup(&refusing).unwrap_err();
         assert!(e.contains("SPIRA_HOME_REPO") && e.contains("SPIRA_QUEUE_DIR"), "{e}");
+    }
+
+    #[test]
+    fn a_runtime_with_no_victorialogs_url_refuses_to_start() {
+        for empty in ["", "  "] {
+            let err = Settings::from_lookup(&|k| if k == "SPIRA_VICTORIALOGS_URL" { Ok(empty.to_string()) } else { lookup("7")(k) }).unwrap_err();
+            assert!(err.contains("SPIRA_VICTORIALOGS_URL") && err.contains("no fallback"), "{err}");
+        }
+        let s = fixture();
+        assert_eq!(s.victorialogs_url, "http://127.0.0.1:19428", "the configured value, not the shipped default");
     }
 
     #[test]

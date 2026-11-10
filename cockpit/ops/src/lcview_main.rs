@@ -270,6 +270,16 @@ fn gather_menders(s: &mut Snapshot) {
     }
 }
 
+fn gather_closed(s: &mut Snapshot) {
+    let read = spira_config::process::cfg("SPIRA_VICTORIALOGS_URL")
+        .and_then(|url| spira_otel::vlogs::Logs::new(&url).map_err(|e| e.to_string()))
+        .and_then(|logs| cockpit_ops::lcview::closed_24h(&logs));
+    match read {
+        Ok(c) => s.closed = Some(c),
+        Err(e) => s.errors.push(e),
+    }
+}
+
 fn gather() -> Snapshot {
     let started = std::time::Instant::now();
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
@@ -286,6 +296,7 @@ fn gather() -> Snapshot {
     let sm = std::thread::spawn(|| {
         let mut t = Snapshot::default();
         gather_state_machine(&mut t);
+        gather_closed(&mut t);
         gather_vm_runs(&mut t);
         t
     });
@@ -398,6 +409,7 @@ fn gather() -> Snapshot {
     s.dwell = sm.dwell;
     s.batches = sm.batches;
     s.vm_runs = sm.vm_runs;
+    s.closed = sm.closed;
     s.eject_why = sm.eject_why;
     s.errors.extend(sm.errors);
     // The pass's live counts are not on the batch row yet, and the pane reads a pass only

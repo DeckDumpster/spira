@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
+use crate::counts::DayCounts;
 use crate::timeutil::{parse_iso, parse_strict};
 
 const BUCKETS: usize = 8;
@@ -35,7 +36,7 @@ fn closed_when(row: &Value) -> Option<f64> {
 }
 
 /// `None` when stdin is not JSON: nothing is emitted, as before.
-pub fn render(stdin: &str, landing_log: &str, now: i64) -> Option<String> {
+pub fn render(stdin: &str, landing_log: &str, now: i64, counts: &Result<DayCounts, String>) -> Option<String> {
     let d: Value = serde_json::from_str(stdin).ok()?;
     let rows: Vec<&Value> = match &d {
         Value::Array(a) => a.iter().collect(),
@@ -54,7 +55,12 @@ pub fn render(stdin: &str, landing_log: &str, now: i64) -> Option<String> {
     kinds.sort_by_key(|e| std::cmp::Reverse(e.1));
     let kinds_s = kinds.iter().take(4).map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(", ");
 
-    let mut out = format!("SP_CLOSED_24H={}\nSP_OPENED_24H={opened}\n", closed.len());
+    let shown = |pick: fn(&DayCounts) -> u64| counts.as_ref().map_or("?".to_string(), |c| pick(c).to_string());
+    let mut out = format!("SP_CLOSED_24H={}\nSP_OPENED_24H={opened}\n", shown(|c| c.closed));
+    out += &format!("SP_CLAIMS_24H={}\nSP_SUBMITS_24H={}\nSP_CUTS_24H={}\n", shown(|c| c.claims), shown(|c| c.submits), shown(|c| c.cuts));
+    if let Err(e) = counts {
+        out += &format!("SP_COUNTS_ERR={}\n", e.replace('\n', " "));
+    }
     out += &format!("SP_CLOSED_KINDS={}\n", if kinds_s.is_empty() { "-" } else { &kinds_s });
 
     let mut ob = [0i64; BUCKETS];
@@ -86,9 +92,10 @@ pub fn render(stdin: &str, landing_log: &str, now: i64) -> Option<String> {
             }
             (lb, n)
         });
+    let landed_24h = shown(|c| c.landings);
     match landed {
-        Some((lb, n)) => out += &format!("SP_BEADS_SPARK_LANDED={}\nSP_BEADS_LANDED_24H={n}\n", spark(&lb)),
-        None => out += "SP_BEADS_SPARK_LANDED=?\nSP_BEADS_LANDED_24H=?\n",
+        Some((lb, _)) => out += &format!("SP_BEADS_SPARK_LANDED={}\nSP_BEADS_LANDED_24H={landed_24h}\n", spark(&lb)),
+        None => out += &format!("SP_BEADS_SPARK_LANDED=?\nSP_BEADS_LANDED_24H={landed_24h}\n"),
     }
     Some(out)
 }
@@ -118,9 +125,19 @@ mod tests {
             at(14400),
             at(57000)
         );
-        let out = render(&json, "/nonexistent", now).unwrap();
-        assert!(out.contains("SP_CLOSED_24H=1\nSP_OPENED_24H=2\nSP_CLOSED_KINDS=bug 1\n"), "{out}");
-        assert!(out.ends_with("SP_BEADS_SPARK_LANDED=?\nSP_BEADS_LANDED_24H=?\n"));
-        assert!(render("not json", "", now).is_none());
+        let counts = Ok(DayCounts { closed: 41, claims: 50, submits: 44, cuts: 40, landings: 38 });
+        let out = render(&json, "/nonexistent", now, &counts).unwrap();
+        assert!(out.contains("SP_CLOSED_24H=41\nSP_OPENED_24H=2\nSP_CLAIMS_24H=50\nSP_SUBMITS_24H=44\nSP_CUTS_24H=40\nSP_CLOSED_KINDS=bug 1\n"), "{out}");
+        assert!(out.ends_with("SP_BEADS_SPARK_LANDED=?\nSP_BEADS_LANDED_24H=38\n"), "{out}");
+        assert!(render("not json", "", now, &counts).is_none());
+    }
+
+    #[test]
+    fn unreadable_counts_are_unknown_with_the_error_not_zero() {
+        let out = render("[]", "", 1_000_000, &Err("victorialogs-unreachable: refused".into())).unwrap();
+        for k in ["SP_CLOSED_24H", "SP_CLAIMS_24H", "SP_SUBMITS_24H", "SP_CUTS_24H", "SP_BEADS_LANDED_24H"] {
+            assert!(out.contains(&format!("{k}=?\n")), "{k}: {out}");
+        }
+        assert!(out.contains("SP_COUNTS_ERR=victorialogs-unreachable: refused\n"), "{out}");
     }
 }

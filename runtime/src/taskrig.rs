@@ -26,7 +26,7 @@ use std::sync::Arc;
 use crate::conformance::trace;
 use crate::engine::{Engine, Executor, Outcome};
 use crate::event::*;
-use crate::journal::{Journal, MemJournal};
+use crate::journal::MemJournal;
 use crate::ports::{Clock, VirtualClock};
 use crate::Result;
 
@@ -56,7 +56,7 @@ pub struct TaskRig {
     requested: Vec<Requested>,
     refused: Vec<String>,
     ticks: BTreeMap<String, EventKind>,
-    read_to: crate::journal::Offset,
+    read_to: usize,
     journaled_requests: BTreeSet<String>,
 }
 
@@ -111,12 +111,13 @@ impl TaskRig {
             if pending.is_empty() {
                 return Ok(());
             }
-            for (o, e) in self.journal.read_from(self.read_to, usize::MAX)? {
-                self.read_to = o + 1;
+            let log = self.journal.log();
+            for e in &log[self.read_to..] {
                 if e.kind.tag == EFFECT_REQUESTED {
-                    self.journaled_requests.insert(e.id.0);
+                    self.journaled_requests.insert(e.id.0.clone());
                 }
             }
+            self.read_to = log.len();
             for p in pending {
                 let journaled = self.journaled_requests.contains(&p.key);
                 self.requested.push(Requested { name: p.spec.name.clone(), input: p.spec.input.clone(), at: p.requested_at, journaled });
@@ -136,7 +137,7 @@ impl TaskRig {
     }
 
     pub fn journaled(&self) -> Vec<Event> {
-        self.journal.read_from(0, usize::MAX).expect("read journal").into_iter().map(|(_, e)| e).collect()
+        self.journal.log()
     }
 
     pub fn trace(&self) -> Trace {
@@ -245,7 +246,7 @@ mod tests {
         }
         fn handle(&self, _: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
             if ev.kind.tag == TICK {
-                return vec![Command::Probe(EffectSpec { name: "look".into(), input: String::new(), deadline_ms: 100 }), Command::Timer { at: ev.at + self.every, kind: EventKind::new(TICK, "") }];
+                return vec![Command::Probe(EffectSpec { name: "look".into(), input: String::new(), deadline_ms: 100, key: "look".into() }), Command::Timer { at: ev.at + self.every, kind: EventKind::new(TICK, "") }];
             }
             if ev.kind.tag != EFFECT_SUCCEEDED {
                 return vec![];
@@ -256,7 +257,7 @@ mod tests {
                 cmds.push(Command::Emit(EventKind::new(SEEN, &ev.kind.body)));
             }
             if ev.kind.body == "loud" {
-                cmds.push(Command::Effect(EffectSpec { name: "say".into(), input: "hi".into(), deadline_ms: 100 }));
+                cmds.push(Command::Effect(EffectSpec { name: "say".into(), input: "hi".into(), deadline_ms: 100, key: "say".into() }));
             }
             cmds
         }
@@ -323,7 +324,7 @@ mod tests {
         let mut r = TaskRig::new(1, reg).unwrap().double("look", |_| Ok("loud".into())).double("say", |_| panic!("an observe task's write must not run"));
         r.tick(S, EventKind::new(TICK, "")).unwrap();
         assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), ["look"]);
-        assert_eq!(r.shadowed(), [EffectSpec { name: "say".into(), input: "hi".into(), deadline_ms: 100 }]);
+        assert_eq!(r.shadowed(), [EffectSpec { name: "say".into(), input: "hi".into(), deadline_ms: 100, key: "say".into() }]);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! The conformance suite: what any executor on any journal must do. Each scenario takes a
 //! `Rig`, which supplies a fresh journal and boots an executor on a journal — booting again on
-//! the same journal is how a crash and restart is staged.
+//! the same journal is how a restart is staged: it finds what the store kept and nothing else.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -50,7 +50,7 @@ impl Handler for Worker {
     }
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         if ev.kind.tag == "start" {
-            vec![Command::Effect(EffectSpec { name: "work".into(), input: ev.kind.body.clone(), deadline_ms: 1000 })]
+            vec![Command::Effect(EffectSpec { name: "work".into(), input: ev.kind.body.clone(), deadline_ms: 1000, key: format!("work/{}", ev.kind.body) })]
         } else {
             let key = ev.cause.as_ref().map_or(String::new(), |c| c.0.clone());
             vec![Command::Emit(EventKind::new(&format!("done:{}", ev.kind.tag), &key))]
@@ -107,13 +107,9 @@ fn all(count: &Counter) -> Vec<Registration> {
     ]
 }
 
-/// What the journal holds, in order: the executor-independent record two runs are compared on.
+/// What the journal was handed, in order: the executor-independent record two runs are compared on.
 pub fn trace(j: &dyn Journal) -> Vec<(String, String, String, String, u64)> {
-    j.read_from(0, usize::MAX)
-        .expect("read journal")
-        .into_iter()
-        .map(|(_, e)| (e.id.0, e.stream.0, e.kind.tag, e.kind.body, e.at))
-        .collect()
+    j.history().into_iter().map(|e| (e.id.0, e.stream.0, e.kind.tag, e.kind.body, e.at)).collect()
 }
 
 fn count_tag(j: &dyn Journal, tag: &str) -> usize {
@@ -124,7 +120,7 @@ fn ping(x: &mut dyn Executor, id: &str, stream: &str) {
     x.submit(id, stream, EventKind::new("ping", "")).expect("submit");
 }
 
-pub fn redelivery_of_any_event(rig: &dyn Rig) {
+pub fn a_duplicate_submit_dispatches_once(rig: &dyn Rig) {
     let (j, clock, n) = (rig.journal(), VirtualClock::new(0), Counter::default());
     let mut x = rig.boot(j.clone(), &clock, 1, all(&n)).unwrap();
     ping(&mut *x, "e1", "s");
@@ -133,46 +129,21 @@ pub fn redelivery_of_any_event(rig: &dyn Rig) {
     assert_eq!(n.load(Ordering::SeqCst), 1, "a duplicate submit must not run the handler twice");
     assert_eq!(count_tag(&*j, "ping"), 1);
     assert_eq!(count_tag(&*j, "pong"), 1);
-
-    let before = trace(&*j);
-    j.set_cursor(0).unwrap();
-    let mut y = rig.boot(j.clone(), &clock, 1, all(&n)).unwrap();
-    y.run_until_idle().unwrap();
-    assert_eq!(n.load(Ordering::SeqCst), 1, "a replayed event must not run an applied handler again");
-    assert_eq!(trace(&*j), before);
 }
 
-pub fn crash_between_append_and_dispatch(rig: &dyn Rig) {
-    let (j, clock, n) = (rig.journal(), VirtualClock::new(0), Counter::default());
-    j.append(&Event {
-        id: EventId("e1".into()),
-        stream: StreamKey("s".into()),
-        kind: EventKind::new("ping", ""),
-        at: 0,
-        cause: None,
-        correlation: CorrelationId("e1".into()),
-    })
-    .unwrap();
-    let mut x = rig.boot(j.clone(), &clock, 1, all(&n)).unwrap();
-    x.run_until_idle().unwrap();
-    assert_eq!(n.load(Ordering::SeqCst), 1, "an event appended and never dispatched must be dispatched after restart");
-    assert_eq!(count_tag(&*j, "pong"), 1);
-}
-
-pub fn crash_during_dispatch_appends_nothing_twice(rig: &dyn Rig) {
+pub fn a_failed_commit_is_sent_again_and_the_turn_lands_once(rig: &dyn Rig) {
     let (j, clock, n) = (rig.journal(), VirtualClock::new(0), Counter::default());
     let faulty = FaultyJournal::new(j.clone());
     let mut x = rig.boot(faulty.clone(), &clock, 1, all(&n)).unwrap();
     ping(&mut *x, "e1", "s");
-    faulty.fail_next("mark_applied");
+    faulty.cannot_tell_next("commit");
     assert!(x.run_until_idle().is_err(), "the injected fault must surface");
-    drop(x);
-    let mut y = rig.boot(j.clone(), &clock, 1, all(&n)).unwrap();
-    y.run_until_idle().unwrap();
-    assert_eq!(count_tag(&*j, "pong"), 1, "the replayed handler must append the same event id, not a second event");
+    x.run_until_idle().unwrap();
+    assert_eq!(n.load(Ordering::SeqCst), 1, "the handler ran once, not again for the retried commit");
+    assert_eq!(count_tag(&*j, "pong"), 1);
 }
 
-pub fn crash_between_effect_request_and_outcome(rig: &dyn Rig) {
+pub fn a_restart_finds_an_unanswered_effect_and_does_not_request_it_again(rig: &dyn Rig) {
     let (j, clock, n) = (rig.journal(), VirtualClock::new(0), Counter::default());
     let mut x = rig.boot(j.clone(), &clock, 1, all(&n)).unwrap();
     x.submit("s1", "s", EventKind::new("start", "payload")).unwrap();
@@ -238,29 +209,25 @@ fn roll_trace(rig: &dyn Rig, seed: u64) -> Vec<(String, String, String, String, 
     trace(&*j)
 }
 
-pub fn determinism_under_replay(rig: &dyn Rig) {
+pub fn determinism_under_one_seed(rig: &dyn Rig) {
     let first = roll_trace(rig, 5);
     assert_eq!(count_tag_in(&first, "ticked"), 5);
     assert_eq!(first, roll_trace(rig, 5), "same seed, same event trace");
     assert!((6..40).any(|s| roll_trace(rig, s) != first), "the seed must reach tie order and randomness");
+}
 
+pub fn a_fired_schedule_row_is_not_fired_by_the_next_process(rig: &dyn Rig) {
     let (j, clock, n) = (rig.journal(), VirtualClock::new(0), Counter::default());
-    let faulty = FaultyJournal::new(j.clone());
-    let mut x = rig.boot(faulty.clone(), &clock, 5, all(&n)).unwrap();
+    let mut x = rig.boot(j.clone(), &clock, 5, all(&n)).unwrap();
     x.submit("r1", "s", EventKind::new("roll", "")).unwrap();
     x.run_until_idle().unwrap();
     clock.advance_to(10);
-    faulty.fail_next("mark_fired");
-    assert!(x.run_until_idle().is_err());
+    x.run_until_idle().unwrap();
     drop(x);
     let mut y = rig.boot(j.clone(), &clock, 5, all(&n)).unwrap();
+    clock.advance_to(20);
     y.run_until_idle().unwrap();
-    assert_eq!(trace(&*j), first, "a crash and restart must land the same trace as an uninterrupted run");
-
-    j.set_cursor(0).unwrap();
-    let mut z = rig.boot(j.clone(), &clock, 5, all(&n)).unwrap();
-    z.run_until_idle().unwrap();
-    assert_eq!(trace(&*j), first, "replaying the whole journal must add nothing");
+    assert_eq!(count_tag(&*j, "ticked"), 5, "a restart fires no row that already fired");
 }
 
 fn count_tag_in(t: &[(String, String, String, String, u64)], tag: &str) -> usize {
@@ -300,16 +267,17 @@ pub fn schedule_rows_survive_restart_and_fire_once(rig: &dyn Rig) {
     let faulty = FaultyJournal::new(j.clone());
     let mut y = rig.boot(faulty.clone(), &clock, 1, all(&n)).unwrap();
     clock.advance_to(50);
-    faulty.fail_next("mark_fired");
+    faulty.cannot_tell_next("commit");
     assert!(y.run_until_idle().is_err());
+    y.run_until_idle().unwrap();
+    assert_eq!(count_tag(&*j, "alarm"), 1, "a row whose commit failed is not fired again by the process that fired it");
     drop(y);
 
     let mut z = rig.boot(j.clone(), &clock, 1, all(&n)).unwrap();
     z.run_until_idle().unwrap();
-    assert_eq!(count_tag(&*j, "alarm"), 1, "a row fired before the crash is not fired again");
+    assert_eq!(count_tag(&*j, "alarm"), 1, "a row fired before the restart is not fired again");
     assert_eq!(count_tag(&*j, "rang"), 1);
 }
-
 
 /// On `start`: one write and one probe, both carrying the body. On the probe's answer: `observed`.
 struct Writer;
@@ -320,8 +288,8 @@ impl Handler for Writer {
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         if ev.kind.tag == "start" {
             vec![
-                Command::Effect(EffectSpec { name: "write".into(), input: ev.kind.body.clone(), deadline_ms: 1000 }),
-                Command::Probe(EffectSpec { name: "read".into(), input: ev.kind.body.clone(), deadline_ms: 1000 }),
+                Command::Effect(EffectSpec { name: "write".into(), input: ev.kind.body.clone(), deadline_ms: 1000, key: format!("write/{}", ev.kind.body) }),
+                Command::Probe(EffectSpec { name: "read".into(), input: ev.kind.body.clone(), deadline_ms: 1000, key: format!("read/{}", ev.kind.body) }),
             ]
         } else {
             vec![Command::Emit(EventKind::new("observed", &ev.kind.body))]
@@ -339,7 +307,7 @@ struct Shadowed {
     deadline_at: u64,
 }
 
-pub fn observe_shadows_writes_runs_probes_and_never_replays_them(rig: &dyn Rig) {
+pub fn observe_shadows_writes_and_runs_probes(rig: &dyn Rig) {
     let (j, clock) = (rig.journal(), VirtualClock::new(7));
     let mut x = rig.boot(j.clone(), &clock, 1, writer(Mode::Observe)).unwrap();
     x.submit("s1", "s", EventKind::new("start", "payload")).unwrap();
@@ -351,7 +319,7 @@ pub fn observe_shadows_writes_runs_probes_and_never_replays_them(rig: &dyn Rig) 
     assert_eq!(t.iter().filter(|e| e.2 == EFFECT_REQUESTED).count(), 0, "and never requested");
     assert_eq!(shadowed[0].0, derive_id("s1/task/0".into()), "with the id effect.requested would have had");
     let body: Shadowed = serde_json::from_str(&shadowed[0].3).expect("the shadowed body is the request body");
-    assert_eq!(body.spec, EffectSpec { name: "write".into(), input: "payload".into(), deadline_ms: 1000 }, "the spec round-trips");
+    assert_eq!(body.spec, EffectSpec { name: "write".into(), input: "payload".into(), deadline_ms: 1000, key: "write/payload".into() }, "the spec round-trips");
     assert_eq!(body.deadline_at, 1007);
 
     let pending = x.pending_effects();
@@ -366,17 +334,9 @@ pub fn observe_shadows_writes_runs_probes_and_never_replays_them(rig: &dyn Rig) 
     y.run_until_idle().unwrap();
     assert!(y.pending_effects().is_empty());
     assert_eq!(count_tag(&*j, EFFECT_REQUESTED), 0, "nothing shadowed is requested for real");
-    drop(y);
-
-    j.set_cursor(0).unwrap();
-    let mut z = rig.boot(j.clone(), &clock, 1, writer(Mode::Act)).unwrap();
-    z.run_until_idle().unwrap();
-    assert_eq!(count_tag(&*j, EFFECT_REQUESTED), 0, "nor on a replay of the whole journal");
-    assert!(z.pending_effects().is_empty());
-
-    z.submit("s2", "s", EventKind::new("start", "now")).unwrap();
-    z.run_until_idle().unwrap();
-    assert_eq!(z.pending_effects().iter().filter(|p| p.spec.name == "write").count(), 1, "in act the same task's next write is requested");
+    y.submit("s2", "s", EventKind::new("start", "now")).unwrap();
+    y.run_until_idle().unwrap();
+    assert_eq!(y.pending_effects().iter().filter(|p| p.spec.name == "write").count(), 1, "in act the same task's next write is requested");
     assert_eq!(count_tag(&*j, EFFECT_SHADOWED), 1);
 }
 
@@ -425,12 +385,7 @@ pub fn halt_holds_writes_runs_probes_and_resume_releases_once_in_order(rig: &dyn
     for (r, want) in released.iter().zip(["a", "b", "c", "d"]) {
         assert!(r.contains(&format!("\"input\":\"{want}\"")), "released in the order held: {released:?}");
     }
-    drop(y);
-
-    j.set_cursor(0).unwrap();
-    let mut z = rig.boot(j.clone(), &clock, 1, writer(Mode::Act)).unwrap();
-    z.run_until_idle().unwrap();
-    assert_eq!(count_tag(&*j, EFFECT_REQUESTED), 4, "a replay of the whole journal releases nothing twice");
+    let z = &mut y;
     z.submit("s10", "s", EventKind::new("start", "e")).unwrap();
     z.run_until_idle().unwrap();
     assert_eq!(count_tag(&*j, EFFECT_REQUESTED), 5, "resumed, a write is requested at once");
@@ -478,7 +433,7 @@ fn wake(x: &mut dyn Executor, id: &str) {
     x.submit(id, "x", EventKind::new("wake", "")).unwrap();
 }
 
-pub fn emit_to_wakes_another_stream_once_across_a_crash(rig: &dyn Rig) {
+pub fn emit_to_wakes_another_stream_once(rig: &dyn Rig) {
     let (j, clock, heard) = (rig.journal(), VirtualClock::new(0), Counter::default());
     let mut x = rig.boot(j.clone(), &clock, 3, cross(&heard, Mode::Act)).unwrap();
     wake(&mut *x, "w1");
@@ -489,30 +444,6 @@ pub fn emit_to_wakes_another_stream_once_across_a_crash(rig: &dyn Rig) {
     assert_eq!((nudges[0].0.as_str(), nudges[0].1.as_str(), nudges[0].3.as_str()), (derive_id("w1/sender/0>y".into()).as_str(), "y", "w1"), "on the target stream, its id from the cause and the target");
     assert_eq!(heard.load(Ordering::SeqCst), 1, "the target stream's handler hears it once");
     assert_eq!(t.iter().filter(|e| e.2 == "heard").map(|e| e.1.as_str()).collect::<Vec<_>>(), vec!["y"]);
-    let first = t;
-    drop(x);
-
-    let (k, again) = (rig.journal(), Counter::default());
-    let faulty = FaultyJournal::new(k.clone());
-    let mut x = rig.boot(faulty.clone(), &clock, 3, cross(&again, Mode::Act)).unwrap();
-    wake(&mut *x, "w1");
-    faulty.fail_next("mark_applied");
-    assert!(x.run_until_idle().is_err(), "the crash lands after the nudge is appended and before it is dispatched");
-    assert_eq!(count_tag(&*k, "nudge"), 1);
-    assert_eq!(again.load(Ordering::SeqCst), 0);
-    drop(x);
-    let mut y = rig.boot(k.clone(), &clock, 3, cross(&again, Mode::Act)).unwrap();
-    y.run_until_idle().unwrap();
-    assert_eq!(count_tag(&*k, "nudge"), 1, "the replayed sender appends the same id, not a second nudge");
-    assert_eq!(again.load(Ordering::SeqCst), 1, "and the target hears it once");
-    assert_eq!(trace(&*k), first, "a crash and restart land the trace of an uninterrupted run");
-    drop(y);
-
-    k.set_cursor(0).unwrap();
-    let mut z = rig.boot(k.clone(), &clock, 3, cross(&again, Mode::Act)).unwrap();
-    z.run_until_idle().unwrap();
-    assert_eq!(trace(&*k), first, "replaying the whole journal adds nothing");
-    assert_eq!(again.load(Ordering::SeqCst), 1);
 }
 
 pub fn emit_to_is_shadowed_under_observe_and_runs_under_halt(rig: &dyn Rig) {
@@ -541,38 +472,34 @@ pub fn emit_to_is_shadowed_under_observe_and_runs_under_halt(rig: &dyn Rig) {
 }
 
 /// Counts on its stream: each `bump` and each probe answer emits `count` one past the newest
-/// `count` it sees; `start` asks two probes. A `bump` whose body is `crash` arms a fault on the
-/// next append, when it was handed the journal to fault: its own `count` is then never written.
-struct Tally(Option<Arc<FaultyJournal>>);
+/// `count` it sees; `start` asks two probes.
+struct Tally;
 impl Handler for Tally {
     fn interests(&self) -> &[EventKindTag] {
         &["bump", "start", EFFECT_SUCCEEDED]
     }
     fn handle(&self, _: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         if ev.kind.tag == "start" {
-            return (0..2).map(|i| Command::Probe(EffectSpec { name: "read".into(), input: i.to_string(), deadline_ms: 1000 })).collect();
-        }
-        if let (Some(f), "crash") = (&self.0, ev.kind.body.as_str()) {
-            f.fail_next("append");
+            return (0..2).map(|i| Command::Probe(EffectSpec { name: "read".into(), input: i.to_string(), deadline_ms: 1000, key: format!("read/{i}") })).collect();
         }
         let seen: u64 = view.events(&ev.stream).iter().rev().find(|e| e.kind.tag == "count").map_or(0, |e| e.kind.body.parse().unwrap_or(0));
         vec![Command::Emit(EventKind::new("count", &(seen + 1).to_string()))]
     }
 }
 
-fn tally(faults: Option<Arc<FaultyJournal>>) -> Vec<Registration> {
-    vec![Registration::new("tally", Tally(faults))]
+fn tally() -> Vec<Registration> {
+    vec![Registration::new("tally", Tally)]
 }
 
 fn counts(j: &dyn Journal) -> Vec<String> {
     trace(j).into_iter().filter(|t| t.2 == "count").map(|t| t.3).collect()
 }
 
-/// Two bumps in the journal together, the second arming the fault when the task holds one.
+/// Two bumps queued together.
 fn bump_twice(x: &mut dyn Executor) {
     x.submit("b1", "t", EventKind::new("bump", "")).unwrap();
-    x.submit("b2", "t", EventKind::new("bump", "crash")).unwrap();
-    let _ = x.run_until_idle();
+    x.submit("b2", "t", EventKind::new("bump", "")).unwrap();
+    x.run_until_idle().unwrap();
 }
 
 /// Two probe answers in memory together.
@@ -586,35 +513,15 @@ fn answer_twice(x: &mut dyn Executor) {
 }
 
 /// Per-stream sequential consistency: a handler's commands for one event are in the projection
-/// before it sees the next event on its stream, whether the two were journaled together or
-/// answered in memory together, and a crash between them replays to the same trace.
+/// before it sees the next event on its stream, whether the two were queued together or
+/// answered in memory together.
 pub fn a_handlers_writes_are_seen_before_its_streams_next_event(rig: &dyn Rig) {
     let (j, clock) = (rig.journal(), VirtualClock::new(0));
-    let mut x = rig.boot(j.clone(), &clock, 1, tally(None)).unwrap();
+    let mut x = rig.boot(j.clone(), &clock, 1, tally()).unwrap();
     bump_twice(&mut *x);
-    assert_eq!(counts(&*j), ["1", "2"], "the second bump sees the first bump's count, though it was journaled before it");
+    assert_eq!(counts(&*j), ["1", "2"], "the second bump sees the first bump's count, though it was queued before it");
     answer_twice(&mut *x);
     assert_eq!(counts(&*j), ["1", "2", "3", "4"], "the second probe answer sees the first answer's count");
-    let first = trace(&*j);
-    drop(x);
-
-    let k = rig.journal();
-    let faulty = FaultyJournal::new(k.clone());
-    let mut x = rig.boot(faulty.clone(), &clock, 1, tally(Some(faulty.clone()))).unwrap();
-    bump_twice(&mut *x);
-    assert_eq!(counts(&*k), ["1"], "the crash lands after the first bump's count and before the second's");
-    drop(x);
-    let mut y = rig.boot(k.clone(), &clock, 1, tally(None)).unwrap();
-    y.run_until_idle().unwrap();
-    assert_eq!(counts(&*k), ["1", "2"], "the replayed second bump sees the count written for the first before the crash");
-    answer_twice(&mut *y);
-    assert_eq!(trace(&*k), first, "a crash and restart land the trace of an uninterrupted run");
-    drop(y);
-
-    k.set_cursor(0).unwrap();
-    let mut z = rig.boot(k.clone(), &clock, 1, tally(None)).unwrap();
-    z.run_until_idle().unwrap();
-    assert_eq!(trace(&*k), first, "replaying the whole journal adds nothing");
 }
 
 /// On `ask`, one write and one probe. Every outcome it is offered becomes `heard`, whose body
@@ -626,7 +533,7 @@ impl Handler for Asker {
     }
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         if ev.kind.tag == "ask" {
-            let spec = |name: &str| EffectSpec { name: name.into(), input: self.0.into(), deadline_ms: 1000 };
+            let spec = |name: &str| EffectSpec { name: name.into(), input: self.0.into(), deadline_ms: 1000, key: name.into() };
             return vec![Command::Effect(spec("write")), Command::Probe(spec("read"))];
         }
         vec![Command::Emit(EventKind::new("heard", &format!("{}<-{}", self.0, ev.kind.body)))]
@@ -656,7 +563,7 @@ fn answer(x: &mut dyn Executor, only: Option<&str>) {
 
 /// An effect's outcome, journaled or memory-only, is offered to the task that asked for it and
 /// to no other task listening on its stream, except one that opts in to every outcome. The
-/// routing holds after a restart between the request and its outcome, and on a full replay.
+/// routing holds after a restart between the request and its outcome.
 pub fn an_outcome_is_offered_only_to_the_task_that_asked(rig: &dyn Rig) {
     let (j, clock) = (rig.journal(), VirtualClock::new(0));
     let mut x = rig.boot(j.clone(), &clock, 1, askers()).unwrap();
@@ -675,7 +582,6 @@ pub fn an_outcome_is_offered_only_to_the_task_that_asked(rig: &dyn Rig) {
     }
     want.sort();
     assert_eq!(heard(&*j), want, "each outcome reaches its requester, and the watcher hears them all");
-    let first = trace(&*j);
     drop(x);
 
     let k = rig.journal();
@@ -686,13 +592,7 @@ pub fn an_outcome_is_offered_only_to_the_task_that_asked(rig: &dyn Rig) {
     let mut y = rig.boot(k.clone(), &clock, 1, askers()).unwrap();
     answer(&mut *y, Some("write"));
     let writes: Vec<String> = want.iter().filter(|w| w.ends_with(":write")).cloned().collect();
-    assert_eq!(heard(&*k), writes, "after a restart the journaled request still names the task that asked");
-    drop(y);
-
-    j.set_cursor(0).unwrap();
-    let mut z = rig.boot(j.clone(), &clock, 1, askers()).unwrap();
-    z.run_until_idle().unwrap();
-    assert_eq!(trace(&*j), first, "replaying the whole journal adds nothing");
+    assert_eq!(heard(&*k), writes, "after a restart the kept request still names the task that asked");
 }
 
 /// On `start`, a `page` and a `write`.
@@ -702,7 +602,7 @@ impl Handler for Pager {
         &["start"]
     }
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
-        ["page", "write"].iter().map(|n| Command::Effect(EffectSpec { name: n.to_string(), input: ev.kind.body.clone(), deadline_ms: 1000 })).collect()
+        ["page", "write"].iter().map(|n| Command::Effect(EffectSpec { name: n.to_string(), input: ev.kind.body.clone(), deadline_ms: 1000, key: n.to_string() })).collect()
     }
 }
 
@@ -746,18 +646,18 @@ pub fn a_halt_holds_work_and_lets_signals_through(rig: &dyn Rig) {
 }
 
 pub fn run_all(rig: &dyn Rig) {
-    redelivery_of_any_event(rig);
-    crash_between_append_and_dispatch(rig);
-    crash_during_dispatch_appends_nothing_twice(rig);
-    crash_between_effect_request_and_outcome(rig);
+    a_duplicate_submit_dispatches_once(rig);
+    a_failed_commit_is_sent_again_and_the_turn_lands_once(rig);
+    a_restart_finds_an_unanswered_effect_and_does_not_request_it_again(rig);
     out_of_order_effect_outcomes(rig);
     effect_deadline_times_out(rig);
-    determinism_under_replay(rig);
+    determinism_under_one_seed(rig);
+    a_fired_schedule_row_is_not_fired_by_the_next_process(rig);
     handler_panic_quarantines_its_stream_only(rig);
     schedule_rows_survive_restart_and_fire_once(rig);
-    observe_shadows_writes_runs_probes_and_never_replays_them(rig);
+    observe_shadows_writes_and_runs_probes(rig);
     halt_holds_writes_runs_probes_and_resume_releases_once_in_order(rig);
-    emit_to_wakes_another_stream_once_across_a_crash(rig);
+    emit_to_wakes_another_stream_once(rig);
     emit_to_is_shadowed_under_observe_and_runs_under_halt(rig);
     a_handlers_writes_are_seen_before_its_streams_next_event(rig);
     an_outcome_is_offered_only_to_the_task_that_asked(rig);

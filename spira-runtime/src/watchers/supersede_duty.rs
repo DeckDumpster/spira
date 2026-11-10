@@ -256,11 +256,7 @@ impl SupersedeDuty {
     }
 
     fn inbox(now: u64, m: &str) -> Command {
-        Command::Effect(EffectSpec {
-            name: INBOX_APPEND.into(),
-            input: format!("{} [watch:{NAME}] {m}", iso8601(now)),
-            deadline_ms: ACT_DEADLINE_MS,
-        })
+        Command::Effect(EffectSpec::by_input(INBOX_APPEND, format!("{} [watch:{NAME}] {m}", iso8601(now)), ACT_DEADLINE_MS))
     }
 }
 
@@ -277,11 +273,7 @@ impl Handler for SupersedeDuty {
         if ev.kind.tag == TICK {
             let input = serde_json::to_string(&carry.not_a_request).unwrap_or_default();
             return vec![
-                Command::Probe(EffectSpec {
-                    name: OBSERVE.into(),
-                    input,
-                    deadline_ms: OBSERVE_DEADLINE_MS,
-                }),
+                Command::Probe(EffectSpec::by_input(OBSERVE, input, OBSERVE_DEADLINE_MS)),
                 Command::Timer {
                     at: ev.at + self.interval_ms,
                     kind: EventKind::new(TICK, ""),
@@ -310,11 +302,7 @@ impl Handler for SupersedeDuty {
                 for o in out {
                     cmds.push(match o {
                         Out::Say(m) => Self::inbox(now, &m),
-                        Out::Act(a) => Command::Effect(EffectSpec {
-                            name: ACT.into(),
-                            input: serde_json::to_string(&a).unwrap_or_default(),
-                            deadline_ms: ACT_DEADLINE_MS,
-                        }),
+                        Out::Act(a) => Command::Effect(EffectSpec::by_input(ACT, serde_json::to_string(&a).unwrap_or_default(), ACT_DEADLINE_MS)),
                     });
                 }
                 cmds

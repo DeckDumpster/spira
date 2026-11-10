@@ -1,18 +1,15 @@
-//! The runtime's journal verbs: `journal <op> ...` over the `runtime_*` tables. The runtime
+//! The runtime's store verbs: `journal <op> ...` over the `runtime_*` tables. The runtime
 //! reaches the lifecycle store only through this socket, so an idle runtime launches no process.
-//! Every write is idempotent on its key; an event or schedule row is one JSON argument.
+//! A turn is one transaction of upserts and updates keyed by what they change, never a delete;
+//! the runtime reads the store once, at boot.
 
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
 use crate::db::{Conn, DbError};
 use crate::rows::escape;
 
 const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
-
-/// Rows one `read` returns at most, whatever the caller asks for.
-const READ_MAX: u64 = 1000;
 
 fn lit(s: &str) -> String {
     format!("'{}'", escape(s))
@@ -26,25 +23,13 @@ fn number(v: &Value, k: &str) -> Result<u64, String> {
     v.get(k).and_then(Value::as_u64).ok_or_else(|| format!("journal: missing number {k}"))
 }
 
-/// Widths of the text columns, mirroring migrations/0030-runtime-journal.sql.
+/// Widths of the text columns, mirroring schema.sql.
 const ID_MAX: usize = 255;
 const STREAM_MAX: usize = 128;
 const TAG_MAX: usize = 64;
 const HANDLER_MAX: usize = 128;
-/// `kind_body` is a TEXT column, in bytes.
-const KIND_BODY_MAX: usize = 65_535;
-const HEAD_KEPT: usize = 4_096;
-
-/// The body as stored: itself when it fits the column, else a JSON stub naming its length and
-/// SHA-256 with the head it began with. An over-long body is recorded, not refused.
-fn stored_body(body: &str) -> String {
-    if body.len() <= KIND_BODY_MAX {
-        return body.to_string();
-    }
-    let cut = (0..=HEAD_KEPT).rev().find(|i| body.is_char_boundary(*i)).unwrap_or(0);
-    let digest: String = Sha256::digest(body.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-    json!({ "truncated": { "bytes": body.len(), "sha256": digest }, "head": &body[..cut] }).to_string()
-}
+const TASK_MAX: usize = 128;
+const KEY_MAX: usize = 255;
 
 fn text(v: &Value, k: &str) -> String {
     v.get(k).and_then(Value::as_str).unwrap_or("").to_string()
@@ -115,50 +100,6 @@ fn text_arg<'a>(arg: Option<&'a String>, what: &str) -> Result<&'a str, String> 
     }
 }
 
-pub fn append_sql(ev: &Value) -> Result<String, String> {
-    let kind = ev.get("kind").ok_or("journal: event has no kind")?;
-    check_widths("append", "event_id", ev)?;
-    Ok(format!(
-        "INSERT INTO runtime_event (event_id, stream, kind_tag, kind_body, at, cause, correlation) SELECT {id}, {}, {}, {}, {}, {}, {} FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM runtime_event WHERE event_id = {id})",
-        lit(field(ev, "stream")?),
-        lit(field(kind, "tag")?),
-        lit(&stored_body(field(kind, "body")?)),
-        number(ev, "at")?,
-        opt_lit(ev, "cause"),
-        lit(field(ev, "correlation")?),
-        id = lit(field(ev, "id")?),
-    ))
-}
-
-const REQUESTED: &str = "effect.requested";
-const OUTCOMES: [&str; 3] = ["effect.succeeded", "effect.failed", "effect.timed_out"];
-
-/// An event and the `runtime_effect` row that follows it, in one transaction: a request opens
-/// its row, an outcome closes the row of the request it names.
-pub fn append_sqls(ev: &Value) -> Result<Vec<String>, String> {
-    let mut sqls = vec![append_sql(ev)?];
-    let tag = field(ev.get("kind").unwrap_or(&Value::Null), "tag")?;
-    if tag == REQUESTED {
-        let id = lit(field(ev, "id")?);
-        sqls.push(format!("INSERT INTO runtime_effect (event_id, seq, resolved) SELECT event_id, seq, 0 FROM runtime_event WHERE event_id = {id} AND NOT EXISTS (SELECT 1 FROM runtime_effect WHERE event_id = {id})"));
-    } else if let (true, Some(cause)) = (OUTCOMES.contains(&tag), ev.get("cause").and_then(Value::as_str)) {
-        sqls.push(format!("UPDATE runtime_effect SET resolved = 1 WHERE event_id = {}", lit(cause)));
-    }
-    Ok(sqls)
-}
-
-/// Requests with no outcome event naming them as cause. `runtime_effect_open_idx` finds the
-/// candidates without reading the journal; the probe on `runtime_event_cause_idx` keeps a row
-/// an older writer never closed from being reported open.
-pub fn open_effects_sql() -> String {
-    "SELECT r.seq, r.event_id, r.stream, r.kind_tag, r.kind_body, r.at, r.cause, r.correlation FROM runtime_effect t JOIN runtime_event r ON r.seq = t.seq WHERE t.resolved = 0 AND NOT EXISTS (SELECT 1 FROM runtime_event o WHERE o.cause = r.event_id AND o.kind_tag IN ('effect.succeeded', 'effect.failed', 'effect.timed_out')) ORDER BY r.seq".into()
-}
-
-/// The newest `limit` events of a stream below `below`, newest first; `runtime_event_stream_idx` walks them backward.
-pub fn stream_sql(stream: &str, below: u64, limit: u64) -> String {
-    format!("SELECT seq, event_id, stream, kind_tag, kind_body, at, cause, correlation FROM runtime_event WHERE stream = {} AND seq < {below} ORDER BY seq DESC LIMIT {limit}", lit(stream))
-}
-
 pub fn schedule_sql(row: &Value) -> Result<String, String> {
     let kind = row.get("kind").ok_or("journal: row has no kind")?;
     check_widths("schedule", "row_id", row)?;
@@ -168,7 +109,7 @@ pub fn schedule_sql(row: &Value) -> Result<String, String> {
         number(row, "at")?,
         lit(field(row, "stream")?),
         lit(field(kind, "tag")?),
-        lit(&stored_body(field(kind, "body")?)),
+        lit(field(kind, "body")?),
         opt_lit(row, "cause"),
         lit(field(row, "correlation")?),
     ))
@@ -188,10 +129,6 @@ fn num(r: &Value, k: &str) -> Value {
 
 fn kind_of(r: &Value) -> Value {
     json!({ "tag": cell(r, "kind_tag"), "body": cell(r, "kind_body").as_str().unwrap_or("") })
-}
-
-fn event_of(r: &Value) -> Value {
-    json!({ "id": cell(r, "event_id"), "stream": cell(r, "stream"), "kind": kind_of(r), "at": num(r, "at"), "cause": cell(r, "cause"), "correlation": cell(r, "correlation") })
 }
 
 fn row_of(r: &Value) -> Value {
@@ -221,77 +158,74 @@ fn read(conn: &Conn, op: &str, sql: &str) -> Result<Vec<Value>, String> {
     conn.query(sql).map_err(|e| failed(op, sql, None, e))
 }
 
-fn mark_applied_sql(handler: &str, id: &str) -> Result<String, String> {
-    check_text("mark-applied", "handler", handler, HANDLER_MAX)?;
-    check_text("mark-applied", "event_id", id, ID_MAX)?;
-    let (h, i) = (lit(handler), lit(id));
-    Ok(format!("INSERT INTO runtime_applied (handler, event_id) SELECT {h}, {i} FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM runtime_applied WHERE handler = {h} AND event_id = {i})"))
-}
-
-fn cursor_sql(next: u64) -> String {
-    format!("INSERT INTO runtime_cursor (id, `next`) VALUES (1, {next}) ON DUPLICATE KEY UPDATE `next` = {next}")
-}
-
-/// One staged write of `journal group` (sp-4du857): `{"append": event}`, `{"schedule": row}` or
-/// `{"fired": row_id}`, each the statement its own op would run.
-fn staged_write_sql(w: &Value) -> Result<Vec<String>, String> {
-    let refused = || format!("journal: group refused: a write is not one of append, schedule, fired: {}", clip(&w.to_string()));
-    let Some((kind, v)) = w.as_object().filter(|o| o.len() == 1).and_then(|o| o.iter().next()) else { return Err(refused()) };
-    match kind.as_str() {
-        "append" => append_sqls(v),
-        "schedule" => schedule_sql(v).map(|s| vec![s]),
-        "fired" => match v.as_str() {
-            Some(id) if !id.is_empty() && !id.contains('\0') => Ok(vec![fired_sql(id)]),
-            _ => Err(format!("journal: group refused: a fired mark is not a row id: {v}")),
-        },
-        _ => Err(refused()),
-    }
-}
-
 fn fired_sql(row_id: &str) -> String {
     format!("UPDATE runtime_schedule SET fired = 1 WHERE row_id = {}", lit(row_id))
 }
 
-/// The staged writes `journal group` and `journal batch` carry (sp-rkb6wl, sp-4du857):
-/// `{"writes": [...], "applied": [[handler, event_id], ...], "cursor": n|null}`. The writes come
-/// first, in the order the runtime made them, so journal order is record order; every one is
-/// checked before any is written, so a refusal writes nothing.
-pub fn staged_sql(staged: &Value) -> Result<Vec<String>, String> {
-    let mut sqls = vec![];
-    match staged.get("writes") {
-        None | Some(Value::Null) => {}
-        Some(Value::Array(ws)) => {
-            for w in ws {
-                sqls.extend(staged_write_sql(w)?);
-            }
-        }
-        Some(other) => return Err(format!("journal: group refused: writes is not a list: {}", clip(&other.to_string()))),
-    }
-    for pair in staged.get("applied").and_then(Value::as_array).map_or(&[][..], Vec::as_slice) {
-        let (h, i) = (pair.get(0).and_then(Value::as_str), pair.get(1).and_then(Value::as_str));
-        let (Some(h), Some(i)) = (h.filter(|s| !s.is_empty()), i.filter(|s| !s.is_empty())) else {
-            return Err(format!("journal: batch refused: an applied mark is not [handler, event_id]: {pair}"));
-        };
-        sqls.push(mark_applied_sql(h, i)?);
-    }
-    match staged.get("cursor") {
-        None | Some(Value::Null) => {}
-        Some(c) => sqls.push(cursor_sql(c.as_u64().ok_or_else(|| format!("journal: batch refused: cursor {c} is not a non-negative integer"))?)),
-    }
-    Ok(sqls)
+fn state_sql(row: &Value) -> Result<String, String> {
+    let (task, skey) = (field(row, "task")?, field(row, "skey")?);
+    check_text("turn", "task", task, TASK_MAX)?;
+    check_text("turn", "skey", skey, KEY_MAX)?;
+    let (value, at) = (field(row, "value")?, number(row, "at")?);
+    Ok(format!("INSERT INTO runtime_task_state (task, skey, value, at) VALUES ({}, {}, {}, {at}) ON DUPLICATE KEY UPDATE value = {}, at = {at}", lit(task), lit(skey), lit(value), lit(value)))
 }
 
-/// The offset of `ev`, just appended (or already there).
-fn appended_seq(conn: &Conn, op: &str, ev: &Value) -> Result<String, String> {
-    let id = field(ev, "id")?;
-    let rows = read(conn, op, &format!("SELECT seq FROM runtime_event WHERE event_id = {}", lit(id)))?;
-    match rows.first() {
-        Some(r) => Ok(num(r, "seq").to_string()),
-        None => {
-            let warnings = read(conn, op, &format!("SELECT seq FROM runtime_event WHERE event_id = {}; SHOW WARNINGS", lit(id))).map_or_else(|e| e, |w| Value::Array(w).to_string());
-            Err(format!("journal: appended event not found; {}; warnings={warnings}", describe(ev)))
-        }
+fn effect_sql(row: &Value) -> Result<String, String> {
+    let (task, ekey, request, stream) = (field(row, "task")?, field(row, "ekey")?, field(row, "request_id")?, field(row, "stream")?);
+    check_text("turn", "task", task, TASK_MAX)?;
+    check_text("turn", "ekey", ekey, KEY_MAX)?;
+    check_text("turn", "request_id", request, ID_MAX)?;
+    check_text("turn", "stream", stream, STREAM_MAX)?;
+    let spec = row.get("spec").ok_or("journal: effect has no spec")?.to_string();
+    let (requested, deadline) = (number(row, "requested_at")?, number(row, "deadline_at")?);
+    Ok(format!(
+        "INSERT INTO runtime_effect (task, ekey, request_id, stream, spec, requested_at, deadline_at, resolved) VALUES ({}, {}, {}, {}, {}, {requested}, {deadline}, 0) ON DUPLICATE KEY UPDATE request_id = {r}, stream = {s}, spec = {sp}, requested_at = {requested}, deadline_at = {deadline}, resolved = 0",
+        lit(task),
+        lit(ekey),
+        lit(request),
+        lit(stream),
+        lit(&spec),
+        r = lit(request),
+        s = lit(stream),
+        sp = lit(&spec),
+    ))
+}
+
+fn resolved_sql(request: &str) -> Result<String, String> {
+    check_text("turn", "request_id", request, ID_MAX)?;
+    Ok(format!("UPDATE runtime_effect SET resolved = 1 WHERE request_id = {}", lit(request)))
+}
+
+fn list<'a>(turn: &'a Value, k: &str) -> Result<&'a [Value], String> {
+    match turn.get(k) {
+        None | Some(Value::Null) => Ok(&[]),
+        Some(Value::Array(a)) => Ok(a),
+        Some(other) => Err(format!("journal: turn refused: {k} is not a list: {}", clip(&other.to_string()))),
     }
+}
+
+/// The statements of one turn, in the order they apply: state, effect requests, schedule rows,
+/// then the outcomes and fired marks that close earlier ones. Every one is checked before any
+/// is written, so a refusal writes nothing.
+pub fn turn_sqls(turn: &Value) -> Result<Vec<String>, String> {
+    let mut sqls = vec![];
+    for r in list(turn, "state")? {
+        sqls.push(state_sql(r)?);
+    }
+    for r in list(turn, "effects")? {
+        sqls.push(effect_sql(r)?);
+    }
+    for r in list(turn, "schedules")? {
+        sqls.push(schedule_sql(r)?);
+    }
+    for id in list(turn, "resolved")? {
+        sqls.push(resolved_sql(id.as_str().filter(|s| !s.is_empty()).ok_or_else(|| format!("journal: turn refused: a resolved mark is not a request id: {id}"))?)?);
+    }
+    for id in list(turn, "fired")? {
+        let id = id.as_str().filter(|s| !s.is_empty() && !s.contains('\0')).ok_or_else(|| format!("journal: turn refused: a fired mark is not a row id: {id}"))?;
+        sqls.push(fired_sql(id));
+    }
+    Ok(sqls)
 }
 
 fn run(args: &[String], conn: &Conn) -> Result<String, String> {
@@ -299,79 +233,26 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
     let (read, write) = (|c: &Conn, s: &str| read(c, op, s), |c: &Conn, s: &str, who: Option<&Value>| write(c, op, s, who));
     let a = |i: usize| args.get(i);
     match op {
-        "append" => {
-            let ev = parse(a(1), "event")?;
-            let sqls = append_sqls(&ev)?;
-            conn.append_events(&sqls).map_err(|e| failed(op, &sqls.join(";\n"), Some(&ev), e))?;
-            appended_seq(conn, op, &ev)
-        }
-        // `group` is `batch` that also carries records, schedule rows and fired marks
-        // (sp-4du857): a client that sends them asks for `group`, so a service without it
-        // refuses the op instead of dropping the writes it does not know.
-        "batch" | "group" => {
-            let staged = parse(a(1), "staged writes")?;
-            if op == "batch" && staged.get("writes").is_some() {
-                return Err("journal: batch refused: records ride `journal group`".into());
+        "turn" => {
+            let turn = parse(a(1), "turn")?;
+            let sqls = turn_sqls(&turn)?;
+            if !sqls.is_empty() {
+                conn.append_events(&sqls).map_err(|e| failed(op, &sqls.join(";\n"), None, e))?;
             }
-            let mut sqls = staged_sql(&staged)?;
-            let inner = &args[2..];
-            match inner.first().map(String::as_str) {
-                Some("batch" | "group") => Err(format!("journal: {op} refused: a batch inside a batch")),
-                Some("append") => {
-                    let ev = parse(inner.get(1), "event")?;
-                    sqls.extend(append_sqls(&ev)?);
-                    conn.append_events(&sqls).map_err(|e| failed(op, &sqls.join(";\n"), Some(&ev), e))?;
-                    appended_seq(conn, op, &ev)
-                }
-                rest => {
-                    conn.append_events(&sqls).map_err(|e| failed(op, &sqls.join(";\n"), None, e))?;
-                    if rest.is_none() { Ok(String::new()) } else { run(inner, conn) }
-                }
-            }
+            Ok(String::new())
         }
-        "read" => {
-            let (from, limit) = (arg_u64(a(1), "from")?, arg_u64(a(2), "limit")?.min(READ_MAX));
-            let rows = read(
-                conn,
-                &format!("SELECT seq, event_id, stream, kind_tag, kind_body, at, cause, correlation FROM runtime_event WHERE seq >= {from} ORDER BY seq LIMIT {limit}"),
-            )?;
-            Ok(Value::Array(rows.iter().map(|r| json!([num(r, "seq"), event_of(r)])).collect()).to_string())
-        }
-        "stream" => {
-            let (stream, below, limit) = (text_arg(a(1), "stream")?, arg_u64(a(2), "below")?, arg_u64(a(3), "limit")?.min(READ_MAX));
-            let mut rows = read(conn, &stream_sql(stream, below, limit))?;
-            rows.reverse();
-            Ok(Value::Array(rows.iter().map(|r| json!([num(r, "seq"), event_of(r)])).collect()).to_string())
-        }
-        "end" => {
-            let rows = read(conn, "SELECT MAX(seq) AS top FROM runtime_event")?;
-            Ok(rows.first().and_then(|r| num(r, "top").as_u64()).map_or(0, |top| top + 1).to_string())
+        "state" => {
+            let rows = read(conn, "SELECT task, skey, value, at FROM runtime_task_state ORDER BY task, skey")?;
+            Ok(Value::Array(rows.iter().map(|r| json!({ "task": cell(r, "task"), "skey": cell(r, "skey"), "value": cell(r, "value"), "at": num(r, "at") })).collect()).to_string())
         }
         "open-effects" => {
-            let rows = read(conn, &open_effects_sql())?;
-            Ok(Value::Array(rows.iter().map(|r| json!([num(r, "seq"), event_of(r)])).collect()).to_string())
-        }
-        "applied" | "mark-applied" => {
-            let (handler, id) = (text_arg(a(1), "handler")?, text_arg(a(2), "event id")?);
-            if op == "mark-applied" {
-                write(conn, &mark_applied_sql(handler, id)?, None)?;
-                return Ok(String::new());
+            let rows = read(conn, "SELECT task, ekey, request_id, stream, spec, requested_at, deadline_at FROM runtime_effect WHERE resolved = 0 ORDER BY requested_at, request_id")?;
+            let mut out = vec![];
+            for r in &rows {
+                let spec: Value = cell(r, "spec").as_str().and_then(|t| serde_json::from_str(t).ok()).ok_or_else(|| format!("journal: effect {} has an unreadable spec", cell(r, "request_id")))?;
+                out.push(json!({ "task": cell(r, "task"), "ekey": cell(r, "ekey"), "request_id": cell(r, "request_id"), "stream": cell(r, "stream"), "spec": spec, "requested_at": num(r, "requested_at"), "deadline_at": num(r, "deadline_at") }));
             }
-            let rows = read(conn, &format!("SELECT 1 AS hit FROM runtime_applied WHERE handler = {} AND event_id = {}", lit(handler), lit(id)))?;
-            Ok(if rows.is_empty() { "0" } else { "1" }.into())
-        }
-        "cursor" => {
-            let rows = read(conn, "SELECT `next` FROM runtime_cursor WHERE id = 1")?;
-            Ok(rows.first().map_or(0, |r| num(r, "next").as_u64().unwrap_or(0)).to_string())
-        }
-        "set-cursor" => {
-            write(conn, &cursor_sql(arg_u64(a(1), "cursor")?), None)?;
-            Ok(String::new())
-        }
-        "schedule" => {
-            let row = parse(a(1), "schedule row")?;
-            write(conn, &schedule_sql(&row)?, Some(&row))?;
-            Ok(String::new())
+            Ok(Value::Array(out).to_string())
         }
         "due" => {
             let filter = match a(1) {
@@ -383,10 +264,6 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
                 &format!("SELECT row_id, at, stream, kind_tag, kind_body, cause, correlation FROM runtime_schedule WHERE fired = 0{filter} ORDER BY row_id"),
             )?;
             Ok(Value::Array(rows.iter().map(row_of).collect()).to_string())
-        }
-        "mark-fired" => {
-            write(conn, &fired_sql(text_arg(a(1), "row id")?), None)?;
-            Ok(String::new())
         }
         "poison" => {
             let p = parse(a(1), "poison")?;
@@ -411,7 +288,7 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             let rows = read(conn, &format!("SELECT stream, event_id, handler, message FROM runtime_poison WHERE stream = {}", lit(text_arg(a(1), "stream")?)))?;
             Ok(rows.first().map_or("null".into(), |r| json!({ "stream": cell(r, "stream"), "event": cell(r, "event_id"), "handler": cell(r, "handler"), "message": cell(r, "message") }).to_string()))
         }
-        _ => Err(format!("journal: unknown op {op:?} (append|batch|group|read|stream|end|open-effects|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned)")),
+        _ => Err(format!("journal: unknown op {op:?} (turn|state|open-effects|due|poison|poisoned)")),
     }
 }
 
@@ -427,29 +304,46 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
 mod tests {
     use super::*;
 
-    fn ev() -> Value {
-        json!({"id": "e'1", "stream": "s", "kind": {"tag": "t", "body": "b\\"}, "at": 7, "cause": null, "correlation": "c"})
+    fn effect() -> Value {
+        json!({"task": "t", "ekey": "k'1", "request_id": "r1", "stream": "s", "spec": {"name": "n", "input": "i", "deadline_ms": 5, "key": "k'1"}, "requested_at": 1, "deadline_at": 6})
     }
 
     #[test]
-    fn append_quotes_every_text_and_nulls_an_absent_cause() {
-        let sql = append_sql(&ev()).unwrap();
-        assert!(sql.contains("'e\\'1'") && sql.contains("'b\\\\'") && sql.contains("NULL"), "{sql}");
+    fn a_turn_upserts_state_and_effects_and_updates_what_it_closes_and_deletes_nothing() {
+        let row = json!({"id": "r1", "at": 5, "stream": "s", "kind": {"tag": "tick", "body": ""}, "cause": null, "correlation": "c"});
+        let turn = json!({"state": [{"task": "t", "skey": "carry", "value": "v'", "at": 2}], "effects": [effect()], "schedules": [row], "resolved": ["r0"], "fired": ["r9"]});
+        let sqls = turn_sqls(&turn).unwrap();
+        let heads: Vec<&str> = sqls.iter().map(|s| s.split(" (").next().unwrap().split(" SET").next().unwrap()).collect();
+        assert_eq!(heads, ["INSERT INTO runtime_task_state", "INSERT INTO runtime_effect", "INSERT INTO runtime_schedule", "UPDATE runtime_effect", "UPDATE runtime_schedule"], "{sqls:?}");
+        assert!(sqls[0].contains("'v\\''") && sqls[0].contains("ON DUPLICATE KEY UPDATE value"), "{}", sqls[0]);
+        assert!(sqls[1].contains("'k\\'1'") && sqls[1].contains("resolved = 0"), "{}", sqls[1]);
+        assert_eq!(sqls[3], "UPDATE runtime_effect SET resolved = 1 WHERE request_id = 'r0'");
+        assert!(sqls.iter().all(|s| !s.to_uppercase().contains("DELETE")), "{sqls:?}");
+        assert!(turn_sqls(&json!({})).unwrap().is_empty(), "an empty turn writes nothing");
     }
 
     #[test]
-    fn the_runtime_window_fits_inside_one_stream_read() {
-        let src = include_str!("../../runtime/src/event.rs");
-        let window: u64 = src.split("pub const WINDOW: usize = ").nth(1).and_then(|r| r.split(';').next()).unwrap().trim().parse().unwrap();
-        assert!(window <= READ_MAX, "the runtime asks for {window}, a stream read returns {READ_MAX}");
-    }
-
-    #[test]
-    fn an_event_missing_a_field_is_refused() {
-        let mut e = ev();
-        e.as_object_mut().unwrap().remove("stream");
-        assert!(append_sql(&e).unwrap_err().contains("stream"));
-        assert!(schedule_sql(&json!({"id": "r"})).is_err());
+    fn a_turn_with_a_bad_write_refuses_all_of_it() {
+        let wide = |k: &str, n: usize| {
+            let mut e = effect();
+            e[k] = json!("x".repeat(n));
+            json!({"effects": [e]})
+        };
+        for bad in [
+            json!({"state": [{"task": "t".repeat(129), "skey": "carry", "value": "v", "at": 1}]}),
+            json!({"state": [{"task": "t", "skey": "k".repeat(256), "value": "v", "at": 1}]}),
+            wide("ekey", 256),
+            wide("request_id", 256),
+            wide("stream", 129),
+            json!({"effects": [{"task": "t"}]}),
+            json!({"resolved": [""]}),
+            json!({"fired": [7]}),
+            json!({"state": {"task": "t"}}),
+            json!({"state": [{"task": "t", "skey": "carry", "value": "v", "at": 1}], "fired": [""]}),
+        ] {
+            assert!(turn_sqls(&bad).unwrap_err().starts_with("journal:"), "{bad}");
+        }
+        assert!(turn_sqls(&wide("ekey", 255)).is_ok(), "the limit itself is accepted");
     }
 
     #[test]
@@ -459,131 +353,34 @@ mod tests {
     }
 
     #[test]
-    fn an_over_length_id_is_refused_naming_the_event_its_fields_and_their_lengths() {
-        let id = "i".repeat(266);
-        let e = append_sql(&json!({"id": id, "stream": "runtime.heartbeat", "kind": {"tag": "heartbeat", "body": ""}, "at": 1, "cause": null, "correlation": "c"})).unwrap_err();
-        assert!(e.starts_with("journal: append refused: event_id is 266 chars (max 255);") && e.contains(&id) && e.contains("stream=runtime.heartbeat") && e.contains("kind=heartbeat") && e.contains("id:266,stream:17,tag:9"), "{e}");
+    fn an_over_length_schedule_id_is_refused_naming_the_row_its_fields_and_their_lengths() {
         let r = schedule_sql(&json!({"id": "r".repeat(260), "at": 1, "stream": "s", "kind": {"tag": "t", "body": ""}, "cause": null, "correlation": "c"})).unwrap_err();
-        assert!(r.contains("row_id is 260 chars (max 255)"), "{r}");
-        for (k, v) in [("stream", "s".repeat(129)), ("correlation", "c".repeat(256)), ("cause", "x".repeat(256))] {
-            let mut ev = ev();
-            ev[k] = json!(v);
-            assert!(append_sql(&ev).unwrap_err().contains(&format!("{k} is")), "{k}");
-        }
-        assert!(append_sql(&json!({"id": "i".repeat(255), "stream": "s".repeat(128), "kind": {"tag": "t".repeat(64), "body": ""}, "at": 1, "cause": null, "correlation": "c"})).is_ok(), "the limits themselves are accepted");
+        assert!(r.starts_with("journal: schedule refused: row_id is 260 chars (max 255);") && r.contains("kind=t"), "{r}");
+        assert!(schedule_sql(&json!({"id": "r"})).is_err());
     }
 
-    #[test]
-    fn a_request_opens_its_effect_row_and_an_outcome_closes_the_one_it_names() {
-        let at = |tag: &str, cause: Value| json!({"id": "x", "stream": "s", "kind": {"tag": tag, "body": ""}, "at": 1, "cause": cause, "correlation": "c"});
-        let opened = append_sqls(&at("effect.requested", Value::Null)).unwrap();
-        assert!(opened.len() == 2 && opened[1].starts_with("INSERT INTO runtime_effect") && opened[1].contains("resolved") && opened[1].contains("NOT EXISTS"), "{opened:?}");
-        for tag in ["effect.succeeded", "effect.failed", "effect.timed_out"] {
-            let closed = append_sqls(&at(tag, json!("r'1"))).unwrap();
-            assert_eq!(closed[1], "UPDATE runtime_effect SET resolved = 1 WHERE event_id = 'r\\'1'", "{tag}");
-        }
-        assert_eq!(append_sqls(&at("effect.succeeded", Value::Null)).unwrap().len(), 1, "an outcome naming no request closes nothing");
-        assert_eq!(append_sqls(&at("heartbeat", Value::Null)).unwrap().len(), 1);
-        assert!(open_effects_sql().contains("t.resolved = 0"), "the boot read starts from the open rows");
-    }
-
-    #[test]
-    fn a_group_carries_the_effect_rows_in_the_order_of_its_events() {
-        let at = |id: &str, tag: &str, cause: Value| json!({"id": id, "stream": "s", "kind": {"tag": tag, "body": ""}, "at": 1, "cause": cause, "correlation": "c"});
-        let sqls = staged_sql(&json!({"writes": [{"append": at("r", "effect.requested", Value::Null)}, {"append": at("o", "effect.failed", json!("r"))}]})).unwrap();
-        let heads: Vec<&str> = sqls.iter().map(|s| s.split(" (").next().unwrap().split(" SET").next().unwrap()).collect();
-        assert_eq!(heads, ["INSERT INTO runtime_event", "INSERT INTO runtime_effect", "INSERT INTO runtime_event", "UPDATE runtime_effect"], "{sqls:?}");
-    }
-
-    #[test]
-    fn no_write_swallows_a_conflict_but_ignore() {
-        let sql = append_sql(&ev()).unwrap();
-        assert!(!sql.contains("IGNORE") && sql.contains("WHERE NOT EXISTS (SELECT 1 FROM runtime_event WHERE event_id = "), "{sql}");
-    }
-
-    /// runtime_event, runtime_applied and runtime_poison are append-only for spira_lc
-    /// (lifecycle/grants.sql: SELECT, INSERT): a dedupe that needs UPDATE is "command denied"
-    /// in production (sp-6gsvrm, 2026-10-29) though a root-run test passes.
+    /// runtime_poison is append-only for spira_lc (lifecycle/grants.sql: SELECT, INSERT): a dedupe
+    /// that needs UPDATE is "command denied" in production though a root-run test passes.
     #[test]
     fn appends_to_append_only_tables_need_no_update_grant() {
-        let sql = append_sql(&ev()).unwrap();
-        assert!(!sql.to_uppercase().contains("UPDATE"), "{sql}");
         let src = include_str!("journal.rs");
-        for table in ["runtime_event", "runtime_applied", "runtime_poison"] {
-            let bad = src.lines().filter(|l| l.contains(&format!("INSERT INTO {table}")) && l.contains("DUPLICATE KEY")).count();
-            assert_eq!(bad, 0, "{table} is granted SELECT, INSERT only; ON DUPLICATE KEY UPDATE is denied");
-        }
+        let table = "runtime_poison";
+        let bad = src.lines().filter(|l| l.contains(&format!("INSERT INTO {table}")) && l.contains("DUPLICATE KEY")).count();
+        assert_eq!(bad, 0, "{table} is granted SELECT, INSERT only; ON DUPLICATE KEY UPDATE is denied");
     }
 
+    /// The runtime checks a write against these widths before it sends it (runtime/src/socket.rs).
     #[test]
-    fn staged_writes_become_one_statement_each_and_a_bad_one_refuses_them_all() {
-        let sqls = staged_sql(&json!({"applied": [["h1", "e1"], ["h2", "e'2"]], "cursor": 9})).unwrap();
-        assert_eq!(sqls.len(), 3, "{sqls:?}");
-        assert!(sqls[0].starts_with("INSERT INTO runtime_applied") && sqls[1].contains("'e\\'2'") && sqls[2].contains("VALUES (1, 9)"), "{sqls:?}");
-        assert!(staged_sql(&json!({})).unwrap().is_empty(), "nothing staged writes nothing");
-        assert!(staged_sql(&json!({"cursor": null})).unwrap().is_empty());
-        for bad in [json!({"applied": [["h"]]}), json!({"applied": [["", "e"]]}), json!({"cursor": -1}), json!({"applied": [["h".repeat(129), "e"]]})] {
-            assert!(staged_sql(&bad).unwrap_err().starts_with("journal:"), "{bad}");
-        }
-    }
-
-    /// sp-4du857: a group's records, schedule rows and fired marks become their ops' own
-    /// statements in the order sent, ahead of the marks and the cursor; one bad write refuses all.
-    #[test]
-    fn a_groups_writes_become_their_ops_statements_in_order_and_one_bad_write_refuses_them_all() {
-        let row = json!({"id": "r1", "at": 5, "stream": "s", "kind": {"tag": "tick", "body": ""}, "cause": null, "correlation": "c"});
-        let sqls = staged_sql(&json!({"writes": [{"append": ev()}, {"schedule": row}, {"fired": "r1"}, {"append": {"id": "e2", "stream": "s", "kind": {"tag": "t", "body": ""}, "at": 8, "cause": "e'1", "correlation": "c"}}], "applied": [["h", "e2"]], "cursor": 4})).unwrap();
-        assert_eq!(sqls.len(), 6, "{sqls:?}");
-        assert_eq!(sqls[0], append_sql(&ev()).unwrap());
-        assert_eq!(sqls[1], schedule_sql(&row).unwrap());
-        assert_eq!(sqls[2], fired_sql("r1"));
-        assert!(sqls[3].contains("'e2'") && sqls[4].starts_with("INSERT INTO runtime_applied") && sqls[5].contains("VALUES (1, 4)"), "{sqls:?}");
-        for bad in [
-            json!({"writes": [{"append": ev()}, {"append": {"id": "i".repeat(256), "stream": "s", "kind": {"tag": "t", "body": ""}, "at": 1, "cause": null, "correlation": "c"}}]}),
-            json!({"writes": [{"fired": ""}]}),
-            json!({"writes": [{"delete": "x"}]}),
-            json!({"writes": [{"append": ev(), "fired": "r"}]}),
-            json!({"writes": {"append": ev()}}),
-        ] {
-            assert!(staged_sql(&bad).unwrap_err().starts_with("journal:"), "{bad}");
-        }
-    }
-
-    /// The runtime stages a write only inside the widths this verb refuses past
-    /// (runtime/src/socket.rs), so a staged write is never the one that refuses a group.
-    #[test]
-    fn the_runtime_stages_only_inside_these_widths() {
+    fn the_runtime_checks_only_inside_these_widths() {
         let src = include_str!("../../runtime/src/socket.rs");
-        for (name, max) in [("ID_MAX", ID_MAX), ("STREAM_MAX", STREAM_MAX), ("TAG_MAX", TAG_MAX), ("HANDLER_MAX", HANDLER_MAX)] {
+        for (name, max) in [("ID_MAX", ID_MAX), ("STREAM_MAX", STREAM_MAX), ("TASK_MAX", TASK_MAX), ("KEY_MAX", KEY_MAX)] {
             assert!(src.contains(&format!("const {name}: usize = {max};")), "runtime/src/socket.rs {name} differs from {max}");
         }
     }
 
-    fn body_of(sql: &str) -> String {
-        let stored = sql.split("'t', '").nth(1).unwrap().split("', 1, ").next().unwrap().to_string();
-        stored.replace("\\\\", "\\").replace("\\'", "'")
-    }
-
-    #[test]
-    fn a_body_over_the_column_is_stored_as_a_digest_and_head_never_dropped() {
-        let big = format!("{{\"runs\":[\"{}é\"]}}", "r".repeat(KIND_BODY_MAX + 10));
-        let sql = append_sql(&json!({"id": "e", "stream": "s", "kind": {"tag": "t", "body": big}, "at": 1, "cause": null, "correlation": "c"})).unwrap();
-        let stored = body_of(&sql);
-        assert!(stored.len() <= KIND_BODY_MAX, "{} bytes", stored.len());
-        let v: Value = serde_json::from_str(&stored).unwrap();
-        assert_eq!(v["truncated"]["bytes"], big.len());
-        assert_eq!(v["truncated"]["sha256"].as_str().unwrap().len(), 64);
-        assert!(big.starts_with(v["head"].as_str().unwrap()));
-        let at_limit = "x".repeat(KIND_BODY_MAX);
-        let sql = append_sql(&json!({"id": "e", "stream": "s", "kind": {"tag": "t", "body": at_limit}, "at": 1, "cause": null, "correlation": "c"})).unwrap();
-        assert_eq!(body_of(&sql), at_limit, "a body that fits is stored as sent");
-        let row = json!({"id": "r", "at": 1, "stream": "s", "kind": {"tag": "t", "body": big}, "cause": null, "correlation": "c"});
-        assert!(schedule_sql(&row).unwrap().contains("truncated"), "a schedule row's body is held to the column too");
-    }
-
     #[test]
     fn a_long_statement_is_clipped_to_the_limit_and_an_ellipsis() {
-        let sql = append_sql(&json!({"id": "e", "stream": "s", "kind": {"tag": "t", "body": "x".repeat(10_000)}, "at": 1, "cause": null, "correlation": "c"})).unwrap();
+        let sql = state_sql(&json!({"task": "t", "skey": "carry", "value": "x".repeat(10_000), "at": 1})).unwrap();
         assert!(sql.len() > 10_000);
         assert_eq!(clip(&sql).chars().count(), CLIP + 1);
         assert_eq!(clip("short"), "short");

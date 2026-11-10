@@ -202,7 +202,7 @@ pub fn violations(path: &str, text: &str) -> Vec<String> {
 /// The text `_csg_once` wrote after the stamp, and the key it marked said.
 fn said(carry: &mut Carry, acts: &mut Vec<EffectSpec>, now_ms: u64, key: String, message: String) {
     if carry.said.insert(key) {
-        acts.push(EffectSpec { name: INBOX_APPEND.into(), input: pattern::inbox_line(now_ms, INBOX_TAG, &message), deadline_ms: INBOX_DEADLINE_MS });
+        acts.push(EffectSpec::by_input(INBOX_APPEND, pattern::inbox_line(now_ms, INBOX_TAG, &message), INBOX_DEADLINE_MS));
     }
 }
 

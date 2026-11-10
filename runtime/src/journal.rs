@@ -1,16 +1,14 @@
-//! The journal behind its trait: append, read from an offset, schedule rows.
+//! The store behind its trait: what must outlive a process, committed once per turn, and the
+//! event history shipped beside it. Dispatch never reads either back.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
+use spira_otel::vlogs::ShipCounts;
 
-use crate::event::{Event, EventId, EventKind, StreamKey, EFFECT_FAILED, EFFECT_REQUESTED, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT};
+use crate::event::{EffectSpec, Event, EventId, EventKind, StreamKey, EFFECT_FAILED, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT};
 use crate::{Class, Result, RuntimeError};
-
-pub type Offset = u64;
-
-const SCAN: usize = 1000;
 
 pub fn is_outcome(tag: &str) -> bool {
     matches!(tag, EFFECT_SUCCEEDED | EFFECT_FAILED | EFFECT_TIMED_OUT)
@@ -34,159 +32,97 @@ pub struct Poison {
     pub message: String,
 }
 
+/// The task whose keys hold the scheduler's own state, and the keys.
+pub const SCHEDULER_TASK: &str = "scheduler";
+pub const HALTED_KEY: &str = "halted";
+pub const HELD_KEY: &str = "held";
+/// The key a task's whole carry is stored under until the per-family split.
+pub const CARRY_KEY: &str = "carry";
+
+/// One key of a task's state, overwritten in place.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Lease {
+pub struct StateRow {
+    pub task: String,
+    pub skey: String,
+    pub value: String,
+    pub at: u64,
+}
+
+/// An effect requested and not yet answered, keyed by the act's idempotency key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectRow {
+    pub task: String,
+    pub ekey: String,
+    pub request_id: String,
     pub stream: StreamKey,
-    pub holder: String,
-    pub epoch: u64,
-    pub expires_at: u64,
+    pub spec: EffectSpec,
+    pub requested_at: u64,
+    pub deadline_at: u64,
 }
 
-pub const LEASE_LOST: &str = "lease lost";
+/// Everything one turn of the engine changes in the store, committed together.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Turn {
+    /// Only the keys whose value changed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub state: Vec<StateRow>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<EffectRow>,
+    /// Request ids whose outcome this turn handled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolved: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub schedules: Vec<ScheduleRow>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fired: Vec<String>,
+}
 
-/// The lease a caller would hold after asking for `stream`: its own renewed, a free or expired
-/// one taken at the next epoch, or nothing when a live holder has it. A released lease keeps
-/// its epoch (holder empty, expired) so the next holder still fences the last.
-pub fn grant(cur: Option<&Lease>, stream: &StreamKey, holder: &str, ttl_ms: u64, now: u64) -> Option<Lease> {
-    let expires_at = now.saturating_add(ttl_ms);
-    let lease = |epoch| Some(Lease { stream: stream.clone(), holder: holder.into(), epoch, expires_at });
-    match cur {
-        None => lease(1),
-        Some(c) if c.holder == holder => lease(c.epoch),
-        Some(c) if c.expires_at <= now => lease(c.epoch + 1),
-        Some(_) => None,
+impl Turn {
+    pub fn is_empty(&self) -> bool {
+        self.state.is_empty() && self.effects.is_empty() && self.resolved.is_empty() && self.schedules.is_empty() && self.fired.is_empty()
     }
 }
 
-pub fn fence(cur: Option<&Lease>, stream: &StreamKey, holder: &str, epoch: u64) -> Result<()> {
-    match cur {
-        Some(c) if c.holder == holder && c.epoch == epoch => Ok(()),
-        _ => Err(RuntimeError::new(format!("{LEASE_LOST}: {}", stream.0))),
-    }
+/// What a booting process reads: every state key, the unresolved effects and the unfired schedule rows.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Boot {
+    pub state: Vec<StateRow>,
+    pub effects: Vec<EffectRow>,
+    pub schedules: Vec<ScheduleRow>,
 }
 
-pub fn release(cur: Option<&Lease>, holder: &str) -> Option<Lease> {
-    cur.filter(|c| c.holder == holder).map(|c| Lease { holder: String::new(), expires_at: 0, ..c.clone() })
-}
-
-/// Stream ownership. `append_fenced` is the one write that checks the lease and appends in a
-/// single step, so a holder that was stolen from cannot land an event after the steal.
-pub trait LeaseTable: Send + Sync {
-    fn acquire(&self, stream: &StreamKey, holder: &str, ttl_ms: u64, now: u64) -> Result<Option<Lease>>;
-    fn release(&self, stream: &StreamKey, holder: &str) -> Result<()>;
-    fn current(&self, stream: &StreamKey) -> Result<Option<Lease>>;
-    fn append_fenced(&self, ev: &Event, holder: &str, epoch: u64) -> Result<Offset>;
-}
-
-/// Every method is idempotent on its key: `append` on an id already present returns the
-/// existing offset, so a replayed handler writes nothing twice.
+/// `record` ships history and is read by nobody; `commit` is the one write that must hold, and is
+/// idempotent on its keys, so a turn that failed may be sent again.
 pub trait Journal: Send + Sync {
-    fn append(&self, ev: &Event) -> Result<Offset>;
-    /// [`append`](Self::append) for a caller that does not need the offset. A journal may stage
-    /// the event to commit with its next request (sp-4du857): every later read still sees it,
-    /// in the order it was recorded, and [`flush`](Self::flush) makes it durable now.
-    fn record(&self, ev: &Event) -> Result<()> {
-        self.append(ev).map(|_| ())
-    }
-    fn read_from(&self, from: Offset, limit: usize) -> Result<Vec<(Offset, Event)>>;
-    fn applied(&self, handler: &str, id: &EventId) -> Result<bool>;
-    fn mark_applied(&self, handler: &str, id: &EventId) -> Result<()>;
-    fn cursor(&self) -> Result<Offset>;
-    /// The newest `limit` events of `stream` at offsets below `below`, oldest first. The default
-    /// scans the journal; a store with an index on the stream answers without reading the rest.
-    fn read_stream(&self, stream: &StreamKey, below: Offset, limit: usize) -> Result<Vec<(Offset, Event)>> {
-        let mut out: Vec<(Offset, Event)> = vec![];
-        let mut from = 0;
-        while from < below {
-            let batch = self.read_from(from, SCAN)?;
-            let Some((last, _)) = batch.last() else { break };
-            from = last + 1;
-            out.extend(batch.into_iter().filter(|(o, e)| *o < below && &e.stream == stream));
-        }
-        out.drain(..out.len().saturating_sub(limit));
-        Ok(out)
-    }
-    /// One past the offset of the newest event, or the cursor when the journal holds nothing
-    /// beyond it. The default pages the backlog; a store that knows its maximum answers in one call.
-    fn end(&self) -> Result<Offset> {
-        let mut from = self.cursor()?;
-        loop {
-            let batch = self.read_from(from, SCAN)?;
-            let Some((last, _)) = batch.last() else { return Ok(from) };
-            from = last + 1;
-        }
-    }
-    /// Every `effect.requested` event no outcome event names as its cause. The default scans the
-    /// journal; a store that tracks open requests answers in their number, not the journal's.
-    fn unresolved_effects(&self) -> Result<Vec<(Offset, Event)>> {
-        let mut open = BTreeMap::new();
-        let mut from = 0;
-        loop {
-            let batch = self.read_from(from, SCAN)?;
-            let Some((last, _)) = batch.last() else { break };
-            from = last + 1;
-            for (o, e) in batch {
-                if e.kind.tag == EFFECT_REQUESTED {
-                    open.insert(e.id.clone(), (o, e));
-                } else if is_outcome(&e.kind.tag) {
-                    if let Some(c) = &e.cause {
-                        open.remove(c);
-                    }
-                }
-            }
-        }
-        Ok(open.into_values().collect())
-    }
-    fn set_cursor(&self, next: Offset) -> Result<()>;
-    fn schedule(&self, row: &ScheduleRow) -> Result<()>;
-    fn pending_schedules(&self) -> Result<Vec<ScheduleRow>>;
-    fn mark_fired(&self, row_id: &str) -> Result<()>;
+    /// Ship `ev` to the event history, best effort, ahead of the turn's commit.
+    fn record(&self, ev: &Event);
+    fn boot(&self) -> Result<Boot>;
+    fn commit(&self, turn: &Turn) -> Result<()>;
     fn poison(&self, p: &Poison) -> Result<()>;
     fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>>;
-    /// `None` when the journal cannot arbitrate stream ownership between processes.
-    fn leases(&self) -> Option<&dyn LeaseTable> {
-        None
+    /// The events recorded so far, for a journal that keeps them: tests read history here, and
+    /// nothing in the engine does.
+    fn history(&self) -> Vec<Event> {
+        vec![]
     }
-    /// Make every write this journal has accepted durable now. A journal that writes through
-    /// has nothing to do; one that stages idempotent writes for its next request sends them.
-    fn flush(&self) -> Result<()> {
-        Ok(())
+    /// What the shipper has dropped and failed, for a journal that ships.
+    fn shipped(&self) -> Option<ShipCounts> {
+        None
     }
 }
 
 #[derive(Default)]
 struct Mem {
-    events: Vec<Event>,
-    by_id: BTreeMap<EventId, Offset>,
-    by_stream: BTreeMap<StreamKey, Vec<Offset>>,
-    open_effects: BTreeSet<Offset>,
-    applied: BTreeSet<(String, EventId)>,
-    cursor: Offset,
+    log: Vec<Event>,
+    commits: Vec<Turn>,
+    state: BTreeMap<(String, String), StateRow>,
+    effects: BTreeMap<(String, String), (EffectRow, bool)>,
     schedules: BTreeMap<String, (ScheduleRow, bool)>,
     poison: BTreeMap<StreamKey, Poison>,
-    leases: BTreeMap<StreamKey, Lease>,
 }
 
-impl Mem {
-    fn append(&mut self, ev: &Event) -> Offset {
-        if let Some(o) = self.by_id.get(&ev.id) {
-            return *o;
-        }
-        let o = self.events.len() as Offset;
-        self.events.push(ev.clone());
-        self.by_id.insert(ev.id.clone(), o);
-        self.by_stream.entry(ev.stream.clone()).or_default().push(o);
-        if ev.kind.tag == EFFECT_REQUESTED {
-            self.open_effects.insert(o);
-        } else if is_outcome(&ev.kind.tag) {
-            if let Some(req) = ev.cause.as_ref().and_then(|c| self.by_id.get(c)) {
-                self.open_effects.remove(req);
-            }
-        }
-        o
-    }
-}
-
+/// The store in memory. Booting another engine on the same journal is a restart: it finds what
+/// was committed and nothing else; `log` is the history a shipper would have been handed.
 #[derive(Default)]
 pub struct MemJournal(Mutex<Mem>);
 
@@ -198,72 +134,61 @@ impl MemJournal {
     fn lock(&self) -> MutexGuard<'_, Mem> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
+
+    /// Every event recorded, in order.
+    pub fn log(&self) -> Vec<Event> {
+        self.lock().log.clone()
+    }
+
+    /// Every turn committed, in order.
+    pub fn commits(&self) -> Vec<Turn> {
+        self.lock().commits.clone()
+    }
+
+    /// Every state key as stored.
+    pub fn state(&self) -> BTreeMap<(String, String), String> {
+        self.lock().state.iter().map(|(k, r)| (k.clone(), r.value.clone())).collect()
+    }
 }
 
 impl Journal for MemJournal {
-    fn append(&self, ev: &Event) -> Result<Offset> {
-        Ok(self.lock().append(ev))
+    fn record(&self, ev: &Event) {
+        self.lock().log.push(ev.clone());
     }
 
-    fn read_from(&self, from: Offset, limit: usize) -> Result<Vec<(Offset, Event)>> {
+    fn boot(&self) -> Result<Boot> {
         let m = self.lock();
-        Ok(m.events
-            .iter()
-            .enumerate()
-            .skip(from as usize)
-            .take(limit)
-            .map(|(i, e)| (i as Offset, e.clone()))
-            .collect())
+        Ok(Boot {
+            state: m.state.values().cloned().collect(),
+            effects: m.effects.values().filter(|(_, resolved)| !resolved).map(|(r, _)| r.clone()).collect(),
+            schedules: m.schedules.values().filter(|(_, fired)| !fired).map(|(r, _)| r.clone()).collect(),
+        })
     }
 
-    fn read_stream(&self, stream: &StreamKey, below: Offset, limit: usize) -> Result<Vec<(Offset, Event)>> {
-        let m = self.lock();
-        let offsets = m.by_stream.get(stream).map_or(&[][..], |v| v.as_slice());
-        let below = offsets.partition_point(|o| *o < below);
-        Ok(offsets[below.saturating_sub(limit)..below].iter().map(|o| (*o, m.events[*o as usize].clone())).collect())
-    }
-
-    fn end(&self) -> Result<Offset> {
-        let m = self.lock();
-        Ok((m.events.len() as Offset).max(m.cursor))
-    }
-
-    fn unresolved_effects(&self) -> Result<Vec<(Offset, Event)>> {
-        let m = self.lock();
-        Ok(m.open_effects.iter().map(|o| (*o, m.events[*o as usize].clone())).collect())
-    }
-
-    fn applied(&self, handler: &str, id: &EventId) -> Result<bool> {
-        Ok(self.lock().applied.contains(&(handler.to_string(), id.clone())))
-    }
-
-    fn mark_applied(&self, handler: &str, id: &EventId) -> Result<()> {
-        self.lock().applied.insert((handler.to_string(), id.clone()));
-        Ok(())
-    }
-
-    fn cursor(&self) -> Result<Offset> {
-        Ok(self.lock().cursor)
-    }
-
-    fn set_cursor(&self, next: Offset) -> Result<()> {
-        self.lock().cursor = next;
-        Ok(())
-    }
-
-    fn schedule(&self, row: &ScheduleRow) -> Result<()> {
-        self.lock().schedules.entry(row.id.clone()).or_insert((row.clone(), false));
-        Ok(())
-    }
-
-    fn pending_schedules(&self) -> Result<Vec<ScheduleRow>> {
-        Ok(self.lock().schedules.values().filter(|(_, fired)| !fired).map(|(r, _)| r.clone()).collect())
-    }
-
-    fn mark_fired(&self, row_id: &str) -> Result<()> {
-        if let Some(s) = self.lock().schedules.get_mut(row_id) {
-            s.1 = true;
+    fn commit(&self, turn: &Turn) -> Result<()> {
+        let mut m = self.lock();
+        for s in &turn.state {
+            m.state.insert((s.task.clone(), s.skey.clone()), s.clone());
         }
+        for e in &turn.effects {
+            m.effects.insert((e.task.clone(), e.ekey.clone()), (e.clone(), false));
+        }
+        for id in &turn.resolved {
+            for (row, resolved) in m.effects.values_mut() {
+                if &row.request_id == id {
+                    *resolved = true;
+                }
+            }
+        }
+        for r in &turn.schedules {
+            m.schedules.entry(r.id.clone()).or_insert((r.clone(), false));
+        }
+        for id in &turn.fired {
+            if let Some((_, fired)) = m.schedules.get_mut(id) {
+                *fired = true;
+            }
+        }
+        m.commits.push(turn.clone());
         Ok(())
     }
 
@@ -276,37 +201,8 @@ impl Journal for MemJournal {
         Ok(self.lock().poison.get(stream).cloned())
     }
 
-    fn leases(&self) -> Option<&dyn LeaseTable> {
-        Some(self)
-    }
-}
-
-impl LeaseTable for MemJournal {
-    fn acquire(&self, stream: &StreamKey, holder: &str, ttl_ms: u64, now: u64) -> Result<Option<Lease>> {
-        let mut m = self.lock();
-        let g = grant(m.leases.get(stream), stream, holder, ttl_ms, now);
-        if let Some(l) = &g {
-            m.leases.insert(stream.clone(), l.clone());
-        }
-        Ok(g)
-    }
-
-    fn release(&self, stream: &StreamKey, holder: &str) -> Result<()> {
-        let mut m = self.lock();
-        if let Some(l) = release(m.leases.get(stream), holder) {
-            m.leases.insert(stream.clone(), l);
-        }
-        Ok(())
-    }
-
-    fn current(&self, stream: &StreamKey) -> Result<Option<Lease>> {
-        Ok(self.lock().leases.get(stream).cloned())
-    }
-
-    fn append_fenced(&self, ev: &Event, holder: &str, epoch: u64) -> Result<Offset> {
-        let mut m = self.lock();
-        fence(m.leases.get(&ev.stream), &ev.stream, holder, epoch)?;
-        Ok(m.append(ev))
+    fn history(&self) -> Vec<Event> {
+        self.log()
     }
 }
 
@@ -321,7 +217,7 @@ impl FaultyJournal {
         Arc::new(FaultyJournal { inner, fail: Mutex::new(None) })
     }
 
-    /// The next call of `op` (a `Journal` method name) fails, once.
+    /// The next call of `op` (`boot`, `commit`, `poison`) fails, once.
     pub fn fail_next(&self, op: &'static str) {
         *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, Class::Fault));
     }
@@ -352,75 +248,28 @@ impl FaultyJournal {
 }
 
 impl Journal for FaultyJournal {
-    fn append(&self, ev: &Event) -> Result<Offset> {
-        self.gate("append")?;
-        self.inner.append(ev)
-    }
-    fn record(&self, ev: &Event) -> Result<()> {
-        self.gate("append")?;
+    fn record(&self, ev: &Event) {
         self.inner.record(ev)
     }
-    fn read_from(&self, from: Offset, limit: usize) -> Result<Vec<(Offset, Event)>> {
-        self.gate("read_from")?;
-        self.inner.read_from(from, limit)
+    fn boot(&self) -> Result<Boot> {
+        self.gate("boot")?;
+        self.inner.boot()
     }
-    fn applied(&self, handler: &str, id: &EventId) -> Result<bool> {
-        self.inner.applied(handler, id)
-    }
-    fn mark_applied(&self, handler: &str, id: &EventId) -> Result<()> {
-        self.gate("mark_applied")?;
-        self.inner.mark_applied(handler, id)
-    }
-    fn cursor(&self) -> Result<Offset> {
-        self.inner.cursor()
-    }
-    fn set_cursor(&self, next: Offset) -> Result<()> {
-        self.gate("set_cursor")?;
-        self.inner.set_cursor(next)
-    }
-    fn schedule(&self, row: &ScheduleRow) -> Result<()> {
-        self.gate("schedule")?;
-        self.inner.schedule(row)
-    }
-    fn pending_schedules(&self) -> Result<Vec<ScheduleRow>> {
-        self.inner.pending_schedules()
-    }
-    fn mark_fired(&self, row_id: &str) -> Result<()> {
-        self.gate("mark_fired")?;
-        self.inner.mark_fired(row_id)
+    fn commit(&self, turn: &Turn) -> Result<()> {
+        self.gate("commit")?;
+        self.inner.commit(turn)
     }
     fn poison(&self, p: &Poison) -> Result<()> {
+        self.gate("poison")?;
         self.inner.poison(p)
     }
     fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>> {
         self.inner.poisoned(stream)
     }
-    fn leases(&self) -> Option<&dyn LeaseTable> {
-        self.inner.leases().map(|_| self as &dyn LeaseTable)
+    fn history(&self) -> Vec<Event> {
+        self.inner.history()
     }
-    fn flush(&self) -> Result<()> {
-        self.inner.flush()
-    }
-}
-
-impl FaultyJournal {
-    fn table(&self) -> Result<&dyn LeaseTable> {
-        self.inner.leases().ok_or_else(|| RuntimeError::new("journal has no leases"))
-    }
-}
-
-impl LeaseTable for FaultyJournal {
-    fn acquire(&self, stream: &StreamKey, holder: &str, ttl_ms: u64, now: u64) -> Result<Option<Lease>> {
-        self.table()?.acquire(stream, holder, ttl_ms, now)
-    }
-    fn release(&self, stream: &StreamKey, holder: &str) -> Result<()> {
-        self.table()?.release(stream, holder)
-    }
-    fn current(&self, stream: &StreamKey) -> Result<Option<Lease>> {
-        self.table()?.current(stream)
-    }
-    fn append_fenced(&self, ev: &Event, holder: &str, epoch: u64) -> Result<Offset> {
-        self.gate("append")?;
-        self.table()?.append_fenced(ev, holder, epoch)
+    fn shipped(&self) -> Option<ShipCounts> {
+        self.inner.shipped()
     }
 }

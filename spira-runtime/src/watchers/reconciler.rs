@@ -66,7 +66,7 @@ pub struct MailJob {
 }
 
 fn spec<T: Serialize>(name: &str, input: &T, deadline_ms: u64) -> EffectSpec {
-    EffectSpec { name: name.into(), input: serde_json::to_string(input).unwrap_or_default(), deadline_ms }
+    EffectSpec::by_input(name, serde_json::to_string(input).unwrap_or_default(), deadline_ms)
 }
 
 impl Reconciler {

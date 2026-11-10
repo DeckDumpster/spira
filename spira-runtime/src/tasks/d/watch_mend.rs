@@ -185,10 +185,10 @@ pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (C
     let mut acts = vec![];
     for (key, line, lift) in &found {
         if !carry.seen.contains(key) {
-            acts.push(EffectSpec { name: LOG_APPEND.into(), input: line.clone(), deadline_ms: ACT_DEADLINE_MS });
+            acts.push(EffectSpec::by_input(LOG_APPEND, line.clone(), ACT_DEADLINE_MS));
         }
         if let Some(l) = lift {
-            acts.push(EffectSpec { name: LIFT_STOP.into(), input: serde_json::to_string(l).unwrap_or_default(), deadline_ms: ACT_DEADLINE_MS });
+            acts.push(EffectSpec::by_input(LIFT_STOP, serde_json::to_string(l).unwrap_or_default(), ACT_DEADLINE_MS));
         }
     }
     (Carry { seeded: true, seen: found.into_iter().map(|(k, _, _)| k).collect() }, acts)

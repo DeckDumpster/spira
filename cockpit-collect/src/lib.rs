@@ -3,6 +3,7 @@
 //! (`cockpit-tier-5s`, `-60s`, `-600s`) call instead of re-executing this binary per probe.
 //! `main.rs` is the CLI over the same modules.
 
+pub mod counts;
 pub mod io;
 pub mod metrics;
 pub mod probes;

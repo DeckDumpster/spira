@@ -222,12 +222,12 @@ impl Handler for MailWake {
                     return vec![];
                 }
                 let look = Look { new_dir: self.mail_root.join(&d.mailbox).join("new"), mailbox: d.mailbox, attempt: d.attempt };
-                vec![Command::Probe(EffectSpec { name: OBSERVE.into(), input: serde_json::to_string(&look).unwrap_or_default(), deadline_ms: OBSERVE_DEADLINE_MS })]
+                vec![Command::Probe(EffectSpec::by_input(OBSERVE, serde_json::to_string(&look).unwrap_or_default(), OBSERVE_DEADLINE_MS))]
             }
             _ => match Self::answered(view, ev) {
                 Some((name, input)) if name == OBSERVE && ev.kind.tag == EFFECT_SUCCEEDED => {
                     let (Ok(look), Ok(u)) = (serde_json::from_str::<Look>(&input), serde_json::from_str::<Unread>(&ev.kind.body)) else { return vec![] };
-                    decide(self, &look, u).map(|w| vec![Command::Effect(EffectSpec { name: WAKE.into(), input: serde_json::to_string(&w).unwrap_or_default(), deadline_ms: WAKE_DEADLINE_MS })]).unwrap_or_default()
+                    decide(self, &look, u).map(|w| vec![Command::Effect(EffectSpec::by_input(WAKE, serde_json::to_string(&w).unwrap_or_default(), WAKE_DEADLINE_MS))]).unwrap_or_default()
                 }
                 Some((name, input)) if name == WAKE => {
                     let Ok(w) = serde_json::from_str::<Wake>(&input) else { return vec![] };

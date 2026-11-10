@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=lifecycle
+DOC=http://host:port of the VictoriaLogs store the runtime and spira-lc ship every event to, and the cockpit and loom read their 24 h counts from; no fallback, a missing value refuses to start.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_VICTORIALOGS_URL:=http://127.0.0.1:9428}"
+SPIRA_CONF_DEFAULT_EOF

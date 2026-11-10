@@ -1,5 +1,5 @@
 //! Timers, probes and notes live in the engine and never reach the journal; a fact a handler
-//! must not lose is emitted, and the journal is still read for what other writers append.
+//! must not lose is emitted.
 
 use std::sync::{Arc, Mutex};
 
@@ -19,7 +19,7 @@ impl Handler for Poller {
         self.seen.lock().unwrap().push(ev.kind.tag.clone());
         match ev.kind.tag.as_str() {
             "tick" => vec![
-                Command::Probe(EffectSpec { name: "look".into(), input: String::new(), deadline_ms: 500 }),
+                Command::Probe(EffectSpec { name: "look".into(), input: String::new(), deadline_ms: 500, key: "look".into() }),
                 Command::Timer { at: ev.at + 1000, kind: EventKind::new("tick", "") },
             ],
             EFFECT_SUCCEEDED => vec![Command::Note(EventKind::new("noted", ""))],
@@ -53,8 +53,8 @@ fn a_probe_and_its_outcome_a_note_and_a_timer_leave_the_journal_empty() {
     }
     assert_eq!(seen.lock().unwrap().iter().filter(|t| *t == "tick").count(), 3, "the timer re-arms itself");
     assert!(seen.lock().unwrap().iter().any(|t| t == EFFECT_SUCCEEDED), "the probe's outcome reaches the handler");
-    assert!(journal.read_from(0, 100).unwrap().is_empty());
-    assert!(journal.pending_schedules().unwrap().is_empty());
+    assert!(journal.log().is_empty());
+    assert!(journal.commits().is_empty() && journal.boot().unwrap().schedules.is_empty());
 }
 
 #[test]
@@ -73,33 +73,6 @@ fn arming_a_timer_again_replaces_the_one_waiting_and_a_restart_forgets_it() {
     assert!(seen.lock().unwrap().is_empty() && again.next_timer_at().is_none(), "a new process starts with no timers");
 }
 
-#[test]
-fn another_writers_event_is_read_within_the_poll_interval_and_not_before() {
-    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
-    let (e, seen) = engine(&journal, &clock);
-    let mut e = e.with_foreign_poll(30_000);
-    e.run_until_idle().unwrap();
-    let foreign = Event { id: EventId("f1".into()), stream: StreamKey("other".into()), kind: EventKind::new("foreign", ""), at: 0, cause: None, correlation: CorrelationId("f1".into()) };
-    journal.append(&foreign).unwrap();
-    clock.advance(29_000);
-    e.run_until_idle().unwrap();
-    assert!(seen.lock().unwrap().is_empty(), "not read before the interval");
-    clock.advance(1_000);
-    e.run_until_idle().unwrap();
-    assert_eq!(*seen.lock().unwrap(), ["foreign"]);
-}
-
-#[test]
-fn an_event_this_engine_appended_is_read_at_once_whatever_the_poll_interval() {
-    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
-    let (e, seen) = engine(&journal, &clock);
-    let mut e = e.with_foreign_poll(30_000);
-    e.run_until_idle().unwrap();
-    e.submit("mine", "s", EventKind::new("foreign", "")).unwrap();
-    e.run_until_idle().unwrap();
-    assert_eq!(*seen.lock().unwrap(), ["foreign"]);
-}
-
 struct Noter;
 
 impl Handler for Noter {
@@ -110,7 +83,7 @@ impl Handler for Noter {
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         match ev.kind.tag.as_str() {
             "tick" => vec![
-                Command::Probe(EffectSpec { name: "look".into(), input: String::new(), deadline_ms: 500 }),
+                Command::Probe(EffectSpec { name: "look".into(), input: String::new(), deadline_ms: 500, key: "look".into() }),
                 Command::Timer { at: ev.at + 1000, kind: EventKind::new("tick", "") },
             ],
             _ => vec![Command::Note(EventKind::new("noted", ""))],

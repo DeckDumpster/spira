@@ -190,7 +190,7 @@ const PRODUCTION_LOCATORS: [&str; 5] = ["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCK
 const EXEC_LOG_MARK: &str = "=== perf-happy exec.log";
 
 fn spec(name: &str, input: String, deadline_ms: u64) -> EffectSpec {
-    EffectSpec { name: name.into(), input, deadline_ms }
+    EffectSpec::by_input(name, input, deadline_ms)
 }
 
 /// The scratch directory the runs keep their worlds in.

@@ -170,9 +170,9 @@ mod unit_double_tests {
         units.script("sweep", 5_000, Exit::Code(0));
         let d = with_units(Doubles::default(), units.clone());
         let spec = r#"{"task":"sweep","key":"k1","argv":["sweep"],"env":[],"cwd":null}"#;
-        let h = d.run("e1", &EffectSpec { name: "unit.start".into(), input: spec.into(), deadline_ms: 1_000 }).unwrap();
+        let h = d.run("e1", &EffectSpec::by_input("unit.start", spec, 1_000)).unwrap();
         assert_eq!(serde_json::from_str::<UnitHandle>(&h).unwrap(), UnitHandle::of("sweep", "k1").unwrap());
-        let f = d.run("e2", &EffectSpec { name: "unit.facts".into(), input: h.clone(), deadline_ms: 1_000 }).unwrap();
+        let f = d.run("e2", &EffectSpec::by_input("unit.facts", h.clone(), 1_000)).unwrap();
         assert_eq!(serde_json::from_str::<UnitFacts>(&f).unwrap().state, UnitState::Active);
         clock.advance(5_000);
         assert_eq!(units.ran().unwrap().len(), 1);

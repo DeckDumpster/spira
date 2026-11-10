@@ -664,7 +664,7 @@ pub fn core_counts_keys() -> Kv {
     // Asks are not work beads: bd status is their only state (spira_config::nonwork).
     let [_, open] = nonwork::status_args(Kind::Ask, Which::Open);
     let open: Vec<&str> = open.split(',').collect();
-    let rows = io::json_rows(io::pane_beads(&ask_label)).map(|r| r.into_iter().filter(|b| b.get("status").and_then(Value::as_str).is_some_and(|s| open.contains(&s))).collect::<Vec<_>>());
+    let rows = io::json_rows(io::live_beads(&ask_label)).map(|r| r.into_iter().filter(|b| b.get("status").and_then(Value::as_str).is_some_and(|s| open.contains(&s))).collect::<Vec<_>>());
     match rows {
         None => push(&mut out, "SP_WAITING", "?"),
         Some(rows) => push(&mut out, "SP_WAITING", rows.len().to_string()),
@@ -840,7 +840,7 @@ pub fn repo_label_keys(cfg: &Cfg) -> Kv {
 
 pub fn dup_refs_keys() -> Kv {
     let mut out = Kv::new();
-    let rows = io::json_rows(io::pane_beads("spira,incident"));
+    let rows = io::json_rows(io::live_beads("spira,incident"));
     // An incident bead is a work bead (sp-jgjvh): whether it is over is its lifecycle row's.
     let lc_rows = rows.as_deref().and_then(|r| lc::state_index_of(&ids_of(r)));
     let Some((rows, lc)) = rows.zip(lc_rows) else {
