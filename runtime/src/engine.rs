@@ -109,6 +109,14 @@ pub struct CarriedState {
     pub body_len: usize,
 }
 
+/// The commands a handler returned for one event, and how many the engine admitted: a refused
+/// or held effect is returned and not admitted, an empty fire is neither.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct FireCommands {
+    pub returned: usize,
+    pub admitted: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct TaskStatus {
     pub name: String,
@@ -124,6 +132,8 @@ pub struct TaskStatus {
     /// The earliest schedule row or timer waiting for a tag the task handles.
     pub next_due_at: Option<u64>,
     pub last_outcome: Option<LastOutcome>,
+    /// What its last fire returned and how much of it the engine took up.
+    pub last_commands: Option<FireCommands>,
     /// Idempotency keys of its effects and probes with no outcome yet.
     pub in_flight: Vec<String>,
 }
@@ -168,6 +178,7 @@ struct Track {
     fired_at: Option<u64>,
     due_at: Option<u64>,
     outcome: Option<LastOutcome>,
+    commands: Option<FireCommands>,
 }
 
 pub trait Executor {
@@ -195,6 +206,8 @@ pub struct Engine {
     baseline: Vec<(String, Value)>,
     started: Instant,
     poison_seen: BTreeMap<StreamKey, bool>,
+    quarantined_here: BTreeSet<StreamKey>,
+    set_aside: BTreeSet<EventId>,
     poison_cleared_at: u64,
     /// Every event waiting for its handlers, in the order it was made; `true` is memory-only.
     queue: VecDeque<(Event, bool)>,
@@ -340,6 +353,8 @@ impl Engine {
             baseline: vec![],
             started: Instant::now(),
             poison_seen: BTreeMap::new(),
+            quarantined_here: BTreeSet::new(),
+            set_aside: BTreeSet::new(),
             poison_cleared_at: 0,
             queue: VecDeque::new(),
             queued_ids: BTreeSet::new(),
@@ -500,6 +515,7 @@ impl Engine {
                     lag_ms: t.and_then(|t| Some(t.fired_at?.saturating_sub(t.due_at?))),
                     next_due_at: rows.iter().filter(|row| interests.contains(&row.kind.tag.as_str())).map(|row| row.at).min(),
                     last_outcome: t.and_then(|t| t.outcome),
+                    last_commands: t.and_then(|t| t.commands),
                     in_flight: self.pending.keys().filter(|k| self.owners.get(*k) == Some(&r.name)).cloned().collect(),
                 }
             })
@@ -783,11 +799,12 @@ impl Engine {
 
     /// Run a handler's commands for `ev`. What lands on `ev`'s own stream is also recorded in
     /// `written`, so the projection holds it before `ev`'s stream is dispatched again.
-    fn apply(&mut self, cmds: Vec<Command>, ev: &Event, reg: &Registration) -> Result<()> {
+    fn apply(&mut self, cmds: Vec<Command>, ev: &Event, reg: &Registration, admitted: &mut usize) -> Result<()> {
         let (handler, mode) = (reg.name.as_str(), reg.mode);
         let own = ev.stream.0 != HALT_STREAM;
         for (i, cmd) in cmds.into_iter().enumerate() {
             let id = derive_id(format!("{}/{handler}/{i}", ev.id.0));
+            *admitted += 1;
             match cmd {
                 Command::Emit(kind) => {
                     self.carry(handler, &ev.stream, &kind);
@@ -811,14 +828,16 @@ impl Engine {
                 Command::Effect(spec) if mode == Mode::Act && self.halted && reg.plane_of(&spec.name) == Plane::Work => {
                     let body = serde_json::to_string(&HeldBody { stream: ev.stream.clone(), task: handler.into(), spec }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     let held = self.append_derived(id, &StreamKey(HALT_STREAM.into()), EventKind::new(EFFECT_HELD, &body), ev, ev.at)?;
+                    *admitted -= 1;
                     if !self.held.iter().any(|h| h.id == held.id) {
                         self.held.push(held);
                         self.dirty_halt = true;
                     }
                 }
                 Command::Effect(spec) if mode == Mode::Act => {
-                    if let Some(req) = self.request(handler, &ev.stream, id, spec, ev, ev.at)? {
-                        self.wrote(own, req, false);
+                    match self.request(handler, &ev.stream, id, spec, ev, ev.at)? {
+                        Some(req) => self.wrote(own, req, false),
+                        None => *admitted -= 1,
                     }
                 }
                 Command::Effect(spec) => {
@@ -999,6 +1018,7 @@ impl Engine {
             if stalls == 0 && set.is_empty() && matches!(&called, Ok(c) if c.is_empty()) {
                 if let Some(t) = self.tracks.get_mut(name) {
                     t.outcome = Some(LastOutcome::Quiet);
+                    t.commands = Some(FireCommands { returned: 0, admitted: 0 });
                 }
                 continue;
             }
@@ -1012,7 +1032,12 @@ impl Engine {
                     wide.set("commands.emit_to", count(|c| matches!(c, Command::EmitTo { .. })));
                     wide.set("commands.effect", count(|c| matches!(c, Command::Effect(_))));
                     wide.set("commands.schedule", count(|c| matches!(c, Command::Schedule { .. })));
-                    let done = self.apply(cmds, ev, reg);
+                    let returned = cmds.len();
+                    let mut admitted = 0;
+                    let done = self.apply(cmds, ev, reg, &mut admitted);
+                    if let Some(t) = self.tracks.get_mut(name) {
+                        t.commands = Some(FireCommands { returned, admitted });
+                    }
                     if matches!(&done, Err(e) if e.is_refused()) {
                         let message = done.unwrap_err().0;
                         wide.set("outcome", "refused");
@@ -1055,7 +1080,23 @@ impl Engine {
         if let Some(p) = self.poison_seen.get(stream) {
             return Ok(*p);
         }
-        let p = self.journal.poisoned(stream)?.is_some();
+        let p = match self.journal.poisoned(stream)? {
+            None => {
+                self.quarantined_here.remove(stream);
+                false
+            }
+            Some(row) if row.handler == SCHEDULER_TASK && !self.quarantined_here.contains(stream) => {
+                if self.set_aside.insert(row.event.clone()) {
+                    let w = self.unit("poison.set_aside", None);
+                    w.set("stream", stream.0.as_str());
+                    w.set("poison.event", row.event.0.as_str());
+                    w.set("poison.message", row.message.as_str());
+                    self.finish(&w);
+                }
+                false
+            }
+            Some(_) => true,
+        };
         self.poison_seen.insert(stream.clone(), p);
         Ok(p)
     }
@@ -1063,6 +1104,7 @@ impl Engine {
     fn quarantine(&mut self, ev: &Event, handler: &str, message: &str) -> Result<()> {
         self.journal.poison(&Poison { stream: ev.stream.clone(), event: ev.id.clone(), handler: handler.into(), message: message.into() })?;
         self.poison_seen.insert(ev.stream.clone(), true);
+        self.quarantined_here.insert(ev.stream.clone());
         let w = self.unit("quarantine", Some(ev));
         w.set("handler", handler);
         w.set("quarantine.reason", message);

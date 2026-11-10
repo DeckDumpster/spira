@@ -122,6 +122,69 @@ mod ids {
         assert!(after > before, "the parked tick is later than the one it replaces");
     }
 
+    #[test]
+    fn a_tick_on_a_stream_whose_standing_poison_came_from_a_refused_commit_runs_and_one_a_handler_wrote_stays_parked() {
+        let run = |handler: &str| {
+            let clock = VirtualClock::new(1_000);
+            let journal = MemJournal::new();
+            journal.poison(&Poison { stream: StreamKey("ticker".into()), event: EventId("x".into()), handler: handler.into(), message: "planted".into() }).unwrap();
+            let mut e = Engine::open(journal, Arc::new(clock.clone()), vec![Registration::new("ticker", Ticker)], 0).unwrap();
+            e.start("ticker", EventKind::new("tick", ""));
+            e.run_until_idle().unwrap();
+            e.status().tasks[0].last_fired_at.is_some()
+        };
+        assert!(run("scheduler"), "a commit refusal is a function of the release that wrote it: a new process tries again");
+        assert!(!run("ticker"), "a handler's quarantine outlives a restart");
+    }
+
+    struct Twice;
+    impl Handler for Twice {
+        fn interests(&self) -> &[EventKindTag] {
+            &["go"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+            vec![Command::Effect(EffectSpec::keyed("w", "same", "", 1_000)), Command::Effect(EffectSpec::keyed("w", "same", "", 1_000))]
+        }
+    }
+
+    #[test]
+    fn the_status_counts_the_commands_a_fire_returned_and_the_ones_the_engine_admitted() {
+        let mut e = Engine::open(MemJournal::new(), Arc::new(VirtualClock::new(1)), vec![Registration::new("twice", Twice)], 0).unwrap();
+        e.submit("g1", "s", EventKind::new("go", "")).unwrap();
+        e.run_until_idle().unwrap();
+        assert_eq!(e.status().tasks[0].last_commands, Some(FireCommands { returned: 2, admitted: 1 }), "the second request is refused while the first is in flight");
+    }
+
+    struct Probes;
+    impl Handler for Probes {
+        fn interests(&self) -> &[EventKindTag] {
+            &["go"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+            vec![Command::Probe(EffectSpec::probe("look", "", 1_000))]
+        }
+    }
+
+    #[test]
+    fn a_probe_asked_again_while_the_one_before_is_unanswered_is_admitted_again() {
+        let mut e = Engine::open(MemJournal::new(), Arc::new(VirtualClock::new(1)), vec![Registration::new("probes", Probes)], 0).unwrap();
+        for n in 0..3 {
+            e.submit(&format!("g{n}"), "s", EventKind::new("go", "")).unwrap();
+            e.run_until_idle().unwrap();
+            assert_eq!(e.status().tasks[0].last_commands, Some(FireCommands { returned: 1, admitted: 1 }), "ask {n}");
+            assert_eq!(e.status().tasks[0].in_flight.len(), n + 1, "every ask is in flight beside the ones before it");
+        }
+    }
+
+    #[test]
+    fn a_fire_whose_effects_are_held_by_a_halt_counts_as_returned_and_not_admitted() {
+        let mut e = Engine::open(MemJournal::new(), Arc::new(VirtualClock::new(1)), vec![Registration::new("twice", Twice)], 0).unwrap();
+        e.halt_at_boot("test").unwrap();
+        e.submit("g1", "s", EventKind::new("go", "")).unwrap();
+        e.run_until_idle().unwrap();
+        assert_eq!(e.status().tasks[0].last_commands, Some(FireCommands { returned: 2, admitted: 0 }));
+    }
+
     struct Echo;
     impl Handler for Echo {
         fn interests(&self) -> &[EventKindTag] {
