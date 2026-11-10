@@ -1274,6 +1274,7 @@ fn record_pass(w: &World, c: &Ctx, b: &Batch, status: &str, out: &str) {
         boot_s: 0,
         build_s: 0,
         suites_s: started.map_or(0, |s| now.saturating_sub(s)),
+        attribution_s: 0,
         cause,
         detail: format!("PR {}", b.pr),
         fences: Vec::new(),

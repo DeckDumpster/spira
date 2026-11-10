@@ -1964,6 +1964,7 @@ struct Facts {
     handle: Option<String>,
     instance_type: Option<String>,
     marks: Option<crate::progress::Marks>,
+    attribution_s: u64,
 }
 
 /// Seconds per fence from this pass's pulled `fence-times` (`<name> <secs> <rc>` lines); a file
@@ -2096,6 +2097,7 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         boot_s,
         build_s,
         suites_s,
+        attribution_s: facts.attribution_s,
         cause: tsd::pass::Cause::from_exit(code, lost.is_some()),
         detail: lost.unwrap_or_default(),
         fences: fence_seconds(&results_root, started),
@@ -2308,9 +2310,9 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     let keep = AtomicBool::new(false);
     if let (Some(_slot), Some(plan)) = (&host_slot, env.host_plan) {
         let henv = RunEnv { remote: plan.remote.as_ref(), ..*env };
-        return on_vm(&henv, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep);
+        return on_vm(&henv, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep, facts);
     }
-    let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep);
+    let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep, facts);
     if keep.load(Ordering::SeqCst) {
         eprintln!("{}", held_vm_line(&vm.handle, &vm.addr));
         if let Err(e) = env.pool.hold(&vm.handle) {
@@ -2436,9 +2438,9 @@ fn place_on_host(env: &RunEnv, args: &RunArgs) -> HostPlacement {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool, round_ref: &str, progress: crate::progress::Progress, results_dir: PathBuf, keep: &AtomicBool) -> i32 {
+fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool, round_ref: &str, progress: crate::progress::Progress, results_dir: PathBuf, keep: &AtomicBool, facts: &Mutex<Facts>) -> i32 {
     let watch = crate::load::Watch::start(&vm.handle);
-    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, build_image, round_ref, progress, results_dir, keep);
+    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, build_image, round_ref, progress, results_dir, keep, facts);
     watch.finish();
     rc
 }
@@ -2457,6 +2459,7 @@ fn on_vm_run(
     mut progress: crate::progress::Progress,
     results_dir: PathBuf,
     keep: &AtomicBool,
+    facts: &Mutex<Facts>,
 ) -> i32 {
     let cfg = env.cfg;
     let maxpar = args.maxpar.unwrap_or(cfg.maxpar);
@@ -2559,7 +2562,8 @@ fn on_vm_run(
     let pid = std::process::id();
     let in_flight = AtomicUsize::new(0);
     let mirror_lock = Mutex::new(());
-    std::thread::scope(|sc| {
+    let attr_time = crate::spool::AttrTime::default();
+    let code = std::thread::scope(|sc| {
         let mut server = Server {
             spool: Spool { dir: spool_dir },
             host: env.host,
@@ -2573,6 +2577,7 @@ fn on_vm_run(
             taken: BTreeSet::new(),
             in_flight: &in_flight,
             mirror_lock: &mirror_lock,
+            attr_time: &attr_time,
         };
         let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
         let mut watch = NoOutputWatch::new(cfg.no_output);
@@ -2625,7 +2630,9 @@ fn on_vm_run(
             linger(&mut server, sc, cfg.attr_linger, Duration::from_millis(200));
         }
         code
-    })
+    });
+    facts.lock().unwrap_or_else(|e| e.into_inner()).attribution_s = attr_time.secs();
+    code
 }
 
 /// The batch's ssh returned 255 on a VM that is still running. Reconnects and waits, within the

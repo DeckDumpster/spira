@@ -210,6 +210,19 @@ pub fn stream_into(pulled: &Path, results_dir: &Path) -> Result<usize, String> {
     Ok(new)
 }
 
+/// Wall time the attribution legs ran on the VM, summed over legs; concurrent legs add up.
+#[derive(Default)]
+pub struct AttrTime(std::sync::atomic::AtomicU64);
+
+impl AttrTime {
+    pub fn add(&self, d: Duration) {
+        self.0.fetch_add(d.as_millis() as u64, Ordering::SeqCst);
+    }
+    pub fn secs(&self) -> u64 {
+        (self.0.load(Ordering::SeqCst) + 500) / 1000
+    }
+}
+
 pub struct Spool {
     pub dir: PathBuf,
 }
@@ -261,6 +274,7 @@ pub struct Server<'a> {
     pub taken: BTreeSet<String>,
     pub in_flight: &'a AtomicUsize,
     pub mirror_lock: &'a Mutex<()>,
+    pub attr_time: &'a AttrTime,
 }
 
 impl<'a> Server<'a> {
@@ -288,9 +302,11 @@ impl<'a> Server<'a> {
             let (host_addr, port, toolchain) = (self.host_addr.to_string(), self.mirror_port, self.toolchain.clone());
             let res_dir = self.spool.res_dir();
             let scratch = self.scratch.join(format!("job-{job}"));
-            let (in_flight, lock) = (self.in_flight, self.mirror_lock);
+            let (in_flight, lock, attr_time) = (self.in_flight, self.mirror_lock, self.attr_time);
             sc.spawn(move || {
+                let began = Instant::now();
                 let rc = run_job(host, remote, tree, addr, &host_addr, port, toolchain, &req, &res_dir, &scratch, lock);
+                attr_time.add(began.elapsed());
                 let _ = write_atomic(&res_dir.join(format!("{}.done", req.job)), &format!("rc={rc}\n"));
                 in_flight.fetch_sub(1, Ordering::SeqCst);
             });
@@ -413,6 +429,15 @@ mod tests {
             .unwrap();
         assert!(out.status.success(), "the rerun sees SPIRA_TOML: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), toml, "the rerun sees the corpus's value, intact");
+    }
+
+    #[test]
+    fn attribution_legs_add_their_wall_time_and_round_to_whole_seconds() {
+        let t = AttrTime::default();
+        assert_eq!(t.secs(), 0);
+        t.add(Duration::from_millis(1400));
+        t.add(Duration::from_millis(1400));
+        assert_eq!(t.secs(), 3, "two concurrent legs of 1.4s are 2.8s of leg time");
     }
 
     #[test]

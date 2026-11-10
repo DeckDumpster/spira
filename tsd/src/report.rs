@@ -298,6 +298,7 @@ mod tests {
             boot_s: boot,
             build_s: build,
             suites_s: suites,
+            attribution_s: 0,
             cause,
             detail: String::new(),
             fences: Vec::new(),
