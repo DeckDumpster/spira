@@ -107,3 +107,21 @@ fn unset_release_removes_a_key_only_the_staged_release_declares() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(!text(&b).contains("new_box_path"), "{}", text(&b));
 }
+
+#[test]
+fn a_plain_set_keeps_a_staged_key_already_written_to_the_file() {
+    let b = setup("plain-set-after-staged");
+    let (staged, toml) = (b.staged.to_str().unwrap(), b.toml.to_str().unwrap());
+    assert!(run(&b, &["set", "--release", staged, "spira.new_box_path", "/box/p", toml]).status.success());
+    let out = run(&b, &["set", "spira.old_key", "z", toml]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(text(&b).contains("old_key = \"z\"") && text(&b).contains("new_box_path = \"/box/p\""), "{}", text(&b));
+}
+
+#[test]
+fn unset_release_leaves_a_key_the_staged_release_drops_for_the_installed_registry() {
+    let b = setup("unset-release-dropped");
+    let out = run(&b, &["unset", "--release", b.staged.to_str().unwrap(), "spira.retiring_key", b.toml.to_str().unwrap()]);
+    assert!(!out.status.success(), "the staged registry does not declare it; the installed one does, so unset without --release");
+    assert!(text(&b).contains("retiring_key"));
+}
