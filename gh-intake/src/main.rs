@@ -21,8 +21,6 @@ fn usage() -> ExitCode {
     println!("  gh-intake unlanded-scan");
     println!("  gh-intake backfill [--dry-run]");
     println!("  gh-intake provenance [--check]");
-    println!("  gh-intake provenance watch [--interval SECS]");
-    println!("  gh-intake provenance health");
     ExitCode::from(0)
 }
 
@@ -181,17 +179,19 @@ fn backfill_cmd(args: &[String]) -> ExitCode {
 
 /// `gh-intake provenance` — every external issue, its bead, the outcome that settles it.
 /// `--check` exits 1 when any trail is broken, 2 when the trail could not be read.
-/// `watch` is the watcher row: one line per newly broken trail. `health` exits 0 when the read works.
 fn provenance_cmd(args: &[String]) -> ExitCode {
     let mode = args.first().map(String::as_str);
-    let (home, run) = match closeout_env() {
+    if let Some(other) = mode.filter(|m| *m != "--check") {
+        eprintln!("gh-intake provenance: unknown argument: {other}");
+        return ExitCode::from(2);
+    }
+    let (home, _) = match closeout_env() {
         Ok(v) => v,
         Err(e) => {
             eprintln!("gh-intake: {e}");
             return ExitCode::from(1);
         }
     };
-    let seen = std::path::Path::new(&run).join("gh-provenance.seen");
     let (bd, gh, git, repo, mail) = match ports(home) {
         Ok(p) => p,
         Err(e) => {
@@ -220,54 +220,7 @@ fn provenance_cmd(args: &[String]) -> ExitCode {
                 ExitCode::from(2)
             }
         },
-        Some("health") => match closeout::provenance_read(&d) {
-            Ok(_) => ExitCode::from(0),
-            Err(e) => {
-                eprintln!("gh-intake provenance: {e}");
-                ExitCode::from(1)
-            }
-        },
-        Some("watch") => {
-            let mut interval = 600u64;
-            if let [flag, secs] = &args[1..] {
-                match (flag.as_str(), secs.parse::<u64>()) {
-                    ("--interval", Ok(n)) if n > 0 => interval = n,
-                    _ => {
-                        eprintln!("usage: gh-intake provenance watch [--interval SECS]");
-                        return ExitCode::from(2);
-                    }
-                }
-            } else if args.len() != 1 {
-                eprintln!("usage: gh-intake provenance watch [--interval SECS]");
-                return ExitCode::from(2);
-            }
-            let mut blind = false;
-            loop {
-                match closeout::provenance_read(&d) {
-                    Ok(rows) => {
-                        blind = false;
-                        match closeout::provenance_news(&rows, &seen) {
-                            Ok(news) => {
-                                for line in news {
-                                    println!("gh-provenance: {line}");
-                                }
-                            }
-                            Err(e) => eprintln!("gh-provenance: {e}"),
-                        }
-                    }
-                    Err(e) if !blind => {
-                        blind = true;
-                        println!("gh-provenance: cannot read the trails — {e}");
-                    }
-                    Err(_) => {}
-                }
-                std::thread::sleep(std::time::Duration::from_secs(interval));
-            }
-        }
-        Some(other) => {
-            eprintln!("gh-intake provenance: unknown argument: {other}");
-            ExitCode::from(2)
-        }
+        Some(_) => unreachable!("provenance modes are checked above"),
     }
 }
 

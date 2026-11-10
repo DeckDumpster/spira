@@ -95,7 +95,7 @@
 #   notify (the timer)                 task inbox.notify
 #
 # Retired (P5): queue-watch (sp-kq4cll), stranded-runner (sp-eb13o2), dwarf-watch (sp-k4y7ax),
-# gh-provenance (sp-51hmmm), concierge-guard and its log row (it re-armed the inbox waiter
+# concierge-guard and its log row (it re-armed the inbox waiter
 # that is abolished), and the event-continuity log row (reconcile.continuity raises its
 # breaks as inbox lines, so nothing writes event-continuity.log).
 
