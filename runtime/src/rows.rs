@@ -17,16 +17,9 @@ pub enum Part {
     Map { name: &'static str, drop: &'static [&'static str] },
 }
 
-/// A stable 128-bit digest of `s`, for a row key that must not carry the text itself.
+/// A stable digest of `s`, for a row key that must not carry the text itself.
 pub fn digest(s: &str) -> String {
-    let h = |seed: u64| {
-        let mut h = 0xcbf2_9ce4_8422_2325u64 ^ seed;
-        for b in s.bytes() {
-            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
-        }
-        h
-    };
-    format!("{:016x}{:016x}", h(0), h(0x9e37_79b9_7f4a_7c15))
+    format!("{:016x}{:016x}", crate::event::fnv1a(s), crate::event::fnv1a(&format!("\u{0}{s}")))
 }
 
 /// The row key for `name`'s entry `key`: the key itself when it fits, else its digest.

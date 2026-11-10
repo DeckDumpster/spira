@@ -2,7 +2,6 @@
 //! rows repeats no side effect and misses nothing. Each family below restarts a task on the
 //! journal it left and asks what the first ticks then do.
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use runtime::journal::{StateRow, Turn};
@@ -82,6 +81,18 @@ mod repo_events {
     }
 
     #[test]
+    fn a_run_whose_conclusion_changes_below_the_cursor_is_not_announced_again() {
+        let forge = Arc::new(Mutex::new(vec![run(3)]));
+        let mut r = rig(forge.clone());
+        start(&mut r);
+        let mut rerun = run(3);
+        rerun.conclusion = "success".into();
+        *forge.lock().unwrap() = vec![rerun];
+        r.advance(45_000).unwrap();
+        assert_eq!(asked(&r, INBOX_APPEND), 0);
+    }
+
+    #[test]
     fn a_failure_already_said_is_not_said_again_after_a_boot() {
         let down = Arc::new(Mutex::new(true));
         let d = down.clone();
@@ -90,7 +101,6 @@ mod repo_events {
         assert_eq!(asked(&r, INBOX_APPEND), 1);
         restart(&mut r);
         assert_eq!(asked(&r, INBOX_APPEND), 1, "the standing failure was said again");
-        *down.lock().unwrap() = false;
     }
 
     #[test]
@@ -166,6 +176,3 @@ mod bead_sweep {
         assert_eq!(asked(&r, INBOX_APPEND), 2);
     }
 }
-
-#[allow(dead_code)]
-fn unused(_: BTreeMap<String, String>) {}

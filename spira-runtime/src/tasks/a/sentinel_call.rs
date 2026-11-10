@@ -449,9 +449,7 @@ impl SentinelCall {
     }
 }
 
-/// The rows a restart keeps; what a Carry field is left out of is rebuilt by the first tick.
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("lane_last"), runtime::rows::Part::Field("refusal"), runtime::rows::Part::Map { name: "in_flight", drop: &[] }];
-
 
 impl Handler for SentinelCall {
     fn interests(&self) -> &[EventKindTag] {

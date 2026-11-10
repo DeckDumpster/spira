@@ -372,9 +372,7 @@ impl PersonaOps {
     }
 }
 
-/// The rows a restart keeps; what a Carry field is left out of is rebuilt by the first tick.
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("run_id"), runtime::rows::Part::Field("name"), runtime::rows::Part::Field("started_at")];
-
 
 impl Handler for PersonaOps {
     fn interests(&self) -> &[EventKindTag] {
