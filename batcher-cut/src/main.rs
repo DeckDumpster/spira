@@ -249,7 +249,13 @@ fn cut(o: &Opts) -> Result<(), pace::CutError> {
             );
             Ok(())
         }
-        None => cut_new_round(&env_, &repo, &pool, &reason),
+        None => {
+            if let Some(batch) = io::abandon_hold(&env_, &repo) {
+                println!("batcher {}: round {batch} was not abandoned — no cut stacks on it; it is retried each pass", repo.name);
+                return Ok(());
+            }
+            cut_new_round(&env_, &repo, &pool, &reason)
+        }
     }
 }
 
