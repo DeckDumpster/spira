@@ -96,10 +96,12 @@ mod ids {
         let regs = vec![Registration::new("ticker", Ticker)];
         let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), regs, 0).unwrap();
         e.start("ticker", EventKind::new("tick", ""));
+        let mut last = 0;
         for _ in 0..4 {
             e.run_until_idle().unwrap();
-            let t = &e.status().tasks[0];
-            assert!(t.next_due_at.is_some(), "the next tick stays armed");
+            let due = e.status().tasks[0].next_due_at.expect("the next tick stays armed");
+            assert!(due > last, "each tick arms a later one, not the same one again");
+            last = due;
             clock.advance(30_000);
         }
     }
