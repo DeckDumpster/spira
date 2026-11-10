@@ -63,8 +63,7 @@ impl std::fmt::Debug for Submit {
     }
 }
 
-/// Queues `s`; its reply is answered when the turn handling it has committed (or the store refused it), a refusal at once. A refusal is answered and absorbed; a fault is answered
-/// and returned, since it may clear on restart.
+/// Queues `s`; its reply is answered when the turn handling it has committed, or at once if the store refuses it. A refusal is absorbed; a fault is returned, since it may clear on restart.
 fn accept(engine: &mut Engine, s: Submit) -> Result<()> {
     // loop-safe: accept runs on the offload pool (Host) or under virtual time (VirtualDriver), never on the loop thread
     let r = engine.submit(&s.id, &s.stream, s.kind);
