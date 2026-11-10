@@ -276,9 +276,9 @@ trap round_exit EXIT
 phase preflight
 [ -n "$testenv_limits" ] || { echo "round-vm: the host sent no testenv limits; a round never takes them from the tree's test fixture" >&2; exit 2; }
 t_start=$(date +%s)
-export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH="${cache_home:+$cache_home/bin:}$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 if ! command -v cargo >/dev/null 2>&1; then
-    echo "round-vm: cargo not found on PATH ($PATH) — the template is missing a Rust toolchain" >&2
+    echo "round-vm: cargo not found on PATH ($PATH) — the template is missing a Rust toolchain" | tee ~/round-runner.out >&2
     exit 127
 fi
 phase checkout
@@ -3466,6 +3466,45 @@ mod tests {
         assert!(!REMOTE_SCRIPT.contains("cargo run"), "testenv runs from the staged release by name");
         assert!(REMOTE_SCRIPT.contains(LAUNCHER_ENV));
         assert!(REMOTE_SCRIPT.contains("exit 4"), "a failed workspace build is testenv's build-failure code");
+    }
+
+    fn preflight(home: &Path, cache_home: &str) -> (i32, String, String) {
+        use std::io::Write;
+        let mut c = command("bash")
+            .args(["-s", "--", "127.0.0.1", "1", "", "1", "", cache_home, "", "0", "0", "", "", "", "refs/x", "0000", "", "limits"])
+            .env_clear()
+            .env("HOME", home)
+            .env("PATH", "/usr/bin:/bin")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        c.stdin.take().unwrap().write_all(REMOTE_SCRIPT.as_bytes()).unwrap();
+        let o = c.wait_with_output().unwrap();
+        let err = String::from_utf8_lossy(&o.stderr).to_string();
+        let out = fs::read_to_string(home.join("round-runner.out")).unwrap_or_default();
+        (o.status.code().unwrap_or(-1), err, out)
+    }
+
+    #[test]
+    fn host_preflight_finds_cargo_under_the_configured_cache_home_not_home() {
+        let home = testkit::TempDir::new("round-vm-pf-home");
+        let cache = testkit::TempDir::new("round-vm-pf-cache");
+        fs::create_dir_all(cache.path().join("bin")).unwrap();
+        testkit::write_exe(&cache.path().join("bin/cargo"), "#!/bin/sh\nexit 0\n");
+        let (_, err, _) = preflight(home.path(), cache.path().to_str().unwrap());
+        assert!(err.contains("PHASE checkout"), "{err}");
+        assert!(!err.contains("cargo not found"), "{err}");
+    }
+
+    #[test]
+    fn host_preflight_without_any_cargo_fails_at_once_with_its_line_in_the_runner_output() {
+        let home = testkit::TempDir::new("round-vm-pf-home-none");
+        let cache = testkit::TempDir::new("round-vm-pf-cache-none");
+        let (rc, err, runner_out) = preflight(home.path(), cache.path().to_str().unwrap());
+        assert_eq!(rc, 127, "{err}");
+        assert!(runner_out.contains("cargo not found on PATH"), "{runner_out:?}");
     }
 
     #[test]
