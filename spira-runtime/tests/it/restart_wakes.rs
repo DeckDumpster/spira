@@ -58,6 +58,7 @@ fn batcher_and_gate_worker_observe_on_cadence_after_a_restart() {
     assert!(observes(&seen, GATE_OBSERVE) >= before.1 + 3, "gate.worker observes each cadence after the restart");
 }
 
+/// The downtime outlasts several cadences; boot must fire the overdue wake once, not wait a full cadence.
 #[test]
 fn a_wake_that_fell_due_while_the_runtime_was_down_fires_at_the_next_boot() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(1_000));
