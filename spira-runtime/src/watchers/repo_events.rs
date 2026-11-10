@@ -3,7 +3,10 @@
 //! tick asks the world for the latest runs of every forge; the decision over snapshot and carried
 //! keys is `decide`, which does no IO. PR transitions are `pr-notify`'s, not said here.
 
+use std::collections::BTreeMap;
+
 use runtime::event::*;
+use runtime::rows::{self, Part};
 use serde::{Deserialize, Serialize};
 
 use super::{answers_observe, carried, iso8601, INBOX_APPEND};
@@ -15,9 +18,6 @@ pub const OBSERVE: &str = "repo-events.observe";
 pub const NAME: &str = "repo-events";
 const BOOT_BODY: &str = "boot";
 
-/// The newest keys kept: older runs have left the window the forge lists (30 per repository).
-/// The carry rides one journal event, so the whole list must fit `kind_body`.
-pub const KEEP: usize = 600;
 const WHY_CHARS: usize = 200;
 const TITLE_CHARS: usize = 80;
 const OBSERVE_DEADLINE_MS: u64 = 60_000;
@@ -48,23 +48,58 @@ pub struct Snapshot {
 }
 
 /// Carried between ticks as the body of the latest `repo-events.state` event, and the question
-/// each observe asks: `runs` are the `run|<slug>|<id>|<conclusion>` keys already settled, oldest
-/// first; `seeded` that a forge has answered once; `adopted` the repositories whose forge has
-/// answered; `failed` the forge failures already said.
+/// each observe asks: `cursors` the newest run id seen per repository whose forge has answered
+/// (a run above it is new); `seeded` that a forge has answered once; `failed` the forge failures
+/// already said. `runs` and `adopted` are what an older carry held: read once, folded into
+/// `cursors`, never written.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub seeded: bool,
-    pub runs: Vec<String>,
-    #[serde(default)]
-    pub adopted: Vec<String>,
+    pub cursors: BTreeMap<String, u64>,
     pub failed: Vec<String>,
+    #[serde(default, skip_serializing)]
+    runs: Vec<String>,
+    #[serde(default, skip_serializing)]
+    adopted: Vec<String>,
 }
 
 impl Carry {
-    fn has_adopted(&self, slug: &str) -> bool {
-        let prefix = format!("run|{slug}|");
-        self.adopted.iter().any(|a| a == slug) || self.runs.iter().any(|k| k.starts_with(&prefix))
+    fn folded(&self) -> Carry {
+        let mut c = Carry { runs: vec![], adopted: vec![], ..self.clone() };
+        for slug in &self.adopted {
+            c.cursors.entry(slug.clone()).or_insert(0);
+        }
+        for k in &self.runs {
+            c.cursor_from(k);
+        }
+        c
     }
+
+    fn cursor_from(&mut self, key: &str) {
+        let mut f = key.split('|');
+        if let (Some("run"), Some(slug), Some(id)) = (f.next(), f.next(), f.next().and_then(|i| i.parse::<u64>().ok())) {
+            let c = self.cursors.entry(slug.to_string()).or_insert(0);
+            *c = (*c).max(id);
+        }
+    }
+}
+
+const PARTS: &[Part] = &[Part::Field("seeded"), Part::Map { name: "cursors", drop: &[] }];
+
+fn split(body: &str) -> BTreeMap<String, String> {
+    let mut rows = rows::split(body, PARTS);
+    if let Ok(c) = serde_json::from_str::<Carry>(body) {
+        rows.extend(c.failed.iter().map(|m| (rows::entry_key("failed", m), m.clone())));
+    }
+    rows
+}
+
+fn join(rows: &BTreeMap<String, String>) -> String {
+    let mut c: Carry = serde_json::from_str(&rows::join(rows, PARTS)).unwrap_or_default();
+    c.failed = rows.iter().filter(|(k, _)| k.starts_with("failed/")).map(|(_, v)| v.clone()).collect();
+    c.failed.sort();
+    serde_json::to_string(&c).unwrap_or_default()
 }
 
 pub fn key(slug: &str, r: &Run) -> String {
@@ -90,9 +125,10 @@ fn line(slug: &str, r: &Run) -> Option<String> {
 /// and nothing seeded, a repository's first answer adopts its runs silently, whenever it comes:
 /// announcing a repository's whole history would wake the pane for nothing.
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<String>) {
+    let carry = carry.folded();
     let mut next = carry.clone();
     if !carry.seeded {
-        next.runs = snap.seed.clone();
+        snap.seed.iter().for_each(|k| next.cursor_from(k));
     }
     let mut say = vec![];
     let mut failed = vec![];
@@ -107,25 +143,19 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<String>) {
             }
             Ok(runs) => {
                 next.seeded = true;
-                let silent = !carry.has_adopted(slug) && (carry.seeded || snap.seed.is_empty());
-                if !next.adopted.iter().any(|a| a == slug) {
-                    next.adopted.push(slug.clone());
+                let silent = !carry.cursors.contains_key(slug) && (carry.seeded || snap.seed.is_empty());
+                let seen = next.cursors.get(slug).copied().unwrap_or(0);
+                if !silent {
+                    say.extend(runs.iter().filter(|r| r.id > seen).filter_map(|r| line(slug, r)));
                 }
-                let fresh: Vec<&Run> = runs.iter().filter(|r| !next.runs.contains(&key(slug, r))).collect();
-                for r in &fresh {
-                    if !silent {
-                        say.extend(line(slug, r));
-                    }
-                }
-                next.runs.extend(fresh.iter().rev().map(|r| key(slug, r)));
+                next.cursors.insert(slug.clone(), runs.iter().map(|r| r.id).fold(seen, u64::max));
             }
         }
     }
-    next.runs.drain(..next.runs.len().saturating_sub(KEEP));
+    failed.sort();
+    failed.dedup();
     next.failed = failed;
     let mut size = serde_json::to_string(&next).map_or(0, |b| b.len());
-    shed(&mut next.runs, &mut size);
-    shed(&mut next.adopted, &mut size);
     shed(&mut next.failed, &mut size);
     (next, say)
 }
@@ -142,7 +172,7 @@ fn shed(list: &mut Vec<String>, size: &mut usize) {
 
 impl RepoEvents {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(RowCodec { stream: STREAM, tag: STATE, split, join })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -192,33 +222,23 @@ impl Handler for RepoEvents {
 mod tests {
     use super::*;
 
-    /// A carry rides one state key and ships as one record; it stays under 64 KiB.
-    const KIND_BODY_MAX: usize = 65_535;
-
     #[test]
-    fn a_full_carry_fits_the_journal_column() {
-        let slug = "DeckDumpster/remarkable-pipeline-extended";
-        let runs = (0..KEEP as u64).map(|i| format!("run|{slug}|{}|action_required", 90_000_000_000 + i)).collect();
-        let adopted = (0..12).map(|_| slug.to_string()).collect();
-        let carry = Carry { seeded: true, runs, adopted, failed: vec![] };
-        let body = serde_json::to_string(&carry).unwrap();
-        assert!(body.len() < KIND_BODY_MAX, "a full carry is {} bytes; kind_body holds {KIND_BODY_MAX}", body.len());
-    }
-
-    #[test]
-    fn the_carry_is_cut_by_bytes_for_the_longest_slugs_and_failure_reasons() {
+    fn a_carry_with_many_repositories_and_failures_is_cut_by_bytes() {
         let slug = format!("{}/{}", "o".repeat(100), "r".repeat(155));
-        let runs = (0..KEEP as u64).map(|i| format!("run|{slug}|{}|action_required", 90_000_000_000 + i)).collect();
-        let adopted = (0..300).map(|i| format!("{i:03}{slug}")).collect();
-        let carry = Carry { seeded: true, runs, adopted, failed: vec![] };
         let fresh = (0..30).map(|i| run(100 + i, "CI", "success", "main")).collect();
         let mut repos: Vec<_> = (0..300).map(|i| (format!("{i:03}{slug}"), Err("x".repeat(100_000)))).collect();
         repos.push((slug.clone(), Ok(fresh)));
-        let snap = Snapshot { seed: vec![], repos };
-        let (c, _) = decide(&carry, &snap);
+        let (c, _) = decide(&Carry::default(), &Snapshot { seed: vec![], repos });
         let body = serde_json::to_string(&c).unwrap();
         assert!(body.len() <= crate::CARRY_BYTES, "{} bytes", body.len());
-        assert!(c.runs.len() < KEEP && c.runs.iter().all(|k| !k.contains("|action_required")), "oldest keys go first: {}", c.runs.len());
+    }
+
+    #[test]
+    fn a_failure_message_longer_than_a_row_key_is_kept_and_read_back() {
+        let carry = Carry { seeded: true, failed: vec!["f".repeat(400)], ..Carry::default() };
+        let rows = split(&serde_json::to_string(&carry).unwrap());
+        assert!(rows.keys().all(|k| k.len() < 255));
+        assert_eq!(serde_json::from_str::<Carry>(&join(&rows)).unwrap(), carry);
     }
 
     fn run(id: u64, wf: &str, concl: &str, br: &str) -> Run {
@@ -232,7 +252,7 @@ mod tests {
     #[test]
     fn a_first_start_with_nothing_seeded_adopts_the_forge_silently() {
         let (c, say) = decide(&Carry::default(), &snap(vec![run(1, "CI", "failure", "main")]));
-        assert_eq!((c.runs, say), (vec!["run|o/r|1|failure".to_string()], vec![]));
+        assert_eq!((c.cursors, say), (BTreeMap::from([("o/r".to_string(), 1)]), vec![]));
     }
 
     #[test]
@@ -251,22 +271,14 @@ mod tests {
         s.seed = vec!["run|o/r|1|failure".into(), "pr|o/r|3|OPEN|none".into()];
         let (c, say) = decide(&Carry::default(), &s);
         assert_eq!(say, ["o/r CI on main FAILURE (run 2) — t2"]);
-        assert_eq!(c.runs, ["run|o/r|1|failure", "pr|o/r|3|OPEN|none", "run|o/r|2|failure"]);
+        assert_eq!(c.cursors, BTreeMap::from([("o/r".to_string(), 2)]));
     }
 
     #[test]
-    fn the_carry_keeps_only_the_newest_keys() {
-        let carry = Carry { seeded: true, runs: (0..KEEP as u64).map(|i| format!("run|o/r|{i}|success")).collect(), adopted: vec![], failed: vec![] };
-        let (c, _) = decide(&carry, &snap(vec![run(9_999, "CI", "success", "main")]));
-        assert_eq!((c.runs.len(), c.runs[0].as_str(), c.runs.last().unwrap().as_str()), (KEEP, "run|o/r|1|success", "run|o/r|9999|success"));
-    }
-
-    #[test]
-    fn a_full_carry_drops_its_oldest_keys_not_the_newest_of_a_batch() {
-        let carry = Carry { seeded: true, runs: (0..KEEP as u64).map(|i| format!("run|o/r|{i}|success")).collect(), adopted: vec![], failed: vec![] };
-        let (c, _) = decide(&carry, &snap(vec![run(20_002, "CI", "success", "main"), run(20_001, "CI", "success", "main")]));
-        assert_eq!(c.runs.len(), KEEP);
-        assert_eq!(&c.runs[KEEP - 2..], ["run|o/r|20001|success", "run|o/r|20002|success"]);
+    fn a_run_below_the_cursor_is_not_new_and_one_above_it_is() {
+        let carry = Carry { seeded: true, cursors: BTreeMap::from([("o/r".to_string(), 10)]), ..Carry::default() };
+        let (c, say) = decide(&carry, &snap(vec![run(11, "CI", "failure", "main"), run(9, "CI", "failure", "main")]));
+        assert_eq!((say, c.cursors["o/r"]), (vec!["o/r CI on main FAILURE (run 11) — t11".to_string()], 11));
     }
 
     #[test]
@@ -282,7 +294,7 @@ mod tests {
 
     #[test]
     fn a_carry_from_before_adoption_was_tracked_counts_a_repository_with_runs_as_adopted() {
-        let carry = Carry { seeded: true, runs: vec!["run|o/r|1|failure".into()], adopted: vec![], failed: vec![] };
+        let carry = Carry { seeded: true, runs: vec!["run|o/r|1|failure".into()], ..Carry::default() };
         let s = Snapshot { seed: vec![], repos: vec![("o/r".into(), Ok(vec![run(2, "CI", "failure", "main")])), ("o/new".into(), Ok(vec![run(3, "CI", "failure", "main")]))] };
         assert_eq!(decide(&carry, &s).1, ["o/r CI on main FAILURE (run 2) — t2"]);
     }

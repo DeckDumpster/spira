@@ -298,13 +298,27 @@ pub struct Registration {
     pub signal_effects: Vec<&'static str>,
     /// Every effect the task declares, for `status`; the plane of each is [`Self::plane_of`].
     pub effects: Vec<&'static str>,
+    /// How the task's carry is kept: one row per irreducible fact, rather than the whole carry
+    /// under one key. `None` keeps the whole carry.
+    pub rows: Option<RowCodec>,
+}
+
+/// A task's carry as keyed rows. `split` names the irreducible facts of a carry body, one row
+/// each; a row that stops being named is overwritten with an empty value, never deleted. `join`
+/// is its inverse over the rows a boot finds: whatever it leaves out is rebuilt by the first tick.
+#[derive(Clone, Copy)]
+pub struct RowCodec {
+    pub stream: &'static str,
+    pub tag: EventKindTag,
+    pub split: fn(&str) -> std::collections::BTreeMap<String, String>,
+    pub join: fn(&std::collections::BTreeMap<String, String>) -> String,
 }
 
 impl Registration {
     /// In `Act` on the `Work` plane; a service takes the mode of every task from its configured
     /// table and the plane from its task row.
     pub fn new(name: &str, handler: impl Handler + 'static) -> Self {
-        Registration { name: name.into(), handler: Box::new(handler), mode: Mode::Act, plane: Plane::Work, signal_effects: vec![], effects: vec![] }
+        Registration { name: name.into(), handler: Box::new(handler), mode: Mode::Act, plane: Plane::Work, signal_effects: vec![], effects: vec![], rows: None }
     }
 
     pub fn with_mode(mut self, mode: Mode) -> Self {
@@ -330,6 +344,11 @@ impl Registration {
     /// The effects the task declares, listed in `status` with their planes.
     pub fn with_effects(mut self, names: &[&'static str]) -> Self {
         self.effects = names.to_vec();
+        self
+    }
+
+    pub fn with_rows(mut self, rows: RowCodec) -> Self {
+        self.rows = Some(rows);
         self
     }
 

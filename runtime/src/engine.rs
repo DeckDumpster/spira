@@ -217,6 +217,7 @@ pub struct Engine {
     /// Each task's newest own-stream emit per (stream, kind): the carry stored under [`CARRY_KEY`].
     carries: BTreeMap<String, BTreeMap<(String, String), Event>>,
     dirty_carry: BTreeSet<String>,
+    codecs: BTreeMap<String, RowCodec>,
     dirty_halt: bool,
     /// What every state key last committed says, as [`carry_signature`] reads it: a key is
     /// written only when this changes.
@@ -232,6 +233,9 @@ pub struct Engine {
     fire_of: BTreeMap<EventId, String>,
     resolves: BTreeMap<EventId, String>,
 }
+
+/// What a whole-carry row holds once its task is kept as rows: no events.
+const LEGACY_SPENT: &str = "[]";
 
 /// What a carry says without the ids, causes and times of the events that carry it: the same
 /// state emitted again is no change, and writes nothing.
@@ -302,6 +306,7 @@ impl Engine {
     /// Rebuild from what the store kept: each task's carry, the halt, the effects still waiting
     /// for an outcome and the schedule rows not yet fired. No event is replayed.
     pub fn open_with(journal: Arc<dyn Journal>, clock: Arc<dyn Clock>, regs: Vec<Registration>, seed: u64, retry: BootRetry) -> Result<Self> {
+        let codecs = regs.iter().filter_map(|r| r.rows.map(|c| (r.name.clone(), c))).collect();
         let mut e = Engine {
             journal,
             clock,
@@ -342,6 +347,7 @@ impl Engine {
             rss: TurnRss::default(),
             carries: BTreeMap::new(),
             dirty_carry: BTreeSet::new(),
+            codecs,
             dirty_halt: false,
             kept: BTreeMap::new(),
             staged: BTreeMap::new(),
@@ -351,9 +357,21 @@ impl Engine {
             resolves: BTreeMap::new(),
         };
         let boot = retry.read(|| e.journal.boot())?;
+        let mut legacy: BTreeMap<String, StateRow> = BTreeMap::new();
+        let mut keyed: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
         for row in boot.state {
+            if e.codecs.contains_key(&row.task) {
+                e.kept.insert((row.task.clone(), row.skey.clone()), row.value.clone());
+                if row.skey == CARRY_KEY {
+                    legacy.insert(row.task.clone(), row);
+                } else {
+                    keyed.entry(row.task.clone()).or_default().insert(row.skey, row.value);
+                }
+                continue;
+            }
             e.restore(&row)?;
         }
+        e.restore_keyed(legacy, keyed)?;
         for row in boot.effects {
             e.restore_effect(row);
         }
@@ -380,6 +398,29 @@ impl Engine {
         }
         let sig = if row.skey == CARRY_KEY { carry_signature(self.carries.get(&row.task).map(|c| c.values()).into_iter().flatten()) } else { row.value.clone() };
         self.kept.insert((row.task.clone(), row.skey.clone()), sig);
+        Ok(())
+    }
+
+    /// A task kept as rows is rebuilt from its rows alone; the whole-carry row of an older
+    /// store is read only while no row of the task exists.
+    fn restore_keyed(&mut self, mut legacy: BTreeMap<String, StateRow>, mut keyed: BTreeMap<String, BTreeMap<String, String>>) -> Result<()> {
+        for task in self.codecs.keys().cloned().collect::<Vec<_>>() {
+            let codec = self.codecs[&task];
+            let Some(rows) = keyed.remove(&task).map(|r| r.into_iter().filter(|(_, v)| !v.is_empty()).collect::<BTreeMap<_, _>>()).filter(|r| !r.is_empty()) else {
+                if let Some(row) = legacy.remove(&task) {
+                    self.restore(&row)?;
+                    self.kept.insert((task.clone(), CARRY_KEY.into()), row.value);
+                    self.dirty_carry.insert(task);
+                }
+                continue;
+            };
+            let id = derive_id(format!("boot/{task}/{}/{}", codec.stream, codec.tag));
+            let kind = EventKind::new(codec.tag, &(codec.join)(&rows));
+            let ev = Event { id: EventId(id.clone()), stream: StreamKey(codec.stream.into()), kind, at: self.clock.now_ms(), cause: None, correlation: CorrelationId(id) };
+            self.projection.push(&ev);
+            self.carry(&task, &ev.stream, &ev.kind);
+            self.carries.entry(task).or_default().insert((ev.stream.0.clone(), ev.kind.tag.clone()), ev);
+        }
         Ok(())
     }
 
@@ -1011,6 +1052,20 @@ impl Engine {
         let at = self.clock.now_ms();
         let mut changed: Vec<(String, String, String, String)> = vec![];
         for task in std::mem::take(&mut self.dirty_carry) {
+            if let Some(codec) = self.codecs.get(&task).copied() {
+                let body = self.carries.get(&task).and_then(|c| c.get(&(codec.stream.to_string(), codec.tag.to_string()))).map(|e| e.kind.body.clone()).unwrap_or_default();
+                let mut rows = (codec.split)(&body);
+                for ((t, k), sig) in &self.kept {
+                    if t == &task && !sig.is_empty() && sig != LEGACY_SPENT && k != CARRY_KEY && !rows.contains_key(k) {
+                        rows.insert(k.clone(), String::new());
+                    }
+                }
+                if self.kept.get(&(task.clone(), CARRY_KEY.into())).is_some_and(|s| s != LEGACY_SPENT) {
+                    rows.insert(CARRY_KEY.into(), LEGACY_SPENT.into());
+                }
+                changed.extend(rows.into_iter().map(|(k, v)| (task.clone(), k, v.clone(), v)));
+                continue;
+            }
             let events: Vec<&Event> = self.carries.get(&task).map(|c| c.values().collect()).unwrap_or_default();
             let sig = carry_signature(events.iter().copied());
             changed.push((task, CARRY_KEY.into(), serde_json::to_string(&events).unwrap_or_default(), sig));
