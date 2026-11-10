@@ -17,7 +17,19 @@ const HOUR: u64 = 3_600;
 const T0: u64 = 10 * 86_400;
 
 fn config() -> Config {
-    Config { period_s: 300, working_min: 2, submit_bound_s: 90 * MIN, cut_bound_s: 45 * MIN, deliver_bound_s: 60 * MIN, activate_bound_s: 15 * MIN, ask_bound_s: 60 * MIN, release_repo: "spira".into(), heartbeat_bound_s: 120, releases: "/rel".into() }
+    Config {
+        period_s: 300,
+        working_min: 2,
+        submit_bound_s: 90 * MIN,
+        cut_bound_s: 45 * MIN,
+        deliver_bound_s: 60 * MIN,
+        activate_bound_s: 15 * MIN,
+        ask_bound_s: 60 * MIN,
+        release_repo: "spira".into(),
+        heartbeat_bound_s: 120,
+        releases: "/rel".into(),
+        repo_map: "/map".into(),
+    }
 }
 
 fn bead(id: &str, repo: &str, state: &str, since: u64) -> Bead {
@@ -196,14 +208,22 @@ fn a_dwell_answer_becomes_the_snapshot_with_deliver_tabled_as_cut() {
         "rev": 9, "now": 5000, "window_s": 600, "horizon": 4400, "complete": true, "scanned": 3,
         "beads": [{ "id": "sp-a", "repo": "spira", "state": "WORKING", "since": 4000, "ask_held": false }],
         "last": { "spira": { "Claim": 4000, "Deliver": 4100, "Delivered": 4200 } },
-        "landed_after": { "spira": 4200 }
+        "landed_after": {}
     });
-    let s = snapshot_of(&dwell, Some(4150)).unwrap();
+    let s = snapshot_of(
+        &dwell,
+        Some(4150),
+        BTreeMap::from([("spira".to_string(), 4200)]),
+    )
+    .unwrap();
     assert!(s.readable);
     assert_eq!(s.last["spira"].get("Cut"), Some(&4100));
     assert_eq!(s.landed_after.get("spira"), Some(&4200));
     assert_eq!(s.beads[0].since, 4000);
-    assert!(snapshot_of(&serde_json::json!({ "error": "x" }), None).is_err(), "a malformed answer is an error, so the observe is BLIND");
+    assert!(
+        snapshot_of(&serde_json::json!({ "error": "x" }), None, BTreeMap::new()).is_err(),
+        "a malformed answer is an error, so the observe is BLIND"
+    );
 }
 
 #[test]
@@ -441,9 +461,12 @@ fn a_submitted_bead_waiting_twenty_minutes_behind_an_open_round_is_queued_not_st
     assert!(keys(&s).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()), "no round open and the wait past the bound pages");
 }
 
+const IN_EFFECT: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const LANDED: &str = "cccccccccccccccccccccccccccccccccccccccc";
+
 /// A run dir whose only release activated at epoch second 100, and a releases dir whose
-/// `current` link was switched just now.
-fn stale_record_fresh_switch() -> (testkit::TempDir, testkit::TempDir, u64) {
+/// `current` names a release built from [`IN_EFFECT`].
+fn stale_record_other_release_in_effect() -> (testkit::TempDir, testkit::TempDir) {
     let run = testkit::TempDir::new("wt-run");
     let mut r = release::machine::Release::new("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     for (to, at) in [(release::machine::ReleaseState::Cut, 1), (release::machine::ReleaseState::Accepted, 2), (release::machine::ReleaseState::Published, 3), (release::machine::ReleaseState::Activated, 100)] {
@@ -451,36 +474,208 @@ fn stale_record_fresh_switch() -> (testkit::TempDir, testkit::TempDir, u64) {
     }
     release::machine::save(&run.path().join("release"), &r).unwrap();
     let rel = testkit::TempDir::new("wt-releases");
-    std::os::unix::fs::symlink("bbbbbbbb", rel.path().join("current")).unwrap();
-    let switched = std::fs::symlink_metadata(rel.path().join("current")).unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-    (run, rel, switched)
+    std::fs::create_dir(rel.path().join("rel-b")).unwrap();
+    std::fs::write(
+        rel.path().join("rel-b/MANIFEST"),
+        format!("commit {IN_EFFECT}\n"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("rel-b", rel.path().join("current")).unwrap();
+    (run, rel)
 }
 
-/// A dwell answer that reports `delivered` as a landing only when it is newer than `--landed-after`.
-fn dwell_with_a_landing_at(delivered: u64) -> impl Fn(&[&str]) -> Result<serde_json::Value, String> {
+/// A dwell answer reporting one landing of `commit` at `at` in `spira`, when it is newer than `--landed-after`.
+fn dwell_with_a_landing(
+    at: u64,
+    commit: &'static str,
+) -> impl Fn(&[&str]) -> Result<serde_json::Value, String> {
     move |argv| {
-        let after = argv.iter().position(|a| *a == "--landed-after").and_then(|i| argv[i + 1].parse::<u64>().ok()).unwrap_or(0);
-        let landed = if delivered > after { serde_json::json!({ "spira": delivered }) } else { serde_json::json!({}) };
-        Ok(serde_json::json!({ "beads": [], "horizon": 0, "last": { "spira": { "Delivered": delivered } }, "landed_after": landed }))
+        let after = argv
+            .iter()
+            .position(|a| *a == "--landed-after")
+            .and_then(|i| argv[i + 1].parse::<u64>().ok());
+        let landed = if after.is_some_and(|a| at > a) {
+            serde_json::json!({ "spira": [{ "at": at, "commit": commit }] })
+        } else {
+            serde_json::json!({})
+        };
+        Ok(
+            serde_json::json!({ "beads": [], "horizon": 0, "last": { "spira": { "Delivered": at } }, "landed_after": landed }),
+        )
     }
 }
 
-#[test]
-fn a_landing_under_the_release_in_effect_raises_no_stall_however_old_the_recorded_activation() {
-    let (run, rel, switched) = stale_record_fresh_switch();
-    let delivered = switched - 20 * MIN;
-    let snap = observe(run.path(), rel.path(), &dwell_with_a_landing_at(delivered), 3_600);
+fn stalls_for_landing(at: u64, commit: &'static str, contained: bool, now: u64) -> Vec<String> {
+    let (run, rel) = stale_record_other_release_in_effect();
+    let asked = std::cell::RefCell::new(vec![]);
+    let ancestor = |c: &str, r: &str| {
+        asked.borrow_mut().push((c.to_string(), r.to_string()));
+        Ok(contained)
+    };
+    let snap = observe(
+        run.path(),
+        rel.path(),
+        "spira",
+        &dwell_with_a_landing(at, commit),
+        &ancestor,
+        3_600,
+    );
     assert!(snap.readable, "{}", snap.why);
-    let found = spira_runtime::tasks::e::watch_transitions::stalls(&snap, switched + 30 * MIN, &config());
-    assert!(!found.iter().any(|s| s.edge == "LANDED→ACTIVATED"), "{found:?}");
+    if !commit.is_empty() {
+        assert_eq!(
+            *asked.borrow(),
+            [(commit.to_string(), IN_EFFECT.to_string())],
+            "ancestry is tested against the release `current` names"
+        );
+    }
+    spira_runtime::tasks::e::watch_transitions::stalls(&snap, now, &config())
+        .into_iter()
+        .map(|s| s.key())
+        .collect()
 }
 
 #[test]
-fn a_landing_after_the_release_in_effect_was_switched_in_raises_the_stall_past_the_bound() {
-    let (run, rel, switched) = stale_record_fresh_switch();
-    let snap = observe(run.path(), rel.path(), &dwell_with_a_landing_at(switched + 60), 3_600);
-    let found = spira_runtime::tasks::e::watch_transitions::stalls(&snap, switched + 60 + 16 * MIN, &config());
-    assert!(found.iter().any(|s| s.edge == "LANDED→ACTIVATED" && s.scope == "spira"), "{found:?}");
+fn a_landing_contained_in_the_release_in_effect_raises_no_stall_however_old_the_recorded_activation(
+) {
+    let found = stalls_for_landing(1_000, LANDED, true, 1_000 + 30 * MIN);
+    assert!(
+        !found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn a_landing_missing_from_the_release_in_effect_raises_the_stall_past_the_bound_whatever_the_recorded_activation(
+) {
+    let found = stalls_for_landing(50, LANDED, false, 50 + 16 * MIN);
+    assert!(
+        found.contains(&"LANDED→ACTIVATED spira".to_string()),
+        "a landing older than the recorded activation is still unreleased: {found:?}"
+    );
+}
+
+#[test]
+fn a_landing_that_recorded_no_commit_is_judged_by_time_against_the_recorded_activation() {
+    let after = stalls_for_landing(1_000, "", false, 1_000 + 16 * MIN);
+    assert!(
+        after.contains(&"LANDED→ACTIVATED spira".to_string()),
+        "{after:?}"
+    );
+    let before = stalls_for_landing(60, "", false, 60 + 16 * MIN);
+    assert!(
+        !before.iter().any(|k| k.starts_with("LANDED→ACTIVATED")),
+        "{before:?}"
+    );
+}
+
+#[test]
+fn the_stall_ages_from_the_oldest_landing_the_release_lacks_not_from_a_contained_older_one() {
+    let (run, rel) = stale_record_other_release_in_effect();
+    let (old, new) = (1_000u64, 1_000 + 40 * MIN);
+    let dwell = move |_: &[&str]| -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({ "beads": [], "horizon": 0,
+            "last": { "spira": { "Delivered": new } },
+            "landed_after": { "spira": [{ "at": new, "commit": "bbbb" }, { "at": old, "commit": "aaaa" }] } }))
+    };
+    let ancestor = |c: &str, _: &str| Ok(c == "aaaa");
+    let snap = observe(run.path(), rel.path(), "spira", &dwell, &ancestor, 3_600);
+    let keys = |now| -> Vec<String> {
+        spira_runtime::tasks::e::watch_transitions::stalls(&snap, now, &config()).into_iter().map(|s| s.key()).collect()
+    };
+    assert!(!keys(new + MIN).iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "aged from the contained landing");
+    assert!(keys(new + 16 * MIN).contains(&"LANDED→ACTIVATED spira".to_string()));
+}
+
+#[test]
+fn a_release_containing_the_newest_landing_clears_every_landing_without_testing_the_older_ones() {
+    let (run, rel) = stale_record_other_release_in_effect();
+    let (old, new) = (1_000u64, 1_000 + 40 * MIN);
+    let dwell = move |_: &[&str]| -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({ "beads": [], "horizon": 0,
+            "last": { "spira": { "Delivered": new } },
+            "landed_after": { "spira": [{ "at": new, "commit": "bbbb" }, { "at": old, "commit": "aaaa" }] } }))
+    };
+    let ancestor = |c: &str, _: &str| Ok(c == "bbbb");
+    let snap = observe(run.path(), rel.path(), "spira", &dwell, &ancestor, 3_600);
+    let found: Vec<String> = spira_runtime::tasks::e::watch_transitions::stalls(&snap, new + 16 * MIN, &config()).into_iter().map(|s| s.key()).collect();
+    assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
+}
+
+#[test]
+fn an_old_landing_without_a_commit_is_judged_by_time_while_a_newer_one_is_tested_by_ancestry() {
+    let (run, rel) = stale_record_other_release_in_effect();
+    let (old, new) = (50u64, 1_000 + 40 * MIN);
+    let dwell = move |_: &[&str]| -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({ "beads": [], "horizon": 0,
+            "last": { "spira": { "Delivered": new } },
+            "landed_after": { "spira": [{ "at": new, "commit": "bbbb" }, { "at": old, "commit": "" }] } }))
+    };
+    let ancestor = |c: &str, _: &str| Ok(c == "bbbb");
+    let snap = observe(run.path(), rel.path(), "spira", &dwell, &ancestor, 3_600);
+    let found: Vec<String> = spira_runtime::tasks::e::watch_transitions::stalls(&snap, new + 16 * MIN, &config()).into_iter().map(|s| s.key()).collect();
+    assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
+}
+
+#[test]
+fn with_no_current_link_a_landing_is_judged_by_time_against_the_recorded_activation() {
+    let (run, rel) = stale_record_other_release_in_effect();
+    std::fs::remove_file(rel.path().join("current")).unwrap();
+    let never = |_: &str, _: &str| -> Result<bool, String> { panic!("no release in effect to test against") };
+    let snap = observe(run.path(), rel.path(), "spira", &dwell_with_a_landing(1_000, LANDED), &never, 3_600);
+    assert!(snap.readable, "{}", snap.why);
+    let found: Vec<String> = spira_runtime::tasks::e::watch_transitions::stalls(&snap, 1_000 + 16 * MIN, &config()).into_iter().map(|s| s.key()).collect();
+    assert!(found.contains(&"LANDED→ACTIVATED spira".to_string()), "{found:?}");
+}
+
+#[test]
+fn a_landing_whose_ancestry_cannot_be_tested_pages_its_edge_and_leaves_the_rest_watched() {
+    let (run, rel) = stale_record_other_release_in_effect();
+    let snap = observe(run.path(), rel.path(), "spira", &dwell_with_a_landing(1_000, LANDED), &|_, _| Err("bad object".into()), 3_600);
+    assert!(snap.readable, "one edge's failed test must not blind the others: {}", snap.why);
+    let found: Vec<String> = spira_runtime::tasks::e::watch_transitions::stalls(&snap, 1_000 + 16 * MIN, &config()).into_iter().map(|s| s.key()).collect();
+    assert!(found.contains(&"LANDED→ACTIVATED spira".to_string()), "{found:?}");
+}
+
+#[test]
+fn the_repo_map_ancestry_test_tells_contained_from_not_contained_and_from_unknown() {
+    let dir = testkit::TempDir::new("wt-git");
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "one"]);
+    let one = git(&["rev-parse", "HEAD"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "two"]);
+    let two = git(&["rev-parse", "HEAD"]);
+    let map = dir.path().join("map");
+    std::fs::write(
+        &map,
+        format!("spira|{}|local/main|main\n", dir.path().display()),
+    )
+    .unwrap();
+    let ancestor = repo_ancestor(&map, "spira");
+    assert_eq!(ancestor(&one, &two), Ok(true));
+    assert_eq!(ancestor(&two, &one), Ok(false));
+    assert!(
+        ancestor(LANDED, &two).is_err(),
+        "a commit the checkout lacks is unknown, not unreleased"
+    );
+    assert!(
+        repo_ancestor(&map, "other")(&one, &two).is_err(),
+        "a repo with no map row cannot be asked"
+    );
 }
 
 #[test]

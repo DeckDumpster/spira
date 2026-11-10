@@ -845,9 +845,19 @@ impl World {
         struct P {
             window_s: u64,
             releases: PathBuf,
+            release_repo: String,
         }
-        let p: P = serde_json::from_str(input).map_err(|e| format!("transitions params unparsed: {e}"))?;
-        let mut snap = wt::observe(&self.run_dir, &p.releases, &|argv| self.lc_json(argv), p.window_s);
+        let p: P =
+            serde_json::from_str(input).map_err(|e| format!("transitions params unparsed: {e}"))?;
+        let ancestor = wt::repo_ancestor(&self.repo_map, &p.release_repo);
+        let mut snap = wt::observe(
+            &self.run_dir,
+            &p.releases,
+            &p.release_repo,
+            &|argv| self.lc_json(argv),
+            &ancestor,
+            p.window_s,
+        );
         snap.open_rounds = self.open_rounds();
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }

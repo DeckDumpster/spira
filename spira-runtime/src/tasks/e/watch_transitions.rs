@@ -17,8 +17,8 @@
 //! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead has itself waited `SPIRA_TRANSITIONS_CUT_BOUND`, no round is open on the repo, and no Delivered inside the bound. A bead waiting behind an open round is queued, not stalled, and the round that just closed has not been closed that long.
 //! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
 //!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
-//! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed work after the
-//!   release in effect was switched in (the later of the newest recorded activation and the mtime of `SPIRA_RELEASES/current`), and the oldest such landing is older than `SPIRA_TRANSITIONS_ACTIVATE_BOUND`.
+//! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed a commit the
+//!   release `SPIRA_RELEASES/current` names does not contain, and the oldest such landing is older than `SPIRA_TRANSITIONS_ACTIVATE_BOUND`.
 //! - ASK→ANSWERED: an ask held unanswered longer than `SPIRA_TRANSITIONS_ASK_BOUND`.
 //!
 //! A stall pages only when its edge's owner is not acting on it: the owner's heartbeat
@@ -59,6 +59,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_TRANSITIONS_RELEASE_REPO",
     "SPIRA_TRANSITIONS_HEARTBEAT_BOUND",
     "SPIRA_RELEASES",
+    "SPIRA_REPO_MAP",
 ];
 /// The period when the key does not resolve; the handler then refuses, so this only sizes the
 /// row's declared cadence.
@@ -84,6 +85,7 @@ pub struct Config {
     pub release_repo: String,
     pub heartbeat_bound_s: u64,
     pub releases: std::path::PathBuf,
+    pub repo_map: std::path::PathBuf,
 }
 
 impl Config {
@@ -103,6 +105,7 @@ impl Config {
             release_repo: cfg("SPIRA_TRANSITIONS_RELEASE_REPO")?,
             heartbeat_bound_s: cfg_parse("SPIRA_TRANSITIONS_HEARTBEAT_BOUND")?,
             releases: cfg("SPIRA_RELEASES")?.into(),
+            repo_map: cfg("SPIRA_REPO_MAP")?.into(),
         })
     }
 
@@ -379,7 +382,11 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
 
 /// The snapshot a `spira-lc dwell` answer and the newest activation make. The store's
 /// `Deliver` is a round cut taking the bead, so it is tabled as `Cut`.
-pub fn snapshot_of(dwell: &serde_json::Value, activated_at: Option<u64>) -> Result<Snapshot, String> {
+pub fn snapshot_of(
+    dwell: &serde_json::Value,
+    activated_at: Option<u64>,
+    landed_after: BTreeMap<String, u64>,
+) -> Result<Snapshot, String> {
     let n = |v: &serde_json::Value| v.as_i64().map(|t| t.max(0) as u64);
     let beads: Vec<Bead> = dwell["beads"].as_array().ok_or("dwell answered no beads list")?.iter().map(|b| serde_json::from_value(b.clone()).map_err(|e| format!("dwell bead unparsed: {e}"))).collect::<Result<_, _>>()?;
     let horizon = n(&dwell["horizon"]).ok_or("dwell answered no horizon")?;
@@ -394,22 +401,95 @@ pub fn snapshot_of(dwell: &serde_json::Value, activated_at: Option<u64>) -> Resu
         }
         last.insert(repo.clone(), by);
     }
-    let landed_after = dwell["landed_after"].as_object().into_iter().flatten().filter_map(|(r, t)| Some((r.clone(), n(t)?))).collect();
-    Ok(Snapshot { readable: true, why: String::new(), horizon, beads, last, activated_at, landed_after, open_rounds: None, owners: BTreeMap::new() })
+    Ok(Snapshot {
+        readable: true,
+        why: String::new(),
+        horizon,
+        beads,
+        last,
+        activated_at,
+        landed_after,
+        open_rounds: None,
+        owners: BTreeMap::new(),
+    })
 }
 
-/// When the release in effect was switched in: the mtime of the `current` link the system
-/// runs from, which holds however the activation event was or was not recorded. `None` when
-/// there is no such link.
-fn in_effect_since(releases_dir: &std::path::Path) -> Option<u64> {
-    let m = std::fs::symlink_metadata(releases_dir.join("current")).ok()?.modified().ok()?;
-    m.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+/// The commit the release `current` names was built from; `None` when there is no such link
+/// or its MANIFEST cannot be read.
+fn in_effect_commit(releases_dir: &std::path::Path) -> Option<String> {
+    release::manifest::Manifest::load(&releases_dir.join("current"))
+        .ok()
+        .map(|m| m.commit)
+}
+
+/// Whether `commit` is an ancestor of `release` (`git merge-base --is-ancestor`),
+/// or why it could not be asked.
+pub type Ancestor<'a> = &'a dyn Fn(&str, &str) -> Result<bool, String>;
+
+/// The ancestry test against the checkout `repo` has in the repo map. A commit the checkout
+/// does not know is an error, not "not contained".
+pub fn repo_ancestor<'a>(repo_map: &'a std::path::Path, repo: &'a str) -> impl Fn(&str, &str) -> Result<bool, String> + 'a {
+    move |commit, release| {
+        let text = std::fs::read_to_string(repo_map).map_err(|e| format!("{}: {e}", repo_map.display()))?;
+        let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), repo.to_string())]);
+        let registry = spira_config::repos::Registry::new(Some(&text), &env, std::path::Path::new("/"));
+        let root = registry.root(repo).ok_or_else(|| format!("repo map has no checkout for {repo}"))?;
+        match crate::wiki_git::git(std::path::Path::new(&root), &["merge-base", "--is-ancestor", commit, release])? {
+            (Some(0), _) => Ok(true),
+            (Some(1), _) => Ok(false),
+            (code, _) => Err(format!("git merge-base --is-ancestor {commit} {release} exited {code:?}")),
+        }
+    }
+}
+
+/// When the oldest landing in `landed` that the release in effect does not contain landed.
+/// Landings with no commit, or with no release in effect, are judged by time; one whose
+/// ancestry cannot be tested counts as unreleased, so the edge pages.
+fn oldest_unreleased(
+    landed: &[serde_json::Value],
+    in_effect: Option<&str>,
+    recorded: Option<u64>,
+    ancestor: Ancestor,
+) -> Option<u64> {
+    let mut landings: Vec<(u64, &str)> = landed
+        .iter()
+        .filter_map(|l| {
+            Some((
+                l["at"].as_i64()?.max(0) as u64,
+                l["commit"].as_str().unwrap_or(""),
+            ))
+        })
+        .collect();
+    landings.sort_unstable();
+    // Landings are one line of history: a release containing the newest contains the rest.
+    if let (Some(release), Some((_, newest))) = (in_effect, landings.last()) {
+        if landings.len() > 1 && landings.iter().all(|(_, c)| !c.is_empty()) && ancestor(newest, release) == Ok(true) {
+            return None;
+        }
+    }
+    for (at, commit) in landings {
+        let unreleased = match in_effect.filter(|_| !commit.is_empty()) {
+            Some(release) => !ancestor(commit, release).unwrap_or(false),
+            None => recorded.is_none_or(|r| at > r),
+        };
+        if unreleased {
+            return Some(at);
+        }
+    }
+    None
 }
 
 /// The snapshot of the lifecycle control store (`dwell` through `lc`), the release machine
 /// records under `run_dir` and the running round's progress file. Anything unreadable, or no
 /// release ever recorded, is BLIND rather than an empty table.
-pub fn observe(run_dir: &std::path::Path, releases_dir: &std::path::Path, lc: &dyn Fn(&[&str]) -> Result<serde_json::Value, String>, window_s: u64) -> Snapshot {
+pub fn observe(
+    run_dir: &std::path::Path,
+    releases_dir: &std::path::Path,
+    release_repo: &str,
+    lc: &dyn Fn(&[&str]) -> Result<serde_json::Value, String>,
+    ancestor: Ancestor,
+    window_s: u64,
+) -> Snapshot {
     let releases = match release::machine::all(&run_dir.join("release")) {
         Ok(r) => r,
         Err(e) => return blind(&format!("release machine records: {e}")),
@@ -417,21 +497,45 @@ pub fn observe(run_dir: &std::path::Path, releases_dir: &std::path::Path, lc: &d
     if releases.is_empty() {
         return blind("no release machine record under run/release/machine");
     }
-    let recorded = releases.iter().flat_map(|r| r.events.iter()).filter(|e| e.to == release::machine::ReleaseState::Activated).map(|e| e.at).max();
-    let activated = recorded.max(in_effect_since(releases_dir));
+    let recorded = releases
+        .iter()
+        .flat_map(|r| r.events.iter())
+        .filter(|e| e.to == release::machine::ReleaseState::Activated)
+        .map(|e| e.at)
+        .max();
+    let in_effect = in_effect_commit(releases_dir);
     let window = window_s.to_string();
-    let mut argv = vec!["dwell", "--window", window.as_str()];
-    let after = activated.map(|a| a.to_string());
-    if let Some(a) = after.as_deref() {
-        argv.extend(["--landed-after", a]);
+    let after = if in_effect.is_some() {
+        0
+    } else {
+        recorded.unwrap_or(0)
     }
+    .to_string();
+    let argv = [
+        "dwell",
+        "--window",
+        window.as_str(),
+        "--landed-after",
+        after.as_str(),
+    ];
     let dwell = match lc(&argv) {
         Ok(v) => v,
         Err(e) => return blind(&format!("spira-lc dwell: {e}")),
     };
-    let mut snap = snapshot_of(&dwell, activated).unwrap_or_else(|e| blind(&e));
-    let progress = std::fs::read_to_string(run_dir.join("round-progress.json")).ok().and_then(|t| round_owner(&t));
-    snap.owners.extend(progress.map(|o| (DELIVERY_EDGE.to_string(), o)));
+    let landed = dwell["landed_after"][release_repo]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    let unreleased = oldest_unreleased(landed, in_effect.as_deref(), recorded, ancestor);
+    let landed_after = unreleased
+        .map(|at| (release_repo.to_string(), at))
+        .into_iter()
+        .collect();
+    let mut snap = snapshot_of(&dwell, recorded, landed_after).unwrap_or_else(|e| blind(&e));
+    let progress = std::fs::read_to_string(run_dir.join("round-progress.json"))
+        .ok()
+        .and_then(|t| round_owner(&t));
+    snap.owners
+        .extend(progress.map(|o| (DELIVERY_EDGE.to_string(), o)));
     snap
 }
 
@@ -536,7 +640,7 @@ impl Handler for WatchTransitions {
             }
         };
         if ev.kind.tag == TICK {
-            let input = serde_json::json!({ "now": ev.at / 1000, "window_s": cfg.window_s(), "releases": cfg.releases }).to_string();
+            let input = serde_json::json!({ "now": ev.at / 1000, "window_s": cfg.window_s(), "releases": cfg.releases, "release_repo": cfg.release_repo }).to_string();
             return pattern::tick(ev, OBSERVE, input, DEADLINE_MS, ev.at + cfg.period_ms());
         }
         if !answers_observe(view, ev, OBSERVE) {
