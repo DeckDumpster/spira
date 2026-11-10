@@ -519,6 +519,9 @@ unit_env() {
 unit_cargo() {
     unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false "$@"
 }
+write_unit_nextest_config() {
+    printf '[profile.default]\nslow-timeout = { period = "%ss", terminate-after = %s }\n' "$1" "$2" > "$3"
+}
 unit_nextest() {
     unit_env nextest run --config-file "$HOME/round-nextest.toml" --cargo-profile unittest --workspace --features integration --config profile.unittest.incremental=false "$@"
 }
@@ -902,7 +905,7 @@ unit_hung="$HOME/round-unit-hung"
 : > "$unit_hung"
 unit_t0=$(date +%s)
 unit_deadline_secs="$(target/release/spira-config get spira.unit_test_deadline_secs)" && unit_deadline_periods="$(target/release/spira-config get spira.unit_test_deadline_periods)" || { echo "round-vm: cannot read the unit-test deadline from the round's config" >&2; exit 2; }
-printf '[profile.default]\nslow-timeout = { period = "%ss", terminate-after = %s }\n' "$unit_deadline_secs" "$unit_deadline_periods" > "$HOME/round-nextest.toml"
+write_unit_nextest_config "$unit_deadline_secs" "$unit_deadline_periods" "$HOME/round-nextest.toml"
 unit_nextest --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
 tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_lib_total" "$unit_progress" &
@@ -3692,7 +3695,7 @@ mod tests {
         let run = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast").unwrap();
         assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
         let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
-        let body = &REMOTE_SCRIPT[f..f + 200];
+        let body = script_fn("unit_cargo");
         assert!(body.contains("unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false"), "{body}");
         assert_eq!(REMOTE_SCRIPT.matches("exec cargo \"$@\"").count(), 1, "one definition of the cargo environment, shared by compile and both runs");
     }
@@ -3728,9 +3731,8 @@ mod tests {
         let cfg = REMOTE_SCRIPT.find("spira-config get spira.unit_test_deadline_secs").unwrap();
         let run = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &").unwrap();
         assert!(cfg < run && REMOTE_SCRIPT.contains("spira-config get spira.unit_test_deadline_periods"));
-        assert!(REMOTE_SCRIPT.contains("slow-timeout = { period = \"%ss\", terminate-after = %s }"));
-        let f = REMOTE_SCRIPT.find("unit_nextest() {").unwrap();
-        let body = &REMOTE_SCRIPT[f..f + 400];
+        assert!(REMOTE_SCRIPT.contains("write_unit_nextest_config \"$unit_deadline_secs\" \"$unit_deadline_periods\" \"$HOME/round-nextest.toml\""));
+        let body = script_fn("unit_nextest");
         assert!(body.contains("--cargo-profile unittest --workspace --features integration --config profile.unittest.incremental=false"), "same profile and flags as the compile: {body}");
         assert!(!body.contains("nice"), "no niceness: the unit tier's wall is what it is today");
         assert!(REMOTE_SCRIPT.contains("unit_cargo --no-fail-fast --test '*'") && REMOTE_SCRIPT.contains("unit_cargo --no-fail-fast --doc"), "the integration tier keeps cargo test");

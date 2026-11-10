@@ -10,9 +10,7 @@ fn function(name: &str) -> String {
 fn a_hung_unit_test_is_terminated_at_its_deadline_and_named_while_the_other_tests_still_run() {
     let cargo_home = std::env::var("CARGO_HOME").unwrap_or_else(|_| format!("{}/.cargo", std::env::var("HOME").unwrap()));
     if !std::path::Path::new(&cargo_home).join("bin/cargo-nextest").exists() {
-        assert!(std::env::var_os("SPIRA_REQUIRE_NEXTEST").is_none(), "cargo-nextest is required and absent");
-        eprintln!("skipped: no cargo-nextest in {cargo_home}/bin");
-        return;
+        panic!("cargo-nextest is required (round-vm/ami-setup.sh installs it) and absent from {cargo_home}/bin");
     }
     let tmp = testkit::TempDir::new("unit-deadline-real");
     let dir = tmp.path().to_path_buf();
@@ -24,10 +22,10 @@ fn a_hung_unit_test_is_terminated_at_its_deadline_and_named_while_the_other_test
     )
     .unwrap();
     std::fs::write(dir.join("rust-toolchain.toml"), include_str!("../../rust-toolchain.toml")).unwrap();
-    std::fs::write(dir.join("round-nextest.toml"), "[profile.default]\nslow-timeout = { period = \"1s\", terminate-after = 1 }\n").unwrap();
     let script = format!(
-        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\nunit_cov_env=\n{}\n{}\n{}\n{}\nunit_cargo --no-run || exit 90\nstart=$(date +%s)\nunit_nextest --no-fail-fast --lib --bins > run.log 2>&1\nrc=$?\necho rc=$rc secs=$(( $(date +%s) - start )) >&2\nunit_stream 3 progress < run.log\ncat run.log >&2\n",
+        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\nunit_cov_env=\n{}\n{}\n{}\n{}\n{}\nwrite_unit_nextest_config 1 1 \"$PWD/round-nextest.toml\"\nunit_cargo --no-run || exit 90\nstart=$(date +%s)\nunit_nextest --no-fail-fast --lib --bins > run.log 2>&1\nrc=$?\necho rc=$rc secs=$(( $(date +%s) - start )) >&2\nunit_stream 3 progress < run.log\ncat run.log >&2\n",
         function("unit_env"),
+        function("write_unit_nextest_config"),
         function("unit_cargo"),
         function("unit_nextest").replace("$HOME/round-nextest.toml", "$PWD/round-nextest.toml"),
         function("unit_stream"),
