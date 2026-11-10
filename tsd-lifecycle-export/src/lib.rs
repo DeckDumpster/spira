@@ -186,6 +186,39 @@ pub struct LifecycleCheckpoint {
     pub last_seq: i64,
 }
 
+/// Exports `fetch(after_seq)` batches until one is empty, saving the checkpoint after each batch
+/// is written: a run cut short (the caller bounds it in seconds) keeps what it exported, so the
+/// next run resumes instead of restarting from the start of a log it can never finish in one go.
+pub fn drain<F, W, S>(from: LifecycleCheckpoint, mut fetch: F, mut write: W, mut save: S) -> Result<LifecycleCheckpoint, String>
+where
+    F: FnMut(i64) -> Result<Vec<LifecycleEventRow>, String>,
+    W: FnMut(&[StageRow]) -> Result<(), String>,
+    S: FnMut(&LifecycleCheckpoint) -> Result<(), String>,
+{
+    let mut cp = from;
+    loop {
+        let batch = fetch(cp.last_seq)?;
+        let Some(last) = batch.iter().map(|r| r.seq).max() else { return Ok(cp) };
+        if last <= cp.last_seq {
+            return Err(format!("the source returned seq {last}, not after {}", cp.last_seq));
+        }
+        let rows: Vec<StageRow> = batch.iter().map(map_lifecycle_row).collect();
+        write(&rows)?;
+        cp = LifecycleCheckpoint { last_seq: last };
+        save(&cp)?;
+    }
+}
+
+/// The export is behind when the newest `bead-stage` row trails the newest lifecycle event by
+/// more than `limit_secs`; no row at all is behind.
+pub fn lag_verdict(newest_stage: Option<i64>, newest_event: i64, limit_secs: i64) -> Result<(), String> {
+    match newest_stage {
+        None => Err(format!("no bead-stage row, and the newest lifecycle event is at {newest_event}")),
+        Some(t) if newest_event - t > limit_secs => Err(format!("newest bead-stage row is {}s older than the newest lifecycle event (limit {limit_secs}s)", newest_event - t)),
+        Some(_) => Ok(()),
+    }
+}
+
 /// One row of the post-cutover `spira_lifecycle.event` table (`lifecycle/schema.sql`),
 /// already in the machine's own vocabulary — this source needs no classifier at all, only a
 /// column rename and a best-effort `reason` pulled from its JSON `evidence`.
@@ -459,6 +492,47 @@ mod tests {
         assert!(!out.applied);
         assert_eq!(out.refusal.as_deref(), Some("StaleVersion"));
         assert_eq!(out.reason, None, "no reason/cause/by key in this evidence — must not fabricate one");
+    }
+
+    fn logged(seq: i64) -> LifecycleEventRow {
+        LifecycleEventRow { seq, machine: "bead".into(), lc_key: "sp-x".into(), event: "Claim".into(), from_state: "READY".into(), to_state: "WORKING".into(), applied: true, refusal: None, evidence: serde_json::Value::Null, actor: "a".into(), at: 1758000000 + seq }
+    }
+
+    #[test]
+    fn a_run_cut_short_keeps_the_checkpoint_of_the_batches_it_finished() {
+        let log: Vec<i64> = (1..=9).collect();
+        let fetch = |after: i64| Ok(log.iter().copied().filter(|s| *s > after).take(3).map(logged).collect());
+        let mut written = 0;
+        let write = |rows: &[StageRow]| {
+            if written >= 6 {
+                return Err("killed".to_string());
+            }
+            written += rows.len();
+            Ok(())
+        };
+        let mut saved = vec![];
+        let r = drain(LifecycleCheckpoint::default(), fetch, write, |cp| {
+            saved.push(cp.last_seq);
+            Ok(())
+        });
+        assert!(r.is_err());
+        assert_eq!(saved, vec![3, 6], "the batches before the cut are not exported again");
+    }
+
+    #[test]
+    fn a_drained_log_ends_at_its_last_seq_and_a_stuck_source_is_refused() {
+        let all: Vec<i64> = (1..=5).collect();
+        let fetch = |after: i64| Ok(all.iter().copied().filter(|s| *s > after).take(2).map(logged).collect());
+        let end = drain(LifecycleCheckpoint { last_seq: 1 }, fetch, |_| Ok(()), |_| Ok(())).unwrap();
+        assert_eq!(end.last_seq, 5);
+        assert!(drain(LifecycleCheckpoint { last_seq: 4 }, |_| Ok(vec![logged(2)]), |_| Ok(()), |_| Ok(())).is_err());
+    }
+
+    #[test]
+    fn the_export_is_behind_when_its_newest_row_trails_the_newest_event_by_over_the_limit() {
+        assert!(lag_verdict(Some(1000), 1600, 600).is_ok());
+        assert!(lag_verdict(Some(1000), 1601, 600).unwrap_err().contains("601s"));
+        assert!(lag_verdict(None, 1600, 600).is_err());
     }
 
     #[test]
