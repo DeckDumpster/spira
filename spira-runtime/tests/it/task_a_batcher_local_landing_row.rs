@@ -90,3 +90,14 @@ fn a_second_round_is_cut_after_the_first_lands_and_the_process_is_replaced() {
     let ran = tick_on_row(&row, "round-one");
     assert!(ran.iter().any(|n| n == ROUND_OPEN), "the second round was cut with no outside event: {ran:?}");
 }
+
+#[test]
+fn every_lifecycle_driven_state_drops_a_row_whose_batch_is_landed() {
+    for state in ["Mending", "Certified", "Corpus", "Attributing", "Certifying"] {
+        let row = STORED.replace("\"state\":\"Landing\"", &format!("\"state\":\"{state}\"")).replace("\"waiting\":{\"state\":\"Landing\",\"since_ms\":1794349965000}", "\"waiting\":null");
+        let rc: RepoCarry = serde_json::from_str(&row).unwrap();
+        let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+        let (_, acts) = decide(&carry, &waiting_pool(BATCH, NOW));
+        assert!(acts.iter().any(|a| a.effect == ASSEMBLE), "{state}: the settled round was forgotten and the next cut: {acts:?}");
+    }
+}

@@ -80,7 +80,7 @@ fn status_halt_and_resume_round_trip_over_the_socket() {
     assert_eq!(t["state"]["body_len"], 2);
     assert_eq!(t["in_flight"].as_array().unwrap().len(), 1);
     assert!(t["last_outcome"].is_null());
-    assert!(t.get("last_commands").is_some(), "status carries what the last fire returned and the engine admitted: {t}");
+    assert!(t["last_commands"]["returned"].is_u64() && t["last_commands"]["admitted"].is_u64(), "status carries what the last fire returned and the engine admitted: {t}");
     assert_eq!(doc["classes"][0], serde_json::json!({"class": "host", "depth": 1, "refusals": 0}));
 
     assert!(lc_call(&path, &["scheduler", "halt", "maintenance"]).is_ok());
