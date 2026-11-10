@@ -217,6 +217,10 @@ fn a_gate_leg_with_no_status_and_no_output_is_not_filed() {
     let with_rc = Filing { rc: Some(1), ..f.clone() };
     let err = complete(&spira_runtime::Effects::default(), &serde_json::to_string(&with_rc).unwrap()).unwrap_err();
     assert!(err.contains("does not hold"), "a leg with a status goes on to the claim: {err}");
+    std::fs::write(&out_path, "killed mid-run").unwrap();
+    let output_only = Filing { rc: None, ..f.clone() };
+    assert!(complete(&spira_runtime::Effects::default(), &serde_json::to_string(&output_only).unwrap()).unwrap_err().contains("does not hold"), "output alone is a trace");
+    std::fs::write(&out_path, "").unwrap();
     let missing = Filing { out_path: dir.path().join("never").display().to_string(), ..f };
     assert!(complete(&spira_runtime::Effects::default(), &serde_json::to_string(&missing).unwrap()).unwrap_err().contains("no status and no output"));
 }
