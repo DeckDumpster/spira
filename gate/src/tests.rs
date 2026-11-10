@@ -3889,6 +3889,20 @@ fn warm_tools_publishes_what_a_gate_then_reuses() {
     assert_eq!(g.installs_from.borrow().len(), 1);
 }
 
+/// The warm build runs in its own environment, and spira-admit refuses a compile without the
+/// one source of config: a warm that omits it never publishes, and the next gate builds cold.
+#[test]
+fn warm_tools_build_carries_the_one_source_of_config() {
+    let f = warm_fake();
+    f.put_var("SPIRA_TOML", "/box/warm-spira.toml");
+    assert_eq!(warm(&f), 0, "{}", f.stderr());
+    let i = f.cmds.borrow().iter().position(|c| c.starts_with("cargo build --profile dwarf")).expect("built");
+    assert_eq!(f.env_of(i, "SPIRA_TOML"), "/box/warm-spira.toml");
+    let g = next_gate(&f, &[]);
+    assert_eq!(g.run(), PASS, "{}", g.stderr());
+    assert!(!built(&g), "{:?}", g.cmds.borrow());
+}
+
 /// The no-op: a key the store already holds is "already warm" — nothing is built or published.
 #[test]
 fn warm_tools_is_a_no_op_when_the_key_is_present() {
