@@ -536,3 +536,10 @@ fn a_round_in_any_phase_suppresses_the_stall_of_its_repo_and_the_all_repos_row()
         assert!(!keys.iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "{phase}: {keys:?}");
     }
 }
+
+#[test]
+fn rounds_that_could_not_be_counted_leave_the_stall_standing() {
+    let (mut s, now) = submitted_ago(20, 0, 24);
+    s.open_rounds = None;
+    assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
+}
