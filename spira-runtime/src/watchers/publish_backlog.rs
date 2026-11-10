@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::{iso8601, INBOX_APPEND};
@@ -15,6 +16,8 @@ pub const TICK: EventKindTag = "publish-backlog.tick";
 pub const STATE: EventKindTag = "publish-backlog.state";
 pub const OBSERVE: &str = "publish-backlog.observe";
 pub const NAME: &str = "publish-backlog";
+
+const ROW_PARTS: &[Part] = &[Part::Map { name: "standing", drop: &[] }, Part::Map { name: "blind_since", drop: &[] }];
 
 const DEADLINE_MS: u64 = 60_000;
 pub const REPO_MAP_KEY: &str = "_repo_map";
@@ -96,7 +99,7 @@ impl PublishBacklog {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

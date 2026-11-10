@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use reconciler::{checks_of, decide, judge_holds, prune, Act, Book, EventRow, Mail, Observation, Rules};
 use reconciler_engine::io::StatusRecord;
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 pub const STREAM: &str = "watch.reconciler";
@@ -19,6 +20,8 @@ pub const RECORD: &str = "reconciler.record";
 pub const REMEDY: &str = "reconciler.remedy";
 pub const MAIL: &str = "reconciler.mail";
 pub const NAME: &str = "reconciler";
+
+const ROW_PARTS: &[Part] = &[Part::Map { name: "state", drop: &[] }, Part::Map { name: "pending", drop: &[] }, Part::Map { name: "alerted", drop: &[] }, Part::Field("reminded")];
 
 /// A pass runs the fences of a whole checkout of the landing ref; the old unit allowed it five minutes.
 pub const OBSERVE_DEADLINE_MS: u64 = 280_000;
@@ -71,7 +74,7 @@ fn spec<T: Serialize>(name: &str, key: String, input: &T, deadline_ms: u64) -> E
 
 impl Reconciler {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

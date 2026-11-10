@@ -5,6 +5,7 @@
 use std::collections::BTreeSet;
 
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::{answers_observe, carried, iso8601, INBOX_APPEND};
@@ -14,6 +15,8 @@ pub const TICK: EventKindTag = "brain-dirty.tick";
 pub const STATE: EventKindTag = "brain-dirty.state";
 pub const OBSERVE: &str = "brain-dirty.observe";
 pub const NAME: &str = "brain-dirty";
+
+const ROW_PARTS: &[Part] = &[Part::Field("said")];
 
 const DEADLINE_MS: u64 = 10_000;
 const NOT_REPO: &str = "notrepo";
@@ -78,7 +81,7 @@ pub fn decide(cfg: &BrainDirty, carry: &Carry, snap: &Snapshot, now: u64) -> (Ca
 
 impl BrainDirty {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

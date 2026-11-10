@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::{answers_observe, carried};
@@ -17,6 +18,8 @@ pub const OBSERVE: &str = "view.observe";
 pub const FLIP: &str = "view.flip";
 pub const FORGET: &str = "view.forget";
 pub const NAME: &str = "view";
+
+const ROW_PARTS: &[Part] = &[Part::Field("want"), Part::Map { name: "absent", drop: &[] }];
 
 pub const SEED: &str = "seed";
 const OBSERVE_DEADLINE_MS: u64 = 5_000;
@@ -104,7 +107,7 @@ impl View {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

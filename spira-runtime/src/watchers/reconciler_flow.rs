@@ -14,6 +14,7 @@ use reconciler_flow::core::{
     ReworkObserved, RoundHealthObserved, SlotsSample, VelocityObserved, DWELL_REGRESSION_STATES,
 };
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::answers_observe;
@@ -25,6 +26,8 @@ pub const OBSERVE: &str = "reconciler-flow.observe";
 pub const MAIL: &str = "reconciler-flow.mail";
 pub const STATUS: &str = "reconciler-flow.status";
 pub const NAME: &str = "reconciler-flow";
+
+const ROW_PARTS: &[Part] = &[Part::Map { name: "state", drop: &[] }, Part::Map { name: "alerted", drop: &[] }];
 
 const OBSERVE_DEADLINE_MS: u64 = 120_000;
 const ACT_DEADLINE_MS: u64 = 30_000;
@@ -108,6 +111,7 @@ impl FlowSnapshot {
 /// Carried between ticks: each invariant's streak, the streak last alerted for, and the word each
 /// last read as, so a pass whose verdicts did not change leaves the journal alone.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub state: StateMap,
     pub alerted: AlertedSinceMap,
@@ -264,7 +268,7 @@ pub fn judge(cfg: &ReconcilerFlow, now: u64, carry: &Carry, snap: &FlowSnapshot)
 
 impl ReconcilerFlow {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

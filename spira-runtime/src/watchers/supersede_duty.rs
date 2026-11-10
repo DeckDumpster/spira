@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::{iso8601, INBOX_APPEND};
@@ -19,6 +20,7 @@ pub const OBSERVE: &str = "supersede-duty.observe";
 pub const ACT: &str = "supersede-duty.act";
 pub const NAME: &str = "supersede-duty";
 pub const ACTOR: &str = "supersede-duty";
+const ROW_PARTS: &[Part] = &[Part::Map { name: "not_a_request", drop: &[] }, Part::Field("failed")];
 /// What an act effect answers when the bead became terminal under it: nothing to report.
 pub const SETTLED: &str = "terminal";
 /// What an act effect answers when the write took but the evidence note did not.
@@ -60,13 +62,22 @@ pub struct Snapshot {
     pub held: Vec<Held>,
 }
 
-/// Carried between ticks: the version at which a bead was read as holding something other than a
-/// request (the body of the latest `supersede-duty.state`), and the beads whose failure was already
-/// reported (one `supersede-duty.failed` event each, so writes settling in one batch lose none).
+/// Carried between ticks, as the body of the latest `supersede-duty.state`: the version at which a
+/// bead was read as holding something other than a request, and the beads whose failure was
+/// already reported.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub not_a_request: BTreeMap<String, String>,
     pub failed: BTreeSet<String>,
+}
+
+/// A state body is the whole carry; the bare map of versions is how it was written before.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Stored {
+    Bare(BTreeMap<String, String>),
+    Whole(Carry),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,7 +226,7 @@ pub fn settle(carry: &Carry, act: &Act, outcome: Result<&str, ()>) -> (bool, Vec
 
 impl SupersedeDuty {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -224,20 +235,18 @@ impl SupersedeDuty {
 
     fn carry(view: &Projection, stream: &StreamKey) -> Carry {
         let events = view.events(stream);
-        let not_a_request = events
-            .iter()
-            .rev()
-            .find(|e| e.kind.tag == STATE)
-            .and_then(|e| serde_json::from_str(&e.kind.body).ok())
-            .unwrap_or_default();
-        Carry {
-            not_a_request,
-            failed: events
-                .iter()
-                .filter(|e| e.kind.tag == FAILED)
-                .map(|e| e.kind.body.clone())
-                .collect(),
-        }
+        let stored = events.iter().rev().find(|e| e.kind.tag == STATE).and_then(|e| serde_json::from_str(&e.kind.body).ok());
+        let mut carry = match stored {
+            Some(Stored::Bare(not_a_request)) => Carry { not_a_request, ..Carry::default() },
+            Some(Stored::Whole(carry)) => carry,
+            None => Carry::default(),
+        };
+        carry.failed.extend(events.iter().filter(|e| e.kind.tag == FAILED).map(|e| e.kind.body.clone()));
+        carry
+    }
+
+    fn state(carry: &Carry) -> Command {
+        Command::Emit(EventKind::new(STATE, &serde_json::to_string(carry).unwrap_or_default()))
     }
 
     /// The effect request an outcome event answers: its spec's name and input.
@@ -294,10 +303,7 @@ impl Handler for SupersedeDuty {
                     .set("supersede_duty.held", snap.held.len() as u64);
                 let mut cmds = vec![];
                 if next.not_a_request != carry.not_a_request {
-                    cmds.push(Command::Emit(EventKind::new(
-                        STATE,
-                        &serde_json::to_string(&next.not_a_request).unwrap_or_default(),
-                    )));
+                    cmds.push(Self::state(&next));
                 }
                 for o in out {
                     cmds.push(match o {
@@ -322,7 +328,9 @@ impl Handler for SupersedeDuty {
                 let (first_failure, say) = settle(&carry, &act, outcome);
                 let mut cmds = vec![];
                 if first_failure {
-                    cmds.push(Command::Emit(EventKind::new(FAILED, &act.id)));
+                    let mut next = carry.clone();
+                    next.failed.insert(act.id.clone());
+                    cmds.push(Self::state(&next));
                 }
                 cmds.extend(say.iter().map(|m| Self::inbox(now, m)));
                 cmds

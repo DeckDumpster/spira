@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::{answers_observe, carried, iso8601, INBOX_APPEND};
@@ -15,6 +16,8 @@ pub const STATE: EventKindTag = "pr-notify.state";
 pub const OBSERVE: &str = "pr-notify.observe";
 pub const OPERATOR_NOTE: &str = "operator.note";
 pub const NAME: &str = "pr-notify";
+
+const ROW_PARTS: &[Part] = &[Part::Map { name: "repos", drop: &[] }];
 
 const OBSERVE_DEADLINE_MS: u64 = 120_000;
 const DEADLINE_MS: u64 = 10_000;
@@ -227,7 +230,7 @@ pub fn decide(cfg: &PrNotify, carry: &Carry, snap: &Snapshot, now: u64) -> (Carr
 
 impl PrNotify {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
