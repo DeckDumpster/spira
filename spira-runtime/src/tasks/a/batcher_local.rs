@@ -2058,6 +2058,9 @@ pub mod edge {
             let guilty = io::implicated(&text, &changed);
             for id in &guilty {
                 io::round_eject(&env, &repo, &leg.batch, id, &["ci".to_string()], &[], true)?;
+                if let Some((_, tip)) = leg.members.iter().find(|(m, _)| m == id) {
+                    batcher_cut::redtip::record(&env.run, &leg.repo, id, tip);
+                }
             }
             return Ok(serde_json::json!({ "ejected": guilty }).to_string());
         }

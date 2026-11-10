@@ -558,7 +558,7 @@ fn eject_runner_abort<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O, 
             if found.is_empty() {
                 found = bisect_members(&red, &mut |m| runner.runner_survives(m), members).unwrap_or_default();
             }
-            found.into_iter().next()
+            found.into_iter().find(|a| matches!(a, Action::Eject { .. }))
         }
     };
     let Some(action) = action else { return Ok(None) };
