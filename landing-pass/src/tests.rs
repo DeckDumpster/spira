@@ -2007,7 +2007,7 @@ fn file_verdict(h: &H, id: &str, tip: &str, rc: i32, out: &str) {
     let job = crate::gateq::Job::new("spira", &format!("spira/{id}"), id, tip, false);
     q.enqueue(&job).unwrap();
     q.claim(0).unwrap();
-    q.complete(0, &crate::gateq::Done { job, run: GateRun::parse(rc, out.into()), started_ms: 1, finished_ms: 2 }).unwrap();
+    q.complete(0, &crate::gateq::Done { job, run: GateRun::parse(rc, out.into()), started_ms: 1, finished_ms: 2, gate: String::new() }).unwrap();
 }
 
 #[test]

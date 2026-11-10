@@ -42,6 +42,7 @@ struct Fake {
     checkouts: RefCell<Vec<String>>,
     written: RefCell<Vec<(PathBuf, String)>>,
     appended: RefCell<Vec<String>>,
+    harness: Cell<&'static str>,
     /// run/tsd rows (telemetry.rs), kept apart from the gate.log meter.
     tsd: RefCell<Vec<String>>,
     yields: RefCell<Vec<Vec<String>>>,
@@ -230,6 +231,7 @@ impl Fake {
             checkouts: RefCell::new(Vec::new()),
             written: RefCell::new(Vec::new()),
             appended: RefCell::new(Vec::new()),
+            harness: Cell::new("harness"),
             tsd: RefCell::new(Vec::new()),
             yields: RefCell::new(Vec::new()),
             lc: RefCell::new(Vec::new()),
@@ -456,7 +458,7 @@ impl World for Fake {
         self.gate_starts.borrow_mut().push(bead.to_string());
     }
     fn harness_hash(&self) -> Option<String> {
-        Some("harness".into())
+        Some(self.harness.get().into())
     }
     fn nproc_all(&self) -> u64 {
         8
@@ -1665,6 +1667,42 @@ fn a_red_is_answered_from_its_record_and_does_not_run_again() {
     assert!(g.ran.borrow().is_empty(), "{:?}", g.ran.borrow());
     assert!(g.verdict_line().contains("reason=branch-red") || line.contains("reason=base-red"), "{}", g.verdict_line());
     assert!(g.written.borrow().iter().all(|(p, _)| !p.to_string_lossy().contains("/verdicts/red/")));
+    let log = g.appended.borrow()[0].clone();
+    assert!(log.contains(" replayed=") && log.contains("replayed=key:"), "{log}");
+}
+
+#[test]
+fn a_red_recorded_under_another_gate_is_not_replayed_and_the_tip_is_judged_again() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
+    f.run();
+    let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("/verdicts/red/")).cloned().expect("a red record");
+    let g = Fake::new();
+    g.harness.set("a-gate-that-changed");
+    g.put_var("SPIRA_VERDICT_TTL", "86400");
+    let entry = entry.lines().map(|l| if l.starts_with("at=") { "at=999999".to_string() } else { l.to_string() }).collect::<Vec<_>>().join("\n") + "\n";
+    g.files.borrow_mut().insert(p, entry);
+    assert_eq!(g.run(), PASS);
+    assert!(!g.ran.borrow().is_empty(), "the changed gate ran the tip");
+    assert!(!g.appended.borrow()[0].contains("replayed"), "{}", g.appended.borrow()[0]);
+}
+
+#[test]
+fn forgetting_a_tip_removes_the_red_recorded_for_it_and_no_other() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
+    f.run();
+    let entry = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("/verdicts/red/")).map(|(_, e)| e.clone()).expect("a red record");
+    let tip = entry.lines().find_map(|l| l.strip_prefix("tip=")).expect("the entry names its tip").to_string();
+    assert!(!tip.is_empty() && tip != "-");
+    let tmp = testkit::TempDir::new("redcache-forget");
+    let dir = tmp.to_path_buf();
+    let red = dir.join("red");
+    std::fs::create_dir_all(&red).unwrap();
+    std::fs::write(red.join("aaa"), &entry).unwrap();
+    std::fs::write(red.join("bbb"), entry.replace(&format!("tip={tip}"), "tip=other")).unwrap();
+    assert_eq!(crate::redcache::forget_tip(&dir, &tip), 1);
+    assert!(!red.join("aaa").exists() && red.join("bbb").exists());
 }
 
 // ---------------------------------------------------------------------------- ejected suites

@@ -772,7 +772,7 @@ pub fn complete(e: &crate::Effects, input: &str) -> Result<String, String> {
     let q = queue(e);
     let job = q.claimed_job(f.slot, &f.job.repo, &f.job.branch, &f.job.tip).ok_or_else(|| format!("{COMPLETE}: slot {} does not hold {} — refused", f.slot, f.job.key()))?;
     let word = run.outcome.word();
-    q.complete(f.slot, &landing_pass::gateq::Done { job, run, started_ms: f.started_ms, finished_ms: f.finished_ms }).map_err(|e| format!("{COMPLETE}: {e}"))?;
+    q.complete(f.slot, &landing_pass::gateq::Done { job, run, started_ms: f.started_ms, finished_ms: f.finished_ms, gate: String::new() }).map_err(|e| format!("{COMPLETE}: {e}"))?;
     for leg in ["warm", "gate"] {
         let (out, rc) = leg_paths(&e.world.run_dir.display().to_string(), f.slot, leg, &f.job);
         let _ = std::fs::remove_file(out);

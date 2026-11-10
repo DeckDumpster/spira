@@ -44,6 +44,10 @@ pub struct Done {
     pub run: GateRun,
     pub started_ms: u64,
     pub finished_ms: u64,
+    /// The release whose gate filed this verdict; `complete` stamps it. A verdict filed by
+    /// any other gate is not this gate's to replay.
+    #[serde(default)]
+    pub gate: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +61,15 @@ const RETAINED_OUTPUTS: usize = 300;
 
 pub struct GateQueue {
     root: PathBuf,
+    gate: String,
+}
+
+/// The release this process runs, canonical; empty when none is named.
+pub fn release_id() -> String {
+    std::env::var_os(spira_config::RELEASE_ENV)
+        .and_then(|r| fs::canonicalize(r).ok())
+        .map(|p| p.display().to_string())
+        .unwrap_or_default()
 }
 
 fn nanos() -> u128 {
@@ -91,7 +104,23 @@ impl Job {
 
 impl GateQueue {
     pub fn new(run: &Path) -> GateQueue {
-        GateQueue { root: run.join("gate-worker") }
+        GateQueue { root: run.join("gate-worker"), gate: release_id() }
+    }
+    pub fn with_gate(mut self, gate: &str) -> GateQueue {
+        self.gate = gate.to_string();
+        self
+    }
+    fn current(&self, d: &Done) -> bool {
+        self.gate.is_empty() || d.gate == self.gate
+    }
+    fn read_done(&self, repo: &str, branch: &str, tip: &str) -> Option<(PathBuf, Done)> {
+        let p = self.dir(Where::Done).join(Job::new(repo, branch, "", tip, false).file());
+        let d: Done = serde_json::from_str(&fs::read_to_string(&p).ok()?).ok()?;
+        self.current(&d).then_some((p, d))
+    }
+    /// Delete the verdict filed for this branch at this tip, whichever gate filed it.
+    pub fn forget_done(&self, repo: &str, branch: &str, tip: &str) -> bool {
+        fs::remove_file(self.dir(Where::Done).join(Job::new(repo, branch, "", tip, false).file())).is_ok()
     }
     fn dir(&self, w: Where) -> PathBuf {
         self.root.join(match w {
@@ -121,7 +150,7 @@ impl GateQueue {
 
     pub fn find(&self, repo: &str, branch: &str, tip: &str) -> Option<Where> {
         let f = Job::new(repo, branch, "", tip, false).file();
-        if self.dir(Where::Done).join(&f).exists() {
+        if self.read_done(repo, branch, tip).is_some() {
             return Some(Where::Done);
         }
         // A slot's own subdirectory, or — the pre-N-worker layout, until slot 0's recover
@@ -160,14 +189,12 @@ impl GateQueue {
 
     /// The verdict for this branch at this tip, left in place for the pass that will judge it.
     pub fn peek_done(&self, repo: &str, branch: &str, tip: &str) -> Option<Done> {
-        let p = self.dir(Where::Done).join(Job::new(repo, branch, "", tip, false).file());
-        serde_json::from_str(&fs::read_to_string(p).ok()?).ok()
+        self.read_done(repo, branch, tip).map(|(_, d)| d)
     }
 
     /// The verdict for this branch at this tip, consumed.
     pub fn take_done(&self, repo: &str, branch: &str, tip: &str) -> Option<Done> {
-        let p = self.dir(Where::Done).join(Job::new(repo, branch, "", tip, false).file());
-        let d: Done = serde_json::from_str(&fs::read_to_string(&p).ok()?).ok()?;
+        let (p, d) = self.read_done(repo, branch, tip)?;
         let _ = fs::remove_file(&p);
         Some(d)
     }
@@ -314,6 +341,7 @@ impl GateQueue {
     }
 
     pub fn complete(&self, slot: usize, d: &Done) -> std::io::Result<()> {
+        let d = &Done { gate: self.gate.clone(), ..d.clone() };
         let body = serde_json::to_string(d).map_err(std::io::Error::other)?;
         atomic_write(&self.dir(Where::Done).join(d.job.file()), &body)?;
         let _ = fs::remove_file(self.claimed_slot(slot).join(d.job.file()));
@@ -327,7 +355,36 @@ mod tests {
     use crate::testutil::tmpdir;
 
     fn done(job: &Job) -> Done {
-        Done { job: job.clone(), run: GateRun::parse(0, "ok".into()), started_ms: 1, finished_ms: 2 }
+        Done { job: job.clone(), run: GateRun::parse(0, "ok".into()), started_ms: 1, finished_ms: 2, gate: String::new() }
+    }
+
+    #[test]
+    fn a_verdict_filed_by_another_gate_is_not_this_gates_to_replay_and_the_tip_is_queued_again() {
+        let dir = tmpdir("gq-gate");
+        let old = GateQueue::new(&dir).with_gate("release-a");
+        let job = Job::new("r", "spira/sp-1", "sp-1", "t1", false);
+        old.enqueue(&job).unwrap();
+        let claimed = old.claim(0).unwrap();
+        old.complete(0, &done(&claimed)).unwrap();
+        assert!(old.peek_done("r", "spira/sp-1", "t1").is_some());
+        let new = GateQueue::new(&dir).with_gate("release-b");
+        assert!(new.peek_done("r", "spira/sp-1", "t1").is_none());
+        assert!(new.take_done("r", "spira/sp-1", "t1").is_none());
+        assert!(new.enqueue(&job).unwrap(), "judged afresh");
+        assert!(new.peek_done("r", "spira/sp-1", "t1").is_none());
+    }
+
+    #[test]
+    fn forgetting_a_done_verdict_lets_the_same_tip_be_queued() {
+        let dir = tmpdir("gq-gate");
+        let q = GateQueue::new(&dir).with_gate("g");
+        let job = Job::new("r", "spira/sp-1", "sp-1", "t1", false);
+        q.enqueue(&job).unwrap();
+        let c = q.claim(0).unwrap();
+        q.complete(0, &done(&c)).unwrap();
+        assert!(!q.enqueue(&job).unwrap());
+        assert!(q.forget_done("r", "spira/sp-1", "t1"));
+        assert!(q.enqueue(&job).unwrap());
     }
 
     #[test]

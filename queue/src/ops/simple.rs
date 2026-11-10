@@ -1125,6 +1125,9 @@ pub fn absolve(
             return FAIL;
         }
     }
+    let queue = landing_pass::gateq::GateQueue::new(&c.s.run);
+    queue.forget_done(&c.r.name, &format!("spira/{id}"), &tip);
+    gate::redcache::forget_tip(&super::land::verdicts_dir(w, &c.s), &tip);
     if let Err(e) = super::round::forget_batch_red(&c, id, &tip) {
         w.err(format!("queue.sh absolve: {id} absolved on spira-lc but the batch red-tip record is unwritable: {e}"));
         return FAIL;

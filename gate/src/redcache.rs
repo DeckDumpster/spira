@@ -27,8 +27,22 @@ pub struct Entry {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn render(status: i32, reason: &str, suite: &str, when: &str, at: u64, by: &str, msg: &str) -> String {
-    format!("status={status}\nreason={reason}\nsuite={suite}\nwhen={when}\nat={at}\nby={by}\n{SEP}{msg}")
+pub fn render(status: i32, reason: &str, suite: &str, when: &str, at: u64, by: &str, tip: &str, msg: &str) -> String {
+    format!("status={status}\nreason={reason}\nsuite={suite}\nwhen={when}\nat={at}\nby={by}\ntip={tip}\n{SEP}{msg}")
+}
+
+/// Delete every stored red recorded for `tip`; returns how many. Absolving a tip must leave
+/// no verdict behind for the next gate to repeat.
+pub fn forget_tip(verdicts: &Path, tip: &str) -> usize {
+    let Ok(rd) = std::fs::read_dir(verdicts.join("red")) else { return 0 };
+    let want = format!("tip={tip}");
+    rd.flatten()
+        .filter(|e| {
+            let Ok(text) = std::fs::read_to_string(e.path()) else { return false };
+            let head = text.split_once(SEP).map_or(text.as_str(), |(h, _)| h);
+            head.lines().any(|l| l == want) && std::fs::remove_file(e.path()).is_ok()
+        })
+        .count()
 }
 
 pub fn fresh(entry: &str, ttl: &str, now: u64) -> Option<Entry> {
@@ -47,15 +61,15 @@ mod tests {
 
     #[test]
     fn a_fresh_red_comes_back_whole_and_a_stale_or_unattributed_one_does_not() {
-        let e = render(FAIL, "branch-red", "test-x.sh", "t", 100, "me", "gate: boom\n");
+        let e = render(FAIL, "branch-red", "test-x.sh", "t", 100, "me", "tip1", "gate: boom\n");
         let got = fresh(&e, "50", 120).unwrap();
         assert_eq!((got.status, got.reason.as_str(), got.suite.as_str(), got.msg.as_str()), (FAIL, "branch-red", "test-x.sh", "gate: boom\n"));
         assert!(fresh(&e, "50", 150).is_none());
         assert!(fresh(&e, "", 120).is_none());
         assert!(fresh("garbage", "50", 120).is_none());
-        let nv = render(NOVERDICT, "died", "-", "t", 100, "me", "m");
+        let nv = render(NOVERDICT, "died", "-", "t", 100, "me", "tip1", "m");
         assert!(fresh(&nv, "50", 120).is_none());
-        let bf = render(BASEFAIL, "base-red", "-", "t", 100, "me", "m");
+        let bf = render(BASEFAIL, "base-red", "-", "t", 100, "me", "tip1", "m");
         assert!(fresh(&bf, "50", 120).is_some());
     }
 

@@ -1823,6 +1823,7 @@ pub(super) fn file_gate_verdict(t: &T, id: &str, tip: &str, rc: i32) {
                 run,
                 started_ms: 1,
                 finished_ms: 2,
+                gate: String::new(),
             },
         )
         .unwrap();
@@ -8116,4 +8117,28 @@ fn ejecting_every_member_on_an_integration_test_red_returns_each_red_and_logs_ea
     for (id, tip) in [("sp-a", "ta"), ("sp-b", "tb")] {
         assert!(t.err().contains(&format!("{id}: {tip} is a recorded ejected-red tip")), "{}", t.err());
     }
+}
+
+#[test]
+fn absolve_deletes_the_gate_workers_stored_verdict_for_the_tip() {
+    use landing_pass::gateq::GateQueue;
+    let t = round_world();
+    t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().find(|r| r.bead_id == "sp-b").unwrap().ejected_red_tip = Some("tb".into());
+    fs::write(t.qfile("red-tips"), "sp-b tb\n").unwrap();
+    file_gate_verdict(&t, "sp-b", "tb", 1);
+    let red = t.s().run.join("verdicts/red");
+    fs::create_dir_all(&red).unwrap();
+    fs::write(red.join("aaa"), "status=1\nreason=branch-red\ntip=tb\n---\n").unwrap();
+    fs::write(red.join("bbb"), "status=1\nreason=branch-red\ntip=other\n---\n").unwrap();
+    let q = GateQueue::new(&t.s().run);
+    assert!(q.peek_done("spira", "spira/sp-b", "tb").is_some(), "positive control: the stored verdict is there");
+    assert_eq!(
+        t.run(&["absolve", "sp-b", "--by=concierge", "--reason=infra red", "--evidence=no suite ran", "--evidence-tip=tb"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(q.peek_done("spira", "spira/sp-b", "tb").is_none(), "absolved: the next gate judges the tip afresh");
+    assert!(!red.join("aaa").exists(), "the gate's own red record for the tip is gone");
+    assert!(red.join("bbb").exists(), "another tip's record is kept");
 }
