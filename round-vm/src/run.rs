@@ -509,12 +509,18 @@ echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
 # THE UNIT-TEST BINARIES COMPILE HERE, in the build phase and outside the suite clock; the unit
 # run below is the same command, which then compiles nothing. A scrubbed environment: the
 # launcher's SPIRA_RELEASE/SPIRA_REPO/PATH leak into tests that resolve configuration.
-unit_cargo() {
+unit_env() {
     env -i HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
         CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
         SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
-        UNIT_COV_ENV="$unit_cov_env" bash -c 'eval "$UNIT_COV_ENV"; exec cargo test "$@"' _ --profile unittest --workspace --features integration --config profile.unittest.incremental=false "$@"
+        UNIT_COV_ENV="$unit_cov_env" bash -c 'eval "$UNIT_COV_ENV"; exec cargo "$@"' _ "$@"
+}
+unit_cargo() {
+    unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false "$@"
+}
+unit_nextest() {
+    unit_env nextest run --config-file "$HOME/round-nextest.toml" --cargo-profile unittest --workspace --features integration --config profile.unittest.incremental=false "$@"
 }
 unit_cov_init() {
     unit_cov_env=""
@@ -542,8 +548,15 @@ unit_total=$(grep -c '^ *Executable ' ~/round-unit-build.log)
 echo "round-vm: built ${unit_total} unit-test binaries in $(( $(date +%s) - t_ut ))s" >&2
 # One line per unit-test binary as it finishes, from cargo's own "Running" and "test result:"
 # lines on stdin: UNIT-TEST <binary> ok|FAILED (k/M). The totals are the --no-run listing's.
+# A nextest log (the unit tier) streams instead each red test by name, with nextest's own k/total.
 unit_stream() {
     awk -v total="$1" -v prog="$2" '
+        /^ *Summary \[/ { nx_done = 1 }
+        nx_done { next }
+        match($0, /^ *[A-Z][A-Z-]+ +\[[ >]*[0-9.]+s\] +\( *[0-9]+\/[0-9]+\) +[^ ]+ +/) {
+            n = substr($0, RLENGTH + 1); st = $1; split(substr($0, 1, RLENGTH), c, /[()\/]/); k = c[2] + 0; total = c[3] + 0
+            if (st != "PASS" && st != "LEAK" && st != "FLAKY") { reds = reds " " n; printf "round-vm: UNIT-TEST %s %s (%d/%d)\n", n, st, k, total > "/dev/stderr"; fflush("/dev/stderr") }
+            printf "%d %d%s\n", k, total, reds > prog; close(prog); next }
         /^ *Running / { name = $0; if (match(name, /\(.*\)/)) { name = substr(name, RSTART + 1, RLENGTH - 2); sub(/.*\//, "", name); sub(/-[0-9a-f]+$/, "", name) } else { sub(/^ *Running /, "", name) } next }
         /^ *Doc-tests / { name = "doc-tests " $2; next }
         /^test result: / { k++; st = ($3 == "ok.") ? "ok" : "FAILED"; if (st == "FAILED") reds = reds " " name
@@ -593,12 +606,18 @@ test_phase_bound() {
     pkill -TERM -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null
     return 0
 }
+# "<STATUS> <test>" per red test of a nextest log, once each: the summary repeats them, so it is not read.
+nextest_reds() {
+    awk '/^ *Summary \[/ { exit } match($0, /^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[[ >]*[0-9.]+s\] +\( *[0-9]+\/[0-9]+\) +[^ ]+ +/) { print $1, substr($0, RLENGTH + 1) }' "$1"
+}
 # A red with no failing test, classified by what happened: "<KIND> binary=<name> [detail]" with
 # KIND SIGNAL (a test binary killed), TIMEOUT (the guard killed the phase) or BUILD (cargo could not
 # compile); empty when a test failed on its own.
 test_phase_class() {
     local log="$1" hung="$2" b d
     if [ -s "$hung" ]; then echo "TIMEOUT binary=$(last_binary "$log" | sed -E 's/-[0-9a-f]{16}$//')"; return; fi
+    d="$(nextest_reds "$log" | awk '$1 == "TIMEOUT" { print $2; exit }')"
+    if [ -n "$d" ]; then echo "TIMEOUT test=$d"; return; fi
     d="$(grep -m1 -E "process didn't exit successfully: .*\(signal: [0-9]+" "$log")" || d=""
     if [ -n "$d" ]; then
         b="$(printf '%s' "$d" | sed -E 's/.*`([^`]*)`.*/\1/; s|.*/||; s/-[0-9a-f]{16}$//')"
@@ -620,7 +639,8 @@ test_phase_red() {
     class="$(test_phase_class "$log" "$hung")"
     {
         [ -z "$class" ] || echo "${stage^^}-RED: $class"
-        echo "${stage^^}-CAUSE: $cause after ${secs}s; last binary=${last:-none-started}; failures=$(grep -c -E '^test .* FAILED|^test result: FAILED' "$log")"
+        echo "${stage^^}-CAUSE: $cause after ${secs}s; last binary=${last:-none-started}; failures=$(( $(grep -c -E '^test .* FAILED|^test result: FAILED' "$log") + $(nextest_reds "$log" | wc -l) ))"
+        nextest_reds "$log" | awk '{ print "test " $2 " ... FAILED" }'
         grep -E -A8 '^(test .* FAILED|---- |error(\[|:))|panicked at|^test result: FAILED|^failures:' "$log" | head -400
         echo "--- last output of the log ---"
         tail -100 "$log"
@@ -634,7 +654,7 @@ test_phase_red() {
             [ -n "$first" ] || printf ','
             first=""
             printf '"%s"' "$(json_str "$n")"
-        done < <(grep -oE '^test [^ ]+ \.\.\. FAILED' "$log" | awk '{print $2}' | sort -u | head -200)
+        done < <({ grep -oE '^test [^ ]+ \.\.\. FAILED' "$log" | awk '{print $2}'; nextest_reds "$log" | awk '{print $2}'; } | sort -u | head -200)
         printf ']}\n'
     } > "$json"
 }
@@ -881,25 +901,24 @@ unit_lib_total=$(grep -c '^ *Executable unittests ' ~/round-unit-build.log)
 unit_hung="$HOME/round-unit-hung"
 : > "$unit_hung"
 unit_t0=$(date +%s)
-unit_cargo --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &
+unit_deadline_secs="$(target/release/spira-config get spira.unit_test_deadline_secs)" && unit_deadline_periods="$(target/release/spira-config get spira.unit_test_deadline_periods)" || { echo "round-vm: cannot read the unit-test deadline from the round's config" >&2; exit 2; }
+printf '[profile.default]\nslow-timeout = { period = "%ss", terminate-after = %s }\n' "$unit_deadline_secs" "$unit_deadline_periods" > "$HOME/round-nextest.toml"
+unit_nextest --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
 tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_lib_total" "$unit_progress" &
 stream_pid=$!
-unit_hang_watch ~/round-unit-tests.log "$unit_hung" "$unit_pid" &
-hang_pid=$!
 test_phase_bound "$unit_pid" "$cap" ~/round-unit-tests.log "$unit_hung" UNIT-TESTS unit-cap
 wait "$unit_pid"; unit_rc=$?
 unit_secs=$(( $(date +%s) - unit_t0 ))
 wait "$stream_pid"
-kill "$hang_pid" 2>/dev/null; wait "$hang_pid" 2>/dev/null
 [ ! -s "$unit_hung" ] || [ "$unit_rc" -ne 0 ] || unit_rc=1
 echo "round-vm: UNIT-TESTS took ${unit_secs}s (--lib --bins, ${unit_lib_total} test binaries)" >&2
 if [ "$unit_rc" -eq 0 ]; then
-    echo "round-vm: UNIT-TESTS: PASS ($(grep -c '^test result: ok' ~/round-unit-tests.log) test binaries)" >&2
+    echo "round-vm: UNIT-TESTS: PASS ($(awk '/^ *Summary \[/ { print $4 }' ~/round-unit-tests.log) tests)" >&2
 else
     phase_failed unit-tests "$unit_rc"
     echo "round-vm: UNIT-TESTS: FAIL (unit run rc=$unit_rc):" >&2
-    grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-unit-tests.log | head -120 >&2
+    grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at|^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[' ~/round-unit-tests.log | head -120 >&2
     test_phase_red unit-tests ~/round-unit-tests.log "$unit_rc" "$unit_secs" "$unit_hung" "$rdir/unit-tests.out" "$rdir/unit.json" true
     echo "round-vm: UNIT-TESTS RED before the suites: no suite was run" >&2
     disk_report_last unit-red
@@ -3259,19 +3278,24 @@ mod tests {
     }
 
     fn red_phase_out(log: &str, hung: &str) -> String {
+        red_phase_files(log, hung).0
+    }
+
+    fn red_phase_files(log: &str, hung: &str) -> (String, String) {
         let d = TempDir::new();
         std::fs::write(d.path().join("log"), log).unwrap();
         std::fs::write(d.path().join("hung"), hung).unwrap();
         let script = format!(
-            "set -uo pipefail\n{}\n{}\n{}\n{}\ncd \"$HOME\"\ntest_phase_red unit-tests log 101 7 hung out.txt unit.json true\ncat out.txt",
+            "set -uo pipefail\n{}\n{}\n{}\n{}\n{}\ncd \"$HOME\"\ntest_phase_red unit-tests log 101 7 hung out.txt unit.json true\ncat out.txt",
             script_fn("last_binary"),
+            script_fn("nextest_reds"),
             script_fn("test_phase_class"),
             script_fn("json_str"),
             script_fn("test_phase_red")
         );
         let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        String::from_utf8(out.stdout).unwrap()
+        (String::from_utf8(out.stdout).unwrap(), std::fs::read_to_string(d.path().join("unit.json")).unwrap())
     }
 
     #[test]
@@ -3286,6 +3310,30 @@ mod tests {
         let log = "     Running unittests src/lib.rs (target/debug/deps/slow-0123456789abcdef)\n";
         let out = red_phase_out(log, "round-vm: UNIT-TESTS: HUNG guard=unit-cap\n");
         assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: TIMEOUT binary=slow", "{out}");
+    }
+
+    const NEXTEST_LOG: &str = "    Starting 3 tests across 1 binary\n        PASS [   0.007s] (1/3) fx t::quick\n        SLOW [>  2.000s] (\u{2500}\u{2500}\u{2500}) fx t::sleeper\n\
+         TERMINATING [>  4.000s] (\u{2500}\u{2500}\u{2500}) fx t::sleeper\n     TIMEOUT [   4.002s] ( 2/3) fx t::sleeper\n\
+                 FAIL [   0.010s] ( 3/3) fx t::bad\n------------\n     Summary [   4.005s] 3 tests run: 1 passed, 1 failed, 1 timed out\n\
+              TIMEOUT [   4.002s] ( 2/3) fx t::sleeper\n        FAIL [   0.010s] ( 3/3) fx t::bad\n";
+
+    #[test]
+    fn a_unit_test_past_its_deadline_is_streamed_by_name_and_the_summary_is_not_counted_again() {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("nextest.log"), NEXTEST_LOG).unwrap();
+        let script = format!("{}\nunit_stream 9 ~/prog < nextest.log", script_fn("unit_stream"));
+        let out = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).env_clear().env("HOME", d.path()).env("PATH", "/usr/bin:/bin").output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(err.lines().collect::<Vec<_>>(), ["round-vm: UNIT-TEST t::sleeper TIMEOUT (2/3)", "round-vm: UNIT-TEST t::bad FAIL (3/3)"], "{err}");
+        assert_eq!(std::fs::read_to_string(d.path().join("prog")).unwrap().trim(), "3 3 t::sleeper t::bad");
+    }
+
+    #[test]
+    fn a_unit_test_terminated_at_its_deadline_is_the_named_cause_and_a_failed_test_of_the_red() {
+        let (out, json) = red_phase_files(NEXTEST_LOG, "");
+        assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: TIMEOUT test=t::sleeper", "{out}");
+        assert!(out.contains("failures=2"), "{out}");
+        assert!(json.contains(r#""failed":["t::bad","t::sleeper"]"#), "{json}");
     }
 
     #[test]
@@ -3641,12 +3689,12 @@ mod tests {
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
         let no_run = REMOTE_SCRIPT.find("unit_cargo --no-run").unwrap();
         let suites = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
-        let run = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast").unwrap();
+        let run = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast").unwrap();
         assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
         let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
-        let body = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap()];
-        assert!(body.contains("exec cargo test \"$@\"' _ --profile unittest --workspace --features integration --config profile.unittest.incremental=false"), "{body}");
-        assert_eq!(REMOTE_SCRIPT.matches("exec cargo test").count(), 1, "one definition of the unit command, shared by compile and run");
+        let body = &REMOTE_SCRIPT[f..f + 200];
+        assert!(body.contains("unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false"), "{body}");
+        assert_eq!(REMOTE_SCRIPT.matches("exec cargo \"$@\"").count(), 1, "one definition of the cargo environment, shared by compile and both runs");
     }
 
     #[test]
@@ -3657,7 +3705,7 @@ mod tests {
         let report = REMOTE_SCRIPT.find("cargo llvm-cov report --profile unittest --json --summary-only").unwrap();
         let waited = REMOTE_SCRIPT.find("wait \"$unit_pid\"; unit_rc=$?").unwrap();
         assert!(waited < report, "the report is read off the profile data after the unit run");
-        assert_eq!(REMOTE_SCRIPT.matches("exec cargo test").count(), 1);
+        assert_eq!(REMOTE_SCRIPT.matches("exec cargo \"$@\"").count(), 1);
     }
 
     #[test]
@@ -3670,26 +3718,38 @@ mod tests {
     }
 
     #[test]
-    fn the_unit_run_is_watched_for_hung_tests_and_a_hang_makes_the_round_red() {
-        let run = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast").unwrap();
-        let watch = REMOTE_SCRIPT.find("unit_hang_watch ~/round-unit-tests.log").unwrap();
-        assert!(run < watch);
+    fn a_unit_run_the_cap_guard_killed_still_makes_the_round_red() {
         assert!(REMOTE_SCRIPT.contains("[ ! -s \"$unit_hung\" ] || [ \"$unit_rc\" -ne 0 ] || unit_rc=1"));
         assert!(REMOTE_SCRIPT.contains("binary=${running:-none-started}; killed"), "the post-guard kill names the binary running");
+    }
+
+    #[test]
+    fn the_unit_tier_alone_runs_under_a_per_test_deadline_read_from_config_and_the_rest_is_unchanged() {
+        let cfg = REMOTE_SCRIPT.find("spira-config get spira.unit_test_deadline_secs").unwrap();
+        let run = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &").unwrap();
+        assert!(cfg < run && REMOTE_SCRIPT.contains("spira-config get spira.unit_test_deadline_periods"));
+        assert!(REMOTE_SCRIPT.contains("slow-timeout = { period = \"%ss\", terminate-after = %s }"));
+        let f = REMOTE_SCRIPT.find("unit_nextest() {").unwrap();
+        let body = &REMOTE_SCRIPT[f..f + 400];
+        assert!(body.contains("--cargo-profile unittest --workspace --features integration --config profile.unittest.incremental=false"), "same profile and flags as the compile: {body}");
+        assert!(!body.contains("nice"), "no niceness: the unit tier's wall is what it is today");
+        assert!(REMOTE_SCRIPT.contains("unit_cargo --no-fail-fast --test '*'") && REMOTE_SCRIPT.contains("unit_cargo --no-fail-fast --doc"), "the integration tier keeps cargo test");
+        assert!(!REMOTE_SCRIPT.contains("unit_hang_watch ~/round-unit-tests.log"), "nextest terminates the test; no watcher kills the binary");
+        assert!(REMOTE_SCRIPT.contains("unit_hang_watch ~/round-integration-tests.log"));
     }
 
     #[test]
     fn the_fences_finish_before_the_unit_tier_starts() {
         let fences = REMOTE_SCRIPT.find("fence_run \"$fname\" \"$fcmd\"").expect("the fence loop");
         let early = REMOTE_SCRIPT.find("LINT/FENCE RED before the suites").unwrap();
-        let units = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
+        let units = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
         assert!(fences < early && early < units, "the fences run in the foreground and the unit tier starts only after them");
         assert!(!REMOTE_SCRIPT[fences..fences + 80].contains('&'), "the fence loop is not backgrounded");
     }
 
     #[test]
     fn the_unit_tier_is_waited_for_before_the_bare_lane_or_any_suite_starts() {
-        let launch = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
+        let launch = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
         let waited = REMOTE_SCRIPT.find("wait \"$unit_pid\"; unit_rc=$?").expect("the unit wait");
         let early = REMOTE_SCRIPT.find("UNIT-TESTS RED before the suites: no suite was run").expect("the early exit");
         let bare = REMOTE_SCRIPT.find("bare_after_setup \"${bare_sel[@]}\"").expect("the bare lane's start");

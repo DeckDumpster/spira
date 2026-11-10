@@ -33,6 +33,11 @@ path = "tests/preflight_guest_harness.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "unit_deadline_real"
+path = "tests/unit_deadline_real.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "unit_cov_real"
 path = "tests/unit_cov_real.rs"
 required-features = ["integration"]

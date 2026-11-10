@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=gate
+DOC=One period of the per-unit-test deadline in seconds (cargo-nextest slow-timeout period); the round's unit tier runs each test under it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_UNIT_TEST_DEADLINE_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF
