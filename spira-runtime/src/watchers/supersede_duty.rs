@@ -350,6 +350,7 @@ impl Handler for SupersedeDuty {
                 if first_failure {
                     let mut next = carry.clone();
                     next.failed.insert(act.id.clone());
+                    cmds.push(Command::Emit(EventKind::new(FAILED, &act.id)));
                     cmds.push(Self::state(&next));
                 }
                 cmds.extend(say.iter().map(|m| Self::inbox(now, m)));

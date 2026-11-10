@@ -45,3 +45,13 @@ fn a_boot_asks_the_world_only_about_the_holds_it_had_not_read() {
 fn a_boot_does_not_say_a_failed_write_or_its_successor_line_again() {
     kit::assert_boot_matches_an_unstopped_run(a_request_whose_write_failed_and_was_said, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+#[test]
+fn two_writes_failing_in_one_batch_are_both_remembered_as_failed() {
+    let req = |id: &str| Held { id: id.into(), version: "3".into(), reading: Reading::Request { succ: "sp-new".into(), own: "HELD".into(), succ_state: "LANDED".into() } };
+    let world = serde_json::to_string(&Snapshot { held: vec![req("sp-a"), req("sp-b")] }).unwrap();
+    let mut rig = rig_reading(world, Err("lifecycle refused"));
+    rig.run_until_idle().unwrap();
+    let failed: Vec<String> = rig.journaled().iter().filter(|e| e.kind.tag == FAILED).map(|e| e.kind.body.clone()).collect();
+    assert_eq!(failed.len(), 2, "{failed:?}");
+}
