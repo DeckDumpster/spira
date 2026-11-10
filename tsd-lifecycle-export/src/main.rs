@@ -1,9 +1,10 @@
 // tsd-lifecycle-export — the one writer of run/tsd/'s `bead-stage` family (design
-// reconciler-time-series-2026-09-27 §2/§2a). Three modes, one schema:
+// reconciler-time-series-2026-09-27 §2/§2a). Four modes, one schema:
 //
 //   tsd-lifecycle-export legacy    [--since <ISO8601>]   bd events, ongoing tail
 //   tsd-lifecycle-export backfill  [--since <ISO8601>]   the same, one-time, back to a date
 //   tsd-lifecycle-export lifecycle                       spira_lifecycle.event, post-cutover
+//   tsd-lifecycle-export check                           fails when the export trails the log by over 10 minutes
 //
 // Every mode tracks its own progress in $SPIRA_RUN/tsd/.bead-stage-checkpoint-<mode>.json, so
 // re-running any of them exports nothing new. Rows are appended through tsd-write (by name)
@@ -15,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use tsd_lifecycle_export::{
-    advance_legacy_checkpoint, fold_legacy, map_lifecycle_row, BdAuditEvent, LegacyCheckpoint, LifecycleCheckpoint, LifecycleEventRow, StageRow,
+    advance_legacy_checkpoint, drain, fold_legacy, lag_verdict, BdAuditEvent, LegacyCheckpoint, LifecycleCheckpoint, LifecycleEventRow, StageRow,
 };
 
 fn main() {
@@ -31,7 +32,8 @@ fn main() {
         Some("legacy") => run_legacy("legacy", since.as_deref().unwrap_or("now")),
         Some("backfill") => run_legacy("backfill", since.as_deref().unwrap_or("2026-09-15T00:00:00Z")),
         Some("lifecycle") => run_lifecycle(),
-        _ => Err("usage: tsd-lifecycle-export <legacy|backfill|lifecycle> [--since <ISO8601>]".to_string()),
+        Some("check") => run_check(),
+        _ => Err("usage: tsd-lifecycle-export <legacy|backfill|lifecycle|check> [--since <ISO8601>]".to_string()),
     });
     if let Err(e) = result {
         eprintln!("tsd-lifecycle-export: {e}");
@@ -121,50 +123,59 @@ fn fetch_bd_events(since: &str) -> Result<Vec<BdAuditEvent>, String> {
 
 // ── lifecycle: spira_lifecycle.event, post-cutover ────────────────────────────────────────
 
+const LIFECYCLE_BATCH: usize = 500;
+const LAG_LIMIT_SECS: i64 = 600;
+
+fn lifecycle_batch(conn: &LcRoConn, after: i64) -> Result<Vec<LifecycleEventRow>, String> {
+    let query = format!(
+        "SELECT seq, machine, lc_key, event, from_state, to_state, applied, refusal, evidence, actor, at \
+         FROM event WHERE seq > {after} ORDER BY seq LIMIT {LIFECYCLE_BATCH}"
+    );
+    conn.query(&query)?
+        .iter()
+        .map(|r| {
+            let refusal = r.get("refusal").and_then(|v| v.as_str()).map(str::to_string);
+            let evidence_raw = field_str(r, "evidence").unwrap_or_default();
+            Ok(LifecycleEventRow {
+                seq: field_str(r, "seq")?.parse().map_err(|e| format!("seq: {e}"))?,
+                machine: field_str(r, "machine")?,
+                lc_key: field_str(r, "lc_key")?,
+                event: field_str(r, "event")?,
+                from_state: field_str(r, "from_state")?,
+                to_state: field_str(r, "to_state")?,
+                applied: field_str(r, "applied")? != "0",
+                refusal,
+                evidence: serde_json::from_str(&evidence_raw).unwrap_or(serde_json::Value::Null),
+                actor: field_str(r, "actor")?,
+                at: field_str(r, "at")?.parse().map_err(|e| format!("at: {e}"))?,
+            })
+        })
+        .collect()
+}
+
 fn run_lifecycle() -> Result<(), String> {
     let run = spira_run()?;
     let cp_path = checkpoint_path(&run, "lifecycle");
     let cp: LifecycleCheckpoint = read_checkpoint(&cp_path);
-
     let conn = LcRoConn::from_env()?;
-    let query = format!(
-        "SELECT seq, machine, lc_key, event, from_state, to_state, applied, refusal, evidence, actor, at \
-         FROM event WHERE seq > {} ORDER BY seq",
-        cp.last_seq
-    );
-    let raw_rows = conn.query(&query)?;
-    if raw_rows.is_empty() {
-        return Ok(());
-    }
+    drain(cp, |after| lifecycle_batch(&conn, after), |rows| write_rows(&run, rows), |cp| write_checkpoint(&cp_path, cp)).map(|_| ())
+}
 
-    let mut events = Vec::with_capacity(raw_rows.len());
-    let mut last_seq = cp.last_seq;
-    for r in &raw_rows {
-        let seq: i64 = field_str(r, "seq")?.parse().map_err(|e| format!("seq: {e}"))?;
-        let at: i64 = field_str(r, "at")?.parse().map_err(|e| format!("at: {e}"))?;
-        let applied = field_str(r, "applied")? != "0";
-        let refusal = r.get("refusal").and_then(|v| v.as_str()).map(str::to_string);
-        let evidence_raw = field_str(r, "evidence").unwrap_or_default();
-        let evidence = serde_json::from_str(&evidence_raw).unwrap_or(serde_json::Value::Null);
-        events.push(LifecycleEventRow {
-            seq,
-            machine: field_str(r, "machine")?,
-            lc_key: field_str(r, "lc_key")?,
-            event: field_str(r, "event")?,
-            from_state: field_str(r, "from_state")?,
-            to_state: field_str(r, "to_state")?,
-            applied,
-            refusal,
-            evidence,
-            actor: field_str(r, "actor")?,
-            at,
-        });
-        last_seq = last_seq.max(seq);
-    }
-
-    let rows: Vec<StageRow> = events.iter().map(map_lifecycle_row).collect();
-    write_rows(&run, &rows)?;
-    write_checkpoint(&cp_path, &LifecycleCheckpoint { last_seq })
+/// Fails when the newest `bead-stage` row trails the newest lifecycle event by over [`LAG_LIMIT_SECS`].
+fn run_check() -> Result<(), String> {
+    let conn = LcRoConn::from_env()?;
+    let newest_event: i64 = conn
+        .query("SELECT MAX(at) AS newest FROM event")?
+        .first()
+        .and_then(|r| field_str(r, "newest").ok())
+        .and_then(|t| t.parse().ok())
+        .ok_or("the lifecycle log has no event")?;
+    let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
+    let store = spira_otel::query::Store::new(endpoint.as_deref()).map_err(|e| e.to_string())?;
+    let from = u64::try_from(newest_event - 86_400).unwrap_or(0);
+    let series = store.export("spira_tsd_value{tsd_family=\"bead-stage\"}", from).map_err(|e| e.to_string())?;
+    let newest_stage = series.iter().flat_map(|s| s.samples.iter().map(|(ms, _)| ms / 1000)).max();
+    lag_verdict(newest_stage, newest_event, LAG_LIMIT_SECS)
 }
 
 fn field_str(row: &serde_json::Value, key: &str) -> Result<String, String> {
