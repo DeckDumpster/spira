@@ -80,27 +80,28 @@ fn ungated_submitted(run_dir: &Path, rows: &[spira_config::lc_state::Row]) -> st
         .collect()
 }
 
-pub const WORKER_SILENT_S: u64 = 120;
+pub const TASK_SILENT_S: u64 = 120;
 
-/// A row when SUBMITTED beads wait ungated and gate.worker has not observed for `WORKER_SILENT_S`.
-/// A host with no stamp at all has never run the worker, which is silence too.
-fn worker_silent(run_dir: &Path, ungated: &std::collections::HashSet<String>) -> Option<PartRow> {
-    if ungated.is_empty() {
+/// A row when `waiting` work is parked on `task` and it has not observed for `TASK_SILENT_S`.
+/// A host with no stamp at all has never run the task, which is silence too.
+fn task_silent(run_dir: &Path, task: &str, waiting: usize, what: &str) -> Option<PartRow> {
+    if waiting == 0 {
         return None;
     }
-    let quiet = fs::metadata(run_dir.join(spira_config::GATE_WORKER_TICKED)).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs());
-    if quiet.is_some_and(|s| s <= WORKER_SILENT_S) {
+    let quiet = spira_config::ticked::quiet_secs(run_dir, task);
+    if quiet.is_some_and(|s| s <= TASK_SILENT_S) {
         return None;
     }
     let since = quiet.map_or("never".to_string(), |s| format!("{}m ago", s / 60));
+    let part = task.replace('.', "-");
     Some(PartRow {
-        part: "gate-worker".into(),
+        part: part.clone(),
         row: Row::new(
-            "gate-worker-silent",
-            "gate.worker",
+            &format!("{part}-silent"),
+            task,
             Disposition::Escalate,
-            format!("{} SUBMITTED bead(s) ungated and gate.worker last ticked {since}", ungated.len()),
-            "check the runtime: its gate.worker task is not ticking".into(),
+            format!("{waiting} {what} and {task} last ticked {since}"),
+            format!("check the runtime: its {task} task is not ticking"),
         ),
     })
 }
@@ -186,7 +187,9 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
         };
         rows.extend(p.classify().into_iter().map(|row| PartRow { part: labels.clone(), row }));
     }
-    rows.extend(worker_silent(&run_dir, &ungated));
+    let certified = lc_rows.iter().filter(|r| r.state == "CERTIFIED" && !r.terminal()).count();
+    rows.extend(task_silent(&run_dir, "gate.worker", ungated.len(), "SUBMITTED bead(s) ungated"));
+    rows.extend(task_silent(&run_dir, "batcher.local", certified, "CERTIFIED bead(s) waiting for a round"));
     if cfg.labels.is_none() {
         let claimable: std::collections::HashSet<String> = lc_rows
             .iter()
@@ -728,17 +731,17 @@ mod ungated_submitted_tests {
     }
 
     #[test]
-    fn ungated_work_with_a_worker_that_has_not_ticked_is_reported_and_a_fresh_tick_is_not() {
-        let run = testkit::TempDir::new("strand-worker-silent");
-        let ungated: std::collections::HashSet<String> = ["sp-a".to_string()].into_iter().collect();
-        assert!(worker_silent(&run, &Default::default()).is_none(), "no ungated work, nothing to report");
-        assert_eq!(worker_silent(&run, &ungated).map(|r| r.row.kind), Some("gate-worker-silent".into()), "never ticked");
-        fs::create_dir_all(run.join("gate-worker")).unwrap();
-        let stamp = run.join(spira_config::GATE_WORKER_TICKED);
-        fs::write(&stamp, "").unwrap();
-        assert!(worker_silent(&run, &ungated).is_none(), "ticked just now");
-        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(WORKER_SILENT_S + 60);
-        fs::File::options().write(true).open(&stamp).unwrap().set_modified(old).unwrap();
-        assert!(worker_silent(&run, &ungated).is_some(), "ticked over two minutes ago");
+    fn work_waiting_on_a_task_that_has_not_ticked_is_reported_and_a_fresh_tick_is_not() {
+        let run = testkit::TempDir::new("strand-task-silent");
+        for task in ["gate.worker", "batcher.local"] {
+            assert!(task_silent(&run, task, 0, "waiting").is_none(), "no work waiting, nothing to report");
+            let silent = task_silent(&run, task, 1, "waiting").expect("never ticked");
+            assert_eq!(silent.row.kind, format!("{}-silent", task.replace('.', "-")));
+            spira_config::ticked::stamp(&run, task);
+            assert!(task_silent(&run, task, 1, "waiting").is_none(), "ticked just now");
+            let old = std::time::SystemTime::now() - std::time::Duration::from_secs(TASK_SILENT_S + 60);
+            fs::File::options().write(true).open(spira_config::ticked::path(&run, task)).unwrap().set_modified(old).unwrap();
+            assert!(task_silent(&run, task, 1, "waiting").is_some(), "ticked over two minutes ago");
+        }
     }
 }
