@@ -76,3 +76,8 @@ required-features = ["integration"]
 name = "validate"
 path = "tests/validate.rs"
 required-features = ["integration"]
+
+[[test]]
+name = "set_release"
+path = "tests/set_release.rs"
+required-features = ["integration"]
