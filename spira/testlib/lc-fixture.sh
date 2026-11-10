@@ -33,6 +33,7 @@ _lcfix_lc() {
 }
 
 _lcfix_create_store() {
+    lcfix_settle || return 1
     rm -f "$LCFIX_DIR/control.db"
     _lcfix_lc admin-create-store >"$LCFIX_DIR/create.log" 2>&1 \
         || { echo "lc-fixture: cannot create the control store: $(cat "$LCFIX_DIR/create.log")" >&2; return 1; }
@@ -95,6 +96,20 @@ lcfix_down() {
 # lcfix_round_files — the queue keeps its open-batch record in a round file, not on the store:
 # for a suite whose subject is that file. The bead rows stay the store's.
 lcfix_round_files() { tl_config SPIRA_LC_LIFECYCLE_ON_STORE=0; }
+
+# lcfix_mark — the env word a suite puts on its subject's command line. The store admits one
+# opener, and a subject may leave a detached child still calling into it (the landing re-execs
+# itself to rebase the waiting beads): replacing the store under that child is refused as
+# "already open", so every marked process is waited out first.
+lcfix_mark() { printf 'LCFIX_MARK=%s' "$LCFIX_DIR"; }
+
+# lcfix_settle — returns once no process carries this fixture's mark. The case deadline bounds it.
+lcfix_settle() {
+    [ -n "$LCFIX_DIR" ] || return 0
+    while [ -n "$(grep -lzxF "$(lcfix_mark)" /proc/[0-9]*/environ 2>/dev/null)" ]; do
+        sleep 0.1
+    done
+}
 
 # lcfix_reset — an empty store: every bead and batch forgotten.
 lcfix_reset() { _lcfix_create_store; }
