@@ -17,7 +17,7 @@ use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
 use crate::hunk;
 use crate::watchers::view;
-use crate::wiki_git::{git, lifecycle_export, overrides_apply, tmux};
+use crate::wiki_git::{git, exporter_run, overrides_apply, tmux};
 use crate::watchers::brain_dirty;
 use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
@@ -554,19 +554,20 @@ impl World {
         work && scoped
     }
 
-    /// Brings `bead-stage` up to the lifecycle log, launching its exporter only when the log is ahead of it.
+    /// Brings `bead-stage` up to the lifecycle log, launching its exporter only when the log is ahead
+    /// of it, then fails when the family still trails the log: a stalled export blinds the stage invariants.
     fn flow_export(&self) -> Result<(), String> {
         let logged = self.lc_json(&["event-seq", "--head"])?["seq"].as_u64().ok_or("event-seq: no seq")?;
         let checkpoint = self.run_dir.join("tsd").join(".bead-stage-checkpoint-lifecycle.json");
         let exported = fs::read_to_string(checkpoint).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["last_seq"].as_u64()).unwrap_or(0);
-        if logged <= exported {
-            return Ok(());
-        }
         let bin = self.export_bin.as_str();
         if bin.is_empty() {
-            return Err("bead-stage is behind the lifecycle log and no exporter is configured".into());
+            return if logged <= exported { Ok(()) } else { Err("bead-stage is behind the lifecycle log and no exporter is configured".into()) };
         }
-        lifecycle_export(bin)
+        if logged > exported {
+            exporter_run(bin, "lifecycle")?;
+        }
+        exporter_run(bin, "check")
     }
 
     pub fn flow_snapshot(&self, input: &str) -> Result<String, String> {

@@ -220,6 +220,76 @@ SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LPORT" SPIRA_LC_DB=spira_lifecycle SPIRA
 stage_rows "$RUN3" "$STORE3" "$FAM3"
 is "re-running the lifecycle source exports nothing new" "2" "$(jpy "$FAM3" 'len(rows)')"
 
+# ============================================================================================
+printf '\n%s\n' "4b. batches end to end: an interrupted run resumes from its checkpoint, and a stale store fails check"
+# ============================================================================================
+N_EXTRA=1200
+python3 - "$N_EXTRA" <<'PY' | root_lc_sql --use-db spira_lifecycle sql >"$T/bulk.log" 2>&1
+import sys
+n = int(sys.argv[1])
+rows = ",".join(f"('bead','sp-tle-m{i}','Claim','READY','READY','WORKING',1,NULL,'{{}}','dwarf-m',{1758500100 + 2 * i})" for i in range(n))
+print(f"INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at) VALUES {rows};")
+PY
+N_ALL=$((N_EXTRA + 2))
+is "the multi-batch fixture holds more than one batch of events: $(head -c 300 "$T/bulk.log")" "$N_ALL" \
+    "$(root_lc_sql --use-db spira_lifecycle sql -r csv -q 'SELECT COUNT(*) FROM event' | tail -1)"
+NEWEST_AT=$((1758500100 + 2 * (N_EXTRA - 1)))
+
+lc_export() {   # lc_export <run-dir> <store> <mode> — the real exporter against the suite's dolt server
+    tl_config SPIRA_RUN="$1" SPIRA_LC_PASSWORD_FILE="" SPIRA_METRICS_ENDPOINT="$2"
+    SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LPORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$LTMP" \
+        SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_METRICS_ENDPOINT="$2" \
+        "$EXPORT_BIN" "$3"
+}
+
+# A tsd-write that dies on its 501st call: the first 500-row batch is written and checkpointed,
+# the second is cut off before its first row.
+# The exporter rebuilds PATH from SPIRA_RELEASE, so the shim goes in a release of its own: the
+# real release's binaries, linked, with this tsd-write in place of the real one.
+REAL_TSD_WRITE="$(command -v tsd-write)"
+REAL_REL="$(cd "$(dirname "$REAL_TSD_WRITE")/.." && pwd -P)"
+SHIM_REL="$T/rel"; SHIM="$SHIM_REL/bin"; mkdir -p "$SHIM"
+for f in "$REAL_REL"/bin/*; do ln -s "$f" "$SHIM/$(basename "$f")"; done
+[ -d "$REAL_REL/spira" ] && ln -s "$REAL_REL/spira" "$SHIM_REL/spira"
+rm "$SHIM/tsd-write"
+cat > "$SHIM/tsd-write" <<SH
+#!/usr/bin/env bash
+n=\$(cat "$T/shim.count" 2>/dev/null || echo 0); n=\$((n + 1)); echo "\$n" > "$T/shim.count"
+[ "\$n" -le 500 ] || exit 1
+exec "$REAL_TSD_WRITE" "\$@"
+SH
+chmod +x "$SHIM/tsd-write"
+
+RUN4="$T/run4"; mkdir -p "$RUN4"
+start_store store4; STORE4="$STORE_ADDR"
+FAM4="$T/fam4.jsonl"
+
+SPIRA_RELEASE="$SHIM_REL" lc_export "$RUN4" "$STORE4" lifecycle >"$T/export4a.out" 2>&1
+wantrc "an export cut off mid-log exits non-zero" 1 $?
+cp_seq="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["last_seq"])' "$RUN4/tsd/.bead-stage-checkpoint-lifecycle.json" 2>/dev/null || echo none)"
+is "the cut-off run checkpointed its first batch" "500" "$(stage_rows "$RUN4" "$STORE4" "$FAM4"; jpy "$FAM4" 'len(rows)')"
+is "the checkpoint stops at the last batch written" "500" "$cp_seq"
+
+lc_export "$RUN4" "$STORE4" check >"$T/check4a.out" 2>&1
+wantrc "check fails while the store trails the log by over 10 minutes" 1 $?
+grep -q "older than the newest lifecycle event" "$T/check4a.out" \
+    && ok "check names the lag" || bad "MUST-FAIL CHECK: the stale-store failure did not name the lag: $(cat "$T/check4a.out")"
+
+lc_export "$RUN4" "$STORE4" lifecycle >"$T/export4b.out" 2>&1
+wantrc "the resumed export exits 0" 0 $?
+stage_rows "$RUN4" "$STORE4" "$FAM4"
+is "the resumed run adds the rest, none twice" "$N_ALL" "$(jpy "$FAM4" 'len(rows)')"
+is "seq is gapless across the batches" "True" "$(jpy "$FAM4" '[r["seq"] for r in rows] == list(range(1, len(rows) + 1))')"
+is "the checkpoint ends at the log head" "$N_ALL" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["last_seq"])' "$RUN4/tsd/.bead-stage-checkpoint-lifecycle.json")"
+
+lc_export "$RUN4" "$STORE4" check >"$T/check4b.out" 2>&1
+wantrc "check passes once the export has caught up" 0 $?
+
+RUN5="$T/run5"; mkdir -p "$RUN5"
+start_store store5; STORE5="$STORE_ADDR"
+lc_export "$RUN5" "$STORE5" check >"$T/check5.out" 2>&1
+wantrc "check fails against a store that holds no bead-stage row" 1 $?
+
 kill "$LC_SERVER_PID" >/dev/null 2>&1
 trap 'kill $STORE_PIDS 2>/dev/null; testdb_drop; rm -rf "$T"' EXIT INT TERM
 
