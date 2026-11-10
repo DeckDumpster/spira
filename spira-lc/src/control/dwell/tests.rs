@@ -345,3 +345,57 @@ fn a_delivery_is_reported_with_the_commit_its_audit_recorded() {
         "{d}"
     );
 }
+
+#[test]
+fn a_delivery_whose_audit_recorded_no_commit_is_reported_with_an_empty_one() {
+    use state_store::{events_key, Backend, Object, Rev, Write};
+    let b = MemBackend::new();
+    let put = |key: String, data: Value, main: u64| Write::Put {
+        key,
+        value: Object::new(data).encode(),
+        create_rev: Rev::new(main, 0),
+        prev: None,
+    };
+    let rec = serde_json::json!({ "bead_id": "sp-a", "state": "Landed", "tip": null, "gate_key": null, "holder": null, "lease_until": null, "holds": [], "reason": null, "version": 1, "since": 1_000, "repo": "harness", "updated_at": 1_000 });
+    let audit = |event: &str, evidence: Value, at: i64| serde_json::json!({ "refused": false, "evidence": { "then": [{ "machine": "bead", "lc_key": "sp-a", "event": event, "expect": "IN_DELIVERY", "from_state": "IN_DELIVERY", "to_state": "LANDED", "applied": true, "refusal": null, "evidence": evidence, "actor": "a", "at": at }] } });
+    let head = b.head().unwrap();
+    let head = b
+        .commit(
+            head,
+            &[
+                put(keys::lifecycle("sp-a"), rec, head + 1),
+                put(
+                    events_key(head + 1),
+                    audit(
+                        "Delivered",
+                        serde_json::json!({ "Delivered": { "proof": "p" } }),
+                        3_000,
+                    ),
+                    head + 1,
+                ),
+            ],
+        )
+        .unwrap();
+    assert!(head > 0);
+    let clock = VirtualClock::new(0);
+    let s = Store::new(
+        Contract::open(
+            b,
+            Ports::virtual_clock(&clock),
+            Config {
+                min_lock_ttl_ms: FLOOR_MS,
+            },
+        )
+        .unwrap(),
+        FLOOR_MS,
+    );
+    let d = dwell(
+        &s,
+        &["--now", "4000", "--window", "3600", "--landed-after", "0"],
+    );
+    assert_eq!(
+        d["landed_after"]["harness"],
+        serde_json::json!([{ "at": 3_000, "commit": "" }]),
+        "{d}"
+    );
+}
