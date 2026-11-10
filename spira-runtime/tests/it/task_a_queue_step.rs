@@ -163,3 +163,19 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+/// The judgement leg ended while the runtime was down, so its `unit.ran` was never heard: the
+/// next tick reads the unit through `unit.facts` and the machine moves on what it says.
+#[test]
+fn t3_a_judgement_whose_unit_ran_was_lost_is_read_through_unit_facts() {
+    use runtime::units::{Exit, UnitFacts, UnitState, UNIT_FACTS};
+    let rc = RepoCarry { state: State::Judging, leg: Some("spira.j1".into()), base: "b2".into(), mode: "queue.local".into(), batch: Some("b-1:3".into()), ..RepoCarry::default() };
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let facts = serde_json::to_string(&UnitFacts { state: UnitState::Inactive, main_pid: None, exit: Some(Exit::Code(0)), since_ms: Some(1) }).unwrap();
+    let mut r = TaskRig::new(1, QueueStep::new(BTreeMap::new()).registration()).unwrap().double(UNIT_FACTS, move |_| Ok(facts.clone()));
+    r.tick(STREAM, EventKind::new(STATE, &serde_json::to_string(&carry).unwrap())).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let asked: Vec<&str> = r.requested().iter().map(|q| q.name.as_str()).collect();
+    assert!(asked.contains(&UNIT_FACTS), "the tick reads the in-flight leg: {asked:?}");
+    assert!(asked.contains(&RECORD), "the exit read from facts judged the leg: {asked:?}");
+}
