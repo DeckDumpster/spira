@@ -205,6 +205,9 @@ pub struct Switched {
     /// (`X-Spira-NoRestart=<reason>`), or whose restart failed after the drain wait ran out.
     /// Never silent: `release activate` names every one as STALE.
     pub stale: Vec<String>,
+    /// Running services on the previous release's code whose restart would cut in-flight work,
+    /// each with why: they restart themselves at their next idle point. Reported, not STALE.
+    pub when_idle: Vec<String>,
 }
 
 fn unit_files(dir: &Path) -> BTreeSet<String> {
@@ -335,9 +338,10 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
         };
         eprintln!("release: {unit}: {why}");
         if long_running {
-            match units::never_restart(new) {
-                Some(reason) => out.stale.push(left_running(unit, &why, &reason)),
-                None => out.restarted.push(unit.clone()),
+            match (units::never_restart(new), units::restart_when_idle(new)) {
+                (Some(reason), _) => out.stale.push(left_running(unit, &why, &reason)),
+                (None, Some(how)) => out.when_idle.push(format!("{unit} ({why}; restarts itself when idle: {how})")),
+                (None, None) => out.restarted.push(unit.clone()),
             }
         } else {
             if st.kind == "oneshot" && is_up(&st.active) && !units::undrained(new) {
@@ -392,6 +396,9 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
     }
     for s in &out.stale {
         eprintln!("release: STALE: {s}");
+    }
+    for s in &out.when_idle {
+        eprintln!("release: WHEN IDLE: {s}");
     }
     Ok(out)
 }

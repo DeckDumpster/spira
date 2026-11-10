@@ -57,6 +57,13 @@ fn resume_rows(endpoint: Option<&str>, family: &str, now: u64) -> Vec<serde_json
     }
 }
 
+const IDLE_CHECK: Duration = Duration::from_secs(15);
+
+fn current_release(started_under: Option<&str>) -> Option<String> {
+    let link = PathBuf::from(started_under?).parent()?.join("current");
+    std::fs::read_link(link).ok().map(|t| t.to_string_lossy().into_owned())
+}
+
 fn watch_cmd(family: &str) -> Result<(), String> {
     let instance = spira_config::process::cfg("SPIRA_INSTANCE")?;
     let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty());
@@ -64,7 +71,7 @@ fn watch_cmd(family: &str) -> Result<(), String> {
     let mut seen = written_ids(&resume);
     let metrics = spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-unit-run", Duration::from_secs(2));
     let store = tsd::store::Pusher::new(endpoint.clone());
-    let mut backlog = unit_run::Backlog::new(BACKLOG_MAX);
+    let backlog = std::cell::RefCell::new(unit_run::Backlog::new(BACKLOG_MAX));
     let mut triggers = Triggers::new(&Spawn);
     let mut conn = unit_run::dbus::Conn::connect(&unit_run::dbus::bus_path()?)?;
     watch::arm(&mut conn)?;
@@ -77,12 +84,12 @@ fn watch_cmd(family: &str) -> Result<(), String> {
         }
         let trig = triggers.of(&r.unit);
         let fields = unit_run::record_fields(&r, trig.as_deref(), &instance);
-        let (dropped, stored) = backlog.offer(&store, family, tsd::iso_utc(Wall.now_epoch()), fields);
+        let (dropped, stored) = backlog.borrow_mut().offer(&store, family, tsd::iso_utc(Wall.now_epoch()), fields);
         if dropped {
             eprintln!("unit-run watch: backlog full ({BACKLOG_MAX}) while the store refuses rows; dropped the oldest");
         }
         if let Err(e) = stored {
-            eprintln!("unit-run watch: {} row(s) held: {e}", backlog.len());
+            eprintln!("unit-run watch: {} row(s) held: {e}", backlog.borrow().len());
         }
         push_metrics(&metrics, &r);
         Ok(())
@@ -91,9 +98,15 @@ fn watch_cmd(family: &str) -> Result<(), String> {
         record(r)?;
     }
     eprintln!("unit-run watch: armed on the user manager; storing {family} rows in the metrics store");
+    let release = std::env::current_exe().ok().and_then(|e| e.parent()?.parent().map(|r| r.to_string_lossy().into_owned()));
     loop {
-        for r in watch::step(&mut conn, &mut tracker, now_us, Duration::from_secs(60))? {
+        for r in watch::step(&mut conn, &mut tracker, now_us, IDLE_CHECK)? {
             record(r)?;
+        }
+        let flushed = backlog.borrow_mut().flush(&store, family).is_ok();
+        if watch::restart_now(tracker.in_flight(), flushed, release.as_deref(), current_release(release.as_deref()).as_deref()) {
+            eprintln!("unit-run watch: idle and no longer on the current release; exiting to be restarted on it");
+            return Ok(());
         }
     }
 }

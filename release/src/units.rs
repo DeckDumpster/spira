@@ -306,9 +306,21 @@ pub fn undrained(text: &str) -> bool {
 /// restarting it disturbs what the operator is using. A line with no reason, or only a
 /// boolean, is no exemption: the unit is restarted like any other.
 pub fn never_restart(text: &str) -> Option<String> {
+    reason_of(text, "X-Spira-NoRestart")
+}
+
+/// How a service restarts itself at its next idle point (`X-Spira-RestartWhenIdle=<how>`): a
+/// restart now would cut in-flight work, and the process exits when it holds none and its
+/// release is no longer current, so `Restart=` brings it up on the new one. Activation
+/// reports it and does not restart it.
+pub fn restart_when_idle(text: &str) -> Option<String> {
+    reason_of(text, "X-Spira-RestartWhenIdle")
+}
+
+fn reason_of(text: &str, key: &str) -> Option<String> {
     text.lines()
         .filter_map(|l| l.trim().split_once('='))
-        .find(|(k, _)| k.trim().eq_ignore_ascii_case("X-Spira-NoRestart"))
+        .find(|(k, _)| k.trim().eq_ignore_ascii_case(key))
         .map(|(_, v)| v.trim())
         .filter(|v| !v.is_empty() && !["true", "yes", "on", "1", "false", "no", "off", "0"].contains(&v.to_ascii_lowercase().as_str()))
         .map(str::to_string)
