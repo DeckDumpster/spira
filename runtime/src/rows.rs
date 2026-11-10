@@ -22,13 +22,19 @@ pub fn digest(s: &str) -> String {
     format!("{:016x}{:016x}", crate::event::fnv1a(s), crate::event::fnv1a(&format!("\u{0}{s}")))
 }
 
+/// An effect's key as the store keeps it: the key itself when it fits, else its digest. The
+/// store refuses a turn holding a wider key, and the engine would quarantine the stream for it.
+pub fn bounded_key(key: &str) -> String {
+    if key.len() <= KEY_MAX {
+        key.to_string()
+    } else {
+        format!("#{}", digest(key))
+    }
+}
+
 /// The row key for `name`'s entry `key`: the key itself when it fits, else its digest.
 pub fn entry_key(name: &str, key: &str) -> String {
-    if key.len() <= KEY_MAX {
-        format!("{name}/{key}")
-    } else {
-        format!("{name}/#{}", digest(key))
-    }
+    format!("{name}/{}", bounded_key(key))
 }
 
 /// A carry that is one bare value (an enum) is its own single row, `state`.
@@ -121,5 +127,14 @@ mod tests {
         let rows = split(&body, PARTS);
         assert!(rows.keys().all(|k| k.len() < 255), "{rows:?}");
         assert_eq!(join(&rows, PARTS), body);
+    }
+
+    #[test]
+    fn a_wide_effect_key_is_stored_as_its_digest_and_a_narrow_one_as_itself() {
+        assert_eq!(bounded_key("sp-a:1"), "sp-a:1");
+        let wide = format!("round:{}", "x".repeat(300));
+        assert!(bounded_key(&wide).len() < 255);
+        assert_eq!(bounded_key(&wide), bounded_key(&wide));
+        assert_ne!(bounded_key(&wide), bounded_key(&format!("{wide}y")));
     }
 }

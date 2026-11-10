@@ -166,6 +166,7 @@ impl Journal for MemJournal {
     }
 
     fn commit(&self, turn: &Turn) -> Result<()> {
+        crate::socket::within_widths(turn)?;
         let mut m = self.lock();
         for s in &turn.state {
             m.state.insert((s.task.clone(), s.skey.clone()), s.clone());

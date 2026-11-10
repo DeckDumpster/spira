@@ -39,7 +39,7 @@ fn within(what: &str, value: &str, max: usize) -> Result<()> {
     Err(RuntimeError::refused(format!("journal: {what} is {} chars (max {max}) or holds a NUL: {}", value.chars().count(), value.chars().take(80).collect::<String>())))
 }
 
-fn within_widths(turn: &Turn) -> Result<()> {
+pub(crate) fn within_widths(turn: &Turn) -> Result<()> {
     for s in &turn.state {
         within("state task", &s.task, TASK_MAX)?;
         within("state key", &s.skey, KEY_MAX)?;
@@ -256,5 +256,13 @@ mod tests {
         assert!(e.is_refused() && e.0.contains("state key"), "{e}");
         let ok = Turn { state: vec![StateRow { task: "t".into(), skey: "k".repeat(KEY_MAX), value: "v".into(), at: 1 }], ..Turn::default() };
         assert!(j.commit(&ok).unwrap_err().is_cannot_tell(), "an in-width turn goes to the socket, which is absent");
+    }
+
+    #[test]
+    fn the_in_memory_journal_refuses_the_widths_the_store_refuses() {
+        let j = crate::journal::MemJournal::new();
+        let wide = Turn { state: vec![StateRow { task: "t".into(), skey: "k".repeat(KEY_MAX + 1), value: "v".into(), at: 1 }], ..Turn::default() };
+        assert!(j.commit(&wide).unwrap_err().is_refused());
+        assert!(j.commits().is_empty(), "a refused turn is not kept");
     }
 }
