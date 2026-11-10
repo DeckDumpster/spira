@@ -488,15 +488,13 @@ pub fn fast_tier_red_brief(digest: &str) -> String {
 }
 
 /// The failure that ejected the bead, as the first section of a rework brief; empty when none
-/// was recorded. `head` is the tip the worktree stands on, named when it is not the judged one.
+/// was recorded or it judged a tip that is no longer `head`.
 pub fn eject_failure_brief(digest: &str, head: &str) -> String {
     let d = digest.trim();
-    if d.is_empty() {
+    if d.is_empty() || spira_config::ejection::parse(d).tip != head {
         return String::new();
     }
-    let judged = spira_config::ejection::parse(d).tip;
-    let moved = if !judged.is_empty() && !head.is_empty() && judged != head { format!(" (HEAD is {head}; it has moved since)") } else { String::new() };
-    format!("## You were ejected — the failure, verbatim{moved}\n\n{d}\n\nThis is the evidence the gate or the round held; start from it, not from a search of the box.\n\n")
+    format!("## You were ejected — the failure, verbatim\n\n{d}\n\nThis is the evidence the gate or the round held; start from it, not from a search of the box.\n\n")
 }
 
 pub fn thrash_banner(streak: &str, last: &str) -> String {
@@ -895,8 +893,7 @@ mod tests {
         let d = spira_config::ejection::digest("aaa", &[], "---- t::boom stdout ----\nthread 't::boom' panicked at x/y.rs:7:1:\nit broke\n\nfailures:\n");
         let b = eject_failure_brief(&d, "aaa");
         assert!(b.starts_with("## You were ejected") && b.contains("t::boom at x/y.rs:7") && b.contains("it broke"), "{b}");
-        assert!(!b.contains("moved since"));
-        assert!(eject_failure_brief(&d, "bbb").contains("HEAD is bbb"));
+        assert_eq!(eject_failure_brief(&d, "bbb"), "", "a red that judged another tip says nothing about this one");
         assert_eq!(eject_failure_brief("  \n", "aaa"), "");
     }
 

@@ -187,11 +187,6 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     }
 }
 
-/// The bead's newest recorded failure out of `spira-lc facts --kinds eject-failure` output.
-pub fn latest(facts_json: &str) -> String {
-    prior_digests(facts_json).pop().map(|(_, d)| d).unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,6 +253,5 @@ mod tests {
         let fact = calls.iter().find(|c| c[0] == "fact").unwrap();
         let cause = &fact[fact.iter().position(|a| a == "--cause").unwrap() + 1];
         assert!(cause.contains("FAIL ci_cut::finds_config at spira/sim/tests/ci_cut.rs:70") && cause.contains("ALSO sp-a"), "{cause}");
-        assert_eq!(latest(&serde_json::json!([{"issue_id": "sp-b", "event_type": KIND, "new_value": cause}]).to_string()), *cause);
     }
 }

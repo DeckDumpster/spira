@@ -347,7 +347,7 @@ impl LiveOps<'_> {
         if owner {
             redtip::record(&self.env.run, &self.repo.name, &member.id, &member.tip);
             let files = self.changed.get(&member.id).cloned().unwrap_or_default();
-            io::record_ejection(self.env, &member.id, &member.tip, &files, Path::new(&self.evidence), suites);
+            io::record_ejection(self.env, &member.id, &member.tip, &files, Path::new(&self.evidence), suites, fails);
         }
         match self.batch {
             Some(batch) => {

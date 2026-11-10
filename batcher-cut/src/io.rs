@@ -1306,8 +1306,11 @@ fn suite_outputs(results_dir: &Path, suites: &[String]) -> String {
 
 /// The failing tests and output tail of the suites a member turned red, recorded on the bead
 /// for the builder's next brief. Best-effort: a refusal is said and never blocks the eject.
-pub fn record_ejection(env: &Env, id: &str, tip: &str, files: &[String], results_dir: &Path, suites: &[String]) {
-    let output = suite_outputs(results_dir, suites);
+pub fn record_ejection(env: &Env, id: &str, tip: &str, files: &[String], results_dir: &Path, suites: &[String], fails: &[(String, String)]) {
+    let mut output = suite_outputs(results_dir, suites);
+    for (suite, line) in fails {
+        output += &format!("\n{suite}: {line}");
+    }
     let lc = |args: &[String]| lcq(env, &args.iter().map(String::as_str).collect::<Vec<_>>());
     if let Err(e) = spira_config::ejection::record(&lc, id, tip, files, &output, "batcher") {
         eprintln!("batcher: {id} failure not recorded on spira-lc: {e}");
