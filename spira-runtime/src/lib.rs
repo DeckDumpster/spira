@@ -322,6 +322,13 @@ mod own_unit_tests {
     use runtime::{Command, Ctx, EffectSpec, Event, EventKindTag, Handler, Projection, Registration};
     use std::sync::Arc;
 
+    #[test]
+    fn the_boot_retry_caps_its_backoff_below_the_bound_so_a_late_store_is_found_soon() {
+        let r = super::boot_retry(&crate::settings::fixture());
+        assert_eq!((r.first_ms, r.ceiling_ms), (super::BOOT_RETRY_FIRST_MS, super::BOOT_RETRY_CEILING_MS));
+        assert!(r.ceiling_ms <= 1_000 && r.ceiling_ms < r.bound_ms);
+    }
+
     struct Writer;
     impl Handler for Writer {
         fn interests(&self) -> &[EventKindTag] {
