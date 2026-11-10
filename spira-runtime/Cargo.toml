@@ -17,9 +17,10 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = []
+integration = ["dep:testkit"]
 
 [dependencies]
+testkit = { path = "../testkit", optional = true }
 inbox-rules = { path = "../inbox-rules" }
 base64 = "0.22"
 install = { path = "../install" }

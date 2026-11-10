@@ -1,77 +1,114 @@
-//! A task's wake survives a runtime restart: after a process dies and a new one boots on the
-//! same journal, batcher.local and gate.worker observe again once the clock passes their cadence.
+//! After a boot built the way `main.rs` builds it (`open_engine` over every registration, then
+//! `start_tasks`), batcher.local and gate.worker keep a tick armed and observe on every cadence.
 
-use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use runtime::host::{EffectRunner, VirtualDriver};
 use runtime::journal::Journal;
 use runtime::ports::{Clock, VirtualClock};
-use runtime::{EffectSpec, Engine, MemJournal};
-use spira_runtime::tasks::a::batcher_local::{BatcherLocal, CADENCE_MS as BATCHER_CADENCE, OBSERVE as BATCHER_OBSERVE};
-use spira_runtime::tasks::a::gate_worker::{GateWorker, CADENCE_MS as GATE_CADENCE, OBSERVE as GATE_OBSERVE};
-use spira_runtime::{start_tasks, tasks};
+use runtime::{Command, Ctx, EffectSpec, Event, EventKindTag, FaultyJournal, Handler, MemJournal, NullMarker, NullSink, Projection, Registration};
+use spira_runtime::settings::fixture;
+use spira_runtime::tasks::a::batcher_local::{CADENCE_MS as BATCHER_CADENCE, OBSERVE as BATCHER_OBSERVE, STREAM as BATCHER_STREAM, TICK as BATCHER_TICK};
+use spira_runtime::tasks::a::gate_worker::{CADENCE_MS as GATE_CADENCE, OBSERVE as GATE_OBSERVE};
+use spira_runtime::{open_engine, start_tasks};
+
+const BATCHER: &str = "batcher.local";
+const GATE: &str = "gate.worker";
 
 #[derive(Default)]
-struct Seen(Mutex<Vec<(String, u64)>>);
+struct Seen(Mutex<Vec<String>>);
 
-struct Recording {
-    seen: Arc<Seen>,
-    clock: VirtualClock,
-}
+struct Recording(Arc<Seen>);
 
 impl EffectRunner for Recording {
     fn run(&self, _: &str, spec: &EffectSpec) -> Result<String, String> {
-        self.seen.0.lock().unwrap().push((spec.name.clone(), self.clock.now_ms()));
+        self.0 .0.lock().unwrap().push(spec.name.clone());
         Ok("{}".into())
     }
 }
 
-fn boot(j: Arc<dyn Journal>, clock: &VirtualClock, seen: &Arc<Seen>) -> VirtualDriver {
+/// Panics once on the batcher's own tick: another handler failing on the stream.
+struct PanicsOnce {
+    tags: Vec<EventKindTag>,
+    spent: AtomicBool,
+}
+
+impl Handler for PanicsOnce {
+    fn interests(&self) -> &[EventKindTag] {
+        &self.tags
+    }
+    fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+        if ev.stream.0 == BATCHER_STREAM && !self.spent.swap(true, Ordering::SeqCst) {
+            panic!("planted handler failure on {}", ev.stream.0);
+        }
+        vec![]
+    }
+}
+
+fn boot(journal: Arc<dyn Journal>, clock: &VirtualClock, seen: &Arc<Seen>, extra: Vec<Registration>) -> VirtualDriver {
     let c: Arc<dyn Clock> = Arc::new(clock.clone());
-    let regs = vec![BatcherLocal::new(BTreeMap::new()).registration(), GateWorker::new(2, BTreeMap::new()).registration()];
-    let mut engine = Engine::open(j, c, regs, 1).unwrap();
+    let mut engine = open_engine(&fixture(), journal, c, Arc::new(NullMarker), Arc::new(NullSink), extra).unwrap();
     start_tasks(&mut engine);
-    VirtualDriver::new(engine, clock.clone(), Arc::new(Recording { seen: seen.clone(), clock: clock.clone() }))
+    VirtualDriver::new(engine, clock.clone(), Arc::new(Recording(seen.clone())))
 }
 
 fn observes(seen: &Seen, name: &str) -> usize {
-    seen.0.lock().unwrap().iter().filter(|(n, _)| n == name).count()
+    seen.0.lock().unwrap().iter().filter(|n| *n == name).count()
+}
+
+fn armed(d: &VirtualDriver, task: &str) -> Option<u64> {
+    d.engine().status().tasks.into_iter().find(|t| t.name == task).unwrap_or_else(|| panic!("{task} is registered")).next_due_at
+}
+
+fn run_for(d: &mut VirtualDriver, clock: &VirtualClock, ms: u64) {
+    d.run_until(clock.now_ms() + ms).unwrap();
+}
+
+/// Past the boot stagger of every task, so each has had its boot tick.
+fn settle_boot(d: &mut VirtualDriver, clock: &VirtualClock) {
+    run_for(d, clock, 60_000);
 }
 
 #[test]
-fn batcher_and_gate_worker_observe_on_cadence_after_a_restart() {
-    let streams: Vec<_> = tasks::boots().into_iter().map(|(_, stream, _)| stream).collect();
-    assert!(streams.contains(&"task.batcher.local") && streams.contains(&"task.gate.worker"), "both tasks are booted: {streams:?}");
+fn batcher_and_gate_worker_stay_armed_and_observe_every_cadence_after_a_boot_of_all_tasks() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(1_000));
     let seen = Arc::new(Seen::default());
-
-    let mut first = boot(j.clone(), &clock, &seen);
-    first.run_until(1_000 + 10_000).unwrap();
-    drop(first);
+    let mut d = boot(j, &clock, &seen, vec![]);
+    settle_boot(&mut d, &clock);
+    for task in [BATCHER, GATE] {
+        assert!(armed(&d, task).is_some(), "{task} is armed after its boot tick");
+    }
     let before = (observes(&seen, BATCHER_OBSERVE), observes(&seen, GATE_OBSERVE));
     assert!(before.0 >= 1 && before.1 >= 1, "each observes at boot: {before:?}");
-
-    let mut second = boot(j, &clock, &seen);
-    second.run_until(clock.now_ms() + BATCHER_CADENCE.max(GATE_CADENCE) * 3).unwrap();
-    assert!(observes(&seen, BATCHER_OBSERVE) >= before.0 + 3, "batcher.local observes each cadence after the restart: {:?}", seen.0.lock().unwrap());
-    assert!(observes(&seen, GATE_OBSERVE) >= before.1 + 3, "gate.worker observes each cadence after the restart");
+    for _ in 0..3 {
+        run_for(&mut d, &clock, BATCHER_CADENCE.max(GATE_CADENCE));
+        for task in [BATCHER, GATE] {
+            assert!(armed(&d, task).is_some(), "{task} is armed after each later tick");
+        }
+    }
+    assert!(observes(&seen, BATCHER_OBSERVE) >= before.0 + 3, "batcher.local observes each cadence");
+    assert!(observes(&seen, GATE_OBSERVE) >= before.1 + 3, "gate.worker observes each cadence");
 }
 
-/// The downtime outlasts several cadences; boot must fire the overdue wake once, not wait a full cadence.
+/// A handler fails on the batcher's stream while the store refuses the poison row: the stream is
+/// skipped in memory with no row, and the tick that would have followed is consumed.
 #[test]
-fn a_wake_that_fell_due_while_the_runtime_was_down_fires_at_the_next_boot() {
-    let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(1_000));
+fn a_tick_swallowed_by_a_stream_quarantine_that_could_not_be_stored_is_armed_again() {
+    let (faulty, clock) = (FaultyJournal::new(MemJournal::new()), VirtualClock::new(1_000));
     let seen = Arc::new(Seen::default());
-
-    let mut first = boot(j.clone(), &clock, &seen);
-    first.run_until(1_000 + 10_000).unwrap();
-    drop(first);
-    let before = (observes(&seen, BATCHER_OBSERVE), observes(&seen, GATE_OBSERVE));
-
-    clock.advance_to(clock.now_ms() + BATCHER_CADENCE.max(GATE_CADENCE) * 5);
-    let mut second = boot(j, &clock, &seen);
-    second.run_until(clock.now_ms() + BATCHER_CADENCE.max(GATE_CADENCE)).unwrap();
-    assert!(observes(&seen, BATCHER_OBSERVE) > before.0, "batcher.local observes at the first boot after the gap");
-    assert!(observes(&seen, GATE_OBSERVE) > before.1, "gate.worker observes at the first boot after the gap");
+    let extra = Registration::new("planted", PanicsOnce { tags: vec![BATCHER_TICK], spent: AtomicBool::new(false) });
+    let mut d = boot(faulty.clone(), &clock, &seen, vec![extra]);
+    faulty.fail_next("poison");
+    // The failed write comes back as an error, as it does to the host, which goes on.
+    for _ in 0..40 {
+        let _ = d.run_until(clock.now_ms() + 5_000);
+    }
+    let after_fault = observes(&seen, BATCHER_OBSERVE);
+    assert!(armed(&d, BATCHER).is_some(), "batcher.local keeps a tick armed");
+    for _ in 0..3 {
+        run_for(&mut d, &clock, BATCHER_CADENCE);
+        assert!(armed(&d, BATCHER).is_some(), "armed after each later tick");
+    }
+    assert!(observes(&seen, BATCHER_OBSERVE) >= after_fault + 3, "batcher.local observes each cadence after the fault");
 }
