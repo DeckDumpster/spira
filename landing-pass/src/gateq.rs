@@ -361,6 +361,7 @@ impl GateQueue {
         job.deaths.push(self.death_evidence(&job, d));
         if job.deaths.len() < 2 {
             job.queued = nanos();
+            job.priority = no_priority();
             let body = serde_json::to_string(&job).map_err(std::io::Error::other)?;
             atomic_write(&self.dir(Where::Inbox).join(job.file()), &body)?;
             let _ = fs::remove_file(self.claimed_slot(slot).join(job.file()));
@@ -404,6 +405,48 @@ impl GateQueue {
 mod tests {
     use super::*;
     use crate::testutil::tmpdir;
+
+    const CAP: &str = "gate: VERDICT=NO_VERDICT reason=died branch=b repo=r suite=-\ngate: VERDICT=FAIL reason=over-cap branch=b repo=r suite=-\n";
+
+    fn dead(job: &Job) -> Done {
+        Done { job: job.clone(), run: GateRun::parse(1, CAP.into()), started_ms: 1, finished_ms: 2001 }
+    }
+
+    #[test]
+    fn a_first_cap_death_goes_back_to_the_inbox_behind_every_other_job() {
+        let d = tmpdir("settle-first");
+        let q = GateQueue::new(&d);
+        let job = Job::new("r", "spira/sp-a", "sp-a", "t1", false).with_priority(0);
+        q.enqueue(&job).unwrap();
+        let other = Job::new("r", "spira/sp-b", "sp-b", "t2", false).with_priority(3);
+        q.enqueue(&other).unwrap();
+        let claimed = q.claim(0).unwrap();
+        assert_eq!(claimed.branch, "spira/sp-a");
+        assert_eq!(q.settle(0, &dead(&claimed)).unwrap(), Settled::Requeued);
+        assert_eq!(q.find("r", "spira/sp-a", "t1"), Some(Where::Inbox));
+        assert_eq!(q.queued().iter().map(|j| j.branch.as_str()).collect::<Vec<_>>(), ["spira/sp-b", "spira/sp-a"]);
+        assert_eq!(q.queued()[1].deaths, ["ran=2000ms (no phase timings in gate.log)"]);
+    }
+
+    #[test]
+    fn a_second_cap_death_is_filed_naming_both_runs_and_a_pass_is_filed_as_it_is() {
+        let d = tmpdir("settle-second");
+        let q = GateQueue::new(&d);
+        let mut job = Job::new("r", "spira/sp-a", "sp-a", "t1", false);
+        job.deaths = vec!["ran=297s phases=build:200".into()];
+        q.enqueue(&job).unwrap();
+        let claimed = q.claim(0).unwrap();
+        assert_eq!(q.settle(0, &dead(&claimed)).unwrap(), Settled::Filed);
+        let run = q.take_done("r", "spira/sp-a", "t1").unwrap().run;
+        assert_eq!(run.reason.as_deref(), Some(DIED_TWICE));
+        assert!(run.out.contains("ran=297s phases=build:200; ran=2000ms"), "{}", run.out);
+
+        q.enqueue(&Job::new("r", "spira/sp-c", "sp-c", "t3", false)).unwrap();
+        let c = q.claim(0).unwrap();
+        let pass = Done { job: c, run: GateRun::parse(0, "gate: VERDICT=PASS reason=ok".into()), started_ms: 1, finished_ms: 2 };
+        assert_eq!(q.settle(0, &pass).unwrap(), Settled::Filed);
+        assert!(q.take_done("r", "spira/sp-c", "t3").is_some());
+    }
 
     fn done(job: &Job) -> Done {
         Done { job: job.clone(), run: GateRun::parse(0, "ok".into()), started_ms: 1, finished_ms: 2, gate: String::new() }

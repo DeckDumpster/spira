@@ -887,6 +887,7 @@ fn a_gate_the_worker_saw_die_twice_is_the_beads_red_on_the_first_filing() {
     h.run();
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 red"]);
     assert!(h.lib.find("reopen sp-a cert-gate-red").contains("build:203"));
+    assert!(h.lib.count("event gate.died-twice sp-a") == 1, "the second death pages once");
 }
 
 #[test]

@@ -615,6 +615,9 @@ impl<'a> Pass<'a> {
             let dead_run = (g.outcome == GateOutcome::NoVerdict && !moved && is_dead_gate_reason(&reason))
                 .then(|| if reason == crate::model::DIED_TWICE { DEAD_GATES_RED.max(self.files.note_dead(br)) } else { self.files.note_dead(br) })
                 .filter(|n| *n >= DEAD_GATES_RED);
+            if reason == crate::model::DIED_TWICE && dead_run.is_some() && !moved {
+                self.lib.event("gate.died-twice", id, &format!("{id}: the gate died at its cap twice on {tip}"), &tail_lines(&g.out, 3));
+            }
             if g.outcome == GateOutcome::Fail {
                 self.files.note_gate_judged(br);
             }
