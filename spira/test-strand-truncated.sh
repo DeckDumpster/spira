@@ -41,6 +41,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/run"
+printf '#!/bin/sh\nexit 0\n' > "$TMP/systemctl-none"; chmod +x "$TMP/systemctl-none"
 
 # THE STRAND AND SENTINEL ARE BINARIES (strand.sh, sentinel.sh are gone), resolved as conf.sh's
 # the tree's build on PATH provides them. Both source lib.sh from SPIRA_HOME, so each stub
@@ -98,7 +99,7 @@ tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd"
 out="$(
     SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$TMP/lc:$PATH" \
     SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
-    SPIRA_CALL=stub \
+    SPIRA_CALL=stub SPIRA_SYSTEMCTL="$TMP/systemctl-none" \
     SPIRA_LABELS="spira,test-plan" \
         strand report 2>/dev/null
 )"
@@ -119,7 +120,7 @@ tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd"
 out="$(
     SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$TMP/lc:$PATH" \
     SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
-    SPIRA_CALL=stub \
+    SPIRA_CALL=stub SPIRA_SYSTEMCTL="$TMP/systemctl-none" \
     SPIRA_LABELS="spira,test-plan" \
         strand report 2>/dev/null
 )"

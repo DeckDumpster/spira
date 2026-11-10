@@ -7,5 +7,4 @@ czar-pass/src/main.rs
 loom/src/ops.rs
 release/src/acceptance/phases.rs
 spira-world/src/proc.rs
-strand/src/classify.rs
 watchtower/src/cpu_throttle.rs

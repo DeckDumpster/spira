@@ -328,7 +328,7 @@ impl<'a> Partition<'a> {
                 "-",
                 Disposition::Escalate,
                 format!("{n} bead(s) ready and no live dwarf{slot}: {head}"),
-                "check spira-sentinel.timer and the tail of sentinel.log".into(),
+                "check the runtime: its sentinel-call and sentinel-pass tasks".into(),
             )
         };
         rows.push(row);

@@ -236,19 +236,24 @@ pub fn holder_alive(run: &Path, id: &str) -> bool {
     hel::reap::holder_alive(run, id)
 }
 
-/// The live dwarves systemd lists that `keep` admits, `exclude` left out. The set and the
-/// liveness rule are `runtime::units::{dwarf_globs, live_dwarf_in_list_line}`, the ones the
-/// fleet ceiling and dwarves.sh count by: a dwarf runs as `spira-dwarf-*` or as the
-/// scheduler's `spira-run-sentinel_2dcall-*` (sp-li4zys: listing only `spira-dwarf-*` read 0
-/// live with 4 running, and the reconciler and strand check alarmed on it).
-fn unit_count(cfg: &Config, keep: &dyn Fn(&str) -> bool, exclude: Option<&str>) -> u32 {
+/// Every live dwarf unit, by the globs and liveness rule `dwarves.sh` and the fleet ceiling count
+/// by. Err when systemd cannot answer: an unreadable list is not an empty fleet.
+pub fn live_units(cfg: &Config) -> Result<Vec<String>, String> {
     let globs = runtime::units::dwarf_globs();
     let mut args = vec!["5", cfg.systemctl.as_str(), "--user", "list-units"];
     args.extend(globs.iter().map(String::as_str));
-    args.push("--no-legend");
+    args.extend(["--no-legend", "--plain", "--no-pager"]);
     let o = run("timeout", &args, None, &[]);
-    let live: HashSet<&str> = o.stdout.lines().filter_map(runtime::units::live_dwarf_in_list_line).filter(|u| runtime::units::counts_toward_caps(u) && keep(u) && Some(*u) != exclude).collect();
-    live.len() as u32
+    if !o.ok {
+        return Err(format!("`systemctl --user list-units` failed, so the live dwarves are unknown: {}", o.stderr.trim()));
+    }
+    let live: std::collections::BTreeSet<&str> = o.stdout.lines().filter_map(runtime::units::live_dwarf_in_list_line).filter(|u| runtime::units::counts_toward_caps(u)).collect();
+    Ok(live.into_iter().map(str::to_string).collect())
+}
+
+fn unit_count(cfg: &Config, keep: &dyn Fn(&str) -> bool, exclude: Option<&str>) -> u32 {
+    let live = live_units(cfg).unwrap_or_default();
+    live.iter().filter(|u| keep(u) && Some(u.as_str()) != exclude).count() as u32
 }
 
 /// Live dwarves of one persona: the unit list under systemd-run (the pidfile lags the unit),
@@ -396,46 +401,9 @@ pub fn pass_truncated(log_text: &str, runes: &[String]) -> bool {
 // The harness's pulse (report header)
 // ------------------------------------------------------------------------------------------
 
-fn unit_known(cfg: &Config, unit: &str) -> bool {
-    run(&cfg.systemctl, &["--user", "is-enabled", unit], None, &[]).ok
-        || run(&cfg.systemctl, &["--user", "is-active", unit], None, &[]).ok
-}
-
-/// conf.sh spira_unit: the instance-suffixed unit if systemd knows it, else the plain one,
-/// else `?`.
-pub fn spira_unit(cfg: &Config, base: &str, t: &str) -> String {
-    let plain = format!("spira-{base}.{t}");
-    let inst = match cfg.instance.as_deref() {
-        Some(i) => format!("spira-{base}-{i}.{t}"),
-        None => plain.clone(),
-    };
-    if unit_known(cfg, &inst) {
-        inst
-    } else if unit_known(cfg, &plain) {
-        plain
-    } else {
-        "?".into()
-    }
-}
-
-/// (sentinel timer state, seconds since the sentinel log was written or -1).
-pub fn harness_state(cfg: &Config, now: i64) -> (String, i64) {
-    let unit = spira_unit(cfg, "sentinel", "timer");
-    let active = if unit == "?" {
-        "unknown".to_string()
-    } else {
-        let o = run(&cfg.systemctl, &["--user", "is-active", &unit], None, &[]);
-        let s = o.stdout.trim().to_string();
-        if s.is_empty() { "unknown".into() } else { s }
-    };
-    let age = cfg
-        .sentinel_log()
-        .and_then(|p| fs::metadata(p).ok())
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| now - d.as_secs() as i64)
-        .unwrap_or(-1);
-    (active, age)
+/// Seconds since the scheduler's last pass, from the runtime's tick stamp; -1 when it never ran.
+pub fn last_pass_age(cfg: &Config) -> i64 {
+    cfg.run.as_deref().and_then(|r| spira_config::ticked::quiet_secs(r, "sentinel-pass")).map_or(-1, |s| s as i64)
 }
 
 #[cfg(test)]
@@ -508,6 +476,33 @@ mod tests {
         assert_eq!(dwarf_count(&cfg, "builder", Some(b1)), 1, "the caller's own unit is excluded");
         assert_eq!(dwarf_count(&cfg, "ops", None), 1);
         assert_eq!(dwarves_live_total(&cfg), 3, "every live dwarf; the landing pass is not one");
+    }
+
+    #[test]
+    fn the_report_names_the_scheduler_started_dwarf_even_when_the_call_mode_is_not_systemd_run() {
+        let t = testkit::TempDir::new("strand-evtrs9-live");
+        let u = "spira-run-sentinel_2dcall-builder_2d1_2d0.service";
+        let cfg = Config { call: "runtime".into(), systemctl: fake_systemctl(&t, &[(u, "active")]), ..Config::test_fixture() };
+        assert_eq!(live_units(&cfg).unwrap(), vec![u.to_string()]);
+    }
+
+    #[test]
+    fn an_unanswering_systemctl_is_an_error_not_zero_live_dwarves() {
+        let t = testkit::TempDir::new("strand-evtrs9-unreadable");
+        let sc = t.join("systemctl");
+        testkit::write_exe(&sc, "#!/bin/sh\necho 'Failed to connect to bus' >&2\nexit 1\n");
+        let cfg = Config { systemctl: sc.to_string_lossy().into_owned(), ..Config::test_fixture() };
+        let e = live_units(&cfg).unwrap_err();
+        assert!(e.contains("live dwarves are unknown") && e.contains("Failed to connect"), "{e}");
+    }
+
+    #[test]
+    fn the_last_pass_is_the_sentinel_pass_tick_and_never_ticked_is_negative() {
+        let run = testkit::TempDir::new("strand-evtrs9-pass");
+        let cfg = Config { run: Some(run.to_path_buf()), ..Config::test_fixture() };
+        assert_eq!(last_pass_age(&cfg), -1);
+        spira_config::ticked::stamp(&run, "sentinel-pass");
+        assert!((0..5).contains(&last_pass_age(&cfg)));
     }
 
     #[test]
