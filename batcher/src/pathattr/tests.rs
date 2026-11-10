@@ -100,3 +100,30 @@ fn glob_matches() {
     assert!(glob("a/", "a/b/c"));
     assert!(!glob("a/", "ab/c"));
 }
+
+const FEATURE_PANIC: &str = "thread 'x' panicked at round-vm/tests/unit_cov_real.rs:39:5:\nerror: the package 'tiny' does not contain this feature: integration\n";
+
+#[test]
+fn a_red_naming_a_test_file_no_member_touched_is_owned_by_the_one_member_that_touches_its_crate() {
+    let members = vec![m("sp-a", &["round-vm/src/run.rs", "round-vm/Cargo.toml"]), m("sp-b", &["docs/x.md"])];
+    let v = attribute(&[red("integration-tests", FEATURE_PANIC, &[])], &members);
+    assert_eq!(eject_ids(&v), ["sp-a"]);
+}
+
+#[test]
+fn a_red_naming_a_crate_two_members_touch_stays_ambiguous() {
+    let members = vec![m("sp-a", &["round-vm/src/run.rs"]), m("sp-b", &["round-vm/src/vm.rs"])];
+    assert!(matches!(attribute(&[red("integration-tests", FEATURE_PANIC, &[])], &members), Verdict::Ambiguous(_)));
+}
+
+#[test]
+fn the_exact_file_outranks_its_crate() {
+    let members = vec![m("sp-a", &["round-vm/tests/unit_cov_real.rs"]), m("sp-b", &["round-vm/src/vm.rs"])];
+    assert_eq!(eject_ids(&attribute(&[red("integration-tests", FEATURE_PANIC, &[])], &members)), ["sp-a"]);
+}
+
+#[test]
+fn a_top_level_directory_that_is_not_a_crate_does_not_stand_for_its_crate() {
+    let members = vec![m("sp-a", &["spira/test-other.sh"])];
+    assert!(matches!(attribute(&[red("fence", "spira/test-x.sh: bad", &[])], &members), Verdict::Ambiguous(_)));
+}

@@ -1,7 +1,8 @@
 //! Path attribution of a red round: which single member's diff a red's own output names.
 //!
 //! Deterministic and pure — evidence text and each member's changed paths in, a verdict out.
-//! Per red: the paths its output names that some member touched; if none, the suite's own
+//! Per red: the paths its output names that some member touched; if none, the crate those paths
+//! sit in, when exactly one member touches it; if none, the suite's own
 //! declared paths (its source, the crate it tests) that some member touched. Exactly one
 //! member per red → that red has an owner; every red owned → eject the owners. A red with no
 //! member or several, or an empty red set, is `Ambiguous` and the round pauses as before.
@@ -80,6 +81,15 @@ fn names(token: &str, path: &str) -> bool {
     !token.contains('/') && token == base && !GENERIC.contains(&token)
 }
 
+const CRATE_SUBDIRS: [&str; 4] = ["src", "tests", "benches", "examples"];
+
+/// The crate directory a token inside a crate names: the component before its first `src/` or `tests/`.
+fn crate_dir(token: &str) -> Option<&str> {
+    let parts: Vec<&str> = token.split('/').collect();
+    let at = parts.iter().position(|p| CRATE_SUBDIRS.contains(p))?;
+    (at >= 1 && at + 1 < parts.len()).then(|| parts[at - 1])
+}
+
 fn glob(pat: &str, s: &str) -> bool {
     if let Some(dir) = pat.strip_suffix('/') {
         return s.starts_with(&format!("{dir}/"));
@@ -114,6 +124,15 @@ fn row(red: &Red, members: &[MemberPaths]) -> Row {
         let hit: BTreeSet<&String> = m.paths.iter().filter(|p| tokens.iter().any(|t| names(t, p))).collect();
         if !hit.is_empty() {
             candidates.insert(m.id.clone(), hit.into_iter().cloned().collect());
+        }
+    }
+    if candidates.is_empty() {
+        let crates: BTreeSet<&str> = tokens.iter().filter_map(|t| crate_dir(t)).collect();
+        for m in members {
+            let hit: BTreeSet<&String> = m.paths.iter().filter(|p| crates.iter().any(|c| p.starts_with(&format!("{c}/")))).collect();
+            if !hit.is_empty() {
+                candidates.insert(m.id.clone(), hit.into_iter().cloned().collect());
+            }
         }
     }
     if candidates.is_empty() {
