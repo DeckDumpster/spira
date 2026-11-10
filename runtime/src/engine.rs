@@ -799,13 +799,12 @@ impl Engine {
 
     /// Run a handler's commands for `ev`. What lands on `ev`'s own stream is also recorded in
     /// `written`, so the projection holds it before `ev`'s stream is dispatched again.
-    fn apply(&mut self, cmds: Vec<Command>, ev: &Event, reg: &Registration) -> Result<usize> {
+    fn apply(&mut self, cmds: Vec<Command>, ev: &Event, reg: &Registration, admitted: &mut usize) -> Result<()> {
         let (handler, mode) = (reg.name.as_str(), reg.mode);
-        let mut admitted = 0;
         let own = ev.stream.0 != HALT_STREAM;
         for (i, cmd) in cmds.into_iter().enumerate() {
             let id = derive_id(format!("{}/{handler}/{i}", ev.id.0));
-            admitted += 1;
+            *admitted += 1;
             match cmd {
                 Command::Emit(kind) => {
                     self.carry(handler, &ev.stream, &kind);
@@ -829,7 +828,7 @@ impl Engine {
                 Command::Effect(spec) if mode == Mode::Act && self.halted && reg.plane_of(&spec.name) == Plane::Work => {
                     let body = serde_json::to_string(&HeldBody { stream: ev.stream.clone(), task: handler.into(), spec }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     let held = self.append_derived(id, &StreamKey(HALT_STREAM.into()), EventKind::new(EFFECT_HELD, &body), ev, ev.at)?;
-                    admitted -= 1;
+                    *admitted -= 1;
                     if !self.held.iter().any(|h| h.id == held.id) {
                         self.held.push(held);
                         self.dirty_halt = true;
@@ -838,7 +837,7 @@ impl Engine {
                 Command::Effect(spec) if mode == Mode::Act => {
                     match self.request(handler, &ev.stream, id, spec, ev, ev.at)? {
                         Some(req) => self.wrote(own, req, false),
-                        None => admitted -= 1,
+                        None => *admitted -= 1,
                     }
                 }
                 Command::Effect(spec) => {
@@ -875,7 +874,7 @@ impl Engine {
                 }
             }
         }
-        Ok(admitted)
+        Ok(())
     }
 
     fn wrote(&mut self, own: bool, e: Event, local: bool) {
@@ -1034,9 +1033,10 @@ impl Engine {
                     wide.set("commands.effect", count(|c| matches!(c, Command::Effect(_))));
                     wide.set("commands.schedule", count(|c| matches!(c, Command::Schedule { .. })));
                     let returned = cmds.len();
-                    let done = self.apply(cmds, ev, reg);
+                    let mut admitted = 0;
+                    let done = self.apply(cmds, ev, reg, &mut admitted);
                     if let Some(t) = self.tracks.get_mut(name) {
-                        t.commands = Some(FireCommands { returned, admitted: *done.as_ref().unwrap_or(&0) });
+                        t.commands = Some(FireCommands { returned, admitted });
                     }
                     if matches!(&done, Err(e) if e.is_refused()) {
                         let message = done.unwrap_err().0;

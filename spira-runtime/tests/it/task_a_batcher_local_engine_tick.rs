@@ -40,10 +40,21 @@ impl EffectRunner for Runner {
 }
 
 #[test]
+fn a_tick_on_the_stored_certifying_row_observes_and_cuts_the_waiting_member() {
+    tick_on_stored_row(false);
+}
+
+#[test]
 fn a_tick_on_the_stored_certifying_row_with_a_standing_refusal_poison_observes_and_cuts_the_waiting_member() {
+    tick_on_stored_row(true);
+}
+
+fn tick_on_stored_row(poisoned: bool) {
     let journal = MemJournal::new();
     journal.commit(&Turn { state: vec![StateRow { task: "batcher.local".into(), skey: "repos/spira".into(), value: STORED.into(), at: NOW }], ..Turn::default() }).unwrap();
-    journal.poison(&Poison { stream: StreamKey(STREAM.into()), event: EventId("unit.ran/spira-run-batcher.local-spira.e14c63e58a6e.certify2.service/1794292447003".into()), handler: "scheduler".into(), message: "journal: effect key is 262 chars (max 255) or holds a NUL".into() }).unwrap();
+    if poisoned {
+        journal.poison(&Poison { stream: StreamKey(STREAM.into()), event: EventId("unit.ran/spira-run-batcher.local-spira.e14c63e58a6e.certify2.service/1794292447003".into()), handler: "scheduler".into(), message: "journal: effect key is 262 chars (max 255) or holds a NUL".into() }).unwrap();
+    }
     let clock = VirtualClock::new(NOW);
     let runner = Arc::new(Runner { clock: clock.clone(), ran: Mutex::new(vec![]) });
     let mut engine = open_engine(&fixture(), journal.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![]).unwrap();
@@ -57,5 +68,6 @@ fn a_tick_on_the_stored_certifying_row_with_a_standing_refusal_poison_observes_a
     let stored = journal.state().get(&("batcher.local".to_string(), "repos/spira".to_string())).cloned().unwrap_or_default();
     assert!(!stored.contains(BATCH), "the Certifying row is gone: {stored}");
     let task = d.engine().status().tasks.into_iter().find(|t| t.name == "batcher.local").unwrap();
-    assert!(task.last_commands.is_some(), "the status says what the last fire returned");
+    let fired = task.last_commands.expect("the status says what the last fire returned");
+    assert_eq!(fired.returned, fired.admitted, "nothing the batcher asked for was refused: {fired:?}");
 }
