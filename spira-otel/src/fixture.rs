@@ -305,19 +305,23 @@ impl Cond {
     }
 }
 
-/// `{a="x",b=~"p|q"}`: equality and alternation of literals, the selectors the readers send.
+/// `name{a="x",b=~"p|q"}` or `{a="x"}`: a leading metric name, equality and alternation of
+/// literals, the selectors the readers send.
 fn parse_selector(s: &str) -> Vec<Cond> {
-    let inner = s.trim().trim_start_matches('{').trim_end_matches('}');
-    inner
-        .split(',')
-        .filter_map(|part| {
+    let s = s.trim();
+    let (name, labels) = s.split_once('{').unwrap_or(("", s));
+    let inner = labels.trim_end_matches('}');
+    let named = (!name.trim().is_empty()).then(|| Cond { label: "__name__".into(), regex: false, want: name.trim().to_string() });
+    named
+        .into_iter()
+        .chain(inner.split(',').filter_map(|part| {
             let (name, rest) = part.split_once('=')?;
             let (regex, value) = match rest.strip_prefix('~') {
                 Some(v) => (true, v),
                 None => (false, rest),
             };
             Some(Cond { label: name.trim().to_string(), regex, want: value.trim().trim_matches('"').to_string() })
-        })
+        }))
         .collect()
 }
 
@@ -353,4 +357,17 @@ fn flatten_timed(req: &ExportMetricsServiceRequest) -> Vec<Stored> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod selector_tests {
+    use super::parse_selector;
+
+    #[test]
+    fn a_leading_metric_name_is_a_name_condition_beside_the_labels() {
+        let c = parse_selector("spira_tsd_value{tsd_family=\"bead-stage\"}");
+        let got: Vec<_> = c.iter().map(|c| (c.label.as_str(), c.want.as_str())).collect();
+        assert_eq!(got, vec![("__name__", "spira_tsd_value"), ("tsd_family", "bead-stage")]);
+        assert_eq!(parse_selector("{a=\"x\"}").len(), 1);
+    }
 }

@@ -48,15 +48,15 @@ pub fn overrides_apply() -> Result<String, String> {
     if out.status.success() { Ok(said.trim().to_string()) } else { Err(said.trim().to_string()) }
 }
 
-/// One `<exporter> lifecycle` run under `timeout`, which brings the `bead-stage` family up to the
-/// lifecycle log; a failed run names its exit code and what it said on stderr.
-pub fn lifecycle_export(bin: &str) -> Result<(), String> {
+/// One `<exporter> <mode>` run under `timeout` (`lifecycle` brings the `bead-stage` family up to the
+/// lifecycle log, `check` fails when it trails the log); a failed run names its exit code and what it said on stderr.
+pub fn exporter_run(bin: &str, mode: &str) -> Result<(), String> {
     // FORK-EDGE: sibling binary tsd-lifecycle-export (the bead-stage exporter).
-    let out = spira_config::bounded::bounded(bin).arg("lifecycle").stdin(Stdio::null()).output().map_err(|e| format!("{bin}: {e}"))?;
+    let out = spira_config::bounded::bounded(bin).arg(mode).stdin(Stdio::null()).output().map_err(|e| format!("{bin}: {e}"))?;
     if out.status.success() {
         return Ok(());
     }
-    Err(format!("{bin} lifecycle: exit {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+    Err(format!("{bin} {mode}: exit {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
 }
 
 fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>), String> {
@@ -81,4 +81,24 @@ fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>
         }
     };
     Ok((code, reader.join().map_err(|_| "git reader panicked")?))
+}
+
+#[cfg(test)]
+mod exporter_tests {
+    use super::exporter_run;
+
+    fn exporter(dir: &std::path::Path, body: &str) -> String {
+        let p = dir.join("fake-export");
+        testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
+        p.display().to_string()
+    }
+
+    #[test]
+    fn the_exporter_is_run_in_the_mode_asked_and_its_refusal_is_carried() {
+        let d = testkit::TempDir::new("exporter-run");
+        let bin = exporter(d.path(), "[ \"$1\" = check ] && { echo 'trails the log' >&2; exit 1; }; exit 0");
+        assert!(exporter_run(&bin, "lifecycle").is_ok());
+        let e = exporter_run(&bin, "check").unwrap_err();
+        assert!(e.contains("check: exit 1") && e.contains("trails the log"), "{e}");
+    }
 }
