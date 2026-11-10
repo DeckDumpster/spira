@@ -416,7 +416,7 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
     }
     // Open beads only for the titles this snapshot can file, and the red-twice detail only for
     // the suites that will be filed.
-    let list = lc.answer(&["content", "list", "--all", "--json"]).unwrap_or_default();
+    let list = open_bead_list(&lc, rows.as_deref().unwrap_or_default());
     let lc_rows = rows.map(spira_config::lc_state::index).unwrap_or_default();
     let titled = |pick: fn(&str) -> Vec<String>, title: fn(&str) -> String, runs: &[Run]| -> Vec<(String, Run)> { runs.iter().flat_map(|r| suites_of(&snap.ci, &r.id, pick).into_iter().map(|s| (title(&s), r.clone()))).collect() };
     let flaky = titled(engine::flaky_suites, engine::flaky_title, &snap.ci.recent_runs);
@@ -439,6 +439,42 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
         }
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+/// The beads whose lifecycle row is not terminal, as one JSON array: read by id, never as the
+/// whole history.
+pub fn open_bead_list(lc: &spira_config::lc_call::LcClient, rows: &[spira_config::lc_state::Row]) -> String {
+    let ids: Vec<&str> = rows.iter().filter(|r| !r.terminal()).map(|r| r.bead_id.as_str()).collect();
+    let mut beads: Vec<serde_json::Value> = Vec::new();
+    for chunk in ids.chunks(100) {
+        let text = lc.answer(&["content", "list", "--all", "--limit", "0", "--json", "--id", &chunk.join(",")]).unwrap_or_default();
+        beads.extend(serde_json::from_str::<Vec<serde_json::Value>>(&text).unwrap_or_default());
+    }
+    serde_json::Value::Array(beads).to_string()
+}
+
+#[cfg(test)]
+mod open_bead_list_tests {
+    use super::open_bead_list;
+    use spira_config::lc_call::{fake, LcClient};
+    use spira_config::lc_state::Row;
+    use std::sync::Arc;
+
+    fn bead(id: &str, status: &str) -> serde_json::Value {
+        serde_json::json!({"id": id, "status": status, "title": "suite red on main: x.sh"})
+    }
+
+    #[test]
+    fn the_flaky_dedupe_finds_the_open_bead_among_closed_ones_without_the_history() {
+        let mut rows = vec![Row { bead_id: "sp-open".into(), state: "READY".into(), ..Default::default() }, Row { bead_id: "sp-old".into(), state: "LANDED".into(), ..Default::default() }];
+        let mut beads = vec![bead("sp-old", "closed"), bead("sp-open", "open")];
+        beads.extend((0..60).map(|i| bead(&format!("sp-h{i}"), "closed")));
+        let store = Arc::new(fake::Content::new(beads));
+        let list = open_bead_list(&LcClient::over(store.clone(), true), &rows);
+        let lc = spira_config::lc_state::index(std::mem::take(&mut rows));
+        assert_eq!(gate_check::engine::find_open_bead(&list, "suite red on main: x.sh", &lc), Some(("sp-open".to_string(), 2)));
+        assert!(store.requests().iter().all(|r| !spira_config::lc_call::reads_whole_history(r)), "{:?}", store.requests());
+    }
 }
 
 /// `ci.failed`: `spira_event`, now `bead::event::emit` in this process, at bead's own default
