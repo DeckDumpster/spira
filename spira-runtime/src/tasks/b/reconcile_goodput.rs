@@ -300,7 +300,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             let timeout = secs(cfg, PASS_TIMEOUT_KEY)?;
             let holder = format!("{NAME}/{now_ms}");
             let next = Carry { phase: Phase::Locking, holder: Some(holder.clone()), token: None, deadline_at: Some(now_ms + timeout * 1000), halted: snap.halted, ..carry.clone() };
-            Ok((next, vec![act(LOCK, &holder.clone(), &LockIn { holder, ttl_secs: timeout })?]))
+            Ok((next, vec![act(LOCK, &holder, &LockIn { holder: holder.clone(), ttl_secs: timeout })?]))
         }
         Input::Outcome { effect, ok, body } => {
             let expected = match carry.phase {
@@ -328,7 +328,8 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                     let v: serde_json::Value = serde_json::from_str(body.trim()).map_err(|e| format!("{NAME}: the lock grant is not JSON: {e}"))?;
                     let token = v.get("token").and_then(serde_json::Value::as_str).ok_or_else(|| format!("{NAME}: the lock grant names no token"))?.to_string();
                     let next = Carry { phase: Phase::Judging, token: Some(token), ..carry.clone() };
-                    Ok((next.clone(), vec![act(JUDGE, &leg(&next)?.token, &leg(&next)?)?]))
+                    let l = leg(&next)?;
+                    Ok((next, vec![act(JUDGE, &l.token, &l)?]))
                 }
                 Phase::Locking if body.contains("locked") => Ok((Carry { phase: Phase::Standby, ..carry.clone() }, vec![act(STANDBY, carry.holder.as_deref().unwrap_or_default(), &LockIn { holder: carry.holder.clone().unwrap_or_default(), ttl_secs: 0 })?])),
                 Phase::Locking | Phase::Standby => Ok((idle(carry), vec![])),
