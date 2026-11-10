@@ -197,3 +197,20 @@ fn an_attribution_leg_deadline_follows_the_member_count() {
     let (_, acts) = decide(&carry, &snap(NOW + wall * 5 + LEG_GRACE_MS + 1, listed));
     assert_eq!(names(&acts).first(), Some(&ABANDON), "{acts:?}");
 }
+
+/// A leg that ended while the runtime was down left no `unit.ran`: the tick reads each leg in
+/// flight, in every state that has one, through `unit.facts`.
+#[test]
+fn a_tick_reads_every_leg_in_flight_through_unit_facts() {
+    use runtime::units::{Exit, UnitFacts, UnitState, UNIT_FACTS};
+    let facts = serde_json::to_string(&UnitFacts { state: UnitState::Inactive, main_pid: None, exit: Some(Exit::Code(0)), since_ms: Some(1) }).unwrap();
+    for state in [State::Corpus, State::Attributing, State::Certifying] {
+        let mut carry = corpus("spira.r9.leg.1", NOW);
+        carry.repos.get_mut("spira").unwrap().state = state;
+        let facts = facts.clone();
+        let mut r = runtime::taskrig::TaskRig::new(1, BatcherLocal::new(Default::default()).registration()).unwrap().double(UNIT_FACTS, move |_| Ok(facts.clone()));
+        r.tick(STREAM, runtime::event::EventKind::new(spira_runtime::tasks::a::batcher_local::STATE, &serde_json::to_string(&carry).unwrap())).unwrap();
+        r.tick(STREAM, runtime::event::EventKind::new(spira_runtime::tasks::a::batcher_local::TICK, "")).unwrap();
+        assert!(r.requested().iter().any(|q| q.name == UNIT_FACTS), "{state:?}: {:?}", r.requested());
+    }
+}
