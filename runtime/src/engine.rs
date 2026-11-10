@@ -214,7 +214,7 @@ pub struct Engine {
     /// Their deadline is not running, so `tick` never times them out.
     queued: BTreeSet<String>,
     rss: TurnRss,
-    /// Each task's newest own-stream emit per (stream, kind): the carry stored under [`CARRY_KEY`].
+    /// Each task's newest own-stream emit per (stream, kind): the carry stored under [`CARRY_KEY`], or as the rows of its codec.
     carries: BTreeMap<String, BTreeMap<(String, String), Event>>,
     dirty_carry: BTreeSet<String>,
     codecs: BTreeMap<String, RowCodec>,
