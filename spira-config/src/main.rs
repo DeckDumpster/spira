@@ -86,6 +86,7 @@ fn env_nonempty(key: &str) -> Option<String> {
 use spira_config::runes;
 use spira_config::{edit_text, is_retired_path, remove_retired_text};
 use spira_config::locate::locate;
+use spira_config::registry::Registry as ConfRegistry;
 use spira_config::repos::{Column, Registry};
 use spira_config::resolve::{resolve, ResolveError, ResolveInput, EXPORT_KEYS};
 use spira_config::{
@@ -961,9 +962,9 @@ fn cmd_schema() -> ExitCode {
     }
 }
 
-fn read_text_and_doc(file: &str) -> Result<(String, SpiraToml), String> {
+fn read_text_and_doc(file: &str, reg: Option<&ConfRegistry>) -> Result<(String, SpiraToml), String> {
     let text = if Path::new(file).exists() { fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))? } else { String::new() };
-    let doc = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
+    let doc = if text.trim().is_empty() { SpiraToml::default() } else { validate_in(&text, reg)? };
     Ok((text, doc))
 }
 
@@ -978,7 +979,7 @@ fn is_checked_in_fixture(path: &Path) -> bool {
 /// contents, back up whatever `file` currently holds, then rename — in that order, so a
 /// crash at any point before the rename leaves `file` exactly as it was, and a doc that
 /// fails to round-trip through validation is never renamed into place at all.
-fn write_doc(file: &str, text: &str, verb: &str) -> ExitCode {
+fn write_doc(file: &str, text: &str, verb: &str, reg: Option<&ConfRegistry>) -> ExitCode {
     if is_checked_in_fixture(Path::new(file)) {
         eprintln!("spira-config {verb}: {file}: refusing to write a checked-in test fixture — layer an override file over it instead");
         return ExitCode::FAILURE;
@@ -992,7 +993,7 @@ fn write_doc(file: &str, text: &str, verb: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if let Err(e) = validate(&out) {
+    if let Err(e) = validate_in(&out, reg) {
         eprintln!("spira-config {verb}: {file}: refusing to write a document that fails to validate: {e}");
         return ExitCode::FAILURE;
     }
@@ -1009,16 +1010,50 @@ fn write_doc(file: &str, text: &str, verb: &str) -> ExitCode {
     }
 }
 
-/// `set <dotted.path> <value> <file>` — write one path's value into `file` in place.
-fn cmd_set(path: &str, value: &str, file: &str) -> ExitCode {
-    let (text, doc) = match read_text_and_doc(file) {
+fn validate_in(text: &str, reg: Option<&ConfRegistry>) -> Result<SpiraToml, String> {
+    match reg {
+        Some(r) => spira_config::validate_with(text, r).map(|(d, _)| d),
+        None => validate(text),
+    }
+}
+
+/// The registry of the release at `dir` (its `conf.d` directly, or under `dir/spira`) — the
+/// one a `--release` write is typed against; a directory with neither is a refusal, never a
+/// fall back to the installed registry.
+fn staged_registry(dir: &str) -> Result<ConfRegistry, String> {
+    let dir = Path::new(dir);
+    let home = [dir.to_path_buf(), dir.join("spira")]
+        .into_iter()
+        .find(|h| h.join("conf.d").is_dir())
+        .ok_or_else(|| format!("--release {}: no conf.d there or under spira/ — not a release", dir.display()))?;
+    ConfRegistry::load(&home)
+}
+
+/// Splits a leading `--release <dir>` off a `set`/`unset` argument list.
+fn split_release(args: &[String]) -> Result<(Option<ConfRegistry>, &[String]), String> {
+    match args {
+        [flag, dir, rest @ ..] if flag == "--release" => Ok((Some(staged_registry(dir)?), rest)),
+        [flag] if flag == "--release" => Err("--release needs a release directory".to_string()),
+        _ => Ok((None, args)),
+    }
+}
+
+/// `set [--release <dir>] <dotted.path> <value> <file>` — write one path's value into `file`
+/// in place. `--release` types the write against that release's registry instead of the one in
+/// force, so a staged release's new keys can be written before it is active.
+fn cmd_set(reg: Option<&ConfRegistry>, path: &str, value: &str, file: &str) -> ExitCode {
+    let (text, doc) = match read_text_and_doc(file, reg) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("spira-config: {e}");
             return ExitCode::FAILURE;
         }
     };
-    let new_doc = match set_path(&doc, path, value) {
+    let set = match reg {
+        Some(r) => spira_config::set_path_with(r, &doc, path, value),
+        None => set_path(&doc, path, value),
+    };
+    let new_doc = match set {
         Ok(d) => d,
         Err(e) => {
             eprintln!("spira-config set: {e}");
@@ -1026,7 +1061,7 @@ fn cmd_set(path: &str, value: &str, file: &str) -> ExitCode {
         }
     };
     match edit_text(&text, &doc, &new_doc) {
-        Ok(out) => write_doc(file, &out, "set"),
+        Ok(out) => write_doc(file, &out, "set", reg),
         Err(e) => {
             eprintln!("spira-config set: {file}: {e}");
             ExitCode::FAILURE
@@ -1044,7 +1079,7 @@ fn cmd_rename_persona(old: &str, new: &str, file: &str) -> ExitCode {
         }
     };
     match spira_config::rename::rename_persona_text(&text, old, new) {
-        Ok(out) => write_doc(file, &out, "rename-persona"),
+        Ok(out) => write_doc(file, &out, "rename-persona", None),
         Err(e) => {
             eprintln!("spira-config rename-persona: {file}: {e}");
             ExitCode::FAILURE
@@ -1052,17 +1087,21 @@ fn cmd_rename_persona(old: &str, new: &str, file: &str) -> ExitCode {
     }
 }
 
-/// `unset <dotted.path> <file>` — remove one path's value from `file` in place, so the key
-/// stops appearing rather than being left behind as an empty string.
-fn cmd_unset(path: &str, file: &str) -> ExitCode {
-    let (text, doc) = match read_text_and_doc(file) {
+/// `unset [--release <dir>] <dotted.path> <file>` — remove one path's value from `file` in
+/// place, so the key stops appearing rather than being left behind as an empty string.
+fn cmd_unset(reg: Option<&ConfRegistry>, path: &str, file: &str) -> ExitCode {
+    let (text, doc) = match read_text_and_doc(file, reg) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("spira-config: {e}");
             return ExitCode::FAILURE;
         }
     };
-    let new_doc = match unset_path(&doc, path) {
+    let unset = match reg {
+        Some(r) => spira_config::unset_path_with(r, &doc, path),
+        None => unset_path(&doc, path),
+    };
+    let new_doc = match unset {
         Ok(d) => d,
         Err(e) => {
             eprintln!("spira-config unset: {e}");
@@ -1071,7 +1110,7 @@ fn cmd_unset(path: &str, file: &str) -> ExitCode {
     };
     let edited = if is_retired_path(path) { remove_retired_text(&text, path) } else { edit_text(&text, &doc, &new_doc) };
     match edited {
-        Ok(out) => write_doc(file, &out, "unset"),
+        Ok(out) => write_doc(file, &out, "unset", reg),
         Err(e) => {
             eprintln!("spira-config unset: {file}: {e}");
             ExitCode::FAILURE
@@ -1587,17 +1626,25 @@ fn dispatch(args: &[String]) -> ExitCode {
         Some("check-bd") => cmd_check_bd(),
         Some("convert") => cmd_convert(&args[1..]),
         Some("repo") => cmd_repo(&args[1..]),
-        Some("set") => match (args.get(1), args.get(2), args.get(3)) {
-            (Some(path), Some(value), Some(file)) => cmd_set(path, value, file),
-            _ => {
-                eprintln!("usage: spira-config set <dotted.path> <value> <file>");
+        Some("set") => match split_release(&args[1..]) {
+            Ok((reg, [path, value, file])) => cmd_set(reg.as_ref(), path, value, file),
+            Ok(_) => {
+                eprintln!("usage: spira-config set [--release <dir>] <dotted.path> <value> <file>");
+                ExitCode::FAILURE
+            }
+            Err(e) => {
+                eprintln!("spira-config set: {e}");
                 ExitCode::FAILURE
             }
         },
-        Some("unset") => match (args.get(1), args.get(2)) {
-            (Some(path), Some(file)) => cmd_unset(path, file),
-            _ => {
-                eprintln!("usage: spira-config unset <dotted.path> <file>");
+        Some("unset") => match split_release(&args[1..]) {
+            Ok((reg, [path, file])) => cmd_unset(reg.as_ref(), path, file),
+            Ok(_) => {
+                eprintln!("usage: spira-config unset [--release <dir>] <dotted.path> <file>");
+                ExitCode::FAILURE
+            }
+            Err(e) => {
+                eprintln!("spira-config unset: {e}");
                 ExitCode::FAILURE
             }
         },
@@ -1661,8 +1708,8 @@ fn dispatch(args: &[String]) -> ExitCode {
                  \x20 convert --conf F --repo-map F [--rune F]... [--home DIR] [--out F]\n\
                  \x20         [--force-shrink]\n\
                  \x20 convert-legacy <config-dir> [--home DIR] [--rune F]...\n\
-                 \x20 set <dotted.path> <value> <file>\n\
-                 \x20 unset <dotted.path> <file>\n\
+                 \x20 set [--release DIR] <dotted.path> <value> <file>\n\
+                 \x20 unset [--release DIR] <dotted.path> <file>\n\
                  \x20 writeback <candidate>\n\
                  \x20 link-model-bin <release>\n\
                  \x20 registry-index <home>\n\
