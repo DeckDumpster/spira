@@ -189,3 +189,10 @@ fn a_gate_leg_that_runs_long_is_never_recovered() {
     assert!(acts.iter().all(|a| a.effect != RECOVER), "{acts:?}");
     assert_eq!(next.slots[0].stall, None);
 }
+
+#[test]
+fn every_observe_stamps_the_file_strand_reads_for_liveness() {
+    let run = testkit::TempDir::new("gate-worker-stamp");
+    spira_runtime::tasks::a::gate_worker::stamp_ticked(&run);
+    assert!(run.join(spira_config::GATE_WORKER_TICKED).exists());
+}
