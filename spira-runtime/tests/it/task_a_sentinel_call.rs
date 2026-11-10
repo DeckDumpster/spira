@@ -204,3 +204,19 @@ fn sp_8mbnup_a_directed_dwarf_takes_no_slot_in_the_fleet_ceiling() {
     let after = fleet(&u, &roster, &|r: &str| r.to_string()).unwrap();
     assert_eq!((before, after.total()), (1, 1), "one ordinary dwarf counts, the directed one beside it does not: {after:?}");
 }
+
+fn at_work() -> TaskRig {
+    let mut r = rig(1, busy());
+    r.advance(60_000).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    kit::assert_kept_as_rows(&at_work(), NAME);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+}

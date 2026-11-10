@@ -172,7 +172,7 @@ fn shed(list: &mut Vec<String>, size: &mut usize) {
 
 impl RepoEvents {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self).with_rows(RowCodec { stream: STREAM, tag: STATE, split, join })
+        Registration::new(NAME, self).with_rows(RowCodec { stream: STREAM, also: &[], tag: STATE, split, join })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

@@ -172,6 +172,8 @@ pub struct Current {
 pub struct Carry {
     pub state: State,
     pub run_id: Option<String>,
+    /// The sessions still to archive: the next observe lists them again, so a restart does not keep them.
+    #[serde(default)]
     pub queue: Vec<String>,
     pub current: Option<Current>,
     pub archived: u32,
@@ -414,7 +416,7 @@ impl PersonaArchivist {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::event::RowCodec { also: &[runtime::sources::UNITS_STREAM], ..runtime::row_codec!(STREAM, STATE, ROW_PARTS)})
     }
 
     fn ours(effect: &str) -> bool {
@@ -445,6 +447,10 @@ impl PersonaArchivist {
         EffectSpec { input: serde_json::json!({ "cfg": self.config, "act": act }).to_string(), ..a }
     }
 }
+
+/// The rows a restart keeps; what a Carry field is left out of is rebuilt by the first tick.
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("run_id"), runtime::rows::Part::Field("current"), runtime::rows::Part::Field("archived")];
+
 
 impl Handler for PersonaArchivist {
     fn interests(&self) -> &[EventKindTag] {

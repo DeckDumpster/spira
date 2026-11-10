@@ -1053,7 +1053,7 @@ impl Engine {
         let mut changed: Vec<(String, String, String, String)> = vec![];
         for task in std::mem::take(&mut self.dirty_carry) {
             if let Some(codec) = self.codecs.get(&task).copied() {
-                let body = self.carries.get(&task).and_then(|c| c.get(&(codec.stream.to_string(), codec.tag.to_string()))).map(|e| e.kind.body.clone()).unwrap_or_default();
+                let body = std::iter::once(codec.stream).chain(codec.also.iter().copied()).filter_map(|s| self.carries.get(&task)?.get(&(s.to_string(), codec.tag.to_string()))).max_by_key(|e| e.at).map(|e| e.kind.body.clone()).unwrap_or_default();
                 let mut rows = (codec.split)(&body);
                 for ((t, k), sig) in &self.kept {
                     if t == &task && !sig.is_empty() && sig != LEGACY_SPENT && k != CARRY_KEY && !rows.contains_key(k) {

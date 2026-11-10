@@ -309,6 +309,8 @@ pub struct Registration {
 #[derive(Clone, Copy)]
 pub struct RowCodec {
     pub stream: &'static str,
+    /// Other streams the same carry may be emitted on; the newest of them is the one kept.
+    pub also: &'static [&'static str],
     pub tag: EventKindTag,
     pub split: fn(&str) -> std::collections::BTreeMap<String, String>,
     pub join: fn(&std::collections::BTreeMap<String, String>) -> String,
@@ -360,4 +362,12 @@ impl Registration {
             Plane::Work
         }
     }
+}
+
+/// A [`RowCodec`] over `stream` and `tag` that keeps what `parts` names (see [`crate::rows`]).
+#[macro_export]
+macro_rules! row_codec {
+    ($stream:expr, $tag:expr, $parts:expr) => {
+        $crate::event::RowCodec { stream: $stream, also: &[], tag: $tag, split: |b| $crate::rows::split(b, $parts), join: |r| $crate::rows::join(r, $parts) }
+    };
 }

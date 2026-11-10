@@ -303,6 +303,38 @@ struct WrittenCarry {
     width: Option<usize>,
 }
 
+/// One row per slot in use (`slot/0003`) and the pool's width.
+fn split_slots(body: &str) -> BTreeMap<String, String> {
+    let Ok(written) = serde_json::from_str::<WrittenCarry>(body) else { return BTreeMap::new() };
+    let width = written.width.unwrap_or(written.slots.len()).max(written.slots.len());
+    let mut rows: BTreeMap<String, String> = written.slots.iter().enumerate().filter(|(_, s)| **s != Slot::default()).map(|(i, s)| (format!("slot/{i:04}"), serde_json::to_string(s).unwrap_or_default())).collect();
+    rows.insert("width".into(), width.to_string());
+    rows
+}
+
+fn join_slots(rows: &BTreeMap<String, String>) -> String {
+    let width: usize = rows.get("width").and_then(|w| w.parse().ok()).unwrap_or(0);
+    let mut slots = vec![];
+    for (k, v) in rows.iter().filter(|(k, _)| k.starts_with("slot/")) {
+        let Some(i) = k["slot/".len()..].parse::<usize>().ok() else { continue };
+        let Ok(slot) = serde_json::from_str::<Slot>(v) else { continue };
+        if slots.len() <= i {
+            slots.resize(i + 1, Slot::default());
+        }
+        slots[i] = slot;
+    }
+    serde_json::to_string(&Carry { slots }.padded(width)).unwrap_or_default()
+}
+
+impl Carry {
+    fn padded(mut self, width: usize) -> Self {
+        if self.slots.len() < width {
+            self.slots.resize(width, Slot::default());
+        }
+        self
+    }
+}
+
 impl From<Carry> for WrittenCarry {
     fn from(c: Carry) -> Self {
         let width = c.slots.len();
@@ -576,7 +608,7 @@ impl GateWorker {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::event::RowCodec { stream: STREAM, also: &[], tag: STATE, split: split_slots, join: join_slots })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

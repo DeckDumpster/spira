@@ -307,9 +307,13 @@ impl CertFull {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+/// The rows a restart keeps; what a Carry field is left out of is rebuilt by the first tick.
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("tip"), runtime::rows::Part::Field("round"), runtime::rows::Part::Field("picks"), runtime::rows::Part::Field("seq"), runtime::rows::Part::Field("pending"), runtime::rows::Part::Field("reruns"), runtime::rows::Part::Field("bisect"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("filed"), runtime::rows::Part::Field("waiting_since"), runtime::rows::Part::Field("work")];
+
 
 impl Handler for CertFull {
     fn interests(&self) -> &[EventKindTag] {

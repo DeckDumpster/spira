@@ -458,7 +458,7 @@ impl Sift {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -470,6 +470,10 @@ impl Sift {
 fn note_key(send_back_key: &str) -> String {
     format!("{}:note", send_back_key.strip_suffix(":GateRed").unwrap_or(send_back_key))
 }
+
+/// The rows a restart keeps; what a Carry field is left out of is rebuilt by the first tick.
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "beads", drop: &[] }, runtime::rows::Part::Map { name: "pending", drop: &[] }];
+
 
 impl Handler for Sift {
     fn interests(&self) -> &[EventKindTag] {

@@ -162,3 +162,23 @@ fn t9_the_prepare_acts_are_keyed_by_the_run_the_handler_assigned() {
     assert_eq!(key(INCIDENT_DRAIN), Some(format!("ops/{id}/drain")));
     assert_eq!(key(BRIEF), Some(format!("ops/{id}/brief")));
 }
+
+fn mid_run() -> TaskRig {
+    let mut r = rig(1, |_| snap("a changed prompt head", 0, false, Pause::Open));
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_run_in_flight_is_kept_as_rows_and_not_as_one_whole_row() {
+    let r = mid_run();
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&r, NAME);
+    assert!(rows.iter().any(|k| k == "run_id"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_records_the_run_that_ends_after_it_as_an_unstopped_process_does() {
+    let run_id = spira_runtime::watchers::carried::<Carry>(mid_run().engine().projection(), &StreamKey(STREAM.into()), STATE).run_id.expect("a run in flight");
+    let ended = UnitRan { handle: UnitHandle::of(NAME, &run_id).unwrap(), exit: Exit::Code(0), duration_ms: 60_000 }.event_kind_with(&runtime::units::RanOutput::captured(b"", b""));
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(mid_run, || handler().registration(), STREAM, ended);
+}

@@ -320,7 +320,7 @@ pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, repaired: &[String]
 
 impl BeadSweep {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self).with_rows(RowCodec { stream: STREAM, tag: STATE, split, join })
+        Registration::new(NAME, self).with_rows(RowCodec { stream: STREAM, also: &[], tag: STATE, split, join })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
