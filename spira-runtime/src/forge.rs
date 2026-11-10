@@ -35,9 +35,8 @@ impl fmt::Debug for Forge {
     }
 }
 
-/// `owner/repo` of a checkout's forge remote: `origin` when it has one, else the first remote.
-pub fn slug(repo_dir: &Path) -> Option<String> {
-    let text = fs::read_to_string(repo_dir.join(".git/config")).ok()?;
+fn remotes(repo_dir: &Path) -> Vec<(String, String)> {
+    let Ok(text) = fs::read_to_string(repo_dir.join(".git/config")) else { return vec![] };
     let mut remotes: Vec<(String, String)> = vec![];
     let mut current: Option<String> = None;
     for l in text.lines().map(str::trim) {
@@ -47,12 +46,30 @@ pub fn slug(repo_dir: &Path) -> Option<String> {
             remotes.push((name.clone(), url.to_string()));
         }
     }
-    let (_, url) = remotes.iter().find(|(n, _)| n == "origin").or(remotes.first())?;
+    remotes
+}
+
+fn slug_of(url: &str) -> Option<String> {
     let path = url.trim_end_matches('/').trim_end_matches(".git").rsplit(['/', ':']).take(2).collect::<Vec<_>>();
     match path[..] {
         [repo, owner] if !repo.is_empty() && !owner.is_empty() => Some(format!("{owner}/{repo}")),
         _ => None,
     }
+}
+
+/// `owner/repo` of a checkout's forge remote: `origin` when it has one, else the first remote.
+pub fn slug(repo_dir: &Path) -> Option<String> {
+    let remotes = remotes(repo_dir);
+    let (_, url) = remotes.iter().find(|(n, _)| n == "origin").or(remotes.first())?;
+    slug_of(url)
+}
+
+/// `owner/repo` of the named remote, only when that remote is on github.com.
+pub fn github_slug(repo_dir: &Path, remote: &str) -> Option<String> {
+    let url = remotes(repo_dir).into_iter().find(|(n, _)| n == remote)?.1;
+    let rest = url.split_once("://").map_or(url.as_str(), |(_, r)| r);
+    let host = rest.split(['/', ':']).next()?.rsplit('@').next()?;
+    host.eq_ignore_ascii_case("github.com").then(|| slug_of(&url)).flatten()
 }
 
 fn text(v: &Value, key: &str) -> String {

@@ -13,6 +13,7 @@ mod effects_runnable;
 mod no_fork_edges_ops;
 mod no_spawn;
 mod pr_notify_parity;
+mod repo_events_publish_forge;
 mod repo_events_restart;
 mod restart_wakes;
 mod state_rows;
