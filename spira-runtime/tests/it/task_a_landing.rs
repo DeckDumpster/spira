@@ -146,3 +146,20 @@ fn t7_confine_outcomes_are_read_from_the_typed_body() {
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!(next.branches["spira/pd-a"].state, State::Done, "an unreadable confine body is inconclusive");
 }
+
+fn at_work() -> TaskRig {
+    let mut r = rig(1, busy());
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&at_work(), NAME);
+    assert!(rows.iter().any(|k| k.starts_with("branches/")), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+}

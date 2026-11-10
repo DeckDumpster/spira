@@ -337,6 +337,7 @@ pub struct RepoCarry {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub repos: BTreeMap<String, RepoCarry>,
 }
@@ -653,13 +654,15 @@ impl Publish {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
         ("publish/boot", STREAM, EventKind::new(TICK, ""))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "repos", drop: &[] }];
 
 impl Handler for Publish {
     fn interests(&self) -> &[EventKindTag] {

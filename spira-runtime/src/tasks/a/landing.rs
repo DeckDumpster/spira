@@ -310,6 +310,7 @@ pub struct BranchCarry {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub branches: BTreeMap<String, BranchCarry>,
 }
@@ -767,13 +768,15 @@ impl Landing {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
         ("landing/boot", STREAM, EventKind::new(TICK, ""))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "branches", drop: &[] }];
 
 impl Handler for Landing {
     fn interests(&self) -> &[EventKindTag] {

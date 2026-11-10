@@ -114,3 +114,20 @@ fn t7_a_hold_in_string_form_keeps_its_row_out_of_the_certified_pool() {
     assert_eq!(unheld_ids(list), Ok(vec!["sp-a".to_string(), "sp-d".to_string()]));
     assert!(unheld_ids("cannot tell: deadline").is_err());
 }
+
+fn at_work() -> TaskRig {
+    let mut r = rig(1, busy());
+    r.advance(30_000).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&at_work(), NAME);
+    assert!(rows.iter().any(|k| k.starts_with("keys/deadlock")), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+}

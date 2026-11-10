@@ -280,13 +280,15 @@ impl SweepTarget {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
         ("sweep.target/boot", STREAM, EventKind::new(TICK, ""))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[];
 
 impl Handler for SweepTarget {
     fn interests(&self) -> &[EventKindTag] {

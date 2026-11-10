@@ -200,3 +200,20 @@ fn the_carry_stays_under_the_journal_column_for_the_longest_repo_names_and_the_r
     assert!(carry.repos.keys().all(|k| again.repos.contains_key(k)), "a carried repo keeps its entry");
     assert!(serde_json::to_string(&again).unwrap().len() < 65_535);
 }
+
+fn at_work() -> TaskRig {
+    let mut r = rig(1, busy());
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&at_work(), NAME);
+    assert!(rows.iter().any(|k| k.starts_with("repos/")), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+}

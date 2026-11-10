@@ -85,7 +85,7 @@ fn t5_a_red_twice_suite_already_p1_is_untouched() {
 /// `main.rs:186-190` (changed by the contract): a new run is ingested once, an old one never again.
 #[test]
 fn t5_a_new_run_is_ingested_once() {
-    let snap = Snapshot { ci: Ci { recent_runs: vec![run("101", "success"), run("103", "success")], ..idle().ci }, ..idle() };
+    let snap = Snapshot { ci: Ci { recent_runs: vec![run("101", "success"), run("103", "success")], ..idle().ci }, ..busy() };
     let (carry, acts) = decide(&ingested(&["101"]), &snap);
     assert_eq!(acts.iter().filter(|a| a.effect == TSD_INGEST).map(|a| a.key.as_str()).collect::<Vec<_>>(), ["rgantt/spira/103"]);
     assert!(decide(&carry, &snap).1.iter().all(|a| a.effect != TSD_INGEST));
@@ -96,4 +96,24 @@ fn t5_a_new_run_is_ingested_once() {
 fn t5_unreadable_rows_file_nothing() {
     let snap = Snapshot { lc_open: None, ..busy() };
     assert!(!effects(&decide(&ingested(&["101"]), &snap).1).contains(&FILE_BEAD));
+}
+
+fn later() -> Snapshot {
+    Snapshot { ci: Ci { recent_runs: vec![run("101", "success"), run("103", "success")], ..idle().ci }, ..busy() }
+}
+
+fn after_baseline() -> TaskRig {
+    let mut r = rig_with(1, kit::cycling(vec![busy(), busy(), later()], 1));
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    assert_eq!(kit::assert_kept_as_rows(&after_baseline(), NAME), ["ingested"]);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(after_baseline, registration, STREAM, EventKind::new(TICK, ""));
 }
