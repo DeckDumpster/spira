@@ -299,6 +299,12 @@ the newest image built from one: a round whose head changes the recipe dispatche
 `spira-round-candidate/*` branch and launches that image by id. The CI workflow
 `round-ami-build.yml` builds and tags that image from the same recipe.
 
+### 2.6a Rounds on the host
+
+A harness round is offered to this host first (`SPIRA_ROUND_VM_HOST`, default `on`; `off` restores the VM-first behaviour). It runs here, as the same round script a VM runs, under a home of its own (`$SPIRA_RUN/host-round`) so the build target stays warm, in the same testenv container; the mirror, results pull and attribution spool are the VM's, over a local `Remote` instead of ssh. A foreign repo's CI round is never offered.
+
+The host takes a round only when the host slot (a kernel lock in the state dir, freed when its holder dies) is free and neither `/proc/pressure/io` `full avg60` (`SPIRA_ROUND_VM_HOST_IO_FULL_AVG60`, 30) nor `/proc/pressure/cpu` `some avg60` (`SPIRA_ROUND_VM_HOST_CPU_SOME_AVG60`, 60) is over its threshold (`spill::decide_host`; an unreadable pressure never refuses). Otherwise the pass is placed on EC2 as a spill, whatever the local pool holds, and falls back to the local VM only when EC2 cannot be had. Attribution legs ride the round's own place. The pass row records `where=host`, with boot/build/suites seconds, so the rounds dashboard compares host and spilled rounds.
+
 ### 2.3 Guarantees
 
 - **G1 Pool of one.** At most one ready VM and at most one provision in flight, ever.
