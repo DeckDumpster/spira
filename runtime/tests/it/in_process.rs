@@ -80,6 +80,30 @@ mod ids {
         assert_ne!(d, derive_id("é".repeat(301)), "the hash covers the whole id");
     }
 
+    struct Ticker;
+    impl Handler for Ticker {
+        fn interests(&self) -> &[EventKindTag] {
+            &["tick"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            vec![Command::Timer { at: ev.at + 30_000, kind: EventKind::new("tick", "") }]
+        }
+    }
+
+    #[test]
+    fn a_plain_ticker_has_its_next_tick_armed_after_the_boot_tick_and_every_later_one() {
+        let clock = VirtualClock::new(1_000);
+        let regs = vec![Registration::new("ticker", Ticker)];
+        let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), regs, 0).unwrap();
+        e.start("ticker", EventKind::new("tick", ""));
+        for _ in 0..4 {
+            e.run_until_idle().unwrap();
+            let t = &e.status().tasks[0];
+            assert!(t.next_due_at.is_some(), "the next tick stays armed");
+            clock.advance(30_000);
+        }
+    }
+
     struct Echo;
     impl Handler for Echo {
         fn interests(&self) -> &[EventKindTag] {
