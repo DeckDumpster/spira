@@ -21,6 +21,7 @@ const EXEMPT_TOML_FROM_STR: &[&str] = &[
     "reconciler-engine/src/causal_map.rs",
     "reconciler-flow/src/io.rs",
     "spira-lint/src/rules/lockfile_lint.rs",
+    "spira-lint/src/rules/integration_opt_in.rs",
     "sim/src/actors.rs",
     "sim/src/fit.rs",
     "spira/sim/src/drive.rs",
