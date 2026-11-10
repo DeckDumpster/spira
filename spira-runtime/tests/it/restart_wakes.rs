@@ -81,6 +81,10 @@ fn observes(seen: &Seen, name: &str) -> usize {
     seen.0.lock().unwrap().iter().filter(|n| *n == name).count()
 }
 
+/// Virtual steps that carry the planted fault past the boot stagger and one full cadence.
+const FAULT_STEP_MS: u64 = 5_000;
+const FAULT_STEPS: u64 = 40;
+
 fn armed(d: &VirtualDriver, task: &str) -> Option<u64> {
     d.engine().status().tasks.into_iter().find(|t| t.name == task).unwrap_or_else(|| panic!("{task} is registered")).next_due_at
 }
@@ -145,8 +149,8 @@ fn a_tick_swallowed_by_a_stream_quarantine_that_could_not_be_stored_is_armed_aga
     faulty.fail_next("poison");
     // The failed write comes back as an error, as it does to the host, which goes on.
     let mut errors = 0;
-    for _ in 0..40 {
-        errors += usize::from(d.run_until(clock.now_ms() + 5_000).is_err());
+    for _ in 0..FAULT_STEPS {
+        errors += usize::from(d.run_until(clock.now_ms() + FAULT_STEP_MS).is_err());
     }
     assert_eq!(errors, 1, "the planted fault surfaces as exactly one run error");
     let after_fault = observes(&seen, BATCHER_OBSERVE);
@@ -176,7 +180,7 @@ fn a_quarantined_batcher_stream_ticks_again_once_its_row_is_cleared() {
         assert!(armed(&d, BATCHER).is_some(), "batcher.local stays armed while its row stands");
     }
     store.lifted.store(true, Ordering::SeqCst);
-    for _ in 0..40 {
+    for _ in 0..FAULT_STEPS {
         run_for(&mut d, &clock, 30_000);
     }
     let resumed = observes(&seen, BATCHER_OBSERVE);
@@ -204,7 +208,7 @@ fn a_restart_onto_a_standing_poison_row_keeps_the_batcher_armed_and_resumes_when
     }
     assert_eq!(observes(&seen, BATCHER_OBSERVE), 0, "a stream under a standing row is not observed");
     store.lifted.store(true, Ordering::SeqCst);
-    for _ in 0..40 {
+    for _ in 0..FAULT_STEPS {
         run_for(&mut d, &clock, 30_000);
     }
     let resumed = observes(&seen, BATCHER_OBSERVE);
