@@ -3694,7 +3694,6 @@ mod tests {
         let suites = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         let run = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast").unwrap();
         assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
-        let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
         let body = script_fn("unit_cargo");
         assert!(body.contains("unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false"), "{body}");
         assert_eq!(REMOTE_SCRIPT.matches("exec cargo \"$@\"").count(), 1, "one definition of the cargo environment, shared by compile and both runs");
