@@ -8126,6 +8126,10 @@ fn absolve_deletes_the_gate_workers_stored_verdict_for_the_tip() {
     t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().find(|r| r.bead_id == "sp-b").unwrap().ejected_red_tip = Some("tb".into());
     fs::write(t.qfile("red-tips"), "sp-b tb\n").unwrap();
     file_gate_verdict(&t, "sp-b", "tb", 1);
+    let red = t.s().run.join("verdicts/red");
+    fs::create_dir_all(&red).unwrap();
+    fs::write(red.join("aaa"), "status=1\nreason=branch-red\ntip=tb\n---\n").unwrap();
+    fs::write(red.join("bbb"), "status=1\nreason=branch-red\ntip=other\n---\n").unwrap();
     let q = GateQueue::new(&t.s().run);
     assert!(q.peek_done("spira", "spira/sp-b", "tb").is_some(), "positive control: the stored verdict is there");
     assert_eq!(
@@ -8135,4 +8139,6 @@ fn absolve_deletes_the_gate_workers_stored_verdict_for_the_tip() {
         t.err()
     );
     assert!(q.peek_done("spira", "spira/sp-b", "tb").is_none(), "absolved: the next gate judges the tip afresh");
+    assert!(!red.join("aaa").exists(), "the gate's own red record for the tip is gone");
+    assert!(red.join("bbb").exists(), "another tip's record is kept");
 }
