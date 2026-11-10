@@ -22,6 +22,7 @@ mod supersede_duty_parity;
 mod task_a_batcher_forge;
 mod task_a_batcher_local;
 mod task_a_batcher_local_engine_tick;
+mod task_a_batcher_local_landing_row;
 mod task_a_batcher_local_leg_lost;
 mod task_a_batcher_local_stacked;
 mod task_a_batcher_local_stale_certifying;

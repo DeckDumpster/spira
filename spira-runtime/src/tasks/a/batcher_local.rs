@@ -909,6 +909,13 @@ struct Machine<'a> {
     below: bool,
 }
 
+/// The states whose next move comes from the queue's lifecycle or a leg, so a restart can lose
+/// it: a batch the lifecycle has settled leaves nothing to wait for. Promoting is not among them,
+/// because a staged landing settles its batch on the way in.
+fn lifecycle_driven(state: State) -> bool {
+    matches!(state, State::Corpus | State::Attributing | State::Mending | State::Certifying | State::Certified | State::Landing)
+}
+
 /// The states in which a round may be stacked on: it is still being certified, or certified and
 /// waiting to land (`queue round open` refuses any other).
 fn stackable(state: State) -> bool {
@@ -1118,13 +1125,15 @@ impl Machine<'_> {
         self.rc.stacked && stackable(self.rc.state) && !repo.open_rounds().any(|r| r.id == batch) && self.now_ms.saturating_sub(self.rc.leg_at_ms) > VOID_GRACE_MS
     }
 
-    /// A leg-driven round whose batch the lifecycle has already settled, with no open round of
-    /// it and no unit running its leg: nothing is left to drive it.
+    /// A round whose batch the lifecycle has already settled, with no open round of it and no
+    /// unit running its leg: nothing is left to drive it. A Landing round is given a grace first,
+    /// for the landing's own outcome, which may still stage a promotion.
     fn settled(&self, repo: &Repo) -> bool {
         let Some(batch) = self.rc.batch.as_deref() else { return false };
         let Some(live) = repo.live_legs.as_ref() else { return false };
         let running = self.rc.leg.as_ref().is_some_and(|leg| live.contains(leg));
-        matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying) && repo.settled.iter().any(|b| b == batch) && !repo.open_rounds().any(|r| r.id == batch) && !running
+        let landing_quiet = self.rc.state != State::Landing || self.rc.waiting.is_some_and(|w| w.state == State::Landing && self.now_ms.saturating_sub(w.since_ms) > VOID_GRACE_MS);
+        lifecycle_driven(self.rc.state) && landing_quiet && repo.settled.iter().any(|b| b == batch) && !repo.open_rounds().any(|r| r.id == batch) && !running
     }
 
     fn land_now(&mut self) {
@@ -1981,7 +1990,7 @@ pub mod edge {
     fn settled_batches(env: &Env, rc: &super::RepoCarry, seen: &Repo) -> Vec<String> {
         rc.rounds()
             .into_iter()
-            .filter(|r| matches!(r.state, super::State::Corpus | super::State::Attributing | super::State::Certifying))
+            .filter(|r| super::lifecycle_driven(r.state))
             .filter_map(|r| r.batch)
             .filter(|b| !seen.open_rounds().any(|o| &o.id == b))
             .filter(|b| {
