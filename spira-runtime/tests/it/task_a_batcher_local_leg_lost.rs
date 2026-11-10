@@ -211,6 +211,8 @@ fn a_tick_reads_every_leg_in_flight_through_unit_facts() {
         let mut r = runtime::taskrig::TaskRig::new(1, BatcherLocal::new(Default::default()).registration()).unwrap().double(UNIT_FACTS, move |_| Ok(facts.clone()));
         r.tick(STREAM, runtime::event::EventKind::new(spira_runtime::tasks::a::batcher_local::STATE, &serde_json::to_string(&carry).unwrap())).unwrap();
         r.tick(STREAM, runtime::event::EventKind::new(spira_runtime::tasks::a::batcher_local::TICK, "")).unwrap();
-        assert!(r.requested().iter().any(|q| q.name == UNIT_FACTS), "{state:?}: {:?}", r.requested());
+        let asked: Vec<&str> = r.requested().iter().map(|q| q.name.as_str()).collect();
+        assert!(asked.contains(&UNIT_FACTS), "{state:?}: {asked:?}");
+        assert!(asked.iter().any(|n| *n != UNIT_FACTS && *n != OBSERVE), "{state:?}: the exit read from facts moved the machine: {asked:?}");
     }
 }
