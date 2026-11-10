@@ -204,3 +204,44 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+fn leg_filing(name: &str, rc: Option<i32>, out: Option<&str>) -> (testkit::TempDir, String) {
+    let dir = testkit::TempDir::new(name);
+    let out_path = dir.path().join("gate.out");
+    if let Some(out) = out {
+        std::fs::write(&out_path, out).unwrap();
+    }
+    let f = Filing { slot: 0, job: job("r", "b", false, 1, 0), rc, out_path: out_path.display().to_string(), started_ms: 1, finished_ms: 2 };
+    (dir, serde_json::to_string(&f).unwrap())
+}
+
+#[test]
+fn a_gate_leg_with_no_status_and_empty_output_is_not_completed() {
+    let (_d, input) = leg_filing("gw-empty", None, Some(""));
+    let err = complete(&spira_runtime::Effects::default(), &input).unwrap_err();
+    assert!(err.contains("no status and no output") && err.contains("refused"), "{err}");
+}
+
+#[test]
+fn a_gate_leg_with_no_status_and_empty_output_keeps_no_output() {
+    let (_d, input) = leg_filing("gw-empty-keep", None, Some(""));
+    assert!(retain_output(&spira_runtime::Effects::default(), &input).unwrap_err().contains("no status and no output"));
+}
+
+#[test]
+fn a_gate_leg_whose_output_file_is_missing_is_not_completed() {
+    let (_d, input) = leg_filing("gw-missing", None, None);
+    assert!(complete(&spira_runtime::Effects::default(), &input).unwrap_err().contains("no status and no output"));
+}
+
+#[test]
+fn a_gate_leg_with_a_status_goes_on_to_the_claim() {
+    let (_d, input) = leg_filing("gw-rc", Some(1), Some(""));
+    assert!(complete(&spira_runtime::Effects::default(), &input).unwrap_err().contains("does not hold"));
+}
+
+#[test]
+fn a_gate_leg_with_output_but_no_status_goes_on_to_the_claim() {
+    let (_d, input) = leg_filing("gw-out", None, Some("killed mid-run"));
+    assert!(complete(&spira_runtime::Effects::default(), &input).unwrap_err().contains("does not hold"));
+}
