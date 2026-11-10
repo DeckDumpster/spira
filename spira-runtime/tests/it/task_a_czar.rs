@@ -125,6 +125,7 @@ fn at_work() -> TaskRig {
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&at_work(), NAME);
     assert!(rows.iter().any(|k| k.starts_with("keys/deadlock")), "{rows:?}");
+    assert!(rows.iter().any(|k| k == "cursor_ms"), "{rows:?}");
 }
 
 #[test]
