@@ -176,8 +176,8 @@ impl World {
         Some((live, unadvanced))
     }
 
-    fn open_rounds(&self) -> Option<u64> {
-        self.open_round_facts().map(|f| f.0)
+    fn open_rounds(&self) -> Option<BTreeMap<String, u64>> {
+        Some(open_rounds_by_repo(self.lc_json(&["list", "--batches"]).ok()?.as_array()?))
     }
 
     fn results(&self, known: &BTreeMap<String, u64>) -> (BTreeMap<String, u64>, Vec<(String, String)>) {
@@ -911,6 +911,18 @@ pub fn bead_ids(subjects: &str, prefix: &str) -> BTreeSet<String> {
         .filter(|w| w.starts_with(&lead) && w.len() > lead.len() && w[lead.len()..].chars().all(|c| c.is_ascii_alphanumeric() || c == '.'))
         .map(|w| w.trim_end_matches('.').to_string())
         .collect()
+}
+
+/// Per repo, batches short of a terminal state in any phase; a row naming no repo is skipped.
+pub fn open_rounds_by_repo(batches: &[Value]) -> BTreeMap<String, u64> {
+    let mut by = BTreeMap::new();
+    for b in batches {
+        let (Some(repo), Some(state)) = (b["repo"].as_str(), b["state"].as_str()) else { continue };
+        if !matches!(state, "LANDED" | "SETTLED" | "ABANDONED" | "DISCARDED") {
+            *by.entry(repo.to_string()).or_default() += 1;
+        }
+    }
+    by
 }
 
 /// Per repo: rounds cut over the batch rows' day, how each ended, and how many ended inside
