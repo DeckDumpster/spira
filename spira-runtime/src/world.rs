@@ -912,7 +912,7 @@ pub fn bead_ids(subjects: &str, prefix: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Per repo, the batches short of a terminal state, whatever their phase; a row naming no repo is skipped.
+/// Per repo, batches short of a terminal state in any phase; a row naming no repo is skipped.
 pub fn open_rounds_by_repo(batches: &[Value]) -> BTreeMap<String, u64> {
     let mut by = BTreeMap::new();
     for b in batches {
