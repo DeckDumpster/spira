@@ -654,7 +654,7 @@ impl Engine {
             return Ok(None);
         }
         let deadline_at = at.saturating_add(spec.deadline_ms);
-        let row = EffectRow { task: task.into(), ekey: spec.key.clone(), request_id: id.clone(), stream: stream.clone(), spec: spec.clone(), requested_at: at, deadline_at };
+        let row = EffectRow { task: task.into(), ekey: crate::rows::bounded_key(&spec.key), request_id: id.clone(), stream: stream.clone(), spec: spec.clone(), requested_at: at, deadline_at };
         let body = serde_json::to_string(&RequestBody { spec, deadline_at, task: Some(task.into()) }).map_err(|e| RuntimeError::new(e.to_string()))?;
         let req = self.append_derived(id, stream, EventKind::new(EFFECT_REQUESTED, &body), cause, at)?;
         self.owners.insert(req.id.0.clone(), task.into());
