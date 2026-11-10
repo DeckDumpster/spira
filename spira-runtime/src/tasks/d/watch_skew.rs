@@ -214,8 +214,8 @@ impl SnapWorld<'_> {
         self.snap.manifest_commit.as_ref()
     }
 
-    fn act(&self, name: &str, input: String, deadline_ms: u64) {
-        self.acts.borrow_mut().push(EffectSpec::by_input(name, input, deadline_ms));
+    fn act(&self, name: &str, key: String, input: String, deadline_ms: u64) {
+        self.acts.borrow_mut().push(EffectSpec::keyed(name, key, input, deadline_ms));
     }
 }
 
@@ -341,7 +341,7 @@ impl World for SnapWorld<'_> {
     }
     fn mail_send_question(&self, subject: &str, body: &str, default_action: &str) -> Result<(), String> {
         let q = Question { from: FROM.into(), subject: subject.into(), body: body.into(), default: default_action.into() };
-        self.act(ESCALATE, serde_json::to_string(&q).unwrap_or_default(), ESCALATE_DEADLINE_MS);
+        self.act(ESCALATE, format!("watch.skew:{:016x}", fnv1a(subject)), serde_json::to_string(&q).unwrap_or_default(), ESCALATE_DEADLINE_MS);
         Ok(())
     }
     fn now_stamp(&self) -> String {
@@ -409,7 +409,7 @@ impl World for SnapWorld<'_> {
     }
     fn run_log_append(&self, name: &str, line: &str) {
         if name == skew::REFRESH_ALARM_LOG {
-            self.act(LOG, line.into(), WRITE_DEADLINE_MS);
+            self.act(LOG, format!("watch.skew:refresh-declined:{}:{:016x}", self.snap.repo, fnv1a(line)), line.into(), WRITE_DEADLINE_MS);
         }
     }
     fn index_lock_age_secs(&self, _: &Path) -> Option<u64> {
@@ -445,7 +445,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, cfg: &Config) -> (Ca
                 if snap.queue_lock_held {
                     skew::decline_streak_bump(&w, &repo, "the queue lock is held; a land is in flight");
                 } else {
-                    w.act(REFRESH, snap.repo.clone(), REFRESH_DEADLINE_MS);
+                    w.act(REFRESH, format!("watch.skew:refresh:{}:{tip}", snap.repo), snap.repo.clone(), REFRESH_DEADLINE_MS);
                 }
             }
             _ => skew::decline_streak_clear(&w, &repo),

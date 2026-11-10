@@ -431,7 +431,7 @@ mod tests {
             assert_eq!(SHARED.iter().filter(|(n, _)| *n == e).count(), 1, "{e} is one shared runner");
             assert!(pending().all(|t| t.runners.iter().all(|(n, _)| *n != e)), "{e} has a runner on a row as well");
         }
-        let start = |input: &str| runtime::EffectSpec::by_input(units::UNIT_START, input, 1);
+        let start = |input: &str| runtime::EffectSpec::keyed(units::UNIT_START, units::UNIT_START, input, 1);
         let spec = serde_json::to_string(&units::UnitSpec { task: "cert.full".into(), key: "k1".into(), argv: vec!["true".into()], env: vec![], cwd: None }).unwrap();
         assert_eq!(crate::Effects::default().run("k", &start(&spec)), Err("no unit manager configured".into()), "no backend is refused, not guessed");
         let scripted = Arc::new(units::ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0))));
@@ -439,10 +439,10 @@ mod tests {
         let fx = crate::Effects { units: Some(scripted.clone()), ..crate::Effects::default() };
         let handle: units::UnitHandle = serde_json::from_str(&fx.run("k", &start(&spec)).unwrap()).unwrap();
         assert_eq!(handle, units::UnitHandle::of("cert.full", "k1").unwrap());
-        let facts = runtime::EffectSpec::by_input(units::UNIT_FACTS, serde_json::to_string(&handle).unwrap(), 1);
+        let facts = runtime::EffectSpec::keyed(units::UNIT_FACTS, units::UNIT_FACTS, serde_json::to_string(&handle).unwrap(), 1);
         let facts: units::UnitFacts = serde_json::from_str(&fx.run("k", &facts).unwrap()).unwrap();
         assert_eq!(facts.state, units::UnitState::Active);
-        let stop = runtime::EffectSpec::by_input(units::UNIT_STOP, serde_json::to_string(&handle).unwrap(), 1);
+        let stop = runtime::EffectSpec::keyed(units::UNIT_STOP, units::UNIT_STOP, serde_json::to_string(&handle).unwrap(), 1);
         assert_eq!(fx.run("k", &stop), Ok(String::new()));
         assert!(scripted.calls().iter().any(|c| c.starts_with("start ")) && scripted.calls().iter().any(|c| c.starts_with("stop ")), "{:?}", scripted.calls());
     }
@@ -450,9 +450,9 @@ mod tests {
     #[test]
     fn an_unknown_effect_name_is_refused_by_the_router() {
         use runtime::host::EffectRunner;
-        let spec = runtime::EffectSpec::by_input(runtime::taskrig::PLANTED_UNKNOWN, String::new(), 1);
+        let spec = runtime::EffectSpec::keyed(runtime::taskrig::PLANTED_UNKNOWN, runtime::taskrig::PLANTED_UNKNOWN, String::new(), 1);
         assert_eq!(crate::Effects::default().run("k", &spec), Err(format!("no runner for effect {}", runtime::taskrig::PLANTED_UNKNOWN)));
-        let ping = runtime::EffectSpec::by_input(heartbeat::PING, String::new(), 1);
+        let ping = runtime::EffectSpec::keyed(heartbeat::PING, heartbeat::PING, String::new(), 1);
         assert_eq!(crate::Effects::default().run("k", &ping), Ok("no heartbeat url configured".into()), "a declared name reaches its runner");
     }
 

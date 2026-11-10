@@ -250,8 +250,8 @@ pub fn is_nominal(s: &Snapshot, snap_stale_s: u64) -> bool {
         && s.failed_units.as_ref().is_some_and(|v| v.is_empty())
 }
 
-fn spec(name: &str, input: String, deadline_ms: u64) -> EffectSpec {
-    EffectSpec::by_input(name, input, deadline_ms)
+fn spec(name: &str, key: String, input: String, deadline_ms: u64) -> EffectSpec {
+    EffectSpec::keyed(name, key, input, deadline_ms)
 }
 
 /// `is_nominal`, `render`, the 13 escalation predicates and the halt guard.
@@ -267,7 +267,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
         let nv_worst = snap.noverdict.values().max().copied().unwrap_or(0);
         let line = format!("SWEEP:NOMINAL lapsed={} snap_age={}s nv_worst={nv_worst}\n", snap.lapsed.len(), snap.snap_age_s.unwrap_or(0));
         if carry.prompt.as_deref() != Some(line.as_str()) {
-            acts.push(spec(PROMPT, serde_json::to_string(&Prompt { text: line.clone(), lapsed_now: snap.lapsed_now.clone() }).unwrap_or_default(), ACT_DEADLINE_MS));
+            acts.push(spec(PROMPT, format!("watch.tower:prompt:{now_ms}"), serde_json::to_string(&Prompt { text: line.clone(), lapsed_now: snap.lapsed_now.clone() }).unwrap_or_default(), ACT_DEADLINE_MS));
             next.prompt = Some(line);
         }
         next.failed_units.clear();
@@ -276,17 +276,18 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
         return (next, acts);
     }
     let text = snap.rendered.clone().unwrap_or_else(|| format!("## Spira pipeline\n(sweep not rendered: {} failed unit(s), {} lapsed)\n", snap.failed_units.as_ref().map_or(0, Vec::len), snap.lapsed.len()));
-    acts.push(spec(PROMPT, serde_json::to_string(&Prompt { text, lapsed_now: snap.lapsed_now.clone() }).unwrap_or_default(), ACT_DEADLINE_MS));
+    acts.push(spec(PROMPT, format!("watch.tower:prompt:{now_ms}"), serde_json::to_string(&Prompt { text, lapsed_now: snap.lapsed_now.clone() }).unwrap_or_default(), ACT_DEADLINE_MS));
     next.prompt = None;
     let slow = if snap.slow_probes.is_empty() { String::new() } else { format!(" (timed out: {})", snap.slow_probes.join("; ")) };
-    acts.push(spec(LOG, format!("watchtower: swept — {} lapsed, {} escalation(s){slow}", snap.lapsed.len(), snap.escalations.len()), ACT_DEADLINE_MS));
+    acts.push(spec(LOG, format!("watch.tower:log:{now_ms}"), format!("watchtower: swept — {} lapsed, {} escalation(s){slow}", snap.lapsed.len(), snap.escalations.len()), ACT_DEADLINE_MS));
     let mut raise = |next: &mut Carry, f: watchtower::incident::Finding| {
         let reference = f.reference.clone().unwrap_or_else(|| f.title.clone());
         if next.alarmed.get(&reference).is_some_and(|at| now.saturating_sub(*at) < REMIND_S) {
             return;
         }
+        let key = format!("watch.tower:{reference}:{}", now / REMIND_S);
         next.alarmed.insert(reference, now);
-        acts.push(spec(ALARM, serde_json::to_string(&f).unwrap_or_default(), STORE_DEADLINE_MS));
+        acts.push(spec(ALARM, key, serde_json::to_string(&f).unwrap_or_default(), STORE_DEADLINE_MS));
     };
     // The failed-unit escalation (`escalate.rs:59-96`), its first-seen rows carried.
     if let Some(units) = &snap.failed_units {
@@ -309,7 +310,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
         raise(&mut next, f.clone());
     }
     if snap.draining {
-        acts.push(spec(DRAIN_CHECK, String::new(), STORE_DEADLINE_MS));
+        acts.push(spec(DRAIN_CHECK, format!("watch.tower:drain-check:{now_ms}"), String::new(), STORE_DEADLINE_MS));
     }
     next.alarmed.retain(|_, at| now.saturating_sub(*at) < REMIND_S);
     (next, acts)

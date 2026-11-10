@@ -190,7 +190,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
                 return Ok((carry.clone(), vec![]));
             }
             let body = Archive { mail: cfg.get("SPIRA_MAIL").cloned().unwrap_or_default(), paths };
-            Ok((Carry { phase: Phase::Decided }, vec![Act { name: ARCHIVE.into(), input: serde_json::to_string(&body).map_err(|e| e.to_string())?, deadline_ms: 5_000, probe: false }]))
+            Ok((Carry { phase: Phase::Decided }, vec![Act { name: ARCHIVE.into(), key: format!("{}/{:016x}", body.mail, runtime::event::fnv1a(&body.paths.join("\n"))), input: serde_json::to_string(&body).map_err(|e| e.to_string())?, deadline_ms: 5_000, probe: false }]))
         }
         Input::Outcome { effect, ok, .. } if effect == ARCHIVE && carry.phase == Phase::Decided => Ok((Carry { phase: if *ok { Phase::Archived } else { Phase::Decided } }, vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase_name(carry.phase))),

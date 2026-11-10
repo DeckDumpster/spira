@@ -246,7 +246,7 @@ pub mod cockpit {
         let next = Carry { fragments: carry_fragments(carry, snap), digest: Some(d.clone()) };
         let changed = carry.digest.as_deref() != Some(d.as_str());
         let refresh = !changed && fresher && kv.iter().any(|(k, _)| k == "SP_AT");
-        let acts = if changed || refresh { vec![EffectSpec::by_input(publish, render(&kv), 1_000)] } else { vec![] };
+        let acts = if changed || refresh { vec![EffectSpec::keyed(publish, format!("{publish}/{d}"), render(&kv), 1_000)] } else { vec![] };
         Ok((next, acts))
     }
 

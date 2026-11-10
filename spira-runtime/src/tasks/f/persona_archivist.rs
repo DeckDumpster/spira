@@ -267,21 +267,25 @@ pub struct Settle {
     pub rc: Option<i32>,
 }
 
-fn spec<T: Serialize>(name: &str, body: &T, deadline_ms: u64) -> EffectSpec {
-    EffectSpec::by_input(name, serde_json::to_string(body).unwrap_or_default(), deadline_ms)
+fn spec<T: Serialize>(name: &str, key: String, body: &T, deadline_ms: u64) -> EffectSpec {
+    EffectSpec::keyed(name, key, serde_json::to_string(body).unwrap_or_default(), deadline_ms)
 }
 
-fn brief(ask: BriefAsk) -> EffectSpec {
-    spec(BRIEF, &ask, BRIEF_DEADLINE_MS)
+fn run_of(carry: &Carry) -> &str {
+    carry.run_id.as_deref().unwrap_or_default()
 }
 
-fn forget() -> EffectSpec {
-    spec(FORGET, &serde_json::json!({}), FORGET_DEADLINE_MS)
+fn brief(carry: &Carry, ask: BriefAsk) -> EffectSpec {
+    spec(BRIEF, format!("archivist/{}/{}/brief", run_of(carry), ask.sid), &ask, BRIEF_DEADLINE_MS)
+}
+
+fn forget(carry: &Carry) -> EffectSpec {
+    spec(FORGET, format!("archivist/forget/{}", run_of(carry)), &serde_json::json!({}), FORGET_DEADLINE_MS)
 }
 
 fn settle(carry: &Carry, outcome: &str, rc: Option<i32>) -> EffectSpec {
     let c = carry.current.clone().unwrap_or(Current { sid: String::new(), at: 0, tc: 0 });
-    spec(SETTLE, &Settle { sid: c.sid, at: c.at, outcome: outcome.into(), rc }, HOST_DEADLINE_MS)
+    spec(SETTLE, format!("archivist/{}/{}/settle", c.sid, c.at), &Settle { sid: c.sid, at: c.at, outcome: outcome.into(), rc }, HOST_DEADLINE_MS)
 }
 
 fn num(config: &BTreeMap<String, String>, k: &str, default: u64) -> u64 {
@@ -295,9 +299,9 @@ fn next_or_done(carry: &Carry, archived: u32, config: &BTreeMap<String, String>,
     match carry.queue.split_first() {
         Some((sid, rest)) if archived < per_pass => {
             let next = Carry { state: step(s, on_next)?, queue: rest.to_vec(), current: Some(Current { sid: sid.clone(), at: 0, tc: 0 }), archived, ..carry.clone() };
-            Ok((next, vec![brief(BriefAsk { sid: sid.clone(), ..BriefAsk::default() })]))
+            Ok((next, vec![brief(carry, BriefAsk { sid: sid.clone(), ..BriefAsk::default() })]))
         }
-        _ => Ok((Carry { state: step(s, on_done)?, queue: vec![], current: None, archived, ..carry.clone() }, vec![forget()])),
+        _ => Ok((Carry { state: step(s, on_done)?, queue: vec![], current: None, archived, ..carry.clone() }, vec![forget(carry)])),
     }
 }
 
@@ -309,20 +313,20 @@ pub fn decide(carry: &Carry, input: &Input, config: &BTreeMap<String, String>) -
     let wiki = config.get("SPIRA_WIKI").is_some_and(|w| !w.trim().is_empty());
     let unexpected = |effect: &str| Err(format!("{NAME}: {s:?} expects no outcome of {effect}"));
     match input {
-        Input::Tick => Ok((Carry { state: go("tick")?, ..carry.clone() }, vec![EffectSpec::by_input(OBSERVE, String::new(), OBSERVE_DEADLINE_MS)])),
+        Input::Tick => Ok((Carry { state: go("tick")?, ..carry.clone() }, vec![EffectSpec::probe(OBSERVE, String::new(), OBSERVE_DEADLINE_MS)])),
         Input::Observed(snap) => {
             if snap.paused {
-                return Ok((Carry { state: go("paused")?, ..Carry::default() }, vec![spec(MARK, &serde_json::json!({}), HOST_DEADLINE_MS)]));
+                return Ok((Carry { state: go("paused")?, ..Carry::default() }, vec![spec(MARK, format!("archivist/{}/mark", run_of(carry)), &serde_json::json!({}), HOST_DEADLINE_MS)]));
             }
             let every = num(config, "SPIRA_ARCHIVIST_EVERY", 40);
             let mut due: Vec<&Candidate> = snap.candidates.iter().filter(|c| archivist::candidates::would_archive(c.drift as i64, every, None, None, 0)).collect();
             due.sort_by_key(|c| std::cmp::Reverse(c.drift));
             match due.split_first() {
                 None if snap.stale.is_empty() => Ok((Carry { state: go("nothing")?, ..Carry::default() }, vec![])),
-                None => Ok((Carry { state: go("stale-only")?, ..Carry::default() }, vec![forget()])),
+                None => Ok((Carry { state: go("stale-only")?, ..Carry::default() }, vec![forget(carry)])),
                 Some((first, rest)) => {
                     let next = Carry { state: go("candidates")?, run_id: carry.run_id.clone(), queue: rest.iter().map(|c| c.sid.clone()).collect(), current: Some(Current { sid: first.sid.clone(), at: first.turns, tc: 0 }), archived: 0 };
-                    Ok((next, vec![brief(BriefAsk { sid: first.sid.clone(), tp: Some(first.tp.clone()), at: Some(first.turns), ctx: Some(first.ctx), drift: Some(first.drift) })]))
+                    Ok((next, vec![brief(carry, BriefAsk { sid: first.sid.clone(), tp: Some(first.tp.clone()), at: Some(first.turns), ctx: Some(first.ctx), drift: Some(first.drift) })]))
                 }
             }
         }
@@ -335,7 +339,7 @@ pub fn decide(carry: &Carry, input: &Input, config: &BTreeMap<String, String>) -
             current.tc = b.tc.unwrap_or(current.tc);
             let run = carry.run_id.clone().ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
             let unit = UnitSpec { task: NAME.into(), key: format!("{run}-{}", current.sid), argv: b.argv, env: b.env, cwd: b.cwd };
-            Ok((Carry { state, current: Some(current), ..carry.clone() }, vec![spec(UNIT_START, &unit, START_DEADLINE_MS)]))
+            Ok((Carry { state, current: Some(current), ..carry.clone() }, vec![spec(UNIT_START, format!("archivist/{run}/{}", carry.current.as_ref().map(|c| c.sid.as_str()).unwrap_or_default()), &unit, START_DEADLINE_MS)]))
         }
         Input::Failed { effect, .. } if effect == BRIEF => next_or_done(carry, carry.archived, config, "skip-next", "skip-last"),
         Input::Succeeded { effect, .. } if effect == UNIT_START => Ok((Carry { state: go("started")?, ..carry.clone() }, vec![])),
@@ -343,7 +347,7 @@ pub fn decide(carry: &Carry, input: &Input, config: &BTreeMap<String, String>) -
         Input::UnitRan(ran) => match ran.exit {
             Exit::Code(0) if wiki => {
                 let sid = carry.current.as_ref().map(|c| c.sid.clone()).unwrap_or_default();
-                Ok((Carry { state: go("ran-ok-wiki")?, ..carry.clone() }, vec![spec(COMMIT, &serde_json::json!({ "sid": sid }), COMMIT_DEADLINE_MS)]))
+                Ok((Carry { state: go("ran-ok-wiki")?, ..carry.clone() }, vec![spec(COMMIT, format!("archivist/{sid}/{}/commit", carry.current.as_ref().map_or(0, |c| c.at)), &serde_json::json!({ "sid": sid }), COMMIT_DEADLINE_MS)]))
             }
             Exit::Code(0) => Ok((Carry { state: go("ran-ok")?, ..carry.clone() }, vec![settle(carry, "safe", Some(0))])),
             Exit::Code(124) | Exit::Signal(_) => Ok((Carry { state: go("timeout")?, ..carry.clone() }, vec![settle(carry, "timeout", Some(124))])),
@@ -355,11 +359,11 @@ pub fn decide(carry: &Carry, input: &Input, config: &BTreeMap<String, String>) -
             let run = carry.run_id.clone().ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
             let sid = carry.current.as_ref().map(|c| c.sid.clone()).unwrap_or_default();
             let h = UnitHandle::of(NAME, &format!("{run}-{sid}")).map_err(|e| e.to_string())?;
-            Ok((Carry { state, ..carry.clone() }, vec![spec(UNIT_STOP, &h, STOP_DEADLINE_MS)]))
+            Ok((Carry { state, ..carry.clone() }, vec![spec(UNIT_STOP, format!("archivist/{run}/{sid}/stop"), &h, STOP_DEADLINE_MS)]))
         }
         Input::Succeeded { effect, .. } if effect == COMMIT => {
             let state = go("committed")?;
-            Ok((Carry { state, ..carry.clone() }, vec![settle(carry, "safe", Some(0)), spec(DIGEST_SEND, &serde_json::json!({}), DIGEST_DEADLINE_MS)]))
+            Ok((Carry { state, ..carry.clone() }, vec![settle(carry, "safe", Some(0)), spec(DIGEST_SEND, format!("archivist/digest/{}", run_of(carry)), &serde_json::json!({}), DIGEST_DEADLINE_MS)]))
         }
         Input::Failed { effect, error } if effect == COMMIT => {
             if archivist::brain::is_dirty_checkout_refusal(error) || error.contains("dirty") {
@@ -373,7 +377,7 @@ pub fn decide(carry: &Carry, input: &Input, config: &BTreeMap<String, String>) -
                 return unexpected(effect);
             }
             if body.trim() == "capacity" {
-                return Ok((Carry { state: go("done")?, queue: vec![], current: None, ..carry.clone() }, vec![forget()]));
+                return Ok((Carry { state: go("done")?, queue: vec![], current: None, ..carry.clone() }, vec![forget(carry)]));
             }
             let archived = carry.archived + u32::from(body.trim() == "safe");
             next_or_done(carry, archived, config, "next", "done")

@@ -261,7 +261,7 @@ impl Cycle {
             return vec![];
         }
         if ev.kind.tag == self.tick {
-            return vec![Command::Probe(EffectSpec::by_input(self.observe, input(), self.deadline_ms)), Command::Timer { at: ev.at + every_ms, kind: EventKind::new(self.tick, "") }];
+            return vec![Command::Probe(EffectSpec::probe(self.observe, input(), self.deadline_ms)), Command::Timer { at: ev.at + every_ms, kind: EventKind::new(self.tick, "") }];
         }
         if ev.kind.tag != EFFECT_SUCCEEDED || !answers_observe(view, ev, self.observe) {
             return vec![];

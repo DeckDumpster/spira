@@ -180,15 +180,15 @@ fn findings(snap: &Snapshot) -> Vec<(String, String, Option<Lift>)> {
 /// `overdue_breach`, `mends_breach`, `fresh`, then `bead_condition` / `entered_state` per stop:
 /// a line for each finding not in `seen`, a lift for every stop reached, and `seen := ` this
 /// snapshot's keys. A lift repeats each tick until the stop is gone; its line does not.
-pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let found = findings(snap);
     let mut acts = vec![];
     for (key, line, lift) in &found {
         if !carry.seen.contains(key) {
-            acts.push(EffectSpec::by_input(LOG_APPEND, line.clone(), ACT_DEADLINE_MS));
+            acts.push(EffectSpec::keyed(LOG_APPEND, format!("watch.mend:{key}:{now_ms}"), line.clone(), ACT_DEADLINE_MS));
         }
         if let Some(l) = lift {
-            acts.push(EffectSpec::by_input(LIFT_STOP, serde_json::to_string(l).unwrap_or_default(), ACT_DEADLINE_MS));
+            acts.push(EffectSpec::keyed(LIFT_STOP, format!("watch.mend:lift:{}:{}", l.repo, l.since), serde_json::to_string(l).unwrap_or_default(), ACT_DEADLINE_MS));
         }
     }
     (Carry { seeded: true, seen: found.into_iter().map(|(k, _, _)| k).collect() }, acts)

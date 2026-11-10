@@ -214,12 +214,12 @@ pub struct Unverifiable {
     pub login: String,
 }
 
-fn act<T: Serialize>(name: &str, body: &T, deadline_ms: u64) -> EffectSpec {
-    EffectSpec::by_input(name, serde_json::to_string(body).unwrap_or_default(), deadline_ms)
+fn act<T: Serialize>(name: &str, key: String, body: &T, deadline_ms: u64) -> EffectSpec {
+    EffectSpec::keyed(name, key, serde_json::to_string(body).unwrap_or_default(), deadline_ms)
 }
 
 fn refusal(now: u64, msg: &str) -> EffectSpec {
-    EffectSpec::by_input(INBOX, format!("{} [watch:{NAME}] gh-intake: {msg}", iso8601(now)), INBOX_DEADLINE_MS)
+    EffectSpec::keyed(INBOX, format!("{now}/{:016x}", runtime::event::fnv1a(msg)), format!("{} [watch:{NAME}] gh-intake: {msg}", iso8601(now)), INBOX_DEADLINE_MS)
 }
 
 fn find<'a>(store: &'a [KnownRef], ext_ref: &str) -> Option<&'a KnownRef> {
@@ -278,7 +278,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
         let mut note_unverifiable = |login: &str, acts: &mut Vec<EffectSpec>| {
             if !unverifiable.iter().any(|l| l == login) {
                 unverifiable.push(login.to_string());
-                acts.push(act(UNVERIFIABLE, &Unverifiable { slug: t.slug.clone(), login: login.into() }, NOTE_DEADLINE_MS));
+                acts.push(act(UNVERIFIABLE, format!("{}/{login}", t.slug), &Unverifiable { slug: t.slug.clone(), login: login.into() }, NOTE_DEADLINE_MS));
             }
         };
         for issue in open.into_iter().filter(|i| !skip.contains(&i.number)) {
@@ -286,7 +286,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
             let ext_ref = format!("github:{}#{}", t.slug, issue.number);
             let uref = format!("github-untrusted:{}#{}", t.slug, issue.number);
             if let Some(existing) = find(&work, &ext_ref) {
-                acts.push(act(NOTE_SEEN, &Note { id: existing.id.clone(), text: gh::seen_again_note(&ext_ref, issue.number) }, NOTE_DEADLINE_MS));
+                acts.push(act(NOTE_SEEN, format!("{}/{ext_ref}", existing.id), &Note { id: existing.id.clone(), text: gh::seen_again_note(&ext_ref, issue.number) }, NOTE_DEADLINE_MS));
                 continue;
             }
             let accept = snap.accept.iter().find(|a| a.slug == t.slug && a.number == issue.number);
@@ -294,11 +294,11 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
             let actor = accept.and_then(|a| a.actor.clone()).unwrap_or_default();
             if becomes_work {
                 if let Some(u) = find(&untrusted, &uref) {
-                    acts.push(act(CLOSE_PROMOTED, &Close { id: u.id.clone(), reason: gh::promoted_reason(&actor) }, NOTE_DEADLINE_MS));
+                    acts.push(act(CLOSE_PROMOTED, u.id.clone(), &Close { id: u.id.clone(), reason: gh::promoted_reason(&actor) }, NOTE_DEADLINE_MS));
                 }
                 let own_bot = actor.is_empty() && issue.author == "github-actions[bot]";
                 let body = gh::work_body(&ext_ref, &issue.author, own_bot, &issue.body);
-                acts.push(act(FILE_WORK, &Filing { title: issue.title.clone(), ext_ref, bead_repo: t.bead_repo.clone(), body }, STORE_DEADLINE_MS));
+                acts.push(act(FILE_WORK, ext_ref.clone(), &Filing { title: issue.title.clone(), ext_ref, bead_repo: t.bead_repo.clone(), body }, STORE_DEADLINE_MS));
                 continue;
             }
             if accept.is_some_and(|a| a.hidden) && !actor.is_empty() {
@@ -311,11 +311,11 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
                 note_unverifiable(&issue.author, &mut acts);
             }
             let body = gh::untrusted_body(&uref, &issue.author, &issue.body);
-            acts.push(act(FILE_UNTRUSTED, &Filing { title: issue.title.clone(), ext_ref: uref, bead_repo: t.bead_repo.clone(), body }, STORE_DEADLINE_MS));
+            acts.push(act(FILE_UNTRUSTED, uref.clone(), &Filing { title: issue.title.clone(), ext_ref: uref, bead_repo: t.bead_repo.clone(), body }, STORE_DEADLINE_MS));
             new_untrusted.push((issue.number, issue.author.clone(), issue.title.clone(), issue.body.clone()));
         }
         if !new_untrusted.is_empty() {
-            acts.push(act(DIGEST, &Digest { slug: t.slug.clone(), items: new_untrusted }, NOTE_DEADLINE_MS));
+            acts.push(act(DIGEST, format!("{}/{}", t.slug, new_untrusted.iter().map(|n| n.0.to_string()).collect::<Vec<_>>().join(",")), &Digest { slug: t.slug.clone(), items: new_untrusted }, NOTE_DEADLINE_MS));
         }
         handled.sort_unstable();
         handled.dedup();

@@ -117,7 +117,7 @@ pub enum Carry {
 }
 
 /// `Ok` only when every store is; a crossing to `Red` mails RED, the way back mails CLEAR.
-pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let state = if all_ok(snap) { Carry::Ok } else { Carry::Red };
     let out = measured(snap);
     let line = match (state, carry) {
@@ -125,7 +125,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, cfg: &Config) -> (Ca
         (Carry::Ok, Carry::Red) => format!("CLEAR: every store has a fresh backup again ({out})"),
         _ => return (state, vec![]),
     };
-    (state, vec![Alert::of(MAILBOX, FROM, "lc-backup", "alert", &line).effect(MAIL, MAIL_DEADLINE_MS)])
+    (state, vec![Alert::of(MAILBOX, FROM, "lc-backup", "alert", &line).effect(MAIL, format!("{NAME}:{now_ms}"), MAIL_DEADLINE_MS)])
 }
 
 /// `_lcb_all_ok`: every store measured, and every one `ok`.

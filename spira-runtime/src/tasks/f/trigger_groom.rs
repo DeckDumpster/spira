@@ -170,8 +170,8 @@ pub struct Filing {
 }
 
 /// The file effect a trigger asks for when `decide` files.
-pub fn file_effect(name: &str, bead: Bead, dedup: String, deadline_ms: u64) -> Command {
-    Command::Effect(EffectSpec::by_input(name, serde_json::to_string(&Filing { bead, dedup }).unwrap_or_default(), deadline_ms))
+pub fn file_effect(name: &str, key: String, bead: Bead, dedup: String, deadline_ms: u64) -> Command {
+    Command::Effect(EffectSpec::keyed(name, key, serde_json::to_string(&Filing { bead, dedup }).unwrap_or_default(), deadline_ms))
 }
 
 /// The file runner every trigger shares: re-count the open triggers, refuse through `guard`
@@ -265,7 +265,7 @@ impl Handler for TriggerGroom {
                     ctx.event().set("groom.skip", why.as_str());
                     vec![]
                 }
-                Decision::File(bead) => vec![file_effect(FILE, bead, dedup_labels(&self.config, "SPIRA_GROOMER_LABEL"), DEADLINE_MS)],
+                Decision::File(bead) => vec![file_effect(FILE, format!("groom-trigger/{}", ev.at / self.interval_ms.max(1)), bead, dedup_labels(&self.config, "SPIRA_GROOMER_LABEL"), DEADLINE_MS)],
             }
         })
     }

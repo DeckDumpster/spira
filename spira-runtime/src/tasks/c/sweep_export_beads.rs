@@ -200,14 +200,14 @@ fn phase_name(p: Phase) -> &'static str {
     }
 }
 
-fn act(name: &str, input: String, deadline_ms: u64) -> Act {
-    Act { name: name.into(), input, deadline_ms, probe: false }
+fn act(name: &str, key: String, input: String, deadline_ms: u64) -> Act {
+    Act { name: name.into(), key, input, deadline_ms, probe: false }
 }
 
 /// `Unchanged | Write(jsonl, manifest) | Refuse(reason)`, sorted by id, refusing without an
 /// `sp-` bead or below half the mirrored count. An unchanged render finishes a pass a failed
 /// commit or push left behind before it only touches the mirror.
-pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(s) if s.disabled => Ok((carry.clone(), vec![])),
@@ -216,13 +216,13 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
             Ok(text) => {
                 let sha = sha_hex(text.as_bytes());
                 if sha != s.mirror_bytes_sha {
-                    return Ok((Carry { phase: Phase::Rendered, sha: Some(sha), refused: None }, vec![act(WRITE, text, 30_000)]));
+                    return Ok((Carry { phase: Phase::Rendered, sha: Some(sha.clone()), refused: None }, vec![act(WRITE, format!("export/{sha}"), text, 30_000)]));
                 }
                 let pending = carry.sha.as_deref() == Some(sha.as_str());
                 match carry.phase {
-                    Phase::Written if pending => Ok((carry.clone(), vec![act(COMMIT, sha, 60_000)])),
-                    Phase::Committed if pending => Ok((carry.clone(), vec![act(PUBLISH, sha, 150_000)])),
-                    _ => Ok((carry.clone(), vec![act(TOUCH, String::new(), 5_000)])),
+                    Phase::Written if pending => Ok((carry.clone(), vec![act(COMMIT, format!("export/commit/{sha}"), sha, 60_000)])),
+                    Phase::Committed if pending => Ok((carry.clone(), vec![act(PUBLISH, format!("export/push/{sha}"), sha, 150_000)])),
+                    _ => Ok((carry.clone(), vec![act(TOUCH, format!("export/touch/{now_ms}"), String::new(), 5_000)])),
                 }
             }
         },
@@ -243,7 +243,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
                 return Err(format!("{NAME}: in state {} the {effect} answered {} for render {sha}", phase_name(carry.phase), body.trim()));
             }
             let next = Carry { phase: to, ..carry.clone() };
-            Ok((next, then.map(|(n, d)| vec![act(n, sha, d)]).unwrap_or_default()))
+            Ok((next, then.map(|(n, d)| vec![act(n, format!("export/{}/{sha}", if n == COMMIT { "commit" } else { "push" }), sha, d)]).unwrap_or_default()))
         }
         Input::Outcome { effect, .. } if effect == TOUCH => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase_name(carry.phase))),

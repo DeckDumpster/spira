@@ -259,8 +259,8 @@ impl Sweep {
         Ok(())
     }
 
-    fn effect(name: &str, input: String, deadline_ms: u64) -> Command {
-        Command::Effect(EffectSpec::by_input(name, input, deadline_ms))
+    fn effect(name: &str, key: String, input: String, deadline_ms: u64) -> Command {
+        Command::Effect(EffectSpec::keyed(name, key, input, deadline_ms))
     }
 
     fn json<T: Serialize>(v: &T) -> String {
@@ -293,7 +293,7 @@ impl Sweep {
         let key = format!("{short}:{}:{seq}", c.work.start_s);
         let results_dir = format!("{}/cert-sweep/{}-{}-{seq}", self.run_dir, c.work.start_s, self.mode);
         c.work.leg = Some(Leg { purpose, commit: commit.clone(), suites, seq, key, results_dir, tail: String::new(), window: window.clone() });
-        vec![Self::effect(self.prepare, Self::json(&Prepare { commit, window }), PREPARE_DEADLINE_MS)]
+        vec![Self::effect(self.prepare, format!("{}:checkout:{short}:{seq}", self.task), Self::json(&Prepare { commit, window }), PREPARE_DEADLINE_MS)]
     }
 
     /// The current leg's unit, once its prepare step answered.
@@ -306,7 +306,7 @@ impl Sweep {
             }
         }
         let spec = (self.unit)(&leg, &prepared);
-        let mut cmds = vec![Self::effect(UNIT_START, Self::json(&spec), UNIT_DEADLINE_MS)];
+        let mut cmds = vec![Self::effect(UNIT_START, format!("{}:{}", self.task, leg.key), Self::json(&spec), UNIT_DEADLINE_MS)];
         if let Some(ms) = self.silence_ms {
             cmds.push(Command::Timer { at: now_ms + ms, kind: EventKind::new(self.watch, &leg.seq.to_string()) });
         }
@@ -332,7 +332,7 @@ impl Sweep {
                 let leg = c.work.leg.as_mut().ok_or("no leg")?;
                 leg.tail = out.stdout_tail.clone().unwrap_or_default();
                 let look = Look { results_dir: Some(leg.results_dir.clone()), stdout: Some(leg.tail.clone()), commit: leg.commit.clone(), round: c.round.clone() };
-                Ok((c.clone(), vec![Command::Probe(EffectSpec::by_input(self.observe, Self::json(&look), OBSERVE_DEADLINE_MS))]))
+                Ok((c.clone(), vec![Command::Probe(EffectSpec::probe(self.observe, Self::json(&look), OBSERVE_DEADLINE_MS))]))
             }
             Input::Silence(seq) => {
                 let live = c.phase == Phase::Running && c.work.leg.as_ref().is_some_and(|l| l.seq == *seq);
@@ -341,7 +341,7 @@ impl Sweep {
                 }
                 let leg = c.work.leg.as_ref().ok_or("no leg")?;
                 let look = Look { results_dir: Some(leg.results_dir.clone()), stdout: None, commit: leg.commit.clone(), round: c.round.clone() };
-                Ok((c.clone(), vec![Command::Probe(EffectSpec::by_input(self.observe, Self::json(&look), OBSERVE_DEADLINE_MS))]))
+                Ok((c.clone(), vec![Command::Probe(EffectSpec::probe(self.observe, Self::json(&look), OBSERVE_DEADLINE_MS))]))
             }
             // The silence watch's answer: a leg that wrote nothing is stopped, as no verdict.
             Input::Observed((_, results)) if c.phase == Phase::Running => {
@@ -354,7 +354,7 @@ impl Sweep {
                 let secs = self.silence_ms.unwrap_or_default() / 1000;
                 let why = format!("VERDICT no-verdict: round-vm produced no output in {secs}s (likely queued in host-wide admission)");
                 let (c2, mut cmds) = self.leg_done(&mut c, now_ms, &[], None, &why)?;
-                cmds.insert(0, Self::effect(UNIT_STOP, Self::json(&handle), UNIT_DEADLINE_MS));
+                cmds.insert(0, Self::effect(UNIT_STOP, format!("{}:stop:{}", self.task, leg.key), Self::json(&handle), UNIT_DEADLINE_MS));
                 Ok((c2, cmds))
             }
             Input::Observed((history, results)) if c.phase == Phase::Collect => {
@@ -407,7 +407,7 @@ impl Sweep {
                 let e = Event::SweepFault { mode: self.mode.into(), round: c.round.clone(), why };
                 let rec = Recording { rows: vec![], lines: vec![e.render()], events: vec![e] };
                 c.work = Work::default();
-                return Ok((c.clone(), vec![Self::effect(self.record, Self::json(&rec), RECORD_DEADLINE_MS)]));
+                return Ok((c.clone(), vec![Self::effect(self.record, format!("{}:fault:{}", self.task, leg.key), Self::json(&rec), RECORD_DEADLINE_MS)]));
             }
             self.go(c, "results")?;
             let picked: Vec<Outcome> = got.iter().filter(|o| c.picks.contains(&o.suite)).cloned().collect();
@@ -567,7 +567,7 @@ impl Sweep {
             }
             self.go(c, "file")?;
             let req = FileReq { title, body, suite, kind, priority: self.priority };
-            return Ok((c.clone(), vec![Self::effect(self.file_bead, Self::json(&req), FILE_DEADLINE_MS)]));
+            return Ok((c.clone(), vec![Self::effect(self.file_bead, format!("{}:{}:{:?}:{}", self.task, req.suite, req.kind, c.work.start_s), Self::json(&req), FILE_DEADLINE_MS)]));
         }
         c.work.emitted.push(e);
         c.work.event = None;
@@ -601,7 +601,7 @@ impl Sweep {
         let rec = Recording { rows, lines: events.iter().map(Event::render).collect(), events };
         self.go(c, "done")?;
         c.pending.clear();
-        Ok((c.clone(), vec![Self::effect(self.record, Self::json(&rec), RECORD_DEADLINE_MS)]))
+        Ok((c.clone(), vec![Self::effect(self.record, format!("{}:{}:summary", self.task, w.start_s), Self::json(&rec), RECORD_DEADLINE_MS)]))
     }
 }
 

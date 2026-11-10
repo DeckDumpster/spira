@@ -26,8 +26,8 @@ impl Alert {
         Alert { mailbox: mailbox.into(), from: from.into(), subject: format!("{prefix}: {line}"), kind: kind.into(), body: format!("## {heading}\n{line}\n") }
     }
 
-    pub fn effect(&self, name: &str, deadline_ms: u64) -> EffectSpec {
-        EffectSpec::by_input(name, serde_json::to_string(self).unwrap_or_default(), deadline_ms)
+    pub fn effect(&self, name: &str, key: String, deadline_ms: u64) -> EffectSpec {
+        EffectSpec::keyed(name, key, serde_json::to_string(self).unwrap_or_default(), deadline_ms)
     }
 }
 

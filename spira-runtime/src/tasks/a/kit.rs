@@ -66,7 +66,7 @@ impl Cadence {
 /// The P1 tick: one memory-only observe probe carrying `input`, and the next tick armed.
 pub fn on_tick(shape: &Shape, input: String, next_at: u64) -> Vec<Command> {
     vec![
-        Command::Probe(EffectSpec::by_input(shape.observe, input, shape.observe_deadline_ms)),
+        Command::Probe(EffectSpec::probe(shape.observe, input, shape.observe_deadline_ms)),
         Command::Timer { at: next_at, kind: EventKind::new(shape.tick, "") },
     ]
 }

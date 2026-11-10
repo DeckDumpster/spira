@@ -163,7 +163,7 @@ impl Handler for TriggerWarden {
                     ctx.event().set("warden.skip", why.as_str());
                     vec![]
                 }
-                Decision::File(bead) => vec![file_effect(FILE, bead, dedup_labels(&self.config, "SPIRA_WARDEN_LABEL"), FILE_DEADLINE_MS)],
+                Decision::File(bead) => vec![file_effect(FILE, format!("warden-sweep/{}", ev.at / self.interval_ms.max(1)), bead, dedup_labels(&self.config, "SPIRA_WARDEN_LABEL"), FILE_DEADLINE_MS)],
             }
         })
     }

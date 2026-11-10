@@ -1645,7 +1645,7 @@ where
         return kit::on_tick(shape, serde_json::to_string(&carry).unwrap_or_default(), cadence.next_after(ev.at));
     }
     if p.wakes.contains(&ev.kind.tag.as_str()) {
-        return vec![Command::Probe(EffectSpec::by_input(shape.observe, serde_json::to_string(&carry).unwrap_or_default(), shape.observe_deadline_ms))];
+        return vec![Command::Probe(EffectSpec::probe(shape.observe, serde_json::to_string(&carry).unwrap_or_default(), shape.observe_deadline_ms))];
     }
     if let Some(r) = UnitRan::from_event_kind(&ev.kind) {
         let Some((next, out)) = ran(&carry, &r) else { return vec![] };

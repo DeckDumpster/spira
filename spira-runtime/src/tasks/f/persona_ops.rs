@@ -209,12 +209,16 @@ pub struct BriefAsk {
     pub run_id: String,
 }
 
-fn spec<T: Serialize>(name: &str, body: &T, deadline_ms: u64) -> EffectSpec {
-    EffectSpec::by_input(name, serde_json::to_string(body).unwrap_or_default(), deadline_ms)
+fn spec<T: Serialize>(name: &str, key: String, body: &T, deadline_ms: u64) -> EffectSpec {
+    EffectSpec::keyed(name, key, serde_json::to_string(body).unwrap_or_default(), deadline_ms)
+}
+
+fn run_of(carry: &Carry) -> &str {
+    carry.run_id.as_deref().unwrap_or_default()
 }
 
 fn ledger(carry: &Carry, what: &str, detail: &str, rc: Option<i32>) -> EffectSpec {
-    spec(LEDGER, &LedgerLine { what: what.into(), detail: detail.into(), rc, run_id: carry.run_id.clone() }, HOST_DEADLINE_MS)
+    spec(LEDGER, format!("ops/{}/{what}", run_of(carry)), &LedgerLine { what: what.into(), detail: detail.into(), rc, run_id: carry.run_id.clone() }, HOST_DEADLINE_MS)
 }
 
 fn with(carry: &Carry, state: State) -> Carry {
@@ -242,7 +246,7 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
     let s = carry.state;
     let go = |on: &str| step(s, on);
     let out = match input {
-        Input::Tick => (with(carry, go("tick")?), vec![EffectSpec::by_input(OBSERVE, String::new(), OBSERVE_DEADLINE_MS)]),
+        Input::Tick => (with(carry, go("tick")?), vec![EffectSpec::probe(OBSERVE, String::new(), OBSERVE_DEADLINE_MS)]),
         Input::Observed(snap) => {
             if snap.halted || !snap.rune_present || snap.prompt_head.trim() == NOMINAL {
                 (Carry { state: go("skip")?, ..Carry::default() }, vec![])
@@ -257,13 +261,13 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
                 (Carry { state: go("busy")?, ..Carry::default() }, vec![ledger(carry, "awake", why, None)])
             } else {
                 let next = with(carry, go("go")?);
-                (next, vec![EffectSpec::by_input(INTAKE_INSTALL, String::new(), PREPARE_DEADLINE_MS), EffectSpec::by_input(INCIDENT_DRAIN, String::new(), PREPARE_DEADLINE_MS)])
+                (next, vec![EffectSpec::keyed(INTAKE_INSTALL, format!("ops/{}/intake", run_of(carry)), String::new(), PREPARE_DEADLINE_MS), EffectSpec::keyed(INCIDENT_DRAIN, format!("ops/{}/drain", run_of(carry)), String::new(), PREPARE_DEADLINE_MS)])
             }
         }
         Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == LEDGER || effect == INTAKE_INSTALL || effect == UNIT_STOP => (carry.clone(), vec![]),
         Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == INCIDENT_DRAIN => {
             let ask = BriefAsk { prompt: String::new(), run_id: carry.run_id.clone().unwrap_or_default() };
-            (with(carry, go("prepared")?), vec![spec(BRIEF, &ask, BRIEF_DEADLINE_MS)])
+            (with(carry, go("prepared")?), vec![spec(BRIEF, format!("ops/{}/brief", run_of(carry)), &ask, BRIEF_DEADLINE_MS)])
         }
         Input::Succeeded { effect, body } if effect == BRIEF => {
             let next = go("briefed")?;
@@ -273,7 +277,7 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
             }
             let key = carry.run_id.clone().ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
             let unit = UnitSpec { task: NAME.into(), key, argv: b.argv, env: b.env, cwd: b.sys_file.parent().map(Path::to_path_buf) };
-            (Carry { state: next, name: Some(b.name), ..carry.clone() }, vec![spec(UNIT_START, &unit, RUN_DEADLINE_MS)])
+            (Carry { state: next, name: Some(b.name), ..carry.clone() }, vec![spec(UNIT_START, format!("ops/{}", run_of(carry)), &unit, RUN_DEADLINE_MS)])
         }
         Input::Failed { effect, error } if effect == BRIEF => {
             if error.contains(dwarf::ops_sweep::STATUTE_MISSING) {
@@ -290,13 +294,13 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
             let stopped = s == State::Stopping;
             let next = go("unit.ran")?;
             let rc = rc_of(ran, outcome.as_deref(), stopped);
-            (with(carry, next), vec![ledger(carry, "done", "sweep", Some(rc)), spec(CLEANUP, &carry.run_id, HOST_DEADLINE_MS)])
+            (with(carry, next), vec![ledger(carry, "done", "sweep", Some(rc)), spec(CLEANUP, format!("ops/{}/cleanup", run_of(carry)), &carry.run_id, HOST_DEADLINE_MS)])
         }
         Input::Deadline => {
             let next = go("deadline")?;
             let key = carry.run_id.clone().ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
             let h = UnitHandle::of(NAME, &key).map_err(|e| e.to_string())?;
-            (with(carry, next), vec![spec(UNIT_STOP, &h, STOP_DEADLINE_MS)])
+            (with(carry, next), vec![spec(UNIT_STOP, format!("ops/{}/stop", run_of(carry)), &h, STOP_DEADLINE_MS)])
         }
     };
     Ok(out)
@@ -415,17 +419,18 @@ impl PersonaOps {
     /// The run id the handler assigned on entering `Preparing`, written into the acts that name it.
     fn with_run(&self, a: EffectSpec, next: &Carry) -> EffectSpec {
         let Some(id) = &next.run_id else { return a };
-        match a.name.as_str() {
+        let a = match a.name.as_str() {
             BRIEF => match serde_json::from_str::<BriefAsk>(&a.input) {
-                Ok(ask) if ask.run_id.is_empty() => spec(BRIEF, &BriefAsk { run_id: id.clone(), ..ask }, a.deadline_ms),
+                Ok(ask) if ask.run_id.is_empty() => spec(BRIEF, a.key.clone(), &BriefAsk { run_id: id.clone(), ..ask }, a.deadline_ms),
                 _ => a,
             },
             LEDGER => match serde_json::from_str::<LedgerLine>(&a.input) {
-                Ok(l) if l.run_id.is_none() => spec(LEDGER, &LedgerLine { run_id: Some(id.clone()), ..l }, a.deadline_ms),
+                Ok(l) if l.run_id.is_none() => spec(LEDGER, a.key.clone(), &LedgerLine { run_id: Some(id.clone()), ..l }, a.deadline_ms),
                 _ => a,
             },
             _ => a,
-        }
+        };
+        EffectSpec { key: a.key.replacen("ops//", &format!("ops/{id}/"), 1), ..a }
     }
 }
 

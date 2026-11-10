@@ -247,7 +247,7 @@ impl Handler for PrNotify {
         if ev.kind.tag == TICK {
             let input = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE)).unwrap_or_default();
             return vec![
-                Command::Probe(EffectSpec::by_input(OBSERVE, input, OBSERVE_DEADLINE_MS)),
+                Command::Probe(EffectSpec::probe(OBSERVE, input, OBSERVE_DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
@@ -264,10 +264,11 @@ impl Handler for PrNotify {
             cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
         }
         for m in say.lines {
-            cmds.push(Command::Effect(EffectSpec::by_input(INBOX_APPEND, format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS)));
+            cmds.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS)));
         }
         for n in say.notes {
-            cmds.push(Command::Effect(EffectSpec::by_input(OPERATOR_NOTE, serde_json::to_string(&n).unwrap_or_default(), DEADLINE_MS)));
+            let input = serde_json::to_string(&n).unwrap_or_default();
+            cmds.push(Command::Effect(EffectSpec::keyed(OPERATOR_NOTE, format!("{NAME}:note:{now}:{:016x}", runtime::event::fnv1a(&input)), input, DEADLINE_MS)));
         }
         cmds
     }

@@ -333,10 +333,10 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     }
     let mut acts = vec![];
     if !candidates.is_empty() {
-        acts.push(EffectSpec::by_input(SOP_MATCH, serde_json::to_string(&Offer { candidates }).unwrap_or_default(), ACT_DEADLINE_MS));
+        acts.push(EffectSpec::keyed(SOP_MATCH, format!("inbox.notify:match:{now}"), serde_json::to_string(&Offer { candidates }).unwrap_or_default(), ACT_DEADLINE_MS));
     }
     if snap.mail_health.is_none() {
-        acts.push(EffectSpec::by_input(MAIL_HEALTH, format!("inbox.notify:mailhealth:{now}"), LONG_DEADLINE_MS));
+        acts.push(EffectSpec::keyed(MAIL_HEALTH, format!("inbox.notify:mailhealth:{now}"), format!("inbox.notify:mailhealth:{now}"), LONG_DEADLINE_MS));
     }
     (next, acts)
 }
@@ -367,8 +367,9 @@ pub fn asks(carry: &Carry, offer: &Offer, outcome: &str) -> Vec<EffectSpec> {
             continue;
         }
         let body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n{why}\n\n{report}\n");
+        let akey = format!("inbox.notify:{}:{fingerprint}", format!("{kind:?}").to_lowercase());
         let ask = Ask { kind, fingerprint, from: watchd::send::FROM.into(), subject: subject.into(), default: default.into(), body };
-        out.push(EffectSpec::by_input(ASK, serde_json::to_string(&ask).unwrap_or_default(), ACT_DEADLINE_MS));
+        out.push(EffectSpec::keyed(ASK, akey, serde_json::to_string(&ask).unwrap_or_default(), ACT_DEADLINE_MS));
     }
     out
 }

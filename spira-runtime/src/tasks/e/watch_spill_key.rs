@@ -152,8 +152,8 @@ pub fn probe_deadline_s(carry: &Carry, cfg: &Config) -> u64 {
 pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let (mut next, mut acts) = (carry.clone(), vec![]);
     let mut once = |next: &mut Carry, key: String, message: String| {
-        if next.said.insert(key) {
-            acts.push(EffectSpec::by_input(INBOX_APPEND, pattern::inbox_line(now_ms, INBOX_TAG, &message), INBOX_DEADLINE_MS));
+        if next.said.insert(key.clone()) {
+            acts.push(EffectSpec::keyed(INBOX_APPEND, format!("spill_key/{key}"), pattern::inbox_line(now_ms, INBOX_TAG, &message), INBOX_DEADLINE_MS));
         }
     };
     let clear = |next: &mut Carry, prefix: &str| next.said.retain(|k| !k.starts_with(prefix));

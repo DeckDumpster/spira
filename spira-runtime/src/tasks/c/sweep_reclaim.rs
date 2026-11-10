@@ -220,8 +220,8 @@ fn gib(cfg: &Cfg, key: &str) -> Result<u64, String> {
     raw.trim().parse::<u64>().map_err(|_| format!("{key} must be a whole number of GiB, got {raw:?}"))
 }
 
-fn act(name: &str, input: String, deadline_ms: u64) -> Act {
-    Act { name: name.into(), input, deadline_ms, probe: false }
+fn act(name: &str, key: String, input: String, deadline_ms: u64) -> Act {
+    Act { name: name.into(), key, input, deadline_ms, probe: false }
 }
 
 /// The acts a snapshot calls for: `reclaim::run`'s branching, split from its IO, and
@@ -231,22 +231,22 @@ pub fn plan(cfg: &Cfg, snap: &Snapshot) -> Result<Vec<Act>, String> {
     let (podman_cap, cache_cap) = (gib(cfg, PODMAN_CAP_KEY)? * GIB, gib(cfg, CACHE_CAP_KEY)? * GIB);
     let mut acts = vec![];
     if snap.free_mib < min_free {
-        acts.push(act(PODMAN_PRUNE, "root under the floor".into(), 600_000));
+        acts.push(act(PODMAN_PRUNE, "prune".into(), "root under the floor".into(), 600_000));
         let mut projected = snap.free_mib;
         for c in snap.candidates.iter().filter(|c| c.verdict == Verdict::Reclaim) {
             if projected >= target_free {
                 break;
             }
             projected += c.bytes >> 20;
-            acts.push(act(REMOVE_TARGET, c.path.clone(), 300_000));
+            acts.push(act(REMOVE_TARGET, format!("{}:{}", c.path, c.age), c.path.clone(), 300_000));
         }
     } else if snap.podman_bytes > podman_cap {
-        acts.push(act(PODMAN_PRUNE, format!("storage {} MiB over cap {} MiB", snap.podman_bytes >> 20, podman_cap >> 20), 600_000));
+        acts.push(act(PODMAN_PRUNE, "prune".into(), format!("storage {} MiB over cap {} MiB", snap.podman_bytes >> 20, podman_cap >> 20), 600_000));
     }
     let files: Vec<(u64, u64, String)> = snap.cache.iter().map(|f| (f.mtime, f.bytes, f.path.clone())).collect();
     let trim = reclaim::trim_selection(&files, cache_cap);
     if !trim.is_empty() {
-        acts.push(act(TRIM_CACHE, serde_json::to_string(&trim).map_err(|e| e.to_string())?, 120_000));
+        acts.push(act(TRIM_CACHE, "cache".into(), serde_json::to_string(&trim).map_err(|e| e.to_string())?, 120_000));
     }
     Ok(acts)
 }

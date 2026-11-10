@@ -128,7 +128,7 @@ pub struct Send {
 /// Every tick sends once, keyed by the tick that asked: `incident_probe/<tick event id>`.
 pub fn decide(_snap: &Snapshot, tick_id: &str, _cfg: &Config) -> Vec<EffectSpec> {
     let send = Send { key: format!("incident_probe/{tick_id}"), mailbox: MAILBOX.into(), subject: SUBJECT.into(), body: BODY.into() };
-    vec![EffectSpec::by_input(SEND, serde_json::to_string(&send).unwrap_or_default(), SEND_DEADLINE_MS)]
+    vec![EffectSpec::keyed(SEND, send.key.clone(), serde_json::to_string(&send).unwrap_or_default(), SEND_DEADLINE_MS)]
 }
 
 /// The latest probe attempt in the alarm-attempt family, the record `probe_health` reads.

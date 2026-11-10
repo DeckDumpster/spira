@@ -179,7 +179,7 @@ fn phase_name(p: Phase) -> String {
 fn next_store(c: &mut Carry) -> Result<Option<Act>, String> {
     let Some(body) = c.queue.pop() else { return Ok(None) };
     c.rels.insert(body.rel.clone(), Phase::Storing);
-    Ok(Some(Act { name: STORE.into(), input: serde_json::to_string(&body).map_err(|e| e.to_string())?, deadline_ms: 300_000, probe: false }))
+    Ok(Some(Act { name: STORE.into(), key: format!("archive/{}/{}/{}", body.rel, body.size, body.mtime), input: serde_json::to_string(&body).map_err(|e| e.to_string())?, deadline_ms: 300_000, probe: false }))
 }
 
 /// The fast path: store a source with no index row, a size or mtime change, or no body.
@@ -229,7 +229,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
             }
             let in_flight = next.rels.values().any(|p| *p == Phase::Storing);
             if !in_flight && next.index == Index::Stale {
-                return Ok((next, vec![Act { name: INDEX.into(), input: String::new(), deadline_ms: 60_000, probe: false }]));
+                return Ok((next, vec![Act { name: INDEX.into(), key: "archive/index".into(), input: String::new(), deadline_ms: 60_000, probe: false }]));
             }
             Ok((next, vec![]))
         }

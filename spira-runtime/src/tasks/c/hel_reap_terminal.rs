@@ -193,8 +193,8 @@ fn unsaved_of(u: Unsaved) -> hel::terminal::Unsaved {
     }
 }
 
-fn act(name: &str, input: String, deadline_ms: u64) -> Act {
-    Act { name: name.into(), input, deadline_ms, probe: false }
+fn act(name: &str, key: String, input: String, deadline_ms: u64) -> Act {
+    Act { name: name.into(), key, input, deadline_ms, probe: false }
 }
 
 /// One answered removal: the entry leaves `open`; a checkout that went marks its repository
@@ -210,7 +210,7 @@ fn answered(carry: &Carry, body: &str, ok: bool) -> (Carry, Vec<Act>) {
     if !next.open.is_empty() {
         return (next, vec![]);
     }
-    let acts = next.prune.iter().map(|r| act(PRUNE, r.clone(), 30_000)).collect();
+    let acts = next.prune.iter().map(|r| act(PRUNE, format!("prune:{r}"), r.clone(), 30_000)).collect();
     (Carry { last_fired: next.last_fired, ..Carry::default() }, acts)
 }
 
@@ -235,12 +235,12 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 match &e.repo {
                     Some(root) => {
                         let d = super::hel_reap_stale::Destroy { id: e.name.clone(), path: String::new(), root: root.clone(), why: format!("reap-terminal: {tag}") };
-                        acts.push(act(DESTROY_WORKTREE, serde_json::to_string(&d).map_err(|e| e.to_string())?, 120_000));
+                        acts.push(act(DESTROY_WORKTREE, format!("{}:destroy", e.name), serde_json::to_string(&d).map_err(|e| e.to_string())?, 120_000));
                         next.roots.insert(e.name.clone(), root.clone());
                     }
                     // A checkout whose repository does not resolve cannot go through the chokepoint.
                     None if e.is_git => continue,
-                    None => acts.push(act(REMOVE_SCRATCH, e.name.clone(), 60_000)),
+                    None => acts.push(act(REMOVE_SCRATCH, e.name.clone(), e.name.clone(), 60_000)),
                 }
                 next.open.push(e.name.clone());
             }

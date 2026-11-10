@@ -237,14 +237,14 @@ pub struct NodeTexts {
 }
 
 /// Today's `pass` over the snapshot: the bumps to file, the metrics push, the `cannot check` lines.
-pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let w = SnapWorld { snap, persona: &cfg.persona, bumps: Default::default() };
     let o = runtime_watch::pass(&w, cfg.max_files);
     let bumps = w.bumps.into_inner();
-    let mut acts: Vec<EffectSpec> = bumps.iter().map(|b| EffectSpec::by_input(FILE_BUMP, serde_json::to_string(b).unwrap_or_default(), FILE_DEADLINE_MS)).collect();
+    let mut acts: Vec<EffectSpec> = bumps.iter().map(|b| EffectSpec::keyed(FILE_BUMP, format!("{NAME}:{}", b.key.replace('\t', ":")), serde_json::to_string(b).unwrap_or_default(), FILE_DEADLINE_MS)).collect();
     let m = Metrics { cannot_check: o.cannot_check.len() as u64, filed: bumps.len() as u64 };
-    acts.push(EffectSpec::by_input(METRICS, serde_json::to_string(&m).unwrap_or_default(), ACT_DEADLINE_MS));
-    acts.extend(o.cannot_check.iter().map(|c| EffectSpec::by_input(LOG, format!("{COMPONENT}: cannot check — {c}"), ACT_DEADLINE_MS)));
+    acts.push(EffectSpec::keyed(METRICS, format!("{NAME}:metrics:{now_ms}"), serde_json::to_string(&m).unwrap_or_default(), ACT_DEADLINE_MS));
+    acts.extend(o.cannot_check.iter().enumerate().map(|(i, c)| EffectSpec::keyed(LOG, format!("{NAME}:log:{now_ms}:{i}"), format!("{COMPONENT}: cannot check — {c}"), ACT_DEADLINE_MS)));
     (carry.clone(), acts)
 }
 

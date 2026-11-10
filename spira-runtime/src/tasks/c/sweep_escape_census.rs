@@ -142,7 +142,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
                 return Err(format!("{NAME}: {week} is already reported; a second census that week is refused"));
             }
             let text = format!("{} {}", crate::watchers::iso8601(now_ms / 1000), line(snap));
-            Ok((Carry { phase: Phase::Reported, last_fired: Some(now_ms), week: Some(week) }, vec![Act { name: REPORT.into(), input: text, deadline_ms: 5_000, probe: false }]))
+            Ok((Carry { phase: Phase::Reported, last_fired: Some(now_ms), week: Some(week.clone()) }, vec![Act { name: REPORT.into(), key: format!("escape-census/{week}"), input: text, deadline_ms: 5_000, probe: false }]))
         }
         Input::Outcome { effect, .. } if effect == REPORT => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase(carry.phase))),

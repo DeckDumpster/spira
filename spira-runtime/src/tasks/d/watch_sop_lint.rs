@@ -157,7 +157,7 @@ pub fn decide(snap: &Snapshot, _cfg: &Config) -> Vec<EffectSpec> {
         return vec![];
     };
     let input = serde_json::to_string(&Filing { title: title.into(), body: out }).unwrap_or_default();
-    vec![EffectSpec::by_input(FILE_INCIDENT, input, FILE_DEADLINE_MS)]
+    vec![EffectSpec::keyed(FILE_INCIDENT, format!("watch.sop_lint:incident:{title}"), input, FILE_DEADLINE_MS)]
 }
 
 /// The sop word cap `sop lint` applies when `SOP_WORD_CAP` is unset (`sop/src/main.rs:47`); the

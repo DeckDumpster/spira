@@ -327,6 +327,8 @@ pub mod kit {
         pub name: String,
         pub input: String,
         pub deadline_ms: u64,
+        /// The idempotency key its contract's Act table names: one request per `(task, key)` is in flight.
+        pub key: String,
         /// A memory-only read rather than a journaled effect.
         pub probe: bool,
     }
@@ -404,7 +406,7 @@ pub mod kit {
             let mut cmds = vec![];
             if !(t.cadence().is_calendar() && ev.kind.body == BOOT) {
                 let input = spec.probe_input_key.and_then(|k| t.cfg().get(k)).cloned().unwrap_or_default();
-                cmds.push(Command::Probe(EffectSpec::by_input(spec.probe, input, spec.probe_deadline_ms)));
+                cmds.push(Command::Probe(EffectSpec::probe(spec.probe, input, spec.probe_deadline_ms)));
             }
             cmds.push(Command::Timer { at: t.cadence().next(ev.at), kind: EventKind::new(spec.tick, FIRE) });
             return cmds;
@@ -433,7 +435,7 @@ pub mod kit {
                     cmds.push(Command::Emit(EventKind::new(T::SPEC.state, &serde_json::to_string(&next).unwrap_or_default())));
                 }
                 for a in acts {
-                    let spec = EffectSpec::by_input(a.name, a.input, a.deadline_ms);
+                    let spec = EffectSpec::keyed(a.name, a.key, a.input, a.deadline_ms);
                     cmds.push(if a.probe { Command::Probe(spec) } else { Command::Effect(spec) });
                 }
                 cmds

@@ -202,7 +202,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             }
             next.through_seq = carry.through_seq.max(snap.through_seq);
             next.pending = fresh;
-            Ok((next, vec![Act { name: SKEW_CHECK.into(), input: String::new(), deadline_ms: 5_000, probe: false }]))
+            Ok((next, vec![Act { name: SKEW_CHECK.into(), key: format!("{NAME}:skew-check:{now_ms}"), input: String::new(), deadline_ms: 5_000, probe: false }]))
         }
         Input::Outcome { effect, ok, .. } if effect == SKEW_CHECK => {
             let mut next = Carry { pending: vec![], skew_red_at: None, ..carry.clone() };
@@ -216,7 +216,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                     p => return Err(format!("{NAME}: {} is {}; a second close is refused", c.id, phase_name(p))),
                 }
                 next.beads.insert(c.id.clone(), Phase::CloseRequested);
-                acts.push(Act { name: CLOSE.into(), input: serde_json::to_string(c).map_err(|e| e.to_string())?, deadline_ms: CLOSE_DEADLINE_MS, probe: false });
+                acts.push(Act { name: CLOSE.into(), key: format!("content-close/{}", c.id), input: serde_json::to_string(c).map_err(|e| e.to_string())?, deadline_ms: CLOSE_DEADLINE_MS, probe: false });
             }
             Ok((next, acts))
         }

@@ -118,8 +118,8 @@ pub struct Snapshot {
 pub type Carry = Rate;
 
 /// OVER on the crossing, CLEAR on the way back, BLIND on every unreadable tick (no latch).
-pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    let say = |line: String| vec![Alert::of(MAILBOX, FROM, "pass-rate", "event", &line).effect(MAIL, MAIL_DEADLINE_MS)];
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    let say = |line: String| vec![Alert::of(MAILBOX, FROM, "pass-rate", "event", &line).effect(MAIL, format!("{NAME}:{now_ms}"), MAIL_DEADLINE_MS)];
     if !snap.readable {
         return (*carry, say("BLIND: the pass-rate watcher cannot read the ledger window".into()));
     }

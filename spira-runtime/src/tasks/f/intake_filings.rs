@@ -184,13 +184,13 @@ fn lib_filing(f: &Filing) -> filings_collect::Filing {
     filings_collect::Filing { class: f.class.clone(), action, repo: f.repo.clone(), title: f.title.clone(), body: f.body.clone() }
 }
 
-fn effect(name: &str, input: String, deadline_ms: u64) -> EffectSpec {
-    EffectSpec::by_input(name, input, deadline_ms)
+fn effect(name: &str, key: String, input: String, deadline_ms: u64) -> EffectSpec {
+    EffectSpec::keyed(name, key, input, deadline_ms)
 }
 
 fn alarm(carry: &mut Carry, acts: &mut Vec<EffectSpec>, at: &str, reason: &str) {
     if carry.alarmed.insert(at.to_string()) {
-        acts.push(effect(INBOX, format!("[watch:{NAME}] filings-collect: ALARM {at}: {reason}"), 10_000));
+        acts.push(effect(INBOX, format!("{at}/{reason}"), format!("[watch:{NAME}] filings-collect: ALARM {at}: {reason}"), 10_000));
     }
 }
 
@@ -222,7 +222,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
         for o in sorted {
             let at = format!("{prefix}{}", o.name);
             if next.applied.contains(&at) {
-                acts.push(effect(ACK, serde_json::to_string(&Ack { host: h.clone(), name: o.name.clone() }).unwrap_or_default(), DEADLINE_MS));
+                acts.push(effect(ACK, at.clone(), serde_json::to_string(&Ack { host: h.clone(), name: o.name.clone() }).unwrap_or_default(), DEADLINE_MS));
                 continue;
             }
             let f = match &o.filing {
@@ -249,9 +249,9 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
                     (FILE, filings_collect::new_bead_body(&lib_host(h), &o.name, &lib), None)
                 }
             };
-            next.applied.insert(at);
+            next.applied.insert(at.clone());
             let input = Apply { host: h.clone(), name: o.name.clone(), key, filing: f.clone(), bead, body };
-            acts.push(effect(name, serde_json::to_string(&input).unwrap_or_default(), APPLY_DEADLINE_MS));
+            acts.push(effect(name, at, serde_json::to_string(&input).unwrap_or_default(), APPLY_DEADLINE_MS));
         }
     }
     (next, acts)

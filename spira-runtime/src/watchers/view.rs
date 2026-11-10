@@ -123,7 +123,7 @@ impl Handler for View {
         }
         if ev.kind.tag == TICK {
             return vec![
-                Command::Probe(EffectSpec::by_input(OBSERVE, ev.kind.body.clone(), OBSERVE_DEADLINE_MS)),
+                Command::Probe(EffectSpec::probe(OBSERVE, ev.kind.body.clone(), OBSERVE_DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
@@ -142,11 +142,12 @@ impl Handler for View {
             cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&decision.carry).unwrap_or_default())));
         }
         if let Some(forget) = &decision.forget {
-            cmds.push(Command::Effect(EffectSpec::by_input(FORGET, serde_json::to_string(forget).unwrap_or_default(), ACT_DEADLINE_MS)));
+            let input = serde_json::to_string(forget).unwrap_or_default();
+            cmds.push(Command::Effect(EffectSpec::keyed(FORGET, format!("{NAME}:forget:{:016x}", runtime::event::fnv1a(&input)), input, ACT_DEADLINE_MS)));
         }
         if let Some(to) = decision.flip {
             ctx.event().set("view.flip", format!("{} -> {to}; live sessions: {}", seen.want.as_deref().unwrap_or(""), snap.live.as_deref().unwrap_or_default().join(" ")));
-            cmds.push(Command::Effect(EffectSpec::by_input(FLIP, to, ACT_DEADLINE_MS)));
+            cmds.push(Command::Effect(EffectSpec::keyed(FLIP, format!("{NAME}:flip:{to}"), to, ACT_DEADLINE_MS)));
         }
         cmds
     }

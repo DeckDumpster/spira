@@ -960,7 +960,7 @@ pub mod edge {
     pub fn notify(e: &Effects, k: &str, spec: &EffectSpec) -> Result<String, String> {
         let p = input(spec)?;
         let s = super::super::queue_step::Step { repo: p.repo, subject: p.subject, body: p.body, ..Default::default() };
-        let spec = EffectSpec::by_input(spec.name.clone(), serde_json::to_string(&s).map_err(|e| e.to_string())?, spec.deadline_ms);
+        let spec = EffectSpec::keyed(spec.name.clone(), spec.key.clone(), serde_json::to_string(&s).map_err(|e| e.to_string())?, spec.deadline_ms);
         super::super::queue_step::edge::notify(e, k, &spec)
     }
 }

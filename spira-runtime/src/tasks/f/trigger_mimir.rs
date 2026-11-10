@@ -234,7 +234,7 @@ impl Handler for TriggerMimir {
                     ctx.event().set("mimir.skip", "recent");
                     vec![]
                 }
-                Decision::File(bead) => vec![file_effect(FILE, bead, dedup_labels(&self.config, "SPIRA_MIMIR_LABEL"), DEADLINE_MS)],
+                Decision::File(bead) => vec![file_effect(FILE, format!("mimir-sweep/{}", ev.at / self.interval_ms.max(1)), bead, dedup_labels(&self.config, "SPIRA_MIMIR_LABEL"), DEADLINE_MS)],
             }
         })
     }

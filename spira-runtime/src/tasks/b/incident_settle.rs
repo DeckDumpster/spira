@@ -96,7 +96,7 @@
 
 use std::collections::BTreeMap;
 
-use runtime::event::EventKindTag;
+use runtime::event::{fnv1a, EventKindTag};
 use serde::{Deserialize, Serialize};
 
 use super::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
@@ -284,8 +284,8 @@ pub struct Job {
     pub log: String,
 }
 
-fn act(name: &str, j: Job, deadline_ms: u64) -> Act {
-    Act { name: name.into(), input: serde_json::to_string(&j).unwrap_or_default(), deadline_ms, probe: false }
+fn act(name: &str, key: String, j: Job, deadline_ms: u64) -> Act {
+    Act { name: name.into(), key, input: serde_json::to_string(&j).unwrap_or_default(), deadline_ms, probe: false }
 }
 
 /// `settle_one` with the port's reads answered from `Inc`: a close asks `close`, a persisting
@@ -293,7 +293,7 @@ fn act(name: &str, j: Job, deadline_ms: u64) -> Act {
 /// one `log`. A second persist while one is in flight is refused naming the fired label.
 pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     let log = cfg.get("SPIRA_INCIDENT_LOG").cloned().unwrap_or_default();
-    let line = |text: String| act(LOG, Job { text, log: log.clone(), ..Job::default() }, 2_000);
+    let line = |text: String| act(LOG, format!("{NAME}:log:{now_ms}:{:016x}", fnv1a(&text)), Job { text, log: log.clone(), ..Job::default() }, 2_000);
     let mut next = carry.clone();
     let mut acts = vec![];
     match input {
@@ -314,7 +314,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                     incident::settle::Outcome::Closed { evidence, .. } => {
                         next.incidents.insert(inc.id.clone(), Phase::Closing);
                         next.waiting.remove(&inc.id);
-                        acts.push(act(CLOSE, Job { id: inc.id.clone(), text: evidence, ..Job::default() }, 5_000));
+                        acts.push(act(CLOSE, format!("{}:close", inc.id), Job { id: inc.id.clone(), text: evidence, ..Job::default() }, 5_000));
                     }
                     incident::settle::Outcome::Persists { .. } => {
                         let (label, note) = port.persisted.borrow().clone().unwrap_or_default();
@@ -323,7 +323,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                         }
                         next.incidents.insert(inc.id.clone(), Phase::Persists);
                         next.waiting.remove(&inc.id);
-                        acts.push(act(NOTE, Job { id: inc.id.clone(), text: note, label, ..Job::default() }, 10_000));
+                        acts.push(act(NOTE, format!("{}:note:{label}", inc.id), Job { id: inc.id.clone(), text: note, label, ..Job::default() }, 10_000));
                     }
                     o @ (incident::settle::Outcome::Waiting { .. } | incident::settle::Outcome::Skipped { .. }) => {
                         let (skipped, why) = match o {
@@ -353,7 +353,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                     next.incidents.insert(j.id.clone(), Phase::Closed);
                     acts.push(line(format!("settle: closed {}: {}", j.id, j.text)));
                 }
-                (NOTE, true) => acts.push(act(LABEL, Job { id: j.id, label: j.label, ..Job::default() }, 10_000)),
+                (NOTE, true) => acts.push(act(LABEL, format!("{}:label:{}", j.id, j.label), Job { id: j.id, label: j.label, ..Job::default() }, 10_000)),
                 (LABEL, true) => {
                     next.incidents.insert(j.id.clone(), Phase::Waiting);
                     next.waiting.insert(j.id.clone(), format!("{}\tfix landed but the alarm persists; already with Ops", j.id));

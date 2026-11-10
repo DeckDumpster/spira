@@ -214,7 +214,8 @@ fn job(r: &Reply, step: &str, text: String, retries: u32) -> Job {
 }
 
 fn act(name: &str, j: &Job, deadline_ms: u64) -> Act {
-    Act { name: name.into(), input: serde_json::to_string(j).unwrap_or_default(), deadline_ms, probe: false }
+    let key = if name == MARK { format!("{}/mark/{}", j.key, j.step) } else { format!("{}/{}", j.key, j.step) };
+    Act { name: name.into(), key, input: serde_json::to_string(j).unwrap_or_default(), deadline_ms, probe: false }
 }
 
 const STORE_MS: u64 = 15_000;

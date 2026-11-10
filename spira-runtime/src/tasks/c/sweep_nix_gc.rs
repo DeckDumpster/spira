@@ -191,13 +191,13 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
         Input::Observed(snap) => match (refusal(snap), &snap.gc_bin) {
             (None, Some(bin)) => {
                 let body = Collect { gc_bin: bin.clone(), week: iso_week(now_ms) };
-                let act = Act { name: COLLECT.into(), input: serde_json::to_string(&body).map_err(|e| e.to_string())?, deadline_ms: 10_000, probe: false };
+                let act = Act { name: COLLECT.into(), key: format!("nix-gc/{}", body.week), input: serde_json::to_string(&body).map_err(|e| e.to_string())?, deadline_ms: 10_000, probe: false };
                 Ok((Carry { phase: Phase::Collecting, last_fired: Some(now_ms), refused: None }, vec![act]))
             }
             (why, _) => {
                 let why = why.unwrap_or("nix-collect-garbage was not found (binary)");
                 let line = format!("{} [task:{NAME}] {why}", crate::watchers::iso8601(now_ms / 1000));
-                Ok((Carry { phase: Phase::Refused, last_fired: Some(now_ms), refused: Some(why.into()) }, vec![Act { name: INBOX_APPEND.into(), input: line, deadline_ms: 10_000, probe: false }]))
+                Ok((Carry { phase: Phase::Refused, last_fired: Some(now_ms), refused: Some(why.into()) }, vec![Act { name: INBOX_APPEND.into(), key: format!("nix-gc/refused/{now_ms}"), input: line, deadline_ms: 10_000, probe: false }]))
             }
         },
         Input::Ran(_) if carry.phase == Phase::Collecting => Ok((Carry { phase: Phase::Idle, ..carry.clone() }, vec![])),
@@ -205,7 +205,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
         // The unit did not start: nothing is collecting, so the next tick tries again.
         Input::Outcome { effect, ok: false, body } if effect == COLLECT && carry.phase == Phase::Collecting => {
             let line = format!("{} [task:{NAME}] nix-collect-garbage did not start: {body}", crate::watchers::iso8601(now_ms / 1000));
-            Ok((Carry { phase: Phase::Idle, ..carry.clone() }, vec![Act { name: INBOX_APPEND.into(), input: line, deadline_ms: 10_000, probe: false }]))
+            Ok((Carry { phase: Phase::Idle, ..carry.clone() }, vec![Act { name: INBOX_APPEND.into(), key: format!("nix-gc/unstarted/{now_ms}"), input: line, deadline_ms: 10_000, probe: false }]))
         }
         Input::Outcome { effect, .. } if effect == COLLECT || effect == INBOX_APPEND => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase_name(carry.phase))),
