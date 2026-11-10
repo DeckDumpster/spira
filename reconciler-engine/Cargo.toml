@@ -11,7 +11,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["mail/integration", "runtime/integration", "spira-config/integration", "spira-desired-state/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 spira-config = { path = "../spira-config" }

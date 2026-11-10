@@ -5,7 +5,7 @@ edition = "2021"
 description = "spira-lint — the harness's static fences as one binary: one walk of the tracked tree, one Rule per fence, each with a named, shrink-only allow list."
 
 [features]
-integration = []
+integration = ["spira-config/integration", "spira-otel/integration", "suite-select/integration", "test-plan/integration", "testkit/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }

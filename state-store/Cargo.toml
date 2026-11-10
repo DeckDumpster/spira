@@ -19,7 +19,7 @@ path = "tests/conformance_model.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["runtime/integration"]
 
 [dependencies]
 runtime = { path = "../runtime" }

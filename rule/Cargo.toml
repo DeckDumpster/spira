@@ -20,7 +20,7 @@ path = "tests/code.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["bead/integration", "spira-config/integration", "spira-lint/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }

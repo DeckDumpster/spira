@@ -31,7 +31,7 @@ path = "tests/victoria.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["spira-otel/integration", "testkit/integration"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

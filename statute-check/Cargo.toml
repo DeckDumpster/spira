@@ -20,7 +20,7 @@ path = "tests/cli.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
 spira-config = { path = "../spira-config" }

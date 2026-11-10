@@ -21,7 +21,7 @@ path = "tests/store_parity.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["reconciler-engine/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }

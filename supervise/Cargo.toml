@@ -5,7 +5,7 @@ edition = "2021"
 description = "spira-supervise — main-PID supervisor for the cockpit collector; sends sd_notify heartbeats while the child is healthy."
 
 [features]
-integration = []
+integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
 libc = "0.2"

@@ -20,7 +20,7 @@ path = "tests/accounting.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

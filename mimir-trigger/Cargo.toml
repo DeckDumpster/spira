@@ -9,7 +9,7 @@ name = "mimir-trigger"
 path = "src/main.rs"
 
 [features]
-integration = []
+integration = ["spira-config/integration", "spira-otel/integration", "strand/integration"]
 
 [dependencies]
 spira-config = { path = "../spira-config" }
