@@ -744,17 +744,15 @@ fn filing(input: &str, effect: &str) -> Result<Filing, String> {
     serde_json::from_str(input).map_err(|e| format!("{effect}: bad input: {e}"))
 }
 
-/// The gate run as `gate_worker::classify` reads it from the leg's own status and output.
-fn gate_run(f: &Filing) -> landing_pass::model::GateRun {
+/// The gate run as `gate_worker::classify` reads it from the leg's own status and output. A leg
+/// that ended with no status and no output was not seen to run: filing it would record a verdict
+/// nobody produced, so it is refused.
+fn gate_run(f: &Filing) -> Result<landing_pass::model::GateRun, String> {
     let out = std::fs::read_to_string(&f.out_path).unwrap_or_default();
-    gate_worker::classify(f.rc.unwrap_or(KILLED), out)
-}
-
-/// A leg that ended with no status and no output was not seen to run: filing it would record a
-/// verdict nobody produced.
-fn leg_left_a_trace(f: &Filing) -> Result<(), String> {
-    let out = std::fs::read_to_string(&f.out_path).unwrap_or_default();
-    if has_trace(f.rc, &out) { Ok(()) } else { Err(format!("{} ended with no status and no output", f.job.key())) }
+    if !has_trace(f.rc, &out) {
+        return Err(format!("{} ended with no status and no output", f.job.key()));
+    }
+    Ok(gate_worker::classify(f.rc.unwrap_or(KILLED), out))
 }
 
 fn has_trace(rc: Option<i32>, out: &str) -> bool {
@@ -764,19 +762,18 @@ fn has_trace(rc: Option<i32>, out: &str) -> bool {
 /// Keep a non-PASS gate's whole output (the newest 300 are kept).
 pub fn retain_output(e: &crate::Effects, input: &str) -> Result<String, String> {
     let f = filing(input, RETAIN_OUTPUT)?;
-    leg_left_a_trace(&f).map_err(|why| format!("{RETAIN_OUTPUT}: {why} — refused"))?;
+    let run = gate_run(&f).map_err(|why| format!("{RETAIN_OUTPUT}: {why} — refused"))?;
     let q = queue(e);
     let job = q.claimed_job(f.slot, &f.job.repo, &f.job.branch, &f.job.tip).unwrap_or_else(|| landing_pass::gateq::Job::new(&f.job.repo, &f.job.branch, &f.job.bead, &f.job.tip, f.job.fix));
-    q.retain_output(&job, &gate_run(&f).out).map(|p| p.display().to_string()).map_err(|e| format!("{RETAIN_OUTPUT}: {e}"))
+    q.retain_output(&job, &run.out).map(|p| p.display().to_string()).map_err(|e| format!("{RETAIN_OUTPUT}: {e}"))
 }
 
 /// File the verdict for the pass and free the slot's claim; the leg's files go with it.
 pub fn complete(e: &crate::Effects, input: &str) -> Result<String, String> {
     let f = filing(input, COMPLETE)?;
-    leg_left_a_trace(&f).map_err(|why| format!("{COMPLETE}: {why} — refused, the claim is recovered and the tip gated again"))?;
+    let run = gate_run(&f).map_err(|why| format!("{COMPLETE}: {why} — refused, the claim is recovered and the tip gated again"))?;
     let q = queue(e);
     let job = q.claimed_job(f.slot, &f.job.repo, &f.job.branch, &f.job.tip).ok_or_else(|| format!("{COMPLETE}: slot {} does not hold {} — refused", f.slot, f.job.key()))?;
-    let run = gate_run(&f);
     let word = run.outcome.word();
     q.complete(f.slot, &landing_pass::gateq::Done { job, run, started_ms: f.started_ms, finished_ms: f.finished_ms }).map_err(|e| format!("{COMPLETE}: {e}"))?;
     for leg in ["warm", "gate"] {
