@@ -880,8 +880,11 @@ impl Engine {
             self.park(ev);
             Ok(())
         } else {
-            self.tick_of.remove(&ev.id);
-            self.offer(ev)
+            let offered = self.offer(ev);
+            if offered.is_ok() {
+                self.tick_of.remove(&ev.id);
+            }
+            offered
         };
         self.place();
         offered
