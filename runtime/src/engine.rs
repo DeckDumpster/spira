@@ -231,7 +231,7 @@ pub struct Engine {
     /// The schedule row a fired event came from, and the request an outcome answers: both are
     /// recorded in the turn that dispatches the event.
     fire_of: BTreeMap<EventId, String>,
-    /// The timer behind each local tick in the queue: a tick for a quarantined stream is parked again, not dropped.
+    /// The timer behind each queued local tick.
     tick_of: BTreeMap<EventId, ScheduleRow>,
     resolves: BTreeMap<EventId, String>,
 }
@@ -887,8 +887,7 @@ impl Engine {
         offered
     }
 
-    /// A tick that lands on a quarantined stream is not heard; its next one is armed for the next
-    /// poison recheck, so the stream ticks again once it is cleared.
+    /// A tick on a quarantined stream is re-armed for the next poison recheck, not dropped.
     fn park(&mut self, ev: &Event) {
         if let Some(mut row) = self.tick_of.remove(&ev.id) {
             row.at = self.clock.now_ms() + POISON_RECHECK_MS;
