@@ -1328,7 +1328,11 @@ pub fn keep_round_results(run: &Path, batch: &str, from: &Path) -> PathBuf {
             }
         }
     }
+    let _ = fs::remove_dir_all(&to);
     copy(from, &to);
+    if !to.is_dir() {
+        eprintln!("batcher: could not keep the round's results from {} at {}", from.display(), to.display());
+    }
     to
 }
 
