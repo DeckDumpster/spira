@@ -269,6 +269,9 @@ pub struct Repo {
     /// The keys of the leg units the unit manager lists as running; `None` when it could not say.
     #[serde(default)]
     pub live_legs: Option<Vec<String>>,
+    /// The carried batches the lifecycle reports LANDED or ABANDONED.
+    #[serde(default)]
+    pub settled: Vec<String>,
 }
 
 impl Repo {
@@ -469,10 +472,14 @@ impl Pace {
 pub struct RepoCarry {
     pub state: State,
     pub round_key: Option<String>,
+    #[serde(default)]
     pub pace: Pace,
+    #[serde(default)]
     pub base_moved: Option<(String, u64)>,
     /// Per member: the tip that last conflicted and how many cuts in a row it did.
+    #[serde(default)]
     pub conflict_streaks: BTreeMap<String, (String, u32)>,
+    #[serde(default)]
     pub held_keys: Vec<String>,
     /// The round the machine is driving: its batch, members, tree and base.
     #[serde(default)]
@@ -535,6 +542,9 @@ pub struct RepoCarry {
     /// Since when the round has waited, unmoved, on the outcome of an effect it issued.
     #[serde(default)]
     pub waiting: Option<Waiting>,
+    /// The batch the last reconcile dropped because the lifecycle had already settled it.
+    #[serde(default)]
+    pub reconciled: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -603,7 +613,7 @@ impl RepoCarry {
     }
 
     /// The live rounds, lowest first.
-    fn rounds(&self) -> Vec<RepoCarry> {
+    pub(crate) fn rounds(&self) -> Vec<RepoCarry> {
         std::iter::once(self.round()).chain(self.above.iter().cloned()).filter(RepoCarry::live).collect()
     }
 
@@ -863,6 +873,10 @@ pub fn notes(old: &Carry, new: &Carry) -> Vec<String> {
     names
         .into_iter()
         .filter_map(|name| {
+            let dropped = new.repos.get(name).and_then(|rc| rc.reconciled.as_ref());
+            if dropped.is_some() && dropped != old.repos.get(name).and_then(|rc| rc.reconciled.as_ref()) {
+                return dropped.map(|b| format!("{NAME} {name}: batch {b} is LANDED or ABANDONED in the lifecycle — its carried round was dropped"));
+            }
             let was = old.repos.get(name).and_then(|rc| rc.skip_why.as_ref());
             let now = new.repos.get(name).and_then(|rc| rc.skip_why.as_ref());
             match (was, now) {
@@ -1010,6 +1024,12 @@ impl Machine<'_> {
     /// A tick's observe, for the states that read the world. A leg's end arrives as its own
     /// `unit.ran` (`on_ran`); a leg past its wall and grace with none is judged lost here.
     fn observe(&mut self, policy: &Policy, repo: &Repo) {
+        if self.settled(repo) {
+            let batch = self.rc.batch.clone();
+            self.forget_round();
+            self.rc.reconciled = batch;
+            return;
+        }
         if self.voided(repo) || self.outcome_lost() {
             self.forget_round();
             return;
@@ -1096,6 +1116,14 @@ impl Machine<'_> {
     fn voided(&self, repo: &Repo) -> bool {
         let Some(batch) = self.rc.batch.as_deref() else { return false };
         self.rc.stacked && stackable(self.rc.state) && !repo.open_rounds().any(|r| r.id == batch) && self.now_ms.saturating_sub(self.rc.leg_at_ms) > VOID_GRACE_MS
+    }
+
+    /// A leg-driven round whose batch the lifecycle has already settled, with no open round of
+    /// it and no unit running its leg: nothing is left to drive it.
+    fn settled(&self, repo: &Repo) -> bool {
+        let Some(batch) = self.rc.batch.as_deref() else { return false };
+        let running = self.rc.leg.as_ref().zip(repo.live_legs.as_ref()).is_some_and(|(leg, live)| live.contains(leg));
+        matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying) && repo.settled.iter().any(|b| b == batch) && !repo.open_rounds().any(|r| r.id == batch) && !running
     }
 
     fn land_now(&mut self) {
@@ -1564,7 +1592,7 @@ fn decide_repo(policy: &Policy, name: &str, rc: &RepoCarry, repo: &Repo, now_ms:
     let (mut shared, mut live, mut acts, mut ended) = (rc.clone(), Vec::<RepoCarry>::new(), vec![], false);
     for round in rc.rounds() {
         let mut m = Machine { repo: name, rc: shared.holding(&round), acts: vec![], now_ms, below: !live.is_empty() };
-        let voided = m.voided(repo) || m.outcome_lost();
+        let voided = m.voided(repo) || m.outcome_lost() || m.settled(repo);
         m.observe(policy, repo);
         acts.extend(m.acts);
         if m.rc.live() {
@@ -1725,11 +1753,15 @@ where
     }
     let (next, out) = if spec.name == shape.observe {
         if ev.kind.tag != EFFECT_SUCCEEDED {
+            eprintln!("{}: observe did not succeed ({}): {}", shape.name, ev.kind.tag, ev.kind.body);
             return vec![];
         }
         match observed(&carry, &ev.kind.body) {
             Some(d) => d,
-            None => return vec![],
+            None => {
+                eprintln!("{}: observe answered something that is not a snapshot", shape.name);
+                return vec![];
+            }
         }
     } else if effects.contains(&spec.name.as_str()) {
         outcome(&carry, &spec.name, ev.kind.tag == EFFECT_SUCCEEDED, &ev.kind.body, &spec.input)
@@ -1926,7 +1958,8 @@ pub mod edge {
     }
 
     /// The probe: every admitted `queue.local` repo's pool, open round, base and hold.
-    pub fn observe(e: &Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
+    pub fn observe(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let carried: super::Carry = serde_json::from_str(&spec.input).unwrap_or_default();
         let env = env()?;
         io::lc_forget(&env);
         let enabled = spira_config::process::cfg("SPIRA_BATCHER_ENABLE")?.trim() != "0";
@@ -1936,9 +1969,25 @@ pub mod edge {
             let repo = batcher_cut::find_repo(&env, &name)?;
             let mut seen = observe_repo(&env, &repo)?;
             seen.live_legs = live_legs(e);
+            seen.settled = carried.repos.get(&name).map(|rc| settled_batches(&env, rc, &seen)).unwrap_or_default();
             snap.repos.insert(name.clone(), seen);
         }
         json(&snap)
+    }
+
+    /// The batches of `rc`'s leg-driven rounds that the queue no longer holds open and the
+    /// lifecycle reports LANDED or ABANDONED; a batch the store cannot say is not settled.
+    fn settled_batches(env: &Env, rc: &super::RepoCarry, seen: &Repo) -> Vec<String> {
+        rc.rounds()
+            .into_iter()
+            .filter(|r| matches!(r.state, super::State::Corpus | super::State::Attributing | super::State::Certifying))
+            .filter_map(|r| r.batch)
+            .filter(|b| !seen.open_rounds().any(|o| &o.id == b))
+            .filter(|b| {
+                let shown = io::lcq(env, &["show-batch", b]).ok().and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok());
+                matches!(shown.as_ref().and_then(|v| v.get("state")).and_then(|s| s.as_str()), Some("LANDED" | "ABANDONED"))
+            })
+            .collect()
     }
 
     /// The keys of this task's leg units the manager lists as running; `None` when it cannot say.

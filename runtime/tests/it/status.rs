@@ -33,6 +33,16 @@ impl Handler for Builder {
     }
 }
 
+struct Napper;
+impl Handler for Napper {
+    fn interests(&self) -> &[EventKindTag] {
+        &["nap"]
+    }
+    fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+        vec![]
+    }
+}
+
 fn engine(j: Arc<MemJournal>, clock: &VirtualClock) -> Engine {
     let regs = vec![Registration::new("ticker", Ticker), Registration::new("builder", Builder).with_mode(Mode::Act)];
     Engine::open(j, Arc::new(clock.clone()), regs, 1).unwrap().with_classifier(Arc::new(|s: &EffectSpec| if s.name == "suite" { "container".into() } else { "host".into() }))
@@ -111,4 +121,15 @@ fn status_shows_the_halt() {
     let s = e.status();
     assert!(!s.halted);
     assert_eq!(s.held, 0);
+}
+
+#[test]
+fn a_fire_whose_handler_does_nothing_leaves_last_outcome_quiet_not_null() {
+    let (j, clock) = (MemJournal::new(), VirtualClock::new(0));
+    let mut e = Engine::open(j, Arc::new(clock.clone()), vec![Registration::new("napper", Napper)], 1).unwrap();
+    e.submit("n1", "n", EventKind::new("nap", "")).unwrap();
+    e.run_until_idle().unwrap();
+    let s = e.status();
+    let t = s.tasks.iter().find(|t| t.name == "napper").unwrap();
+    assert_eq!((t.last_fired_at.is_some(), t.last_outcome), (true, Some(LastOutcome::Quiet)));
 }

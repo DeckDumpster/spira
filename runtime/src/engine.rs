@@ -97,6 +97,8 @@ pub enum LastOutcome {
     TimedOut,
     /// Its effector class was full; the effect is still waiting to run.
     Deferred,
+    /// It was fired and its handler answered with nothing to do.
+    Quiet,
 }
 
 /// The newest event a task emitted or noted: what it carries forward.
@@ -995,6 +997,9 @@ impl Engine {
             let elapsed = began.elapsed();
             let set = ctx.into_event();
             if stalls == 0 && set.is_empty() && matches!(&called, Ok(c) if c.is_empty()) {
+                if let Some(t) = self.tracks.get_mut(name) {
+                    t.outcome = Some(LastOutcome::Quiet);
+                }
                 continue;
             }
             let wide = self.dispatch_unit(ev, name, mode, stalls);
