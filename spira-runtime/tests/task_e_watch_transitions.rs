@@ -522,11 +522,11 @@ fn stalls_for_landing(at: u64, commit: &'static str, contained: bool, now: u64) 
     );
     assert!(snap.readable, "{}", snap.why);
     if !commit.is_empty() {
-        assert_eq!(
-            asked.borrow().first(),
-            Some(&(commit.to_string(), IN_EFFECT.to_string())),
-            "ancestry is tested first against the release `current` names"
-        );
+        let mut want = vec![(commit.to_string(), IN_EFFECT.to_string())];
+        if !contained {
+            want.push((commit.to_string(), "a".repeat(40)));
+        }
+        assert_eq!(*asked.borrow(), want, "ancestry is tested against the release `current` names, then the newest activated");
     }
     spira_runtime::tasks::e::watch_transitions::stalls(&snap, now, &config())
         .into_iter()
@@ -806,11 +806,10 @@ fn landing_stalls(l: &Lineage, at: u64, commit: &str, now: u64) -> Vec<String> {
 }
 
 #[test]
-fn a_landing_delivered_after_its_own_release_activated_is_no_stall_once_a_descendant_release_is_active() {
+fn a_hand_landing_with_no_lifecycle_member_delivered_after_its_release_activated_is_no_stall_once_a_descendant_is_active() {
     let l = lineage();
     let found = landing_stalls(&l, 200, &l.a, 200 + 40 * MIN);
     assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
-    assert_eq!(l.b.len(), 40);
 }
 
 #[test]
