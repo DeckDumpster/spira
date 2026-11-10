@@ -744,9 +744,6 @@ fn filing(input: &str, effect: &str) -> Result<Filing, String> {
     serde_json::from_str(input).map_err(|e| format!("{effect}: bad input: {e}"))
 }
 
-/// The gate run as `gate_worker::classify` reads it from the leg's own status and output. A leg
-/// that ended with no status and no output was not seen to run: filing it would record a verdict
-/// nobody produced, so it is refused.
 fn gate_run(f: &Filing) -> Result<landing_pass::model::GateRun, String> {
     let out = std::fs::read_to_string(&f.out_path).unwrap_or_default();
     if !has_trace(f.rc, &out) {
