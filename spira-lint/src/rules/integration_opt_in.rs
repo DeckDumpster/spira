@@ -172,6 +172,25 @@ mod tests {
     }
 
     #[test]
+    fn cargo_lists_the_target_the_rule_accepts_as_gated() {
+        let t = TempDir::new("iop-cargo");
+        t.write("Cargo.toml", &format!("{GOOD}\n[features]\nintegration = []\n").replace("name = \"a\"", "name = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\""));
+        t.write("src/lib.rs", "");
+        t.write("tests/it/main.rs", "");
+        let out = std::process::Command::new("cargo")
+            .args(["metadata", "--no-deps", "--offline", "--format-version", "1", "--manifest-path"])
+            .arg(t.path().join("Cargo.toml"))
+            .output()
+            .expect("cargo runs");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let json = String::from_utf8_lossy(&out.stdout);
+        assert!(json.contains("\"required-features\":[\"integration\"]"), "{json}");
+        assert!(json.contains("\"name\":\"it\""), "{json}");
+        let tree = Tree::from_paths(t.path(), ["Cargo.toml", "tests/it/main.rs"], std::iter::empty::<&str>());
+        assert!(IntegrationOptIn::default().check(&tree).unwrap().is_empty());
+    }
+
+    #[test]
     fn a_tree_with_no_target_refuses_rather_than_pass() {
         assert!(run(GOOD, &[]).is_err());
     }
