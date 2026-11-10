@@ -60,6 +60,14 @@ impl HostSlot {
     }
 }
 
+/// What the round's private `HOME` would hide that the host already has: the operator's own
+/// container store and container config. Declared here, once; the round's `HOME` stays its own.
+pub fn operator_dirs(get: &dyn Fn(&str) -> Option<String>) -> Vec<(&'static str, String)> {
+    let Some(home) = get("HOME").filter(|h| !h.is_empty()) else { return Vec::new() };
+    let pick = |key: &str, rel: &str| get(key).filter(|v| !v.is_empty()).unwrap_or_else(|| format!("{home}/{rel}"));
+    vec![("XDG_DATA_HOME", pick("XDG_DATA_HOME", ".local/share")), ("XDG_CONFIG_HOME", pick("XDG_CONFIG_HOME", ".config"))]
+}
+
 /// [`Remote`] over this machine: the VM's `$HOME` is `home`, and no ssh or rsync is involved.
 pub struct LocalRemote {
     pub home: PathBuf,
@@ -74,6 +82,9 @@ impl LocalRemote {
     fn shell(&self, script: &str) -> std::process::Command {
         let mut c = command("bash");
         c.arg("-c").arg(script).current_dir(&self.home).env("HOME", &self.home);
+        for (k, v) in operator_dirs(&|k| std::env::var(k).ok()) {
+            c.env(k, v);
+        }
         c
     }
 
@@ -171,6 +182,22 @@ mod tests {
 
     fn dir(tag: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("round-vm-host-{tag}"))
+    }
+
+    #[test]
+    fn the_round_keeps_the_operators_container_store_not_the_one_under_its_own_home() {
+        let env = |k: &str| match k {
+            "HOME" => Some("/ops/home".to_string()),
+            _ => None,
+        };
+        assert_eq!(operator_dirs(&env), vec![("XDG_DATA_HOME", "/ops/home/.local/share".to_string()), ("XDG_CONFIG_HOME", "/ops/home/.config".to_string())]);
+        let set = |k: &str| match k {
+            "HOME" => Some("/ops/home".to_string()),
+            "XDG_DATA_HOME" => Some("/data".to_string()),
+            _ => None,
+        };
+        assert_eq!(operator_dirs(&set)[0], ("XDG_DATA_HOME", "/data".to_string()));
+        assert!(operator_dirs(&|_| None).is_empty());
     }
 
     #[test]

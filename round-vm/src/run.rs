@@ -143,6 +143,9 @@ pub struct BatchJob {
     /// The head's image tag differs from what the template (or the landing ref) holds: the VM
     /// builds `localhost/spira-testenv:<tag>` as a declared setup step instead of refusing it.
     pub build_image: bool,
+    /// The head's image tag as the host computed it; set, the preflight refuses an absent image
+    /// before any build. Empty: the tag is only known once the round's own testenv is built.
+    pub image_tag: Option<String>,
     /// Where ssh's own diagnostics for this pass's connections are written.
     pub ssh_log: PathBuf,
     /// The mirror ref holding this run's tree, and the commit it must resolve to.
@@ -246,7 +249,7 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = concat!(r#"set -euo pipefail
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}" round_ref="${13}" round_sha="${14}"
-testenv_limits="${16:-}" resume_url="${17:-}" fences="${18:-}"
+testenv_limits="${16:-}" resume_url="${17:-}" fences="${18:-}" want_tag="${19:-}"
 rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log ~/round-script.log
 : > ~/round-runner.out
 exec > >(tee -a ~/round-script.log)
@@ -281,6 +284,10 @@ export PATH="${cache_home:-$HOME/.cargo}/bin:/usr/local/bin:/usr/local/sbin:/usr
 if ! command -v cargo >/dev/null 2>&1; then
     echo "round-vm: cargo not found on PATH ($PATH) — the template is missing a Rust toolchain" >&2
     exit 127
+fi
+if [ -n "$want_tag" ] && [ -z "$build_image" ] && ! podman image exists "localhost/spira-testenv:$want_tag" 2>/dev/null; then
+    echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$want_tag is not in this round's container store — refusing before any build (law-unexpected-image-builds-are-killed-then-fixed); put it in the store the round uses (the template for a VM, the operator's own for a host round)" >&2
+    exit 3
 fi
 phase checkout
 mirror="git://${host_addr}:${port}/mirror.git"
@@ -1184,6 +1191,7 @@ pub fn remote_command(job: &BatchJob) -> String {
     args.push(job.testenv_limits.clone());
     args.push(job.resume_url.clone().unwrap_or_default());
     args.push(job.fences.clone());
+    args.push(job.image_tag.clone().unwrap_or_default());
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -c {} launcher {}", shell_quote(REMOTE_LAUNCHER), quoted.join(" "))
 }
@@ -2493,6 +2501,7 @@ fn on_vm_run(
         post_guard_secs: cfg.post_guard_secs,
         lint: lints(args),
         build_image,
+        image_tag: env.host.image_tag(&args.tree_dir, commit_sha).map_err(|e| eprintln!("round-vm run: no image tag for the preflight ({e}) — the round checks the image only after its builds")).ok(),
         round_ref: round_ref.to_string(),
         round_sha: commit_sha.to_string(),
         ssh_log: results_dir.join(SSH_LOG_FILE),
@@ -3384,7 +3393,7 @@ mod tests {
     #[test]
     fn the_remote_script_says_whether_the_template_holds_the_rounds_image() {
         let clone = REMOTE_SCRIPT.find("git clone").unwrap();
-        let check = REMOTE_SCRIPT.find("podman image exists").unwrap();
+        let check = clone + REMOTE_SCRIPT[clone..].find("podman image exists").unwrap();
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(clone < check && check < batch, "checked after the clone, before testenv starts");
         assert!(REMOTE_SCRIPT.contains("template image: localhost/spira-testenv:$tag present"));
@@ -3477,9 +3486,13 @@ mod tests {
     }
 
     fn preflight(home: &Path, cache_home: &str, limits: &str) -> (i32, String, String) {
+        preflight_tag(home, cache_home, limits, "")
+    }
+
+    fn preflight_tag(home: &Path, cache_home: &str, limits: &str, tag: &str) -> (i32, String, String) {
         use std::io::Write;
         let mut c = command("bash")
-            .args(["-s", "--", "127.0.0.1", "1", "", "1", "", cache_home, "", "0", "0", "", "", "", "refs/x", "0000", "", limits])
+            .args(["-s", "--", "127.0.0.1", "1", "", "1", "", cache_home, "", "0", "0", "", "", "", "refs/x", "0000", "", limits, "", "", tag])
             .env_clear()
             .env("HOME", home)
             .env("PATH", "/usr/bin:/bin")
@@ -3504,6 +3517,30 @@ mod tests {
         let (_, err, _) = preflight(home.path(), cache.path().to_str().unwrap(), "limits");
         assert!(err.contains("PHASE checkout"), "{err}");
         assert!(!err.contains("cargo not found"), "{err}");
+    }
+
+    #[test]
+    fn preflight_refuses_an_absent_image_before_any_checkout_or_build() {
+        let home = testkit::TempDir::new("round-vm-pf-home-img");
+        let cache = testkit::TempDir::new("round-vm-pf-cache-img");
+        fs::create_dir_all(cache.path().join("bin")).unwrap();
+        testkit::write_exe(cache.path().join("bin/cargo"), "#!/bin/sh\nexit 0\n");
+        testkit::write_exe(cache.path().join("bin/podman"), "#!/bin/sh\nexit 1\n");
+        let (rc, err, _) = preflight_tag(home.path(), cache.path().to_str().unwrap(), "limits", "f26562235eb6");
+        assert_eq!(rc, 3, "{err}");
+        assert!(err.contains("IMAGE-ABSENT: localhost/spira-testenv:f26562235eb6"), "{err}");
+        assert!(!err.contains("PHASE checkout"), "{err}");
+    }
+
+    #[test]
+    fn preflight_passes_a_present_image_on_to_the_checkout() {
+        let home = testkit::TempDir::new("round-vm-pf-home-img-ok");
+        let cache = testkit::TempDir::new("round-vm-pf-cache-img-ok");
+        fs::create_dir_all(cache.path().join("bin")).unwrap();
+        testkit::write_exe(cache.path().join("bin/cargo"), "#!/bin/sh\nexit 0\n");
+        testkit::write_exe(cache.path().join("bin/podman"), "#!/bin/sh\nexit 0\n");
+        let (_, err, _) = preflight_tag(home.path(), cache.path().to_str().unwrap(), "limits", "f26562235eb6");
+        assert!(err.contains("PHASE checkout"), "{err}");
     }
 
     #[test]
@@ -3701,6 +3738,7 @@ mod tests {
             post_guard_secs: 600,
             lint: false,
             build_image: false,
+            image_tag: None,
             ssh_log: PathBuf::from("ssh.log"),
             round_ref: "refs/rounds/7-abc".into(),
             round_sha: "abc".into(),
@@ -3708,7 +3746,7 @@ mod tests {
             fences: String::new(),
             cancel: Default::default(),
         });
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' ''", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -3824,10 +3862,10 @@ mod tests {
         let job = BatchJob {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
             testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
-            testenv_limits: "x".into(), post_guard_secs: 1, lint: false, build_image: false,
+            testenv_limits: "x".into(), post_guard_secs: 1, lint: false, build_image: false, image_tag: None,
             ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, fences: String::new(), cancel: Default::default(),
         };
-        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' ''"));
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' ''"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
         push_resume_credentials(&remote, "10.0.0.2", Path::new("/creds"));
