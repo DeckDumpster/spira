@@ -386,6 +386,6 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("mislabelled_seen"), runtime::rows::Part::Map { name: "asks", drop: &[] }, runtime::rows::Part::Map { name: "checks", drop: &[] }];
 
 super::hosted!(AsksVerify);

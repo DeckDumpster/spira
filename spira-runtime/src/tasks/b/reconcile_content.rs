@@ -297,6 +297,6 @@ pub fn close(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("through_seq"), runtime::rows::Part::Map { name: "beads", drop: &[] }, runtime::rows::Part::Field("skew_red_at")];
 
 super::hosted!(ReconcileContent);

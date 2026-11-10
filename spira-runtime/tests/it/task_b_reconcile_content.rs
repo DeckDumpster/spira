@@ -63,3 +63,50 @@ fn t5_terminal_records_and_complete_epics_close_behind_the_skew_gate() {
     let (_, acts) = task::decide(&h.cfg, &c, &Input::Outcome { effect: task::SKEW_CHECK.into(), ok: false, body: "exit 3".into() }, TICK).unwrap();
     assert!(acts.is_empty(), "a red skew check drops the batch: {acts:?}");
 }
+
+/// A store that keeps listing `sp-a` as closable, with the skew check answering `skew`.
+fn listed_with(skew: Result<&'static str, &'static str>) -> runtime::taskrig::TaskRig {
+    let listing = json(&Snapshot { through_seq: Some(41), work: vec![close("sp-a", "LANDED")], ..Snapshot::default() });
+    let mut rig = runtime::taskrig::TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, move |_| Ok(listing.clone()))
+        .double(task::SKEW_CHECK, move |_| skew.map(String::from).map_err(String::from))
+        .double(task::CLOSE, |input| Ok(serde_json::from_str::<Close>(input).unwrap().id));
+    let (_, stream, kind) = H::boot();
+    rig.tick(stream, kind).unwrap();
+    rig
+}
+
+fn closed() -> runtime::taskrig::TaskRig {
+    listed_with(Ok("ok"))
+}
+
+fn skew_red() -> runtime::taskrig::TaskRig {
+    listed_with(Err("exit 3"))
+}
+
+fn registration() -> runtime::event::Registration {
+    t::handler::<H>(SET).registration()
+}
+
+fn tick() -> runtime::event::EventKind {
+    runtime::event::EventKind::new(task::TICK, "")
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&closed(), task::NAME);
+    assert!(rows.iter().any(|k| k == "beads/sp-a") && rows.iter().any(|k| k == "through_seq"), "{rows:?}");
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&skew_red(), task::NAME);
+    assert!(rows.iter().any(|k| k == "skew_red_at"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_closes_no_listed_bead_a_second_time() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(closed, registration, task::STREAM, tick());
+}
+
+#[test]
+fn a_boot_does_not_ask_the_skew_check_again_inside_its_red_window() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(skew_red, registration, task::STREAM, tick());
+}

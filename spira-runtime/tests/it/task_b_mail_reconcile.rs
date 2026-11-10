@@ -77,3 +77,16 @@ fn a_close_refusal_is_the_runners_typed_answer_not_text_in_the_failure() {
     assert_eq!(marked(&h.cfg, task::CLOSE, true, "m1/close:refused"), "close:refused");
     assert_eq!(marked(&h.cfg, task::CLOSE, false, "m1/close: spira-lc exited 3: a bead title"), "fail:close", "the words 'exited 3' decide nothing");
 }
+
+#[test]
+fn it_keeps_no_carry_row_however_many_replies_it_has_acted_on() {
+    let rig = t::rig::<H>(1, SET, &json(&Snapshot { replies: vec![reply("m1", "question", &[])] }));
+    t::assert_ported(&rig, task::STREAM);
+    let kept: Vec<_> = rig.journal.state().into_iter().filter(|((task_name, _), v)| task_name == task::NAME && !v.is_empty()).collect();
+    assert!(kept.is_empty(), "{kept:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![json(&Snapshot { replies: vec![reply("m1", "question", &[])] })], |_| {});
+}

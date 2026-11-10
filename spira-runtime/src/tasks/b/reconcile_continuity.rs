@@ -236,6 +236,6 @@ pub fn observe(lc: &spira_config::lc_call::LcClient) -> Result<String, String> {
     serde_json::to_string(&parse(r.code, &r.out)?).map_err(|e| e.to_string())
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "breaks", drop: &[] }];
 
 super::hosted!(ReconcileContinuity);

@@ -84,3 +84,17 @@ fn t5_landed_and_quiet_closes_with_the_old_evidence_and_dropped_fixes_do_not_blo
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(unlanded), TICK).unwrap();
     assert!(acts.iter().all(|a| a.name == task::LOG), "an unlanded fix waits: {acts:?}");
 }
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rig = t::rig::<H>(1, SET, &json(&idle().0));
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig, task::NAME);
+    assert!(rows.iter().any(|k| k == "incidents/sp-i1") && rows.iter().any(|k| k == "waiting/sp-i1"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_waiting_line_and_misses_none() {
+    let (snap, _) = idle();
+    let changed = Snapshot { incidents: vec![inc("sp-i1", vec![fix("sp-f1", "SUBMITTED", Landing::NotInRelease)], Detector::NoProbe), inc("sp-i2", vec![fix("sp-f2", "SUBMITTED", Landing::NotInRelease)], Detector::NoProbe)] };
+    t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![json(&snap), json(&changed)], |_| {});
+}
