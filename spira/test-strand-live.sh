@@ -4,7 +4,8 @@
 #   source dwarves.sh and the runtime use), names them, reports no starvation while one is
 #   working, and refuses rather than report zero when that source cannot be read.
 #
-# covers: strand/src/* spira-runtime/src/* spira/dwarves.sh
+# tier: T1
+# covers: strand/src/* spira-world/src/* UC-ops-detection-remediation-21
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
