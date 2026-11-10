@@ -3053,15 +3053,20 @@ pub fn read_local_verdict(env: &Env, repo: &str) -> Option<(String, u64)> {
 /// `cause` is the one word the round's `.result` line carries as `abandoned:<cause>`.
 /// The batcher abandons only after it has ejected every member it can implicate, so its abandon
 /// of a red round is a considered one; `queue round abandon` refuses any other.
-pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str) {
+pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str) -> bool {
     if spira_config::round_ended::is_ended(&env.run, batch) {
         println!("batcher {}: round {batch} has already ended — no second abandon", repo.name);
-        return;
+        let files = crate::pace::Files::new(&env.run, &repo.name);
+        if files.abandon_refused().is_some_and(|(b, _, _)| b == batch) {
+            files.clear_abandon_refused();
+        }
+        return true;
     }
     let considered =
         format!("the batcher's {cause} abandon, after ejecting every member it could implicate");
     let vars = [("QUEUE_ABANDON_CONSIDERED", considered.as_str())];
-    match round_verb_with(
+    let files = crate::pace::Files::new(&env.run, &repo.name);
+    let refused = match round_verb_with(
         env,
         &[
             "abandon",
@@ -3075,16 +3080,38 @@ pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str
         why,
         &vars,
     ) {
-        Ok(r) if r.code == Some(0) => {}
-        Ok(r) => println!(
-            "batcher {}: could not abandon round {batch}: {}",
-            repo.name,
-            verb_failed("queue round abandon", &r)
-        ),
-        Err(e) => println!(
-            "batcher {}: could not abandon round {batch}: {e}",
-            repo.name
-        ),
+        Ok(r) if r.code == Some(0) => {
+            if files.abandon_refused().is_some_and(|(b, _, _)| b == batch) {
+                files.clear_abandon_refused();
+            }
+            return true;
+        }
+        Ok(r) => verb_failed("queue round abandon", &r),
+        Err(e) => e,
+    };
+    println!(
+        "batcher {}: could not abandon round {batch}: {refused}",
+        repo.name
+    );
+    if let Err(e) = files.record_abandon_refused(batch, cause, why) {
+        println!("batcher {}: could not record the refused abandon: {e}", repo.name);
+    }
+    false
+}
+
+/// The round whose abandon is still refused, once the abandon is tried again: `Some` while it
+/// stays open, so a cut holds rather than stack another round on it. A round that is gone
+/// (abandoned by hand, or landed) clears the record. When the queue cannot say, it holds.
+pub fn abandon_hold(env: &Env, repo: &Repo) -> Option<String> {
+    let files = crate::pace::Files::new(&env.run, &repo.name);
+    let (batch, cause, why) = files.abandon_refused()?;
+    match open_rounds(env, repo) {
+        Ok(rs) if !rs.iter().any(|r| r.id == batch) => {
+            files.clear_abandon_refused();
+            None
+        }
+        Ok(_) if round_abandon(env, repo, &batch, &why, &cause) => None,
+        _ => Some(batch),
     }
 }
 
@@ -4787,5 +4814,71 @@ mod adds_path_tests {
             "no-such-ref",
             "spira/test-new.sh"
         ));
+    }
+}
+
+#[cfg(test)]
+mod abandon_hold_tests {
+    use super::*;
+    /// A `queue` whose `round abandon` refuses while `refuse` exists, and whose `round status`
+    /// lists `r1` as open until an abandon has gone through.
+    fn queue_stub(d: &Path) -> Env {
+        let script = format!(
+            "#!/bin/sh\ncase \"$2\" in\n abandon) if [ -e {d}/refuse ]; then echo 'queue.sh round abandon: refused' >&2; exit 1; fi; rm -f {d}/live; exit 0;;\n status) if [ -e {d}/live ]; then echo 'round=open'; echo 'batch_id=r1'; echo 'phase=opened'; else echo 'round=none'; fi;;\nesac\n",
+            d = d.display()
+        );
+        testkit::write_exe(d.join("queue"), &script);
+        fs::write(d.join("live"), "").unwrap();
+        fs::write(d.join("refuse"), "").unwrap();
+        lifecycle_tests_env(d)
+    }
+
+    fn repo(name: &str) -> Repo {
+        Repo {
+            name: name.into(),
+            path: PathBuf::new(),
+            base: "main".into(),
+            forge: PathBuf::new(),
+            land: Land::Local,
+        }
+    }
+
+    #[test]
+    fn a_refused_abandon_holds_the_next_cut_until_the_round_is_abandoned() {
+        let d = testkit::TempDir::new("abandon-hold");
+        let e = queue_stub(d.path());
+        let r = repo("alpha");
+        assert_eq!(abandon_hold(&e, &r), None, "control: nothing refused, nothing held");
+        assert!(!round_abandon(&e, &r, "r1", "red", "ci-red"));
+        assert_eq!(abandon_hold(&e, &r).as_deref(), Some("r1"), "still refused: the cut holds");
+        fs::remove_file(d.path().join("refuse")).unwrap();
+        assert_eq!(abandon_hold(&e, &r), None, "the retry abandoned it: the cut proceeds");
+        assert!(
+            crate::pace::Files::new(&e.run, "alpha").abandon_refused().is_none(),
+            "the record is gone once the round is"
+        );
+    }
+
+    #[test]
+    fn an_already_ended_round_clears_its_refusal_record() {
+        let d = testkit::TempDir::new("abandon-hold-ended");
+        let e = queue_stub(d.path());
+        let r = repo("alpha");
+        assert!(!round_abandon(&e, &r, "r1", "red", "ci-red"));
+        let files = crate::pace::Files::new(&e.run, "alpha");
+        assert!(files.abandon_refused().is_some(), "control: the refusal was recorded");
+        spira_config::round_ended::mark_abandoned(&e.run, "r1");
+        assert!(round_abandon(&e, &r, "r1", "red", "ci-red"));
+        assert!(files.abandon_refused().is_none());
+    }
+
+    #[test]
+    fn a_refused_round_that_was_abandoned_by_hand_stops_holding() {
+        let d = testkit::TempDir::new("abandon-hold-hand");
+        let e = queue_stub(d.path());
+        let r = repo("alpha");
+        assert!(!round_abandon(&e, &r, "r1", "red", "ci-red"));
+        fs::remove_file(d.path().join("live")).unwrap();
+        assert_eq!(abandon_hold(&e, &r), None);
     }
 }

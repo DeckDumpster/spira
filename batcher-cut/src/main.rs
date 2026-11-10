@@ -231,6 +231,11 @@ fn cut(o: &Opts) -> Result<(), pace::CutError> {
         io::read_open_batch(&env_, &repo.name)?
     };
 
+    if let Some(batch) = io::abandon_hold(&env_, &repo) {
+        println!("batcher {}: round {batch} was not abandoned — no cut stacks on it; the abandon is retried each pass", repo.name);
+        return Ok(());
+    }
+
     let inputs = TriggerInputs {
         pool: &pool,
         main_red: false,

@@ -392,6 +392,27 @@ impl Files {
         )
         .map(|_| ())
     }
+    fn abandon_refused_path(&self) -> PathBuf {
+        self.dir.join("abandon-refused")
+    }
+    /// Remembers a round whose abandon the queue refused: batch, cause, then the reason.
+    pub fn record_abandon_refused(&self, batch: &str, cause: &str, why: &str) -> Result<(), String> {
+        fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
+        let why = why.split_whitespace().collect::<Vec<_>>().join(" ");
+        fs::write(self.abandon_refused_path(), format!("{batch}\n{cause}\n{why}\n"))
+            .map_err(|e| format!("rounds-pace abandon-refused: {e}"))
+    }
+    /// The round (batch, cause, reason) whose abandon was refused and has not since succeeded.
+    pub fn abandon_refused(&self) -> Option<(String, String, String)> {
+        let text = fs::read_to_string(self.abandon_refused_path()).ok()?;
+        let mut lines = text.lines();
+        let batch = lines.next().filter(|b| !b.is_empty())?.to_string();
+        let cause = lines.next().unwrap_or("").to_string();
+        Some((batch, cause, lines.collect::<Vec<_>>().join(" ")))
+    }
+    pub fn clear_abandon_refused(&self) {
+        let _ = fs::remove_file(self.abandon_refused_path());
+    }
     pub fn stopped(&self) -> bool {
         scoped_stop::stop_for(&self.run, &self.repo, "rounds").is_some()
     }
