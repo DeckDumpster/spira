@@ -649,8 +649,6 @@ fn read_leg(rc_path: &str, out_path: &str) -> (Option<i32>, String) {
     (rc, std::fs::read_to_string(out_path).unwrap_or_default())
 }
 
-/// The snapshot: the queue's inbox, claims and per-repo running counts; free admission; and for
-/// each slot whose leg started, whether it still runs and, once ended, how.
 pub fn stamp_ticked(run_dir: &std::path::Path) {
     let ticked = run_dir.join(spira_config::GATE_WORKER_TICKED);
     if let Some(dir) = ticked.parent() {
@@ -659,6 +657,8 @@ pub fn stamp_ticked(run_dir: &std::path::Path) {
     let _ = std::fs::write(&ticked, "");
 }
 
+/// The snapshot: the queue's inbox, claims and per-repo running counts; free admission; and for
+/// each slot whose leg started, whether it still runs and, once ended, how.
 pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
     let carry: Carry = serde_json::from_str(input).unwrap_or_default();
     let mut pinned = BTreeMap::new();
