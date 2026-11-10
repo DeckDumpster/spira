@@ -139,6 +139,7 @@ pub const OBSERVE_DEADLINE_MS: u64 = 5_000;
 pub const UNIT_START_DEADLINE_MS: u64 = 10_000;
 /// `GATE_NOVERDICT`: the verdict of a run the gate itself did not choose.
 pub const NO_VERDICT: &str = "NO_VERDICT";
+pub const STUCK_MS: u64 = 120_000;
 
 pub const ACTS: &[(&str, u64)] = &[(TIP, 5_000), (CLAIM, 5_000), (DISCARD, 5_000), (UNIT_START, UNIT_START_DEADLINE_MS), (RETAIN_OUTPUT, 5_000), (COMPLETE, 5_000), (RECOVER, 5_000)];
 pub const EMITS: &[EventKindTag] = &[];
@@ -274,6 +275,15 @@ pub struct Slot {
     /// leg that died, not one still to start.
     #[serde(default)]
     pub leg_started: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stall: Option<Stall>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stall {
+    pub state: State,
+    pub leg_started: bool,
+    pub since_ms: u64,
 }
 
 /// One slot per `certify_par`, each single-flight.
@@ -406,6 +416,28 @@ fn slot_input(slot: usize, job: &Job) -> String {
     serde_json::to_string(&SlotJob { slot, job: job.clone() }).unwrap_or_default()
 }
 
+/// A slot waiting on an effect outcome or a leg-start answer resolves in seconds; one that has not
+/// moved for `STUCK_MS` lost its outcome and would otherwise hold its slot, and the gate, forever.
+fn watchdog(slot: &mut Slot, now_ms: u64) -> bool {
+    let quick = match slot.state {
+        State::Idle => false,
+        State::Claimed | State::Dropped | State::Filing => true,
+        State::Warming | State::Gating => !slot.leg_started,
+    };
+    if !quick {
+        slot.stall = None;
+        return false;
+    }
+    let since = match slot.stall {
+        Some(s) if s.state == slot.state && s.leg_started == slot.leg_started => s.since_ms,
+        _ => {
+            slot.stall = Some(Stall { state: slot.state, leg_started: slot.leg_started, since_ms: now_ms });
+            return false;
+        }
+    };
+    now_ms.saturating_sub(since) > STUCK_MS
+}
+
 /// What the probe's snapshot moves each slot to. An idle slot claims the next job while host
 /// admission has room; a slot whose leg ended moves on: a warm leg to the gate leg, a gate leg
 /// to filing; a slot whose leg is gone with no status, after a restart, gives its claim back.
@@ -417,6 +449,10 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     let mut free = snap.free_slots;
     let mut queue = Snapshot { inbox: snap.inbox.iter().filter(|j| !held.contains(&j.key())).cloned().collect(), ..snap.clone() };
     for (i, slot) in next.slots.iter_mut().enumerate() {
+        if watchdog(slot, snap.now_ms) {
+            acts.push(Act::new(RECOVER, i.to_string()).with_input(i.to_string()));
+            *slot = Slot::default();
+        }
         match (slot.state, slot.job.clone()) {
             (State::Idle, _) if free > 0 => {
                 let Some(job) = pick(&queue, i) else { continue };
@@ -424,7 +460,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
                 *queue.running_by_repo.entry(job.repo.clone()).or_default() += 1;
                 free -= 1;
                 acts.push(Act::new(CLAIM, job.key()).with_input(slot_input(i, &job)));
-                *slot = Slot { state: State::Claimed, job: Some(job), started_ms: Some(snap.now_ms), leg_started: false };
+                *slot = Slot { state: State::Claimed, job: Some(job), started_ms: Some(snap.now_ms), leg_started: false, stall: None };
             }
             (State::Warming | State::Gating, Some(job)) if slot.leg_started => {
                 let Some(leg) = snap.legs.get(&i).filter(|l| !l.running) else { continue };
@@ -613,6 +649,14 @@ fn read_leg(rc_path: &str, out_path: &str) -> (Option<i32>, String) {
     (rc, std::fs::read_to_string(out_path).unwrap_or_default())
 }
 
+pub fn stamp_ticked(run_dir: &std::path::Path) {
+    let ticked = run_dir.join(spira_config::GATE_WORKER_TICKED);
+    if let Some(dir) = ticked.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&ticked, "");
+}
+
 /// The snapshot: the queue's inbox, claims and per-repo running counts; free admission; and for
 /// each slot whose leg started, whether it still runs and, once ended, how.
 pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
@@ -624,6 +668,7 @@ pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
     let par: usize = pinned["SPIRA_CERTIFY_PAR"].trim().parse().map_err(|_| "SPIRA_CERTIFY_PAR must be a positive integer".to_string())?;
     let q = queue(e);
     spira_config::process::spec()?;
+    stamp_ticked(&e.world.run_dir);
     let mut snap = pins(&pinned);
     snap.run_dir = e.world.run_dir.display().to_string();
     snap.inbox = q.queued().iter().map(task_job).collect();
