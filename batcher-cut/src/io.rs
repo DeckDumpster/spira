@@ -1760,6 +1760,14 @@ pub fn round_eject(env: &Env, repo: &Repo, batch: &str, id: &str, suites: &[Stri
     round_eject_with(env, repo, batch, id, &reason, &csv)
 }
 
+/// `queue round eject --suites` for the only member of a round the repository's own CI judged red:
+/// nothing else in the round can own the red, and `evidence` (the verdict and the output path)
+/// is the reason the rework is held to.
+pub fn round_eject_sole_red(env: &Env, repo: &Repo, batch: &str, id: &str, suites: &[String], evidence: &str) -> Result<(), String> {
+    let reason = format!("Ejected by the merge queue's local round: spira/{id} is the only member of a round the repository's own CI judged red, so the red is its own. Evidence: {evidence}");
+    round_eject_with(env, repo, batch, id, &reason, &suites.join(","))
+}
+
 /// `queue round eject` for a member whose code lacks what `behind` adds: it leaves the round
 /// holding the compiler error as its reason, and a blocks edge keeps the next cut from admitting
 /// it before they have landed.

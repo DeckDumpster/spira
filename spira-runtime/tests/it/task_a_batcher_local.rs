@@ -253,6 +253,60 @@ fn t3_a_red_certify_ejects_the_guilty_then_abandons() {
     assert_eq!((after[eject].1.why.as_str(), after[eject].1.bead.as_str()), ("/run/certify-r9.out", ""), "the guilty are read from the output");
 }
 
+fn sole_member(mut c: Carry) -> Carry {
+    c.repos.get_mut("spira").unwrap().members = vec![("sp-a".into(), "t1".into())];
+    c
+}
+
+/// A red `queue round certify` of a one-member round ejects that member with the red output as
+/// its evidence and writes no pause, whether or not the output names the member's files.
+#[test]
+fn sp_z43b7y_a_red_certify_of_a_one_member_round_ejects_the_member_and_writes_no_pause() {
+    for out in ["verdict=red\nred-output=/run/rounds/r9.results/testenv.out\n", "queue.sh round certify: round r9 is RED at abc: test-a.sh\nred=test-a.sh\n", ""] {
+        let mut r = carried(&{
+            let mut c = sole_member(driving(State::Certifying, "spira.c3"));
+            c.repos.get_mut("spira").unwrap().attributed = true;
+            c
+        });
+        let n = r.requested().len();
+        r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), out)).unwrap();
+        kit::assert_unpoisoned(&r, STREAM);
+        let after = asked_after(&r, n);
+        let names: Vec<&str> = after.iter().map(|(e, _)| e.as_str()).collect();
+        assert!(!names.contains(&PAUSE), "{out:?}: {names:?}");
+        let eject = after.iter().find(|(e, _)| e == EJECT).unwrap_or_else(|| panic!("{out:?}: no eject: {names:?}")).1.clone();
+        assert_eq!((eject.bead.as_str(), eject.head.as_str()), ("sp-a", "t1"), "{out:?}");
+        if out.contains("red-output=") {
+            assert!(eject.why.contains("/run/rounds/r9.results/testenv.out"), "{}", eject.why);
+        }
+        assert!(names.contains(&ABANDON), "{names:?}");
+    }
+}
+
+/// Two members and no file named: the red has no culprit to eject, so the pause stands for a person.
+#[test]
+fn sp_z43b7y_a_red_certify_of_a_two_member_round_naming_no_member_still_pauses() {
+    let mut c = driving(State::Certifying, "spira.c3");
+    c.repos.get_mut("spira").unwrap().attributed = true;
+    let mut r = carried(&c);
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
+    let names: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
+    assert!(names.contains(&PAUSE.to_string()) && !names.contains(&EJECT.to_string()), "{names:?}");
+}
+
+/// Every other path that pauses blames no member, so its pause carries the reason a person acts on.
+#[test]
+fn sp_z43b7y_a_pause_without_a_culprit_carries_the_reason_a_person_acts_on() {
+    let mut r = carried(&sole_member(driving(State::Attributing, "spira.a2")));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(1), "batcher: spira-lc unreachable")).unwrap();
+    let after = asked_after(&r, n);
+    let pause = after.iter().find(|(e, _)| e == PAUSE).unwrap_or_else(|| panic!("no pause: {after:?}"));
+    assert!(pause.1.why.contains("attribution leg ended"), "{}", pause.1.why);
+    assert!(!after.iter().any(|(e, _)| e == EJECT), "no culprit is named: {after:?}");
+}
+
 /// A red certify with no `red-output=` still names its suites and verdict line in the abandon
 /// act (sp-7yu70y): the Concierge attributes the red from the reason, not from a guess.
 #[test]
