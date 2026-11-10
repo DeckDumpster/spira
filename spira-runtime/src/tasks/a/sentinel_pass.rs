@@ -728,6 +728,25 @@ fn client(e: &Effects, deadline_ms: u64) -> LcClient {
     LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_millis(deadline_ms))
 }
 
+/// The beads a pass decides over: the open ones, every child of an open epic carrying `epic_labels`
+/// (a closed child still counts toward its epic), and any live-row bead the open list lacks.
+/// Never the whole history; `None` when any of it is unreadable.
+pub fn beads_on(lc: &LcClient, epic_labels: &[String], live_ids: &[String]) -> Option<Vec<sentinel::model::Bead>> {
+    let read = |args: &[&str]| answer(lc, &[&["content", "list", "--limit", "0", "--json"][..], args].concat()).ok().and_then(|t| sentinel::model::parse_beads(&t).ok());
+    let mut beads = read(&[])?;
+    let mut have: std::collections::HashSet<String> = beads.iter().map(|b| b.id.clone()).collect();
+    let mut extra = Vec::new();
+    for epic in sentinel::pilgrimage::epics(&beads, epic_labels, &|_| None) {
+        extra.extend(read(&["--all", "--parent", &epic.id])?);
+    }
+    let missing: Vec<&str> = live_ids.iter().map(String::as_str).filter(|id| !have.contains(*id)).collect();
+    for chunk in missing.chunks(100) {
+        extra.extend(read(&["--all", "--id", &chunk.join(",")])?);
+    }
+    beads.extend(extra.into_iter().filter(|b| have.insert(b.id.clone())));
+    Some(beads)
+}
+
 fn answer(lc: &LcClient, args: &[&str]) -> Result<String, String> {
     let r = lc.call(args).map_err(|e| e.to_string())?;
     if r.code == 0 { Ok(r.out) } else { Err(format!("spira-lc {} exited {}: {}", args.first().copied().unwrap_or(""), r.code, r.why())) }
@@ -771,7 +790,9 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         ..Snapshot::default()
     };
     snap.skew = std::env::var(spira_config::RELEASE_ENV).ok().filter(|r| !r.is_empty()).and_then(|r| spira_config::release_skew::skew(std::path::Path::new(&r))).map(|s| s.describe());
-    let content = answer(&lc, &["content", "list", "--all", "--limit", "0", "--json"]).ok().and_then(|t| sentinel::model::parse_beads(&t).ok());
+    let mut rows = answer(&lc, &["list", "--live"]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok());
+    let live_ids: Vec<String> = rows.iter().flatten().map(|r| r.bead_id.clone()).collect();
+    let content = beads_on(&lc, &snap.labels.epics, &live_ids);
     snap.beads = content.as_ref().map(|v| {
         v.iter()
             .map(|b| {
@@ -781,7 +802,6 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
             })
             .collect()
     });
-    let mut rows = answer(&lc, &["list", "--live"]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok());
     if let (Some(live), Some(beads)) = (rows.as_mut(), content.as_ref()) {
         let known: std::collections::HashSet<String> = live.iter().map(|r| r.bead_id.clone()).collect();
         let mut ids = sentinel::pass_checks::unread_blockers(beads, &snap.labels.red_tracker, &|id| known.contains(id));
@@ -1021,4 +1041,39 @@ pub fn phase_metric(e: &Effects, input: &str) -> Result<String, String> {
     let fields: Vec<(String, serde_json::Value)> = v.as_object().map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
     tsd::store::Pusher::new(e.world.metrics_endpoint.clone()).push("sentinel-phase", &tsd::now_iso(), &fields).map_err(|e| e.to_string())?;
     Ok("sentinel-phase".into())
+}
+
+#[cfg(test)]
+mod beads_on_tests {
+    use super::beads_on;
+    use spira_config::lc_call::{fake, LcClient};
+    use std::sync::Arc;
+
+    fn bead(id: &str, status: &str, kind: &str, parent: Option<&str>) -> serde_json::Value {
+        serde_json::json!({"id": id, "status": status, "issue_type": kind, "labels": ["spira"], "parent": parent})
+    }
+
+    fn store() -> Arc<fake::Content> {
+        let mut rows = vec![bead("sp-e", "open", "epic", None), bead("sp-c1", "closed", "task", Some("sp-e")), bead("sp-c2", "open", "task", Some("sp-e")), bead("sp-c3", "closed", "task", Some("sp-e")), bead("sp-held", "closed", "task", None)];
+        rows.extend((0..80).map(|i| bead(&format!("sp-h{i}"), "closed", "task", None)));
+        Arc::new(fake::Content::new(rows))
+    }
+
+    #[test]
+    fn an_open_epic_keeps_its_closed_children_and_the_history_is_not_read() {
+        let store = store();
+        let labels = vec!["spira".to_string()];
+        let beads = beads_on(&LcClient::over(store.clone(), true), &labels, &[]).unwrap();
+        let epic = sentinel::pilgrimage::epics(&beads, &labels, &|id| (id != "sp-c2").then(|| "LANDED".to_string()));
+        assert_eq!((epic.len(), epic[0].total, epic[0].closed), (1, 3, 2), "the epic is not complete while sp-c2 is open");
+        assert!(!beads.iter().any(|b| b.id.starts_with("sp-h")), "unrelated closed history stays out");
+        assert!(store.requests().iter().all(|r| !spira_config::lc_call::reads_whole_history(r)), "{:?}", store.requests());
+    }
+
+    #[test]
+    fn a_live_row_whose_bead_is_closed_is_read_by_id() {
+        let store = store();
+        let beads = beads_on(&LcClient::over(store, true), &["spira".to_string()], &["sp-held".to_string()]).unwrap();
+        assert!(beads.iter().any(|b| b.id == "sp-held"));
+    }
 }
