@@ -592,9 +592,10 @@ pub fn an_outcome_is_offered_only_to_the_task_that_asked(rig: &dyn Rig) {
     x.run_until_idle().unwrap();
     drop(x);
     let mut y = rig.boot(k.clone(), &clock, 1, askers()).unwrap();
-    answer(&mut *y, Some("write"));
-    let writes: Vec<String> = want.iter().filter(|w| w.ends_with(":write")).cloned().collect();
-    assert_eq!(heard(&*k), writes, "after a restart the kept request still names the task that asked");
+    y.run_until_idle().unwrap();
+    let lost = "<-lost at restart";
+    let told: Vec<String> = ["asker", "other", "watcher", "watcher", "watcher"].iter().map(|h| format!("{h}{lost}")).collect();
+    assert_eq!(heard(&*k), told, "after a restart the kept request still names the task that asked, and that task is told");
 }
 
 /// On `start`, a `page` and a `write`.
@@ -625,7 +626,7 @@ fn writers(x: &dyn Executor) -> Vec<String> {
 
 /// While halted, a `Signal` task's write runs, and so does a `Work` task's `Signal` effect;
 /// a `Work` effect is held (the `Work` task's write and the mixed task's write), and the resume
-/// releases each once, also across a restart.
+/// releases each once; a restart loses the requested ones, not the held.
 pub fn a_halt_holds_work_and_lets_signals_through(rig: &dyn Rig) {
     let (j, clock) = (rig.journal(), VirtualClock::new(0));
     let mut x = rig.boot(j.clone(), &clock, 1, planes()).unwrap();
@@ -639,11 +640,12 @@ pub fn a_halt_holds_work_and_lets_signals_through(rig: &dyn Rig) {
     drop(x);
 
     let mut y = rig.boot(j.clone(), &clock, 1, planes()).unwrap();
-    assert_eq!(writers(&*y), ["mixed.page", "signal.write"], "a restart while halted holds nothing more");
+    assert!(writers(&*y).is_empty(), "a restart relaunches no effect it found unresolved");
     clock.advance(10);
     y.submit("r1", HALT_STREAM, EventKind::new(SCHEDULER_RESUMED, "")).unwrap();
     y.run_until_idle().unwrap();
-    assert_eq!(writers(&*y), ["mixed.page", "mixed.write", "signal.write", "work.write"], "the resume releases the work effects");
+    assert_eq!(writers(&*y), ["mixed.write", "work.write"], "the resume releases the work effects a halt held: they were never requested");
+    assert_eq!(j.history().iter().filter(|e| e.kind.tag == EFFECT_TIMED_OUT).count(), 2, "the two requested before the restart are lost");
     assert_eq!(count_tag(&*j, EFFECT_REQUESTED), 4, "each effect is requested once");
 }
 

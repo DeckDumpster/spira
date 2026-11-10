@@ -200,21 +200,20 @@ fn an_outcome_turn_costs_one_store_call_however_many_handlers_consume_it() {
 }
 
 #[test]
-fn a_restart_finds_the_effect_a_crash_left_unanswered_and_nothing_else() {
+fn a_restart_settles_the_effect_a_crash_left_unanswered_as_lost_and_relaunches_nothing() {
     let (store, path, _dir) = serve();
     let clock = VirtualClock::new(0);
     let (_logs, ship) = shipper();
     let mut x = Engine::open(Arc::new(SocketJournal::new(&path, ship)), Arc::new(clock.clone()), regs(3), 1).unwrap();
     x.submit("boot", "task.ticker", EventKind::new("tick", "")).unwrap();
     x.run_until_idle().unwrap();
-    let key = x.pending_effects()[0].key.clone();
+    assert_eq!(x.pending_effects().len(), 1);
     std::mem::forget(x);
-    let turns = store.turns.load(Ordering::SeqCst);
     let (_logs, ship) = shipper();
     let mut y = Engine::open(Arc::new(SocketJournal::new(&path, ship)), Arc::new(clock.clone()), regs(3), 1).unwrap();
     y.run_until_idle().unwrap();
-    assert_eq!(y.pending_effects().iter().map(|p| p.key.clone()).collect::<Vec<_>>(), vec![key], "the unanswered effect is found, once");
-    assert_eq!(store.turns.load(Ordering::SeqCst), turns, "the restart commits nothing");
+    assert!(y.pending_effects().is_empty(), "the unanswered effect is not offered to a runner again");
+    assert!(store.mem.boot().unwrap().effects.is_empty(), "and its row is resolved");
     assert_eq!(store.mem.boot().unwrap().schedules.len(), 1, "and the next tick's row is waiting");
 }
 

@@ -20,7 +20,7 @@ mod conformance {
     s!(
         a_duplicate_submit_dispatches_once,
         a_failed_commit_is_sent_again_and_the_turn_lands_once,
-        a_restart_finds_an_unanswered_effect_and_does_not_request_it_again,
+        a_restart_never_relaunches_an_unresolved_effect_and_delivers_timed_out,
         determinism_under_one_seed,
         a_fired_schedule_row_is_not_fired_by_the_next_process,
         out_of_order_effect_outcomes,

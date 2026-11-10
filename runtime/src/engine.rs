@@ -25,11 +25,15 @@ const POISON_RECHECK_MS: u64 = 300_000;
 /// Memory-only events a stream keeps in the projection; older ones are dropped.
 pub const LOCAL_KEEP: usize = 64;
 
+const LOST_AT_RESTART: &str = "lost at restart";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Succeeded(String),
     Failed(String),
     TimedOut,
+    /// The process that launched the effect ended before it answered; whether it ran is unknown.
+    Lost,
 }
 
 impl Outcome {
@@ -37,7 +41,7 @@ impl Outcome {
         match self {
             Outcome::Succeeded(_) => EFFECT_SUCCEEDED,
             Outcome::Failed(_) => EFFECT_FAILED,
-            Outcome::TimedOut => EFFECT_TIMED_OUT,
+            Outcome::TimedOut | Outcome::Lost => EFFECT_TIMED_OUT,
         }
     }
 
@@ -45,6 +49,7 @@ impl Outcome {
         match self {
             Outcome::Succeeded(d) | Outcome::Failed(d) => d.clone(),
             Outcome::TimedOut => String::new(),
+            Outcome::Lost => LOST_AT_RESTART.into(),
         }
     }
 }
@@ -372,8 +377,12 @@ impl Engine {
             e.restore(&row)?;
         }
         e.restore_keyed(legacy, keyed)?;
+        let lost: Vec<String> = boot.effects.iter().map(|r| r.request_id.clone()).collect();
         for row in boot.effects {
             e.restore_effect(row);
+        }
+        for key in lost {
+            e.complete(&key, Outcome::Lost)?;
         }
         for row in boot.schedules {
             e.scheduler.insert(row);
@@ -1219,7 +1228,7 @@ impl Executor for Engine {
             self.tracks.entry(owner).or_default().outcome = Some(match outcome {
                 Outcome::Succeeded(_) => LastOutcome::Succeeded,
                 Outcome::Failed(_) => LastOutcome::Failed,
-                Outcome::TimedOut => LastOutcome::TimedOut,
+                Outcome::TimedOut | Outcome::Lost => LastOutcome::TimedOut,
             });
         }
         let w = self.unit("effect", Some(&ev));
