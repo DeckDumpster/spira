@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use spira_config::lc_call::{LcClient, LcError, Reply, Transport};
-use store_view::Projection;
+use store_view::{Projection, RowQuery};
 
 /// A scripted store: `rc list` and `list` answer from what it holds, each `watch` takes the next
 /// scripted answer, and every request is recorded.
@@ -86,7 +86,7 @@ fn forge(id: &str, phase: &str, opened: u64, pr: &str, created: u64) -> Value {
 }
 
 fn bead(id: &str, state: &str, holds: &str, verdict: Option<&str>, express: bool) -> Value {
-    json!({ "bead_id": id, "state": state, "holds": holds, "express": if express { "1" } else { "0" }, "claim_verdict": verdict })
+    json!({ "bead_id": id, "state": state, "holds": holds, "express": if express { "1" } else { "0" }, "claim_verdict": verdict, "repo": "spira", "updated_at": 4_000_000_000_i64 })
 }
 
 struct World {
@@ -291,5 +291,87 @@ fn the_watch_names_only_the_prefixes_the_view_applies() {
         let watch = w.script.lock().unwrap().seen.iter().find(|a| a[0] == "watch").cloned().unwrap();
         let prefixes: Vec<&str> = watch[1..].iter().take_while(|a| !a.starts_with("--")).map(String::as_str).collect();
         assert_eq!(prefixes, ["batches/", "lifecycle/", "readiness/"], "{watch:?}");
+    });
+}
+
+#[test]
+fn a_state_change_the_watch_delivers_is_served_as_a_row_and_a_pool_with_no_further_read() {
+    within(|| {
+        let w = world(
+            Script { list_rev: 9, rows: vec![bead("sp-a", "SUBMITTED", "[]", None, false), bead("sp-b", "CERTIFIED", "[]", None, false), bead("sp-c", "CERTIFIED", "[\"wait\"]", None, false)], ..Default::default() },
+            Duration::from_secs(10),
+        );
+        w.p.poll().unwrap();
+        assert_eq!(w.p.unheld("CERTIFIED", "spira").unwrap().value, ["sp-b"], "a held row is not pool");
+        assert!(w.p.unheld("CERTIFIED", "other").unwrap().value.is_empty(), "another repo's pool is not this one's");
+        let by = |states: &[&str]| w.p.rows(&RowQuery { states, ..Default::default() }).unwrap().value.iter().map(|r| r["bead_id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(by(&["SUBMITTED", "CERTIFIED"]), ["sp-a", "sp-b", "sp-c"]);
+
+        w.script.lock().unwrap().rows = vec![bead("sp-a", "CERTIFIED", "[]", None, false), bead("sp-b", "LANDED", "[]", None, false), bead("sp-c", "CERTIFIED", "[\"wait\"]", None, false)];
+        w.watch(json!({ "events": [
+            { "key": "lifecycle/sp-a", "rev": rev(10), "value": {}, "create_rev": null, "prev_mod_rev": rev(2) },
+            { "key": "lifecycle/sp-b", "rev": rev(11), "value": {}, "create_rev": null, "prev_mod_rev": rev(2) },
+        ], "through": 11 }));
+        w.p.poll().unwrap();
+        let asked = w.script.lock().unwrap().seen.len();
+        assert_eq!(w.p.unheld("CERTIFIED", "spira").unwrap().value, ["sp-a"], "visible after one watch round-trip");
+        assert_eq!(by(&["CERTIFIED"]), ["sp-a", "sp-c"]);
+        let live = w.p.rows(&RowQuery { live: true, ..Default::default() }).unwrap().value;
+        assert_eq!(live.len(), 3, "a terminal row updated within the window is live");
+        assert_eq!(w.script.lock().unwrap().seen.len(), asked, "serving rows asks the store nothing");
+    });
+}
+
+#[test]
+fn a_cut_watch_makes_every_reader_refuse_and_says_the_watch_is_lost() {
+    within(|| {
+        let w = world(Script { list_rev: 4, rows: vec![bead("sp-a", "READY", "[]", None, false)], ..Default::default() }, Duration::from_millis(1500));
+        w.p.poll().unwrap();
+        assert!(w.p.unheld("READY", "spira").is_ok());
+        assert!(w.p.poll().is_err(), "the watch was cut");
+        w.advance(Duration::from_secs(2));
+        for refusal in [w.p.rows(&RowQuery::default()).err(), w.p.unheld("READY", "spira").err(), w.p.batch_view("spira").err()] {
+            assert!(matches!(&refusal, Some(LcError::Refused(m)) if m.starts_with("stale past 1500ms") && m.contains("the watch is lost")), "{refusal:?}");
+        }
+        w.watch(json!({ "progress_rev": 6 }));
+        w.p.poll().unwrap();
+        assert!(w.p.unheld("READY", "spira").is_ok(), "a poll the store answered ends the refusal");
+    });
+}
+
+#[test]
+fn an_installed_projection_is_what_hot_serves_and_a_watched_one_reads_no_batch_records() {
+    within(|| {
+        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
+        let script = Arc::clone(&w.script);
+        let p = Arc::new(w.p);
+        let client = LcClient::over(Arc::new(Double(Arc::clone(&w.script))), true);
+        let installed = store_view::install(Arc::clone(&p));
+        assert!(Arc::ptr_eq(&installed, &p));
+        assert!(Arc::ptr_eq(&Projection::hot(client).unwrap(), &p), "hot serves the installed projection");
+
+        assert!(!p.watching());
+        p.batches_current().unwrap();
+        let rc_reads = |w: &Mutex<Script>| w.lock().unwrap().seen.iter().filter(|a| a[0] == "rc").count();
+        assert_eq!(rc_reads(&script), 1, "an unwatched projection reads the batch records afresh");
+
+        p.load().unwrap();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        for rev in 5..400 {
+            script.lock().unwrap().watches.push_back((0, json!({ "progress_rev": rev }).to_string()));
+        }
+        let runner = {
+            let (p, stop) = (Arc::clone(&p), Arc::clone(&stop));
+            std::thread::spawn(move || p.run(&stop))
+        };
+        while !p.watching() {
+            std::thread::yield_now();
+        }
+        let before = rc_reads(&script);
+        p.batches_current().unwrap();
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        runner.join().unwrap();
+        assert_eq!(rc_reads(&script), before, "a watched projection asks the store for no batch record");
+        assert!(!p.watching());
     });
 }
