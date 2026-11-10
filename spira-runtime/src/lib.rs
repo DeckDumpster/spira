@@ -83,11 +83,13 @@ pub fn start_tasks(engine: &mut Engine) {
 }
 
 pub const BOOT_RETRY_FIRST_MS: u64 = 250;
+pub const BOOT_RETRY_CEILING_MS: u64 = 1_000;
 pub const BOOT_RETRY_BOUND_MS: u64 = 60_000;
 
 fn boot_retry(s: &Settings) -> runtime::engine::BootRetry {
     runtime::engine::BootRetry {
         first_ms: BOOT_RETRY_FIRST_MS,
+        ceiling_ms: BOOT_RETRY_CEILING_MS,
         bound_ms: BOOT_RETRY_BOUND_MS,
         store: format!("the journal store at {}", s.lc_socket.display()),
         // waits-on: the journal store's next answer; cap BOOT_RETRY_BOUND_MS
