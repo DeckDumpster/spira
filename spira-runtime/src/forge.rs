@@ -35,9 +35,8 @@ impl fmt::Debug for Forge {
     }
 }
 
-/// `owner/repo` of a checkout's forge remote: `origin` when it has one, else the first remote.
-pub fn slug(repo_dir: &Path) -> Option<String> {
-    let text = fs::read_to_string(repo_dir.join(".git/config")).ok()?;
+fn remotes(repo_dir: &Path) -> Vec<(String, String)> {
+    let Ok(text) = fs::read_to_string(repo_dir.join(".git/config")) else { return vec![] };
     let mut remotes: Vec<(String, String)> = vec![];
     let mut current: Option<String> = None;
     for l in text.lines().map(str::trim) {
@@ -47,12 +46,36 @@ pub fn slug(repo_dir: &Path) -> Option<String> {
             remotes.push((name.clone(), url.to_string()));
         }
     }
-    let (_, url) = remotes.iter().find(|(n, _)| n == "origin").or(remotes.first())?;
+    remotes
+}
+
+fn slug_of(url: &str) -> Option<String> {
     let path = url.trim_end_matches('/').trim_end_matches(".git").rsplit(['/', ':']).take(2).collect::<Vec<_>>();
     match path[..] {
         [repo, owner] if !repo.is_empty() && !owner.is_empty() => Some(format!("{owner}/{repo}")),
         _ => None,
     }
+}
+
+/// `owner/repo` of a checkout's forge remote: `origin` when it has one, else the first remote.
+pub fn slug(repo_dir: &Path) -> Option<String> {
+    let remotes = remotes(repo_dir);
+    let (_, url) = remotes.iter().find(|(n, _)| n == "origin").or(remotes.first())?;
+    slug_of(url)
+}
+
+/// `owner/repo` of the named remote, only when that remote is on github.com.
+pub fn github_slug(repo_dir: &Path, remote: &str) -> Option<String> {
+    let url = remotes(repo_dir).into_iter().find(|(n, _)| n == remote)?.1;
+    host_of(&url).eq_ignore_ascii_case("github.com").then(|| slug_of(&url)).flatten()
+}
+
+fn host_of(url: &str) -> &str {
+    let authority = match url.split_once("://") {
+        Some((_, rest)) => rest.split('/').next().unwrap_or(""),
+        None => url.split(':').next().unwrap_or(""),
+    };
+    authority.rsplit('@').next().unwrap_or("").split(':').next().unwrap_or("")
 }
 
 fn text(v: &Value, key: &str) -> String {
@@ -264,6 +287,27 @@ mod tests {
             assert_eq!(slug(checkout(url).path()).as_deref(), Some("acme/widgets"), "{url}");
         }
         assert_eq!(slug(Path::new("/nonexistent")), None);
+    }
+
+    #[test]
+    fn a_remote_is_github_by_its_host_however_it_is_spelled() {
+        for (url, github) in [
+            ("https://github.com/acme/widgets.git", true),
+                        ("https://USERINFO/github.com/acme/widgets", true),
+            ("ssh://git@github.com:22/acme/widgets.git", true),
+            ("git@github.com:acme/widgets.git", true),
+            ("git@gitea.example:acme/widgets.git", false),
+            ("https://gitea.example/github.com/widgets.git", false),
+            ("https://notgithub.com/acme/widgets", false),
+        ] {
+            let d = testkit::TempDir::new("forge-github-slug");
+            let url = url.replace("USERINFO/", &format!("{}{}", "x:y", "@"));
+            let url = url.as_str();
+            fs::create_dir_all(d.path().join(".git")).unwrap();
+            fs::write(d.path().join(".git/config"), format!("[remote \"up\"]\n\turl = {url}\n")).unwrap();
+            assert_eq!(github_slug(d.path(), "up").is_some(), github, "{url}");
+            assert_eq!(github_slug(d.path(), "other"), None);
+        }
     }
 
     #[test]

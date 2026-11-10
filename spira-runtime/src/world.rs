@@ -10,7 +10,7 @@ use spira_config::nonwork::{status_args, Kind, Which};
 use serde_json::Value;
 
 use crate::watchers::inbox_keeper;
-use crate::forge::{slug, Forge};
+use crate::forge::{github_slug, slug, Forge};
 use crate::watchers::pr_notify::{self, RepoObs};
 use crate::watchers::repo_events;
 use crate::watchers::asks;
@@ -281,6 +281,14 @@ impl World {
     /// the dedup keys the old script left in its state file are offered as the seed. A repository the forge
     /// could not answer for carries its reason in the snapshot.
     pub fn repo_events_snapshot(&self, forge: &Forge, input: &str) -> Result<String, String> {
+        let home = spira_config::resolve::locate_home_for_process()?;
+        let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
+        self.repo_events_snapshot_for(&reg, forge, input)
+    }
+
+    /// Only a repository whose publish remote (`spira-config repo publish-forge`) is on GitHub is asked;
+    /// one that publishes elsewhere or nowhere has no Actions runs to see.
+    pub fn repo_events_snapshot_for(&self, reg: &spira_config::repos::Registry, forge: &Forge, input: &str) -> Result<String, String> {
         let carry: repo_events::Carry = serde_json::from_str(input).unwrap_or_default();
         let rows = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
         let seed = if !carry.seeded { fs::read_to_string(self.run_dir.join("watchd/repo-events.state")).unwrap_or_default().lines().filter(|l| l.starts_with("run|")).map(str::to_string).collect() } else { vec![] };
@@ -290,7 +298,8 @@ impl World {
             return serde_json::to_string(&repo_events::Snapshot { seed, repos }).map_err(|e| e.to_string());
         }
         for r in rows.iter().filter(|r| Path::new(&r.path).join(".git").is_dir()) {
-            let Some(slug) = slug(Path::new(&r.path)) else { continue };
+            let Some((remote, _)) = spira_config::repos::publish_forge(reg, &r.name, &BTreeMap::new()) else { continue };
+            let Some(slug) = github_slug(Path::new(&r.path), &remote) else { continue };
             if repos.iter().all(|(s, _)| *s != slug) {
                 let found = forge.completed_runs(&slug);
                 repos.push((slug, found));
