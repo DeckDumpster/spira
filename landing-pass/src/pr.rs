@@ -142,7 +142,8 @@ impl<'a> PrPass<'a> {
                     continue;
                 }
                 self.log(&format!("landing-pass {name}: {base} already contains every change on {br} — nothing to land"));
-                // The Delivered event, best-effort additive; a machine that cannot be asked or
+                // The Delivered event is this mode's close: the branch's PR carries the evidence.
+                // Best-effort additive; a machine that cannot be asked or
                 // refuses is a loud LIFECYCLE: line, and the next pass tries again.
                 let delivered = match self.git.rev_parse(&r.path, &base_fq) {
                     Some(sha) => match self.tools.deliver_by_content(&r.path, id, &sha) {

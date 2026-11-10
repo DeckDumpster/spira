@@ -501,7 +501,9 @@ impl<'a> Pass<'a> {
         if self.files.content_settled(br, &tip) {
             return;
         }
-        self.log(&format!("{} already contains every change on {br} — nothing to land", w.base));
+        if self.files.announce_content(br, &tip) {
+            self.log(&format!("{} already contains every change on {br} — nothing to land", w.base));
+        }
         if spira_config::lc_state::is_terminal(&bead.state) {
             self.files.settle_content(br, &tip);
             return;

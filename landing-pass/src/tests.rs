@@ -80,6 +80,8 @@ struct FakeGit {
     matching: RefCell<HashMap<String, Vec<String>>>,
     /// branch → the subjects of its commits ahead of the base
     subjects: RefCell<HashMap<String, String>>,
+    /// grep → `sha\tsubject` lines on the base
+    grep: RefCell<HashMap<String, String>>,
 }
 
 impl FakeGit {
@@ -140,8 +142,8 @@ impl Git for FakeGit {
     fn refs_matching(&self, _: &Path, p: &str) -> Vec<String> {
         self.matching.borrow().get(p).cloned().unwrap_or_default()
     }
-    fn log_grep(&self, _: &Path, _: &str, _: &[String]) -> Option<String> {
-        None
+    fn log_grep(&self, _: &Path, g: &str, _: &[String]) -> Option<String> {
+        self.grep.borrow().get(g).cloned()
     }
     fn merge_base(&self, _: &Path, _: &str, _: &str) -> Option<String> {
         None
@@ -1008,6 +1010,7 @@ fn a_refused_content_on_base_is_tried_again_next_pass() {
     h.run();
     h.run();
     assert_eq!(h.lib.count("content_on_base sp-empty"), 2);
+    assert_eq!(h.out.lines().iter().filter(|l| l.contains(NOTHING_TO_LAND)).count(), 1);
     assert!(!h.lib.has("note sp-empty"));
     assert!(!h.mailbox().contains("closed LANDED"));
 }
@@ -1021,6 +1024,26 @@ fn a_new_tip_with_no_tree_diff_is_settled_again() {
     h.git.add("spira/sp-empty", "t10");
     h.run();
     assert_eq!(h.lib.count("content_on_base sp-empty"), 2);
+    assert_eq!(h.out.lines().iter().filter(|l| l.contains(NOTHING_TO_LAND)).count(), 2);
+}
+
+#[test]
+fn a_stacked_base_only_branch_passes_the_evidence_guard_as_hel_does() {
+    let h = H::new(LandMode::Queue);
+    empty_submit(&h);
+    h.git.subjects.borrow_mut().insert("spira/sp-empty".into(), "stacked base: merge sp-other".into());
+    h.run();
+    assert_eq!(h.lib.count("content_on_base sp-empty"), 1, "stacked-base commits carry no work of their own, so the guard passes it as hel does");
+}
+
+#[test]
+fn a_squash_merged_bead_named_on_the_base_is_closed() {
+    let h = H::new(LandMode::Queue);
+    empty_submit(&h);
+    h.git.subjects.borrow_mut().insert("spira/sp-empty".into(), "unrelated work".into());
+    h.git.grep.borrow_mut().insert("sp-empty".into(), "c0ffee\tsp-empty: squashed".into());
+    h.run();
+    assert_eq!(h.lib.count("content_on_base sp-empty"), 1);
 }
 
 #[test]
