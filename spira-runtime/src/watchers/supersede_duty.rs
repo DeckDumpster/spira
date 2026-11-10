@@ -256,7 +256,7 @@ impl SupersedeDuty {
     }
 
     fn inbox(now: u64, m: &str) -> Command {
-        Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), ACT_DEADLINE_MS))
+        Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), ACT_DEADLINE_MS))
     }
 }
 

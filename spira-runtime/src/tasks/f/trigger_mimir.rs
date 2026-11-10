@@ -88,6 +88,8 @@ pub const KEYS: &[&str] = &[
     "SPIRA_METRICS_ENDPOINT",
 ];
 
+// literal-ok: an idempotency-key prefix, not the sweep label
+const KEY_PREFIX: &str = "mimir-sweep";
 const DEADLINE_MS: u64 = 120_000;
 const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: DEADLINE_MS };
 
@@ -234,7 +236,7 @@ impl Handler for TriggerMimir {
                     ctx.event().set("mimir.skip", "recent");
                     vec![]
                 }
-                Decision::File(bead) => vec![file_effect(FILE, format!("mimir-sweep/{}", ev.at / self.interval_ms.max(1)), bead, dedup_labels(&self.config, "SPIRA_MIMIR_LABEL"), DEADLINE_MS)],
+                Decision::File(bead) => vec![file_effect(FILE, format!("{KEY_PREFIX}/{}", ev.at / self.interval_ms.max(1)), bead, dedup_labels(&self.config, "SPIRA_MIMIR_LABEL"), DEADLINE_MS)],
             }
         })
     }
