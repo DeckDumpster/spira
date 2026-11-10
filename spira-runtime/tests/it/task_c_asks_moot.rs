@@ -68,3 +68,36 @@ fn t5_a_cleared_predicate_resolves_with_the_old_reason_and_rc_124_never_reads_as
     let (_, acts) = task::decide(&h.cfg, &at("sp-a", Phase::Checking), &checked("sp-a", task::TIMED_OUT_RC), TICK).unwrap();
     assert!(acts.is_empty(), "a timeout leaves the ask open: {acts:?}");
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// One ask whose predicate cleared and whose resolve the store refused: it stays cleared, held.
+fn cleared_and_unresolved() -> TaskRig {
+    let listed = serde_json::to_string(&Snapshot { asks: vec![ask("sp-a", "test -f /gone", &["sp-w"])] }).unwrap();
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, move |_| Ok(listed.clone()))
+        .double(task::CHECK, |input| {
+            let c: task::Check = serde_json::from_str(input).unwrap();
+            Ok(serde_json::to_string(&CheckOutcome { id: c.id, rc: 0, output: "gone".into() }).unwrap())
+        })
+        .double(task::RESOLVE, |_| Err("store unreachable".into()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&cleared_and_unresolved(), task::NAME);
+    for key in ["asks/sp-a", "held/sp-a"] {
+        assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(cleared_and_unresolved, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}

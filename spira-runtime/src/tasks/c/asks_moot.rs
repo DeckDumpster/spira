@@ -403,6 +403,6 @@ pub fn withdraw(lc: &LcClient, input: &str) -> Result<String, String> {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "asks", drop: &[] }, runtime::rows::Part::Map { name: "timeouts", drop: &[] }, runtime::rows::Part::Map { name: "held", drop: &[] }];
 
 crate::tasks::b::hosted!(AsksMoot);

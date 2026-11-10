@@ -58,3 +58,35 @@ fn t5_the_fake_ec2_fixture_plans_ami_0_and_deregisters_it_first() {
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(in_use), AT_0630).unwrap();
     assert!(acts.is_empty(), "an image in use is never pruned: {acts:?}");
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// Day one plans and deregisters ami-0 but its snapshot delete fails; the next day's world no longer lists it.
+fn deregistered_with_snapshots_left() -> TaskRig {
+    let day_one = Snapshot { stores: vec![image(0, "r0"), image(1, "r1"), image(2, "r2")], current_recipe: "r2".into(), ..Snapshot::default() };
+    let day_two = Snapshot { stores: vec![image(1, "r1"), image(2, "r2")], current_recipe: "r2".into(), ..Snapshot::default() };
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, kit::cycling(vec![day_one, day_two], 1))
+        .double(task::DEREGISTER, |_| Ok("ami-0".into()))
+        .double(task::DELETE_SNAPSHOT, |_| Err("snapshot busy".into()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&deregistered_with_snapshots_left(), task::NAME);
+    for key in ["images/ami-0", "snapshots/ami-0", "last_fired"] {
+        assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(deregistered_with_snapshots_left, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}

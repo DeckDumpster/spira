@@ -103,3 +103,33 @@ fn the_probe_reads_content_in_bounded_id_chunks_never_one_whole_store_dump() {
         assert!(call[3].split(',').count() <= task::CONTENT_CHUNK, "a chunk is bounded");
     }
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// A render written to the mirror whose commit failed; the next world finds the mirror equal to it.
+fn written_but_uncommitted() -> TaskRig {
+    let ids = ["sp-a", "sp-b"];
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, kit::cycling(vec![dump(&ids, 2, ""), current(&ids, 2)], 1))
+        .double(task::WRITE, |text| Ok(task::sha_hex(text.as_bytes())))
+        .double(task::COMMIT, |_| Err("index.lock exists".into()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&written_but_uncommitted(), task::NAME);
+    for key in ["phase", "sha", "refused"] {
+        assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(written_but_uncommitted, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}

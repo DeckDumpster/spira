@@ -200,6 +200,6 @@ pub fn release(handle: &str) -> Result<String, String> {
     Ok(format!("Released {handle}"))
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase")];
 
 crate::tasks::b::hosted!(RoundvmDrain);

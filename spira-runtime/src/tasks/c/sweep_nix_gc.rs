@@ -248,6 +248,6 @@ pub fn collect(units: Option<&dyn runtime::units::Units>, env_link: &str, profil
     runtime::units::effect(units, runtime::units::UNIT_START, &serde_json::to_string(&spec).map_err(|e| e.to_string())?)
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Field("refused")];
 
 crate::tasks::b::hosted!(SweepNixGc);

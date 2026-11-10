@@ -55,3 +55,28 @@ fn t5_draining_never_touches_a_vm_a_live_round_holds_and_ec2_always_releases_at_
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { world_halted: true, ..pool(Some(40), &[]) }), NOW).unwrap();
     assert!(acts.is_empty(), "nothing while halted: {acts:?}");
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// An aged VM whose release the pool refused: the task stays releasing.
+fn releasing_a_refused_release() -> TaskRig {
+    let world = json(&pool(Some(40), &[]));
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).double(task::RELEASE, |_| Err("leased by round r-9".into()));
+    r.clock.advance_to(NOW);
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&releasing_a_refused_release(), task::NAME);
+    assert!(rows.iter().any(|k| k == "phase"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(releasing_a_refused_release, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}

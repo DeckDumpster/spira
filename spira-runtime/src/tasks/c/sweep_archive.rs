@@ -691,6 +691,6 @@ pub fn store(p: &archive::Paths, proc: &dyn runtime::ports::Proc, input: &str) -
     archive::store(p, proc, &job, now)
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "rels", drop: &[] }, runtime::rows::Part::Field("queue"), runtime::rows::Part::Field("index")];
 
 crate::tasks::b::hosted!(SweepArchive);

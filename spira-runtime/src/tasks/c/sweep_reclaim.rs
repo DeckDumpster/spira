@@ -391,6 +391,6 @@ pub fn trim_cache(p: &Pinned, input: &str) -> Result<String, String> {
     Ok(format!("cache {}: trimmed {n} file(s), {} MiB", dir.display(), freed >> 20))
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("refused_cause"), runtime::rows::Part::Field("pending")];
 
 crate::tasks::b::hosted!(SweepReclaim);

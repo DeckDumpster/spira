@@ -64,3 +64,30 @@ fn t5_the_line_matches_escape_classify_census_for_empty_flake_only_and_all_four(
         assert!(acts[0].input.contains(line), "{} lacks {line}", acts[0].input);
     }
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// The Monday census has been reported.
+fn reported_this_week() -> TaskRig {
+    let world = json(&counts(&[("flake", 1)]));
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).double(task::REPORT, |_| Ok("appended".into()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.advance(FIRST).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&reported_this_week(), task::NAME);
+    for key in ["phase", "last_fired", "week"] {
+        assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(reported_this_week, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}

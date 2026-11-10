@@ -126,3 +126,43 @@ fn t10_the_index_waits_for_the_queued_stores_not_just_the_one_in_flight() {
     let (_, acts) = task::decide(&h.cfg, &c, &Input::Outcome { effect: task::STORE.into(), ok: true, body: first }, TICK).unwrap();
     assert_eq!(names(&acts), vec![task::STORE], "the next store, not the index");
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// The first pass stores one transcript but the index rewrite fails; the next world has a second transcript whose store fails.
+fn index_stale_after_a_failed_rewrite() -> TaskRig {
+    let first = Snapshot { sources: vec![src("p/a.jsonl", 10, 1)], index: BTreeMap::new(), projects_dir_exists: true, projects_dir_configured: false };
+    let mut second = first.clone();
+    second.sources.push(src("p/b.jsonl", 20, 2));
+    second.index.insert("p/a.jsonl".into(), Row { bytes: 10, mtime: 1, body_exists: true });
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, kit::cycling(vec![first, second], 1))
+        .double(task::STORE, |input| {
+            let rel = serde_json::from_str::<task::Store>(input).unwrap().rel;
+            if rel == "p/a.jsonl" {
+                Ok(rel)
+            } else {
+                Err(format!("{rel}: disk full"))
+            }
+        })
+        .double(task::INDEX, |_| Err("index locked".into()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&index_stale_after_a_failed_rewrite(), task::NAME);
+    for key in ["rels/p/a.jsonl", "queue", "index"] {
+        assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(index_stale_after_a_failed_rewrite, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}

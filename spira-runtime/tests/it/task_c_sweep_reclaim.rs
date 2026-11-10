@@ -58,3 +58,29 @@ fn t5_low_space_prunes_podman_then_the_oldest_targets_and_a_fat_podman_alone_pru
     let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(Snapshot { podman_bytes: 50 * GIB, ..idle() }), HOUR).unwrap();
     assert_eq!(names(&acts), [task::PODMAN_PRUNE], "podman: system prune -f would run");
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// A pass refused because a positive control matched nothing.
+fn refused_by_a_failed_control() -> TaskRig {
+    let world = json(&Snapshot { require_ok: vec![("/r/worktree".into(), false)], ..idle() });
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&refused_by_a_failed_control(), task::NAME);
+    for key in ["phase", "refused_cause", "pending"] {
+        assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(refused_by_a_failed_control, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}

@@ -72,3 +72,30 @@ fn t5_terminal_checkouts_and_old_scratch_go_and_unsaved_work_stays() {
     let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(snap), AT_20).unwrap();
     assert_eq!(names(&acts), [task::DESTROY_WORKTREE, task::REMOVE_SCRATCH], "WOULD remove sp-done and scratch-old; KEEP the unsaved checkout and the dot-name");
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// A landed checkout whose removal was refused, after a pass that fired.
+fn after_a_refused_removal() -> TaskRig {
+    let world = json(&Snapshot { rows: [("sp-done".to_string(), "LANDED".to_string())].into(), entries: vec![entry("sp-done", true, 600, None)], ..idle() });
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).double(task::DESTROY_WORKTREE, |_| Err("holder alive".into()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&after_a_refused_removal(), task::NAME);
+    for key in ["phase", "last_fired", "open", "prune"] {
+        assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(after_a_refused_removal, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}
