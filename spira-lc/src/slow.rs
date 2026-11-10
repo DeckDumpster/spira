@@ -23,6 +23,11 @@ struct Counters {
 
 static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), callers: BTreeMap::new() });
 
+/// Who the request on this thread is for, as [`caller_of_pid`] named it.
+pub fn current_caller() -> String {
+    CALLER.with(|c| c.borrow().clone())
+}
+
 pub fn set_caller(caller: &str) {
     CALLER.with(|c| *c.borrow_mut() = clean(caller));
 }

@@ -89,6 +89,21 @@ impl Transport for Socket {
     }
 }
 
+const BOUNDING: &[&str] = &["--id", "--parent", "--updated-after", "--closed-after", "--created-after"];
+
+/// Whether `argv` is a `content list` of every bead there is: `--all --limit 0` with nothing
+/// that bounds it to ids, a parent or a time window (a label can match every bead). The store
+/// refuses it from a scheduler task or the cockpit collector.
+pub fn reads_whole_history<S: AsRef<str>>(argv: &[S]) -> bool {
+    let a: Vec<&str> = argv.iter().map(AsRef::as_ref).collect();
+    if a.get(..2) != Some(&["content", "list"][..]) {
+        return false;
+    }
+    let unlimited = a.windows(2).any(|w| matches!(w[0], "--limit" | "-n") && w[1] == "0") || a.contains(&"--limit=0");
+    let bounded = a.iter().any(|x| BOUNDING.contains(&x.split('=').next().unwrap_or("")));
+    a.contains(&"--all") && unlimited && !bounded
+}
+
 /// The caller's environment a `content` write carries to the service: the variables bdq's write
 /// guards read from their own environment (`bead::guard`) — the rune, the czar class and
 /// trigger bead, and every czar stage. The service judges the write on these, as bdq would have
@@ -538,6 +553,69 @@ mod tests {
             ("planning.rs", include_str!("planning.rs")),
         ] {
             assert_eq!(launches(src), Vec::<&str>::new(), "{name} launches a process instead of calling LcClient");
+        }
+    }
+}
+
+/// A scripted `content list` over rows held in memory, answering as bd does: closed rows only
+/// with `--all`, 50 rows unless `--limit`, and the whole-history read refused as the store
+/// refuses it. Every request it sees is recorded.
+pub mod fake {
+    use super::{reads_whole_history, Reply, Transport, REFUSED};
+    use serde_json::Value;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    pub struct Content {
+        pub rows: Vec<Value>,
+        pub seen: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl Content {
+        pub fn new(rows: Vec<Value>) -> Self {
+            Content { rows, seen: Mutex::new(vec![]) }
+        }
+
+        pub fn requests(&self) -> Vec<Vec<String>> {
+            self.seen.lock().unwrap().clone()
+        }
+    }
+
+    fn flag<'a>(a: &'a [String], name: &str) -> Option<&'a str> {
+        a.iter().position(|x| x == name).and_then(|i| a.get(i + 1)).map(String::as_str)
+    }
+
+    fn labels(r: &Value) -> Vec<&str> {
+        r["labels"].as_array().map(|l| l.iter().filter_map(Value::as_str).collect()).unwrap_or_default()
+    }
+
+    impl Transport for Content {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            self.seen.lock().unwrap().push(argv.to_vec());
+            if reads_whole_history(argv) {
+                return Ok(Reply { code: REFUSED, out: String::new(), err: "refused: whole bead history\n".into() });
+            }
+            if argv.get(..2) != Some(&["content".to_string(), "list".to_string()][..]) {
+                return Ok(Reply { code: 0, out: "[]".into(), err: String::new() });
+            }
+            let a = &argv[2..];
+            let all = a.iter().any(|x| x == "--all");
+            let ids: Option<Vec<&str>> = flag(a, "--id").map(|v| v.split(',').collect());
+            let parent = flag(a, "--parent");
+            let any: Option<Vec<&str>> = flag(a, "--label-any").map(|v| v.split(',').collect());
+            let kind = flag(a, "--type").or_else(|| flag(a, "-t"));
+            let limit = flag(a, "--limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(50);
+            let rows: Vec<&Value> = self
+                .rows
+                .iter()
+                .filter(|r| all || r["status"] != "closed")
+                .filter(|r| ids.as_ref().is_none_or(|ids| ids.contains(&r["id"].as_str().unwrap_or(""))))
+                .filter(|r| parent.is_none_or(|p| r["parent"].as_str() == Some(p)))
+                .filter(|r| any.as_ref().is_none_or(|any| labels(r).iter().any(|l| any.contains(l))))
+                .filter(|r| kind.is_none_or(|k| r["issue_type"].as_str() == Some(k)))
+                .take(if limit == 0 { usize::MAX } else { limit })
+                .collect();
+            Ok(Reply { code: 0, out: serde_json::to_string(&rows).unwrap_or_default(), err: String::new() })
         }
     }
 }
