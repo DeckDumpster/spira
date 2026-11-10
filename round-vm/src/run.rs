@@ -286,7 +286,7 @@ if ! command -v cargo >/dev/null 2>&1; then
     exit 127
 fi
 if [ -n "$want_tag" ] && [ -z "$build_image" ] && ! podman image exists "localhost/spira-testenv:$want_tag" 2>/dev/null; then
-    echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$want_tag is not in this round's container store — refusing before any build (law-unexpected-image-builds-are-killed-then-fixed); refresh the template with round-vm template and recycle the warm pool" >&2
+    echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$want_tag is not in this round's container store — refusing before any build (law-unexpected-image-builds-are-killed-then-fixed); put it in the store the round uses (the template for a VM, the operator's own for a host round)" >&2
     exit 3
 fi
 phase checkout
@@ -2501,7 +2501,7 @@ fn on_vm_run(
         post_guard_secs: cfg.post_guard_secs,
         lint: lints(args),
         build_image,
-        image_tag: env.host.image_tag(&args.tree_dir, commit_sha).ok(),
+        image_tag: env.host.image_tag(&args.tree_dir, commit_sha).map_err(|e| eprintln!("round-vm run: no image tag for the preflight ({e}) — the round checks the image only after its builds")).ok(),
         round_ref: round_ref.to_string(),
         round_sha: commit_sha.to_string(),
         ssh_log: results_dir.join(SSH_LOG_FILE),
@@ -3393,7 +3393,7 @@ mod tests {
     #[test]
     fn the_remote_script_says_whether_the_template_holds_the_rounds_image() {
         let clone = REMOTE_SCRIPT.find("git clone").unwrap();
-        let check = REMOTE_SCRIPT.find("podman image exists").unwrap();
+        let check = clone + REMOTE_SCRIPT[clone..].find("podman image exists").unwrap();
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(clone < check && check < batch, "checked after the clone, before testenv starts");
         assert!(REMOTE_SCRIPT.contains("template image: localhost/spira-testenv:$tag present"));
@@ -3746,7 +3746,7 @@ mod tests {
             fences: String::new(),
             cancel: Default::default(),
         });
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' ''", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -3865,7 +3865,7 @@ mod tests {
             testenv_limits: "x".into(), post_guard_secs: 1, lint: false, build_image: false, image_tag: None,
             ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, fences: String::new(), cancel: Default::default(),
         };
-        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' ''"));
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' ''"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
         push_resume_credentials(&remote, "10.0.0.2", Path::new("/creds"));
