@@ -181,6 +181,7 @@ fn a_restart_onto_a_standing_poison_row_keeps_the_batcher_armed_and_resumes_when
         run_for(&mut d, &clock, 60_000);
         assert!(armed(&d, BATCHER).is_some(), "batcher.local stays armed while the inherited row stands");
     }
+    assert_eq!(observes(&seen, BATCHER_OBSERVE), 0, "a stream under a standing row is not observed");
     store.lifted.store(true, Ordering::SeqCst);
     for _ in 0..40 {
         run_for(&mut d, &clock, 30_000);
