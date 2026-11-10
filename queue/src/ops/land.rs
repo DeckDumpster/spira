@@ -599,6 +599,9 @@ pub fn lc_deliver(
     let Ok(mut v) = version.trim().parse::<u64>() else {
         return fail(format!("unreadable version {version:?}"));
     };
+    if ungated.is_some() && state == "LANDED" {
+        return true;
+    }
     if let Some(g) = ungated.filter(|_| !matches!(state.as_str(), "CERTIFIED" | "IN_DELIVERY")) {
         let proof = format!("ungated:{}:{}:evidence={}", g.by, g.reason, g.evidence);
         let kind = serde_json::json!({"ContentOnBase": {"proof": proof}}).to_string();

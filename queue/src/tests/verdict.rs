@@ -2498,3 +2498,18 @@ fn a_gated_landing_still_refuses_a_submitted_member() {
     };
     assert!(!t.with_world(|w| lc_deliver(w, Path::new("/repo"), "h1", &m, None)));
 }
+
+#[test]
+fn an_ungated_landing_of_an_already_landed_member_is_not_a_fault() {
+    use crate::ops::land::{lc_deliver, BreakGlass};
+    use crate::model::Member;
+    let t = T::new(LandMode::Queue);
+    t.git.ancestor("m1", "h1");
+    t.lc.bead_rows
+        .borrow_mut()
+        .insert("sp-a".into(), ("LANDED".into(), "5".into()));
+    let m = Member { id: "sp-a".into(), tip: "m1".into() };
+    let g = BreakGlass { reason: "r".into(), by: "operator".into(), evidence: "e1".into() };
+    assert!(t.with_world(|w| lc_deliver(w, Path::new("/repo"), "h1", &m, Some(&g))));
+    assert!(!t.lc.has("event bead"));
+}
