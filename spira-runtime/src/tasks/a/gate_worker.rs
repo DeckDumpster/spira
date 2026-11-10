@@ -707,11 +707,11 @@ pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
             _ => continue,
         };
         let (out_path, rc_path) = leg_paths(&snap.run_dir, i, leg, job);
-        // The unit is asked before the files are read: a leg that ends in between is seen ended with its files, never ended with none.
+        // Ask the unit before reading the files, so a leg ending in between is seen with its files.
         let unit_present = e.units.as_deref().ok_or("no unit manager configured")?.facts(&runtime::units::UnitHandle::of(NAME, &leg_key(i, leg, job)).map_err(|e| e.0)?).map_err(|e| e.0)?.state != runtime::units::UnitState::Absent;
         let (rc, out) = read_leg(&rc_path, &out_path);
         let running = rc.is_none() && unit_present;
-        let run = (!running && leg == "gate" && (rc.is_some() || !out.is_empty())).then(|| classify(rc.unwrap_or(KILLED), &out));
+        let run = (!running && leg == "gate" && has_trace(rc, &out)).then(|| classify(rc.unwrap_or(KILLED), &out));
         snap.legs.insert(i, Leg { running, rc, verdict: run.as_ref().map(|r| r.verdict.clone()), reason: run.and_then(|r| r.reason) });
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
@@ -753,11 +753,12 @@ fn gate_run(f: &Filing) -> landing_pass::model::GateRun {
 /// A leg that ended with no status and no output was not seen to run: filing it would record a
 /// verdict nobody produced.
 fn leg_left_a_trace(f: &Filing) -> Result<(), String> {
-    let empty = std::fs::read_to_string(&f.out_path).map_or(true, |o| o.is_empty());
-    match f.rc {
-        None if empty => Err(format!("{} ended with no status and no output", f.job.key())),
-        _ => Ok(()),
-    }
+    let out = std::fs::read_to_string(&f.out_path).unwrap_or_default();
+    if has_trace(f.rc, &out) { Ok(()) } else { Err(format!("{} ended with no status and no output", f.job.key())) }
+}
+
+fn has_trace(rc: Option<i32>, out: &str) -> bool {
+    rc.is_some() || !out.is_empty()
 }
 
 /// Keep a non-PASS gate's whole output (the newest 300 are kept).
