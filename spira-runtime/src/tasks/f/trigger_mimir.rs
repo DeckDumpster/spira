@@ -160,11 +160,6 @@ pub fn decide(snap: &Snapshot, config: &BTreeMap<String, String>) -> Decision {
     Decision::File(Bead { title: format!("Mimir pass — {text}"), kind: "task".into(), priority: 3, labels, body, persona: None, repo: None })
 }
 
-/// The journal scan that predates the state row: a journal written before it holds no `STATE`.
-pub fn last_filed_at(view: &Projection, stream: &StreamKey) -> Option<u64> {
-    view.events(stream).iter().rev().find(|e| e.kind.tag == EFFECT_SUCCEEDED && crate::watchers::answered_effect(view, e).as_deref() == Some(FILE)).map(|e| e.at)
-}
-
 /// `trigger.mimir.state`: when the newest `trigger.mimir.file` succeeded.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -246,7 +241,7 @@ impl Handler for TriggerMimir {
                     ctx.event().set("mimir.skip", why.as_str());
                     vec![]
                 }
-                Decision::File(_) if recently_filed(carried::<Carry>(view, &ev.stream, STATE).filed_at.or_else(|| last_filed_at(view, &ev.stream)), ev.at, &self.config) => {
+                Decision::File(_) if recently_filed(carried::<Carry>(view, &ev.stream, STATE).filed_at, ev.at, &self.config) => {
                     ctx.event().set("mimir.skip", "recent");
                     vec![]
                 }

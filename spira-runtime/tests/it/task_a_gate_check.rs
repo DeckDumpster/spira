@@ -85,7 +85,7 @@ fn t5_a_red_twice_suite_already_p1_is_untouched() {
 /// `main.rs:186-190` (changed by the contract): a new run is ingested once, an old one never again.
 #[test]
 fn t5_a_new_run_is_ingested_once() {
-    let snap = Snapshot { ci: Ci { recent_runs: vec![run("101", "success"), run("103", "success")], ..idle().ci }, ..busy() };
+    let snap = Snapshot { ci: Ci { recent_runs: vec![run("101", "success"), run("103", "success")], ..idle().ci }, ..idle() };
     let (carry, acts) = decide(&ingested(&["101"]), &snap);
     assert_eq!(acts.iter().filter(|a| a.effect == TSD_INGEST).map(|a| a.key.as_str()).collect::<Vec<_>>(), ["rgantt/spira/103"]);
     assert!(decide(&carry, &snap).1.iter().all(|a| a.effect != TSD_INGEST));

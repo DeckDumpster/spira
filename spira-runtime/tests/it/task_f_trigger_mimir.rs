@@ -137,9 +137,3 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_does_not_file_again_inside_the_gap_a_filing_already_covers() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
 }
-
-#[test]
-fn a_journal_with_no_state_row_still_dates_the_last_filing() {
-    let r = filed();
-    assert!(last_filed_at(r.engine().projection(), &StreamKey(STREAM.into())).is_some());
-}

@@ -359,6 +359,7 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
     out.map(|_| if refused { format!("{}/close:refused", j.key) } else { tag.clone() }).map_err(|why| format!("{tag}: {why}"))
 }
 
+// No carry: the ledger on each reply is the state, so no row is kept (`it_keeps_no_carry_row…`).
 const ROW_PARTS: &[runtime::rows::Part] = &[];
 
 super::hosted!(MailReconcile);
