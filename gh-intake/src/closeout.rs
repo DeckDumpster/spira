@@ -364,7 +364,7 @@ fn settled_text(d: &Deps, outcome: &ExternalOutcome, via: &[String]) -> Result<S
 pub fn provenance_mode(args: &[String]) -> Result<bool, String> {
     match args.first().map(String::as_str) {
         None => Ok(false),
-        Some("--check") if args.len() == 1 => Ok(true),
+        Some("--check") => Ok(true),
         Some(other) => Err(format!("unknown argument: {other}")),
     }
 }
