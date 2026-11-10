@@ -173,6 +173,7 @@ pub struct Snapshot {
 
 /// `{ escalated: {cksum(key)→condition}, declined: {repo→n} }`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub escalated: BTreeMap<String, String>,
     pub declined: BTreeMap<String, u32>,
@@ -555,9 +556,12 @@ impl WatchSkew {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+/// The rows a restart keeps; what a Carry field is left out of is rebuilt by the first tick.
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "escalated", drop: &[] }, runtime::rows::Part::Map { name: "declined", drop: &[] }];
 
 impl Handler for WatchSkew {
     fn interests(&self) -> &[EventKindTag] {

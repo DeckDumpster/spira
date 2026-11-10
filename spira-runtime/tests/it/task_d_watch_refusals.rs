@@ -115,3 +115,18 @@ fn t6_seven_days_of_a_repeating_class_replay_identically_inside_the_budget() {
     assert_eq!(r.requested().iter().filter(|q| q.name == FILE && q.at < 7 * DAY_MS).count(), 7, "one filing per day");
     assert_journal_budget(&r, 2);
 }
+
+fn filed_class() -> TaskRig {
+    rig(1, world(vec![class("claim", 9)]), filed_ok)
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_class(), NAME);
+    assert!(rows.iter().any(|k| k.starts_with("filed/")), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed_class, || WatchRefusals::new(config()).registration(), STREAM, WatchRefusals::boot().2);
+}

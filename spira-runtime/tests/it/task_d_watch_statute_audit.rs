@@ -103,3 +103,19 @@ fn t6_eight_weeks_replay_identically_inside_the_budget() {
     assert!(filed(&r).len() <= 5 * 9, "at most five filings a week");
     assert_journal_budget(&r, 1);
 }
+
+fn standing_finding() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(book(2))))
+}
+
+#[test]
+fn a_stateless_task_journals_no_carry_row() {
+    let r = standing_finding();
+    assert_eq!(filed(&r).len(), 2);
+    assert!(r.journal.state().into_iter().all(|((t, _), v)| t != NAME || v.is_empty()), "{NAME} kept a row");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(standing_finding, || WatchStatuteAudit::new(config()).registration(), STREAM, WatchStatuteAudit::boot().2);
+}

@@ -134,3 +134,18 @@ fn t8_the_pattern_passes_each_act_key_through_to_its_effect_command() {
     let keys: Vec<String> = cmds.into_iter().filter_map(|c| if let Command::Effect(e) = c { Some(e.key) } else { None }).collect();
     assert_eq!(keys, ["watch.mend:k1", "watch.mend:k2"], "two effects with identical input keep their own keys");
 }
+
+fn standing_breach() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(overdue())))
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&standing_breach(), NAME);
+    assert!(rows.iter().any(|k| k == "seen"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(standing_breach, || WatchMend::new(config()).registration(), STREAM, WatchMend::boot().2);
+}

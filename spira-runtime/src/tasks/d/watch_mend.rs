@@ -133,6 +133,7 @@ pub struct Snapshot {
 
 /// `seen := keys of this snapshot`, so a breach that clears and returns is announced again.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub seeded: bool,
     pub seen: BTreeSet<String>,
@@ -293,9 +294,12 @@ impl WatchMend {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+/// The rows a restart keeps; what a Carry field is left out of is rebuilt by the first tick.
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("seeded"), runtime::rows::Part::Field("seen")];
 
 impl Handler for WatchMend {
     fn interests(&self) -> &[EventKindTag] {

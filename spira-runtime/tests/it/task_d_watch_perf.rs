@@ -121,3 +121,21 @@ fn t5_the_lines_are_the_ones_perf_watch_wrote() {
     let logged: Vec<&str> = r.requested().iter().filter(|q| q.name == LOG).map(|q| q.input.as_str()).collect();
     assert_eq!(logged, ["PERF UNRUNNABLE lc-show: exit status: 1"], "the log carries the bare alarm");
 }
+
+fn standing_alarm() -> TaskRig {
+    let mut r = rig(1, Arc::new(Mutex::new(slow("lc-list", 900))));
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&standing_alarm(), NAME);
+    assert!(rows.iter().any(|k| k == "last_pass") && rows.iter().any(|k| k.starts_with("alarms/")), "{rows:?}");
+    assert!(!rows.iter().any(|k| k == "record"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(standing_alarm, || WatchPerf::new(config()).registration(), STREAM, WatchPerf::boot().2);
+}

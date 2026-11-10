@@ -100,3 +100,31 @@ fn t5_the_prompt_and_the_alarm_are_the_ones_watchtower_wrote() {
     let a = asked(&r, ALARM);
     assert!(a.len() == 1 && a[0].contains("FAILED UNIT: spira-gate-prod.service failing for") && a[0].contains("incident:failed-unit-spira-gate-prod.service"), "{a:?}");
 }
+
+fn failing_past_the_warn_window() -> TaskRig {
+    let mut r = rig(1, Arc::new(Mutex::new(failing())));
+    r.advance(4 * CADENCE_MS).unwrap();
+    r
+}
+
+fn nominal_prompt_written() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(nominal())))
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&failing_past_the_warn_window(), NAME);
+    assert!(rows.iter().any(|k| k.starts_with("failed_units/")) && rows.iter().any(|k| k.starts_with("alarmed/")) && rows.iter().any(|k| k == "escalated"), "{rows:?}");
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&nominal_prompt_written(), NAME);
+    assert!(rows.iter().any(|k| k == "prompt"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(failing_past_the_warn_window, || WatchTower::new(config()).registration(), STREAM, WatchTower::boot().2);
+}
+
+#[test]
+fn a_boot_does_not_rewrite_the_nominal_prompt_it_already_wrote() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(nominal_prompt_written, || WatchTower::new(config()).registration(), STREAM, WatchTower::boot().2);
+}
