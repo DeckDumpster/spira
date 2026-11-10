@@ -104,7 +104,7 @@ impl CockpitTier600s {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, super::cockpit::ROW_PARTS))
     }
 }
 

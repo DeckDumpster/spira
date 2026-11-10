@@ -151,6 +151,7 @@ pub struct Snapshot {
 /// `intake.gh.state`: the issue numbers handled per slug (the first read's baseline and every
 /// number acted on since), and the last good fetch, by hour.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub seen: BTreeMap<String, Vec<u64>>,
     pub last_ok_hour: Option<u64>,
@@ -346,7 +347,7 @@ impl IntakeGh {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     /// A write's input with the pinned config beside the act, so its runner reads no config.
@@ -358,6 +359,8 @@ impl IntakeGh {
         EffectSpec { input: serde_json::json!({ "cfg": self.config, "act": act }).to_string(), ..a }
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "seen", drop: &[] }, runtime::rows::Part::Field("last_ok_hour")];
 
 impl Handler for IntakeGh {
     fn interests(&self) -> &[EventKindTag] {

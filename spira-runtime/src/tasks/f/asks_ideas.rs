@@ -95,6 +95,7 @@ pub struct Snapshot {
 
 /// `asks.ideas.state`: changes only on a busy/idle edge or a prompt.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub idle_since: Option<u64>,
     pub last_prompt: Option<u64>,
@@ -261,9 +262,11 @@ impl AsksIdeas {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("idle_since"), runtime::rows::Part::Field("last_prompt"), runtime::rows::Part::Field("prompted")];
 
 impl Handler for AsksIdeas {
     fn interests(&self) -> &[EventKindTag] {

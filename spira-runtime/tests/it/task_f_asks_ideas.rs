@@ -125,3 +125,56 @@ fn t5_parity_outside_waking_hours_and_no_ideas_ask_nothing() {
     let (_, outcome, acts) = decide(&spell, &none, &config());
     assert_eq!((outcome, acts.len()), (Outcome::NoIdeas, 0));
 }
+
+fn idle_for(secs: u64) -> Snapshot {
+    snap(NOW + secs, 10, false)
+}
+
+fn boot_matches(make: impl Fn() -> TaskRig) {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(make, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
+}
+
+fn idle_spell_opened() -> TaskRig {
+    rig(1, |n| idle_for(if n == 0 { 0 } else { 1_800 }))
+}
+
+fn prompted_once() -> TaskRig {
+    let mut r = idle_spell_opened();
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+fn prompted_then_idle_again() -> TaskRig {
+    let mut r = rig(1, |n| match n {
+        0 => idle_for(0),
+        1 => idle_for(1_800),
+        2 => snap(NOW + 2_000, 10, true),
+        3 => idle_for(2_100),
+        _ => idle_for(4_000),
+    });
+    r.advance(3 * CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&prompted_once(), NAME);
+    for k in ["idle_since", "last_prompt", "prompted"] {
+        assert!(rows.iter().any(|r| r == k), "{k} missing from {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    boot_matches(idle_spell_opened);
+}
+
+#[test]
+fn a_boot_after_the_ask_does_not_ask_again_for_the_same_idle_spell() {
+    boot_matches(prompted_once);
+}
+
+#[test]
+fn a_boot_after_an_ask_keeps_the_gap_that_holds_back_the_next_one() {
+    boot_matches(prompted_then_idle_again);
+}

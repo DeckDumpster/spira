@@ -129,3 +129,36 @@ fn t5_parity_a_closed_bead_gets_a_new_bead_and_an_open_one_an_append() {
     let (_, acts) = decide(&carry, &snap(vec![filing("f2.json")], &[("sp-1", true)]));
     assert_eq!(names(&acts), [APPEND]);
 }
+
+fn unparsable(name: &str) -> Outboxed {
+    Outboxed { name: name.into(), filing: Err("not json".into()) }
+}
+
+/// One alarm raised, one filing applied and its bead recorded; the outbox then gains a second filing of the same class.
+fn applied_and_alarmed() -> TaskRig {
+    let calls = AtomicU64::new(0);
+    let world = move |_: &str| {
+        let outbox = if calls.fetch_add(1, Ordering::SeqCst) == 0 { vec![unparsable("f0.json"), filing("f1.json")] } else { vec![unparsable("f0.json"), filing("f1.json"), filing("f2.json")] };
+        Ok(serde_json::to_string(&snap(outbox, &[("sp-9", true)])).unwrap())
+    };
+    let mut r = TaskRig::new(1, handler().registration()).unwrap().double(OBSERVE, world).double(FILE, |_| Ok(r#"{"key":"h/bug","id":"sp-9"}"#.into()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, FILE].contains(e)) {
+        r = r.double(e, |i| Ok(i.into()));
+    }
+    let (_, stream, kind) = IntakeFilings::boot();
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&applied_and_alarmed(), NAME);
+    for k in ["beads/h/bug", "applied", "alarmed"] {
+        assert!(rows.iter().any(|r| r == k), "{k} missing from {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(applied_and_alarmed, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
+}

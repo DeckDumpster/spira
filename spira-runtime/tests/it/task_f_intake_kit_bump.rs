@@ -125,3 +125,21 @@ fn t5_parity_an_unpublished_crate_files_nothing() {
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!(next, Carry::default());
 }
+
+/// Both sites bumped to 1.1.0 and recorded; the registry then moves to 1.2.0.
+fn bumped_then_released_again() -> TaskRig {
+    rig(1, |n| snap(Some(if n == 0 { "1.1.0" } else { "1.2.0" }), "1.0.0", "^1.0"))
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&bumped_then_released_again(), NAME);
+    for k in ["bumps/deck", "bumps/poke"] {
+        assert!(rows.iter().any(|r| r == k), "{k} missing from {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_amends_the_open_bump_rather_than_filing_another() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(bumped_then_released_again, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
+}

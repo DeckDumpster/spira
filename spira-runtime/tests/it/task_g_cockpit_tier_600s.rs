@@ -133,3 +133,32 @@ fn t6_a_dirty_file_on_day_two_publishes_once_then_and_two_days_are_deterministic
     assert_eq!(publishes, 2, "the first snapshot, then the dirty file");
     assert_journal_budget(&a, 1);
 }
+
+fn with_clock(mut s: Snapshot) -> Snapshot {
+    let f = s.fragments.values_mut().next().unwrap();
+    f.at = 10;
+    f.kv.insert("SP_AT".into(), "10".into());
+    s
+}
+
+fn boot_matches(make: impl Fn() -> TaskRig) {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(make, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig(1, |_| with_clock(snap(""))), NAME);
+    for k in ["digest", "fragments/cockpit.livelock"] {
+        assert!(rows.iter().any(|r| r == k), "{k} missing from {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_does_not_republish_a_snapshot_whose_digest_it_published() {
+    boot_matches(|| rig(1, |_| snap("")));
+}
+
+#[test]
+fn a_boot_does_not_refresh_a_snapshot_no_newer_than_the_last_read() {
+    boot_matches(|| rig(1, |_| with_clock(snap(""))));
+}

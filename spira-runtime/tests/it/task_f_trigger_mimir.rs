@@ -122,3 +122,18 @@ fn t5_parity_the_time_trigger_files_a_byte_equal_bead() {
         format!("Scheduled trigger: the Mimir persona will claim this bead, run a retrospective pass over the failure distribution, identify recurring failure classes, and cut at most 3 remedy beads. Trigger: 10800s elapsed (lastpass ts={t}, watermark ts={t}). See spira/runes/mimir.md for the pass procedure.")
     );
 }
+
+fn filed() -> TaskRig {
+    rig(1, |_| snap(0, 10_800, 0))
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed(), NAME);
+    assert!(rows.iter().any(|k| k == "filed_at"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_does_not_file_again_inside_the_gap_a_filing_already_covers() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
+}
