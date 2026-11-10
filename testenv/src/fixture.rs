@@ -1033,6 +1033,24 @@ impl<'a> Session<'a> {
         }
     }
 
+    /// `df` of the filesystems suites write to, one line each, for naming the full one.
+    pub fn free_space(&self) -> String {
+        let out = self.rt.exec(&self.as_user(
+            &["df", "-P", "-h", "/workspace", "/tmp"],
+            vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)],
+        ));
+        let rows: Vec<String> = out
+            .output
+            .lines()
+            .skip(1)
+            .filter_map(|l| {
+                let f: Vec<&str> = l.split_whitespace().collect();
+                (f.len() >= 6).then(|| format!("{} {} free of {}", f[5], f[3], f[1]))
+            })
+            .collect();
+        if rows.is_empty() { "unknown".into() } else { rows.join(", ") }
+    }
+
     /// The contents of each of `paths` inside the container, in order, in one exec; a file
     /// that is missing, or an exec that fails, reads as empty.
     pub fn read_files(&self, paths: &[String]) -> Vec<String> {

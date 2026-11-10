@@ -4,6 +4,7 @@
 //! `BatchCfg::deadline`, a hard cut of the whole suite phase (DESIGN.md D7).
 
 use crate::phase::{RunEvent, RunLog};
+use crate::build::is_enospc;
 use crate::fixture::{is_user_account_fault, Fixtures, Liveness, Session};
 use crate::record::{self, Mode, Producer, ResultRecord, Status};
 use crate::runtime::cancelled;
@@ -78,6 +79,8 @@ pub struct BatchOutcome {
     pub container_dead: Option<String>,
     pub exec_fault: Option<usize>,
     pub account_fault: Option<String>,
+    /// A red suite's output says the disk was full: the pass has no verdict, the box does.
+    pub disk_fault: Option<String>,
     pub cancelled: bool,
     /// The deadline stopped the launch loop; jobs with no record were never started.
     pub deadline_hit: bool,
@@ -90,6 +93,7 @@ impl BatchOutcome {
         self.container_dead = self.container_dead.take().or(other.container_dead);
         self.exec_fault = self.exec_fault.take().or(other.exec_fault);
         self.account_fault = self.account_fault.take().or(other.account_fault);
+        self.disk_fault = self.disk_fault.take().or(other.disk_fault);
         self.cancelled |= other.cancelled;
         self.deadline_hit |= other.deadline_hit;
     }
@@ -129,6 +133,7 @@ impl BatchOutcome {
         self.container_dead.is_some()
             || self.exec_fault.is_some()
             || self.account_fault.is_some()
+            || self.disk_fault.is_some()
             || self.cancelled
     }
 }
@@ -312,6 +317,28 @@ impl Shared<'_> {
         }
     }
 
+    /// The first red suite whose output says the disk filled, with the container's free
+    /// space on the filesystems a suite writes to.
+    fn disk_fault(&self) -> Option<String> {
+        let suite = self
+            .records
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, r)| matches!(r.status, Status::Red | Status::QuarantinedRed))
+            .map(|(s, _)| s.clone())
+            .find(|s| {
+                fs::read_to_string(self.cfg.results.join(format!("{s}.out")))
+                    .is_ok_and(|o| is_enospc(&o))
+            })?;
+        let d = format!(
+            "{suite} hit 'No space left on device'; container free space: {}",
+            self.session.free_space()
+        );
+        (self.hooks.log)(&format!("harness fault — {d}"));
+        Some(d)
+    }
+
     fn storm_count(&self) -> usize {
         let empties = self.empty_output.lock().unwrap();
         self.records
@@ -374,6 +401,7 @@ pub fn run(
         }
     }
     sh.report_timing();
+    outcome.disk_fault = sh.disk_fault();
     outcome.records = sh.records.into_inner().unwrap();
     outcome.cancelled |= cancelled();
     outcome
@@ -838,6 +866,28 @@ mod tests {
         });
         assert_eq!(out.records.len(), 4);
         assert_eq!(excl_saw.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_suite_red_on_enospc_is_a_harness_fault_not_a_red() {
+        let rt = FakeRuntime::new();
+        rt.suite(
+            "test-a.sh",
+            1,
+            "not ok 1 - seed\n/workspace/spira/testlib.sh: line 310: printf: write error: No space left on device\n",
+        );
+        rt.suite("test-b.sh", 1, "not ok 1 - real defect\n");
+        let dir = tmpdir("enospc");
+        let s = session(&rt);
+        let c = cfg(Mode::Parallel, &dir, 2);
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+        assert!(out.harness_fault());
+        assert!(out.disk_fault.as_deref().is_some_and(|d| d.contains("test-a.sh")));
+        let dir = tmpdir("enospc-control");
+        let c = cfg(Mode::Parallel, &dir, 2);
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-b.sh"])));
+        assert!(!out.harness_fault(), "an ordinary red is not a disk fault");
+        assert_eq!(out.blocking_reds(), vec!["test-b.sh"]);
     }
 
     #[test]
