@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=round
+DOC=SPIRA_ROUND_VM_HOST — `on` runs a certification round in the testenv container on this host, from a warm target, one round at a time; `off` never does. A busy host slot or host pressure over the thresholds sends the round to the spill provider either way.
+SCHEMA=Where a round runs by default: on (the host's testenv container; the round VM is spill only) or off (the round VM as before). Default on.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_HOST:=on}"
+SPIRA_CONF_DEFAULT_EOF

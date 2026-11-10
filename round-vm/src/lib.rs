@@ -5,6 +5,7 @@ pub mod ci_yield;
 pub mod cli;
 pub mod config;
 pub mod ec2;
+pub mod host;
 pub mod load;
 pub mod lpt;
 pub mod machine;

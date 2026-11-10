@@ -64,6 +64,22 @@ impl FileLock {
     }
 }
 
+impl FileLock {
+    /// `None` when another descriptor holds the lock.
+    pub fn try_exclusive(path: &Path) -> Result<Option<FileLock>, String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        let file = OpenOptions::new().create(true).truncate(false).write(true).open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        // SAFETY: flock on a descriptor this function owns for the lock's lifetime.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(Some(FileLock { _file: file }));
+        }
+        let err = std::io::Error::last_os_error();
+        if err.kind() == std::io::ErrorKind::WouldBlock { Ok(None) } else { Err(format!("flock {}: {err}", path.display())) }
+    }
+}
+
 const GUARDED_SIGNALS: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
 
 fn guarded_set() -> libc::sigset_t {

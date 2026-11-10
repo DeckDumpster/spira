@@ -418,6 +418,9 @@ round_vm_ec2_run_deadline
 round_vm_ec2_security_group
 round_vm_ec2_subnet
 round_vm_ec2_tailscale_key_file
+round_vm_host
+round_vm_host_cpu_some_avg60
+round_vm_host_io_full_avg60
 round_vm_spill
 round_vm_spill_io_full_avg60
 round_vm_spill_wait_secs

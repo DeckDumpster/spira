@@ -788,6 +788,106 @@
           "refId": "B"
         }
       ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "round phases p50 by place: provision / build / suites (host vs ec2 vs the before-window)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 88,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.5, spira_cert_pass_boot_seconds{repo=~\"$repo\",place=~\"$place\"}[$__interval])",
+          "legendFormat": "provision {{place}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.5, spira_cert_pass_build_seconds{repo=~\"$repo\",place=~\"$place\"}[$__interval])",
+          "legendFormat": "build {{place}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.5, spira_cert_pass_suites_seconds{repo=~\"$repo\",place=~\"$place\"}[$__interval])",
+          "legendFormat": "suites {{place}}",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.5, spira_cert_pass_total_seconds{repo=~\"$repo\",place=~\"$place\"}[$__interval])",
+          "legendFormat": "total {{place}}",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.5, spira_cert_pass_total_seconds{repo=~\"$repo\",place=~\"$place\"}[$__interval] offset 24h)",
+          "legendFormat": "total {{place}}, 24 h earlier",
+          "refId": "E"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "rounds by place \u00d7 cause (host rounds vs spill)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 96,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (place, cause) (increase(spira_cert_pass_causes{repo=~\"$repo\",place=~\"$place\"}[$__interval]))",
+          "legendFormat": "{{place}} {{cause}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }
