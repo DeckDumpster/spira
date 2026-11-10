@@ -263,6 +263,7 @@ fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
 #[derive(Clone)]
 pub struct BootRetry {
     pub first_ms: u64,
+    pub ceiling_ms: u64,
     pub bound_ms: u64,
     pub store: String,
     pub sleep: Arc<dyn Fn(u64) + Send + Sync>,
@@ -271,7 +272,7 @@ pub struct BootRetry {
 impl BootRetry {
     /// Ask once: the policy of a caller that has no store to wait for.
     pub fn once() -> Self {
-        BootRetry { first_ms: 0, bound_ms: 0, store: String::new(), sleep: Arc::new(|_| {}) }
+        BootRetry { first_ms: 0, ceiling_ms: 0, bound_ms: 0, store: String::new(), sleep: Arc::new(|_| {}) }
     }
 
     fn read<T>(&self, mut ask: impl FnMut() -> Result<T>) -> Result<T> {
@@ -285,7 +286,7 @@ impl BootRetry {
                     let wait_now = wait.min(self.bound_ms - waited);
                     (self.sleep)(wait_now);
                     waited += wait_now;
-                    wait = wait.saturating_mul(2);
+                    wait = wait.saturating_mul(2).min(self.ceiling_ms);
                 }
                 other => return other,
             }

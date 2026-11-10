@@ -49,7 +49,7 @@ impl Journal for Unsure {
 
 fn retry(slept: &Arc<Mutex<Vec<u64>>>, bound_ms: u64) -> BootRetry {
     let slept = slept.clone();
-    BootRetry { first_ms: 100, bound_ms, store: "spira-lc".into(), sleep: Arc::new(move |ms| slept.lock().unwrap().push(ms)) }
+    BootRetry { first_ms: 100, ceiling_ms: u64::MAX, bound_ms, store: "spira-lc".into(), sleep: Arc::new(move |ms| slept.lock().unwrap().push(ms)) }
 }
 
 #[test]
@@ -92,4 +92,13 @@ fn the_waits_spend_the_whole_bound_with_a_shortened_last_wait() {
     assert!(r.is_err());
     let v = slept.lock().unwrap().clone();
     assert_eq!(v.iter().sum::<u64>(), 1_000, "{v:?}");
+}
+
+#[test]
+fn the_wait_stops_doubling_at_the_ceiling_so_a_store_that_arrives_late_is_found_soon() {
+    let slept = Arc::new(Mutex::new(Vec::new()));
+    let mut r = retry(&slept, 60_000);
+    r.ceiling_ms = 300;
+    Engine::open_with(Unsure::new(5), Arc::new(VirtualClock::new(0)), vec![], 0, r).unwrap();
+    assert_eq!(*slept.lock().unwrap(), vec![100, 200, 300, 300, 300]);
 }
