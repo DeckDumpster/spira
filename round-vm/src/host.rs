@@ -182,7 +182,7 @@ mod tests {
         assert!(HostSlot::try_take(d.path()).unwrap().is_none());
         drop(first);
         // A sibling test's fork holds the descriptor until its exec closes it.
-        let freed = (0..200).any(|_| free(d.path()) || { std::thread::sleep(Duration::from_millis(10)); false });
+        let freed = (0..200).any(|_| free(d.path()) || { std::thread::sleep(Duration::from_millis(10)); false }); // clock-safe: a cap on the wait for a forked sibling's exec to close the descriptor
         assert!(freed, "the slot stayed taken after its holder dropped it");
     }
 
