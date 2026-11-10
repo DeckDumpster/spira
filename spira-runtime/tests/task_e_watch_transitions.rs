@@ -569,6 +569,24 @@ fn a_landing_that_recorded_no_commit_is_judged_by_time_against_the_recorded_acti
 }
 
 #[test]
+fn the_stall_ages_from_the_oldest_landing_the_release_lacks_not_from_a_contained_older_one() {
+    let (run, rel) = stale_record_other_release_in_effect();
+    let (old, new) = (1_000u64, 1_000 + 40 * MIN);
+    let dwell = move |_: &[&str]| -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({ "beads": [], "horizon": 0,
+            "last": { "spira": { "Delivered": new } },
+            "landed_after": { "spira": [{ "at": new, "commit": "bbbb" }, { "at": old, "commit": "aaaa" }] } }))
+    };
+    let ancestor = |c: &str, _: &str| Ok(c == "aaaa");
+    let snap = observe(run.path(), rel.path(), "spira", &dwell, &ancestor, 3_600);
+    let keys = |now| -> Vec<String> {
+        spira_runtime::tasks::e::watch_transitions::stalls(&snap, now, &config()).into_iter().map(|s| s.key()).collect()
+    };
+    assert!(!keys(new + MIN).iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "aged from the contained landing");
+    assert!(keys(new + 16 * MIN).contains(&"LANDED→ACTIVATED spira".to_string()));
+}
+
+#[test]
 fn a_landing_whose_ancestry_cannot_be_tested_pages_its_edge_and_leaves_the_rest_watched() {
     let (run, rel) = stale_record_other_release_in_effect();
     let snap = observe(run.path(), rel.path(), "spira", &dwell_with_a_landing(1_000, LANDED), &|_, _| Err("bad object".into()), 3_600);
