@@ -53,11 +53,14 @@ fn an_empty_shelf_is_refused_not_passed() {
 fn the_first_queue_rework_is_refused_with_the_law_and_the_retry_passes_with_it_attached() {
     let d = testkit::TempDir::new("statute-check-hook");
     let env: [(&str, &str); 0] = [];
-    let cmd = "queue rework sp-k3lt4y";
+    let cmd = "queue rework sp-aaa111";
     let first: serde_json::Value = serde_json::from_str(&hook(&d, &env, cmd)).unwrap();
     assert_eq!(first["decision"], "block");
     let reason = first["reason"].as_str().unwrap();
-    assert!(reason.contains("law-a-twice-failed-landing-is-traced-before-the-third") || reason.contains("law-a-test-that-flips-is-deleted"), "{reason}");
+    for want in ["law-a-test-that-flips-is-deleted", "law-landing-rounds-run-the-full-suite-on-a-vm"] {
+        assert!(reason.contains(want), "{want} missing: {reason}");
+    }
+    assert!(!reason.contains("law-never-derive-an-id-from-output"), "an unrelated statute is not shown");
     assert!(reason.contains("STATUTE_CHECK_CONSIDERED"));
     let retry: serde_json::Value = serde_json::from_str(&hook(&d, &env, cmd)).unwrap();
     assert!(retry.get("decision").is_none(), "{retry}");
@@ -85,4 +88,12 @@ fn the_override_passes_and_is_logged_with_its_reason() {
 fn a_command_that_is_not_a_decision_is_untouched() {
     let d = testkit::TempDir::new("statute-check-nondecision");
     assert_eq!(hook(&d, &[], "queue status"), "");
+}
+
+#[test]
+fn touching_a_rounds_pace_pause_file_is_refused_with_law_on_first_call() {
+    let d = testkit::TempDir::new("statute-check-pause");
+    let first = hook(&d, &[], "touch /run/x/rounds-pace/repo/pause");
+    assert!(first.contains("\"block\"") && first.contains("law-"), "{first}");
+    assert_eq!(hook(&d, &[], "cat /run/x/rounds-pace/repo/pause"), "");
 }
