@@ -591,3 +591,28 @@ fn the_unit_environment_built_for_a_leg_ends_in_the_runtimes_own_path() {
     let path = env.into_iter().find(|(n, _)| n == "PATH").map(|(_, v)| v).unwrap();
     assert!(path.ends_with(&format!(":{own}")), "{path} should end with the runtime PATH {own}");
 }
+
+/// A round whose land outcome never came back holds its state; the repo must not sit idle behind it.
+#[test]
+fn sp_2gcs4h_a_round_that_lost_its_land_outcome_is_forgotten_and_the_waiting_member_is_cut() {
+    let mut stuck = driving(State::Landing, "");
+    stuck.repos.get_mut("spira").unwrap().leg = None;
+    let landed_world = |now_ms| Snapshot { now_ms, ..busy() };
+    let (seen, acts) = decide(&stuck, &landed_world(NOW));
+    assert!(acts.is_empty(), "first seen, inside the bound: {acts:?}");
+    assert_eq!(seen.repos["spira"].state, State::Landing);
+    let (_, acts) = decide(&seen, &landed_world(NOW + OUTCOME_WAIT_MS - 1));
+    assert!(acts.is_empty(), "still inside the bound: {acts:?}");
+    let (next, acts) = decide(&seen, &landed_world(NOW + OUTCOME_WAIT_MS + 1));
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert_eq!(names, [FETCH, ASSEMBLE], "the next tick cuts: {acts:?}");
+    assert_eq!(next.repos["spira"].state, State::Assembling);
+}
+
+/// A leg that runs for hours is not an outcome wait.
+#[test]
+fn sp_2gcs4h_a_certifying_round_is_never_forgotten_for_waiting() {
+    let (seen, _) = decide(&driving(State::Certifying, "u"), &Snapshot { now_ms: NOW, ..idle() });
+    let (next, _) = decide(&seen, &Snapshot { now_ms: NOW + 10 * OUTCOME_WAIT_MS, ..idle() });
+    assert_eq!(next.repos["spira"].waiting, None);
+}

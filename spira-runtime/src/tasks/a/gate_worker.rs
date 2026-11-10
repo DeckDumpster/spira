@@ -649,14 +649,6 @@ fn read_leg(rc_path: &str, out_path: &str) -> (Option<i32>, String) {
     (rc, std::fs::read_to_string(out_path).unwrap_or_default())
 }
 
-pub fn stamp_ticked(run_dir: &std::path::Path) {
-    let ticked = run_dir.join(spira_config::GATE_WORKER_TICKED);
-    if let Some(dir) = ticked.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(&ticked, "");
-}
-
 /// The snapshot: the queue's inbox, claims and per-repo running counts; free admission; and for
 /// each slot whose leg started, whether it still runs and, once ended, how.
 pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
@@ -668,7 +660,6 @@ pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
     let par: usize = pinned["SPIRA_CERTIFY_PAR"].trim().parse().map_err(|_| "SPIRA_CERTIFY_PAR must be a positive integer".to_string())?;
     let q = queue(e);
     spira_config::process::spec()?;
-    stamp_ticked(&e.world.run_dir);
     let mut snap = pins(&pinned);
     snap.run_dir = e.world.run_dir.display().to_string();
     snap.inbox = q.queued().iter().map(task_job).collect();

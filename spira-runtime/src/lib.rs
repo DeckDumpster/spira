@@ -292,10 +292,14 @@ fn routes() -> &'static std::collections::BTreeMap<&'static str, Runner> {
 
 impl EffectRunner for Effects {
     fn run(&self, key: &str, spec: &EffectSpec) -> Result<String, String> {
-        match routes().get(spec.name.as_str()) {
+        let answered = match routes().get(spec.name.as_str()) {
             Some(runner) => runner(self, key, spec),
             None => Err(format!("no runner for effect {}", spec.name)),
+        };
+        if let (Ok(_), Some(task)) = (&answered, spira_config::ticked::task_of_probe(&spec.name)) {
+            spira_config::ticked::stamp(&self.world.run_dir, task);
         }
+        answered
     }
 
     /// The class in [`classes::CLASSES`]. A name no task registers has no runner either; it

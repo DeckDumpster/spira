@@ -133,6 +133,8 @@ pub const OBSERVE_DEADLINE_MS: u64 = 10_000;
 /// the leg itself runs under `SPIRA_BATCHER_WALL_SECS` ([`Policy::wall_ms`]) and ends on its
 /// `unit.ran`.
 pub const UNIT_START_DEADLINE_MS: u64 = 10_000;
+/// Past the longest effect this task waits on (`land`, 900 s): an outcome that has not come is lost.
+pub const OUTCOME_WAIT_MS: u64 = 1_200_000;
 
 pub const ACTS: &[(&str, u64)] = &[
     (FETCH, 60_000),
@@ -530,6 +532,15 @@ pub struct RepoCarry {
     /// The landing ref the round was cut against, which `base` is not for a stacked round.
     #[serde(default)]
     pub landing_base: String,
+    /// Since when the round has waited, unmoved, on the outcome of an effect it issued.
+    #[serde(default)]
+    pub waiting: Option<Waiting>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Waiting {
+    pub state: State,
+    pub since_ms: u64,
 }
 
 impl RepoCarry {
@@ -557,6 +568,7 @@ impl RepoCarry {
             recertified_on: self.recertified_on.clone(),
             stacked: self.stacked,
             landing_base: self.landing_base.clone(),
+            waiting: self.waiting,
             ..RepoCarry::default()
         }
     }
@@ -585,6 +597,7 @@ impl RepoCarry {
             recertified_on: round.recertified_on.clone(),
             stacked: round.stacked,
             landing_base: round.landing_base.clone(),
+            waiting: round.waiting,
             ..self
         }
     }
@@ -997,10 +1010,11 @@ impl Machine<'_> {
     /// A tick's observe, for the states that read the world. A leg's end arrives as its own
     /// `unit.ran` (`on_ran`); a leg past its wall and grace with none is judged lost here.
     fn observe(&mut self, policy: &Policy, repo: &Repo) {
-        if self.voided(repo) {
+        if self.voided(repo) || self.outcome_lost() {
             self.forget_round();
             return;
         }
+        self.note_waiting();
         match self.rc.state {
             State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > leg_deadline_ms(policy, self.rc.state == State::Attributing, self.rc.members.len()) => self.leg_ended(Exit::Unknown),
             State::Corpus | State::Attributing | State::Certifying => self.watch_leg(repo),
@@ -1010,6 +1024,25 @@ impl Machine<'_> {
             }
             _ => {}
         }
+    }
+
+    fn awaits_outcome(&self) -> bool {
+        matches!(self.rc.state, State::Assembling | State::Opened | State::Landing | State::Promoting)
+    }
+
+    /// The round has waited past [`OUTCOME_WAIT_MS`] in a state that only an effect's outcome
+    /// moves: the outcome was lost, and the round would otherwise hold the repo for good.
+    fn outcome_lost(&self) -> bool {
+        self.awaits_outcome() && self.rc.waiting.is_some_and(|w| w.state == self.rc.state && self.now_ms.saturating_sub(w.since_ms) > OUTCOME_WAIT_MS)
+    }
+
+    fn note_waiting(&mut self) {
+        let state = self.rc.state;
+        self.rc.waiting = match self.rc.waiting {
+            _ if !self.awaits_outcome() => None,
+            Some(w) if w.state == state => Some(w),
+            _ => Some(Waiting { state, since_ms: self.now_ms }),
+        };
     }
 
     /// A leg the unit manager does not list for [`LEG_MISSING_OBSERVES`] observes in a row, past
@@ -1522,7 +1555,7 @@ fn decide_repo(policy: &Policy, name: &str, rc: &RepoCarry, repo: &Repo, now_ms:
     let (mut shared, mut live, mut acts, mut ended) = (rc.clone(), Vec::<RepoCarry>::new(), vec![], false);
     for round in rc.rounds() {
         let mut m = Machine { repo: name, rc: shared.holding(&round), acts: vec![], now_ms, below: !live.is_empty() };
-        let voided = m.voided(repo);
+        let voided = m.voided(repo) || m.outcome_lost();
         m.observe(policy, repo);
         acts.extend(m.acts);
         if m.rc.live() {

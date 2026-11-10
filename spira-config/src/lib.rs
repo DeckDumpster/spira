@@ -59,12 +59,10 @@ pub mod scratch;
 pub mod session;
 pub mod stack_conflict;
 pub mod target;
+pub mod ticked;
 pub mod unit;
 pub mod vtime;
 pub mod writeback;
-
-/// Under `$SPIRA_RUN`: touched by every gate.worker observe, read by whoever asks if it is alive.
-pub const GATE_WORKER_TICKED: &str = "gate-worker/ticked";
 
 pub use locate::LocateOutcome;
 
