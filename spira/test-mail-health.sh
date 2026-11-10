@@ -28,7 +28,6 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 # detect-and-alert path was silently looking at the wrong maildir the whole time).
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
-export SPIRA_MAIL_OPERATOR_CONSIDERED=test-suite
 export SPIRA_HOME="$HERE"
 export HOME="$TMP/home"; mkdir -p "$HOME"
 export SPIRA_CONF="$TMP/no-such-spira.conf"
@@ -69,6 +68,7 @@ echo "=== POSITIVE CONTROL — fires when threshold exceeded ==="
 # assertions would still pass — so this confirms the starting state is empty.
 initial="$(op_count)"
 is "SEEN RED: operator starts with 0 messages" "0" "$initial"
+unset SPIRA_MAIL_OPERATOR_CONSIDERED
 
 send_old concierge 120
 

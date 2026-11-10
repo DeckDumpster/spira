@@ -18,6 +18,10 @@
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
 
+# These are alerts about a silent reader, often the concierge; without this `mail send operator`
+# reroutes a note to the concierge, which is the mailbox that is not being read.
+export SPIRA_MAIL_OPERATOR_CONSIDERED="mail-health alerts the operator about unread mailboxes"
+
 _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 _state_dir="${SPIRA_RUN}/mail-health"
 
