@@ -205,22 +205,43 @@ fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
 
-#[test]
-fn a_gate_leg_with_no_status_and_no_output_is_not_filed() {
-    let dir = testkit::TempDir::new("gw-empty");
+fn leg_filing(name: &str, rc: Option<i32>, out: Option<&str>) -> (testkit::TempDir, String) {
+    let dir = testkit::TempDir::new(name);
     let out_path = dir.path().join("gate.out");
-    std::fs::write(&out_path, "").unwrap();
-    let f = Filing { slot: 0, job: job("r", "b", false, 1, 0), rc: None, out_path: out_path.display().to_string(), started_ms: 1, finished_ms: 2 };
-    let err = complete(&spira_runtime::Effects::default(), &serde_json::to_string(&f).unwrap()).unwrap_err();
+    if let Some(out) = out {
+        std::fs::write(&out_path, out).unwrap();
+    }
+    let f = Filing { slot: 0, job: job("r", "b", false, 1, 0), rc, out_path: out_path.display().to_string(), started_ms: 1, finished_ms: 2 };
+    (dir, serde_json::to_string(&f).unwrap())
+}
+
+#[test]
+fn a_gate_leg_with_no_status_and_empty_output_is_not_completed() {
+    let (_d, input) = leg_filing("gw-empty", None, Some(""));
+    let err = complete(&spira_runtime::Effects::default(), &input).unwrap_err();
     assert!(err.contains("no status and no output") && err.contains("refused"), "{err}");
-    assert!(retain_output(&spira_runtime::Effects::default(), &serde_json::to_string(&f).unwrap()).unwrap_err().contains("no status and no output"));
-    let with_rc = Filing { rc: Some(1), ..f.clone() };
-    let err = complete(&spira_runtime::Effects::default(), &serde_json::to_string(&with_rc).unwrap()).unwrap_err();
-    assert!(err.contains("does not hold"), "a leg with a status goes on to the claim: {err}");
-    std::fs::write(&out_path, "killed mid-run").unwrap();
-    let output_only = Filing { rc: None, ..f.clone() };
-    assert!(complete(&spira_runtime::Effects::default(), &serde_json::to_string(&output_only).unwrap()).unwrap_err().contains("does not hold"), "output alone is a trace");
-    std::fs::write(&out_path, "").unwrap();
-    let missing = Filing { out_path: dir.path().join("never").display().to_string(), ..f };
-    assert!(complete(&spira_runtime::Effects::default(), &serde_json::to_string(&missing).unwrap()).unwrap_err().contains("no status and no output"));
+}
+
+#[test]
+fn a_gate_leg_with_no_status_and_empty_output_keeps_no_output() {
+    let (_d, input) = leg_filing("gw-empty-keep", None, Some(""));
+    assert!(retain_output(&spira_runtime::Effects::default(), &input).unwrap_err().contains("no status and no output"));
+}
+
+#[test]
+fn a_gate_leg_whose_output_file_is_missing_is_not_completed() {
+    let (_d, input) = leg_filing("gw-missing", None, None);
+    assert!(complete(&spira_runtime::Effects::default(), &input).unwrap_err().contains("no status and no output"));
+}
+
+#[test]
+fn a_gate_leg_with_a_status_goes_on_to_the_claim() {
+    let (_d, input) = leg_filing("gw-rc", Some(1), Some(""));
+    assert!(complete(&spira_runtime::Effects::default(), &input).unwrap_err().contains("does not hold"));
+}
+
+#[test]
+fn a_gate_leg_with_output_but_no_status_goes_on_to_the_claim() {
+    let (_d, input) = leg_filing("gw-out", None, Some("killed mid-run"));
+    assert!(complete(&spira_runtime::Effects::default(), &input).unwrap_err().contains("does not hold"));
 }
