@@ -1435,7 +1435,6 @@ pub fn batch_sweep(w: &World, repo: Option<&str>) -> i32 {
 
 /// The sweep itself, with the repo's queue lock held by the caller.
 pub(super) fn sweep_locked(w: &World, c: &super::Ctx, path: &std::path::Path) -> i32 {
-    use super::forge_batch::{OPEN, OPENING, PHASE};
     const LABEL: &str = "batch sweep";
     let name = c.r.name.as_str();
     // The batch the queue kept before the store is no record the sweep reads: its PR would be
@@ -1445,20 +1444,8 @@ pub(super) fn sweep_locked(w: &World, c: &super::Ctx, path: &std::path::Path) ->
         w.err(format!("queue.sh {LABEL}: {} still holds a batch recorded before the batch machine moved to the control store — nothing swept; it is settled through it (`queue verdict {name}`, or `queue abandon {name}`), which removes it", legacy.display()));
         return FAIL;
     }
-    let ttl = match w.env.config(LEASE_TTL_KEY).map(|v| v.trim().parse::<u64>()) {
-        Ok(Ok(t)) => t,
-        Ok(Err(e)) => {
-            w.err(format!(
-                "queue.sh {LABEL}: {LEASE_TTL_KEY} does not parse as seconds ({e}) — nothing swept"
-            ));
-            return FAIL;
-        }
-        Err(e) => {
-            w.err(format!(
-                "queue.sh {LABEL}: {LEASE_TTL_KEY} does not resolve ({e}) — nothing swept"
-            ));
-            return FAIL;
-        }
+    let Ok(ttl) = lease_ttl(w, LABEL, " — nothing swept") else {
+        return FAIL;
     };
     let live = match super::forge_batch::live(w, c) {
         Ok(l) => l,
@@ -1492,6 +1479,38 @@ pub(super) fn sweep_locked(w: &World, c: &super::Ctx, path: &std::path::Path) ->
         w.lib.cancel_runs(&c.s.forge, path, branch);
         delete_branch(w, c, path, branch);
     }
+    rc.max(sweep_opening(w, c, path, ttl, &live, &prs))
+}
+
+/// `SPIRA_ROUND_LEASE_TTL_SECS` as seconds; the refusal is already said.
+pub(super) fn lease_ttl(w: &World, label: &str, outcome: &str) -> Result<u64, ()> {
+    match w.env.config(LEASE_TTL_KEY).map(|v| v.trim().parse::<u64>()) {
+        Ok(Ok(t)) => Ok(t),
+        Ok(Err(e)) => {
+            w.err(format!("queue.sh {label}: {LEASE_TTL_KEY} does not parse as seconds ({e}){outcome}"));
+            Err(())
+        }
+        Err(e) => {
+            w.err(format!("queue.sh {label}: {LEASE_TTL_KEY} does not resolve ({e}){outcome}"));
+            Err(())
+        }
+    }
+}
+
+/// A record left `opening` past `ttl` with no live lease is adopted when its PR is in `prs`, and
+/// released otherwise; `prs` is what the forge lists, so the caller must have read it.
+pub(super) fn sweep_opening(
+    w: &World,
+    c: &super::Ctx,
+    path: &std::path::Path,
+    ttl: u64,
+    live: &[crate::batches::BatchRecord],
+    prs: &[(String, String)],
+) -> i32 {
+    use super::forge_batch::{OPEN, OPENING, PHASE};
+    const LABEL: &str = "batch sweep";
+    let name = c.r.name.as_str();
+    let mut rc = OK;
     let now = w.clock.now();
     for b in live.iter().filter(|b| b.kv.get(PHASE) == Some(OPENING)) {
         let age = now.saturating_sub(b.kv.get("opened").and_then(|o| o.parse().ok()).unwrap_or(0));

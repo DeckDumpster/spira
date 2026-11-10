@@ -83,7 +83,7 @@ pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
         return OK;
     };
     let mut rc = OK;
-    // A batch still opening may have a PR its record does not name yet: only the sweep settles it.
+    // A batch still opening is not reconciled here: the opening-record release settles it, adopting a PR the forge lists.
     if let Some(o) = open.as_ref().filter(|o| !o.is_opening()) {
         if let Some(r) = super::reconcile::step(w, c, path, o, &o.kv) {
             rc = r;
@@ -97,11 +97,46 @@ pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
     rc
 }
 
+/// A stale opening record is adopted when the forge lists its PR (a mode switch can leave one) and
+/// released when it lists none; a forge that cannot answer leaves the record.
+fn release_stale_opening(w: &World, c: &Ctx, path: &Path) -> i32 {
+    if !forge_batch::on_store(w) {
+        return OK;
+    }
+    let live = match forge_batch::live(w, c) {
+        Ok(live) => live,
+        Err(e) => {
+            w.err(format!("verdict {}: cannot tell which batches are open: {e}", c.r.name));
+            return FAIL;
+        }
+    };
+    if !live.iter().any(|b| b.kv.get(forge_batch::PHASE) == Some(forge_batch::OPENING)) {
+        return OK;
+    }
+    let Ok(ttl) = super::batch::lease_ttl(w, "verdict", "") else {
+        return FAIL;
+    };
+    let now = w.clock.now();
+    let aged = |b: &crate::batches::BatchRecord| {
+        now.saturating_sub(b.kv.get("opened").and_then(|o| o.parse().ok()).unwrap_or(0)) >= ttl
+    };
+    if !live.iter().any(|b| b.kv.get(forge_batch::PHASE) == Some(forge_batch::OPENING) && aged(b)) {
+        return OK;
+    }
+    let Some(prs) = w.forge.queue_prs(&c.s.forge, path) else {
+        w.err(format!("verdict {}: the forge cannot list its spira/queue/* PRs — opening records left as they are", c.r.name));
+        return FAIL;
+    };
+    super::batch::sweep_opening(w, c, path, ttl, &live, &prs)
+}
+
 fn local_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
     let name = c.r.name.as_str();
     let (rc, out) = match lock::try_lock_as(&c.s.queue_dir, name, "verdict") {
         Acquire::Held(g) => {
-            let r = settle_locked(w, c, path);
+            let released = release_stale_opening(w, c, path);
+            let (rc, out) = settle_locked(w, c, path);
+            let r = (rc.max(released), out);
             drop(g);
             r
         }
