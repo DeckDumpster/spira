@@ -1815,7 +1815,7 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
             .as_ref()
             .filter(|cur| w.git.is_ancestor(b.path, &m.tip, cur))
         {
-            super::land::lc_deliver(w, b.path, cur, m);
+            super::land::lc_deliver(w, b.path, cur, m, None);
             land_member(w, c, b.path, m, cur);
             w.out(format!(
                 "verdict {name}: {} already in moved base — LANDED",

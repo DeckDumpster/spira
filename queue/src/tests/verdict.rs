@@ -2448,3 +2448,53 @@ fn mode_switch_refuses_on_an_unsettled_batch() {
     assert_eq!(t.run(&["mode-switch", "spira", "queue.local"]), 1);
     assert!(t.err().contains("already queue.local"));
 }
+
+#[test]
+fn an_ungated_landing_walks_a_submitted_member_to_landed_with_the_override_on_the_transition() {
+    use crate::model::Member;
+    use crate::ops::land::{lc_deliver, BreakGlass};
+    let t = T::new(LandMode::Queue);
+    t.git.ancestor("m1", "h1");
+    t.lc.bead_rows
+        .borrow_mut()
+        .insert("sp-a".into(), ("SUBMITTED".into(), "2".into()));
+    let m = Member {
+        id: "sp-a".into(),
+        tip: "m1".into(),
+    };
+    let g = BreakGlass {
+        reason: "round loser".into(),
+        by: "operator".into(),
+        evidence: "e1".into(),
+    };
+    let ok = t.with_world(|w| lc_deliver(w, Path::new("/repo"), "h1", &m, Some(&g)));
+    assert!(ok, "{}", t.err());
+    let calls = t.lc.calls.borrow().clone();
+    let ev = calls
+        .iter()
+        .find(|c| c.starts_with("event bead sp-a SUBMITTED 2 "))
+        .expect("event");
+    assert!(
+        ev.contains("ContentOnBase")
+            && ev.contains("operator")
+            && ev.contains("round loser")
+            && ev.contains("e1"),
+        "{ev}"
+    );
+}
+
+#[test]
+fn a_gated_landing_still_refuses_a_submitted_member() {
+    use crate::model::Member;
+    use crate::ops::land::lc_deliver;
+    let t = T::new(LandMode::Queue);
+    t.git.ancestor("m1", "h1");
+    t.lc.bead_rows
+        .borrow_mut()
+        .insert("sp-a".into(), ("SUBMITTED".into(), "2".into()));
+    let m = Member {
+        id: "sp-a".into(),
+        tip: "m1".into(),
+    };
+    assert!(!t.with_world(|w| lc_deliver(w, Path::new("/repo"), "h1", &m, None)));
+}

@@ -241,4 +241,27 @@ is "5: round head 4 is archived"              "$HEAD4" "$(git -C "$REPO" rev-par
 flock -u 8
 exec 8>&-
 
+# ============================================================================
+echo
+echo "6 — a hand landing of a SUBMITTED member leaves it LANDED, the override on the transition"
+# ============================================================================
+testdb_reset
+seed sp-lloc6
+git -C "$REPO" checkout -qb round-6 local/main
+printf 'six\n' > "$REPO/six.txt"
+git -C "$REPO" add six.txt
+git -C "$REPO" commit -q -m "sp-lloc6: the work"
+HEAD6="$(git -C "$REPO" rev-parse round-6)"
+lcfix_seed sp-lloc6 SUBMITTED "$HEAD6"
+git -C "$REPO" checkout -q trunk
+git -C "$REPO" branch -D round-6 >/dev/null 2>&1
+mk_bins "$HEAD6" round-6-bin
+out="$(LAND_UNGATED='fixture: a hand landing of a submitted member' run land-local fixq --head "$HEAD6" --members "sp-lloc6:$HEAD6" --worktree "$(bins_wt "$HEAD6")")"; rc=$?
+[ "$rc" -eq 0 ] && ok "6: exit 0 for a SUBMITTED member" || bad "6: exit 0 for a SUBMITTED member" "got rc=$rc out=$out"
+is "6: local/main equals the head" "$HEAD6" "$(localmain)"
+is "6: the SUBMITTED member's row is LANDED" "LANDED" "$(lcfix_state sp-lloc6)"
+want "6: the transition records the override's reason" "fixture: a hand landing of a submitted member" "$(lcfix_reason sp-lloc6)"
+want "6: the transition records the override's actor" "operator" "$(lcfix_reason sp-lloc6)"
+want "6: the transition records the override's evidence" "evidence=" "$(lcfix_reason sp-lloc6)"
+
 tl_summary

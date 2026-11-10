@@ -1415,6 +1415,11 @@ fn cut_new_round_inner(
     });
     for sa in &combined.set_aside {
         println!("{}", batcher::core::evicted_event(sa).text);
+        if sa.reason == batcher::core::SetAsideReason::Empty {
+            if let Some(m) = sorted.iter().find(|m| m.id == sa.id) {
+                io::lc_land_on_base(env_, repo, &m.id, &m.tip, &base_sha);
+            }
+        }
     }
     if combined.merged.is_empty() {
         println!("{}", skipped_event("no members merged cleanly").text);

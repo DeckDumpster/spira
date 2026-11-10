@@ -1254,6 +1254,41 @@ pub fn lc_certify_round(env: &Env, members: &[(String, String)], round_key: &str
     }
 }
 
+/// A CERTIFIED member whose tip is already an ancestor of the landing ref is recorded LANDED
+/// there, so no later cut sets it aside again. Anything else is left as it stands.
+pub fn lc_land_on_base(env: &Env, repo: &Repo, id: &str, tip: &str, base_sha: &str) {
+    let fail = |why: String| {
+        eprintln!("batcher: LIFECYCLE: {id} not recorded LANDED on spira-lc: {why}")
+    };
+    if !head_on_base(repo, tip) {
+        return;
+    }
+    let row = match lcq(env, &["show", id]).map(|o| serde_json::from_str::<serde_json::Value>(&o)) {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return fail(format!("show: unparsed reply: {e}")),
+        Err(e) => return fail(format!("show: {e}")),
+    };
+    let bead = row.get("bead").cloned().unwrap_or_default();
+    if bead.get("state").and_then(|s| s.as_str()) != Some("CERTIFIED")
+        || bead.get("tip").and_then(|t| t.as_str()) != Some(tip)
+    {
+        return;
+    }
+    let Some(version) = bead.get("version").and_then(|v| {
+        v.as_u64()
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+    }) else {
+        return fail("show: no version".into());
+    };
+    let kind = serde_json::json!({"ContentOnBase": {"proof": format!("ancestry:{base_sha}")}})
+        .to_string();
+    let version = version.to_string();
+    let args = ["event", "bead", id, "--expect", "CERTIFIED", "--version", &version, "--actor", "batcher", "--kind", &kind];
+    if let Err(e) = lcq(env, &args) {
+        fail(e);
+    }
+}
+
 /// Takes a member the batcher withdraws out of the pool on the lifecycle machine (sp-mve9i).
 /// The pool is the machine's CERTIFIED rows alone — bd's reopen no longer keeps a withdrawn
 /// member out of the next round — so the withdrawal is the machine's too, by queue eject's
