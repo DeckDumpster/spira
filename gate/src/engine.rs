@@ -93,6 +93,7 @@ struct State {
     held_lock: bool,
     tree: Option<PathBuf>,
     filelist: Option<PathBuf>,
+    changed: Vec<String>,
     bead: String,
     /// The composition's label once one was chosen (DESIGN.md "Composition"); empty before.
     compose: String,
@@ -639,6 +640,7 @@ impl<'w, W: World> Trial<'w, W> {
         } else {
             status_list.trim_end_matches('\n').to_string()
         };
+        self.s.changed = list.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
         self.s.filelist = w.temp_file(&format!("{list}\n"));
 
         // THE COMPOSITION: what the branch touches decides what runs.
@@ -1908,6 +1910,9 @@ impl<'w, W: World> Trial<'w, W> {
                 NOVERDICT | BASEFAIL => ("infra", vd.reason.clone()),
                 _ => ("red", vd.reason.clone()),
             };
+            if o == "red" {
+                w.lc_failure(&self.s.bead, &self.s.branch_tip, &self.s.changed, &vd.msg);
+            }
             let refused = w.lc_certify(&self.s.bead, &self.s.branch_tip, o, &d);
             if refused.contains("tip mismatch") && self.s.armed {
                 w.append(

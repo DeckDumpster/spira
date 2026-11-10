@@ -1299,6 +1299,21 @@ mod local_red_ref_tests {
     }
 }
 
+/// The saved output of each of `suites`, joined; a suite with none contributes nothing.
+fn suite_outputs(results_dir: &Path, suites: &[String]) -> String {
+    suites.iter().filter_map(|s| fs::read_to_string(locate(results_dir, s, "out")?).ok()).collect::<Vec<_>>().join("\n")
+}
+
+/// The failing tests and output tail of the suites a member turned red, recorded on the bead
+/// for the builder's next brief. Best-effort: a refusal is said and never blocks the eject.
+pub fn record_ejection(env: &Env, id: &str, tip: &str, files: &[String], results_dir: &Path, suites: &[String]) {
+    let output = suite_outputs(results_dir, suites);
+    let lc = |args: &[String]| lcq(env, &args.iter().map(String::as_str).collect::<Vec<_>>());
+    if let Err(e) = spira_config::ejection::record(&lc, id, tip, files, &output, "batcher") {
+        eprintln!("batcher: {id} failure not recorded on spira-lc: {e}");
+    }
+}
+
 /// The first line of a suite's output that reports a failure, trimmed and bounded.
 pub fn first_fail_line(out: &str) -> Option<String> {
     let l = out.lines().map(str::trim).find(|l| l.contains("-RED: SIGNAL ") || l.contains("-RED: TIMEOUT ") || l.contains("-RED: BUILD ") || l.starts_with("FAIL") || l.contains("FAIL:") || l.starts_with("not ok"))?;
@@ -2903,6 +2918,16 @@ mod fail_line_tests {
         let why = keep_red_evidence(run.path(), "b9", "red", &["test-red.sh".to_string(), "test-nested.sh".to_string()]);
         assert!(why.contains("test-red.sh: FAIL: it broke") && why.contains("test-nested.sh: FAIL: nested"), "{why}");
         assert!(why.contains(kept.to_str().unwrap()), "{why}");
+    }
+
+    #[test]
+    fn an_ejected_members_digest_is_built_from_its_red_suites_output_alone() {
+        let d = testkit::TempDir::new("batcher-cut-ejection");
+        fs::write(d.path().join("test-a.sh.out"), "---- t::boom stdout ----\nthread 't::boom' panicked at x/y.rs:7:1:\nit broke\n\nfailures:\n").unwrap();
+        fs::write(d.path().join("test-green.sh.out"), "all fine\n").unwrap();
+        let out = suite_outputs(d.path(), &["test-a.sh".to_string(), "test-missing.sh".to_string()]);
+        let digest = spira_config::ejection::digest("t1", &[], &out);
+        assert!(digest.contains("FAIL t::boom at x/y.rs:7") && digest.contains("it broke") && !digest.contains("all fine"), "{digest}");
     }
 
     #[test]

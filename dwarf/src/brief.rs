@@ -487,6 +487,18 @@ pub fn fast_tier_red_brief(digest: &str) -> String {
     format!("## Your last closeout failed — fix this first\n\n{d}\n\n{repro}\n\n")
 }
 
+/// The failure that ejected the bead, as the first section of a rework brief; empty when none
+/// was recorded. `head` is the tip the worktree stands on, named when it is not the judged one.
+pub fn eject_failure_brief(digest: &str, head: &str) -> String {
+    let d = digest.trim();
+    if d.is_empty() {
+        return String::new();
+    }
+    let judged = spira_config::ejection::parse(d).tip;
+    let moved = if !judged.is_empty() && !head.is_empty() && judged != head { format!(" (HEAD is {head}; it has moved since)") } else { String::new() };
+    format!("## You were ejected — the failure, verbatim{moved}\n\n{d}\n\nThis is the evidence the gate or the round held; start from it, not from a search of the box.\n\n")
+}
+
 pub fn thrash_banner(streak: &str, last: &str) -> String {
     let last = if last.is_empty() { "?" } else { last };
     format!(
@@ -876,6 +888,16 @@ mod tests {
         assert!(spent_wall(call_deadline(Some(480), incident_first_seen), call_start).unwrap().contains("already spent"));
         assert!(spent_wall(call_deadline(Some(0), call_start), call_start).is_some());
         assert_eq!(spent_wall(None, call_start), None);
+    }
+
+    #[test]
+    fn an_eject_brief_leads_with_the_test_location_and_output_and_is_empty_without_one() {
+        let d = spira_config::ejection::digest("aaa", &[], "---- t::boom stdout ----\nthread 't::boom' panicked at x/y.rs:7:1:\nit broke\n\nfailures:\n");
+        let b = eject_failure_brief(&d, "aaa");
+        assert!(b.starts_with("## You were ejected") && b.contains("t::boom at x/y.rs:7") && b.contains("it broke"), "{b}");
+        assert!(!b.contains("moved since"));
+        assert!(eject_failure_brief(&d, "bbb").contains("HEAD is bbb"));
+        assert_eq!(eject_failure_brief("  \n", "aaa"), "");
     }
 
     #[test]

@@ -29,6 +29,7 @@ pub mod containment;
 pub mod convert;
 pub mod deps;
 pub mod edges;
+pub mod ejection;
 pub mod env_bootstrap;
 pub mod hostaddr;
 pub mod eval;

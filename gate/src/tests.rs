@@ -44,6 +44,7 @@ struct Fake {
     tsd: RefCell<Vec<String>>,
     yields: RefCell<Vec<Vec<String>>>,
     lc: RefCell<Vec<Vec<String>>>,
+    failures: RefCell<Vec<(String, String, Vec<String>, String)>>,
     gate_starts: RefCell<Vec<String>>,
     lc_refusal: RefCell<String>,
     removed_trees: Cell<u32>,
@@ -230,6 +231,7 @@ impl Fake {
             tsd: RefCell::new(Vec::new()),
             yields: RefCell::new(Vec::new()),
             lc: RefCell::new(Vec::new()),
+            failures: RefCell::new(Vec::new()),
             gate_starts: RefCell::new(Vec::new()),
             lc_refusal: RefCell::new(String::new()),
             removed_trees: Cell::new(0),
@@ -435,6 +437,9 @@ impl World for Fake {
         let mut v = vec![run.to_string()];
         v.extend(args.iter().map(|s| s.to_string()));
         self.yields.borrow_mut().push(v);
+    }
+    fn lc_failure(&self, bead: &str, tip: &str, files: &[String], output: &str) {
+        self.failures.borrow_mut().push((bead.into(), tip.into(), files.to_vec(), output.into()));
     }
     fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) -> String {
         self.lc.borrow_mut().push(
@@ -1886,6 +1891,27 @@ fn certification_events_follow_the_outcome() {
             assert_eq!(lc[3], key_for(&f, "", "sp-a"));
         }
     }
+}
+
+#[test]
+fn a_red_gate_hands_its_failing_output_to_the_bead_before_certifying() {
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh ok\ntest-b.sh RED".into()));
+    f.run();
+    let got = f.failures.borrow();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!((got[0].0.as_str(), got[0].1.as_str()), ("sp-a", BR));
+    assert!(got[0].3.contains("test-b.sh"), "{:?}", got[0].3);
+}
+
+#[test]
+fn a_green_gate_records_no_failure() {
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "test-a.sh ok".into()));
+    f.run();
+    assert!(f.failures.borrow().is_empty());
 }
 
 #[test]
