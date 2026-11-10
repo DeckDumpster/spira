@@ -60,7 +60,7 @@
 //! | `inbox.notify.concierge_note` | store (mail; `ops.rs:358`) | 30 s | `inbox.notify:note:<slug>:<row key>` | — |
 //! | `inbox.notify.mail_health` | store (until split into `mail.health`) | 60 s | `inbox.notify:mailhealth:<tick at>` | exit 3 means the task could not check: `notify` fails today, which becomes `effect.failed` |
 //!
-//! The ask is mailed exactly as today: `mail send operator --from "Watchd <watchd@spira>" --subject <s> --kind question --default <d>`, with the body `"## Question\n{subject}\n\n## Default\n{default}\n\n{why}\n\n{evidence}\n"` (`ops.rs:252-259`). There are two subjects:
+//! The ask is mailed as `mail send operator --from "Watchd <watchd@spira>" --subject <s> --kind note` with the operator bypass (an alert about a silent reader must not be rerouted to it), body `"## Note\n{subject}\n\nAction: {default}\n\n{why}\n\n{evidence}\n"`. There are two subjects:
 //!
 //! - `Events a watcher produced have reached no reader`
 //! - `A watcher has stopped producing events`
@@ -367,7 +367,7 @@ pub fn asks(carry: &Carry, offer: &Offer, outcome: &str) -> Vec<EffectSpec> {
         if stamp.as_deref() == Some(fingerprint.as_str()) {
             continue;
         }
-        let body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n{why}\n\n{report}\n");
+        let body = format!("## Note\n{subject}\n\nAction: {default}\n\n{why}\n\n{report}\n");
         let akey = format!("inbox.notify:{}:{fingerprint}", format!("{kind:?}").to_lowercase());
         let ask = Ask { kind, fingerprint, from: watchd::send::FROM.into(), subject: subject.into(), default: default.into(), body };
         out.push(EffectSpec::keyed(ASK, akey, serde_json::to_string(&ask).unwrap_or_default(), ACT_DEADLINE_MS));
@@ -443,7 +443,7 @@ pub fn observe(units: Option<&dyn runtime::units::Units>) -> Result<String, Stri
 /// The operator question, in-process through watchd's mail library (`Real::mail_ask`).
 pub fn ask(input: &str) -> Result<String, String> {
     let a: Ask = serde_json::from_str(input).map_err(|e| format!("{ASK}: bad input: {e}"))?;
-    watchd::send::send_configured(&watchd::send::Letter { mailbox: "operator", subject: &a.subject, kind: "question", default: &a.default, body: &a.body })?;
+    watchd::send::alert_operator_configured(&a.subject, &a.body)?;
     Ok(format!("asked {}", a.fingerprint))
 }
 

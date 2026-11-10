@@ -44,6 +44,19 @@ pub fn send(bd: &dyn Bd, env: &Env, letter: &Letter) -> Result<(), String> {
     })
 }
 
+/// A note to the operator about a reader that is not reading. Unclassed operator mail is
+/// rerouted to the concierge, which is the mailbox such an alert is usually about.
+pub fn alert_operator(bd: &dyn Bd, env: &Env, subject: &str, body: &str) -> Result<(), String> {
+    let env = Env { operator_considered: Some("watchd alerts the operator about readers that are not reading".into()), ..env.clone() };
+    send(bd, &env, &Letter { mailbox: "operator", subject, kind: "note", default: "", body })
+}
+
+pub fn alert_operator_configured(subject: &str, body: &str) -> Result<(), String> {
+    let env = Env::load().map_err(|e| format!("mail: {e}"))?;
+    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+    alert_operator(&bd, &env, subject, body)
+}
+
 /// [`send`] with the configured store and environment, as the `mail` binary builds them.
 pub fn send_configured(letter: &Letter) -> Result<(), String> {
     let env = Env::load().map_err(|e| format!("mail: {e}"))?;
@@ -102,6 +115,16 @@ mod tests {
             bead_id: None,
             lock_timeout_ms: 1000,
         }
+    }
+
+    #[test]
+    fn an_alert_about_a_silent_reader_reaches_the_operator_not_the_concierge() {
+        let tmp = testkit::TempDir::new("watchd-alert");
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("run")).unwrap();
+        alert_operator(&NoStore::default(), &env(&root), "events unread", "## Note\nx\n").unwrap();
+        assert_eq!(std::fs::read_dir(root.join("mail/operator/new")).unwrap().count(), 1);
+        assert!(!root.join("mail/concierge/new").exists());
     }
 
     #[test]

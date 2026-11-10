@@ -206,8 +206,8 @@ impl Ops for Real {
     }
 
     fn mail_ask(&self, subject: &str, default: &str, why: &str, evidence: &str) -> Result<(), String> {
-        let body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n{why}\n\n{evidence}\n");
-        crate::send::send_configured(&crate::send::Letter { mailbox: "operator", subject, kind: "question", default, body: &body })
+        let body = format!("## Note\n{subject}\n\nAction: {default}\n\n{why}\n\n{evidence}\n");
+        crate::send::alert_operator_configured(subject, &body)
     }
 
     // FORK-EDGE: mail-health.sh is 122 lines of shell (over the ~100-line port bound).
