@@ -18,7 +18,7 @@
 //! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
 //!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
 //! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed work after the
-//!   newest activation, and the oldest such landing is older than `SPIRA_TRANSITIONS_ACTIVATE_BOUND`.
+//!   release in effect was switched in (the later of the newest recorded activation and the mtime of `SPIRA_RELEASES/current`), and the oldest such landing is older than `SPIRA_TRANSITIONS_ACTIVATE_BOUND`.
 //! - ASK→ANSWERED: an ask held unanswered longer than `SPIRA_TRANSITIONS_ASK_BOUND`.
 //!
 //! A stall pages only when its edge's owner is not acting on it: the owner's heartbeat
@@ -58,6 +58,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_TRANSITIONS_ASK_BOUND",
     "SPIRA_TRANSITIONS_RELEASE_REPO",
     "SPIRA_TRANSITIONS_HEARTBEAT_BOUND",
+    "SPIRA_RELEASES",
 ];
 /// The period when the key does not resolve; the handler then refuses, so this only sizes the
 /// row's declared cadence.
@@ -82,6 +83,7 @@ pub struct Config {
     pub ask_bound_s: u64,
     pub release_repo: String,
     pub heartbeat_bound_s: u64,
+    pub releases: std::path::PathBuf,
 }
 
 impl Config {
@@ -100,6 +102,7 @@ impl Config {
             ask_bound_s: cfg_parse("SPIRA_TRANSITIONS_ASK_BOUND")?,
             release_repo: cfg("SPIRA_TRANSITIONS_RELEASE_REPO")?,
             heartbeat_bound_s: cfg_parse("SPIRA_TRANSITIONS_HEARTBEAT_BOUND")?,
+            releases: cfg("SPIRA_RELEASES")?.into(),
         })
     }
 
@@ -380,10 +383,18 @@ pub fn snapshot_of(dwell: &serde_json::Value, activated_at: Option<u64>) -> Resu
     Ok(Snapshot { readable: true, why: String::new(), horizon, beads, last, activated_at, landed_after, open_rounds: None, owners: BTreeMap::new() })
 }
 
+/// When the release in effect was switched in: the mtime of the `current` link the system
+/// runs from, which holds however the activation event was or was not recorded. `None` when
+/// there is no such link.
+fn in_effect_since(releases_dir: &std::path::Path) -> Option<u64> {
+    let m = std::fs::symlink_metadata(releases_dir.join("current")).ok()?.modified().ok()?;
+    m.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+}
+
 /// The snapshot of the lifecycle control store (`dwell` through `lc`), the release machine
 /// records under `run_dir` and the running round's progress file. Anything unreadable, or no
 /// release ever recorded, is BLIND rather than an empty table.
-pub fn observe(run_dir: &std::path::Path, lc: &dyn Fn(&[&str]) -> Result<serde_json::Value, String>, window_s: u64) -> Snapshot {
+pub fn observe(run_dir: &std::path::Path, releases_dir: &std::path::Path, lc: &dyn Fn(&[&str]) -> Result<serde_json::Value, String>, window_s: u64) -> Snapshot {
     let releases = match release::machine::all(&run_dir.join("release")) {
         Ok(r) => r,
         Err(e) => return blind(&format!("release machine records: {e}")),
@@ -391,7 +402,8 @@ pub fn observe(run_dir: &std::path::Path, lc: &dyn Fn(&[&str]) -> Result<serde_j
     if releases.is_empty() {
         return blind("no release machine record under run/release/machine");
     }
-    let activated = releases.iter().flat_map(|r| r.events.iter()).filter(|e| e.to == release::machine::ReleaseState::Activated).map(|e| e.at).max();
+    let recorded = releases.iter().flat_map(|r| r.events.iter()).filter(|e| e.to == release::machine::ReleaseState::Activated).map(|e| e.at).max();
+    let activated = recorded.max(in_effect_since(releases_dir));
     let window = window_s.to_string();
     let mut argv = vec!["dwell", "--window", window.as_str()];
     let after = activated.map(|a| a.to_string());
@@ -507,7 +519,7 @@ impl Handler for WatchTransitions {
             }
         };
         if ev.kind.tag == TICK {
-            let input = serde_json::json!({ "now": ev.at / 1000, "window_s": cfg.window_s() }).to_string();
+            let input = serde_json::json!({ "now": ev.at / 1000, "window_s": cfg.window_s(), "releases": cfg.releases }).to_string();
             return pattern::tick(ev, OBSERVE, input, DEADLINE_MS, ev.at + cfg.period_ms());
         }
         if !answers_observe(view, ev, OBSERVE) {

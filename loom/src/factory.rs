@@ -250,7 +250,7 @@ pub async fn gather(client: LcClient, budget: Duration, run: &str, sensing: &Sen
     let releases = async move { tokio::task::spawn_blocking(move || release::machine::all(&release_dir)).await.map_err(|e| format!("release records: {e}"))? };
     let observed = async {
         let cfg = sensing.transitions.clone()?;
-        let (lc, run, window) = (client.within(budget), std::path::PathBuf::from(run), cfg.window_s());
+        let (lc, run, window, releases) = (client.within(budget), std::path::PathBuf::from(run), cfg.window_s(), cfg.releases.clone());
         let snap = tokio::task::spawn_blocking(move || {
             let ask = |argv: &[&str]| -> Result<Value, String> {
                 let r = lc.call(argv).map_err(|e| e.to_string())?;
@@ -259,7 +259,7 @@ pub async fn gather(client: LcClient, budget: Duration, run: &str, sensing: &Sen
                 }
                 serde_json::from_str(&r.out).map_err(|e| e.to_string())
             };
-            wt::observe(&run, &ask, window)
+            wt::observe(&run, &releases, &ask, window)
         })
         .await
         .map_err(|e| format!("watch.transitions observe: {e}"))?;
@@ -1033,6 +1033,7 @@ mod tests {
             ask_bound_s: 3600,
             release_repo: "spira".into(),
             heartbeat_bound_s: 300,
+            releases: "/nonexistent-releases".into(),
         }
     }
 
