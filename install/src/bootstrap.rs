@@ -295,7 +295,7 @@ pub fn refuse_if_stale_release(tool: &str) -> Option<String> {
     stale_release_refusal(tool, &std::env::current_exe().ok()?)
 }
 
-fn argv0_path() -> Option<PathBuf> {
+pub(crate) fn argv0_path() -> Option<PathBuf> {
     let arg0 = env::args_os().next()?;
     let p = PathBuf::from(&arg0);
     if p.components().count() > 1 {
