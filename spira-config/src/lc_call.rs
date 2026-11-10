@@ -568,12 +568,19 @@ pub mod fake {
 
     pub struct Content {
         pub rows: Vec<Value>,
+        /// What `list --live` answers: lifecycle rows.
+        pub live: Vec<Value>,
         pub seen: Mutex<Vec<Vec<String>>>,
     }
 
     impl Content {
         pub fn new(rows: Vec<Value>) -> Self {
-            Content { rows, seen: Mutex::new(vec![]) }
+            Content { rows, live: vec![], seen: Mutex::new(vec![]) }
+        }
+
+        pub fn with_live(mut self, live: Vec<Value>) -> Self {
+            self.live = live;
+            self
         }
 
         pub fn requests(&self) -> Vec<Vec<String>> {
@@ -594,6 +601,9 @@ pub mod fake {
             self.seen.lock().unwrap().push(argv.to_vec());
             if reads_whole_history(argv) {
                 return Ok(Reply { code: REFUSED, out: String::new(), err: "refused: whole bead history\n".into() });
+            }
+            if argv == ["list", "--live"] {
+                return Ok(Reply { code: 0, out: Value::Array(self.live.clone()).to_string(), err: String::new() });
             }
             if argv.get(..2) != Some(&["content".to_string(), "list".to_string()][..]) {
                 return Ok(Reply { code: 0, out: "[]".into(), err: String::new() });
