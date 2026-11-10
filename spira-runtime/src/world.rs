@@ -85,10 +85,6 @@ fn lane_stopped(run_dir: &Path, repo: &str, lane: &str) -> bool {
     serde_json::from_str::<Value>(&text).ok().and_then(|v| v["lanes"].as_array().map(|a| a.iter().any(|l| l == lane))).unwrap_or(false)
 }
 
-fn kv_get(text: &str, key: &str) -> Option<String> {
-    text.lines().find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('=')).map(str::to_string))
-}
-
 /// A top-level frontmatter value, unquoted; empty when the page has none.
 fn frontmatter(text: &str, key: &str) -> String {
     let mut lines = text.split('\n');
@@ -144,33 +140,22 @@ impl World {
         Some(rows.as_array()?.iter().filter(|r| r.get("bead_id").is_some() && !held(r)).count() as u64)
     }
 
-    /// The rounds the lifecycle still holds open for the home repo, from the queue's records, and
-    /// of those the ones still at phase `opened` with the epoch second they opened.
+    /// The home repo's rounds the lifecycle has not ended, the source `queue round status` reads,
+    /// and of those the ones still at phase `opened` with the epoch second they opened. `None`
+    /// when the lifecycle did not answer: no answer is not "no round open".
     fn open_round_facts(&self) -> Option<(u64, Vec<(String, u64)>)> {
-        let rows = fs::read_to_string(&self.repo_map).ok().map(|t| map_rows(&t))?;
-        let home = rows.iter().find(|r| r.name == self.home_repo)?;
-        let dir = self.queue_dir.join(&home.name);
+        let batches = self.lc_json(&["list", "--batches", "--window", "1"]).ok()?;
         let mut live = 0;
         let mut unadvanced = vec![];
-        let entries = match fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some((0, vec![])),
-            Err(_) => return None,
-        };
-        let mut records: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n == "round" || n.starts_with("round."))).collect();
-        records.sort();
-        for p in records {
-            let Ok(text) = fs::read_to_string(&p) else { continue };
-            let Some(batch) = kv_get(&text, "batch_id").filter(|b| !b.is_empty()) else { continue };
-            let state = self.lc(&["show-batch", &batch]).and_then(|b| serde_json::from_str::<Value>(&b).ok()).and_then(|v| v["state"].as_str().map(str::to_string));
-            if matches!(state.as_deref(), Some("ABANDONED" | "DISCARDED")) {
+        for b in batches.as_array()? {
+            let (Some(repo), Some(state)) = (b["repo"].as_str(), b["state"].as_str()) else { continue };
+            if repo != self.home_repo || matches!(state, "LANDED" | "SETTLED" | "ABANDONED" | "DISCARDED") {
                 continue;
             }
             live += 1;
-            if state.as_deref() == Some("OPEN") {
-                if let Some(at) = kv_get(&text, "opened").and_then(|o| o.parse::<u64>().ok()) {
-                    unadvanced.push((batch, at));
-                }
+            let opened = b["opened_at"].as_str().and_then(|o| o.parse::<u64>().ok());
+            if let (true, Some(at), Some(id)) = (state == "OPEN", opened, b["batch_id"].as_str()) {
+                unadvanced.push((id.to_string(), at));
             }
         }
         Some((live, unadvanced))
