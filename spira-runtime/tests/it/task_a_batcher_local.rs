@@ -616,3 +616,19 @@ fn sp_2gcs4h_a_certifying_round_is_never_forgotten_for_waiting() {
     let (next, _) = decide(&seen, &Snapshot { now_ms: NOW + 10 * OUTCOME_WAIT_MS, ..idle() });
     assert_eq!(next.repos["spira"].waiting, None);
 }
+
+#[test]
+fn sp_2gcs4h_the_outcome_wait_outlasts_every_effect_a_waiting_state_issues() {
+    let longest = ACTS.iter().filter(|(e, _)| [ASSEMBLE, ROUND_OPEN, LAND, LC_CERTIFY, PROMOTE, FETCH].contains(e)).map(|(_, d)| *d).max().unwrap();
+    assert!(OUTCOME_WAIT_MS > longest, "{OUTCOME_WAIT_MS} vs {longest}");
+}
+
+#[test]
+fn sp_2gcs4h_after_a_landing_with_a_certified_bead_and_no_round_open_the_next_tick_cuts() {
+    let landing = driving(State::Landing, "");
+    let leg = Leg { batch: "r9".into(), key: "r9".into(), ..Leg::on("spira") };
+    let (landed, _) = on_outcome(&landing, LAND, true, "{}", &leg, NOW);
+    let (_, acts) = decide(&landed, &Snapshot { now_ms: NOW + CADENCE_MS, ..busy() });
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert_eq!(names, [FETCH, ASSEMBLE], "{acts:?}");
+}

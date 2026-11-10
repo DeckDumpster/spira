@@ -282,6 +282,31 @@ impl Effects {
     }
 }
 
+/// An observe that answered is a tick; one that failed is not, so a task whose observe errors
+/// every time goes quiet to whoever reads the stamp.
+fn stamp_answered_probe(run_dir: &std::path::Path, effect: &str, answered: &Result<String, String>) {
+    if let (Ok(_), Some(task)) = (answered, spira_config::ticked::task_of_probe(effect)) {
+        spira_config::ticked::stamp(run_dir, task);
+    }
+}
+
+#[cfg(test)]
+mod probe_stamp_tests {
+    use super::stamp_answered_probe;
+
+    #[test]
+    fn an_observe_that_answers_stamps_its_task_and_one_that_errs_or_is_no_probe_does_not() {
+        let run = testkit::TempDir::new("probe-stamp");
+        stamp_answered_probe(&run, "batcher.local.observe", &Err("store down".into()));
+        stamp_answered_probe(&run, "batcher.local.land", &Ok("{}".into()));
+        assert_eq!(spira_config::ticked::quiet_secs(&run, "batcher.local"), None);
+        for task in ["batcher.local", "gate.worker"] {
+            stamp_answered_probe(&run, &format!("{task}.observe"), &Ok("{}".into()));
+            assert!(spira_config::ticked::path(&run, task).exists(), "{task}");
+        }
+    }
+}
+
 /// Runs one named effect: `(effects, idempotency key, spec)`.
 pub type Runner = fn(&Effects, &str, &EffectSpec) -> Result<String, String>;
 
@@ -296,9 +321,7 @@ impl EffectRunner for Effects {
             Some(runner) => runner(self, key, spec),
             None => Err(format!("no runner for effect {}", spec.name)),
         };
-        if let (Ok(_), Some(task)) = (&answered, spira_config::ticked::task_of_probe(&spec.name)) {
-            spira_config::ticked::stamp(&self.world.run_dir, task);
-        }
+        stamp_answered_probe(&self.world.run_dir, &spec.name, &answered);
         answered
     }
 
