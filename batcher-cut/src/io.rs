@@ -2649,8 +2649,11 @@ pub fn unlocked<T>(env: &Env, repo: &str, batch: Option<&str>, wait_secs: u64, l
     let out = leg();
     drop(driving);
     if held {
-        let Some(l) = wait_lock(env, repo, wait_secs)? else {
-            return Err(format!("{repo}: another operation took the queue lock during the leg (waited {wait_secs}s to take it back)"));
+        let l = loop {
+            if let Some(l) = wait_lock(env, repo, wait_secs)? {
+                break l;
+            }
+            eprintln!("{repo}: another operation holds the queue lock after the leg (waited {wait_secs}s) — keeping the leg's result, retrying");
         };
         HELD_QUEUE_LOCK.with(|s| *s.borrow_mut() = Some(l));
     }
@@ -3097,6 +3100,25 @@ mod wait_lock_tests {
         assert_eq!(seen, Some((true, true)), "during the leg the queue lock is free and the round is driven");
         assert!(try_lock(&e, "r").unwrap().is_none(), "the queue lock is held again after the leg");
         assert!(!certify_driven(&e, "r", "b1"), "a finished leg drives nothing");
+    }
+
+    #[test]
+    fn a_leg_keeps_its_result_when_another_operation_holds_the_lock_past_the_wait() {
+        let d = testkit::TempDir::new("batcher-cut-retake");
+        let e = super::lifecycle_tests_env(&d);
+        let _parked = park_queue_lock(try_lock(&e, "r").unwrap().unwrap());
+        let (e2, mut other) = (e.clone(), None);
+        let out = unlocked(&e, "r", Some("b1"), 1, || {
+            other = try_lock(&e2, "r").unwrap();
+            let held = other.take();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(2500));
+                drop(held);
+            });
+            "verdict"
+        });
+        assert_eq!(out, Ok("verdict"), "a lock held past the wait must not cost the leg its result");
+        assert!(try_lock(&e, "r").unwrap().is_none(), "the queue lock is held again after the retry");
     }
 
     #[test]

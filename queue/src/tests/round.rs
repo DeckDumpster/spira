@@ -3653,6 +3653,29 @@ fn fences_red_on_the_staged_head_stage_nothing() {
 }
 
 #[test]
+fn staging_runs_its_fences_with_the_queue_lock_free() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    *t.scripts.lock_probe.borrow_mut() = Some(t.s().queue_dir.clone());
+    assert_eq!(
+        t.run(&["round", "stage", "--members", "sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(
+        *t.scripts.lock_free_at_gate.borrow(),
+        [true],
+        "a stage's gate run must not hold the lock the open round's driver retakes"
+    );
+}
+
+#[test]
 fn a_no_verdict_fence_is_infra_and_leaves_the_stage_retryable() {
     let t = round_world();
     assert_eq!(

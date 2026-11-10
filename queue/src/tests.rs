@@ -462,6 +462,7 @@ struct FScripts {
     /// When set, `release activate` records whether `spira`'s queue lock was free under it.
     lock_probe: RefCell<Option<PathBuf>>,
     lock_free_at_activate: RefCell<Vec<bool>>,
+    lock_free_at_gate: RefCell<Vec<bool>>,
     /// `release activate` answers consumed in order before `release_rc` applies.
     activate_seq: RefCell<std::collections::VecDeque<(i32, String)>>,
     /// `ActiveState` answers in order (the last repeats; empty reads `active`), and the units asked about.
@@ -550,6 +551,13 @@ impl Scripts for FScripts {
         self.calls
             .borrow_mut()
             .push(format!("gate {br} {repo} bead={bead} suites={suites}"));
+        if let Some(dir) = self.lock_probe.borrow().as_ref() {
+            let free = matches!(
+                crate::lock::try_lock(dir, "spira"),
+                crate::lock::Acquire::Held(_)
+            );
+            self.lock_free_at_gate.borrow_mut().push(free);
+        }
         (self.gate_rc.get(), "gate says".into())
     }
     fn judgement_ci(
