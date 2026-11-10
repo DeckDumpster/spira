@@ -627,6 +627,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v suite-select)\""
 
 [[dep]]
+name = "statute-check"
+tier = "release"
+purpose = "Spira's statute-check binary, from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v statute-check)\""
+
+[[dep]]
 name = "testenv"
 tier = "release"
 purpose = "Spira's testenv binary, from the release's bin/"

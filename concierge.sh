@@ -297,14 +297,15 @@ tmux_shim_dir() { printf '%s' "$SPIRA_RUN/concierge-tmux-shim"; }
 
 # The session's own hooks: Stop refuses idle without a live inbox waiter
 # (hooks/concierge-waiter-stop.sh); PreToolUse refuses a raw PR against a registered repo
-# (hooks/concierge-raw-pr-fence.sh).
+# (hooks/concierge-raw-pr-fence.sh) and shows the statutes governing a decision command
+# first (hooks/statute-check-hook.sh).
 session_settings() {
     python3 -c '
 import json, sys
 h = lambda p, t: [{"hooks": [{"type": "command", "command": p, "timeout": t}]}]
 print(json.dumps({"hooks": {
     "Stop": h(sys.argv[1] + "/concierge-waiter-stop.sh", 10),
-    "PreToolUse": [{"matcher": "Bash", "hooks": h(sys.argv[1] + "/concierge-raw-pr-fence.sh", 30)[0]["hooks"]}]}}))' \
+    "PreToolUse": [{"matcher": "Bash", "hooks": h(sys.argv[1] + "/concierge-raw-pr-fence.sh", 30)[0]["hooks"] + h(sys.argv[1] + "/statute-check-hook.sh", 30)[0]["hooks"]}]}}))' \
         "$SPIRA_HOME/hooks"
 }
 

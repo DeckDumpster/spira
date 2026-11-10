@@ -2280,6 +2280,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "statute-check"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "spira-otel",
+ "testkit",
+]
+
+[[package]]
 name = "store-persist"
 version = "0.1.0"
 dependencies = [
