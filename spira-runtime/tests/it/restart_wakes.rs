@@ -115,6 +115,25 @@ fn batcher_and_gate_worker_stay_armed_and_observe_every_cadence_after_a_boot_of_
     assert!(observes(&seen, GATE_OBSERVE) >= before.1 + 3, "gate.worker observes each cadence");
 }
 
+#[test]
+fn a_restart_onto_the_same_journal_arms_and_observes_again_even_after_a_long_downtime() {
+    let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(1_000));
+    let seen = Arc::new(Seen::default());
+    let mut first = boot(j.clone(), &clock, &seen, vec![]);
+    settle_boot(&mut first, &clock);
+    drop(first);
+    let before = (observes(&seen, BATCHER_OBSERVE), observes(&seen, GATE_OBSERVE));
+
+    clock.advance_to(clock.now_ms() + BATCHER_CADENCE.max(GATE_CADENCE) * 5);
+    let mut second = boot(j, &clock, &seen, vec![]);
+    settle_boot(&mut second, &clock);
+    for task in [BATCHER, GATE] {
+        assert!(armed(&second, task).is_some(), "{task} is armed after the restart");
+    }
+    assert!(observes(&seen, BATCHER_OBSERVE) > before.0, "batcher.local observes at the first boot after the gap");
+    assert!(observes(&seen, GATE_OBSERVE) > before.1, "gate.worker observes at the first boot after the gap");
+}
+
 /// A handler fails on the batcher's stream while the store refuses the poison row: the stream is
 /// skipped in memory with no row, and the tick that would have followed is consumed.
 #[test]
