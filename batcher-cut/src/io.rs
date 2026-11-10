@@ -3056,6 +3056,10 @@ pub fn read_local_verdict(env: &Env, repo: &str) -> Option<(String, u64)> {
 pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str) -> bool {
     if spira_config::round_ended::is_ended(&env.run, batch) {
         println!("batcher {}: round {batch} has already ended — no second abandon", repo.name);
+        let files = crate::pace::Files::new(&env.run, &repo.name);
+        if files.abandon_refused().is_some_and(|(b, _, _)| b == batch) {
+            files.clear_abandon_refused();
+        }
         return true;
     }
     let considered =
@@ -4853,6 +4857,19 @@ mod abandon_hold_tests {
             crate::pace::Files::new(&e.run, "alpha").abandon_refused().is_none(),
             "the record is gone once the round is"
         );
+    }
+
+    #[test]
+    fn an_already_ended_round_clears_its_refusal_record() {
+        let d = testkit::TempDir::new("abandon-hold-ended");
+        let e = queue_stub(d.path());
+        let r = repo("alpha");
+        assert!(!round_abandon(&e, &r, "r1", "red", "ci-red"));
+        let files = crate::pace::Files::new(&e.run, "alpha");
+        assert!(files.abandon_refused().is_some(), "control: the refusal was recorded");
+        spira_config::round_ended::mark_abandoned(&e.run, "r1");
+        assert!(round_abandon(&e, &r, "r1", "red", "ci-red"));
+        assert!(files.abandon_refused().is_none());
     }
 
     #[test]
