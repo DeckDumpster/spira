@@ -122,6 +122,39 @@ mod ids {
         assert!(after > before, "the parked tick is later than the one it replaces");
     }
 
+    #[test]
+    fn a_tick_on_a_stream_whose_standing_poison_came_from_a_refused_commit_runs_and_one_a_handler_wrote_stays_parked() {
+        let run = |handler: &str| {
+            let clock = VirtualClock::new(1_000);
+            let journal = MemJournal::new();
+            journal.poison(&Poison { stream: StreamKey("ticker".into()), event: EventId("x".into()), handler: handler.into(), message: "planted".into() }).unwrap();
+            let mut e = Engine::open(journal, Arc::new(clock.clone()), vec![Registration::new("ticker", Ticker)], 0).unwrap();
+            e.start("ticker", EventKind::new("tick", ""));
+            e.run_until_idle().unwrap();
+            e.status().tasks[0].last_fired_at.is_some()
+        };
+        assert!(run("scheduler"), "a commit refusal is a function of the release that wrote it: a new process tries again");
+        assert!(!run("ticker"), "a handler's quarantine outlives a restart");
+    }
+
+    struct Twice;
+    impl Handler for Twice {
+        fn interests(&self) -> &[EventKindTag] {
+            &["go"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+            vec![Command::Effect(EffectSpec::keyed("w", "same", "", 1_000)), Command::Effect(EffectSpec::keyed("w", "same", "", 1_000))]
+        }
+    }
+
+    #[test]
+    fn the_status_counts_the_commands_a_fire_returned_and_the_ones_the_engine_admitted() {
+        let mut e = Engine::open(MemJournal::new(), Arc::new(VirtualClock::new(1)), vec![Registration::new("twice", Twice)], 0).unwrap();
+        e.submit("g1", "s", EventKind::new("go", "")).unwrap();
+        e.run_until_idle().unwrap();
+        assert_eq!(e.status().tasks[0].last_commands, Some(FireCommands { returned: 2, admitted: 1 }), "the second request is refused while the first is in flight");
+    }
+
     struct Echo;
     impl Handler for Echo {
         fn interests(&self) -> &[EventKindTag] {

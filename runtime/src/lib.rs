@@ -25,7 +25,7 @@ pub mod units;
 pub mod usage;
 pub mod wide;
 
-pub use engine::{Engine, Executor, Outcome, PendingEffect};
+pub use engine::{Engine, Executor, FireCommands, Outcome, PendingEffect};
 pub use event::*;
 pub use journal::{Boot, EffectRow, FaultyJournal, Journal, MemJournal, Poison, ScheduleRow, StateRow, Turn};
 pub use marker::{FileMarker, Mark, Marker, MemMarker, NullMarker};
