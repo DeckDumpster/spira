@@ -2,7 +2,18 @@
 //! §2): every spawn of a Spira program or a store/unit tool named below is either gone or
 //! carries a `FORK-EDGE:` comment on its line or one of the two above, saying why it stays.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            rs_files(&p, out);
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            out.push(p);
+        }
+    }
+}
 
 const BANNED: &[&str] = &["spira-lc", "bd", "bdq", "bash", "systemctl", "systemd-run", "tsd-write", "mail", "queue", "pgrep"];
 const SPAWNERS: &[&str] = &["Command::new(\"", "bounded(\"", "bounded_for(\""];
@@ -46,9 +57,12 @@ fn unmarked(name: &str, text: &str) -> Vec<String> {
 #[test]
 fn no_unmarked_fork_edge_remains() {
     let mut found = Vec::new();
-    // This crate's operations files only; the task slices are scanned by their own owners.
-    for file in ["world.rs", "wake.rs", "wiki_git.rs", "reconcile_host.rs"] {
-        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(file);
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files: Vec<PathBuf> = ["world.rs", "wake.rs", "wiki_git.rs", "reconcile_host.rs"].iter().map(|f| src.join(f)).collect();
+    let before = files.len();
+    rs_files(&src.join("tasks"), &mut files);
+    assert!(files.len() > before, "the scan read no task module");
+    for p in files {
         let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
         found.extend(unmarked(&p.display().to_string(), &text));
     }
