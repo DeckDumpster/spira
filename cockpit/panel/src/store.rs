@@ -891,6 +891,7 @@ mod tests {
         let store = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows));
         let lc = spira_config::lc_call::LcClient::over(store.clone(), true);
         let got = fetch_beads_on(&lc, 1_794_000_000).unwrap();
+        assert!(!got.iter().any(|r| r["id"].as_str().unwrap_or("").starts_with("sp-h")), "closed beads outside the window stay out");
         assert!(got.iter().any(|r| r["id"] == "sp-open") && got.iter().any(|r| r["id"] == "sp-event"));
         assert!(store.requests().iter().all(|r| !spira_config::lc_call::reads_whole_history(r)), "{:?}", store.requests());
         assert!(store.requests().iter().any(|r| r.contains(&"--updated-after".to_string()) && r.contains(&"2026-10-23".to_string())));

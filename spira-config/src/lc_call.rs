@@ -376,6 +376,21 @@ pub fn run_bounded(mut cmd: Command, limit: Duration) -> (i32, String) {
 mod tests {
     use super::*;
 
+    fn whole(a: &[&str]) -> bool {
+        reads_whole_history(&[&["content", "list"][..], a].concat())
+    }
+
+    #[test]
+    fn the_whole_history_is_all_and_unlimited_and_unbounded_in_every_spelling() {
+        assert!(whole(&["--all", "--limit", "0", "--json"]));
+        assert!(whole(&["--all", "-n", "0"]));
+        assert!(whole(&["--all", "--limit=0", "--label-any", "x"]), "a label can match every bead");
+        for bounded in [&["--all", "--limit", "0", "--id=sp-a"][..], &["--all", "--limit", "0", "--id", "sp-a"], &["--all", "--limit", "0", "--parent", "e"], &["--all", "--limit=0", "--updated-after=2026-01-01"], &["--limit", "0"], &["--all"], &["--all", "--limit", "50"]] {
+            assert!(!whole(bounded), "{bounded:?}");
+        }
+        assert!(!reads_whole_history(&["list", "--all", "--limit", "0"]) && !reads_whole_history(&["content", "show", "--all", "--limit", "0"]));
+    }
+
     #[test]
     fn a_deadline_refusal_is_never_stdout() {
         assert!(is_refusal(2, "cannot tell: deadline"));
@@ -560,6 +575,7 @@ mod tests {
 /// A scripted `content list` over rows held in memory, answering as bd does: closed rows only
 /// with `--all`, 50 rows unless `--limit`, and the whole-history read refused as the store
 /// refuses it. Every request it sees is recorded.
+#[cfg(any(test, feature = "fake-content"))]
 pub mod fake {
     use super::{reads_whole_history, Reply, Transport, REFUSED};
     use serde_json::Value;
@@ -613,6 +629,7 @@ pub mod fake {
             let ids: Option<Vec<&str>> = flag(a, "--id").map(|v| v.split(',').collect());
             let parent = flag(a, "--parent");
             let any: Option<Vec<&str>> = flag(a, "--label-any").map(|v| v.split(',').collect());
+            let since = flag(a, "--updated-after");
             let kind = flag(a, "--type").or_else(|| flag(a, "-t"));
             let limit = flag(a, "--limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(50);
             let rows: Vec<&Value> = self
@@ -622,6 +639,7 @@ pub mod fake {
                 .filter(|r| ids.as_ref().is_none_or(|ids| ids.contains(&r["id"].as_str().unwrap_or(""))))
                 .filter(|r| parent.is_none_or(|p| r["parent"].as_str() == Some(p)))
                 .filter(|r| any.as_ref().is_none_or(|any| labels(r).iter().any(|l| any.contains(l))))
+                .filter(|r| since.is_none_or(|d| r["updated_at"].as_str().is_some_and(|u| u >= d)))
                 .filter(|r| kind.is_none_or(|k| r["issue_type"].as_str() == Some(k)))
                 .take(if limit == 0 { usize::MAX } else { limit })
                 .collect();

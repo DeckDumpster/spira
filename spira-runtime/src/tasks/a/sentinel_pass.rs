@@ -1067,6 +1067,8 @@ mod beads_on_tests {
         let epic = sentinel::pilgrimage::epics(&beads, &labels, &|id| (id != "sp-c2").then(|| "LANDED".to_string()));
         assert_eq!((epic.len(), epic[0].total, epic[0].closed), (1, 3, 2), "the epic is not complete while sp-c2 is open");
         assert!(!beads.iter().any(|b| b.id.starts_with("sp-h")), "unrelated closed history stays out");
+        let everything: Vec<sentinel::model::Bead> = store.rows.iter().filter_map(|r| serde_json::from_value(r.clone()).ok()).collect();
+        assert_eq!(sentinel::pilgrimage::open_epic_children(&beads, &labels), sentinel::pilgrimage::open_epic_children(&everything, &labels), "the epic children are what the whole history yields");
         assert!(store.requests().iter().all(|r| !spira_config::lc_call::reads_whole_history(r)), "{:?}", store.requests());
     }
 
