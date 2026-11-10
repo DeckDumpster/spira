@@ -96,6 +96,7 @@ wantrc "schema.sql applies to an empty database" 0 $?
 spira-lc admin-migrate "$REPO/lifecycle/migrations" >"$TMP/fresh.log" 2>&1
 wantrc "a fresh database migrates with exit 0" 0 $?
 
+want "0038 is skipped because its table was renamed aside" "0038-runtime-effect-open.sql: its table was renamed aside" "$(cat "$TMP/fresh.log")"
 is "the fresh database has the current runtime_effect" "$CURRENT" "$(cols runtime_effect)"
 is "the 0038 table survives under its renamed name" "event_id,seq,resolved" "$(cols runtime_effect_0038)"
 spira-lc admin-migrate "$REPO/lifecycle/migrations" >"$TMP/again.log" 2>&1
