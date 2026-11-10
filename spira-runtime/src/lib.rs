@@ -1,6 +1,8 @@
 //! The service around the `runtime` crate: its pinned settings, the effect runner, the
 //! systemd notifier the dispatch loop kicks, and the OTLP log sink for wide events.
 
+#[cfg(any(test, feature = "integration"))]
+pub mod fixture;
 pub mod forge;
 pub mod classes;
 pub mod hunk;

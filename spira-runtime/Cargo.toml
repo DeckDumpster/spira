@@ -58,9 +58,10 @@ path = "tests/world_round_snapshot.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["dep:testkit"]
 
 [dependencies]
+testkit = { path = "../testkit", optional = true }
 inbox-rules = { path = "../inbox-rules" }
 base64 = "0.22"
 install = { path = "../install" }

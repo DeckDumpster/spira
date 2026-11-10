@@ -80,6 +80,48 @@ mod ids {
         assert_ne!(d, derive_id("é".repeat(301)), "the hash covers the whole id");
     }
 
+    struct Ticker;
+    impl Handler for Ticker {
+        fn interests(&self) -> &[EventKindTag] {
+            &["tick"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            vec![Command::Timer { at: ev.at + 30_000, kind: EventKind::new("tick", "") }]
+        }
+    }
+
+    #[test]
+    fn a_plain_ticker_has_its_next_tick_armed_after_the_boot_tick_and_every_later_one() {
+        let clock = VirtualClock::new(1_000);
+        let regs = vec![Registration::new("ticker", Ticker)];
+        let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), regs, 0).unwrap();
+        e.start("ticker", EventKind::new("tick", ""));
+        let mut last = 0;
+        for _ in 0..4 {
+            e.run_until_idle().unwrap();
+            let due = e.status().tasks[0].next_due_at.expect("the next tick stays armed");
+            assert!(due > last, "each tick arms a later one, not the same one again");
+            last = due;
+            clock.advance(30_000);
+        }
+    }
+
+    #[test]
+    fn a_tick_on_a_stream_with_a_standing_poison_row_is_parked_for_the_recheck_not_dropped() {
+        let clock = VirtualClock::new(1_000);
+        let journal = MemJournal::new();
+        let regs = vec![Registration::new("ticker", Ticker)];
+        let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), regs, 0).unwrap();
+        e.start("ticker", EventKind::new("tick", ""));
+        e.run_until_idle().unwrap();
+        let before = e.status().tasks[0].next_due_at.expect("armed");
+        journal.poison(&Poison { stream: StreamKey("ticker".into()), event: EventId("x".into()), handler: "ticker".into(), message: "planted".into() }).unwrap();
+        clock.advance(30_000);
+        e.run_until_idle().unwrap();
+        let after = e.status().tasks[0].next_due_at.expect("a poisoned stream's tick is parked, not dropped");
+        assert!(after > before, "the parked tick is later than the one it replaces");
+    }
+
     struct Echo;
     impl Handler for Echo {
         fn interests(&self) -> &[EventKindTag] {
