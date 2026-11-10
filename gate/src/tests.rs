@@ -44,7 +44,7 @@ struct Fake {
     tsd: RefCell<Vec<String>>,
     yields: RefCell<Vec<Vec<String>>>,
     lc: RefCell<Vec<Vec<String>>>,
-    failures: RefCell<Vec<(String, String, Vec<String>, String)>>,
+    failures: RefCell<Vec<Recorded>>,
     gate_starts: RefCell<Vec<String>>,
     lc_refusal: RefCell<String>,
     removed_trees: Cell<u32>,
