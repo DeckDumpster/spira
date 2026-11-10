@@ -553,6 +553,10 @@ pub fn run_all(cmd: &str) -> String {
     s
 }
 
+/// (crate, package) pairs: the crate's tests run the package's binary prebuilt in the target
+/// directory (spira-sim's ci_cut runs spira-config), so selecting the crate builds it too.
+const NEEDS_BUILT: [(&str, &str); 1] = [("spira-sim", "spira-config")];
+
 /// The unit phases' commands, in order: build (the `dwarf` profile), then the tests.
 ///
 /// The build is `cargo build --all-targets` (sp-aprxm), not `cargo test --no-run`: the latter
@@ -563,14 +567,14 @@ pub fn run_all(cmd: &str) -> String {
 ///
 /// Only the named crates build: linking every workspace binary on each gate is what pushed the
 /// build phase to the gate cap, and a test reaches its own package's binaries through
-/// `CARGO_BIN_EXE_*`, which cargo builds with the test.
+/// `CARGO_BIN_EXE_*`, which cargo builds with the test. The exception is a binary of another
+/// package that a test runs from beside its own (`NEEDS_BUILT`): it is added to the build.
 pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2] {
     let p = pkgs(crates);
-    let built = if crates.iter().any(|c| c == "spira-sim") && !crates.iter().any(|c| c == "spira-config") {
-        " -p spira-config"
-    } else {
-        ""
-    };
+    let built = NEEDS_BUILT
+        .iter()
+        .filter(|(user, bin)| crates.iter().any(|c| c == user) && !crates.iter().any(|c| c == bin))
+        .fold(String::new(), |acc, (_, bin)| acc + " -p " + bin);
     let cfg = spira_config::build::one_shot_words("dwarf");
     [
         (
