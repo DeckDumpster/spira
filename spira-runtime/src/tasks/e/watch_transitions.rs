@@ -441,10 +441,9 @@ pub fn repo_ancestor<'a>(repo_map: &'a std::path::Path, repo: &'a str) -> impl F
     }
 }
 
-/// When the oldest landing in `landed` (the dwell's list for the release repo) that the
-/// release in effect does not contain landed. A landing that recorded no commit, or any landing
-/// while no release in effect is known, is judged by time against the recorded activation. A
-/// landing whose ancestry cannot be tested counts as unreleased: the edge pages, the rest still watch.
+/// When the oldest landing in `landed` that the release in effect does not contain landed.
+/// Landings with no commit, or with no release in effect, are judged by time; one whose
+/// ancestry cannot be tested counts as unreleased, so the edge pages.
 fn oldest_unreleased(
     landed: &[serde_json::Value],
     in_effect: Option<&str>,
