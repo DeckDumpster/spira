@@ -461,6 +461,12 @@ fn oldest_unreleased(
         })
         .collect();
     landings.sort_unstable();
+    // Landings are one line of history: a release containing the newest contains the rest.
+    if let (Some(release), Some((_, newest))) = (in_effect, landings.last()) {
+        if landings.iter().all(|(_, c)| !c.is_empty()) && ancestor(newest, release) == Ok(true) {
+            return None;
+        }
+    }
     for (at, commit) in landings {
         let unreleased = match in_effect.filter(|_| !commit.is_empty()) {
             Some(release) => !ancestor(commit, release).unwrap_or(false),
