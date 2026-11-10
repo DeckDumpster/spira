@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use runtime::host::{EffectRunner, VirtualDriver};
-use runtime::journal::Journal;
+use runtime::journal::{Boot, Journal, Poison, Turn};
 use runtime::ports::{Clock, VirtualClock};
-use runtime::{Command, Ctx, EffectSpec, Event, EventKindTag, FaultyJournal, Handler, MemJournal, NullMarker, NullSink, Projection, Registration};
+use runtime::{Command, StreamKey, Ctx, EffectSpec, Event, EventKindTag, FaultyJournal, Handler, MemJournal, NullMarker, NullSink, Projection, Registration};
 use spira_runtime::settings::fixture;
 use spira_runtime::tasks::a::batcher_local::{CADENCE_MS as BATCHER_CADENCE, OBSERVE as BATCHER_OBSERVE, STREAM as BATCHER_STREAM, TICK as BATCHER_TICK};
 use spira_runtime::tasks::a::gate_worker::{CADENCE_MS as GATE_CADENCE, OBSERVE as GATE_OBSERVE};
@@ -43,6 +43,30 @@ impl Handler for PanicsOnce {
             panic!("planted handler failure on {}", ev.stream.0);
         }
         vec![]
+    }
+}
+
+/// A store whose poison rows the operator can clear.
+struct Lifting {
+    inner: Arc<dyn Journal>,
+    lifted: AtomicBool,
+}
+
+impl Journal for Lifting {
+    fn record(&self, ev: &Event) {
+        self.inner.record(ev)
+    }
+    fn boot(&self) -> runtime::Result<Boot> {
+        self.inner.boot()
+    }
+    fn commit(&self, turn: &Turn) -> runtime::Result<()> {
+        self.inner.commit(turn)
+    }
+    fn poison(&self, p: &Poison) -> runtime::Result<()> {
+        self.inner.poison(p)
+    }
+    fn poisoned(&self, stream: &StreamKey) -> runtime::Result<Option<Poison>> {
+        Ok(self.inner.poisoned(stream)?.filter(|_| !self.lifted.load(Ordering::SeqCst)))
     }
 }
 
@@ -111,4 +135,26 @@ fn a_tick_swallowed_by_a_stream_quarantine_that_could_not_be_stored_is_armed_aga
         assert!(armed(&d, BATCHER).is_some(), "armed after each later tick");
     }
     assert!(observes(&seen, BATCHER_OBSERVE) >= after_fault + 3, "batcher.local observes each cadence after the fault");
+}
+
+/// The stream is quarantined with a row; ticks that fall on it are not heard, and once the
+/// operator clears the row the stream ticks again without a restart.
+#[test]
+fn a_quarantined_batcher_stream_ticks_again_once_its_row_is_cleared() {
+    let (store, clock) = (Arc::new(Lifting { inner: MemJournal::new(), lifted: AtomicBool::new(false) }), VirtualClock::new(1_000));
+    let seen = Arc::new(Seen::default());
+    let extra = Registration::new("planted", PanicsOnce { tags: vec![BATCHER_TICK], spent: AtomicBool::new(false) });
+    let mut d = boot(store.clone(), &clock, &seen, vec![extra]);
+    run_for(&mut d, &clock, 60_000);
+    assert!(store.inner.poisoned(&StreamKey(BATCHER_STREAM.into())).unwrap().is_some(), "the quarantine left its row in the store");
+    store.lifted.store(true, Ordering::SeqCst);
+    for _ in 0..40 {
+        run_for(&mut d, &clock, 30_000);
+    }
+    let resumed = observes(&seen, BATCHER_OBSERVE);
+    assert!(armed(&d, BATCHER).is_some(), "batcher.local keeps a tick armed once the row is cleared");
+    for _ in 0..3 {
+        run_for(&mut d, &clock, BATCHER_CADENCE);
+    }
+    assert!(observes(&seen, BATCHER_OBSERVE) >= resumed + 3, "batcher.local observes each cadence once the row is cleared");
 }
