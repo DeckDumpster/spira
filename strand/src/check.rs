@@ -443,7 +443,8 @@ pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
 /// snapshot. None when the roster cannot be read.
 fn lane_live_now(cfg: &Config, specs: Result<Vec<probe::PartitionSpec>, String>) -> Option<u32> {
     let specs = specs.ok()?;
-    Some(specs.iter().flat_map(|s| s.runes.iter()).map(|f| probe::dwarf_count(cfg, f, None)).sum())
+    let live = probe::live_units(cfg).ok()?;
+    Some(specs.iter().flat_map(|s| s.runes.iter()).map(|f| live.iter().filter(|u| runtime::units::is_dwarf_of(u, f, f)).count() as u32).sum())
 }
 
 /// Only a lane read as live withholds the ask; a failed probe must not suppress it silently.
@@ -716,6 +717,18 @@ mod tests {
         assert_eq!(title_for("spira,plan", "starved", "-"), "Spira: the [spira,plan] queue is stranded (starved)");
         assert_eq!(title_for("-", "starved", "-"), "Spira: the plan is stranded (starved)");
         assert_eq!(title_for("p", "reclaim-ceiling", "sp-1"), "Spira: sp-1 keeps losing its dwarf — the host, not the bead");
+    }
+
+    #[test]
+    fn the_raise_time_lane_count_reads_units_whatever_the_call_mode_and_none_when_unreadable() {
+        let t = testkit::TempDir::new("strand-lane-live");
+        let spec = || vec![probe::PartitionSpec { labels: "spira,plan".into(), exclude: String::new(), runes: vec!["builder".into()] }];
+        let sc = t.join("systemctl");
+        testkit::write_exe(&sc, "#!/bin/sh\necho 'spira-run-sentinel_2dcall-builder_2d1_2d0.service loaded active running d'\n");
+        let cfg = Config { call: "runtime".into(), systemctl: sc.to_string_lossy().into_owned(), ..Config::test_fixture() };
+        assert_eq!(lane_live_now(&cfg, Ok(spec())), Some(1));
+        testkit::write_exe(&sc, "#!/bin/sh\nexit 1\n");
+        assert_eq!(lane_live_now(&cfg, Ok(spec())), None);
     }
 
     #[test]
