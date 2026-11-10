@@ -1312,18 +1312,27 @@ impl Machine<'_> {
             }
             (State::Certifying, false) => {
                 self.go(Trigger::CertifyRed);
-                // The guilty leave the round charged: the members whose files the repository's
-                // red output names (`io::implicated`, as `finish_local_round` ejects them).
-                if let Some(output) = out.lines().rev().find_map(|l| l.strip_prefix(RED_OUTPUT)) {
-                    let leg = Leg { why: output.trim().to_string(), key: format!("{}:{}:guilty", self.repo, self.rc.batch.clone().unwrap_or_default()), ..self.leg() };
-                    self.acts.push(leg.act(EJECT));
-                }
                 let (verdict, reds) = certify_red_evidence(out);
                 let why = match (&verdict, reds.is_empty()) {
                     (Some(v), _) => format!("queue round certify judged the round red: {v}"),
                     (None, false) => format!("queue round certify judged the round red: {}", reds.join(",")),
                     (None, true) => "queue round certify judged the round red (its output named no verdict and no suite)".into(),
                 };
+                let output = out.lines().rev().find_map(|l| l.strip_prefix(RED_OUTPUT)).map(str::trim);
+                if let [(id, tip)] = self.rc.members.clone().as_slice() {
+                    let evidence = output.map_or_else(|| why.clone(), |o| format!("{why}; output kept at {o}"));
+                    let key = format!("{}:{}:sole", self.repo, self.rc.batch.clone().unwrap_or_default());
+                    self.acts.push(Leg { bead: id.clone(), head: tip.clone(), why: evidence, reds: reds.clone(), key, ..self.leg() }.act(EJECT));
+                    self.abandon_naming(&why, reds);
+                    self.finish(pace::Outcome::Quiet, "");
+                    return;
+                }
+                // The guilty leave the round charged: the members whose files the repository's
+                // red output names (`io::implicated`, as `finish_local_round` ejects them).
+                if let Some(output) = output {
+                    let leg = Leg { why: output.to_string(), key: format!("{}:{}:guilty", self.repo, self.rc.batch.clone().unwrap_or_default()), ..self.leg() };
+                    self.acts.push(leg.act(EJECT));
+                }
                 self.red_naming(&why, reds);
             }
             _ => {}
@@ -2051,10 +2060,15 @@ pub mod edge {
             let guilty = io::implicated(&text, &changed);
             for id in &guilty {
                 io::round_eject(&env, &repo, &leg.batch, id, &["ci".to_string()], &[], true)?;
+                if let Some((_, tip)) = leg.members.iter().find(|(m, _)| m == id) {
+                    batcher_cut::redtip::record(&env.run, &leg.repo, id, tip);
+                }
             }
             return Ok(serde_json::json!({ "ejected": guilty }).to_string());
         }
-        io::round_eject(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.bead, &[], &[], true)?;
+        let suites = if leg.reds.is_empty() { vec!["ci".to_string()] } else { leg.reds.clone() };
+        io::round_eject_sole_red(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.bead, &suites, &leg.why)?;
+        batcher_cut::redtip::record(&env.run, &leg.repo, &leg.bead, &leg.head);
         Ok("{}".into())
     }
 

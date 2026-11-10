@@ -74,6 +74,11 @@ pub trait RoundRunner {
     fn filter_green(&mut self, _name: &str, _members: &[Member]) -> Option<bool> {
         None
     }
+    /// Whether testenv runs to a verdict, rather than dying on a signal, with exactly `members`
+    /// merged onto the base; `None` when the runner cannot probe a subset or the probe faulted.
+    fn runner_survives(&mut self, _members: &[Member]) -> Option<bool> {
+        None
+    }
 }
 
 /// A filter's red. `named` is each member the filter's own output blames, with the line that does;
@@ -535,16 +540,29 @@ fn apply_build_actions<O: RoundOps>(ops: &mut O, members: &[Member], actions: &[
     Ok((!rebuilt.is_empty()).then_some(rebuilt))
 }
 
-/// A main run that died on a signal in a tree where exactly one member changes the code that
-/// runs the suites is that member's red: it leaves, with the failure as its evidence.
-fn eject_runner_abort<O: RoundOps>(ops: &mut O, members: &[Member], err: &str) -> Result<Option<Vec<Member>>, String> {
+/// A main run that died on a signal belongs to one member: the only one that changes the code that
+/// runs the suites, else the one whose tree alone kills the runner, found by running member subsets.
+/// It leaves with the failure as its evidence; `None` when no single member can be named, an empty
+/// survivor list when it was the last.
+fn eject_runner_abort<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O, members: &[Member], err: &str) -> Result<Option<Vec<Member>>, String> {
     if !buildattr::is_signal_death(err) {
         return Ok(None);
     }
     let diffs = ops.diffs(&members.iter().map(|m| m.id.clone()).collect::<Vec<_>>());
-    let [owner] = buildattr::runner_touchers(&diffs)[..] else { return Ok(None) };
-    let line = format!("testenv was killed by a signal in a round where this member changes round-vm/ or testenv/: {}", buildattr::error_tail(err));
-    apply_build_actions(ops, members, &[Action::Eject { id: owner.id.clone(), line }], RUNNER_ABORT)
+    let tail = buildattr::error_tail(err);
+    let action = match buildattr::runner_touchers(&diffs)[..] {
+        [owner] => Some(Action::Eject { id: owner.id.clone(), line: format!("testenv was killed by a signal in a round where this member changes round-vm/ or testenv/: {tail}") }),
+        _ => {
+            let red = format!("testenv was killed by a signal ({tail})");
+            let mut found = sole_member_culprit(&red, members);
+            if found.is_empty() {
+                found = bisect_members(&red, &mut |m| runner.runner_survives(m), members).unwrap_or_default();
+            }
+            found.into_iter().find(|a| matches!(a, Action::Eject { .. }))
+        }
+    };
+    let Some(action) = action else { return Ok(None) };
+    Ok(Some(apply_build_actions(ops, members, &[action], RUNNER_ABORT)?.unwrap_or_default()))
 }
 
 /// A red the reruns could not attribute belongs to the member when exactly one member's diff
@@ -588,7 +606,8 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         }
         let s = match drive(runner, &*ops, kind, &suites, &members, budget) {
             Ok(s) => s,
-            Err(e) => match eject_runner_abort(ops, &members, &e)? {
+            Err(e) => match eject_runner_abort(runner, ops, &members, &e)? {
+                Some(next) if next.is_empty() => return Ok(RoundEnd::Emptied("testenv died on a signal and every member left".into())),
                 Some(next) => {
                     println!("batcher: testenv died on a signal — its one runner-touching member left, re-cutting {} member(s)", next.len());
                     let _ = runner.stop_main();
@@ -977,6 +996,10 @@ pub(crate) mod tests {
             let tree: BTreeSet<String> = members.iter().map(|m| m.id.clone()).collect();
             self.probes.push(tree.iter().cloned().collect());
             self.bisects.then(|| self.filter.as_ref().is_none_or(|f| f(&tree).is_none()))
+        }
+        fn runner_survives(&mut self, members: &[Member]) -> Option<bool> {
+            self.probes.push(members.iter().map(|m| m.id.clone()).collect());
+            self.bisects.then(|| self.aborts_with.as_ref().is_none_or(|(m, _)| !members.iter().any(|x| &x.id == m)))
         }
         fn stop_main(&mut self) -> Result<(), String> {
             self.stopped += 1;
@@ -1641,6 +1664,42 @@ pub(crate) mod tests {
             assert!(err.contains("rc=134"), "{err}");
             assert!(ops.ejected.is_empty());
         }
+    }
+
+    #[test]
+    fn a_testenv_abort_no_member_touches_the_runner_for_ejects_the_member_whose_tree_alone_aborts_it() {
+        let mut f = Fake::new(|_, _| false);
+        f.aborts_with = Some(("m2".into(), ABORT.into()));
+        f.bisects = true;
+        let mut ops = Ops { diffs: vec![md("m1", "doc/x.md", "+p\n"), md("m2", "doc/z.md", "+x\n"), md("m3", "doc/y.md", "+q\n")], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![RUNNER_ABORT.to_string()])]);
+        assert_eq!(ops.owner_flags, vec![("m2".to_string(), true)]);
+        assert!(ops.eject_evidence[0].1.contains("rc=134") && ops.eject_evidence[0].1.contains("bisected"), "{:?}", ops.eject_evidence);
+        assert!(ops.judged.is_empty() && ops.incidents.is_empty());
+    }
+
+    #[test]
+    fn a_testenv_abort_several_members_touch_the_runner_for_is_bisected_to_the_member_that_aborts_it() {
+        let mut f = Fake::new(|_, _| false);
+        f.aborts_with = Some(("m3".into(), ABORT.into()));
+        f.bisects = true;
+        let mut ops = Ops { diffs: vec![md("m1", "round-vm/a.rs", "+p\n"), md("m2", "testenv/b.rs", "+p\n"), md("m3", "doc/y.md", "+q\n")], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m2"]);
+        assert_eq!(ops.ejected, vec![("m3".to_string(), vec![RUNNER_ABORT.to_string()])]);
+    }
+
+    #[test]
+    fn a_testenv_abort_in_a_one_member_round_ejects_that_member_without_a_probe() {
+        let mut f = Fake::new(|_, _| false);
+        f.aborts_with = Some(("m1".into(), ABORT.into()));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(ops.owner_flags, vec![("m1".to_string(), true)]);
+        assert!(f.probes.is_empty());
     }
 
     #[test]

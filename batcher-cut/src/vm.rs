@@ -141,6 +141,17 @@ pub fn unit_probe_result(rc: i32) -> Option<bool> {
     }
 }
 
+/// What a `build=unit` job's exit code says of the runner: 0 or 5 it reached a verdict, a death by
+/// signal (128+n) it did not, anything else is a fault.
+pub fn survival_probe_result(rc: i32) -> Option<bool> {
+    match rc {
+        0 | 5 => Some(true),
+        137 => None,
+        129..=192 => Some(false),
+        _ => None,
+    }
+}
+
 pub struct VmRunner<'a> {
     env: &'a Env,
     repo: &'a Repo,
@@ -579,6 +590,10 @@ impl RoundRunner for VmRunner<'_> {
         }
     }
 
+    fn runner_survives(&mut self, subset: &[Member]) -> Option<bool> {
+        self.probe_subset(subset, "unit", survival_probe_result)
+    }
+
     fn stop_main(&mut self) -> Result<(), String> {
         let Some(mut child) = self.child.take() else { return Ok(()) };
         if child.try_wait().map_err(|e| format!("round-vm: {e}"))?.is_none() {
@@ -734,6 +749,17 @@ mod tests {
     }
 
     #[test]
+    fn a_survival_probe_reads_a_signal_death_as_the_runner_dying_and_a_verdict_as_surviving() {
+        assert_eq!(survival_probe_result(134), Some(false));
+        for rc in [0, 5] {
+            assert_eq!(survival_probe_result(rc), Some(true), "rc {rc}");
+        }
+        for rc in [1, 2, 3, 4, 124, 137, -1] {
+            assert_eq!(survival_probe_result(rc), None, "rc {rc}");
+        }
+    }
+
+    #[test]
     fn a_build_probe_reads_rc_4_as_not_building_and_a_fault_as_no_answer() {
         assert_eq!(build_probe_result(0), Some(true));
         assert_eq!(build_probe_result(4), Some(false));
@@ -786,6 +812,18 @@ mod tests {
         assert_eq!(filter_red_in(d.path(), &ms, &changed), None, "only a red record is a red");
         fs::write(d.path().join("integration.json"), "{\"stage\":\"integration-tests\",\"verdict\":\"red\"}").unwrap();
         fs::write(d.path().join("integration-tests.out"), "panicked at docs/x.md:1:1\n").unwrap();
+        let red = filter_red_in(d.path(), &ms, &changed).unwrap();
+        assert_eq!((red.name.as_str(), red.named.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>()), ("integration-tests", vec!["sp-a"]));
+    }
+
+    #[test]
+    fn a_red_integration_phase_naming_a_test_file_names_the_one_member_that_touches_its_crate() {
+        let d = testkit::TempDir::new("vm-integration-red");
+        let mk = |id: &str| Member { id: id.to_string(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() };
+        let ms = vec![mk("sp-a"), mk("sp-b")];
+        let changed = BTreeMap::from([("sp-a".to_string(), vec!["round-vm/src/run.rs".to_string()]), ("sp-b".to_string(), vec!["docs/x.md".to_string()])]);
+        fs::write(d.path().join("integration.json"), "{\"stage\":\"integration-tests\",\"verdict\":\"red\"}").unwrap();
+        fs::write(d.path().join("integration-tests.out"), "thread 'main' panicked at round-vm/tests/unit_cov_real.rs:39:5:\nerror: the package 'tiny' does not contain this feature: integration\n").unwrap();
         let red = filter_red_in(d.path(), &ms, &changed).unwrap();
         assert_eq!((red.name.as_str(), red.named.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>()), ("integration-tests", vec!["sp-a"]));
     }
