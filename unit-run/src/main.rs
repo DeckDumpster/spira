@@ -78,6 +78,7 @@ fn watch_cmd(family: &str) -> Result<(), String> {
     let now_us = || spira_config::vtime::now_epoch().saturating_mul(1_000_000);
     let started_us = now_us();
     let mut tracker = watch::Tracker::new(watch::last_ended_us(&resume).unwrap_or(started_us));
+    let held = std::cell::Cell::new(false);
     let mut record = |r: unit_run::Record| -> Result<(), String> {
         if !seen.insert(r.invocation_id.clone()) {
             return Ok(());
@@ -91,6 +92,7 @@ fn watch_cmd(family: &str) -> Result<(), String> {
         if let Err(e) = stored {
             eprintln!("unit-run watch: {} row(s) held: {e}", backlog.len());
         }
+        held.set(!backlog.is_empty());
         push_metrics(&metrics, &r);
         Ok(())
     };
@@ -98,12 +100,12 @@ fn watch_cmd(family: &str) -> Result<(), String> {
         record(r)?;
     }
     eprintln!("unit-run watch: armed on the user manager; storing {family} rows in the metrics store");
-    let release = std::env::var("SPIRA_RELEASE").ok();
+    let release = std::env::current_exe().ok().and_then(|e| e.parent()?.parent().map(|r| r.to_string_lossy().into_owned()));
     loop {
         for r in watch::step(&mut conn, &mut tracker, now_us, IDLE_CHECK)? {
             record(r)?;
         }
-        if tracker.in_flight() == 0 && backlog.is_empty() && watch::superseded(release.as_deref(), current_release(release.as_deref()).as_deref()) {
+        if tracker.in_flight() == 0 && !held.get() && watch::superseded(release.as_deref(), current_release(release.as_deref()).as_deref()) {
             eprintln!("unit-run watch: idle and no longer on the current release; exiting to be restarted on it");
             return Ok(());
         }

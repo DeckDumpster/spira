@@ -202,7 +202,7 @@ impl Tracker {
     }
 }
 
-/// Whether the release a process started under (`SPIRA_RELEASE`) is not the one `current` now
+/// Whether the release root a process runs from is not the one `current` now
 /// names. A process pinned to the `current` link follows it, and an unreadable link is no reason to stop.
 pub fn superseded(started_under: Option<&str>, current: Option<&str>) -> bool {
     let base = |p: &str| p.trim_end_matches('/').rsplit('/').next().unwrap_or(p).to_string();
