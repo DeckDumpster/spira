@@ -17,6 +17,8 @@ const BR: &str = "spira/sp-a";
 const MERGE_SHA: &str = "m3rg3";
 
 type UnitRuns = HashMap<(String, &'static str), (i32, String)>;
+/// (bead, tip, changed files, output) of each `lc_failure`.
+type Recorded = (String, String, Vec<String>, String);
 
 struct Fake {
     ctx: RefCell<Result<Ctx, String>>,
