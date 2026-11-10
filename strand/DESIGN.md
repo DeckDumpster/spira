@@ -189,7 +189,9 @@ strand starts a fresh episode). **Not** rewritten when the store could not be re
 
 Text:
 ```
-sentinel timer: <active>   last pass: <age>s ago
+scheduler last pass: <age>s ago (or `never`)
+live dwarves: <n>
+  <unit>  (one per live dwarf)
 <blank>
 no stranded work in [<partitions space-separated>]
 ```
@@ -198,7 +200,7 @@ one `%-16s %-20s %-16s %-9s %5sm  %s` line per row and a `%71s→ %s` action lin
 
 `--json`:
 ```json
-{ "sentinel_timer": "active", "last_pass_seconds": 42,
+{ "live_dwarves": ["<unit>"], "last_pass_seconds": 42,
   "strands": [ { "partition", "kind", "id", "disposition", "age_seconds",
                  "acted_at", "escalated_at", "detail", "action" } ] }
 ```

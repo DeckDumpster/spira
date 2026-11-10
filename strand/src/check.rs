@@ -23,6 +23,7 @@ pub fn warn(msg: &str) {
 pub struct Classified {
     pub rows: Vec<PartRow>,
     pub watching: Vec<String>,
+    pub live: Vec<String>,
 }
 
 /// Rows from a saved classifier TSV (`--from <f|->`), attributed to SPIRA_LABELS or `-`.
@@ -33,7 +34,7 @@ pub fn from_tsv(cfg: &Config, text: &str) -> Classified {
         .filter_map(Row::from_tsv)
         .map(|row| PartRow { part: part.clone(), row })
         .collect();
-    Classified { rows, watching: vec![part] }
+    Classified { rows, watching: vec![part], live: Vec::new() }
 }
 
 fn world_state(run_dir: &std::path::Path) -> Option<&'static str> {
@@ -126,14 +127,15 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
         .collect();
     if parts.is_empty() {
         warn("WARN no persona in the runes declares a partition — no work is being watched for strands");
-        return Ok(Classified { rows: Vec::new(), watching: Vec::new() });
+        return Ok(Classified { rows: Vec::new(), watching: Vec::new(), live: Vec::new() });
     }
 
     let store = Store::new(probe::load_store(cfg)?);
     let now = timefmt::now();
     let log_text = cfg.sentinel_log().and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
     let run_dir = cfg.run.clone().ok_or("SPIRA_RUN is unknown (not in the environment, no [spira].run)")?;
-    let total_live = probe::dwarves_live_total(cfg);
+    let live = probe::live_units(cfg)?;
+    let total_live = live.len() as u32;
     let capacity = probe::capacity(cfg, now);
     let throttle = probe::throttle(cfg);
 
@@ -164,7 +166,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
         let ready = probe::ready(cfg, &labels, &excl)?;
         let facts = Facts {
             now,
-            live: runes.iter().map(|f| probe::dwarf_count(cfg, f, None)).sum(),
+            live: runes.iter().map(|f| live.iter().filter(|u| runtime::units::is_dwarf_of(u, f, f)).count() as u32).sum(),
             total_live,
             max_dwarves: cfg.max_live_dwarves,
             capacity_paused: capacity.clone(),
@@ -205,15 +207,20 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
             Err(e) => warn(&format!("WARN the persona runes could not be read ({e}) — unrostered READY beads are not checked")),
         }
     }
-    Ok(Classified { rows, watching })
+    Ok(Classified { rows, watching, live })
 }
 
 // ------------------------------------------------------------------------------------------
 // report
 // ------------------------------------------------------------------------------------------
 
-pub fn render_text(active: &str, age: i64, rows: &[AgedRow], watching: &[String]) -> String {
-    let mut out = format!("sentinel timer: {active}   last pass: {age}s ago\n\n");
+pub fn render_text(live: &[String], age: i64, rows: &[AgedRow], watching: &[String]) -> String {
+    let pass = if age < 0 { "never".to_string() } else { format!("{age}s ago") };
+    let mut out = format!("scheduler last pass: {pass}\nlive dwarves: {}\n", live.len());
+    for u in live {
+        out.push_str(&format!("  {u}\n"));
+    }
+    out.push('\n');
     if rows.is_empty() {
         out.push_str(&format!("no stranded work in [{}]\n", watching.join(" ")));
         return out;
@@ -287,9 +294,9 @@ pub fn render_deferred(rows: &[Deferred], now: i64) -> String {
     out
 }
 
-pub fn render_json(active: &str, age: i64, rows: &[AgedRow]) -> String {
+pub fn render_json(live: &[String], age: i64, rows: &[AgedRow]) -> String {
     let doc = ReportJson {
-        sentinel_timer: active.to_string(),
+        live_dwarves: live.to_vec(),
         last_pass_seconds: age,
         strands: rows
             .iter()
@@ -312,11 +319,11 @@ pub fn render_json(active: &str, age: i64, rows: &[AgedRow]) -> String {
 pub fn report(cfg: &Config, c: &Classified, json: bool) {
     let st = cfg.state_path().map(|p| state::load(&p)).unwrap_or_default();
     let (aged, _) = state::apply(&st, &c.rows, timefmt::now());
-    let (active, age) = probe::harness_state(cfg, timefmt::now());
+    let age = probe::last_pass_age(cfg);
     if json {
-        print!("{}", render_json(&active, age, &aged));
+        print!("{}", render_json(&c.live, age, &aged));
     } else {
-        print!("{}", render_text(&active, age, &aged, &c.watching));
+        print!("{}", render_text(&c.live, age, &aged, &c.watching));
         print!("{}", render_deferred(&deferred_branches(cfg), timefmt::now()));
     }
 }
@@ -714,16 +721,18 @@ mod tests {
     #[test]
     fn report_shapes() {
         let rows = vec![aged("stuck", Disposition::Escalate, 180, 0, 0)];
-        let t = render_text("active", 42, &rows, &["spira,plan".into()]);
+        let t = render_text(&["spira-dwarf-builder-1.service".into()], 42, &rows, &["spira,plan".into()]);
         let lines: Vec<&str> = t.lines().collect();
-        assert_eq!(lines[0], "sentinel timer: active   last pass: 42s ago");
-        assert_eq!(lines[2], "PARTITION        KIND                 ID               DISPOSITION    AGE  DETAIL");
-        assert_eq!(lines[3], "spira,plan       stuck                sp-x             escalate      3m  d");
-        assert_eq!(lines[4], format!("{}→ a", " ".repeat(71)));
-        let empty = render_text("active", 42, &[], &["spira,plan".into(), "spira,incident".into()]);
+        assert_eq!(lines[0], "scheduler last pass: 42s ago");
+        assert_eq!(lines[1], "live dwarves: 1");
+        assert_eq!(lines[2], "  spira-dwarf-builder-1.service");
+        assert_eq!(lines[4], "PARTITION        KIND                 ID               DISPOSITION    AGE  DETAIL");
+        assert_eq!(lines[5], "spira,plan       stuck                sp-x             escalate      3m  d");
+        assert_eq!(lines[6], format!("{}→ a", " ".repeat(71)));
+        let empty = render_text(&[], -1, &[], &["spira,plan".into(), "spira,incident".into()]);
         assert!(empty.ends_with("no stranded work in [spira,plan spira,incident]\n"));
-        let j: serde_json::Value = serde_json::from_str(&render_json("active", 42, &rows)).unwrap();
-        assert_eq!(j["sentinel_timer"], "active");
+        let j: serde_json::Value = serde_json::from_str(&render_json(&["u.service".into()], 42, &rows)).unwrap();
+        assert_eq!(j["live_dwarves"][0], "u.service");
         assert_eq!(j["last_pass_seconds"], 42);
         assert_eq!(j["strands"][0]["partition"], "spira,plan");
         assert_eq!(j["strands"][0]["age_seconds"], 180);

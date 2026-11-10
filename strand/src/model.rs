@@ -296,7 +296,7 @@ pub struct StateEntry {
 /// `report --json` (DESIGN.md §3.4).
 #[derive(Debug, Serialize)]
 pub struct ReportJson {
-    pub sentinel_timer: String,
+    pub live_dwarves: Vec<String>,
     pub last_pass_seconds: i64,
     pub strands: Vec<ReportStrand>,
 }
