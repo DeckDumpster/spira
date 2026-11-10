@@ -501,4 +501,38 @@ mod tests {
             }
         }
     }
+
+    /// A task whose effect times out asks the world before it asks again: a retry on timeout
+    /// that never observed repeats an act whose first run may have landed.
+    #[test]
+    fn no_task_retries_an_act_on_timeout_without_observing_first() {
+        use runtime::taskrig::retries_without_observing;
+        use runtime::{Command, Ctx, EffectSpec, Event, EventKind, EventKindTag, Handler, Projection, Registration, EFFECT_TIMED_OUT};
+        struct Retrier(std::sync::atomic::AtomicUsize);
+        impl Handler for Retrier {
+            fn interests(&self) -> &[EventKindTag] {
+                &["planted.go", EFFECT_TIMED_OUT]
+            }
+            fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+                let asked = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if asked >= 2 {
+                    return vec![];
+                }
+                vec![Command::Effect(EffectSpec::keyed("planted.act", "planted.act", "x", 1_000))]
+            }
+        }
+        let mut planted = TaskRig::new(1, Registration::new("planted", Retrier(Default::default()))).unwrap().timing_out();
+        planted.tick("planted", EventKind::new("planted.go", "")).unwrap();
+        planted.advance(5_000).unwrap();
+        assert!(!retries_without_observing(planted.requested()).is_empty(), "the check must see a retry that never looked: {:?}", planted.requested());
+
+        let s = crate::settings::fixture();
+        for t in all() {
+            let mut rig = TaskRig::new(1, (t.build)(&s)).unwrap().timing_out();
+            let (_, stream, kind) = (t.boot)();
+            rig.tick(stream, kind).unwrap();
+            rig.advance(3 * (t.cadence_ms)(&s)).unwrap();
+            assert_eq!(retries_without_observing(rig.requested()), Vec::<String>::new(), "{} retried an act after it timed out, without observing first", t.name);
+        }
+    }
 }

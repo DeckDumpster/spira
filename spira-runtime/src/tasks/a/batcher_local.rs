@@ -98,7 +98,7 @@ use batcher::core;
 use batcher_cut::pace;
 use runtime::event::*;
 use batcher_cut::attribute::Attribution;
-use runtime::units::{Exit, RanOutput, UnitRan, UNIT_RAN};
+use runtime::units::{Exit, RanOutput, UnitFacts, UnitHandle, UnitRan, UnitState, UNIT_FACTS, UNIT_RAN};
 use serde::{Deserialize, Serialize};
 
 use super::kit::{self, Act, Cadence, Shape};
@@ -159,7 +159,7 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, PAUSE, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, PAUSE, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -1658,7 +1658,7 @@ pub struct P2<'a> {
 }
 
 /// What a family-A P2 task's handler does with each kind of event it hears.
-pub struct On<O, U, R> {
+pub struct On<O, U, R, L> {
     /// The observe answer.
     pub observed: O,
     /// The outcome of one of its effects.
@@ -1666,25 +1666,47 @@ pub struct On<O, U, R> {
     /// A `unit.ran` delivered on its own stream (the source routes each run to the task its unit
     /// name parses to): the leg's end advances the machine at once, not at the next observe.
     pub ran: R,
+    /// The unit keys of the legs the carry has in flight: each is read through `unit.facts` on a
+    /// tick, so a leg whose `unit.ran` was lost still ends.
+    pub legs: L,
+}
+
+/// How long a `unit.facts` read may take.
+const FACTS_DEADLINE_MS: u64 = 10_000;
+
+fn facts_probe(task: &str, key: &str) -> Option<Command> {
+    let handle = UnitHandle::of(task, key).ok()?;
+    Some(Command::Probe(EffectSpec::keyed(UNIT_FACTS, format!("{UNIT_FACTS}/{}", handle.name), serde_json::to_string(&handle).ok()?, FACTS_DEADLINE_MS)))
+}
+
+/// The run `facts` reports for the unit a probe read, when that unit has ended.
+fn ran_from_facts(input: &str, body: &str) -> Option<UnitRan> {
+    let handle: UnitHandle = serde_json::from_str(input).ok()?;
+    let facts: UnitFacts = serde_json::from_str(body).ok()?;
+    let ended = matches!(facts.state, UnitState::Inactive | UnitState::Failed);
+    Some(UnitRan { handle, exit: facts.exit.filter(|_| ended)?, duration_ms: 0 })
 }
 
 /// The shared handler body of the family-A P2 tasks: the tick's probe, the observe answer, each
 /// outcome of one of `effects`, and the end of each of its own unit legs.
-pub fn handle_p2<C, O, U, R>(p: &P2, view: &Projection, ev: &Event, on: On<O, U, R>) -> Vec<Command>
+pub fn handle_p2<C, O, U, R, L>(p: &P2, view: &Projection, ev: &Event, on: On<O, U, R, L>) -> Vec<Command>
 where
     C: Serialize + serde::de::DeserializeOwned + Default + PartialEq,
     O: FnOnce(&C, &str) -> Option<(C, Vec<Act>)>,
     U: FnOnce(&C, &str, bool, &str, &str) -> (C, Vec<Act>),
     R: FnOnce(&C, &UnitRan) -> Option<(C, Vec<Act>)>,
+    L: FnOnce(&C) -> Vec<String>,
 {
     let (shape, cadence, acts, emits, effects) = (p.shape, p.cadence, p.acts, p.emits, p.effects);
-    let On { observed, outcome, ran } = on;
+    let On { observed, outcome, ran, legs } = on;
     if ev.stream.0 != shape.stream {
         return vec![];
     }
     let carry: C = kit::carry(shape, view);
     if ev.kind.tag == shape.tick {
-        return kit::on_tick(shape, serde_json::to_string(&carry).unwrap_or_default(), cadence.next_after(ev.at));
+        let mut out = kit::on_tick(shape, serde_json::to_string(&carry).unwrap_or_default(), cadence.next_after(ev.at));
+        out.extend(legs(&carry).iter().filter_map(|key| facts_probe(shape.name, key)));
+        return out;
     }
     if p.wakes.contains(&ev.kind.tag.as_str()) {
         return vec![Command::Probe(EffectSpec::probe(shape.observe, serde_json::to_string(&carry).unwrap_or_default(), shape.observe_deadline_ms))];
@@ -1694,6 +1716,13 @@ where
         return kit::commands(shape, acts, emits, &carry, &next, out);
     }
     let Some(spec) = crate::watchers::answered_spec(view, ev) else { return vec![] };
+    if spec.name == UNIT_FACTS {
+        if ev.kind.tag != EFFECT_SUCCEEDED {
+            return vec![];
+        }
+        let Some((next, out)) = ran_from_facts(&spec.input, &ev.kind.body).and_then(|r| ran(&carry, &r)) else { return vec![] };
+        return kit::commands(shape, acts, emits, &carry, &next, out);
+    }
     let (next, out) = if spec.name == shape.observe {
         if ev.kind.tag != EFFECT_SUCCEEDED {
             return vec![];
@@ -1767,7 +1796,8 @@ impl Handler for BatcherLocal {
         };
         let out = RanOutput::from_event_kind(&ev.kind).unwrap_or_default();
         let ran = |carry: &Carry, r: &UnitRan| on_ran_with(carry, r, &out, ev.at);
-        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran })
+        let legs = |carry: &Carry| carry.repos.values().flat_map(|rc| rc.rounds()).filter(|r| matches!(r.state, State::Corpus | State::Attributing | State::Certifying)).filter_map(|r| r.leg).collect();
+        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran, legs })
     }
 }
 

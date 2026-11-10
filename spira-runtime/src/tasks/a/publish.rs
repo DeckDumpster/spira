@@ -674,7 +674,7 @@ impl Handler for Publish {
         };
         // Publish starts no unit leg, so no `unit.ran` is its own.
         let ran = |_: &Carry, _: &runtime::units::UnitRan| None;
-        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran })
+        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran, legs: |_: &Carry| vec![] })
     }
 }
 
