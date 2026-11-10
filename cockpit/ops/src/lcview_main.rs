@@ -273,9 +273,13 @@ fn gather_menders(s: &mut Snapshot) {
 fn gather_closed(s: &mut Snapshot) {
     let read = spira_config::process::cfg("SPIRA_VICTORIALOGS_URL")
         .and_then(|url| spira_otel::vlogs::Logs::new(&url).map_err(|e| e.to_string()))
-        .and_then(|logs| cockpit_ops::lcview::closed_24h(&logs));
+        .and_then(|logs| Ok((cockpit_ops::lcview::closed_24h(&logs)?, cockpit_ops::lcview::applied_edges_1h(&logs)?)));
     match read {
-        Ok(c) => s.closed = Some(c),
+        Ok((c, applied)) => {
+            s.closed = Some(c);
+            s.edges.retain(|e| e.kind != "applied");
+            s.edges.extend(applied);
+        }
         Err(e) => s.errors.push(e),
     }
 }
