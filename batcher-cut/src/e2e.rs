@@ -16,8 +16,8 @@ use std::time::Instant;
 use batcher::attrib::{Budget, Decision};
 use batcher::core::Member;
 
-use batcher::drive::{attribute_round, RoundEnd, RoundOps};
 use crate::io::{Env, Land, Repo};
+use batcher::drive::{attribute_round, RoundEnd, RoundOps};
 
 /// Stands in for `round-vm run <wt> ... --results-dir R --attr-spool S`: runs the corpus
 /// `maxpar`-wide from the round worktree, writing each `.result` as the suite finishes, and
@@ -85,8 +85,17 @@ exit "$rc"
 "#;
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let o = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
-    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    let o = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        o.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
     String::from_utf8_lossy(&o.stdout).trim().to_string()
 }
 
@@ -97,7 +106,18 @@ fn write(p: &Path, body: &str) {
 
 fn commit(repo: &Path, msg: &str) {
     git(repo, &["add", "-A"]);
-    git(repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg]);
+    git(
+        repo,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            msg,
+        ],
+    );
 }
 
 struct ProofOps {
@@ -118,10 +138,18 @@ impl RoundOps for ProofOps {
         self.ejected.push((member.id.clone(), suites.to_vec()));
     }
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
-        crate::merge_round(&self.env, &self.repo, &self.wt, &self.start, survivors.to_vec())
+        crate::merge_round(
+            &self.env,
+            &self.repo,
+            &self.wt,
+            &self.start,
+            survivors.to_vec(),
+        )
     }
     fn fix_integration(&mut self, members: &[Member], _: &[String]) -> bool {
-        crate::io::integration_fix(&self.env, &self.wt, &self.start, members).map(|f| !f.is_empty()).unwrap_or(false)
+        crate::io::integration_fix(&self.env, &self.wt, &self.start, members)
+            .map(|f| !f.is_empty())
+            .unwrap_or(false)
     }
     fn base_moved(&mut self, _: &[Member]) -> Result<Option<(String, Vec<Member>)>, String> {
         Ok(None)
@@ -142,7 +170,13 @@ impl RoundOps for ProofOps {
         self.decisions.push((iteration, d.clone()));
     }
     fn preempted(&mut self, _owner: &String, _unreached: &[String]) {}
-    fn escape(&mut self, _member: &Member, _suite: &str, _rerun: Option<batcher::attrib::JobResult>) {}
+    fn escape(
+        &mut self,
+        _member: &Member,
+        _suite: &str,
+        _rerun: Option<batcher::attrib::JobResult>,
+    ) {
+    }
 }
 
 #[test]
@@ -155,7 +189,10 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
     write(&repo_dir.join("spira/test-fast.sh"), "#!/bin/bash\n# covers: spira/widget.sh\n. spira/widget.sh\nsleep 0.3\n[ \"$(widget)\" = ok ] || { echo 'FAIL widget'; exit 1; }\n");
     write(&repo_dir.join("spira/widget.sh"), "widget() { echo ok; }\n");
     for i in 1..=8 {
-        write(&repo_dir.join(format!("spira/test-slow-{i}.sh")), "#!/bin/bash\n# covers: spira/other.sh\nsleep 3\n");
+        write(
+            &repo_dir.join(format!("spira/test-slow-{i}.sh")),
+            "#!/bin/bash\n# covers: spira/other.sh\nsleep 3\n",
+        );
     }
     write(&repo_dir.join("spira/other.sh"), "true\n");
     commit(&repo_dir, "base");
@@ -166,11 +203,24 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         ("sp-m2", "spira/widget.sh", "widget() { echo broken; }\n"),
         ("sp-m3", "spira/three.sh", "true\n"),
     ] {
-        git(&repo_dir, &["checkout", "-q", "-b", &format!("spira/{id}"), &base]);
+        git(
+            &repo_dir,
+            &["checkout", "-q", "-b", &format!("spira/{id}"), &base],
+        );
         write(&repo_dir.join(path), body);
         commit(&repo_dir, id);
         let tip = git(&repo_dir, &["rev-parse", "HEAD"]);
-        members.push(Member { id: id.into(), tip, title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() });
+        members.push(Member {
+            id: id.into(),
+            tip,
+            title: String::new(),
+            priority: None,
+            express: false,
+            base_fix: false,
+            certified_at: 0,
+            stack: BTreeMap::new(),
+            blocked_by: Vec::new(),
+        });
     }
     git(&repo_dir, &["checkout", "-q", "main"]);
 
@@ -189,7 +239,11 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         rebase_stale_bin: root.join("rebase-stale"),
         testenv_bin: root.join("testenv"),
         round_slots: Some(4),
-        hypervisor: crate::io::Hypervisor { host_mib: 0, round_vm_mib: 0, runner_mib: 0 },
+        hypervisor: crate::io::Hypervisor {
+            host_mib: 0,
+            round_vm_mib: 0,
+            runner_mib: 0,
+        },
         poll: std::time::Duration::from_secs(1),
         maxpar: 2,
         wall_secs: 600,
@@ -204,7 +258,13 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         pause_lift_after: 900,
         land_unpause: None,
     };
-    let repo = Repo { name: "fx".into(), path: repo_dir.clone(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+    let repo = Repo {
+        name: "fx".into(),
+        path: repo_dir.clone(),
+        base: "main".into(),
+        forge: PathBuf::new(),
+        land: Land::Local,
+    };
     let wt = run.join("worktree/.batcher-fx");
 
     let t0 = Instant::now();
@@ -213,19 +273,44 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
     let branch = "spira/batcher-attr/fx-proof";
     crate::io::set_branch(&repo, branch, &crate::io::head_of(&wt).unwrap());
     let suites = crate::io::all_suites(&repo, branch);
-    let changed: BTreeMap<String, Vec<String>> = merged.iter().map(|m| (m.id.clone(), crate::io::changed_paths(&repo, &base, &m.tip))).collect();
-    let mut runner = crate::vm::VmRunner::new(&env, &repo, &wt, &base, "proof", changed.clone()).unwrap();
+    let changed: BTreeMap<String, Vec<String>> = merged
+        .iter()
+        .map(|m| (m.id.clone(), crate::io::changed_paths(&repo, &base, &m.tip)))
+        .collect();
+    let mut runner =
+        crate::vm::VmRunner::new(&env, &repo, &wt, &base, "proof", changed.clone()).unwrap();
     let log = runner.spool.parent().unwrap().join("stub.log");
-    let mut ops = ProofOps { wt: wt.clone(), env: env.clone(), repo: repo.clone(), start: base.clone(), changed, ejected: vec![], decisions: vec![] };
+    let mut ops = ProofOps {
+        wt: wt.clone(),
+        env: env.clone(),
+        repo: repo.clone(),
+        start: base.clone(),
+        changed,
+        ejected: vec![],
+        decisions: vec![],
+    };
     let started = crate::now();
-    let end = attribute_round(&mut runner, &mut ops, &suites, merged, Budget { slots: 4, maxpar: 2 }).unwrap();
+    let end = attribute_round(
+        &mut runner,
+        &mut ops,
+        &suites,
+        merged,
+        Budget {
+            slots: 4,
+            maxpar: 2,
+        },
+    )
+    .unwrap();
     runner.close();
     let wall = t0.elapsed().as_secs_f64();
 
     let d0 = &ops.decisions[0].1;
     let rec = &d0.records[0];
     println!("\n=== e2e proof: 3 members, sp-m2 breaks test-fast.sh; corpus = 9 suites at maxpar 2, round slots 4 ===");
-    println!("stub log (epoch, job, build):\n{}", fs::read_to_string(&log).unwrap_or_default());
+    println!(
+        "stub log (epoch, job, build):\n{}",
+        fs::read_to_string(&log).unwrap_or_default()
+    );
     println!(
         "red streamed at +{}s; attributed ({:?}) at +{}s after {} rerun(s); settled before corpus end: {}",
         rec.red_at - started,
@@ -238,16 +323,35 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
     println!("round end: {:?}", end.clone_members());
     println!("whole round wall (merge → corpus → verification → decision): {wall:.1}s");
 
-    assert_eq!(ops.ejected, vec![("sp-m2".to_string(), vec!["test-fast.sh".to_string()])]);
-    assert!(rec.settled_before_main_end, "attribution finished before the corpus ended");
-    assert_eq!(ops.decisions.len(), 2, "corpus, then the survivors' verification of test-fast.sh alone");
-    assert!(ops.decisions[1].1.records.is_empty(), "test-fast.sh green on the survivors");
+    assert_eq!(
+        ops.ejected,
+        vec![("sp-m2".to_string(), vec!["test-fast.sh".to_string()])]
+    );
+    assert!(
+        rec.settled_before_main_end,
+        "attribution finished before the corpus ended"
+    );
+    assert_eq!(
+        ops.decisions.len(),
+        2,
+        "corpus, then the survivors' verification of test-fast.sh alone"
+    );
+    assert!(
+        ops.decisions[1].1.records.is_empty(),
+        "test-fast.sh green on the survivors"
+    );
     match end {
-        RoundEnd::Land { members, .. } => assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-m1", "sp-m3"]),
+        RoundEnd::Land { members, .. } => assert_eq!(
+            members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["sp-m1", "sp-m3"]
+        ),
         other => panic!("expected to land, got {other:?}"),
     }
     // path-ok: a test asserting where the survivors' fixture binary is installed in a temp worktree
-    assert!(wt.join("target/release/fakebin").is_file(), "the survivors' binaries were installed");
+    assert!(
+        wt.join("target/release/fakebin").is_file(),
+        "the survivors' binaries were installed"
+    );
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -257,8 +361,15 @@ trait CloneMembers {
 impl CloneMembers for RoundEnd {
     fn clone_members(&self) -> String {
         match self {
-            RoundEnd::Land { members, attribution_secs } => {
-                format!("land {:?} (attribution {:?}s)", members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), attribution_secs)
+            RoundEnd::Land {
+                members,
+                attribution_secs,
+            } => {
+                format!(
+                    "land {:?} (attribution {:?}s)",
+                    members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+                    attribution_secs
+                )
             }
             RoundEnd::Blocked(w) => format!("blocked: {w}"),
             RoundEnd::Emptied(w) => format!("emptied: {w}"),

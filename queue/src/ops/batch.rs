@@ -1487,11 +1487,15 @@ pub(super) fn lease_ttl(w: &World, label: &str, outcome: &str) -> Result<u64, ()
     match w.env.config(LEASE_TTL_KEY).map(|v| v.trim().parse::<u64>()) {
         Ok(Ok(t)) => Ok(t),
         Ok(Err(e)) => {
-            w.err(format!("queue.sh {label}: {LEASE_TTL_KEY} does not parse as seconds ({e}){outcome}"));
+            w.err(format!(
+                "queue.sh {label}: {LEASE_TTL_KEY} does not parse as seconds ({e}){outcome}"
+            ));
             Err(())
         }
         Err(e) => {
-            w.err(format!("queue.sh {label}: {LEASE_TTL_KEY} does not resolve ({e}){outcome}"));
+            w.err(format!(
+                "queue.sh {label}: {LEASE_TTL_KEY} does not resolve ({e}){outcome}"
+            ));
             Err(())
         }
     }

@@ -106,11 +106,17 @@ fn release_stale_opening(w: &World, c: &Ctx, path: &Path) -> i32 {
     let live = match forge_batch::live(w, c) {
         Ok(live) => live,
         Err(e) => {
-            w.err(format!("verdict {}: cannot tell which batches are open: {e}", c.r.name));
+            w.err(format!(
+                "verdict {}: cannot tell which batches are open: {e}",
+                c.r.name
+            ));
             return FAIL;
         }
     };
-    if !live.iter().any(|b| b.kv.get(forge_batch::PHASE) == Some(forge_batch::OPENING)) {
+    if !live
+        .iter()
+        .any(|b| b.kv.get(forge_batch::PHASE) == Some(forge_batch::OPENING))
+    {
         return OK;
     }
     let Ok(ttl) = super::batch::lease_ttl(w, "verdict", "") else {
@@ -120,7 +126,10 @@ fn release_stale_opening(w: &World, c: &Ctx, path: &Path) -> i32 {
     let aged = |b: &crate::batches::BatchRecord| {
         now.saturating_sub(b.kv.get("opened").and_then(|o| o.parse().ok()).unwrap_or(0)) >= ttl
     };
-    if !live.iter().any(|b| b.kv.get(forge_batch::PHASE) == Some(forge_batch::OPENING) && aged(b)) {
+    if !live
+        .iter()
+        .any(|b| b.kv.get(forge_batch::PHASE) == Some(forge_batch::OPENING) && aged(b))
+    {
         return OK;
     }
     let Some(prs) = w.forge.queue_prs(&c.s.forge, path) else {

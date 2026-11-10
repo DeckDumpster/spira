@@ -463,6 +463,7 @@ struct FScripts {
     lock_probe: RefCell<Option<PathBuf>>,
     lock_free_at_activate: RefCell<Vec<bool>>,
     lock_free_at_gate: RefCell<Vec<bool>>,
+    during_gate: RefCell<Option<Box<dyn Fn()>>>,
     /// `release activate` answers consumed in order before `release_rc` applies.
     activate_seq: RefCell<std::collections::VecDeque<(i32, String)>>,
     /// `ActiveState` answers in order (the last repeats; empty reads `active`), and the units asked about.
@@ -557,6 +558,9 @@ impl Scripts for FScripts {
                 crate::lock::Acquire::Held(_)
             );
             self.lock_free_at_gate.borrow_mut().push(free);
+        }
+        if let Some(f) = self.during_gate.borrow().as_ref() {
+            f();
         }
         (self.gate_rc.get(), "gate says".into())
     }

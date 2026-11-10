@@ -36,9 +36,18 @@ impl Acts for Live<'_> {
     }
     fn tell(&mut self, msg: &str) {
         println!("batcher: {msg}");
-        let line = format!("{} [watch:sift] {msg}\n", io::utc_stamp(spira_config::vtime::now_epoch()));
-        let wrote = cfg("SPIRA_CONCIERGE_INBOX")
-            .and_then(|p| OpenOptions::new().create(true).append(true).open(p).and_then(|mut f| f.write_all(line.as_bytes())).map_err(|e| e.to_string()));
+        let line = format!(
+            "{} [watch:sift] {msg}\n",
+            io::utc_stamp(spira_config::vtime::now_epoch())
+        );
+        let wrote = cfg("SPIRA_CONCIERGE_INBOX").and_then(|p| {
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+                .and_then(|mut f| f.write_all(line.as_bytes()))
+                .map_err(|e| e.to_string())
+        });
         if let Err(e) = wrote {
             eprintln!("batcher: sift: concierge not told ({e}): {msg}");
         }
@@ -48,11 +57,17 @@ impl Acts for Live<'_> {
 /// The members whose current tip carries a pass. A bead with none is not yet screened and waits
 /// for the next cut.
 pub fn cut_pool(pool: Vec<Member>, sifted: &BTreeMap<String, String>) -> Vec<Member> {
-    pool.into_iter().filter(|m| sifted.get(&m.id).map(String::as_str) == Some(m.tip.as_str())).collect()
+    pool.into_iter()
+        .filter(|m| sifted.get(&m.id).map(String::as_str) == Some(m.tip.as_str()))
+        .collect()
 }
 
 /// Screens every SUBMITTED and CERTIFIED bead of `repo`, recording a pass or sending the bead back.
-pub fn sift_repo(env: &Env, repo: &Repo, open: Option<&OpenBatch>) -> Result<sift::Outcome, String> {
+pub fn sift_repo(
+    env: &Env,
+    repo: &Repo,
+    open: Option<&OpenBatch>,
+) -> Result<sift::Outcome, String> {
     let pool = io::certified_pool(env, repo)?;
     if pool.is_empty() {
         return Ok(sift::Outcome::default());
@@ -74,10 +89,36 @@ pub fn sift_repo(env: &Env, repo: &Repo, open: Option<&OpenBatch>) -> Result<sif
             move |id| io::bd_show_text(&env, id)
         }),
     };
-    let candidates: Vec<Candidate> = pool.iter().map(|m| Candidate { id: m.id.clone(), tip: m.tip.clone() }).collect();
-    let open_round: Vec<Candidate> = open.map(|o| o.members.iter().map(|(id, tip)| Candidate { id: id.clone(), tip: tip.clone() }).collect()).unwrap_or_default();
-    let mut live = Live { env, repo, sifted: io::sifted_tips(env)? };
-    let out = sift::screen(&probe, &FileStore::new(work), &mut live, &candidates, &open_round);
+    let candidates: Vec<Candidate> = pool
+        .iter()
+        .map(|m| Candidate {
+            id: m.id.clone(),
+            tip: m.tip.clone(),
+        })
+        .collect();
+    let open_round: Vec<Candidate> = open
+        .map(|o| {
+            o.members
+                .iter()
+                .map(|(id, tip)| Candidate {
+                    id: id.clone(),
+                    tip: tip.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut live = Live {
+        env,
+        repo,
+        sifted: io::sifted_tips(env)?,
+    };
+    let out = sift::screen(
+        &probe,
+        &FileStore::new(work),
+        &mut live,
+        &candidates,
+        &open_round,
+    );
     for e in &out.errors {
         eprintln!("batcher {}: {e}", repo.name);
     }
@@ -89,14 +130,35 @@ mod tests {
     use super::*;
 
     fn member(id: &str, tip: &str) -> Member {
-        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![] }
+        Member {
+            id: id.into(),
+            tip: tip.into(),
+            title: String::new(),
+            priority: None,
+            express: false,
+            base_fix: false,
+            certified_at: 0,
+            stack: Default::default(),
+            blocked_by: vec![],
+        }
     }
 
     #[test]
     fn a_cut_takes_only_beads_with_a_pass_at_their_current_tip() {
-        let sifted: BTreeMap<String, String> = [("sp-a", "t1"), ("sp-b", "old")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
-        let pool = vec![member("sp-a", "t1"), member("sp-b", "new"), member("sp-c", "t3")];
+        let sifted: BTreeMap<String, String> = [("sp-a", "t1"), ("sp-b", "old")]
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        let pool = vec![
+            member("sp-a", "t1"),
+            member("sp-b", "new"),
+            member("sp-c", "t3"),
+        ];
         let ids: Vec<String> = cut_pool(pool, &sifted).into_iter().map(|m| m.id).collect();
-        assert_eq!(ids, ["sp-a"], "a moved tip and an unscreened bead both wait");
+        assert_eq!(
+            ids,
+            ["sp-a"],
+            "a moved tip and an unscreened bead both wait"
+        );
     }
 }

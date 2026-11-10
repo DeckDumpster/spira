@@ -14,10 +14,10 @@ use std::process::{Child, Command, Stdio};
 use batcher::attrib::{Job, JobResult};
 use batcher::core::{Id, Member, MergeResult};
 
-use batcher::pathattr::{attribute, MemberPaths, Red, Verdict};
-use batcher::drive::{FilterRed, MainEnd, MainKind, MainPoll, RoundRunner};
 use crate::io::{self, Env, Repo};
 use crate::order;
+use batcher::drive::{FilterRed, MainEnd, MainKind, MainPoll, RoundRunner};
+use batcher::pathattr::{attribute, MemberPaths, Red, Verdict};
 
 /// Only these extensions may differ for a rerun to reuse the round's release binaries.
 fn binary_neutral(path: &str) -> bool {
@@ -26,7 +26,11 @@ fn binary_neutral(path: &str) -> bool {
 
 /// `artifacts` when every removed member changed only binary-neutral files, else `dwarf`.
 pub fn build_for(removal: &[Id], changed: &BTreeMap<Id, Vec<String>>) -> &'static str {
-    let neutral = removal.iter().all(|m| changed.get(m).is_some_and(|ps| ps.iter().all(|p| binary_neutral(p))));
+    let neutral = removal.iter().all(|m| {
+        changed
+            .get(m)
+            .is_some_and(|ps| ps.iter().all(|p| binary_neutral(p)))
+    });
     if neutral {
         "artifacts"
     } else {
@@ -35,7 +39,11 @@ pub fn build_for(removal: &[Id], changed: &BTreeMap<Id, Vec<String>>) -> &'stati
 }
 
 fn read_rc(path: &Path) -> Option<i32> {
-    fs::read_to_string(path).ok()?.lines().find_map(|l| l.strip_prefix("rc=")).and_then(|v| v.trim().parse().ok())
+    fs::read_to_string(path)
+        .ok()?
+        .lines()
+        .find_map(|l| l.strip_prefix("rc="))
+        .and_then(|v| v.trim().parse().ok())
 }
 
 /// round-vm's exit code for a container install that failed before any suite ran.
@@ -52,7 +60,11 @@ pub fn stderr_tail(text: &str) -> String {
         return "\n  (round-vm wrote nothing to stderr)".into();
     }
     let from = lines.len().saturating_sub(STDERR_TAIL_LINES);
-    let mut out = format!("\n  round-vm stderr (last {} of {} lines):", lines.len() - from, lines.len());
+    let mut out = format!(
+        "\n  round-vm stderr (last {} of {} lines):",
+        lines.len() - from,
+        lines.len()
+    );
     for l in &lines[from..] {
         out.push_str("\n    ");
         out.push_str(l);
@@ -63,26 +75,49 @@ pub fn stderr_tail(text: &str) -> String {
 /// The corpus run's end, typed from round-vm's exit code (round-vm DESIGN.md §2.2). `Ok` is
 /// a verdict the round can be judged on; every `Err` is a harness fault — the round is not
 /// judged (no verdict) — and carries round-vm's stderr.
-pub fn corpus_end(rc: i32, stderr: &str, wall_secs: u64, reported: usize, total: usize) -> Result<MainEnd, String> {
-    let lost_vm = reported == 0 && total > 0 && (matches!(rc, 124 | 137) || (rc == 2 && vm_unreachable(stderr).is_some()));
+pub fn corpus_end(
+    rc: i32,
+    stderr: &str,
+    wall_secs: u64,
+    reported: usize,
+    total: usize,
+) -> Result<MainEnd, String> {
+    let lost_vm = reported == 0
+        && total > 0
+        && (matches!(rc, 124 | 137) || (rc == 2 && vm_unreachable(stderr).is_some()));
     let why = match rc {
         0 | 1 => return Ok(MainEnd::Ran),
         _ if lost_vm => {
             let (host, status) = vm_unreachable(stderr).unwrap_or_default();
-            let host = if host.is_empty() { "unknown host".to_string() } else { host };
-            let status = if status.is_empty() { "no ssh status in stderr".to_string() } else { format!("ssh exit {status}") };
+            let host = if host.is_empty() {
+                "unknown host".to_string()
+            } else {
+                host
+            };
+            let status = if status.is_empty() {
+                "no ssh status in stderr".to_string()
+            } else {
+                format!("ssh exit {status}")
+            };
             format!("round-vm: infrastructure fault — the round VM ({host}) was unreachable ({status}) and 0 of {total} suites reported within the {wall_secs}s wall bound; no member is implicated, and this is not a cap breach (rc {rc})")
         }
         4 => return Ok(MainEnd::WorkspaceBuild),
         2 => {
             if let Some(line) = stderr.lines().find(|l| l.contains("batch: unknown suite:")) {
-                return Err(format!("round-vm: suite list mismatch, not a harness fault — {}", line.trim()));
+                return Err(format!(
+                    "round-vm: suite list mismatch, not a harness fault — {}",
+                    line.trim()
+                ));
             }
             "round-vm: harness fault — the round VM did not come up, its container died, or round-vm itself failed".to_string()
         }
         INSTALL_FAILED_RC => "round-vm: harness fault — install failed".to_string(),
         124 | 137 => {
-            let named = stderr.lines().find_map(|l| l.split_once("OVER-CAP:").map(|(_, r)| r.trim())).map(|r| format!(" ({r})")).unwrap_or_default();
+            let named = stderr
+                .lines()
+                .find_map(|l| l.split_once("OVER-CAP:").map(|(_, r)| r.trim()))
+                .map(|r| format!(" ({r})"))
+                .unwrap_or_default();
             format!("round-vm: harness fault — over-cap: exceeded the {wall_secs}s wall bound{named}, no verdict (not a functional red)")
         }
         c => format!("round-vm: harness fault — exit {c}, outside round-vm's contract (0-4)"),
@@ -97,21 +132,48 @@ fn vm_unreachable(stderr: &str) -> Option<(String, String)> {
         let l = l.to_lowercase();
         l.contains("ssh") && (l.contains("exit") || l.contains("fail") || l.contains("unreachable"))
     })?;
-    let words: Vec<&str> = line.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '(' | ')' | ':' | '=')).filter(|w| !w.is_empty()).collect();
-    let is_ip = |w: &str| w.split('.').count() == 4 && w.split('.').all(|o| !o.is_empty() && o.chars().all(|c| c.is_ascii_digit()));
-    let host = words.iter().copied().find(|w| is_ip(w)).map(str::to_string).or_else(|| {
-        stderr.lines().find_map(|l| l.strip_prefix("round-vm run:").and_then(|r| r.split_whitespace().find(|w| is_ip(w))).map(str::to_string))
-    })?;
-    let status = words.iter().position(|w| w.eq_ignore_ascii_case("exit") || w.eq_ignore_ascii_case("status"))
-        .and_then(|i| words.get(i + 1)).filter(|w| w.chars().all(|c| c.is_ascii_digit())).map(|w| w.to_string()).unwrap_or_default();
+    let words: Vec<&str> = line
+        .split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '(' | ')' | ':' | '='))
+        .filter(|w| !w.is_empty())
+        .collect();
+    let is_ip = |w: &str| {
+        w.split('.').count() == 4
+            && w.split('.')
+                .all(|o| !o.is_empty() && o.chars().all(|c| c.is_ascii_digit()))
+    };
+    let host = words
+        .iter()
+        .copied()
+        .find(|w| is_ip(w))
+        .map(str::to_string)
+        .or_else(|| {
+            stderr.lines().find_map(|l| {
+                l.strip_prefix("round-vm run:")
+                    .and_then(|r| r.split_whitespace().find(|w| is_ip(w)))
+                    .map(str::to_string)
+            })
+        })?;
+    let status = words
+        .iter()
+        .position(|w| w.eq_ignore_ascii_case("exit") || w.eq_ignore_ascii_case("status"))
+        .and_then(|i| words.get(i + 1))
+        .filter(|w| w.chars().all(|c| c.is_ascii_digit()))
+        .map(|w| w.to_string())
+        .unwrap_or_default();
     Some((host, status))
 }
 
 enum Main {
     None,
     Finished(MainEnd),
-    Corpus { suites: Vec<String>, seen: BTreeSet<String> },
-    Verify { job: String, suites: Vec<String> },
+    Corpus {
+        suites: Vec<String>,
+        seen: BTreeSet<String>,
+    },
+    Verify {
+        job: String,
+        suites: Vec<String>,
+    },
 }
 
 /// What a bare `round-vm run` exit says about the install: 3 broke it, 0/1/4 got past it.
@@ -181,7 +243,10 @@ pub struct VmRunner<'a> {
 /// A base culprit, or an id outside the round, names nobody.
 pub fn blamed_member(line: &str, members: &[Member]) -> Option<Id> {
     let who = line.strip_prefix("member=")?;
-    let clean = |w: &str| w.trim_end_matches(|c: char| !c.is_alphanumeric()).to_string();
+    let clean = |w: &str| {
+        w.trim_end_matches(|c: char| !c.is_alphanumeric())
+            .to_string()
+    };
     let words: Vec<&str> = who.split_whitespace().collect();
     let token = match words.first()? {
         &"commit" => words.iter().skip_while(|w| **w != "land").nth(1).copied(),
@@ -192,17 +257,28 @@ pub fn blamed_member(line: &str, members: &[Member]) -> Option<Id> {
 }
 
 /// The low-pass filter that ended the pass red in `results`, with each member its output blames.
-fn filter_red_in(results: &Path, members: &[Member], changed: &BTreeMap<Id, Vec<String>>) -> Option<FilterRed> {
+fn filter_red_in(
+    results: &Path,
+    members: &[Member],
+    changed: &BTreeMap<Id, Vec<String>>,
+) -> Option<FilterRed> {
     let mut reds: Vec<String> = vec![];
     for e in fs::read_dir(results).ok()?.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if let Some(stem) = name.strip_suffix(".result").filter(|s| *s == LINT || s.starts_with(FENCE_PREFIX)) {
+        if let Some(stem) = name
+            .strip_suffix(".result")
+            .filter(|s| *s == LINT || s.starts_with(FENCE_PREFIX))
+        {
             if io::result_status(results, stem) == Some(false) {
                 reds.push(stem.to_string());
             }
         }
     }
-    let phases: Vec<&str> = TEST_PHASES.iter().filter(|(json, _)| phase_red(results, json)).map(|(_, stage)| *stage).collect();
+    let phases: Vec<&str> = TEST_PHASES
+        .iter()
+        .filter(|(json, _)| phase_red(results, json))
+        .map(|(_, stage)| *stage)
+        .collect();
     reds.extend(phases.iter().map(|s| s.to_string()));
     reds.sort();
     let name = reds.first()?.clone();
@@ -228,7 +304,10 @@ fn filter_red_in(results: &Path, members: &[Member], changed: &BTreeMap<Id, Vec<
 }
 
 const UNIT_TESTS: &str = "unit-tests";
-const TEST_PHASES: [(&str, &str); 2] = [("unit.json", UNIT_TESTS), ("integration.json", "integration-tests")];
+const TEST_PHASES: [(&str, &str); 2] = [
+    ("unit.json", UNIT_TESTS),
+    ("integration.json", "integration-tests"),
+];
 
 fn phase_red(results: &Path, json: &str) -> bool {
     fs::read_to_string(results.join(json))
@@ -239,10 +318,25 @@ fn phase_red(results: &Path, json: &str) -> bool {
 
 /// The one member whose changed paths the failed phase's output names; nobody when none or
 /// several do, so an ambiguous red is filed rather than a guessed member ejected.
-fn phase_owner(results: &Path, stage: &str, members: &[Member], changed: &BTreeMap<Id, Vec<String>>) -> Vec<(Id, String)> {
+fn phase_owner(
+    results: &Path,
+    stage: &str,
+    members: &[Member],
+    changed: &BTreeMap<Id, Vec<String>>,
+) -> Vec<(Id, String)> {
     let evidence = fs::read_to_string(results.join(format!("{stage}.out"))).unwrap_or_default();
-    let red = Red { suite: stage.to_string(), evidence, own: vec![] };
-    let paths: Vec<MemberPaths> = members.iter().map(|m| MemberPaths { id: m.id.clone(), paths: changed.get(&m.id).cloned().unwrap_or_default() }).collect();
+    let red = Red {
+        suite: stage.to_string(),
+        evidence,
+        own: vec![],
+    };
+    let paths: Vec<MemberPaths> = members
+        .iter()
+        .map(|m| MemberPaths {
+            id: m.id.clone(),
+            paths: changed.get(&m.id).cloned().unwrap_or_default(),
+        })
+        .collect();
     match attribute(&[red], &paths) {
         Verdict::Eject(owners) => owners,
         Verdict::Ambiguous(_) => vec![],
@@ -261,11 +355,22 @@ fn clear_results(results: &Path, suites: &[String]) {
     let wanted: BTreeSet<&str> = suites.iter().map(String::as_str).collect();
     let is_filter = |stem: &str| stem == LINT || stem.starts_with(FENCE_PREFIX);
     let mut dirs = vec![results.to_path_buf()];
-    dirs.extend(fs::read_dir(results).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+    dirs.extend(
+        fs::read_dir(results)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir()),
+    );
     for dir in dirs {
         for e in fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.rsplit_once('.').is_some_and(|(stem, _)| wanted.contains(stem) || is_filter(stem)) && e.path().is_file() {
+            if name
+                .rsplit_once('.')
+                .is_some_and(|(stem, _)| wanted.contains(stem) || is_filter(stem))
+                && e.path().is_file()
+            {
                 let _ = fs::remove_file(e.path());
             }
         }
@@ -275,13 +380,32 @@ fn clear_results(results: &Path, suites: &[String]) {
 impl<'a> VmRunner<'a> {
     /// Runs the `build` job (`workspace` or `unit`) on the base plus exactly `subset`; `verdict`
     /// reads its exit code. `None` when the probe faulted.
-    fn probe_subset(&mut self, subset: &[Member], build: &str, verdict: fn(i32) -> Option<bool>) -> Option<bool> {
+    fn probe_subset(
+        &mut self,
+        subset: &[Member],
+        build: &str,
+        verdict: fn(i32) -> Option<bool>,
+    ) -> Option<bool> {
         self.build_n += 1;
         let job = format!("b{}", self.build_n);
-        let removal: Vec<Id> = self.members.iter().filter(|m| !subset.iter().any(|s| s.id == m.id)).map(|m| m.id.clone()).collect();
-        let tried = subset.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(",");
-        let branch = self.tree_without(self.branch(&job), &job, &removal).inspect_err(|e| eprintln!("batcher: {build} probe tree not built: {e}")).ok()?;
-        self.request(&job, &branch, &[build.to_string()], build).inspect_err(|e| eprintln!("batcher: {e}")).ok()?;
+        let removal: Vec<Id> = self
+            .members
+            .iter()
+            .filter(|m| !subset.iter().any(|s| s.id == m.id))
+            .map(|m| m.id.clone())
+            .collect();
+        let tried = subset
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let branch = self
+            .tree_without(self.branch(&job), &job, &removal)
+            .inspect_err(|e| eprintln!("batcher: {build} probe tree not built: {e}"))
+            .ok()?;
+        self.request(&job, &branch, &[build.to_string()], build)
+            .inspect_err(|e| eprintln!("batcher: {e}"))
+            .ok()?;
         let done = self.spool.join("res").join(format!("{job}.done"));
         let deadline = epoch() + self.env.wall_secs;
         let rc = loop {
@@ -303,7 +427,11 @@ impl<'a> VmRunner<'a> {
 
     fn scope_unit(&self) -> Option<String> {
         let batch = self.batch.as_deref()?;
-        Some(runtime::units::round_scope_unit(&self.repo.name, batch, &format!("{}-{}", self.round, self.corpus_runs)))
+        Some(runtime::units::round_scope_unit(
+            &self.repo.name,
+            batch,
+            &format!("{}-{}", self.round, self.corpus_runs),
+        ))
     }
 
     /// Names the round-vm scope after `batch`, so abandoning that batch stops it.
@@ -312,8 +440,18 @@ impl<'a> VmRunner<'a> {
         self
     }
 
-    pub fn new(env: &'a Env, repo: &'a Repo, wt: &Path, base_sha: &str, round: &str, changed: BTreeMap<Id, Vec<String>>) -> Result<Self, String> {
-        let root = env.run.join("batch-results").join(format!("{}-{round}", repo.name));
+    pub fn new(
+        env: &'a Env,
+        repo: &'a Repo,
+        wt: &Path,
+        base_sha: &str,
+        round: &str,
+        changed: BTreeMap<Id, Vec<String>>,
+    ) -> Result<Self, String> {
+        let root = env
+            .run
+            .join("batch-results")
+            .join(format!("{}-{round}", repo.name));
         let spool = root.join("spool");
         let results = root.join("corpus");
         let _ = fs::remove_dir_all(&root);
@@ -355,8 +493,17 @@ impl<'a> VmRunner<'a> {
         format!("spira/batcher-attr/{}-{}-{tag}", self.repo.name, self.round)
     }
 
-    fn request(&self, job: &str, branch: &str, suites: &[String], build: &str) -> Result<(), String> {
-        let body = format!("branch={branch}\nsuites={}\nbuild={build}\n", suites.join(","));
+    fn request(
+        &self,
+        job: &str,
+        branch: &str,
+        suites: &[String],
+        build: &str,
+    ) -> Result<(), String> {
+        let body = format!(
+            "branch={branch}\nsuites={}\nbuild={build}\n",
+            suites.join(",")
+        );
         let path = self.spool.join("req").join(format!("{job}.req"));
         let tmp = self.spool.join(format!(".{job}.req.tmp"));
         fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
@@ -394,18 +541,31 @@ impl<'a> VmRunner<'a> {
     /// `branch` at the round's base plus every member not in `removal`, merged in round order in
     /// a scratch worktree named by `key`.
     fn tree_without(&self, branch: String, key: &str, removal: &[Id]) -> Result<String, String> {
-        let wt = self.env.run.join("worktree").join(format!(".batcher-attr-{}-{key}", self.repo.name));
+        let wt = self
+            .env
+            .run
+            .join("worktree")
+            .join(format!(".batcher-attr-{}-{key}", self.repo.name));
         io::worktree_reset(self.repo, &wt, &self.base_sha)?;
         let mut result = Ok(());
         for m in self.members.iter().filter(|m| !removal.contains(&m.id)) {
             if io::merge_member(self.env, &wt, &m.id, &m.tip) == MergeResult::Conflict {
-                result = Err(format!("{} does not merge without {}", m.id, removal.join(",")));
+                result = Err(format!(
+                    "{} does not merge without {}",
+                    m.id,
+                    removal.join(",")
+                ));
                 break;
             }
         }
         let head = io::head_of(&wt);
         // batch-job: git history or network operation, as long as the repository is large
-        let _ = Command::new("git").arg("-C").arg(&self.repo.path).args(["worktree", "remove", "-f"]).arg(&wt).status();
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&self.repo.path)
+            .args(["worktree", "remove", "-f"])
+            .arg(&wt)
+            .status();
         result?;
         io::set_branch(self.repo, &branch, &head?);
         Ok(branch)
@@ -415,15 +575,31 @@ impl<'a> VmRunner<'a> {
     /// exactly the worktree's tree (round-vm G8, applied here).
     fn install_verify_bins(&self, res: &Path) -> Result<(), String> {
         let bins = res.join("bins");
-        let Ok(rd) = fs::read_dir(&bins) else { return Ok(()) };
+        let Ok(rd) = fs::read_dir(&bins) else {
+            return Ok(());
+        };
         let want = String::from_utf8_lossy(
-            &spira_config::bounded::bounded("git").arg("-C").arg(&self.wt).args(["rev-parse", "HEAD^{tree}"]).output().map_err(|e| e.to_string())?.stdout,
+            &spira_config::bounded::bounded("git")
+                .arg("-C")
+                .arg(&self.wt)
+                .args(["rev-parse", "HEAD^{tree}"])
+                .output()
+                .map_err(|e| e.to_string())?
+                .stdout,
         )
         .trim()
         .to_string();
-        let got = fs::read_to_string(res.join("batch.meta")).ok().and_then(|t| t.lines().find_map(|l| l.strip_prefix("tree=")).map(|v| v.trim().to_string()));
+        let got = fs::read_to_string(res.join("batch.meta"))
+            .ok()
+            .and_then(|t| {
+                t.lines()
+                    .find_map(|l| l.strip_prefix("tree="))
+                    .map(|v| v.trim().to_string())
+            });
         if got.as_deref() != Some(want.as_str()) {
-            return Err(format!("refusing the survivors' binaries: built tree {got:?}, round tree {want}"));
+            return Err(format!(
+                "refusing the survivors' binaries: built tree {got:?}, round tree {want}"
+            ));
         }
         let target = self.wt.join("target").join("release");
         let _ = fs::remove_dir_all(&target);
@@ -435,7 +611,7 @@ impl<'a> VmRunner<'a> {
         Ok(())
     }
 
-        /// Did the corpus run end on a failed container install?
+    /// Did the corpus run end on a failed container install?
     pub fn install_failed(&self) -> bool {
         self.install_failed
     }
@@ -449,11 +625,18 @@ impl<'a> VmRunner<'a> {
     /// `suite` on a fresh VM; only the exit code is read.
     pub fn probe_install(&mut self, removal: &[Id], suite: &str) -> JobResult {
         self.probe_n += 1;
-        let wt = self.env.run.join("worktree").join(format!(".batcher-install-{}-{}", self.repo.name, self.probe_n));
+        let wt = self.env.run.join("worktree").join(format!(
+            ".batcher-install-{}-{}",
+            self.repo.name, self.probe_n
+        ));
         let built = io::worktree_reset(self.repo, &wt, &self.base_sha).and_then(|_| {
             for m in self.members.iter().filter(|m| !removal.contains(&m.id)) {
                 if io::merge_member(self.env, &wt, &m.id, &m.tip) == MergeResult::Conflict {
-                    return Err(format!("{} does not merge without {}", m.id, removal.join(",")));
+                    return Err(format!(
+                        "{} does not merge without {}",
+                        m.id,
+                        removal.join(",")
+                    ));
                 }
             }
             Ok(())
@@ -485,11 +668,19 @@ impl<'a> VmRunner<'a> {
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .status();
-                status.ok().and_then(|st| st.code()).map_or(JobResult::Fault, install_probe_result)
+                status
+                    .ok()
+                    .and_then(|st| st.code())
+                    .map_or(JobResult::Fault, install_probe_result)
             }
         };
         // batch-job: git history or network operation, as long as the repository is large
-        let _ = Command::new("git").arg("-C").arg(&self.repo.path).args(["worktree", "remove", "-f"]).arg(&wt).status();
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&self.repo.path)
+            .args(["worktree", "remove", "-f"])
+            .arg(&wt)
+            .status();
         result
     }
 
@@ -540,11 +731,15 @@ impl RoundRunner for VmRunner<'_> {
                     clear_results(&self.results, suites);
                 }
                 self.corpus_runs += 1;
-                let err = fs::File::create(&self.stderr_path).map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
+                let err = fs::File::create(&self.stderr_path)
+                    .map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
                 // batch-job: this runs whatever its caller names, as long as that takes
                 // FORK-EDGE: needs a Units scope start (a CPU-quota scope whose process stays this one's child, stderr to a file); round-vm inside it is the machine leg
                 let mut cmd = Command::new("systemd-run");
-                cmd.args(scope_args(std::env::var("ROUND_CPU_QUOTA").ok().as_deref(), self.scope_unit().as_deref()));
+                cmd.args(scope_args(
+                    std::env::var("ROUND_CPU_QUOTA").ok().as_deref(),
+                    self.scope_unit().as_deref(),
+                ));
                 cmd.arg("timeout");
                 cmd.arg("-k").arg("10").arg(self.env.wall_secs.to_string());
                 cmd.arg(&self.env.round_vm).arg("run").arg(&self.wt);
@@ -553,10 +748,14 @@ impl RoundRunner for VmRunner<'_> {
                 cmd.arg("--results-dir").arg(&self.results);
                 cmd.arg("--attr-spool").arg(&self.spool);
                 cmd.arg("--base").arg(&self.repo.base);
-                cmd.env("SPIRA_HOME", &self.env.home).env("SPIRA_RUN", &self.env.run);
+                cmd.env("SPIRA_HOME", &self.env.home)
+                    .env("SPIRA_RUN", &self.env.run);
                 cmd.stdin(Stdio::null()).stderr(Stdio::from(err));
                 self.child = Some(cmd.spawn().map_err(|e| format!("round-vm: {e}"))?);
-                self.main = Main::Corpus { suites: suites.to_vec(), seen: BTreeSet::new() };
+                self.main = Main::Corpus {
+                    suites: suites.to_vec(),
+                    seen: BTreeSet::new(),
+                };
             }
             MainKind::Verify => {
                 self.verify_n += 1;
@@ -564,7 +763,10 @@ impl RoundRunner for VmRunner<'_> {
                 let branch = self.branch(&job);
                 io::set_branch(self.repo, &branch, &io::head_of(&self.wt)?);
                 self.request(&job, &branch, suites, "round")?;
-                self.main = Main::Verify { job, suites: suites.to_vec() };
+                self.main = Main::Verify {
+                    job,
+                    suites: suites.to_vec(),
+                };
             }
         }
         Ok(())
@@ -595,12 +797,22 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn stop_main(&mut self) -> Result<(), String> {
-        let Some(mut child) = self.child.take() else { return Ok(()) };
-        if child.try_wait().map_err(|e| format!("round-vm: {e}"))?.is_none() {
+        let Some(mut child) = self.child.take() else {
+            return Ok(());
+        };
+        if child
+            .try_wait()
+            .map_err(|e| format!("round-vm: {e}"))?
+            .is_none()
+        {
             // SAFETY: kill(2) on our own child's pid, which we have not reaped yet.
             let _ = unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
             let mut waited = 0;
-            while child.try_wait().map_err(|e| format!("round-vm: {e}"))?.is_none() {
+            while child
+                .try_wait()
+                .map_err(|e| format!("round-vm: {e}"))?
+                .is_none()
+            {
                 if waited >= STOP_SECS {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -616,7 +828,8 @@ impl RoundRunner for VmRunner<'_> {
         self.jobs.clear();
         let _ = fs::remove_dir_all(&self.spool);
         for d in ["req", "res"] {
-            fs::create_dir_all(self.spool.join(d)).map_err(|e| format!("{}: {e}", self.spool.join(d).display()))?;
+            fs::create_dir_all(self.spool.join(d))
+                .map_err(|e| format!("{}: {e}", self.spool.join(d).display()))?;
         }
         Ok(())
     }
@@ -630,7 +843,12 @@ impl RoundRunner for VmRunner<'_> {
         let mut p = MainPoll::default();
         let verify = match &mut self.main {
             Main::None => return Err("no main run started".into()),
-            Main::Finished(end) => return Ok(MainPoll { results: vec![], done: Some(*end) }),
+            Main::Finished(end) => {
+                return Ok(MainPoll {
+                    results: vec![],
+                    done: Some(*end),
+                })
+            }
             Main::Corpus { suites, seen } => {
                 for s in suites.iter() {
                     if !seen.contains(s) {
@@ -658,13 +876,19 @@ impl RoundRunner for VmRunner<'_> {
                 Main::Corpus { suites, seen } => (seen.len(), suites.len()),
                 _ => (0, 0),
             };
-            p.done = Some(corpus_end(rc, &self.stderr_text(), self.env.wall_secs, reported, total).inspect_err(|_| self.harness_fault = true)?);
+            p.done = Some(
+                corpus_end(rc, &self.stderr_text(), self.env.wall_secs, reported, total)
+                    .inspect_err(|_| self.harness_fault = true)?,
+            );
             self.main = Main::Finished(p.done.unwrap());
             return Ok(p);
         };
         let Some(rc) = read_rc(&res_root.join(format!("{job}.done"))) else {
             if exited.is_some() {
-                return Err(format!("round-vm exited before the survivors' verification ran{}", stderr_tail(&self.stderr_text())));
+                return Err(format!(
+                    "round-vm exited before the survivors' verification ran{}",
+                    stderr_tail(&self.stderr_text())
+                ));
             }
             return Ok(p);
         };
@@ -673,12 +897,18 @@ impl RoundRunner for VmRunner<'_> {
             0 | 1 => {
                 self.install_verify_bins(&res)?;
                 for s in &suites {
-                    p.results.push((s.clone(), io::result_status(&res, s).unwrap_or(false)));
+                    p.results
+                        .push((s.clone(), io::result_status(&res, s).unwrap_or(false)));
                 }
                 p.done = Some(MainEnd::Ran);
             }
             4 => p.done = Some(MainEnd::WorkspaceBuild),
-            c => return Err(format!("the survivors' verification faulted (rc {c}){}", stderr_tail(&self.stderr_text()))),
+            c => {
+                return Err(format!(
+                    "the survivors' verification faulted (rc {c}){}",
+                    stderr_tail(&self.stderr_text())
+                ))
+            }
         }
         self.main = Main::Finished(p.done.unwrap());
         Ok(p)
@@ -686,7 +916,11 @@ impl RoundRunner for VmRunner<'_> {
 
     fn launch(&mut self, job: &Job) -> Result<(), String> {
         let branch = self.tree_for(job)?;
-        let build = if job.removal.is_empty() { "artifacts" } else { build_for(&job.removal, &self.changed) };
+        let build = if job.removal.is_empty() {
+            "artifacts"
+        } else {
+            build_for(&job.removal, &self.changed)
+        };
         let name = self.job_name(job);
         self.request(&name, &branch, std::slice::from_ref(&job.suite), build)?;
         self.jobs.insert(job.id, (name, job.suite.clone()));
@@ -732,11 +966,21 @@ mod tests {
     #[test]
     fn a_rerun_reuses_the_round_binaries_only_when_the_removed_members_changed_no_source() {
         let mut changed = BTreeMap::new();
-        changed.insert("a".to_string(), vec!["spira/lib.sh".to_string(), "doc/x.md".to_string()]);
+        changed.insert(
+            "a".to_string(),
+            vec!["spira/lib.sh".to_string(), "doc/x.md".to_string()],
+        );
         changed.insert("b".to_string(), vec!["queue/src/lib.rs".to_string()]);
         assert_eq!(build_for(&["a".to_string()], &changed), "artifacts");
-        assert_eq!(build_for(&["a".to_string(), "b".to_string()], &changed), "dwarf");
-        assert_eq!(build_for(&["unknown".to_string()], &changed), "dwarf", "unknown paths are never neutral");
+        assert_eq!(
+            build_for(&["a".to_string(), "b".to_string()], &changed),
+            "dwarf"
+        );
+        assert_eq!(
+            build_for(&["unknown".to_string()], &changed),
+            "dwarf",
+            "unknown paths are never neutral"
+        );
     }
 
     #[test]
@@ -771,10 +1015,31 @@ mod tests {
     #[test]
     fn filter_red_reads_the_lint_result_and_names_each_blamed_member_once() {
         let d = testkit::TempDir::new("vm-filter-red");
-        let ms: Vec<Member> = ["sp-a", "sp-b"].iter().map(|id| Member { id: id.to_string(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() }).collect();
-        assert_eq!(filter_red_in(d.path(), &ms, &BTreeMap::new()), None, "no filter result, no filter red");
+        let ms: Vec<Member> = ["sp-a", "sp-b"]
+            .iter()
+            .map(|id| Member {
+                id: id.to_string(),
+                tip: String::new(),
+                title: String::new(),
+                priority: None,
+                express: false,
+                base_fix: false,
+                certified_at: 0,
+                stack: BTreeMap::new(),
+                blocked_by: Vec::new(),
+            })
+            .collect();
+        assert_eq!(
+            filter_red_in(d.path(), &ms, &BTreeMap::new()),
+            None,
+            "no filter result, no filter red"
+        );
         fs::write(d.path().join("fence-x.result"), "ok 1 1\n").unwrap();
-        assert_eq!(filter_red_in(d.path(), &ms, &BTreeMap::new()), None, "a green fence is not a red");
+        assert_eq!(
+            filter_red_in(d.path(), &ms, &BTreeMap::new()),
+            None,
+            "a green fence is not a red"
+        );
         fs::write(d.path().join("spira-lint.result"), "red 1 2 - - - 1\n").unwrap();
         fs::write(d.path().join("spira-lint.out"), "member=commit abc spira: land sp-b — t r: f.rs:1: x\nmember=sp-b r: g.rs:2: y\nmember=the base itself (z) r: h.rs:3: z\n").unwrap();
         let red = filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap();
@@ -782,60 +1047,201 @@ mod tests {
         assert_eq!(red.named.len(), 1);
         assert_eq!(red.named[0].0, "sp-b");
         assert!(red.named[0].1.contains("f.rs:1"));
-        fs::write(d.path().join("spira-lint.out"), "member=the base itself (z) r: h.rs:3: z\n").unwrap();
-        assert!(filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap().named.is_empty());
+        fs::write(
+            d.path().join("spira-lint.out"),
+            "member=the base itself (z) r: h.rs:3: z\n",
+        )
+        .unwrap();
+        assert!(filter_red_in(d.path(), &ms, &BTreeMap::new())
+            .unwrap()
+            .named
+            .is_empty());
         fs::write(d.path().join("fence-x.result"), "red 1 1 - - - 1\n").unwrap();
         fs::remove_file(d.path().join("spira-lint.result")).unwrap();
-        assert_eq!(filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap().name, "fence-x", "a red fence is a filter red, naming nobody");
+        assert_eq!(
+            filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap().name,
+            "fence-x",
+            "a red fence is a filter red, naming nobody"
+        );
     }
 
     #[test]
     fn a_red_unit_phase_is_a_filter_red_naming_the_member_whose_paths_its_panic_names() {
         let d = testkit::TempDir::new("vm-unit-red");
-        let mk = |id: &str| Member { id: id.to_string(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() };
+        let mk = |id: &str| Member {
+            id: id.to_string(),
+            tip: String::new(),
+            title: String::new(),
+            priority: None,
+            express: false,
+            base_fix: false,
+            certified_at: 0,
+            stack: BTreeMap::new(),
+            blocked_by: Vec::new(),
+        };
         let ms = vec![mk("sp-a"), mk("sp-b")];
         let mut changed = BTreeMap::new();
         changed.insert("sp-a".to_string(), vec!["docs/x.md".to_string()]);
-        changed.insert("sp-b".to_string(), vec!["queue/src/ops/round.rs".to_string()]);
-        assert_eq!(filter_red_in(d.path(), &ms, &changed), None, "no phase record, no filter red");
-        fs::write(d.path().join("unit.json"), "{\"stage\":\"unit-tests\",\"verdict\":\"red\",\"failed\":[\"ops::t\"]}\n").unwrap();
-        fs::write(d.path().join("unit-tests.out"), "---- ops::t stdout ----\nthread 'ops::t' panicked at queue/src/ops/round.rs:3124:9:\n").unwrap();
+        changed.insert(
+            "sp-b".to_string(),
+            vec!["queue/src/ops/round.rs".to_string()],
+        );
+        assert_eq!(
+            filter_red_in(d.path(), &ms, &changed),
+            None,
+            "no phase record, no filter red"
+        );
+        fs::write(
+            d.path().join("unit.json"),
+            "{\"stage\":\"unit-tests\",\"verdict\":\"red\",\"failed\":[\"ops::t\"]}\n",
+        )
+        .unwrap();
+        fs::write(
+            d.path().join("unit-tests.out"),
+            "---- ops::t stdout ----\nthread 'ops::t' panicked at queue/src/ops/round.rs:3124:9:\n",
+        )
+        .unwrap();
         let red = filter_red_in(d.path(), &ms, &changed).expect("a red unit phase ends the pass");
         assert_eq!(red.name, "unit-tests");
-        assert_eq!(red.named.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["sp-b"]);
-        fs::write(d.path().join("unit-tests.out"), "error: could not compile\n").unwrap();
-        assert!(filter_red_in(d.path(), &ms, &changed).unwrap().named.is_empty(), "a red naming no member is filed, not guessed");
-        fs::write(d.path().join("unit-tests.out"), "panicked at queue/src/ops/round.rs:1:1\n").unwrap();
-        changed.insert("sp-a".to_string(), vec!["queue/src/ops/round.rs".to_string(), "docs/x.md".to_string()]);
-        assert!(filter_red_in(d.path(), &ms, &changed).unwrap().named.is_empty(), "two members touching the named file is ambiguous");
+        assert_eq!(
+            red.named
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            ["sp-b"]
+        );
+        fs::write(
+            d.path().join("unit-tests.out"),
+            "error: could not compile\n",
+        )
+        .unwrap();
+        assert!(
+            filter_red_in(d.path(), &ms, &changed)
+                .unwrap()
+                .named
+                .is_empty(),
+            "a red naming no member is filed, not guessed"
+        );
+        fs::write(
+            d.path().join("unit-tests.out"),
+            "panicked at queue/src/ops/round.rs:1:1\n",
+        )
+        .unwrap();
+        changed.insert(
+            "sp-a".to_string(),
+            vec![
+                "queue/src/ops/round.rs".to_string(),
+                "docs/x.md".to_string(),
+            ],
+        );
+        assert!(
+            filter_red_in(d.path(), &ms, &changed)
+                .unwrap()
+                .named
+                .is_empty(),
+            "two members touching the named file is ambiguous"
+        );
         fs::write(d.path().join("unit.json"), "{\"verdict\":\"green\"}").unwrap();
-        assert_eq!(filter_red_in(d.path(), &ms, &changed), None, "only a red record is a red");
-        fs::write(d.path().join("integration.json"), "{\"stage\":\"integration-tests\",\"verdict\":\"red\"}").unwrap();
-        fs::write(d.path().join("integration-tests.out"), "panicked at docs/x.md:1:1\n").unwrap();
+        assert_eq!(
+            filter_red_in(d.path(), &ms, &changed),
+            None,
+            "only a red record is a red"
+        );
+        fs::write(
+            d.path().join("integration.json"),
+            "{\"stage\":\"integration-tests\",\"verdict\":\"red\"}",
+        )
+        .unwrap();
+        fs::write(
+            d.path().join("integration-tests.out"),
+            "panicked at docs/x.md:1:1\n",
+        )
+        .unwrap();
         let red = filter_red_in(d.path(), &ms, &changed).unwrap();
-        assert_eq!((red.name.as_str(), red.named.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>()), ("integration-tests", vec!["sp-a"]));
+        assert_eq!(
+            (
+                red.name.as_str(),
+                red.named
+                    .iter()
+                    .map(|(i, _)| i.as_str())
+                    .collect::<Vec<_>>()
+            ),
+            ("integration-tests", vec!["sp-a"])
+        );
     }
 
     #[test]
     fn a_red_integration_phase_naming_a_test_file_names_the_one_member_that_touches_its_crate() {
         let d = testkit::TempDir::new("vm-integration-red");
-        let mk = |id: &str| Member { id: id.to_string(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() };
+        let mk = |id: &str| Member {
+            id: id.to_string(),
+            tip: String::new(),
+            title: String::new(),
+            priority: None,
+            express: false,
+            base_fix: false,
+            certified_at: 0,
+            stack: BTreeMap::new(),
+            blocked_by: Vec::new(),
+        };
         let ms = vec![mk("sp-a"), mk("sp-b")];
-        let changed = BTreeMap::from([("sp-a".to_string(), vec!["round-vm/src/run.rs".to_string()]), ("sp-b".to_string(), vec!["docs/x.md".to_string()])]);
-        fs::write(d.path().join("integration.json"), "{\"stage\":\"integration-tests\",\"verdict\":\"red\"}").unwrap();
+        let changed = BTreeMap::from([
+            ("sp-a".to_string(), vec!["round-vm/src/run.rs".to_string()]),
+            ("sp-b".to_string(), vec!["docs/x.md".to_string()]),
+        ]);
+        fs::write(
+            d.path().join("integration.json"),
+            "{\"stage\":\"integration-tests\",\"verdict\":\"red\"}",
+        )
+        .unwrap();
         fs::write(d.path().join("integration-tests.out"), "thread 'main' panicked at round-vm/tests/unit_cov_real.rs:39:5:\nerror: the package 'tiny' does not contain this feature: integration\n").unwrap();
         let red = filter_red_in(d.path(), &ms, &changed).unwrap();
-        assert_eq!((red.name.as_str(), red.named.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>()), ("integration-tests", vec!["sp-a"]));
+        assert_eq!(
+            (
+                red.name.as_str(),
+                red.named
+                    .iter()
+                    .map(|(i, _)| i.as_str())
+                    .collect::<Vec<_>>()
+            ),
+            ("integration-tests", vec!["sp-a"])
+        );
     }
 
     #[test]
     fn a_lint_line_blames_the_member_whose_land_commit_it_names_and_nobody_else() {
-        let ms: Vec<Member> = ["sp-8mbnup", "sp-other"].iter().map(|id| Member { id: id.to_string(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() }).collect();
+        let ms: Vec<Member> = ["sp-8mbnup", "sp-other"]
+            .iter()
+            .map(|id| Member {
+                id: id.to_string(),
+                tip: String::new(),
+                title: String::new(),
+                priority: None,
+                express: false,
+                base_fix: false,
+                certified_at: 0,
+                stack: BTreeMap::new(),
+                blocked_by: Vec::new(),
+            })
+            .collect();
         let l = "member=commit 26d967089685 spira: land sp-8mbnup — Wire it ffx-vocabulary: dwarf/src/lib.rs:26: the term \"banned\"";
         assert_eq!(blamed_member(l, &ms), Some("sp-8mbnup".to_string()));
-        assert_eq!(blamed_member("member=sp-other ffx: a.rs:1: x", &ms), Some("sp-other".to_string()));
-        assert_eq!(blamed_member("member=commit 1 spira: land sp-gone — t r: f:1: x", &ms), None, "an id outside the round");
-        assert_eq!(blamed_member("member=the base itself (no member's diff touches a.rs or its rule r) r: a.rs:1: x", &ms), None);
+        assert_eq!(
+            blamed_member("member=sp-other ffx: a.rs:1: x", &ms),
+            Some("sp-other".to_string())
+        );
+        assert_eq!(
+            blamed_member("member=commit 1 spira: land sp-gone — t r: f:1: x", &ms),
+            None,
+            "an id outside the round"
+        );
+        assert_eq!(
+            blamed_member(
+                "member=the base itself (no member's diff touches a.rs or its rule r) r: a.rs:1: x",
+                &ms
+            ),
+            None
+        );
         assert_eq!(blamed_member("lint noise without the prefix", &ms), None);
     }
 
@@ -851,15 +1257,28 @@ mod tests {
         for rc in [2, 3, 101, 124, 137, -1] {
             let e = corpus_end(rc, err, 600, 3, 5).unwrap_err();
             assert!(e.contains("harness fault"), "rc {rc}: {e}");
-            assert!(e.contains("could not determine which binary"), "rc {rc} lost round-vm's stderr: {e}");
+            assert!(
+                e.contains("could not determine which binary"),
+                "rc {rc} lost round-vm's stderr: {e}"
+            );
         }
-        assert!(corpus_end(101, err, 600, 3, 5).unwrap_err().contains("exit 101"));
-        assert!(corpus_end(124, "", 600, 3, 5).unwrap_err().contains("over-cap: exceeded the 600s wall bound"));
+        assert!(corpus_end(101, err, 600, 3, 5)
+            .unwrap_err()
+            .contains("exit 101"));
+        assert!(corpus_end(124, "", 600, 3, 5)
+            .unwrap_err()
+            .contains("over-cap: exceeded the 600s wall bound"));
         let named = corpus_end(124, "round-vm run: OVER-CAP: FAULT over-cap guard=testenv-suite-cap cap=600s unreached=4 — testenv's suite cap fired; no member is implicated\n", 600, 3, 5).unwrap_err();
-        assert!(named.contains("FAULT over-cap guard=testenv-suite-cap cap=600s unreached=4"), "{named}");
+        assert!(
+            named.contains("FAULT over-cap guard=testenv-suite-cap cap=600s unreached=4"),
+            "{named}"
+        );
         assert!(named.contains("not a functional red"), "{named}");
         let mismatch = corpus_end(2, "batch: unknown suite: test-x.sh\n", 600, 0, 5).unwrap_err();
-        assert!(mismatch.contains("suite list mismatch, not a harness fault"), "{mismatch}");
+        assert!(
+            mismatch.contains("suite list mismatch, not a harness fault"),
+            "{mismatch}"
+        );
     }
 
     #[test]
@@ -870,15 +1289,32 @@ mod tests {
     }
 
     #[test]
-    fn a_pass_that_lost_its_vm_before_any_suite_reported_is_an_infrastructure_fault_not_a_cap_breach() {
+    fn a_pass_that_lost_its_vm_before_any_suite_reported_is_an_infrastructure_fault_not_a_cap_breach(
+    ) {
         let err = "round-vm run: 103 192.168.13.252 warm\nssh: connect failed, exit 255\n";
         let e = corpus_end(124, err, 900, 0, 444).unwrap_err();
-        assert!(e.contains("infrastructure fault") && e.contains("192.168.13.252") && e.contains("ssh exit 255"), "{e}");
-        assert!(e.contains("0 of 444") && e.contains("no member is implicated") && !e.contains("over-cap"), "{e}");
+        assert!(
+            e.contains("infrastructure fault")
+                && e.contains("192.168.13.252")
+                && e.contains("ssh exit 255"),
+            "{e}"
+        );
+        assert!(
+            e.contains("0 of 444")
+                && e.contains("no member is implicated")
+                && !e.contains("over-cap"),
+            "{e}"
+        );
         let bare = corpus_end(137, "", 900, 0, 444).unwrap_err();
-        assert!(bare.contains("infrastructure fault") && !bare.contains("over-cap"), "{bare}");
+        assert!(
+            bare.contains("infrastructure fault") && !bare.contains("over-cap"),
+            "{bare}"
+        );
         let slow = corpus_end(124, err, 900, 7, 444).unwrap_err();
-        assert!(slow.contains("over-cap"), "a pass that reported results is a genuine cap breach: {slow}");
+        assert!(
+            slow.contains("over-cap"),
+            "a pass that reported results is a genuine cap breach: {slow}"
+        );
     }
 
     #[test]
@@ -917,7 +1353,12 @@ mod tests {
 pub fn scope_args(quota: Option<&str>, unit: Option<&str>) -> Vec<String> {
     let q = quota.filter(|q| !q.is_empty()).unwrap_or("1600%");
     let named = unit.map(|u| format!("--unit={u}"));
-    ["--user", "--scope", "--quiet"].iter().map(|s| s.to_string()).chain(named).chain(["-p".to_string(), format!("CPUQuota={q}")]).collect()
+    ["--user", "--scope", "--quiet"]
+        .iter()
+        .map(|s| s.to_string())
+        .chain(named)
+        .chain(["-p".to_string(), format!("CPUQuota={q}")])
+        .collect()
 }
 
 #[cfg(test)]
@@ -935,15 +1376,19 @@ mod scope_tests {
         let unit = runtime::units::round_scope_unit("spira", "spira-20261108T183608Z", "9-1");
         let args = scope_args(None, Some(&unit));
         assert!(args.contains(&format!("--unit={unit}")));
-        assert!(runtime::units::glob_match(&runtime::units::round_scope_glob("spira", "spira-20261108T183608Z"), &format!("{unit}.scope")));
-        assert!(!scope_args(None, None).iter().any(|a| a.starts_with("--unit")));
+        assert!(runtime::units::glob_match(
+            &runtime::units::round_scope_glob("spira", "spira-20261108T183608Z"),
+            &format!("{unit}.scope")
+        ));
+        assert!(!scope_args(None, None)
+            .iter()
+            .any(|a| a.starts_with("--unit")));
     }
 }
 
 #[cfg(test)]
 mod vtime_tests {
     use super::*;
-
 
     #[test]
     fn epoch_honours_spira_now() {
@@ -968,7 +1413,11 @@ mod clear_results_tests {
         }
         fs::write(sub.join("a.sh.result"), "red\n").unwrap();
         clear_results(&d, &["a.sh".to_string()]);
-        assert!(!d.join("a.sh.result").exists() && !d.join("a.sh.out").exists() && !sub.join("a.sh.result").exists());
+        assert!(
+            !d.join("a.sh.result").exists()
+                && !d.join("a.sh.out").exists()
+                && !sub.join("a.sh.result").exists()
+        );
         assert!(d.join("b.sh.result").exists());
     }
 }

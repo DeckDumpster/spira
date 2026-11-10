@@ -3676,6 +3676,53 @@ fn staging_runs_its_fences_with_the_queue_lock_free() {
 }
 
 #[test]
+fn a_stage_refuses_to_start_while_another_stage_is_running_its_fences() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let held = crate::lock::try_stage_lock(&t.s().queue_dir, "spira");
+    assert!(matches!(held, crate::lock::Acquire::Held(_)));
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-b:tb"]), 6);
+    assert!(t.err().contains("another stage"), "{}", t.err());
+    assert!(!t
+        .scripts
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("gate ")));
+}
+
+#[test]
+fn a_stage_whose_slot_was_taken_during_its_fences_is_not_staged_and_cleans_up() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let planted = t.qfile("round-staged");
+    *t.scripts.during_gate.borrow_mut() = Some(Box::new(move || {
+        std::fs::write(&planted, "batch_id=other\n").unwrap();
+    }));
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-b:tb"]), 1);
+    assert!(t.err().contains("while the fences ran"), "{}", t.err());
+    assert!(!t.lc.has("stage "), "nothing is staged on spira-lc");
+    assert!(
+        t.git
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("branch -D sanctioned") && c.contains("round-staged/")),
+        "the staged branch is deleted"
+    );
+}
+
+#[test]
 fn a_no_verdict_fence_is_infra_and_leaves_the_stage_retryable() {
     let t = round_world();
     assert_eq!(
@@ -8115,11 +8162,26 @@ fn open_admits_a_text_only_member_that_has_fallen_behind_the_landing_ref() {
 #[test]
 fn ejecting_every_member_on_an_integration_test_red_returns_each_red_and_logs_each() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     for id in ["sp-a", "sp-b"] {
         assert_eq!(
-            t.run(&["round", "eject", &batch, id, "--reason", "integration red", "--no-rebuild", "--suites", "integration-tests"]),
+            t.run(&[
+                "round",
+                "eject",
+                &batch,
+                id,
+                "--reason",
+                "integration red",
+                "--no-rebuild",
+                "--suites",
+                "integration-tests"
+            ]),
             0,
             "{id}: {}",
             t.err()
@@ -8127,18 +8189,38 @@ fn ejecting_every_member_on_an_integration_test_red_returns_each_red_and_logs_ea
     }
     let log = t.landing_log();
     for id in ["sp-a", "sp-b"] {
-        assert!(log.contains(&format!("batch={batch} id={id} cause=eject-red")), "{id}: {log}");
         assert!(
-            t.lc.calls.borrow().iter().any(|c| c.contains(&format!("event bead {id} IN_DELIVERY")) && c.contains("batch-ejected-red")),
+            log.contains(&format!("batch={batch} id={id} cause=eject-red")),
+            "{id}: {log}"
+        );
+        assert!(
+            t.lc.calls
+                .borrow()
+                .iter()
+                .any(|c| c.contains(&format!("event bead {id} IN_DELIVERY"))
+                    && c.contains("batch-ejected-red")),
             "{id}: {:?}",
             t.lc.calls.borrow()
         );
-        assert!(t.lib.has(&format!("bead_reopen {id} eject-red unit-tests")), "{id}");
+        assert!(
+            t.lib.has(&format!("bead_reopen {id} eject-red unit-tests")),
+            "{id}"
+        );
     }
     assert!(t.lc.has(&format!("abandon-batch {batch} OPEN")));
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 1, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        1,
+        "{}",
+        t.err()
+    );
     for (id, tip) in [("sp-a", "ta"), ("sp-b", "tb")] {
-        assert!(t.err().contains(&format!("{id}: {tip} is a recorded ejected-red tip")), "{}", t.err());
+        assert!(
+            t.err()
+                .contains(&format!("{id}: {tip} is a recorded ejected-red tip")),
+            "{}",
+            t.err()
+        );
     }
 }
 

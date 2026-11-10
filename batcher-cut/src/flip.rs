@@ -14,7 +14,11 @@ pub fn without_allowlist_row(text: &str, suite: &str) -> Option<String> {
     if !text.lines().any(row) {
         return None;
     }
-    let mut out: String = text.lines().filter(|l| !row(l)).collect::<Vec<_>>().join("\n");
+    let mut out: String = text
+        .lines()
+        .filter(|l| !row(l))
+        .collect::<Vec<_>>()
+        .join("\n");
     out.push('\n');
     Some(out)
 }
@@ -23,9 +27,18 @@ pub fn without_allowlist_row(text: &str, suite: &str) -> Option<String> {
 /// not declared here or is already marked.
 pub fn mark_uncovered(text: &str, uc: &str, bead: &str, suite: &str, date: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
-    let at = lines.iter().position(|l| l.trim() == format!("id = \"{uc}\""))?;
-    let end = lines[at..].iter().position(|l| l.trim().is_empty() || l.starts_with('[')).map_or(lines.len(), |i| at + i);
-    if lines[end..].iter().find(|l| !l.trim().is_empty()).is_some_and(|l| l.starts_with("[use_case.uncovered]")) {
+    let at = lines
+        .iter()
+        .position(|l| l.trim() == format!("id = \"{uc}\""))?;
+    let end = lines[at..]
+        .iter()
+        .position(|l| l.trim().is_empty() || l.starts_with('['))
+        .map_or(lines.len(), |i| at + i);
+    if lines[end..]
+        .iter()
+        .find(|l| !l.trim().is_empty())
+        .is_some_and(|l| l.starts_with("[use_case.uncovered]"))
+    {
         return None;
     }
     let reason = format!("{suite} flipped (red once, green on every alone re-run) and the batcher deleted it from the round");
@@ -46,7 +59,11 @@ pub fn mark_uncovered(text: &str, uc: &str, bead: &str, suite: &str, date: &str)
 
 /// The `UC-` ids a suite's `# covers:` line names.
 pub fn use_cases_of(suite_text: &str) -> Vec<String> {
-    suite_select::header::covers_of(suite_text).unwrap_or_default().into_iter().filter(|t| t.starts_with("UC-")).collect()
+    suite_select::header::covers_of(suite_text)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|t| t.starts_with("UC-"))
+        .collect()
 }
 
 /// Delete each `(suite, bead)` from the tree at `wt`. Returns the paths changed or removed,
@@ -81,13 +98,25 @@ pub fn apply(wt: &Path, flips: &[(String, String)], date: &str) -> Result<Vec<St
         })
         .unwrap_or_default();
     let dir = wt.join(CATALOGUES);
-    let tomls: Vec<_> = fs::read_dir(&dir).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "toml")).collect()).unwrap_or_default();
+    let tomls: Vec<_> = fs::read_dir(&dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+                .collect()
+        })
+        .unwrap_or_default();
     for (uc, bead, suite) in ucs.iter().filter(|(uc, _, _)| !still_covered.contains(uc)) {
         for p in &tomls {
-            let Ok(t) = fs::read_to_string(p) else { continue };
+            let Ok(t) = fs::read_to_string(p) else {
+                continue;
+            };
             if let Some(n) = mark_uncovered(&t, uc, bead, suite, date) {
                 fs::write(p, n).map_err(|e| format!("{}: {e}", p.display()))?;
-                touched.push(format!("{CATALOGUES}/{}", p.file_name().unwrap_or_default().to_string_lossy()));
+                touched.push(format!(
+                    "{CATALOGUES}/{}",
+                    p.file_name().unwrap_or_default().to_string_lossy()
+                ));
             }
         }
     }
@@ -106,10 +135,19 @@ mod tests {
     fn marks_only_the_named_use_case_and_cites_the_bead() {
         let n = mark_uncovered(CAT, "UC-x-01", "sp-b1", "test-a.sh", "2026-10-02").unwrap();
         let (first, second) = n.split_once("id = \"UC-x-02\"").unwrap();
-        assert!(first.contains("[use_case.uncovered]") && first.contains("bead = \"sp-b1\""), "{n}");
+        assert!(
+            first.contains("[use_case.uncovered]") && first.contains("bead = \"sp-b1\""),
+            "{n}"
+        );
         assert!(!second.contains("uncovered"), "{n}");
-        assert!(mark_uncovered(&n, "UC-x-01", "sp-b2", "t", "d").is_none(), "already marked");
-        assert!(mark_uncovered(CAT, "UC-x-09", "sp-b1", "t", "d").is_none(), "not declared here");
+        assert!(
+            mark_uncovered(&n, "UC-x-01", "sp-b2", "t", "d").is_none(),
+            "already marked"
+        );
+        assert!(
+            mark_uncovered(CAT, "UC-x-09", "sp-b1", "t", "d").is_none(),
+            "not declared here"
+        );
     }
 
     #[test]
@@ -121,7 +159,10 @@ mod tests {
     #[test]
     fn drops_exactly_the_suites_allowlist_row() {
         let t = "# c\ntest-a.sh\tT1\t3.0\ntest-ab.sh\tT1\t2.0\n";
-        assert_eq!(without_allowlist_row(t, "test-a.sh").unwrap(), "# c\ntest-ab.sh\tT1\t2.0\n");
+        assert_eq!(
+            without_allowlist_row(t, "test-a.sh").unwrap(),
+            "# c\ntest-ab.sh\tT1\t2.0\n"
+        );
         assert!(without_allowlist_row(t, "test-z.sh").is_none());
     }
 
@@ -130,17 +171,35 @@ mod tests {
         let d = testkit::TempDir::new("flip-apply");
         fs::create_dir_all(d.join("spira")).unwrap();
         fs::create_dir_all(d.join(CATALOGUES)).unwrap();
-        fs::write(d.join("spira/test-flip.sh"), "#!/bin/bash\n# covers: spira/x.sh UC-x-01 UC-x-02\nset -uo pipefail\n").unwrap();
-        fs::write(d.join("spira/test-keep.sh"), "#!/bin/bash\n# covers: UC-x-02\nset -uo pipefail\n").unwrap();
-        fs::write(d.join(ALLOWLIST), "test-flip.sh\tT1\t3.0\ntest-keep.sh\tT1\t1.0\n").unwrap();
+        fs::write(
+            d.join("spira/test-flip.sh"),
+            "#!/bin/bash\n# covers: spira/x.sh UC-x-01 UC-x-02\nset -uo pipefail\n",
+        )
+        .unwrap();
+        fs::write(
+            d.join("spira/test-keep.sh"),
+            "#!/bin/bash\n# covers: UC-x-02\nset -uo pipefail\n",
+        )
+        .unwrap();
+        fs::write(
+            d.join(ALLOWLIST),
+            "test-flip.sh\tT1\t3.0\ntest-keep.sh\tT1\t1.0\n",
+        )
+        .unwrap();
         fs::write(d.join(CATALOGUES).join("x.toml"), CAT).unwrap();
         let touched = apply(&d, &[("test-flip.sh".into(), "sp-b1".into())], "2026-10-02").unwrap();
         assert!(!d.join("spira/test-flip.sh").exists());
-        assert_eq!(fs::read_to_string(d.join(ALLOWLIST)).unwrap(), "test-keep.sh\tT1\t1.0\n");
+        assert_eq!(
+            fs::read_to_string(d.join(ALLOWLIST)).unwrap(),
+            "test-keep.sh\tT1\t1.0\n"
+        );
         let cat = fs::read_to_string(d.join(CATALOGUES).join("x.toml")).unwrap();
         let (one, two) = cat.split_once("id = \"UC-x-02\"").unwrap();
         assert!(one.contains("sp-b1") && !two.contains("uncovered"), "{cat}");
         assert_eq!(touched.len(), 3, "{touched:?}");
-        assert!(apply(&d, &[("test-flip.sh".into(), "sp-b1".into())], "d").is_err(), "a suite already gone is an error");
+        assert!(
+            apply(&d, &[("test-flip.sh".into(), "sp-b1".into())], "d").is_err(),
+            "a suite already gone is an error"
+        );
     }
 }

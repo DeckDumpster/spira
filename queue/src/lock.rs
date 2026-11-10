@@ -236,6 +236,12 @@ pub fn try_step_lock(queue_dir: &Path, repo: &str) -> Acquire {
     try_lock_file(queue_dir, repo, "step.lock", None)
 }
 
+/// Held by a `round stage` for its whole run, so a second stage is refused while the first one's
+/// gate runs without the queue lock.
+pub fn try_stage_lock(queue_dir: &Path, repo: &str) -> Acquire {
+    try_lock_file(queue_dir, repo, "stage.lock", None)
+}
+
 fn try_lock_file(queue_dir: &Path, repo: &str, file: &str, verb: Option<&str>) -> Acquire {
     let dir = queue_dir.join(repo);
     let _ = fs::create_dir_all(&dir);

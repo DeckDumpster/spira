@@ -137,6 +137,21 @@ pub fn stage(
         // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
         Err(rc) => return rc,
     };
+    let _stage_lock = match crate::lock::try_stage_lock(&c.s.queue_dir, &repo_name) {
+        crate::lock::Acquire::Held(g) => g,
+        crate::lock::Acquire::Busy => {
+            w.err(format!(
+                "queue.sh {label}: another stage for {repo_name} is running its fences — retry"
+            ));
+            return super::LOCK_BUSY;
+        }
+        crate::lock::Acquire::Unopenable => {
+            w.err(format!(
+                "queue.sh {label}: cannot open the stage lock for {repo_name}"
+            ));
+            return FAIL;
+        }
+    };
     let open = match live_records(w, &c) {
         Ok(open) => open,
         Err(e) => {
@@ -240,8 +255,13 @@ pub fn stage(
         }
     };
     let moved = match live_records(w, &c) {
-        Ok(open) => open.first().and_then(|r| r.get("batch_id").map(str::to_string)).as_deref() != Some(parent.as_str())
-            || staged_record(&c).is_some(),
+        Ok(open) => {
+            open.first()
+                .and_then(|r| r.get("batch_id").map(str::to_string))
+                .as_deref()
+                != Some(parent.as_str())
+                || staged_record(&c).is_some()
+        }
         Err(_) => true,
     };
     if moved {
