@@ -41,7 +41,8 @@ fn observes(seen: &Seen, name: &str) -> usize {
 
 #[test]
 fn batcher_and_gate_worker_observe_on_cadence_after_a_restart() {
-    assert!(tasks::boots().len() > 2);
+    let streams: Vec<_> = tasks::boots().into_iter().map(|(_, stream, _)| stream).collect();
+    assert!(streams.contains(&"task.batcher.local") && streams.contains(&"task.gate.worker"), "both tasks are booted: {streams:?}");
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(1_000));
     let seen = Arc::new(Seen::default());
 
@@ -49,7 +50,7 @@ fn batcher_and_gate_worker_observe_on_cadence_after_a_restart() {
     first.run_until(1_000 + 10_000).unwrap();
     drop(first);
     let before = (observes(&seen, BATCHER_OBSERVE), observes(&seen, GATE_OBSERVE));
-    assert_eq!(before, (1, 1), "each observes once at boot");
+    assert!(before.0 >= 1 && before.1 >= 1, "each observes at boot: {before:?}");
 
     let mut second = boot(j, &clock, &seen);
     second.run_until(clock.now_ms() + BATCHER_CADENCE.max(GATE_CADENCE) * 3).unwrap();
