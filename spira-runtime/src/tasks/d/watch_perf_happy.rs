@@ -189,8 +189,8 @@ const PRODUCTION_LOCATORS: [&str; 5] = ["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCK
 /// Where the run prints its world's `exec.log`, after the sim's own output.
 const EXEC_LOG_MARK: &str = "=== perf-happy exec.log";
 
-fn spec(name: &str, input: String, deadline_ms: u64) -> EffectSpec {
-    EffectSpec::by_input(name, input, deadline_ms)
+fn spec(name: &str, key: String, input: String, deadline_ms: u64) -> EffectSpec {
+    EffectSpec::keyed(name, format!("{NAME}:{key}"), input, deadline_ms)
 }
 
 /// The scratch directory the runs keep their worlds in.
@@ -229,9 +229,9 @@ fn result_of(ran: &UnitRan, out: &RanOutput) -> Result<String, String> {
 }
 
 /// The bare alarm line for `outcome`, to `perf-watch.log`, as the unit's stdout carried it.
-fn alarm(outcome: &Outcome, history: &[(u64, u64)]) -> Vec<EffectSpec> {
+fn alarm(outcome: &Outcome, history: &[(u64, u64)], now_ms: u64) -> Vec<EffectSpec> {
     let recent: Vec<u64> = history.iter().map(|(_, ms)| *ms).collect();
-    happy::alarm(outcome, GOAL_MS, &recent).map(|l| spec(LOG, l, WRITE_DEADLINE_MS)).into_iter().collect()
+    happy::alarm(outcome, GOAL_MS, &recent).map(|l| spec(LOG, now_ms.to_string(), l, WRITE_DEADLINE_MS)).into_iter().collect()
 }
 
 /// One move of the machine: the next carry and its effects, or a refusal naming the state.
@@ -249,10 +249,10 @@ pub fn decide(carry: &Carry, input: &Input, now_ms: u64, cfg: &Config) -> Result
                 None => {
                     let phase = mv("tick round=none")?;
                     let next = Carry { phase, attempt: 1, run_unit: None, ..carry.clone() };
-                    Ok((next, vec![spec(CHECKOUT, scratch(cfg), CHECKOUT_DEADLINE_MS)]))
+                    Ok((next, vec![spec(CHECKOUT, format!("checkout:{now_ms}"), scratch(cfg), CHECKOUT_DEADLINE_MS)]))
                 }
                 Some(Outcome::Skipped) => mv("tick round=open").map(|_| (carry.clone(), vec![])),
-                Some(o) => mv("tick round=unknown").map(|_| (carry.clone(), alarm(&o, &carry.history))),
+                Some(o) => mv("tick round=unknown").map(|_| (carry.clone(), alarm(&o, &carry.history, now_ms))),
             }
         }
         Input::CheckedOut(at) => {
@@ -262,25 +262,25 @@ pub fn decide(carry: &Carry, input: &Input, now_ms: u64, cfg: &Config) -> Result
             let handle = runtime::units::unit_name(NAME, &key).map_err(|e| e.0)?;
             let next = Carry { phase, run_unit: Some(handle), ..carry.clone() };
             // The checkout's answer is kept for a retry, which starts the same tree again.
-            Ok((next, vec![spec(UNIT_START, serde_json::to_string(&unit).unwrap_or_default(), RUN_LIMIT_S * 1000)]))
+            Ok((next, vec![spec(UNIT_START, format!("run:{now_ms}:{}", carry.attempt), serde_json::to_string(&unit).unwrap_or_default(), RUN_LIMIT_S * 1000)]))
         }
         Input::CheckoutFailed(why) => {
             let phase = mv("checkout failed")?;
-            Ok((Carry { phase, attempt: 0, run_unit: None, ..carry.clone() }, alarm(&Outcome::Failed(why.clone()), &carry.history)))
+            Ok((Carry { phase, attempt: 0, run_unit: None, ..carry.clone() }, alarm(&Outcome::Failed(why.clone()), &carry.history, now_ms)))
         }
         Input::Ran(ran, out) => {
             let attempt = carry.attempt.max(1);
             let step = happy::judge(result_of(ran, out), ran.duration_ms, attempt as usize);
-            let teardown = spec(TEARDOWN, scratch(cfg), TEARDOWN_DEADLINE_MS);
+            let teardown = spec(TEARDOWN, format!("down:{}", scratch(cfg)), scratch(cfg), TEARDOWN_DEADLINE_MS);
             match step {
                 Step::Retry => {
                     let phase = mv("unit.ran fixture-retry")?;
                     let next = Carry { phase, attempt: attempt + 1, run_unit: None, ..carry.clone() };
-                    Ok((next, vec![teardown, spec(CHECKOUT, scratch(cfg), CHECKOUT_DEADLINE_MS)]))
+                    Ok((next, vec![teardown, spec(CHECKOUT, format!("checkout:{now_ms}"), scratch(cfg), CHECKOUT_DEADLINE_MS)]))
                 }
                 Step::Done(o @ Outcome::FixtureDown(_)) => {
                     let phase = mv("unit.ran fixture-down")?;
-                    Ok((Carry { phase, attempt: 0, run_unit: None, ..carry.clone() }, [vec![teardown], alarm(&o, &carry.history)].concat()))
+                    Ok((Carry { phase, attempt: 0, run_unit: None, ..carry.clone() }, [vec![teardown], alarm(&o, &carry.history, now_ms)].concat()))
                 }
                 Step::Done(o @ Outcome::Measured { millis, .. }) => {
                     let phase = mv("unit.ran measured")?;
@@ -289,12 +289,12 @@ pub fn decide(carry: &Carry, input: &Input, now_ms: u64, cfg: &Config) -> Result
                     history.push((epoch, millis));
                     history = history.split_off(history.len().saturating_sub(5));
                     let line = happy::history_line(epoch, millis).trim_end().to_string();
-                    let acts = [vec![teardown, spec(HISTORY, line, WRITE_DEADLINE_MS)], alarm(&o, &history)].concat();
+                    let acts = [vec![teardown, spec(HISTORY, format!("hist:{epoch}"), line, WRITE_DEADLINE_MS)], alarm(&o, &history, now_ms)].concat();
                     Ok((Carry { phase, attempt: 0, history, run_unit: None }, acts))
                 }
                 Step::Done(o) => {
                     let phase = mv("unit.ran failed")?;
-                    Ok((Carry { phase, attempt: 0, run_unit: None, ..carry.clone() }, [vec![teardown], alarm(&o, &carry.history)].concat()))
+                    Ok((Carry { phase, attempt: 0, run_unit: None, ..carry.clone() }, [vec![teardown], alarm(&o, &carry.history, now_ms)].concat()))
                 }
             }
         }

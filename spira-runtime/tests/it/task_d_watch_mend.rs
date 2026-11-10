@@ -112,3 +112,25 @@ fn t5_the_log_lines_are_mend_watchs_and_pause_sweeps() {
     let r = rig(1, Arc::new(Mutex::new(stop(Err("history unreadable".into())))));
     assert_eq!(asked(&r, LOG_APPEND), ["pause-sweep: kept spira: history unreadable"]);
 }
+
+#[test]
+fn t7_acts_carry_the_act_tables_keys_not_a_digest_of_their_input() {
+    let snap = Snapshot { stops: vec![Stop { repo: "spira".into(), bead: "sp-x".into(), state: "LANDED".into(), since: 500, reached: Ok(true) }], ..overdue() };
+    let (_, first) = decide(&Carry::default(), &snap, 10_000, &config());
+    let (_, later) = decide(&Carry::default(), &snap, 20_000, &config());
+    let key = |acts: &[runtime::event::EffectSpec], name: &str| acts.iter().find(|a| a.name == name).map(|a| a.key.clone());
+    assert_eq!(key(&first, LIFT_STOP).as_deref(), Some("watch.mend:lift:spira:500"), "a lift is keyed by its repo and the stop's since");
+    assert_eq!(key(&first, LIFT_STOP), key(&later, LIFT_STOP), "the same stop is the same lift on every tick");
+    assert!(key(&first, LOG_APPEND).is_some_and(|k| k.starts_with("watch.mend:") && k.ends_with(":10000")), "a log line is keyed by its breach and the tick");
+    assert_ne!(key(&first, LOG_APPEND), key(&later, LOG_APPEND), "the same line on a later tick is a new request, not a refused repeat");
+}
+
+#[test]
+fn t8_the_pattern_passes_each_act_key_through_to_its_effect_command() {
+    use runtime::event::EffectSpec;
+    use runtime::event::Command;
+    let acts = vec![EffectSpec::keyed(LOG_APPEND, "watch.mend:k1", "same input", 5), EffectSpec::keyed(LOG_APPEND, "watch.mend:k2", "same input", 5)];
+    let cmds = spira_runtime::tasks::d::pattern::commands("watch.mend.state", &0u8, &0u8, acts);
+    let keys: Vec<String> = cmds.into_iter().filter_map(|c| if let Command::Effect(e) = c { Some(e.key) } else { None }).collect();
+    assert_eq!(keys, ["watch.mend:k1", "watch.mend:k2"], "two effects with identical input keep their own keys");
+}

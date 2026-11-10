@@ -65,8 +65,8 @@ pub struct MailJob {
     pub what: String,
 }
 
-fn spec<T: Serialize>(name: &str, input: &T, deadline_ms: u64) -> EffectSpec {
-    EffectSpec::by_input(name, serde_json::to_string(input).unwrap_or_default(), deadline_ms)
+fn spec<T: Serialize>(name: &str, key: String, input: &T, deadline_ms: u64) -> EffectSpec {
+    EffectSpec::keyed(name, key, serde_json::to_string(input).unwrap_or_default(), deadline_ms)
 }
 
 impl Reconciler {
@@ -124,14 +124,14 @@ impl Reconciler {
         ctx.event().set("reconciler.acted", (remedies.len() + mails.len()) as u64);
         if !record.events.is_empty() || !record.log.is_empty() {
             let journaled = Record { status: vec![], ..record.clone() };
-            cmds.push(Command::Effect(spec(RECORD, &journaled, EFFECT_DEADLINE_MS)));
+            cmds.push(Command::Effect(spec(RECORD, format!("{NAME}:record:{}", ev.at), &journaled, EFFECT_DEADLINE_MS)));
         }
         if !record.status.is_empty() {
             let rows = Record { events: vec![], log: vec![], ..record };
-            cmds.push(Command::Probe(spec(RECORD, &rows, EFFECT_DEADLINE_MS)));
+            cmds.push(Command::Probe(spec(RECORD, RECORD.into(), &rows, EFFECT_DEADLINE_MS)));
         }
-        cmds.extend(remedies.iter().map(|r| Command::Effect(spec(REMEDY, r, OBSERVE_DEADLINE_MS))));
-        cmds.extend(mails.iter().map(|m| Command::Effect(spec(MAIL, m, EFFECT_DEADLINE_MS))));
+        cmds.extend(remedies.iter().map(|r| Command::Effect(spec(REMEDY, format!("{NAME}:remedy:{}", r.key), r, OBSERVE_DEADLINE_MS))));
+        cmds.extend(mails.iter().map(|m| Command::Effect(spec(MAIL, format!("{NAME}:mail:{}:{:016x}", ev.at, runtime::event::fnv1a(&m.what)), m, EFFECT_DEADLINE_MS))));
         cmds
     }
 
@@ -162,7 +162,7 @@ impl Handler for Reconciler {
         if ev.kind.tag == TICK {
             let input = ObserveIn { at: ev.at, reminded: Self::book(view, &ev.stream).reminded };
             return vec![
-                Command::Probe(spec(OBSERVE, &input, OBSERVE_DEADLINE_MS)),
+                Command::Probe(spec(OBSERVE, OBSERVE.into(), &input, OBSERVE_DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }

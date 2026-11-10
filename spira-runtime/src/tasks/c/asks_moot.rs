@@ -203,8 +203,8 @@ fn phase_name(p: Phase) -> String {
     serde_json::to_value(p).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
 }
 
-fn act(name: &str, body: &impl Serialize, deadline_ms: u64) -> Result<Act, String> {
-    Ok(Act { name: name.into(), input: serde_json::to_string(body).map_err(|e| e.to_string())?, deadline_ms, probe: false })
+fn act(name: &str, key: String, body: &impl Serialize, deadline_ms: u64) -> Result<Act, String> {
+    Ok(Act { name: name.into(), key, input: serde_json::to_string(body).map_err(|e| e.to_string())?, deadline_ms, probe: false })
 }
 
 /// `bytes` cut to at most `n`, on a char boundary.
@@ -217,7 +217,7 @@ fn head(text: &str, n: usize) -> &str {
 }
 
 /// One check per MOOT-WHEN ask; `rc == 0` resolves, 124 is a timeout, any other rc is live.
-pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     let mut next = carry.clone();
     match input {
         Input::Fire => Ok((next, vec![])),
@@ -232,7 +232,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
             for a in s.asks.iter().filter(|a| !a.pred.trim().is_empty()) {
                 next.asks.insert(a.id.clone(), Phase::Checking);
                 next.held.insert(a.id.clone(), a.clone());
-                acts.push(act(CHECK, &Check { id: a.id.clone(), pred: a.pred.clone(), timeout_s }, timeout_s * 1000 + 5_000)?);
+                acts.push(act(CHECK, format!("{}/{:016x}/{now_ms}", a.id, runtime::event::fnv1a(&a.pred)), &Check { id: a.id.clone(), pred: a.pred.clone(), timeout_s }, timeout_s * 1000 + 5_000)?);
             }
             Ok((next, acts))
         }
@@ -249,7 +249,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
                     next.asks.insert(out.id.clone(), Phase::Cleared);
                     let pred = carry.held.get(&out.id).map(|a| a.pred.as_str()).unwrap_or_default();
                     let reason = format!("auto-resolved: MOOT-WHEN predicate cleared — {pred} → exit 0. Evidence: {}", head(&out.output, EVIDENCE_BYTES));
-                    Ok((next, vec![act(RESOLVE, &Resolve { id: out.id, reason }, 15_000)?]))
+                    Ok((next, vec![act(RESOLVE, format!("{}/resolve", out.id), &Resolve { id: out.id, reason }, 15_000)?]))
                 }
                 TIMED_OUT_RC => {
                     *next.timeouts.entry(out.id.clone()).or_default() += 1;
@@ -273,7 +273,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
             next.asks.insert(id.to_string(), to);
             let works = carry.held.get(id).map(|a| a.works.clone()).unwrap_or_default();
             if to == Phase::Resolved && !works.is_empty() {
-                return Ok((next, vec![act(WITHDRAW, &Withdraw { ask: id.to_string(), works }, 15_000)?]));
+                return Ok((next, vec![act(WITHDRAW, format!("{id}/withdraw"), &Withdraw { ask: id.to_string(), works }, 15_000)?]));
             }
             Ok((next, vec![]))
         }

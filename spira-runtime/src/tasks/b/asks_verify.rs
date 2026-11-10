@@ -84,7 +84,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use runtime::event::EventKindTag;
+use runtime::event::{fnv1a, EventKindTag};
 use serde::{Deserialize, Serialize};
 
 use super::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
@@ -197,8 +197,8 @@ pub struct Job {
     pub timeout_secs: u64,
 }
 
-fn act(name: &str, j: &Job, deadline_ms: u64, probe: bool) -> Act {
-    Act { name: name.into(), input: serde_json::to_string(j).unwrap_or_default(), deadline_ms, probe }
+fn act(name: &str, key: String, j: &Job, deadline_ms: u64, probe: bool) -> Act {
+    Act { name: name.into(), key, input: serde_json::to_string(j).unwrap_or_default(), deadline_ms, probe }
 }
 
 /// `verify-asks.sh`'s close reason, the evidence cut at 400 bytes on a char boundary.
@@ -213,7 +213,7 @@ pub fn close_reason(cmd: &str, output: &str) -> String {
 /// One check per ask; on `rc == 0` a close then a withdraw per non-terminal work bead. The
 /// check is a probe (an `rc != 0` is the common answer and journals nothing); an ask that
 /// stays open re-checks each tick without a state change.
-pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     let timeout_secs: u64 = cfg.get("SPIRA_VERIFY_TIMEOUT").and_then(|v| v.trim().parse().ok()).unwrap_or(120);
     let mut next = carry.clone();
     let mut acts = vec![];
@@ -224,7 +224,8 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
             if seen != carry.mislabelled_seen {
                 let fresh: Vec<String> = s.mislabelled.iter().filter(|m| !carry.mislabelled_seen.contains(&m.0)).map(|(id, kind, title)| format!("MISLABELLED {id} ({kind}) — {title}: an {kind} cannot be answered; strip the ask label or write the question")).collect();
                 if !fresh.is_empty() {
-                    acts.push(act(NOTE, &Job { reason: fresh.join("\n"), ..Job::default() }, 10_000, false));
+                    let note = Job { reason: fresh.join("\n"), ..Job::default() };
+                    acts.push(act(NOTE, format!("mislabelled/{:016x}", fnv1a(&note.reason)), &note, 10_000, false));
                 }
                 next.mislabelled_seen = seen;
             }
@@ -241,7 +242,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
                 if phase == Phase::Open || phase == Phase::Withdrawn {
                     next.asks.insert(a.id.clone(), Phase::Checking);
                 }
-                acts.push(act(CHECK, &Job { id: a.id.clone(), cmd: a.cmd.clone(), timeout_secs, ..Job::default() }, timeout_secs * 1000, true));
+                acts.push(act(CHECK, format!("{}/{:016x}/{now_ms}", a.id, fnv1a(&a.cmd)), &Job { id: a.id.clone(), cmd: a.cmd.clone(), timeout_secs, ..Job::default() }, timeout_secs * 1000, true));
             }
         }
         Input::Outcome { effect, ok, body } if effect == CHECK => {
@@ -256,7 +257,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
             if c.rc == 0 {
                 let cmd = carry.checks.get(&c.id).map(|a| a.cmd.clone()).unwrap_or_default();
                 next.asks.insert(c.id.clone(), Phase::Satisfied);
-                acts.push(act(CLOSE, &Job { id: c.id.clone(), reason: close_reason(&cmd, &c.output), ..Job::default() }, 15_000, false));
+                acts.push(act(CLOSE, format!("{}/close", c.id), &Job { id: c.id.clone(), reason: close_reason(&cmd, &c.output), ..Job::default() }, 15_000, false));
             } else if phase == Phase::Checking {
                 next.asks.insert(c.id.clone(), Phase::StillOpen);
             }
@@ -273,7 +274,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
             }
             next.asks.insert(id.clone(), Phase::Closed);
             for w in carry.checks.get(&id).map(|a| a.works.clone()).unwrap_or_default() {
-                acts.push(act(WITHDRAW, &Job { id: id.clone(), work: w, ..Job::default() }, 15_000, false));
+                acts.push(act(WITHDRAW, format!("{w}/withdraw/{id}"), &Job { id: id.clone(), work: w, ..Job::default() }, 15_000, false));
             }
             if acts.is_empty() {
                 next.asks.remove(&id);

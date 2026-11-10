@@ -145,7 +145,7 @@ pub struct Verdict {
 }
 
 fn say(now_ms: u64, line: &str) -> EffectSpec {
-    EffectSpec::by_input(INBOX_APPEND, pattern::inbox_line(now_ms, TAG, line), DEADLINE_MS)
+    EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:{now_ms}:{:016x}", fnv1a(line)), pattern::inbox_line(now_ms, TAG, line), DEADLINE_MS)
 }
 
 fn stall_filing(l: &RepoLanding, rounds: Option<&RepoRounds>, now_ms: u64, cfg: &Config) -> Filing {
@@ -180,7 +180,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
             continue;
         }
         let f = stall_filing(l, snap.repos.iter().find(|r| r.repo == l.repo), now_ms, cfg);
-        acts.push(EffectSpec::by_input(FILE, serde_json::to_string(&f).unwrap_or_default(), FILE_DEADLINE_MS));
+        acts.push(EffectSpec::keyed(FILE, format!("{NAME}:file:{}:{}", f.repo, f.last_landing), serde_json::to_string(&f).unwrap_or_default(), FILE_DEADLINE_MS));
     }
 
     let starving: Vec<&RepoRounds> = snap.repos.iter().filter(|r| r.abandoned_recent >= cfg.abandon_count && r.landed_recent == 0).collect();
@@ -208,7 +208,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     next.unlanded = stuck.iter().map(|u| u.batch.clone()).collect();
 
     if !snap.records.clear.is_empty() {
-        acts.push(EffectSpec::by_input(CLEAR, serde_json::to_string(&snap.records.clear).unwrap_or_default(), DEADLINE_MS));
+        acts.push(EffectSpec::keyed(CLEAR, format!("{NAME}:clear:{now_ms}"), serde_json::to_string(&snap.records.clear).unwrap_or_default(), DEADLINE_MS));
     }
     for h in &snap.records.held {
         if !carry.held.contains(h) {

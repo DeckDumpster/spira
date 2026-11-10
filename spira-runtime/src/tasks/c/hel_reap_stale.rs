@@ -220,13 +220,13 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
                     let state = t.bead_state.as_deref().map(finished_as);
                     let Some(why) = hel::stale::reason(&hel::stale::verdict(state, t.merged_into.as_deref(), t.idle_secs, t.live_pid.is_some(), window)) else { continue };
                     let d = Destroy { id: t.id.clone(), path: t.path.clone(), root: r.root.clone(), why: format!("reaper: {why}") };
-                    acts.push(Act { name: DESTROY_WORKTREE.into(), input: serde_json::to_string(&d).map_err(|e| e.to_string())?, deadline_ms: 120_000, probe: false });
+                    acts.push(Act { name: DESTROY_WORKTREE.into(), key: format!("{}:{}", t.id, t.path), input: serde_json::to_string(&d).map_err(|e| e.to_string())?, deadline_ms: 120_000, probe: false });
                 }
             }
             Ok((Carry { phase: if acts.is_empty() { Phase::Idle } else { Phase::Reaping } }, acts))
         }
         // Prune only after a removal succeeded (today it runs every pass).
-        Input::Outcome { effect, ok: true, body } if effect == DESTROY_WORKTREE => Ok((carry.clone(), vec![Act { name: PRUNE.into(), input: body.clone(), deadline_ms: 30_000, probe: false }])),
+        Input::Outcome { effect, ok: true, body } if effect == DESTROY_WORKTREE => Ok((carry.clone(), vec![Act { name: PRUNE.into(), key: format!("prune:{body}"), input: body.clone(), deadline_ms: 30_000, probe: false }])),
         Input::Outcome { effect, ok: false, .. } if effect == DESTROY_WORKTREE => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, .. } if effect == PRUNE => Ok((Carry::default(), vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),

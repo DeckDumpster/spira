@@ -287,8 +287,8 @@ pub struct Publish {
 pub const STORE_DEADLINE_MS: u64 = 15_000;
 pub const SHORT_DEADLINE_MS: u64 = 5_000;
 
-fn act(name: &str, input: &impl Serialize, deadline_ms: u64, probe: bool) -> Result<Act, String> {
-    Ok(Act { name: name.into(), input: serde_json::to_string(input).map_err(|e| e.to_string())?, deadline_ms, probe })
+fn act(name: &str, key: String, input: &impl Serialize, deadline_ms: u64, probe: bool) -> Result<Act, String> {
+    Ok(Act { name: name.into(), key, input: serde_json::to_string(input).map_err(|e| e.to_string())?, deadline_ms, probe })
 }
 
 /// The status without its clock fields (`pass_age_secs`, each condition's transition time),
@@ -340,12 +340,12 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
     let mut acts = vec![];
     if !carry.knob_inited {
         next.knob_inited = true;
-        acts.push(act(KNOB_INIT, &serde_json::json!({}), SHORT_DEADLINE_MS, false)?);
+        acts.push(act(KNOB_INIT, format!("{NAME}:knob-init"), &serde_json::json!({}), SHORT_DEADLINE_MS, false)?);
     }
     let intents = ap::retry_intents(&snap.section_snapshot);
     next.retries = intents.iter().map(|(k, _)| k.clone()).collect();
     for (key, target) in intents.into_iter().filter(|(k, _)| !carry.retries.contains(k)) {
-        acts.push(act(RETRY, &Retry { key, target }, STORE_DEADLINE_MS, false)?);
+        acts.push(act(RETRY, format!("{NAME}:retry:{key}"), &Retry { key, target }, STORE_DEADLINE_MS, false)?);
     }
     let dm = ap::deadman_of(snap.observability_halted, snap.goodput.armed, snap.goodput.last_fired_ms.map(|ms| ms / 1000), now, deadman_secs);
     next.deadman = match dm {
@@ -366,12 +366,13 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             incident::page::Verdict::Send => {
                 rows = incident::page::sent(&rows, c, "", now_i);
                 let mine = rows.iter().filter(|r| r.section == c.section && r.sent == now_i && r.ask.is_empty()).map(|r| (r.section.clone(), r.condition.clone())).collect();
-                acts.push(act(PAGE, &Send { reference: c.reference(), kind: ap::PAGE.into(), message: ap::message_of(c), rows: mine, binding: None }, STORE_DEADLINE_MS, false)?);
+                acts.push(act(PAGE, format!("{NAME}:page:{}", c.reference()), &Send { reference: c.reference(), kind: ap::PAGE.into(), message: ap::message_of(c), rows: mine, binding: None }, STORE_DEADLINE_MS, false)?);
             }
             incident::page::Verdict::Note { ask } => {
                 rows = incident::page::noted(&rows, c, now_i);
                 if !ask.is_empty() {
-                    acts.push(act(NOTE, &Note { ask, text: format!("Changed inside the page window, not re-sent:\n{}", c.body()) }, 10_000, false)?);
+                    let text = format!("Changed inside the page window, not re-sent:\n{}", c.body());
+                    acts.push(act(NOTE, format!("{NAME}:note:{ask}:{:016x}", runtime::event::fnv1a(&text)), &Note { ask, text }, 10_000, false)?);
                 }
             }
         }
@@ -386,11 +387,11 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         Some((binding, message)) => {
             next.floors = BTreeMap::from([(binding.clone(), Floor::Asking)]);
             next.floor_asks.clear();
-            acts.push(act(FLOOR_ASK, &Send { reference: format!("floor:{binding}"), kind: ap::FLOOR.into(), message, rows: vec![], binding: Some(binding) }, STORE_DEADLINE_MS, false)?);
+            acts.push(act(FLOOR_ASK, format!("{NAME}:floor:{binding}"), &Send { reference: format!("floor:{binding}"), kind: ap::FLOOR.into(), message, rows: vec![], binding: Some(binding) }, STORE_DEADLINE_MS, false)?);
         }
     }
     if matches!(dm, ap::DeadMan::Fresh { .. }) && !heartbeat_url.is_empty() {
-        acts.push(Act { name: HEARTBEAT.into(), input: heartbeat_url, deadline_ms: SHORT_DEADLINE_MS, probe: true });
+        acts.push(Act { name: HEARTBEAT.into(), key: format!("{NAME}:heartbeat:{now_ms}"), input: heartbeat_url, deadline_ms: SHORT_DEADLINE_MS, probe: true });
     }
     let prev = ap::previous(&seen);
     let (status, unchanged) = ap::status_of(prev, pass.as_ref(), &dm, &snap.attempts, None, now);
@@ -401,9 +402,9 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         if key != carry.status {
             next.status = key;
             next.published_at = Some(now_ms);
-            acts.push(act(PUBLISH, &publish, SHORT_DEADLINE_MS, false)?);
+            acts.push(act(PUBLISH, format!("{NAME}:publish:{}", publish.rev), &publish, SHORT_DEADLINE_MS, false)?);
         } else {
-            acts.push(act(PUBLISH, &publish, SHORT_DEADLINE_MS, true)?);
+            acts.push(act(PUBLISH, format!("{NAME}:publish:{}", publish.rev), &publish, SHORT_DEADLINE_MS, true)?);
         }
     }
     Ok((next, acts))

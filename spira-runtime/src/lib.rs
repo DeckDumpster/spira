@@ -330,7 +330,7 @@ mod own_unit_tests {
             &["start"]
         }
         fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
-            vec![Command::Effect(EffectSpec::by_input("write", String::new(), 1000))]
+            vec![Command::Effect(EffectSpec::keyed("write", "write", String::new(), 1000))]
         }
     }
 

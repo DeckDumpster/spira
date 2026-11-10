@@ -155,8 +155,8 @@ fn to_lib(t: &Timing) -> perf_watch::Timing {
     perf_watch::Timing { name: t.name.clone(), millis: t.millis, micros: t.micros, error: t.error.clone(), phases: t.phases.clone() }
 }
 
-fn spec(name: &str, input: String, deadline_ms: u64) -> EffectSpec {
-    EffectSpec::by_input(name, input, deadline_ms)
+fn spec(name: &str, key: String, input: String, deadline_ms: u64) -> EffectSpec {
+    EffectSpec::keyed(name, key, input, deadline_ms)
 }
 
 /// `run_pass` with the probing lifted out: the next carry and the writes, among them each
@@ -173,14 +173,14 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     let pass = perf_watch::settle(&settings, &prior, now, snap.timings.iter().map(to_lib).collect(), cur);
     let next = Carry { last_pass: now, alarms: pass.health.alarms, sample_at: pass.health.sample_at.unwrap_or(0), sample: pass.health.sample, record: snap.timings.clone() };
     let mut acts = vec![];
-    for l in &pass.lines {
-        acts.push(spec(INBOX_APPEND, perf_watch::inbox_line(now, l).trim_end().to_string(), WRITE_DEADLINE_MS));
-        acts.push(spec(LOG, l.clone(), WRITE_DEADLINE_MS));
+    for (i, l) in pass.lines.iter().enumerate() {
+        acts.push(spec(INBOX_APPEND, format!("watch.perf:{now}:{i}"), perf_watch::inbox_line(now, l).trim_end().to_string(), WRITE_DEADLINE_MS));
+        acts.push(spec(LOG, format!("watch.perf:log:{now}:{i}"), l.clone(), WRITE_DEADLINE_MS));
     }
-    for s in &pass.slow {
-        acts.push(spec(SLOW_SAMPLE, s.trim_end().to_string(), WRITE_DEADLINE_MS));
+    for (i, s) in pass.slow.iter().enumerate() {
+        acts.push(spec(SLOW_SAMPLE, format!("watch.perf:slow:{i}:{now}"), s.trim_end().to_string(), WRITE_DEADLINE_MS));
     }
-    acts.push(spec(METRICS, serde_json::to_string(&snap.timings).unwrap_or_default(), WRITE_DEADLINE_MS));
+    acts.push(spec(METRICS, format!("watch.perf:metrics:{now}"), serde_json::to_string(&snap.timings).unwrap_or_default(), WRITE_DEADLINE_MS));
     (next, acts)
 }
 

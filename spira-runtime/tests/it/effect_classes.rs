@@ -22,7 +22,7 @@ impl Handler for Asks {
     }
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         if ev.kind.tag == "go" {
-            return vec![Command::Effect(EffectSpec::by_input(ev.kind.body.clone(), String::new(), 5_000))];
+            return vec![Command::Effect(EffectSpec::keyed(ev.kind.body.clone(), ev.kind.body.clone(), String::new(), 5_000))];
         }
         vec![Command::Emit(EventKind::new("outcome", &format!("{}:{}", ev.kind.tag, ev.stream.0.trim_start_matches("s-"))))]
     }

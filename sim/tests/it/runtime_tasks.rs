@@ -69,7 +69,7 @@ impl Handler for Plant {
         &["plant"]
     }
     fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
-        vec![Command::Effect(EffectSpec::by_input("fork", String::new(), 1000))]
+        vec![Command::Effect(EffectSpec::keyed("fork", "fork", String::new(), 1000))]
     }
 }
 

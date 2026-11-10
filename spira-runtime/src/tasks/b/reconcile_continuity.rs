@@ -176,7 +176,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
                     (_, true) => Phase::Acknowledged,
                     (Phase::Unseen | Phase::Gone, false) => {
                         let line = format!("{} {TAG} event continuity broken: {} {} seq {} event {} from {} after {}", crate::watchers::iso8601(now_ms / 1000), b.machine, b.key, b.seq, b.event, b.from_state, b.previous_to_state);
-                        acts.push(Act { name: INBOX_APPEND.into(), input: line, deadline_ms: INBOX_DEADLINE_MS, probe: false });
+                        acts.push(Act { name: INBOX_APPEND.into(), key: format!("continuity/{}/{}/{}", b.machine, b.key, b.seq), input: line, deadline_ms: INBOX_DEADLINE_MS, probe: false });
                         Phase::Announced
                     }
                     (p, false) => p,

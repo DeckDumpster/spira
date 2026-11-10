@@ -175,7 +175,7 @@ fn from_ec2(s: &round_vm::ec2::ImageStore) -> ImageStore {
 
 fn delete_act(image_id: &str, carry: &Carry) -> Result<Act, String> {
     let d = Delete { image_id: image_id.into(), snapshots: carry.snapshots.get(image_id).cloned().unwrap_or_default() };
-    Ok(Act { name: DELETE_SNAPSHOT.into(), input: serde_json::to_string(&d).map_err(|e| e.to_string())?, deadline_ms: 60_000, probe: false })
+    Ok(Act { name: DELETE_SNAPSHOT.into(), key: format!("snap/{image_id}"), input: serde_json::to_string(&d).map_err(|e| e.to_string())?, deadline_ms: 60_000, probe: false })
 }
 
 /// The image an outcome body names: one whose snapshots include it, else the one whose id it
@@ -209,7 +209,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
                 }
                 next.images.insert(p.image_id.clone(), Phase::Planned);
                 next.snapshots.insert(p.image_id.clone(), p.snapshots.clone());
-                acts.push(Act { name: DEREGISTER.into(), input: p.image_id.clone(), deadline_ms: 60_000, probe: false });
+                acts.push(Act { name: DEREGISTER.into(), key: format!("ami/{}", p.image_id), input: p.image_id.clone(), deadline_ms: 60_000, probe: false });
             }
             if !acts.is_empty() {
                 next.last_fired = Some(now_ms);

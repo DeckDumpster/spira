@@ -183,7 +183,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
                 let cutoff = now.saturating_sub(u64::from(days) * DAY_SECS);
                 if f.oldest_ts.is_some_and(|ts| ts / 1000 < cutoff) {
                     let p = Prune { family: f.family.clone(), keep_days: days, cutoff };
-                    acts.push(Act { name: PRUNE.into(), input: serde_json::to_string(&p).map_err(|e| e.to_string())?, deadline_ms: 300_000, probe: false });
+                    acts.push(Act { name: PRUNE.into(), key: format!("sweep.tsd/{}/{}", p.family, p.cutoff), input: serde_json::to_string(&p).map_err(|e| e.to_string())?, deadline_ms: 300_000, probe: false });
                     in_flight.push(f.family.clone());
                 }
             }

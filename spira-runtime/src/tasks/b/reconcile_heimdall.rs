@@ -277,8 +277,8 @@ pub const WRITE_DEADLINE_MS: u64 = 10_000;
 /// The host writes' deadline.
 pub const HOST_DEADLINE_MS: u64 = 2_000;
 
-fn act(name: &str, input: &impl Serialize, deadline_ms: u64, probe: bool) -> Result<Act, String> {
-    Ok(Act { name: name.into(), input: serde_json::to_string(input).map_err(|e| e.to_string())?, deadline_ms, probe })
+fn act(name: &str, key: String, input: &impl Serialize, deadline_ms: u64, probe: bool) -> Result<Act, String> {
+    Ok(Act { name: name.into(), key, input: serde_json::to_string(input).map_err(|e| e.to_string())?, deadline_ms, probe })
 }
 
 /// `hosted::classify` then `hosted::step` (`reconcile::step_keys` with its counters saturated).
@@ -305,7 +305,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             return Err(format!("{NAME}: the store is unreachable; the raise of {} is refused and waits for it", would.join(", ")));
         }
         let doc = heimdall::fallback::build(now, false, None, &firing);
-        return Ok((carry.clone(), vec![act(FALLBACK, &doc, HOST_DEADLINE_MS, true)?]));
+        return Ok((carry.clone(), vec![act(FALLBACK, format!("heimdall/fallback/{now}"), &doc, HOST_DEADLINE_MS, true)?]));
     }
     let by_key: BTreeMap<&str, &heimdall::classify::Firing> = firing.iter().map(|f| (f.key.as_str(), f)).collect();
     let when = |s: i64| crate::watchers::iso8601(s.max(0) as u64);
@@ -321,18 +321,18 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         let ks = match st.trigger {
             heimdall::reconcile::Trigger::ConfirmRaise => {
                 let k = st.on_success(now);
-                acts.push(act(RAISE, &write(&k), WRITE_DEADLINE_MS, false)?);
+                acts.push(act(RAISE, format!("heimdall/{}/raise/{}", st.key, k.flaps), &write(&k), WRITE_DEADLINE_MS, false)?);
                 from_heimdall(&k, Phase::Firing)
             }
             heimdall::reconcile::Trigger::ConfirmClear => {
                 let k = st.on_success(now);
-                acts.push(act(CLEAR, &Clear { key: st.key.clone(), reason: heimdall::alerts::clear_reason_with(&when(k.first), k.flaps, clear_n) }, WRITE_DEADLINE_MS, false)?);
+                acts.push(act(CLEAR, format!("heimdall/{}/clear/{}", st.key, k.flaps), &Clear { key: st.key.clone(), reason: heimdall::alerts::clear_reason_with(&when(k.first), k.flaps, clear_n) }, WRITE_DEADLINE_MS, false)?);
                 from_heimdall(&k, Phase::Cleared)
             }
             heimdall::reconcile::Trigger::Refresh if !snap.alert_rows.is_empty() && !snap.alert_rows.contains(&st.key) => from_heimdall(&st.on_refresh_skip_closed(now), Phase::Firing),
             heimdall::reconcile::Trigger::Refresh => {
                 let k = st.on_success(now);
-                acts.push(act(REFRESH, &write(&k), WRITE_DEADLINE_MS, true)?);
+                acts.push(act(REFRESH, format!("heimdall/{}/refresh/{}", st.key, k.refreshed), &write(&k), WRITE_DEADLINE_MS, true)?);
                 from_heimdall(&k, Phase::Firing)
             }
             heimdall::reconcile::Trigger::None => {

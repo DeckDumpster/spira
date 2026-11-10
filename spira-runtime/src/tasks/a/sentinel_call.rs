@@ -712,7 +712,7 @@ pub fn unit_start(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let unit = UnitSpec { task: NAME.into(), key: start.key.clone(), argv: vec![dwarf.to_string_lossy().into_owned(), "--home".into(), home.to_string_lossy().into_owned(), start.rune.clone()], env, cwd: None };
     let timeout = spira_config::runes::rune_get(&home, &start.rune, "RUNE_TIMEOUT_SECONDS", "3600");
     let input = serde_json::to_string(&units::StartSpec { unit, props: dwarf_props(&timeout)? }).map_err(|e| e.to_string())?;
-    e.unit(&EffectSpec::by_input(units::UNIT_START, input, spec.deadline_ms))
+    e.unit(&EffectSpec::keyed(units::UNIT_START, spec.key.clone(), input, spec.deadline_ms))
 }
 
 /// The properties `call_argv` gave every dwarf call (`sentinel/src/call.rs`): the rune's

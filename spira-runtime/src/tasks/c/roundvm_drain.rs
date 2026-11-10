@@ -160,7 +160,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
         Input::Observed(s) => {
             let view = round_vm::pool::DrainView { ready: s.ready.as_ref().map(|r| (r.handle.clone(), r.ready_since / 1000)), leased: s.leased.clone(), refreshing_alive: s.refreshing_alive };
             match round_vm::pool::drain_choice(&view, round_vm::pool::spill_only_ec2(&s.spill_mode), s.idle_bound_secs, now_ms / 1000) {
-                Some((handle, _why)) => Ok((Carry { phase: Phase::Releasing }, vec![Act { name: RELEASE.into(), input: handle, deadline_ms: 600_000, probe: false }])),
+                Some((handle, _why)) => Ok((Carry { phase: Phase::Releasing }, vec![Act { name: RELEASE.into(), key: format!("roundvm.drain/{handle}"), input: handle, deadline_ms: 600_000, probe: false }])),
                 None => Ok((carry.clone(), vec![])),
             }
         }

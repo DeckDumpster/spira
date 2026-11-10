@@ -366,8 +366,8 @@ impl hel::sweep::Facts for Snap<'_> {
     }
 }
 
-fn effect(name: &str, input: &impl Serialize, deadline_ms: u64) -> Result<Act, String> {
-    Ok(Act { name: name.into(), input: serde_json::to_string(input).map_err(|e| e.to_string())?, deadline_ms, probe: false })
+fn effect(name: &str, key: String, input: &impl Serialize, deadline_ms: u64) -> Result<Act, String> {
+    Ok(Act { name: name.into(), key, input: serde_json::to_string(input).map_err(|e| e.to_string())?, deadline_ms, probe: false })
 }
 
 fn leg_key(repo: &str, br: &str, tip: &str) -> String {
@@ -377,12 +377,12 @@ fn leg_key(repo: &str, br: &str, tip: &str) -> String {
 fn send_leg(jobs: &mut BTreeMap<String, Job>, s: &Snapshot, b: &Branch, caller: &str, proof: bool, close: bool) -> Result<Act, String> {
     jobs.insert(leg_key(&s.repo, &b.br, &b.tip), Job { effect: SEND.into(), repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), close });
     let why = if caller == "archived" { "archived".to_string() } else { format!("landed in {}", s.base.landref) };
-    effect(SEND, &Send { repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), why, caller: caller.into(), proof }, 120_000)
+    effect(SEND, format!("{}:{}:{}", s.repo, b.br, b.tip), &Send { repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), why, caller: caller.into(), proof }, 120_000)
 }
 
 fn job(jobs: &mut BTreeMap<String, Job>, kind: &str, t: &Target) -> Result<Act, String> {
     jobs.insert(format!("{kind}:{}:{}", t.repo, t.id), Job { effect: kind.into(), repo: t.repo.clone(), id: t.id.clone(), br: t.br.clone(), tip: t.tip.clone(), close: false });
-    effect(kind, t, if kind == ARCHIVE { 30_000 } else { 120_000 })
+    effect(kind, format!("{}:{}:{}:{}:{}:{kind}", t.repo, t.id, t.br, t.tip, t.path), t, if kind == ARCHIVE { 30_000 } else { 120_000 })
 }
 
 /// One repository's acts: `hel::sweep::judge` per branch (round branches and held beads
@@ -426,7 +426,7 @@ pub fn plan(cfg: &Cfg, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) -> Result
 }
 
 fn observe_next(repo: &str) -> Act {
-    Act { name: OBSERVE.into(), input: repo.into(), deadline_ms: SPEC.probe_deadline_ms, probe: true }
+    Act { name: OBSERVE.into(), key: OBSERVE.into(), input: repo.into(), deadline_ms: SPEC.probe_deadline_ms, probe: true }
 }
 
 /// After an answer: while jobs remain, wait; once the repository's are all in, prune it and
@@ -436,7 +436,7 @@ fn settle(mut next: Carry, repo: &str, mut acts: Vec<Act>) -> Result<(Carry, Vec
         return Ok((next, acts));
     }
     if !repo.is_empty() {
-        acts.push(effect(PRUNE, &Target { repo: repo.into(), ..Target::default() }, 30_000)?);
+        acts.push(effect(PRUNE, format!("{repo}:prune"), &Target { repo: repo.into(), ..Target::default() }, 30_000)?);
     }
     match next.pass.as_mut().filter(|p| !p.repos_left.is_empty()) {
         Some(p) => {
@@ -521,7 +521,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 runtime::units::Exit::Code(0) => {
                     next.tally.sent += 1;
                     if j.close {
-                        acts.push(effect(CLOSE_ON_LAND, &Target { repo: j.repo.clone(), id: j.id.clone(), br: j.br.clone(), tip: j.tip.clone(), path: String::new() }, 5_000)?);
+                        acts.push(effect(CLOSE_ON_LAND, format!("{}:{}", j.id, j.tip), &Target { repo: j.repo.clone(), id: j.id.clone(), br: j.br.clone(), tip: j.tip.clone(), path: String::new() }, 5_000)?);
                     }
                 }
                 // Queued behind a certification: neither sent nor failed.

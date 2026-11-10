@@ -174,7 +174,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
         .take(cfg.max_files)
         .map(|c| {
             let f = Filing { key: c.key(), title: c.title(), body: refusal_watch::body(c, &lcfg) };
-            EffectSpec::by_input(FILE, serde_json::to_string(&f).unwrap_or_default(), FILE_DEADLINE_MS)
+            EffectSpec::keyed(FILE, format!("watch.refusals:{}:{}", f.key, now / cfg.repeat_secs.max(1)), serde_json::to_string(&f).unwrap_or_default(), FILE_DEADLINE_MS)
         })
         .collect();
     (pruned(carry, now, cfg), acts)

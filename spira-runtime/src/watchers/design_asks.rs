@@ -106,7 +106,7 @@ impl Handler for DesignAsks {
         }
         if ev.kind.tag == TICK {
             return vec![
-                Command::Probe(EffectSpec::by_input(OBSERVE, String::new(), DEADLINE_MS)),
+                Command::Probe(EffectSpec::probe(OBSERVE, String::new(), DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
@@ -123,7 +123,7 @@ impl Handler for DesignAsks {
             cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
         }
         for m in say {
-            cmds.push(Command::Effect(EffectSpec::by_input(INBOX_APPEND, format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS)));
+            cmds.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS)));
         }
         cmds
     }

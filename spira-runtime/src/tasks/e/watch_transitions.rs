@@ -421,7 +421,7 @@ pub fn observe(run_dir: &std::path::Path, releases_dir: &std::path::Path, lc: &d
 }
 
 fn say(now_ms: u64, line: &str) -> EffectSpec {
-    EffectSpec::by_input(INBOX_APPEND, pattern::inbox_line(now_ms, TAG, line), DEADLINE_MS)
+    EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:{now_ms}:{:016x}", fnv1a(line)), pattern::inbox_line(now_ms, TAG, line), DEADLINE_MS)
 }
 
 /// A snapshot that is not there: the store or the release records could not be read.

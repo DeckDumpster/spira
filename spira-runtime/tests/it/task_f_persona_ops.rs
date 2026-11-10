@@ -145,3 +145,20 @@ fn t5_parity_an_unlanded_segment_counts_as_rc_0() {
     let line: serde_json::Value = serde_json::from_str(&acts[0].input).unwrap();
     assert_eq!(line["rc"], 0, "{line}");
 }
+
+#[test]
+fn t9_the_prepare_acts_are_keyed_by_the_run_the_handler_assigned() {
+    let r = rig(1, |_| snap("SWEEP: go", 0, false, Pause::Open));
+    running(&r);
+    let key = |name: &str| {
+        r.journaled().iter().filter(|e| e.kind.tag == runtime::event::EFFECT_REQUESTED).find_map(|e| {
+            let body: serde_json::Value = serde_json::from_str(&e.kind.body).ok()?;
+            (body["spec"]["name"] == name).then(|| body["spec"]["key"].as_str().unwrap_or_default().to_string())
+        })
+    };
+    let intake = key(INTAKE_INSTALL).expect("the prepare step asks for the intake install");
+    let id = intake.strip_prefix("ops/").and_then(|k| k.strip_suffix("/intake")).expect("ops/<run>/intake");
+    assert!(!id.is_empty(), "the run id is built into the key: {intake}");
+    assert_eq!(key(INCIDENT_DRAIN), Some(format!("ops/{id}/drain")));
+    assert_eq!(key(BRIEF), Some(format!("ops/{id}/brief")));
+}
