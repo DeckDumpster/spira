@@ -360,6 +360,15 @@ fn settled_text(d: &Deps, outcome: &ExternalOutcome, via: &[String]) -> Result<S
     })
 }
 
+/// The argv of `gh-intake provenance`: whether `--check` was asked. Any other word is refused.
+pub fn provenance_mode(args: &[String]) -> Result<bool, String> {
+    match args.first().map(String::as_str) {
+        None => Ok(false),
+        Some("--check") => Ok(true),
+        Some(other) => Err(format!("unknown argument: {other}")),
+    }
+}
+
 /// Every GitHub-originated bead, its state, and where its trail ends. A bead the machine has no
 /// row for is broken, not open: its origin has no recorded fate. A machine that cannot answer
 /// is an error, never a clean read.
@@ -387,29 +396,6 @@ pub fn provenance_read(d: &Deps) -> Result<Vec<ProvRow>, String> {
         out.push(ProvRow { ext: row.ext, bead: row.id, state, verdict });
     }
     Ok(out)
-}
-
-/// The broken rows whose line differs from the one last reported for the same (issue, bead),
-/// remembered in `seen` across restarts. A row that mends keeps its entry, so a flapping row
-/// is not told again; an unwritable `seen` is an error, never a silent re-report.
-pub fn provenance_news(rows: &[ProvRow], seen: &Path) -> Result<Vec<String>, String> {
-    let mut known: std::collections::BTreeMap<String, String> = std::fs::read_to_string(seen)
-        .map(|t| t.lines().map(|l| (l.split(' ').take(2).collect::<Vec<_>>().join(" "), l.to_string())).collect())
-        .unwrap_or_default();
-    let mut news = Vec::new();
-    for r in rows.iter().filter(|r| r.is_broken()) {
-        let line = r.line();
-        if known.insert(format!("{} {}", r.ext, r.bead), line.clone()).as_deref() != Some(line.as_str()) {
-            news.push(line);
-        }
-    }
-    if !news.is_empty() {
-        let tmp = seen.with_extension("tmp");
-        std::fs::write(&tmp, known.values().map(|l| format!("{l}\n")).collect::<String>())
-            .and_then(|_| std::fs::rename(&tmp, seen))
-            .map_err(|e| format!("cannot record the reported rows in {} ({e})", seen.display()))?;
-    }
-    Ok(news)
 }
 
 /// Posts the outcome of a settled, non-landing trail on the issue, and closes the issue when
@@ -1528,24 +1514,13 @@ mod tests {
     }
 
     #[test]
-    fn a_broken_row_is_reported_once_across_restarts_and_again_only_when_its_verdict_changes() {
-        let tmp = testkit::TempDir::new("gh-intake-prov-news");
-        let seen = tmp.path().join("seen");
-        let row = |why: &str| ProvRow { ext: "github:o/r#1".into(), bead: "sp-a".into(), state: "LANDED".into(), verdict: ProvVerdict::Broken(why.into()) };
-        let news = |rows: &[ProvRow]| provenance_news(rows, &seen).unwrap().len();
-        assert_eq!(news(&[row("no commit")]), 1);
-        assert_eq!(news(&[row("no commit")]), 0, "same row, second pass or a restarted watcher");
-        assert_eq!(news(&[row("no lifecycle row")]), 1, "changed verdict");
-        let open = ProvRow { ext: "github:o/r#1".into(), bead: "sp-a".into(), state: "LANDED".into(), verdict: ProvVerdict::Open };
-        assert_eq!(news(&[open]), 0);
-        assert_eq!(news(&[row("no lifecycle row")]), 0, "a flapping row is not told again");
-    }
-
-    #[test]
-    fn an_unwritable_record_of_reported_rows_is_an_error_not_a_silent_re_report() {
-        let tmp = testkit::TempDir::new("gh-intake-prov-news-unwritable");
-        let row = ProvRow { ext: "github:o/r#1".into(), bead: "sp-a".into(), state: "LANDED".into(), verdict: ProvVerdict::Broken("x".into()) };
-        assert!(provenance_news(&[row], &tmp.path().join("no-such-dir").join("seen")).is_err());
+    fn the_retired_provenance_modes_are_refused_as_unknown_arguments() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        for mode in ["watch", "health"] {
+            assert_eq!(provenance_mode(&args(&[mode])), Err(format!("unknown argument: {mode}")));
+        }
+        assert_eq!(provenance_mode(&args(&[])), Ok(false));
+        assert_eq!(provenance_mode(&args(&["--check"])), Ok(true));
     }
 
     #[test]
