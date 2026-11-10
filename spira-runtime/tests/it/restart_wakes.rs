@@ -144,9 +144,11 @@ fn a_tick_swallowed_by_a_stream_quarantine_that_could_not_be_stored_is_armed_aga
     let mut d = boot(faulty.clone(), &clock, &seen, vec![extra]);
     faulty.fail_next("poison");
     // The failed write comes back as an error, as it does to the host, which goes on.
+    let mut errors = 0;
     for _ in 0..40 {
-        let _ = d.run_until(clock.now_ms() + 5_000);
+        errors += usize::from(d.run_until(clock.now_ms() + 5_000).is_err());
     }
+    assert_eq!(errors, 1, "the planted fault surfaces as exactly one run error");
     let after_fault = observes(&seen, BATCHER_OBSERVE);
     let gate_after_fault = observes(&seen, GATE_OBSERVE);
     assert!(armed(&d, BATCHER).is_some(), "batcher.local keeps a tick armed");
