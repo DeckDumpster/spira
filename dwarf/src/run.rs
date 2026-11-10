@@ -211,6 +211,15 @@ impl<'a> Run<'a> {
         checkpoint::parse_facts(&o.stdout).into_iter().rev().find(|f| f.kind == crate::fast_tier::KIND).map(|f| f.cause).unwrap_or_default()
     }
 
+    /// The newest `eject-failure` fact of the bead: why the gate or a round sent it back.
+    pub fn last_eject_failure(&self) -> String {
+        let o = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &self.s.bead, "--kinds", spira_config::ejection::KIND]), None, None);
+        if !o.success() {
+            return String::new();
+        }
+        checkpoint::parse_facts(&o.stdout).into_iter().rev().find(|f| f.kind == spira_config::ejection::KIND).map(|f| f.cause).unwrap_or_default()
+    }
+
     pub fn record_fact(&self, kind: &str, cause: &str) {
         let o = self.d.exec.exec("spira-lc", &s(&["fact", &self.s.bead, "--kind", kind, "--actor", &self.s.dwarf, "--cause", cause]), None, None);
         if !o.success() {
@@ -1154,7 +1163,8 @@ impl<'a> Run<'a> {
             }
         }
 
-        body = format!("{}{body}", brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)));
+        let head = self.d.git.git(work, &["rev-parse", "HEAD"]).stdout.trim().to_string();
+        body = format!("{}{}{body}", brief::eject_failure_brief(&self.last_eject_failure(), &head), brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)));
 
         // A thrashed bead leads with its sticking point, while the tip has not moved.
         let mut banner = None;

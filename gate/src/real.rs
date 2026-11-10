@@ -619,6 +619,9 @@ impl World for Real {
             .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
             .unwrap_or_default()
     }
+    fn lc_failure(&self, bead: &str, tip: &str, files: &[String], output: &str) {
+        let _ = spira_config::ejection::record(&spira_config::ejection::cli, bead, tip, files, output, "gate");
+    }
     fn lc_gate_start(&self, bead: &str) {
         let _ = spira_config::bounded::bounded("spira-lc")
             .args(["fact", bead, "--kind", "gate-start", "--actor", "gate"])
