@@ -173,12 +173,15 @@ impl Backlog {
             self.held.pop_front();
         }
         self.held.push_back((ts, fields));
+        (dropped, self.flush(store, family))
+    }
+
+    /// Offers everything held to the store; `Err` is the first refusal, with the rest still held.
+    pub fn flush(&mut self, store: &tsd::store::Pusher, family: &str) -> Result<(), String> {
         while let Some((ts, fields)) = self.held.front() {
-            if let Err(e) = store.push(family, ts, fields) {
-                return (dropped, Err(e));
-            }
+            store.push(family, ts, fields)?;
             self.held.pop_front();
         }
-        (dropped, Ok(()))
+        Ok(())
     }
 }

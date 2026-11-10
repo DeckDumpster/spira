@@ -212,6 +212,12 @@ pub fn superseded(started_under: Option<&str>, current: Option<&str>) -> bool {
     }
 }
 
+/// A listener exits to be restarted when nothing it holds would be lost and it is on a
+/// superseded release.
+pub fn restart_now(in_flight: usize, backlog_flushed: bool, started_under: Option<&str>, current: Option<&str>) -> bool {
+    in_flight == 0 && backlog_flushed && superseded(started_under, current)
+}
+
 #[allow(clippy::type_complexity)]
 fn properties_changed(m: &Msg) -> Option<(&str, String, Vec<(String, Val)>)> {
     if m.kind != SIGNAL || m.member.as_deref() != Some("PropertiesChanged") {
@@ -397,6 +403,15 @@ mod idle_tests {
         assert!(!superseded(Some("/r/spira-releases/current"), Some("bbb")), "a unit pinned to the link follows it");
         assert!(!superseded(Some("/r/spira-releases/aaa"), None), "an unreadable link is not a reason to stop");
         assert!(!superseded(None, Some("bbb")));
+    }
+
+    #[test]
+    fn a_superseded_listener_restarts_only_with_nothing_in_flight_and_its_rows_stored() {
+        let (old, cur) = (Some("/r/aaa"), Some("bbb"));
+        assert!(restart_now(0, true, old, cur));
+        assert!(!restart_now(1, true, old, cur), "a run in flight would be lost");
+        assert!(!restart_now(0, false, old, cur), "rows the store has not taken would be lost");
+        assert!(!restart_now(0, true, Some("/r/bbb"), cur));
     }
 
     #[test]

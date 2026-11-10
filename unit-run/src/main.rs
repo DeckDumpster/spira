@@ -71,28 +71,26 @@ fn watch_cmd(family: &str) -> Result<(), String> {
     let mut seen = written_ids(&resume);
     let metrics = spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-unit-run", Duration::from_secs(2));
     let store = tsd::store::Pusher::new(endpoint.clone());
-    let mut backlog = unit_run::Backlog::new(BACKLOG_MAX);
+    let backlog = std::cell::RefCell::new(unit_run::Backlog::new(BACKLOG_MAX));
     let mut triggers = Triggers::new(&Spawn);
     let mut conn = unit_run::dbus::Conn::connect(&unit_run::dbus::bus_path()?)?;
     watch::arm(&mut conn)?;
     let now_us = || spira_config::vtime::now_epoch().saturating_mul(1_000_000);
     let started_us = now_us();
     let mut tracker = watch::Tracker::new(watch::last_ended_us(&resume).unwrap_or(started_us));
-    let held = std::cell::Cell::new(false);
     let mut record = |r: unit_run::Record| -> Result<(), String> {
         if !seen.insert(r.invocation_id.clone()) {
             return Ok(());
         }
         let trig = triggers.of(&r.unit);
         let fields = unit_run::record_fields(&r, trig.as_deref(), &instance);
-        let (dropped, stored) = backlog.offer(&store, family, tsd::iso_utc(Wall.now_epoch()), fields);
+        let (dropped, stored) = backlog.borrow_mut().offer(&store, family, tsd::iso_utc(Wall.now_epoch()), fields);
         if dropped {
             eprintln!("unit-run watch: backlog full ({BACKLOG_MAX}) while the store refuses rows; dropped the oldest");
         }
         if let Err(e) = stored {
-            eprintln!("unit-run watch: {} row(s) held: {e}", backlog.len());
+            eprintln!("unit-run watch: {} row(s) held: {e}", backlog.borrow().len());
         }
-        held.set(!backlog.is_empty());
         push_metrics(&metrics, &r);
         Ok(())
     };
@@ -105,7 +103,8 @@ fn watch_cmd(family: &str) -> Result<(), String> {
         for r in watch::step(&mut conn, &mut tracker, now_us, IDLE_CHECK)? {
             record(r)?;
         }
-        if tracker.in_flight() == 0 && !held.get() && watch::superseded(release.as_deref(), current_release(release.as_deref()).as_deref()) {
+        let flushed = backlog.borrow_mut().flush(&store, family).is_ok();
+        if watch::restart_now(tracker.in_flight(), flushed, release.as_deref(), current_release(release.as_deref()).as_deref()) {
             eprintln!("unit-run watch: idle and no longer on the current release; exiting to be restarted on it");
             return Ok(());
         }
