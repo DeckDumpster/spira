@@ -337,6 +337,60 @@ for seg in re.split(r"&&|\|\||;|\||\n", cmd):
     fi
 fi
 
+if [ -z "$reason" ]; then
+    _pattern_kill="$(printf '%s' "$cmd" | python3 -c '
+import re, shlex, sys
+PREFIX = {"sudo", "env", "timeout", "nohup", "nice", "command", "exec", "time"}
+FINDERS = {"pgrep", "pidof", "pkill", "ps", "grep", "awk", "pidwait"}
+def segments(text):
+    try:
+        lex = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        toks = text.split()
+    segs, cur = [], []
+    for t in toks:
+        if t and set(t) <= set("&|;()"):
+            segs.append((cur, t)); cur = []
+        else:
+            cur.append(t)
+    segs.append((cur, ""))
+    return segs
+def head(toks):
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t) or t in PREFIX or (i > 0 and (t.startswith("-") or t[:1].isdigit())):
+            i += 1
+            continue
+        return toks[i].split("/")[-1], toks[i + 1:]
+    return "", []
+def hit(text, depth=0):
+    if re.search(r"(^|[;&|(\s])kill\s[^;&|]*(\$\(|`)\s*(pgrep|pidof)\b", text):
+        return True
+    pipeline = []
+    for toks, sep in segments(text):
+        name, rest = head(toks)
+        if name in ("pkill", "killall", "pidwait"):
+            return True
+        if name in ("bash", "sh", "zsh", "dash", "ksh") and "-c" in rest and depth < 3:
+            j = rest.index("-c")
+            if j + 1 < len(rest) and hit(rest[j + 1], depth + 1):
+                return True
+        if name == "xargs" and any(r.split("/")[-1] in ("kill", "pkill") for r in rest):
+            if any(h in FINDERS for h in pipeline):
+                return True
+        pipeline.append(name)
+        if sep != "|":
+            pipeline = []
+    return False
+if hit(sys.stdin.read()): print("1")
+' 2>/dev/null)"
+    [ "$_pattern_kill" = "1" ] && \
+        reason="dwarves may not kill by pattern (pkill, killall, pgrep|xargs kill match other sessions' processes, the Concierge's included; law-guard-binds-the-caller): kill by PID after reading /proc/<pid>/cmdline, or stop a systemd unit by name with systemctl --user stop <unit>; SPIRA_DWARF_OVERRIDE=1 for Ops incidents"
+fi
+
 # No bd rule (sp-j7l3q; Ryan 2026-10-05, superseding sp-nkr42 here): no dwarf persona has bd.
 # The model's PATH holds only `work` (sp-zf4q3) and every persona's bead operations are
 # `work` broker verbs (sp-st0mm), so the old `bd create` heuristic guarded nothing.

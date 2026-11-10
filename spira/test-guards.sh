@@ -569,5 +569,27 @@ rc_c1=$?
 is   "suites-quarantine/exits-nonzero-in-dwarf-session" 1               "$rc_c1"
 want "suites-quarantine/names-dwarves-may-not"           "dwarves may not" "$out_c1"
 want "suites-quarantine/names-operator-or-Ops"          "operator"      "$out_c1"
+# ===========================================================================
+echo
+echo "pattern kills are refused in a dwarf session; PID kills and unit stops pass:"
+# ===========================================================================
+for c in 'pkill -f "it-"' 'pkill cargo' 'killall cargo' 'pgrep -f it- | xargs kill' \
+         'FOO=1 sudo pkill -9 -f x' 'cd /tmp && pkill -f it-' 'bash -c "pkill -f it-"' \
+         'kill $(pgrep -f it-)' 'timeout 5 /usr/bin/pkill -f it-'; do
+    out="$(fence_run "$c" SPIRA_DWARF=test-dwarf)"
+    want "pattern-kill/refused: $c" '"decision":"block"' "$out"
+    want "pattern-kill/names-the-exit: $c" 'systemctl --user stop' "$out"
+done
+for c in 'kill 1234' 'kill -9 1234 5678' 'systemctl --user stop spira-x.service' \
+         'grep pkill notes.md' 'echo "do not pkill -f it-"' 'cat /proc/1234/cmdline | xargs -0 echo' \
+         'git commit -m "no pkill here"'; do
+    out="$(fence_run "$c" SPIRA_DWARF=test-dwarf)"
+    nowant "pattern-kill/allowed: $c" '"decision":"block"' "$out"
+done
+out="$(fence_run 'pkill -f "it-"' SPIRA_DWARF=test-dwarf SPIRA_DWARF_OVERRIDE=1)"
+nowant "pattern-kill/override-bypasses" '"decision":"block"' "$out"
+out="$(fence_run 'pkill -f "it-"')"
+nowant "pattern-kill/silent-outside-dwarf" '"decision":"block"' "$out"
+
 
 tl_summary
