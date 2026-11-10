@@ -3,7 +3,6 @@ name = "state-store-sqlite"
 version = "0.1.0"
 edition = "2021"
 description = "state-store-sqlite — the state-store contract's Backend on SQLite (WAL, synchronous=NORMAL with a durable revision jump on open, one exclusive opener), with bulk load, a stepped online backup, a floored compaction, and state-store-bench: CAS-write latency under load and the conformance suite against a live file."
-autotests = false
 
 [lib]
 name = "state_store_sqlite"
@@ -27,13 +26,3 @@ spira-otel = { path = "../spira-otel" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
-
-[[test]]
-name = "conformance_sqlite"
-path = "tests/conformance_sqlite.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "durability"
-path = "tests/durability.rs"
-required-features = ["integration"]

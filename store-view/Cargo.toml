@@ -3,7 +3,6 @@ name = "store-view"
 version = "0.1.0"
 edition = "2021"
 description = "store-view — the store's hot reads held in memory: rounds, open and ended forge batches and ready counts, kept current by the store's watch, refusing once stale. A leaf crate any binary can depend on."
-autotests = false
 
 [lib]
 name = "store_view"
@@ -15,8 +14,3 @@ integration = []
 [dependencies]
 spira-config = { path = "../spira-config" }
 serde_json = "1"
-
-[[test]]
-name = "store"
-path = "tests/store.rs"
-required-features = ["integration"]

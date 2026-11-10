@@ -4,7 +4,6 @@ version = "1.0.0"
 edition = "2021"
 default-run = "spira-config"
 description = "spira-config — typed spira.toml: schema, validate, get, export --sh, and a converter from spira.conf/repo-map/rune."
-autotests = false
 
 [features]
 integration = []
@@ -51,33 +50,3 @@ strip = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
-
-[[test]]
-name = "build_dir_cli"
-path = "tests/build_dir_cli.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "convert"
-path = "tests/convert.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "locate_parity"
-path = "tests/locate_parity.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "registry_codegen"
-path = "tests/registry_codegen.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "validate"
-path = "tests/validate.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "set_release"
-path = "tests/set_release.rs"
-required-features = ["integration"]

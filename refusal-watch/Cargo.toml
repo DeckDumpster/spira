@@ -3,7 +3,6 @@ name = "refusal-watch"
 version = "0.1.0"
 edition = "2021"
 description = "refusal-watch — groups the lifecycle machine's refused bead events by caller and refusal, and files one bead per class whose count passes its baseline, once per class per repeat window."
-autotests = false
 
 [lib]
 name = "refusal_watch"
@@ -27,8 +26,3 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-
-[[test]]
-name = "no_fork_edges"
-path = "tests/no_fork_edges.rs"
-required-features = ["integration"]

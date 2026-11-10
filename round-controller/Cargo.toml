@@ -3,7 +3,6 @@ name = "round-controller"
 version = "0.1.0"
 edition = "2021"
 description = "round-controller — rounds as resources with one owner and one store: injected ports, typed stamped outcomes, and the scenario harness its every branch is driven through. Only its sifts verb is installed."
-autotests = false
 
 [lib]
 name = "round_controller"
@@ -42,8 +41,3 @@ spira-lc = { path = "../spira-lc" }
 state-store-sqlite = { path = "../state-store-sqlite" }
 testkit = { path = "../testkit" }
 forge = { path = "../forge" }
-
-[[test]]
-name = "scenarios"
-path = "tests/scenarios.rs"
-required-features = ["integration"]

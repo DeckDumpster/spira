@@ -3,7 +3,6 @@ name = "lifecycle"
 version = "1.0.0"
 edition = "2021"
 description = "lifecycle — the three pure bead/delivery/batch transition machines and the event log fold. No I/O, no clock, no git."
-autotests = false
 
 [features]
 integration = []
@@ -20,13 +19,3 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-
-[[test]]
-name = "delivery_properties"
-path = "tests/delivery_properties.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "schema_views"
-path = "tests/schema_views.rs"
-required-features = ["integration"]

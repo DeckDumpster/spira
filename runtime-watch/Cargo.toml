@@ -3,7 +3,6 @@ name = "runtime-watch"
 version = "0.1.0"
 edition = "2021"
 description = "runtime-watch — files one bump bead per repo and language runtime whose pinned release upstream no longer supports (Rust behind current stable, Node and Python past end-of-life)."
-autotests = false
 
 [lib]
 name = "runtime_watch"
@@ -30,8 +29,3 @@ strip = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
-
-[[test]]
-name = "no_fork_edges"
-path = "tests/no_fork_edges.rs"
-required-features = ["integration"]

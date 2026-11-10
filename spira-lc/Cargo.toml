@@ -3,7 +3,6 @@ name = "spira-lc"
 version = "1.0.0"
 edition = "2021"
 description = "spira-lc — the lifecycle CLI and system service: show/list/history/event against spira_lifecycle, over a local socket when the system-user service is installed, or a direct connection in same-user fallback. Deploys inert."
-autotests = false
 
 [features]
 integration = []
@@ -43,8 +42,3 @@ testkit = { path = "../testkit" }
 reconciler-engine = { path = "../reconciler-engine" }
 incident = { path = "../incident" }
 sentinel = { path = "../sentinel" }
-
-[[test]]
-name = "e2e_goodput_20d"
-path = "tests/e2e_goodput_20d.rs"
-required-features = ["integration"]

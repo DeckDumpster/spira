@@ -3,7 +3,6 @@ name = "reconciler-flow"
 version = "1.0.0"
 edition = "2021"
 description = "reconciler-flow — flow invariants (backlog trend, stage velocities vs a trailing baseline, stage dwell, round health) over the run/tsd/ time series, on a 30-minute pass."
-autotests = false
 
 [[bin]]
 name = "reconciler-flow"
@@ -31,13 +30,3 @@ strip = true
 [dev-dependencies]
 spira-otel = { path = "../spira-otel" }
 testkit = { path = "../testkit" }
-
-[[test]]
-name = "no_fork_edges"
-path = "tests/no_fork_edges.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "store_parity"
-path = "tests/store_parity.rs"
-required-features = ["integration"]

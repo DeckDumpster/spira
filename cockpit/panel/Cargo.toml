@@ -3,7 +3,6 @@ name = "panel"
 version = "1.0.0"
 edition = "2021"
 description = "Cockpit panel — decisions, insights and notifications over beads and Gas Town mail."
-autotests = false
 
 [features]
 integration = []
@@ -30,8 +29,3 @@ path = "../../mail"
 
 [dev-dependencies.testkit]
 path = "../../testkit"
-
-[[test]]
-name = "no_fork_edges"
-path = "tests/no_fork_edges.rs"
-required-features = ["integration"]

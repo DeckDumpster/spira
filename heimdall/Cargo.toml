@@ -3,7 +3,6 @@ name = "heimdall"
 version = "1.0.0"
 edition = "2021"
 description = "heimdall — the watchdog over the loop. Its only power is speech: it reads timestamps and counters, asks the database one question, and raises or clears an alert bead. Replaces spira/heimdall.sh."
-autotests = false
 
 [lib]
 path = "src/lib.rs"
@@ -25,8 +24,3 @@ runtime = { path = "../runtime" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
-
-[[test]]
-name = "no_fork_edges"
-path = "tests/no_fork_edges.rs"
-required-features = ["integration"]

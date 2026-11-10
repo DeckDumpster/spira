@@ -3,7 +3,6 @@ name = "skew"
 version = "1.0.0"
 edition = "2021"
 description = "skew — is the activated release the latest published, and the landing gate's foreign-harness fence. Replaces spira/skew.sh."
-autotests = false
 
 [lib]
 name = "skew"
@@ -26,8 +25,3 @@ libc = "0.2"
 
 [profile.release]
 opt-level = "z"
-
-[[test]]
-name = "no_fork_edges"
-path = "tests/no_fork_edges.rs"
-required-features = ["integration"]

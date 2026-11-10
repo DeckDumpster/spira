@@ -3,7 +3,6 @@ name = "unit-run"
 version = "1.0.0"
 edition = "2021"
 description = "unit-run — the one writer of the unit-run-dbus family, held in the metrics store: one record per systemd user-unit execution, learned from the user manager's D-Bus signals (watch)."
-autotests = false
 
 [lib]
 name = "unit_run"
@@ -32,8 +31,3 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-
-[[test]]
-name = "accounting"
-path = "tests/accounting.rs"
-required-features = ["integration"]

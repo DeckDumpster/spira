@@ -3,7 +3,6 @@ name = "incident"
 version = "1.0.0"
 edition = "2021"
 description = "incident — turn a production event into a bead Ops can claim, deduplicated on external_ref, with a write-ahead spool so an event that arrives while the store is down is never lost. Rust port of spira/incident.sh (sp-0ekp7); contract, scar and scope: DESIGN.md."
-autotests = false
 
 [features]
 integration = []
@@ -40,8 +39,3 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-
-[[test]]
-name = "no_fork_edges"
-path = "tests/no_fork_edges.rs"
-required-features = ["integration"]

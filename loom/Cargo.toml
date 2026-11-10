@@ -3,7 +3,6 @@ name = "loom"
 version = "1.0.0"
 edition = "2021"
 description = "Loom — a read endpoint over the live beads graph, with the budget that keeps it cheap."
-autotests = false
 
 [[bin]]
 name = "loom"
@@ -40,8 +39,3 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-
-[[test]]
-name = "no_fork_edges"
-path = "tests/no_fork_edges.rs"
-required-features = ["integration"]

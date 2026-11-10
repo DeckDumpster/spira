@@ -3,7 +3,6 @@ name = "sim"
 version = "0.1.0"
 edition = "2021"
 description = "spira-sim — deterministic simulation of the Spira loop: virtual-time event loop driven by one seed."
-autotests = false
 
 [lib]
 name = "sim"
@@ -38,13 +37,3 @@ reconciler-engine = { path = "../reconciler-engine" }
 spira-runtime = { path = "../spira-runtime" }
 lifecycle = { path = "../lifecycle" }
 testkit = { path = "../testkit" }
-
-[[test]]
-name = "goodput_fixture"
-path = "tests/goodput_fixture.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "it"
-path = "tests/it/main.rs"
-required-features = ["integration"]

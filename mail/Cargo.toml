@@ -3,7 +3,6 @@ name = "mail"
 version = "1.0.0"
 edition = "2021"
 description = "mail — Maildir mailboxes for operator/concierge messages: send with transport lint and repeat-guard, list/read/count/unread-age/done, sendmail (RFC 5322 reply intake that closes the tracking bead), tidy and sweep-dismissed. Replaces spira/mail.sh (sp-ooh1k)."
-autotests = false
 
 [features]
 integration = []
@@ -32,8 +31,3 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-
-[[test]]
-name = "no_fork_edges"
-path = "tests/no_fork_edges.rs"
-required-features = ["integration"]

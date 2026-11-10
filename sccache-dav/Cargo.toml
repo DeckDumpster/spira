@@ -3,7 +3,6 @@ name = "sccache-dav"
 version = "1.0.0"
 edition = "2021"
 description = "A minimal WebDAV store for sccache (sp-xjnzl): this box and every ephemeral round-vm share one compilation cache instead of each cold-building its dependencies."
-autotests = false
 
 [[bin]]
 name = "sccache-dav"
@@ -28,8 +27,3 @@ httpdate = "1"
 [dev-dependencies]
 testkit = { path = "../testkit" }
 tokio = { version = "1", features = ["io-util", "time"] }
-
-[[test]]
-name = "store"
-path = "tests/store.rs"
-required-features = ["integration"]

@@ -20,7 +20,6 @@ const EXEMPT_TOML_FROM_STR: &[&str] = &[
     "desired-state/src/store.rs",
     "reconciler-engine/src/causal_map.rs",
     "reconciler-flow/src/io.rs",
-    "spira-lint/src/rules/integration_opt_in.rs",
     "spira-lint/src/rules/lockfile_lint.rs",
     "sim/src/actors.rs",
     "sim/src/fit.rs",

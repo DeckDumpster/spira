@@ -5,7 +5,6 @@ edition = "2021"
 default-run = "round-vm"
 rust-version = "1.99"
 description = "round-vm — a pool of one ephemeral round VM from the hypervisor: acquire / release / run / status (sp-o3o6z; replaces spira/round-vm.sh and round-vm-provider-pve.sh)."
-autotests = false
 
 [[bin]]
 name = "round-vm"
@@ -42,23 +41,3 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-
-[[test]]
-name = "image_preflight"
-path = "tests/image_preflight.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "lint_culprit"
-path = "tests/lint_culprit.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "preflight_guest_harness"
-path = "tests/preflight_guest_harness.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "unit_cov_real"
-path = "tests/unit_cov_real.rs"
-required-features = ["integration"]

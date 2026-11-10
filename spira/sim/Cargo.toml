@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 description = "spira-sim — the deterministic simulator's hermetic scratch world (sim world up/down); the simulator and sim gh live in this crate."
-autotests = false
 
 [lib]
 name = "spira_sim"
@@ -38,8 +37,3 @@ spira-config = { path = "../../spira-config" }
 testkit = { path = "../../testkit" }
 perf-watch = { path = "../../perf-watch" }
 queue = { path = "../../queue" }
-
-[[test]]
-name = "it"
-path = "tests/it/main.rs"
-required-features = ["integration"]

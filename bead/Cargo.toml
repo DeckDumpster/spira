@@ -3,7 +3,6 @@ name = "bead"
 version = "0.1.0"
 edition = "2021"
 description = "bead — file a bead through the contract, lint the store against it, report it, wire a blocks edge (sp-g9mhe, replaces spira/bead.sh). Also carries bdq: the harness's one chokepoint for invoking bd, its create-time safety fences, and bdjson/json_only/json_count/ghq (sp-w3h16, wave 4.14, replaces spira/lib.sh's bdq family)."
-autotests = false
 
 [lib]
 name = "bead"
@@ -37,8 +36,3 @@ strand = { path = "../strand" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
-
-[[test]]
-name = "no_fork_edges"
-path = "tests/no_fork_edges.rs"
-required-features = ["integration"]
