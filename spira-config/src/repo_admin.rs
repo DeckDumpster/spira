@@ -314,6 +314,111 @@ fn register(a: &AddArgs, land_ref: &str, t: &Targets, did: &mut Vec<String>) -> 
     Ok(())
 }
 
+const LANES: [&str; 6] = [
+    "plan",
+    "incident",
+    "groom",
+    "mimir-sweep",
+    "spike",
+    "czar-trigger",
+];
+
+fn map_row_index(text: &str, name: &str) -> Option<(usize, repos::Row)> {
+    text.lines()
+        .enumerate()
+        .find_map(|(i, l)| repos::parse(l).into_iter().next().filter(|r| r.name == name).map(|r| (i, r)))
+}
+
+fn rebuild(text: &str, idx: usize, replacement: Option<String>) -> String {
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    match replacement {
+        Some(l) => lines[idx] = l,
+        None => {
+            lines.remove(idx);
+        }
+    }
+    lines.join("\n") + "\n"
+}
+
+fn write_map(map: &Path, out: &str) -> Result<(), String> {
+    crate::backup_existing(map).map_err(|e| format!("{}: {e}", map.display()))?;
+    crate::write_atomic(map, out).map_err(|e| format!("{}: {e}", map.display()))
+}
+
+fn read_map(verb: &str, map: Option<&PathBuf>) -> Result<(PathBuf, String), String> {
+    let map = map
+        .filter(|m| m.is_file())
+        .ok_or_else(|| format!("repo {verb}: no repo-map is in force"))?;
+    let text = std::fs::read_to_string(map).map_err(|e| format!("{}: {e}", map.display()))?;
+    Ok((map.clone(), text))
+}
+
+/// Changes one field of a registered repo's repo-map row and returns `(old, new)`. `queue`
+/// is the land-mode column and `land` the landing ref (`base`).
+pub fn set(name: &str, field: &str, value: &str, t: &Targets) -> Result<(String, String), String> {
+    let (map, text) = read_map("set", t.map.as_ref())?;
+    let (idx, mut row) = map_row_index(&text, name)
+        .ok_or_else(|| format!("repo set: {name} is not registered in {}", map.display()))?;
+    if matches!(field, "format" | "gate") && (value.contains('|') || value.contains('\n')) {
+        return Err(format!("repo set: {field} may not contain a pipe or newline"));
+    }
+    let old = match field {
+        "path" => {
+            if !Path::new(value).is_absolute() {
+                return Err(format!("repo set: path {value} must be absolute"));
+            }
+            std::mem::replace(&mut row.path, value.to_string())
+        }
+        "queue" => {
+            let q = Queue::parse(value)
+                .ok_or_else(|| format!("repo set: queue must be local or forge, not {value:?}"))?;
+            std::mem::replace(&mut row.land, q.mode().to_string())
+        }
+        "land" => std::mem::replace(&mut row.base, value.to_string()),
+        "format" => std::mem::replace(&mut row.format, value.to_string()),
+        "gate" => std::mem::replace(&mut row.gate, value.to_string()),
+        "lanes" => {
+            if value.is_empty() || !value.split(',').all(|l| LANES.contains(&l)) {
+                return Err(format!(
+                    "repo set: lanes must be a comma list of {}, not {value:?}",
+                    LANES.join(", ")
+                ));
+            }
+            std::mem::replace(&mut row.lanes, value.to_string())
+        }
+        other => {
+            return Err(format!(
+                "repo set: unknown field {other:?} (path, queue, land, format, gate, lanes)"
+            ))
+        }
+    };
+    if matches!(field, "queue" | "land")
+        && row.land == Queue::Forge.mode()
+        && repos::ref_remote(&row.base, None).is_none()
+    {
+        return Err(format!(
+            "repo set: queue.forge lands on a remote ref such as origin/main, not {}",
+            row.base
+        ));
+    }
+    let line = format!(
+        "{} | {} | {} | {} | {} | {} | {}",
+        row.name, row.path, row.land, row.base, row.format, row.gate, row.lanes
+    );
+    write_map(&map, &rebuild(&text, idx, Some(line)))?;
+    Ok((old, value.to_string()))
+}
+
+/// Removes a repository's repo-map row, returning the row it removed.
+pub fn rm(name: &str, t: &Targets) -> Result<String, String> {
+    let (map, text) = read_map("rm", t.map.as_ref())?;
+    let (idx, _) = map_row_index(&text, name)
+        .ok_or_else(|| format!("repo rm: {name} is not registered in {}", map.display()))?;
+    let old = text.lines().nth(idx).unwrap_or_default().to_string();
+    write_map(&map, &rebuild(&text, idx, None))?;
+    Ok(old)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Piece {
     pub name: &'static str,
@@ -521,5 +626,64 @@ mod tests {
     fn unregistered_is_named_first() {
         let f = fx();
         assert_eq!(first_failure(&f), Some("registered"));
+    }
+
+    fn registered(f: &Fx, gate: &str) -> Targets {
+        std::fs::write(
+            &f.map,
+            format!("# rows\nfixture | /srv/fx | queue.local | local/main | fmt | {gate} | plan\n"),
+        )
+        .unwrap();
+        Targets {
+            map: Some(f.map.clone()),
+            toml: None,
+        }
+    }
+
+    #[test]
+    fn set_gate_to_empty_reads_back_empty_and_reports_old_and_new() {
+        let f = fx();
+        let t = registered(&f, "bash gate.sh");
+        let (old, new) = set("fixture", "gate", "", &t).unwrap();
+        assert_eq!((old.as_str(), new.as_str()), ("bash gate.sh", ""));
+        let r = reg(&f);
+        assert_eq!(r.gate("fixture").as_deref(), Some(""));
+        assert_eq!(r.format("fixture").as_deref(), Some("fmt"));
+        assert_eq!(r.root("fixture").as_deref(), Some("/srv/fx"));
+    }
+
+    #[test]
+    fn set_refuses_an_unknown_field_and_leaves_the_map_alone() {
+        let f = fx();
+        let t = registered(&f, "g");
+        let before = std::fs::read_to_string(&f.map).unwrap();
+        let e = set("fixture", "colour", "red", &t).unwrap_err();
+        assert!(e.contains("unknown field"), "{e}");
+        assert_eq!(std::fs::read_to_string(&f.map).unwrap(), before);
+    }
+
+    #[test]
+    fn set_refuses_an_unregistered_name_and_bad_values() {
+        let f = fx();
+        let t = registered(&f, "g");
+        assert!(set("nope", "gate", "", &t).unwrap_err().contains("not registered"));
+        assert!(set("fixture", "path", "rel", &t).is_err());
+        assert!(set("fixture", "gate", "a|b", &t).is_err());
+        assert!(set("fixture", "queue", "sideways", &t).is_err());
+        assert!(set("fixture", "lanes", "plan,bogus", &t).is_err());
+        set("fixture", "land", "main", &t).unwrap();
+        assert!(set("fixture", "queue", "forge", &t).is_err());
+    }
+
+    #[test]
+    fn rm_drops_only_the_named_row() {
+        let f = fx();
+        let t = registered(&f, "g");
+        let mut text = std::fs::read_to_string(&f.map).unwrap();
+        text.push_str("other | /srv/o | queue.local | local/main | | | plan\n");
+        std::fs::write(&f.map, text).unwrap();
+        rm("fixture", &t).unwrap();
+        assert_eq!(reg(&f).names(), vec!["other".to_string()]);
+        assert!(rm("fixture", &t).is_err());
     }
 }
