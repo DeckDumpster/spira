@@ -84,6 +84,7 @@ seed() {   # seed <id>
 tl_config SPIRA_RUN="$RUN" SPIRA_QUEUE_DIR="$QDIR" SPIRA_REPO_MAP="$RMAP" \
     SPIRA_RELEASES="$RELEASES" SPIRA_HOME_REPO=fixq SPIRA_QUEUE_LOCK_WAIT=2
 run() {
+    env "$(lcfix_mark)" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \
     SPIRA_REPO="$REPO" \
@@ -93,6 +94,7 @@ run() {
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 run_lockheld() {
+    env "$(lcfix_mark)" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \
     SPIRA_REPO="$REPO" \
@@ -104,7 +106,7 @@ run_lockheld() {
 }
 localmain() { git -C "$REPO" rev-parse local/main; }
 # The reconcile-content pass the timer runs: bd's status follows the lifecycle record.
-reconcile() { spira-lc reconcile-content --apply "$@" 2>&1; }
+reconcile() { lcfix_settle; spira-lc reconcile-content --apply "$@" 2>&1; }
 roundseq()  { cat "$QDIR/fixq/round-seq" 2>/dev/null; }
 
 # ============================================================================
@@ -113,6 +115,18 @@ echo "1 — a fixture round lands: fast-forward, LANDED, bead closed citing the 
 # ============================================================================
 testdb_reset
 seed sp-lloc1
+
+echo "1a — a marked process still holding the store is waited out, not answered cannot-tell"
+env "$(lcfix_mark)" flock "$LCFIX_DIR/control.db.lock" \
+    sh -c 'while [ ! -e "$1" ]; do sleep 0.1; done' _ "$TMP/release" &
+holder=$!
+until [ -n "$(grep -lzxF "$(lcfix_mark)" /proc/[0-9]*/environ 2>/dev/null)" ]; do sleep 0.1; done
+out="$(spira-lc reconcile-content --apply sp-lloc1 2>&1)"; rc=$?
+is "1a: unsettled, reconcile-content cannot tell while the store is held" 2 "$rc"
+( sleep 1; : > "$TMP/release" ) &
+rec="$(reconcile sp-lloc1)"; rcc=$?
+[ "$rcc" -eq 0 ] && ok "1a: reconcile settles the holder first and answers" || bad "1a: reconcile settles the holder first and answers" "rc=$rcc out=$rec"
+wait "$holder" 2>/dev/null
 
 git -C "$REPO" checkout -qb round-1 local/main
 printf 'one\n' > "$REPO/one.txt"
@@ -136,7 +150,7 @@ want "1: the override is loud" "UNGATED LANDING of $HEAD1" "$out"
 is "1: local/main equals the round head" "$HEAD1" "$(localmain)"
 is "1: the member's lifecycle row is LANDED" "LANDED" "$(lcfix_state sp-lloc1)"
 is "1: the landing writes no bd status — reconcile-content does" open "$(field sp-lloc1 status)"
-rec="$(reconcile sp-lloc1)"; is "1: reconcile-content exits 0" 0 "$?"
+rec="$(reconcile sp-lloc1)"; rcc=$?; [ "$rcc" -eq 0 ] && ok "1: reconcile-content exits 0" || bad "1: reconcile-content exits 0" "rc=$rcc out=$rec"
 want "1: reconcile-content closes the bead from its LANDED record" "closed sp-lloc1 (lifecycle LANDED)" "$rec"
 is "1: the bead is closed"                closed "$(field sp-lloc1 status)"
 want "1: close reason declares landed"    "OUTCOME: landed" "$(field sp-lloc1 close_reason)"
@@ -172,7 +186,7 @@ nowant "2: never claims success"          "fast-forwarded to"     "$out"
 is "2: local/main is unchanged"           "$PRE_MAIN" "$(localmain)"
 is "2: round-seq is unchanged"            "$PRE_SEQ"  "$(roundseq)"
 is "2: the refused member's lifecycle row is still CERTIFIED" "CERTIFIED" "$(lcfix_state sp-lloc2)"
-rec="$(reconcile sp-lloc2)"; is "2: reconcile-content exits 0" 0 "$?"
+rec="$(reconcile sp-lloc2)"; rcc=$?; [ "$rcc" -eq 0 ] && ok "2: reconcile-content exits 0" || bad "2: reconcile-content exits 0" "rc=$rcc out=$rec"
 is "2: the bead is left open, even after reconcile-content" open "$(field sp-lloc2 status)"
 
 # ============================================================================
@@ -218,7 +232,7 @@ out="$(run_lockheld land-local fixq --head "$HEAD4" --members "sp-lloc4:$HEAD4" 
     || bad "5: SPIRA_QUEUE_LOCK_HELD=1 proceeds despite the outside lock" "got rc=$rc out=$out"
 is "5: local/main advances to the round head" "$HEAD4" "$(localmain)"
 is "5: the member's lifecycle row is LANDED" "LANDED" "$(lcfix_state sp-lloc4)"
-rec="$(reconcile sp-lloc4)"; is "5: reconcile-content exits 0" 0 "$?"
+rec="$(reconcile sp-lloc4)"; rcc=$?; [ "$rcc" -eq 0 ] && ok "5: reconcile-content exits 0" || bad "5: reconcile-content exits 0" "rc=$rcc out=$rec"
 want "5: reconcile-content closes the bead from its LANDED record" "closed sp-lloc4 (lifecycle LANDED)" "$rec"
 is "5: the bead is closed"                    closed "$(field sp-lloc4 status)"
 is "5: round-seq advances to 2"               "2" "$(roundseq)"

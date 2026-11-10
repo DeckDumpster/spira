@@ -101,15 +101,10 @@ out="$(env "$(lcfix_mark)" SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_REPO="
 [ "$rc" -eq 0 ] && ok "the round lands the quarantine edit" || bad "the round lands the quarantine edit" "rc=$rc out=$out"
 is "local/main is the edit" "$TIP" "$(localmain)"
 is "the change bead's lifecycle row is LANDED" "LANDED" "$(lcfix_state sp-ssland1)"
-# Exit 2 is "cannot tell" (the store was unreachable): safe to retry. Only a settled answer is judged.
-rec=""; for _ in 1 2 3 4 5 6 7 8 9 10; do
-    rec="$(env "$(lcfix_mark)" spira-lc reconcile-content --apply sp-ssland1 2>&1)"; rrc=$?
-    [ "$rrc" -ne 2 ] && break; sleep 1
-done
-[ "$rrc" -eq 0 ] && ok "reconcile-content settles with exit 0" || bad "reconcile-content settles with exit 0" "rc=$rrc out=$rec"
-st="$(field sp-ssland1 status)"
-[ "$st" = closed ] && ok "the change bead is closed from its LANDED record" \
-    || bad "the change bead is closed from its LANDED record" "status=$st rc=$rrc out=$rec"
+lcfix_settle
+rec="$(env "$(lcfix_mark)" spira-lc reconcile-content --apply sp-ssland1 2>&1)"; rcc=$?; [ "$rcc" -eq 0 ] && ok "reconcile-content exits 0" || bad "reconcile-content exits 0" "rc=$rcc out=$rec"
+want "reconcile-content closes the change bead from its LANDED record" "closed sp-ssland1 (lifecycle LANDED)" "$rec"
+is "the change bead is closed" closed "$(field sp-ssland1 status)"
 want "the landed lifecycle file quarantines the suite" "test-q.sh | quarantined" "$(git -C "$REPO" show local/main:spira/suite-state 2>/dev/null)"
 want "...naming the defect bead, not the change bead" "| sp-defect6 |" "$(git -C "$REPO" show local/main:spira/suite-state 2>/dev/null)"
 [ ! -e "$QDIR/sp-ssland1" ] && ok "still no queue record after the land" || bad "still no queue record after the land" "found $QDIR/sp-ssland1"
