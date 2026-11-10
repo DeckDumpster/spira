@@ -147,6 +147,10 @@ fn a_quarantined_batcher_stream_ticks_again_once_its_row_is_cleared() {
     let mut d = boot(store.clone(), &clock, &seen, vec![extra]);
     run_for(&mut d, &clock, 60_000);
     assert!(store.inner.poisoned(&StreamKey(BATCHER_STREAM.into())).unwrap().is_some(), "the quarantine left its row in the store");
+    for _ in 0..3 {
+        run_for(&mut d, &clock, 30_000);
+        assert!(armed(&d, BATCHER).is_some(), "batcher.local stays armed while its row stands");
+    }
     store.lifted.store(true, Ordering::SeqCst);
     for _ in 0..40 {
         run_for(&mut d, &clock, 30_000);
