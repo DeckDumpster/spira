@@ -12,7 +12,7 @@
 //! for a given source path — a second worker's rename of the same already-moved path fails
 //! and that worker moves on to the next job.
 
-use crate::model::GateRun;
+use crate::model::{GateRun, DIED_TWICE};
 use crate::util::{atomic_write, branch_key};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -32,6 +32,9 @@ pub struct Job {
     /// The bead's priority, lower first; a job queued without one sorts last.
     #[serde(default = "no_priority")]
     pub priority: i64,
+    /// Gate runs of this tip that died at the cap, each as its `ran=` and `phases=` evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deaths: Vec<String>,
 }
 
 fn no_priority() -> i64 {
@@ -48,6 +51,12 @@ pub struct Done {
     /// any other gate is not this gate's to replay.
     #[serde(default)]
     pub gate: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Settled {
+    Filed,
+    Requeued,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,7 +103,7 @@ impl Job {
         format!("{}{}.json", self.prefix(), branch_key(&self.tip))
     }
     pub fn new(repo: &str, branch: &str, bead: &str, tip: &str, fix: bool) -> Job {
-        Job { repo: repo.into(), branch: branch.into(), bead: bead.into(), tip: tip.into(), fix, queued: nanos(), priority: no_priority() }
+        Job { repo: repo.into(), branch: branch.into(), bead: bead.into(), tip: tip.into(), fix, queued: nanos(), priority: no_priority(), deaths: Vec::new() }
     }
     pub fn with_priority(mut self, priority: i64) -> Job {
         self.priority = priority;
@@ -338,6 +347,48 @@ impl GateQueue {
             let _ = fs::remove_file(old);
         }
         Ok(path)
+    }
+
+    /// File a finished run. A first death at the cap goes back to the inbox, behind what is
+    /// queued now, instead of reaching the pass; a second is filed as `died-twice`, with both
+    /// deaths' timings in its output, so the pass moves the bead out of SUBMITTED at once.
+    pub fn settle(&self, slot: usize, d: &Done) -> std::io::Result<Settled> {
+        if !d.run.cap_death() {
+            self.complete(slot, d)?;
+            return Ok(Settled::Filed);
+        }
+        let mut job = d.job.clone();
+        job.deaths.push(self.death_evidence(&job, d));
+        if job.deaths.len() < 2 {
+            job.queued = nanos();
+            let body = serde_json::to_string(&job).map_err(std::io::Error::other)?;
+            atomic_write(&self.dir(Where::Inbox).join(job.file()), &body)?;
+            let _ = fs::remove_file(self.claimed_slot(slot).join(job.file()));
+            return Ok(Settled::Requeued);
+        }
+        let out = format!(
+            "{}\ngate: VERDICT=NO_VERDICT reason={} branch={} repo={} suite=-\ngate-worker: the gate died at its cap on {} runs of {}: {}\n",
+            d.run.out,
+            DIED_TWICE,
+            job.branch,
+            job.repo,
+            job.deaths.len(),
+            job.tip,
+            job.deaths.join("; ")
+        );
+        let run = GateRun::parse(crate::model::GATE_NOVERDICT, out);
+        self.complete(slot, &Done { job, run, started_ms: d.started_ms, finished_ms: d.finished_ms })?;
+        Ok(Settled::Filed)
+    }
+
+    fn death_evidence(&self, job: &Job, d: &Done) -> String {
+        let log = self.root.parent().map(|r| r.join("gate.log")).and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
+        let mark = format!(" {} ", job.branch);
+        let line = log.lines().rev().find(|l| l.contains(&mark) && l.contains(" phases="));
+        match line.and_then(|l| l.find(" ran=").map(|i| l[i..].trim().to_string())) {
+            Some(t) => t,
+            None => format!("ran={}ms (no phase timings in gate.log)", d.finished_ms.saturating_sub(d.started_ms)),
+        }
     }
 
     pub fn complete(&self, slot: usize, d: &Done) -> std::io::Result<()> {

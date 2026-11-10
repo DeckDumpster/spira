@@ -7,7 +7,7 @@
 //! concurrent drains"). Each worker files each verdict it gates; the pass applies it:
 //! attribution of the four outcomes stays in `landing_pass::pass::certify_judge`.
 
-use landing_pass::gateq::{Done, GateQueue, Job};
+use landing_pass::gateq::{Done, GateQueue, Job, Settled};
 use landing_pass::model::{GateOutcome, GateRun, GATE_NOVERDICT};
 use std::fs::OpenOptions;
 use std::os::fd::AsRawFd;
@@ -185,7 +185,14 @@ impl Worker<'_> {
         if run.outcome == GateOutcome::NoVerdict {
             (self.log)(&format!("gate-worker: {} — not the branch's fault ({})", job.branch, run.reason_or("unspecified")));
         }
-        self.queue.complete(self.slot, &Done { job: job.clone(), run, started_ms, finished_ms, gate: String::new() }).is_ok()
+        match self.queue.settle(self.slot, &Done { job: job.clone(), run, started_ms, finished_ms, gate: String::new() }) {
+            Ok(Settled::Requeued) => {
+                (self.log)(&format!("gate-worker: {} died at the gate's cap — queued again behind the rest, not filed", job.branch));
+                false
+            }
+            Ok(Settled::Filed) => true,
+            Err(_) => false,
+        }
     }
 }
 
