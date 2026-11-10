@@ -671,6 +671,9 @@ fn stabilize_round(
     }
     let harness_fault = runner.harness_fault();
     runner.close();
+    if let (Some(b), false) = (batch, matches!(end, Ok(drive::RoundEnd::Land { .. }))) {
+        io::keep_round_results(&env_.run, b, &runner.results);
+    }
     let staged = stage_bg.and_then(|bg| io::round_stage_done(repo, bg));
     let end = end.map_err(|e| pace::CutError::new(if harness_fault { pace::CutKind::Infra } else { pace::CutKind::Other }, e));
     match end? {
@@ -1490,6 +1493,9 @@ fn attribute(o: &Opts) -> Result<(), String> {
         install_fault_outcome(&repo, &mut ops, &members, &fault);
     }
     runner.close();
+    if let (Some(b), false) = (o.batch.as_deref(), matches!(end, Ok(drive::RoundEnd::Land { .. }))) {
+        io::keep_round_results(&env_.run, b, &runner.results);
+    }
     let mended = ops.prior != batcher::mender::Prior::default();
     let outcome = match end {
         Ok(drive::RoundEnd::Land { members, attribution_secs }) => Attribution::Land { members: members.into_iter().map(|m| (m.id, m.tip)).collect(), attribution_secs, mended },
