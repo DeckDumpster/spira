@@ -27,6 +27,9 @@ pub const LOCAL_KEEP: usize = 64;
 
 const LOST_AT_RESTART: &str = "lost at restart";
 
+/// Hears whether a submitted event's turn was committed.
+pub type Reply = tokio::sync::oneshot::Sender<std::result::Result<(), String>>;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Succeeded(String),
@@ -194,6 +197,10 @@ pub struct Engine {
     /// Every event waiting for its handlers, in the order it was made; `true` is memory-only.
     queue: VecDeque<(Event, bool)>,
     queued_ids: BTreeSet<EventId>,
+    /// Submitters waiting to hear their event's turn committed, by submission id.
+    replies: BTreeMap<String, Reply>,
+    /// Submissions dispatched whose turn is not yet committed.
+    uncommitted: Vec<String>,
     submitted: VecDeque<String>,
     submitted_ids: BTreeSet<String>,
     seq: u64,
@@ -332,6 +339,8 @@ impl Engine {
             poison_cleared_at: 0,
             queue: VecDeque::new(),
             queued_ids: BTreeSet::new(),
+            replies: BTreeMap::new(),
+            uncommitted: vec![],
             submitted: VecDeque::new(),
             submitted_ids: BTreeSet::new(),
             seq: 0,
@@ -1035,6 +1044,7 @@ impl Engine {
     /// A turn that could not commit is sent again before the next event is taken.
     pub fn pump(&mut self) -> Result<usize> {
         self.commit_turn()?;
+        self.answer_committed(Ok(()));
         let mut n = 0;
         let now = self.clock.now_ms();
         if now.saturating_sub(self.poison_cleared_at) >= POISON_RECHECK_MS {
@@ -1048,9 +1058,18 @@ impl Engine {
             }
             self.queued_ids.remove(&ev.id);
             n += 1;
+            if self.replies.contains_key(&ev.id.0) {
+                self.uncommitted.push(ev.id.0.clone());
+            }
             match self.commit_turn() {
-                Err(e) if e.is_refused() => self.discard_turn(&ev, &e.0)?,
-                other => other?,
+                Err(e) if e.is_refused() => {
+                    self.answer_committed(Err(e.0.clone()));
+                    self.discard_turn(&ev, &e.0)?
+                }
+                other => {
+                    other?;
+                    self.answer_committed(Ok(()));
+                }
             }
         }
         Ok(n)
@@ -1092,6 +1111,24 @@ impl Engine {
             if self.kept.get(&key) != Some(&sig) {
                 self.turn.state.push(StateRow { task, skey, value, at });
                 self.staged.insert(key, sig);
+            }
+        }
+    }
+
+    /// Answers `reply` once the turn handling submission `id` has committed, or refused: a
+    /// submission already past its turn is answered now.
+    pub fn answer_on_commit(&mut self, id: &str, reply: Reply) {
+        if self.queued_ids.contains(&EventId(id.into())) || self.uncommitted.iter().any(|u| u == id) {
+            self.replies.insert(id.into(), reply);
+        } else {
+            let _ = reply.send(Ok(()));
+        }
+    }
+
+    fn answer_committed(&mut self, result: std::result::Result<(), String>) {
+        for id in std::mem::take(&mut self.uncommitted) {
+            if let Some(reply) = self.replies.remove(&id) {
+                let _ = reply.send(result.clone());
             }
         }
     }
