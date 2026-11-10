@@ -378,7 +378,7 @@ impl GateQueue {
             job.deaths.join("; ")
         );
         let run = GateRun::parse(crate::model::GATE_NOVERDICT, out);
-        self.complete(slot, &Done { job, run, started_ms: d.started_ms, finished_ms: d.finished_ms })?;
+        self.complete(slot, &Done { job, run, started_ms: d.started_ms, finished_ms: d.finished_ms, gate: String::new() })?;
         Ok(Settled::Filed)
     }
 
@@ -409,7 +409,7 @@ mod tests {
     const CAP: &str = "gate: VERDICT=NO_VERDICT reason=died branch=b repo=r suite=-\ngate: VERDICT=FAIL reason=over-cap branch=b repo=r suite=-\n";
 
     fn dead(job: &Job) -> Done {
-        Done { job: job.clone(), run: GateRun::parse(1, CAP.into()), started_ms: 1, finished_ms: 2001 }
+        Done { job: job.clone(), run: GateRun::parse(1, CAP.into()), started_ms: 1, finished_ms: 2001, gate: String::new() }
     }
 
     #[test]
@@ -443,7 +443,7 @@ mod tests {
 
         q.enqueue(&Job::new("r", "spira/sp-c", "sp-c", "t3", false)).unwrap();
         let c = q.claim(0).unwrap();
-        let pass = Done { job: c, run: GateRun::parse(0, "gate: VERDICT=PASS reason=ok".into()), started_ms: 1, finished_ms: 2 };
+        let pass = Done { job: c, run: GateRun::parse(0, "gate: VERDICT=PASS reason=ok".into()), started_ms: 1, finished_ms: 2, gate: String::new() };
         assert_eq!(q.settle(0, &pass).unwrap(), Settled::Filed);
         assert!(q.take_done("r", "spira/sp-c", "t3").is_some());
     }
