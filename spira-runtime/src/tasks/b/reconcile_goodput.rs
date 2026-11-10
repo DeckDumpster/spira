@@ -411,4 +411,6 @@ pub fn release(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<Stri
     reconciler_engine::goodput_pass::legs::release(&Socket(lc.clone()), &i.token, &i.holder).map(|()| "released".into())
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 super::hosted!(ReconcileGoodput);

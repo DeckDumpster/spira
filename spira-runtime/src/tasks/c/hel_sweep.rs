@@ -728,4 +728,6 @@ pub fn prune(real: &hel::real::Real, input: &str) -> Result<String, String> {
     Ok(format!("pruned {}", t.repo))
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 crate::tasks::b::hosted!(HelSweep);

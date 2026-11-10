@@ -297,4 +297,6 @@ pub fn close(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String
     }
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 super::hosted!(ReconcileContent);

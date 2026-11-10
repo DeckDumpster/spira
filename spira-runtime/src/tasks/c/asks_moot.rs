@@ -403,4 +403,6 @@ pub fn withdraw(lc: &LcClient, input: &str) -> Result<String, String> {
     }
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 crate::tasks::b::hosted!(AsksMoot);

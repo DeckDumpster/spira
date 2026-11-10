@@ -403,4 +403,6 @@ pub fn touch(wiki: &str) -> Result<String, String> {
     Ok("touched".into())
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 crate::tasks::b::hosted!(SweepExportBeads);

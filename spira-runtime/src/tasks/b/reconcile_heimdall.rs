@@ -411,4 +411,6 @@ pub fn heartbeat(run_dir: &std::path::Path, input: &str) -> Result<String, Strin
     heimdall::heartbeat::write(&run_dir.join("heimdall.status"), input).map(|()| "written".into()).map_err(|e| e.to_string())
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 super::hosted!(ReconcileHeimdall);

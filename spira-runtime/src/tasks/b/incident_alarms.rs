@@ -578,4 +578,6 @@ pub fn attempt(run_dir: &std::path::Path, input: &str) -> Result<String, String>
     a.write(run_dir, &incident::intake::hostname()).map(|_| "recorded".into()).map_err(|e| e.to_string())
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 super::hosted!(IncidentAlarms);

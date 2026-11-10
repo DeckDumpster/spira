@@ -328,4 +328,6 @@ pub fn prune(real: &hel::real::Real, root: &str) -> Result<String, String> {
     Ok(format!("pruned {root}"))
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 crate::tasks::b::hosted!(HelReapTerminal);

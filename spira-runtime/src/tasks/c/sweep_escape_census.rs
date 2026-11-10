@@ -170,4 +170,6 @@ pub fn report(run_dir: &std::path::Path, text: &str) -> Result<String, String> {
     Ok("appended".into())
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 crate::tasks::b::hosted!(SweepEscapeCensus);

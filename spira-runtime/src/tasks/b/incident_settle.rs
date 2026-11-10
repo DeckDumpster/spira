@@ -494,4 +494,6 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
     }
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 super::hosted!(IncidentSettle);

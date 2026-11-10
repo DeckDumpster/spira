@@ -237,4 +237,6 @@ pub fn prune(run: &std::path::Path, input: &str) -> Result<String, String> {
     Ok(format!("{}: kept {}, dropped {}", p.family, done.kept, done.dropped))
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 crate::tasks::b::hosted!(SweepTsd);

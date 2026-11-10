@@ -11,19 +11,20 @@
 //! Promoting a row is moving it from `PENDING` to `TASKS`.
 //!
 //! [`kit`] is the shape every family B and C stub shares: the tick, the observe probe, the
-//! carried state and the acceptance helpers T1–T6 are written against.
+//! carried state, the rows of it a restart keeps (`ROW_PARTS`) and the acceptance helpers T1–T6 are written against.
 
 use super::Task;
 
 /// `Stub` and `Handler` for a stub module's handler struct `$ty`, which has fields `cadence`
-/// and `cfg`, beside the module's `SPEC`, `KEYS`, `CADENCE_KEY`, `TICK`, `Snapshot`, `Carry`
-/// and `decide`.
+/// and `cfg`, beside the module's `SPEC`, `KEYS`, `CADENCE_KEY`, `TICK`, `Snapshot`, `Carry`,
+/// `ROW_PARTS` and `decide`.
 macro_rules! hosted {
     ($ty:ident) => {
         impl $crate::tasks::b::kit::Stub for $ty {
             type Snapshot = Snapshot;
             type Carry = Carry;
             const SPEC: $crate::tasks::b::kit::Spec = SPEC;
+            const ROWS: &'static [runtime::rows::Part] = ROW_PARTS;
 
             fn from_cfg(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Self, String> {
                 let cfg = $crate::tasks::b::kit::configure(KEYS, get)?;
@@ -339,6 +340,8 @@ pub mod kit {
         type Snapshot: DeserializeOwned;
         type Carry: Serialize + DeserializeOwned + Default + PartialEq + Clone;
         const SPEC: Spec;
+        /// What a restart keeps of the carry, as keyed rows.
+        const ROWS: &'static [runtime::rows::Part];
 
         fn from_cfg(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Self, String>;
         fn cadence(&self) -> &Cadence;
@@ -346,7 +349,7 @@ pub mod kit {
         fn decide(cfg: &Cfg, carry: &Self::Carry, input: &Input<Self::Snapshot>, now_ms: u64) -> Decision<Self::Carry>;
 
         fn registration(self) -> Registration {
-            Registration::new(Self::SPEC.name, self)
+            Registration::new(Self::SPEC.name, self).with_rows(runtime::row_codec!(Self::SPEC.stream, Self::SPEC.state, Self::ROWS))
         }
     }
 
@@ -549,6 +552,17 @@ pub mod kit {
         pub fn launcher(text: &str) -> Option<&'static str> {
             let code = text.split("#[cfg(test)]").next().unwrap_or_default();
             LAUNCHERS.iter().copied().find(|l| code.contains(l))
+        }
+
+        /// A rig on `T`, driven by `drive` to a carry worth keeping, restarted on its journal: the
+        /// first tick then asks for what the same tick asks of a process that never stopped.
+        pub fn assert_boot_matches_an_unstopped_run<T: Stub>(set: &'static [(&'static str, &'static str)], answers: Vec<String>, drive: impl Fn(&mut TaskRig) + Copy) {
+            let make = || {
+                let mut r = rig_cycle::<T>(1, set, answers.clone());
+                drive(&mut r);
+                r
+            };
+            crate::tasks::a::kit::assert_boot_matches_an_unstopped_run(make, || handler::<T>(set).registration(), T::SPEC.stream, EventKind::new(T::SPEC.tick, FIRE));
         }
 
         /// The times `T`'s probe was asked, in order.

@@ -298,4 +298,6 @@ pub fn delete_snapshots(input: &str) -> Result<String, String> {
     Ok(d.image_id)
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 crate::tasks::b::hosted!(RoundvmAmiPrune);
