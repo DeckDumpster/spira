@@ -2,7 +2,6 @@
 //! (`FORK-EDGE:` on the line or the two above it): the static half of
 //! law-a-loops-hot-read-is-in-process. The positive control plants an unmarked site and
 //! requires the scan to catch it, so a scan that matches nothing cannot pass.
-//! requires the scan to catch it, so a scan that matches nothing cannot pass.
 
 use std::path::{Path, PathBuf};
 
