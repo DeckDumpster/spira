@@ -587,6 +587,32 @@ fn the_stall_ages_from_the_oldest_landing_the_release_lacks_not_from_a_contained
 }
 
 #[test]
+fn a_release_containing_the_newest_landing_clears_every_landing_without_testing_the_older_ones() {
+    let (run, rel) = stale_record_other_release_in_effect();
+    let (old, new) = (1_000u64, 1_000 + 40 * MIN);
+    let dwell = move |_: &[&str]| -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({ "beads": [], "horizon": 0,
+            "last": { "spira": { "Delivered": new } },
+            "landed_after": { "spira": [{ "at": new, "commit": "bbbb" }, { "at": old, "commit": "aaaa" }] } }))
+    };
+    let ancestor = |c: &str, _: &str| Ok(c == "bbbb");
+    let snap = observe(run.path(), rel.path(), "spira", &dwell, &ancestor, 3_600);
+    let found: Vec<String> = spira_runtime::tasks::e::watch_transitions::stalls(&snap, new + 16 * MIN, &config()).into_iter().map(|s| s.key()).collect();
+    assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
+}
+
+#[test]
+fn with_no_current_link_a_landing_is_judged_by_time_against_the_recorded_activation() {
+    let (run, rel) = stale_record_other_release_in_effect();
+    std::fs::remove_file(rel.path().join("current")).unwrap();
+    let never = |_: &str, _: &str| -> Result<bool, String> { panic!("no release in effect to test against") };
+    let snap = observe(run.path(), rel.path(), "spira", &dwell_with_a_landing(1_000, LANDED), &never, 3_600);
+    assert!(snap.readable, "{}", snap.why);
+    let found: Vec<String> = spira_runtime::tasks::e::watch_transitions::stalls(&snap, 1_000 + 16 * MIN, &config()).into_iter().map(|s| s.key()).collect();
+    assert!(found.contains(&"LANDED→ACTIVATED spira".to_string()), "{found:?}");
+}
+
+#[test]
 fn a_landing_whose_ancestry_cannot_be_tested_pages_its_edge_and_leaves_the_rest_watched() {
     let (run, rel) = stale_record_other_release_in_effect();
     let snap = observe(run.path(), rel.path(), "spira", &dwell_with_a_landing(1_000, LANDED), &|_, _| Err("bad object".into()), 3_600);
