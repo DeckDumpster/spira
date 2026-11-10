@@ -116,15 +116,26 @@ fn a_scan_that_stops_short_names_its_horizon_and_is_not_complete() {
 }
 
 #[test]
-fn landed_after_is_the_oldest_delivery_newer_than_the_mark() {
+fn landed_after_is_every_delivery_newer_than_the_mark_oldest_first() {
     let mut idx = super::LastIndex::default();
     let mut repo = |_: &str| Ok(Some("harness".to_string()));
     for at in [90, 120, 150, 110] {
-        idx.fold("Delivered", "sp-a", at, &mut repo).unwrap();
+        idx.fold("Delivered", "sp-a", at, "", &mut repo).unwrap();
     }
-    idx.fold("Renew", "sp-a", 500, &mut repo).unwrap();
-    assert!(!idx.last["harness"].contains_key("Renew"), "only the four kinds are kept");
-    assert_eq!(idx.landed_after(100, 0).get("harness"), Some(&110));
+    idx.fold("Renew", "sp-a", 500, "", &mut repo).unwrap();
+    assert!(
+        !idx.last["harness"].contains_key("Renew"),
+        "only the four kinds are kept"
+    );
+    let times: Vec<i64> = idx.landed_after(100, 0)["harness"]
+        .iter()
+        .map(|l| l.at)
+        .collect();
+    assert_eq!(
+        times,
+        [110, 120, 150],
+        "every delivery newer than the mark, oldest first"
+    );
     assert_eq!(idx.last["harness"]["Delivered"], 150);
 }
 
@@ -218,8 +229,28 @@ fn dwell_over_a_day_on_a_production_sized_store_answers_from_the_index_inside_20
         assert!(d.complete, "{d:?}");
         assert_eq!(d.scanned, 0, "nothing new to read");
         assert_eq!(d.last, z.last);
-        let landed: std::collections::BTreeMap<String, i64> = z.delivered.iter().filter_map(|(r, ts)| Some((r.clone(), *ts.iter().filter(|t| **t > mark).min()?))).collect();
-        assert_eq!(d.landed_after, landed);
+        let landed: std::collections::BTreeMap<String, Vec<i64>> = z
+            .delivered
+            .iter()
+            .filter_map(|(r, ts)| {
+                Some((
+                    r.clone(),
+                    ts.iter()
+                        .copied()
+                        .filter(|t| *t > mark)
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                ))
+                .filter(|(_, v)| !v.is_empty())
+            })
+            .collect();
+        let got: std::collections::BTreeMap<String, Vec<i64>> = d
+            .landed_after
+            .iter()
+            .map(|(r, ls)| (r.clone(), ls.iter().map(|l| l.at).collect()))
+            .collect();
+        assert_eq!(got, landed);
     }
     times.sort();
     eprintln!("dwell --window 86400: median {:?}, max {:?}", times[2], times[4]);
@@ -258,4 +289,59 @@ fn a_refused_or_other_machines_audit_is_not_a_bead_event_but_still_dates_the_sca
     assert_eq!(super::bead_audit(&b), (None, Some(8)));
     let c = serde_json::json!({ "machine": "bead", "lc_key": "sp-a", "event": "Submit", "applied": true, "at": 9 });
     assert_eq!(super::bead_audit(&c), (Some(("Submit", "sp-a")), Some(9)));
+}
+
+#[test]
+fn a_delivery_is_reported_with_the_commit_its_audit_recorded() {
+    use state_store::{events_key, Backend, Object, Rev, Write};
+    let b = MemBackend::new();
+    let put = |key: String, data: Value, main: u64| Write::Put {
+        key,
+        value: Object::new(data).encode(),
+        create_rev: Rev::new(main, 0),
+        prev: None,
+    };
+    let rec = serde_json::json!({ "bead_id": "sp-a", "state": "Landed", "tip": null, "gate_key": null, "holder": null, "lease_until": null, "holds": [], "reason": null, "version": 1, "since": 1_000, "repo": "harness", "updated_at": 1_000 });
+    let audit = |event: &str, evidence: Value, at: i64| serde_json::json!({ "refused": false, "evidence": { "then": [{ "machine": "bead", "lc_key": "sp-a", "event": event, "expect": "IN_DELIVERY", "from_state": "IN_DELIVERY", "to_state": "LANDED", "applied": true, "refusal": null, "evidence": evidence, "actor": "a", "at": at }] } });
+    let sha = "1111111111111111111111111111111111111111";
+    let head = b.head().unwrap();
+    let head = b
+        .commit(
+            head,
+            &[
+                put(keys::lifecycle("sp-a"), rec, head + 1),
+                put(
+                    events_key(head + 1),
+                    audit(
+                        "Delivered",
+                        serde_json::json!({ "Delivered": { "merge_sha": sha, "proof": "p" } }),
+                        3_000,
+                    ),
+                    head + 1,
+                ),
+            ],
+        )
+        .unwrap();
+    assert!(head > 0);
+    let clock = VirtualClock::new(0);
+    let s = Store::new(
+        Contract::open(
+            b,
+            Ports::virtual_clock(&clock),
+            Config {
+                min_lock_ttl_ms: FLOOR_MS,
+            },
+        )
+        .unwrap(),
+        FLOOR_MS,
+    );
+    let d = dwell(
+        &s,
+        &["--now", "4000", "--window", "3600", "--landed-after", "0"],
+    );
+    assert_eq!(
+        d["landed_after"]["harness"],
+        serde_json::json!([{ "at": 3_000, "commit": sha }]),
+        "{d}"
+    );
 }

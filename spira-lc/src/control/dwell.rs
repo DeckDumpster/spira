@@ -12,7 +12,8 @@
 //!   reached, so a kind not seen is known only to be older than it.
 //!   `Deliver` is also the newest cut round's `opened_at` per repo, read from the round records
 //!   every cut writes, so a cut is seen whatever the audit scan covered.
-//! - **landed_after**: with `--landed-after T`, per repo, the oldest Delivered newer than `T`.
+//! - **landed_after**: with `--landed-after T`, per repo, every Delivered newer than `T`, oldest
+//!   first, each with the commit its audit recorded (empty when it recorded none).
 //!
 //! The answer is complete or it names its horizon; it never reads an empty log as "no events".
 
@@ -76,7 +77,14 @@ pub struct Dwell {
     pub beads: Vec<Waiting>,
     pub last: BTreeMap<String, BTreeMap<String, i64>>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub landed_after: BTreeMap<String, i64>,
+    pub landed_after: BTreeMap<String, Vec<Landing>>,
+}
+
+/// One Delivered: when, and the commit it put on the landing ref.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Landing {
+    pub at: i64,
+    pub commit: String,
 }
 
 fn repo_of(r: &LifecycleRecord) -> String {
@@ -121,7 +129,7 @@ pub struct LastIndex {
     /// The oldest audit time read.
     horizon: i64,
     pub(super) last: BTreeMap<String, BTreeMap<String, i64>>,
-    delivered: BTreeMap<String, BTreeSet<i64>>,
+    delivered: BTreeMap<String, BTreeSet<(i64, String)>>,
 }
 
 impl Default for LastIndex {
@@ -131,8 +139,16 @@ impl Default for LastIndex {
 }
 
 impl LastIndex {
-    /// Folds one applied bead `event` on bead `id` at `at`, its repo found through `repo`.
-    pub(super) fn fold(&mut self, event: &str, id: &str, at: i64, repo: &mut impl FnMut(&str) -> Result<Option<String>>) -> Result<()> {
+    /// Folds one applied bead `event` on bead `id` at `at`, its repo found through `repo`; `commit`
+    /// is what a Delivered audit recorded.
+    pub(super) fn fold(
+        &mut self,
+        event: &str,
+        id: &str,
+        at: i64,
+        commit: &str,
+        repo: &mut impl FnMut(&str) -> Result<Option<String>>,
+    ) -> Result<()> {
         if !KINDS.contains(&event) {
             return Ok(());
         }
@@ -140,15 +156,31 @@ impl LastIndex {
         let newest = self.last.entry(repo.clone()).or_default().entry(event.to_string()).or_insert(at);
         *newest = (*newest).max(at);
         if event == "Delivered" {
-            self.delivered.entry(repo).or_default().insert(at);
+            self.delivered
+                .entry(repo)
+                .or_default()
+                .insert((at, commit.to_string()));
         }
         Ok(())
     }
 
-    /// Per repo, the oldest Delivered newer than `t` and at or after `floor`.
-    pub(super) fn landed_after(&self, t: i64, floor: i64) -> BTreeMap<String, i64> {
+    /// Per repo, the Delivered newer than `t` and at or after `floor`, oldest first.
+    pub(super) fn landed_after(&self, t: i64, floor: i64) -> BTreeMap<String, Vec<Landing>> {
         let from = t.max(floor.saturating_sub(1));
-        self.delivered.iter().filter_map(|(repo, ats)| Some((repo.clone(), *ats.range(from + 1..).next()?))).collect()
+        let landings = |ats: &BTreeSet<(i64, String)>| -> Vec<Landing> {
+            ats.iter()
+                .filter(|(at, _)| *at > from)
+                .map(|(at, commit)| Landing {
+                    at: *at,
+                    commit: commit.clone(),
+                })
+                .collect()
+        };
+        self.delivered
+            .iter()
+            .map(|(repo, ats)| (repo.clone(), landings(ats)))
+            .filter(|(_, l)| !l.is_empty())
+            .collect()
     }
 
     /// The range just folded reached `oldest`: only now does the index claim coverage that far.
@@ -224,7 +256,9 @@ impl<B: Backend> Store<B> {
         if d.complete {
             d.horizon = d.horizon.min(floor);
         }
-        idx.delivered.values_mut().for_each(|ats| ats.retain(|at| *at >= now - DELIVERED_KEPT_S));
+        idx.delivered
+            .values_mut()
+            .for_each(|ats| ats.retain(|(at, _)| *at >= now - DELIVERED_KEPT_S));
         d.last = idx.last_since(floor);
         for (_, round) in self.batches()? {
             let (cut, repo) = (round.value.opened_at, round.value.row.repo.clone());
@@ -257,7 +291,15 @@ impl<B: Backend> Store<B> {
                     let Some(at) = at else { continue };
                     oldest = Some(oldest.map_or(at, |o| o.min(at)));
                     if let Some((event, id)) = named {
-                        idx.fold(event, id, at, repo)?;
+                        idx.fold(
+                            event,
+                            id,
+                            at,
+                            a["evidence"]["Delivered"]["merge_sha"]
+                                .as_str()
+                                .unwrap_or(""),
+                            repo,
+                        )?;
                     }
                 }
             }
