@@ -2129,3 +2129,39 @@ fn a_verdict_for_a_tree_the_branch_no_longer_has_is_not_applied() {
     h.run();
     assert!(!h.lib.has("CERTIFIED"));
 }
+
+#[test]
+fn a_claimed_gate_worker_row_leaves_a_submitted_bead_untouched() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    q.enqueue(&crate::gateq::Job::new("spira", "spira/sp-a", "sp-a", "t1", false)).unwrap();
+    q.claim(0).unwrap();
+    h.run();
+    assert!(!h.lib.has("reopen") && !h.lib.has("CERTIFIED") && !h.lib.has("noverdict"), "{:?}", h.lib.calls.borrow());
+    assert!(q.queued().is_empty(), "the claimed gate is still the worker's");
+}
+
+#[test]
+fn a_gate_worker_row_with_no_outcome_is_not_a_verdict() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    file_verdict(&h, "sp-a", "t1", 137, "");
+    h.run();
+    assert!(!h.lib.has("reopen"), "{:?}", h.lib.calls.borrow());
+    assert!(h.lc.certified.borrow().is_empty(), "{:?}", h.lc.certified.borrow());
+    assert!(!h.logged("is in — applying it"));
+    assert_eq!(crate::gateq::GateQueue::new(&h.s.run).queued().len(), 1, "the tip is gated again");
+}
+
+#[test]
+fn a_gate_worker_row_with_pass_certifies_and_one_with_fail_and_a_reason_reworks() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.closed("sp-b", "t2");
+    file_verdict(&h, "sp-a", "t1", 0, "gate: VERDICT=PASS\n");
+    file_verdict(&h, "sp-b", "t2", 1, "gate: VERDICT=FAIL reason=suite-red branch=b repo=spira suite=test-x.sh\n");
+    h.run();
+    assert!(h.lc.certified.borrow().iter().any(|c| c == "sp-a t1 pass"), "{:?}", h.lc.certified.borrow());
+    assert!(h.lib.has("reopen sp-b cert-gate-red"), "{:?}", h.lib.calls.borrow());
+}

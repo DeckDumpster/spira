@@ -516,7 +516,10 @@ impl<'a> Pass<'a> {
     fn certify_queued(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow, tip: &str) -> Flow {
         let name = &w.repo.name;
         let q = GateQueue::new(&self.s.run);
-        if let Some(d) = q.take_done(name, br, tip) {
+        if q.peek_done(name, br, tip).is_some_and(|d| d.run.unjudged()) {
+            drop(q.take_done(name, br, tip));
+            self.log(&format!("CHECK6 {id}: gate-worker filed no verdict for {br} at {tip} — gating it again"));
+        } else if let Some(d) = q.take_done(name, br, tip) {
             self.log(&format!("CHECK6 {id}: gate-worker's verdict for {br} at {tip} is in — applying it"));
             return self.certify_judge(w, br, id, bead, tip, d.run);
         }

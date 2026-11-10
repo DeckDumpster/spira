@@ -369,6 +369,11 @@ impl GateRun {
         }
         GateRun { rc, outcome, out, reason, suite }
     }
+    /// A FAIL that names no reason and printed nothing: the gate was never heard from, so no
+    /// verdict was reached.
+    pub fn unjudged(&self) -> bool {
+        self.outcome == GateOutcome::Fail && self.reason.as_deref().unwrap_or("").is_empty() && self.out.trim().is_empty()
+    }
     pub fn reason_or(&self, dflt: &str) -> String {
         self.reason.clone().filter(|r| !r.is_empty()).unwrap_or_else(|| dflt.to_string())
     }
