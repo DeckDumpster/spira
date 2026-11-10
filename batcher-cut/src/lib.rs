@@ -4,9 +4,9 @@
 //! (`src/main.rs`) is the old one-shot driver over this library; the pure decisions stay in the
 //! `batcher` crate.
 
+pub mod attribute;
 #[allow(dead_code)]
 pub mod endpass;
-pub mod attribute;
 pub mod flip;
 pub mod io;
 pub mod order;
@@ -33,20 +33,34 @@ pub fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
     let land = match mode.as_str() {
         "queue" => Land::Forge,
         "queue.local" => Land::Local,
-        other => return Err(format!("{name}: mode is {other:?}, not queue or queue.local")),
+        other => {
+            return Err(format!(
+                "{name}: mode is {other:?}, not queue or queue.local"
+            ))
+        }
     };
     let path = reg.root(name).unwrap_or_default();
     if path.is_empty() {
-        return Err(format!("{name}: repo_root returned nothing — the registry has no row for it"));
+        return Err(format!(
+            "{name}: repo_root returned nothing — the registry has no row for it"
+        ));
     }
     let base = spira_config::repos::landref(&reg, name).unwrap_or_default();
     if base.is_empty() {
-        return Err(format!("{name}: spira_landref could not resolve a base ref"));
+        return Err(format!(
+            "{name}: spira_landref could not resolve a base ref"
+        ));
     }
     // SPIRA_FORGE, resolved once at the top level into `env_.forge` — not re-read here; the
     // bare-`forge` default lives in spira/conf.d/SPIRA_FORGE, the one source (sp-yv4b3).
     let forge = env_.forge.clone();
-    Ok(Repo { name: name.to_string(), path: PathBuf::from(path), base, forge, land })
+    Ok(Repo {
+        name: name.to_string(),
+        path: PathBuf::from(path),
+        base,
+        forge,
+        land,
+    })
 }
 
 /// `round-vm` from the declared release, unless the caller names another.
@@ -80,7 +94,9 @@ pub fn env_from_cfg(home: PathBuf, run: PathBuf, round_vm: Option<PathBuf>) -> R
         queue_bin: PathBuf::from(spira_config::release_env::tool("queue")?),
         rebase_stale_bin: PathBuf::from(spira_config::release_env::tool("rebase-stale")?),
         testenv_bin: PathBuf::from(spira_config::release_env::tool("testenv")?),
-        round_slots: var("SPIRA_BATCHER_ROUND_SLOTS").and_then(|v| v.trim().parse().ok()).filter(|n: &u32| *n > 0),
+        round_slots: var("SPIRA_BATCHER_ROUND_SLOTS")
+            .and_then(|v| v.trim().parse().ok())
+            .filter(|n: &u32| *n > 0),
         hypervisor: io::Hypervisor {
             host_mib: cfg_parse::<u64>("SPIRA_HYPERVISOR_MEM_MIB")?,
             round_vm_mib: cfg_parse::<u64>("SPIRA_ROUND_VM_MEM_MIB")?,
@@ -96,21 +112,31 @@ pub fn env_from_cfg(home: PathBuf, run: PathBuf, round_vm: Option<PathBuf>) -> R
         lc_bin: Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)),
         lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
         verdicts: gate::cert::verdicts_dir(var("SPIRA_VERDICTS").as_deref(), &run),
-        land_lock_attempts: var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").and_then(|v| v.parse().ok()).unwrap_or(10),
-        land_lock_wait: std::time::Duration::from_secs(var("SPIRA_BATCHER_LAND_LOCK_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30)),
+        land_lock_attempts: var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10),
+        land_lock_wait: std::time::Duration::from_secs(
+            var("SPIRA_BATCHER_LAND_LOCK_WAIT")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(30),
+        ),
         orphan_redrive_after: cfg_parse::<u64>("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS")?,
         pause_lift_after: cfg_parse::<u64>("SPIRA_BATCHER_PAUSE_LIFT_SECS")?,
-        land_unpause: var("SPIRA_BATCHER_LAND_UNPAUSE").filter(|v| !v.is_empty()).map(PathBuf::from),
+        land_unpause: var("SPIRA_BATCHER_LAND_UNPAUSE")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from),
     })
 }
 
 /// `SPIRA_BATCHER_POLL_SECS` as the gap between polls: seconds, fractions allowed so a world
 /// whose jobs finish in milliseconds is not held to a whole second; 2 s when unset or unreadable.
 pub fn poll_interval(secs: Option<&str>) -> std::time::Duration {
-    let s = secs.and_then(|v| v.trim().parse::<f64>().ok()).filter(|s| s.is_finite()).unwrap_or(2.0);
+    let s = secs
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|s| s.is_finite())
+        .unwrap_or(2.0);
     std::time::Duration::from_secs_f64(s.clamp(0.05, 3600.0))
 }
-
 
 /// The most members one cut may write within the store's limits (`cap_round`'s bound).
 pub use state_store::limits::MAX_CUT_MEMBERS;
@@ -136,19 +162,50 @@ pub fn open_round_pr(
     let ids: Vec<String> = merged.iter().map(|m| m.id.clone()).collect();
     let foreign = io::foreign_beads(repo, base_sha, batch_head, &ids)?;
     if !foreign.is_empty() {
-        return Err(format!("round head carries commits of non-member bead(s) {} — refusing to open", foreign.join(", ")));
+        return Err(format!(
+            "round head carries commits of non-member bead(s) {} — refusing to open",
+            foreign.join(", ")
+        ));
     }
     let prr = batcher::core::pr_record(merged);
-    let base_branch = repo.base.rsplit('/').next().unwrap_or(&repo.base).to_string();
-    let shots = io::batch_shots_section(&env_.testenv_bin, &env_.run, spira_config::process::cfg("SPIRA_LOOM_ADDR").ok().as_deref(), &repo.name, base_sha, batch_head);
-    let body = format!("Merge-queue batch: {} beads for {}, onto {}.\n\n{}\n{shots}", merged.len(), repo.name, base_branch, prr.body);
+    let base_branch = repo
+        .base
+        .rsplit('/')
+        .next()
+        .unwrap_or(&repo.base)
+        .to_string();
+    let shots = io::batch_shots_section(
+        &env_.testenv_bin,
+        &env_.run,
+        spira_config::process::cfg("SPIRA_LOOM_ADDR")
+            .ok()
+            .as_deref(),
+        &repo.name,
+        base_sha,
+        batch_head,
+    );
+    let body = format!(
+        "Merge-queue batch: {} beads for {}, onto {}.\n\n{}\n{shots}",
+        merged.len(),
+        repo.name,
+        base_branch,
+        prr.body
+    );
     // queue batch open records the batch before the PR exists, refuses while one is open, and
     // arms auto-merge; the PR title is its own, `queue: <n> beads for <repo>`.
-    let member_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+    let member_pairs: Vec<(String, String)> = merged
+        .iter()
+        .map(|m| (m.id.clone(), m.tip.clone()))
+        .collect();
     let (pr_n, armed) = io::batch_open(env_, repo, &member_pairs, batch_head, &body)?;
     io::write_local_verdict(env_, &repo.name, "green", "");
     println!("{}", batcher::core::opened_event(&prr).text);
-    println!("batcher {}: PR {} opened — {} member(s)", repo.name, pr_n, merged.len());
+    println!(
+        "batcher {}: PR {} opened — {} member(s)",
+        repo.name,
+        pr_n,
+        merged.len()
+    );
 
     let pr_n_out = pr_n.clone();
     let mut fields = vec![
@@ -156,8 +213,10 @@ pub fn open_round_pr(
         ("verdict", "green".to_string()),
         ("members", merged.len().to_string()),
         ("pr", pr_n.clone()),
-
-        ("duration_ms", ((spira_config::vtime::now_epoch() - round_start) * 1000).to_string()),
+        (
+            "duration_ms",
+            ((spira_config::vtime::now_epoch() - round_start) * 1000).to_string(),
+        ),
         ("base", base_sha.to_string()),
     ];
     if let Some(a) = attribution_seconds {
@@ -181,7 +240,11 @@ mod poll_tests {
         assert_eq!(poll_interval(Some("junk")), Duration::from_secs(2));
         assert_eq!(poll_interval(Some("1")), Duration::from_secs(1));
         assert_eq!(poll_interval(Some(" 0.2 ")), Duration::from_millis(200));
-        assert_eq!(poll_interval(Some("0")), Duration::from_millis(50), "never a busy loop");
+        assert_eq!(
+            poll_interval(Some("0")),
+            Duration::from_millis(50),
+            "never a busy loop"
+        );
         assert_eq!(poll_interval(Some("-3")), Duration::from_millis(50));
         assert_eq!(poll_interval(Some("NaN")), Duration::from_secs(2));
     }

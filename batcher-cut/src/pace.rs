@@ -49,7 +49,10 @@ pub struct CutError {
 
 impl CutError {
     pub fn new(kind: CutKind, msg: impl Into<String>) -> CutError {
-        CutError { kind, msg: msg.into() }
+        CutError {
+            kind,
+            msg: msg.into(),
+        }
     }
 }
 
@@ -97,7 +100,11 @@ pub struct Effects {
 /// The cut's result and the repo's local verdict (`verdict`, `at`) as written during the pass.
 /// A cut that admitted nothing is `Quiet` whatever its wording: only a round that ran and did
 /// not land is red.
-pub fn classify(result: &Result<(), CutError>, verdict: Option<(&str, u64)>, pass_start: u64) -> Outcome {
+pub fn classify(
+    result: &Result<(), CutError>,
+    verdict: Option<(&str, u64)>,
+    pass_start: u64,
+) -> Outcome {
     match result.as_ref().err().map(|e| e.kind) {
         Some(CutKind::StaleImage) => Outcome::StaleImage,
         Some(CutKind::Infra) => Outcome::Infra,
@@ -136,8 +143,14 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, detail: &str) -> (Stat
             next.infra = 0;
             next.no_vm = 0;
             fx.pause = true;
-            let again = if st.pause_lifts > 0 { " (lifted once and red again — the clock will not lift it)" } else { "" };
-            fx.pages.push(format!("ROUND RED {repo}{again} — attribute and eject, then rm the pause file ({detail})"));
+            let again = if st.pause_lifts > 0 {
+                " (lifted once and red again — the clock will not lift it)"
+            } else {
+                ""
+            };
+            fx.pages.push(format!(
+                "ROUND RED {repo}{again} — attribute and eject, then rm the pause file ({detail})"
+            ));
         }
         Outcome::StaleImage => {}
         Outcome::NoVm => {
@@ -148,7 +161,9 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, detail: &str) -> (Stat
             }
         }
         Outcome::OpenFailed => {
-            fx.pages.push(format!("OPEN FAILED {repo} — the cut could not open a round ({detail})"));
+            fx.pages.push(format!(
+                "OPEN FAILED {repo} — the cut could not open a round ({detail})"
+            ));
         }
         Outcome::Infra => {
             next.infra += 1;
@@ -177,7 +192,13 @@ pub enum Orphan {
 
 /// Tracks how long `open_id` has gone undriven and decides what it is owed. `fit` is `Err(why)`
 /// when certify would refuse the round at once, so a re-drive would change nothing.
-pub fn orphan_step(st: &State, open_id: &str, now: u64, wait: u64, fit: Result<(), String>) -> (State, Orphan) {
+pub fn orphan_step(
+    st: &State,
+    open_id: &str,
+    now: u64,
+    wait: u64,
+    fit: Result<(), String>,
+) -> (State, Orphan) {
     let mut next = st.clone();
     if next.orphan != open_id {
         next.orphan = open_id.to_string();
@@ -214,7 +235,11 @@ pub struct Files {
 
 impl Files {
     pub fn new(run: &Path, repo: &str) -> Files {
-        Files { run: run.to_path_buf(), repo: repo.to_string(), dir: run.join("rounds-pace").join(repo) }
+        Files {
+            run: run.to_path_buf(),
+            repo: repo.to_string(),
+            dir: run.join("rounds-pace").join(repo),
+        }
     }
     pub fn pause_file(&self) -> PathBuf {
         self.dir.join("pause")
@@ -227,8 +252,17 @@ impl Files {
         if text.starts_with("hold:") {
             return None;
         }
-        let stamped = text.trim().strip_prefix("red:").and_then(|t| t.parse().ok());
-        stamped.or_else(|| meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs()))
+        let stamped = text
+            .trim()
+            .strip_prefix("red:")
+            .and_then(|t| t.parse().ok());
+        stamped.or_else(|| {
+            meta.modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs())
+        })
     }
     pub fn load(&self) -> State {
         let kv: BTreeMap<String, String> = fs::read_to_string(self.dir.join("state"))
@@ -242,9 +276,15 @@ impl Files {
             no_vm: kv.get("no_vm").and_then(|v| v.parse().ok()).unwrap_or(0),
             paged_open: kv.get("paged_open").cloned().unwrap_or_default(),
             orphan: kv.get("orphan").cloned().unwrap_or_default(),
-            orphan_since: kv.get("orphan_since").and_then(|v| v.parse().ok()).unwrap_or(0),
+            orphan_since: kv
+                .get("orphan_since")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
             redriven: kv.get("redriven").cloned().unwrap_or_default(),
-            pause_lifts: kv.get("pause_lifts").and_then(|v| v.parse().ok()).unwrap_or(0),
+            pause_lifts: kv
+                .get("pause_lifts")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
         }
     }
     pub fn save(&self, st: &State) -> Result<(), String> {
@@ -257,7 +297,9 @@ impl Files {
     }
     fn stamp_pause(&self, now: u64) -> Result<(), String> {
         let p = self.pause_file();
-        fs::create_dir_all(&self.dir).and_then(|_| fs::write(&p, format!("red:{now}\n"))).map_err(|e| format!("{}: {e}", p.display()))
+        fs::create_dir_all(&self.dir)
+            .and_then(|_| fs::write(&p, format!("red:{now}\n")))
+            .map_err(|e| format!("{}: {e}", p.display()))
     }
 }
 
@@ -276,14 +318,20 @@ pub fn is_stale_image(msg: &str) -> bool {
 
 pub fn refusal_key(msg: &str, batch: &str) -> String {
     msg.split_whitespace()
-        .filter(|t| !(t.len() >= 40 && t.chars().all(|c| c.is_ascii_hexdigit())) && !t.contains(batch))
+        .filter(|t| {
+            !(t.len() >= 40 && t.chars().all(|c| c.is_ascii_hexdigit())) && !t.contains(batch)
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }
 
 pub fn note_refusal(prev: &Refusals, key: &str, now: u64) -> Refusals {
     let repeat = prev.key == key && now.saturating_sub(prev.at) <= REFUSAL_WINDOW_SECS;
-    Refusals { key: key.to_string(), at: now, count: if repeat { prev.count + 1 } else { 1 } }
+    Refusals {
+        key: key.to_string(),
+        at: now,
+        count: if repeat { prev.count + 1 } else { 1 },
+    }
 }
 
 impl Files {
@@ -294,27 +342,55 @@ impl Files {
         let text = fs::read_to_string(self.refusals_path()).unwrap_or_default();
         let mut lines = text.lines();
         let (at, count) = (lines.next().unwrap_or(""), lines.next().unwrap_or(""));
-        Refusals { at: at.parse().unwrap_or(0), count: count.parse().unwrap_or(0), key: lines.collect::<Vec<_>>().join(" ") }
+        Refusals {
+            at: at.parse().unwrap_or(0),
+            count: count.parse().unwrap_or(0),
+            key: lines.collect::<Vec<_>>().join(" "),
+        }
     }
     pub fn clear_refusals(&self) {
         let _ = fs::remove_file(self.refusals_path());
     }
     /// Records a refusal; at the second like it inside the window the repo is stopped and the
     /// text to page is returned.
-    pub fn record_refusal(&self, repo: &str, key: &str, now: u64) -> Result<Option<String>, String> {
+    pub fn record_refusal(
+        &self,
+        repo: &str,
+        key: &str,
+        now: u64,
+    ) -> Result<Option<String>, String> {
         let next = note_refusal(&self.load_refusals(), key, now);
         fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
-        fs::write(self.refusals_path(), format!("{}\n{}\n{}\n", next.at, next.count, next.key)).map_err(|e| format!("rounds-pace refusals: {e}"))?;
+        fs::write(
+            self.refusals_path(),
+            format!("{}\n{}\n{}\n", next.at, next.count, next.key),
+        )
+        .map_err(|e| format!("rounds-pace refusals: {e}"))?;
         if next.count < REFUSAL_STOP_AFTER {
             return Ok(None);
         }
-        let why = format!("{} consecutive rounds refused for the same reason ({key})", next.count);
+        let why = format!(
+            "{} consecutive rounds refused for the same reason ({key})",
+            next.count
+        );
         self.stop_rounds(&why, now)?;
         Ok(Some(format!("ROUNDS STOPPED {repo}: {why} — look before lifting: world.sh unpause --repo {repo} --lanes rounds")))
     }
     pub fn stop_rounds(&self, why: &str, now: u64) -> Result<(), String> {
-        let until = format!("the fault is fixed; then world.sh unpause --repo {} --lanes rounds", self.repo);
-        scoped_stop::pause_repo(&self.run, &self.repo, &["rounds".to_string()], PACE_OWNER, why, &until, now).map(|_| ())
+        let until = format!(
+            "the fault is fixed; then world.sh unpause --repo {} --lanes rounds",
+            self.repo
+        );
+        scoped_stop::pause_repo(
+            &self.run,
+            &self.repo,
+            &["rounds".to_string()],
+            PACE_OWNER,
+            why,
+            &until,
+            now,
+        )
+        .map(|_| ())
     }
     pub fn stopped(&self) -> bool {
         scoped_stop::stop_for(&self.run, &self.repo, "rounds").is_some()
@@ -331,21 +407,34 @@ pub struct Seams<'a> {
 }
 
 fn page(sm: &Seams, text: &str) -> Result<(), String> {
-    let mut f = fs::OpenOptions::new().create(true).append(true).open(sm.inbox).map_err(|e| format!("{}: {e}", sm.inbox.display()))?;
-    writeln!(f, "{} [watch:rounds] {text}", (sm.stamp)(sm.now)).map_err(|e| format!("{}: {e}", sm.inbox.display()))
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(sm.inbox)
+        .map_err(|e| format!("{}: {e}", sm.inbox.display()))?;
+    writeln!(f, "{} [watch:rounds] {text}", (sm.stamp)(sm.now))
+        .map_err(|e| format!("{}: {e}", sm.inbox.display()))
 }
 
 /// Pages the Concierge once per pause that has outlived `bound` seconds while the repo has work
 /// waiting; a lifted pause forgets the page so the next one pages afresh. A `hold:` pause is a
 /// person's decision and is never paged.
-pub fn page_stale_pause(files: &Files, sm: &Seams, bound: u64, waiting: impl FnOnce() -> bool) -> Result<(), String> {
+pub fn page_stale_pause(
+    files: &Files,
+    sm: &Seams,
+    bound: u64,
+    waiting: impl FnOnce() -> bool,
+) -> Result<(), String> {
     let marker = files.dir.join("pause-paged");
     let Some(since) = files.pause_since() else {
         let _ = fs::remove_file(&marker);
         return Ok(());
     };
     let age = sm.now.saturating_sub(since);
-    if age <= bound || fs::read_to_string(&marker).ok().as_deref() == Some(since.to_string().as_str()) || !waiting() {
+    if age <= bound
+        || fs::read_to_string(&marker).ok().as_deref() == Some(since.to_string().as_str())
+        || !waiting()
+    {
         return Ok(());
     }
     let text = fs::read_to_string(files.pause_file()).unwrap_or_default();
@@ -370,11 +459,24 @@ pub fn paced(
     let mut st = files.load();
     if let Some(since) = files.pause_since() {
         if pause_expired(&st, sm.now.saturating_sub(since), sm.pause_lift_after) {
-            fs::remove_file(files.pause_file()).map_err(|e| format!("{}: {e}", files.pause_file().display()))?;
+            fs::remove_file(files.pause_file())
+                .map_err(|e| format!("{}: {e}", files.pause_file().display()))?;
             st.pause_lifts += 1;
             files.save(&st)?;
-            println!("batcher rounds: {}: pause held {}s past its {}s bound — lifted, cutting", sm.repo, sm.now.saturating_sub(since), sm.pause_lift_after);
-            page(sm, &format!("PAUSE LIFTED {} after {}s — cutting again; a second red stays paused", sm.repo, sm.now.saturating_sub(since)))?;
+            println!(
+                "batcher rounds: {}: pause held {}s past its {}s bound — lifted, cutting",
+                sm.repo,
+                sm.now.saturating_sub(since),
+                sm.pause_lift_after
+            );
+            page(
+                sm,
+                &format!(
+                    "PAUSE LIFTED {} after {}s — cutting again; a second red stays paused",
+                    sm.repo,
+                    sm.now.saturating_sub(since)
+                ),
+            )?;
         }
     }
     if let Some(h) = hold(files.pause_file().exists(), files.stopped()) {
@@ -383,19 +485,39 @@ pub fn paced(
     }
     if let Some(id) = open_round()? {
         if driven(&id) {
-            println!("batcher rounds: {}: round {id} is open and being certified — not re-cut", sm.repo);
+            println!(
+                "batcher rounds: {}: round {id} is open and being certified — not re-cut",
+                sm.repo
+            );
             if !st.orphan.is_empty() {
-                files.save(&State { orphan: String::new(), orphan_since: 0, ..st })?;
+                files.save(&State {
+                    orphan: String::new(),
+                    orphan_since: 0,
+                    ..st
+                })?;
             }
             return Ok(());
         }
-        let wait = if st.redriven != id && (orphans.opened)(&id) { 0 } else { sm.redrive_after };
+        let wait = if st.redriven != id && (orphans.opened)(&id) {
+            0
+        } else {
+            sm.redrive_after
+        };
         let (mut next, step) = orphan_step(&st, &id, sm.now, wait, (orphans.fit)(&id));
         match step {
-            Orphan::Wait => println!("batcher rounds: {}: round {id} is open with no driver — not re-cut", sm.repo),
+            Orphan::Wait => println!(
+                "batcher rounds: {}: round {id} is open with no driver — not re-cut",
+                sm.repo
+            ),
             Orphan::Redrive => match (orphans.redrive)(&id) {
-                Ok(()) => println!("batcher rounds: {}: round {id} had no driver; re-driving it once", sm.repo),
-                Err(e) => println!("batcher rounds: {}: round {id} had no driver; the re-drive did not start: {e}", sm.repo),
+                Ok(()) => println!(
+                    "batcher rounds: {}: round {id} had no driver; re-driving it once",
+                    sm.repo
+                ),
+                Err(e) => println!(
+                    "batcher rounds: {}: round {id} had no driver; the re-drive did not start: {e}",
+                    sm.repo
+                ),
             },
             Orphan::Incident(why) => {
                 if next.paged_open != id {
@@ -416,14 +538,24 @@ pub fn paced(
     let res = cut();
     let v = verdict();
     let outcome = classify(&res, v.as_ref().map(|(s, at)| (s.as_str(), *at)), sm.now);
-    let detail = res.as_ref().err().map(|e| e.msg.clone()).unwrap_or_default();
+    let detail = res
+        .as_ref()
+        .err()
+        .map(|e| e.msg.clone())
+        .unwrap_or_default();
     let (next, fx) = advance(&st, &outcome, sm.repo, &detail);
     st = next;
     if fx.pause {
         files.stamp_pause(sm.now)?;
     }
     if fx.stop {
-        files.stop_rounds(&format!("{} consecutive rounds produced no verdicts ({detail})", st.infra), sm.now)?;
+        files.stop_rounds(
+            &format!(
+                "{} consecutive rounds produced no verdicts ({detail})",
+                st.infra
+            ),
+            sm.now,
+        )?;
     }
     for p in &fx.pages {
         page(sm, p)?;
@@ -443,15 +575,42 @@ mod tests {
     fn stamp(n: u64) -> String {
         format!("T{n}")
     }
-    fn run(d: &Path, repo: &str, now: u64, open: Option<&str>, verdict: Option<(&str, u64)>, res: Result<(), CutError>) -> bool {
+    fn run(
+        d: &Path,
+        repo: &str,
+        now: u64,
+        open: Option<&str>,
+        verdict: Option<(&str, u64)>,
+        res: Result<(), CutError>,
+    ) -> bool {
         let inbox = d.join("inbox.log");
-        let sm = Seams { repo, now, inbox: &inbox, stamp: &stamp, redrive_after: WAIT, pause_lift_after: LIFT };
+        let sm = Seams {
+            repo,
+            now,
+            inbox: &inbox,
+            stamp: &stamp,
+            redrive_after: WAIT,
+            pause_lift_after: LIFT,
+        };
         let cut_ran = Cell::new(false);
-        let none = Orphans { fit: &|_| Ok(()), redrive: &|_| Ok(()), incident: &|_, _| Ok(String::new()), opened: &|_| false };
-        let r = paced(&Files::new(d, repo), &sm, || Ok(open.map(String::from)), |_| false, || verdict.map(|(s, a)| (s.to_string(), a)), &none, || {
-            cut_ran.set(true);
-            res
-        });
+        let none = Orphans {
+            fit: &|_| Ok(()),
+            redrive: &|_| Ok(()),
+            incident: &|_, _| Ok(String::new()),
+            opened: &|_| false,
+        };
+        let r = paced(
+            &Files::new(d, repo),
+            &sm,
+            || Ok(open.map(String::from)),
+            |_| false,
+            || verdict.map(|(s, a)| (s.to_string(), a)),
+            &none,
+            || {
+                cut_ran.set(true);
+                res
+            },
+        );
         let _ = r;
         cut_ran.get()
     }
@@ -461,7 +620,14 @@ mod tests {
 
     fn stale_page(d: &Path, repo: &str, now: u64, work: bool) -> String {
         let log = d.join("inbox.log");
-        let sm = Seams { repo, now, inbox: &log, stamp: &stamp, redrive_after: WAIT, pause_lift_after: LIFT };
+        let sm = Seams {
+            repo,
+            now,
+            inbox: &log,
+            stamp: &stamp,
+            redrive_after: WAIT,
+            pause_lift_after: LIFT,
+        };
         page_stale_pause(&Files::new(d, repo), &sm, 3600, || work).unwrap();
         inbox(d)
     }
@@ -472,18 +638,43 @@ mod tests {
         let d = t.path();
         let files = Files::new(d, "pokebot");
         fs::create_dir_all(d.join("rounds-pace/pokebot")).unwrap();
-        fs::write(files.pause_file(), "queue round certify judged the round red\n").unwrap();
+        fs::write(
+            files.pause_file(),
+            "queue round certify judged the round red\n",
+        )
+        .unwrap();
         let since = files.pause_since().unwrap();
-        assert_eq!(stale_page(d, "pokebot", since + 3600, true), "", "a pause no older than the bound is a round in flight");
-        assert_eq!(stale_page(d, "pokebot", since + 7200, false), "", "no work waiting, nothing is lost");
+        assert_eq!(
+            stale_page(d, "pokebot", since + 3600, true),
+            "",
+            "a pause no older than the bound is a round in flight"
+        );
+        assert_eq!(
+            stale_page(d, "pokebot", since + 7200, false),
+            "",
+            "no work waiting, nothing is lost"
+        );
         let out = stale_page(d, "pokebot", since + 7200, true);
         assert_eq!(out.lines().count(), 1, "{out}");
-        assert!(out.contains("PAUSE UNATTENDED pokebot") && out.contains("certify judged the round red") && out.contains("7200s"), "{out}");
-        assert_eq!(stale_page(d, "pokebot", since + 9000, true).lines().count(), 1, "the same pause is paged once");
+        assert!(
+            out.contains("PAUSE UNATTENDED pokebot")
+                && out.contains("certify judged the round red")
+                && out.contains("7200s"),
+            "{out}"
+        );
+        assert_eq!(
+            stale_page(d, "pokebot", since + 9000, true).lines().count(),
+            1,
+            "the same pause is paged once"
+        );
         fs::remove_file(files.pause_file()).unwrap();
         stale_page(d, "pokebot", since + 9500, true);
         fs::write(files.pause_file(), "red:1\n").unwrap();
-        assert_eq!(stale_page(d, "pokebot", 1 + 7200, true).lines().count(), 2, "a new pause pages afresh");
+        assert_eq!(
+            stale_page(d, "pokebot", 1 + 7200, true).lines().count(),
+            2,
+            "a new pause pages afresh"
+        );
     }
 
     #[test]
@@ -501,7 +692,10 @@ mod tests {
         for i in 0..5u32 {
             let (next, fx) = advance(&st, &Outcome::NoVm, "r", "acquire failed");
             let brake = i + 1 >= NO_VM_STOP_AFTER;
-            assert_eq!((fx.pause, fx.stop, fx.pages.len(), next.infra), (false, brake, usize::from(brake), 0));
+            assert_eq!(
+                (fx.pause, fx.stop, fx.pages.len(), next.infra),
+                (false, brake, usize::from(brake), 0)
+            );
             st = next;
         }
     }
@@ -515,11 +709,19 @@ mod tests {
         assert_eq!(f.record_refusal("a", &key, 1000).unwrap(), None);
         assert!(!f.stopped(), "one abandon only records");
         assert_eq!(f.record_refusal("a", "other", 1010).unwrap(), None);
-        let page = f.record_refusal("a", "other", 1040).unwrap().expect("the second like refusal alarms");
+        let page = f
+            .record_refusal("a", "other", 1040)
+            .unwrap()
+            .expect("the second like refusal alarms");
         assert!(page.contains("ROUNDS STOPPED a") && f.stopped());
         let g = Files::new(t.path(), "b");
         g.record_refusal("b", "k", 1000).unwrap();
-        assert_eq!(g.record_refusal("b", "k", 1000 + REFUSAL_WINDOW_SECS + 1).unwrap(), None, "outside the window it is a first");
+        assert_eq!(
+            g.record_refusal("b", "k", 1000 + REFUSAL_WINDOW_SECS + 1)
+                .unwrap(),
+            None,
+            "outside the window it is a first"
+        );
     }
 
     #[test]
@@ -542,8 +744,14 @@ mod tests {
         let t = dir("lift");
         let d = t.path();
         assert!(run(d, "a", 1000, None, Some(("red", 1000)), Ok(())));
-        assert!(!run(d, "a", 1000 + LIFT - 1, None, None, Ok(())), "inside the bound the pause holds");
-        assert!(run(d, "a", 1000 + LIFT, None, None, Ok(())), "at the bound the owner lifts it and cuts");
+        assert!(
+            !run(d, "a", 1000 + LIFT - 1, None, None, Ok(())),
+            "inside the bound the pause holds"
+        );
+        assert!(
+            run(d, "a", 1000 + LIFT, None, None, Ok(())),
+            "at the bound the owner lifts it and cuts"
+        );
         assert!(!Files::new(d, "a").pause_file().exists());
         assert!(inbox(d).contains("PAUSE LIFTED a"));
     }
@@ -553,10 +761,20 @@ mod tests {
         let t = dir("lift-twice");
         let d = t.path();
         run(d, "a", 1000, None, Some(("red", 1000)), Ok(()));
-        run(d, "a", 1000 + LIFT, None, Some(("red", 1000 + LIFT)), Ok(()));
+        run(
+            d,
+            "a",
+            1000 + LIFT,
+            None,
+            Some(("red", 1000 + LIFT)),
+            Ok(()),
+        );
         assert!(Files::new(d, "a").pause_file().exists());
         assert!(inbox(d).contains("lifted once and red again"));
-        assert!(!run(d, "a", 1000 + 10 * LIFT, None, None, Ok(())), "a second red is not lifted by the clock");
+        assert!(
+            !run(d, "a", 1000 + 10 * LIFT, None, None, Ok(())),
+            "a second red is not lifted by the clock"
+        );
         assert!(Files::new(d, "a").pause_file().exists());
     }
 
@@ -567,7 +785,10 @@ mod tests {
         run(d, "a", 1000, None, Some(("red", 1000)), Ok(()));
         run(d, "a", 1000 + LIFT, None, None, Ok(()));
         run(d, "a", 5000, None, Some(("red", 5000)), Ok(()));
-        assert!(run(d, "a", 5000 + LIFT, None, None, Ok(())), "a green cycle between reds earns a fresh lift");
+        assert!(
+            run(d, "a", 5000 + LIFT, None, None, Ok(())),
+            "a green cycle between reds earns a fresh lift"
+        );
     }
 
     #[test]
@@ -586,7 +807,10 @@ mod tests {
         let d = t.path();
         fs::create_dir_all(d.join("rounds-pace/a")).unwrap();
         fs::write(Files::new(d, "a").pause_file(), "").unwrap();
-        assert!(!run(d, "a", 1, None, None, Ok(())), "an unstamped pause is not lifted at once");
+        assert!(
+            !run(d, "a", 1, None, None, Ok(())),
+            "an unstamped pause is not lifted at once"
+        );
     }
 
     #[test]
@@ -594,7 +818,10 @@ mod tests {
         let t = dir("verdict");
         let d = t.path();
         run(d, "a", 1000, None, Some(("red", 999)), Ok(()));
-        assert!(!Files::new(d, "a").pause_file().exists(), "a verdict from before the pass is not this pass's");
+        assert!(
+            !Files::new(d, "a").pause_file().exists(),
+            "a verdict from before the pass is not this pass's"
+        );
         run(d, "a", 1000, None, Some(("red", 1005)), Ok(()));
         assert!(Files::new(d, "a").pause_file().exists());
     }
@@ -603,18 +830,38 @@ mod tests {
     fn a_round_that_ejected_every_member_is_recut_at_once_not_paused() {
         let t = dir("recut");
         let d = t.path();
-        assert!(run(d, "a", 1000, None, Some((crate::io::RECUT_VERDICT, 1005)), Ok(())));
+        assert!(run(
+            d,
+            "a",
+            1000,
+            None,
+            Some((crate::io::RECUT_VERDICT, 1005)),
+            Ok(())
+        ));
         assert!(!Files::new(d, "a").pause_file().exists());
         assert_eq!(inbox(d), "");
-        assert!(run(d, "a", 1010, None, None, Ok(())), "the next pass cuts again");
+        assert!(
+            run(d, "a", 1010, None, None, Ok(())),
+            "the next pass cuts again"
+        );
     }
 
     #[test]
     fn a_cut_that_admitted_nothing_never_pauses_whatever_its_wording() {
         let t = dir("empty");
         let d = t.path();
-        for (i, msg) in ["nothing admissible", "pool empty", "queue is empty"].iter().enumerate() {
-            run(d, "a", 1000 + i as u64 * 100, None, None, Err(CutError::from(*msg)));
+        for (i, msg) in ["nothing admissible", "pool empty", "queue is empty"]
+            .iter()
+            .enumerate()
+        {
+            run(
+                d,
+                "a",
+                1000 + i as u64 * 100,
+                None,
+                None,
+                Err(CutError::from(*msg)),
+            );
             run(d, "a", 1050 + i as u64 * 100, None, None, Ok(()));
         }
         assert!(!Files::new(d, "a").pause_file().exists());
@@ -634,17 +881,34 @@ mod tests {
         assert!(Files::new(d, "a").stopped());
         assert!(inbox(d).contains("ROUNDS STOPPED a: 2 consecutive"));
         let ran = run(d, "a", 9_000_000, None, None, Ok(()));
-        assert!(!ran, "stopped stays stopped until the operator lifts the scoped stop");
+        assert!(
+            !ran,
+            "stopped stays stopped until the operator lifts the scoped stop"
+        );
     }
 
     #[test]
     fn a_clean_round_resets_the_infra_streak() {
         let t = dir("reset");
         let d = t.path();
-        run(d, "a", 1000, None, None, Err(CutError::new(CutKind::Infra, "over cap")));
+        run(
+            d,
+            "a",
+            1000,
+            None,
+            None,
+            Err(CutError::new(CutKind::Infra, "over cap")),
+        );
         run(d, "a", 2000, None, None, Ok(()));
         assert_eq!(Files::new(d, "a").load().infra, 0);
-        run(d, "a", 3000, None, None, Err(CutError::new(CutKind::Infra, "over cap")));
+        run(
+            d,
+            "a",
+            3000,
+            None,
+            None,
+            Err(CutError::new(CutKind::Infra, "over cap")),
+        );
         assert!(!Files::new(d, "a").stopped());
     }
 
@@ -654,7 +918,11 @@ mod tests {
         for _ in [1000, 1100] {
             let (next, fx) = advance(&st, &Outcome::OpenFailed, "a", "x");
             assert!(!fx.pause && !fx.stop && next == st);
-            pages += fx.pages.iter().filter(|p| p.starts_with("OPEN FAILED a")).count();
+            pages += fx
+                .pages
+                .iter()
+                .filter(|p| p.starts_with("OPEN FAILED a"))
+                .count();
         }
         assert_eq!(pages, 2);
     }
@@ -664,13 +932,35 @@ mod tests {
 
     type Calls = std::cell::RefCell<Vec<String>>;
 
-    fn orphan_pass(d: &Path, now: u64, id: &str, driven: bool, fit: Result<(), String>, calls: &Calls) -> bool {
+    fn orphan_pass(
+        d: &Path,
+        now: u64,
+        id: &str,
+        driven: bool,
+        fit: Result<(), String>,
+        calls: &Calls,
+    ) -> bool {
         orphan_pass_in(d, now, id, driven, fit, calls, false)
     }
 
-    fn orphan_pass_in(d: &Path, now: u64, id: &str, driven: bool, fit: Result<(), String>, calls: &Calls, opened: bool) -> bool {
+    fn orphan_pass_in(
+        d: &Path,
+        now: u64,
+        id: &str,
+        driven: bool,
+        fit: Result<(), String>,
+        calls: &Calls,
+        opened: bool,
+    ) -> bool {
         let inbox_p = d.join("inbox.log");
-        let sm = Seams { repo: "a", now, inbox: &inbox_p, stamp: &stamp, redrive_after: WAIT, pause_lift_after: LIFT };
+        let sm = Seams {
+            repo: "a",
+            now,
+            inbox: &inbox_p,
+            stamp: &stamp,
+            redrive_after: WAIT,
+            pause_lift_after: LIFT,
+        };
         let (fit_f, redrive_f, incident_f) = (
             |_: &str| fit.clone(),
             |id: &str| {
@@ -683,12 +973,25 @@ mod tests {
             },
         );
         let opened_f = |_: &str| opened;
-        let o = Orphans { fit: &fit_f, redrive: &redrive_f, incident: &incident_f, opened: &opened_f };
+        let o = Orphans {
+            fit: &fit_f,
+            redrive: &redrive_f,
+            incident: &incident_f,
+            opened: &opened_f,
+        };
         let cut = Cell::new(false);
-        paced(&Files::new(d, "a"), &sm, || Ok(Some(id.into())), |_| driven, || None, &o, || {
-            cut.set(true);
-            Ok(())
-        })
+        paced(
+            &Files::new(d, "a"),
+            &sm,
+            || Ok(Some(id.into())),
+            |_| driven,
+            || None,
+            &o,
+            || {
+                cut.set(true);
+                Ok(())
+            },
+        )
         .unwrap();
         cut.get()
     }
@@ -698,20 +1001,41 @@ mod tests {
         let t = dir("orphan");
         let (d, calls) = (t.path(), Calls::default());
         assert!(!orphan_pass(d, 1000, "b-1", false, Ok(()), &calls));
-        assert!(!orphan_pass(d, 1000 + WAIT - 1, "b-1", false, Ok(()), &calls));
-        assert!(calls.borrow().is_empty(), "not before the wait: {:?}", calls.borrow());
+        assert!(!orphan_pass(
+            d,
+            1000 + WAIT - 1,
+            "b-1",
+            false,
+            Ok(()),
+            &calls
+        ));
+        assert!(
+            calls.borrow().is_empty(),
+            "not before the wait: {:?}",
+            calls.borrow()
+        );
         assert!(!orphan_pass(d, 1000 + WAIT, "b-1", false, Ok(()), &calls));
         assert_eq!(*calls.borrow(), vec!["redrive b-1".to_string()]);
     }
 
     #[test]
-    fn a_round_still_in_phase_opened_with_no_driver_gets_its_certify_on_the_first_tick_and_only_once() {
+    fn a_round_still_in_phase_opened_with_no_driver_gets_its_certify_on_the_first_tick_and_only_once(
+    ) {
         let t = dir("orphan-opened");
         let (d, calls) = (t.path(), Calls::default());
         assert!(!orphan_pass_in(d, 1000, "b-1", false, Ok(()), &calls, true));
-        assert_eq!(*calls.borrow(), vec!["redrive b-1".to_string()], "no wait for a round nobody has driven");
+        assert_eq!(
+            *calls.borrow(),
+            vec!["redrive b-1".to_string()],
+            "no wait for a round nobody has driven"
+        );
         orphan_pass_in(d, 1001, "b-1", false, Ok(()), &calls, true);
-        assert_eq!(calls.borrow().len(), 1, "a certify that has not yet moved the phase is not an incident: {:?}", calls.borrow());
+        assert_eq!(
+            calls.borrow().len(),
+            1,
+            "a certify that has not yet moved the phase is not an incident: {:?}",
+            calls.borrow()
+        );
     }
 
     #[test]
@@ -722,23 +1046,53 @@ mod tests {
         orphan_pass(d, 1000, "b-1", false, Ok(()), &calls);
         orphan_pass(d, 1000 + n, "b-1", false, Ok(()), &calls);
         orphan_pass(d, 1000 + n + 1, "b-1", false, Ok(()), &calls);
-        assert_eq!(calls.borrow().len(), 1, "the re-driven round gets its own wait: {:?}", calls.borrow());
+        assert_eq!(
+            calls.borrow().len(),
+            1,
+            "the re-driven round gets its own wait: {:?}",
+            calls.borrow()
+        );
         orphan_pass(d, 1000 + 2 * n, "b-1", false, Ok(()), &calls);
         orphan_pass(d, 1000 + 3 * n, "b-1", false, Ok(()), &calls);
         let c = calls.borrow();
-        assert_eq!(c.iter().filter(|x| x.starts_with("redrive")).count(), 1, "{c:?}");
-        assert_eq!(c.iter().filter(|x| x.starts_with("incident b-1")).count(), 1, "{c:?}");
+        assert_eq!(
+            c.iter().filter(|x| x.starts_with("redrive")).count(),
+            1,
+            "{c:?}"
+        );
+        assert_eq!(
+            c.iter().filter(|x| x.starts_with("incident b-1")).count(),
+            1,
+            "{c:?}"
+        );
     }
 
     #[test]
     fn a_round_whose_worktree_moved_on_is_not_redriven_and_files_an_incident_naming_why() {
         let t = dir("orphan-moved");
         let (d, calls) = (t.path(), Calls::default());
-        orphan_pass(d, 1000, "b-1", false, Err("the worktree is at d7aa8f08, not 07da4601".into()), &calls);
-        orphan_pass(d, 1000 + WAIT, "b-1", false, Err("the worktree is at d7aa8f08, not 07da4601".into()), &calls);
+        orphan_pass(
+            d,
+            1000,
+            "b-1",
+            false,
+            Err("the worktree is at d7aa8f08, not 07da4601".into()),
+            &calls,
+        );
+        orphan_pass(
+            d,
+            1000 + WAIT,
+            "b-1",
+            false,
+            Err("the worktree is at d7aa8f08, not 07da4601".into()),
+            &calls,
+        );
         let c = calls.borrow();
         assert_eq!(c.len(), 1, "{c:?}");
-        assert!(c[0].starts_with("incident b-1") && c[0].contains("d7aa8f08"), "{c:?}");
+        assert!(
+            c[0].starts_with("incident b-1") && c[0].contains("d7aa8f08"),
+            "{c:?}"
+        );
     }
 
     #[test]
@@ -750,7 +1104,11 @@ mod tests {
             orphan_pass(d, 1000 + k * WAIT, "b-1", false, moved(), &calls);
         }
         let c = calls.borrow();
-        assert_eq!(c.iter().filter(|x| x.starts_with("incident")).count(), 1, "{c:?}");
+        assert_eq!(
+            c.iter().filter(|x| x.starts_with("incident")).count(),
+            1,
+            "{c:?}"
+        );
         assert_eq!(inbox(d).matches("ROUND OPEN a b-1").count(), 1);
     }
 
@@ -769,7 +1127,14 @@ mod tests {
         let t = dir("driven");
         let (d, calls) = (t.path(), Calls::default());
         for k in 0..5 {
-            assert!(!orphan_pass(d, 1000 + k * WAIT, "b-1", true, Ok(()), &calls));
+            assert!(!orphan_pass(
+                d,
+                1000 + k * WAIT,
+                "b-1",
+                true,
+                Ok(()),
+                &calls
+            ));
         }
         assert!(calls.borrow().is_empty());
     }
@@ -800,15 +1165,24 @@ mod tests {
 
     #[test]
     fn a_stale_image_refusal_is_recognised_and_a_plain_one_is_not() {
-        assert!(is_stale_image("cannot certify the round: round AMI is stale: acquire failed"));
-        assert!(!is_stale_image("cannot certify the round: acquire failed: pool exhausted"));
+        assert!(is_stale_image(
+            "cannot certify the round: round AMI is stale: acquire failed"
+        ));
+        assert!(!is_stale_image(
+            "cannot certify the round: acquire failed: pool exhausted"
+        ));
     }
 
     #[test]
     fn a_certify_that_always_exits_4_gets_two_attempts_and_one_alert() {
         let t = dir("exit4");
         let d = t.path();
-        let env = || Err(CutError::new(CutKind::Infra, "refused — cannot certify the round: no VM"));
+        let env = || {
+            Err(CutError::new(
+                CutKind::Infra,
+                "refused — cannot certify the round: no VM",
+            ))
+        };
         let mut attempts = 0;
         for i in 0..10u64 {
             if run(d, "a", 1000 + i, None, None, env()) {
@@ -826,7 +1200,11 @@ mod tests {
         assert_eq!(of(CutKind::Infra), Outcome::Infra);
         assert_eq!(of(CutKind::StaleImage), Outcome::StaleImage);
         assert_eq!(of(CutKind::Other), Outcome::Quiet);
-        assert_eq!(classify(&Err(CutError::from(words)), Some(("red", 9)), 0), Outcome::Quiet, "a failed cut is judged by its kind, not the verdict file");
+        assert_eq!(
+            classify(&Err(CutError::from(words)), Some(("red", 9)), 0),
+            Outcome::Quiet,
+            "a failed cut is judged by its kind, not the verdict file"
+        );
     }
 
     #[test]

@@ -17,8 +17,15 @@ pub struct Ordered {
 fn mean_wall(history: &str) -> BTreeMap<String, f64> {
     let mut acc: BTreeMap<String, (f64, u64)> = BTreeMap::new();
     for l in history.lines() {
-        let Ok(v) = serde_json::from_str::<Value>(l) else { continue };
-        let (Some(suite), Some(wall)) = (v.get("suite").and_then(Value::as_str), v.get("wall_secs").and_then(Value::as_f64)) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(l) else {
+            continue;
+        };
+        let (Some(suite), Some(wall)) = (
+            v.get("suite").and_then(Value::as_str),
+            v.get("wall_secs").and_then(Value::as_f64),
+        ) else {
+            continue;
+        };
         if suite == BATCH_ROW || !wall.is_finite() {
             continue;
         }
@@ -26,34 +33,61 @@ fn mean_wall(history: &str) -> BTreeMap<String, f64> {
         e.0 += wall;
         e.1 += 1;
     }
-    acc.into_iter().map(|(k, (s, n))| (k, s / n as f64)).collect()
+    acc.into_iter()
+        .map(|(k, (s, n))| (k, s / n as f64))
+        .collect()
 }
 
 /// Every suite in `tree`: unmeasured ones first (tree order), then longest mean wall first,
 /// ties in tree order.
 pub fn longest_first(tree: &[String], history: &str) -> Ordered {
     let mean = mean_wall(history);
-    let (mut unmeasured, mut measured): (Vec<&String>, Vec<&String>) = tree.iter().partition(|s| !mean.contains_key(*s));
-    measured.sort_by(|a, b| mean[*b].partial_cmp(&mean[*a]).unwrap_or(std::cmp::Ordering::Equal));
-    let list = unmeasured.iter().chain(measured.iter()).map(|s| s.to_string()).collect();
-    Ordered { list, unmeasured: unmeasured.drain(..).cloned().collect() }
+    let (mut unmeasured, mut measured): (Vec<&String>, Vec<&String>) =
+        tree.iter().partition(|s| !mean.contains_key(*s));
+    measured.sort_by(|a, b| {
+        mean[*b]
+            .partial_cmp(&mean[*a])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let list = unmeasured
+        .iter()
+        .chain(measured.iter())
+        .map(|s| s.to_string())
+        .collect();
+    Ordered {
+        list,
+        unmeasured: unmeasured.drain(..).cloned().collect(),
+    }
 }
 
 /// Suite-seconds `suites` would have taken, from their recorded mean wall times; a suite with
 /// no record counts as nothing.
 pub fn expected_secs(suites: &[String], history: &str) -> u64 {
     let mean = mean_wall(history);
-    suites.iter().filter_map(|s| mean.get(s)).sum::<f64>().round() as u64
+    suites
+        .iter()
+        .filter_map(|s| mean.get(s))
+        .sum::<f64>()
+        .round() as u64
 }
 
 /// A list that does not name every suite in the tree is refused, naming what is missing.
 pub fn covers(tree: &[String], list: &[String]) -> Result<(), String> {
     let have: BTreeSet<&String> = list.iter().collect();
-    let missing: Vec<&str> = tree.iter().filter(|s| !have.contains(s)).map(String::as_str).collect();
+    let missing: Vec<&str> = tree
+        .iter()
+        .filter(|s| !have.contains(s))
+        .map(String::as_str)
+        .collect();
     if missing.is_empty() {
         Ok(())
     } else {
-        Err(format!("suite list omits {} of {} suites in the tree: {}", missing.len(), tree.len(), missing.join(",")))
+        Err(format!(
+            "suite list omits {} of {} suites in the tree: {}",
+            missing.len(),
+            tree.len(),
+            missing.join(",")
+        ))
     }
 }
 
@@ -70,7 +104,14 @@ mod tests {
 
     #[test]
     fn longest_first_by_mean_history_with_batch_rows_ignored() {
-        let h = [row("test-a.sh", 5), row("test-b.sh", 50), row("test-c.sh", 40), row("test-c.sh", 80), row(BATCH_ROW, 999)].concat();
+        let h = [
+            row("test-a.sh", 5),
+            row("test-b.sh", 50),
+            row("test-c.sh", 40),
+            row("test-c.sh", 80),
+            row(BATCH_ROW, 999),
+        ]
+        .concat();
         let o = longest_first(&names(&["test-a.sh", "test-b.sh", "test-c.sh"]), &h);
         assert_eq!(o.list, names(&["test-c.sh", "test-b.sh", "test-a.sh"]));
         assert!(o.unmeasured.is_empty());

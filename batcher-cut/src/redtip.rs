@@ -39,7 +39,11 @@ pub fn mark_filed(run: &Path, repo: &str, id: &str, tip: &str) {
 
 /// Splits `pool` into the members to cut and the ids withheld because their tip is the one a red
 /// was attributed to. A withheld id comes back with `true` the first time only, which is when it is to be filed.
-pub fn withhold(run: &Path, repo: &str, pool: Vec<Member>) -> (Vec<Member>, Vec<(String, String, bool)>) {
+pub fn withhold(
+    run: &Path,
+    repo: &str,
+    pool: Vec<Member>,
+) -> (Vec<Member>, Vec<(String, String, bool)>) {
     let mut kept = Vec::new();
     let mut withheld = Vec::new();
     for m in pool {
@@ -62,7 +66,17 @@ mod tests {
     use super::*;
 
     fn member(id: &str, tip: &str) -> Member {
-        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![] }
+        Member {
+            id: id.into(),
+            tip: tip.into(),
+            title: String::new(),
+            priority: None,
+            express: false,
+            base_fix: false,
+            certified_at: 0,
+            stack: Default::default(),
+            blocked_by: vec![],
+        }
     }
 
     #[test]
@@ -71,22 +85,49 @@ mod tests {
         record(run.path(), "r", "sp-a", "t1");
         let pool = || vec![member("sp-a", "t1"), member("sp-b", "t2")];
         let (kept, out) = withhold(run.path(), "r", pool());
-        assert_eq!(kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-b"]);
+        assert_eq!(
+            kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["sp-b"]
+        );
         assert_eq!(out, [("sp-a".to_string(), "t1".to_string(), true)]);
         mark_filed(run.path(), "r", "sp-a", "t1");
         let (_, again) = withhold(run.path(), "r", pool());
-        assert_eq!(again, [("sp-a".to_string(), "t1".to_string(), false)], "filed once, not every cut");
+        assert_eq!(
+            again,
+            [("sp-a".to_string(), "t1".to_string(), false)],
+            "filed once, not every cut"
+        );
     }
 
     #[test]
     fn a_new_tip_or_another_repo_is_cut() {
         let run = testkit::TempDir::new("batcher-cut-redtip-moved");
         record(run.path(), "r", "sp-a", "t1");
-        assert_eq!(withhold(run.path(), "r", vec![member("sp-a", "t9")]).0.len(), 1, "a changed tip is a changed input");
-        assert_eq!(withhold(run.path(), "other", vec![member("sp-a", "t1")]).0.len(), 1);
-        assert!(!file(run.path(), "r", "sp-a").exists(), "a record the tip has moved past is dropped");
+        assert_eq!(
+            withhold(run.path(), "r", vec![member("sp-a", "t9")])
+                .0
+                .len(),
+            1,
+            "a changed tip is a changed input"
+        );
+        assert_eq!(
+            withhold(run.path(), "other", vec![member("sp-a", "t1")])
+                .0
+                .len(),
+            1
+        );
+        assert!(
+            !file(run.path(), "r", "sp-a").exists(),
+            "a record the tip has moved past is dropped"
+        );
         record(run.path(), "r", "sp-a", "t9");
         record(run.path(), "r", "sp-a", "t10");
-        assert_eq!(withhold(run.path(), "r", vec![member("sp-a", "t9")]).0.len(), 1, "a later record replaces the earlier");
+        assert_eq!(
+            withhold(run.path(), "r", vec![member("sp-a", "t9")])
+                .0
+                .len(),
+            1,
+            "a later record replaces the earlier"
+        );
     }
 }

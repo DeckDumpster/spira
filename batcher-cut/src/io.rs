@@ -15,10 +15,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration};
+use std::time::Duration;
 
-use batcher::core::{Member, MergeResult};
 use crate::pace::{CutError, CutKind};
+use batcher::core::{Member, MergeResult};
 
 /// Where a repo's landed branch goes — `repo_land`'s `queue`/`queue.forge` alias normalizes
 /// to `Forge`; `queue.local` is `Local`. Carried on `Repo` so a caller never has to re-derive
@@ -50,7 +50,13 @@ impl Hypervisor {
     /// A staged round starts only beside the certifying round and one CI runner, so both VMs
     /// and the runner must fit; an unknown size never fits.
     pub fn fits_a_staged_round(&self) -> bool {
-        self.host_mib > 0 && self.round_vm_mib > 0 && self.round_vm_mib.saturating_mul(2).saturating_add(self.runner_mib) <= self.host_mib
+        self.host_mib > 0
+            && self.round_vm_mib > 0
+            && self
+                .round_vm_mib
+                .saturating_mul(2)
+                .saturating_add(self.runner_mib)
+                <= self.host_mib
     }
 }
 
@@ -116,7 +122,11 @@ fn run(cmd: &mut Command, what: &str) -> Result<String, String> {
         return Err(format!(
             "{what} exited {}{}",
             o.status.code().unwrap_or(-1),
-            if err.is_empty() { String::new() } else { format!(": {err}") }
+            if err.is_empty() {
+                String::new()
+            } else {
+                format!(": {err}")
+            }
         ));
     }
     Ok(String::from_utf8_lossy(&o.stdout).to_string())
@@ -150,7 +160,11 @@ where
 {
     // FORK-EDGE: needs Rust homes for the lib.sh functions called here (land_subject; bead_reopen: release_claim, the requeue event, the TSD dual-write)
     let mut cmd = Command::new("bash");
-    cmd.arg("-c").arg(r#". "$1" && shift && "$0" "$@""#).arg(func).arg(env.home.join("lib.sh")).args(args);
+    cmd.arg("-c")
+        .arg(r#". "$1" && shift && "$0" "$@""#)
+        .arg(func)
+        .arg(env.home.join("lib.sh"))
+        .args(args);
     // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
     // bin/+spira/ on the CHILD's PATH, never only inherited — see inbox-triage's scar.
     cmd.envs(spira_config::release_env::child_path_env_for_process()?);
@@ -199,19 +213,37 @@ pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> i32 {
 // unset, never blocking the PR).
 
 pub fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
-    let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
-    let client = spira_config::lc_call::LcClient::for_bin(&bin.to_string_lossy())?.within(std::time::Duration::from_secs(env.lc_timeout));
+    let bin = env
+        .lc_bin
+        .as_ref()
+        .ok_or_else(|| "no spira-lc program".to_string())?;
+    let client = spira_config::lc_call::LcClient::for_bin(&bin.to_string_lossy())?
+        .within(std::time::Duration::from_secs(env.lc_timeout));
     lc_answer(client.call(args))
 }
 
 /// An answer as the `spira-lc` child's was read: its stdout when it applied; otherwise its exit
 /// and the last line it said.
-fn lc_answer(r: Result<spira_config::lc_call::Reply, spira_config::lc_call::LcError>) -> Result<String, String> {
+fn lc_answer(
+    r: Result<spira_config::lc_call::Reply, spira_config::lc_call::LcError>,
+) -> Result<String, String> {
     let r = r.map_err(|e| format!("spira-lc: {e}"))?;
     if r.code != 0 {
-        let said = if r.err.trim().is_empty() { &r.out } else { &r.err };
+        let said = if r.err.trim().is_empty() {
+            &r.out
+        } else {
+            &r.err
+        };
         let last = said.lines().last().unwrap_or("").trim();
-        return Err(format!("spira-lc exited {}{}", r.code, if last.is_empty() { String::new() } else { format!(": {last}") }));
+        return Err(format!(
+            "spira-lc exited {}{}",
+            r.code,
+            if last.is_empty() {
+                String::new()
+            } else {
+                format!(": {last}")
+            }
+        ));
     }
     Ok(r.out)
 }
@@ -224,7 +256,11 @@ pub fn lc_rows(env: &Env) -> Result<Vec<serde_json::Value>, String> {
     if let Some(rows) = held.as_ref() {
         return Ok(rows.clone());
     }
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&lcq(env, &["list", "--state", "SUBMITTED,CERTIFIED", "--snapshot"])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&lcq(
+        env,
+        &["list", "--state", "SUBMITTED,CERTIFIED", "--snapshot"],
+    )?)
+    .map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
     *held = Some(rows.clone());
     Ok(rows)
 }
@@ -233,7 +269,8 @@ pub fn lc_rows_of(env: &Env, ids: &[String]) -> Result<Vec<serde_json::Value>, S
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    serde_json::from_str(&lcq(env, &["list", "--ids", &ids.join(",")])?).map_err(|e| format!("spira-lc list --ids: unparsed reply: {e}"))
+    serde_json::from_str(&lcq(env, &["list", "--ids", &ids.join(",")])?)
+        .map_err(|e| format!("spira-lc list --ids: unparsed reply: {e}"))
 }
 
 pub fn lc_forget(env: &Env) {
@@ -241,7 +278,10 @@ pub fn lc_forget(env: &Env) {
 }
 
 fn in_pool_states(r: &serde_json::Value) -> bool {
-    matches!(r.get("state").and_then(|s| s.as_str()), Some("CERTIFIED" | "SUBMITTED"))
+    matches!(
+        r.get("state").and_then(|s| s.as_str()),
+        Some("CERTIFIED" | "SUBMITTED")
+    )
 }
 
 /// Is the machine there to answer? `spira-lc list`, parsed — the same
@@ -268,7 +308,9 @@ fn read_stack(env: &Env, id: &str) -> BTreeMap<String, String> {
         return BTreeMap::new();
     };
     let stack = match v.get("bead").and_then(|b| b.get("stack")) {
-        Some(serde_json::Value::String(s)) => serde_json::from_str::<serde_json::Value>(s).unwrap_or(serde_json::Value::Null),
+        Some(serde_json::Value::String(s)) => {
+            serde_json::from_str::<serde_json::Value>(s).unwrap_or(serde_json::Value::Null)
+        }
         Some(other) => other.clone(),
         None => return BTreeMap::new(),
     };
@@ -286,9 +328,18 @@ fn read_stack(env: &Env, id: &str) -> BTreeMap<String, String> {
 /// A prerequisite the machine records as LANDED, SUPERSEDED or DROPPED sequences nothing.
 /// An unreadable row is read as live: sequencing a member is the safe side.
 fn prereq_is_finished(env: &Env, id: &str) -> bool {
-    let Ok(out) = lcq(env, &["show", id]) else { return false };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) else { return false };
-    matches!(v.get("bead").and_then(|b| b.get("state")).and_then(|s| s.as_str()), Some("LANDED" | "SUPERSEDED" | "DROPPED"))
+    let Ok(out) = lcq(env, &["show", id]) else {
+        return false;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) else {
+        return false;
+    };
+    matches!(
+        v.get("bead")
+            .and_then(|b| b.get("state"))
+            .and_then(|s| s.as_str()),
+        Some("LANDED" | "SUPERSEDED" | "DROPPED")
+    )
 }
 
 // ---------------------------------------------------------------------------------------
@@ -300,7 +351,9 @@ fn holds_empty(r: &serde_json::Value) -> bool {
     match r.get("holds") {
         None | Some(serde_json::Value::Null) => true,
         Some(serde_json::Value::Array(a)) => a.is_empty(),
-        Some(serde_json::Value::String(t)) => serde_json::from_str::<Vec<serde_json::Value>>(t).map(|a| a.is_empty()).unwrap_or(false),
+        Some(serde_json::Value::String(t)) => serde_json::from_str::<Vec<serde_json::Value>>(t)
+            .map(|a| a.is_empty())
+            .unwrap_or(false),
         Some(_) => false,
     }
 }
@@ -311,34 +364,47 @@ fn read_pool(env: &Env) -> Result<Vec<PoolRow>, String> {
     let mut pool: Vec<PoolRow> = Vec::new();
     {
         let rows = lc_rows(env)?;
-        pool.extend(rows.iter().filter(|r| in_pool_states(r)).filter(|r| holds_empty(r)).filter_map(|r| {
-            let id = r.get("bead_id")?.as_str()?.to_string();
-            let tip = r.get("tip").and_then(|t| t.as_str()).unwrap_or("none").to_string();
-            if r.get("ejected_red_tip").and_then(|t| t.as_str()) == Some(tip.as_str()) {
-                return None;
-            }
-            let epoch = [r.get("since"), r.get("updated_at")]
-                .into_iter()
-                .flatten()
-                .find_map(|v| match v {
-                    serde_json::Value::Number(n) => n.as_u64(),
-                    serde_json::Value::String(t) => t.parse().ok(),
-                    _ => None,
-                })
-                .unwrap_or(0);
-            let express = match r.get("express") {
-                Some(serde_json::Value::Bool(b)) => *b,
-                Some(serde_json::Value::Number(n)) => n.as_u64() == Some(1),
-                Some(serde_json::Value::String(t)) => matches!(t.as_str(), "1" | "true"),
-                _ => false,
-            };
-            let blocked_by = r
-                .get("blocked_by")
-                .and_then(|b| b.as_array())
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
-                .unwrap_or_default();
-            Some((id, tip, epoch, express, blocked_by))
-        }));
+        pool.extend(
+            rows.iter()
+                .filter(|r| in_pool_states(r))
+                .filter(|r| holds_empty(r))
+                .filter_map(|r| {
+                    let id = r.get("bead_id")?.as_str()?.to_string();
+                    let tip = r
+                        .get("tip")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("none")
+                        .to_string();
+                    if r.get("ejected_red_tip").and_then(|t| t.as_str()) == Some(tip.as_str()) {
+                        return None;
+                    }
+                    let epoch = [r.get("since"), r.get("updated_at")]
+                        .into_iter()
+                        .flatten()
+                        .find_map(|v| match v {
+                            serde_json::Value::Number(n) => n.as_u64(),
+                            serde_json::Value::String(t) => t.parse().ok(),
+                            _ => None,
+                        })
+                        .unwrap_or(0);
+                    let express = match r.get("express") {
+                        Some(serde_json::Value::Bool(b)) => *b,
+                        Some(serde_json::Value::Number(n)) => n.as_u64() == Some(1),
+                        Some(serde_json::Value::String(t)) => matches!(t.as_str(), "1" | "true"),
+                        _ => false,
+                    };
+                    let blocked_by = r
+                        .get("blocked_by")
+                        .and_then(|b| b.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    Some((id, tip, epoch, express, blocked_by))
+                }),
+        );
     }
     pool.sort();
     pool.dedup_by(|a, b| a.0 == b.0);
@@ -347,26 +413,53 @@ fn read_pool(env: &Env) -> Result<Vec<PoolRow>, String> {
 
 /// Beads that carry their commits into whatever stacks on them yet may not be batched
 /// themselves: held, or ejected at their current tip.
-fn barred_ids(env: &Env, stacked_on: &[String]) -> Result<std::collections::BTreeSet<String>, String> {
+fn barred_ids(
+    env: &Env,
+    stacked_on: &[String],
+) -> Result<std::collections::BTreeSet<String>, String> {
     let mut rows = lc_rows(env)?;
-    let pooled: std::collections::BTreeSet<&str> = rows.iter().filter_map(|r| r.get("bead_id")?.as_str()).collect();
-    let outside: Vec<String> = stacked_on.iter().filter(|id| !pooled.contains(id.as_str())).cloned().collect();
+    let pooled: std::collections::BTreeSet<&str> = rows
+        .iter()
+        .filter_map(|r| r.get("bead_id")?.as_str())
+        .collect();
+    let outside: Vec<String> = stacked_on
+        .iter()
+        .filter(|id| !pooled.contains(id.as_str()))
+        .cloned()
+        .collect();
     rows.extend(lc_rows_of(env, &outside)?);
     Ok(rows
         .iter()
-        .filter(|r| !holds_empty(r) || (r.get("ejected_red_tip").and_then(|t| t.as_str()).is_some() && r.get("ejected_red_tip") == r.get("tip")))
+        .filter(|r| {
+            !holds_empty(r)
+                || (r.get("ejected_red_tip").and_then(|t| t.as_str()).is_some()
+                    && r.get("ejected_red_tip") == r.get("tip"))
+        })
         .filter_map(|r| r.get("bead_id")?.as_str().map(str::to_string))
         .collect())
 }
 
 /// Drops every member whose recorded stack names a barred bead, or a member dropped for that
 /// reason, and says why on stderr.
-fn drop_stacked_on_barred(members: Vec<Member>, mut barred: std::collections::BTreeSet<String>) -> Vec<Member> {
+fn drop_stacked_on_barred(
+    members: Vec<Member>,
+    mut barred: std::collections::BTreeSet<String>,
+) -> Vec<Member> {
     let mut kept = members;
     loop {
-        let Some(i) = kept.iter().position(|m| m.stack.keys().any(|p| barred.contains(p))) else { return kept };
+        let Some(i) = kept
+            .iter()
+            .position(|m| m.stack.keys().any(|p| barred.contains(p)))
+        else {
+            return kept;
+        };
         let m = kept.remove(i);
-        let p = m.stack.keys().find(|p| barred.contains(*p)).cloned().unwrap_or_default();
+        let p = m
+            .stack
+            .keys()
+            .find(|p| barred.contains(*p))
+            .cloned()
+            .unwrap_or_default();
         eprintln!("batcher: skipped {}: stacked on held {p}", m.id);
         barred.insert(m.id);
     }
@@ -376,7 +469,10 @@ fn drop_stacked_on_barred(members: Vec<Member>, mut barred: std::collections::BT
 /// lc-serve, never by spawning bd.
 pub fn bd_show_text(env: &Env, id: &str) -> Result<String, String> {
     let rows = bd_show(env, &[id.to_string()])?;
-    let row = rows.as_array().and_then(|a| a.first()).ok_or_else(|| format!("plan items: no row for {id}"))?;
+    let row = rows
+        .as_array()
+        .and_then(|a| a.first())
+        .ok_or_else(|| format!("plan items: no row for {id}"))?;
     let field = |k: &str| row.get(k).and_then(|v| v.as_str()).unwrap_or("");
     Ok(format!("{}\n{}", field("description"), field("notes")))
 }
@@ -387,15 +483,22 @@ fn bd_show(env: &Env, ids: &[String]) -> Result<serde_json::Value, String> {
     if ids.is_empty() {
         return Ok(serde_json::Value::Array(vec![]));
     }
-    plan_items(&lcq(env, &["plan", "items", "--full", "--ids", &ids.join(",")])?)
+    plan_items(&lcq(
+        env,
+        &["plan", "items", "--full", "--ids", &ids.join(",")],
+    )?)
 }
 
 /// The `items` of a `plan items` answer.
 fn plan_items(text: &str) -> Result<serde_json::Value, String> {
-    let mut v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("plan items: unparsed output: {e}"))?;
+    let mut v: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("plan items: unparsed output: {e}"))?;
     match v.get_mut("items").map(serde_json::Value::take) {
         Some(items @ serde_json::Value::Array(_)) => Ok(items),
-        _ => Err(format!("plan items: no items in {}", text.chars().take(200).collect::<String>())),
+        _ => Err(format!(
+            "plan items: no items in {}",
+            text.chars().take(200).collect::<String>()
+        )),
     }
 }
 
@@ -407,7 +510,11 @@ fn plan_items(text: &str) -> Result<serde_json::Value, String> {
 /// batch.sh did or did not do first.
 fn repo_branch_tips(repo: &Repo) -> Result<BTreeMap<String, String>, String> {
     let out = run(
-        Command::new("git").arg("-C").arg(&repo.path).args(["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/spira/*"]),
+        Command::new("git").arg("-C").arg(&repo.path).args([
+            "for-each-ref",
+            "--format=%(refname:short) %(objectname)",
+            "refs/heads/spira/*",
+        ]),
         "git for-each-ref",
     )?;
     Ok(out
@@ -442,8 +549,16 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let certified = read_pool(env)?;
     let branches = repo_branch_tips(repo)?;
     let mut barred = std::collections::BTreeSet::new();
-    barred.extend(certified.iter().filter(|(id, tip, ..)| !tip_current(tip, id, &branches)).map(|(id, ..)| id.clone()));
-    let certified: Vec<_> = certified.into_iter().filter(|(id, tip, ..)| tip_current(tip, id, &branches)).collect();
+    barred.extend(
+        certified
+            .iter()
+            .filter(|(id, tip, ..)| !tip_current(tip, id, &branches))
+            .map(|(id, ..)| id.clone()),
+    );
+    let certified: Vec<_> = certified
+        .into_iter()
+        .filter(|(id, tip, ..)| tip_current(tip, id, &branches))
+        .collect();
     let ids: Vec<String> = certified.iter().map(|(id, ..)| id.clone()).collect();
     let v = bd_show(env, &ids)?;
     let items = match v {
@@ -454,19 +569,42 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let mut texts: BTreeMap<String, (bool, String)> = BTreeMap::new();
     let mut content_blockers: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for it in items {
-        let Some(id) = it.get("id").and_then(|x| x.as_str()) else { continue };
+        let Some(id) = it.get("id").and_then(|x| x.as_str()) else {
+            continue;
+        };
         content_blockers.insert(id.to_string(), blockers_of(&it));
-        let priority = it.get("priority").and_then(|p| p.as_u64()).map(|p| p.min(9) as u8);
-        let title = it.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
-        let own_ref = it.get("external_ref").and_then(|x| x.as_str()).unwrap_or("");
-        let text = format!("{title}\n{}", it.get("description").and_then(|d| d.as_str()).unwrap_or(""));
-        texts.insert(id.to_string(), (own_ref.starts_with(&format!("basefail:{}:", repo.name)), text));
+        let priority = it
+            .get("priority")
+            .and_then(|p| p.as_u64())
+            .map(|p| p.min(9) as u8);
+        let title = it
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        let own_ref = it
+            .get("external_ref")
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let text = format!(
+            "{title}\n{}",
+            it.get("description").and_then(|d| d.as_str()).unwrap_or("")
+        );
+        texts.insert(
+            id.to_string(),
+            (
+                own_ref.starts_with(&format!("basefail:{}:", repo.name)),
+                text,
+            ),
+        );
         by_id.insert(id.to_string(), (priority, title));
     }
     let fixes = base_fix_ids(env, repo, &texts);
     let mut out = Vec::new();
     for (id, tip, epoch, express, mut blocked_by) in certified {
-        let Some((priority, title)) = by_id.get(&id) else { continue };
+        let Some((priority, title)) = by_id.get(&id) else {
+            continue;
+        };
         for dep in content_blockers.get(&id).into_iter().flatten() {
             if !blocked_by.contains(dep) && !prereq_is_finished(env, dep) {
                 blocked_by.push(dep.clone());
@@ -475,9 +613,24 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
         let stack = read_stack(env, &id);
         let base_fix = fixes.contains(&id);
         let priority = if base_fix { Some(0) } else { *priority };
-        out.push(Member { id, tip, title: title.clone(), priority, express, base_fix, certified_at: epoch, stack, blocked_by });
+        out.push(Member {
+            id,
+            tip,
+            title: title.clone(),
+            priority,
+            express,
+            base_fix,
+            certified_at: epoch,
+            stack,
+            blocked_by,
+        });
     }
-    let stacked_on: Vec<String> = out.iter().flat_map(|m| m.stack.keys().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    let stacked_on: Vec<String> = out
+        .iter()
+        .flat_map(|m| m.stack.keys().cloned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
     barred.extend(barred_ids(env, &stacked_on)?);
     Ok(drop_stacked_on_barred(out, barred))
 }
@@ -489,27 +642,62 @@ fn blockers_of(row: &serde_json::Value) -> Vec<String> {
         .and_then(|d| d.as_array())
         .into_iter()
         .flatten()
-        .filter(|d| spira_config::edges::blocks(spira_config::edges::Edge::Dep(d.get("type").and_then(|t| t.as_str()).unwrap_or(""))))
-        .filter_map(|d| d.get("depends_on_id").and_then(|i| i.as_str()).map(str::to_string))
+        .filter(|d| {
+            spira_config::edges::blocks(spira_config::edges::Edge::Dep(
+                d.get("type").and_then(|t| t.as_str()).unwrap_or(""),
+            ))
+        })
+        .filter_map(|d| {
+            d.get("depends_on_id")
+                .and_then(|i| i.as_str())
+                .map(str::to_string)
+        })
         .collect()
 }
 
 /// The certified ids that fix an open base-red bead of `repo`: a bead the basefail bead
 /// depends on, one citing it by id, or one carrying the basefail external ref itself. A
 /// failed lookup yields none — the lane is an acceleration, never a gate on the round.
-fn base_fix_ids(env: &Env, repo: &Repo, texts: &BTreeMap<String, (bool, String)>) -> std::collections::BTreeSet<String> {
+fn base_fix_ids(
+    env: &Env,
+    repo: &Repo,
+    texts: &BTreeMap<String, (bool, String)>,
+) -> std::collections::BTreeSet<String> {
     // Only a member of the pool can be a fix, so an empty pool has nothing to ask bd about.
     if texts.is_empty() {
         return Default::default();
     }
-    let mut fixes: std::collections::BTreeSet<String> = texts.iter().filter(|(_, (own, _))| *own).map(|(id, _)| id.clone()).collect();
+    let mut fixes: std::collections::BTreeSet<String> = texts
+        .iter()
+        .filter(|(_, (own, _))| *own)
+        .map(|(id, _)| id.clone())
+        .collect();
     // The content store lists the base-red beads; whether one is still open is its lifecycle
     // row's — not terminal (sp-mve9i). A base-red bead with no row, or a machine that cannot
     // answer, accelerates nothing: the lane is never a gate.
-    let Ok(text) = lcq(env, &["plan", "items", "--external-contains", &format!("basefail:{}:", repo.name)]) else { return fixes };
-    let Ok(serde_json::Value::Array(rows)) = plan_items(&text) else { return fixes };
-    let basefail_ids: Vec<String> = rows.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect();
-    let Ok(lc) = lc_rows_of(env, &basefail_ids).and_then(|r| spira_config::lc_state::parse_rows(&serde_json::Value::Array(r).to_string())) else { return fixes };
+    let Ok(text) = lcq(
+        env,
+        &[
+            "plan",
+            "items",
+            "--external-contains",
+            &format!("basefail:{}:", repo.name),
+        ],
+    ) else {
+        return fixes;
+    };
+    let Ok(serde_json::Value::Array(rows)) = plan_items(&text) else {
+        return fixes;
+    };
+    let basefail_ids: Vec<String> = rows
+        .iter()
+        .filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string))
+        .collect();
+    let Ok(lc) = lc_rows_of(env, &basefail_ids)
+        .and_then(|r| spira_config::lc_state::parse_rows(&serde_json::Value::Array(r).to_string()))
+    else {
+        return fixes;
+    };
     let lc = spira_config::lc_state::index(lc);
     let open: Vec<String> = basefail_ids
         .into_iter()
@@ -526,9 +714,15 @@ fn base_fix_ids(env: &Env, repo: &Repo, texts: &BTreeMap<String, (bool, String)>
             o => vec![o],
         };
         for b in shown {
-            for d in b.get("dependencies").and_then(|d| d.as_array()).into_iter().flatten() {
+            for d in b
+                .get("dependencies")
+                .and_then(|d| d.as_array())
+                .into_iter()
+                .flatten()
+            {
                 let blocks = d.get("type").and_then(|t| t.as_str()) != Some("parent-child");
-                if let (true, Some(id)) = (blocks, d.get("depends_on_id").and_then(|i| i.as_str())) {
+                if let (true, Some(id)) = (blocks, d.get("depends_on_id").and_then(|i| i.as_str()))
+                {
                     fixes.insert(id.to_string());
                 }
             }
@@ -549,7 +743,10 @@ pub struct OpenBatch {
 }
 
 fn parse_kv(text: &str) -> BTreeMap<String, String> {
-    text.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.trim().to_string(), v.trim().to_string())).collect()
+    text.lines()
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect()
 }
 
 fn parse_members(s: &str) -> Vec<(String, String)> {
@@ -576,13 +773,18 @@ pub fn read_open_batch(env: &Env, repo: &str) -> Result<Option<OpenBatch>, Strin
         return Ok(open_batch_from(&run.out));
     }
     let views = store_view::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
-    views.refresh_batches().map_err(|e| format!("could not say: {e}"))?;
+    views
+        .refresh_batches()
+        .map_err(|e| format!("could not say: {e}"))?;
     open_batch_of(views.batch_view(repo).map(|r| r.value))
 }
 
 /// The open batch a view's answer holds; a refused read could not say.
-fn open_batch_of(read: Result<store_view::BatchView, spira_config::lc_call::LcError>) -> Result<Option<OpenBatch>, String> {
-    read.map(|v| open_batch_from(&v.shown())).map_err(|e| format!("could not say: {e}"))
+fn open_batch_of(
+    read: Result<store_view::BatchView, spira_config::lc_call::LcError>,
+) -> Result<Option<OpenBatch>, String> {
+    read.map(|v| open_batch_from(&v.shown()))
+        .map_err(|e| format!("could not say: {e}"))
 }
 
 /// `queue batch show`'s answer: `None` when it printed no record. A record whose PR is not yet
@@ -602,9 +804,33 @@ fn open_batch_from(text: &str) -> Option<OpenBatch> {
 /// Opens the batch PR for `members` at `head` through `queue batch open`, which records the batch
 /// before it pushes and creates the PR and arms auto-merge after: the PR's number. The caller holds
 /// the repo's queue lock.
-pub fn batch_open(env: &Env, repo: &Repo, members: &[(String, String)], head: &str, body: &str) -> Result<(String, Result<(), String>), String> {
-    let named = members.iter().map(|(id, tip)| format!("{id}@{tip}")).collect::<Vec<_>>().join(",");
-    let args = ["batch", "open", "--repo", repo.name.as_str(), "--members", &named, "--head", head, "--owner", "batcher", "--skip-pregate", "--body-file", "-"];
+pub fn batch_open(
+    env: &Env,
+    repo: &Repo,
+    members: &[(String, String)],
+    head: &str,
+    body: &str,
+) -> Result<(String, Result<(), String>), String> {
+    let named = members
+        .iter()
+        .map(|(id, tip)| format!("{id}@{tip}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let args = [
+        "batch",
+        "open",
+        "--repo",
+        repo.name.as_str(),
+        "--members",
+        &named,
+        "--head",
+        head,
+        "--owner",
+        "batcher",
+        "--skip-pregate",
+        "--body-file",
+        "-",
+    ];
     let run = queue_verb(env, &args, body, &[])?;
     print!("{}", run.out);
     eprint!("{}", run.err);
@@ -628,12 +854,26 @@ fn subject_bead(subject: &str) -> Option<&str> {
         let ok = stem.len() >= 2
             && stem.bytes().all(|b| b.is_ascii_lowercase())
             && tail.len() >= 3
-            && tail.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-            && rest.split('.').skip(1).all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+            && tail
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+            && rest
+                .split('.')
+                .skip(1)
+                .all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
         ok.then_some(t)
     }
-    let lead = subject.split_once(':').map(|(a, _)| a.trim()).and_then(shaped);
-    lead.or_else(|| subject.split_once("land ").and_then(|(_, r)| r.split_whitespace().next()).map(|t| t.trim_end_matches([':', ',', '.'])).and_then(shaped))
+    let lead = subject
+        .split_once(':')
+        .map(|(a, _)| a.trim())
+        .and_then(shaped);
+    lead.or_else(|| {
+        subject
+            .split_once("land ")
+            .and_then(|(_, r)| r.split_whitespace().next())
+            .map(|t| t.trim_end_matches([':', ',', '.']))
+            .and_then(shaped)
+    })
 }
 
 /// Bead ids named by commit subjects that are not in `members`, sorted and deduplicated.
@@ -650,9 +890,18 @@ pub fn foreign_in(subjects: &[String], members: &[String]) -> Vec<String> {
 }
 
 /// Beads other than `members` that have commits in `base..head`.
-pub fn foreign_beads(repo: &Repo, base: &str, head: &str, members: &[String]) -> Result<Vec<String>, String> {
+pub fn foreign_beads(
+    repo: &Repo,
+    base: &str,
+    head: &str,
+    members: &[String],
+) -> Result<Vec<String>, String> {
     let out = run(
-        Command::new("git").arg("-C").arg(&repo.path).args(["log", "--format=%s", &format!("{base}..{head}")]),
+        Command::new("git").arg("-C").arg(&repo.path).args([
+            "log",
+            "--format=%s",
+            &format!("{base}..{head}"),
+        ]),
         "git log base..head",
     )?;
     let subjects: Vec<String> = out.lines().map(str::to_string).collect();
@@ -690,7 +939,13 @@ pub fn base_moved_at(env: &Env, repo: &str, current_base_sha: &str) -> u64 {
 // ---------------------------------------------------------------------------------------
 
 pub fn resolve_base_sha(repo: &Repo) -> Result<String, String> {
-    let out = run(Command::new("git").arg("-C").arg(&repo.path).args(["rev-parse", &repo.base]), "git rev-parse base")?;
+    let out = run(
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo.path)
+            .args(["rev-parse", &repo.base]),
+        "git rev-parse base",
+    )?;
     Ok(out.trim().to_string())
 }
 
@@ -701,8 +956,19 @@ pub fn fetch_base(repo: &Repo) -> Result<(), String> {
     if repo.land == Land::Local {
         return Ok(());
     }
-    let remote = repo.base.split_once('/').map(|(r, _)| r).unwrap_or("origin");
-    run(Command::new("git").arg("-C").arg(&repo.path).args(["fetch", "-q", remote]), "git fetch base").map(|_| ())
+    let remote = repo
+        .base
+        .split_once('/')
+        .map(|(r, _)| r)
+        .unwrap_or("origin");
+    run(
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo.path)
+            .args(["fetch", "-q", remote]),
+        "git fetch base",
+    )
+    .map(|_| ())
 }
 
 /// Re-fetch and return the base the round is about to be opened on, refusing when `head`
@@ -711,8 +977,16 @@ pub fn fetch_base(repo: &Repo) -> Result<(), String> {
 pub fn confirm_base(repo: &Repo, head: &str) -> Result<String, String> {
     fetch_base(repo)?;
     let base = resolve_base_sha(repo)?;
-    if !run_status(Command::new("git").arg("-C").arg(&repo.path).args(["merge-base", "--is-ancestor", &base, head])) {
-        return Err(format!("round does not descend from {} ({base}) — the base moved while the round was tested", repo.base));
+    if !run_status(Command::new("git").arg("-C").arg(&repo.path).args([
+        "merge-base",
+        "--is-ancestor",
+        &base,
+        head,
+    ])) {
+        return Err(format!(
+            "round does not descend from {} ({base}) — the base moved while the round was tested",
+            repo.base
+        ));
     }
     Ok(base)
 }
@@ -721,20 +995,47 @@ pub fn confirm_base(repo: &Repo, head: &str) -> Result<String, String> {
 /// tree's recipe, and synchronous otherwise, so the next lease finds the landed recipe's image.
 pub fn template_refresh(env: &Env, tree: &Path) -> Result<(), String> {
     // FORK-EDGE: machine leg round-vm (refresh)
-    run(Command::new(&env.round_vm).arg("refresh").arg(tree), "round-vm refresh").map(|_| ())
+    run(
+        Command::new(&env.round_vm).arg("refresh").arg(tree),
+        "round-vm refresh",
+    )
+    .map(|_| ())
 }
 
 pub fn worktree_reset(repo: &Repo, wt: &Path, at_sha: &str) -> Result<(), String> {
-    let _ = run(Command::new("git").arg("-C").arg(&repo.path).args(["worktree", "prune"]), "git worktree prune");
+    let _ = run(
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo.path)
+            .args(["worktree", "prune"]),
+        "git worktree prune",
+    );
     if wt.join(".git").exists() {
-        run(Command::new("git").arg("-C").arg(wt).args(["reset", "-q", "--hard", at_sha]), "git reset worktree")?;
-        let _ = run(Command::new("git").arg("-C").arg(wt).args(["clean", "-qfd"]), "git clean worktree");
+        run(
+            Command::new("git")
+                .arg("-C")
+                .arg(wt)
+                .args(["reset", "-q", "--hard", at_sha]),
+            "git reset worktree",
+        )?;
+        let _ = run(
+            Command::new("git")
+                .arg("-C")
+                .arg(wt)
+                .args(["clean", "-qfd"]),
+            "git clean worktree",
+        );
     } else {
         if let Some(parent) = wt.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
         }
         run(
-            Command::new("git").arg("-C").arg(&repo.path).args(["worktree", "add", "-q", "--detach"]).arg(wt).arg(at_sha),
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo.path)
+                .args(["worktree", "add", "-q", "--detach"])
+                .arg(wt)
+                .arg(at_sha),
             "git worktree add",
         )?;
     }
@@ -747,7 +1048,12 @@ pub fn worktree_reset(repo: &Repo, wt: &Path, at_sha: &str) -> Result<(), String
 /// merge by exit status alone, so this must be checked before `merge_member` ever shells out
 /// to `git merge`.
 fn tip_already_in_round(wt: &Path, tip: &str) -> bool {
-    run_status(Command::new("git").arg("-C").arg(wt).args(["merge-base", "--is-ancestor", tip, "HEAD"]))
+    run_status(Command::new("git").arg("-C").arg(wt).args([
+        "merge-base",
+        "--is-ancestor",
+        tip,
+        "HEAD",
+    ]))
 }
 
 /// Merge one member's tip into the worktree with the queue's own commit message. Aborts and
@@ -763,7 +1069,12 @@ pub fn merge_member(env: &Env, wt: &Path, id: &str, tip: &str) -> MergeResult {
         Command::new("git")
             .arg("-C")
             .arg(wt)
-            .args(["-c", &format!("user.name={}", env.git_name), "-c", &format!("user.email={}", env.git_email)])
+            .args([
+                "-c",
+                &format!("user.name={}", env.git_name),
+                "-c",
+                &format!("user.email={}", env.git_email),
+            ])
             .args(["merge", "--no-edit", "--no-ff", "-m", &subject])
             .arg(tip),
     );
@@ -774,18 +1085,38 @@ pub fn merge_member(env: &Env, wt: &Path, id: &str, tip: &str) -> MergeResult {
         }
         MergeResult::Ok
     } else {
-        let _ = run(Command::new("git").arg("-C").arg(wt).args(["merge", "--abort"]), "git merge --abort");
+        let _ = run(
+            Command::new("git")
+                .arg("-C")
+                .arg(wt)
+                .args(["merge", "--abort"]),
+            "git merge --abort",
+        );
         MergeResult::Conflict
     }
 }
 
 /// The earliest of `winners` (id, tip) that touched one of `files` since `base_sha`: the
 /// sibling a base-clean member lost its merge to, with the files they clashed on.
-pub fn sibling_conflict(repo: &Repo, base_sha: &str, files: &[String], winners: &[(String, String)]) -> Option<(String, Vec<String>)> {
+pub fn sibling_conflict(
+    repo: &Repo,
+    base_sha: &str,
+    files: &[String],
+    winners: &[(String, String)],
+) -> Option<(String, Vec<String>)> {
     for (id, tip) in winners {
-        let o = spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(["diff", "--name-only", &format!("{base_sha}...{tip}")]).output().ok()?;
+        let o = spira_config::bounded::bounded("git")
+            .arg("-C")
+            .arg(&repo.path)
+            .args(["diff", "--name-only", &format!("{base_sha}...{tip}")])
+            .output()
+            .ok()?;
         let touched = String::from_utf8_lossy(&o.stdout).to_string();
-        let shared: Vec<String> = files.iter().filter(|f| touched.lines().any(|l| l == f.as_str())).cloned().collect();
+        let shared: Vec<String> = files
+            .iter()
+            .filter(|f| touched.lines().any(|l| l == f.as_str()))
+            .cloned()
+            .collect();
         if !shared.is_empty() {
             return Some((id.clone(), shared));
         }
@@ -807,16 +1138,33 @@ pub fn conflict_files(dir: &Path, side: &str, tip: &str) -> Option<Vec<String>> 
     let o = spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(dir)
-        .args(["-c", &format!("attr.tree={side}"), "merge-tree", "--write-tree", "--name-only", "--no-messages", side, tip])
+        .args([
+            "-c",
+            &format!("attr.tree={side}"),
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            side,
+            tip,
+        ])
         .output()
         .ok()?;
     let out = String::from_utf8_lossy(&o.stdout).to_string();
     let mut lines = out.lines();
     let first = lines.next().unwrap_or("");
-    if o.status.code() != Some(1) || first.len() < 40 || !first.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if o.status.code() != Some(1)
+        || first.len() < 40
+        || !first.bytes().all(|b| b.is_ascii_hexdigit())
+    {
         return None;
     }
-    Some(lines.take_while(|l| !l.is_empty()).map(str::to_string).collect())
+    Some(
+        lines
+            .take_while(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
 }
 
 fn conflict_streak_file(env: &Env, id: &str) -> PathBuf {
@@ -846,9 +1194,18 @@ pub fn conflict_streak_clear(env: &Env, id: &str) {
 /// Ejects a certified member set aside for a base conflict in consecutive rounds: reopened
 /// for rebase, so it can only rejoin by recertifying.
 pub fn withdraw_for_conflict(env: &Env, repo: &Repo, id: &str, rounds: u32, files: &[String]) {
-    let listed = if files.is_empty() { "unknown".to_string() } else { files.join(", ") };
+    let listed = if files.is_empty() {
+        "unknown".to_string()
+    } else {
+        files.join(", ")
+    };
     let reason = format!("set aside for conflict with {} in {rounds} consecutive rounds; conflicting files: {listed}", repo.base);
-    bead_reopen(env, id, "rebase-conflict", &format!("spira/{id} was {reason} — withdrawn by the batcher for rebase."));
+    bead_reopen(
+        env,
+        id,
+        "rebase-conflict",
+        &format!("spira/{id} was {reason} — withdrawn by the batcher for rebase."),
+    );
     lc_withdraw(env, id);
     conflict_streak_clear(env, id);
 }
@@ -858,14 +1215,40 @@ pub fn withdraw_for_conflict(env: &Env, repo: &Repo, id: &str, rounds: u32, file
 /// key. A refusal (tip moved, already certified) is said on stderr and never blocks the round.
 pub fn lc_certify_round(env: &Env, members: &[(String, String)], round_key: &str) {
     for (id, tip) in members {
-        let Ok(Ok(row)) = lcq(env, &["show", id]).map(|o| serde_json::from_str::<serde_json::Value>(&o)) else { continue };
+        let Ok(Ok(row)) =
+            lcq(env, &["show", id]).map(|o| serde_json::from_str::<serde_json::Value>(&o))
+        else {
+            continue;
+        };
         let bead = row.get("bead").cloned().unwrap_or_default();
         if bead.get("state").and_then(|s| s.as_str()) != Some("SUBMITTED") {
             continue;
         }
-        let Some(version) = bead.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))) else { continue };
-        let kind = serde_json::json!({"GatePass": {"tip": tip, "gate_key": format!("round:{round_key}")}}).to_string();
-        if let Err(e) = lcq(env, &["event", "bead", id, "--expect", "SUBMITTED", "--version", &version.to_string(), "--actor", "batcher", "--kind", &kind]) {
+        let Some(version) = bead.get("version").and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+        }) else {
+            continue;
+        };
+        let kind =
+            serde_json::json!({"GatePass": {"tip": tip, "gate_key": format!("round:{round_key}")}})
+                .to_string();
+        if let Err(e) = lcq(
+            env,
+            &[
+                "event",
+                "bead",
+                id,
+                "--expect",
+                "SUBMITTED",
+                "--version",
+                &version.to_string(),
+                "--actor",
+                "batcher",
+                "--kind",
+                &kind,
+            ],
+        ) {
             eprintln!("batcher: LIFECYCLE: {id} not certified by its round on spira-lc: {e}");
         }
     }
@@ -878,28 +1261,68 @@ pub fn lc_certify_round(env: &Env, members: &[(String, String)], round_key: &str
 /// submit starts a fresh trial. A member not CERTIFIED there (resubmitted since, already
 /// returned) is left alone; a refusal is said on stderr and never blocks the round.
 pub fn lc_withdraw(env: &Env, id: &str) {
-    let fail = |why: String| eprintln!("batcher: LIFECYCLE: {id} not returned to REWORK on spira-lc: {why}");
+    let fail = |why: String| {
+        eprintln!("batcher: LIFECYCLE: {id} not returned to REWORK on spira-lc: {why}")
+    };
     let row = match lcq(env, &["show", id]).map(|o| serde_json::from_str::<serde_json::Value>(&o)) {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => return fail(format!("show: unparsed reply: {e}")),
         Err(e) => return fail(format!("show: {e}")),
     };
     let bead = row.get("bead").cloned().unwrap_or_default();
-    let mut state = bead.get("state").and_then(|s| s.as_str()).unwrap_or("").to_string();
-    let Some(mut version) = bead.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))) else {
+    let mut state = bead
+        .get("state")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    let Some(mut version) = bead.get("version").and_then(|v| {
+        v.as_u64()
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+    }) else {
         return fail("show: no version".into());
     };
     if state == "SUBMITTED" {
         let tip = bead.get("tip").and_then(|t| t.as_str()).unwrap_or("");
-        let kind = serde_json::json!({"GateRed": {"tip": tip, "reason": "suites-failed"}}).to_string();
-        if let Err(e) = lcq(env, &["event", "bead", id, "--expect", "SUBMITTED", "--version", &version.to_string(), "--actor", "batcher", "--kind", &kind]) {
+        let kind =
+            serde_json::json!({"GateRed": {"tip": tip, "reason": "suites-failed"}}).to_string();
+        if let Err(e) = lcq(
+            env,
+            &[
+                "event",
+                "bead",
+                id,
+                "--expect",
+                "SUBMITTED",
+                "--version",
+                &version.to_string(),
+                "--actor",
+                "batcher",
+                "--kind",
+                &kind,
+            ],
+        ) {
             fail(format!("GateRed: {e}"));
         }
         return;
     }
     if state == "CERTIFIED" {
         let v = version.to_string();
-        if let Err(e) = lcq(env, &["event", "bead", id, "--expect", "CERTIFIED", "--version", &v, "--actor", "batcher", "--kind", "\"Deliver\""]) {
+        if let Err(e) = lcq(
+            env,
+            &[
+                "event",
+                "bead",
+                id,
+                "--expect",
+                "CERTIFIED",
+                "--version",
+                &v,
+                "--actor",
+                "batcher",
+                "--kind",
+                "\"Deliver\"",
+            ],
+        ) {
             return fail(format!("Deliver: {e}"));
         }
         state = "IN_DELIVERY".into();
@@ -909,29 +1332,74 @@ pub fn lc_withdraw(env: &Env, id: &str) {
         return;
     }
     let v = version.to_string();
-    if let Err(e) = lcq(env, &["event", "bead", id, "--expect", "IN_DELIVERY", "--version", &v, "--actor", "batcher", "--kind", "{\"Returned\":{\"reason\":\"batch-ejected\"}}"]) {
+    if let Err(e) = lcq(
+        env,
+        &[
+            "event",
+            "bead",
+            id,
+            "--expect",
+            "IN_DELIVERY",
+            "--version",
+            &v,
+            "--actor",
+            "batcher",
+            "--kind",
+            "{\"Returned\":{\"reason\":\"batch-ejected\"}}",
+        ],
+    ) {
         fail(format!("Returned: {e}"));
     }
 }
 
 /// `id`'s state on the machine.
 pub fn lc_state(env: &Env, id: &str) -> Result<String, String> {
-    let v: serde_json::Value = serde_json::from_str(&lcq(env, &["show", id])?).map_err(|e| format!("show: unparsed reply: {e}"))?;
-    v.get("bead").and_then(|b| b.get("state")).and_then(|s| s.as_str()).map(str::to_string).ok_or_else(|| "show: no state".to_string())
+    let v: serde_json::Value = serde_json::from_str(&lcq(env, &["show", id])?)
+        .map_err(|e| format!("show: unparsed reply: {e}"))?;
+    v.get("bead")
+        .and_then(|b| b.get("state"))
+        .and_then(|s| s.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "show: no state".to_string())
 }
 
 /// Sends `id` back to REWORK with `GateRed(reason)` at `tip`, but only while it is still the
 /// SUBMITTED or CERTIFIED bead at that tip the screen judged.
 pub fn lc_gate_red(env: &Env, id: &str, tip: &str, reason: &str) -> Result<(), String> {
-    let v: serde_json::Value = serde_json::from_str(&lcq(env, &["show", id])?).map_err(|e| format!("show: unparsed reply: {e}"))?;
+    let v: serde_json::Value = serde_json::from_str(&lcq(env, &["show", id])?)
+        .map_err(|e| format!("show: unparsed reply: {e}"))?;
     let bead = v.get("bead").cloned().unwrap_or_default();
     let state = bead.get("state").and_then(|s| s.as_str()).unwrap_or("");
-    let version = bead.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))).ok_or("show: no version")?;
-    if !matches!(state, "SUBMITTED" | "CERTIFIED") || bead.get("tip").and_then(|t| t.as_str()) != Some(tip) {
+    let version = bead
+        .get("version")
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+        })
+        .ok_or("show: no version")?;
+    if !matches!(state, "SUBMITTED" | "CERTIFIED")
+        || bead.get("tip").and_then(|t| t.as_str()) != Some(tip)
+    {
         return Err(format!("{id} moved since screening (state {state})"));
     }
     let kind = serde_json::json!({"GateRed": {"tip": tip, "reason": reason}}).to_string();
-    lcq(env, &["event", "bead", id, "--expect", state, "--version", &version.to_string(), "--actor", "sift", "--kind", &kind]).map(|_| ())
+    lcq(
+        env,
+        &[
+            "event",
+            "bead",
+            id,
+            "--expect",
+            state,
+            "--version",
+            &version.to_string(),
+            "--actor",
+            "sift",
+            "--kind",
+            &kind,
+        ],
+    )
+    .map(|_| ())
 }
 
 /// Records the screen's pass for `tip`; the machine refuses it unless `id` is still SUBMITTED or
@@ -941,16 +1409,39 @@ fn sifted_accepts(state: &str) -> bool {
 }
 
 pub fn lc_sifted(env: &Env, id: &str, tip: &str) -> Result<(), String> {
-    let v: serde_json::Value = serde_json::from_str(&lcq(env, &["show", id])?).map_err(|e| format!("show: unparsed reply: {e}"))?;
+    let v: serde_json::Value = serde_json::from_str(&lcq(env, &["show", id])?)
+        .map_err(|e| format!("show: unparsed reply: {e}"))?;
     let bead = v.get("bead").cloned().unwrap_or_default();
     let state = bead.get("state").and_then(|s| s.as_str()).unwrap_or("");
     if !sifted_accepts(state) {
         println!("batcher: sift: {id} is {state}, not screened at {tip}; no pass recorded");
         return Ok(());
     }
-    let version = bead.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))).ok_or("show: no version")?;
+    let version = bead
+        .get("version")
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+        })
+        .ok_or("show: no version")?;
     let kind = serde_json::json!({"Sifted": {"tip": tip}}).to_string();
-    lcq(env, &["event", "bead", id, "--expect", state, "--version", &version.to_string(), "--actor", "sift", "--kind", &kind]).map(|_| ())
+    lcq(
+        env,
+        &[
+            "event",
+            "bead",
+            id,
+            "--expect",
+            state,
+            "--version",
+            &version.to_string(),
+            "--actor",
+            "sift",
+            "--kind",
+            &kind,
+        ],
+    )
+    .map(|_| ())
 }
 
 /// Bead id -> the tip the screen last passed, for every SUBMITTED and CERTIFIED bead that has one.
@@ -958,7 +1449,12 @@ pub fn sifted_tips(env: &Env) -> Result<BTreeMap<String, String>, String> {
     let mut out = BTreeMap::new();
     {
         for r in lc_rows(env)?.into_iter().filter(in_pool_states) {
-            let (Some(id), Some(tip)) = (r.get("bead_id").and_then(|x| x.as_str()), r.get("sifted_tip").and_then(|x| x.as_str())) else { continue };
+            let (Some(id), Some(tip)) = (
+                r.get("bead_id").and_then(|x| x.as_str()),
+                r.get("sifted_tip").and_then(|x| x.as_str()),
+            ) else {
+                continue;
+            };
             out.insert(id.to_string(), tip.to_string());
         }
     }
@@ -967,9 +1463,18 @@ pub fn sifted_tips(env: &Env) -> Result<BTreeMap<String, String>, String> {
 
 pub fn lc_supersede(env: &Env, id: &str, keeper: &str) -> Result<(), String> {
     let reason = format!("Sift: identical patch (patch-id) to {keeper}.");
-    let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
+    let bin = env
+        .lc_bin
+        .as_ref()
+        .ok_or_else(|| "no spira-lc program".to_string())?;
     // FORK-EDGE: unserved verb close (the spira-lc CLI answers it; the socket does not)
-    spira_config::lifecycle_row::close_with(&bin.to_string_lossy(), id, &reason, "sift", Some(keeper))
+    spira_config::lifecycle_row::close_with(
+        &bin.to_string_lossy(),
+        id,
+        &reason,
+        "sift",
+        Some(keeper),
+    )
 }
 
 /// The evidence a send-back stands on, written on the bead before the GateRed.
@@ -977,7 +1482,9 @@ pub fn bead_note(env: &Env, id: &str, text: &str) -> Result<(), String> {
     // batch-job: bead.sh amend is a bead-store write that takes as long as the store does
     // FORK-EDGE: bead.sh amend is the operator tool (it also mails the dwarf at work on the bead); no library entry does both
     let mut cmd = Command::new("bash");
-    cmd.arg(env.home.join("bead.sh")).args(["amend", id, "--note", text]).env("SPIRA_HOME", &env.home);
+    cmd.arg(env.home.join("bead.sh"))
+        .args(["amend", id, "--note", text])
+        .env("SPIRA_HOME", &env.home);
     run(&mut cmd, "bead.sh amend").map(|_| ())
 }
 
@@ -985,29 +1492,49 @@ pub fn bead_note(env: &Env, id: &str, text: &str) -> Result<(), String> {
 /// aside on conflict, since that is the list its builder needs to know before rebasing.
 pub fn deleted_suites(repo: &Repo, member_tip: &str, base_sha: &str) -> Vec<String> {
     let out = run(
-        Command::new("git")
-            .arg("-C")
-            .arg(&repo.path)
-            .args(["diff", "--diff-filter=D", "--name-only", member_tip, base_sha, "--", "spira/test-*.sh"]),
+        Command::new("git").arg("-C").arg(&repo.path).args([
+            "diff",
+            "--diff-filter=D",
+            "--name-only",
+            member_tip,
+            base_sha,
+            "--",
+            "spira/test-*.sh",
+        ]),
         "git diff deleted suites",
     )
     .unwrap_or_default();
-    out.lines().filter(|l| !l.is_empty()).map(|l| l.rsplit('/').next().unwrap_or(l).to_string()).collect()
+    out.lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.rsplit('/').next().unwrap_or(l).to_string())
+        .collect()
 }
 
 /// The paths `tip` changed since it forked from `base_sha` (`git diff base...tip`) — what
 /// attribution orders suspects by and decides a rerun's build by.
 pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
-    run(Command::new("git").arg("-C").arg(&repo.path).args(["diff", "--name-only", &format!("{base_sha}...{tip}")]), "git diff changed paths")
-        .unwrap_or_default()
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(str::to_string)
-        .collect()
+    run(
+        Command::new("git").arg("-C").arg(&repo.path).args([
+            "diff",
+            "--name-only",
+            &format!("{base_sha}...{tip}"),
+        ]),
+        "git diff changed paths",
+    )
+    .unwrap_or_default()
+    .lines()
+    .filter(|l| !l.is_empty())
+    .map(str::to_string)
+    .collect()
 }
 
 fn patch_id(repo: &Repo, base_sha: &str, tip: &str) -> Option<String> {
-    let diff = spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(["diff", &format!("{base_sha}...{tip}")]).output().ok()?;
+    let diff = spira_config::bounded::bounded("git")
+        .arg("-C")
+        .arg(&repo.path)
+        .args(["diff", &format!("{base_sha}...{tip}")])
+        .output()
+        .ok()?;
     if !diff.status.success() {
         return None;
     }
@@ -1021,7 +1548,13 @@ fn patch_id(repo: &Repo, base_sha: &str, tip: &str) -> Option<String> {
         .ok()?;
     std::io::Write::write_all(child.stdin.as_mut()?, &diff.stdout).ok()?;
     let out = child.wait_with_output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).split_whitespace().next().unwrap_or("").to_string())
+    out.status.success().then(|| {
+        String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_string()
+    })
 }
 
 /// The members whose `refs/heads/spira/<id>` now carries a different patch than the tip the
@@ -1039,16 +1572,28 @@ pub fn moved_members(repo: &Repo, base_sha: &str, members: &[Member]) -> Vec<Str
 }
 
 pub fn set_branch(repo: &Repo, branch: &str, sha: &str) {
-    let _ = spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(["branch", "-f", branch, sha]).status();
+    let _ = spira_config::bounded::bounded("git")
+        .arg("-C")
+        .arg(&repo.path)
+        .args(["branch", "-f", branch, sha])
+        .status();
 }
 
 pub fn local_branches(repo: &Repo, prefix: &str) -> Vec<String> {
     let out = run(
-        Command::new("git").arg("-C").arg(&repo.path).args(["for-each-ref", "--format=%(refname:short)", &format!("refs/heads/{prefix}")]),
+        Command::new("git").arg("-C").arg(&repo.path).args([
+            "for-each-ref",
+            "--format=%(refname:short)",
+            &format!("refs/heads/{prefix}"),
+        ]),
         "git for-each-ref",
     )
     .unwrap_or_default();
-    out.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
+    out.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 pub fn reap_branches(repo: &Repo, prefix: &str) {
@@ -1076,11 +1621,24 @@ pub fn utc_stamp(t: u64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+    format!(
+        "{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
 }
 
 pub fn head_of(wt: &Path) -> Result<String, String> {
-    Ok(run(Command::new("git").arg("-C").arg(wt).args(["rev-parse", "HEAD"]), "git rev-parse HEAD")?.trim().to_string())
+    Ok(run(
+        Command::new("git")
+            .arg("-C")
+            .arg(wt)
+            .args(["rev-parse", "HEAD"]),
+        "git rev-parse HEAD",
+    )?
+    .trim()
+    .to_string())
 }
 
 /// The member ids `terminal_ready` (core) can treat as actually landed at `head`: every merge
@@ -1090,12 +1648,21 @@ pub fn head_of(wt: &Path) -> Result<String, String> {
 /// a different patch after the corpus run that validated this round.
 pub fn named_ids(repo: &Repo, base_sha: &str, head: &str, members: &[Member]) -> Vec<String> {
     let out = run(
-        Command::new("git").arg("-C").arg(&repo.path).args(["log", "--merges", "--format=%P", &format!("{base_sha}..{head}")]),
+        Command::new("git").arg("-C").arg(&repo.path).args([
+            "log",
+            "--merges",
+            "--format=%P",
+            &format!("{base_sha}..{head}"),
+        ]),
         "git log merges",
     )
     .unwrap_or_default();
     let parents: std::collections::BTreeSet<&str> = out.split_whitespace().collect();
-    members.iter().filter(|m| parents.contains(m.tip.as_str())).map(|m| m.id.clone()).collect()
+    members
+        .iter()
+        .filter(|m| parents.contains(m.tip.as_str()))
+        .map(|m| m.id.clone())
+        .collect()
 }
 
 /// Whether the round worktree `wt` holds the release binaries of `head`'s own tree — the
@@ -1103,21 +1670,37 @@ pub fn named_ids(repo: &Repo, base_sha: &str, head: &str, members: &[Member]) ->
 /// worktree's HEAD tree is `head`'s tree, and its target/release holds an executable.
 /// round-vm installs the VM's release build there after checking the VM built this tree.
 pub fn bins_present(repo: &Repo, wt: &Path, head: &str) -> bool {
-    let Ok(want) = run(Command::new("git").arg("-C").arg(&repo.path).args(["rev-parse", &format!("{head}^{{tree}}")]), "git rev-parse tree")
-    else {
+    let Ok(want) = run(
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo.path)
+            .args(["rev-parse", &format!("{head}^{{tree}}")]),
+        "git rev-parse tree",
+    ) else {
         return false;
     };
-    let Ok(have) = run(Command::new("git").arg("-C").arg(wt).args(["rev-parse", "HEAD^{tree}"]), "git rev-parse worktree tree") else {
+    let Ok(have) = run(
+        Command::new("git")
+            .arg("-C")
+            .arg(wt)
+            .args(["rev-parse", "HEAD^{tree}"]),
+        "git rev-parse worktree tree",
+    ) else {
         return false;
     };
     if want.trim() != have.trim() {
         return false;
     }
     let dir = wt.join("target").join("release");
-    let Ok(rd) = fs::read_dir(&dir) else { return false };
+    let Ok(rd) = fs::read_dir(&dir) else {
+        return false;
+    };
     rd.flatten().any(|e| {
         let path = e.path();
-        path.is_file() && fs::metadata(&path).map(|md| md.permissions().mode() & 0o111 != 0).unwrap_or(false)
+        path.is_file()
+            && fs::metadata(&path)
+                .map(|md| md.permissions().mode() & 0o111 != 0)
+                .unwrap_or(false)
     })
 }
 
@@ -1138,7 +1721,14 @@ pub fn all_suites(repo: &Repo, branch: &str) -> Vec<String> {
 
 pub fn suites_in(path: &Path, branch: &str) -> Vec<String> {
     let out = run(
-        Command::new("git").arg("-C").arg(path).args(["ls-tree", "-r", "--name-only", branch, "--", "spira/"]),
+        Command::new("git").arg("-C").arg(path).args([
+            "ls-tree",
+            "-r",
+            "--name-only",
+            branch,
+            "--",
+            "spira/",
+        ]),
         "git ls-tree suites",
     )
     .unwrap_or_default();
@@ -1169,7 +1759,9 @@ pub fn locate(results_dir: &Path, suite: &str, ext: &str) -> Option<PathBuf> {
         if !cand.is_file() {
             continue;
         }
-        let mtime = fs::metadata(&cand).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+        let mtime = fs::metadata(&cand)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
         if best.as_ref().is_none_or(|(t, _)| mtime > *t) {
             best = Some((mtime, cand));
         }
@@ -1206,20 +1798,50 @@ pub const EJECT_COLLATERAL_CAUSE: &str = "queue-eject-collateral";
 /// The suites also go to bead_reopen's fourth argument, which writes the `<id>.ejected`
 /// sidecar, as the retired verdict.sh's own ejection did (sp-p3srm): the gate's re-entry check reads it
 /// first.
-pub fn eject_member(env: &Env, repo_name: &str, id: &str, suites: &[String], first_fails: &[(String, String)], owner: bool) {
+pub fn eject_member(
+    env: &Env,
+    repo_name: &str,
+    id: &str,
+    suites: &[String],
+    first_fails: &[(String, String)],
+    owner: bool,
+) {
     let suites_csv = suites.join(",");
     let note = format!(
         "Ejected by the merge queue's local attribution (pre-PR): spira/{id} {} red on: {}.{}",
-        if owner { "turned" } else { "is stacked on a member that turned" },
+        if owner {
+            "turned"
+        } else {
+            "is stacked on a member that turned"
+        },
         suites.join(", "),
-        first_fails.iter().map(|(s, l)| format!(" First FAIL, {s}: {l}")).collect::<String>()
+        first_fails
+            .iter()
+            .map(|(s, l)| format!(" First FAIL, {s}: {l}"))
+            .collect::<String>()
     );
-    let cause = if owner { "queue-eject-local" } else { EJECT_COLLATERAL_CAUSE };
-    let _ = lib_call(env, "bead_reopen", [id, cause, note.as_str(), suites_csv.as_str()]);
+    let cause = if owner {
+        "queue-eject-local"
+    } else {
+        EJECT_COLLATERAL_CAUSE
+    };
+    let _ = lib_call(
+        env,
+        "bead_reopen",
+        [id, cause, note.as_str(), suites_csv.as_str()],
+    );
     lc_withdraw(env, id);
-    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(env.run.join("landing.log")) {
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(env.run.join("landing.log"))
+    {
         use std::io::Write;
-        let _ = writeln!(f, "QUEUE LOCAL-EJECT {} repo={repo_name} id={id} suites={suites_csv}", now());
+        let _ = writeln!(
+            f,
+            "QUEUE LOCAL-EJECT {} repo={repo_name} id={id} suites={suites_csv}",
+            now()
+        );
     }
 }
 
@@ -1240,7 +1862,9 @@ pub fn record_escape(
     evidence: &str,
     rerun_rc: Option<i32>,
 ) -> String {
-    let (classify, child_env) = match spira_config::release_env::tool("escape-classify.sh").and_then(|t| Ok((t, spira_config::release_env::child_path_env_for_process()?))) {
+    let (classify, child_env) = match spira_config::release_env::tool("escape-classify.sh")
+        .and_then(|t| Ok((t, spira_config::release_env::child_path_env_for_process()?)))
+    {
         Ok(v) => v,
         Err(e) => return format!("escape not recorded: {e}"),
     };
@@ -1248,7 +1872,20 @@ pub fn record_escape(
         c.env("SPIRA_RUN", &env.run).envs(child_env.iter().cloned());
     };
     let record_args = |c: &mut Command| {
-        c.args(["--member", &member.id, "--suite", suite, "--batch-id", batch_id, "--repo", &repo.name, "--paths", paths, "--evidence", evidence]);
+        c.args([
+            "--member",
+            &member.id,
+            "--suite",
+            suite,
+            "--batch-id",
+            batch_id,
+            "--repo",
+            &repo.name,
+            "--paths",
+            paths,
+            "--evidence",
+            evidence,
+        ]);
     };
     if let Some(rc) = rerun_rc {
         // FORK-EDGE: escape-classify.sh is a 195-line classifier with its own suite; porting it is its own task, not a transport change
@@ -1257,16 +1894,25 @@ pub fn record_escape(
         record_args(&mut c);
         common(&mut c);
         match run(&mut c, "escape-classify.sh rerun-verdict") {
-            Ok(out) if out.contains("FLIP") => return format!("{suite} flipped on rerun with {} present — FLIP: flake recorded", member.id),
+            Ok(out) if out.contains("FLIP") => {
+                return format!(
+                    "{suite} flipped on rerun with {} present — FLIP: flake recorded",
+                    member.id
+                )
+            }
             Ok(_) => {}
             Err(e) => return format!("escape not recorded: {e}"),
         }
     }
     // FORK-EDGE: escape-classify.sh is a 195-line classifier with its own suite; porting it is its own task, not a transport change
     let mut c = Command::new(&classify);
-    c.arg("classify").args(["--repo".as_ref(), repo.path.as_os_str()]).args(["--base", base, "--tip", &member.tip]);
+    c.arg("classify")
+        .args(["--repo".as_ref(), repo.path.as_os_str()])
+        .args(["--base", base, "--tip", &member.tip]);
     c.arg("--suite-file").arg(wt.join("spira").join(suite));
-    c.arg("--gate-log").arg(env.run.join("gate.log")).args(["--branch", &format!("spira/{}", member.id)]);
+    c.arg("--gate-log")
+        .arg(env.run.join("gate.log"))
+        .args(["--branch", &format!("spira/{}", member.id)]);
     common(&mut c);
     let class = match run(&mut c, "escape-classify.sh classify") {
         Ok(out) => out.trim().to_string(),
@@ -1289,7 +1935,10 @@ mod local_red_ref_tests {
 
     #[test]
     fn key_is_bounded_and_distinguishes_detail() {
-        let long = format!("landing-ref-red red tier: lint; command: {}", "x".repeat(2000));
+        let long = format!(
+            "landing-ref-red red tier: lint; command: {}",
+            "x".repeat(2000)
+        );
         let s = vec!["local-tier".to_string()];
         let a = local_red_ref("dumpstar", &s, &long);
         assert!(a.len() <= 160, "{a}");
@@ -1319,7 +1968,14 @@ pub fn record_ejection(env: &Env, id: &str, tip: &str, files: &[String], results
 
 /// The first line of a suite's output that reports a failure, trimmed and bounded.
 pub fn first_fail_line(out: &str) -> Option<String> {
-    let l = out.lines().map(str::trim).find(|l| l.contains("-RED: SIGNAL ") || l.contains("-RED: TIMEOUT ") || l.contains("-RED: BUILD ") || l.starts_with("FAIL") || l.contains("FAIL:") || l.starts_with("not ok"))?;
+    let l = out.lines().map(str::trim).find(|l| {
+        l.contains("-RED: SIGNAL ")
+            || l.contains("-RED: TIMEOUT ")
+            || l.contains("-RED: BUILD ")
+            || l.starts_with("FAIL")
+            || l.contains("FAIL:")
+            || l.starts_with("not ok")
+    })?;
     Some(l.chars().take(300).collect())
 }
 
@@ -1349,7 +2005,11 @@ pub fn keep_round_results(run: &Path, batch: &str, from: &Path) -> PathBuf {
     let _ = fs::remove_dir_all(&to);
     copy(from, &to);
     if !to.is_dir() {
-        eprintln!("batcher: could not keep the round's results from {} at {}", from.display(), to.display());
+        eprintln!(
+            "batcher: could not keep the round's results from {} at {}",
+            from.display(),
+            to.display()
+        );
     }
     to
 }
@@ -1364,9 +2024,19 @@ pub fn keep_red_evidence(run: &Path, batch: &str, why: &str, reds: &[String]) ->
     let results = run.join("rounds").join(format!("{batch}.results"));
     let lines: Vec<String> = reds
         .iter()
-        .map(|s| format!("{s}: {}", suite_first_fail(&results, s).unwrap_or_else(|| "(no FAIL line in its output)".into())))
+        .map(|s| {
+            format!(
+                "{s}: {}",
+                suite_first_fail(&results, s)
+                    .unwrap_or_else(|| "(no FAIL line in its output)".into())
+            )
+        })
         .collect();
-    let evidence = format!("{why}\n{}\noutput: {}\n", lines.join("\n"), results.display());
+    let evidence = format!(
+        "{why}\n{}\noutput: {}\n",
+        lines.join("\n"),
+        results.display()
+    );
     if fs::create_dir_all(&results).is_ok() {
         let _ = fs::write(results.join("red-evidence"), &evidence);
     }
@@ -1376,10 +2046,21 @@ pub fn keep_red_evidence(run: &Path, batch: &str, why: &str, reds: &[String]) ->
 /// The incident key for a local red: a bounded identity plus a short hash of the full reason,
 /// because external_ref is a fixed-width column and the reason carries command and error text.
 pub fn local_red_ref(repo: &str, suites: &[String], reason: &str) -> String {
-    let kind: String = reason.split_whitespace().next().unwrap_or("").chars().take(40).collect();
-    let hash = reason.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3));
+    let kind: String = reason
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(40)
+        .collect();
+    let hash = reason.bytes().fold(0xcbf29ce484222325u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
+    });
     let suites: String = suites.join(",").chars().take(60).collect();
-    format!("basefail-local:{repo}:{suites}:{kind}:{:08x}", hash & 0xffff_ffff)
+    format!(
+        "basefail-local:{repo}:{suites}:{kind}:{:08x}",
+        hash & 0xffff_ffff
+    )
 }
 
 /// File an Ops incident for a local red the round could not resolve mechanically: a suite red
@@ -1394,7 +2075,11 @@ pub fn file_local_red_incident(
     evidence: &str,
     reason: &str,
 ) -> Result<String, String> {
-    let title = format!("{}: local round red ({reason}) on {} — nothing can land", repo.name, suites.join(","));
+    let title = format!(
+        "{}: local round red ({reason}) on {} — nothing can land",
+        repo.name,
+        suites.join(",")
+    );
     let body = batcher::core::base_fail_body(&repo.name, round_branch, suites, evidence);
     let tmp_dir = env.run.join("tmp");
     fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
@@ -1402,13 +2087,19 @@ pub fn file_local_red_incident(
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
         // FORK-EDGE: needs an incident library filing entry that takes the per-call SPIRA_INCIDENT_* fields; intake::file_payload reads them from the process environment only
-        Command::new("incident.sh").arg("file").arg(&title).arg(&tmp).env("SPIRA_INCIDENT_TYPE", "bug").env(
-            "SPIRA_INCIDENT_PRIORITY",
-            "1",
-        ).env("SPIRA_INCIDENT_ACTOR", "batcher").env("SPIRA_INCIDENT_REPO", &repo.name).env(
-            "SPIRA_INCIDENT_REF",
-            local_red_ref(&repo.name, suites, reason),
-        ).env("SPIRA_INCIDENT_CAUSE", "local-round-red"),
+        Command::new("incident.sh")
+            .arg("file")
+            .arg(&title)
+            .arg(&tmp)
+            .env("SPIRA_INCIDENT_TYPE", "bug")
+            .env("SPIRA_INCIDENT_PRIORITY", "1")
+            .env("SPIRA_INCIDENT_ACTOR", "batcher")
+            .env("SPIRA_INCIDENT_REPO", &repo.name)
+            .env(
+                "SPIRA_INCIDENT_REF",
+                local_red_ref(&repo.name, suites, reason),
+            )
+            .env("SPIRA_INCIDENT_CAUSE", "local-round-red"),
         "incident.sh file",
     );
     let _ = fs::remove_file(&tmp);
@@ -1419,7 +2110,10 @@ pub fn file_local_red_incident(
 /// File an Ops incident for a landing whose release was not activated. The members landed, so
 /// nothing is filed against them.
 pub fn file_deploy_fault_incident(env: &Env, repo: &Repo, head: &str) -> Result<String, String> {
-    let title = format!("{}: landed {head} but its release was not activated", repo.name);
+    let title = format!(
+        "{}: landed {head} but its release was not activated",
+        repo.name
+    );
     let body = format!(
         "queue land-local exited {LAND_DEPLOY_FAULT_EXIT} for {head}: the landing is recorded and every member is LANDED, but the release build, verify or activate failed and `current` was not moved. See the queue land-local stderr in the batcher log. Fix the release path; do not reopen the members."
     );
@@ -1437,7 +2131,10 @@ pub fn file_deploy_fault_incident(env: &Env, repo: &Repo, head: &str) -> Result<
             .env("SPIRA_INCIDENT_PRIORITY", "1")
             .env("SPIRA_INCIDENT_ACTOR", "batcher")
             .env("SPIRA_INCIDENT_REPO", &repo.name)
-            .env("SPIRA_INCIDENT_REF", format!("land-deploy-fault:{}:{head}", repo.name))
+            .env(
+                "SPIRA_INCIDENT_REF",
+                format!("land-deploy-fault:{}:{head}", repo.name),
+            )
             .env("SPIRA_INCIDENT_CAUSE", "land-deploy-fault"),
         "incident.sh file",
     );
@@ -1448,7 +2145,8 @@ pub fn file_deploy_fault_incident(env: &Env, repo: &Repo, head: &str) -> Result<
 
 /// The bead `incident file` answered with: its stdout is one JSON object, `{"id": <bead>|null}`.
 fn filed_id(out: &str) -> Result<String, String> {
-    let answer: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("incident.sh file: answer is not JSON ({e})"))?;
+    let answer: serde_json::Value = serde_json::from_str(out.trim())
+        .map_err(|e| format!("incident.sh file: answer is not JSON ({e})"))?;
     match answer.get("id").and_then(serde_json::Value::as_str) {
         Some(id) if !id.is_empty() => Ok(id.to_string()),
         _ => Err("incident.sh file: no id returned".to_string()),
@@ -1465,7 +2163,8 @@ pub fn write_hold(env: &Env, repo: &str, key: &str, bead: &str) -> Result<(), St
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let tmp = p.with_extension("tmp");
-    fs::write(&tmp, format!("key={key}\nbead={bead}\n")).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    fs::write(&tmp, format!("key={key}\nbead={bead}\n"))
+        .map_err(|e| format!("{}: {e}", tmp.display()))?;
     fs::rename(&tmp, &p).map_err(|e| format!("{}: {e}", p.display()))
 }
 
@@ -1489,12 +2188,28 @@ pub fn hold_blocking(env: &Env, repo: &str, key: &str) -> Option<String> {
 /// Repairs the integration breaks that are mechanical, on the round tree, as one commit
 /// naming every member: a stale test-plan matrix is regenerated and a newly added spira
 /// script is made executable. Returns what it fixed; empty means the tree was left untouched.
-pub fn integration_fix(env: &Env, wt: &Path, base_sha: &str, members: &[Member]) -> Result<Vec<&'static str>, String> {
-    let git = |args: &[&str]| run(spira_config::bounded::bounded("git").arg("-C").arg(wt).args(args), "git");
+pub fn integration_fix(
+    env: &Env,
+    wt: &Path,
+    base_sha: &str,
+    members: &[Member],
+) -> Result<Vec<&'static str>, String> {
+    let git = |args: &[&str]| {
+        run(
+            spira_config::bounded::bounded("git")
+                .arg("-C")
+                .arg(wt)
+                .args(args),
+            "git",
+        )
+    };
     let mut fixes = Vec::new();
 
     let added = git(&["diff", "--name-only", "--diff-filter=A", base_sha, "HEAD"])?;
-    for path in added.lines().filter(|p| p.starts_with("spira/") && p.ends_with(".sh")) {
+    for path in added
+        .lines()
+        .filter(|p| p.starts_with("spira/") && p.ends_with(".sh"))
+    {
         let staged = git(&["ls-files", "-s", "--", path])?;
         if staged.starts_with("100644") {
             git(&["update-index", "--chmod=+x", "--", path])?;
@@ -1507,8 +2222,16 @@ pub fn integration_fix(env: &Env, wt: &Path, base_sha: &str, members: &[Member])
     if wt.join("spira/plan-matrix.sh").is_file() {
         // batch-job: runs a gate, build or forge script that takes as long as its work
         // FORK-EDGE: the round tree's own plan-matrix.sh (that tree's version, not the release's)
-        run(Command::new("bash").arg(wt.join("spira/plan-matrix.sh")).current_dir(wt), "plan-matrix.sh")?;
-        if !git(&["status", "--porcelain", "--", "docs/test-plan"])?.trim().is_empty() {
+        run(
+            Command::new("bash")
+                .arg(wt.join("spira/plan-matrix.sh"))
+                .current_dir(wt),
+            "plan-matrix.sh",
+        )?;
+        if !git(&["status", "--porcelain", "--", "docs/test-plan"])?
+            .trim()
+            .is_empty()
+        {
             git(&["add", "--", "docs/test-plan"])?;
             fixes.push("regenerate the test-plan matrix");
         }
@@ -1520,10 +2243,20 @@ pub fn integration_fix(env: &Env, wt: &Path, base_sha: &str, members: &[Member])
     let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
     let msg = batcher::core::integration_fix_message(&fixes, &ids);
     let mut c = spira_config::bounded::bounded("git");
-    c.arg("-C").arg(wt).args(["-c", &format!("user.name={}", env.git_name), "-c", &format!("user.email={}", env.git_email)]);
-    c.args(["commit", "-q", "-F", "-"]).stdin(std::process::Stdio::piped());
+    c.arg("-C").arg(wt).args([
+        "-c",
+        &format!("user.name={}", env.git_name),
+        "-c",
+        &format!("user.email={}", env.git_email),
+    ]);
+    c.args(["commit", "-q", "-F", "-"])
+        .stdin(std::process::Stdio::piped());
     let mut child = c.spawn().map_err(|e| format!("git commit: {e}"))?;
-    std::io::Write::write_all(&mut child.stdin.take().ok_or("git commit: no stdin")?, msg.as_bytes()).map_err(|e| e.to_string())?;
+    std::io::Write::write_all(
+        &mut child.stdin.take().ok_or("git commit: no stdin")?,
+        msg.as_bytes(),
+    )
+    .map_err(|e| e.to_string())?;
     if !child.wait().map_err(|e| e.to_string())?.success() {
         return Err("git commit of the integration fix failed".into());
     }
@@ -1560,8 +2293,14 @@ pub fn write_local_verdict(env: &Env, repo: &str, verdict: &str, detail: &str) {
 pub fn shots_section(run: &Path, loom_addr: Option<&str>, members: &[(String, String)]) -> String {
     let mut lines = Vec::new();
     for (bead, tip) in members {
-        let Ok(rd) = fs::read_dir(run.join("shots").join(bead).join(tip)) else { continue };
-        let mut names: Vec<String> = rd.flatten().filter_map(|e| e.file_name().into_string().ok()).filter(|n| n.ends_with(".png")).collect();
+        let Ok(rd) = fs::read_dir(run.join("shots").join(bead).join(tip)) else {
+            continue;
+        };
+        let mut names: Vec<String> = rd
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| n.ends_with(".png"))
+            .collect();
         names.sort();
         for n in names {
             let path = format!("/shots/{bead}/{tip}/{n}");
@@ -1580,16 +2319,34 @@ pub fn shots_section(run: &Path, loom_addr: Option<&str>, members: &[(String, St
 /// The batch PR body's screenshot section: `testenv shots --batch` captures the pages the batch's
 /// frontend changes name, before and after, and the section links them. A failed capture is logged
 /// and becomes a `capture failed: <reason>` line; nothing here can fail the batch.
-pub fn batch_shots_section(testenv_bin: &Path, run_dir: &Path, loom_addr: Option<&str>, repo: &str, base: &str, head: &str) -> String {
+pub fn batch_shots_section(
+    testenv_bin: &Path,
+    run_dir: &Path,
+    loom_addr: Option<&str>,
+    repo: &str,
+    base: &str,
+    head: &str,
+) -> String {
     // FORK-EDGE: machine leg testenv (shots)
     let mut cmd = Command::new("timeout");
-    cmd.arg("1500").arg(testenv_bin).args(["shots", "--batch", repo, base, head]);
+    cmd.arg("1500")
+        .arg(testenv_bin)
+        .args(["shots", "--batch", repo, base, head]);
     if let Err(e) = run(&mut cmd, "testenv shots --batch") {
         eprintln!("batcher {repo}: screenshot capture failed: {e}");
-        let reason = e.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no output").trim().to_string();
+        let reason = e
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("no output")
+            .trim()
+            .to_string();
         return format!("\ncapture failed: {reason}\n");
     }
-    let pairs = [("batch-before".to_string(), base.to_string()), ("batch-after".to_string(), head.to_string())];
+    let pairs = [
+        ("batch-before".to_string(), base.to_string()),
+        ("batch-after".to_string(), head.to_string()),
+    ];
     shots_section(run_dir, loom_addr, &pairs)
 }
 
@@ -1608,7 +2365,11 @@ fn forge_run(repo: &Repo, verb: &str, args: &[&str]) -> Result<forge::client::Re
                 .stdin(std::process::Stdio::null())
                 .output()
                 .map_err(|e| format!("forge {verb}: {e}"))?;
-            Ok(forge::client::Reply { code: o.status.code().unwrap_or(-1), out: String::from_utf8_lossy(&o.stdout).into_owned(), err: String::from_utf8_lossy(&o.stderr).into_owned() })
+            Ok(forge::client::Reply {
+                code: o.status.code().unwrap_or(-1),
+                out: String::from_utf8_lossy(&o.stdout).into_owned(),
+                err: String::from_utf8_lossy(&o.stderr).into_owned(),
+            })
         }
     }
 }
@@ -1645,29 +2406,53 @@ pub struct VerbRun {
 
 /// One `queue <args…>` run, `stdin` on its stdin and `vars` in its environment, told the caller
 /// holds the repo's queue lock.
-fn queue_verb(env: &Env, args: &[&str], stdin: &str, vars: &[(&str, &str)]) -> Result<VerbRun, String> {
+fn queue_verb(
+    env: &Env,
+    args: &[&str],
+    stdin: &str,
+    vars: &[(&str, &str)],
+) -> Result<VerbRun, String> {
     use std::io::Write;
     // batch-job: this runs whatever its caller names, as long as that takes
     // FORK-EDGE: machine leg queue (batch open/round verbs — the batcher's writes through the queue)
     let mut cmd = Command::new(&env.queue_bin);
     cmd.args(args).envs(vars.iter().copied());
     cmd.env("SPIRA_QUEUE_LOCK_HELD", "1");
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let what = format!("queue {}", args.iter().take(2).copied().collect::<Vec<_>>().join(" "));
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let what = format!(
+        "queue {}",
+        args.iter().take(2).copied().collect::<Vec<_>>().join(" ")
+    );
     let mut child = cmd.spawn().map_err(|e| format!("{what}: {e}"))?;
     if let Some(mut si) = child.stdin.take() {
-        si.write_all(stdin.as_bytes()).map_err(|e| format!("{what}: stdin: {e}"))?;
+        si.write_all(stdin.as_bytes())
+            .map_err(|e| format!("{what}: stdin: {e}"))?;
     }
-    let o = child.wait_with_output().map_err(|e| format!("{what}: {e}"))?;
-    Ok(VerbRun { code: o.status.code(), out: String::from_utf8_lossy(&o.stdout).to_string(), err: String::from_utf8_lossy(&o.stderr).to_string() })
+    let o = child
+        .wait_with_output()
+        .map_err(|e| format!("{what}: {e}"))?;
+    Ok(VerbRun {
+        code: o.status.code(),
+        out: String::from_utf8_lossy(&o.stdout).to_string(),
+        err: String::from_utf8_lossy(&o.stderr).to_string(),
+    })
 }
 
 fn round_verb(env: &Env, args: &[&str], stdin: &str) -> Result<VerbRun, String> {
     round_verb_with(env, args, stdin, &[])
 }
 
-fn round_verb_with(env: &Env, args: &[&str], stdin: &str, vars: &[(&str, &str)]) -> Result<VerbRun, String> {
-    let all: Vec<&str> = std::iter::once("round").chain(args.iter().copied()).collect();
+fn round_verb_with(
+    env: &Env,
+    args: &[&str],
+    stdin: &str,
+    vars: &[(&str, &str)],
+) -> Result<VerbRun, String> {
+    let all: Vec<&str> = std::iter::once("round")
+        .chain(args.iter().copied())
+        .collect();
     let run = queue_verb(env, &all, stdin, vars)?;
     if !run.out.is_empty() {
         print!("{}", run.out);
@@ -1679,11 +2464,19 @@ fn round_verb_with(env: &Env, args: &[&str], stdin: &str, vars: &[(&str, &str)])
 }
 
 fn verb_value(out: &str, key: &str) -> Option<String> {
-    out.lines().find_map(|l| l.strip_prefix(key).and_then(|v| v.strip_prefix('=')).map(|v| v.trim().to_string()))
+    out.lines().find_map(|l| {
+        l.strip_prefix(key)
+            .and_then(|v| v.strip_prefix('='))
+            .map(|v| v.trim().to_string())
+    })
 }
 
 fn verb_failed(what: &str, run: &VerbRun) -> String {
-    format!("{what} exited {}: {}", run.code.map_or("by signal".to_string(), |c| c.to_string()), refusal_line(&run.err))
+    format!(
+        "{what} exited {}: {}",
+        run.code.map_or("by signal".to_string(), |c| c.to_string()),
+        refusal_line(&run.err)
+    )
 }
 
 /// `queue round open` for `members` in `wt`: the batch id, once the verb admitted and merged
@@ -1692,7 +2485,13 @@ fn verb_failed(what: &str, run: &VerbRun) -> String {
 pub fn round_open(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Result<String, String> {
     match round_open_or_refused(env, repo, wt, members)? {
         OpenOutcome::Opened(batch) => Ok(batch),
-        OpenOutcome::Refused(r, line) => Err(format!("{line} (refused: {})", r.iter().map(|r| format!("{} {}", r.id, r.kind)).collect::<Vec<_>>().join(", "))),
+        OpenOutcome::Refused(r, line) => Err(format!(
+            "{line} (refused: {})",
+            r.iter()
+                .map(|r| format!("{} {}", r.id, r.kind))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
     }
 }
 
@@ -1712,7 +2511,11 @@ pub fn parse_refused(out: &str) -> Vec<Refused> {
             let rest = l.strip_prefix("refused=")?;
             let (id, rest) = rest.split_once(" kind=")?;
             let (kind, why) = rest.split_once(" why=").unwrap_or((rest, ""));
-            Some(Refused { id: id.trim().to_string(), kind: kind.trim().to_string(), why: why.trim().to_string() })
+            Some(Refused {
+                id: id.trim().to_string(),
+                kind: kind.trim().to_string(),
+                why: why.trim().to_string(),
+            })
         })
         .collect()
 }
@@ -1727,19 +2530,38 @@ pub enum OpenOutcome {
 
 /// [`round_open`], with a refusal that names its members returned as [`OpenOutcome::Refused`]
 /// so the caller re-cuts without them instead of failing the cut.
-pub fn round_open_or_refused(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Result<OpenOutcome, String> {
+pub fn round_open_or_refused(
+    env: &Env,
+    repo: &Repo,
+    wt: &Path,
+    members: &[Member],
+) -> Result<OpenOutcome, String> {
     let text = members.iter().fold(String::new(), |mut acc, m| {
         acc.push_str(&format!("{}:{}\n", m.id, m.tip));
         acc
     });
     let wt_arg = wt.display().to_string();
-    let run = round_verb(env, &["open", &repo.name, "--members-file", "-", "--worktree", &wt_arg], &text)?;
+    let run = round_verb(
+        env,
+        &[
+            "open",
+            &repo.name,
+            "--members-file",
+            "-",
+            "--worktree",
+            &wt_arg,
+        ],
+        &text,
+    )?;
     if run.code != Some(0) {
         let refused = parse_refused(&run.out);
         if refused.is_empty() {
             return Err(verb_failed("queue round open", &run));
         }
-        return Ok(OpenOutcome::Refused(refused, verb_failed("queue round open", &run)));
+        return Ok(OpenOutcome::Refused(
+            refused,
+            verb_failed("queue round open", &run),
+        ));
     }
     let batch = verb_value(&run.out, "batch").ok_or("queue round open named no batch")?;
     let opened: Vec<String> = verb_value(&run.out, "members")
@@ -1749,8 +2571,18 @@ pub fn round_open_or_refused(env: &Env, repo: &Repo, wt: &Path, members: &[Membe
         .collect();
     let wanted: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
     if opened != wanted {
-        round_abandon(env, repo, &batch, "the round opened with members other than the ones the batcher named", "members-differ");
-        return Err(format!("queue round open admitted [{}], the batcher named [{}] — round {batch} abandoned", opened.join(" "), wanted.join(" ")));
+        round_abandon(
+            env,
+            repo,
+            &batch,
+            "the round opened with members other than the ones the batcher named",
+            "members-differ",
+        );
+        return Err(format!(
+            "queue round open admitted [{}], the batcher named [{}] — round {batch} abandoned",
+            opened.join(" "),
+            wanted.join(" ")
+        ));
     }
     Ok(OpenOutcome::Opened(batch))
 }
@@ -1767,21 +2599,47 @@ pub fn ci_red_suites(wt: &Path) -> Vec<String> {
 
 /// `queue round eject`: `owner` is a member whose own tip reddened `suites`; a collateral
 /// member leaves uncharged. The batcher rebuilds the round tree itself, so the verb does not.
-pub fn round_eject(env: &Env, repo: &Repo, batch: &str, id: &str, suites: &[String], first_fails: &[(String, String)], owner: bool) -> Result<(), String> {
+pub fn round_eject(
+    env: &Env,
+    repo: &Repo,
+    batch: &str,
+    id: &str,
+    suites: &[String],
+    first_fails: &[(String, String)],
+    owner: bool,
+) -> Result<(), String> {
     let reason = format!(
         "Ejected by the merge queue's local attribution (pre-PR): spira/{id} {} red on: {}.{}",
-        if owner { "turned" } else { "is stacked on a member that turned" },
+        if owner {
+            "turned"
+        } else {
+            "is stacked on a member that turned"
+        },
         suites.join(", "),
-        first_fails.iter().map(|(s, l)| format!(" First FAIL, {s}: {l}")).collect::<String>()
+        first_fails
+            .iter()
+            .map(|(s, l)| format!(" First FAIL, {s}: {l}"))
+            .collect::<String>()
     );
-    let csv = if owner { suites.join(",") } else { String::new() };
+    let csv = if owner {
+        suites.join(",")
+    } else {
+        String::new()
+    };
     round_eject_with(env, repo, batch, id, &reason, &csv)
 }
 
 /// `queue round eject --suites` for the only member of a round the repository's own CI judged red:
 /// nothing else in the round can own the red, and `evidence` (the verdict and the output path)
 /// is the reason the rework is held to.
-pub fn round_eject_sole_red(env: &Env, repo: &Repo, batch: &str, id: &str, suites: &[String], evidence: &str) -> Result<(), String> {
+pub fn round_eject_sole_red(
+    env: &Env,
+    repo: &Repo,
+    batch: &str,
+    id: &str,
+    suites: &[String],
+    evidence: &str,
+) -> Result<(), String> {
     let reason = format!("Ejected by the merge queue's local round: spira/{id} is the only member of a round the repository's own CI judged red, so the red is its own. Evidence: {evidence}");
     round_eject_with(env, repo, batch, id, &reason, &suites.join(","))
 }
@@ -1789,7 +2647,14 @@ pub fn round_eject_sole_red(env: &Env, repo: &Repo, batch: &str, id: &str, suite
 /// `queue round eject` for a member whose code lacks what `behind` adds: it leaves the round
 /// holding the compiler error as its reason, and a blocks edge keeps the next cut from admitting
 /// it before they have landed.
-pub fn round_sequence(env: &Env, repo: &Repo, batch: &str, id: &str, behind: &[String], line: &str) -> Result<(), String> {
+pub fn round_sequence(
+    env: &Env,
+    repo: &Repo,
+    batch: &str,
+    id: &str,
+    behind: &[String],
+    line: &str,
+) -> Result<(), String> {
     let reason = format!(
         "Held behind {} by the merge queue's local attribution (pre-PR): the round's workspace failed to build because spira/{id} uses what {} adds. It is admitted again once {} landed. Compiler: {line}",
         behind.join(", "),
@@ -1806,7 +2671,9 @@ pub fn sequence_edges(env: &Env, id: &str, behind: &[String]) -> Result<(), Stri
         // batch-job: bead.sh dep add is a bead-store write that takes as long as the store does
         // FORK-EDGE: bead.sh dep add refuses the edges that would deadlock (an epic, an incident); no library entry does
         let mut cmd = Command::new("bash");
-        cmd.arg(env.home.join("bead.sh")).args(["dep", "add", id, dep]).env("SPIRA_HOME", &env.home);
+        cmd.arg(env.home.join("bead.sh"))
+            .args(["dep", "add", id, dep])
+            .env("SPIRA_HOME", &env.home);
         run(&mut cmd, "bead.sh dep add")?;
     }
     Ok(())
@@ -1814,19 +2681,36 @@ pub fn sequence_edges(env: &Env, id: &str, behind: &[String]) -> Result<(), Stri
 
 /// Whether `tip` adds `path`, which `base_sha` lacks.
 pub fn adds_path(dir: &Path, base_sha: &str, tip: &str, path: &str) -> bool {
-    run(Command::new("git").arg("-C").arg(dir).args(["diff", "--name-only", "--diff-filter=A", &format!("{base_sha}...{tip}"), "--", path]), "git diff added paths")
-        .map_err(|e| eprintln!("batcher: cannot tell whether {tip} adds {path}: {e}"))
-        .is_ok_and(|out| out.lines().any(|l| l == path))
+    run(
+        Command::new("git").arg("-C").arg(dir).args([
+            "diff",
+            "--name-only",
+            "--diff-filter=A",
+            &format!("{base_sha}...{tip}"),
+            "--",
+            path,
+        ]),
+        "git diff added paths",
+    )
+    .map_err(|e| eprintln!("batcher: cannot tell whether {tip} adds {path}: {e}"))
+    .is_ok_and(|out| out.lines().any(|l| l == path))
 }
 
 /// The lines `tip` adds over `base_sha`, as `git diff` prints them.
 pub fn added_lines(repo: &Repo, base_sha: &str, tip: &str) -> String {
-    run(Command::new("git").arg("-C").arg(&repo.path).args(["diff", "-U0", &format!("{base_sha}...{tip}")]), "git diff added lines")
-        .unwrap_or_default()
-        .lines()
-        .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
-        .map(|l| format!("{l}\n"))
-        .collect()
+    run(
+        Command::new("git").arg("-C").arg(&repo.path).args([
+            "diff",
+            "-U0",
+            &format!("{base_sha}...{tip}"),
+        ]),
+        "git diff added lines",
+    )
+    .unwrap_or_default()
+    .lines()
+    .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+    .map(|l| format!("{l}\n"))
+    .collect()
 }
 
 /// Members of an open round whose lifecycle row carries a red gate verdict at the very tip the
@@ -1836,25 +2720,48 @@ pub fn gate_red_marks(env: &Env, members: &[(String, String)]) -> Vec<(String, S
     members
         .iter()
         .filter_map(|(id, tip)| {
-            let row = serde_json::from_str::<serde_json::Value>(&lcq(env, &["show", id]).ok()?).ok()?;
+            let row =
+                serde_json::from_str::<serde_json::Value>(&lcq(env, &["show", id]).ok()?).ok()?;
             let bead = row.get("bead")?;
             let field = |k: &str| bead.get(k).and_then(|v| v.as_str()).unwrap_or("");
             let mark = field("reason").strip_prefix(lifecycle::bead::GATE_RED_MARK)?;
-            (field("state") == "IN_DELIVERY" && field("tip") == tip).then(|| (id.clone(), mark.to_string()))
+            (field("state") == "IN_DELIVERY" && field("tip") == tip)
+                .then(|| (id.clone(), mark.to_string()))
         })
         .collect()
 }
 
 /// `queue round eject` for a member the gate had already marked red while it sat in the round.
-pub fn round_eject_gate_red(env: &Env, repo: &Repo, batch: &str, id: &str, mark: &str) -> Result<(), String> {
+pub fn round_eject_gate_red(
+    env: &Env,
+    repo: &Repo,
+    batch: &str,
+    id: &str,
+    mark: &str,
+) -> Result<(), String> {
     let reason = format!(
         "Ejected from the round before its corpus ran: spira/{id}'s own gate went red at the tip the round holds ({mark}). The gate's whole output is kept under the gate-worker's output directory."
     );
     round_eject_with(env, repo, batch, id, &reason, "")
 }
 
-fn round_eject_with(env: &Env, repo: &Repo, batch: &str, id: &str, reason: &str, csv: &str) -> Result<(), String> {
-    let mut args = vec!["eject", batch, id, &repo.name, "--reason-file", "-", "--no-rebuild"];
+fn round_eject_with(
+    env: &Env,
+    repo: &Repo,
+    batch: &str,
+    id: &str,
+    reason: &str,
+    csv: &str,
+) -> Result<(), String> {
+    let mut args = vec![
+        "eject",
+        batch,
+        id,
+        &repo.name,
+        "--reason-file",
+        "-",
+        "--no-rebuild",
+    ];
     if !csv.is_empty() {
         args.extend(["--suites", csv]);
     } else {
@@ -1866,7 +2773,11 @@ fn round_eject_with(env: &Env, repo: &Repo, batch: &str, id: &str, reason: &str,
         if !lock_busy(last.code) {
             break;
         }
-        println!("batcher {}: queue round eject refused ({}) — retry {n}/{attempts}", repo.name, refusal_line(&last.err));
+        println!(
+            "batcher {}: queue round eject refused ({}) — retry {n}/{attempts}",
+            repo.name,
+            refusal_line(&last.err)
+        );
         std::thread::sleep(env.land_lock_wait);
         last = round_verb(env, &args, reason)?;
     }
@@ -1880,7 +2791,13 @@ fn round_eject_with(env: &Env, repo: &Repo, batch: &str, id: &str, reason: &str,
 /// `queue round certify`: with `Some((head, ran))` the batcher's own corpus ran `ran` suites green
 /// on `head`, the round worktree's head, and the verb records that tree's GREEN; with `None` the
 /// verb runs the repo's own CI entry on a round VM and judges the round itself.
-pub fn round_certify(env: &Env, repo: &Repo, batch: &str, attest: Option<(&str, usize)>, rehead: Option<&str>) -> Certified {
+pub fn round_certify(
+    env: &Env,
+    repo: &Repo,
+    batch: &str,
+    attest: Option<(&str, usize)>,
+    rehead: Option<&str>,
+) -> Certified {
     let ran = attest.map(|(_, n)| n.to_string());
     let mut args = vec!["certify", batch, repo.name.as_str()];
     if let (Some((head, _)), Some(ran)) = (attest, ran.as_deref()) {
@@ -1905,7 +2822,10 @@ pub fn round_certify(env: &Env, repo: &Repo, batch: &str, attest: Option<(&str, 
 
 fn certify_failure(code: Option<i32>, stderr: &str, failed: String) -> CutError {
     if stderr.contains(crate::pace::STALE_AMI_MARKER) {
-        CutError::new(CutKind::StaleImage, format!("{}: {failed}", crate::pace::STALE_AMI_MARKER))
+        CutError::new(
+            CutKind::StaleImage,
+            format!("{}: {failed}", crate::pace::STALE_AMI_MARKER),
+        )
     } else if matches!(code, Some(CERTIFY_ENV_RC | CERTIFY_LOST_RC)) {
         CutError::new(CutKind::Infra, failed)
     } else {
@@ -1922,7 +2842,9 @@ pub const CERTIFY_LOST_RC: i32 = 75;
 pub enum Certified {
     Green,
     /// The repository's own CI judged the round red; `output` is the file holding its output.
-    Red { output: String },
+    Red {
+        output: String,
+    },
     Failed(CutError),
 }
 
@@ -1931,7 +2853,11 @@ pub fn implicated(output: &str, changed: &[(String, Vec<String>)]) -> Vec<String
     if let [(id, _)] = changed {
         return vec![id.clone()];
     }
-    changed.iter().filter(|(_, paths)| paths.iter().any(|p| output.contains(p.as_str()))).map(|(id, _)| id.clone()).collect()
+    changed
+        .iter()
+        .filter(|(_, paths)| paths.iter().any(|p| output.contains(p.as_str())))
+        .map(|(id, _)| id.clone())
+        .collect()
 }
 
 /// The member ids the round record holds now, as `queue round status` reports them.
@@ -1940,13 +2866,17 @@ pub fn round_members(env: &Env, repo: &Repo, batch: &str) -> Result<Vec<String>,
     if run.code != Some(0) {
         return Err(verb_failed("queue round status", &run));
     }
-    members_of_batch(&run.out, batch).ok_or_else(|| format!("queue round status names no open round {batch}"))
+    members_of_batch(&run.out, batch)
+        .ok_or_else(|| format!("queue round status names no open round {batch}"))
 }
 
 /// The member ids `queue round status` reports for `batch`, whichever of the open rounds it is:
 /// the first is unprefixed, the rest are `round<n>_`.
 fn members_of_batch(out: &str, batch: &str) -> Option<Vec<String>> {
-    open_rounds_of(out).into_iter().find(|r| r.id == batch).map(|r| r.members)
+    open_rounds_of(out)
+        .into_iter()
+        .find(|r| r.id == batch)
+        .map(|r| r.members)
 }
 
 /// The id of the repo's open round, if `queue round status` reports one.
@@ -1958,7 +2888,13 @@ pub fn open_round_id(env: &Env, repo: &Repo) -> Result<Option<String>, String> {
     if verb_value(&run.out, "round").as_deref() != Some("open") {
         return Ok(None);
     }
-    Ok(Some(open_rounds_of(&run.out).into_iter().next().map(|r| r.id).unwrap_or_default()))
+    Ok(Some(
+        open_rounds_of(&run.out)
+            .into_iter()
+            .next()
+            .map(|r| r.id)
+            .unwrap_or_default(),
+    ))
 }
 
 /// One round `queue round status` lists as open.
@@ -1991,10 +2927,17 @@ fn open_rounds_of(out: &str) -> Vec<OpenRound> {
             let get = |k: &str| verb_value(out, &format!("{p}{k}")).unwrap_or_default();
             Some(OpenRound {
                 id,
-                members: get("members").split_whitespace().map(|m| m.split(':').next().unwrap_or("").to_string()).collect(),
+                members: get("members")
+                    .split_whitespace()
+                    .map(|m| m.split(':').next().unwrap_or("").to_string())
+                    .collect(),
                 head: get("head"),
                 worktree: get("worktree"),
-                phase: if p.is_empty() { verb_value(out, "phase").unwrap_or_default() } else { get("phase") },
+                phase: if p.is_empty() {
+                    verb_value(out, "phase").unwrap_or_default()
+                } else {
+                    get("phase")
+                },
                 red: !get("red").is_empty(),
                 age_secs: get("wall_secs").parse().unwrap_or(0),
             })
@@ -2010,22 +2953,37 @@ pub fn round_certifiable(env: &Env, repo: &Repo, batch: &str) -> Result<(), Stri
     if run.code != Some(0) {
         return Err(verb_failed("queue round status", &run));
     }
-    let (head, worktree) = round_head_and_worktree(&run.out, batch).ok_or_else(|| format!("queue round status names no open round {batch}"))?;
-    let at = git_head(Path::new(&worktree)).ok_or_else(|| format!("the round worktree {worktree:?} has no readable head"))?;
+    let (head, worktree) = round_head_and_worktree(&run.out, batch)
+        .ok_or_else(|| format!("queue round status names no open round {batch}"))?;
+    let at = git_head(Path::new(&worktree))
+        .ok_or_else(|| format!("the round worktree {worktree:?} has no readable head"))?;
     if at == head {
         Ok(())
     } else {
-        Err(format!("the round worktree {worktree} is at {at}, not at the round's head {head}"))
+        Err(format!(
+            "the round worktree {worktree} is at {at}, not at the round's head {head}"
+        ))
     }
 }
 
 fn git_head(dir: &Path) -> Option<String> {
-    let o = spira_config::bounded::bounded("git").arg("-C").arg(dir).args(["rev-parse", "HEAD"]).output().ok()?;
-    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|h| !h.is_empty())
+    let o = spira_config::bounded::bounded("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    o.status
+        .success()
+        .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|h| !h.is_empty())
 }
 
 fn round_head_and_worktree(out: &str, batch: &str) -> Option<(String, String)> {
-    open_rounds_of(out).into_iter().find(|r| r.id == batch).map(|r| (r.head, r.worktree))
+    open_rounds_of(out)
+        .into_iter()
+        .find(|r| r.id == batch)
+        .map(|r| (r.head, r.worktree))
 }
 
 /// Whether `batch` is open and still in phase `opened`: no certify has ever moved it on.
@@ -2036,14 +2994,23 @@ pub fn round_is_opened(env: &Env, repo: &Repo, batch: &str) -> bool {
 /// `round-recert --batch <id> --repo <repo>`: starts the round's driver in its own unit and returns.
 pub fn redrive_round(repo: &Repo, batch: &str) -> Result<(), String> {
     // FORK-EDGE: machine leg round-recert
-    let out = run(spira_config::bounded::bounded_for(spira_config::release_env::tool("round-recert")?, "60").args(["--batch", batch, "--repo", &repo.name]), "round-recert")?;
+    let out = run(
+        spira_config::bounded::bounded_for(spira_config::release_env::tool("round-recert")?, "60")
+            .args(["--batch", batch, "--repo", &repo.name]),
+        "round-recert",
+    )?;
     println!("{}", out.trim());
     Ok(())
 }
 
 /// One incident for a round that sits open with nothing to drive it, keyed by the round so a
 /// pass that finds it again is a recurrence of the same incident.
-pub fn file_orphan_round_incident(env: &Env, repo: &Repo, batch: &str, why: &str) -> Result<String, String> {
+pub fn file_orphan_round_incident(
+    env: &Env,
+    repo: &Repo,
+    batch: &str,
+    why: &str,
+) -> Result<String, String> {
     let title = format!("{}: round {batch} sits open with no driver", repo.name);
     let body = format!(
         "Round {batch} of {} has been open with no certify running for over {} s: {why}.\nThe rounds loop never re-cuts an open round. Reset the worktree to the round's head and run `round-recert --batch {batch} --repo {}`, or eject or abandon the round. Rounds stacked on it are refused at land until it ends.",
@@ -2065,7 +3032,10 @@ pub fn file_orphan_round_incident(env: &Env, repo: &Repo, batch: &str, why: &str
             .env("SPIRA_INCIDENT_PRIORITY", "1")
             .env("SPIRA_INCIDENT_ACTOR", "batcher")
             .env("SPIRA_INCIDENT_REPO", &repo.name)
-            .env("SPIRA_INCIDENT_REF", format!("round-orphan:{}:{batch}", repo.name))
+            .env(
+                "SPIRA_INCIDENT_REF",
+                format!("round-orphan:{}:{batch}", repo.name),
+            )
             .env("SPIRA_INCIDENT_CAUSE", "round-orphan"),
         "incident.sh file",
     );
@@ -2084,12 +3054,33 @@ pub fn read_local_verdict(env: &Env, repo: &str) -> Option<(String, u64)> {
 /// The batcher abandons only after it has ejected every member it can implicate, so its abandon
 /// of a red round is a considered one; `queue round abandon` refuses any other.
 pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str) {
-    let considered = format!("the batcher's {cause} abandon, after ejecting every member it could implicate");
+    let considered =
+        format!("the batcher's {cause} abandon, after ejecting every member it could implicate");
     let vars = [("QUEUE_ABANDON_CONSIDERED", considered.as_str())];
-    match round_verb_with(env, &["abandon", batch, &repo.name, "--reason-file", "-", "--cause", cause], why, &vars) {
+    match round_verb_with(
+        env,
+        &[
+            "abandon",
+            batch,
+            &repo.name,
+            "--reason-file",
+            "-",
+            "--cause",
+            cause,
+        ],
+        why,
+        &vars,
+    ) {
         Ok(r) if r.code == Some(0) => {}
-        Ok(r) => println!("batcher {}: could not abandon round {batch}: {}", repo.name, verb_failed("queue round abandon", &r)),
-        Err(e) => println!("batcher {}: could not abandon round {batch}: {e}", repo.name),
+        Ok(r) => println!(
+            "batcher {}: could not abandon round {batch}: {}",
+            repo.name,
+            verb_failed("queue round abandon", &r)
+        ),
+        Err(e) => println!(
+            "batcher {}: could not abandon round {batch}: {e}",
+            repo.name
+        ),
     }
 }
 
@@ -2106,7 +3097,11 @@ pub struct BgVerb {
 fn round_verb_bg(env: &Env, args: &[&str], stdin: &str) -> Result<BgVerb, String> {
     use std::io::Write;
     let what = format!("queue round {}", args.first().copied().unwrap_or(""));
-    let stem = env.run.join(format!("round-bg-{}-{}", std::process::id(), args.first().copied().unwrap_or("verb")));
+    let stem = env.run.join(format!(
+        "round-bg-{}-{}",
+        std::process::id(),
+        args.first().copied().unwrap_or("verb")
+    ));
     let (out, err) = (stem.with_extension("out"), stem.with_extension("err"));
     let file = |p: &Path| fs::File::create(p).map_err(|e| format!("{what}: {}: {e}", p.display()));
     // batch-job: this runs whatever its caller names, as long as that takes
@@ -2114,23 +3109,38 @@ fn round_verb_bg(env: &Env, args: &[&str], stdin: &str) -> Result<BgVerb, String
     let mut cmd = Command::new(&env.queue_bin);
     cmd.arg("round").args(args);
     cmd.env("SPIRA_QUEUE_LOCK_HELD", "1");
-    cmd.stdin(Stdio::piped()).stdout(file(&out)?).stderr(file(&err)?);
+    cmd.stdin(Stdio::piped())
+        .stdout(file(&out)?)
+        .stderr(file(&err)?);
     let mut child = cmd.spawn().map_err(|e| format!("{what}: {e}"))?;
     if let Some(mut si) = child.stdin.take() {
-        si.write_all(stdin.as_bytes()).map_err(|e| format!("{what}: stdin: {e}"))?;
+        si.write_all(stdin.as_bytes())
+            .map_err(|e| format!("{what}: stdin: {e}"))?;
     }
-    Ok(BgVerb { child, what, out, err })
+    Ok(BgVerb {
+        child,
+        what,
+        out,
+        err,
+    })
 }
 
 impl BgVerb {
     pub fn wait(mut self) -> Result<VerbRun, String> {
-        let status = self.child.wait().map_err(|e| format!("{}: {e}", self.what))?;
+        let status = self
+            .child
+            .wait()
+            .map_err(|e| format!("{}: {e}", self.what))?;
         let read = |p: &Path| {
             let t = fs::read_to_string(p).unwrap_or_default();
             let _ = fs::remove_file(p);
             t
         };
-        let run = VerbRun { code: status.code(), out: read(&self.out), err: read(&self.err) };
+        let run = VerbRun {
+            code: status.code(),
+            out: read(&self.out),
+            err: read(&self.err),
+        };
         if !run.out.is_empty() {
             print!("{}", run.out);
         }
@@ -2142,13 +3152,29 @@ impl BgVerb {
 }
 
 /// `queue round stage` for `members` behind the open round, in `wt`.
-pub fn round_stage_spawn(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Result<BgVerb, String> {
+pub fn round_stage_spawn(
+    env: &Env,
+    repo: &Repo,
+    wt: &Path,
+    members: &[Member],
+) -> Result<BgVerb, String> {
     let text = members.iter().fold(String::new(), |mut acc, m| {
         acc.push_str(&format!("{}:{}\n", m.id, m.tip));
         acc
     });
     let wt_arg = wt.display().to_string();
-    round_verb_bg(env, &["stage", &repo.name, "--members-file", "-", "--worktree", &wt_arg], &text)
+    round_verb_bg(
+        env,
+        &[
+            "stage",
+            &repo.name,
+            "--members-file",
+            "-",
+            "--worktree",
+            &wt_arg,
+        ],
+        &text,
+    )
 }
 
 /// The staged round's batch id once the verb wrote the row; any other end is `None` and the
@@ -2157,7 +3183,11 @@ pub fn round_stage_done(repo: &Repo, bg: BgVerb) -> Option<String> {
     match bg.wait() {
         Ok(run) if run.code == Some(0) => verb_value(&run.out, "batch"),
         Ok(run) => {
-            println!("batcher {}: {} — no round staged", repo.name, verb_failed("queue round stage", &run));
+            println!(
+                "batcher {}: {} — no round staged",
+                repo.name,
+                verb_failed("queue round stage", &run)
+            );
             None
         }
         Err(e) => {
@@ -2176,7 +3206,11 @@ pub fn round_stage_test_done(repo: &Repo, bg: BgVerb) -> bool {
     match bg.wait() {
         Ok(run) if run.code == Some(0) => true,
         Ok(run) => {
-            println!("batcher {}: {} — the staged round gets its own pass", repo.name, verb_failed("queue round stage-test", &run));
+            println!(
+                "batcher {}: {} — the staged round gets its own pass",
+                repo.name,
+                verb_failed("queue round stage-test", &run)
+            );
             false
         }
         Err(e) => {
@@ -2215,7 +3249,12 @@ struct PromotedMember {
 pub fn parse_promotion(out: &str) -> Option<Promotion> {
     let line = out.lines().rev().find(|l| !l.trim().is_empty())?;
     let a: PromotionAnswer = serde_json::from_str(line.trim()).ok()?;
-    Some(Promotion { batch: a.batch, head: a.head, members: a.members.into_iter().map(|m| (m.id, m.tip)).collect(), attested: a.attested })
+    Some(Promotion {
+        batch: a.batch,
+        head: a.head,
+        members: a.members.into_iter().map(|m| (m.id, m.tip)).collect(),
+        attested: a.attested,
+    })
 }
 
 /// `queue round promote`. A refusal is not an error: the verb has discarded the stage, or left
@@ -2227,7 +3266,11 @@ pub fn round_promote(env: &Env, repo: &Repo) -> Option<Promotion> {
             None
         }),
         Ok(run) => {
-            println!("batcher {}: {}", repo.name, verb_failed("queue round promote", &run));
+            println!(
+                "batcher {}: {}",
+                repo.name,
+                verb_failed("queue round promote", &run)
+            );
             None
         }
         Err(e) => {
@@ -2299,15 +3342,26 @@ fn refusal_line(err: &str) -> String {
 /// outcome is final.
 pub fn round_land(env: &Env, repo: &Repo, batch: &str) -> Result<LandRun, String> {
     let attempts = env.land_lock_attempts.max(1);
-    let mut last = LandRun { outcome: LandOutcome::Refused, refusal: String::new(), code: None };
+    let mut last = LandRun {
+        outcome: LandOutcome::Refused,
+        refusal: String::new(),
+        code: None,
+    };
     for n in 1..=attempts {
         let run = round_verb(env, &["land", batch, &repo.name], "")?;
-        last = LandRun { outcome: classify_land_exit(run.code), refusal: refusal_line(&run.err), code: run.code };
+        last = LandRun {
+            outcome: classify_land_exit(run.code),
+            refusal: refusal_line(&run.err),
+            code: run.code,
+        };
         let busy = lock_busy(run.code);
         if !busy || n == attempts {
             break;
         }
-        println!("batcher {}: queue round land refused ({}) — retry {n}/{attempts}", repo.name, last.refusal);
+        println!(
+            "batcher {}: queue round land refused ({}) — retry {n}/{attempts}",
+            repo.name, last.refusal
+        );
         std::thread::sleep(env.land_lock_wait);
     }
     Ok(last)
@@ -2324,8 +3378,12 @@ pub enum Unpause {
 /// A deliberate hold (the file starts with `hold:`) belongs to the operator; any other pause is
 /// the loop's own and a landing ends it.
 pub fn unpause_after_land(env: &Env) -> Result<Unpause, String> {
-    let Some(path) = env.land_unpause.as_ref() else { return Ok(Unpause::Off) };
-    let Ok(text) = fs::read_to_string(path) else { return Ok(Unpause::Absent) };
+    let Some(path) = env.land_unpause.as_ref() else {
+        return Ok(Unpause::Off);
+    };
+    let Ok(text) = fs::read_to_string(path) else {
+        return Ok(Unpause::Absent);
+    };
     if text.starts_with("hold:") {
         return Ok(Unpause::Held);
     }
@@ -2336,9 +3394,12 @@ pub fn unpause_after_land(env: &Env) -> Result<Unpause, String> {
 /// True only when `head` is an ancestor of the repo's landing ref: the one fact that says the
 /// round landed, whatever land-local reported.
 pub fn head_on_base(repo: &Repo, head: &str) -> bool {
-    run_status(
-        Command::new("git").arg("-C").arg(&repo.path).args(["merge-base", "--is-ancestor", head, &repo.base]),
-    )
+    run_status(Command::new("git").arg("-C").arg(&repo.path).args([
+        "merge-base",
+        "--is-ancestor",
+        head,
+        &repo.base,
+    ]))
 }
 
 /// The (title, ref) an unlanded round is filed under. A refusal because the round is stacked on one
@@ -2347,11 +3408,20 @@ pub fn head_on_base(repo: &Repo, head: &str) -> bool {
 pub fn land_unverified_key(repo: &Repo, head: &str, detail: &str) -> (String, String) {
     if let Some(parent) = stacked_parent(detail) {
         return (
-            format!("{}: rounds stacked on unlanded round {parent} are refused at land", repo.name),
+            format!(
+                "{}: rounds stacked on unlanded round {parent} are refused at land",
+                repo.name
+            ),
             format!("land-unverified:{}:stacked:{parent}", repo.name),
         );
     }
-    (format!("{}: round head {head} did not reach {}", repo.name, repo.base), format!("land-unverified:{}:{head}", repo.name))
+    (
+        format!(
+            "{}: round head {head} did not reach {}",
+            repo.name, repo.base
+        ),
+        format!("land-unverified:{}:{head}", repo.name),
+    )
 }
 
 fn stacked_parent(detail: &str) -> Option<&str> {
@@ -2361,7 +3431,12 @@ fn stacked_parent(detail: &str) -> Option<&str> {
 }
 
 /// Alarm for a round that did not land: the incident names the refusal line.
-pub fn file_land_unverified_incident(env: &Env, repo: &Repo, head: &str, detail: &str) -> Result<String, String> {
+pub fn file_land_unverified_incident(
+    env: &Env,
+    repo: &Repo,
+    head: &str,
+    detail: &str,
+) -> Result<String, String> {
     let (title, incident_ref) = land_unverified_key(repo, head, detail);
     let body = format!(
         "queue land-local did not land round head {head} on {}: {detail}\nNo member was landed by this round; the batcher reported the round as refused. Find why land-local refused (its stderr is in the batcher log) before the next round.",
@@ -2422,7 +3497,13 @@ pub fn tsd_append(env: &Env, family: &str, fields: &[(&str, String)]) {
 /// written to a scratch file under `env.run/tmp` rather than passed inline, matching every
 /// other `--body-file` caller in this harness (arbitrary suite output as a shell argument is
 /// how a stray backtick becomes command substitution).
-pub fn file_judgement(env: &Env, repo: &Repo, j: &batcher::core::Judgement, members: &[String], evidence: &str) -> Result<String, String> {
+pub fn file_judgement(
+    env: &Env,
+    repo: &Repo,
+    j: &batcher::core::Judgement,
+    members: &[String],
+    evidence: &str,
+) -> Result<String, String> {
     use batcher::core::{judgement_body, RedSource};
     let title = format!(
         "batcher: {} double-red in {} needs judgement ({})",
@@ -2462,18 +3543,35 @@ pub fn file_judgement(env: &Env, repo: &Repo, j: &batcher::core::Judgement, memb
 }
 
 fn bead_id(out: &str) -> Result<String, String> {
-    let start = out.find('{').ok_or_else(|| format!("bead.sh file: no JSON in output: {out}"))?;
-    let v: serde_json::Value = serde_json::from_str(&out[start..]).map_err(|e| format!("bead.sh file: unparsed output: {e}"))?;
+    let start = out
+        .find('{')
+        .ok_or_else(|| format!("bead.sh file: no JSON in output: {out}"))?;
+    let v: serde_json::Value = serde_json::from_str(&out[start..])
+        .map_err(|e| format!("bead.sh file: unparsed output: {e}"))?;
     let v = match v {
-        serde_json::Value::Array(a) => a.into_iter().next().ok_or("bead.sh file: empty JSON array")?,
+        serde_json::Value::Array(a) => a
+            .into_iter()
+            .next()
+            .ok_or("bead.sh file: empty JSON array")?,
         o => o,
     };
-    v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("bead.sh file: no id in output: {out}"))
+    v.get("id")
+        .and_then(|i| i.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| format!("bead.sh file: no id in output: {out}"))
 }
 
 /// File the follow-up bead for a deleted flip and return its id.
-pub fn file_flip_bead(env: &Env, repo: &Repo, suite: &str, round_branch: &str) -> Result<String, String> {
-    let title = format!("{}: {suite} flipped in a batcher round and was deleted — restore it fixed", repo.name);
+pub fn file_flip_bead(
+    env: &Env,
+    repo: &Repo,
+    suite: &str,
+    round_branch: &str,
+) -> Result<String, String> {
+    let title = format!(
+        "{}: {suite} flipped in a batcher round and was deleted — restore it fixed",
+        repo.name
+    );
     let body = format!(
         "{suite} was red in the round's corpus and green on every re-run alone (twice on the round tree, on the base, and on each member touching it), so the batcher deleted it from the round ({round_branch}) rather than send a flip to CI (law-a-test-that-flips-is-deleted).\n\nDeliverable: find the nondeterminism, fix it and re-add the suite.\n"
     );
@@ -2483,7 +3581,19 @@ pub fn file_flip_bead(env: &Env, repo: &Repo, suite: &str, round_branch: &str) -
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
         // FORK-EDGE: bead.sh is the operator tool for filing; it stays
-        Command::new("bead.sh").args(["file", &title, "--for", "batcher", "--repo", &repo.name, "--harness-title", "--body-file"]).arg(&tmp).arg("--json"),
+        Command::new("bead.sh")
+            .args([
+                "file",
+                &title,
+                "--for",
+                "batcher",
+                "--repo",
+                &repo.name,
+                "--harness-title",
+                "--body-file",
+            ])
+            .arg(&tmp)
+            .arg("--json"),
         "bead.sh file",
     );
     let _ = fs::remove_file(&tmp);
@@ -2492,18 +3602,30 @@ pub fn file_flip_bead(env: &Env, repo: &Repo, suite: &str, round_branch: &str) -
 
 /// Commit the deletion of `flips` (suite, follow-up bead) into the round worktree, naming
 /// the follow-up beads in the message.
-pub fn commit_flip_deletion(env: &Env, wt: &Path, flips: &[(String, String)]) -> Result<(), String> {
+pub fn commit_flip_deletion(
+    env: &Env,
+    wt: &Path,
+    flips: &[(String, String)],
+) -> Result<(), String> {
     // EXTERNAL: date — the local calendar date; std has no local time zone
     let date = run(Command::new("date").arg("+%F"), "date")?;
     crate::flip::apply(wt, flips, date.trim())?;
-    run(Command::new("git").arg("-C").arg(wt).args(["add", "-A"]), "git add")?;
+    run(
+        Command::new("git").arg("-C").arg(wt).args(["add", "-A"]),
+        "git add",
+    )?;
     let names: Vec<String> = flips.iter().map(|(s, b)| format!("{s} ({b})")).collect();
     let msg = format!("batcher: delete flipped suite(s) {}", names.join(", "));
     run(
         Command::new("git")
             .arg("-C")
             .arg(wt)
-            .args(["-c", &format!("user.name={}", env.git_name), "-c", &format!("user.email={}", env.git_email)])
+            .args([
+                "-c",
+                &format!("user.name={}", env.git_name),
+                "-c",
+                &format!("user.email={}", env.git_email),
+            ])
             .args(["commit", "-q", "-m", &msg]),
         "git commit",
     )?;
@@ -2513,13 +3635,19 @@ pub fn commit_flip_deletion(env: &Env, wt: &Path, flips: &[(String, String)]) ->
 /// The checks a suite deletion can break: the plan-matrix and its orphan fence, where the
 /// round tree has them. Err names what failed.
 pub fn recheck_after_deletion(wt: &Path, base_sha: &str) -> Result<(), String> {
-    for (script, args) in [("plan-matrix.sh", vec![]), ("plan-lint.sh", vec!["--orphans", base_sha])] {
+    for (script, args) in [
+        ("plan-matrix.sh", vec![]),
+        ("plan-lint.sh", vec!["--orphans", base_sha]),
+    ] {
         let path = wt.join("spira").join(script);
         if !path.exists() {
             continue;
         }
         // FORK-EDGE: the round tree's own plan scripts (that tree's version, not the release's)
-        run(Command::new("bash").arg(&path).args(&args).current_dir(wt), script)?;
+        run(
+            Command::new("bash").arg(&path).args(&args).current_dir(wt),
+            script,
+        )?;
     }
     Ok(())
 }
@@ -2551,7 +3679,12 @@ struct Beat {
 }
 
 fn touch(path: &Path) {
-    if let Ok(f) = fs::OpenOptions::new().create(true).write(true).truncate(false).open(path) {
+    if let Ok(f) = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+    {
         let _ = f.set_modified(std::time::SystemTime::now());
     }
 }
@@ -2566,7 +3699,11 @@ impl Beat {
                 touch(&p);
             }
         });
-        Beat { stop, thread: Some(thread), path }
+        Beat {
+            stop,
+            thread: Some(thread),
+            path,
+        }
     }
 }
 
@@ -2591,7 +3728,12 @@ fn lock_at(path: &Path, verb: &str) -> Result<Option<Lock>, String> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    let f = fs::OpenOptions::new().create(true).write(true).truncate(false).open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let f = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     if unsafe { flock(f.as_raw_fd(), LOCK_EX | LOCK_NB) } != 0 {
         return Ok(None);
     }
@@ -2634,13 +3776,21 @@ impl Drop for Parked {
 /// Runs a long leg (a suite run) without the queue lock, so an operator verb is not refused for
 /// its length, and marks `batch` driven by holding its certify lock meanwhile. The queue lock
 /// is taken again before returning: state transitions stay under it.
-pub fn unlocked<T>(env: &Env, repo: &str, batch: Option<&str>, wait_secs: u64, leg: impl FnOnce() -> T) -> Result<T, String> {
+pub fn unlocked<T>(
+    env: &Env,
+    repo: &str,
+    batch: Option<&str>,
+    wait_secs: u64,
+    leg: impl FnOnce() -> T,
+) -> Result<T, String> {
     let Some(batch) = batch else { return Ok(leg()) };
     let held = HELD_QUEUE_LOCK.with(|s| s.borrow_mut().take()).is_some();
     let driving = if held {
         let marker = drive_marker(env, repo, batch);
         if marker.is_none() {
-            return Err(format!("{repo}: a leg may not run unlocked without marking {batch} driven"));
+            return Err(format!(
+                "{repo}: a leg may not run unlocked without marking {batch} driven"
+            ));
         }
         marker
     } else {
@@ -2649,8 +3799,11 @@ pub fn unlocked<T>(env: &Env, repo: &str, batch: Option<&str>, wait_secs: u64, l
     let out = leg();
     drop(driving);
     if held {
-        let Some(l) = wait_lock(env, repo, wait_secs)? else {
-            return Err(format!("{repo}: another operation took the queue lock during the leg (waited {wait_secs}s to take it back)"));
+        let l = loop {
+            if let Some(l) = wait_lock(env, repo, wait_secs)? {
+                break l;
+            }
+            eprintln!("{repo}: another operation holds the queue lock after the leg (waited {wait_secs}s) — keeping the leg's result, retrying");
         };
         HELD_QUEUE_LOCK.with(|s| *s.borrow_mut() = Some(l));
     }
@@ -2658,14 +3811,25 @@ pub fn unlocked<T>(env: &Env, repo: &str, batch: Option<&str>, wait_secs: u64, l
 }
 
 fn drive_marker(env: &Env, repo: &str, batch: &str) -> Option<fs::File> {
-    let path = env.queue_dir.join(repo).join(format!("certify-{batch}.lock"));
-    let f = fs::OpenOptions::new().create(true).write(true).truncate(false).open(path).ok()?;
+    let path = env
+        .queue_dir
+        .join(repo)
+        .join(format!("certify-{batch}.lock"));
+    let f = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+        .ok()?;
     (unsafe { flock(f.as_raw_fd(), LOCK_EX | LOCK_NB) } == 0).then_some(f)
 }
 
 /// Whether a `round certify` of `batch` is running, asked of the lock it holds for its whole run.
 pub fn certify_driven(env: &Env, repo: &str, batch: &str) -> bool {
-    let path = env.queue_dir.join(repo).join(format!("certify-{batch}.lock"));
+    let path = env
+        .queue_dir
+        .join(repo)
+        .join(format!("certify-{batch}.lock"));
     if !path.exists() {
         return false;
     }
@@ -2705,7 +3869,10 @@ mod land_tests {
             subj("Merge branch 'x' into y"),
         ];
         let members = vec!["sp-94a87q".to_string(), "sp-ffh07b.2".to_string()];
-        assert_eq!(foreign_in(&subjects, &members), vec!["sp-lc1puh".to_string()]);
+        assert_eq!(
+            foreign_in(&subjects, &members),
+            vec!["sp-lc1puh".to_string()]
+        );
         assert!(foreign_in(&subjects[2..4], &members).is_empty());
     }
 }
@@ -2731,12 +3898,18 @@ mod pool_parity_tests {
         branches.insert("sp-moved".to_string(), "newtip".to_string());
         branches.insert("sp-stable".to_string(), "sametip".to_string());
 
-        assert!(!tip_current("oldtip", "sp-moved", &branches), "a certified tip that the branch has moved past must not be admitted");
+        assert!(
+            !tip_current("oldtip", "sp-moved", &branches),
+            "a certified tip that the branch has moved past must not be admitted"
+        );
         // POSITIVE CONTROL: the same branch's own live tip is admitted — proves the check
         // discriminates on the tip, not on the id being present at all.
         assert!(tip_current("newtip", "sp-moved", &branches));
         assert!(tip_current("sametip", "sp-stable", &branches));
-        assert!(!tip_current("sametip", "sp-unknown", &branches), "no branch at all is not current");
+        assert!(
+            !tip_current("sametip", "sp-unknown", &branches),
+            "no branch at all is not current"
+        );
     }
     #[test]
     fn a_member_stacked_on_a_held_bead_is_left_out_of_the_pool_and_returns_when_the_hold_lifts() {
@@ -2748,12 +3921,24 @@ mod pool_parity_tests {
             express: false,
             base_fix: false,
             certified_at: 0,
-            stack: prereq.map(|p| (p.to_string(), format!("{p}-tip"))).into_iter().collect(),
+            stack: prereq
+                .map(|p| (p.to_string(), format!("{p}-tip")))
+                .into_iter()
+                .collect(),
             blocked_by: vec![],
         };
-        let pool = || vec![member("sp-q", Some("sp-p")), member("sp-r", Some("sp-q")), member("sp-s", None)];
+        let pool = || {
+            vec![
+                member("sp-q", Some("sp-p")),
+                member("sp-r", Some("sp-q")),
+                member("sp-s", None),
+            ]
+        };
         let held: std::collections::BTreeSet<String> = ["sp-p".to_string()].into();
-        let kept: Vec<String> = drop_stacked_on_barred(pool(), held).into_iter().map(|m| m.id).collect();
+        let kept: Vec<String> = drop_stacked_on_barred(pool(), held)
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
         assert_eq!(kept, ["sp-s"]);
         let lifted = drop_stacked_on_barred(pool(), Default::default());
         assert_eq!(lifted.len(), 3);
@@ -2782,11 +3967,19 @@ mod result_path_tests {
         fs::write(d.join("test-y.sh.result"), "ok 1s\\n").unwrap();
         assert_eq!(result_status(&d, "test-y.sh"), Some(true));
         fs::write(d.join("test-q.sh.result"), "quarantined-red 1 2 fp p e 1").unwrap();
-        assert_eq!(result_status(&d, "test-q.sh"), Some(true), "quarantined never blocks");
+        assert_eq!(
+            result_status(&d, "test-q.sh"),
+            Some(true),
+            "quarantined never blocks"
+        );
         fs::write(d.join("test-t.sh.result"), "timeout 1 2 fp p e 124").unwrap();
         assert_eq!(result_status(&d, "test-t.sh"), Some(false));
         fs::write(d.join("test-h.sh.result"), "").unwrap();
-        assert_eq!(result_status(&d, "test-h.sh"), None, "half-written: not final yet");
+        assert_eq!(
+            result_status(&d, "test-h.sh"),
+            None,
+            "half-written: not final yet"
+        );
     }
 
     #[test]
@@ -2853,7 +4046,10 @@ mod open_batch_tests {
     use super::*;
 
     fn members() -> Vec<(String, String)> {
-        vec![("sp-a".into(), "aaaa".into()), ("sp-b".into(), "bbbb".into())]
+        vec![
+            ("sp-a".into(), "aaaa".into()),
+            ("sp-b".into(), "bbbb".into()),
+        ]
     }
 
     #[test]
@@ -2863,13 +4059,24 @@ mod open_batch_tests {
         assert_eq!(ob.pr, "12");
         assert_eq!(ob.members, members());
         let opening = open_batch_from("batch_id=deck-2\nforge.phase=opening\n").unwrap();
-        assert_eq!(opening.pr, "", "a batch still opening is open, with no PR yet");
+        assert_eq!(
+            opening.pr, "",
+            "a batch still opening is open, with no PR yet"
+        );
     }
 
     #[test]
     fn queue_batch_open_answers_its_pr_and_whether_the_open_finished() {
-        let run = |code, out: &str| VerbRun { code: Some(code), out: out.into(), err: "queue.sh open-batch: PR 12 for deck is open but auto-merge could not be armed".into() };
-        assert_eq!(opened_pr(&run(0, "x\nbatch_id=deck-1\npr=12\n")).unwrap(), ("12".to_string(), Ok(())));
+        let run = |code, out: &str| VerbRun {
+            code: Some(code),
+            out: out.into(),
+            err: "queue.sh open-batch: PR 12 for deck is open but auto-merge could not be armed"
+                .into(),
+        };
+        assert_eq!(
+            opened_pr(&run(0, "x\nbatch_id=deck-1\npr=12\n")).unwrap(),
+            ("12".to_string(), Ok(()))
+        );
         let (pr, finished) = opened_pr(&run(1, "batch_id=deck-1\npr=12\n")).unwrap();
         assert_eq!(pr, "12");
         assert!(finished.unwrap_err().contains("queue batch open exited 1"));
@@ -2897,13 +4104,22 @@ mod fail_line_tests {
         let run = testkit::TempDir::new("batcher-cut-red-evidence");
         let results = run.path().join("rounds").join("b1.results");
         fs::create_dir_all(&results).unwrap();
-        fs::write(results.join("test-a.sh.out"), "ok 1\nFAIL: a broke\nFAIL: later\n").unwrap();
+        fs::write(
+            results.join("test-a.sh.out"),
+            "ok 1\nFAIL: a broke\nFAIL: later\n",
+        )
+        .unwrap();
         fs::write(results.join("test-b.sh.out"), "not ok 2 - b broke\n").unwrap();
         let reds = vec!["test-a.sh".to_string(), "test-b.sh".to_string()];
         let why = keep_red_evidence(run.path(), "b1", "judged red: VERDICT", &reds);
         let kept = fs::read_to_string(results.join("red-evidence")).unwrap();
         for text in [&why, &kept] {
-            assert!(text.contains("judged red: VERDICT") && text.contains("test-a.sh: FAIL: a broke") && text.contains("test-b.sh: not ok 2 - b broke"), "{text}");
+            assert!(
+                text.contains("judged red: VERDICT")
+                    && text.contains("test-a.sh: FAIL: a broke")
+                    && text.contains("test-b.sh: not ok 2 - b broke"),
+                "{text}"
+            );
             assert!(!text.contains("later"), "{text}");
         }
     }
@@ -2914,12 +4130,28 @@ mod fail_line_tests {
         let corpus = run.path().join("batch-results").join("r-1").join("corpus");
         fs::create_dir_all(corpus.join("v1")).unwrap();
         fs::write(corpus.join("test-red.sh.out"), "FAIL: it broke\n").unwrap();
-        fs::write(corpus.join("v1").join("test-nested.sh.out"), "FAIL: nested\n").unwrap();
+        fs::write(
+            corpus.join("v1").join("test-nested.sh.out"),
+            "FAIL: nested\n",
+        )
+        .unwrap();
         let kept = keep_round_results(run.path(), "b9", &corpus);
         assert_eq!(kept, run.path().join("rounds").join("b9.results"));
-        assert_eq!(fs::read_to_string(kept.join("test-red.sh.out")).unwrap(), "FAIL: it broke\n");
-        let why = keep_red_evidence(run.path(), "b9", "red", &["test-red.sh".to_string(), "test-nested.sh".to_string()]);
-        assert!(why.contains("test-red.sh: FAIL: it broke") && why.contains("test-nested.sh: FAIL: nested"), "{why}");
+        assert_eq!(
+            fs::read_to_string(kept.join("test-red.sh.out")).unwrap(),
+            "FAIL: it broke\n"
+        );
+        let why = keep_red_evidence(
+            run.path(),
+            "b9",
+            "red",
+            &["test-red.sh".to_string(), "test-nested.sh".to_string()],
+        );
+        assert!(
+            why.contains("test-red.sh: FAIL: it broke")
+                && why.contains("test-nested.sh: FAIL: nested"),
+            "{why}"
+        );
         assert!(why.contains(kept.to_str().unwrap()), "{why}");
     }
 
@@ -2936,21 +4168,46 @@ mod fail_line_tests {
     #[test]
     fn each_open_round_carries_its_own_phase() {
         let out = "round=open\nphase=opened\nbatch_id=b1\nround2=open\nround2_phase=certifying\nround2_batch_id=b2\n";
-        let phases: Vec<_> = open_rounds_of(out).into_iter().map(|r| (r.id, r.phase)).collect();
-        assert_eq!(phases, [("b1".to_string(), "opened".to_string()), ("b2".to_string(), "certifying".to_string())]);
+        let phases: Vec<_> = open_rounds_of(out)
+            .into_iter()
+            .map(|r| (r.id, r.phase))
+            .collect();
+        assert_eq!(
+            phases,
+            [
+                ("b1".to_string(), "opened".to_string()),
+                ("b2".to_string(), "certifying".to_string())
+            ]
+        );
     }
 
     #[test]
     fn the_first_fail_line_is_found_and_absence_is_none() {
-        assert_eq!(first_fail_line("ok 1\n  FAIL widget broke\nFAIL later\n").as_deref(), Some("FAIL widget broke"));
-        assert_eq!(first_fail_line("not ok 3 - x\n").as_deref(), Some("not ok 3 - x"));
+        assert_eq!(
+            first_fail_line("ok 1\n  FAIL widget broke\nFAIL later\n").as_deref(),
+            Some("FAIL widget broke")
+        );
+        assert_eq!(
+            first_fail_line("not ok 3 - x\n").as_deref(),
+            Some("not ok 3 - x")
+        );
         assert_eq!(first_fail_line("all fine\nPASS\n"), None);
         let signal = "UNIT-TESTS-RED: SIGNAL binary=crashy signal: 11, SIGSEGV\nUNIT-TESTS-CAUSE: exit status 101\n";
-        assert_eq!(first_fail_line(signal).as_deref(), Some("UNIT-TESTS-RED: SIGNAL binary=crashy signal: 11, SIGSEGV"), "a classified unit red is its own evidence");
-        assert!(first_fail_line("UNIT-TESTS-RED: TIMEOUT binary=slow\n").is_some() && first_fail_line("UNIT-TESTS-RED: BUILD binary=w\n").is_some());
+        assert_eq!(
+            first_fail_line(signal).as_deref(),
+            Some("UNIT-TESTS-RED: SIGNAL binary=crashy signal: 11, SIGSEGV"),
+            "a classified unit red is its own evidence"
+        );
+        assert!(
+            first_fail_line("UNIT-TESTS-RED: TIMEOUT binary=slow\n").is_some()
+                && first_fail_line("UNIT-TESTS-RED: BUILD binary=w\n").is_some()
+        );
         let d = testkit::TempDir::new("batcher-cut-failline");
         fs::write(d.join("test-a.sh.out"), "setup\nFAIL: boom\n").unwrap();
-        assert_eq!(suite_first_fail(&d, "test-a.sh").as_deref(), Some("FAIL: boom"));
+        assert_eq!(
+            suite_first_fail(&d, "test-a.sh").as_deref(),
+            Some("FAIL: boom")
+        );
         assert_eq!(suite_first_fail(&d, "test-missing.sh"), None);
         let _ = fs::remove_dir_all(&d);
     }
@@ -2966,7 +4223,11 @@ mod land_exit_tests {
         assert_eq!(classify_land_exit(Some(1)), LandOutcome::Refused);
         assert_eq!(classify_land_exit(Some(2)), LandOutcome::Refused);
         assert_eq!(classify_land_exit(Some(3)), LandOutcome::DeployFault);
-        assert_eq!(classify_land_exit(None), LandOutcome::Refused, "killed by a signal: nothing is known to have landed");
+        assert_eq!(
+            classify_land_exit(None),
+            LandOutcome::Refused,
+            "killed by a signal: nothing is known to have landed"
+        );
     }
 
     /// sp-tjrjca: a base-moved refusal is told by its exit, never by its words.
@@ -2981,20 +4242,37 @@ mod land_exit_tests {
     fn a_refused_open_names_each_member_by_its_typed_record() {
         let out = "refused=sp-1mspuc kind=integration why=sp-1mspuc: carried by integration sp-ggdrzb — lands with it, not admitted\nnoise\nrefused=sp-zr6wdz kind=round-conflict why=sp-zr6wdz: conflicts with the round — paths: a.rs\n";
         let r = parse_refused(out);
-        assert_eq!(r.iter().map(|r| (r.id.as_str(), r.kind.as_str())).collect::<Vec<_>>(), [("sp-1mspuc", "integration"), ("sp-zr6wdz", "round-conflict")]);
+        assert_eq!(
+            r.iter()
+                .map(|r| (r.id.as_str(), r.kind.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("sp-1mspuc", "integration"),
+                ("sp-zr6wdz", "round-conflict")
+            ]
+        );
         assert!(r[1].why.ends_with("paths: a.rs"), "{r:?}");
         assert!(parse_refused("batch=x\nmembers=sp-a:t\n").is_empty());
     }
 
     fn repo_at(d: &Path) -> Repo {
-        Repo { name: "spira".into(), path: d.to_path_buf(), base: "local/main".into(), forge: d.to_path_buf(), land: Land::Local }
+        Repo {
+            name: "spira".into(),
+            path: d.to_path_buf(),
+            base: "local/main".into(),
+            forge: d.to_path_buf(),
+            land: Land::Local,
+        }
     }
 
     #[test]
     fn a_red_ci_implicates_only_the_member_whose_changed_file_it_names() {
         let changed = vec![
             ("sp-a".to_string(), vec!["crates/x/src/a.rs".to_string()]),
-            ("sp-b".to_string(), vec!["crates/x/src/parent.rs".to_string()]),
+            (
+                "sp-b".to_string(),
+                vec!["crates/x/src/parent.rs".to_string()],
+            ),
         ];
         let out = "Diff in crates/x/src/parent.rs:30:\n";
         assert_eq!(implicated(out, &changed), vec!["sp-b".to_string()]);
@@ -3005,7 +4283,10 @@ mod land_exit_tests {
     #[test]
     fn a_filed_incident_is_the_id_in_the_typed_answer_not_the_last_line() {
         assert_eq!(filed_id("{\"id\":\"sp-abc\"}\n"), Ok("sp-abc".to_string()));
-        assert!(filed_id("sp-abc\n").is_err(), "a bare line is not an answer");
+        assert!(
+            filed_id("sp-abc\n").is_err(),
+            "a bare line is not an answer"
+        );
         assert!(filed_id("filed sp-abc\nnoted\n").is_err());
         assert!(filed_id("{\"id\":null}").is_err(), "a skew filed nothing");
         assert!(filed_id("").is_err());
@@ -3014,10 +4295,25 @@ mod land_exit_tests {
     #[test]
     fn a_promotion_names_its_round_head_members_and_whether_it_was_attested() {
         let p = parse_promotion("pass ran\n{\"batch\":\"r2\",\"head\":\"abc\",\"members\":[{\"id\":\"sp-a\",\"tip\":\"t1\"},{\"id\":\"sp-b\",\"tip\":\"t2\"}],\"attested\":true}\n").unwrap();
-        assert_eq!(p, Promotion { batch: "r2".into(), head: "abc".into(), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], attested: true });
+        assert_eq!(
+            p,
+            Promotion {
+                batch: "r2".into(),
+                head: "abc".into(),
+                members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())],
+                attested: true
+            }
+        );
         assert!(!parse_promotion("{\"batch\":\"r2\",\"head\":\"abc\",\"members\":[{\"id\":\"sp-a\",\"tip\":\"t1\"}],\"attested\":false}\n").unwrap().attested);
-        assert!(parse_promotion("batch=r2\nhead=abc\nmembers=sp-a:t1\nattested=1\n").is_none(), "key=value lines are no answer");
-        assert_eq!(parse_promotion("batch=r2\nmembers=sp-a:t1\n"), None, "a promotion with no head names no tree to land");
+        assert!(
+            parse_promotion("batch=r2\nhead=abc\nmembers=sp-a:t1\nattested=1\n").is_none(),
+            "key=value lines are no answer"
+        );
+        assert_eq!(
+            parse_promotion("batch=r2\nmembers=sp-a:t1\n"),
+            None,
+            "a promotion with no head names no tree to land"
+        );
     }
 
     #[test]
@@ -3027,7 +4323,10 @@ mod land_exit_tests {
         let mut e = lifecycle_tests_env(&d);
         assert_eq!(unpause_after_land(&e).unwrap(), Unpause::Off, "default off");
         fs::write(&pause, "ROUND RED").unwrap();
-        assert!(pause.exists(), "positive control: the pause exists before the call");
+        assert!(
+            pause.exists(),
+            "positive control: the pause exists before the call"
+        );
         assert_eq!(unpause_after_land(&e).unwrap(), Unpause::Off);
         assert!(pause.exists(), "disabled leaves the pause alone");
         e.land_unpause = Some(pause.clone());
@@ -3043,18 +4342,36 @@ mod land_exit_tests {
     fn rounds_stacked_on_one_unlanded_head_share_one_incident_key() {
         let d = testkit::TempDir::new("batcher-cut-stacked-key");
         let repo = repo_at(&d);
-        let refusal = |parent: &str| format!("refused: queue.sh round land: round r3 is stacked on round {parent}, which has not landed — land {parent} first; nothing changed");
-        let keys: Vec<_> = [("h1", "r1"), ("h2", "r1"), ("h3", "r2")].iter().map(|(h, p)| land_unverified_key(&repo, h, &refusal(p))).collect();
+        let refusal = |parent: &str| {
+            format!("refused: queue.sh round land: round r3 is stacked on round {parent}, which has not landed — land {parent} first; nothing changed")
+        };
+        let keys: Vec<_> = [("h1", "r1"), ("h2", "r1"), ("h3", "r2")]
+            .iter()
+            .map(|(h, p)| land_unverified_key(&repo, h, &refusal(p)))
+            .collect();
         assert_eq!(keys[0], keys[1], "{keys:?}");
-        assert_ne!(keys[0], keys[2], "a second unlanded head is a second incident: {keys:?}");
-        assert_ne!(land_unverified_key(&repo, "h1", "refused: not a fast-forward"), land_unverified_key(&repo, "h2", "refused: not a fast-forward"), "positive control: other refusals stay one incident per head");
+        assert_ne!(
+            keys[0], keys[2],
+            "a second unlanded head is a second incident: {keys:?}"
+        );
+        assert_ne!(
+            land_unverified_key(&repo, "h1", "refused: not a fast-forward"),
+            land_unverified_key(&repo, "h2", "refused: not a fast-forward"),
+            "positive control: other refusals stay one incident per head"
+        );
     }
 
     #[test]
     fn a_rounds_head_and_worktree_are_read_from_whichever_open_round_status_lists_it() {
         let out = "round=open\nbatch_id=r1\nhead=aaa\nworktree=/w\nround2=open\nround2_batch_id=r2\nround2_head=bbb\nround2_worktree=/w2\n";
-        assert_eq!(round_head_and_worktree(out, "r2"), Some(("bbb".into(), "/w2".into())));
-        assert_eq!(round_head_and_worktree(out, "r1"), Some(("aaa".into(), "/w".into())));
+        assert_eq!(
+            round_head_and_worktree(out, "r2"),
+            Some(("bbb".into(), "/w2".into()))
+        );
+        assert_eq!(
+            round_head_and_worktree(out, "r1"),
+            Some(("aaa".into(), "/w".into()))
+        );
         assert_eq!(round_head_and_worktree(out, "r3"), None);
     }
 
@@ -3062,7 +4379,13 @@ mod land_exit_tests {
     fn status_lists_every_open_round_with_its_head_and_age() {
         let out = "rounds=2\nround=open\nbatch_id=r1\nhead=h1\nmembers=sp-a:ta sp-b:tb\nworktree=/w/1\nwall_secs=90\nround2=open\nround2_batch_id=r2\nround2_head=h2\nround2_members=sp-c:tc\nround2_worktree=/w/2\nround2_red=test-x.sh\nround2_wall_secs=30\nstaged_members=sp-z\n";
         let rounds = open_rounds_of(out);
-        assert_eq!(rounds.iter().map(|r| (r.id.as_str(), r.head.as_str(), r.red, r.age_secs)).collect::<Vec<_>>(), [("r1", "h1", false, 90), ("r2", "h2", true, 30)]);
+        assert_eq!(
+            rounds
+                .iter()
+                .map(|r| (r.id.as_str(), r.head.as_str(), r.red, r.age_secs))
+                .collect::<Vec<_>>(),
+            [("r1", "h1", false, 90), ("r2", "h2", true, 30)]
+        );
         assert_eq!(rounds[0].members, ["sp-a", "sp-b"]);
         assert!(open_rounds_of("round=none\nrepo=spira\n").is_empty());
     }
@@ -3078,7 +4401,10 @@ mod wait_lock_tests {
         let e = super::lifecycle_tests_env(&d);
         let beat = e.queue_dir.join("r").join(BEAT_FILE);
         let held = try_lock(&e, "r").unwrap().unwrap();
-        assert!(beat.is_file(), "the batcher's queue-lock holder must beat while it lands");
+        assert!(
+            beat.is_file(),
+            "the batcher's queue-lock holder must beat while it lands"
+        );
         drop(held);
         assert!(!beat.exists(), "the beat goes with the lock");
     }
@@ -3094,9 +4420,45 @@ mod wait_lock_tests {
             seen = Some((free.is_some(), certify_driven(&e, "r", "b1")));
         })
         .unwrap();
-        assert_eq!(seen, Some((true, true)), "during the leg the queue lock is free and the round is driven");
-        assert!(try_lock(&e, "r").unwrap().is_none(), "the queue lock is held again after the leg");
-        assert!(!certify_driven(&e, "r", "b1"), "a finished leg drives nothing");
+        assert_eq!(
+            seen,
+            Some((true, true)),
+            "during the leg the queue lock is free and the round is driven"
+        );
+        assert!(
+            try_lock(&e, "r").unwrap().is_none(),
+            "the queue lock is held again after the leg"
+        );
+        assert!(
+            !certify_driven(&e, "r", "b1"),
+            "a finished leg drives nothing"
+        );
+    }
+
+    #[test]
+    fn a_leg_keeps_its_result_when_another_operation_holds_the_lock_past_the_wait() {
+        let d = testkit::TempDir::new("batcher-cut-retake");
+        let e = super::lifecycle_tests_env(&d);
+        let _parked = park_queue_lock(try_lock(&e, "r").unwrap().unwrap());
+        let (e2, mut other) = (e.clone(), None);
+        let out = unlocked(&e, "r", Some("b1"), 1, || {
+            other = try_lock(&e2, "r").unwrap();
+            let held = other.take();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(2500)); // clock-safe: holds the lock past the 1s wait, then releases it
+                drop(held);
+            });
+            "verdict"
+        });
+        assert_eq!(
+            out,
+            Ok("verdict"),
+            "a lock held past the wait must not cost the leg its result"
+        );
+        assert!(
+            try_lock(&e, "r").unwrap().is_none(),
+            "the queue lock is held again after the retry"
+        );
     }
 
     #[test]
@@ -3128,7 +4490,11 @@ pub fn lifecycle_tests_env(dir: &Path) -> Env {
         rebase_stale_bin: dir.join("rebase-stale"),
         testenv_bin: dir.join("testenv"),
         round_slots: None,
-        hypervisor: Hypervisor { host_mib: 0, round_vm_mib: 0, runner_mib: 0 },
+        hypervisor: Hypervisor {
+            host_mib: 0,
+            round_vm_mib: 0,
+            runner_mib: 0,
+        },
         poll: std::time::Duration::from_secs(1),
         maxpar: 1,
         wall_secs: 1,
@@ -3151,7 +4517,11 @@ mod hypervisor_tests {
     use super::Hypervisor;
 
     fn hv(host_mib: u64, round_vm_mib: u64) -> Hypervisor {
-        Hypervisor { host_mib, round_vm_mib, runner_mib: 16384 }
+        Hypervisor {
+            host_mib,
+            round_vm_mib,
+            runner_mib: 16384,
+        }
     }
 
     #[test]
@@ -3178,10 +4548,19 @@ mod shots_tests {
         fs::create_dir_all(&d).unwrap();
         fs::write(d.join("index-390.png"), b"x").unwrap();
         fs::write(d.join("note.txt"), b"x").unwrap();
-        let members = vec![("sp-a".to_string(), "abc".to_string()), ("sp-b".to_string(), "def".to_string())];
+        let members = vec![
+            ("sp-a".to_string(), "abc".to_string()),
+            ("sp-b".to_string(), "def".to_string()),
+        ];
         let with = shots_section(tmp.path(), Some("host:1"), &members);
-        assert!(with.contains("sp-a index-390.png: http://host:1/shots/sp-a/abc/index-390.png") && !with.contains("note.txt") && !with.contains("sp-b"), "{with}");
-        assert!(shots_section(tmp.path(), None, &members).contains("- sp-a index-390.png: /shots/sp-a/abc/index-390.png"));
+        assert!(
+            with.contains("sp-a index-390.png: http://host:1/shots/sp-a/abc/index-390.png")
+                && !with.contains("note.txt")
+                && !with.contains("sp-b"),
+            "{with}"
+        );
+        assert!(shots_section(tmp.path(), None, &members)
+            .contains("- sp-a index-390.png: /shots/sp-a/abc/index-390.png"));
         assert_eq!(shots_section(tmp.path(), None, &members[1..]), "");
     }
 }
@@ -3195,7 +4574,10 @@ mod round_status_tests {
     #[test]
     fn the_members_are_those_of_the_named_round_not_the_first_open_one() {
         assert_eq!(members_of_batch(STATUS, "new"), Some(vec!["c".to_string()]));
-        assert_eq!(members_of_batch(STATUS, "old"), Some(vec!["a".to_string(), "b".to_string()]));
+        assert_eq!(
+            members_of_batch(STATUS, "old"),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
         assert_eq!(members_of_batch(STATUS, "gone"), None);
     }
 }
@@ -3209,15 +4591,28 @@ mod forge_release_tests {
         let dir = testkit::TempDir::new("batcher-forge-stand-in");
         let script = dir.path().join("forge-fixture.sh");
         std::fs::write(&script, "echo \"$1 $2 $3\"\nexit 0\n").unwrap();
-        let repo = Repo { name: "r".into(), path: PathBuf::from("/tmp/r"), base: "local/main".into(), forge: script, land: Land::Forge };
+        let repo = Repo {
+            name: "r".into(),
+            path: PathBuf::from("/tmp/r"),
+            base: "local/main".into(),
+            forge: script,
+            land: Land::Forge,
+        };
         let r = forge_run(&repo, "pr-arm-queue", &["merge"]).unwrap();
         assert_eq!((r.code, r.out.as_str()), (0, "pr-arm-queue /tmp/r merge\n"));
-        assert_eq!(forge::client::route_of(Path::new("forge")), forge::client::Route::InProcess);
+        assert_eq!(
+            forge::client::route_of(Path::new("forge")),
+            forge::client::Route::InProcess
+        );
     }
 
     #[test]
     fn arming_reports_the_forges_lines_and_its_failure() {
-        let r = |code| forge::client::Reply { code, out: "armed #12\n".into(), err: String::new() };
+        let r = |code| forge::client::Reply {
+            code,
+            out: "armed #12\n".into(),
+            err: String::new(),
+        };
         assert_eq!(armed("r", r(0)), Ok(()));
         assert_eq!(armed("r", r(1)), Err("forge pr-arm-queue exited 1".into()));
     }
@@ -3225,29 +4620,79 @@ mod forge_release_tests {
     #[test]
     fn a_lifecycle_answer_reads_as_the_childs_did() {
         use spira_config::lc_call::{LcError, Reply};
-        assert_eq!(lc_answer(Ok(Reply { code: 0, out: "[]".into(), err: String::new() })), Ok("[]".into()));
-        assert_eq!(lc_answer(Ok(Reply { code: 3, out: "x\nrefused: held\n".into(), err: String::new() })), Err("spira-lc exited 3: refused: held".into()));
-        assert!(lc_answer(Err(LcError::Fault("cannot tell: down".into()))).unwrap_err().contains("cannot tell"));
+        assert_eq!(
+            lc_answer(Ok(Reply {
+                code: 0,
+                out: "[]".into(),
+                err: String::new()
+            })),
+            Ok("[]".into())
+        );
+        assert_eq!(
+            lc_answer(Ok(Reply {
+                code: 3,
+                out: "x\nrefused: held\n".into(),
+                err: String::new()
+            })),
+            Err("spira-lc exited 3: refused: held".into())
+        );
+        assert!(lc_answer(Err(LcError::Fault("cannot tell: down".into())))
+            .unwrap_err()
+            .contains("cannot tell"));
     }
 
     #[test]
     fn an_open_batch_the_store_cannot_vouch_for_could_not_say() {
         use spira_config::lc_call::LcError;
         use store_view::{BatchView, Record};
-        assert!(open_batch_of(Err(LcError::Refused("stale".into()))).unwrap_err().starts_with("could not say"));
-        assert!(open_batch_of(Ok(BatchView { repo: "r".into(), open: None })).unwrap().is_none());
-        let rec = Record { id: "b".into(), state: "OPEN".into(), fields: vec![("batch_id".into(), "b".into()), ("members".into(), "sp-a:t1".into()), ("pr".into(), "12".into())] };
-        let ob = open_batch_of(Ok(BatchView { repo: "r".into(), open: Some(rec) })).unwrap().unwrap();
-        assert_eq!((ob.pr.as_str(), ob.members), ("12", vec![("sp-a".to_string(), "t1".to_string())]));
+        assert!(open_batch_of(Err(LcError::Refused("stale".into())))
+            .unwrap_err()
+            .starts_with("could not say"));
+        assert!(open_batch_of(Ok(BatchView {
+            repo: "r".into(),
+            open: None
+        }))
+        .unwrap()
+        .is_none());
+        let rec = Record {
+            id: "b".into(),
+            state: "OPEN".into(),
+            fields: vec![
+                ("batch_id".into(), "b".into()),
+                ("members".into(), "sp-a:t1".into()),
+                ("pr".into(), "12".into()),
+            ],
+        };
+        let ob = open_batch_of(Ok(BatchView {
+            repo: "r".into(),
+            open: Some(rec),
+        }))
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            (ob.pr.as_str(), ob.members),
+            ("12", vec![("sp-a".to_string(), "t1".to_string())])
+        );
     }
 
     #[test]
     fn a_certify_failure_is_typed_by_its_exit_code_and_stale_image_never_by_the_code() {
-        let kind = |code, err: &str| certify_failure(code, err, "queue round certify exited x".into()).kind;
+        let kind = |code, err: &str| {
+            certify_failure(code, err, "queue round certify exited x".into()).kind
+        };
         assert_eq!(kind(Some(CERTIFY_ENV_RC), "no VM"), CutKind::Infra);
-        assert_eq!(kind(Some(CERTIFY_ENV_RC), "round AMI is stale: clone refused"), CutKind::StaleImage);
-        assert_eq!(kind(Some(CERTIFY_LOST_RC), "INCOMPLETE reason=vm-lost"), CutKind::Infra);
-        assert_eq!(kind(Some(3), "certify exited 4 in words only"), CutKind::Other);
+        assert_eq!(
+            kind(Some(CERTIFY_ENV_RC), "round AMI is stale: clone refused"),
+            CutKind::StaleImage
+        );
+        assert_eq!(
+            kind(Some(CERTIFY_LOST_RC), "INCOMPLETE reason=vm-lost"),
+            CutKind::Infra
+        );
+        assert_eq!(
+            kind(Some(3), "certify exited 4 in words only"),
+            CutKind::Other
+        );
         assert_eq!(kind(None, ""), CutKind::Other);
     }
 }
@@ -3273,8 +4718,14 @@ mod ci_red_suites_tests {
 
     #[test]
     fn a_ci_red_on_a_tree_declaring_no_suite_names_the_whole_testenv_run() {
-        assert_eq!(ci_red_suites(tree(Some("ci_entry = \"make\"\n")).path()), vec!["testenv".to_string()]);
-        assert_eq!(ci_red_suites(tree(None).path()), vec!["testenv".to_string()]);
+        assert_eq!(
+            ci_red_suites(tree(Some("ci_entry = \"make\"\n")).path()),
+            vec!["testenv".to_string()]
+        );
+        assert_eq!(
+            ci_red_suites(tree(None).path()),
+            vec!["testenv".to_string()]
+        );
     }
 }
 
@@ -3290,15 +4741,42 @@ mod adds_path_tests {
         std::fs::create_dir_all(d.join("spira")).unwrap();
         std::fs::write(d.join("spira/test-old.sh"), "a\n").unwrap();
         testkit::git(d, &["add", "."]);
-        testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
+        testkit::git(
+            d,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "base",
+            ],
+        );
         let base = testkit::git(d, &["rev-parse", "HEAD"]);
         std::fs::write(d.join("spira/test-new.sh"), "b\n").unwrap();
         std::fs::write(d.join("spira/test-old.sh"), "c\n").unwrap();
         testkit::git(d, &["add", "."]);
-        testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "tip"]);
+        testkit::git(
+            d,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "tip",
+            ],
+        );
         let tip = testkit::git(d, &["rev-parse", "HEAD"]);
         assert!(adds_path(d, base.trim(), tip.trim(), "spira/test-new.sh"));
         assert!(!adds_path(d, base.trim(), tip.trim(), "spira/test-old.sh"));
-        assert!(!adds_path(d, base.trim(), "no-such-ref", "spira/test-new.sh"));
+        assert!(!adds_path(
+            d,
+            base.trim(),
+            "no-such-ref",
+            "spira/test-new.sh"
+        ));
     }
 }
