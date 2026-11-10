@@ -52,7 +52,7 @@ fn an_empty_shelf_is_refused_not_passed() {
 #[test]
 fn the_first_queue_rework_is_refused_with_the_law_and_the_retry_passes_with_it_attached() {
     let d = testkit::TempDir::new("statute-check-hook");
-    let env = [("SPIRA_CONCIERGE", "1")];
+    let env: [(&str, &str); 0] = [];
     let cmd = "queue rework sp-k3lt4y";
     let first: serde_json::Value = serde_json::from_str(&hook(&d, &env, cmd)).unwrap();
     assert_eq!(first["decision"], "block");
@@ -67,7 +67,7 @@ fn the_first_queue_rework_is_refused_with_the_law_and_the_retry_passes_with_it_a
 #[test]
 fn another_verb_class_is_refused_on_its_own_first_call() {
     let d = testkit::TempDir::new("statute-check-classes");
-    let env = [("SPIRA_CONCIERGE", "1")];
+    let env: [(&str, &str); 0] = [];
     hook(&d, &env, "queue rework sp-1");
     assert!(hook(&d, &env, "queue round eject r1").contains("\"block\""));
 }
@@ -75,20 +75,14 @@ fn another_verb_class_is_refused_on_its_own_first_call() {
 #[test]
 fn the_override_passes_and_is_logged_with_its_reason() {
     let d = testkit::TempDir::new("statute-check-override");
-    let out = hook(&d, &[("SPIRA_CONCIERGE", "1")], "STATUTE_CHECK_CONSIDERED=\"law-a-test-that-flips-is-deleted read; red on both runs\" queue rework sp-1");
+    let out = hook(&d, &[], "STATUTE_CHECK_CONSIDERED=\"law-a-test-that-flips-is-deleted read; red on both runs\" queue rework sp-1");
     assert_eq!(out, "");
     let log = std::fs::read_to_string(d.join("overrides.log")).unwrap();
     assert!(log.contains("red on both runs") && log.contains("queue rework"), "{log}");
 }
 
 #[test]
-fn a_session_that_is_neither_concierge_nor_persona_is_untouched() {
-    let d = testkit::TempDir::new("statute-check-inert");
-    assert_eq!(hook(&d, &[], "queue rework sp-1"), "");
-}
-
-#[test]
 fn a_command_that_is_not_a_decision_is_untouched() {
     let d = testkit::TempDir::new("statute-check-nondecision");
-    assert_eq!(hook(&d, &[("SPIRA_CONCIERGE", "1")], "queue status"), "");
+    assert_eq!(hook(&d, &[], "queue status"), "");
 }

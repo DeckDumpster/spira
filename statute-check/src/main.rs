@@ -45,7 +45,11 @@ fn cfg_path(explicit: &Option<PathBuf>, key: &str, tail: &str) -> Result<PathBuf
 }
 
 fn vocab_of(o: &Opts) -> Vocab {
-    cfg_path(&o.vocab, "SPIRA_HOME", "statute-vocab").and_then(|p| Vocab::load(&p)).unwrap_or_else(|e| {
+    o.vocab
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(|| spira_config::resolve::locate_home_for_process().map(|h| h.join("statute-vocab")))
+        .and_then(|p| Vocab::load(&p)).unwrap_or_else(|e| {
         eprintln!("statute-check: {e}; ranking without synonyms");
         Vocab::default()
     })
@@ -58,14 +62,11 @@ fn run_hook(o: &Opts) -> i32 {
     if payload["tool_name"] != "Bash" {
         return 0;
     }
-    let in_scope = std::env::var("SPIRA_CONCIERGE").is_ok_and(|v| v == "1") || std::env::var("SPIRA_DWARF").is_ok_and(|v| !v.is_empty());
-    if !in_scope {
-        return 0;
-    }
     let command = payload["tool_input"]["command"].as_str().unwrap_or("");
     if hook::classify(command).0.is_empty() {
         return 0;
     }
+    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "statute-check", "hook");
     let shelf = cfg_path(&o.dir, "SPIRA_STATUTE_DIR", "").and_then(|d| load_shelf(&d));
     let state = cfg_path(&o.state, "SPIRA_RUN", "statute-check");
     let log = cfg_path(&o.log, "SPIRA_RUN", "statute-check/overrides.log");
@@ -75,7 +76,7 @@ fn run_hook(o: &Opts) -> i32 {
     };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let env_override = std::env::var(hook::OVERRIDE).ok();
-    let session = payload["session_id"].as_str().filter(|s| !s.is_empty()).map(str::to_string).or_else(|| std::env::var("SPIRA_DWARF").ok()).unwrap_or_else(|| "concierge".into());
+    let session = payload["session_id"].as_str().filter(|s| !s.is_empty()).map(str::to_string).unwrap_or_else(|| "session".into());
     let outcome = hook::decide(
         &Inputs {
             command,
@@ -106,31 +107,33 @@ fn main() {
                 eprintln!("statute-check: {e}");
             }
             eprintln!("{USAGE}");
-            std::process::exit(2);
+            spira_otel::oneshot::exit(2);
         }
     };
     if hook_mode {
-        std::process::exit(run_hook(&o));
+        spira_otel::oneshot::exit(run_hook(&o));
     }
+    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "statute-check", "rank");
     let query = match &o.command {
         Some(c) => format!("{c} {}", o.context),
         None => o.words.join(" "),
     };
     if query.trim().is_empty() {
         eprintln!("{USAGE}");
-        std::process::exit(2);
+        spira_otel::oneshot::exit(2);
     }
     let shelf = match cfg_path(&o.dir, "SPIRA_STATUTE_DIR", "").and_then(|d| load_shelf(&d)) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("statute-check: refusing: {e}");
-            std::process::exit(2);
+            spira_otel::oneshot::exit(2);
         }
     };
     let hits = rank(&shelf, &vocab_of(&o), &query, o.max);
     if hits.is_empty() {
         eprintln!("statute-check: no statute in force governs this text");
-        std::process::exit(1);
+        spira_otel::oneshot::exit(1);
     }
     print!("{}", render(&hits));
+    spira_otel::oneshot::exit(0);
 }
