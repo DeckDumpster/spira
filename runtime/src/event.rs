@@ -298,13 +298,29 @@ pub struct Registration {
     pub signal_effects: Vec<&'static str>,
     /// Every effect the task declares, for `status`; the plane of each is [`Self::plane_of`].
     pub effects: Vec<&'static str>,
+    /// How the task's carry is kept: one row per irreducible fact, rather than the whole carry
+    /// under one key. `None` keeps the whole carry.
+    pub rows: Option<RowCodec>,
+}
+
+/// A task's carry as keyed rows. `split` names the irreducible facts of a carry body, one row
+/// each; a row that stops being named is overwritten with an empty value, never deleted. `join`
+/// is its inverse over the rows a boot finds: whatever it leaves out is rebuilt by the first tick.
+#[derive(Clone, Copy)]
+pub struct RowCodec {
+    pub stream: &'static str,
+    /// Other streams the same carry may be emitted on; the newest of them is the one kept.
+    pub also: &'static [&'static str],
+    pub tag: EventKindTag,
+    pub split: fn(&str) -> std::collections::BTreeMap<String, String>,
+    pub join: fn(&std::collections::BTreeMap<String, String>) -> String,
 }
 
 impl Registration {
     /// In `Act` on the `Work` plane; a service takes the mode of every task from its configured
     /// table and the plane from its task row.
     pub fn new(name: &str, handler: impl Handler + 'static) -> Self {
-        Registration { name: name.into(), handler: Box::new(handler), mode: Mode::Act, plane: Plane::Work, signal_effects: vec![], effects: vec![] }
+        Registration { name: name.into(), handler: Box::new(handler), mode: Mode::Act, plane: Plane::Work, signal_effects: vec![], effects: vec![], rows: None }
     }
 
     pub fn with_mode(mut self, mode: Mode) -> Self {
@@ -333,6 +349,11 @@ impl Registration {
         self
     }
 
+    pub fn with_rows(mut self, rows: RowCodec) -> Self {
+        self.rows = Some(rows);
+        self
+    }
+
     /// The plane of this task's effect `name`: a halt holds it only on `Work`.
     pub fn plane_of(&self, name: &str) -> Plane {
         if self.plane == Plane::Signal || self.signal_effects.contains(&name) {
@@ -341,4 +362,12 @@ impl Registration {
             Plane::Work
         }
     }
+}
+
+/// A [`RowCodec`] over `stream` and `tag` that keeps what `parts` names (see [`crate::rows`]).
+#[macro_export]
+macro_rules! row_codec {
+    ($stream:expr, $tag:expr, $parts:expr) => {
+        $crate::event::RowCodec { stream: $stream, also: &[], tag: $tag, split: |b| $crate::rows::split(b, $parts), join: |r| $crate::rows::join(r, $parts) }
+    };
 }

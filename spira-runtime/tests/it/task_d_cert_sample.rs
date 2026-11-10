@@ -127,3 +127,19 @@ fn t5_a_green_sample_records_the_summary_cert_sweep_wrote() {
     let rec = asked(&r, RECORD);
     assert!(rec.iter().any(|l| l.contains("SAMPLE round=r1 ran=2 red=0 fault=0 wall=")), "{rec:?}");
 }
+
+fn mid_leg() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(tip(8, None))))
+}
+
+#[test]
+fn a_pass_in_flight_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&mid_leg(), NAME);
+    assert!(rows.iter().any(|k| k == "picks") && rows.iter().any(|k| k == "work"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_records_the_leg_that_ends_after_it_as_an_unstopped_process_does() {
+    let ended = ran(&mid_leg());
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(mid_leg, || CertSample::new(config()).registration(), STREAM, ended);
+}

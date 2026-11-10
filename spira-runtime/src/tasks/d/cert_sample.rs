@@ -207,9 +207,10 @@ impl CertSample {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, super::sweep::ROW_PARTS))
     }
 }
+
 
 impl Handler for CertSample {
     fn interests(&self) -> &[EventKindTag] {

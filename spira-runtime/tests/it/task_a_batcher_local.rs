@@ -632,3 +632,19 @@ fn sp_2gcs4h_after_a_landing_with_a_certified_bead_and_no_round_open_the_next_ti
     let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
     assert_eq!(names, [FETCH, ASSEMBLE], "{acts:?}");
 }
+
+fn at_work() -> TaskRig {
+    let mut r = rig(1, busy());
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    kit::assert_kept_as_rows(&at_work(), NAME);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+}

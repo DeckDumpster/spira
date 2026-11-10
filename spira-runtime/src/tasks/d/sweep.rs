@@ -210,6 +210,9 @@ pub struct Carry {
     pub work: Work,
 }
 
+/// The rows a pass keeps: every field of its [`Carry`].
+pub const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("tip"), runtime::rows::Part::Field("round"), runtime::rows::Part::Field("picks"), runtime::rows::Part::Field("seq"), runtime::rows::Part::Field("pending"), runtime::rows::Part::Field("reruns"), runtime::rows::Part::Field("bisect"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("filed"), runtime::rows::Part::Field("waiting_since"), runtime::rows::Part::Field("work")];
+
 /// What moved the machine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Input<S> {

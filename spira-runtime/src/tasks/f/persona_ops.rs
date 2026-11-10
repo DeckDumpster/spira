@@ -340,7 +340,7 @@ impl PersonaOps {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::event::RowCodec { also: &[UNITS_STREAM], ..runtime::row_codec!(STREAM, STATE, ROW_PARTS)})
     }
 
     fn ours(effect: &str) -> bool {
@@ -371,6 +371,8 @@ impl PersonaOps {
         EffectSpec { input: serde_json::json!({ "cfg": self.config, "act": act }).to_string(), ..a }
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("run_id"), runtime::rows::Part::Field("name"), runtime::rows::Part::Field("started_at")];
 
 impl Handler for PersonaOps {
     fn interests(&self) -> &[EventKindTag] {

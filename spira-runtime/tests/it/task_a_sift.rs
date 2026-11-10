@@ -102,3 +102,39 @@ fn t5_a_conflict_is_noted_then_sent_back_and_not_counted() {
     assert_eq!(order, [NOTE, SEND_BACK], "the note precedes the send-back");
     assert_ne!(carry.beads.get("sp-a").map(|b| b.0), Some(Sifted::SentBack(1)), "a conflict is never counted");
 }
+
+/// A submission whose target names no outcome: sent back, and again at each tick until the cap.
+fn without_a_target() -> Snapshot {
+    let mut s = busy();
+    s.repos.get_mut("spira").unwrap().items.insert("sp-a".into(), "Target: wall under 10 s".into());
+    s
+}
+
+fn sent_back_twice() -> TaskRig {
+    let mut r = rig(1, without_a_target());
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_sifted_machines_and_the_waiting_notes_are_kept_a_row_each() {
+    let r = sent_back_twice();
+    let rows = kit::assert_kept_as_rows(&r, NAME);
+    assert!(rows.iter().any(|k| k == "beads/sp-a"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_send_back_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(sent_back_twice, registration, STREAM, EventKind::new(TICK, ""));
+}
+
+#[test]
+fn a_boot_does_not_start_the_send_back_count_again() {
+    let mut r = sent_back_twice();
+    r.reopen(registration()).unwrap();
+    for _ in 0..6 {
+        r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    }
+    let sent = r.requested().iter().filter(|q| q.name == SEND_BACK).count();
+    assert_eq!(sent, sift::SEND_BACK_CAP as usize, "send-backs across a restart: {sent}");
+}

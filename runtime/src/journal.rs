@@ -36,7 +36,7 @@ pub struct Poison {
 pub const SCHEDULER_TASK: &str = "scheduler";
 pub const HALTED_KEY: &str = "halted";
 pub const HELD_KEY: &str = "held";
-/// The key a task's whole carry is stored under until the per-family split.
+/// The key a whole carry is stored under, for a task registered without a row codec; a task with one has this row spent.
 pub const CARRY_KEY: &str = "carry";
 
 /// One key of a task's state, overwritten in place.

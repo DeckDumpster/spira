@@ -161,3 +161,34 @@ fn t5_parity_rc_0_with_a_wiki_commits_and_rc_124_settles_as_timeout() {
     assert_eq!(next.state, State::Settling);
     assert_eq!(settled(&acts), "retry", "a dirty checkout settles as retry");
 }
+
+fn two_candidates() -> Snapshot {
+    Snapshot { candidates: vec![candidate("s1", 90), candidate("s2", 90)], ..snap(90, &[]) }
+}
+
+fn mid_run() -> TaskRig {
+    let mut r = rig(1, |_| two_candidates());
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+fn carry_after(r: &TaskRig) -> Carry {
+    spira_runtime::watchers::carried(r.engine().projection(), &StreamKey(STREAM.into()), STATE)
+}
+
+#[test]
+fn the_run_in_flight_is_kept_as_rows_without_the_queue() {
+    let r = mid_run();
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&r, NAME);
+    assert!(rows.iter().any(|k| k == "current") && !rows.iter().any(|k| k == "queue"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_keeps_the_run_and_leaves_the_queue_to_the_next_observe() {
+    let mut r = mid_run();
+    let before = carry_after(&r);
+    assert_eq!(before.queue, ["s2"], "the scenario queues the second session");
+    r.reopen(handler().registration()).unwrap();
+    let after = carry_after(&r);
+    assert_eq!(after, Carry { queue: vec![], ..before });
+}

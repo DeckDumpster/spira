@@ -185,6 +185,32 @@ pub fn assert_read_equals_record<C: DeserializeOwned + PartialEq + std::fmt::Deb
     assert_eq!(read, recorded, "the carry read is not the carry recorded");
 }
 
+/// The rows `task` holds after `rig` ran: keyed, and none under the whole-carry key.
+pub fn assert_kept_as_rows(rig: &TaskRig, task: &str) -> Vec<String> {
+    let rows: Vec<String> = rig.journal.state().into_iter().filter(|((t, _), v)| t == task && !v.is_empty()).map(|((_, k), _)| k).collect();
+    assert!(!rows.is_empty(), "{task} kept no rows");
+    assert!(!rows.iter().any(|k| k == runtime::journal::CARRY_KEY), "{task} kept its whole carry under one key: {rows:?}");
+    rows
+}
+
+/// A boot repeats no side effect and misses nothing: the first tick after a restart on the same
+/// store asks for exactly what the same tick asks of a process that never stopped. `make` builds a
+/// rig and drives it to a carry worth keeping, the same way each time.
+pub fn assert_boot_matches_an_unstopped_run(make: impl Fn() -> TaskRig, registration: impl Fn() -> runtime::event::Registration, stream: &str, tick: EventKind) {
+    let after = |restart: bool| {
+        let mut r = make();
+        if restart {
+            r.reopen(registration()).expect("restart");
+        }
+        let mark = r.requested().len();
+        r.tick(stream, tick.clone()).expect("first tick");
+        r.requested()[mark..].iter().map(|q| (q.name.clone(), q.input.clone())).collect::<Vec<_>>()
+    };
+    let (rebooted, unstopped) = (after(true), after(false));
+    assert!(!unstopped.is_empty(), "the control tick asked for nothing: the scenario proves nothing");
+    assert_eq!(rebooted, unstopped, "the first tick after a restart is not the tick of a process that never stopped");
+}
+
 /// An observe double answering each of `worlds` in turn for `every` answers, round and round:
 /// a world that changes on a fixed beat, the same on every run.
 pub fn cycling<S: Serialize + Send + Sync + 'static>(worlds: Vec<S>, every: usize) -> impl Fn(&str) -> Result<String, String> + Send + Sync + 'static {

@@ -188,3 +188,19 @@ fn a_gate_leg_that_runs_long_is_never_recovered() {
     assert!(acts.iter().all(|a| a.effect != RECOVER), "{acts:?}");
     assert_eq!(next.slots[0].stall, None);
 }
+
+fn at_work() -> TaskRig {
+    let mut r = rig(1, busy());
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    kit::assert_kept_as_rows(&at_work(), NAME);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+}

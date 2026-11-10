@@ -158,3 +158,19 @@ fn an_attribution_leg_is_given_one_wall_for_each_corpus_run_it_may_make() {
     assert!(lost_after(3, wall * 5 + 1));
     assert!(!lost_after(1, wall * 2), "past one wall, as the audit's 2099s iterations would be");
 }
+
+fn at_work() -> TaskRig {
+    let mut r = rig(1, busy());
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    kit::assert_kept_as_rows(&at_work(), NAME);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+}

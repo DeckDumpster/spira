@@ -701,13 +701,15 @@ impl QueueStep {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
         ("queue.step/boot", STREAM, EventKind::new(TICK, ""))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "repos", drop: &[] }];
 
 impl Handler for QueueStep {
     fn interests(&self) -> &[EventKindTag] {

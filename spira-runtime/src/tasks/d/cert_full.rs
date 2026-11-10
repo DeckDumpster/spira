@@ -307,9 +307,10 @@ impl CertFull {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, super::sweep::ROW_PARTS))
     }
 }
+
 
 impl Handler for CertFull {
     fn interests(&self) -> &[EventKindTag] {

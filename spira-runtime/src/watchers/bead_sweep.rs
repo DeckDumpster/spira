@@ -120,6 +120,15 @@ pub struct Carry {
     pub seen: BTreeSet<String>,
 }
 
+fn split(body: &str) -> std::collections::BTreeMap<String, String> {
+    let carry: Carry = serde_json::from_str(body).unwrap_or_default();
+    carry.seen.into_iter().map(|l| (runtime::rows::entry_key("seen", &l), l)).collect()
+}
+
+fn join(rows: &std::collections::BTreeMap<String, String>) -> String {
+    serde_json::to_string(&Carry { seen: rows.values().cloned().collect() }).unwrap_or_default()
+}
+
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = y - i64::from(m <= 2);
     let era = y.div_euclid(400);
@@ -311,7 +320,7 @@ pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, repaired: &[String]
 
 impl BeadSweep {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(RowCodec { stream: STREAM, also: &[], tag: STATE, split, join })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

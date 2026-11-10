@@ -146,3 +146,19 @@ fn t5_the_event_lines_are_the_ones_cert_sweep_recorded() {
     acc::assert_healthy(&r, STREAM);
     assert!(asked(&r, RECORD).iter().any(|i| i.contains("SWEEP FAULT mode=full round=r2:")), "{:?}", asked(&r, RECORD));
 }
+
+fn mid_leg() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(new_tip(None))))
+}
+
+#[test]
+fn a_pass_in_flight_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&mid_leg(), NAME);
+    assert!(rows.iter().any(|k| k == "picks") && rows.iter().any(|k| k == "work"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_records_the_leg_that_ends_after_it_as_an_unstopped_process_does() {
+    let ended = ran(&mid_leg());
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(mid_leg, || CertFull::new(config()).registration(), STREAM, ended);
+}

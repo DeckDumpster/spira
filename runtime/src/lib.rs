@@ -14,6 +14,7 @@ pub mod marker;
 pub mod offload;
 pub mod pools;
 pub mod ports;
+pub mod rows;
 pub mod scheduler;
 pub mod socket;
 pub mod sources;

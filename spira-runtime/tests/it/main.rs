@@ -14,6 +14,7 @@ mod no_fork_edges_ops;
 mod no_spawn;
 mod pr_notify_parity;
 mod repo_events_restart;
+mod state_rows;
 mod status;
 mod supersede_duty_parity;
 mod task_a_batcher_forge;

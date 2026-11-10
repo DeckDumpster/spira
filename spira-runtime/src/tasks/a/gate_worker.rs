@@ -303,6 +303,38 @@ struct WrittenCarry {
     width: Option<usize>,
 }
 
+/// One row per slot in use (`slot/0003`) and the pool's width.
+fn split_slots(body: &str) -> BTreeMap<String, String> {
+    let Ok(written) = serde_json::from_str::<WrittenCarry>(body) else { return BTreeMap::new() };
+    let width = written.width.unwrap_or(written.slots.len()).max(written.slots.len());
+    let mut rows: BTreeMap<String, String> = written.slots.iter().enumerate().filter(|(_, s)| **s != Slot::default()).map(|(i, s)| (format!("slot/{i:04}"), serde_json::to_string(s).unwrap_or_default())).collect();
+    rows.insert("width".into(), width.to_string());
+    rows
+}
+
+fn join_slots(rows: &BTreeMap<String, String>) -> String {
+    let width: usize = rows.get("width").and_then(|w| w.parse().ok()).unwrap_or(0);
+    let mut slots = vec![];
+    for (k, v) in rows.iter().filter(|(k, _)| k.starts_with("slot/")) {
+        let Some(i) = k["slot/".len()..].parse::<usize>().ok() else { continue };
+        let Ok(slot) = serde_json::from_str::<Slot>(v) else { continue };
+        if slots.len() <= i {
+            slots.resize(i + 1, Slot::default());
+        }
+        slots[i] = slot;
+    }
+    serde_json::to_string(&Carry { slots }.padded(width)).unwrap_or_default()
+}
+
+impl Carry {
+    fn padded(mut self, width: usize) -> Self {
+        if self.slots.len() < width {
+            self.slots.resize(width, Slot::default());
+        }
+        self
+    }
+}
+
 impl From<Carry> for WrittenCarry {
     fn from(c: Carry) -> Self {
         let width = c.slots.len();
@@ -576,7 +608,7 @@ impl GateWorker {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::event::RowCodec { stream: STREAM, also: &[], tag: STATE, split: split_slots, join: join_slots })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -745,4 +777,32 @@ pub fn recover(e: &crate::Effects, input: &str) -> Result<String, String> {
     let slot: usize = input.trim().parse().map_err(|_| format!("{RECOVER}: bad slot {input:?}"))?;
     queue(e).recover(slot);
     Ok(format!("slot {slot} recovered"))
+}
+
+#[cfg(test)]
+mod slot_row_tests {
+    use super::*;
+
+    fn busy(ms: u64) -> Slot {
+        Slot { started_ms: Some(ms), ..Slot::default() }
+    }
+
+    #[test]
+    fn a_carry_with_a_gap_and_idle_tail_comes_back_from_its_rows_at_the_same_width() {
+        let carry = Carry { slots: vec![Slot::default(), busy(7), Slot::default(), busy(9), Slot::default(), Slot::default()] };
+        let body = serde_json::to_string(&carry).unwrap();
+        let rows = split_slots(&body);
+        assert_eq!(rows.keys().cloned().collect::<Vec<_>>(), ["slot/0001", "slot/0003", "width"], "idle slots are not stored");
+        let back: Carry = serde_json::from_str(&join_slots(&rows)).unwrap();
+        assert_eq!(back, carry);
+    }
+
+    #[test]
+    fn dropping_the_width_row_loses_the_idle_tail() {
+        let carry = Carry { slots: vec![busy(1), Slot::default(), Slot::default()] };
+        let mut rows = split_slots(&serde_json::to_string(&carry).unwrap());
+        rows.remove("width");
+        let back: Carry = serde_json::from_str(&join_slots(&rows)).unwrap();
+        assert_eq!(back.slots.len(), 1);
+    }
 }
