@@ -463,7 +463,7 @@ fn oldest_unreleased(
     landings.sort_unstable();
     // Landings are one line of history: a release containing the newest contains the rest.
     if let (Some(release), Some((_, newest))) = (in_effect, landings.last()) {
-        if landings.iter().all(|(_, c)| !c.is_empty()) && ancestor(newest, release) == Ok(true) {
+        if landings.len() > 1 && landings.iter().all(|(_, c)| !c.is_empty()) && ancestor(newest, release) == Ok(true) {
             return None;
         }
     }
