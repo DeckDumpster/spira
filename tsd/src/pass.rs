@@ -65,6 +65,7 @@ pub enum Place {
     Ec2,
     Proxmox,
     Local,
+    Host,
 }
 
 impl Place {
@@ -73,11 +74,12 @@ impl Place {
             Place::Ec2 => "ec2",
             Place::Proxmox => "proxmox",
             Place::Local => "local",
+            Place::Host => "host",
         }
     }
 
     pub fn parse(s: &str) -> Result<Place, String> {
-        [Place::Ec2, Place::Proxmox, Place::Local].into_iter().find(|p| p.as_str() == s).ok_or_else(|| format!("where {s:?} is not one of ec2, proxmox, local"))
+        [Place::Ec2, Place::Proxmox, Place::Local, Place::Host].into_iter().find(|p| p.as_str() == s).ok_or_else(|| format!("where {s:?} is not one of ec2, proxmox, local, host"))
     }
 }
 
@@ -278,6 +280,14 @@ mod tests {
         for c in Cause::ALL {
             assert_eq!(Cause::parse(c.as_str()), Ok(c));
         }
+    }
+
+    #[test]
+    fn a_host_round_is_a_place_a_row_can_carry() {
+        assert_eq!(Place::parse("host"), Ok(Place::Host));
+        assert_eq!(Place::Host.as_str(), "host");
+        let a: Vec<String> = "--repo r --batch b --pass 1 --where host --cause green".split(' ').map(String::from).collect();
+        assert_eq!(from_args(&a).unwrap().place, Place::Host);
     }
 
     #[test]

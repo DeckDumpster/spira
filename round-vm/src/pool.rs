@@ -107,6 +107,14 @@ fn write_state(path: &Path, s: &PoolState) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Why a pass is placed on EC2 before the spill rule is asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Forced {
+    No,
+    Image,
+    HostRefused(String),
+}
+
 impl Pool {
     pub fn state_file(&self) -> PathBuf {
         self.state_dir.join("pool.json")
@@ -330,18 +338,19 @@ impl Pool {
         owner: Option<ProcId>,
         holder: Option<ProcId>,
     ) -> Result<(Vm, AcquireMode), String> {
-        self.acquire_placed(deps, owner, holder, false)
+        self.acquire_placed(deps, owner, holder, Forced::No)
     }
 
-    /// As `acquire_held`; `needs_ec2` places the pass on EC2 whatever the spill rule says,
-    /// because the local template does not hold the image the pass needs. With no EC2
-    /// provider configured it leases locally, as before.
+    /// As `acquire_held`; `forced` places the pass on EC2 whatever the spill rule says: the
+    /// local template does not hold the image the pass needs (no fallback), or the host took
+    /// the round's place and was refused (falls back to local if EC2 cannot be had). With no
+    /// EC2 provider configured it leases locally, as before.
     pub fn acquire_placed(
         &self,
         deps: &Deps,
         owner: Option<ProcId>,
         holder: Option<ProcId>,
-        needs_ec2: bool,
+        forced: Forced,
     ) -> Result<(Vm, AcquireMode), String> {
         let me = ProcId::current();
         let mut attempts = 0u32;
@@ -372,21 +381,23 @@ impl Pool {
                 self.reap_unheld(&attempt);
             }
             if let Some(plan) = attempt.spill.as_ref().filter(|_| !spill_failed) {
-                let place = if needs_ec2 {
-                    Place::Ec2("the local template does not hold the round's image".into())
-                } else {
-                    let leased = self.with_state(|s| Self::local_leased(s))?;
-                    decide(
-                        &plan.rule,
-                        leased,
-                        wait_since.map(|t| t.elapsed()),
-                        (plan.pressure)(),
-                    )
+                let place = match &forced {
+                    Forced::Image => Place::Ec2("the local template does not hold the round's image".into()),
+                    Forced::HostRefused(why) => Place::Ec2(why.clone()),
+                    Forced::No => {
+                        let leased = self.with_state(|s| Self::local_leased(s))?;
+                        decide(
+                            &plan.rule,
+                            leased,
+                            wait_since.map(|t| t.elapsed()),
+                            (plan.pressure)(),
+                        )
+                    }
                 };
                 if let Place::Ec2(reason) = place {
                     match self.spill(&attempt, plan, owner, holder, &reason) {
                         Ok(vm) => return Ok((vm, AcquireMode::Cold)),
-                        Err(e) if needs_ec2 => return Err(format!("round-vm: acquire: EC2 launch failed ({reason}), and a local VM would refuse the pass: {e}")),
+                        Err(e) if forced == Forced::Image => return Err(format!("round-vm: acquire: EC2 launch failed ({reason}), and a local VM would refuse the pass: {e}")),
                         Err(e) if plan.only || plan.rule.always => return Err(format!("round-vm: acquire: EC2 launch failed ({reason}), placement {} has no local fallback: {e}", if plan.only { "ec2-only" } else { "ec2-always" })),
                         Err(e) => {
                             eprintln!("round-vm: spill to EC2 failed, staying local: {e}");
@@ -2334,12 +2345,26 @@ mod tests {
                 },
                 None,
                 None,
-                true,
+                Forced::Image,
             )
             .unwrap();
         assert!(crate::ec2::is_ec2_handle(&vm.handle), "{vm:?}");
         assert!(fp.live_vms().is_empty());
         assert!(lease_reason(&pl, &vm.handle).contains("does not hold the round's image"));
+    }
+
+    #[test]
+    fn a_pass_the_host_refused_spills_to_ec2_with_a_free_local_vm_and_no_pressure() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(0.0)));
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &sp };
+        let (vm, _) = pl.acquire_placed(&deps, None, None, Forced::HostRefused("the host round slot is taken".into())).unwrap();
+        assert!(crate::ec2::is_ec2_handle(&vm.handle), "{vm:?}");
+        assert!(fp.live_vms().is_empty());
+        assert!(lease_reason(&pl, &vm.handle).contains("host round slot is taken"));
     }
 
     #[test]

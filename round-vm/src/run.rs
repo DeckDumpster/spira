@@ -1804,6 +1804,7 @@ pub fn merge_tsd(src: &Path, run_dir: &Path, vm: &str, vcpus: u32, maxpar: u32, 
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct RunEnv<'a> {
     pub cfg: &'a Config,
     pub pool: &'a Pool,
@@ -1811,6 +1812,8 @@ pub struct RunEnv<'a> {
     pub host: &'a dyn Host,
     pub remote: &'a dyn Remote,
     pub record: &'a dyn Recorder,
+    /// Set: a harness round is first offered to this host (`SPIRA_ROUND_VM_HOST`).
+    pub host_plan: Option<&'a crate::host::HostPlan>,
 }
 
 /// Writes a pass boundary onto the round's batch row.
@@ -2059,9 +2062,14 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
     let marks = facts.marks.clone().unwrap_or_default();
     let (boot_s, build_s, suites_s) = marks.phases(facts.wait_s, crate::progress::now_secs());
     let lost = marks.get().lost;
-    let place = if facts.handle.as_deref().is_some_and(crate::ec2::is_ec2_handle) { tsd::pass::Place::Ec2 } else { tsd::pass::Place::Proxmox };
+    let place = match facts.handle.as_deref() {
+        Some(crate::host::HOST_HANDLE) => tsd::pass::Place::Host,
+        Some(h) if crate::ec2::is_ec2_handle(h) => tsd::pass::Place::Ec2,
+        _ => tsd::pass::Place::Proxmox,
+    };
     let vcpus = match place {
         tsd::pass::Place::Ec2 => facts.instance_type.as_deref().and_then(crate::ec2::vcpus_of),
+        tsd::pass::Place::Host => facts.instance_type.as_deref().and_then(|t| t.strip_suffix("vcpu")).and_then(|n| n.parse().ok()),
         _ => Some(env.cfg.vcpus),
     };
     let instance_type = facts.instance_type.clone().unwrap_or_else(|| format!("{}vcpu", env.cfg.vcpus));
@@ -2209,7 +2217,22 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         f.started = Some(crate::progress::now_secs());
         f.marks = Some(progress.lock().unwrap_or_else(|e| e.into_inner()).marks());
     }
-    let acquired = {
+    let (host_slot, spill_reason) = match place_on_host(env, args) {
+        HostPlacement::Host(slot) => (Some(slot), None),
+        HostPlacement::Spill(why) => (None, Some(why)),
+        HostPlacement::NotOffered => (None, None),
+    };
+    let acquired = if host_slot.is_some() {
+        Ok((Vm { handle: crate::host::HOST_HANDLE.to_string(), addr: HOST_ADDR.to_string() }, AcquireMode::Warm))
+    } else {
+        let forced = match (&spill_reason, image_missing) {
+            (_, true) => crate::pool::Forced::Image,
+            (Some(why), false) => {
+                eprintln!("round-vm run: not on the host: {why}");
+                crate::pool::Forced::HostRefused(why.clone())
+            }
+            (None, false) => crate::pool::Forced::No,
+        };
         let leasing = AtomicBool::new(true);
         std::thread::scope(|sc| {
             sc.spawn(|| {
@@ -2230,7 +2253,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
                     std::thread::sleep(Duration::from_millis(50));
                 }
             });
-            let got = env.pool.acquire_placed(env.deps, Some(ProcId::current()), None, image_missing);
+            let got = env.pool.acquire_placed(env.deps, Some(ProcId::current()), None, forced);
             leasing.store(false, Ordering::SeqCst);
             got
         })
@@ -2244,9 +2267,12 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
             return 2;
         }
     };
-    env.pool.label(&vm.handle, &run_label(args));
+    let on_host = host_slot.is_some();
+    if !on_host {
+        env.pool.label(&vm.handle, &run_label(args));
+    }
     progress.place(&results_dir, place_of(&vm.handle));
-    let instance_type = (env.deps.factory)().ok().and_then(|a| a.provider.instance_type(&vm.handle));
+    let instance_type = if on_host { Some(format!("{}vcpu", host_vcpus())) } else { (env.deps.factory)().ok().and_then(|a| a.provider.instance_type(&vm.handle)) };
     {
         let mut f = facts.lock().unwrap_or_else(|e| e.into_inner());
         f.wait_s = leased_from.elapsed().as_secs();
@@ -2265,7 +2291,9 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         }
         None => args,
     };
-    let host_addr = if crate::ec2::is_ec2_handle(&vm.handle) {
+    let host_addr = if on_host {
+        host_addr
+    } else if crate::ec2::is_ec2_handle(&vm.handle) {
         match crate::config::declared("SPIRA_ROUND_VM_EC2_HOST_ADDR") {
             Some(a) => a,
             None => {
@@ -2278,6 +2306,10 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         host_addr
     };
     let keep = AtomicBool::new(false);
+    if let (Some(_slot), Some(plan)) = (&host_slot, env.host_plan) {
+        let henv = RunEnv { remote: plan.remote.as_ref(), ..*env };
+        return on_vm(&henv, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep);
+    }
     let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep);
     if keep.load(Ordering::SeqCst) {
         eprintln!("{}", held_vm_line(&vm.handle, &vm.addr));
@@ -2366,11 +2398,40 @@ fn pool_detail(state_file: &Path) -> Option<String> {
     Some(format!("VM {} {:?}: {}", e.vm, e.to, e.reason).to_lowercase())
 }
 
+const HOST_ADDR: &str = "127.0.0.1";
+
 fn place_of(handle: &str) -> &'static str {
-    if crate::ec2::is_ec2_handle(handle) {
+    if handle == crate::host::HOST_HANDLE {
+        "host"
+    } else if crate::ec2::is_ec2_handle(handle) {
         "ec2"
     } else {
         "proxmox"
+    }
+}
+
+fn host_vcpus() -> u32 {
+    std::thread::available_parallelism().map_or(1, |n| n.get() as u32)
+}
+
+enum HostPlacement {
+    Host(crate::host::HostSlot),
+    Spill(String),
+    NotOffered,
+}
+
+/// Offers a harness round to this host: it runs here only with the host slot free and the host
+/// under both pressure thresholds. A slot that cannot be read is a refusal, never a free slot.
+fn place_on_host(env: &RunEnv, args: &RunArgs) -> HostPlacement {
+    use crate::spill::{decide_host, HostPlace};
+    let Some(plan) = env.host_plan.filter(|_| args.ci_entry.is_none()) else { return HostPlacement::NotOffered };
+    let slot = match crate::host::HostSlot::try_take(&env.cfg.state_dir) {
+        Ok(slot) => slot,
+        Err(e) => return HostPlacement::Spill(format!("the host round slot is unreadable: {e}")),
+    };
+    match decide_host(&plan.rule, slot.is_some(), (plan.load)()) {
+        HostPlace::Host => slot.map_or(HostPlacement::NotOffered, HostPlacement::Host),
+        HostPlace::Ec2(why) => HostPlacement::Spill(why),
     }
 }
 
@@ -2645,7 +2706,8 @@ pub const VM_LOST_EXIT: i32 = 75;
 
 /// Whether the hypervisor says `vm` is no longer running; a provider that cannot answer says no.
 fn vm_lost(env: &RunEnv, vm: &Vm) -> bool {
-    (env.deps.factory)().ok().is_some_and(|a| matches!(a.provider.alive(&vm.handle), Ok(false)))
+    vm.handle != crate::host::HOST_HANDLE
+        && (env.deps.factory)().ok().is_some_and(|a| matches!(a.provider.alive(&vm.handle), Ok(false)))
 }
 
 /// The VM is gone, so its lease is not kept: `run_pass` releases it on the way out.
@@ -2980,7 +3042,7 @@ fn after_batch(
         batch_wall_secs: wall,
         build_wall_secs: build,
         suite_wall_secs_sum: suite_sum,
-        provider: if crate::ec2::is_ec2_handle(&vm.handle) { "ec2" } else { "proxmox" }.to_string(),
+        provider: place_of(&vm.handle).to_string(),
     };
     let mdir = cfg.state_dir.join("manifests");
     let written = fs::create_dir_all(&mdir)
@@ -4103,7 +4165,7 @@ mod tests {
         };
         let alarm = FakeAlarm::default();
         let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
-        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote, record: &FakeRecorder::default() }, a)
+        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote, record: &FakeRecorder::default(), host_plan: None }, a)
     }
 
     #[derive(Default)]
@@ -4367,6 +4429,84 @@ mod tests {
         RunArgs { round_batch: Some("r-1".into()), round_repo: Some("sp".into()), results_dir: Some(fx.cfg.run_dir.join("results")), ..tree(fx) }
     }
 
+    fn host_plan(remote: FakeRemote, load: crate::spill::HostLoad) -> crate::host::HostPlan {
+        crate::host::HostPlan {
+            rule: crate::spill::HostRule { io_full_avg60: 30.0, cpu_some_avg60: 60.0 },
+            home: PathBuf::from("/unused"),
+            load: Box::new(move || load),
+            remote: Box::new(remote),
+        }
+    }
+
+    fn go_with_host(fx: &Fixture, remote: &FakeRemote, plan: &crate::host::HostPlan, a: &RunArgs) -> i32 {
+        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
+        let fp = fx.fp.clone();
+        let f = move || Ok(Attempt { provider: Box::new(fp.clone()), spill: None, iface: "ens18".into(), ssh_user: "root".into(), pubkey: "k".into(), timing: Timing { boot_tries: 1, poll: Duration::ZERO, gone_tries: 1 } });
+        let alarm = FakeAlarm::default();
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
+        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote, record: &FakeRecorder::default(), host_plan: Some(plan) }, a)
+    }
+
+    fn recorded_where(fx: &Fixture) -> String {
+        let rows = fs::read_to_string(fx.cfg.run_dir.join("tsd/cert-pass.jsonl")).unwrap_or_default();
+        let row: Value = serde_json::from_str(rows.lines().last().expect("a pass row")).unwrap();
+        row["where"].as_str().unwrap().to_string()
+    }
+
+    const CALM: crate::spill::HostLoad = crate::spill::HostLoad { io_full_avg60: Some(1.0), cpu_some_avg60: Some(1.0) };
+
+    #[test]
+    fn a_round_with_the_host_slot_free_runs_on_the_host_and_leases_no_vm() {
+        let fx = fixture();
+        let vm_remote = FakeRemote::green();
+        let plan = host_plan(FakeRemote::green(), CALM);
+        let code = go_with_host(&fx, &vm_remote, &plan, &round_args(&fx));
+        assert_ne!(code, 2);
+        assert_eq!(fx.fp.count("clone"), 0, "no VM is cloned for a host round");
+        assert!(vm_remote.jobs.lock().unwrap().is_empty(), "the VM's ssh is never touched");
+        assert_eq!(recorded_where(&fx), "host");
+    }
+
+    #[test]
+    fn a_round_cut_while_the_host_slot_is_busy_does_not_run_on_the_host() {
+        let fx = fixture();
+        let vm_remote = FakeRemote::green();
+        let host_remote = FakeRemote::green();
+        let plan = host_plan(host_remote, CALM);
+        let _taken = crate::host::HostSlot::try_take(&fx.cfg.state_dir).unwrap().expect("the slot was free");
+        go_with_host(&fx, &vm_remote, &plan, &round_args(&fx));
+        assert_eq!(fx.fp.count("clone"), 1, "the round went to a VM");
+        assert_ne!(recorded_where(&fx), "host");
+    }
+
+    #[test]
+    fn a_round_cut_under_host_pressure_does_not_run_on_the_host() {
+        let fx = fixture();
+        let vm_remote = FakeRemote::green();
+        let hot = crate::spill::HostLoad { io_full_avg60: Some(55.0), cpu_some_avg60: Some(1.0) };
+        let plan = host_plan(FakeRemote::green(), hot);
+        go_with_host(&fx, &vm_remote, &plan, &round_args(&fx));
+        assert_eq!(fx.fp.count("clone"), 1);
+        assert_ne!(recorded_where(&fx), "host");
+    }
+
+    #[test]
+    fn a_foreign_repos_ci_round_is_never_offered_to_the_host() {
+        let fx = fixture();
+        let plan = host_plan(FakeRemote::green(), CALM);
+        let a = RunArgs { ci_entry: Some("deploy/ci.sh".into()), ..round_args(&fx) };
+        go_with_host(&fx, &FakeRemote::green(), &plan, &a);
+        assert_eq!(fx.fp.count("clone"), 1);
+    }
+
+    #[test]
+    fn the_host_slot_is_free_again_once_a_host_round_ends() {
+        let fx = fixture();
+        let plan = host_plan(FakeRemote::green(), CALM);
+        go_with_host(&fx, &FakeRemote::green(), &plan, &round_args(&fx));
+        assert!(crate::host::HostSlot::try_take(&fx.cfg.state_dir).unwrap().is_some());
+    }
+
     #[test]
     fn a_vm_that_answers_ssh_and_never_starts_the_round_is_the_named_no_output_fault() {
         let fx = fixture();
@@ -4379,7 +4519,7 @@ mod tests {
             let f = move || Ok(Attempt { provider: Box::new(fp.clone()), spill: None, iface: "ens18".into(), ssh_user: "root".into(), pubkey: "k".into(), timing: Timing { boot_tries: 1, poll: Duration::ZERO, gone_tries: 1 } });
             let alarm = FakeAlarm::default();
             let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
-            run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote: &remote, record: &rec }, &round_args(&fx))
+            run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote: &remote, record: &rec, host_plan: None }, &round_args(&fx))
         };
         assert_eq!(code, VM_NO_OUTPUT_EXIT);
         let results = fx.cfg.run_dir.join("results");
