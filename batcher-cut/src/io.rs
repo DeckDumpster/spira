@@ -3089,10 +3089,8 @@ pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str
         "batcher {}: could not abandon round {batch}: {refused}",
         repo.name
     );
-    if open_rounds(env, repo).is_ok_and(|rs| rs.iter().any(|r| r.id == batch)) {
-        if let Err(e) = files.record_abandon_refused(batch, cause, why) {
-            println!("batcher {}: could not record the refused abandon: {e}", repo.name);
-        }
+    if let Err(e) = files.record_abandon_refused(batch, cause, why) {
+        println!("batcher {}: could not record the refused abandon: {e}", repo.name);
     }
     false
 }
@@ -4822,11 +4820,11 @@ mod abandon_hold_tests {
     /// lists `r1` as open until an abandon has gone through.
     fn queue_stub(d: &Path) -> Env {
         let script = format!(
-            "#!/bin/sh\ncase \"$2\" in\n abandon) if [ -e {d}/refuse ]; then echo 'queue.sh round abandon: refused' >&2; exit 1; fi; rm -f {d}/open; exit 0;;\n status) if [ -e {d}/open ]; then echo 'round=open'; echo 'batch_id=r1'; echo 'phase=opened'; else echo 'round=none'; fi;;\nesac\n",
+            "#!/bin/sh\ncase \"$2\" in\n abandon) if [ -e {d}/refuse ]; then echo 'queue.sh round abandon: refused' >&2; exit 1; fi; rm -f {d}/live; exit 0;;\n status) if [ -e {d}/live ]; then echo 'round=open'; echo 'batch_id=r1'; echo 'phase=opened'; else echo 'round=none'; fi;;\nesac\n",
             d = d.display()
         );
         testkit::write_exe(d.join("queue"), &script);
-        fs::write(d.join("open"), "").unwrap();
+        fs::write(d.join("live"), "").unwrap();
         fs::write(d.join("refuse"), "").unwrap();
         lifecycle_tests_env(d)
     }
@@ -4863,7 +4861,7 @@ mod abandon_hold_tests {
         let e = queue_stub(d.path());
         let r = repo("alpha");
         assert!(!round_abandon(&e, &r, "r1", "red", "ci-red"));
-        fs::remove_file(d.path().join("open")).unwrap();
+        fs::remove_file(d.path().join("live")).unwrap();
         assert_eq!(abandon_hold(&e, &r), None);
     }
 }
