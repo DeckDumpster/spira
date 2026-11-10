@@ -149,7 +149,7 @@ impl World {
         let mut unadvanced = vec![];
         for b in batches.as_array()? {
             let (Some(repo), Some(state)) = (b["repo"].as_str(), b["state"].as_str()) else { continue };
-            if repo != self.home_repo || matches!(state, "LANDED" | "SETTLED" | "ABANDONED" | "DISCARDED") {
+            if repo != self.home_repo || !round_unended(state) {
                 continue;
             }
             live += 1;
@@ -908,12 +908,16 @@ pub fn bead_ids(subjects: &str, prefix: &str) -> BTreeSet<String> {
         .collect()
 }
 
+fn round_unended(state: &str) -> bool {
+    !matches!(state, "LANDED" | "SETTLED" | "ABANDONED" | "DISCARDED")
+}
+
 /// Per repo, batches short of a terminal state in any phase; a row naming no repo is skipped.
 pub fn open_rounds_by_repo(batches: &[Value]) -> BTreeMap<String, u64> {
     let mut by = BTreeMap::new();
     for b in batches {
         let (Some(repo), Some(state)) = (b["repo"].as_str(), b["state"].as_str()) else { continue };
-        if !matches!(state, "LANDED" | "SETTLED" | "ABANDONED" | "DISCARDED") {
+        if round_unended(state) {
             *by.entry(repo.to_string()).or_default() += 1;
         }
     }
