@@ -3492,7 +3492,7 @@ mod tests {
         let home = testkit::TempDir::new("round-vm-pf-home");
         let cache = testkit::TempDir::new("round-vm-pf-cache");
         fs::create_dir_all(cache.path().join("bin")).unwrap();
-        testkit::write_exe(&cache.path().join("bin/cargo"), "#!/bin/sh\nexit 0\n");
+        testkit::write_exe(cache.path().join("bin/cargo"), "#!/bin/sh\nexit 0\n");
         let (_, err, _) = preflight(home.path(), cache.path().to_str().unwrap());
         assert!(err.contains("PHASE checkout"), "{err}");
         assert!(!err.contains("cargo not found"), "{err}");
