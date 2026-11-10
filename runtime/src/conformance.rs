@@ -143,7 +143,7 @@ pub fn a_failed_commit_is_sent_again_and_the_turn_lands_once(rig: &dyn Rig) {
     assert_eq!(count_tag(&*j, "pong"), 1);
 }
 
-pub fn a_restart_finds_an_unanswered_effect_and_does_not_request_it_again(rig: &dyn Rig) {
+pub fn a_restart_never_relaunches_an_unresolved_effect_and_delivers_timed_out(rig: &dyn Rig) {
     let (j, clock, n) = (rig.journal(), VirtualClock::new(0), Counter::default());
     let mut x = rig.boot(j.clone(), &clock, 1, all(&n)).unwrap();
     x.submit("s1", "s", EventKind::new("start", "payload")).unwrap();
@@ -152,16 +152,18 @@ pub fn a_restart_finds_an_unanswered_effect_and_does_not_request_it_again(rig: &
     drop(x);
 
     let mut y = rig.boot(j.clone(), &clock, 1, all(&n)).unwrap();
-    let pending = y.pending_effects();
-    assert_eq!(pending.len(), 1, "the unanswered effect must survive a restart");
-    assert_eq!(pending[0].key, key, "and keep its idempotency key");
-    assert_eq!(pending[0].spec.input, "payload");
+    assert!(y.pending_effects().is_empty(), "an effect lost at restart is not offered to a runner again");
     y.run_until_idle().unwrap();
     assert_eq!(count_tag(&*j, EFFECT_REQUESTED), 1, "a restart must not request the effect again");
-    assert!(y.complete(&key, Outcome::Succeeded("ok".into())).unwrap());
-    y.run_until_idle().unwrap();
-    assert_eq!(count_tag(&*j, "done:effect.succeeded"), 1);
-    assert!(!y.complete(&key, Outcome::Succeeded("ok".into())).unwrap(), "a second outcome is dropped");
+    assert_eq!(count_tag(&*j, "done:effect.timed_out"), 1, "its task is told it timed out");
+    assert!(j.history().iter().any(|e| e.kind.tag == EFFECT_TIMED_OUT && e.kind.body == "lost at restart"), "and why");
+    assert!(!y.complete(&key, Outcome::Succeeded("late".into())).unwrap(), "a late success is dropped");
+    drop(y);
+
+    let mut z = rig.boot(j.clone(), &clock, 1, all(&n)).unwrap();
+    z.run_until_idle().unwrap();
+    assert!(z.pending_effects().is_empty());
+    assert_eq!(count_tag(&*j, "done:effect.timed_out"), 1, "the lost effect is resolved once");
 }
 
 pub fn out_of_order_effect_outcomes(rig: &dyn Rig) {
@@ -590,9 +592,10 @@ pub fn an_outcome_is_offered_only_to_the_task_that_asked(rig: &dyn Rig) {
     x.run_until_idle().unwrap();
     drop(x);
     let mut y = rig.boot(k.clone(), &clock, 1, askers()).unwrap();
-    answer(&mut *y, Some("write"));
-    let writes: Vec<String> = want.iter().filter(|w| w.ends_with(":write")).cloned().collect();
-    assert_eq!(heard(&*k), writes, "after a restart the kept request still names the task that asked");
+    y.run_until_idle().unwrap();
+    let lost = "<-lost at restart";
+    let told: Vec<String> = ["asker", "other", "watcher", "watcher", "watcher"].iter().map(|h| format!("{h}{lost}")).collect();
+    assert_eq!(heard(&*k), told, "after a restart the kept request still names the task that asked, and that task is told");
 }
 
 /// On `start`, a `page` and a `write`.
@@ -623,7 +626,7 @@ fn writers(x: &dyn Executor) -> Vec<String> {
 
 /// While halted, a `Signal` task's write runs, and so does a `Work` task's `Signal` effect;
 /// a `Work` effect is held (the `Work` task's write and the mixed task's write), and the resume
-/// releases each once, also across a restart.
+/// releases each once; a restart loses the requested ones, not the held.
 pub fn a_halt_holds_work_and_lets_signals_through(rig: &dyn Rig) {
     let (j, clock) = (rig.journal(), VirtualClock::new(0));
     let mut x = rig.boot(j.clone(), &clock, 1, planes()).unwrap();
@@ -637,18 +640,19 @@ pub fn a_halt_holds_work_and_lets_signals_through(rig: &dyn Rig) {
     drop(x);
 
     let mut y = rig.boot(j.clone(), &clock, 1, planes()).unwrap();
-    assert_eq!(writers(&*y), ["mixed.page", "signal.write"], "a restart while halted holds nothing more");
+    assert!(writers(&*y).is_empty(), "a restart relaunches no effect it found unresolved");
     clock.advance(10);
     y.submit("r1", HALT_STREAM, EventKind::new(SCHEDULER_RESUMED, "")).unwrap();
     y.run_until_idle().unwrap();
-    assert_eq!(writers(&*y), ["mixed.page", "mixed.write", "signal.write", "work.write"], "the resume releases the work effects");
+    assert_eq!(writers(&*y), ["mixed.write", "work.write"], "the resume releases the work effects a halt held: they were never requested");
+    assert_eq!(j.history().iter().filter(|e| e.kind.tag == EFFECT_TIMED_OUT).count(), 2, "the two requested before the restart are lost");
     assert_eq!(count_tag(&*j, EFFECT_REQUESTED), 4, "each effect is requested once");
 }
 
 pub fn run_all(rig: &dyn Rig) {
     a_duplicate_submit_dispatches_once(rig);
     a_failed_commit_is_sent_again_and_the_turn_lands_once(rig);
-    a_restart_finds_an_unanswered_effect_and_does_not_request_it_again(rig);
+    a_restart_never_relaunches_an_unresolved_effect_and_delivers_timed_out(rig);
     out_of_order_effect_outcomes(rig);
     effect_deadline_times_out(rig);
     determinism_under_one_seed(rig);

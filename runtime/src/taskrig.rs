@@ -36,6 +36,7 @@ pub type Double = Box<dyn Fn(&str) -> std::result::Result<String, String> + Send
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Requested {
     pub name: String,
+    pub key: String,
     pub input: String,
     pub at: u64,
     /// `true` for a `Command::Effect` (an `effect.requested` row in the journal); `false` for a
@@ -58,6 +59,7 @@ pub struct TaskRig {
     ticks: BTreeMap<String, EventKind>,
     read_to: usize,
     journaled_requests: BTreeSet<String>,
+    timing_out: bool,
 }
 
 impl TaskRig {
@@ -65,13 +67,19 @@ impl TaskRig {
         let journal = MemJournal::new();
         let clock = VirtualClock::new(0);
         let engine = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![reg], seed)?;
-        Ok(TaskRig { journal, clock, engine, doubles: BTreeMap::new(), requested: vec![], refused: vec![], ticks: BTreeMap::new(), read_to: 0, journaled_requests: BTreeSet::new() })
+        Ok(TaskRig { journal, clock, engine, doubles: BTreeMap::new(), requested: vec![], refused: vec![], ticks: BTreeMap::new(), read_to: 0, journaled_requests: BTreeSet::new(), timing_out: false })
     }
 
     /// Stop the engine and open a new one on the same journal and clock: a runtime restart.
     pub fn reopen(&mut self, reg: Registration) -> Result<()> {
         self.engine = Engine::open(self.journal.clone(), Arc::new(self.clock.clone()), vec![reg], 0)?;
         Ok(())
+    }
+
+    /// Every effect and probe times out instead of being answered.
+    pub fn timing_out(mut self) -> Self {
+        self.timing_out = true;
+        self
     }
 
     pub fn double(mut self, name: &str, f: impl Fn(&str) -> std::result::Result<String, String> + Send + Sync + 'static) -> Self {
@@ -120,12 +128,13 @@ impl TaskRig {
             self.read_to = log.len();
             for p in pending {
                 let journaled = self.journaled_requests.contains(&p.key);
-                self.requested.push(Requested { name: p.spec.name.clone(), input: p.spec.input.clone(), at: p.requested_at, journaled });
-                let outcome = match self.doubles.get(&p.spec.name) {
+                self.requested.push(Requested { name: p.spec.name.clone(), key: p.spec.key.clone(), input: p.spec.input.clone(), at: p.requested_at, journaled });
+                let outcome = match self.doubles.get(&p.spec.name).filter(|_| !self.timing_out) {
                     Some(f) => match f(&p.spec.input) {
                         Ok(o) => Outcome::Succeeded(o),
                         Err(e) => Outcome::Failed(e),
                     },
+                    None if self.timing_out => Outcome::TimedOut,
                     None => {
                         self.refused.push(p.spec.name.clone());
                         Outcome::Failed(format!("no runner for effect {}", p.spec.name))
@@ -161,6 +170,22 @@ impl TaskRig {
     pub fn refused(&self) -> &[String] {
         &self.refused
     }
+}
+
+/// Each journaled effect the task asked for again under the same key and input after the first asked
+/// for it, with no probe between the two asks: a retry that did not look at the world first.
+/// Run it on a rig that [`TaskRig::timing_out`], where every ask ends in a timeout.
+pub fn retries_without_observing(requested: &[Requested]) -> Vec<String> {
+    let mut found = vec![];
+    for (i, first) in requested.iter().enumerate().filter(|(_, r)| r.journaled) {
+        let unobserved = requested[i + 1..].iter().take_while(|r| r.journaled);
+        if unobserved.into_iter().any(|r| r.name == first.name && r.key == first.key && r.input == first.input) {
+            found.push(format!("{} {:?}", first.name, first.input));
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
 }
 
 /// T2: tick `stream` once to settle (a first tick may record a baseline), then tick it again and

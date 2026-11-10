@@ -174,3 +174,22 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+/// A leg that ended while the runtime was down left no `unit.ran`: the tick reads it through
+/// `unit.facts`.
+#[test]
+fn a_tick_reads_every_leg_in_flight_through_unit_facts() {
+    use runtime::units::{Exit, UnitFacts, UnitState, UNIT_FACTS};
+    let facts = serde_json::to_string(&UnitFacts { state: UnitState::Inactive, main_pid: None, exit: Some(Exit::Code(0)), since_ms: Some(1) }).unwrap();
+    for state in [State::Corpus, State::Attributing] {
+        let rc = RepoCarry { state, leg: Some("spira.r9.leg.1".into()), ..RepoCarry::default() };
+        let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+        let facts = facts.clone();
+        let mut r = runtime::taskrig::TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration()).unwrap().double(UNIT_FACTS, move |_| Ok(facts.clone()));
+        r.tick(STREAM, EventKind::new(STATE, &serde_json::to_string(&carry).unwrap())).unwrap();
+        r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+        let asked: Vec<&str> = r.requested().iter().map(|q| q.name.as_str()).collect();
+        assert!(asked.contains(&UNIT_FACTS), "{state:?}: {asked:?}");
+        assert!(asked.iter().any(|n| *n != UNIT_FACTS && *n != OBSERVE), "{state:?}: the exit read from facts moved the machine: {asked:?}");
+    }
+}

@@ -110,6 +110,31 @@ fn a_reply_hears_acceptance_and_a_stopped_host_drops_it() {
     assert!(late_rx.try_recv().is_err(), "a host that stopped first drops the reply: the sender reads it as not accepted");
 }
 
+#[test]
+fn a_reply_waits_for_the_turn_that_handles_its_event_to_commit() {
+    let (mem, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
+    let mut v = VirtualDriver::new(engine(mem.clone(), &clock, 1), clock.clone(), Arc::new(Jobs::default()));
+    let (s, mut rx) = Submit::with_reply("m1", "s", EventKind::new("ping", "x"));
+    v.submit(s).unwrap();
+    assert!(rx.try_recv().is_err(), "queued is not committed: the reply has not been sent");
+    v.settle().unwrap();
+    assert_eq!(rx.try_recv(), Ok(Ok(())), "heard once the turn committed");
+    assert!(bodies(&*mem, "pong").len() == 1);
+}
+
+#[test]
+fn a_reply_hears_the_refusal_when_the_store_refuses_the_turn() {
+    let clock = VirtualClock::new(0);
+    let faulty = runtime::journal::FaultyJournal::new(MemJournal::new());
+    let mut v = VirtualDriver::new(engine(faulty.clone(), &clock, 1), clock.clone(), Arc::new(Jobs::default()));
+    let (s, mut rx) = Submit::with_reply("m1", "s", EventKind::new("ping", "x"));
+    v.submit(s).unwrap();
+    faulty.refuse_next("commit");
+    v.settle().unwrap();
+    let heard = rx.try_recv().expect("answered");
+    assert!(heard.is_err(), "a turn the store refused is not a 250: {heard:?}");
+}
+
 struct Bus;
 impl Source for Bus {
     fn name(&self) -> &str {

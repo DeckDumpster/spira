@@ -35,9 +35,9 @@ pub trait EffectRunner: Send + Sync {
     }
 }
 
-/// An event from outside the engine. `reply`, when set, hears whether it was queued: `Ok` once
-/// it is, `Err` when the engine refused it. A dropped reply means the host stopped before the
-/// event was offered.
+/// An event from outside the engine. `reply`, when set, hears `Ok` once the turn that handled the
+/// event committed, `Err` when the engine or the store refused it. A dropped reply means the host
+/// stopped before then.
 pub struct Submit {
     pub id: String,
     pub stream: String,
@@ -63,13 +63,17 @@ impl std::fmt::Debug for Submit {
     }
 }
 
-/// Queues `s` and answers its reply. A refusal is answered and absorbed; a fault is answered
-/// and returned, since it may clear on restart.
+/// Queues `s`; its reply is answered when the turn handling it has committed, or at once if the store refuses it. A refusal is absorbed; a fault is returned, since it may clear on restart.
 fn accept(engine: &mut Engine, s: Submit) -> Result<()> {
     // loop-safe: accept runs on the offload pool (Host) or under virtual time (VirtualDriver), never on the loop thread
     let r = engine.submit(&s.id, &s.stream, s.kind);
     if let Some(reply) = s.reply {
-        let _ = reply.send(r.as_ref().map(|_| ()).map_err(|e| e.to_string()));
+        match &r {
+            Ok(()) => engine.answer_on_commit(&s.id, reply),
+            Err(e) => {
+                let _ = reply.send(Err(e.to_string()));
+            }
+        }
     }
     match r {
         Err(e) if e.is_refused() => Ok(()),

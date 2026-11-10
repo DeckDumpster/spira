@@ -179,7 +179,7 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[CUT_WANTED, PUBLISH_WANTED];
 /// Hand-offs that wake it at once, besides its tick: batcher.forge left a batch to settle.
 pub const WAKES: &[EventKindTag] = &[super::batcher_forge::SETTLE_WANTED];
-pub const EFFECTS: &[&str] = &[OBSERVE, PUSH, LAND, CLOSE_BEAD, GH_CLOSEOUT, PR_CLOSE, CANCEL_RUNS, RERUN, JUDGEMENT, OBSERVE_FLAKE, EJECT, RECONCILE, SWEEP, FILE_BUG, NOTIFY, RECORD];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, PUSH, LAND, CLOSE_BEAD, GH_CLOSEOUT, PR_CLOSE, CANCEL_RUNS, RERUN, JUDGEMENT, OBSERVE_FLAKE, EJECT, RECONCILE, SWEEP, FILE_BUG, NOTIFY, RECORD];
 pub const KEYS: &[&str] = &[
     "SPIRA_QUEUE_CI_MAXSEC",
     "SPIRA_QUEUE_CI_IDLE_SEC",
@@ -723,7 +723,8 @@ impl Handler for QueueStep {
             Err(_) => (carry.clone(), vec![]),
         };
         let ran = |carry: &Carry, r: &UnitRan| on_ran(carry, r, ev.at);
-        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran })
+        let legs = |carry: &Carry| carry.repos.values().filter(|rc| rc.state == State::Judging).filter_map(|rc| rc.leg.clone()).collect();
+        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran, legs })
     }
 }
 
