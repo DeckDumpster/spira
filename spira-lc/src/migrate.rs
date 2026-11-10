@@ -461,6 +461,35 @@ fn any_cell_is(rows: &[Value], want: &str) -> bool {
     rows.iter().any(|r| r.as_object().is_some_and(|o| o.values().any(|v| v.as_str().is_some_and(|s| s.eq_ignore_ascii_case(want)))))
 }
 
+/// The table a step creates, indexes, inserts into or alters.
+fn target_table(st: &Stmt) -> Option<String> {
+    match st {
+        Stmt::AddColumn { table, .. } | Stmt::WidenColumn { table, .. } => Some(table.clone()),
+        Stmt::UnguardedAlter(_) => None,
+        Stmt::Plain(sql) => match probe_for(st) {
+            Probe::Table(t) if !sql.trim_start().to_ascii_uppercase().starts_with("RENAME") => Some(t),
+            Probe::Index { table, .. } => Some(table),
+            _ => {
+                let toks: Vec<&str> = sql.split_whitespace().collect();
+                let into = toks.first().is_some_and(|t| t.eq_ignore_ascii_case("INSERT")) && toks.get(1).is_some_and(|t| t.eq_ignore_ascii_case("INTO"));
+                into.then(|| toks.get(2).map(|t| t.split('(').next().unwrap_or("")).and_then(plain_ident)).flatten()
+            }
+        },
+    }
+}
+
+/// The name a later `RENAME TABLE t TO u` in `rest` moved `t` to, when that rename is already
+/// applied: the step's effect on `t` lives on in `u`, and the table now called `t` is another.
+fn renamed_aside(db: &dyn Sql, t: &str, rest: &[(String, Stmt)]) -> Option<String> {
+    rest.iter().find_map(|(_, later)| {
+        let Stmt::Plain(sql) = later else { return None };
+        let toks: Vec<&str> = sql.split_whitespace().collect();
+        let renames_t = toks.len() > 4 && toks[0].eq_ignore_ascii_case("RENAME") && toks[1].eq_ignore_ascii_case("TABLE") && plain_ident(toks[2]).as_deref() == Some(t);
+        let to = if renames_t { toks.get(4).and_then(|u| plain_ident(u.trim_end_matches(';')))? } else { return None };
+        is_applied(db, later).ok()?.then_some(to)
+    })
+}
+
 /// Whether `st` is already applied, read through `db`. An `Err` is "cannot tell".
 pub fn is_applied(db: &dyn Sql, st: &Stmt) -> Result<bool, String> {
     match probe_for(st) {
@@ -674,11 +703,15 @@ fn migrate_paced(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, admi
             return grant_failed("before the migrations", &e);
         }
     }
-    for (name, st) in steps {
+    for (at, (name, st)) in steps.iter().enumerate() {
         let prober: &dyn Sql = match admin {
             Some(a) if admin_wrote => a,
             _ => service,
         };
+        if let Some(aside) = target_table(st).and_then(|t| renamed_aside(prober, &t, &steps[at + 1..])) {
+            report.push(format!("{name}: its table was renamed aside to {aside} by a later step — skipped"));
+            continue;
+        }
         match is_applied(prober, st) {
             Ok(true) => {
                 report.push(format!("{name}: {} — skipped", what(st, true)));
@@ -1209,6 +1242,20 @@ mod tests {
         assert!(out.contains("0002-since.sql: bead.since present"), "{out}");
         assert!(out.contains("0003-terminal-holder.sql"), "{out}");
         assert!(db.borrow().writes.is_empty(), "nothing ran: {:?}", db.borrow().writes);
+    }
+
+    #[test]
+    fn a_step_on_a_table_a_later_applied_rename_moved_aside_is_skipped_not_probed() {
+        let db = migrated();
+        db.borrow_mut().indexes.remove("runtime_effect_open_idx");
+        let svc = service(&db);
+        let (rc, out) = migrate(&real_steps(), &svc, None);
+        assert_eq!(rc, 0, "{out}");
+        assert!(out.contains("0038-runtime-effect-open.sql: its table was renamed aside to runtime_effect_0038"), "{out}");
+        assert!(db.borrow().writes.is_empty(), "nothing ran: {:?}", db.borrow().writes);
+        db.borrow_mut().tables.remove("runtime_effect_0038");
+        let (rc, out) = migrate(&real_steps(), &svc, None);
+        assert_eq!(rc, 2, "an unapplied rename supersedes nothing: {out}");
     }
 
     #[test]
