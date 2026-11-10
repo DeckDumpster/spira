@@ -846,11 +846,10 @@ impl World {
             window_s: u64,
             releases: PathBuf,
             release_repo: String,
-            repo_map: PathBuf,
         }
         let p: P =
             serde_json::from_str(input).map_err(|e| format!("transitions params unparsed: {e}"))?;
-        let ancestor = wt::repo_ancestor(&p.repo_map, &p.release_repo);
+        let ancestor = wt::repo_ancestor(&self.repo_map, &p.release_repo);
         let mut snap = wt::observe(
             &self.run_dir,
             &p.releases,

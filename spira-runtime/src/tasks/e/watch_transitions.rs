@@ -637,7 +637,7 @@ impl Handler for WatchTransitions {
             }
         };
         if ev.kind.tag == TICK {
-            let input = serde_json::json!({ "now": ev.at / 1000, "window_s": cfg.window_s(), "releases": cfg.releases, "release_repo": cfg.release_repo, "repo_map": cfg.repo_map }).to_string();
+            let input = serde_json::json!({ "now": ev.at / 1000, "window_s": cfg.window_s(), "releases": cfg.releases, "release_repo": cfg.release_repo }).to_string();
             return pattern::tick(ev, OBSERVE, input, DEADLINE_MS, ev.at + cfg.period_ms());
         }
         if !answers_observe(view, ev, OBSERVE) {
