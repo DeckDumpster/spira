@@ -261,6 +261,25 @@ impl<'a> RealLib<'a> {
         }
         rc == 0
     }
+    fn content_on_base_checked(&self, id: &str, proof: &str) -> bool {
+        let (rc, err) = match self.lc() {
+            Ok(c) => {
+                let (rc, _, err) = crate::lifecycle::run(&c, &["content-on-base", id, proof, "landing-pass"]);
+                (rc, err)
+            }
+            Err(e) => (spira_config::lc_call::CANNOT_TELL, e),
+        };
+        if rc != 0 {
+            let line = format!(
+                "landing-pass: {id}: LIFECYCLE: spira-lc content-on-base did not happen (exit {rc}): {}",
+                err.trim()
+            );
+            self.seam.out.log(&line);
+            eprintln!("{line}");
+        }
+        rc == 0
+    }
+
     /// lib.sh `ask_already_open <subject>` (sp-31hjr) — the strongest dedupe is "is it
     /// already in front of him", so this asks the database.
     fn ask_already_open(&self, subject: &str) -> bool {
@@ -567,6 +586,9 @@ impl<'a> Lib for RealLib<'a> {
         crate::land_verify::close_on_land(&RealGit, self.seam.out, &self.s.home, row.as_ref(), id, sha);
     }
     /// `hel prune <repo>`, in-process: hel's own worktree prune, logged to its reap log.
+    fn content_on_base(&self, id: &str, proof: &str) -> bool {
+        self.content_on_base_checked(id, proof)
+    }
     fn prune_worktrees(&self, repo: &Path) {
         let _ = hel::reap::prune_worktrees(&hel::real::reaplog_path_in(&self.s.run), repo);
     }

@@ -306,6 +306,9 @@ mod tests {
         fn deliver_returned(&self, _: &str, _: &str) {}
         fn closeout(&self, _: &str, _: &str, _: &Path) {}
         fn close_on_land(&self, _: &str, _: &str) {}
+        fn content_on_base(&self, _: &str, _: &str) -> bool {
+            true
+        }
         fn prune_worktrees(&self, _: &Path) {}
         fn gh_unlanded_scan(&self) {}
         fn ask_refresh_loop(&self, _: &Path, _: &str, br: &str, id: &str, _: &str, n: u32) {

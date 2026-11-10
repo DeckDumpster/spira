@@ -146,6 +146,21 @@ impl Files {
         fs::read_to_string(self.pass_refused_file(branch)).map(|t| t.trim() == tip).unwrap_or(false)
     }
 
+    fn content_settled_file(&self, branch: &str) -> PathBuf {
+        self.run.join("content-settled").join(branch_key(branch))
+    }
+
+    /// Record that `branch` at `tip` was found to add nothing to the base and was answered
+    /// for: the same tip is not announced or closed again.
+    pub fn settle_content(&self, branch: &str, tip: &str) {
+        let _ = fs::create_dir_all(self.run.join("content-settled"));
+        let _ = atomic_write(&self.content_settled_file(branch), &format!("{tip}\n"));
+    }
+
+    pub fn content_settled(&self, branch: &str, tip: &str) -> bool {
+        fs::read_to_string(self.content_settled_file(branch)).map(|t| t.trim() == tip).unwrap_or(false)
+    }
+
     fn round_deferred_file(&self, branch: &str) -> PathBuf {
         self.run.join("gate-deferred").join(branch_key(branch))
     }

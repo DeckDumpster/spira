@@ -469,7 +469,7 @@ impl<'a> Pass<'a> {
             return Screen::Done(Flow::Next);
         }
         if self.git.content_on_base(&repo.path, br, &w.base_fq) {
-            self.log(&format!("{} already contains every change on {br} — nothing to land", w.base));
+            self.settle_content_on_base(w, br, id, bead);
             return Screen::Done(Flow::Next);
         }
         if self.procs.holder_alive(id) {
@@ -487,6 +487,53 @@ impl<'a> Pass<'a> {
             return Screen::Queue(bead);
         }
         Screen::Push(bead)
+    }
+
+    /// §4.1 step 5: the base already holds every change on `br`. Said and settled once per
+    /// tip; a bead not yet terminal is closed LANDED, but only when the branch did work for
+    /// it (hel's evidence rule) — an empty diff alone proves nothing.
+    fn settle_content_on_base(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow) {
+        let repo = &w.repo.path;
+        let Some(tip) = self.git.rev_parse(repo, br) else {
+            self.log(&format!("{} already contains every change on {br} — nothing to land", w.base));
+            return;
+        };
+        if self.files.content_settled(br, &tip) {
+            return;
+        }
+        self.log(&format!("{} already contains every change on {br} — nothing to land", w.base));
+        if spira_config::lc_state::is_terminal(&bead.state) {
+            self.files.settle_content(br, &tip);
+            return;
+        }
+        let ahead = self.git.count(repo, &format!("{}..{br}", w.base_fq)).unwrap_or(0);
+        let own = || {
+            self.git
+                .log_subjects(repo, &format!("{}..{br}", w.base_fq), &[])
+                .is_some_and(|s| s.lines().any(|l| names_bead(l, id)))
+        };
+        let stacked = || {
+            self.git
+                .log_subjects(repo, &format!("{}..{br}", w.base_fq), &[])
+                .is_some_and(|s| !s.trim().is_empty() && s.lines().all(|l| l.starts_with("stacked base: merge ")))
+        };
+        let on_base = || {
+            self.git
+                .log_grep(repo, id, std::slice::from_ref(&w.base_fq))
+                .is_some_and(|s| s.lines().filter_map(|l| l.split_once('\t')).any(|(_, subj)| names_bead(subj, id)))
+        };
+        if hel::sweep::needs_evidence(ahead, own, stacked, on_base) {
+            self.log(&format!("CHECK6 {id}: {br} has {ahead} commit(s) not in {}, none naming the bead — an empty diff is not evidence of landing, not closing it", w.base));
+            self.files.settle_content(br, &tip);
+            return;
+        }
+        let at = self.git.rev_parse(repo, &w.base_fq).unwrap_or_default();
+        if !self.lib.content_on_base(id, &format!("merge-tree:{at}")) {
+            return;
+        }
+        self.lib.note(id, &format!("tip {tip}, {} at {at}: no tree diff, closed LANDED by landing-pass", w.base));
+        self.out.progress(&format!("landing-pass: {id} closed LANDED — {br} at {tip} adds nothing to {} ({at})", w.base));
+        self.files.settle_content(br, &tip);
     }
 
     /// Queue-mode certification (DESIGN.md §4.2).
@@ -1032,4 +1079,11 @@ pub(crate) fn first_nonempty<'s>(xs: &[&'s str]) -> &'s str {
 /// Log the first line of a multi-line text (confine.sh's verdict).
 pub(crate) fn head1(s: &str) -> &str {
     first_line(s)
+}
+
+/// `subject` names `id` as a whole word: `sp-ab` is not `sp-abc`.
+fn names_bead(subject: &str, id: &str) -> bool {
+    subject
+        .match_indices(id)
+        .any(|(i, _)| !subject[i + id.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '.' || c == '-'))
 }

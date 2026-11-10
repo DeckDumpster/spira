@@ -138,13 +138,24 @@ impl<'a> PrPass<'a> {
                 continue;
             }
             if self.git.content_on_base(&r.path, br, &base_fq) {
+                if self.files.content_settled(br, tip) {
+                    continue;
+                }
                 self.log(&format!("landing-pass {name}: {base} already contains every change on {br} — nothing to land"));
                 // The Delivered event, best-effort additive; a machine that cannot be asked or
-                // refuses is a loud LIFECYCLE: line and the pass goes on.
-                if let Some(sha) = self.git.rev_parse(&r.path, &base_fq) {
-                    if let Err(why) = self.tools.deliver_by_content(&r.path, id, &sha) {
-                        self.lifecycle_loud(id, &why);
-                    }
+                // refuses is a loud LIFECYCLE: line, and the next pass tries again.
+                let delivered = match self.git.rev_parse(&r.path, &base_fq) {
+                    Some(sha) => match self.tools.deliver_by_content(&r.path, id, &sha) {
+                        Ok(_) => true,
+                        Err(why) => {
+                            self.lifecycle_loud(id, &why);
+                            false
+                        }
+                    },
+                    None => false,
+                };
+                if delivered {
+                    self.files.settle_content(br, tip);
                 }
                 continue;
             }
