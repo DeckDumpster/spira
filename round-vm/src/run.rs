@@ -3469,10 +3469,10 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("exit 4"), "a failed workspace build is testenv's build-failure code");
     }
 
-    fn preflight(home: &Path, cache_home: &str) -> (i32, String, String) {
+    fn preflight(home: &Path, cache_home: &str, limits: &str) -> (i32, String, String) {
         use std::io::Write;
         let mut c = command("bash")
-            .args(["-s", "--", "127.0.0.1", "1", "", "1", "", cache_home, "", "0", "0", "", "", "", "refs/x", "0000", "", "limits"])
+            .args(["-s", "--", "127.0.0.1", "1", "", "1", "", cache_home, "", "0", "0", "", "", "", "refs/x", "0000", "", limits])
             .env_clear()
             .env("HOME", home)
             .env("PATH", "/usr/bin:/bin")
@@ -3494,19 +3494,24 @@ mod tests {
         let cache = testkit::TempDir::new("round-vm-pf-cache");
         fs::create_dir_all(cache.path().join("bin")).unwrap();
         testkit::write_exe(cache.path().join("bin/cargo"), "#!/bin/sh\nexit 0\n");
-        let (_, err, _) = preflight(home.path(), cache.path().to_str().unwrap());
+        let (_, err, _) = preflight(home.path(), cache.path().to_str().unwrap(), "limits");
         assert!(err.contains("PHASE checkout"), "{err}");
         assert!(!err.contains("cargo not found"), "{err}");
     }
 
     #[test]
-    fn host_preflight_without_any_cargo_fails_at_once_and_leaves_a_runner_output_to_pull() {
-        let home = testkit::TempDir::new("round-vm-pf-home-none");
-        let cache = testkit::TempDir::new("round-vm-pf-cache-none");
-        let (rc, err, _) = preflight(home.path(), cache.path().to_str().unwrap());
-        assert_eq!(rc, 127, "{err}");
-        assert!(err.contains("cargo not found on PATH"), "{err}");
+    fn an_early_preflight_exit_leaves_a_runner_output_to_pull() {
+        let home = testkit::TempDir::new("round-vm-pf-home-early");
+        let cache = testkit::TempDir::new("round-vm-pf-cache-early");
+        let (rc, err, _) = preflight(home.path(), cache.path().to_str().unwrap(), "");
+        assert_eq!(rc, 2, "{err}");
         assert!(home.path().join("round-runner.out").exists(), "the host's pull must find a runner output for any early exit");
+    }
+
+    #[test]
+    fn a_missing_toolchain_is_one_named_line_and_exit_127() {
+        assert!(REMOTE_SCRIPT.contains("cargo not found on PATH ($PATH)"));
+        assert!(REMOTE_SCRIPT.contains("is missing a Rust toolchain\" >&2\n    exit 127"));
     }
 
     #[test]
