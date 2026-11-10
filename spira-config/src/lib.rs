@@ -46,6 +46,7 @@ pub mod planning;
 pub mod process;
 pub mod proof;
 pub mod recipe;
+pub mod round_ended;
 pub mod rename;
 pub mod registry;
 pub mod release_env;

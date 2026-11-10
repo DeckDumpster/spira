@@ -342,6 +342,20 @@ fn with_the_store_abandon_closes_the_open_round_and_finishes_one_the_reconciler_
 }
 
 #[test]
+fn with_the_store_a_second_abandon_of_a_closed_round_writes_no_second_audit_line() {
+    let t = store_world();
+    for reason in ["first", "second"] {
+        assert_eq!(
+            t.run(&["round", "abandon", "spira-orphaned", "--reason", reason]),
+            0,
+            "{}",
+            t.err()
+        );
+    }
+    assert_eq!(t.landing_log().matches("ROUND-ABANDON").count(), 1, "{}", t.landing_log());
+}
+
+#[test]
 fn with_the_store_a_round_the_lifecycle_ended_is_swept_once_under_the_lock() {
     let t = store_world();
     let running = marker(&t, "spira-orphaned", "running");

@@ -776,6 +776,7 @@ enum Stabilized {
     Stable(StableRound),
     Blocked,
     Emptied,
+    Abandoned,
 }
 
 /// Enforces law-a-round-takes-certified-tips (amended 2026-09-27): a round that is red on its
@@ -973,6 +974,10 @@ fn stabilize_round(
         drive::RoundEnd::Emptied(why) => {
             println!("batcher {}: round emptied — {why}", repo.name);
             Ok(Stabilized::Emptied)
+        }
+        drive::RoundEnd::Abandoned => {
+            println!("batcher {}: the round was abandoned while it ran — stopped, no verdict written", repo.name);
+            Ok(Stabilized::Abandoned)
         }
     }
 }
@@ -1454,6 +1459,7 @@ fn cut_new_round_inner(
             return Err(e);
         }
         Ok(Stabilized::Stable(s)) => s,
+        Ok(Stabilized::Abandoned) => return Ok(()),
         Ok(Stabilized::Emptied) => {
             abandon(
                 "every member was ejected; the survivors are re-cut",
@@ -1581,6 +1587,7 @@ fn follow_promoted(
                 return Err(e);
             }
             Ok(Stabilized::Stable(s)) => s,
+            Ok(Stabilized::Abandoned) => return Ok(None),
             Ok(Stabilized::Emptied) => {
                 abandon(
                     "every member was ejected; the survivors are re-cut",
@@ -2142,6 +2149,7 @@ fn attribute(o: &Opts) -> Result<(), String> {
         },
         Ok(drive::RoundEnd::Blocked(why)) => Attribution::Blocked(why),
         Ok(drive::RoundEnd::Emptied(why)) => Attribution::Emptied(why),
+        Ok(drive::RoundEnd::Abandoned) => Attribution::Blocked("the round was abandoned".into()),
         Err(e) if batcher_cut::attribute::is_round_vm_fault(&e) => {
             Attribution::Fault(format!("the attribution did not finish: {e}"))
         }

@@ -776,6 +776,35 @@ fn abandoning_a_round_stops_its_running_legs_and_records_them_in_the_reason() {
     assert!(t.lc.has("abandon-batch hand-1 OPEN 1 base moved — stopped spira-run-batcher.local-leg-attribute2.service"), "{:?}", t.lc.calls.borrow());
 }
 
+fn open_hand_round(t: &T) {
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-1"]),
+        0,
+        "{}",
+        t.err()
+    );
+}
+
+#[test]
+fn an_abandoned_round_is_recorded_ended_for_the_process_driving_it() {
+    let t = round_world();
+    open_hand_round(&t);
+    let run = t.s().run.clone();
+    assert!(!spira_config::round_ended::is_ended(&run, "hand-1"));
+    assert_eq!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0, "{}", t.err());
+    assert!(spira_config::round_ended::is_ended(&run, "hand-1"));
+    assert!(!spira_config::round_ended::is_ended(&run, "hand-2"));
+}
+
+#[test]
+fn a_refused_abandon_leaves_the_round_driven() {
+    let t = round_world();
+    open_hand_round(&t);
+    t.scripts.round_legs_stubborn.set(true);
+    assert_ne!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0);
+    assert!(!spira_config::round_ended::is_ended(&t.s().run, "hand-1"));
+}
+
 #[test]
 fn a_leg_that_outlives_its_stop_keeps_the_round_open() {
     let t = round_world();
