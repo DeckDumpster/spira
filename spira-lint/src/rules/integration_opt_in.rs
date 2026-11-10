@@ -159,6 +159,44 @@ mod tests {
     }
 
     #[test]
+    fn a_target_gated_only_by_another_feature_is_refused() {
+        let t = TempDir::new("ioo-otherfeature");
+        let m = GOOD.replace("required-features = [\"integration\"]", "required-features = [\"sim\"]");
+        let got = tree(&t, &m, &["a/tests/it/main.rs"]).unwrap();
+        assert!(got.iter().any(|g| g.contains("lacks required-features")), "{got:?}");
+    }
+
+    #[test]
+    fn a_declared_path_that_misses_the_discovered_target_is_refused() {
+        let t = TempDir::new("ioo-pathmiss");
+        let m = GOOD.replace("tests/it/main.rs", "tests/it.rs");
+        let got = tree(&t, &m, &["a/tests/it/main.rs"]).unwrap();
+        assert_eq!(got, vec!["tests/it/main.rs has no [[test]] entry".to_string()]);
+    }
+
+    #[test]
+    fn cargo_lists_a_gated_target_only_with_the_opt_in() {
+        let t = TempDir::new("ioo-cargo");
+        t.write("Cargo.toml", &format!("{}\n[lib]\npath = \"src/lib.rs\"\n", GOOD.replace("tests/it/main.rs", "tests/it.rs").replace("\"a\"", "\"gated\"")));
+        t.write("src/lib.rs", "#[test]\nfn unit_one() {}\n");
+        t.write("tests/it.rs", "#[test]\nfn integration_one() {}\n");
+        let list = |extra: &[&str]| {
+            let out = std::process::Command::new("cargo")
+                .args(["test", "--offline", "-q"]).args(extra).args(["--", "--list"])
+                .current_dir(t.path())
+                .env("CARGO_TARGET_DIR", t.path().join("target"))
+                .output()
+                .expect("cargo runs");
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        let plain = list(&[]);
+        assert!(plain.contains("unit_one") && !plain.contains("integration_one"), "{plain}");
+        let opted = list(&["--features", "integration"]);
+        assert!(opted.contains("unit_one") && opted.contains("integration_one"), "{opted}");
+    }
+
+    #[test]
     fn a_member_without_the_feature_is_refused() {
         let t = TempDir::new("ioo-nofeature");
         let got = tree(&t, "[package]\nname = \"a\"\n", &[]).unwrap();
