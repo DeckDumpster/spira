@@ -575,7 +575,9 @@ echo "pattern kills are refused in a dwarf session; PID kills and unit stops pas
 # ===========================================================================
 for c in 'pkill -f "it-"' 'pkill cargo' 'killall cargo' 'pgrep -f it- | xargs kill' \
          'FOO=1 sudo pkill -9 -f x' 'cd /tmp && pkill -f it-' 'bash -c "pkill -f it-"' \
-         'kill $(pgrep -f it-)' 'timeout 5 /usr/bin/pkill -f it-'; do
+         'kill $(pgrep -f it-)' 'sudo -u root pkill -f x' 'env -u FOO pkill -f x' \
+         'kill $(ps aux | grep it- | awk "{print \$2}")' 'kill "$(pgrep -f it-)"' \
+         'pgrep -f it- | while read p; do kill $p; done' 'ps aux | grep it- | awk "{print \$2}" | xargs kill -9' 'timeout 5 /usr/bin/pkill -f it-'; do
     out="$(fence_run "$c" SPIRA_DWARF=test-dwarf)"
     want "pattern-kill/refused: $c" '"decision":"block"' "$out"
     want "pattern-kill/names-the-exit: $c" 'systemctl --user stop' "$out"

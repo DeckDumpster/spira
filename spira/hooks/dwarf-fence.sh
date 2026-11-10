@@ -367,12 +367,18 @@ def head(toks):
         return toks[i].split("/")[-1], toks[i + 1:]
     return "", []
 def hit(text, depth=0):
-    if re.search(r"(^|[;&|(\s])kill\s[^;&|]*(\$\(|`)\s*(pgrep|pidof)\b", text):
+    if re.search(r"(^|[;&|(\s])kill\s[^;&]*(\$\(|`)[^)`]*\b(pgrep|pidof|ps|grep|awk)\b", text):
         return True
     pipeline = []
     for toks, sep in segments(text):
         name, rest = head(toks)
+        words = {w.split("/")[-1] for w in toks}
+        lead = [w for w in toks if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w)][:1]
+        if lead and lead[0] in PREFIX and words & {"pkill", "killall", "pidwait"}:
+            return True
         if name in ("pkill", "killall", "pidwait"):
+            return True
+        if "kill" in words and any(h in FINDERS for h in pipeline):
             return True
         if name in ("bash", "sh", "zsh", "dash", "ksh") and "-c" in rest and depth < 3:
             j = rest.index("-c")
@@ -382,7 +388,7 @@ def hit(text, depth=0):
             if any(h in FINDERS for h in pipeline):
                 return True
         pipeline.append(name)
-        if sep != "|":
+        if sep != "|" and not (sep == ";" and "while" in pipeline):
             pipeline = []
     return False
 if hit(sys.stdin.read()): print("1")
