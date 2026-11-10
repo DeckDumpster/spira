@@ -484,7 +484,7 @@ fn a_landing_after_the_release_in_effect_was_switched_in_raises_the_stall_past_t
 }
 
 #[test]
-fn a_round_open_in_the_repo_suppresses_its_stall_whatever_phase_it_has_reached() {
+fn a_round_open_in_the_repo_suppresses_its_stall() {
     let (s, now) = submitted_ago(20, 1, 24);
     assert!(!five_minute_cut_bound(&s, now).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")));
 }
@@ -497,10 +497,20 @@ fn a_round_open_in_another_repo_does_not_suppress_this_repos_stall() {
 }
 
 #[test]
-fn the_all_repos_row_is_suppressed_when_its_only_submitted_work_is_behind_an_open_round() {
-    let (s, now) = submitted_ago(20, 1, 24);
+fn every_non_terminal_batch_state_counts_as_an_open_round_for_its_repo() {
+    let row = |repo: &str, state: &str| serde_json::json!({"repo": repo, "state": state});
+    let mut rows: Vec<_> = ["OPEN", "CI_RUNNING", "REBUILDING", "GREEN", "LANDING", "DEPLOYING"].iter().map(|s| row("spira", s)).collect();
+    rows.extend([row("spira", "LANDED"), row("spira", "ABANDONED"), row("other", "SETTLED"), row("other", "DISCARDED"), row("other", "OPEN"), serde_json::json!({"state": "OPEN"})]);
+    let open = spira_runtime::world::open_rounds_by_repo(&rows);
+    assert_eq!(open, BTreeMap::from([("spira".to_string(), 6), ("other".to_string(), 1)]));
+}
+
+#[test]
+fn the_all_repos_row_waits_on_work_behind_no_round_only() {
+    let (mut s, now) = submitted_ago(20, 1, 24);
+    s.beads.push(bead("sp-s2", "other", "SUBMITTED", now - MIN));
     let keys = five_minute_cut_bound(&s, now);
-    assert!(!keys.iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "{keys:?}");
+    assert!(!keys.iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "the covered repo's old bead and the other repo's young one: {keys:?}");
 }
 
 #[test]
