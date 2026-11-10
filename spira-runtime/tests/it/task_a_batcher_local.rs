@@ -702,3 +702,31 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+/// The round key lists every member as `id:tip`, so it outgrows the store's 255-char key column
+/// with the round's size; a green certify of such a round must still reach `lc_certify`.
+#[test]
+fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_store() {
+    use runtime::units::{Exit, UnitHandle, UnitRan};
+    let members: Vec<Member> = (0..9).map(|i| member(&format!("sp-wide{i:02}"), &format!("{:040x}", i + 1))).collect();
+    let world = Snapshot { repos: [("spira".to_string(), repo(members.clone()))].into(), now_ms: NOW };
+    let snaps = std::sync::Mutex::new(vec![world]);
+    let assembled = Assembled { merged: members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .double(OBSERVE, move |_| Ok(serde_json::to_string(&snaps.lock().unwrap().pop().unwrap_or_else(idle)).unwrap()))
+        .double(ASSEMBLE, move |_| Ok(serde_json::to_string(&assembled).unwrap()))
+        .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, ROUND_OPEN].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let leg_of = |r: &TaskRig, effect: &str| -> Leg { serde_json::from_str(&r.requested().iter().rev().find(|q| q.name == effect).unwrap_or_else(|| panic!("{effect} was never asked")).input).unwrap() };
+    let corpus = leg_of(&r, CORPUS);
+    let ran = |leg: &Leg| UnitRan { handle: UnitHandle::of(NAME, &leg.unit).unwrap(), exit: Exit::Code(0), duration_ms: 1_000 };
+    r.tick(STREAM, ran(&corpus).event_kind()).unwrap();
+    let certify = leg_of(&r, CERTIFY);
+    r.tick(STREAM, ran(&certify).event_kind()).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    assert!(r.requested().iter().any(|q| q.name == LC_CERTIFY), "the green certify reaches lc_certify");
+}

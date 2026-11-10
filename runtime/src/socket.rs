@@ -39,7 +39,7 @@ fn within(what: &str, value: &str, max: usize) -> Result<()> {
     Err(RuntimeError::refused(format!("journal: {what} is {} chars (max {max}) or holds a NUL: {}", value.chars().count(), value.chars().take(80).collect::<String>())))
 }
 
-fn within_widths(turn: &Turn) -> Result<()> {
+pub(crate) fn within_widths(turn: &Turn) -> Result<()> {
     for s in &turn.state {
         within("state task", &s.task, TASK_MAX)?;
         within("state key", &s.skey, KEY_MAX)?;
