@@ -361,7 +361,7 @@ def head(toks):
     i = 0
     while i < len(toks):
         t = toks[i]
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t) or t in PREFIX or (i > 0 and (t.startswith("-") or t[:1].isdigit())):
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t) or t in PREFIX or t in ("do", "then", "{") or (i > 0 and (t.startswith("-") or t[:1].isdigit())):
             i += 1
             continue
         return toks[i].split("/")[-1], toks[i + 1:]
@@ -378,10 +378,11 @@ def hit(text, depth=0):
             return True
         if name in ("pkill", "killall", "pidwait"):
             return True
-        if "kill" in words and any(h in FINDERS for h in pipeline):
+        if name in ("kill", "xargs") and "kill" in words and any(h in FINDERS for h in pipeline):
             return True
-        if name in ("bash", "sh", "zsh", "dash", "ksh") and "-c" in rest and depth < 3:
-            j = rest.index("-c")
+        flag = [k for k, w in enumerate(rest) if re.match(r"^-[a-z]*c$", w)]
+        if name in ("bash", "sh", "zsh", "dash", "ksh") and flag and depth < 3:
+            j = flag[0]
             if j + 1 < len(rest) and hit(rest[j + 1], depth + 1):
                 return True
         if name == "xargs" and any(r.split("/")[-1] in ("kill", "pkill") for r in rest):
