@@ -536,6 +536,7 @@ fn rounds_that_could_not_be_counted_leave_the_stall_standing() {
     let (mut s, now) = submitted_ago(20, 0, 24);
     s.open_rounds = None;
     assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
+}
 
 fn registration() -> runtime::event::Registration {
     WatchTransitions::new(config()).registration()
