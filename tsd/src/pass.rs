@@ -96,6 +96,8 @@ pub struct PassRecord {
     pub boot_s: u64,
     pub build_s: u64,
     pub suites_s: u64,
+    /// Wall seconds the attribution legs ran, summed; already inside `suites_s`, so not in the total.
+    pub attribution_s: u64,
     pub cause: Cause,
     pub detail: String,
     /// Seconds each fence of the round took on the VM (`fence-<name>.result`), by name.
@@ -143,6 +145,7 @@ impl PassRecord {
             f("boot_s", self.boot_s.into()),
             f("build_s", self.build_s.into()),
             f("suites_s", self.suites_s.into()),
+            f("attribution_s", self.attribution_s.into()),
             f("verdict", self.cause.verdict().into()),
             f("cause", self.cause.as_str().into()),
             f("detail", self.detail.clone().into()),
@@ -166,6 +169,7 @@ impl PassRecord {
             boot_s: n("boot_s")?,
             build_s: n("build_s")?,
             suites_s: n("suites_s")?,
+            attribution_s: row.get("attribution_s").and_then(Value::as_u64).unwrap_or(0),
             cause: Cause::parse(&s("cause")?)?,
             detail: s("detail").unwrap_or_default(),
             fences: row.get("fence_s").and_then(Value::as_object).map(|o| o.iter().filter_map(|(k, v)| v.as_u64().map(|n| (k.clone(), n))).collect()).unwrap_or_default(),
@@ -194,6 +198,7 @@ impl PassRecord {
                 secs("spira_cert_pass_boot_seconds", self.boot_s),
                 secs("spira_cert_pass_build_seconds", self.build_s),
                 secs("spira_cert_pass_suites_seconds", self.suites_s),
+                secs("spira_cert_pass_attribution_seconds", self.attribution_s),
                 secs("spira_cert_pass_total_seconds", self.capacity_wait_s + self.boot_s + self.build_s + self.suites_s),
                 Point::Count { name: "spira_cert_pass_verdicts", value: 1 },
                 Point::Count { name: "spira_cert_pass_causes", value: 1 },
@@ -254,7 +259,7 @@ pub fn from_args(args: &[String]) -> Result<PassRecord, String> {
             "repo" | "batch" | "pass" | "instance-type" | "where" | "cause" | "detail" => {
                 m.insert(key.replace('-', "_"), Value::String(val.clone()));
             }
-            "vcpus" | "capacity-wait-s" | "boot-s" | "build-s" | "suites-s" => {
+            "vcpus" | "capacity-wait-s" | "boot-s" | "build-s" | "suites-s" | "attribution-s" => {
                 let n: u64 = val.parse().map_err(|_| format!("--{key} must be a whole number"))?;
                 m.insert(key.replace('-', "_"), Value::from(n));
             }
@@ -263,7 +268,7 @@ pub fn from_args(args: &[String]) -> Result<PassRecord, String> {
     }
     m.insert("members".into(), members.into());
     m.entry("instance_type").or_insert(Value::String(String::new()));
-    for k in ["capacity_wait_s", "boot_s", "build_s", "suites_s"] {
+    for k in ["capacity_wait_s", "boot_s", "build_s", "suites_s", "attribution_s"] {
         m.entry(k).or_insert(Value::from(0));
     }
     m.insert("where".into(), m.get("where").cloned().ok_or("--where is required")?);
@@ -288,6 +293,17 @@ mod tests {
         assert_eq!(Place::Host.as_str(), "host");
         let a: Vec<String> = "--repo r --batch b --pass 1 --where host --cause green".split(' ').map(String::from).collect();
         assert_eq!(from_args(&a).unwrap().place, Place::Host);
+    }
+
+    #[test]
+    fn a_pass_carries_its_attribution_seconds_and_an_older_row_reads_as_zero() {
+        let a: Vec<String> = "--repo r --batch b --pass 1 --where host --cause green --attribution-s 42".split(' ').map(String::from).collect();
+        let r = from_args(&a).unwrap();
+        let mut row: serde_json::Map<String, Value> = r.fields().into_iter().collect();
+        assert_eq!(row["attribution_s"], Value::from(42));
+        assert_eq!(PassRecord::from_row(&Value::Object(row.clone())).unwrap().attribution_s, 42);
+        row.remove("attribution_s");
+        assert_eq!(PassRecord::from_row(&Value::Object(row)).unwrap().attribution_s, 0);
     }
 
     #[test]

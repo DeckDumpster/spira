@@ -83,6 +83,7 @@ mod tests {
                 boot_s: 2,
                 build_s: 3,
                 suites_s: 4,
+                attribution_s: 5,
                 cause,
                 detail: String::new(),
                 fences: Vec::new(),
@@ -90,7 +91,7 @@ mod tests {
             };
             push_pass_to(Some(&addr), &rec);
             let body = h.join().unwrap();
-            for want in ["spira_cert_pass_verdicts", "spira_cert_pass_causes", "spira_cert_pass_total_seconds", "spira_cert_pass_boot_seconds", "place", "proxmox", "16vcpu", verdict] {
+            for want in ["spira_cert_pass_verdicts", "spira_cert_pass_causes", "spira_cert_pass_total_seconds", "spira_cert_pass_boot_seconds", "spira_cert_pass_attribution_seconds", "place", "proxmox", "16vcpu", verdict] {
                 assert!(body.contains(want), "{want} missing from the push");
             }
         }

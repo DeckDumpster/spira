@@ -792,7 +792,7 @@
     {
       "id": 22,
       "type": "timeseries",
-      "title": "round phases p50 by place: provision / build / suites (host vs ec2 vs the before-window)",
+      "title": "round phases p50 by place: provision / build / suites / attribution (host vs ec2 vs the before-window)",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -854,6 +854,15 @@
           "expr": "quantile_over_time(0.5, spira_cert_pass_total_seconds{repo=~\"$repo\",place=~\"$place\"}[$__interval] offset 24h)",
           "legendFormat": "total {{place}}, 24 h earlier",
           "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.5, spira_cert_pass_attribution_seconds{repo=~\"$repo\",place=~\"$place\"}[$__interval])",
+          "legendFormat": "attribution (inside suites) {{place}}",
+          "refId": "F"
         }
       ]
     },
