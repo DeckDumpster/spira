@@ -1310,6 +1310,28 @@ pub fn suite_first_fail(results_dir: &Path, suite: &str) -> Option<String> {
     first_fail_line(&fs::read_to_string(locate(results_dir, suite, "out")?).ok()?)
 }
 
+/// Copies the round VM's results (every suite's `.out` and `.result`, nested run directories
+/// included) into `<run>/rounds/<batch>.results`, where a red round's Concierge and
+/// attribution step read them. Returns that directory.
+pub fn keep_round_results(run: &Path, batch: &str, from: &Path) -> PathBuf {
+    let to = run.join("rounds").join(format!("{batch}.results"));
+    fn copy(from: &Path, to: &Path) {
+        if fs::create_dir_all(to).is_err() {
+            return;
+        }
+        for e in fs::read_dir(from).into_iter().flatten().flatten() {
+            let (src, dst) = (e.path(), to.join(e.file_name()));
+            if src.is_dir() {
+                copy(&src, &dst);
+            } else {
+                let _ = fs::copy(&src, &dst);
+            }
+        }
+    }
+    copy(from, &to);
+    to
+}
+
 /// Each red suite with the first FAIL line of its output in the round's results, written to
 /// `<run>/rounds/<batch>.results/red-evidence` and appended to `why`, so an abandoned red round
 /// can be attributed afterwards (law-a-failure-carries-its-own-explanation).
@@ -1322,7 +1344,7 @@ pub fn keep_red_evidence(run: &Path, batch: &str, why: &str, reds: &[String]) ->
         .iter()
         .map(|s| format!("{s}: {}", suite_first_fail(&results, s).unwrap_or_else(|| "(no FAIL line in its output)".into())))
         .collect();
-    let evidence = format!("{why}\n{}\n", lines.join("\n"));
+    let evidence = format!("{why}\n{}\noutput: {}\n", lines.join("\n"), results.display());
     if fs::create_dir_all(&results).is_ok() {
         let _ = fs::write(results.join("red-evidence"), &evidence);
     }
@@ -2854,6 +2876,21 @@ mod fail_line_tests {
             assert!(text.contains("judged red: VERDICT") && text.contains("test-a.sh: FAIL: a broke") && text.contains("test-b.sh: not ok 2 - b broke"), "{text}");
             assert!(!text.contains("later"), "{text}");
         }
+    }
+
+    #[test]
+    fn a_red_rounds_suite_output_is_copied_under_the_rounds_results_and_named_in_the_reason() {
+        let run = testkit::TempDir::new("batcher-cut-keep-results");
+        let corpus = run.path().join("batch-results").join("r-1").join("corpus");
+        fs::create_dir_all(corpus.join("v1")).unwrap();
+        fs::write(corpus.join("test-red.sh.out"), "FAIL: it broke\n").unwrap();
+        fs::write(corpus.join("v1").join("test-nested.sh.out"), "FAIL: nested\n").unwrap();
+        let kept = keep_round_results(run.path(), "b9", &corpus);
+        assert_eq!(kept, run.path().join("rounds").join("b9.results"));
+        assert_eq!(fs::read_to_string(kept.join("test-red.sh.out")).unwrap(), "FAIL: it broke\n");
+        let why = keep_red_evidence(run.path(), "b9", "red", &["test-red.sh".to_string(), "test-nested.sh".to_string()]);
+        assert!(why.contains("test-red.sh: FAIL: it broke") && why.contains("test-nested.sh: FAIL: nested"), "{why}");
+        assert!(why.contains(kept.to_str().unwrap()), "{why}");
     }
 
     #[test]
