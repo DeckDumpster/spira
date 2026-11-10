@@ -723,8 +723,8 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         Err(_) => Read::Observed(None),
     };
     let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_secs(5));
-    let views = store_view::Projection::configured(lc.clone());
-    let refreshed = views.as_ref().map_err(Clone::clone).and_then(|v| v.refresh_batches().map_err(String::from));
+    let views = store_view::Projection::hot(lc.clone());
+    let refreshed = views.as_ref().map_err(Clone::clone).and_then(|v| v.batches_current().map_err(String::from));
     let home = spira_config::resolve::locate_home_for_process()?;
     let reg = spira_config::repos::Registry::from_env(std::env::vars().chain(req.pinned.clone()).collect(), &home);
     let forge = req.pinned.get("SPIRA_FORGE").cloned().unwrap_or_else(|| "forge".into());
@@ -769,19 +769,31 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
             snap.base_ci.insert(name.clone(), read);
         }
         if matches!(land.as_str(), "queue" | "queue.local") {
-            let certified = match lc.call(&["list", "--state", "CERTIFIED", "--repo", name.as_str()]) {
-                Ok(r) if r.code == 0 => match unheld_ids(&r.out) {
-                    Ok(ids) => Read::Observed(ids),
-                    Err(err) => Read::Unobservable(err),
-                },
-                Ok(r) => Read::Unobservable(r.why()),
-                Err(err) => Read::Unobservable(err.to_string()),
-            };
+            let certified = certified_pool(&lc, &name);
             snap.certified.insert(name.clone(), certified);
         }
         snap.open_batch.insert(name, batch);
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+/// The repo's unheld CERTIFIED beads: held rows when the process keeps the store's watch (a
+/// refusal could not say), else the store's own list.
+pub fn certified_pool(lc: &spira_config::lc_call::LcClient, repo: &str) -> Read<Vec<String>> {
+    if let Some(held) = store_view::shared() {
+        return match held.unheld("CERTIFIED", repo) {
+            Ok(r) => Read::Observed(r.value),
+            Err(err) => Read::Unobservable(format!("could not say: {err}")),
+        };
+    }
+    match lc.call(&["list", "--state", "CERTIFIED", "--repo", repo]) {
+        Ok(r) if r.code == 0 => match unheld_ids(&r.out) {
+            Ok(ids) => Read::Observed(ids),
+            Err(err) => Read::Unobservable(err),
+        },
+        Ok(r) => Read::Unobservable(r.why()),
+        Err(err) => Read::Unobservable(err.to_string()),
+    }
 }
 
 fn filing(input: &str) -> Result<czar_pass::Filing, String> {

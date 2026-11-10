@@ -752,6 +752,14 @@ fn answer(lc: &LcClient, args: &[&str]) -> Result<String, String> {
     if r.code == 0 { Ok(r.out) } else { Err(format!("spira-lc {} exited {}: {}", args.first().copied().unwrap_or(""), r.code, r.why())) }
 }
 
+/// `list <query>`'s answer: the held rows when the process keeps the store's watch, else the store's.
+pub fn rows_answer(lc: &LcClient, q: &store_view::RowQuery, args: &[&str]) -> Result<String, String> {
+    match store_view::shared() {
+        Some(held) => held.rows(q).map(|r| serde_json::Value::Array(r.value).to_string()).map_err(|e| e.to_string()),
+        None => answer(lc, args),
+    }
+}
+
 fn write_of(input: &str, what: &str) -> Result<Write, String> {
     serde_json::from_str(input).map_err(|e| format!("{what}: {e}"))
 }
@@ -790,7 +798,7 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         ..Snapshot::default()
     };
     snap.skew = std::env::var(spira_config::RELEASE_ENV).ok().filter(|r| !r.is_empty()).and_then(|r| spira_config::release_skew::skew(std::path::Path::new(&r))).map(|s| s.describe());
-    let mut rows = answer(&lc, &["list", "--live"]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok());
+    let mut rows = rows_answer(&lc, &store_view::RowQuery { live: true, ..Default::default() }, &["list", "--live"]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok());
     let live_ids: Vec<String> = rows.iter().flatten().map(|r| r.bead_id.clone()).collect();
     let content = beads_on(&lc, &snap.labels.epics, &live_ids);
     snap.beads = content.as_ref().map(|v| {
@@ -809,7 +817,7 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         ids.sort();
         ids.dedup();
         for chunk in ids.chunks(100) {
-            if let Some(older) = answer(&lc, &["list", "--ids", &chunk.join(",")]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok()) {
+            if let Some(older) = rows_answer(&lc, &store_view::RowQuery { ids: Some(chunk), ..Default::default() }, &["list", "--ids", &chunk.join(",")]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok()) {
                 live.extend(older);
             }
         }

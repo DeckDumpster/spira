@@ -534,14 +534,14 @@ fn batch_show(env: &Env, repo: &str) -> Result<String, String> {
     let client = spira_config::lc_call::LcClient::for_bin(&env.lc_bin)
         .map_err(|e| format!("could not say: {e}"))?
         .within(std::time::Duration::from_secs(env.lc_timeout));
-    let views = store_view::Projection::configured(client).map_err(|e| format!("could not say: {e}"))?;
+    let views = store_view::Projection::hot(client).map_err(|e| format!("could not say: {e}"))?;
     shown_in(&views, repo)
 }
 
-/// `repo`'s open batch record from `views`, its batch records read afresh. A read the store
+/// `repo`'s open batch record from `views`, its batch records current (read afresh unless a watch keeps them so). A read the store
 /// refused, or a view it cannot vouch for, could not say: it is never read as no batch.
 fn shown_in(views: &store_view::Projection, repo: &str) -> Result<String, String> {
-    views.refresh_batches().map_err(|e| format!("could not say: {e}"))?;
+    views.batches_current().map_err(|e| format!("could not say: {e}"))?;
     views.batch_view(repo).map(|r| r.value.shown()).map_err(|e| format!("could not say: {e}"))
 }
 

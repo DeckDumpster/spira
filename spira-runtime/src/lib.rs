@@ -13,7 +13,7 @@ pub mod settings;
 pub mod sink;
 pub mod sources;
 pub mod status;
-pub use store_view as store;
+pub mod store;
 pub mod tasks;
 pub mod wake;
 pub mod watchers;

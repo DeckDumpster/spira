@@ -135,6 +135,9 @@ impl World {
 
     /// Unheld beads of one repo in `state`; `None` when the lifecycle did not answer.
     fn unheld(&self, repo: &str, state: &str) -> Option<u64> {
+        if let Some(views) = store_view::shared() {
+            return views.unheld(state, repo).ok().map(|r| r.value.len() as u64);
+        }
         let rows: Value = serde_json::from_str(&self.lc(&["list", "--state", state, "--repo", repo])?).ok()?;
         let held = |r: &Value| r["holds"].as_array().is_some_and(|h| !h.is_empty());
         Some(rows.as_array()?.iter().filter(|r| r.get("bead_id").is_some() && !held(r)).count() as u64)
@@ -144,6 +147,11 @@ impl World {
     /// and of those the ones still at phase `opened` with the epoch second they opened. `None`
     /// when the lifecycle did not answer: no answer is not "no round open".
     fn open_round_facts(&self) -> Option<(u64, Vec<(String, u64)>)> {
+        if let Some(views) = store_view::shared() {
+            let rounds = views.round_view(&self.home_repo).ok()?.value.rounds;
+            let unadvanced = rounds.iter().filter(|r| r.record.state == "OPEN").filter_map(|r| Some((r.record.id.clone(), r.record.get("opened")?.parse().ok()?))).collect();
+            return Some((rounds.len() as u64, unadvanced));
+        }
         let batches = self.lc_json(&["list", "--batches", "--window", "1"]).ok()?;
         let mut live = 0;
         let mut unadvanced = vec![];

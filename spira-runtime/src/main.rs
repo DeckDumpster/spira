@@ -105,6 +105,14 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     let _sources = spira_runtime::sources::real(&|k: &str| spira_config::process::cfg(k), backend.completions(), clock.clone())?.start(tx.clone()).map_err(|e| e.to_string())?;
     let control = spira_runtime::status::Control::new(board, spira_runtime::control_submit(tx), clock.clone());
     spira_runtime::spawn_control(&settings.control_socket, control)?;
+    // Held to the end of `serve`: dropping it stops the watch.
+    let _store = match spira_runtime::store::start(&settings.lc_socket) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            eprintln!("spira-runtime: no store views, tasks read the store per tick: {e}");
+            None
+        }
+    };
     notifier.ready();
     let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None };
     let units = backend.units();
