@@ -133,7 +133,9 @@ would make the gate test the code already in force.
 exists (`name | path | mode | base | format | gate | lanes`), else the `[repo.*]` tables.
 Register one with `spira-config repo add <name> --path P --queue local|forge [--remote URL]
 [--land-ref R] [--format CMD] [--gate CMD]` and audit with `spira-config repo check
-<name>|--all`. A repository carries its own gate in the tree under test (`gate.steps`) and, for
+<name>|--all`. Change a field with `spira-config repo set <name> path|queue|land|format|gate|lanes
+<value>` (prints old and new; `queue` is the mode, `land` the landing ref) and unregister with
+`spira-config repo rm <name>`. A repository carries its own gate in the tree under test (`gate.steps`) and, for
 repositories other than the harness, its test entry in `.spira/testenv.toml`.
 
 **Personas.** `spira/runes/<name>.rune` and `<name>.md` ([concepts](concepts.md)). The live model per

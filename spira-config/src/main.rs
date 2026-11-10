@@ -664,6 +664,52 @@ fn cmd_repo_add(args: &[String]) -> ExitCode {
     }
 }
 
+fn repo_targets() -> spira_config::repo_admin::Targets {
+    let home = spira_config::resolve::locate_home_for_process().unwrap_or_default();
+    let env_map = spira_config::repos::registry_env(env::vars().collect(), &home);
+    spira_config::repo_admin::Targets {
+        map: env_map
+            .get("SPIRA_REPO_MAP")
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from),
+        toml: spira_config::locate::locate(None).found(),
+    }
+}
+
+fn cmd_repo_set(args: &[String]) -> ExitCode {
+    let [name, field, value] = args else {
+        eprintln!("usage: spira-config repo set <name> <path|queue|land|format|gate|lanes> <value>");
+        return ExitCode::FAILURE;
+    };
+    match spira_config::repo_admin::set(name, field, value, &repo_targets()) {
+        Ok((old, new)) => {
+            println!("repo set: {name} {field}: {old:?} -> {new:?}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn cmd_repo_rm(args: &[String]) -> ExitCode {
+    let [name] = args else {
+        eprintln!("usage: spira-config repo rm <name>");
+        return ExitCode::FAILURE;
+    };
+    match spira_config::repo_admin::rm(name, &repo_targets()) {
+        Ok(old) => {
+            println!("repo rm: {name}: removed {old:?}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn cmd_repo_check(reg: &Registry, args: &[String]) -> ExitCode {
     let names: Vec<String> = match args.first().map(String::as_str) {
         Some("--all") => reg.all(),
@@ -732,6 +778,8 @@ fn cmd_repo(args: &[String]) -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("add") => cmd_repo_add(&args[1..]),
+        Some("set") => cmd_repo_set(&args[1..]),
+        Some("rm") => cmd_repo_rm(&args[1..]),
         Some("check") => cmd_repo_check(&reg, &args[1..]),
         Some("home-repo") => {
             println!("{}", reg.home_repo());
