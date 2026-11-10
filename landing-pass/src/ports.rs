@@ -92,6 +92,9 @@ pub trait Lib {
     fn deliver_returned(&self, id: &str, reason: &str);
     fn closeout(&self, id: &str, sha: &str, repo: &Path);
     fn close_on_land(&self, id: &str, sha: &str);
+    /// `spira-lc content-on-base <id> <proof> landing-pass`: the bead's work is already on the
+    /// base. True when the store recorded it; a refusal is logged with its exit and stderr.
+    fn content_on_base(&self, id: &str, proof: &str) -> bool;
     fn prune_worktrees(&self, repo: &Path);
     fn gh_unlanded_scan(&self);
     /// `spira_ask_refresh_loop <repo> <name> <branch> <id> <base_fq> <n>` — needs_refresh's

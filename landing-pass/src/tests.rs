@@ -78,6 +78,10 @@ struct FakeGit {
     merge_conflict: RefCell<HashSet<String>>,
     deleted: RefCell<Vec<String>>,
     matching: RefCell<HashMap<String, Vec<String>>>,
+    /// branch → the subjects of its commits ahead of the base
+    subjects: RefCell<HashMap<String, String>>,
+    /// grep → `sha\tsubject` lines on the base
+    grep: RefCell<HashMap<String, String>>,
 }
 
 impl FakeGit {
@@ -138,14 +142,15 @@ impl Git for FakeGit {
     fn refs_matching(&self, _: &Path, p: &str) -> Vec<String> {
         self.matching.borrow().get(p).cloned().unwrap_or_default()
     }
-    fn log_grep(&self, _: &Path, _: &str, _: &[String]) -> Option<String> {
-        None
+    fn log_grep(&self, _: &Path, g: &str, _: &[String]) -> Option<String> {
+        self.grep.borrow().get(g).cloned()
     }
     fn merge_base(&self, _: &Path, _: &str, _: &str) -> Option<String> {
         None
     }
-    fn log_subjects(&self, _: &Path, _: &str, _: &[&str]) -> Option<String> {
-        None
+    fn log_subjects(&self, _: &Path, range: &str, _: &[&str]) -> Option<String> {
+        let br = range.rsplit("..").next()?;
+        self.subjects.borrow().get(br).cloned()
     }
     fn commit_body(&self, _: &Path, _: &str) -> Option<String> {
         None
@@ -154,6 +159,7 @@ impl Git for FakeGit {
 
 #[derive(Default)]
 struct FakeLib {
+    content_refused: Cell<Option<i32>>,
     calls: RefCell<Vec<String>>,
     rebase_fail: RefCell<HashMap<String, Rebase>>,
     recut: RefCell<Option<Recut>>,
@@ -256,6 +262,10 @@ impl Lib for FakeLib {
     }
     fn close_on_land(&self, id: &str, sha: &str) {
         self.rec(format!("close_on_land {id} {sha}"));
+    }
+    fn content_on_base(&self, id: &str, proof: &str) -> bool {
+        self.rec(format!("content_on_base {id} {proof}"));
+        self.content_refused.get().is_none()
     }
     fn prune_worktrees(&self, _: &Path) {
         self.rec("prune_worktrees".into());
@@ -966,6 +976,84 @@ fn the_budget_cut_defers_the_rest_writes_the_cursor_and_escalates_at_the_thresho
     assert!(h.lib.has("ask_budget_deferred spira/sp-c spira 5"));
     assert!(!h.lib.has("ask_budget_deferred spira/sp-b"));
     assert!(!files.deferred_dir().join("spira_sp-a").exists());
+}
+
+const NOTHING_TO_LAND: &str = "already contains every change on spira/sp-empty — nothing to land";
+
+fn empty_submit(h: &H) {
+    h.bead("sp-empty", "closed", &[]);
+    h.git.add("spira/sp-empty", "t9");
+    h.git.shas.borrow_mut().insert("origin/main".into(), "b00".into());
+    h.git.shas.borrow_mut().insert("refs/remotes/origin/main".into(), "b00".into());
+    h.git.content.borrow_mut().insert("spira/sp-empty".into());
+    h.git.subjects.borrow_mut().insert("spira/sp-empty".into(), "sp-empty: record the decision (store-only)".into());
+}
+
+#[test]
+fn a_submitted_branch_with_no_tree_diff_is_closed_landed_once_and_said_once() {
+    let h = H::new(LandMode::Queue);
+    empty_submit(&h);
+    h.run();
+    h.run();
+    assert_eq!(h.lib.count("content_on_base sp-empty merge-tree:b00"), 1, "{:?}", h.lib.calls.borrow());
+    assert_eq!(h.lib.count("note sp-empty tip t9, origin/main at b00: no tree diff, closed LANDED by landing-pass"), 1);
+    assert!(h.mailbox().contains("sp-empty closed LANDED"), "{}", h.mailbox());
+    assert_eq!(h.out.lines().iter().filter(|l| l.contains(NOTHING_TO_LAND)).count(), 1);
+    assert!(h.tools.gate_calls.borrow().is_empty(), "no gate for a branch with no tree diff");
+}
+
+#[test]
+fn a_refused_content_on_base_is_tried_again_next_pass() {
+    let h = H::new(LandMode::Queue);
+    empty_submit(&h);
+    h.lib.content_refused.set(Some(2));
+    h.run();
+    h.run();
+    assert_eq!(h.lib.count("content_on_base sp-empty"), 2);
+    assert_eq!(h.out.lines().iter().filter(|l| l.contains(NOTHING_TO_LAND)).count(), 1);
+    assert!(!h.lib.has("note sp-empty"));
+    assert!(!h.mailbox().contains("closed LANDED"));
+}
+
+#[test]
+fn a_new_tip_with_no_tree_diff_is_settled_again() {
+    let h = H::new(LandMode::Queue);
+    empty_submit(&h);
+    h.run();
+    h.git.refs.borrow_mut().retain(|(b, _)| b != "spira/sp-empty");
+    h.git.add("spira/sp-empty", "t10");
+    h.run();
+    assert_eq!(h.lib.count("content_on_base sp-empty"), 2);
+    assert_eq!(h.out.lines().iter().filter(|l| l.contains(NOTHING_TO_LAND)).count(), 2);
+}
+
+#[test]
+fn a_stacked_base_only_branch_passes_the_evidence_guard_as_hel_does() {
+    let h = H::new(LandMode::Queue);
+    empty_submit(&h);
+    h.git.subjects.borrow_mut().insert("spira/sp-empty".into(), "stacked base: merge sp-other".into());
+    h.run();
+    assert_eq!(h.lib.count("content_on_base sp-empty"), 1, "stacked-base commits carry no work of their own, so the guard passes it as hel does");
+}
+
+#[test]
+fn a_squash_merged_bead_named_on_the_base_is_closed() {
+    let h = H::new(LandMode::Queue);
+    empty_submit(&h);
+    h.git.subjects.borrow_mut().insert("spira/sp-empty".into(), "unrelated work".into());
+    h.git.grep.borrow_mut().insert("sp-empty".into(), "c0ffee\tsp-empty: squashed".into());
+    h.run();
+    assert_eq!(h.lib.count("content_on_base sp-empty"), 1);
+}
+
+#[test]
+fn commits_that_name_no_bead_are_kept_not_closed() {
+    let h = H::new(LandMode::Queue);
+    empty_submit(&h);
+    h.git.subjects.borrow_mut().insert("spira/sp-empty".into(), "unrelated work".into());
+    h.run();
+    assert!(!h.lib.has("content_on_base"));
+    assert!(h.logged("none naming the bead"));
 }
 
 #[test]
@@ -1970,6 +2058,10 @@ fn the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails() {
     assert!(pr_run(&h, &tools).is_empty());
     assert_eq!(*tools.delivered.borrow(), vec!["sp-merged M"]);
 
+    let h = H::new(LandMode::Pr);
+    h.closed("sp-merged", "t3");
+    h.git.content.borrow_mut().insert("spira/sp-merged".into());
+    h.git.shas.borrow_mut().insert("refs/remotes/origin/main".into(), "M".into());
     let tools = FakePr::default();
     *tools.fail.borrow_mut() = Some("show exited 1: Access denied".into());
     let loud = pr_run(&h, &tools);
@@ -1977,6 +2069,19 @@ fn the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails() {
         loud,
         vec!["landing-pass: sp-merged: LIFECYCLE: the Delivered event did not happen (show exited 1: Access denied) — the delivery row stays PR_OPEN"]
     );
+    assert!(pr_run(&h, &tools).len() == 1, "a refused delivery is tried again next pass");
+}
+
+#[test]
+fn the_pr_pass_proves_a_content_delivery_once_per_tip() {
+    let h = H::new(LandMode::Pr);
+    h.closed("sp-merged", "t3");
+    h.git.content.borrow_mut().insert("spira/sp-merged".into());
+    h.git.shas.borrow_mut().insert("refs/remotes/origin/main".into(), "M".into());
+    let tools = FakePr::default();
+    pr_run(&h, &tools);
+    pr_run(&h, &tools);
+    assert_eq!(*tools.delivered.borrow(), vec!["sp-merged M"]);
 }
 
 #[test]
