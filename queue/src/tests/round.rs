@@ -806,6 +806,16 @@ fn a_refused_abandon_leaves_the_round_driven() {
 }
 
 #[test]
+fn an_abandon_names_the_driver_still_holding_the_rounds_lock() {
+    let t = round_world();
+    open_hand_round(&t);
+    let _driver = crate::lock::try_certify_lock(&t.s().queue_dir, "spira", "hand-1");
+    assert_eq!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0, "{}", t.err());
+    assert!(t.err().contains("a driver of round hand-1 could not be stopped"), "{}", t.err());
+    assert!(t.err().contains(&format!("pid={}", std::process::id())), "{}", t.err());
+}
+
+#[test]
 fn a_leg_that_outlives_its_stop_keeps_the_round_open() {
     let t = round_world();
     assert_eq!(

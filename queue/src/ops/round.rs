@@ -4980,7 +4980,7 @@ fn void_stacked(w: &World, label: &str, c: &Ctx, path: &Path, parent: &str) -> R
 /// A driver still holding the round's certify lock was not stopped by the abandon; it ends at its
 /// next poll, when it reads the abandon marker.
 fn name_surviving_driver(w: &World, label: &str, c: &Ctx, batch: &str) {
-    if crate::lock::certify_lock_batches(&c.s.queue_dir, &c.r.name).iter().any(|b| b == batch) {
+    if crate::lock::certify_held(&c.s.queue_dir, &c.r.name, batch) {
         let holder = crate::lock::certify_holder(&c.s.queue_dir, &c.r.name, batch);
         w.err(format!(
             "queue.sh {label}: WARNING — a driver of round {batch} could not be stopped ({}); it ends at its next poll",
@@ -5023,8 +5023,8 @@ fn close_abandoned(
     match lc_abandon(w, batch, LC_ACTOR, &why) {
         Ok(()) => {
             w.out(format!("queue.sh {label}: {batch} abandoned on spira-lc"));
-            crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, batch);
             name_surviving_driver(w, label, c, batch);
+            crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, batch);
         }
         Err((1, out)) if out.is_empty() => w.err(format!(
             "queue.sh {label}: spira-lc has no batch row for {batch}"
