@@ -168,3 +168,27 @@ fn a_quarantined_batcher_stream_ticks_again_once_its_row_is_cleared() {
     assert!(observes(&seen, GATE_OBSERVE) >= gate_resumed + 3, "gate.worker observes each cadence");
     assert!(observes(&seen, BATCHER_OBSERVE) >= resumed + 3, "batcher.local observes each cadence once the row is cleared");
 }
+
+/// A restart onto a stream whose poison row stands: the boot tick lands on it, is parked, and
+/// the stream ticks again once the row is cleared.
+#[test]
+fn a_restart_onto_a_standing_poison_row_keeps_the_batcher_armed_and_resumes_when_it_is_cleared() {
+    let (store, clock) = (Arc::new(Lifting { inner: MemJournal::new(), lifted: AtomicBool::new(false) }), VirtualClock::new(1_000));
+    store.inner.poison(&Poison { stream: StreamKey(BATCHER_STREAM.into()), event: runtime::EventId("earlier".into()), handler: "planted".into(), message: "left by the run before the restart".into() }).unwrap();
+    let seen = Arc::new(Seen::default());
+    let mut d = boot(store.clone(), &clock, &seen, vec![]);
+    for _ in 0..3 {
+        run_for(&mut d, &clock, 60_000);
+        assert!(armed(&d, BATCHER).is_some(), "batcher.local stays armed while the inherited row stands");
+    }
+    store.lifted.store(true, Ordering::SeqCst);
+    for _ in 0..40 {
+        run_for(&mut d, &clock, 30_000);
+    }
+    let resumed = observes(&seen, BATCHER_OBSERVE);
+    for _ in 0..3 {
+        run_for(&mut d, &clock, BATCHER_CADENCE);
+        assert!(armed(&d, BATCHER).is_some(), "armed after each tick once the row is cleared");
+    }
+    assert!(observes(&seen, BATCHER_OBSERVE) >= resumed + 3, "batcher.local observes each cadence once the row is cleared");
+}
