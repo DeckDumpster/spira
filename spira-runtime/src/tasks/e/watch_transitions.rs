@@ -421,7 +421,7 @@ fn in_effect_commit(releases_dir: &std::path::Path) -> Option<String> {
         .map(|m| m.commit)
 }
 
-/// Whether `commit` is an ancestor of `release`: the answer of `git merge-base --is-ancestor`,
+/// Whether `commit` is an ancestor of `release` (`git merge-base --is-ancestor`),
 /// or why it could not be asked.
 pub type Ancestor<'a> = &'a dyn Fn(&str, &str) -> Result<bool, String>;
 
