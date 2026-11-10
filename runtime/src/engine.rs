@@ -231,6 +231,8 @@ pub struct Engine {
     /// The schedule row a fired event came from, and the request an outcome answers: both are
     /// recorded in the turn that dispatches the event.
     fire_of: BTreeMap<EventId, String>,
+    /// The timer behind each local tick in the queue: a tick for a quarantined stream is parked again, not dropped.
+    tick_of: BTreeMap<EventId, ScheduleRow>,
     resolves: BTreeMap<EventId, String>,
 }
 
@@ -354,6 +356,7 @@ impl Engine {
             turn: Turn::default(),
             committed: BTreeSet::new(),
             fire_of: BTreeMap::new(),
+            tick_of: BTreeMap::new(),
             resolves: BTreeMap::new(),
         };
         let boot = retry.read(|| e.journal.boot())?;
@@ -716,6 +719,8 @@ impl Engine {
     /// re-arms its memory-only timers each time it starts.
     pub fn start(&mut self, stream: &str, kind: EventKind) {
         let ev = self.local_event(&StreamKey(stream.into()), kind, self.clock.now_ms(), None);
+        let id = format!("{stream}/{}", ev.kind.tag);
+        self.tick_of.insert(ev.id.clone(), ScheduleRow { id, at: ev.at, stream: ev.stream.clone(), kind: ev.kind.clone(), cause: None, correlation: ev.correlation.clone() });
         self.queue.push_back((ev, true));
     }
 
@@ -871,9 +876,24 @@ impl Engine {
         if !local && ev.stream.0 == HALT_STREAM {
             self.gate(ev)?;
         }
-        let offered = if self.is_poisoned(&ev.stream)? { Ok(()) } else { self.offer(ev) };
+        let offered = if self.is_poisoned(&ev.stream)? {
+            self.park(ev);
+            Ok(())
+        } else {
+            self.tick_of.remove(&ev.id);
+            self.offer(ev)
+        };
         self.place();
         offered
+    }
+
+    /// A tick that lands on a quarantined stream is not heard; its next one is armed for the next
+    /// poison recheck, so the stream ticks again once it is cleared.
+    fn park(&mut self, ev: &Event) {
+        if let Some(mut row) = self.tick_of.remove(&ev.id) {
+            row.at = self.clock.now_ms() + POISON_RECHECK_MS;
+            self.timers.entry(row.id.clone()).or_insert(row);
+        }
     }
 
     fn push_local(&mut self, ev: &Event) {
@@ -1012,8 +1032,8 @@ impl Engine {
     }
 
     fn quarantine(&mut self, ev: &Event, handler: &str, message: &str) -> Result<()> {
-        self.poison_seen.insert(ev.stream.clone(), true);
         self.journal.poison(&Poison { stream: ev.stream.clone(), event: ev.id.clone(), handler: handler.into(), message: message.into() })?;
+        self.poison_seen.insert(ev.stream.clone(), true);
         let w = self.unit("quarantine", Some(ev));
         w.set("handler", handler);
         w.set("quarantine.reason", message);
@@ -1141,6 +1161,7 @@ impl Engine {
         for (_, id) in due {
             if let Some(row) = self.timers.remove(&id) {
                 let ev = Event { cause: row.cause.clone(), correlation: row.correlation.clone(), ..self.local_event(&row.stream, row.kind.clone(), row.at, None) };
+                self.tick_of.insert(ev.id.clone(), row);
                 self.enqueue_local(ev);
                 n += 1;
             }
