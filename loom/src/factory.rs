@@ -1384,6 +1384,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_round_open_in_another_repo_leaves_this_repos_stall_standing() {
+        let run = run_with_a_release();
+        let dwell = json!({"beads": [{"id": "sp-a", "repo": "spira", "state": "SUBMITTED", "since": NOW - 7200}], "horizon": NOW - 4200, "last": {"spira": {}}, "landed_after": {}});
+        let round = json!({"batch_id": "b-1", "state": "ATTRIBUTING", "repo": "elsewhere", "members": ["sp-x"], "pass": 1, "opened_at": NOW - 60});
+        let mut answers = script(batch_graph(), &quiet(), json!([]));
+        answers.retain(|a| a.0 != "list --batches");
+        answers.push(ok("list --batches", json!([round]).to_string()));
+        answers.push(ok(&dwell_key(), dwell.to_string()));
+        let f = floor_with(answers, run.path().to_str().unwrap(), &sensing()).await.unwrap();
+        let stalls: Vec<&Value> = of_kind(&f, "transitions").into_iter().filter(|s| s["status"] == "STALL").collect();
+        assert!(stalls.iter().any(|s| s["repo"] == "spira" && s["reading"].as_str().unwrap().contains("no Cut")), "{stalls:?}");
+    }
+
+    #[tokio::test]
     async fn a_refused_dwell_makes_every_transitions_sensor_blind_and_names_the_refusal() {
         let run = run_with_a_release();
         let mut answers = script(batch_graph(), &quiet(), json!([]));
