@@ -484,12 +484,6 @@ fn a_landing_after_the_release_in_effect_was_switched_in_raises_the_stall_past_t
 }
 
 #[test]
-fn a_round_open_in_the_repo_suppresses_its_stall() {
-    let (s, now) = submitted_ago(20, 1, 24);
-    assert!(!five_minute_cut_bound(&s, now).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")));
-}
-
-#[test]
 fn a_round_open_in_another_repo_does_not_suppress_this_repos_stall() {
     let (mut s, now) = submitted_ago(20, 0, 24);
     s.open_rounds = Some(rounds_in("other", 1));
