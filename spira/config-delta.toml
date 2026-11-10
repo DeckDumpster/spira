@@ -192,6 +192,8 @@ identity_login_cmd = ""
 identity_login_ttl_secs = "900"
 identity_login_url = ""
 ffx_vocabulary_mode = "enforce"
+unit_test_deadline_secs = 60
+unit_test_deadline_periods = 2
 # literal-ok: shipped default of the registry key
 mimir_label = "mimir-sweep"
 mimir_landing_interval = "25"
