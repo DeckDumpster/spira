@@ -17,7 +17,7 @@ const HOUR: u64 = 3_600;
 const T0: u64 = 10 * 86_400;
 
 fn config() -> Config {
-    Config { period_s: 300, working_min: 2, submit_bound_s: 90 * MIN, cut_bound_s: 45 * MIN, deliver_bound_s: 60 * MIN, activate_bound_s: 15 * MIN, ask_bound_s: 60 * MIN, release_repo: "spira".into(), heartbeat_bound_s: 120 }
+    Config { period_s: 300, working_min: 2, submit_bound_s: 90 * MIN, cut_bound_s: 45 * MIN, deliver_bound_s: 60 * MIN, activate_bound_s: 15 * MIN, ask_bound_s: 60 * MIN, release_repo: "spira".into(), heartbeat_bound_s: 120, releases: "/rel".into() }
 }
 
 fn bead(id: &str, repo: &str, state: &str, since: u64) -> Bead {
@@ -435,4 +435,46 @@ fn a_submitted_bead_waiting_twenty_minutes_behind_an_open_round_is_queued_not_st
     assert!(!keys(&s).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "{:?}", keys(&s));
     s.open_rounds = Some(0);
     assert!(keys(&s).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()), "no round open and the wait past the bound pages");
+}
+
+/// A run dir whose only release activated at epoch second 100, and a releases dir whose
+/// `current` link was switched just now.
+fn stale_record_fresh_switch() -> (testkit::TempDir, testkit::TempDir, u64) {
+    let run = testkit::TempDir::new("wt-run");
+    let mut r = release::machine::Release::new("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    for (to, at) in [(release::machine::ReleaseState::Cut, 1), (release::machine::ReleaseState::Accepted, 2), (release::machine::ReleaseState::Published, 3), (release::machine::ReleaseState::Activated, 100)] {
+        r.record(to, "t", at).unwrap();
+    }
+    release::machine::save(&run.path().join("release"), &r).unwrap();
+    let rel = testkit::TempDir::new("wt-releases");
+    std::os::unix::fs::symlink("bbbbbbbb", rel.path().join("current")).unwrap();
+    let switched = std::fs::symlink_metadata(rel.path().join("current")).unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    (run, rel, switched)
+}
+
+/// A dwell answer that reports `delivered` as a landing only when it is newer than `--landed-after`.
+fn dwell_with_a_landing_at(delivered: u64) -> impl Fn(&[&str]) -> Result<serde_json::Value, String> {
+    move |argv| {
+        let after = argv.iter().position(|a| *a == "--landed-after").and_then(|i| argv[i + 1].parse::<u64>().ok()).unwrap_or(0);
+        let landed = if delivered > after { serde_json::json!({ "spira": delivered }) } else { serde_json::json!({}) };
+        Ok(serde_json::json!({ "beads": [], "horizon": 0, "last": { "spira": { "Delivered": delivered } }, "landed_after": landed }))
+    }
+}
+
+#[test]
+fn a_landing_under_the_release_in_effect_raises_no_stall_however_old_the_recorded_activation() {
+    let (run, rel, switched) = stale_record_fresh_switch();
+    let delivered = switched - 20 * MIN;
+    let snap = observe(run.path(), rel.path(), &dwell_with_a_landing_at(delivered), 3_600);
+    assert!(snap.readable, "{}", snap.why);
+    let found = spira_runtime::tasks::e::watch_transitions::stalls(&snap, switched + 30 * MIN, &config());
+    assert!(!found.iter().any(|s| s.edge == "LANDED→ACTIVATED"), "{found:?}");
+}
+
+#[test]
+fn a_landing_after_the_release_in_effect_was_switched_in_raises_the_stall_past_the_bound() {
+    let (run, rel, switched) = stale_record_fresh_switch();
+    let snap = observe(run.path(), rel.path(), &dwell_with_a_landing_at(switched + 60), 3_600);
+    let found = spira_runtime::tasks::e::watch_transitions::stalls(&snap, switched + 60 + 16 * MIN, &config());
+    assert!(found.iter().any(|s| s.edge == "LANDED→ACTIVATED" && s.scope == "spira"), "{found:?}");
 }

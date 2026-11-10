@@ -843,9 +843,10 @@ impl World {
         #[derive(serde::Deserialize)]
         struct P {
             window_s: u64,
+            releases: PathBuf,
         }
         let p: P = serde_json::from_str(input).map_err(|e| format!("transitions params unparsed: {e}"))?;
-        let mut snap = wt::observe(&self.run_dir, &|argv| self.lc_json(argv), p.window_s);
+        let mut snap = wt::observe(&self.run_dir, &p.releases, &|argv| self.lc_json(argv), p.window_s);
         snap.open_rounds = self.open_rounds();
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
