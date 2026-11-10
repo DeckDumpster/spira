@@ -1471,6 +1471,7 @@ pub(crate) fn shell_quote(s: &str) -> String {
 /// Sets one dotted path (`spira.prod`, `spira.max_live_dwarves`) to a leaf JSON value on `doc`.
 /// Shared by `set_path`'s two attempts, below.
 fn set_path_leaf(
+    reg: &registry::Registry,
     doc: &SpiraToml,
     path: &str,
     leaf_value: serde_json::Value,
@@ -1482,7 +1483,6 @@ fn set_path_leaf(
     };
     let mut json = serde_json::to_value(doc).map_err(|e| e.to_string())?;
     if let ["spira", field] = segs.as_slice() {
-        let reg = registry::for_process()?;
         let rk = reg.by_field(field).ok_or_else(|| format!("spira.{field}: unknown field `{field}`"))?;
         let table = json.as_object_mut().expect("a document is an object").entry("spira").or_insert_with(|| serde_json::Value::Object(Default::default()));
         if table.is_null() {
@@ -1601,14 +1601,20 @@ fn diff_apply(
 /// first (string) attempt's error when both fail, since "expected u32" names the fix; the
 /// generic JSON-parse failure on a bare word does not.
 pub fn set_path(doc: &SpiraToml, path: &str, value: &str) -> Result<SpiraToml, String> {
-    let as_string_err = match set_path_leaf(doc, path, serde_json::Value::String(value.to_string()))
+    set_path_with(registry::for_process()?, doc, path, value)
+}
+
+/// [`set_path`] typed against `reg` rather than this process's release: a staged release's
+/// registry declares keys the installed one does not yet.
+pub fn set_path_with(reg: &registry::Registry, doc: &SpiraToml, path: &str, value: &str) -> Result<SpiraToml, String> {
+    let as_string_err = match set_path_leaf(reg, doc, path, serde_json::Value::String(value.to_string()))
     {
         Ok(d) => return Ok(d),
         Err(e) => e,
     };
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) {
         if !parsed.is_string() {
-            if let Ok(d) = set_path_leaf(doc, path, parsed) {
+            if let Ok(d) = set_path_leaf(reg, doc, path, parsed) {
                 return Ok(d);
             }
         }
@@ -1628,10 +1634,15 @@ pub fn set_path(doc: &SpiraToml, path: &str, value: &str) -> Result<SpiraToml, S
 /// one is therefore the document unchanged, never an "unknown field" refusal — that refusal
 /// would leave the retired line in the live file with no CLI way to take it out.
 pub fn unset_path(doc: &SpiraToml, path: &str) -> Result<SpiraToml, String> {
+    unset_path_with(registry::for_process()?, doc, path)
+}
+
+/// [`unset_path`] typed against `reg`; see [`set_path_with`].
+pub fn unset_path_with(reg: &registry::Registry, doc: &SpiraToml, path: &str) -> Result<SpiraToml, String> {
     if is_retired_path(path) {
         return Ok(doc.clone());
     }
-    set_path_leaf(doc, path, serde_json::Value::Null)
+    set_path_leaf(reg, doc, path, serde_json::Value::Null)
 }
 
 /// `text` without the retired key at `path`, every other line untouched.
