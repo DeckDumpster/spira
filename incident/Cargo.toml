@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "incident — turn a production event into a bead Ops can claim, deduplicated on external_ref, with a write-ahead spool so an event that arrives while the store is down is never lost. Rust port of spira/incident.sh (sp-0ekp7); contract, scar and scope: DESIGN.md."
 
+[features]
+integration = []
+
 [dependencies]
 bead = { path = "../bead" }
 spira-config = { path = "../spira-config" }

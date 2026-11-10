@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "inbox-triage — the concierge's in-session Monitor over SPIRA_CONCIERGE_INBOX: drop echoes, dedup, pass the rest. Replaces spira/inbox-triage.sh (sp-48f6g)."
 
+[features]
+integration = []
+
 [dependencies]
 inbox-rules = { path = "../inbox-rules" }
 spira-config = { path = "../spira-config" }

@@ -23,6 +23,9 @@ name = "bdsim"
 path = "src/bin/bdsim.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 regex = "1"

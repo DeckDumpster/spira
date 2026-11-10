@@ -8,6 +8,9 @@ description = "gate-diag — diagnostic output and machine-readable results for 
 name = "gate-diag"
 path = "src/main.rs"
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 spira-config = { path = "../spira-config" }

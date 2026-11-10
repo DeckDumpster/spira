@@ -37,6 +37,9 @@ name = "reply"
 path = "src/reply_main.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 crossterm = "0.28"
 regex = "1"

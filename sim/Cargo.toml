@@ -18,6 +18,9 @@ name = "sim-replay"
 path = "src/bin/sim-replay.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 serde = { version = "1", features = ["derive"] }

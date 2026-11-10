@@ -16,6 +16,9 @@ name = "round-vm-stub-pve"
 path = "src/bin/round-vm-stub-pve.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 spira-config = { path = "../spira-config" }
 serde = { version = "1", features = ["derive"] }

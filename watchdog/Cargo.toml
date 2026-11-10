@@ -13,6 +13,9 @@ name = "spira-watchdog"
 path = "src/main.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 inbox-rules = { path = "../inbox-rules" }
 runtime = { path = "../runtime" }

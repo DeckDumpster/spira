@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "Broker — mints the GitHub App token and answers read-only forge queries."
 
+[features]
+integration = []
+
 [dependencies]
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }

@@ -8,6 +8,9 @@ description = "batcher-cut — the IO seam (git, testenv-batch, the forge, the b
 name = "batcher"
 path = "src/main.rs"
 
+[features]
+integration = []
+
 [dependencies]
 batcher = { path = "../batcher" }
 sift = { path = "../sift" }

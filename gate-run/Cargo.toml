@@ -8,6 +8,9 @@ description = "gate-run — runs the landing gate detached and reports its verdi
 name = "gate-run"
 path = "src/main.rs"
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 libc = "0.2"

@@ -12,6 +12,7 @@ name = "round-controller"
 path = "src/main.rs"
 
 [features]
+integration = []
 sim = ["dep:toml", "dep:spira-lc", "dep:spira-sim", "dep:incident"]
 
 [dependencies]

@@ -29,6 +29,9 @@ name = "target-reap"
 path = "src/target_reap_main.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 serde = { version = "1", features = ["derive"] }

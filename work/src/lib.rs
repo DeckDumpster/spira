@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn the_clippy_check_names_only_a_touched_leaf_and_its_dependents() {
         let scope = affected_scope(&raw(&["a/src/lib.rs"]), META).unwrap();
-        assert_eq!(check_argv(&repo_clippy_row(), &scope).unwrap(), v(&["cargo", "clippy", "-p", "a", "-p", "b", "--all-targets", "--", "-D", "warnings"]));
+        assert_eq!(check_argv(&repo_clippy_row(), &scope).unwrap(), v(&["cargo", "clippy", "-p", "a", "-p", "b", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
     }
 
     #[test]
@@ -510,7 +510,7 @@ mod tests {
         for input in ["Cargo.lock", "Cargo.toml", "rust-toolchain.toml", ".cargo/config.toml"] {
             let scope = affected_scope(&raw(&["c/src/lib.rs", input]), META).unwrap();
             assert_eq!(scope, Affected::Workspace, "{input}");
-            assert_eq!(check_argv(&repo_clippy_row(), &scope).unwrap(), v(&["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]));
+            assert_eq!(check_argv(&repo_clippy_row(), &scope).unwrap(), v(&["cargo", "clippy", "--workspace", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
         }
     }
 

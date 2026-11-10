@@ -8,6 +8,9 @@ description = "store-view — the store's hot reads held in memory: rounds, open
 name = "store_view"
 path = "src/lib.rs"
 
+[features]
+integration = []
+
 [dependencies]
 spira-config = { path = "../spira-config" }
 serde_json = "1"

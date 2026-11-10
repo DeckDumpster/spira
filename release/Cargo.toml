@@ -18,6 +18,9 @@ name = "round-recert"
 path = "src/bin/round-recert.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 sha2 = "0.10"
 toml = "0.8"

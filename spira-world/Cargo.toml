@@ -23,6 +23,9 @@ name = "slay"
 path = "src/bin/slay.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 spira-ctrl = { path = "../spira-ctrl" }

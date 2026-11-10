@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "spira-supervise — main-PID supervisor for the cockpit collector; sends sd_notify heartbeats while the child is healthy."
 
+[features]
+integration = []
+
 [dependencies]
 libc = "0.2"
 spira-config = { path = "../spira-config" }

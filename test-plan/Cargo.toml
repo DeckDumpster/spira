@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "test-plan — typed UC catalogue: schema, validate, coverage matrix, render."
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 spira-config = { path = "../spira-config" }

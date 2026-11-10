@@ -11,6 +11,9 @@ path = "src/lib.rs"
 name = "dwarf"
 path = "src/main.rs"
 
+[features]
+integration = []
+
 [dependencies]
 bead = { path = "../bead" }
 spira-config = { path = "../spira-config" }

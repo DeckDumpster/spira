@@ -16,6 +16,9 @@ name = "spira-runtime"
 path = "src/main.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 inbox-rules = { path = "../inbox-rules" }
 base64 = "0.22"

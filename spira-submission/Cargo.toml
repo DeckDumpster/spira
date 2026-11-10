@@ -12,6 +12,9 @@ name = "spira-submission"
 path = "src/main.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

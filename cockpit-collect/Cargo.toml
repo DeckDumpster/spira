@@ -8,6 +8,9 @@ description = "cockpit-collect — Spira's own cockpit collector: tiered probe s
 name = "cockpit-collect"
 path = "src/main.rs"
 
+[features]
+integration = []
+
 [dependencies]
 dwarf = { path = "../dwarf" }
 bead = { path = "../bead" }

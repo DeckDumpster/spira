@@ -7,6 +7,9 @@ description = "state-store — the control-plane contract (revisions, txn, histo
 [lib]
 name = "state_store"
 
+[features]
+integration = []
+
 [dependencies]
 runtime = { path = "../runtime" }
 serde = { version = "1", features = ["derive"] }

@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "reconciler-engine — pure invariant engine: (desired, observed) in, per-invariant gaps and remedy verdicts out, with hysteresis and unobservable as a first-class result."
 
+[features]
+integration = []
+
 [dependencies]
 spira-config = { path = "../spira-config" }
 spira-desired-state = { path = "../desired-state" }

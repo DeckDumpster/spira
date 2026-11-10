@@ -9,6 +9,9 @@ name = "sccache-dav"
 path = "src/main.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 # axum for routing, tokio for the socket — the same pair loom already uses for a small,
 # single-purpose server on this box. No tower-http, no templating: the whole surface this

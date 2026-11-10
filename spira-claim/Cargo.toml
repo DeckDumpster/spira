@@ -8,6 +8,9 @@ description = "spira-claim — bead attempt accounting, the CHECK 4 poison decis
 name = "spira_claim"
 path = "src/lib.rs"
 
+[features]
+integration = []
+
 [dependencies]
 bead = { path = "../bead" }
 lifecycle = { path = "../lifecycle" }

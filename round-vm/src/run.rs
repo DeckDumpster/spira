@@ -506,7 +506,7 @@ unit_cargo() {
         CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
         SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
-        UNIT_COV_ENV="$unit_cov_env" bash -c 'eval "$UNIT_COV_ENV"; exec cargo test "$@"' _ --profile unittest --workspace --config profile.unittest.incremental=false "$@"
+        UNIT_COV_ENV="$unit_cov_env" bash -c 'eval "$UNIT_COV_ENV"; exec cargo test "$@"' _ --profile unittest --workspace --features integration --config profile.unittest.incremental=false "$@"
 }
 unit_cov_init() {
     unit_cov_env=""
@@ -3555,7 +3555,7 @@ mod tests {
         assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
         let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
         let body = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap()];
-        assert!(body.contains("exec cargo test \"$@\"' _ --profile unittest --workspace --config profile.unittest.incremental=false"), "{body}");
+        assert!(body.contains("exec cargo test \"$@\"' _ --profile unittest --workspace --features integration --config profile.unittest.incremental=false"), "{body}");
         assert_eq!(REMOTE_SCRIPT.matches("exec cargo test").count(), 1, "one definition of the unit command, shared by compile and run");
     }
 

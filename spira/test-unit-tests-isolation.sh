@@ -27,8 +27,8 @@ put_tree() {
     mkdir -p "$WS/spira" "$WS/lc/src" "$WS/app/src" "$WS/target"
     cp "$HERE/unit-tests.sh" "$HERE/target-clean.sh" "$WS/spira/"
     printf '[workspace]\nmembers = ["lc", "app"]\nresolver = "2"\n' > "$WS/Cargo.toml"
-    printf '[package]\nname = "lc"\nversion = "0.1.0"\nedition = "2021"\n' > "$WS/lc/Cargo.toml"
-    printf '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\nlc = { path = "../lc" }\n' > "$WS/app/Cargo.toml"
+    printf '[package]\nname = "lc"\nversion = "0.1.0"\nedition = "2021"\n\n[features]\nintegration = []\n' > "$WS/lc/Cargo.toml"
+    printf '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n\n[features]\nintegration = []\n\n[dependencies]\nlc = { path = "../lc" }\n' > "$WS/app/Cargo.toml"
     printf 'pub fn tag() -> &'"'"'static str { "%s" }\n' "$1" > "$WS/lc/src/lib.rs"
     printf '#[cfg(test)]\nmod tests {\n    #[test]\n    fn %s() {\n        assert_eq!(lc::tag(), "%s");\n    }\n}\n' "$2" "$1" > "$WS/app/src/lib.rs"
     (cd "$WS" && cargo generate-lockfile --offline >/dev/null 2>&1)
@@ -93,6 +93,7 @@ fake_run() { (cd "$WS" && env PATH="$FAKE:$PATH" CARGO_TARGET_DIR="$VOL" "$@" ba
 out="$(fake_run env -u CARGO_BUILD_JOBS -u RUST_TEST_THREADS)"
 want "6 cargo jobs by default" "-j 6 --" "$out"
 want "4 test threads by default" "--test-threads=4" "$out"
+want "integration targets are opted in" "--features integration" "$out"
 want "test temp files on the tmpfs" "TMPDIR=/tmp" "$out"
 out="$(fake_run env CARGO_BUILD_JOBS=2 RUST_TEST_THREADS=1)"
 want "CARGO_BUILD_JOBS overrides the jobs" "-j 2 --" "$out"

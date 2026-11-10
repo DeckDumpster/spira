@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "work — the dwarf semantic layer client: show/note/submit/done/blocked/file-followup/split/superseded-by, bound to one called bead and reached only through the spira-lc socket. Holds no DB connection code at all, by construction — the dwarf's environment has no credential for one to hold. Deploys inert."
 
+[features]
+integration = []
+
 [dependencies]
 serde_json = "1"
 spira-config = { path = "../spira-config" }

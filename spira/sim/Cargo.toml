@@ -19,6 +19,9 @@ name = "sim-agent"
 path = "src/bin/sim-agent.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../../spira-otel" }
 serde_json = "1"

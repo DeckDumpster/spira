@@ -12,6 +12,9 @@ path = "src/lib.rs"
 name = "kit-bump"
 path = "src/main.rs"
 
+[features]
+integration = []
+
 [dependencies]
 spira-config = { path = "../spira-config" }
 install = { path = "../install" }

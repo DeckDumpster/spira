@@ -12,6 +12,9 @@ name = "state-store-bench"
 path = "src/bin/state-store-bench.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 state-store = { path = "../state-store" }
 runtime = { path = "../runtime" }

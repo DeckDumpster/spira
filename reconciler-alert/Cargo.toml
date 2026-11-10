@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "reconciler-alert — the alert path's IO seam: an evidence-carrying wake to the Concierge, deduplicated per gap, and an operator escalation path refused for any class but permissions, policy or destructive."
 
+[features]
+integration = []
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 spira-config = { path = "../spira-config" }

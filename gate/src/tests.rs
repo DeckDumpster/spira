@@ -2004,11 +2004,11 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     // spira-config brings its dependent queue
     assert_eq!(
         cmds[1],
-        "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 8 --all-targets -p queue -p spira-config"
+        "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 8 --all-targets --features integration -p queue -p spira-config"
     );
     assert_eq!(
         cmds[2],
-        "cargo test --profile dwarf --config profile.dwarf.incremental=false -j 8 -p queue -p spira-config -- --test-threads=8"
+        "cargo test --profile dwarf --config profile.dwarf.incremental=false -j 8 --features integration -p queue -p spira-config -- --test-threads=8"
     );
     assert!(f.stderr().contains(
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for: queue spira-config (touched: spira-config)"
@@ -2176,7 +2176,7 @@ fn unit_mode_rust_only_returned_bead_runs_its_unit_gate_then_exactly_the_named_s
         "off",
         "the gate string selects nothing"
     );
-    assert!(cmds[1].contains("--all-targets -p gate"));
+    assert!(cmds[1].contains("--all-targets --features integration -p gate"));
     assert!(
         cmds[3].contains("--suites test-b.sh,test-c.sh \"$SPIRA_GATE_BRANCH\""),
         "{}",

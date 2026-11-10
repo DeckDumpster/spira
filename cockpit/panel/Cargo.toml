@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "Cockpit panel — decisions, insights and notifications over beads and Gas Town mail."
 
+[features]
+integration = []
+
 [dependencies]
 crossterm = "0.28"
 serde_json = "1"

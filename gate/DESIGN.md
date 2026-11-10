@@ -420,7 +420,7 @@ A fence red is still a `branch-red`; a unit test the branch breaks is the round'
 | `unit`, any **script** touched | `suites(script)` | the same |
 | `unit`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the same — the caller asked for the corpus |
 | `unit`, the touched set or the graph unreadable | `suites(no-diff)` / `suites(no-metadata)` | the same — no guessing a cheaper gate |
-| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `cargo build --profile dwarf -j J --all-targets -p …` (build) and `cargo test --profile dwarf -j J -p … -- --test-threads=J` (test) |
+| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `cargo build --profile dwarf -j J --all-targets --features integration -p …` (build) and `cargo test --profile dwarf -j J --features integration -p … -- --test-threads=J` (test) |
 | `unit`, nothing buildable | `fences` | the gate string with **suites off** |
 | `fences`, a fresh bead | `fences` | the gate string **without its suites step** ("Fences mode") |
 | `fences`, a re-entering bead (named suites) or a changed suite | `fences+reentry` | the same, then the re-entry phase: exactly those suites |

@@ -13,6 +13,9 @@ name = "skew"
 path = "src/main.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }

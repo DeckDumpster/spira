@@ -29,6 +29,9 @@ name = "render-unit"
 path = "src/bin/render_unit.rs"
 test = false
 
+[features]
+integration = []
+
 [dependencies]
 release = { path = "../release" }
 lifecycle = { path = "../lifecycle" }
