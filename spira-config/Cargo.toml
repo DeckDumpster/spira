@@ -27,6 +27,11 @@ path = "tests/registry_codegen.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "repo_set_cli"
+path = "tests/repo_set_cli.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "set_release"
 path = "tests/set_release.rs"
 required-features = ["integration"]

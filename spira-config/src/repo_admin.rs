@@ -273,8 +273,7 @@ fn register(a: &AddArgs, land_ref: &str, t: &Targets, did: &mut Vec<String>) -> 
         }
         out.push_str(&row_line(a, land_ref));
         out.push('\n');
-        crate::backup_existing(map).map_err(|e| format!("{}: {e}", map.display()))?;
-        crate::write_atomic(map, &out).map_err(|e| format!("{}: {e}", map.display()))?;
+        write_map(map, &out)?;
         did.push(format!("appended the {} row to {}", a.name, map.display()));
         return Ok(());
     }
