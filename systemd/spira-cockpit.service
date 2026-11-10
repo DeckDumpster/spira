@@ -10,7 +10,6 @@ Wants=lc-serve.service
 # sp-kt4l3: `spira/cockpit.sh` and `spira/collect.sh` are retired; this unit now runs the
 # `cockpit-collect` crate's own tiered supervisor (`cockpit-collect collect`).
 Description=Spira cockpit collector (snapshot for the ops pane)
-X-Spira-NoRestart=a restart disturbs the operator's panes; restart it at a safe point
 Documentation=file://@SPIRA_PROD_ROOT@/cockpit-collect/DESIGN.md
 StartLimitIntervalSec=300
 StartLimitBurst=5

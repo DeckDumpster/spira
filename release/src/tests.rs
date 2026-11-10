@@ -886,3 +886,22 @@ fn completion_gives_a_task_the_live_task_modes_lacks_its_release_default_mode() 
     assert_eq!(back[0], live, "a rollback puts the live value back as it was");
     assert!(config_delta::complete(&post, &new, Some(&active), None).unwrap().is_none(), "a complete value is left alone");
 }
+
+fn shipped_unit(name: &str) -> String {
+    std::fs::read_to_string(format!("{}/../systemd/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+}
+
+#[test]
+fn a_template_that_restarts_when_idle_gives_a_reason_and_a_bare_boolean_gives_none() {
+    let t = |v: &str| format!("[Unit]\nX-Spira-RestartWhenIdle={v}\n");
+    assert_eq!(units::restart_when_idle(&t("it ends its own pass when idle")).as_deref(), Some("it ends its own pass when idle"));
+    assert_eq!(units::restart_when_idle(&t("true")), None);
+    assert_eq!(units::restart_when_idle("[Unit]\n"), None);
+}
+
+#[test]
+fn the_cockpit_collector_is_restarted_by_activation_and_the_unit_run_watcher_restarts_itself_when_idle() {
+    assert_eq!(units::never_restart(&shipped_unit("spira-cockpit.service")), None, "a stale collector freezes the panel it feeds");
+    assert!(units::restart_when_idle(&shipped_unit("spira-unit-run-dbus.service")).is_some());
+    assert_eq!(units::never_restart(&shipped_unit("spira-unit-run-dbus.service")), None);
+}

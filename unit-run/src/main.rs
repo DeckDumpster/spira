@@ -57,6 +57,13 @@ fn resume_rows(endpoint: Option<&str>, family: &str, now: u64) -> Vec<serde_json
     }
 }
 
+const IDLE_CHECK: Duration = Duration::from_secs(15);
+
+fn current_release(started_under: Option<&str>) -> Option<String> {
+    let link = PathBuf::from(started_under?).parent()?.join("current");
+    std::fs::read_link(link).ok().map(|t| t.to_string_lossy().into_owned())
+}
+
 fn watch_cmd(family: &str) -> Result<(), String> {
     let instance = spira_config::process::cfg("SPIRA_INSTANCE")?;
     let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty());
@@ -91,9 +98,14 @@ fn watch_cmd(family: &str) -> Result<(), String> {
         record(r)?;
     }
     eprintln!("unit-run watch: armed on the user manager; storing {family} rows in the metrics store");
+    let release = std::env::var("SPIRA_RELEASE").ok();
     loop {
-        for r in watch::step(&mut conn, &mut tracker, now_us, Duration::from_secs(60))? {
+        for r in watch::step(&mut conn, &mut tracker, now_us, IDLE_CHECK)? {
             record(r)?;
+        }
+        if tracker.in_flight() == 0 && backlog.is_empty() && watch::superseded(release.as_deref(), current_release(release.as_deref()).as_deref()) {
+            eprintln!("unit-run watch: idle and no longer on the current release; exiting to be restarted on it");
+            return Ok(());
         }
     }
 }

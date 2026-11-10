@@ -140,6 +140,11 @@ impl Tracker {
         self.open.len()
     }
 
+    /// Runs seen live and not yet recorded: what a restart now would lose.
+    pub fn in_flight(&self) -> usize {
+        self.open.values().filter(|p| p.live).count()
+    }
+
     /// Fold one interface's properties for the unit at `path`. `signal` marks a
     /// PropertiesChanged (which may start or end a run) as against a GetAll read-back.
     pub fn apply(&mut self, path: &str, iface: &str, changed: &[(String, Val)], signal: bool) -> Next {
@@ -194,6 +199,16 @@ impl Tracker {
             io_read_bytes: p.io_read,
             io_write_bytes: p.io_write,
         })
+    }
+}
+
+/// Whether the release a process started under (`SPIRA_RELEASE`) is not the one `current` now
+/// names. A process pinned to the `current` link follows it, and an unreadable link is no reason to stop.
+pub fn superseded(started_under: Option<&str>, current: Option<&str>) -> bool {
+    let base = |p: &str| p.trim_end_matches('/').rsplit('/').next().unwrap_or(p).to_string();
+    match (started_under.map(base), current) {
+        (Some(s), Some(c)) => s != "current" && s != base(c),
+        _ => false,
     }
 }
 
@@ -368,5 +383,29 @@ mod tests {
         let rows = [serde_json::json!({"ended_at": "2026-10-17T10:00:05Z"}), serde_json::json!({"ended_at": "2026-10-17T10:00:01Z"}), serde_json::json!({"unit": "x"})];
         assert_eq!(last_ended_us(&rows), tsd::parse_ts("2026-10-17T10:00:05Z").map(|s| s * 1_000_000));
         assert_eq!(last_ended_us(&[]), None);
+    }
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::*;
+
+    #[test]
+    fn a_listener_is_superseded_only_when_current_names_a_different_release() {
+        assert!(superseded(Some("/r/spira-releases/aaa"), Some("bbb")));
+        assert!(!superseded(Some("/r/spira-releases/bbb/"), Some("bbb")));
+        assert!(!superseded(Some("/r/spira-releases/current"), Some("bbb")), "a unit pinned to the link follows it");
+        assert!(!superseded(Some("/r/spira-releases/aaa"), None), "an unreadable link is not a reason to stop");
+        assert!(!superseded(None, Some("bbb")));
+    }
+
+    #[test]
+    fn only_a_run_seen_live_is_in_flight() {
+        let mut t = Tracker::new(0);
+        let p = "/org/freedesktop/systemd1/unit/job_2dx_2eservice";
+        t.apply(p, UNIT_IFACE, &[("Description".into(), Val::Var(Box::new(Val::S("d".into()))))], false);
+        assert_eq!(t.in_flight(), 0, "a unit merely known to the manager holds nothing");
+        t.apply(p, UNIT_IFACE, &[("ActiveState".into(), Val::Var(Box::new(Val::S("activating".into()))))], true);
+        assert_eq!(t.in_flight(), 1);
     }
 }
