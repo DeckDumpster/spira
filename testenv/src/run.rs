@@ -2540,6 +2540,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         deps.log(&format!("harness fault — {d}"));
         return Finish::fault(2, "user-account", ran);
     }
+    if let Some(d) = &outcome.disk_fault {
+        deps.log(&format!("harness fault — disk full, not a suite defect: {d}"));
+        return Finish::fault(2, "disk-full", ran);
+    }
     // sp-3azqi: podman's own exec lost one or more suites' exit status (conmon's
     // exit-file wait gave up under load) — their verdict is unknown, never a red, and
     // takes priority over whatever other suites did: a batch that can't vouch for every

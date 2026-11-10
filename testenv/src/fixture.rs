@@ -370,6 +370,18 @@ pub fn is_user_account_fault(output: &str) -> bool {
     }
 }
 
+pub fn df_summary(df: &str) -> String {
+    let rows: Vec<String> = df
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            (f.len() >= 6).then(|| format!("{} {} free of {}", f[5], f[3], f[1]))
+        })
+        .collect();
+    if rows.is_empty() { "unknown".into() } else { rows.join(", ") }
+}
+
 pub struct Session<'a> {
     pub rt: &'a dyn ContainerRuntime,
     pub name: String,
@@ -1031,6 +1043,15 @@ impl<'a> Session<'a> {
         } else {
             String::new()
         }
+    }
+
+    /// `df` of the filesystems suites write to, one line each, for naming the full one.
+    pub fn free_space(&self) -> String {
+        let out = self.rt.exec(&self.as_user(
+            &["df", "-P", "-h", "/workspace", "/tmp"],
+            vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)],
+        ));
+        df_summary(&out.output)
     }
 
     /// The contents of each of `paths` inside the container, in order, in one exec; a file
@@ -2188,6 +2209,13 @@ mod tests {
             detail.contains("never saw Running=false"),
             "the unreachable case must say the state was never confirmed: {detail}"
         );
+    }
+
+    #[test]
+    fn df_summary_names_each_mount_and_its_free_space() {
+        let df = "Filesystem Size Used Avail Use% Mounted on\ntmpfs 2.0G 2.0G 0 100% /workspace\n";
+        assert_eq!(df_summary(df), "/workspace 0 free of 2.0G");
+        assert_eq!(df_summary("df: error"), "unknown");
     }
 
     #[test]
