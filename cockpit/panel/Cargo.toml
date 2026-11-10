@@ -2,7 +2,13 @@
 name = "panel"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "Cockpit panel — decisions, insights and notifications over beads and Gas Town mail."
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

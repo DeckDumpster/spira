@@ -2,7 +2,13 @@
 name = "test-plan"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "test-plan — typed UC catalogue: schema, validate, coverage matrix, render."
+
+[[test]]
+name = "validate"
+path = "tests/validate.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

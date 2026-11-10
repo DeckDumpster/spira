@@ -2,6 +2,7 @@
 name = "rule"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "rule — enact, retire, list, show a statute in one command (sp-g9mhe, replaces rule.sh)."
 
 [lib]
@@ -12,6 +13,11 @@ path = "src/lib.rs"
 name = "rule"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "code"
+path = "tests/code.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

@@ -2,7 +2,13 @@
 name = "runtime"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "runtime — the event/handler contract, the Journal trait, the scheduler, the in-process executor and the conformance suite every executor passes."
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

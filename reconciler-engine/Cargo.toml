@@ -2,7 +2,13 @@
 name = "reconciler-engine"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "reconciler-engine — pure invariant engine: (desired, observed) in, per-invariant gaps and remedy verdicts out, with hysteresis and unobservable as a first-class result."
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

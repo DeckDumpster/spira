@@ -2,6 +2,7 @@
 name = "spira-runtime"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "spira-runtime — the long-running service that hosts the loop's workflows: pinned config, wide events as OTLP logs, a heartbeat schedule, a loop-kicked systemd watchdog and stall quarantine."
 
 [package.metadata.spira]
@@ -15,6 +16,46 @@ path = "src/lib.rs"
 name = "spira-runtime"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "task_e_watch_dwarf_usage"
+path = "tests/task_e_watch_dwarf_usage.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "task_e_watch_transitions"
+path = "tests/task_e_watch_transitions.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "world_flow_export"
+path = "tests/world_flow_export.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "world_readiness_dependents"
+path = "tests/world_readiness_dependents.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "world_readiness_dependents_off"
+path = "tests/world_readiness_dependents_off.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "world_round_records"
+path = "tests/world_round_records.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "world_round_snapshot"
+path = "tests/world_round_snapshot.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

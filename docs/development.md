@@ -102,7 +102,7 @@ It belongs to whoever runs the harness. No shared repository holds it, and no be
 
 ```sh
 make build     # cargo build --release --workspace
-make test      # cargo test --workspace
+make test      # cargo test --workspace --features integration
 make dist      # build + spira/build-tarball.sh build --workspace .
 ```
 
@@ -127,6 +127,13 @@ testenv status [--json] <results-dir>
 `testenv testdb …` manages throwaway Dolt instances for suites that need the real engine.
 Rust unit tests run with `cargo test -p <crate>`; `work crates` prints the `-p` words for your
 branch's diff.
+
+Integration tests are opt-in. Every `tests/` target is declared `[[test]]` with
+`required-features = ["integration"]` and its package sets `autotests = false`, so plain
+`cargo test -p <crate>` runs unit tests only and `cargo test -p <crate> --features integration`
+runs both. The gate, the round, `make test` and `work checks` pass the feature. `spira-lint`'s
+`integration-opt-in` rule refuses a `tests/` target that is undeclared, declared without the
+feature, or declared at a path that is not on disk; a new `tests/` file needs its `[[test]]`.
 
 - **Suites** are `spira/test-*.sh`, found by glob. Each carries `# tier: T0..T4` and a
   `# covers:` line (space-separated path globs and use-case ids from `docs/test-plan/*.toml`)

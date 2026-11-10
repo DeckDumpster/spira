@@ -2,10 +2,21 @@
 name = "state-store"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "state-store — the control-plane contract (revisions, txn, history, watch, locks with fencing, finalizers and GC, request ids, etcd v3's limits) above a minimal Backend trait, its conformance suite and the in-memory reference backend."
 
 [lib]
 name = "state_store"
+
+[[test]]
+name = "conformance_mem"
+path = "tests/conformance_mem.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "conformance_model"
+path = "tests/conformance_model.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

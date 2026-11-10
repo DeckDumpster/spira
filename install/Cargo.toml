@@ -2,6 +2,7 @@
 name = "install"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "install — rewrite wave 6a (sp-31dm0): the root installer, the per-instance unit renderer/writer, and the non-disruptive unit ensure. Replaces install.sh, systemd/install.sh, systemd/unit-ensure.sh, systemd/units.sh and systemd/render.py."
 
 [lib]
@@ -28,6 +29,11 @@ test = false
 name = "render-unit"
 path = "src/bin/render_unit.rs"
 test = false
+
+[[test]]
+name = "units_lint"
+path = "tests/units_lint.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

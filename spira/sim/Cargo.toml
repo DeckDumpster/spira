@@ -2,6 +2,7 @@
 name = "spira-sim"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 publish = false
 description = "spira-sim — the deterministic simulator's hermetic scratch world (sim world up/down); the simulator and sim gh live in this crate."
 
@@ -18,6 +19,11 @@ test = false
 name = "sim-agent"
 path = "src/bin/sim-agent.rs"
 test = false
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

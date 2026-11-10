@@ -2,11 +2,17 @@
 name = "cockpit-collect"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "cockpit-collect — Spira's own cockpit collector: tiered probe supervisor and probe library, replacing spira/cockpit.sh and spira/collect.sh (sp-kt4l3)."
 
 [[bin]]
 name = "cockpit-collect"
 path = "src/main.rs"
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

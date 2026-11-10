@@ -2,6 +2,7 @@
 name = "exec-census"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "exec-census — execs per minute by systemd unit, sampled from /proc and pushed over OTLP."
 
 [lib]
@@ -12,6 +13,11 @@ path = "src/lib.rs"
 name = "exec-census"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "fixture"
+path = "tests/fixture.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

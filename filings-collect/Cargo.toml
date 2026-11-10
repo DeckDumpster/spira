@@ -2,6 +2,7 @@
 name = "filings-collect"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "filings-collect — reads each product host's filings outbox over ssh, files or amends one builder bead per filing, and acknowledges it on the host."
 
 [lib]
@@ -12,6 +13,11 @@ path = "src/lib.rs"
 name = "filings-collect"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

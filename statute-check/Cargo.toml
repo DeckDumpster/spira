@@ -2,6 +2,7 @@
 name = "statute-check"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "statute-check — the statutes in force that govern a decision, ranked, with full text; and the PreToolUse hook that shows them before a decision command runs."
 
 [lib]
@@ -12,6 +13,14 @@ path = "src/lib.rs"
 name = "statute-check"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "cli"
+path = "tests/cli.rs"
+required-features = ["integration"]
+
+[features]
+integration = []
 
 [dependencies]
 spira-config = { path = "../spira-config" }
