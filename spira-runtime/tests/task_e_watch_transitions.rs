@@ -569,21 +569,12 @@ fn a_landing_that_recorded_no_commit_is_judged_by_time_against_the_recorded_acti
 }
 
 #[test]
-fn an_ancestry_test_that_cannot_be_made_is_blind_not_an_all_clear() {
+fn a_landing_whose_ancestry_cannot_be_tested_pages_its_edge_and_leaves_the_rest_watched() {
     let (run, rel) = stale_record_other_release_in_effect();
-    let snap = observe(
-        run.path(),
-        rel.path(),
-        "spira",
-        &dwell_with_a_landing(1_000, LANDED),
-        &|_, _| Err("bad object".into()),
-        3_600,
-    );
-    assert!(
-        !snap.readable && snap.why.contains("bad object"),
-        "{}",
-        snap.why
-    );
+    let snap = observe(run.path(), rel.path(), "spira", &dwell_with_a_landing(1_000, LANDED), &|_, _| Err("bad object".into()), 3_600);
+    assert!(snap.readable, "one edge's failed test must not blind the others: {}", snap.why);
+    let found: Vec<String> = spira_runtime::tasks::e::watch_transitions::stalls(&snap, 1_000 + 16 * MIN, &config()).into_iter().map(|s| s.key()).collect();
+    assert!(found.contains(&"LANDED→ACTIVATED spira".to_string()), "{found:?}");
 }
 
 #[test]

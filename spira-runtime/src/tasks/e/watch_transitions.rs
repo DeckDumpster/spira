@@ -443,13 +443,14 @@ pub fn repo_ancestor<'a>(repo_map: &'a std::path::Path, repo: &'a str) -> impl F
 
 /// When the oldest landing in `landed` (the dwell's list for the release repo) that the
 /// release in effect does not contain landed. A landing that recorded no commit, or any landing
-/// while no release in effect is known, is judged by time against the recorded activation.
+/// while no release in effect is known, is judged by time against the recorded activation. A
+/// landing whose ancestry cannot be tested counts as unreleased: the edge pages, the rest still watch.
 fn oldest_unreleased(
     landed: &[serde_json::Value],
     in_effect: Option<&str>,
     recorded: Option<u64>,
     ancestor: Ancestor,
-) -> Result<Option<u64>, String> {
+) -> Option<u64> {
     let mut landings: Vec<(u64, &str)> = landed
         .iter()
         .filter_map(|l| {
@@ -462,14 +463,14 @@ fn oldest_unreleased(
     landings.sort_unstable();
     for (at, commit) in landings {
         let unreleased = match in_effect.filter(|_| !commit.is_empty()) {
-            Some(release) => !ancestor(commit, release)?,
+            Some(release) => !ancestor(commit, release).unwrap_or(false),
             None => recorded.is_none_or(|r| at > r),
         };
         if unreleased {
-            return Ok(Some(at));
+            return Some(at);
         }
     }
-    Ok(None)
+    None
 }
 
 /// The snapshot of the lifecycle control store (`dwell` through `lc`), the release machine
@@ -518,14 +519,7 @@ pub fn observe(
     let landed = dwell["landed_after"][release_repo]
         .as_array()
         .map_or(&[][..], Vec::as_slice);
-    let unreleased = match oldest_unreleased(landed, in_effect.as_deref(), recorded, ancestor) {
-        Ok(u) => u,
-        Err(e) => {
-            return blind(&format!(
-                "landing ancestry against the release in effect: {e}"
-            ))
-        }
-    };
+    let unreleased = oldest_unreleased(landed, in_effect.as_deref(), recorded, ancestor);
     let landed_after = unreleased
         .map(|at| (release_repo.to_string(), at))
         .into_iter()

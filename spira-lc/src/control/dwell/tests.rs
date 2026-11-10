@@ -314,7 +314,7 @@ fn a_delivery_is_reported_with_the_commit_its_audit_recorded() {
                     events_key(head + 1),
                     audit(
                         "Delivered",
-                        serde_json::json!({ "Delivered": { "merge_sha": sha, "proof": "p" } }),
+                        serde_json::to_value(BeadEventKind::Delivered { merge_sha: sha.into(), proof: "p".into() }).unwrap(),
                         3_000,
                     ),
                     head + 1,
