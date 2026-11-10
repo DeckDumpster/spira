@@ -38,7 +38,11 @@ pub fn check_collisions(instance: &str, host: &HostValues) -> Result<(), Vec<Str
 /// its landref branch and not behind it, unless it is a release install (no `.git`) or a
 /// detached-HEAD tag checkout.
 pub fn check_landref(host: &HostValues) -> Result<(), String> {
-    let repo = &host.repo;
+    let exe = crate::bootstrap::argv0_path();
+    landref_currency(&host.repo, exe.as_deref(), || landref_of(host))
+}
+
+fn landref_currency(repo: &str, exe: Option<&Path>, landref: impl Fn() -> Option<String>) -> Result<(), String> {
     if !Path::new(repo).join(".git").exists() {
         return Ok(());
     }
@@ -49,9 +53,8 @@ pub fn check_landref(host: &HostValues) -> Result<(), String> {
             Err(_) => (false, String::new()),
         }
     };
-    let own_release = crate::bootstrap::argv0_path().and_then(|e| release_commit(e.parent()?.parent()?));
-    if let Some(commit) = own_release {
-        let Some(base) = landref_of(host) else { return Err(format!("cannot resolve landref for {repo}")) };
+    if let Some(commit) = exe.and_then(|e| release_commit(e.parent()?.parent()?)) {
+        let Some(base) = landref() else { return Err(format!("cannot resolve landref for {repo}")) };
         return release_currency(&git, &commit, &base);
     }
     let (_, cur) = git(&["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -62,7 +65,7 @@ pub fn check_landref(host: &HostValues) -> Result<(), String> {
             return Ok(());
         }
     }
-    let Some(base) = landref_of(host) else {
+    let Some(base) = landref() else {
         return Err(format!("cannot resolve landref for {repo}"));
     };
     let base_short = spira_config::repos::ref_branch(&base);
@@ -159,6 +162,41 @@ mod tests {
             let o = std::process::Command::new("git").arg("-C").arg(repo).args(args).output().unwrap();
             (o.status.success(), String::from_utf8_lossy(&o.stdout).trim().to_string())
         }
+    }
+
+    fn release_dir_at(commit: &str) -> testkit::TempDir {
+        let rel = testkit::TempDir::new("rel");
+        std::fs::create_dir_all(rel.path().join("bin")).unwrap();
+        std::fs::write(rel.path().join("MANIFEST"), format!("commit {commit}\n")).unwrap();
+        rel
+    }
+
+    #[test]
+    fn sp_io4b8m_the_guard_run_from_a_release_at_the_tip_passes_beside_a_lagging_checkout() {
+        let (d, shas) = repo_with_commits(4);
+        testkit::git(d.path(), &["checkout", "-q", "--detach", &shas[0]]);
+        let rel = release_dir_at(&shas[3]);
+        let exe = rel.path().join("bin/units-install");
+        let repo = d.path().to_str().unwrap();
+        assert_eq!(landref_currency(repo, Some(&exe), || Some("main".into())), Ok(()));
+        assert!(landref_currency(repo, None, || Some("main".into())).is_err(), "the same checkout, run as a checkout, is behind");
+    }
+
+    #[test]
+    fn sp_io4b8m_the_guard_run_from_an_old_release_refuses() {
+        let (d, shas) = repo_with_commits(4);
+        let rel = release_dir_at(&shas[1]);
+        let exe = rel.path().join("bin/units-install");
+        let err = landref_currency(d.path().to_str().unwrap(), Some(&exe), || Some("main".into())).unwrap_err();
+        assert!(err.contains("2 commit(s) behind main"), "{err}");
+    }
+
+    #[test]
+    fn sp_io4b8m_a_release_with_no_resolvable_landref_is_refused() {
+        let (d, shas) = repo_with_commits(1);
+        let rel = release_dir_at(&shas[0]);
+        let exe = rel.path().join("bin/units-install");
+        assert!(landref_currency(d.path().to_str().unwrap(), Some(&exe), || None).is_err());
     }
 
     #[test]
