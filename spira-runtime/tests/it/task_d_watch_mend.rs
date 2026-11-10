@@ -124,3 +124,13 @@ fn t7_acts_carry_the_act_tables_keys_not_a_digest_of_their_input() {
     assert!(key(&first, LOG_APPEND).is_some_and(|k| k.starts_with("watch.mend:") && k.ends_with(":10000")), "a log line is keyed by its breach and the tick");
     assert_ne!(key(&first, LOG_APPEND), key(&later, LOG_APPEND), "the same line on a later tick is a new request, not a refused repeat");
 }
+
+#[test]
+fn t8_the_pattern_passes_each_act_key_through_to_its_effect_command() {
+    use runtime::event::EffectSpec;
+    use runtime::event::Command;
+    let acts = vec![EffectSpec::keyed(LOG_APPEND, "watch.mend:k1", "same input", 5), EffectSpec::keyed(LOG_APPEND, "watch.mend:k2", "same input", 5)];
+    let cmds = spira_runtime::tasks::d::pattern::commands("watch.mend.state", &0u8, &0u8, acts);
+    let keys: Vec<String> = cmds.into_iter().filter_map(|c| if let Command::Effect(e) = c { Some(e.key) } else { None }).collect();
+    assert_eq!(keys, ["watch.mend:k1", "watch.mend:k2"], "two effects with identical input keep their own keys");
+}
