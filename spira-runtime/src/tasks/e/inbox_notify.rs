@@ -183,6 +183,7 @@ pub struct Snapshot {
 
 /// `{ pending: {row→(pos, at)}, unhealthy: {row→at}, stamp_backlog, stamp_health, sop_runs }`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub pending: BTreeMap<String, (u64, u64)>,
     pub unhealthy: BTreeMap<String, u64>,
@@ -525,9 +526,11 @@ impl InboxNotify {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "pending", drop: &[] }, runtime::rows::Part::Map { name: "unhealthy", drop: &[] }, runtime::rows::Part::Field("stamp_backlog"), runtime::rows::Part::Field("stamp_health")];
 
 impl Handler for InboxNotify {
     fn interests(&self) -> &[EventKindTag] {

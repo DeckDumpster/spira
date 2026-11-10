@@ -59,3 +59,17 @@ fn t5_the_first_announcement_matches_the_old_log_and_the_repeat_is_dropped() {
     let (_, acts) = task::decide(&h.cfg, &c, &Input::Observed(Snapshot { breaks: vec![brk(None)] }), 2 * TICK).unwrap();
     assert!(acts.is_empty(), "the old unit re-printed every 15 min; the task does not: {acts:?}");
 }
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rig = t::rig::<H>(1, SET, &json(&Snapshot { breaks: vec![brk(None)] }));
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig, task::NAME);
+    assert!(rows.iter().any(|k| k == &format!("breaks/{KEY}")), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_announcement_and_misses_none() {
+    let announced = json(&Snapshot { breaks: vec![brk(None)] });
+    let announced_then_new = json(&Snapshot { breaks: vec![brk(None), Break { seq: 13, ..brk(None) }] });
+    t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![announced, announced_then_new], |_| {});
+}

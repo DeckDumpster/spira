@@ -100,3 +100,19 @@ fn t6_a_finding_standing_two_days_replays_identically_at_one_filing_an_hour() {
     // events in 48 h, over a budget of 2/h by the fence post, so the ceiling is 3/h.
     assert_journal_budget(&r, 3);
 }
+
+fn standing_finding() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(shelf(&[("sop-bad", "SYMPTOM: only this\n")]))))
+}
+
+#[test]
+fn a_stateless_task_journals_no_carry_row() {
+    let r = standing_finding();
+    assert_eq!(filed(&r).len(), 1);
+    assert!(r.journal.state().into_iter().all(|((t, _), v)| t != NAME || v.is_empty()), "{NAME} kept a row");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(standing_finding, || WatchSopLint::new(config()).registration(), STREAM, WatchSopLint::boot().2);
+}

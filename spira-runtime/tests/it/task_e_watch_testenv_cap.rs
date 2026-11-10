@@ -104,3 +104,25 @@ fn t5_the_breaches_and_the_line_are_the_ones_testenv_cap_made() {
     let r = rig(1, world(vec![run(4242, 800, SUITE)]), killed);
     assert_eq!(asked(&r, INBOX_APPEND), ["1970-01-01T00:00:00Z testenv over-cap killed: pid 4242 tier=suite wall=800s cap=600s cmd=/r/bin/testenv --suites test-a.sh spira"]);
 }
+
+fn registration() -> runtime::event::Registration {
+    WatchTestenvCap::new(config()).registration()
+}
+
+fn over_cap() -> TaskRig {
+    rig(1, world(vec![run(7, 900, SUITE)]), killed)
+}
+
+#[test]
+fn a_cap_that_carries_nothing_keeps_no_row_after_killing() {
+    let mut r = over_cap();
+    r.advance(CADENCE_MS).unwrap();
+    assert!(!asked(&r, KILL).is_empty());
+    let kept: Vec<_> = r.journal.state().into_iter().filter(|((t, _), v)| t == NAME && !v.is_empty()).collect();
+    assert!(kept.is_empty(), "{kept:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(over_cap, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}

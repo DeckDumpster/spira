@@ -121,3 +121,20 @@ fn t5_parity_a_first_run_at_threshold_files_the_groomer_bead() {
     assert_eq!(bead.repo.as_deref(), Some("spira"));
     assert!(bead.labels.contains(&"groom-trigger".to_string()) && bead.labels.contains(&"delivers:note:/run/groom.log".to_string()), "{:?}", bead.labels);
 }
+
+fn filed() -> TaskRig {
+    rig(1, |_| snap(0, true, 6, 0))
+}
+
+#[test]
+fn the_task_keeps_no_carry_row_because_it_has_no_carry() {
+    let r = filed();
+    assert!(r.requested().iter().any(|q| q.name == FILE), "the scenario must file");
+    let rows: Vec<_> = r.journal.state().into_iter().filter(|((t, _), _)| t == NAME).collect();
+    assert!(rows.is_empty(), "{rows:?}");
+}
+
+#[test]
+fn a_boot_asks_what_a_process_that_never_stopped_asks() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
+}

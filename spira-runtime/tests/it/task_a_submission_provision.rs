@@ -133,3 +133,20 @@ fn t6_thirty_days_renew_once_and_restart_once() {
     let count = |n: &str| r.requested().iter().filter(|q| q.name == n).count();
     assert_eq!((count(CERT_RENEW), count(UNIT_RESTART)), (1, 1));
 }
+
+fn at_work() -> TaskRig {
+    let mut r = rig(1, Snapshot { password: Password::NoSource, firewall: Firewall::Closed, ..idle() });
+    r.advance(DAY_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&at_work(), NAME);
+    assert!(rows.iter().any(|k| k == "last_note"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+}

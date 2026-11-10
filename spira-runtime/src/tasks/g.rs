@@ -146,6 +146,7 @@ pub mod cockpit {
     }
 
     #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(default)]
     pub struct FragmentCarry {
         pub at: u64,
         pub status: FragmentState,
@@ -154,10 +155,14 @@ pub mod cockpit {
 
     /// `<tier>.state`: each probe's fragment status and the digest of the last published `Kv`.
     #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(default)]
     pub struct Carry {
         pub fragments: BTreeMap<String, FragmentCarry>,
         pub digest: Option<String>,
     }
+
+    /// What every tier keeps: the digest that stops a republish, and each fragment's time and status.
+    pub const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("digest"), runtime::rows::Part::Map { name: "fragments", drop: &[] }];
 
     pub type Decide = fn(&Carry, &Snapshot) -> Result<(Carry, Vec<EffectSpec>), String>;
 

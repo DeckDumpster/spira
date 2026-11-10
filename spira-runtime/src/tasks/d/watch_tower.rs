@@ -205,6 +205,7 @@ pub struct Snapshot {
 /// `{ lapsed_marker, failed_units rows, cpu_throttle samples, prompt }`; `prompt` is the last
 /// `SWEEP:NOMINAL` line, so an unchanged nominal sweep rewrites nothing.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub lapsed_marker: Option<String>,
     pub failed_units: BTreeMap<String, u64>,
@@ -425,9 +426,11 @@ impl WatchTower {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("prompt"), runtime::rows::Part::Map { name: "failed_units", drop: &[] }, runtime::rows::Part::Field("escalated"), runtime::rows::Part::Map { name: "alarmed", drop: &[] }];
 
 impl Handler for WatchTower {
     fn interests(&self) -> &[EventKindTag] {

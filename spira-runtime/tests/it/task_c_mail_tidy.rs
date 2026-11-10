@@ -70,3 +70,27 @@ fn t5_the_keep_rule_archives_duplicates_and_stale_mail_and_a_failed_control_arch
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { store_ok: false, open_asks: BTreeSet::new(), ..snap }), TICK).unwrap();
     assert!(acts.is_empty(), "empty asks and a failing positive control archive nothing: {acts:?}");
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// A stale read message whose archive the mailbox refused: the pass stays decided.
+fn decided_and_unarchived() -> TaskRig {
+    let world = json(&Snapshot { messages: vec![msg("cur/3", "stale", None, false, 9 * 86_400)], ..idle() });
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).double(task::ARCHIVE, |_| Err("mailbox locked".into()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&decided_and_unarchived(), task::NAME);
+    assert!(rows.iter().any(|k| k == "phase"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(decided_and_unarchived, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}

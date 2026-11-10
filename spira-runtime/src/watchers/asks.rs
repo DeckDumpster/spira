@@ -5,6 +5,7 @@
 use std::collections::BTreeSet;
 
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::{answers_observe, carried, iso8601, INBOX_APPEND};
@@ -14,6 +15,8 @@ pub const TICK: EventKindTag = "asks.tick";
 pub const STATE: EventKindTag = "asks.state";
 pub const OBSERVE: &str = "asks.observe";
 pub const NAME: &str = "asks";
+
+const ROW_PARTS: &[Part] = &[Part::Field("seeded"), Part::Field("seen")];
 
 const DEADLINE_MS: u64 = 10_000;
 
@@ -56,7 +59,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<String>) {
 
 impl Asks {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

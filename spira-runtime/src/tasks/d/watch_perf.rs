@@ -131,6 +131,7 @@ pub struct Snapshot {
 
 /// Today's `--health` file (`perf-watch/src/lib.rs:170-219`) plus the `--record` it replaces.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub last_pass: u64,
     /// alarm key → when it was last printed.
@@ -262,9 +263,11 @@ impl WatchPerf {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("last_pass"), runtime::rows::Part::Map { name: "alarms", drop: &[] }, runtime::rows::Part::Field("sample_at"), runtime::rows::Part::Map { name: "sample", drop: &[] }];
 
 impl Handler for WatchPerf {
     fn interests(&self) -> &[EventKindTag] {

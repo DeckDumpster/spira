@@ -135,3 +135,31 @@ fn t6_seven_days_with_a_tip_advance_replay_identically_inside_the_budget() {
     assert_eq!(r.requested().iter().filter(|q| q.name == ESCALATE).count(), 1);
     assert_journal_budget(&r, 2);
 }
+
+fn escalated_condition() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(behind())))
+}
+
+fn two_declined_passes() -> TaskRig {
+    let mut r = rig(1, Arc::new(Mutex::new(declined())));
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&escalated_condition(), NAME);
+    assert!(rows.iter().any(|k| k.starts_with("escalated/")), "{rows:?}");
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&two_declined_passes(), NAME);
+    assert!(rows.iter().any(|k| k.starts_with("declined/")), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(escalated_condition, || WatchSkew::new(config()).registration(), STREAM, WatchSkew::boot().2);
+}
+
+#[test]
+fn a_boot_keeps_the_decline_streak_that_the_next_pass_alarms_on() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(two_declined_passes, || WatchSkew::new(config()).registration(), STREAM, WatchSkew::boot().2);
+}

@@ -64,3 +64,22 @@ fn t5_a_satisfied_ask_closes_with_the_old_reason_and_a_mislabelled_epic_is_said_
     let (_, acts) = task::decide(&h.cfg, &c, &Input::Observed(snap), 2 * TICK).unwrap();
     assert!(acts.is_empty(), "an unchanged mislabelled set is silent: {acts:?}");
 }
+
+fn mislabelled_epic() -> Snapshot {
+    Snapshot { asks: vec![ask("sp-a", "test -f /done", &["sp-w"])], mislabelled: vec![("sp-e".into(), "epic".into(), "an epic with the ask label".into())], ..Snapshot::default() }
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rig = t::rig::<H>(1, SET, &json(&mislabelled_epic()));
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig, task::NAME);
+    for want in ["mislabelled_seen", "asks/sp-a", "checks/sp-a"] {
+        assert!(rows.iter().any(|k| k == want), "{want} in {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_mislabelled_note_and_misses_none() {
+    let both = Snapshot { mislabelled: vec![("sp-e".into(), "epic".into(), "an epic with the ask label".into()), ("sp-f".into(), "epic".into(), "another".into())], ..mislabelled_epic() };
+    t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![json(&mislabelled_epic()), json(&both)], |_| {});
+}

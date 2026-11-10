@@ -124,6 +124,7 @@ pub struct Snapshot {
 /// `intake.filings.state`: the bead per `host/class`, the filings applied and not yet gone from
 /// the outbox (`host/name`), and the alarms already raised (`host` or `host/name`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub beads: BTreeMap<String, String>,
     pub applied: BTreeSet<String>,
@@ -353,9 +354,11 @@ impl IntakeFilings {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "beads", drop: &[] }, runtime::rows::Part::Field("applied"), runtime::rows::Part::Field("alarmed")];
 
 impl Handler for IntakeFilings {
     fn interests(&self) -> &[EventKindTag] {

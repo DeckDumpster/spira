@@ -3,6 +3,7 @@
 //! that fails is said to the Concierge once per distinct failure, not once per tick.
 
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::{answered_effect, carried, iso8601, INBOX_APPEND};
@@ -12,6 +13,8 @@ pub const TICK: EventKindTag = "overrides.tick";
 pub const STATE: EventKindTag = "overrides.state";
 pub const APPLY: &str = "overrides.apply";
 pub const NAME: &str = "overrides";
+
+const ROW_PARTS: &[Part] = &[Part::Field("said")];
 
 const DEADLINE_MS: u64 = 120_000;
 
@@ -28,7 +31,7 @@ pub struct Carry {
 
 impl Overrides {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

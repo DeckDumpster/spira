@@ -122,6 +122,7 @@ pub struct Snapshot {
 
 /// Today's state file: class key → when its filing succeeded.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub filed: BTreeMap<String, u64>,
 }
@@ -221,9 +222,11 @@ impl WatchRefusals {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "filed", drop: &[] }];
 
 impl Handler for WatchRefusals {
     fn interests(&self) -> &[EventKindTag] {

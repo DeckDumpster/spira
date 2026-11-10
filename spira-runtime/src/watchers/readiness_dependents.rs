@@ -3,6 +3,7 @@
 //! again; the revision moves only once that has been done, so a failed pass is asked for again.
 
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::{answered_effect, carried};
@@ -12,6 +13,8 @@ pub const TICK: EventKindTag = "readiness-dependents.tick";
 pub const STATE: EventKindTag = "readiness-dependents.state";
 pub const RUN: &str = "readiness-dependents.run";
 pub const NAME: &str = "readiness-dependents";
+
+const ROW_PARTS: &[Part] = &[Part::Field("through")];
 
 const DEADLINE_MS: u64 = 120_000;
 
@@ -36,7 +39,7 @@ pub struct Pass {
 
 impl ReadinessDependents {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

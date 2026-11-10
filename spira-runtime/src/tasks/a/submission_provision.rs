@@ -223,6 +223,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
 
 /// Carried: the machine, and the last note sent, so a note goes to the inbox only on change.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub state: State,
     pub last_note: Option<String>,
@@ -553,7 +554,7 @@ impl SubmissionProvision {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     /// The boot tick only arms the one tick `BOOT_DELAY_MS` later.
@@ -561,6 +562,8 @@ impl SubmissionProvision {
         ("submission-provision/boot", STREAM, EventKind::new(TICK, "boot"))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("last_note")];
 
 impl Handler for SubmissionProvision {
     fn interests(&self) -> &[EventKindTag] {

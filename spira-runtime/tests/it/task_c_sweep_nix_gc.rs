@@ -67,3 +67,30 @@ fn t5_three_refusals_and_the_happy_tree_match_the_scripts_exit_codes() {
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(ok()), FIRST_MONDAY).unwrap();
     assert_eq!(names(&acts), [task::COLLECT], "exit 0");
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// A collect whose unit started and has not ended.
+fn collecting() -> TaskRig {
+    let world = json(&ok());
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).double(task::COLLECT, |_| Ok("started".into()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&collecting(), task::NAME);
+    for key in ["phase", "last_fired", "refused"] {
+        assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(collecting, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}

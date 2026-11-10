@@ -196,7 +196,7 @@ impl WatchBackupAge {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(RowCodec { stream: STREAM, also: &[], tag: STATE, split: runtime::rows::split_whole, join: runtime::rows::join_whole })
     }
 }
 

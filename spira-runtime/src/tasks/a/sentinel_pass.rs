@@ -666,7 +666,7 @@ impl SentinelPass {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     /// The boot tick only arms the first pass, one cadence later (the row's `cadence_ms`).
@@ -679,6 +679,8 @@ impl SentinelPass {
         kit::on_tick(&SHAPE, serde_json::to_string(&input).unwrap_or_default(), next_at)
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("inference_last_ms"), runtime::rows::Part::Field("land_escalated_at_ms"), runtime::rows::Part::Field("roster_warned"), runtime::rows::Part::Field("announced"), runtime::rows::Part::Field("inconsistent")];
 
 impl Handler for SentinelPass {
     fn interests(&self) -> &[EventKindTag] {

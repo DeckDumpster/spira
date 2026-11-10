@@ -3,6 +3,7 @@
 //! wake line, and does no IO.
 
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::{iso8601, CONCIERGE_WAKE};
@@ -12,6 +13,8 @@ pub const TICK: EventKindTag = "inbox-keeper.tick";
 pub const STATE: EventKindTag = "inbox-keeper.state";
 pub const OBSERVE: &str = "inbox-keeper.observe";
 pub const NAME: &str = "inbox-keeper";
+
+const ROW_PARTS: &[Part] = &[Part::Field("last_seen"), Part::Field("last_wake"), Part::Field("persisted_seen")];
 
 const DEADLINE_MS: u64 = 10_000;
 pub const WAKE_DEADLINE_MS: u64 = 700_000;
@@ -63,7 +66,7 @@ pub fn decide(cfg: &InboxKeeper, carry: &Carry, snap: &Snapshot, now: u64) -> (C
 
 impl InboxKeeper {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

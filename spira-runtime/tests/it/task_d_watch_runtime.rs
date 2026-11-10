@@ -113,3 +113,18 @@ fn t5_the_bump_title_and_the_cannot_check_line_are_runtime_watchs() {
     let logged = asked(&r, LOG);
     assert!(logged.len() == 1 && logged[0].contains("cannot check"), "{logged:?}");
 }
+
+fn filed_bump() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(pinned("1.91", "1.93.0"))))
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_bump(), NAME);
+    assert!(rows.iter().any(|k| k.starts_with("ledger/")), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed_bump, || WatchRuntime::new(config()).registration(), STREAM, WatchRuntime::boot().2);
+}

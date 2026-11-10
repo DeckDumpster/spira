@@ -103,6 +103,7 @@ pub struct Snapshot {
 
 /// `intake.kit_bump.state`: per site, the open bump's bead id and target.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub bumps: BTreeMap<String, (String, String)>,
 }
@@ -283,9 +284,11 @@ impl IntakeKitBump {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "bumps", drop: &[] }];
 
 impl Handler for IntakeKitBump {
     fn interests(&self) -> &[EventKindTag] {

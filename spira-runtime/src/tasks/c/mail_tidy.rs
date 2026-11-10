@@ -239,4 +239,6 @@ pub fn archive(input: &str) -> Result<String, String> {
     mail::tidy::archive(std::path::Path::new(&a.mail), &paths).map(|n| format!("archived {n}"))
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase")];
+
 crate::tasks::b::hosted!(MailTidy);

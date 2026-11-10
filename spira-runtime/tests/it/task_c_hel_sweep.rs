@@ -69,3 +69,30 @@ fn t5_one_disposition_per_branch_as_hel_dry_run_would() {
     let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(held), AT_35).unwrap();
     assert!(acts.is_empty(), "a held bead is skipped: {acts:?}");
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// A landed branch whose send leg started and has not ended: the pass is acting on one job.
+fn acting_on_a_started_leg() -> TaskRig {
+    let world = json(&Snapshot { branches: vec![branch("sp-a", true)], rows: [("sp-a".to_string(), "SUBMITTED".to_string())].into(), ..keep() });
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).double(task::SEND, |_| Ok("started".into()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&acting_on_a_started_leg(), task::NAME);
+    for key in ["phase", "last_fired", "pass", "tally", "jobs/spira:spira/sp-a:abc123"] {
+        assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(acting_on_a_started_leg, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}

@@ -102,3 +102,22 @@ fn t5_the_lines_are_the_ones_round_ami_stale_wrote() {
     let r = rig(1, Arc::new(Mutex::new(seen(Verdict::Unreadable { rc: 2, out: "ExpiredToken".into() }))));
     assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:round-ami-stale] round AMI check could not read the images: 'round-vm ami-check' exited 2: ExpiredToken; EC2 rounds refuse the image until the Round AMI workflow builds one"]);
 }
+
+fn said_once() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(stale(STALE))))
+}
+
+fn registration() -> runtime::event::Registration {
+    WatchAmiStale::new(config()).registration()
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&said_once(), NAME);
+    assert_eq!(rows, ["said"]);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(said_once, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}

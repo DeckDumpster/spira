@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::{answers_observe, carried, iso8601, INBOX_APPEND};
@@ -14,6 +15,8 @@ pub const TICK: EventKindTag = "round-duty.tick";
 pub const STATE: EventKindTag = "round-duty.state";
 pub const OBSERVE: &str = "round-duty.observe";
 pub const NAME: &str = "round-duty";
+
+const ROW_PARTS: &[Part] = &[Part::Field("last_due"), Part::Field("last_unknown"), Part::Field("last_c"), Part::Field("last_change"), Part::Field("last_stopped"), Part::Field("starved_since"), Part::Field("last_starved"), Part::Field("last_unadvanced"), Part::Map { name: "lines", drop: &[] }];
 
 const DEADLINE_MS: u64 = 10_000;
 
@@ -135,7 +138,7 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
 
 impl RoundDuty {
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

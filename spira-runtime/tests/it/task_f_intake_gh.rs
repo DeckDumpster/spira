@@ -130,3 +130,37 @@ fn t5_parity_a_zero_bead_store_is_refused_on_the_inbox_and_files_nothing() {
     assert_eq!(acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), [f::INBOX]);
     assert!(acts[0].input.contains("[watch:intake.gh] gh-intake:"), "{}", acts[0].input);
 }
+
+fn baselined(second: fn(u64) -> Snapshot) -> TaskRig {
+    rig(1, move |n| if n == 0 { snap(1, vec![issue(1, "ryan")], vec![]) } else { second(n) })
+}
+
+fn a_new_issue(_: u64) -> Snapshot {
+    snap(1, vec![issue(1, "ryan"), issue(2, "stranger")], vec![])
+}
+
+fn rate_limited_for_hours(_: u64) -> Snapshot {
+    Snapshot { now: 5 * 3_600, pages: [("o/r".to_string(), Pages::RateLimited { reset: 0 })].into(), ..snap(1, vec![], vec![]) }
+}
+
+fn boot_matches(make: impl Fn() -> TaskRig) {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(make, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&baselined(a_new_issue), NAME);
+    for k in ["seen/o/r", "last_ok_hour"] {
+        assert!(rows.iter().any(|r| r == k), "{k} missing from {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_files_a_new_issue_rather_than_baselining_it_away() {
+    boot_matches(|| baselined(a_new_issue));
+}
+
+#[test]
+fn a_boot_keeps_the_last_good_fetch_so_a_long_rate_limit_still_alarms() {
+    boot_matches(|| baselined(rate_limited_for_hours));
+}

@@ -728,4 +728,6 @@ pub fn prune(real: &hel::real::Real, input: &str) -> Result<String, String> {
     Ok(format!("pruned {}", t.repo))
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Field("pass"), runtime::rows::Part::Field("tally"), runtime::rows::Part::Map { name: "jobs", drop: &[] }];
+
 crate::tasks::b::hosted!(HelSweep);

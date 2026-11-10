@@ -61,3 +61,25 @@ fn t5_one_publish_per_tick_as_the_old_unit_made() {
     t::assert_ported(&rig, task::STREAM);
     assert_eq!(t::fired_at::<H>(&rig), (0..=10).map(|i| i * MIN).collect::<Vec<_>>());
 }
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rig = t::rig::<H>(1, SET, &json(&snap(true)));
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig, task::NAME);
+    assert!(rows.iter().any(|k| k == "phase"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![json(&snap(true))], |_| {});
+}
+
+#[test]
+fn a_boot_does_not_record_the_publish_a_second_time() {
+    let mut rig = t::rig::<H>(1, SET, &json(&snap(true)));
+    let recorded = |rig: &runtime::taskrig::TaskRig| rig.journaled().iter().filter(|e| e.kind.tag == task::STATE).count();
+    assert_eq!(recorded(&rig), 1);
+    rig.reopen(t::handler::<H>(SET).registration()).unwrap();
+    rig.tick(task::STREAM, runtime::event::EventKind::new(task::TICK, "")).unwrap();
+    assert_eq!(recorded(&rig), 1, "the publish was recorded again after the restart");
+}

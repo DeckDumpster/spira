@@ -135,3 +135,26 @@ fn t5_the_asks_are_the_ones_watchd_notify_mailed() {
     let a = asks(&r);
     assert!(a.len() == 1 && a[0].contains(HEALTH_SUBJECT) && a[0].contains("mail-deliver — DEGRADED for") && a[0].contains("no delivery in 900s"), "{a:?}");
 }
+
+fn registration() -> runtime::event::Registration {
+    InboxNotify::new(config()).registration()
+}
+
+/// A stale row asked about once and stamped.
+fn asked_once() -> TaskRig {
+    let mut r = rig(1, Arc::new(Mutex::new(stale())));
+    r.advance(35 * MIN).unwrap();
+    assert_eq!(asks(&r).len(), 1);
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&asked_once(), NAME);
+    assert!(rows.iter().any(|k| k == "pending/gate") && rows.iter().any(|k| k == "stamp_backlog"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(asked_once, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}

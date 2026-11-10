@@ -95,3 +95,22 @@ fn t5_the_lines_are_the_ones_ci_spill_guard_wrote() {
     let r = rig(1, world(vec![Repo { name: "deck".into(), ref_: None, sha: None, workflows: None }]));
     assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:ci-spill-guard] CI SPILL: deck has no resolvable landing ref; its workflows are unchecked"]);
 }
+
+fn registration() -> runtime::event::Registration {
+    WatchCiSpill::new(config()).registration()
+}
+
+fn violation_said() -> TaskRig {
+    rig(1, world(vec![repo("a1", MISSING)]))
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&violation_said(), NAME);
+    assert_eq!(rows, ["said", "seen/spira"]);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(violation_said, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}

@@ -111,3 +111,22 @@ fn t5_the_reap_set_and_the_line_are_the_ones_warm_full_made() {
     assert!(reaped.len() == 1 && reaped[0].contains("slot.3"), "an idle slot over cap is reaped below the limit: {reaped:?}");
     assert!(asked(&r, INBOX_APPEND).is_empty());
 }
+
+fn registration() -> runtime::event::Registration {
+    WatchWarmFull::new(config()).registration()
+}
+
+fn said_once() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(full())))
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&said_once(), NAME);
+    assert_eq!(rows, ["said"]);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(said_once, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}

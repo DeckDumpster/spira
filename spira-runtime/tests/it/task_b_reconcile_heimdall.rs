@@ -71,3 +71,21 @@ fn t5_a_confirmed_stall_raises_once_and_a_store_outage_writes_nothing() {
     let outage = task::decide(&h.cfg, &keyed(Phase::Seen, 1), &Input::Observed(Snapshot { db_reachable: false, ..stalled(now) }), now);
     assert!(matches!(&outage, Err(e) if e.contains("unreachable")), "no store write while unreachable: {outage:?}");
 }
+
+const MIRROR_SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "120"), ("SPIRA_HEIMDALL_CONFIRM", "2"), ("SPIRA_HEIMDALL_CLEAR", "2"), ("SPIRA_HEIMDALL_REFRESH", "3600"), ("SPIRA_HEIMDALL_PASS_STALE", "900"), ("SPIRA_HEIMDALL_MIRROR_STALE", "90000")];
+
+fn mirror_stale() -> String {
+    json(&Snapshot { db_reachable: true, mirror_age_secs: Some(200_000), ..Snapshot::default() })
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rig = t::rig::<H>(1, MIRROR_SET, &mirror_stale());
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig, task::NAME);
+    assert!(rows.iter().any(|k| k == "keys/mirror-stale"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_neither_forgets_a_sighting_nor_raises_without_its_second() {
+    t::assert_boot_matches_an_unstopped_run::<H>(MIRROR_SET, vec![mirror_stale()], |_| {});
+}

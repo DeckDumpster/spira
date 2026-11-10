@@ -145,6 +145,7 @@ pub struct Snapshot {
 
 /// The `--state` ledger: `"<repo>\t<runtime>"` → bead id.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub ledger: BTreeMap<String, String>,
 }
@@ -402,9 +403,11 @@ impl WatchRuntime {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "ledger", drop: &[] }];
 
 impl Handler for WatchRuntime {
     fn interests(&self) -> &[EventKindTag] {

@@ -156,3 +156,16 @@ fn two_days_of_minute_ticks_replay_identically_inside_the_budget() {
     acc::assert_healthy(&r, STREAM);
     assert_journal_budget(&r, 1);
 }
+
+#[test]
+fn a_sampler_that_carries_nothing_keeps_no_row_after_running() {
+    let mut r = rig(1);
+    r.advance(120_000).unwrap();
+    let kept: Vec<_> = r.journal.state().into_iter().filter(|((t, _), v)| t == NAME && !v.is_empty()).collect();
+    assert!(kept.is_empty(), "{kept:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(|| rig(1), || WatchDwarfUsage { interval_ms: 60_000 }.registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
+}

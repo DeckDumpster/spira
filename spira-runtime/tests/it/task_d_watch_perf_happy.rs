@@ -111,3 +111,18 @@ fn t5_the_lines_are_the_ones_happy_path_logged() {
     assert_eq!(asked(&r, LOG), ["PERF SLOW happy-path 75000ms (goal 60000ms) slowest phase: unknown; recent ms: 75000"]);
     assert_eq!(asked(&r, HISTORY).len(), 1, "the measured run is appended to the history");
 }
+
+fn run_in_flight() -> TaskRig {
+    rig(1, world(Round::None))
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&run_in_flight(), NAME);
+    assert!(rows.iter().any(|k| k == "phase") && rows.iter().any(|k| k == "run_unit"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(run_in_flight, || WatchPerfHappy::new(config()).registration(), STREAM, WatchPerfHappy::boot().2);
+}

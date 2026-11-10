@@ -121,3 +121,23 @@ fn t5_a_no_lever_pass_pages_and_an_observability_halt_only_waits() {
     assert_eq!(c.deadman, Deadman::Waiting);
     assert!(!names(&acts).contains(&task::PAGE) && !names(&acts).contains(&task::HEARTBEAT), "{acts:?}");
 }
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rig = t::rig::<H>(1, SET, &json(&idle(0)));
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig, task::NAME);
+    assert!(rows.iter().any(|k| k == "knob_inited"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_knob_init_and_misses_none() {
+    t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![json(&idle(0))], |_| {});
+}
+
+#[test]
+fn a_boot_does_not_page_again_inside_the_page_window() {
+    let mut no_lever = idle(0);
+    no_lever.section_snapshot["pass"] = pass(0, &["Lifecycle/all"], None);
+    let paged = json(&no_lever);
+    t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![paged.clone(), paged], |_| {});
+}

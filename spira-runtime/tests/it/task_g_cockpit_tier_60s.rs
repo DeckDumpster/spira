@@ -131,3 +131,32 @@ fn t5_parity_an_ok_slots_fragment_samples_live_and_ceiling() {
     let sample = acts.iter().find(|a| a.name == SLOTS_SAMPLE).expect("an ok slots fragment is sampled");
     assert!(sample.input.contains("live=3") && sample.input.contains("ceiling=4"), "{}", sample.input);
 }
+
+fn with_clock(mut s: Snapshot) -> Snapshot {
+    let f = s.fragments.values_mut().next().unwrap();
+    f.at = 10;
+    f.kv.insert("SP_AT".into(), "10".into());
+    s
+}
+
+fn boot_matches(make: impl Fn() -> TaskRig) {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(make, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig(1, |_| with_clock(snap(0))), NAME);
+    for k in ["digest", "fragments/cockpit.slots"] {
+        assert!(rows.iter().any(|r| r == k), "{k} missing from {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_does_not_republish_a_snapshot_whose_digest_it_published() {
+    boot_matches(|| rig(1, |_| snap(0)));
+}
+
+#[test]
+fn a_boot_does_not_refresh_a_snapshot_no_newer_than_the_last_read() {
+    boot_matches(|| rig(1, |_| with_clock(snap(0))));
+}

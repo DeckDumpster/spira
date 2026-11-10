@@ -138,6 +138,7 @@ pub struct Snapshot {
 
 /// `{ said, probe_latency_s }`: today's `.said` keys and `.latency`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub said: BTreeSet<String>,
     pub probe_latency_s: Option<u64>,
@@ -309,9 +310,11 @@ impl WatchSpillKey {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("said"), runtime::rows::Part::Field("probe_latency_s")];
 
 impl Handler for WatchSpillKey {
     fn interests(&self) -> &[EventKindTag] {

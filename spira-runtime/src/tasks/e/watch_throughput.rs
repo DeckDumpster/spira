@@ -237,9 +237,11 @@ impl WatchThroughput {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held")];
 
 impl Handler for WatchThroughput {
     fn interests(&self) -> &[EventKindTag] {

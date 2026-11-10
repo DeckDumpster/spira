@@ -21,7 +21,7 @@
 //! `invalid_closed_rows`, `trigger_labels`, `reason_text`, `description`). In order: a count error
 //! or an open trigger skips; an unadmitted lane skips; fire when `now - lastpass >=
 //! SPIRA_MIMIR_MAX_GAP_SECONDS`, or `landings >= SPIRA_MIMIR_LANDING_INTERVAL`, or there is any
-//! invalid-closed row. No carried state. Fixtures: the 17 engine tests, the 5 `main.rs` tests,
+//! invalid-closed row. Fixtures: the 17 engine tests, the 5 `main.rs` tests,
 //! `real.rs`'s open-trigger test and `spira/test-mimir-trigger.sh`.
 //!
 //! # Act
@@ -61,10 +61,12 @@ use spira_config::lc_call::LcClient;
 
 use super::trigger_groom::{config_input, config_of, dedup_labels, file_effect, guard, halted, run_file_with, walk};
 use super::{Bead, Cycle, Decision, Transition};
+use crate::watchers::carried;
 
 pub const NAME: &str = "trigger.mimir";
 pub const STREAM: &str = "task.trigger.mimir";
 pub const TICK: EventKindTag = "trigger.mimir.tick";
+pub const STATE: EventKindTag = "trigger.mimir.state";
 
 pub const OBSERVE: &str = "trigger.mimir.observe";
 pub const FILE: &str = "trigger.mimir.file";
@@ -158,9 +160,11 @@ pub fn decide(snap: &Snapshot, config: &BTreeMap<String, String>) -> Decision {
     Decision::File(Bead { title: format!("Mimir pass — {text}"), kind: "task".into(), priority: 3, labels, body, persona: None, repo: None })
 }
 
-/// When this stream last filed a trigger: the newest `trigger.mimir.file` that succeeded.
-pub fn last_filed_at(view: &Projection, stream: &StreamKey) -> Option<u64> {
-    view.events(stream).iter().rev().find(|e| e.kind.tag == EFFECT_SUCCEEDED && crate::watchers::answered_effect(view, e).as_deref() == Some(FILE)).map(|e| e.at)
+/// `trigger.mimir.state`: when the newest `trigger.mimir.file` succeeded.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Carry {
+    pub filed_at: Option<u64>,
 }
 
 /// Whether a trigger filed at `filed_at` still covers `now` (both ms): at most one Mimir pass is
@@ -215,9 +219,11 @@ impl TriggerMimir {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("filed_at")];
 
 impl Handler for TriggerMimir {
     fn interests(&self) -> &[EventKindTag] {
@@ -225,6 +231,9 @@ impl Handler for TriggerMimir {
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
+        if ev.stream.0 == STREAM && ev.kind.tag == EFFECT_SUCCEEDED && crate::watchers::answered_effect(view, ev).as_deref() == Some(FILE) {
+            return super::commands(&carried::<Carry>(view, &ev.stream, STATE), &Carry { filed_at: Some(ev.at) }, STATE, vec![]);
+        }
         CYCLE.handle(self.interval_ms, view, ev, || config_input(&self.config), |body| {
             let Ok(snap) = serde_json::from_str::<Snapshot>(body) else { return vec![] };
             match decide(&snap, &self.config) {
@@ -232,7 +241,7 @@ impl Handler for TriggerMimir {
                     ctx.event().set("mimir.skip", why.as_str());
                     vec![]
                 }
-                Decision::File(_) if recently_filed(last_filed_at(view, &ev.stream), ev.at, &self.config) => {
+                Decision::File(_) if recently_filed(carried::<Carry>(view, &ev.stream, STATE).filed_at, ev.at, &self.config) => {
                     ctx.event().set("mimir.skip", "recent");
                     vec![]
                 }

@@ -95,3 +95,22 @@ fn t5_only_stale_unbusy_foreign_runs_go() {
 fn t5_unreadable_free_space_reclaims_nothing() {
     assert_eq!(removed(&decide(&Carry::default(), &Snapshot { free_bytes: None, ..busy() }).1), Vec::<&str>::new());
 }
+
+fn at_work() -> TaskRig {
+    let mut r = rig(1, busy());
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn nothing_is_kept_because_every_tick_re_observes() {
+    let r = at_work();
+    assert!(!r.requested().is_empty());
+    let kept: Vec<_> = r.journal.state().into_iter().filter(|((t, _), v)| t == NAME && !v.is_empty()).collect();
+    assert!(kept.is_empty(), "{kept:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+}

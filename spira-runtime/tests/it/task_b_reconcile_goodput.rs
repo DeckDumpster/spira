@@ -65,3 +65,33 @@ fn t5_a_due_intent_takes_the_lock_and_a_halted_world_records_without_judging() {
     let (c, acts) = task::decide(&h.cfg, &carried_equal(), &Input::Observed(halted), MIN).unwrap();
     assert_eq!((c.phase, names(&acts)), (Phase::Locking, vec![task::LOCK]), "a halt is an input, not a skip: Mode::Halted still records");
 }
+
+/// A halted world, a lock granted, and a judge leg whose answer does not decode: the pass stays judging.
+fn judging() -> runtime::taskrig::TaskRig {
+    let halted = json(&Snapshot { halted: true, ..quiet() });
+    let mut rig = runtime::taskrig::TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, move |_| Ok(halted.clone()))
+        .double(task::LOCK, |_| Ok(r#"{"token":"tok"}"#.into()))
+        .double(task::JUDGE, |_| Ok("not a judgement".into()));
+    let (_, stream, kind) = H::boot();
+    rig.tick(stream, kind).unwrap();
+    rig
+}
+
+fn registration() -> runtime::event::Registration {
+    t::handler::<H>(SET).registration()
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&judging(), task::NAME);
+    for want in ["phase", "token", "holder", "deadline_at"] {
+        assert!(rows.iter().any(|k| k == want), "{want} in {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_does_not_take_the_lock_again_for_a_pass_in_flight() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(judging, registration, task::STREAM, runtime::event::EventKind::new(task::TICK, ""));
+}

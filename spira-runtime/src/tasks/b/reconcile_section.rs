@@ -152,4 +152,6 @@ pub fn publish(lc: &spira_config::lc_call::LcClient) -> Result<String, String> {
     lc.answer(&["publish-section", "lifecycle"]).map_err(String::from)
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase")];
+
 super::hosted!(ReconcileSection);

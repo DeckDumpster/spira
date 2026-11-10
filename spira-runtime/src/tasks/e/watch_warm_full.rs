@@ -125,6 +125,7 @@ pub struct Snapshot {
 
 /// Today's `run/watchd/warm-full.said` latch.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub said: bool,
 }
@@ -264,9 +265,11 @@ impl WatchWarmFull {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("said")];
 
 impl Handler for WatchWarmFull {
     fn interests(&self) -> &[EventKindTag] {

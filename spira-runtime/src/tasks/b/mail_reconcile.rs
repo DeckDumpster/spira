@@ -359,4 +359,6 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
     out.map(|_| if refused { format!("{}/close:refused", j.key) } else { tag.clone() }).map_err(|why| format!("{tag}: {why}"))
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[];
+
 super::hosted!(MailReconcile);

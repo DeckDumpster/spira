@@ -127,3 +127,33 @@ fn t6_seven_days_with_a_three_hour_outage_replay_identically_at_one_send_an_hour
     assert_eq!(r.trace().len() as u64, 2 * per_hour);
     assert_journal_budget(&r, 3);
 }
+
+fn registration() -> runtime::event::Registration {
+    IncidentProbe::new(config()).registration()
+}
+
+#[test]
+fn a_probe_that_carries_nothing_keeps_no_row_after_running() {
+    let mut r = rig(1, none(), delivered);
+    r.advance(CADENCE_MS).unwrap();
+    let kept: Vec<_> = r.journal.state().into_iter().filter(|((t, _), v)| t == NAME && !v.is_empty()).collect();
+    assert!(kept.is_empty(), "{kept:?}");
+}
+
+/// The send is keyed by the tick event that asked, whose sequence number a restart renumbers, so the
+/// tick after a boot is compared by what it asks for with that key set aside.
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    let asked = |restart: bool| {
+        let mut r = rig(1, none(), delivered);
+        if restart {
+            r.reopen(registration()).expect("restart");
+        }
+        let mark = r.requested().len();
+        r.tick(STREAM, runtime::event::EventKind::new(TICK, "")).expect("first tick");
+        r.requested()[mark..].iter().map(|q| (q.name.clone(), q.input.replace(|c: char| c.is_ascii_digit(), ""))).collect::<Vec<_>>()
+    };
+    let unstopped = asked(false);
+    assert_eq!(unstopped.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), [OBSERVE, SEND]);
+    assert_eq!(asked(true), unstopped);
+}

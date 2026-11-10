@@ -119,3 +119,20 @@ fn t5_parity_the_filed_sweep_is_byte_equal() {
     assert_eq!((bead.kind.as_str(), bead.priority), ("task", 3));
     assert_eq!(bead.labels, ["spira", "warden-sweep", "delivers:note:/run/warden.log"]);
 }
+
+fn filed() -> TaskRig {
+    rig(1, |_| snap(Ok(0)))
+}
+
+#[test]
+fn the_task_keeps_no_carry_row_because_it_has_no_carry() {
+    let r = filed();
+    assert!(r.requested().iter().any(|q| q.name == FILE), "the scenario must file");
+    let rows: Vec<_> = r.journal.state().into_iter().filter(|((t, _), _)| t == NAME).collect();
+    assert!(rows.is_empty(), "{rows:?}");
+}
+
+#[test]
+fn a_boot_asks_what_a_process_that_never_stopped_asks() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
+}

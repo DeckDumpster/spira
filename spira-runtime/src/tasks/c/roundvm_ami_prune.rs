@@ -298,4 +298,6 @@ pub fn delete_snapshots(input: &str) -> Result<String, String> {
     Ok(d.image_id)
 }
 
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Map { name: "images", drop: &[] }, runtime::rows::Part::Map { name: "snapshots", drop: &[] }];
+
 crate::tasks::b::hosted!(RoundvmAmiPrune);

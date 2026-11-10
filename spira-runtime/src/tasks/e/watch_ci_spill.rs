@@ -119,6 +119,7 @@ pub struct Snapshot {
 
 /// `{ said, seen: repo → sha }`; `said` is never pruned, as today.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub said: BTreeSet<String>,
     pub seen: BTreeMap<String, String>,
@@ -296,9 +297,11 @@ impl WatchCiSpill {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("said"), runtime::rows::Part::Map { name: "seen", drop: &[] }];
 
 impl Handler for WatchCiSpill {
     fn interests(&self) -> &[EventKindTag] {

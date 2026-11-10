@@ -108,6 +108,7 @@ pub struct Snapshot {
 
 /// Today's `round-ami-stale.said`: the last line said, cleared on fresh.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub said: Option<String>,
 }
@@ -177,9 +178,11 @@ impl WatchAmiStale {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("said")];
 
 impl Handler for WatchAmiStale {
     fn interests(&self) -> &[EventKindTag] {

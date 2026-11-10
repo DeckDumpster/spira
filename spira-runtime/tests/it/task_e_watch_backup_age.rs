@@ -96,3 +96,22 @@ fn t5_the_alerts_are_the_ones_lc_backup_mailed() {
     assert!(m[0].contains(&format!("lc-backup: {red}")) && m[0].contains("## Alert") && m[0].matches(red).count() >= 2 && m[0].contains(FROM), "{m:?}");
     assert!(m[1].contains("CLEAR: every store has a fresh backup again (spira_lifecycle: ok 60)"), "{m:?}");
 }
+
+fn registration() -> runtime::event::Registration {
+    WatchBackupAge::new(config()).registration()
+}
+
+fn red() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(dbs(Db::Stale { age: 30_000 }))))
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&red(), NAME);
+    assert_eq!(rows, ["state"]);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(red, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}

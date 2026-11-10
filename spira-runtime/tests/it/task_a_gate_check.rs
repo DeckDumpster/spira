@@ -97,3 +97,23 @@ fn t5_unreadable_rows_file_nothing() {
     let snap = Snapshot { lc_open: None, ..busy() };
     assert!(!effects(&decide(&ingested(&["101"]), &snap).1).contains(&FILE_BEAD));
 }
+
+fn later() -> Snapshot {
+    Snapshot { ci: Ci { recent_runs: vec![run("101", "success"), run("103", "success")], ..idle().ci }, ..busy() }
+}
+
+fn after_baseline() -> TaskRig {
+    let mut r = rig_with(1, kit::cycling(vec![busy(), busy(), later()], 1));
+    r.advance(CADENCE_MS).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    assert_eq!(kit::assert_kept_as_rows(&after_baseline(), NAME), ["ingested"]);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(after_baseline, registration, STREAM, EventKind::new(TICK, ""));
+}

@@ -62,3 +62,32 @@ fn t5_only_families_past_their_keep_days_are_pruned_as_dry_run_lists_them() {
     assert_eq!(names(&acts), [task::PRUNE, task::PRUNE]);
     assert!(acts[0].input.contains("cert-pass") && acts[1].input.contains("custom"), "{acts:?}");
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// One family past its keep days, pruned.
+fn after_a_prune() -> TaskRig {
+    let now = 40 * DAY_MS;
+    let world = json(&Snapshot { families: vec![fam("cert-pass", 35, now)], ..within(now) });
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).double(task::PRUNE, |_| Ok("cert-pass: kept 10, dropped 4".into()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.clock.advance_to(now);
+    r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&after_a_prune(), task::NAME);
+    for key in ["phase", "last_fired", "in_flight"] {
+        assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
+    }
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(after_a_prune, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}

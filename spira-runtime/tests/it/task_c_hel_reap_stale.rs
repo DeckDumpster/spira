@@ -65,3 +65,27 @@ fn t5_finished_merged_and_idle_trees_go_and_the_two_listed_divergences_hold() {
     let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(repo(vec![tree("sp-a", Some("WORKING"), false, 60, None)])), HOUR).unwrap();
     assert!(acts.is_empty(), "no prune on an idle pass (divergence from today): {acts:?}");
 }
+
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::b::kit::FIRE;
+
+/// A landed checkout whose removal was refused: the pass stays reaping.
+fn reaping_a_refused_removal() -> TaskRig {
+    let world = json(&repo(vec![tree("sp-a", Some("LANDED"), false, 60, None)]));
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone()));
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = kit::assert_kept_as_rows(&reaping_a_refused_removal(), task::NAME);
+    assert!(rows.iter().any(|k| k == "phase"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    kit::assert_boot_matches_an_unstopped_run(reaping_a_refused_removal, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+}
