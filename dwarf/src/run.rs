@@ -1710,6 +1710,7 @@ pub fn dwarf_settings(home: &Path, habits: bool) -> String {
     for p in [
         home.join("hooks").join("dwarf-fence.sh"),
         home.join("hooks").join("dwarf-amend-block.sh"),
+        home.join("hooks").join("statute-check-hook.sh"),
         home.join("bd-close-unacked-guard.sh"),
         home.join("script-running-guard.sh"),
     ] {
@@ -1742,5 +1743,19 @@ mod tests {
         assert_eq!(post[1]["hooks"][0]["command"], "habits");
         assert_eq!(on["hooks"]["Stop"][0]["hooks"][0]["command"], "habits");
         assert_eq!(post[0], off["hooks"]["PostToolUse"][0], "the existing group is untouched");
+    }
+
+    #[test]
+    fn the_statute_hook_is_a_pre_tool_use_hook_once_the_release_ships_it() {
+        let d = testkit::TempDir::new("dwarf-settings-statute");
+        let pre = |d: &Path| -> Vec<String> {
+            let v: serde_json::Value = serde_json::from_str(&dwarf_settings(d, false)).unwrap();
+            v["hooks"]["PreToolUse"].as_array().map_or(vec![], |g| g[0]["hooks"].as_array().unwrap().iter().map(|h| h["command"].as_str().unwrap().to_string()).collect())
+        };
+        assert!(pre(&d).is_empty());
+        std::fs::create_dir_all(d.join("hooks")).unwrap();
+        let hook = d.join("hooks").join("statute-check-hook.sh");
+        testkit::write_exe(&hook, "#!/bin/sh\n");
+        assert_eq!(pre(&d), [hook.display().to_string()]);
     }
 }

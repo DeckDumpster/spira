@@ -198,4 +198,14 @@ mod tests {
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].slug, "law-bad");
     }
+
+    #[test]
+    fn a_statute_naming_statute_check_is_clean_once_the_release_ships_the_binary() {
+        let m: BTreeMap<String, serde_json::Value> =
+            [("law-every-decision-passes-the-statute-check".to_string(), json!("Before a decision run `statute-check hook` on it"))].into();
+        let shipped = |n: &str| (n == "statute-check").then(|| "usage: statute-check hook [opts]".to_string());
+        assert!(audit(&m, &shipped).is_empty());
+        let other_verb = |n: &str| (n == "statute-check").then(|| "usage: statute-check [opts]".to_string());
+        assert_eq!(audit(&m, &other_verb).len(), 1, "positive control: a verb the binary lacks is a finding");
+    }
 }

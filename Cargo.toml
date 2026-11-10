@@ -58,6 +58,7 @@ members = [
     "archivist",
     "intent-report",
     "suite-select",
+    "statute-check",
     "release",
     "forge",
     "skew",

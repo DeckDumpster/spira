@@ -1,0 +1,10 @@
+# statute-vocab — synonym sets for `statute-check`: one set per line, any word standing for every
+# other. They bridge how a decision is worded to how a statute is worded; the statutes
+# themselves are read from the statute shelf, never named here.
+flaky flipping flips flip unattributed intermittent red fails failing failure unchanged
+suite tests test
+rework resubmit absolve eject abandon certify round rounds batch landing land
+pause pace hold stop halt stall stalled
+diagnose diagnosing investigate investigation hypothesis
+revert rollback
+rework resubmit absolve eject red flips fails unchanged
