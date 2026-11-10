@@ -11,7 +11,7 @@
 //! Promoting a row is moving it from `PENDING` to `TASKS`.
 //!
 //! [`kit`] is the shape every family B and C stub shares: the tick, the observe probe, the
-//! carried state, the rows of it a restart keeps (`ROW_PARTS`) and the acceptance helpers T1–T6 are written against.
+//! carried state and the acceptance helpers T1–T6 are written against.
 
 use super::Task;
 
