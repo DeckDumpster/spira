@@ -248,6 +248,7 @@ pub const REMOTE_SCRIPT: &str = concat!(r#"set -euo pipefail
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}" round_ref="${13}" round_sha="${14}"
 testenv_limits="${16:-}" resume_url="${17:-}" fences="${18:-}"
 rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log ~/round-script.log
+: > ~/round-runner.out
 exec > >(tee -a ~/round-script.log)
 script_out_tee=${!:-}
 exec 2> >(tee -a ~/round-script.log ~/round-setup.log >&2)
@@ -276,9 +277,9 @@ trap round_exit EXIT
 phase preflight
 [ -n "$testenv_limits" ] || { echo "round-vm: the host sent no testenv limits; a round never takes them from the tree's test fixture" >&2; exit 2; }
 t_start=$(date +%s)
-export PATH="${cache_home:+$cache_home/bin:}$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH="${cache_home:-$HOME/.cargo}/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 if ! command -v cargo >/dev/null 2>&1; then
-    echo "round-vm: cargo not found on PATH ($PATH) — the template is missing a Rust toolchain" | tee ~/round-runner.out >&2
+    echo "round-vm: cargo not found on PATH ($PATH) — the template is missing a Rust toolchain" >&2
     exit 127
 fi
 phase checkout
@@ -3499,12 +3500,13 @@ mod tests {
     }
 
     #[test]
-    fn host_preflight_without_any_cargo_fails_at_once_with_its_line_in_the_runner_output() {
+    fn host_preflight_without_any_cargo_fails_at_once_and_leaves_a_runner_output_to_pull() {
         let home = testkit::TempDir::new("round-vm-pf-home-none");
         let cache = testkit::TempDir::new("round-vm-pf-cache-none");
-        let (rc, err, runner_out) = preflight(home.path(), cache.path().to_str().unwrap());
+        let (rc, err, _) = preflight(home.path(), cache.path().to_str().unwrap());
         assert_eq!(rc, 127, "{err}");
-        assert!(runner_out.contains("cargo not found on PATH"), "{runner_out:?}");
+        assert!(err.contains("cargo not found on PATH"), "{err}");
+        assert!(home.path().join("round-runner.out").exists(), "the host's pull must find a runner output for any early exit");
     }
 
     #[test]
@@ -3825,7 +3827,7 @@ mod tests {
         let check = REMOTE_SCRIPT.find("command -v cargo").expect("checks for cargo");
         let clone = REMOTE_SCRIPT.find("git clone").expect("clones the mirror");
         assert!(check < clone, "cargo must be checked before the clone, not after it fails");
-        let path_export = REMOTE_SCRIPT.find(r#"export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin""#).expect("puts cargo's install dirs on PATH");
+        let path_export = REMOTE_SCRIPT.find(r#"export PATH="${cache_home:-$HOME/.cargo}/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin""#).expect("puts cargo's install dirs on PATH");
         assert!(path_export < check, "PATH must be widened before the check that reads it");
     }
 
