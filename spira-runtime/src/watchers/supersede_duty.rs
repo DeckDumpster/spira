@@ -224,6 +224,31 @@ pub fn settle(carry: &Carry, act: &Act, outcome: Result<&str, ()>) -> (bool, Vec
     }
 }
 
+fn stored(body: &str) -> Option<Carry> {
+    match serde_json::from_str(body).ok()? {
+        Stored::Bare(not_a_request) => Some(Carry { not_a_request, ..Carry::default() }),
+        Stored::Whole(carry) => Some(carry),
+    }
+}
+
+#[cfg(test)]
+mod stored_tests {
+    use super::*;
+
+    #[test]
+    fn a_state_row_written_as_a_bare_map_still_reads() {
+        let carry = stored(r#"{"sp-old":"3"}"#).expect("bare map reads");
+        assert_eq!(carry.not_a_request.get("sp-old").map(String::as_str), Some("3"));
+        assert!(carry.failed.is_empty());
+    }
+
+    #[test]
+    fn a_whole_state_row_reads_as_written() {
+        let whole = Carry { not_a_request: BTreeMap::from([("a".into(), "1".into())]), failed: BTreeSet::from(["b".into()]) };
+        assert_eq!(stored(&serde_json::to_string(&whole).unwrap()), Some(whole));
+    }
+}
+
 impl SupersedeDuty {
     pub fn registration(self) -> Registration {
         Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
@@ -235,12 +260,7 @@ impl SupersedeDuty {
 
     fn carry(view: &Projection, stream: &StreamKey) -> Carry {
         let events = view.events(stream);
-        let stored = events.iter().rev().find(|e| e.kind.tag == STATE).and_then(|e| serde_json::from_str(&e.kind.body).ok());
-        let mut carry = match stored {
-            Some(Stored::Bare(not_a_request)) => Carry { not_a_request, ..Carry::default() },
-            Some(Stored::Whole(carry)) => carry,
-            None => Carry::default(),
-        };
+        let mut carry = events.iter().rev().find(|e| e.kind.tag == STATE).and_then(|e| stored(&e.kind.body)).unwrap_or_default();
         carry.failed.extend(events.iter().filter(|e| e.kind.tag == FAILED).map(|e| e.kind.body.clone()));
         carry
     }
