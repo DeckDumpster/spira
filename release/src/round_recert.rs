@@ -448,6 +448,15 @@ fn drive_pass(sys: &dyn Sys, batch: &str, repo: &str, mut keeper: Option<&mut Ke
     0
 }
 
+/// The manager knows a unit by its full name; asked for a bare one it answers InvalidArgs.
+fn service_name(unit: &str) -> String {
+    if unit.ends_with(".service") { unit.to_string() } else { format!("{unit}.service") }
+}
+
+fn state_in(units: &dyn runtime::units::Units, unit: &str) -> Result<UnitState, String> {
+    units.facts(&runtime::units::UnitHandle::named(&service_name(unit))).map(|f| f.state).map_err(|e| format!("{unit}: {e}"))
+}
+
 struct Real {
     env: Vec<(String, String)>,
     path: String,
@@ -538,7 +547,7 @@ impl Sys for Real {
     fn unit_state(&self, unit: &str) -> Result<UnitState, String> {
         let clock: std::sync::Arc<dyn runtime::ports::Clock> = std::sync::Arc::new(runtime::ports::WallClock);
         let units = runtime::units::from_env(clock).map_err(|e| format!("the user manager: {e}"))?.units();
-        units.facts(&runtime::units::UnitHandle::named(unit)).map(|f| f.state).map_err(|e| format!("{unit}: {e}"))
+        state_in(&*units, unit)
     }
 }
 
@@ -766,6 +775,56 @@ mod tests {
     fn a_second_certify_after_a_no_output_vm_that_is_green_goes_on_to_land() {
         let fake = drive_answers(&[(VM_NO_OUTPUT, ""), (0, ""), (0, "landed\n"), (0, "round=none\n")]);
         assert_eq!(drive(&fake, "r-1", "spira", None), 0);
+    }
+
+    /// Answers as the user manager does: a name without its type suffix is InvalidArgs.
+    struct FullNamesOnly;
+
+    impl runtime::units::Units for FullNamesOnly {
+        fn start(&self, _: &runtime::units::UnitSpec) -> runtime::Result<runtime::units::UnitHandle> {
+            unimplemented!()
+        }
+        fn stop(&self, _: &runtime::units::UnitHandle) -> runtime::Result<()> {
+            unimplemented!()
+        }
+        fn restart(&self, _: &runtime::units::UnitHandle) -> runtime::Result<()> {
+            unimplemented!()
+        }
+        fn facts(&self, h: &runtime::units::UnitHandle) -> runtime::Result<runtime::units::UnitFacts> {
+            if h.name.ends_with(".service") {
+                Ok(runtime::units::UnitFacts { state: UnitState::Absent, main_pid: None, exit: None, since_ms: None })
+            } else {
+                Err(runtime::RuntimeError::new(format!("{}: LoadUnit: org.freedesktop.DBus.Error.InvalidArgs", h.name)))
+            }
+        }
+    }
+
+    #[test]
+    fn a_driver_unit_is_asked_of_the_manager_by_its_service_name_and_an_absent_one_is_not_running() {
+        assert_eq!(state_in(&FullNamesOnly, "round-recert-b"), Ok(UnitState::Absent));
+        assert_eq!(state_in(&FullNamesOnly, "round-recert-b.service"), Ok(UnitState::Absent));
+        assert_eq!(driver(&Fixed(state_in(&FullNamesOnly, "round-recert-b")), "round-recert-b"), Driver::NotRunning);
+    }
+
+    struct Fixed(Result<UnitState, String>);
+
+    impl Sys for Fixed {
+        fn exec(&self, _: &str, _: &[String], _: u64) -> Out {
+            unimplemented!()
+        }
+        fn exec_ticking(&self, _: &str, _: &[String], _: u64, _: u64, _: &mut dyn FnMut() -> bool) -> Out {
+            unimplemented!()
+        }
+        fn sleep(&self, _: u64) {}
+        fn now_ms(&self) -> u64 {
+            0
+        }
+        fn progress(&self) -> Option<Mark> {
+            None
+        }
+        fn unit_state(&self, _: &str) -> Result<UnitState, String> {
+            self.0.clone()
+        }
     }
 
     struct Recorder(RefCell<Vec<(String, Vec<String>)>>);
