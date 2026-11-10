@@ -156,9 +156,9 @@ pub struct Snapshot {
     /// Per repo, the oldest Delivered after `activated_at`.
     #[serde(default)]
     pub landed_after: BTreeMap<String, u64>,
-    /// Rounds in flight; `None` when they could not be counted.
+    /// Per repo, rounds in flight in any phase; `None` when they could not be counted.
     #[serde(default)]
-    pub open_rounds: Option<u64>,
+    pub open_rounds: Option<BTreeMap<String, u64>>,
     /// Per edge, the owner that acts when the edge's bound expires.
     #[serde(default)]
     pub owners: BTreeMap<String, Owner>,
@@ -324,6 +324,21 @@ fn evidence(snap: &Snapshot, scope: &str, now: u64, held: &[&str], exit: &str, b
     format!("{}; no {exit} for {} (bound {}); last: {}", held.join(", "), ago(since_last(snap, scope, exit, now), snap, now), dur(bound), lasts.join(", "))
 }
 
+fn round_open_in(snap: &Snapshot, repo: &str) -> bool {
+    snap.open_rounds.as_ref().is_some_and(|open| open.get(repo).is_some_and(|n| *n > 0))
+}
+
+/// The oldest wait at SUBMITTED or CERTIFIED in `scope` among repos with no round open; the `*`
+/// scope counts only the repos an open round does not already cover.
+fn uncovered_wait(snap: &Snapshot, scope: &str, now: u64) -> u64 {
+    snap.beads
+        .iter()
+        .filter(|b| (scope == ALL || b.repo == scope) && matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED") && !round_open_in(snap, &b.repo))
+        .map(|b| now.saturating_sub(b.since))
+        .max()
+        .unwrap_or(0)
+}
+
 /// Every edge stalled in every scope of `snap`. The `*` scope stands only for an edge no single
 /// repo is stalled on: work spread thinly across repos that, together, has stopped moving.
 pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
@@ -334,8 +349,7 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
             let found = match edge {
                 "WORKING→SUBMITTED" => (t["WORKING"].count as u64 >= cfg.working_min.max(1) && quiet(snap, &scope, "Submit", now, cfg.submit_bound_s)).then(|| evidence(snap, &scope, now, &["WORKING"], "Submit", cfg.submit_bound_s)),
                 "SUBMITTED→IN_DELIVERY" => {
-                    let round_open = snap.open_rounds.is_some_and(|open| open > 0);
-                    (!round_open && quiet(snap, &scope, "Delivered", now, cfg.cut_bound_s) && t["SUBMITTED"].oldest.max(t["CERTIFIED"].oldest) >= cfg.cut_bound_s).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s))
+                    (quiet(snap, &scope, "Delivered", now, cfg.cut_bound_s) && uncovered_wait(snap, &scope, now) >= cfg.cut_bound_s).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s))
                 }
                 "IN_DELIVERY→LANDED" => (t["IN_DELIVERY"].oldest >= cfg.deliver_bound_s && quiet(snap, &scope, "Delivered", now, cfg.deliver_bound_s)).then(|| evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", cfg.deliver_bound_s)),
                 "LANDED→ACTIVATED" if scope == cfg.release_repo => snap.landed_after.get(&scope).copied().filter(|l| now.saturating_sub(*l) >= cfg.activate_bound_s).map(|landed| {

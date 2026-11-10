@@ -176,8 +176,17 @@ impl World {
         Some((live, unadvanced))
     }
 
-    fn open_rounds(&self) -> Option<u64> {
-        self.open_round_facts().map(|f| f.0)
+    /// Per repo, the batches the lifecycle holds short of a terminal state, whatever their phase.
+    fn open_rounds(&self) -> Option<BTreeMap<String, u64>> {
+        let batches = self.lc_json(&["list", "--batches"]).ok()?;
+        let mut by: BTreeMap<String, u64> = BTreeMap::new();
+        for b in batches.as_array()? {
+            if matches!(b["state"].as_str()?, "LANDED" | "SETTLED" | "ABANDONED" | "DISCARDED") {
+                continue;
+            }
+            *by.entry(b["repo"].as_str()?.to_string()).or_default() += 1;
+        }
+        Some(by)
     }
 
     fn results(&self, known: &BTreeMap<String, u64>) -> (BTreeMap<String, u64>, Vec<(String, String)>) {

@@ -699,7 +699,13 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
     };
 
     // Rounds in flight, as the batch machine's own edges say: those of the watched repo not yet at a terminal belt.
-    let open_rounds = reads.transitions.as_ref().ok().map(|(cfg, _)| items.iter().filter(|i| i.kind == "batch" && i.repo.as_deref() == Some(cfg.release_repo.as_str())).count() as u64);
+    let open_rounds = reads.transitions.as_ref().ok().map(|_| {
+        let mut by: BTreeMap<String, u64> = BTreeMap::new();
+        for repo in items.iter().filter(|i| i.kind == "batch").filter_map(|i| i.repo.clone()) {
+            *by.entry(repo).or_default() += 1;
+        }
+        by
+    });
 
     // Belts as JSON.
     let in24h_releases = reads.releases.as_ref().ok().map(|rs| rs.iter().flat_map(|r| r.events.iter()).filter(|e| e.to == release::machine::ReleaseState::Activated && e.at as i64 >= now - DAY).count() as i64);
@@ -875,7 +881,7 @@ fn tsd_reading(rows: &[Value], wait_field: &str) -> Result<(String, String), Str
 
 /// Every sensor of the floor. Nothing here is a zero that was not read: what cannot be read is
 /// BLIND and says why, what is not measured at all is MISSING.
-fn sensors(reads: &Reads, now: i64, open_rounds: Option<u64>, stations: &[Built], edges: &[Edge], belt_exists: &dyn Fn(&str) -> bool, outs: &dyn Fn(&Built) -> Vec<String>) -> Vec<Value> {
+fn sensors(reads: &Reads, now: i64, open_rounds: Option<BTreeMap<String, u64>>, stations: &[Built], edges: &[Edge], belt_exists: &dyn Fn(&str) -> bool, outs: &dyn Fn(&Built) -> Vec<String>) -> Vec<Value> {
     let mut out: Vec<Sensor> = Vec::new();
     let anywhere = |ids: Vec<String>| if ids.is_empty() { vec![BUS.to_string()] } else { ids };
     let at_edge = |machine: &str, from: &str, to: &str| -> Vec<String> {
