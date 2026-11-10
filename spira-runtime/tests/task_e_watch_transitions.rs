@@ -523,9 +523,9 @@ fn stalls_for_landing(at: u64, commit: &'static str, contained: bool, now: u64) 
     assert!(snap.readable, "{}", snap.why);
     if !commit.is_empty() {
         assert_eq!(
-            *asked.borrow(),
-            [(commit.to_string(), IN_EFFECT.to_string())],
-            "ancestry is tested against the release `current` names"
+            asked.borrow().first(),
+            Some(&(commit.to_string(), IN_EFFECT.to_string())),
+            "ancestry is tested first against the release `current` names"
         );
     }
     spira_runtime::tasks::e::watch_transitions::stalls(&snap, now, &config())
@@ -617,11 +617,11 @@ fn an_old_landing_without_a_commit_is_judged_by_time_while_a_newer_one_is_tested
 }
 
 #[test]
-fn with_no_current_link_a_landing_is_judged_by_time_against_the_recorded_activation() {
+fn with_no_current_link_a_landing_is_tested_against_the_newest_activated_release() {
     let (run, rel) = stale_record_other_release_in_effect();
     std::fs::remove_file(rel.path().join("current")).unwrap();
-    let never = |_: &str, _: &str| -> Result<bool, String> { panic!("no release in effect to test against") };
-    let snap = observe(run.path(), rel.path(), "spira", &dwell_with_a_landing(1_000, LANDED), &never, 3_600);
+    let only_recorded = |_: &str, r: &str| -> Result<bool, String> { assert_eq!(r, "a".repeat(40)); Ok(false) };
+    let snap = observe(run.path(), rel.path(), "spira", &dwell_with_a_landing(1_000, LANDED), &only_recorded, 3_600);
     assert!(snap.readable, "{}", snap.why);
     let found: Vec<String> = spira_runtime::tasks::e::watch_transitions::stalls(&snap, 1_000 + 16 * MIN, &config()).into_iter().map(|s| s.key()).collect();
     assert!(found.contains(&"LANDED→ACTIVATED spira".to_string()), "{found:?}");
@@ -746,4 +746,84 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(|| rig_at(todays_case).0, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}
+
+struct Lineage {
+    run: testkit::TempDir,
+    rel: testkit::TempDir,
+    map: std::path::PathBuf,
+    _repo: testkit::TempDir,
+    a: String,
+    b: String,
+    c: String,
+}
+
+/// A real repo with A <- B and a sibling C off A; machine records for a release of A
+/// activated at 100 and of B activated at 300; `current` names B.
+fn lineage() -> Lineage {
+    let repo = testkit::TempDir::new("wt-lineage");
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git").arg("-C").arg(repo.path()).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "a"]);
+    let a = git(&["rev-parse", "HEAD"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "b"]);
+    let b = git(&["rev-parse", "HEAD"]);
+    git(&["checkout", "-q", "-b", "side", &a]);
+    git(&["commit", "-q", "--allow-empty", "-m", "c"]);
+    let c = git(&["rev-parse", "HEAD"]);
+    let map = repo.path().join("map");
+    std::fs::write(&map, format!("spira|{}|local/main|main\n", repo.path().display())).unwrap();
+    let run = testkit::TempDir::new("wt-run");
+    for (commit, at) in [(&a, 100u64), (&b, 300)] {
+        let mut r = release::machine::Release::new(commit);
+        for (to, t) in [(release::machine::ReleaseState::Cut, at - 3), (release::machine::ReleaseState::Accepted, at - 2), (release::machine::ReleaseState::Published, at - 1), (release::machine::ReleaseState::Activated, at)] {
+            r.record(to, "t", t).unwrap();
+        }
+        release::machine::save(&run.path().join("release"), &r).unwrap();
+    }
+    let rel = testkit::TempDir::new("wt-releases");
+    std::fs::create_dir(rel.path().join("rel-b")).unwrap();
+    std::fs::write(rel.path().join("rel-b/MANIFEST"), format!("commit {b}\n")).unwrap();
+    std::os::unix::fs::symlink("rel-b", rel.path().join("current")).unwrap();
+    Lineage { run, rel, map, _repo: repo, a, b, c }
+}
+
+fn landing_stalls(l: &Lineage, at: u64, commit: &str, now: u64) -> Vec<String> {
+    let commit = commit.to_string();
+    let dwell = move |argv: &[&str]| -> Result<serde_json::Value, String> {
+        let after = argv.iter().position(|a| *a == "--landed-after").and_then(|i| argv[i + 1].parse::<u64>().ok()).unwrap_or(0);
+        let landed = if at > after { serde_json::json!({ "spira": [{ "at": at, "commit": commit }] }) } else { serde_json::json!({}) };
+        Ok(serde_json::json!({ "beads": [], "horizon": 0, "last": { "spira": { "Delivered": at } }, "landed_after": landed }))
+    };
+    let ancestor = repo_ancestor(&l.map, "spira");
+    let snap = observe(l.run.path(), l.rel.path(), "spira", &dwell, &ancestor, 3_600);
+    assert!(snap.readable, "{}", snap.why);
+    spira_runtime::tasks::e::watch_transitions::stalls(&snap, now, &config()).into_iter().map(|s| s.key()).collect()
+}
+
+#[test]
+fn a_landing_delivered_after_its_own_release_activated_is_no_stall_once_a_descendant_release_is_active() {
+    let l = lineage();
+    let found = landing_stalls(&l, 200, &l.a, 200 + 40 * MIN);
+    assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
+    assert_eq!(l.b.len(), 40);
+}
+
+#[test]
+fn a_landing_the_active_release_does_not_contain_stalls_once_past_the_bound() {
+    let l = lineage();
+    let found = landing_stalls(&l, 200, &l.c, 200 + 40 * MIN);
+    assert_eq!(found.iter().filter(|k| k.starts_with("LANDED→ACTIVATED")).count(), 1, "{found:?}");
+}
+
+#[test]
+fn a_landing_the_newest_activated_release_contains_is_no_stall_while_the_current_link_names_another() {
+    let l = lineage();
+    std::fs::write(l.rel.path().join("rel-b/MANIFEST"), format!("commit {}\n", l.c)).unwrap();
+    let found = landing_stalls(&l, 200, &l.b, 200 + 40 * MIN);
+    assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
 }
