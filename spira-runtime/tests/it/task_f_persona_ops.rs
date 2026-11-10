@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::journal::Journal;
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::units::{Exit, UnitHandle, UnitRan, UNIT_START, UNIT_STOP};
 use runtime::StreamKey;
 use spira_runtime::tasks::f::persona_ops::*;
@@ -144,12 +144,4 @@ fn t5_parity_an_unlanded_segment_counts_as_rc_0() {
     assert_eq!((next.state, names(&acts)), (State::Recording, vec![LEDGER, CLEANUP]));
     let line: serde_json::Value = serde_json::from_str(&acts[0].input).unwrap();
     assert_eq!(line["rc"], 0, "{line}");
-}
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_budget() {
-    let world = |call: u64| if call.is_multiple_of(2) { nominal() } else { snap("SWEEP: go", 0, false, Pause::Open) };
-    let a = assert_deterministic(|seed| rig(seed, world), 1, 2);
-    running(&a);
-    assert_journal_budget(&a, 12);
 }

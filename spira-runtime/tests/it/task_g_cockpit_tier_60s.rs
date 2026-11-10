@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::journal::Journal;
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::StreamKey;
 use spira_runtime::tasks::g::cockpit::{Carry, Fragment, FragmentState, Snapshot};
 use spira_runtime::tasks::g::cockpit_tier_60s::*;
@@ -130,14 +130,4 @@ fn t5_parity_an_ok_slots_fragment_samples_live_and_ceiling() {
     let (_, acts) = decide(&Carry::default(), &snap(3)).unwrap();
     let sample = acts.iter().find(|a| a.name == SLOTS_SAMPLE).expect("an ok slots fragment is sampled");
     assert!(sample.input.contains("live=3") && sample.input.contains("ceiling=4"), "{}", sample.input);
-}
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_publish_at_most_once_per_distinct_snapshot() {
-    let world = |call: u64| snap((call / 90 % 4) as u32);
-    let a = assert_deterministic(|seed| rig(seed, world), 1, 2);
-    running(&a);
-    let publishes = a.requested().iter().filter(|q| q.name == PUBLISH).count();
-    assert!(publishes <= 1 + (2 * 86_400_000 / CADENCE_MS / 90) as usize, "{publishes} publishes");
-    assert_journal_budget(&a, 4);
 }

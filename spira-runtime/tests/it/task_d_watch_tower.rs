@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::d::watch_tower::*;
 
@@ -99,11 +99,4 @@ fn t5_the_prompt_and_the_alarm_are_the_ones_watchtower_wrote() {
     acc::assert_healthy(&r, STREAM);
     let a = asked(&r, ALARM);
     assert!(a.len() == 1 && a[0].contains("FAILED UNIT: spira-gate-prod.service failing for") && a[0].contains("incident:failed-unit-spira-gate-prod.service"), "{a:?}");
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(nominal()))), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 6);
 }

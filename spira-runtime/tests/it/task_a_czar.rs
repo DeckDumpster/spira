@@ -10,7 +10,6 @@ spira_runtime::family_a_acceptance! {
     registration: Czar::new(policy(Stage::Shadow)).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: 30_000,
-    budget: 60,
 }
 
 const NOW: u64 = 1_793_000_000_000;

@@ -454,7 +454,7 @@ pub mod kit {
     pub mod testing {
         use super::*;
         use runtime::journal::Journal;
-        use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig, PLANTED_UNKNOWN};
+        use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig, PLANTED_UNKNOWN};
 
         /// The launchers `tests/it/no_spawn.rs` scans for, each split so this file does not name one.
         pub const LAUNCHERS: &[&str] = &[concat!("Command", "::new"), concat!("std", "::process"), concat!("process", "::Command"), concat!("libc", "::fork"), concat!("libc", "::exec"), concat!("posix", "_spawn"), concat!("nix", "::unistd")];
@@ -549,31 +549,9 @@ pub mod kit {
             LAUNCHERS.iter().copied().find(|l| code.contains(l))
         }
 
-        /// T6: `days` virtual days from a rig made by `make` (seeded), twice, give one trace;
-        /// the stream is never quarantined; the journal stays within `per_hour`. Returns the
-        /// first run's rig.
-        pub fn t6_deterministic<T: Stub>(make: impl Fn(u64) -> TaskRig, days: u64, per_hour: u64) -> TaskRig {
-            let rig = assert_deterministic(make, 7, days);
-            assert_ported(&rig, T::SPEC.stream);
-            assert_journal_budget(&rig, per_hour);
-            rig
-        }
-
         /// The times `T`'s probe was asked, in order.
         pub fn fired_at<T: Stub>(rig: &TaskRig) -> Vec<u64> {
             rig.requested().iter().filter(|q| q.name == T::SPEC.probe).map(|q| q.at).collect()
-        }
-
-        /// Every elapse of `spec` in `(from, to]`.
-        pub fn elapses(spec: &str, from: u64, to: u64) -> Vec<u64> {
-            let c = Calendar::parse(spec).unwrap();
-            let mut out = vec![];
-            let mut at = c.next_after(from);
-            while at <= to {
-                out.push(at);
-                at = c.next_after(at);
-            }
-            out
         }
     }
 

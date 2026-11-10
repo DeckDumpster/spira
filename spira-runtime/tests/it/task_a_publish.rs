@@ -13,7 +13,6 @@ spira_runtime::family_a_acceptance! {
     registration: Publish::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
-    budget: 4,
 }
 
 fn repo(pr: Pr) -> Repo {

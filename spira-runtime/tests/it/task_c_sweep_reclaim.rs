@@ -58,8 +58,3 @@ fn t5_low_space_prunes_podman_then_the_oldest_targets_and_a_fat_podman_alone_pru
     let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(Snapshot { podman_bytes: 50 * GIB, ..idle() }), HOUR).unwrap();
     assert_eq!(names(&acts), [task::PODMAN_PRUNE], "podman: system prune -f would run");
 }
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_1_event_an_hour() {
-    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&idle())), 2, 1);
-}

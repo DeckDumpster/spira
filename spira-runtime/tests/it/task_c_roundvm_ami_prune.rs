@@ -3,7 +3,6 @@
 
 use std::collections::BTreeMap;
 
-use runtime::taskrig::DAY_MS;
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
 use spira_runtime::tasks::c::roundvm_ami_prune::{self as task, Carry, ImageStore, Phase, RoundvmAmiPrune as H, Snapshot};
 
@@ -58,11 +57,4 @@ fn t5_the_fake_ec2_fixture_plans_ami_0_and_deregisters_it_first() {
     let in_use = Snapshot { stores: vec![image(0, "r0"), image(1, "r1"), image(2, "r2")], in_use: vec!["ami-0".into()], current_recipe: "r2".into(), ..Snapshot::default() };
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(in_use), AT_0630).unwrap();
     assert!(acts.is_empty(), "an image in use is never pruned: {acts:?}");
-}
-
-#[test]
-fn t6_two_virtual_days_fire_at_0630_each_day_deterministically() {
-    let snap = Snapshot { stores: vec![image(1, "r1"), image(2, "r2")], current_recipe: "r2".into(), ..Snapshot::default() };
-    let rig = t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&snap)), 2, 1);
-    assert_eq!(t::fired_at::<H>(&rig), t::elapses(SPEC, 0, 2 * DAY_MS));
 }

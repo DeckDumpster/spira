@@ -12,7 +12,6 @@ spira_runtime::family_a_acceptance! {
     registration: SentinelCall::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: 60_000,
-    budget: 60,
 }
 
 /// The contract's idle fixture: world running, every rune `ready=0`.

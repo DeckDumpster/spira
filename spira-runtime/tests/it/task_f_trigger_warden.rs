@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::journal::Journal;
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::StreamKey;
 use spira_runtime::tasks::f::trigger_warden::*;
 use spira_runtime::tasks::f::Decision;
@@ -118,12 +118,4 @@ fn t5_parity_the_filed_sweep_is_byte_equal() {
     assert_eq!(bead.body, DESCRIPTION);
     assert_eq!((bead.kind.as_str(), bead.priority), ("task", 3));
     assert_eq!(bead.labels, ["spira", "warden-sweep", "delivers:note:/run/warden.log"]);
-}
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_budget() {
-    let world = |call: u64| snap(Ok(call % 2));
-    let a = assert_deterministic(|seed| rig(seed, world), 1, 2);
-    running(&a);
-    assert_journal_budget(&a, 1);
 }

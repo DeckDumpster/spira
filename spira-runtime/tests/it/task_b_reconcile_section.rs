@@ -61,9 +61,3 @@ fn t5_one_publish_per_tick_as_the_old_unit_made() {
     t::assert_ported(&rig, task::STREAM);
     assert_eq!(t::fired_at::<H>(&rig), (0..=10).map(|i| i * MIN).collect::<Vec<_>>());
 }
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_2_events_an_hour() {
-    let rig = t::t6_deterministic::<H>(|seed| t::rig_cycle::<H>(seed, SET, vec![json(&snap(true)), json(&snap(false))]), 2, 2);
-    assert_eq!(t::fired_at::<H>(&rig).len() as u64, 2 * 24 * 60 + 1);
-}

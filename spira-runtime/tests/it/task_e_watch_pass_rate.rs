@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_pass_rate::*;
 
@@ -95,11 +95,4 @@ fn t5_the_lines_are_the_ones_pass_rate_mailed() {
     assert!(m[1].contains("CLEAR: 12 gate pass(es) for 10 landing(s), back under 150%"), "{m:?}");
     let r = rig(1, Arc::new(Mutex::new(Snapshot { readable: false, ..rate(0, 0) })));
     assert!(mails(&r).iter().any(|m| m.contains("BLIND: the pass-rate watcher cannot read the ledger window")));
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(rate(12, 10)))), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 1);
 }

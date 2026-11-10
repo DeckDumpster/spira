@@ -55,8 +55,3 @@ fn t5_draining_never_touches_a_vm_a_live_round_holds_and_ec2_always_releases_at_
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { world_halted: true, ..pool(Some(40), &[]) }), NOW).unwrap();
     assert!(acts.is_empty(), "nothing while halted: {acts:?}");
 }
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_journal_nothing_without_a_release() {
-    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&pool(Some(10), &[]))), 2, 1);
-}

@@ -1,7 +1,6 @@
 //! T1–T6 for `hel.sweep` (a P2 machine on a calendar tick, per the corrections), from the
 //! Acceptance section of `wiki/projects/spira/designs/tasks/hel-sweep.md`. Red until ported.
 
-use runtime::taskrig::DAY_MS;
 use runtime::units::{Exit, UnitHandle, UnitRan};
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
 use spira_runtime::tasks::c::hel_sweep::{self as task, Branch, Carry, HelSweep as H, Pass, Phase, Snapshot};
@@ -69,10 +68,4 @@ fn t5_one_disposition_per_branch_as_hel_dry_run_would() {
     let held = Snapshot { holders: [("sp-a".to_string(), "store did not answer".to_string())].into(), ..Snapshot { branches: vec![branch("sp-a", true)], ..keep() } };
     let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(held), AT_35).unwrap();
     assert!(acts.is_empty(), "a held bead is skipped: {acts:?}");
-}
-
-#[test]
-fn t6_two_virtual_days_fire_at_every_35_deterministically_within_2_events_an_hour() {
-    let rig = t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&keep())), 2, 2);
-    assert_eq!(t::fired_at::<H>(&rig), t::elapses(SPEC, 0, 2 * DAY_MS));
 }

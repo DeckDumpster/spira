@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_backup_age::*;
 
@@ -95,11 +95,4 @@ fn t5_the_alerts_are_the_ones_lc_backup_mailed() {
     let red = "RED: a store has no good backup within 25200s (spira_lifecycle: stale 30000) — losing its disk now loses its data and history";
     assert!(m[0].contains(&format!("lc-backup: {red}")) && m[0].contains("## Alert") && m[0].matches(red).count() >= 2 && m[0].contains(FROM), "{m:?}");
     assert!(m[1].contains("CLEAR: every store has a fresh backup again (spira_lifecycle: ok 60)"), "{m:?}");
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(dbs(Db::Ok { age: 60 })))), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 1);
 }

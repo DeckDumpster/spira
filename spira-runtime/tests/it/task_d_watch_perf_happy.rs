@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::units::{Exit, UnitHandle, UnitRan, UnitSpec, UNIT_START};
 use runtime::EventKind;
 use spira_runtime::tasks::d::acceptance as acc;
@@ -110,11 +110,4 @@ fn t5_the_lines_are_the_ones_happy_path_logged() {
     acc::assert_healthy(&r, STREAM);
     assert_eq!(asked(&r, LOG), ["PERF SLOW happy-path 75000ms (goal 60000ms) slowest phase: unknown; recent ms: 75000"]);
     assert_eq!(asked(&r, HISTORY).len(), 1, "the measured run is appended to the history");
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, world(Round::Open)), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 6);
 }

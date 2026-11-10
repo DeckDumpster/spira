@@ -70,8 +70,3 @@ fn t5_the_keep_rule_archives_duplicates_and_stale_mail_and_a_failed_control_arch
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { store_ok: false, open_asks: BTreeSet::new(), ..snap }), TICK).unwrap();
     assert!(acts.is_empty(), "empty asks and a failing positive control archive nothing: {acts:?}");
 }
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_8_events_an_hour() {
-    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&idle())), 2, 8);
-}

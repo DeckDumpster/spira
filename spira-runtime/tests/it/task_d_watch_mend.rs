@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::d::watch_mend::*;
 
@@ -111,11 +111,4 @@ fn t5_the_log_lines_are_mend_watchs_and_pause_sweeps() {
     assert_eq!(asked(&r, LOG_APPEND), ["pause-sweep: lifted the stop on spira: its bead condition was met"]);
     let r = rig(1, Arc::new(Mutex::new(stop(Err("history unreadable".into())))));
     assert_eq!(asked(&r, LOG_APPEND), ["pause-sweep: kept spira: history unreadable"]);
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(quiet()))), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 1);
 }

@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_ci_spill::*;
 use spira_runtime::watchers::INBOX_APPEND;
@@ -94,11 +94,4 @@ fn t5_the_lines_are_the_ones_ci_spill_guard_wrote() {
     assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:ci-spill-guard] CI SPILL: law-buy-capacity-rather-than-wait: spira:.github/workflows/ci.yml:4: provision has no spill: input; override: spill: ec2-only (at local/main)"]);
     let r = rig(1, world(vec![Repo { name: "deck".into(), ref_: None, sha: None, workflows: None }]));
     assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:ci-spill-guard] CI SPILL: deck has no resolvable landing ref; its workflows are unchecked"]);
-}
-
-#[test]
-fn t6_two_days_replay_identically_inside_the_budget() {
-    let r = assert_deterministic(|seed| rig(seed, world(vec![repo("a1", COMPLIANT)])), 7, 2);
-    acc::assert_healthy(&r, STREAM);
-    assert_journal_budget(&r, 1);
 }

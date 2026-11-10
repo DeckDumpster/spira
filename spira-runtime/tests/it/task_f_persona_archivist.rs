@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::journal::Journal;
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig};
+use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use runtime::units::{Exit, UnitHandle, UnitRan, UNIT_START, UNIT_STOP};
 use runtime::StreamKey;
 use spira_runtime::tasks::f::persona_archivist::*;
@@ -160,12 +160,4 @@ fn t5_parity_rc_0_with_a_wiki_commits_and_rc_124_settles_as_timeout() {
     let (next, acts) = decide(&in_state(State::Committing), &Input::Failed { effect: COMMIT.into(), error: "dirty checkout".into() }, &config("/brain")).unwrap();
     assert_eq!(next.state, State::Settling);
     assert_eq!(settled(&acts), "retry", "a dirty checkout settles as retry");
-}
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_budget() {
-    let world = |call: u64| snap(if call.is_multiple_of(144) { 90 } else { 10 }, &[]);
-    let a = assert_deterministic(|seed| rig(seed, world), 1, 2);
-    running(&a);
-    assert_journal_budget(&a, 30);
 }

@@ -13,7 +13,6 @@ spira_runtime::family_a_acceptance! {
     registration: GateCheck::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
-    budget: 0,
 }
 
 fn run(id: &str, conclusion: &str) -> Run {

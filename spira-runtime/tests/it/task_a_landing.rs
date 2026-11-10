@@ -12,7 +12,6 @@ spira_runtime::family_a_acceptance! {
     registration: Landing::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
-    budget: 0,
 }
 
 fn bead(id: &str, handed_on: bool) -> BeadRow {

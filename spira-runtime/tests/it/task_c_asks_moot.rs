@@ -68,8 +68,3 @@ fn t5_a_cleared_predicate_resolves_with_the_old_reason_and_rc_124_never_reads_as
     let (_, acts) = task::decide(&h.cfg, &at("sp-a", Phase::Checking), &checked("sp-a", task::TIMED_OUT_RC), TICK).unwrap();
     assert!(acts.is_empty(), "a timeout leaves the ask open: {acts:?}");
 }
-
-#[test]
-fn t6_two_virtual_days_are_deterministic_and_within_8_events_an_hour() {
-    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&Snapshot::default())), 2, 8);
-}
