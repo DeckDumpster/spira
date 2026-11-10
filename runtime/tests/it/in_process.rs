@@ -106,6 +106,22 @@ mod ids {
         }
     }
 
+    #[test]
+    fn a_tick_on_a_stream_with_a_standing_poison_row_is_parked_for_the_recheck_not_dropped() {
+        let clock = VirtualClock::new(1_000);
+        let journal = MemJournal::new();
+        let regs = vec![Registration::new("ticker", Ticker)];
+        let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), regs, 0).unwrap();
+        e.start("ticker", EventKind::new("tick", ""));
+        e.run_until_idle().unwrap();
+        let before = e.status().tasks[0].next_due_at.expect("armed");
+        journal.poison(&Poison { stream: StreamKey("ticker".into()), event: EventId("x".into()), handler: "ticker".into(), message: "planted".into() }).unwrap();
+        clock.advance(30_000);
+        e.run_until_idle().unwrap();
+        let after = e.status().tasks[0].next_due_at.expect("a poisoned stream's tick is parked, not dropped");
+        assert!(after > before, "the parked tick is later than the one it replaces");
+    }
+
     struct Echo;
     impl Handler for Echo {
         fn interests(&self) -> &[EventKindTag] {
