@@ -96,3 +96,22 @@ fn t5_the_lines_are_the_ones_pass_rate_mailed() {
     let r = rig(1, Arc::new(Mutex::new(Snapshot { readable: false, ..rate(0, 0) })));
     assert!(mails(&r).iter().any(|m| m.contains("BLIND: the pass-rate watcher cannot read the ledger window")));
 }
+
+fn registration() -> runtime::event::Registration {
+    WatchPassRate::new(config()).registration()
+}
+
+fn over() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(rate(40, 10))))
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&over(), NAME);
+    assert_eq!(rows, ["state"]);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(over, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}

@@ -536,4 +536,18 @@ fn rounds_that_could_not_be_counted_leave_the_stall_standing() {
     let (mut s, now) = submitted_ago(20, 0, 24);
     s.open_rounds = None;
     assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()));
+
+fn registration() -> runtime::event::Registration {
+    WatchTransitions::new(config()).registration()
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig_at(todays_case).0, NAME);
+    assert!(rows.iter().any(|k| k == "stalled"), "{rows:?}");
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(|| rig_at(todays_case).0, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
 }

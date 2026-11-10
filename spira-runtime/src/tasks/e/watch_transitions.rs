@@ -192,6 +192,7 @@ fn owner_acting(snap: &Snapshot, edge: &str, now: u64, cfg: &Config) -> bool {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub blind: bool,
     /// The `<edge> <scope>` stalls already paged and not yet drained.
@@ -509,9 +510,11 @@ impl WatchTransitions {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }];
 
 impl Handler for WatchTransitions {
     fn interests(&self) -> &[EventKindTag] {

@@ -107,3 +107,23 @@ fn t5_the_lines_are_the_ones_round_spill_key_wrote() {
     let r = rig(1, Arc::new(Mutex::new(timeout)));
     assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:round-spill-key] ROUND SPILL LAUNCH: probe could not decide: round-vm ec2-probe --dry-run gave no answer in 60s and no real EC2 launch is recorded in the last 1800s"]);
 }
+
+fn registration() -> runtime::event::Registration {
+    WatchSpillKey::new(config()).registration()
+}
+
+/// A key inside its warning window, said once, behind a probe that took 100 s.
+fn warned_after_a_slow_probe() -> TaskRig {
+    rig(1, Arc::new(Mutex::new(Snapshot { launch: Some(Launch::Probed { rc: 0, out_tail3: String::new(), took_s: 100 }), ..key(10) })))
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&warned_after_a_slow_probe(), NAME);
+    assert_eq!(rows, ["probe_latency_s", "said"]);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(warned_after_a_slow_probe, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}

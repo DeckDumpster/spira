@@ -139,9 +139,12 @@ impl WatchDwarfUsage {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self)
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
     }
 }
+
+const STATE: EventKindTag = "watch.dwarf_usage.state";
+const ROW_PARTS: &[runtime::rows::Part] = &[];
 
 impl Handler for WatchDwarfUsage {
     fn interests(&self) -> &[EventKindTag] {

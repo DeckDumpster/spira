@@ -350,3 +350,27 @@ fn a_repo_whose_landing_ref_cannot_be_resolved_is_unreadable() {
     let w = World { repo_map: map, home_repo: "spira".into(), ..World::default() };
     assert!(w.landed_on_refs(1_000_000, "sp").is_err(), "no landing ref is a blind count, not zero");
 }
+
+fn registration() -> runtime::event::Registration {
+    WatchThroughput::new(config()).registration()
+}
+
+/// A landing stall filed and a starved repo said, both still standing.
+fn filed_and_said() -> TaskRig {
+    let mut host = waiting(landed(48), 3, Last::Ago(8_000));
+    host.snap.repos = vec![starved("alpha", 5, 0)];
+    let r = rig(Arc::new(Mutex::new(host)));
+    assert_eq!(named(&r, FILE).len(), 1);
+    r
+}
+
+#[test]
+fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_and_said(), NAME);
+    assert_eq!(rows, ["blind", "diluted", "held", "stalled/alpha", "starved", "unlanded"]);
+}
+
+#[test]
+fn a_boot_repeats_no_side_effect_and_misses_none() {
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed_and_said, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}
