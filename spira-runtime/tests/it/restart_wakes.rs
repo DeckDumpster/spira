@@ -57,3 +57,20 @@ fn batcher_and_gate_worker_observe_on_cadence_after_a_restart() {
     assert!(observes(&seen, BATCHER_OBSERVE) >= before.0 + 3, "batcher.local observes each cadence after the restart: {:?}", seen.0.lock().unwrap());
     assert!(observes(&seen, GATE_OBSERVE) >= before.1 + 3, "gate.worker observes each cadence after the restart");
 }
+
+#[test]
+fn a_wake_that_fell_due_while_the_runtime_was_down_fires_at_the_next_boot() {
+    let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(1_000));
+    let seen = Arc::new(Seen::default());
+
+    let mut first = boot(j.clone(), &clock, &seen);
+    first.run_until(1_000 + 10_000).unwrap();
+    drop(first);
+    let before = (observes(&seen, BATCHER_OBSERVE), observes(&seen, GATE_OBSERVE));
+
+    clock.advance_to(clock.now_ms() + BATCHER_CADENCE.max(GATE_CADENCE) * 5);
+    let mut second = boot(j, &clock, &seen);
+    second.run_until(clock.now_ms() + BATCHER_CADENCE.max(GATE_CADENCE)).unwrap();
+    assert!(observes(&seen, BATCHER_OBSERVE) > before.0, "batcher.local observes at the first boot after the gap");
+    assert!(observes(&seen, GATE_OBSERVE) > before.1, "gate.worker observes at the first boot after the gap");
+}
