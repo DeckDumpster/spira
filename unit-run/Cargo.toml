@@ -2,6 +2,7 @@
 name = "unit-run"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "unit-run — the one writer of the unit-run-dbus family, held in the metrics store: one record per systemd user-unit execution, learned from the user manager's D-Bus signals (watch)."
 
 [lib]
@@ -12,6 +13,11 @@ path = "src/lib.rs"
 name = "unit-run"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "accounting"
+path = "tests/accounting.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

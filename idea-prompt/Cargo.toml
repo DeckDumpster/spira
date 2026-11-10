@@ -2,6 +2,7 @@
 name = "idea-prompt"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "idea-prompt — when Spira has been idle for a sustained stretch inside the operator's waking hours, mails the operator the parked idea beads and asks which to start."
 
 [lib]
@@ -12,6 +13,11 @@ path = "src/lib.rs"
 name = "idea-prompt"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

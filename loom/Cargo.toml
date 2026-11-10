@@ -2,12 +2,18 @@
 name = "loom"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "Loom — a read endpoint over the live beads graph, with the budget that keeps it cheap."
 
 [[bin]]
 name = "loom"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

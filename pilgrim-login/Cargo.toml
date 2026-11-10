@@ -2,6 +2,7 @@
 name = "pilgrim-login"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "pilgrim-login — signs a headless Claude Code in to an MCP server as the pilgrim: the login code comes from the broker's identity-login-code verb, the approval is completed in the pinned Playwright image."
 
 [lib]
@@ -12,6 +13,11 @@ path = "src/lib.rs"
 name = "pilgrim-login"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "signin"
+path = "tests/signin.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

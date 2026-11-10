@@ -2,6 +2,7 @@
 name = "tsd"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "tsd — append-only time-series writer for run/tsd/: the durable, engine-free contract every observation producer writes to (law-producers-stamp-their-own-clock)."
 
 [lib]
@@ -23,6 +24,11 @@ path = "src/read_main.rs"
 [[bin]]
 name = "tsd-fake-store"
 path = "src/fake_store_main.rs"
+
+[[test]]
+name = "victoria"
+path = "tests/victoria.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

@@ -2,6 +2,7 @@
 name = "landing-pass"
 version = "2.0.0"
 edition = "2021"
+autotests = false
 description = "landing-pass — the one landing pass for every land mode: pr (its own timer, no local gate), push, hold, queue and queue.local (CHECK 6's worker). Replaces spira/landing.sh."
 
 [lib]
@@ -11,6 +12,11 @@ path = "src/lib.rs"
 [[bin]]
 name = "landing-pass"
 path = "src/main.rs"
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

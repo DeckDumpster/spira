@@ -2,6 +2,7 @@
 name = "perf-watch"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "perf-watch — times the hot read paths end to end, outside the round, and alarms past a limit with the top callers."
 
 [lib]
@@ -12,6 +13,11 @@ path = "src/lib.rs"
 name = "perf-watch"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

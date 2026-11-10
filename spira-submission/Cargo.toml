@@ -2,6 +2,7 @@
 name = "spira-submission"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "Authenticated SMTPS submission on the tailnet: a reply from a mail client reaches `mail sendmail` with its thread intact."
 
 [lib]
@@ -11,6 +12,16 @@ path = "src/lib.rs"
 name = "spira-submission"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "provision"
+path = "tests/provision.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "submission"
+path = "tests/submission.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

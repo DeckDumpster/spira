@@ -2,7 +2,13 @@
 name = "reconciler"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "Structural-invariant control loop: desired state vs observed state, gaps and deterministic remedies."
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

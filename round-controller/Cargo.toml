@@ -2,6 +2,7 @@
 name = "round-controller"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "round-controller — rounds as resources with one owner and one store: injected ports, typed stamped outcomes, and the scenario harness its every branch is driven through. Only its sifts verb is installed."
 
 [lib]
@@ -10,6 +11,11 @@ name = "round_controller"
 [[bin]]
 name = "round-controller"
 path = "src/main.rs"
+
+[[test]]
+name = "scenarios"
+path = "tests/scenarios.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

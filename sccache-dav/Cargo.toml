@@ -2,12 +2,18 @@
 name = "sccache-dav"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "A minimal WebDAV store for sccache (sp-xjnzl): this box and every ephemeral round-vm share one compilation cache instead of each cold-building its dependencies."
 
 [[bin]]
 name = "sccache-dav"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "store"
+path = "tests/store.rs"
+required-features = ["integration"]
 
 [features]
 integration = []

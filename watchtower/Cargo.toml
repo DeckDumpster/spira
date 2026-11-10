@@ -2,7 +2,13 @@
 name = "watchtower"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "watchtower — hands Ops the pipeline's vital signs (the sweep) and the four cheap detectors the sentinel runs every pass (throttle, czar-outcome, pr-stall, disabled-timer). Replaces spira/watchtower.sh and spira/watchtower-czar-outcome.py."
+
+[[test]]
+name = "no_fork_edges"
+path = "tests/no_fork_edges.rs"
+required-features = ["integration"]
 
 [features]
 integration = []
