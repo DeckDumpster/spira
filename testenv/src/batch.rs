@@ -335,7 +335,6 @@ impl Shared<'_> {
             "{suite} hit 'No space left on device'; container free space: {}",
             self.session.free_space()
         );
-        (self.hooks.log)(&format!("harness fault — {d}"));
         Some(d)
     }
 

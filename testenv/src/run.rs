@@ -2541,9 +2541,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         return Finish::fault(2, "user-account", ran);
     }
     if let Some(d) = &outcome.disk_fault {
-        use crate::container::Host;
-        let host = crate::container::RealHost.free_disk(&results);
-        deps.log(&format!("harness fault — disk full, not a suite defect: {d}; host results filesystem {host} free"));
+        deps.log(&format!("harness fault — disk full, not a suite defect: {d}"));
         return Finish::fault(2, "disk-full", ran);
     }
     // sp-3azqi: podman's own exec lost one or more suites' exit status (conmon's
