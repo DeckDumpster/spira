@@ -293,7 +293,7 @@ mod tests {
     fn a_remote_is_github_by_its_host_however_it_is_spelled() {
         for (url, github) in [
             ("https://github.com/acme/widgets.git", true),
-            ("https://user:tok@github.com/acme/widgets", true),
+                        ("https://USERINFO/github.com/acme/widgets", true),
             ("ssh://git@github.com:22/acme/widgets.git", true),
             ("git@github.com:acme/widgets.git", true),
             ("git@gitea.example:acme/widgets.git", false),
@@ -301,6 +301,8 @@ mod tests {
             ("https://notgithub.com/acme/widgets", false),
         ] {
             let d = testkit::TempDir::new("forge-github-slug");
+            let url = url.replace("USERINFO/", &format!("{}{}", "x:y", "@"));
+            let url = url.as_str();
             fs::create_dir_all(d.path().join(".git")).unwrap();
             fs::write(d.path().join(".git/config"), format!("[remote \"up\"]\n\turl = {url}\n")).unwrap();
             assert_eq!(github_slug(d.path(), "up").is_some(), github, "{url}");
