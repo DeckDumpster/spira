@@ -882,7 +882,11 @@ impl Engine {
         } else {
             let offered = self.offer(ev);
             if offered.is_ok() {
-                self.tick_of.remove(&ev.id);
+                if self.poison_seen.get(&ev.stream) == Some(&true) {
+                    self.park(ev);
+                } else {
+                    self.tick_of.remove(&ev.id);
+                }
             }
             offered
         };
