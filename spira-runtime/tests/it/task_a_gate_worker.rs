@@ -213,6 +213,10 @@ fn a_gate_leg_with_no_status_and_no_output_is_not_filed() {
     let f = Filing { slot: 0, job: job("r", "b", false, 1, 0), rc: None, out_path: out_path.display().to_string(), started_ms: 1, finished_ms: 2 };
     let err = complete(&spira_runtime::Effects::default(), &serde_json::to_string(&f).unwrap()).unwrap_err();
     assert!(err.contains("no status and no output") && err.contains("refused"), "{err}");
+    assert!(retain_output(&spira_runtime::Effects::default(), &serde_json::to_string(&f).unwrap()).unwrap_err().contains("no status and no output"));
+    let with_rc = Filing { rc: Some(1), ..f.clone() };
+    let err = complete(&spira_runtime::Effects::default(), &serde_json::to_string(&with_rc).unwrap()).unwrap_err();
+    assert!(err.contains("does not hold"), "a leg with a status goes on to the claim: {err}");
     let missing = Filing { out_path: dir.path().join("never").display().to_string(), ..f };
     assert!(complete(&spira_runtime::Effects::default(), &serde_json::to_string(&missing).unwrap()).unwrap_err().contains("no status and no output"));
 }

@@ -711,7 +711,7 @@ pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
         let unit_present = e.units.as_deref().ok_or("no unit manager configured")?.facts(&runtime::units::UnitHandle::of(NAME, &leg_key(i, leg, job)).map_err(|e| e.0)?).map_err(|e| e.0)?.state != runtime::units::UnitState::Absent;
         let (rc, out) = read_leg(&rc_path, &out_path);
         let running = rc.is_none() && unit_present;
-        let run = (!running && leg == "gate").then(|| classify(rc.unwrap_or(KILLED), &out));
+        let run = (!running && leg == "gate" && (rc.is_some() || !out.is_empty())).then(|| classify(rc.unwrap_or(KILLED), &out));
         snap.legs.insert(i, Leg { running, rc, verdict: run.as_ref().map(|r| r.verdict.clone()), reason: run.and_then(|r| r.reason) });
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
@@ -763,6 +763,7 @@ fn leg_left_a_trace(f: &Filing) -> Result<(), String> {
 /// Keep a non-PASS gate's whole output (the newest 300 are kept).
 pub fn retain_output(e: &crate::Effects, input: &str) -> Result<String, String> {
     let f = filing(input, RETAIN_OUTPUT)?;
+    leg_left_a_trace(&f).map_err(|why| format!("{RETAIN_OUTPUT}: {why} — refused"))?;
     let q = queue(e);
     let job = q.claimed_job(f.slot, &f.job.repo, &f.job.branch, &f.job.tip).unwrap_or_else(|| landing_pass::gateq::Job::new(&f.job.repo, &f.job.branch, &f.job.bead, &f.job.tip, f.job.fix));
     q.retain_output(&job, &gate_run(&f).out).map(|p| p.display().to_string()).map_err(|e| format!("{RETAIN_OUTPUT}: {e}"))
