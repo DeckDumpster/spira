@@ -778,3 +778,31 @@ pub fn recover(e: &crate::Effects, input: &str) -> Result<String, String> {
     queue(e).recover(slot);
     Ok(format!("slot {slot} recovered"))
 }
+
+#[cfg(test)]
+mod slot_row_tests {
+    use super::*;
+
+    fn busy(ms: u64) -> Slot {
+        Slot { started_ms: Some(ms), ..Slot::default() }
+    }
+
+    #[test]
+    fn a_carry_with_a_gap_and_idle_tail_comes_back_from_its_rows_at_the_same_width() {
+        let carry = Carry { slots: vec![Slot::default(), busy(7), Slot::default(), busy(9), Slot::default(), Slot::default()] };
+        let body = serde_json::to_string(&carry).unwrap();
+        let rows = split_slots(&body);
+        assert_eq!(rows.keys().cloned().collect::<Vec<_>>(), ["slot/0001", "slot/0003", "width"], "idle slots are not stored");
+        let back: Carry = serde_json::from_str(&join_slots(&rows)).unwrap();
+        assert_eq!(back, carry);
+    }
+
+    #[test]
+    fn dropping_the_width_row_loses_the_idle_tail() {
+        let carry = Carry { slots: vec![busy(1), Slot::default(), Slot::default()] };
+        let mut rows = split_slots(&serde_json::to_string(&carry).unwrap());
+        rows.remove("width");
+        let back: Carry = serde_json::from_str(&join_slots(&rows)).unwrap();
+        assert_eq!(back.slots.len(), 1);
+    }
+}
