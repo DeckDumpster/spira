@@ -707,8 +707,10 @@ pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
             _ => continue,
         };
         let (out_path, rc_path) = leg_paths(&snap.run_dir, i, leg, job);
+        // The unit is asked before the files are read: a leg that ends in between is seen ended with its files, never ended with none.
+        let unit_present = e.units.as_deref().ok_or("no unit manager configured")?.facts(&runtime::units::UnitHandle::of(NAME, &leg_key(i, leg, job)).map_err(|e| e.0)?).map_err(|e| e.0)?.state != runtime::units::UnitState::Absent;
         let (rc, out) = read_leg(&rc_path, &out_path);
-        let running = rc.is_none() && e.units.as_deref().ok_or("no unit manager configured")?.facts(&runtime::units::UnitHandle::of(NAME, &leg_key(i, leg, job)).map_err(|e| e.0)?).map_err(|e| e.0)?.state != runtime::units::UnitState::Absent;
+        let running = rc.is_none() && unit_present;
         let run = (!running && leg == "gate").then(|| classify(rc.unwrap_or(KILLED), &out));
         snap.legs.insert(i, Leg { running, rc, verdict: run.as_ref().map(|r| r.verdict.clone()), reason: run.and_then(|r| r.reason) });
     }
@@ -748,6 +750,16 @@ fn gate_run(f: &Filing) -> landing_pass::model::GateRun {
     gate_worker::classify(f.rc.unwrap_or(KILLED), out)
 }
 
+/// A leg that ended with no status and no output was not seen to run: filing it would record a
+/// verdict nobody produced.
+fn leg_left_a_trace(f: &Filing) -> Result<(), String> {
+    let empty = std::fs::read_to_string(&f.out_path).map_or(true, |o| o.is_empty());
+    match f.rc {
+        None if empty => Err(format!("{} ended with no status and no output", f.job.key())),
+        _ => Ok(()),
+    }
+}
+
 /// Keep a non-PASS gate's whole output (the newest 300 are kept).
 pub fn retain_output(e: &crate::Effects, input: &str) -> Result<String, String> {
     let f = filing(input, RETAIN_OUTPUT)?;
@@ -759,6 +771,7 @@ pub fn retain_output(e: &crate::Effects, input: &str) -> Result<String, String> 
 /// File the verdict for the pass and free the slot's claim; the leg's files go with it.
 pub fn complete(e: &crate::Effects, input: &str) -> Result<String, String> {
     let f = filing(input, COMPLETE)?;
+    leg_left_a_trace(&f).map_err(|why| format!("{COMPLETE}: {why} — refused, the claim is recovered and the tip gated again"))?;
     let q = queue(e);
     let job = q.claimed_job(f.slot, &f.job.repo, &f.job.branch, &f.job.tip).ok_or_else(|| format!("{COMPLETE}: slot {} does not hold {} — refused", f.slot, f.job.key()))?;
     let run = gate_run(&f);

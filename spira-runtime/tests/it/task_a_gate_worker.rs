@@ -204,3 +204,15 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+#[test]
+fn a_gate_leg_with_no_status_and_no_output_is_not_filed() {
+    let dir = testkit::TempDir::new("gw-empty");
+    let out_path = dir.path().join("gate.out");
+    std::fs::write(&out_path, "").unwrap();
+    let f = Filing { slot: 0, job: job("r", "b", false, 1, 0), rc: None, out_path: out_path.display().to_string(), started_ms: 1, finished_ms: 2 };
+    let err = complete(&spira_runtime::Effects::default(), &serde_json::to_string(&f).unwrap()).unwrap_err();
+    assert!(err.contains("no status and no output") && err.contains("refused"), "{err}");
+    let missing = Filing { out_path: dir.path().join("never").display().to_string(), ..f };
+    assert!(complete(&spira_runtime::Effects::default(), &serde_json::to_string(&missing).unwrap()).unwrap_err().contains("no status and no output"));
+}
