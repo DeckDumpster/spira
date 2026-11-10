@@ -129,11 +129,14 @@ fn a_tick_swallowed_by_a_stream_quarantine_that_could_not_be_stored_is_armed_aga
         let _ = d.run_until(clock.now_ms() + 5_000);
     }
     let after_fault = observes(&seen, BATCHER_OBSERVE);
+    let gate_after_fault = observes(&seen, GATE_OBSERVE);
     assert!(armed(&d, BATCHER).is_some(), "batcher.local keeps a tick armed");
     for _ in 0..3 {
-        run_for(&mut d, &clock, BATCHER_CADENCE);
+        run_for(&mut d, &clock, BATCHER_CADENCE.max(GATE_CADENCE));
         assert!(armed(&d, BATCHER).is_some(), "armed after each later tick");
+        assert!(armed(&d, GATE).is_some(), "gate.worker is untouched by the batcher's fault");
     }
+    assert!(observes(&seen, GATE_OBSERVE) >= gate_after_fault + 3, "gate.worker observes each cadence");
     assert!(observes(&seen, BATCHER_OBSERVE) >= after_fault + 3, "batcher.local observes each cadence after the fault");
 }
 
@@ -156,9 +159,12 @@ fn a_quarantined_batcher_stream_ticks_again_once_its_row_is_cleared() {
         run_for(&mut d, &clock, 30_000);
     }
     let resumed = observes(&seen, BATCHER_OBSERVE);
+    let gate_resumed = observes(&seen, GATE_OBSERVE);
     assert!(armed(&d, BATCHER).is_some(), "batcher.local keeps a tick armed once the row is cleared");
     for _ in 0..3 {
-        run_for(&mut d, &clock, BATCHER_CADENCE);
+        run_for(&mut d, &clock, BATCHER_CADENCE.max(GATE_CADENCE));
+        assert!(armed(&d, GATE).is_some(), "gate.worker stays armed beside the quarantined stream");
     }
+    assert!(observes(&seen, GATE_OBSERVE) >= gate_resumed + 3, "gate.worker observes each cadence");
     assert!(observes(&seen, BATCHER_OBSERVE) >= resumed + 3, "batcher.local observes each cadence once the row is cleared");
 }
