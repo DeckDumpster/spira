@@ -575,6 +575,7 @@ SPIRA_MAIL_LINT_CONSIDERED bead/src/claimdesc.rs
 SPIRA_MAIL_LINT_CONSIDERED mail/src/env.rs
 SPIRA_MAIL_LOCK_TIMEOUT_MS mail/src/env.rs
 SPIRA_MAIL_OPERATOR_CONSIDERED mail/src/env.rs
+SPIRA_MAIL_OPERATOR_CONSIDERED strand/src/check.rs
 SPIRA_MAIL_REPEAT_CONSIDERED mail/src/env.rs
 SPIRA_MAIL_SH spira-lc/src/bd.rs
 SPIRA_MAIL_SH spira-lc/src/work.rs

@@ -594,8 +594,16 @@ pub fn bead_context(bead: Option<&crate::model::Bead>, id: &str, now: i64) -> St
 }
 
 pub fn escalation_body(title: &str, action: &str, why: &str, ctx: &str) -> String {
-    format!("## Question\n{title}\n\n## Default\n{action}\n\n{why}\n\n{ctx}\n")
+    format!("## Note\n{title}\n\nAction: {action}\n\n{why}\n\n{ctx}\n")
 }
+
+/// A stranded-work alert is about the very mailboxes a dead reader leaves unread; it is a note
+/// to the operator with the bypass, since an unclassed question is rerouted to the concierge.
+pub fn operator_send_args(title: &str) -> Vec<&str> {
+    vec!["send", "operator", "--from", "Strand check <strand@spira>", "--subject", title, "--kind", "note"]
+}
+
+pub const OPERATOR_CONSIDERED: (&str, &str) = ("SPIRA_MAIL_OPERATOR_CONSIDERED", "strand-check alerts the operator about stranded work whoever reads the concierge");
 
 fn tail_lines(path: Option<&Path>, n: usize) -> String {
     match path.and_then(|p| fs::read(p).ok()) {
@@ -647,9 +655,9 @@ fn escalate(cfg: &Config, part: &str, kind: &str, id: &str, detail: &str, action
     // mail, by name on the launcher's PATH (sp-gypjk).
     let _ = probe::run(
         "mail",
-        &["send", "operator", "--from", "Strand check <strand@spira>", "--subject", &title, "--kind", "question", "--default", action],
+        &operator_send_args(&title),
         Some(body.as_bytes()),
-        &[],
+        &[OPERATOR_CONSIDERED],
     );
 }
 
@@ -682,6 +690,17 @@ mod tests {
             acted,
             escalated: esc,
         }
+    }
+
+    #[test]
+    fn a_stranded_alert_is_a_note_to_the_operator_with_the_bypass_and_no_question() {
+        let a = operator_send_args("t");
+        assert_eq!(a[1], "operator");
+        assert!(a.windows(2).any(|w| w == ["--kind", "note"]), "{a:?}");
+        assert!(!a.contains(&"--default") && !a.contains(&"question"), "{a:?}");
+        assert_eq!(OPERATOR_CONSIDERED.0, "SPIRA_MAIL_OPERATOR_CONSIDERED");
+        let b = escalation_body("T", "do x", "why", "ctx");
+        assert!(b.starts_with("## Note\n") && b.contains("do x"), "{b}");
     }
 
     #[test]
