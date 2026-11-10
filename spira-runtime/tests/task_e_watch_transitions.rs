@@ -808,6 +808,7 @@ fn landing_stalls(l: &Lineage, at: u64, commit: &str, now: u64) -> Vec<String> {
 #[test]
 fn a_hand_landing_with_no_lifecycle_member_delivered_after_its_release_activated_is_no_stall_once_a_descendant_is_active() {
     let l = lineage();
+    std::fs::write(l.rel.path().join("rel-b/MANIFEST"), format!("commit {}\n", "9".repeat(40))).unwrap();
     let found = landing_stalls(&l, 200, &l.a, 200 + 40 * MIN);
     assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
 }
@@ -825,4 +826,12 @@ fn a_landing_the_newest_activated_release_contains_is_no_stall_while_the_current
     std::fs::write(l.rel.path().join("rel-b/MANIFEST"), format!("commit {}\n", l.c)).unwrap();
     let found = landing_stalls(&l, 200, &l.b, 200 + 40 * MIN);
     assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
+}
+
+#[test]
+fn with_no_current_link_a_landing_whose_ancestry_cannot_be_tested_stalls() {
+    let l = lineage();
+    std::fs::remove_file(l.rel.path().join("current")).unwrap();
+    let found = landing_stalls(&l, 200, &"8".repeat(40), 200 + 40 * MIN);
+    assert_eq!(found.iter().filter(|k| k.starts_with("LANDED→ACTIVATED")).count(), 1, "{found:?}");
 }
