@@ -37,7 +37,7 @@ path = "tests/validate.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["lifecycle/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }

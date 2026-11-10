@@ -6,7 +6,7 @@ publish = false
 description = "inbox-rules — the one drop/dedup rule set for the Concierge inbox, shared by the inbox-triage Monitor and `watchd next` so the two cannot diverge, and the one append-and-push leg (record) every inbox writer calls."
 
 [features]
-integration = []
+integration = ["testkit/integration"]
 
 [dependencies]
 regex = "1"

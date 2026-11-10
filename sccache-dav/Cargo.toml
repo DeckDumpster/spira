@@ -16,7 +16,7 @@ path = "tests/store.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
 # axum for routing, tokio for the socket — the same pair loom already uses for a small,

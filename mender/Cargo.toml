@@ -5,7 +5,7 @@ edition = "2021"
 description = "mender — what a mender dwarf is given and how it answers: the evidence pack for one failing suite, the whole-bead context, the read verbs, and the triage outcomes recorded on the MENDING row."
 
 [features]
-integration = []
+integration = ["lifecycle/integration", "spira-config/integration", "spira-otel/integration", "suite-select/integration"]
 
 [dependencies]
 lifecycle = { path = "../lifecycle" }

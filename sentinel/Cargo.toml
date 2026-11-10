@@ -5,7 +5,7 @@ edition = "2021"
 description = "sentinel — the loop's heartbeat: one reconcile pass over the work graph (CHECK 1-8), the 15s call fast path. Replaces spira/sentinel.sh."
 
 [features]
-integration = []
+integration = ["dwarf/integration", "hel/integration", "mail/integration", "reconciler-engine/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-desired-state/integration", "spira-otel/integration", "strand/integration", "testkit/integration", "tsd/integration", "watchtower/integration"]
 
 [dependencies]
 dwarf = { path = "../dwarf" }

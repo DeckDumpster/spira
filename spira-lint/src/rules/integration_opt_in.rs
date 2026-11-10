@@ -111,8 +111,94 @@ impl Rule for IntegrationOptIn {
     }
 }
 
+/// `integration-closed` — a package's `integration` feature enables `integration` on every
+/// path dependency. `--features integration` reaches only the packages a build selects, so
+/// without this a crate compiles with the feature when selected and without it as a
+/// dependency: two artifacts, and every crate above it rebuilt, per distinct selection.
+#[derive(Default)]
+pub struct IntegrationClosed {
+    checked: Cell<Option<usize>>,
+}
+
+const CLOSED: &str = "integration-closed";
+
+fn path_deps(v: &toml::Value) -> BTreeSet<String> {
+    let mut tables: Vec<&toml::Value> = vec![v];
+    tables.extend(v.get("target").and_then(|t| t.as_table()).into_iter().flat_map(|t| t.values()));
+    let mut out = BTreeSet::new();
+    for t in tables {
+        for kind in ["dependencies", "dev-dependencies", "build-dependencies"] {
+            for (key, d) in t.get(kind).and_then(|d| d.as_table()).into_iter().flatten() {
+                if d.get("path").and_then(|p| p.as_str()).is_some_and(|p| p != ".") {
+                    out.insert(key.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+fn judge_closed(manifest: &str, text: &str) -> (usize, Vec<Finding>) {
+    let v: toml::Value = match toml::from_str(text) {
+        Ok(v) => v,
+        Err(e) => return (0, vec![Finding { rule: CLOSED, path: manifest.into(), line: None, message: format!("does not parse: {e}") }]),
+    };
+    let enabled: BTreeSet<String> = v
+        .get("features")
+        .and_then(|f| f.get(FEATURE))
+        .and_then(|a| a.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|x| x.as_str())
+        .map(|x| x.replace("?/", "/"))
+        .collect();
+    let deps = path_deps(&v);
+    let out = deps
+        .iter()
+        .filter(|d| !enabled.contains(&format!("{d}/{FEATURE}")))
+        .map(|d| Finding { rule: CLOSED, path: manifest.into(), line: None, message: format!("[features] {FEATURE} does not enable \"{d}/{FEATURE}\", a path dependency") })
+        .collect();
+    (deps.len(), out)
+}
+
+impl Rule for IntegrationClosed {
+    fn name(&self) -> &'static str {
+        CLOSED
+    }
+
+    fn applies_to(&self, e: &Entry) -> bool {
+        e.path == "Cargo.toml" || e.path.ends_with("/Cargo.toml")
+    }
+
+    fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
+        self.checked.set(None);
+        let (mut out, mut edges) = (Vec::new(), 0);
+        for e in crate::scope(tree, self)? {
+            let Some(c) = tree.content(e) else { continue };
+            let (n, f) = judge_closed(&e.path, &String::from_utf8_lossy(c));
+            edges += n;
+            out.extend(f);
+        }
+        if edges == 0 {
+            return Err(LintError::Refused("no manifest has a path dependency — nothing to lint".into()));
+        }
+        if out.is_empty() {
+            self.checked.set(Some(edges));
+        }
+        Ok(out)
+    }
+
+    fn checked(&self) -> Option<(usize, String)> {
+        self.checked.get().map(|n| (n, "path dependencies".into()))
+    }
+
+    fn hint(&self) -> &'static str {
+        "list \"<dependency>/integration\" in the package's `integration` feature, so one build compiles each crate once"
+    }
+}
+
 pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![Box::new(IntegrationOptIn::default())]
+    vec![Box::new(IntegrationOptIn::default()), Box::new(IntegrationClosed::default())]
 }
 
 #[cfg(test)]
@@ -188,6 +274,26 @@ mod tests {
         assert!(json.contains("\"name\":\"it\""), "{json}");
         let tree = Tree::from_paths(t.path(), ["Cargo.toml", "tests/it/main.rs"], std::iter::empty::<&str>());
         assert!(IntegrationOptIn::default().check(&tree).unwrap().is_empty());
+    }
+
+    const CLOSED_OK: &str = "[package]\nname = \"a\"\n\n[features]\nintegration = [\"b/integration\", \"c?/integration\"]\n\n[dependencies]\nb = { path = \"../b\" }\nc = { path = \"../c\", optional = true }\n\n[dev-dependencies]\nd = { path = \"../d\" }\n";
+
+    #[test]
+    fn a_path_dependency_the_feature_does_not_enable_is_refused() {
+        let (_, f) = judge_closed("a/Cargo.toml", CLOSED_OK);
+        let msgs: Vec<_> = f.iter().map(|f| f.message.clone()).collect();
+        assert_eq!(msgs.len(), 1, "{msgs:?}");
+        assert!(msgs[0].contains("\"d/integration\""), "{msgs:?}");
+        let (n, f) = judge_closed("a/Cargo.toml", &CLOSED_OK.replace("\"c?/integration\"]", "\"c?/integration\", \"d/integration\"]"));
+        assert_eq!((n, f.len()), (3, 0));
+    }
+
+    #[test]
+    fn a_tree_with_no_path_dependency_refuses_rather_than_pass() {
+        let t = TempDir::new("iclosed");
+        t.write("a/Cargo.toml", "[package]\nname = \"a\"\n");
+        let tree = Tree::from_paths(t.path(), ["a/Cargo.toml"], std::iter::empty::<&str>());
+        assert!(IntegrationClosed::default().check(&tree).is_err());
     }
 
     #[test]

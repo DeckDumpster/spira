@@ -879,6 +879,18 @@ fn a_gate_that_dies_twice_on_one_bead_is_that_beads_red_with_the_gates_output() 
 }
 
 #[test]
+fn a_gate_the_worker_saw_die_twice_is_the_beads_red_on_the_first_filing() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let twice = "gate-worker: the gate died at its cap on 2 runs: ran=298s phases=build:203\ngate: VERDICT=NO_VERDICT reason=died-twice branch=b repo=spira suite=-\n";
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, twice.into()));
+    h.run();
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 red"]);
+    assert!(h.lib.find("reopen sp-a cert-gate-red").contains("build:203"));
+    assert!(h.lib.count("event gate.died-twice sp-a") == 1, "the second death pages once");
+}
+
+#[test]
 fn a_dead_gate_between_other_beads_dead_gates_is_not_one_beads_red() {
     let h = H::new(LandMode::Queue);
     h.closed("sp-a", "t1");

@@ -12,7 +12,7 @@
 //! for a given source path — a second worker's rename of the same already-moved path fails
 //! and that worker moves on to the next job.
 
-use crate::model::GateRun;
+use crate::model::{GateRun, DIED_TWICE};
 use crate::util::{atomic_write, branch_key};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -32,6 +32,9 @@ pub struct Job {
     /// The bead's priority, lower first; a job queued without one sorts last.
     #[serde(default = "no_priority")]
     pub priority: i64,
+    /// Gate runs of this tip that died at the cap, each as its `ran=` and `phases=` evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deaths: Vec<String>,
 }
 
 fn no_priority() -> i64 {
@@ -48,6 +51,12 @@ pub struct Done {
     /// any other gate is not this gate's to replay.
     #[serde(default)]
     pub gate: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Settled {
+    Filed,
+    Requeued,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,7 +103,7 @@ impl Job {
         format!("{}{}.json", self.prefix(), branch_key(&self.tip))
     }
     pub fn new(repo: &str, branch: &str, bead: &str, tip: &str, fix: bool) -> Job {
-        Job { repo: repo.into(), branch: branch.into(), bead: bead.into(), tip: tip.into(), fix, queued: nanos(), priority: no_priority() }
+        Job { repo: repo.into(), branch: branch.into(), bead: bead.into(), tip: tip.into(), fix, queued: nanos(), priority: no_priority(), deaths: Vec::new() }
     }
     pub fn with_priority(mut self, priority: i64) -> Job {
         self.priority = priority;
@@ -340,6 +349,49 @@ impl GateQueue {
         Ok(path)
     }
 
+    /// File a finished run. A first death at the cap goes back to the inbox, behind what is
+    /// queued now, instead of reaching the pass; a second is filed as `died-twice`, with both
+    /// deaths' timings in its output, so the pass moves the bead out of SUBMITTED at once.
+    pub fn settle(&self, slot: usize, d: &Done) -> std::io::Result<Settled> {
+        if !d.run.cap_death() {
+            self.complete(slot, d)?;
+            return Ok(Settled::Filed);
+        }
+        let mut job = d.job.clone();
+        job.deaths.push(self.death_evidence(&job, d));
+        if job.deaths.len() < 2 {
+            job.queued = nanos();
+            job.priority = no_priority();
+            let body = serde_json::to_string(&job).map_err(std::io::Error::other)?;
+            atomic_write(&self.dir(Where::Inbox).join(job.file()), &body)?;
+            let _ = fs::remove_file(self.claimed_slot(slot).join(job.file()));
+            return Ok(Settled::Requeued);
+        }
+        let out = format!(
+            "{}\ngate: VERDICT=NO_VERDICT reason={} branch={} repo={} suite=-\ngate-worker: the gate died at its cap on {} runs of {}: {}\n",
+            d.run.out,
+            DIED_TWICE,
+            job.branch,
+            job.repo,
+            job.deaths.len(),
+            job.tip,
+            job.deaths.join("; ")
+        );
+        let run = GateRun::parse(crate::model::GATE_NOVERDICT, out);
+        self.complete(slot, &Done { job, run, started_ms: d.started_ms, finished_ms: d.finished_ms, gate: String::new() })?;
+        Ok(Settled::Filed)
+    }
+
+    fn death_evidence(&self, job: &Job, d: &Done) -> String {
+        let log = self.root.parent().map(|r| r.join("gate.log")).and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
+        let mark = format!(" {} ", job.branch);
+        let line = log.lines().rev().find(|l| l.contains(&mark) && l.contains(" phases="));
+        match line.and_then(|l| l.find(" ran=").map(|i| l[i..].trim().to_string())) {
+            Some(t) => t,
+            None => format!("ran={}ms (no phase timings in gate.log)", d.finished_ms.saturating_sub(d.started_ms)),
+        }
+    }
+
     pub fn complete(&self, slot: usize, d: &Done) -> std::io::Result<()> {
         let d = &Done { gate: self.gate.clone(), ..d.clone() };
         let body = serde_json::to_string(d).map_err(std::io::Error::other)?;
@@ -353,6 +405,48 @@ impl GateQueue {
 mod tests {
     use super::*;
     use crate::testutil::tmpdir;
+
+    const CAP: &str = "gate: VERDICT=NO_VERDICT reason=died branch=b repo=r suite=-\ngate: VERDICT=FAIL reason=over-cap branch=b repo=r suite=-\n";
+
+    fn dead(job: &Job) -> Done {
+        Done { job: job.clone(), run: GateRun::parse(1, CAP.into()), started_ms: 1, finished_ms: 2001, gate: String::new() }
+    }
+
+    #[test]
+    fn a_first_cap_death_goes_back_to_the_inbox_behind_every_other_job() {
+        let d = tmpdir("settle-first");
+        let q = GateQueue::new(&d);
+        let job = Job::new("r", "spira/sp-a", "sp-a", "t1", false).with_priority(0);
+        q.enqueue(&job).unwrap();
+        let other = Job::new("r", "spira/sp-b", "sp-b", "t2", false).with_priority(3);
+        q.enqueue(&other).unwrap();
+        let claimed = q.claim(0).unwrap();
+        assert_eq!(claimed.branch, "spira/sp-a");
+        assert_eq!(q.settle(0, &dead(&claimed)).unwrap(), Settled::Requeued);
+        assert_eq!(q.find("r", "spira/sp-a", "t1"), Some(Where::Inbox));
+        assert_eq!(q.queued().iter().map(|j| j.branch.as_str()).collect::<Vec<_>>(), ["spira/sp-b", "spira/sp-a"]);
+        assert_eq!(q.queued()[1].deaths, ["ran=2000ms (no phase timings in gate.log)"]);
+    }
+
+    #[test]
+    fn a_second_cap_death_is_filed_naming_both_runs_and_a_pass_is_filed_as_it_is() {
+        let d = tmpdir("settle-second");
+        let q = GateQueue::new(&d);
+        let mut job = Job::new("r", "spira/sp-a", "sp-a", "t1", false);
+        job.deaths = vec!["ran=297s phases=build:200".into()];
+        q.enqueue(&job).unwrap();
+        let claimed = q.claim(0).unwrap();
+        assert_eq!(q.settle(0, &dead(&claimed)).unwrap(), Settled::Filed);
+        let run = q.take_done("r", "spira/sp-a", "t1").unwrap().run;
+        assert_eq!(run.reason.as_deref(), Some(DIED_TWICE));
+        assert!(run.out.contains("ran=297s phases=build:200; ran=2000ms"), "{}", run.out);
+
+        q.enqueue(&Job::new("r", "spira/sp-c", "sp-c", "t3", false)).unwrap();
+        let c = q.claim(0).unwrap();
+        let pass = Done { job: c, run: GateRun::parse(0, "gate: VERDICT=PASS reason=ok".into()), started_ms: 1, finished_ms: 2, gate: String::new() };
+        assert_eq!(q.settle(0, &pass).unwrap(), Settled::Filed);
+        assert!(q.take_done("r", "spira/sp-c", "t3").is_some());
+    }
 
     fn done(job: &Job) -> Done {
         Done { job: job.clone(), run: GateRun::parse(0, "ok".into()), started_ms: 1, finished_ms: 2, gate: String::new() }

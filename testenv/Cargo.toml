@@ -41,7 +41,7 @@ path = "tests/test_sandbox.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["gate/integration", "spira-config/integration", "spira-otel/integration", "suite-select/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }

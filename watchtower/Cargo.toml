@@ -11,7 +11,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["runtime/integration", "spira-config/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

@@ -962,6 +962,16 @@ problem: autotests left on, a gate without the feature, a path that misses the d
 no `[[test]]` declares (cargo would drop it silently). **Refuses** when no crate has a target.
 **Positive control:** `fence: integration-opt-in checked <n> integration test targets`.
 
+## Rule `integration-closed`
+
+**Intent.** `--features integration` reaches only the packages a build selects, so a crate
+selected by one gate and merely depended on by another compiled as two artifacts, and every
+crate above it again. Each package's `integration` feature therefore lists
+`<dependency>/integration` (`<dependency>?/integration` when optional) for every path
+dependency, dev and build included. One finding per dependency not listed. **Refuses** when no
+manifest has a path dependency. **Positive control:** `fence: integration-closed checked <n>
+path dependencies`.
+
 ## Rule `config-delta`
 
 **Intent.** The release applies a registry change to the config in force only from

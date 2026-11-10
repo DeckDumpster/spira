@@ -362,3 +362,38 @@ fn a_dropped_job_is_never_warmed_for() {
     assert_eq!(w.drain(), 0);
     assert!(calls.borrow().is_empty(), "{:?}", calls.borrow());
 }
+
+const CAP_DEATH: &str = "gate: signalled during the trial of spira/sp-a\ngate: VERDICT=NO_VERDICT reason=died branch=spira/sp-a repo=r suite=-\ngate: VERDICT=FAIL reason=over-cap branch=spira/sp-a repo=r suite=- (killed at the 300s hard cap)\n";
+
+fn worker_over<'a>(q: &'a GateQueue, g: &'a Scripted, tip: &'a Tip, clock: &'a Tick) -> Worker<'a> {
+    Worker { queue: q, gate: g, branches: tip, clock, lock_wait: 5400, log: &|_| {}, slot: 0 }
+}
+
+#[test]
+fn a_run_killed_at_the_cap_is_queued_again_not_filed_for_the_pass() {
+    let d = tmp("cap-retry");
+    let q = GateQueue::new(&d);
+    q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", "t1", false)).unwrap();
+    let g = Scripted(RefCell::new(vec![(1, CAP_DEATH.into())]));
+    assert_eq!(worker_over(&q, &g, &Tip(Some("t1".into())), &Tick(AtomicU64::new(0))).drain_while(&|| g.0.borrow().len() == 1), 0);
+    assert_eq!(q.find("r", "spira/sp-a", "t1"), Some(Where::Inbox), "a death at the cap leaves a gate run pending");
+    assert_eq!(q.queued()[0].deaths.len(), 1);
+}
+
+#[test]
+fn a_second_death_at_the_cap_is_filed_with_both_deaths_as_evidence() {
+    let d = tmp("cap-twice");
+    let q = GateQueue::new(&d);
+    q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", "t1", false)).unwrap();
+    std::fs::write(d.join("gate.log"), "2026-11-10T17:41:01Z r spira/sp-a waited=0s ran=298s rc=75 died compose=unit phases=fences:11,build:203,test:80\n").unwrap();
+    let g = Scripted(RefCell::new(vec![(1, CAP_DEATH.into()), (1, CAP_DEATH.into())]));
+    assert_eq!(worker_over(&q, &g, &Tip(Some("t1".into())), &Tick(AtomicU64::new(0))).drain(), 1);
+    let run = q.take_done("r", "spira/sp-a", "t1").unwrap().run;
+    assert_eq!((run.outcome, run.reason.as_deref()), (GateOutcome::NoVerdict, Some("died-twice")));
+    assert!(run.out.contains("phases=fences:11,build:203,test:80"), "{}", run.out);
+}
+
+#[test]
+fn a_gate_that_ends_for_another_reason_is_filed_at_once() {
+    assert_eq!(drain_one(75, "gate: VERDICT=NO_VERDICT reason=lock").reason.as_deref(), Some("lock"));
+}

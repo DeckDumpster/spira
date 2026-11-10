@@ -18,7 +18,7 @@ path = "tests/scenarios.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["batcher/integration", "forge/integration", "incident?/integration", "lifecycle/integration", "migration-numbers/integration", "reconciler-engine/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-desired-state/integration", "spira-lc/integration", "spira-otel/integration", "spira-sim?/integration", "state-store/integration", "state-store-sqlite/integration", "store-view/integration", "testkit/integration"]
 sim = ["dep:toml", "dep:spira-lc", "dep:spira-sim", "dep:incident"]
 
 [dependencies]

@@ -24,7 +24,7 @@ path = "tests/durability.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["runtime/integration", "spira-config/integration", "spira-otel/integration", "state-store/integration", "testkit/integration"]
 
 [dependencies]
 state-store = { path = "../state-store" }

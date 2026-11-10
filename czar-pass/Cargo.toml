@@ -5,7 +5,7 @@ edition = "2021"
 description = "Czar fast pass — deterministic queue-stall detection on a 30-second timer."
 
 [features]
-integration = []
+integration = ["forge/integration", "incident/integration", "reconciler-engine/integration", "runtime/integration", "spira-config/integration", "spira-otel/integration", "store-view/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 spira-config = { path = "../spira-config" }

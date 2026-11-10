@@ -21,7 +21,7 @@ const GATE_EXHAUSTED_AFTER: usize = 2;
 
 /// A NO_VERDICT that names no host-side cause: the gate ran the branch and never finished.
 fn is_dead_gate_reason(reason: &str) -> bool {
-    matches!(reason, "died" | "timeout" | "unspecified")
+    matches!(reason, "died" | "timeout" | "unspecified") || reason == crate::model::DIED_TWICE
 }
 
 pub struct Pass<'a> {
@@ -613,8 +613,11 @@ impl<'a> Pass<'a> {
             let moved = matches!(g.outcome, GateOutcome::Fail | GateOutcome::NoVerdict)
                 && self.git.rev_parse(&repo.path, br).unwrap_or_default() != tip;
             let dead_run = (g.outcome == GateOutcome::NoVerdict && !moved && is_dead_gate_reason(&reason))
-                .then(|| self.files.note_dead(br))
+                .then(|| if reason == crate::model::DIED_TWICE { DEAD_GATES_RED.max(self.files.note_dead(br)) } else { self.files.note_dead(br) })
                 .filter(|n| *n >= DEAD_GATES_RED);
+            if reason == crate::model::DIED_TWICE && dead_run.is_some() && !moved {
+                self.lib.event("gate.died-twice", id, &format!("{id}: the gate died at its cap twice on {tip}"), &tail_lines(&g.out, 3));
+            }
             if g.outcome == GateOutcome::Fail {
                 self.files.note_gate_judged(br);
             }

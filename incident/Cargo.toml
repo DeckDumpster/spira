@@ -11,7 +11,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["bead/integration", "mail/integration", "reconciler-engine/integration", "runtime/integration", "spira-config/integration", "spira-desired-state/integration", "spira-world/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 bead = { path = "../bead" }

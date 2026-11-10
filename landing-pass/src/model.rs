@@ -302,6 +302,8 @@ pub enum GateOutcome {
 }
 
 pub const GATE_NOVERDICT: i32 = 75;
+/// The reason a branch's gate died at its cap on both of its runs.
+pub const DIED_TWICE: &str = "died-twice";
 pub const GATE_BASEFAIL: i32 = 76;
 /// Must equal `spira_claim::events::BASE_RED_CAUSE`, which classifies it as uncharged.
 pub const BASE_RED_CAUSE: &str = "gate-base-red";
@@ -368,6 +370,10 @@ impl GateRun {
             outcome = GateOutcome::NoVerdict;
         }
         GateRun { rc, outcome, out, reason, suite }
+    }
+    /// The gate ended at its cap or was killed before any verdict: a host fault, not the branch's.
+    pub fn cap_death(&self) -> bool {
+        self.outcome == GateOutcome::NoVerdict && matches!(self.reason.as_deref(), Some("died" | "over-cap"))
     }
     /// A FAIL that names no reason and printed nothing: the gate was never heard from, so no
     /// verdict was reached.
