@@ -527,12 +527,15 @@ mod tests {
         assert!(!retries_without_observing(planted.requested()).is_empty(), "the check must see a retry that never looked: {:?}", planted.requested());
 
         let s = crate::settings::fixture();
+        let mut acts = 0;
         for t in all() {
             let mut rig = TaskRig::new(1, (t.build)(&s)).unwrap().timing_out();
             let (_, stream, kind) = (t.boot)();
             rig.tick(stream, kind).unwrap();
             rig.advance(3 * (t.cadence_ms)(&s)).unwrap();
             assert_eq!(retries_without_observing(rig.requested()), Vec::<String>::new(), "{} retried an act after it timed out, without observing first", t.name);
+            acts += rig.requested().iter().filter(|r| r.journaled).count();
         }
+        assert!(acts > 0, "no row asked for an act under timeout, so the check above proves nothing");
     }
 }
