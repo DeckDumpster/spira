@@ -425,6 +425,48 @@ want "and names SPIRA_TOML"                      "SPIRA_TOML" "$st_nofile"
     || bad "and launches no unit" "systemd-run was called: $(cat "$ST/systemd-run.argv")"
 
 echo
+echo "start — a session whose pane has died is respawned, not reported as already running"
+
+DP="$TMP/dead-pane"; mkdir -p "$DP/bin" "$DP/run" "$DP/wiki"
+printf '#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done; shift\nexec "$@"\n' > "$DP/bin/systemd-run"
+printf '#!/bin/sh\nexec sleep 60\n' > "$DP/bin/claude"
+chmod +x "$DP/bin/systemd-run" "$DP/bin/claude"
+DP_SOCK="test-concierge-deadpane-$$"
+DP_TOML="$(tl_layer SPIRA_RUN="$DP/run" SPIRA_WIKI="$DP/wiki" SPIRA_RUNES_DIR="$FX/runes" \
+    SPIRA_MEMORIES_CACHE="")"
+printf '%s\n%s\n' "dead-pane-session-id" "$DP/wiki" > "$DP/run/concierge-session"
+dp_env() { env -u SPIRA_ADOPT_CONFIGURE_DEFAULT SPIRA_TOML="$DP_TOML" PATH="$DP/bin:$PATH" SPIRA_HOME="$FX" \
+    CONCIERGE_RUNE=fx CONCIERGE_SOCKET="$DP_SOCK" CONCIERGE_SESSION="$DP_SOCK" \
+    SPIRA_MEMORIES_CMD="$(fixture_cmd)" "$@"; }
+dp_pane_dead() { tmux -L "$DP_SOCK" list-panes -t "$DP_SOCK" -F '#{pane_dead}' 2>/dev/null | head -1; }
+tmux -L "$DP_SOCK" kill-server 2>/dev/null || true
+tmux -L "$DP_SOCK" new-session -d -s "$DP_SOCK" "sleep 600" \; set-option -t "$DP_SOCK" remain-on-exit on
+dp_pid="$(tmux -L "$DP_SOCK" list-panes -t "$DP_SOCK" -F '#{pane_pid}')"
+is "the live fixture pane reads live (positive control)" 0 "$(dp_pane_dead)"
+dp_live_out="$(dp_env bash "$HARNESS/concierge.sh" status 2>&1)"
+want   "status reports a live pane as running" "concierge: running" "$dp_live_out"
+dp_live_start="$(dp_env bash "$HARNESS/concierge.sh" start 2>&1 </dev/null)"
+want   "start leaves a live pane alone (positive control)" "already running" "$dp_live_start"
+
+kill "$dp_pid"
+for _i in 1 2 3 4 5 6 7 8 9 10; do [ "$(dp_pane_dead)" = 1 ] && break; sleep 0.2; done
+is "the fixture pane is dead (positive control)" 1 "$(dp_pane_dead)"
+dp_status="$(dp_env bash "$HARNESS/concierge.sh" status 2>&1)"; dp_status_rc=$?
+want   "status says the pane is dead" "dead" "$dp_status"
+nowant "status does not say running for a dead pane" "concierge: running" "$dp_status"
+is     "status exits non-zero for a dead pane" 1 "$dp_status_rc"
+printf '#!/bin/sh\necho rebuild-probe-ran\n' > "$DP/bin/rebuild"; chmod +x "$DP/bin/rebuild"
+dp_cockpit="$(dp_env bash "$HARNESS/cockpit.sh" status 2>&1)"
+want   "cockpit status (ensure-cockpit status) says the Concierge pane is dead" "pane dead" "$dp_cockpit"
+want   "and still runs the layout probe (positive control)" "rebuild-probe-ran" "$dp_cockpit"
+dp_out="$(dp_env bash "$HARNESS/concierge.sh" start 2>&1 </dev/null)"
+nowant "start does not call a dead pane already running" "already running" "$dp_out"
+is     "start leaves a live pane behind" 0 "$(dp_pane_dead)"
+want   "the respawned launcher resumes the recorded session id" "--resume dead-pane-session-id" \
+    "$(cat "$DP/run/concierge-launch.sh" 2>/dev/null)"
+tmux -L "$DP_SOCK" kill-server 2>/dev/null || true
+
+echo
 echo "the ensure unit leaves the tmux server it starts alive"
 svc="$(sed -n '/^\[Service\]/,/^\[/p' "$HARNESS/systemd/concierge.service" | grep -v '^\s*#')"
 want "the unit is a oneshot, whose cgroup is reaped when start returns" "Type=oneshot" "$svc"

@@ -72,7 +72,11 @@ done
 CALLER_TMUX="${TMUX:-}"
 unset TMUX TMUX_PANE
 
-if [ "$MODE" = probe ]; then exec rebuild probe; fi
+if [ "$MODE" = probe ]; then
+    rebuild probe; _ck_probe_rc=$?
+    [ -x "$HERE/concierge.sh" ] && bash "$HERE/concierge.sh" status 2>&1 | head -1
+    exit "$_ck_probe_rc"
+fi
 
 # `resume` lifts only a drain that `world.sh drain --reboot` marked; any other world state is left as found.
 if [ "$RESUME" = 1 ]; then

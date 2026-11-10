@@ -389,8 +389,14 @@ start)
     fi
 
     if $TM has-session -t "$SESSION" 2>/dev/null; then
-        echo "concierge: already running (tmux -L $SOCKET attach -t $SESSION)"
-        exit 0
+        # remain-on-exit keeps the session after its client dies, so has-session alone cannot
+        # tell a running concierge from a corpse; a dead pane is cleared and started below.
+        if [ "$($TM list-panes -t "$SESSION" -F '#{pane_dead}' 2>/dev/null | head -1)" != 1 ]; then
+            echo "concierge: already running (tmux -L $SOCKET attach -t $SESSION)"
+            exit 0
+        fi
+        echo "concierge: pane is dead — clearing it and starting again"
+        $TM kill-session -t "$SESSION" 2>/dev/null
     fi
     # THE SINGLETON GUARD (sp-rig42). has-session above only sees THIS socket. A second
     # concierge started by hand — the recurring hazard: a bare `claude --remote-control
@@ -664,6 +670,11 @@ brief)
 
 status)
     if $TM has-session -t "$SESSION" 2>/dev/null; then
+        if [ "$($TM list-panes -t "$SESSION" -F '#{pane_dead}' 2>/dev/null | head -1)" = 1 ]; then
+            echo "concierge: pane dead  (restart with: $0 start)"
+            $TM capture-pane -p -t "$SESSION" 2>/dev/null | grep -v '^$' | tail -5 | sed 's/^/    /'
+            exit 1
+        fi
         echo "concierge: running"
         $TM list-panes -t "$SESSION" -F '  pane #{pane_id} pid=#{pane_pid} #{pane_current_command}'
         echo "  last 15 lines:"
