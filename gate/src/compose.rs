@@ -566,12 +566,17 @@ pub fn run_all(cmd: &str) -> String {
 /// `CARGO_BIN_EXE_*`, which cargo builds with the test.
 pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2] {
     let p = pkgs(crates);
+    let built = if crates.iter().any(|c| c == "spira-sim") && !crates.iter().any(|c| c == "spira-config") {
+        " -p spira-config"
+    } else {
+        ""
+    };
     let cfg = spira_config::build::one_shot_words("dwarf");
     [
         (
             "build",
             format!(
-                "cargo build --profile dwarf {cfg} -j {jobs} --all-targets --features integration{p}"
+                "cargo build --profile dwarf {cfg} -j {jobs} --all-targets --features integration{p}{built}"
             ),
         ),
         (
@@ -1092,6 +1097,15 @@ mod tests {
         assert!(!b.1.contains("--workspace") && !b.1.contains("&&"), "{}", b.1);
         assert!(b.1.ends_with(" --all-targets --features integration -p spira-runtime"), "{}", b.1);
         assert!(!t.1.contains("--workspace") && !t.1.contains("spira-config"), "{}", t.1);
+    }
+
+    #[test]
+    fn selecting_spira_sim_builds_the_spira_config_its_ci_cut_tests_run() {
+        let [b, t] = unit_commands(&["spira-sim".into()], 4);
+        assert!(b.1.ends_with(" -p spira-sim -p spira-config"), "{}", b.1);
+        assert!(!t.1.contains("spira-config"), "{}", t.1);
+        let [b, _] = unit_commands(&["spira-sim".into(), "spira-config".into()], 4);
+        assert_eq!(b.1.matches("-p spira-config").count(), 1, "{}", b.1);
     }
 
     #[test]
