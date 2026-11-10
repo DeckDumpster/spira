@@ -74,6 +74,7 @@ name and scoped to the crates your diff touches; that scoping is performed using
 command. A change that cannot go red, a pure refactor, keeps the tests that already cover it
 green by name. You do not run whole unit tiers or shell suites your change does not touch: the
 round runs every suite on the merged tree, with every other change in view.
+`work checks` and clippy pass `--features integration` themselves; never run a crate's whole integration suite to satisfy them.
 
 Then a second reader reviews your diff against the work item, and you can say how each
 acceptance criterion is met. Each of these, and the submission itself, is performed using a
