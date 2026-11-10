@@ -407,7 +407,6 @@ impl WatchRuntime {
     }
 }
 
-/// The rows a restart keeps; what a Carry field is left out of is rebuilt by the first tick.
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "ledger", drop: &[] }];
 
 impl Handler for WatchRuntime {

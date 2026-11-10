@@ -386,7 +386,6 @@ impl WatchPerfHappy {
     }
 }
 
-/// The rows a restart keeps; what a Carry field is left out of is rebuilt by the first tick.
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("attempt"), runtime::rows::Part::Field("history"), runtime::rows::Part::Field("run_unit")];
 
 impl Handler for WatchPerfHappy {

@@ -267,7 +267,6 @@ impl WatchPerf {
     }
 }
 
-/// The rows a restart keeps; what a Carry field is left out of is rebuilt by the first tick.
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("last_pass"), runtime::rows::Part::Map { name: "alarms", drop: &[] }, runtime::rows::Part::Field("sample_at"), runtime::rows::Part::Map { name: "sample", drop: &[] }];
 
 impl Handler for WatchPerf {

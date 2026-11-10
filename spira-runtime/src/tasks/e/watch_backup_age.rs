@@ -196,16 +196,8 @@ impl WatchBackupAge {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self).with_rows(RowCodec { stream: STREAM, also: &[], tag: STATE, split: keep_state, join: restore_state })
+        Registration::new(NAME, self).with_rows(RowCodec { stream: STREAM, also: &[], tag: STATE, split: runtime::rows::split_whole, join: runtime::rows::join_whole })
     }
-}
-
-fn keep_state(body: &str) -> std::collections::BTreeMap<String, String> {
-    [("state".to_string(), body.to_string())].into()
-}
-
-fn restore_state(rows: &std::collections::BTreeMap<String, String>) -> String {
-    rows.get("state").cloned().unwrap_or_default()
 }
 
 impl Handler for WatchBackupAge {

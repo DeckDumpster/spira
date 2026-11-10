@@ -206,7 +206,6 @@ impl WatchSopLint {
     }
 }
 
-/// The rows a restart keeps; what a Carry field is left out of is rebuilt by the first tick.
 const ROW_PARTS: &[runtime::rows::Part] = &[];
 
 impl Handler for WatchSopLint {

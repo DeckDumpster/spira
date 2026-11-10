@@ -182,12 +182,9 @@ impl IncidentProbe {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, ROW_PARTS))
+        Registration::new(NAME, self)
     }
 }
-
-const STATE: EventKindTag = "incident.probe.state";
-const ROW_PARTS: &[runtime::rows::Part] = &[];
 
 impl Handler for IncidentProbe {
     fn interests(&self) -> &[EventKindTag] {

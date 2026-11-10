@@ -31,6 +31,15 @@ pub fn entry_key(name: &str, key: &str) -> String {
     }
 }
 
+/// A carry that is one bare value (an enum) is its own single row, `state`.
+pub fn split_whole(body: &str) -> BTreeMap<String, String> {
+    [("state".to_string(), body.to_string())].into()
+}
+
+pub fn join_whole(rows: &BTreeMap<String, String>) -> String {
+    rows.get("state").cloned().unwrap_or_default()
+}
+
 pub fn split(body: &str, parts: &[Part]) -> BTreeMap<String, String> {
     let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(body) else { return BTreeMap::new() };
     let mut rows = BTreeMap::new();
@@ -96,6 +105,13 @@ mod tests {
         let rows = split(body, PARTS);
         assert_eq!(rows.keys().collect::<Vec<_>>(), ["n", "repos/o/r", "repos/p"]);
         assert_eq!(join(&rows, PARTS), r#"{"n":3,"repos":{"o/r":{"a":1},"p":{"a":2}}}"#);
+    }
+
+    #[test]
+    fn a_bare_value_carry_round_trips_as_one_row() {
+        let rows = split_whole("\"Over\"");
+        assert_eq!(rows.keys().collect::<Vec<_>>(), ["state"]);
+        assert_eq!(join_whole(&rows), "\"Over\"");
     }
 
     #[test]

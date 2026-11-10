@@ -430,7 +430,6 @@ impl WatchTower {
     }
 }
 
-/// The rows a restart keeps; what a Carry field is left out of is rebuilt by the first tick.
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("prompt"), runtime::rows::Part::Map { name: "failed_units", drop: &[] }, runtime::rows::Part::Field("escalated"), runtime::rows::Part::Map { name: "alarmed", drop: &[] }];
 
 impl Handler for WatchTower {
