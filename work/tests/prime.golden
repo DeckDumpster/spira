@@ -124,7 +124,7 @@ Run suites only through testenv; `testenv --help` is its manual.
 
 ### work crates
 Prints the `-p` words for your diff: touched crates plus their direct dependents.
-Use when: Before `cargo test`/`build`/`check`: `cargo test $(work crates)`. Empty output means nothing buildable changed. Never use `--workspace`.
+Use when: Before `cargo test`/`build`/`check`: `cargo test $(work crates)` runs unit tests only; add `--features integration` to run the integration targets under `tests/`. Empty output means nothing buildable changed. Never use `--workspace`.
 Arguments:
   [<base>]   (default local/main)
 Checks:

@@ -32,7 +32,9 @@ holds at your tip, the work is done.
    default you will take, and continue on that default. This is performed using a `work` command.
 5. **Write the test first and see it fail.** Test through the same entry point a real caller
    uses. Name each test for the behaviour it protects. Keep unit tests under a second by
-   injecting clocks and processes.
+   injecting clocks and processes. Plain `cargo test` runs unit tests only; a test under a
+   crate's `tests/` is an integration test, declared `[[test]]` with
+   `required-features = ["integration"]` and run with `--features integration`.
 6. **Make the smallest change that makes it pass, then refactor.** Change what the work item
    needs. Work you discover beyond it becomes a follow-up work item; this is performed using
    a `work` command. Match the surrounding code's style and naming. Prefer deleting code to
@@ -66,8 +68,8 @@ which runs every suite on the merged tree.
 Before you submit, your branch sits on the landing ref and your tip builds, passes clippy and
 passes the repository's lint; running the repository's checks is performed using a `work`
 command. Each test you added or changed is seen red at the base and green at the tip, run by
-name and scoped to the crates your diff touches; that scoping is performed using a `work`
-command. A change that cannot go red, a pure refactor, keeps the tests that already cover it
+name and scoped to the crates your diff touches, with `--features integration` for a test
+under `tests/`; that scoping is performed using a `work` command. A change that cannot go red, a pure refactor, keeps the tests that already cover it
 green by name. You do not run whole unit tiers or shell suites your change does not touch: the
 round runs every suite on the merged tree, with every other change in view.
 

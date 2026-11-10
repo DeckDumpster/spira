@@ -952,6 +952,16 @@ name it as a word. One finding per bump, path `Cargo.lock`.
 a lock that does not parse or locks nothing. **Positive control:** `fence: lockfile-lint
 checked <n> packages`.
 
+## Rule `integration-opt-in`
+
+**Intent.** Plain `cargo test` runs unit tests only; a `tests/` target runs under
+`--features integration`. For each `Cargo.toml` whose directory has `tests/*.rs` or
+`tests/*/main.rs`, the package sets `autotests = false` and every target is a `[[test]]` with
+`required-features` naming `integration`, at a path that exists. One finding per manifest
+problem: autotests left on, a gate without the feature, a path that misses the disk, a target
+no `[[test]]` declares (cargo would drop it silently). **Refuses** when no crate has a target.
+**Positive control:** `fence: integration-opt-in checked <n> integration test targets`.
+
 ## Rule `config-delta`
 
 **Intent.** The release applies a registry change to the config in force only from
