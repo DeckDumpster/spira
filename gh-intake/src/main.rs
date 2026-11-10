@@ -180,11 +180,13 @@ fn backfill_cmd(args: &[String]) -> ExitCode {
 /// `gh-intake provenance` — every external issue, its bead, the outcome that settles it.
 /// `--check` exits 1 when any trail is broken, 2 when the trail could not be read.
 fn provenance_cmd(args: &[String]) -> ExitCode {
-    let mode = args.first().map(String::as_str);
-    if let Some(other) = mode.filter(|m| *m != "--check") {
-        eprintln!("gh-intake provenance: unknown argument: {other}");
-        return ExitCode::from(2);
-    }
+    let check = match closeout::provenance_mode(args) {
+        Ok(check) => check,
+        Err(e) => {
+            eprintln!("gh-intake provenance: {e}");
+            return ExitCode::from(2);
+        }
+    };
     let (home, _) = match closeout_env() {
         Ok(v) => v,
         Err(e) => {
@@ -207,20 +209,17 @@ fn provenance_cmd(args: &[String]) -> ExitCode {
         }
     };
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
-    match mode {
-        None | Some("--check") => match closeout::provenance_read(&d) {
-            Ok(rows) => {
-                for r in &rows {
-                    println!("{}", r.line());
-                }
-                ExitCode::from(if mode.is_some() && rows.iter().any(|r| r.is_broken()) { 1 } else { 0 })
+    match closeout::provenance_read(&d) {
+        Ok(rows) => {
+            for r in &rows {
+                println!("{}", r.line());
             }
-            Err(e) => {
-                eprintln!("gh-intake provenance: {e}");
-                ExitCode::from(2)
-            }
-        },
-        Some(_) => unreachable!("provenance modes are checked above"),
+            ExitCode::from(if check && rows.iter().any(|r| r.is_broken()) { 1 } else { 0 })
+        }
+        Err(e) => {
+            eprintln!("gh-intake provenance: {e}");
+            ExitCode::from(2)
+        }
     }
 }
 

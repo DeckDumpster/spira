@@ -360,6 +360,15 @@ fn settled_text(d: &Deps, outcome: &ExternalOutcome, via: &[String]) -> Result<S
     })
 }
 
+/// The argv of `gh-intake provenance`: whether `--check` was asked. Any other word is refused.
+pub fn provenance_mode(args: &[String]) -> Result<bool, String> {
+    match args.first().map(String::as_str) {
+        None => Ok(false),
+        Some("--check") if args.len() == 1 => Ok(true),
+        Some(other) => Err(format!("unknown argument: {other}")),
+    }
+}
+
 /// Every GitHub-originated bead, its state, and where its trail ends. A bead the machine has no
 /// row for is broken, not open: its origin has no recorded fate. A machine that cannot answer
 /// is an error, never a clean read.
@@ -1502,6 +1511,16 @@ mod tests {
         let log = gh_unlanded_scan(&d, &ctx(&tmp.path().join("run")), 2_000_000_000);
         assert!(gh.comments.borrow().is_empty() && gh.closes.borrow().is_empty());
         assert!(log.iter().any(|l| l.contains("asked operator")), "{log:?}");
+    }
+
+    #[test]
+    fn the_retired_provenance_modes_are_refused_as_unknown_arguments() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        for mode in ["watch", "health"] {
+            assert_eq!(provenance_mode(&args(&[mode])), Err(format!("unknown argument: {mode}")));
+        }
+        assert_eq!(provenance_mode(&args(&[])), Ok(false));
+        assert_eq!(provenance_mode(&args(&["--check"])), Ok(true));
     }
 
     #[test]
