@@ -35,6 +35,7 @@ pub fn document(s: &SchedulerStatus) -> serde_json::Value {
                     LastOutcome::Deferred => "deferred",
                     LastOutcome::Quiet => "quiet",
                 }),
+                "last_commands": t.last_commands,
                 "in_flight": t.in_flight,
             })
         })
