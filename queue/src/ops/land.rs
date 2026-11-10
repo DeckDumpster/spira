@@ -470,7 +470,7 @@ pub fn land_local_deferring(
     }
     let lc_faults = ms
         .iter()
-        .filter(|m| !lc_deliver(w, &path, &head, m))
+        .filter(|m| !lc_deliver(w, &path, &head, m, ungated.as_ref()))
         .count();
     for m in &ms {
         for why in super::integrate::land_carried(w, &c, &m.id, &head) {
@@ -579,7 +579,13 @@ fn record_land(w: &World, run: &Path, repo: &str, m: &Member) {
 /// A landed member's walk on spira-lc: Deliver (CERTIFIED -> IN_DELIVERY) then Delivered
 /// (-> LANDED), from the row's own state and version. The landing is already recorded, so a
 /// refusal is reported, never undone; false when the member did not reach LANDED.
-pub fn lc_deliver(w: &World, path: &Path, head: &str, m: &Member) -> bool {
+pub fn lc_deliver(
+    w: &World,
+    path: &Path,
+    head: &str,
+    m: &Member,
+    ungated: Option<&BreakGlass>,
+) -> bool {
     let fail = |why: String| {
         w.err(format!("queue.sh land-local: spira-lc: {}: {why} — landed on the ref but not LANDED on spira-lc", m.id));
         false
@@ -593,6 +599,17 @@ pub fn lc_deliver(w: &World, path: &Path, head: &str, m: &Member) -> bool {
     let Ok(mut v) = version.trim().parse::<u64>() else {
         return fail(format!("unreadable version {version:?}"));
     };
+    if ungated.is_some() && state == "LANDED" {
+        return true;
+    }
+    if let Some(g) = ungated.filter(|_| !matches!(state.as_str(), "CERTIFIED" | "IN_DELIVERY")) {
+        let proof = format!("ungated:{}:{}:evidence={}", g.by, g.reason, g.evidence);
+        let kind = serde_json::json!({"ContentOnBase": {"proof": proof}}).to_string();
+        return match w.lc.bead_event(&m.id, &state, &v.to_string(), &g.by, &kind) {
+            Ok(()) => true,
+            Err((rc, e)) => fail(format!("LANDED refused from {state} (rc={rc}): {e}")),
+        };
+    }
     let who = actor(w);
     if state == "CERTIFIED" {
         if let Err((rc, e)) =

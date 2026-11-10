@@ -294,7 +294,8 @@ case "${1:-}" in
     show) st=; tip=; [ -f "${SPIRA_RUN:-/nonexistent}/lc-stub/${2:-}" ] && read -r st tip _ < "${SPIRA_RUN}/lc-stub/$2"
           printf '{"bead":{"bead_id":"%s","state":"%s","tip":"%s","version":1}}\n' "${2:-}" "$st" "$tip"; exit 0 ;;
     event) f="${SPIRA_RUN:-/nonexistent}/lc-stub/${3:-}"
-           case "$*" in *Returned*|*GateRed*) [ -f "$f" ] && { read -r _ tip ep < "$f"; printf 'REWORK %s %s\n' "$tip" "$ep" > "$f"; } ;; esac
+           case "$*" in *Returned*|*GateRed*) [ -f "$f" ] && { read -r _ tip ep < "$f"; printf 'REWORK %s %s\n' "$tip" "$ep" > "$f"; } ;;
+               *ContentOnBase*) [ -f "$f" ] && { read -r _ tip ep < "$f"; printf 'LANDED %s %s\n' "$tip" "$ep" > "$f"; } ;; esac
            exit 0 ;;
     # reopen (sp-swh8b8): the door moves the row, then reopens the store — open, unassigned,
     # no submitted label; here only the store half, the row being this fixture's file.
@@ -685,7 +686,7 @@ if cut_runs J; then
 # never merged into the batch worktree, and never marked BATCHED.
 # =============================================================================
 echo
-echo "J. batcher parity: a member whose tip is already in the round is set aside, never merged or marked:"
+echo "J. batcher parity: a member whose tip is already in the round is set aside, never merged, and settled LANDED:"
 end_forge_batch "$REPONAME" "the case before is done" || bad "the case before's batch is ended" "abandon failed"
 plant sp-cjjjj express
 base_now="$(git -C "$REPO" rev-parse origin/main)"
@@ -700,7 +701,7 @@ prcreate_before_j="$(grep -c '^pr-create' "$FORGE_LOG")"
 out_j="$(STUB_RED_SUITES="" cut_repo)"
 want "J: reports the member set aside as EMPTY, not a member" "EMPTY sp-cjjjj: tip is already in the round — not a member" "$out_j"
 nowant "J: no PR opens crediting a no-op tip" "PR " "$out_j"
-is   "J: sp-cjjjj stays CERTIFIED, never marked BATCHED" "CERTIFIED" "$(cut -d' ' -f1 < "$LCSTUB/sp-cjjjj")"
+is   "J: sp-cjjjj, whose tip is on the landing ref, is recorded LANDED rather than skipped every cut" "LANDED" "$(cut -d' ' -f1 < "$LCSTUB/sp-cjjjj")"
 is   "J: forge pr-create not called for the empty round" "$prcreate_before_j" "$(grep -c '^pr-create' "$FORGE_LOG")"
 
 fi
