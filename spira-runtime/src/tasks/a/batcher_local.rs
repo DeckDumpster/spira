@@ -1122,7 +1122,8 @@ impl Machine<'_> {
     /// it and no unit running its leg: nothing is left to drive it.
     fn settled(&self, repo: &Repo) -> bool {
         let Some(batch) = self.rc.batch.as_deref() else { return false };
-        let running = self.rc.leg.as_ref().zip(repo.live_legs.as_ref()).is_some_and(|(leg, live)| live.contains(leg));
+        let Some(live) = repo.live_legs.as_ref() else { return false };
+        let running = self.rc.leg.as_ref().is_some_and(|leg| live.contains(leg));
         matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying) && repo.settled.iter().any(|b| b == batch) && !repo.open_rounds().any(|r| r.id == batch) && !running
     }
 

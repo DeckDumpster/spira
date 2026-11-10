@@ -50,3 +50,11 @@ fn a_certifying_row_whose_batch_the_lifecycle_does_not_call_settled_is_left_to_i
     assert!(!names(&acts).contains(&ASSEMBLE), "{acts:?}");
     assert!(carry.repos["spira"].reconciled.is_none());
 }
+
+#[test]
+fn a_snapshot_that_could_not_list_units_does_not_reconcile() {
+    let mut snap = waiting_pool(vec![BATCH.into()]);
+    snap.repos.get_mut("spira").unwrap().live_legs = None;
+    let (carry, _) = decide(&stuck(), &snap);
+    assert!(carry.repos["spira"].reconciled.is_none());
+}
