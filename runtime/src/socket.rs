@@ -257,4 +257,12 @@ mod tests {
         let ok = Turn { state: vec![StateRow { task: "t".into(), skey: "k".repeat(KEY_MAX), value: "v".into(), at: 1 }], ..Turn::default() };
         assert!(j.commit(&ok).unwrap_err().is_cannot_tell(), "an in-width turn goes to the socket, which is absent");
     }
+
+    #[test]
+    fn the_in_memory_journal_refuses_the_widths_the_store_refuses() {
+        let j = crate::journal::MemJournal::new();
+        let wide = Turn { state: vec![StateRow { task: "t".into(), skey: "k".repeat(KEY_MAX + 1), value: "v".into(), at: 1 }], ..Turn::default() };
+        assert!(j.commit(&wide).unwrap_err().is_refused());
+        assert!(j.commits().is_empty(), "a refused turn is not kept");
+    }
 }

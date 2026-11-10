@@ -34,11 +34,7 @@ pub fn bounded_key(key: &str) -> String {
 
 /// The row key for `name`'s entry `key`: the key itself when it fits, else its digest.
 pub fn entry_key(name: &str, key: &str) -> String {
-    if key.len() <= KEY_MAX {
-        format!("{name}/{key}")
-    } else {
-        format!("{name}/#{}", digest(key))
-    }
+    format!("{name}/{}", bounded_key(key))
 }
 
 /// A carry that is one bare value (an enum) is its own single row, `state`.

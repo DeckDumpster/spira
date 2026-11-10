@@ -708,7 +708,7 @@ fn a_boot_repeats_no_side_effect_and_misses_none() {
 #[test]
 fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_store() {
     use runtime::units::{Exit, UnitHandle, UnitRan};
-    let members: Vec<Member> = (0..9).map(|i| member(&format!("sp-wide{i:02}"), &format!("{:040x}", i + 1))).collect();
+    let members: Vec<Member> = (0..9).map(|i| Member { state: "CERTIFIED".into(), ..member(&format!("sp-wide{i:02}"), &format!("{:040x}", i + 1)) }).collect();
     let world = Snapshot { repos: [("spira".to_string(), repo(members.clone()))].into(), now_ms: NOW };
     let snaps = std::sync::Mutex::new(vec![world]);
     let assembled = Assembled { merged: members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
@@ -721,6 +721,7 @@ fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_sto
         r = r.double(e, |_| Ok("{}".into()));
     }
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    assert!(r.requested().iter().any(|q| q.name == ROUND_OPEN), "certified beads and no open round: the first tick opens a round");
     let leg_of = |r: &TaskRig, effect: &str| -> Leg { serde_json::from_str(&r.requested().iter().rev().find(|q| q.name == effect).unwrap_or_else(|| panic!("{effect} was never asked")).input).unwrap() };
     let corpus = leg_of(&r, CORPUS);
     let ran = |leg: &Leg| UnitRan { handle: UnitHandle::of(NAME, &leg.unit).unwrap(), exit: Exit::Code(0), duration_ms: 1_000 };
