@@ -661,7 +661,7 @@ mod tests {
         assert!(set("fixture", "path", "rel", &t).is_err());
         assert!(set("fixture", "gate", "a|b", &t).is_err());
         assert!(set("fixture", "queue", "sideways", &t).is_err());
-        assert!(set("fixture", "lanes", "plan,bogus", &t).is_err());
+        assert!(set("fixture", "lanes", "plan,b@d", &t).is_err());
         set("fixture", "land", "main", &t).unwrap();
         assert!(set("fixture", "queue", "forge", &t).is_err());
     }
