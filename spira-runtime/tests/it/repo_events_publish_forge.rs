@@ -26,10 +26,19 @@ fn only_a_repository_publishing_to_github_is_asked_for_its_runs() {
     std::fs::create_dir_all(&gitea).unwrap();
     checkout(&gh, "git@github.com:acme/widgets.git");
     checkout(&gitea, "git@gitea.example:acme/gadgets.git");
-    let map = format!("widgets|{}|push|main|cargo|true\ngadgets|{}|push|main|cargo|true\n", gh.display(), gitea.display());
+    let (nowhere, mirror) = (tmp.path().join("nowhere"), tmp.path().join("mirror"));
+    for d in [&nowhere, &mirror] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    checkout(&nowhere, "git@github.com:acme/private.git");
+    checkout(&mirror, "git@gitea.example:acme/mirrored.git");
+    assert!(Command::new("git").args(["remote", "add", "github", "git@github.com:acme/mirrored.git"]).current_dir(&mirror).status().unwrap().success());
+    let map = format!("widgets|{}|push|main|cargo|true\ngadgets|{}|push|main|cargo|true\nprivate|{}|push|main|cargo|true\nmirrored|{}|push|main|cargo|true\n", gh.display(), gitea.display(), nowhere.display(), mirror.display());
     let publish = BTreeMap::from([
         ("widgets".to_string(), PublishSection::default()),
         ("gadgets".to_string(), PublishSection { mode: Some(PublishMode::Push), ..PublishSection::default() }),
+        ("private".to_string(), PublishSection { remote: Some("none".into()), ..PublishSection::default() }),
+        ("mirrored".to_string(), PublishSection { remote: Some("github".into()), ..PublishSection::default() }),
     ]);
     let reg = Registry::new(Some(&map), &BTreeMap::new(), tmp.path()).with_publish(publish);
     let map_path = tmp.path().join("registry-rows");
@@ -55,7 +64,8 @@ fn only_a_repository_publishing_to_github_is_asked_for_its_runs() {
     let out = world.repo_events_snapshot_for(&reg, &forge, "{}").unwrap();
 
     let lines = paths.lock().unwrap().clone();
-    assert_eq!(lines.len(), 1, "{lines:?}");
-    assert!(lines[0].contains("/repos/acme/widgets/actions/runs"), "{lines:?}");
-    assert!(!out.contains("gadgets"), "{out}");
+    let mut asked: Vec<&str> = lines.iter().map(|l| l.split(' ').nth(1).unwrap_or("")).collect();
+    asked.sort();
+    assert_eq!(asked, ["/repos/acme/mirrored/actions/runs?per_page=30", "/repos/acme/widgets/actions/runs?per_page=30"]);
+    assert!(!out.contains("gadgets") && !out.contains("private"), "{out}");
 }

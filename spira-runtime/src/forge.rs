@@ -67,9 +67,15 @@ pub fn slug(repo_dir: &Path) -> Option<String> {
 /// `owner/repo` of the named remote, only when that remote is on github.com.
 pub fn github_slug(repo_dir: &Path, remote: &str) -> Option<String> {
     let url = remotes(repo_dir).into_iter().find(|(n, _)| n == remote)?.1;
-    let rest = url.split_once("://").map_or(url.as_str(), |(_, r)| r);
-    let host = rest.split(['/', ':']).next()?.rsplit('@').next()?;
-    host.eq_ignore_ascii_case("github.com").then(|| slug_of(&url)).flatten()
+    host_of(&url).eq_ignore_ascii_case("github.com").then(|| slug_of(&url)).flatten()
+}
+
+fn host_of(url: &str) -> &str {
+    let authority = match url.split_once("://") {
+        Some((_, rest)) => rest.split('/').next().unwrap_or(""),
+        None => url.split(':').next().unwrap_or(""),
+    };
+    authority.rsplit('@').next().unwrap_or("").split(':').next().unwrap_or("")
 }
 
 fn text(v: &Value, key: &str) -> String {
@@ -281,6 +287,25 @@ mod tests {
             assert_eq!(slug(checkout(url).path()).as_deref(), Some("acme/widgets"), "{url}");
         }
         assert_eq!(slug(Path::new("/nonexistent")), None);
+    }
+
+    #[test]
+    fn a_remote_is_github_by_its_host_however_it_is_spelled() {
+        for (url, github) in [
+            ("https://github.com/acme/widgets.git", true),
+            ("https://user:tok@github.com/acme/widgets", true),
+            ("ssh://git@github.com:22/acme/widgets.git", true),
+            ("git@github.com:acme/widgets.git", true),
+            ("git@gitea.example:acme/widgets.git", false),
+            ("https://gitea.example/github.com/widgets.git", false),
+            ("https://notgithub.com/acme/widgets", false),
+        ] {
+            let d = testkit::TempDir::new("forge-github-slug");
+            fs::create_dir_all(d.path().join(".git")).unwrap();
+            fs::write(d.path().join(".git/config"), format!("[remote \"up\"]\n\turl = {url}\n")).unwrap();
+            assert_eq!(github_slug(d.path(), "up").is_some(), github, "{url}");
+            assert_eq!(github_slug(d.path(), "other"), None);
+        }
     }
 
     #[test]
