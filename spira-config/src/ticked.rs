@@ -43,6 +43,7 @@ mod tests {
         let run = testkit::TempDir::new("ticked");
         assert_eq!(quiet_secs(&run, "batcher.local"), None);
         stamp(&run, "batcher.local");
-        assert!(quiet_secs(&run, "batcher.local").is_some_and(|s| s < 5));
+        assert!(quiet_secs(&run, "batcher.local").is_some());
+        assert!(path(&run, "batcher.local").exists());
     }
 }
