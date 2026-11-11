@@ -5,14 +5,14 @@
 //! hold (`target/`), so nothing inside it is ever an untracked file to a fence — and each of
 //! its build directories ([`LINKED`]) is a symlink to `<root>/<tree basename>/<dir>` on a
 //! RAM-backed tmpfs. Every path a step or the tools phase reads (`target/dwarf/<pkg>`,
-//! `target/gate-tools/<id>`) is unchanged; only where the bytes land moves.
+//! `target/tree-tools/<id>`) is unchanged; only where the bytes land moves.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The build directories of a gate tree that live on the tmpfs: the unit/tools profile, the
 /// build fence's `make build` (release), a stray dev build, and the tree-keyed tools.
-pub const LINKED: [&str; 4] = ["dwarf", "release", "debug", "gate-tools"];
+pub const LINKED: [&str; 4] = ["dwarf", "release", "debug", "tree-tools"];
 
 /// Directory under the run dir that held sp-nv7btk's warm per-slot `dwarf` targets, **retired**
 /// (DESIGN.md "The gate tree's target is on tmpfs", sp-z61hj). A slot sat at a fixed path on the

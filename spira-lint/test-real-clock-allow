@@ -4,7 +4,6 @@
 1 archivist/src/run.rs
 1 archivist/src/transcripts.rs
 2 gate/src/target.rs
-1 gate/src/tests.rs
 1 gate-worker/src/tests.rs
 3 round-vm/src/pool.rs
 2 round-vm/src/run.rs

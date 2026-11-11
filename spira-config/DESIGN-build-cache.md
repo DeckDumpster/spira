@@ -68,9 +68,9 @@ on any cached build: two target dirs set that way never share a key (0 hits meas
 ### 2.3 The gate tree's target on tmpfs
 
 `<gate tree>/target` stays a real directory, and each of its build directories — `dwarf`,
-`release`, `debug`, `gate-tools` — is a **symlink** to `<root>/<gate tree basename>/<dir>`,
+`release`, `debug`, `tree-tools` — is a **symlink** to `<root>/<gate tree basename>/<dir>`,
 where `<root>` is `$SPIRA_GATE_TARGET_ROOT`, else `/tmp/spira-gate-target-<sha256(SPIRA_RUN)[..6]>`
-when `/tmp` is a tmpfs. Every path consumer (`target/dwarf/<pkg>`, `target/gate-tools/<tree
+when `/tmp` is a tmpfs. Every path consumer (`target/dwarf/<pkg>`, `target/tree-tools/<tree
 id>`, `git clean -e target`, `make build`) is unchanged; only where the bytes land moves.
 **Why the links are inside `target/` and not `target` itself:** `.gitignore` says `target/`,
 which matches a directory only. A `target` symlink would be an *untracked file* to every

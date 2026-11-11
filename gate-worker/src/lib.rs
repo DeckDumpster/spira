@@ -62,23 +62,7 @@ pub fn release_is_current(path: &Path) -> bool {
 
 pub trait Gate {
     fn gate(&self, branch: &str, repo: &str, lock_wait: &str, bead: &str) -> (i32, String);
-    /// `gate warm-tools --repo <repo>`: publish the landing ref's `bin` tools to the shared
-    /// store (gate/src/toolkey.rs) unless it already holds them. None when this gate has no
-    /// store to warm.
-    fn warm(&self, _repo: &str) -> Option<(i32, String)> {
-        None
-    }
-    fn pause(&self, ms: u64) {
-        std::thread::sleep(std::time::Duration::from_millis(ms)); // waits-on: the other warm-tools releasing its lock; cap WARM_POLLS
-    }
 }
-
-/// A warm held by another process is re-asked every `WARM_POLL_MS`, at most `WARM_POLLS` times
-/// (about the cold build it saves, 65-106 s, with margin): once the holder publishes, the
-/// re-ask answers "already warm" and the gate installs instead of building.
-pub const WARM_POLL_MS: u64 = 5000;
-pub const WARM_POLLS: u32 = 60;
-const WARM_HELD: &str = "another warm-tools holds";
 
 pub trait Branches {
     /// The branch's tip now; None when the branch (or its repository) is gone.
@@ -162,24 +146,6 @@ impl Worker<'_> {
                 return false;
             }
             Some(_) => {}
-        }
-        // WARM THE LANDING REF'S TOOLS FIRST, off the gate's clock (gate/DESIGN.md `gate
-        // warm-tools`: "run it after a landing that moves the key"). A branch that leaves the
-        // tools' sources alone has its landing ref's tool key, so once the ref's tools are in
-        // the store its gate installs them instead of building. Nothing ran warm-tools, so the
-        // first gate after every landing that moved the key paid a cold build of 65-106 s inside
-        // its 300 s cap (58% of store misses, 2026-10-16..28). A warm that fails costs only that
-        // build, inside the gate, as before.
-        if let Some((mut rc, mut out)) = self.gate.warm(&job.repo) {
-            let mut polls = 0;
-            while out.contains(WARM_HELD) && polls < WARM_POLLS {
-                self.gate.pause(WARM_POLL_MS);
-                polls += 1;
-                let Some(again) = self.gate.warm(&job.repo) else { break };
-                (rc, out) = again;
-            }
-            let last = out.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
-            (self.log)(&format!("gate-worker: warm-tools {} (rc {rc}): {last}", job.repo));
         }
         let started_ms = self.clock.now_ms();
         let (rc, out) = self.gate.gate(&job.branch, &job.repo, &self.lock_wait.to_string(), &job.bead);

@@ -127,10 +127,12 @@ fn t3_its_own_leg_unit_ran_is_heard() {
 fn a_gate_leg_carries_the_release_on_path() {
     let base_env = spira_runtime::tasks::a::batcher_local::edge::leg_env(vec![], "/rel", "/home/x", "/rel/conf", "/usr/bin");
     let snap = Snapshot { base_env, ..idle() };
-    let slot = Slot { state: State::Warming, job: Some(job("spira", "a", false, 2, 10)), ..Slot::default() };
-    let failed_warm = runtime::units::UnitSpec { task: NAME.into(), key: "0/warm/spira/a-tip".into(), argv: vec![], env: vec![], cwd: None };
-    let (_, acts) = on_outcome(&Carry { slots: vec![slot] }, UNIT_START, &serde_json::to_string(&failed_warm).unwrap(), false, "", &snap);
-    let leg = acts.iter().find(|a| a.effect == UNIT_START).expect("a failed warm leg moves on to the gate leg");
+    let j = job("spira", "a", false, 2, 10);
+    let slot = Slot { state: State::Claimed, job: Some(j.clone()), ..Slot::default() };
+    let input = serde_json::to_string(&SlotJob { slot: 0, job: j.clone() }).unwrap();
+    let (next, acts) = on_outcome(&Carry { slots: vec![slot] }, TIP, &input, true, &j.tip, &snap);
+    assert_eq!(next.slots[0].state, State::Gating, "a matching tip goes straight to the gate leg");
+    let leg = acts.iter().find(|a| a.effect == UNIT_START).expect("the gate leg starts");
     let spec: runtime::units::UnitSpec = serde_json::from_str(&leg.input).unwrap();
     let get = |k: &str| spec.env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
     assert!(get("PATH").unwrap_or_default().starts_with("/rel/bin:/rel/spira:"), "PATH {:?}", get("PATH"));
@@ -140,14 +142,14 @@ fn a_gate_leg_carries_the_release_on_path() {
 }
 
 #[test]
-fn a_warm_leg_carries_the_release_on_path_and_a_leg_variable_wins() {
+fn a_leg_carries_the_release_on_path_and_a_leg_variable_wins() {
     let base_env = spira_runtime::tasks::a::batcher_local::edge::leg_env(vec![], "/rel", "/home/x", "/rel/conf", "/usr/bin");
     let snap = Snapshot { base_env, ..idle() };
     let j = job("spira", "a", false, 2, 10);
     let slot = Slot { state: State::Claimed, job: Some(j.clone()), ..Slot::default() };
     let input = serde_json::to_string(&SlotJob { slot: 0, job: j.clone() }).unwrap();
     let (_, acts) = on_outcome(&Carry { slots: vec![slot] }, TIP, &input, true, &j.tip, &snap);
-    let spec: runtime::units::UnitSpec = serde_json::from_str(&acts.iter().find(|a| a.effect == UNIT_START).expect("tip answered starts the warm leg").input).unwrap();
+    let spec: runtime::units::UnitSpec = serde_json::from_str(&acts.iter().find(|a| a.effect == UNIT_START).expect("tip answered starts the gate leg").input).unwrap();
     assert!(spec.env.iter().any(|(k, v)| k == "PATH" && v.starts_with("/rel/bin:/rel/spira:")), "{:?}", spec.env);
     let kept = spira_runtime::tasks::a::batcher_local::edge::with_defaults(vec![("PATH".into(), "/mine".into())], &snap.base_env);
     assert_eq!(kept.iter().filter(|(k, _)| k == "PATH").map(|(_, v)| v.as_str()).collect::<Vec<_>>(), ["/mine"]);

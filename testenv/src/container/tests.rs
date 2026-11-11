@@ -987,7 +987,7 @@ fn up_refuses_to_start_when_the_podman_mode_is_unknown() {
 }
 
 /// THE PRODUCTION BUG (sp-e5v53-3, 2026-10-01): a gate tree's `target/{dwarf,release,debug,
-/// gate-tools}` are symlinks to a tmpfs root outside the checkout (gate/src/target.rs,
+/// tree-tools}` are symlinks to a tmpfs root outside the checkout (gate/src/target.rs,
 /// sp-z61hj). `--checkout /wt` bind-mounts `/wt` at `/workspace`, preserving the symlink as
 /// a symlink — `/workspace/target/dwarf`, from inside the container, points to a host path
 /// that was never mounted there, so a binary built right through it is invisible to `stage`
@@ -1431,12 +1431,12 @@ fn sizes_read_like_df_h() {
 fn symlinked_targets_finds_a_real_symlinked_build_dir_and_collapses_a_shared_root() {
     let d = testkit::TempDir::new("testenv-symlinked-targets");
     let root = d.join("tmpfs-root").join("tree-x");
-    for p in ["dwarf", "release", "debug", "gate-tools"] {
+    for p in ["dwarf", "release", "debug", "tree-tools"] {
         std::fs::create_dir_all(root.join(p)).unwrap();
     }
     let target = d.join("checkout").join("target");
     std::fs::create_dir_all(&target).unwrap();
-    for p in ["dwarf", "release", "debug", "gate-tools"] {
+    for p in ["dwarf", "release", "debug", "tree-tools"] {
         std::os::unix::fs::symlink(root.join(p), target.join(p)).unwrap();
     }
     // An ordinary, non-symlinked entry alongside them (e.g. ".rustc_info.json" or any real

@@ -1160,7 +1160,7 @@ that this cleanup ran.
   `cut -c` byte-truncation of heartbeat lines (now characters); `df -Ph`/`free -h` (now statvfs and `/proc/meminfo` MemAvailable, same units).
 * **D23 — a symlinked build directory gets its own mount too, so a bind-mounted checkout's
   `/workspace` can still see what it points to (sp-e5v53-3).** Found 2026-10-01: a gate
-  tree's `target/{dwarf,release,debug,gate-tools}` are each a symlink to a tmpfs root
+  tree's `target/{dwarf,release,debug,tree-tools}` are each a symlink to a tmpfs root
   *outside* the checkout (gate/src/target.rs, sp-z61hj — "every path a step or the tools
   phase reads is unchanged; only where the bytes land moves"). `up`'s bind mount of the
   checkout preserves that symlink as a symlink; a binary built right through it is
