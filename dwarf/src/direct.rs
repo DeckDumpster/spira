@@ -198,8 +198,7 @@ pub fn run(exec: &dyn Exec, sink: &dyn Sink, sleep: &dyn Fn(Duration), run_dir: 
         }
         sleep(TICK);
     }
-    sink.out(&util::log_line(now, &format!("direct {}: the dwarf has neither claimed nor refused it after {}s — see its unit", req.bead, WAIT_TICKS)));
-    0
+    fatal(format!("the dwarf neither claimed nor refused it within {WAIT_TICKS}s — it exited without a reason; see its unit's journal"))
 }
 
 #[cfg(test)]
@@ -337,7 +336,7 @@ mod tests {
         assert_eq!((go(&f).0, progs(&f)), (1, a(&["spira-lc"])));
         let f = fake(Out { code: 2, stdout: String::new(), stderr: "store down".into() }, 0);
         assert_eq!((go(&f).0, progs(&f)), (1, a(&["spira-lc"])));
-        let f = fake(Out { code: 1, stdout: String::new(), stderr: String::new() }, 0);
+        let f = { let mut f = fake(Out { code: 1, stdout: String::new(), stderr: String::new() }, 0); f.after_launch = Some(row("WORKING", Some("dwarf-new"))); f };
         assert_eq!((go(&f).0, progs(&f)), (0, a(&["spira-lc", "systemd-run", "spira-lc"])), "no row yet: the claim creates it");
     }
 
@@ -381,5 +380,20 @@ mod tests {
         let why = refusal_reason("sp-x", "concierge", &r, &["lost to another claim".into()]);
         assert!(why.contains("sp-x") && why.contains("concierge") && why.contains("state=READY holder=none") && why.contains("lost to another claim"), "{why}");
         assert!(refusal_reason("sp-x", "c", &Ok(None), &[]).contains("no lifecycle row"));
+    }
+
+    #[test]
+    fn a_dwarf_that_neither_claims_nor_refuses_fails_the_call() {
+        let f = fake(row("READY", None), 0);
+        let (rc, sink) = go(&f);
+        assert_eq!(rc, 1);
+        assert!(sink.all().contains("neither claimed nor refused"), "{}", sink.all());
+    }
+
+    #[test]
+    fn a_refusal_is_left_where_the_launcher_looks_for_that_bead() {
+        let dir = testkit::TempDir::new("dwarf-direct-refusal-path");
+        write_refusal(&dir, "sp-x", "because");
+        assert_eq!(std::fs::read_to_string(refusal_path(&dir, "sp-x")).unwrap(), "because\n");
     }
 }
