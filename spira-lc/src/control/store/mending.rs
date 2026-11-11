@@ -2,7 +2,7 @@
 //! born WAITING in the txn of its round's `Failed`; each member branch a mend moved is a
 //! `mends/<bead>/` entry, written in the txn of the row's `Mended`.
 
-use lifecycle::mending::{self, MendingEvent, MendingEventKind, MendingRow, MendingState};
+use lifecycle::mending::{self, HandFix, MendingEvent, MendingEventKind, MendingRow, MendingState};
 use lifecycle::Refusal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -207,6 +207,7 @@ impl<B: Backend> Store<B> {
         moves: &[Move],
         ask: Option<&str>,
         checked: &[String],
+        hand: Option<&HandFix>,
         actor: &str,
         at: i64,
         req: &Request,
@@ -217,6 +218,7 @@ impl<B: Backend> Store<B> {
             return Ok(Stepped::NoRow);
         };
         let evidence = serde_json::json!({ "Mended": {
+            "hand": hand,
             "at": at,
             "members": moves.iter().map(|(b, f, t)| format!("{b}:{f}:{t}")).collect::<Vec<_>>(),
             "ask": ask,

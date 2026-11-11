@@ -145,6 +145,10 @@ impl Rig {
     }
 
     fn mend(&self, suite: &str, members: &str) -> (i32, String) {
+        self.mend_as("mender", FACTS, suite, members)
+    }
+
+    fn mend_as(&self, actor: &str, facts: &str, suite: &str, members: &str) -> (i32, String) {
         self.lc(&[
             "mending",
             "mend",
@@ -156,11 +160,11 @@ impl Rig {
             "--members",
             members,
             "--facts",
-            FACTS,
+            facts,
             "--fences",
             "[]",
             "--actor",
-            "mender",
+            actor,
         ])
     }
 }
@@ -247,4 +251,49 @@ fn an_overdue_mend_expires_on_sweep_and_a_waiting_failure_of_an_ended_round_is_r
         .map(|v| v["state"].as_str().unwrap())
         .collect();
     assert_eq!(states, ["RETURNED", "RETURNED"]);
+}
+
+fn hand_facts(evidence_tip: &str) -> String {
+    format!(
+        r#"{{"changes":[],"member_files":[],"required_checks":[],"checked":[],"ask":null,"hand":{{"reason":"hand-built fix","evidence":"npm test 101/0","evidence_tip":"{evidence_tip}"}}}}"#
+    )
+}
+
+#[test]
+fn a_concierge_hand_mends_a_waiting_failure_with_provenance_and_the_next_certify_carries_the_tip() {
+    let r = Rig::new();
+    r.suites();
+    r.fail("test-a.sh");
+    assert_eq!(r.row_state("test-a.sh"), MendingState::Waiting);
+    let hand = hand_facts(T2);
+    assert_eq!(
+        r.mend_as("concierge", &hand, "test-a.sh", &format!("sp-a:{T1}:{T2}")),
+        (0, "MENDED".into())
+    );
+    assert_eq!(r.row_state("test-a.sh"), MendingState::Mended);
+    assert_eq!(
+        r.ok(&["mending", "tips", "--beads", "sp-a"]),
+        format!(r#"{{"sp-a":"{T2}"}}"#)
+    );
+}
+
+#[test]
+fn a_hand_mend_without_provenance_is_refused_and_leaves_the_failure_waiting() {
+    let r = Rig::new();
+    r.suites();
+    r.fail("test-a.sh");
+    let members = format!("sp-a:{T1}:{T2}");
+    let blank = hand_facts("");
+    let elsewhere = hand_facts(T1);
+    for (facts, why) in [(FACTS, "no provenance"), (blank.as_str(), "no evidence tip"), (elsewhere.as_str(), "evidence tip not the mended tip")] {
+        for actor in ["concierge", "operator"] {
+            let (rc, out) = r.mend_as(actor, facts, "test-a.sh", &members);
+            assert_eq!(rc, 3, "{actor} {why}: {out}");
+            assert!(out.contains("MendRefused"), "{actor} {why}: {out}");
+            assert_eq!(r.row_state("test-a.sh"), MendingState::Waiting, "{actor} {why}");
+        }
+    }
+    let (rc, _) = r.mend_as("dwarf-x", &hand_facts(T2), "test-a.sh", &members);
+    assert_eq!(rc, 3, "provenance does not make a stranger the concierge");
+    assert_eq!(r.row_state("test-a.sh"), MendingState::Waiting);
 }

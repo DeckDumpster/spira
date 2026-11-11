@@ -1510,10 +1510,10 @@ impl Lc for FLc {
         members: &str,
         facts: &str,
         fences: &str,
-        _: &str,
+        actor: &str,
     ) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!(
-            "mend {id} {pass} {suite} {members} facts={facts} fences={fences}"
+            "mend {id} {pass} {suite} {members} facts={facts} fences={fences} by={actor}"
         ));
         match self.mend_refused.borrow().clone() {
             Some(why) => Err((3, why)),

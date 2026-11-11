@@ -19,6 +19,14 @@ use crate::model::Member;
 const FENCE_LIST: &str = "spira/mend-fences";
 const SUITE_GLOB: &str = "**/test-*.sh";
 
+/// `--by`, `--evidence` and `--evidence-tip` of `round mended`: the person who put the tip on the
+/// branch, answering for it the way a resubmit does.
+pub struct HandFix {
+    pub by: String,
+    pub evidence: Text,
+    pub evidence_tip: String,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     w: &World,
@@ -30,6 +38,7 @@ pub fn run(
     checked: &str,
     ask: Option<&str>,
     reason: &Text,
+    hand: HandFix,
 ) -> i32 {
     let label = format!("round {outcome}");
     if !czar_ok(w) {
@@ -57,7 +66,14 @@ pub fn run(
     };
     let text = read_text(w, reason).unwrap_or_default();
     let diagnosis = text.trim();
-    let by = actor(w);
+    let hand_by = hand.by.trim().to_string();
+    if !hand_by.is_empty() && !(outcome == "mended" && mending::may_settle_unpicked(&hand_by)) {
+        w.err(format!(
+            "queue.sh {label}: --by is for a hand-built `round mended` and names concierge or operator"
+        ));
+        return USAGE;
+    }
+    let by = if hand_by.is_empty() { actor(w) } else { hand_by.clone() };
     let send = |kind: serde_json::Value| {
         w.lc.mending_event(batch, pass, suite, &kind.to_string(), &by)
     };
@@ -128,9 +144,28 @@ pub fn run(
             }
             report(r, did)
         }
-        _ => mended(
-            w, &label, &path, &kv, batch, pass, suite, tips, checked, ask, diagnosis, &by,
-        ),
+        _ => {
+            let hand_fix = (!hand_by.is_empty()).then(|| mending::HandFix {
+                reason: diagnosis.to_string(),
+                evidence: read_text(w, &hand.evidence).unwrap_or_default().trim().to_string(),
+                evidence_tip: hand.evidence_tip.clone(),
+            });
+            let rc = mended(
+                w, &label, &path, &kv, batch, pass, suite, tips, checked, ask, diagnosis, &by,
+                hand_fix,
+            );
+            if rc == OK && !hand_by.is_empty() {
+                super::round::retire_failure_mender(
+                    w,
+                    &c,
+                    batch,
+                    pass,
+                    suite,
+                    &format!("{suite} of {batch} was mended by hand ({hand_by}); the failure this mender bead was filed for is settled."),
+                );
+            }
+            rc
+        }
     }
 }
 
@@ -152,6 +187,7 @@ fn mended(
     ask: Option<&str>,
     diagnosis: &str,
     by: &str,
+    hand: Option<mending::HandFix>,
 ) -> i32 {
     let wanted: Vec<(String, String)> = tips
         .split(',')
@@ -300,6 +336,7 @@ fn mended(
             .map(String::from)
             .collect(),
         ask: ask.map(String::from),
+        hand,
     };
     if !diagnosis.is_empty() {
         let _ = w.lc.mending_event(
