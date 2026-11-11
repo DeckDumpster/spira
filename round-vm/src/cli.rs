@@ -19,7 +19,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template [--adopt <vmid>]|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|ami-prune|reap|ec2-probe [--dry-run]";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template [--adopt <vmid>]|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|ami-prune|reap|ec2-probe [--dry-run]|section";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -300,6 +300,43 @@ pub fn ec2_api() -> Result<(AwsCli, Ec2Config), String> {
 }
 
 /// `round-vm ami-prune`: removes superseded, unreferenced round images and their snapshots.
+/// `section`: publishes `VmPool/pool` from the hour's `cert-pass` rows and the pool's leases.
+fn section_pass() -> i32 {
+    match publish_section() {
+        Ok(r) => {
+            println!("round-vm section: {} passes in the hour, infra-incomplete {:.3}, over-cap {:.3}", r.passes, r.infra_incomplete_share, r.over_cap_share);
+            0
+        }
+        Err(e) => {
+            eprintln!("round-vm section: {e}");
+            1
+        }
+    }
+}
+
+struct SpiraLc(spira_config::lc_call::LcClient);
+
+impl reconciler_engine::goodput_pass::Lc for SpiraLc {
+    fn call(&self, args: &[String]) -> (i32, serde_json::Value) {
+        match self.0.call(args) {
+            Ok(r) => (r.code, serde_json::from_str(r.out.trim()).unwrap_or_else(|_| serde_json::json!({ "cannot_tell": r.why() }))),
+            Err(e) => (-1, serde_json::json!({ "cannot_tell": e.to_string() })),
+        }
+    }
+}
+
+fn publish_section() -> Result<crate::section::Reading, String> {
+    let cfg = Config::load()?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs();
+    let rows = tsd::query::Source { reader: None, root: &cfg.run_dir }
+        .rows(tsd::pass::FAMILY, now.saturating_sub(crate::section::HOUR))
+        .or_else(|f| if f.code == tsd::query::ERR_NO_FAMILY { Ok(Vec::new()) } else { Err(f.message) })?;
+    let pool = pool_for(&cfg);
+    let state = crate::pool::read_state(&pool.state_file())?;
+    let lc = SpiraLc(spira_config::lc_call::LcClient::configured()?);
+    crate::section::run(&lc, now, &rows, crate::section::slots_by_pool(&state.leases))
+}
+
 fn ami_prune() -> i32 {
     let (api, ec2cfg) = match ec2_api() {
         Ok(a) => a,
@@ -388,6 +425,9 @@ pub fn main_with(args: Vec<String>) -> i32 {
     }
     if verb == "ec2-probe" {
         return ec2_probe(&rest);
+    }
+    if verb == "section" {
+        return section_pass();
     }
     match verb.as_str() {
         "acquire" | "release" | "run" | "status" | "reap" | "warm" | "drain" | "_provision-bg" | "template" | "refresh" | "teardown" => {}

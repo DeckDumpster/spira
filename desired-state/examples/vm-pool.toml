@@ -1,0 +1,18 @@
+# The VmPool section's spec: the shares of an hour's certification passes the pool may waste.
+# Not part of the default document, which every install composes and publishes: a section spec
+# reaches the control store, so it is applied when the section is armed
+# (`spira compose desired-state/examples/default.toml desired-state/examples/vm-pool.toml`).
+
+[producer]
+producer = "spira-default"
+version = "1"
+time = "2026-11-10T00:00:00Z"
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "VmPool"
+[resources.metadata]
+name = "pool"
+[resources.spec]
+infra_incomplete_share = { value = 0.05, statute = "law-a-concurrency-ceiling-names-its-measurement" }
+over_cap_share = { value = 0.05, statute = "law-a-concurrency-ceiling-names-its-measurement" }

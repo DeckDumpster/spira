@@ -1,0 +1,16 @@
+[Unit]
+Description=Publish the VmPool section: the hour's infra-incomplete and over-cap pass shares, and the slots in use
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+CPUQuota=10%
+ExecStart=@SPIRA_PROD_ROOT@/bin/round-vm section
+TimeoutStartSec=60
+StandardOutput=append:@SPIRA_RUN@/vm-pool-section.log
+StandardError=append:@SPIRA_RUN@/vm-pool-section.log
+
+[X-Spira]
+Plane=observability
