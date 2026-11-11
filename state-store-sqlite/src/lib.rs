@@ -784,7 +784,7 @@ impl SqliteBackend {
             }
         }
         drop(_read);
-        dest_conn.execute_batch("VACUUM").map_err(db)?;
+        exec(&dest_conn, "VACUUM", [])?;
         Ok(rev)
     }
 
