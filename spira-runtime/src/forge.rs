@@ -12,7 +12,6 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::watchers::pr_notify::{classify, Final, OpenPr, Run};
-use crate::watchers::repo_events;
 use crate::wiki_git::gh_auth_token;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -198,20 +197,6 @@ impl Forge {
         let r = runs["workflow_runs"].as_array()?.iter().find(|r| r["status"] == "completed")?;
         let secs = epoch(r["updated_at"].as_str()?).zip(epoch(r["created_at"].as_str()?)).map_or(0, |(u, c)| u.saturating_sub(c));
         Some(Run { conclusion: r["conclusion"].as_str().unwrap_or("unknown").to_string(), secs, url: text(r, "html_url") })
-    }
-
-    /// The newest finished workflow runs of a repository, newest first; the forge's reason when it
-    /// could not say, never an empty list.
-    pub fn completed_runs(&self, slug: &str) -> Result<Vec<repo_events::Run>, String> {
-        let v = self.try_get(&format!("/repos/{slug}/actions/runs?per_page=30"))?;
-        let runs = v["workflow_runs"].as_array().ok_or_else(|| format!("/repos/{slug}/actions/runs: no workflow_runs"))?;
-        Ok(runs
-            .iter()
-            .filter(|r| r["status"] == "completed")
-            .filter_map(|r| {
-                Some(repo_events::Run { id: r["id"].as_u64()?, workflow: text(r, "name"), conclusion: text(r, "conclusion"), branch: text(r, "head_branch"), event: text(r, "event"), title: repo_events::title_of(&text(r, "display_title")) })
-            })
-            .collect())
     }
 
     /// One `STRANDED run=<id> job="<name>" label=<labels> queued=<n>s runner=<name> vmid=<id>` line per

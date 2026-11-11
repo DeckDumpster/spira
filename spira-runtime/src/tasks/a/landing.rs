@@ -25,8 +25,7 @@
 //! ## Tick
 //!
 //! - Cadence 90 s (`spira-landing-pass-prod.timer`: OnBootSec 120 s, OnUnitActiveSec 90 s).
-//! - Also woken by `bead.handed_on` and `pr.merged`/`pr.closed`, both from `repo_events`
-//!   (unverified that it emits them).
+//! - Also woken by `bead.handed_on` and `pr.merged`/`pr.closed`.
 //! - Single-flight across the whole task. Today that is `run/landing-pass.lock`
 //!   (`main.rs:101-111`).
 //! - It is skipped while `world.halted` (`main.rs:97-100`). This becomes the scheduler's world

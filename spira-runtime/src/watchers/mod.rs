@@ -13,7 +13,6 @@ pub mod pr_notify;
 pub mod publish_backlog;
 pub mod readiness_dependents;
 pub mod reconciler_flow;
-pub mod repo_events;
 pub mod reconciler;
 pub mod round_duty;
 pub mod supersede_duty;
