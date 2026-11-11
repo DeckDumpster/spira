@@ -187,6 +187,7 @@ pub fn run(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut
             no_all_fallback: true,
             no_nocov: env.suites_off,
             tiers: env.tiers.clone(),
+            covers_outrank_tiers: false,
             reach: Reach::load(&env.repo)?,
         };
         let sel = match &env.files {

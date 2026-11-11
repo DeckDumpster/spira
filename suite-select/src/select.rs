@@ -134,6 +134,9 @@ pub struct Options {
     pub no_nocov: bool,
     /// Keep only suites whose tier is listed (and every untiered suite). `None`: no filter.
     pub tiers: Option<Vec<String>>,
+    /// A suite selected because the diff touches what its `# covers:` names (or what it
+    /// selects-on) is kept whatever its tier; `tiers` still filters the always-run and reach-selected suites.
+    pub covers_outrank_tiers: bool,
     /// The workspace's reverse-dependency reach; `None`: only `# covers:` selects.
     pub reach: Option<crate::reach::Reach>,
 }
@@ -245,10 +248,12 @@ pub fn select(
     buckets: &Buckets,
     opts: &Options,
 ) -> Result<Selection, Fail> {
-    let tier_filter = |names: Vec<String>| -> Vec<String> {
+    let tier_filter = |names: Vec<String>, covered: &[String]| -> Vec<String> {
         names
             .into_iter()
-            .filter(|n| corpus.get(n).is_some_and(|s| opts.tier_ok(s)))
+            .filter(|n| {
+                (opts.covers_outrank_tiers && covered.contains(n)) || corpus.get(n).is_some_and(|s| opts.tier_ok(s))
+            })
             .collect()
     };
     // 1. Inert files select nothing and never fall back.
@@ -258,7 +263,7 @@ pub fn select(
         .collect();
     if live.is_empty() {
         return Ok(Selection {
-            suites: tier_filter(nocov(corpus, opts)),
+            suites: tier_filter(nocov(corpus, opts), &[]),
             mode: Mode::Diff,
             unplaced: vec![],
             log: vec![],
@@ -272,6 +277,7 @@ pub fn select(
 
     // 2. Covers match.
     let mut selected: Vec<String> = Vec::new();
+    let mut covered: Vec<String> = Vec::new();
     let mut unmapped: Vec<&Change> = Vec::new();
     let mut log: Vec<String> = Vec::new();
     for c in &live {
@@ -299,7 +305,10 @@ pub fn select(
                     if s.selects_on.is_empty() {
                         match &narrowed {
                             Some(a) if !reaches(s, a) => cut += 1,
-                            _ => push_once(&mut selected, &s.name),
+                            _ => {
+                                push_once(&mut selected, &s.name);
+                                push_once(&mut covered, &s.name);
+                            }
                         }
                     }
                 }
@@ -318,11 +327,13 @@ pub fn select(
                 if fns.iter().any(|x| x == fname) {
                     any = true;
                     push_once(&mut selected, s);
+                    push_once(&mut covered, s);
                 }
             }
             if !any {
                 for (s, _) in &fn_pairs {
                     push_once(&mut selected, s);
+                    push_once(&mut covered, s);
                 }
             }
         }
@@ -394,6 +405,7 @@ pub fn select(
         });
         if fires {
             push_once(&mut selected, &s.name);
+            push_once(&mut covered, &s.name);
         }
     }
 
@@ -401,7 +413,7 @@ pub fn select(
     for n in nocov(corpus, opts) {
         push_once(&mut selected, &n);
     }
-    let suites = tier_filter(selected);
+    let suites = tier_filter(selected, &covered);
     log.push(format!("select: {} suite(s) selected", suites.len()));
     Ok(Selection {
         suites,

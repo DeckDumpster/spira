@@ -1266,18 +1266,16 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             // compute is a fault here, never an empty selection read as "nothing to do".
             let head = s.select_head.clone().unwrap_or_else(|| br.clone());
             let env = |k: &str| std::env::var(k).ok();
-            let opts = suite_select::select::Options {
-                no_all_fallback: true,
-                no_nocov: false,
-                tiers: suite_select::select::parse_tiers(&s.tiers),
-                reach: match suite_select::reach::Reach::load(&repo.path) {
+            let opts = diff_select_options(
+                &s.tiers,
+                match suite_select::reach::Reach::load(&repo.path) {
                     Ok(r) => r,
                     Err(r) => {
                         stderr(&format!("batch: suite selection refused: {r}"));
                         return Finish::fault(2, "select-refused", 0);
                     }
                 },
-            };
+            );
             let corpus = match suite_select::corpus::Corpus::load(&suite_dir) {
                 Ok(c) => c,
                 Err(r) => {
@@ -3143,6 +3141,18 @@ fn refuse_repeat(
         ];
         let title = format!("repeat attempt: no change — {br}");
         let _ = helper(&incident, &["alarm", &title, "-"], &env, Some(&body));
+    }
+}
+
+/// The selector options of a diff-derived run: the tier filter narrows only the always-run
+/// suites, never a suite the diff selected by `# covers:`.
+fn diff_select_options(tiers: &str, reach: Option<suite_select::reach::Reach>) -> suite_select::select::Options {
+    suite_select::select::Options {
+        no_all_fallback: true,
+        no_nocov: false,
+        tiers: suite_select::select::parse_tiers(tiers),
+        covers_outrank_tiers: true,
+        reach,
     }
 }
 
