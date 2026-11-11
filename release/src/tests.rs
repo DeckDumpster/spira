@@ -2,6 +2,7 @@
 //! unit fails to come up, the hotfix supersede rule, and prune. Nothing here touches the
 //! host's systemd or runs cargo: `FakeGit`, `FakeCargo` and `FakeSystemctl` stand in.
 
+use crate::activate;
 use crate::artifacts;
 use crate::config::{Config, Env, Flags, Registered};
 use crate::config_delta;
@@ -184,6 +185,9 @@ struct FakeSystemctl {
     /// Run at every daemon-reload — after `current` flips, before dropped keys are removed.
     probe: Option<Box<dyn Fn() -> String>>,
     probes: RefCell<Vec<String>>,
+    /// Run at every restart, before it takes effect.
+    on_restart: Option<Box<dyn Fn() -> String>>,
+    at_restart: RefCell<Vec<String>>,
     /// Units that go inactive once `state` has been asked about them this many more times.
     exits_after: RefCell<BTreeMap<String, usize>>,
 }
@@ -210,6 +214,8 @@ impl FakeSystemctl {
             disable_fails: BTreeSet::new(),
             probe: None,
             probes: RefCell::new(vec![]),
+            on_restart: None,
+            at_restart: RefCell::new(vec![]),
             exits_after: RefCell::new(BTreeMap::new()),
         }
     }
@@ -260,6 +266,9 @@ impl Systemctl for FakeSystemctl {
             return Err(format!("{unit}: RefuseManualStop=yes denies a restart job"));
         }
         self.restarts.borrow_mut().push(unit.into());
+        if let Some(p) = &self.on_restart {
+            self.at_restart.borrow_mut().push(p());
+        }
         if self.restart_fails.contains(unit) {
             return Err(format!("{unit}: simulated restart failure"));
         }
@@ -904,4 +913,56 @@ fn the_cockpit_collector_is_restarted_by_activation_and_the_unit_run_watcher_res
     assert_eq!(units::never_restart(&shipped_unit("spira-cockpit.service")), None, "a stale collector freezes the panel it feeds");
     assert!(units::restart_when_idle(&shipped_unit("spira-unit-run-dbus.service")).is_some());
     assert_eq!(units::never_restart(&shipped_unit("spira-unit-run-dbus.service")), None);
+}
+
+const OLD_UNIT: &str = "[Service]\nType=simple\nExecStart=/bin/true old\n";
+const NEW_UNIT: &str = "[Service]\nType=simple\nExecStart=/bin/true new\n";
+
+/// A release `A` whose only template differs from the installed unit, so activating it restarts
+/// that unit. Returns the world with `current` unset.
+fn world_activating_a_changed_unit() -> World {
+    let w = World::with_git(FakeGit::default());
+    let rel = w.cfg.releases.join(A);
+    file(&rel.join("systemd/spira-tool.service"), NEW_UNIT);
+    let entries = Manifest::scan(&rel).unwrap();
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    file(&w.cfg.unit_dir.join("spira-tool-prod.service"), OLD_UNIT);
+    w
+}
+
+fn activate_with(w: &World, sc: &FakeSystemctl) -> Result<activate::Switched, String> {
+    let ctx = activate::Ctx { cfg: &w.cfg, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10) };
+    activate::activate(&ctx, A, None)
+}
+
+#[test]
+fn the_activation_is_recorded_before_the_first_restart_so_a_restart_that_kills_the_activator_loses_nothing() {
+    let w = world_activating_a_changed_unit();
+    let state = w.cfg.state_dir().unwrap();
+    let seen = {
+        let state = state.clone();
+        move || {
+            let machine = crate::machine::load(&state, A).unwrap().and_then(|r| r.state()).map(|s| s.as_str().to_string());
+            format!("{machine:?} {}", fs::read_to_string(state.join("history")).unwrap_or_default().trim())
+        }
+    };
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.on_restart = Some(Box::new(seen));
+    activate_with(&w, &sc).unwrap();
+    assert_eq!(*sc.restarts.borrow(), vec!["spira-tool-prod.service".to_string()]);
+    assert_eq!(*sc.at_restart.borrow(), vec![format!("Some(\"activated\") {A} landed")]);
+}
+
+#[test]
+fn an_activation_whose_restart_fails_is_undone_in_the_record_as_in_the_link() {
+    let w = world_activating_a_changed_unit();
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_fails.insert("spira-tool-prod.service".into());
+    let e = activate_with(&w, &sc).unwrap_err();
+    assert!(e.contains("rolled back"), "{e}");
+    let state = w.cfg.state_dir().unwrap();
+    let record = crate::machine::load(&state, A).unwrap().unwrap();
+    assert_eq!(record.state().map(|s| s.as_str()), Some("rolled_back"));
+    assert!(!fs::read_to_string(state.join("history")).unwrap_or_default().contains(A));
 }

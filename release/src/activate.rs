@@ -5,6 +5,7 @@ use crate::config::Config;
 use crate::config_delta::{self, Txn};
 use crate::fsutil;
 use crate::git::Git;
+use crate::machine::{self, ReleaseState};
 use crate::systemctl::Systemctl;
 use crate::units;
 use crate::verify;
@@ -221,7 +222,7 @@ fn is_up(active: &str) -> bool {
 /// Switch the running system onto release `sha`: render and install units, swap
 /// `current`, daemon-reload, restart what changed, check it came up, and undo all of it
 /// when something did not.
-pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, String> {
+pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn() -> Result<(), String>) -> Result<Switched, String> {
     let cfg = ctx.cfg;
     let rel = verify::release_dir(cfg, sha)?;
     let problems = verify::check_files(&rel, sha);
@@ -349,6 +350,10 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
             }
             out.deferred.push(unit.clone());
         }
+    }
+    if let Err(e) = live() {
+        let undo = undo(ctx, &changes, prev.as_deref(), &[]);
+        return Err(format!("cannot record the activation of {sha}: {e}; nothing was restarted; rolled back{undo}"));
     }
     let mut failed = Vec::new();
     let mut attempted = Vec::new();
@@ -515,11 +520,11 @@ fn undo(ctx: &Ctx, changes: &[Change], prev: Option<&str>, restarted: &[String])
 /// `spira-config` before anything changes, added keys written before the flip, dropped keys
 /// removed after it, and the config put back when the switch fails. `Ok` carries the undo
 /// record and any problem dropping keys hit after the flip (the switch itself stood).
-fn switch_with_config(ctx: &Ctx, sha: &str, txn: Option<&Txn>, install_new: bool) -> Result<(Switched, Option<String>), String> {
+fn switch_with_config(ctx: &Ctx, sha: &str, txn: Option<&Txn>, install_new: bool, live: &dyn Fn() -> Result<(), String>) -> Result<(Switched, Option<String>), String> {
     if let Some(t) = txn {
         t.apply_pre()?;
     }
-    let out = match switch(ctx, sha, install_new) {
+    let out = match switch(ctx, sha, install_new, live) {
         Ok(o) => o,
         Err(e) => {
             let undo = txn.map(Txn::restore).unwrap_or_default();
@@ -744,20 +749,39 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
     let rel = verify::release_dir(ctx.cfg, sha)?;
     let standing = read_hotfix(&state)?;
     let after = hotfix_rule(ctx, standing, sha, hotfix_reason)?;
-    let mut history = read_history(&state)?;
+    let history = read_history(&state)?;
     let delta = config_delta::complete_for(ctx.cfg, &rel, config_delta::load(&rel)?)?;
     let delta = delta.or_else(|| (!config_delta::load_retired(&state).is_empty() || config_delta::must_resolve(ctx.cfg, &rel)).then(config_delta::Delta::default));
     let txn = delta.as_ref().map(|d| config_delta::prepare(ctx.cfg, &rel, d, true)).transpose()?;
-    let (out, late) = switch_with_config(ctx, sha, txn.as_ref(), true)?;
+    let entry = HistEntry { sha: sha.to_string(), hotfix: hotfix_reason.map(one_line) };
+    let mut activated = history.clone();
+    if activated.last() != Some(&entry) {
+        activated.push(entry);
+    }
+    let recorded = std::cell::Cell::new(false);
+    let live = || {
+        write_history(&state, &activated)?;
+        machine::enter(&state, sha, ReleaseState::Activated, "current switched")?;
+        recorded.set(true);
+        Ok(())
+    };
+    let (out, late) = match switch_with_config(ctx, sha, txn.as_ref(), true, &live) {
+        Ok(done) => done,
+        Err(e) => {
+            let unrecorded = recorded
+                .get()
+                .then(|| write_history(&state, &history).and(machine::enter(&state, sha, ReleaseState::RolledBack, "activation failed and was undone")))
+                .and_then(Result::err);
+            return Err(match unrecorded {
+                Some(why) => format!("{e}\n  THE RECORD OF THE UNDONE ACTIVATION IS STILL THERE: {why}"),
+                None => e,
+            });
+        }
+    };
     if let Some(t) = &txn {
         config_delta::save_undo(&state, sha, &t.undo)?;
         config_delta::save_retired(&state, &t.deferred)?;
     }
-    let entry = HistEntry { sha: sha.to_string(), hotfix: hotfix_reason.map(one_line) };
-    if history.last() != Some(&entry) {
-        history.push(entry);
-    }
-    write_history(&state, &history)?;
     match after {
         HotfixAfter::Unchanged => {}
         HotfixAfter::Record(h) => {
@@ -802,7 +826,7 @@ pub fn rollback(ctx: &Ctx) -> Result<String, String> {
         }
         None => None,
     };
-    let (_, late) = switch_with_config(ctx, &prev.sha, txn.as_ref(), false)?;
+    let (_, late) = switch_with_config(ctx, &prev.sha, txn.as_ref(), false, &|| Ok(()))?;
     config_delta::clear_undo(&state, &top.sha);
     config_delta::save_retired(&state, &[])?;
     history.pop();

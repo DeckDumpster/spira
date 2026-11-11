@@ -554,6 +554,46 @@ fn a_landing_missing_from_the_release_in_effect_raises_the_stall_past_the_bound_
     );
 }
 
+/// [`stale_record_other_release_in_effect`] plus the record a round landing leaves for the
+/// release `current` names: published at 120, never marked activated.
+fn current_release_published_not_activated() -> (testkit::TempDir, testkit::TempDir) {
+    let (run, rel) = stale_record_other_release_in_effect();
+    let mut r = release::machine::Release::new(IN_EFFECT);
+    for (to, at) in [(release::machine::ReleaseState::Cut, 100), (release::machine::ReleaseState::Accepted, 110), (release::machine::ReleaseState::Published, 120)] {
+        r.record(to, "t", at).unwrap();
+    }
+    release::machine::save(&run.path().join("release"), &r).unwrap();
+    (run, rel)
+}
+
+fn stalls_with_current_published_only(at: u64, commit: &'static str, contained: bool, now: u64) -> Vec<String> {
+    let (run, rel) = current_release_published_not_activated();
+    let ancestor = |_: &str, _: &str| Ok(contained);
+    let snap = observe(run.path(), rel.path(), "spira", &dwell_with_a_landing(at, commit), &ancestor, 3_600);
+    assert!(snap.readable, "{}", snap.why);
+    spira_runtime::tasks::e::watch_transitions::stalls(&snap, now, &config()).into_iter().map(|s| s.key()).collect()
+}
+
+#[test]
+fn a_landing_before_the_current_release_was_published_is_no_stall_though_no_activation_was_recorded_for_it() {
+    let found = stalls_with_current_published_only(110, "", false, 110 + 30 * MIN);
+    assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
+}
+
+#[test]
+fn a_landing_the_current_release_contains_is_no_stall_when_only_its_publication_was_recorded() {
+    let found = stalls_with_current_published_only(130, LANDED, true, 130 + 30 * MIN);
+    assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
+}
+
+#[test]
+fn a_landing_after_the_current_release_was_published_and_not_in_it_stalls_past_the_bound() {
+    let found = stalls_with_current_published_only(130, "", false, 130 + 30 * MIN);
+    assert!(found.contains(&"LANDED→ACTIVATED spira".to_string()), "{found:?}");
+    let found = stalls_with_current_published_only(130, LANDED, false, 130 + 30 * MIN);
+    assert!(found.contains(&"LANDED→ACTIVATED spira".to_string()), "{found:?}");
+}
+
 #[test]
 fn a_landing_that_recorded_no_commit_is_judged_by_time_against_the_recorded_activation() {
     let after = stalls_for_landing(1_000, "", false, 1_000 + 16 * MIN);
