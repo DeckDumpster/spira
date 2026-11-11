@@ -935,8 +935,36 @@ fn world_activating_a_changed_unit() -> World {
     w
 }
 
+/// The new release's `spira-lc`: one READY bead, and a content read that is refused when
+/// `refuses` names it (the argv's words, joined).
+struct FakeReads {
+    refuses: Option<&'static str>,
+    asked: RefCell<Vec<String>>,
+}
+
+impl FakeReads {
+    fn serving() -> FakeReads {
+        FakeReads { refuses: None, asked: RefCell::new(vec![]) }
+    }
+}
+
+impl activate::Reads for FakeReads {
+    fn lc(&self, _rel: &Path, args: &[&str]) -> Result<String, String> {
+        let call = args.join(" ");
+        self.asked.borrow_mut().push(call.clone());
+        if self.refuses.is_some_and(|r| call.starts_with(r)) {
+            return Err(format!("{call} (exit status: 2): spira-lc content: cannot tell: the beads database spira does not have the layout the content reads query (missing events.issue_id, ...)"));
+        }
+        Ok(if call.starts_with("list") { r#"[{"bead_id":"sp-first"},{"bead_id":"sp-second"}]"#.into() } else { "[]".into() })
+    }
+}
+
 fn activate_with(w: &World, sc: &FakeSystemctl) -> Result<activate::Switched, String> {
-    let ctx = activate::Ctx { cfg: &w.cfg, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10) };
+    activate_reading(w, sc, &FakeReads::serving())
+}
+
+fn activate_reading(w: &World, sc: &FakeSystemctl, reads: &FakeReads) -> Result<activate::Switched, String> {
+    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10) };
     activate::activate(&ctx, A, None)
 }
 
@@ -1030,4 +1058,35 @@ fn an_activation_that_changes_the_cache_backends_unit_restarts_it_and_stops_the_
     activate_with(&w, &sc).unwrap();
     assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
     assert_eq!(*sc.cache_server_stops.borrow(), 1);
+}
+
+#[test]
+fn an_activation_reads_the_lifecycle_and_the_first_beads_content_through_the_new_release() {
+    let w = world_activating_a_changed_unit();
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    let reads = FakeReads::serving();
+    activate_reading(&w, &sc, &reads).unwrap();
+    assert_eq!(*reads.asked.borrow(), vec!["list --state READY".to_string(), "content show sp-first".to_string()]);
+}
+
+#[test]
+fn a_release_whose_content_read_is_refused_is_rolled_back_and_the_error_names_the_read() {
+    let w = world_activating_a_changed_unit();
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    let reads = FakeReads { refuses: Some("content show"), asked: RefCell::new(vec![]) };
+    let e = activate_reading(&w, &sc, &reads).unwrap_err();
+    assert!(e.contains("content read refused") && e.contains("missing events.issue_id") && e.contains("rolled back"), "{e}");
+    let state = w.cfg.state_dir().unwrap();
+    assert_eq!(crate::machine::load(&state, A).unwrap().unwrap().state().map(|s| s.as_str()), Some("rolled_back"));
+    assert_eq!(fs::read_to_string(w.cfg.unit_dir.join("spira-tool-prod.service")).unwrap(), OLD_UNIT, "the unit file is put back");
+    assert!(!w.cfg.releases.join("current").exists(), "current is put back");
+}
+
+#[test]
+fn a_release_whose_lifecycle_read_is_refused_is_rolled_back() {
+    let w = world_activating_a_changed_unit();
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    let reads = FakeReads { refuses: Some("list"), asked: RefCell::new(vec![]) };
+    let e = activate_reading(&w, &sc, &reads).unwrap_err();
+    assert!(e.contains("lifecycle read refused") && e.contains("rolled back"), "{e}");
 }

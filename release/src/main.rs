@@ -524,7 +524,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         }
         "activate" | "rollback" => {
             let sc = RealSystemctl::from_env();
-            let ctx = Ctx { cfg: &cfg, sc: &sc, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain };
+            let ctx = Ctx { cfg: &cfg, reads: &activate::RealReads(&cfg), sc: &sc, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain };
             if cmd == "activate" {
                 want(1)?;
                 if activate::current(&cfg).as_deref() != Some(rest[0].as_str()) {

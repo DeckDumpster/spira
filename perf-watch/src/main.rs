@@ -103,6 +103,10 @@ impl Runner for Spawn {
         if self.scoped && status.code() == Some(127) {
             return Err(format!("{}: not found", argv[0]));
         }
+        if !status.success() {
+            let said = format!("{err} {out}");
+            return Err(format!("{}: {status}: {}", argv[0], said.split_whitespace().take(40).collect::<Vec<_>>().join(" ")));
+        }
         Ok(out)
     }
 }
