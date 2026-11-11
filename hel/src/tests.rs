@@ -50,6 +50,7 @@ struct Fake {
     destroy_fails: bool,
     out: RefCell<Vec<String>>,
     calls: RefCell<Vec<String>>,
+    prefetched: RefCell<Vec<String>>,
 }
 
 impl Fake {
@@ -62,8 +63,10 @@ impl Fake {
 }
 
 impl World for Fake {
-    fn prefetch(&self) {
+    fn prefetch(&self, ids: &[String]) -> Result<(), String> {
         self.call("prefetch".into());
+        self.prefetched.borrow_mut().extend(ids.iter().cloned());
+        Ok(())
     }
     fn base(&self, _root: &Path) -> Option<Base> {
         self.base.clone()
