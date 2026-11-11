@@ -756,6 +756,23 @@ fn the_requeue_orphans_command_leaves_the_round_it_is_told_is_live() {
 }
 
 #[test]
+fn the_requeue_orphans_command_abandons_a_round_with_no_driver_after_two_minutes_by_default() {
+    let r = Rig::new();
+    open_round(&r);
+    let at = |now: i64| {
+        let args: Vec<String> = ["requeue-orphans", "--actor", "test"].iter().map(|s| s.to_string()).collect();
+        let req = r.req();
+        state::run(&r.s, &args, &Call { now, request: &req.id })
+    };
+    let (rc, early) = at(AT + 60);
+    assert_eq!(rc, 0, "{early}");
+    assert!(!early.contains(r#""b-1""#), "a minute is not yet a stall: {early}");
+    let (rc, late) = at(AT + 180);
+    assert_eq!(rc, 0, "{late}");
+    assert!(late.contains(r#""repos":{"b-1":"spira"}"#), "{late}");
+}
+
+#[test]
 fn requeue_orphans_leaves_a_leased_round_that_never_began_open_and_lists_it_leased() {
     let r = Rig::new();
     open_round(&r);
