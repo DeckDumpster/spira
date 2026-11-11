@@ -383,5 +383,12 @@ fn the_last_landing_is_when_the_round_landed_not_when_it_was_cut() {
     let rows = [serde_json::json!({ "repo": "a", "state": "LANDED", "last_at": cut + 2_400 }), serde_json::json!({ "repo": "a", "state": "ABANDONED", "last_at": cut + 9_000 })];
     stamp_landings(&mut landings, &rows);
     assert_eq!(landings[0].last_landing, cut + 2_400);
+    let now_ms = (cut + 2_400 + 7_000) * 1000;
+    let cfg = Config { stall_s: 3_600, abandon_count: 3, abandon_window_s: 7_200, ratio_min_pct: 10, ratio_min_runs: 10, passed_grace_s: 3_600 };
+    let snap = Snapshot { readable: true, landings: vec![RepoLanding { waiting: 2, ..landings[0].clone() }], ..Default::default() };
+    let v = decide(&Carry::default(), &snap, now_ms, &cfg);
+    let filed: Filing = serde_json::from_str(&v.acts.iter().find(|a| a.name == FILE).expect("a stall is filed").input).unwrap();
+    assert!(filed.line.contains("(7000s ago)"), "{}", filed.line);
+    assert_eq!(filed.reference(), format!("incident:throughput-stall:a:{}", cut + 2_400));
     assert_eq!(landings[1].last_landing, 500, "a repo with no landed round keeps the ref's time");
 }
