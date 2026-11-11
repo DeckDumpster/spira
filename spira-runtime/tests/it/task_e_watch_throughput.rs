@@ -374,3 +374,14 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed_and_said, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
 }
+
+#[test]
+fn the_last_landing_is_when_the_round_landed_not_when_it_was_cut() {
+    use spira_runtime::world::stamp_landings;
+    let cut = 1_000_000u64;
+    let mut landings = vec![RepoLanding { repo: "a".into(), last_landing: cut, ..Default::default() }, RepoLanding { repo: "b".into(), last_landing: 500, ..Default::default() }];
+    let rows = [serde_json::json!({ "repo": "a", "state": "LANDED", "last_at": cut + 2_400 }), serde_json::json!({ "repo": "a", "state": "ABANDONED", "last_at": cut + 9_000 })];
+    stamp_landings(&mut landings, &rows);
+    assert_eq!(landings[0].last_landing, cut + 2_400);
+    assert_eq!(landings[1].last_landing, 500, "a repo with no landed round keeps the ref's time");
+}
