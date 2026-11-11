@@ -383,6 +383,12 @@ mod tests {
     }
 
     #[test]
+    fn a_program_that_cannot_execute_reads_126() {
+        let out = bounded("/etc/hostname").output().unwrap();
+        assert_eq!(out.status.code(), Some(126));
+    }
+
+    #[test]
     fn a_blocked_stdin_write_is_released_by_the_deadline() {
         let mut child = bounded_for("sleep", "0.05").arg("5").stdin(Stdio::piped()).spawn().unwrap();
         let mut stdin = child.stdin.take().unwrap();
@@ -399,6 +405,7 @@ mod tests {
         assert_eq!(parse_deadline("1h"), Ok(Some(secs(3600))));
         assert_eq!(parse_deadline("0"), Ok(None));
         assert_eq!(bounded_for("true", "x").status().unwrap().code(), Some(125));
+        assert_eq!(bounded_for("true", "x").output().unwrap().status.code(), Some(125));
         assert_eq!(bounded_for("true", "x").spawn().err().unwrap().kind(), io::ErrorKind::InvalidInput);
     }
 }
