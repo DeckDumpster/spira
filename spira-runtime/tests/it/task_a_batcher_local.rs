@@ -923,6 +923,7 @@ fn an_assemble_that_succeeds_after_failures_clears_the_failure_and_its_skip_why(
 fn an_assemble_lost_at_restart_is_requested_again_on_the_next_tick() {
     let (carry, _) = failed_assemble(&Carry::default(), "lost at restart");
     let (carry, acts) = decide(&carry, &busy());
+    assert_eq!(carry.repos["spira"].skip_why, None, "a lost assemble is not a failure to report");
     assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE], "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Assembling);
 }
