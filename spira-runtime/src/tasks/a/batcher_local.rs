@@ -269,6 +269,10 @@ pub struct Repo {
     /// The keys of the leg units the unit manager lists as running; `None` when it could not say.
     #[serde(default)]
     pub live_legs: Option<Vec<String>>,
+    /// The effects of this task asked for this repo and not yet answered, as the scheduler holds
+    /// them; `None` when the handler could not say.
+    #[serde(default)]
+    pub in_flight: Option<Vec<String>>,
     /// The carried batches the lifecycle reports LANDED or ABANDONED.
     #[serde(default)]
     pub settled: Vec<String>,
@@ -1058,7 +1062,7 @@ impl Machine<'_> {
             self.rc.reconciled = batch;
             return;
         }
-        if self.voided(repo) || self.outcome_lost() {
+        if self.voided(repo) || self.outcome_lost() || self.assemble_unsent(repo) {
             self.forget_round();
             return;
         }
@@ -1066,13 +1070,30 @@ impl Machine<'_> {
         match self.rc.state {
             State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > leg_deadline_ms(policy, self.rc.state == State::Attributing, self.rc.members.len()) => self.leg_ended(Exit::Unknown),
             State::Corpus | State::Attributing | State::Certifying => self.watch_leg(repo),
-            State::Opened if self.rc.batch.is_none() => self.adopt_opened(repo),
+            State::Opened if self.rc.batch.is_none() => {
+                self.adopt_opened(repo);
+                if self.rc.batch.is_none() && self.unsent(repo, ROUND_OPEN) {
+                    let why = if self.rc.suites.unwrap_or(true) { "suites" } else { "" };
+                    let key = core::round_key(&self.rc.members);
+                    self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), why: why.into(), ..self.leg() }.act(ROUND_OPEN));
+                }
+            }
             State::Certified if !self.below => {
                 self.go(Trigger::LowerEnded);
                 self.land_now();
             }
             _ => {}
         }
+    }
+
+    /// The state waits on `effect`'s outcome and the scheduler holds none in flight for the repo:
+    /// the request died with a restart, and no outcome will come.
+    fn unsent(&self, repo: &Repo, effect: &str) -> bool {
+        repo.in_flight.as_ref().is_some_and(|f| !f.iter().any(|e| e == effect))
+    }
+
+    fn assemble_unsent(&self, repo: &Repo) -> bool {
+        self.rc.state == State::Assembling && self.unsent(repo, ASSEMBLE)
     }
 
     fn awaits_outcome(&self) -> bool {
@@ -1449,6 +1470,7 @@ impl Machine<'_> {
     /// The outcome of one of this task's own effects.
     fn outcome(&mut self, effect: &str, ok: bool, body: &str, leg: &Leg) {
         match (self.rc.state, effect) {
+            (State::Assembling, ASSEMBLE) if !ok && body == runtime::engine::LOST_AT_RESTART => self.forget_round(),
             (State::Assembling, ASSEMBLE) if !ok => {
                 self.assemble_failed(body.trim());
                 self.go(Trigger::AssembledEmpty);
@@ -1458,6 +1480,7 @@ impl Machine<'_> {
                 let a: Assembled = serde_json::from_str(body).unwrap_or_default();
                 self.assembled(a, leg);
             }
+            (State::Opened, ROUND_OPEN) if !ok && body == runtime::engine::LOST_AT_RESTART => {}
             (State::Opened, ROUND_OPEN) => {
                 let o: Opened = if ok { serde_json::from_str(body).unwrap_or_default() } else { Opened::default() };
                 if o.batch.is_empty() && !o.refused.is_empty() {
@@ -1670,7 +1693,7 @@ fn decide_repo(policy: &Policy, name: &str, rc: &RepoCarry, repo: &Repo, now_ms:
     let (mut shared, mut live, mut acts, mut ended) = (rc.clone(), Vec::<RepoCarry>::new(), vec![], false);
     for round in rc.rounds() {
         let mut m = Machine { repo: name, rc: shared.holding(&round), acts: vec![], now_ms, below: !live.is_empty() };
-        let voided = m.voided(repo) || m.outcome_lost() || m.settled(repo);
+        let voided = m.voided(repo) || m.outcome_lost() || m.settled(repo) || m.assemble_unsent(repo);
         m.observe(policy, repo);
         acts.extend(m.acts);
         if m.rc.live() {
@@ -1890,7 +1913,8 @@ impl Handler for BatcherLocal {
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         let observed = |carry: &Carry, body: &str| {
-            serde_json::from_str::<Snapshot>(body).ok().map(|snap| {
+            serde_json::from_str::<Snapshot>(body).ok().map(|mut snap| {
+                in_flight(view, &ev.stream, &mut snap);
                 let (next, acts) = decide_with(&self.policy, carry, &snap);
                 // law-a-failure-carries-its-own-explanation: a pass that cuts nothing while
                 // members wait says why, once each time the reason changes.
@@ -1908,6 +1932,23 @@ impl Handler for BatcherLocal {
         let ran = |carry: &Carry, r: &UnitRan| on_ran_with(carry, r, &out, ev.at);
         let legs = |carry: &Carry| carry.repos.values().flat_map(|rc| rc.rounds()).filter(|r| matches!(r.state, State::Corpus | State::Attributing | State::Certifying)).filter_map(|r| r.leg).collect();
         handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran, legs })
+    }
+}
+
+/// Each repo of `snap` given the effects of this task the stream has asked for and not had answered.
+fn in_flight(view: &Projection, stream: &runtime::event::StreamKey, snap: &mut Snapshot) {
+    let events = view.events(stream);
+    let answered: std::collections::BTreeSet<&runtime::event::EventId> = events.iter().filter(|e| [EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT].contains(&e.kind.tag.as_str())).filter_map(|e| e.cause.as_ref()).collect();
+    let mut flying: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for req in events.iter().filter(|e| e.kind.tag == EFFECT_REQUESTED && !answered.contains(&e.id)) {
+        let Ok(body) = serde_json::from_str::<serde_json::Value>(&req.kind.body) else { continue };
+        let (Some(name), Some(input)) = (body["spec"]["name"].as_str(), body["spec"]["input"].as_str()) else { continue };
+        if let Ok(leg) = serde_json::from_str::<Leg>(input) {
+            flying.entry(leg.repo).or_default().push(name.to_string());
+        }
+    }
+    for (name, repo) in &mut snap.repos {
+        repo.in_flight = Some(flying.remove(name).unwrap_or_default());
     }
 }
 

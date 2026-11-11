@@ -918,3 +918,106 @@ fn an_assemble_that_succeeds_after_failures_clears_the_failure_and_its_skip_why(
     assert_eq!(carry.repos["spira"].assemble_failed, None);
     assert_eq!(carry.repos["spira"].skip_why, None);
 }
+
+#[test]
+fn an_assemble_lost_at_restart_is_requested_again_on_the_next_tick() {
+    let (carry, _) = failed_assemble(&Carry::default(), "lost at restart");
+    let (carry, acts) = decide(&carry, &busy());
+    assert_eq!(carry.repos["spira"].skip_why, None, "a lost assemble is not a failure to report");
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE], "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Assembling);
+}
+
+#[test]
+fn a_lost_assemble_is_not_counted_as_an_assemble_failure() {
+    let (carry, acts) = failed_assemble(&Carry::default(), "lost at restart");
+    assert!(carry.repos.get("spira").is_none_or(|rc| rc.skip_why.is_none() && rc.assemble_failed.is_none() && rc.state == State::Idle), "{carry:?}");
+    assert!(acts.is_empty(), "{acts:?}");
+}
+
+#[test]
+fn a_restart_with_assembling_carried_and_no_assemble_in_flight_requests_it_on_the_next_tick() {
+    let (carry, _) = decide(&Carry::default(), &busy());
+    let mut quiet = busy();
+    quiet.now_ms = NOW + CADENCE_MS;
+    quiet.repos.get_mut("spira").unwrap().in_flight = Some(vec![]);
+    let (carry, acts) = decide(&carry, &quiet);
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE], "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Assembling);
+}
+
+#[test]
+fn an_assemble_in_flight_is_left_alone() {
+    let (carry, _) = decide(&Carry::default(), &busy());
+    let mut flying = busy();
+    flying.now_ms = NOW + CADENCE_MS;
+    flying.repos.get_mut("spira").unwrap().in_flight = Some(vec![ASSEMBLE.into()]);
+    let (_, acts) = decide(&carry, &flying);
+    assert!(acts.is_empty(), "{acts:?}");
+}
+
+/// A scheduler restart while the assemble is open ends it lost; a round is cut within a minute.
+#[test]
+fn a_round_is_cut_within_a_minute_of_a_restart_that_interrupted_the_assemble() {
+    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .hanging(ASSEMBLE)
+        .double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()))
+        .double(ASSEMBLE, move |_| Ok(serde_json::to_string(&assembled).unwrap()))
+        .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, ROUND_OPEN].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 3).unwrap();
+    let asked = |r: &TaskRig, name: &str| r.requested().iter().filter(|q| q.name == name).count();
+    assert_eq!((asked(&r, ASSEMBLE), asked(&r, ROUND_OPEN)), (1, 0), "an open assemble is waited for, not asked again");
+    r.reopen(registration()).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(60_000).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    assert_eq!((asked(&r, ASSEMBLE), asked(&r, ROUND_OPEN)), (2, 1), "{:?}", r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>());
+}
+
+/// The engine's own lost-at-restart outcome for an open round open is asked for again.
+#[test]
+fn a_round_open_interrupted_by_a_restart_is_asked_again() {
+    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .hanging(ROUND_OPEN)
+        .double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()))
+        .double(ASSEMBLE, move |_| Ok(serde_json::to_string(&assembled).unwrap()))
+        .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, ROUND_OPEN].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let opens = |r: &TaskRig| r.requested().iter().filter(|q| q.name == ROUND_OPEN).map(|q| (q.key.clone(), q.input.clone())).collect::<Vec<_>>();
+    assert_eq!(opens(&r).len(), 1, "an open round open is waited for, not asked again: {:?}", opens(&r));
+    r.reopen(registration()).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(60_000).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let asked = opens(&r);
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    assert!(asked[1].1.contains("spira"), "the repeat names the repo: {asked:?}");
+}
+
+/// A round open that ends lost is neither a failed open nor a reason to wait out the outcome timer.
+#[test]
+fn a_round_open_lost_at_restart_is_asked_again() {
+    let mut carry = Carry::default();
+    carry.repos.insert("spira".into(), RepoCarry { state: State::Opened, round_key: Some("k".into()), members: vec![("sp-a".into(), "t1".into())], wt: "/w".into(), base: "b1".into(), suites: Some(true), ..RepoCarry::default() });
+    let mut world = Snapshot { now_ms: NOW, ..idle() };
+    world.repos.get_mut("spira").unwrap().in_flight = Some(vec![]);
+    let (carry, acts) = decide(&carry, &world);
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [ROUND_OPEN], "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Opened);
+    let leg = Leg { repo: "spira".into(), ..Leg::default() };
+    let (carry, acts) = on_outcome(&carry, ROUND_OPEN, false, "lost at restart", &leg, NOW);
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Opened, "not an open failure");
+}
