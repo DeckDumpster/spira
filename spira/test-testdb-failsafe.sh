@@ -35,6 +35,8 @@ testdb_require testdb-failsafe
 # SPIRA_TESTDB_MODE too: this suite exercises the embedded shared-fixture branch, and testenv
 # sends every other suite to a server fixture (DESIGN-testdb.md §2.4).
 unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_MODE TESTDB_BIN SPIRA_TESTDB_MODE 2>/dev/null || true
+# The embedded branch is asked for by name now that server is the default (sp-7tz6jb).
+export SPIRA_TESTDB_MODE=embedded
 testdb_up testdb-failsafe || { printf 'SKIP testdb-failsafe: could not build stand-in fixture\n' >&2; exit 77; }
 PROD_DB="$SPIRA_DB"
 PROD_BD="$SPIRA_BD"

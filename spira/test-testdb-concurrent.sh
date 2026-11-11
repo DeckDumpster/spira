@@ -15,6 +15,8 @@ testdb_require testdb-concurrent
 # sends every other suite to a server fixture (DESIGN-testdb.md §2.4).
 unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_MODE \
       TESTDB_BIN TESTDB_PRIVATE_DIR SPIRA_TESTDB_MODE 2>/dev/null || true
+# The embedded branch is asked for by name now that server is the default (sp-7tz6jb).
+export SPIRA_TESTDB_MODE=embedded
 testdb_up concurrent || { printf 'SKIP testdb-concurrent: could not build fixture\n' >&2; exit 77; }
 OWNER_DIR="$TESTDB_DIR"
 OWNER_BL="$TESTDB_BASELINE"
