@@ -2,7 +2,7 @@
 # dwarf-mail-deliver.sh — PostToolUse hook: deliver queued dwarf mail as additionalContext.
 #
 # After each tool call, moves new messages from the dwarf's Maildir inbox to cur/ and
-# returns them as additionalContext. Cheap when empty (one readdir). The mailbox path
+# returns them as additionalContext under hookSpecificOutput (a bare top-level key is ignored). Cheap when empty (one readdir). The mailbox path
 # and bead id come from the environment the dwarf session inherits from dwarf.sh.
 set -uo pipefail
 
@@ -27,4 +27,4 @@ for f in "$NEW"/*; do
 done
 
 [ -n "$out" ] || exit 0
-python3 -c 'import json,sys; print(json.dumps({"additionalContext": sys.argv[1]}))' "$out"
+python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": sys.argv[1]}}))' "$out"

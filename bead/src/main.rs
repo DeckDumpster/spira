@@ -1251,7 +1251,9 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     // "nothing to notify".
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
     let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
-    notify_live_dwarf(&id, &changed, &run, &mail);
+    if let Some(line) = notify_live_dwarf(&id, &changed, &run, &mail).report(&id) {
+        println!("bead: amend: {line}");
+    }
     rc
 }
 

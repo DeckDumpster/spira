@@ -100,4 +100,4 @@ print("\n\n---\n\n".join(new_parts))
 ' 2>/dev/null)"
 
 [ -n "$out" ] || exit 0
-python3 -c 'import json,sys; print(json.dumps({"additionalContext": sys.argv[1]}))' "$out"
+python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": sys.argv[1]}}))' "$out"

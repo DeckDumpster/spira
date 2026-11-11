@@ -60,6 +60,8 @@ printf 'From: Operator <op@spira>\nSubject: Scope change\nDate: Mon, 1 Jan 2024 
 hook_out="$(SPIRA_MAIL="$SPIRA_MAIL" BEAD_ID="$BID" bash "$HOOK" </dev/null 2>&1)"; rc=$?
 is  "SEEN RED (a): hook exits 0 with a message" 0 "$rc"
 want  "SEEN RED (a): output contains additionalContext"  "additionalContext"  "$hook_out"
+is    "SEEN RED (a): additionalContext is nested under hookSpecificOutput for PostToolUse" "PostToolUse" \
+      "$(printf '%s' "$hook_out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["hookEventName"])' 2>&1)"
 want  "SEEN RED (a): output contains the message body"   "New requirement"    "$hook_out"
 want  "SEEN RED (a): output contains the sender"         "Operator"           "$hook_out"
 
