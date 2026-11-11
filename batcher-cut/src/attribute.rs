@@ -24,6 +24,8 @@ pub enum Attribution {
     Emptied(String),
     /// The harness failed (no VM, a dead container): the round was not judged, red or green.
     Fault(String),
+    /// The attribution's own reruns faulted: the round is not judged and is left open.
+    Faulted(String),
 }
 
 impl Attribution {
@@ -40,6 +42,7 @@ impl Attribution {
             Attribution::Blocked(why) => json!({ "end": "blocked", "why": why }),
             Attribution::Emptied(why) => json!({ "end": "emptied", "why": why }),
             Attribution::Fault(why) => json!({ "end": "fault", "why": why }),
+            Attribution::Faulted(why) => json!({ "end": "faulted", "why": why }),
         };
         format!("{PREFIX}{body}")
     }
@@ -72,6 +75,7 @@ impl Attribution {
             "blocked" => Some(Attribution::Blocked(body.get("why")?.as_str()?.to_string())),
             "emptied" => Some(Attribution::Emptied(body.get("why")?.as_str()?.to_string())),
             "fault" => Some(Attribution::Fault(body.get("why")?.as_str()?.to_string())),
+            "faulted" => Some(Attribution::Faulted(body.get("why")?.as_str()?.to_string())),
             _ => None,
         }
     }
@@ -111,6 +115,12 @@ mod tests {
     fn sp_56d3l3_an_emptied_outcome_reads_back_as_emptied_not_blocked() {
         let emptied = Attribution::Emptied("unit-tests red ejected every member".into());
         assert_eq!(Attribution::parse(&emptied.line()), Some(emptied));
+    }
+
+    #[test]
+    fn a_faulted_outcome_reads_back_as_faulted_not_blocked_or_fault() {
+        let faulted = Attribution::Faulted("attribution faulted: its reruns of test-x.sh could not run".into());
+        assert_eq!(Attribution::parse(&faulted.line()), Some(faulted));
     }
 
     #[test]

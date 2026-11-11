@@ -85,7 +85,7 @@ pub fn tick(s: &mut Shipping, was_red: bool, metrics: &MetricsSink, clock: &dyn 
     };
     let age = oldest.unwrap_or(0) as f64 / 1_000.0;
     metrics.push(&[Point::Gauge { name: GAUGE, value: age }], &[]);
-    let (red, line) = ship::alarm(was_red, oldest, s.max_age_ms);
+    let (red, line) = ship::alarm(was_red, oldest, s.max_age_ms, s.shipper.newest_shipped_snapshot_age_ms());
     if let Some(line) = line {
         let stamped = format!("{} lc-ship: {line}\n", clock.now_ms() / 1_000);
         let wrote = std::fs::OpenOptions::new()

@@ -493,4 +493,14 @@ at=100
             }
         );
     }
+
+    #[test]
+    fn an_attribution_rerun_of_a_red_key_is_allowed_every_time_and_refused_without_its_reason() {
+        let f = VerdictFile::parse("verdict=red\nwhen=w\nat=100\nred_suites=test-a.sh\n");
+        for job in ["v0j3", "v0j5", "v0j9"] {
+            let reason = format!("attribution re-run {job} of the round's red");
+            assert_eq!(decide(Some(&f), 150, 86400, Some(&reason), true), CacheDecision::RepeatAllowed { reason });
+        }
+        assert!(matches!(decide(Some(&f), 150, 86400, None, false), CacheDecision::RepeatRefused { .. }));
+    }
 }

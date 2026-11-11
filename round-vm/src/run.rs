@@ -91,8 +91,9 @@ pub trait Host: Sync {
     fn drop_round_ref(&self, round_ref: &str);
     /// The testenv image tag `commit` of `tree` needs, computed without a checkout.
     fn image_tag(&self, tree: &Path, commit: &str) -> Result<String, String>;
-    /// Fetches `branch` of `tree`'s repository into the mirror as `refs/heads/<as_ref>`.
-    fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<(), String>;
+    /// Fetches `branch` of `tree`'s repository into the mirror as `refs/heads/<as_ref>`; the
+    /// tree sha it points at.
+    fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<String, String>;
     /// Every suite file name committed in `tree`'s HEAD.
     fn suites_in(&self, tree: &Path) -> Result<Vec<String>, String>;
     /// Recorded median wall seconds per suite (`testenv --report`).
@@ -1655,9 +1656,10 @@ impl Host for GitHost {
         let _ = git(&["--git-dir", &m, "update-ref", "-d", round_ref]);
     }
 
-    fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<(), String> {
+    fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<String, String> {
         let m = self.state_dir.join("mirror.git").to_string_lossy().to_string();
-        git(&["--git-dir", &m, "fetch", "--quiet", &tree.to_string_lossy(), &format!("+{branch}:refs/heads/{as_ref}")]).map(|_| ())
+        git(&["--git-dir", &m, "fetch", "--quiet", &tree.to_string_lossy(), &format!("+{branch}:refs/heads/{as_ref}")])?;
+        git(&["--git-dir", &m, "rev-parse", &format!("refs/heads/{as_ref}^{{tree}}")])
     }
 }
 
@@ -2621,6 +2623,7 @@ fn on_vm_run(
     let pid = std::process::id();
     let in_flight = AtomicUsize::new(0);
     let mirror_lock = Mutex::new(());
+    let tree_queue = crate::spool::TreeQueue::default();
     let attr_time = crate::spool::AttrTime::default();
     let code = std::thread::scope(|sc| {
         let mut server = Server {
@@ -2636,6 +2639,7 @@ fn on_vm_run(
             taken: BTreeSet::new(),
             in_flight: &in_flight,
             mirror_lock: &mirror_lock,
+            tree_queue: &tree_queue,
             attr_time: &attr_time,
         };
         let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
@@ -4133,8 +4137,8 @@ mod tests {
         fn image_tag(&self, tree: &Path, rev: &str) -> Result<String, String> {
             if rev == "main" { Ok("tagA".into()) } else if tree.ends_with("tag-unreadable") { Err("no closure".into()) } else if tree.ends_with("newer-image") { Ok("tagB".into()) } else { Ok("tagA".into()) }
         }
-        fn mirror_ref(&self, _: &Path, branch: &str, _: &str) -> Result<(), String> {
-            if branch == "missing" { Err("no such branch".into()) } else { Ok(()) }
+        fn mirror_ref(&self, _: &Path, branch: &str, _: &str) -> Result<String, String> {
+            if branch == "missing" { Err("no such branch".into()) } else { Ok(branch.split('@').next().unwrap_or(branch).to_string()) }
         }
         fn suites_in(&self, _: &Path) -> Result<Vec<String>, String> {
             Ok(vec!["test-fast.sh".into(), "test-slow.sh".into()])
@@ -4191,6 +4195,8 @@ mod tests {
         ssh_log_text: Option<&'static str>,
         /// answers ssh, holds the batch, and never writes the round script's log
         never_starts: bool,
+        attr_live: std::sync::atomic::AtomicUsize,
+        attr_overlap: std::sync::atomic::AtomicBool,
     }
     impl FakeRemote {
         fn green() -> FakeRemote {
@@ -4222,6 +4228,8 @@ mod tests {
                 recorded_exit: None,
                 ssh_log_text: None,
                 never_starts: false,
+                attr_live: std::sync::atomic::AtomicUsize::new(0),
+                attr_overlap: std::sync::atomic::AtomicBool::new(false),
             }
         }
     }
@@ -4273,6 +4281,15 @@ mod tests {
             }
             let running = self.batch_running.load(std::sync::atomic::Ordering::SeqCst);
             self.attrs.lock().unwrap().push((job.job.clone(), running));
+            if self.attr_live.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
+                self.attr_overlap.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            let mut spins = 0;
+            while self.attr_live.load(std::sync::atomic::Ordering::SeqCst) < 2 && spins < 300_000 {
+                std::thread::yield_now();
+                spins += 1;
+            }
+            self.attr_live.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             Ok(if job.job == "j2" { 1 } else { 0 })
         }
         fn push(&self, _: &str, local: &Path, remote_path: &str) -> Result<(), String> {
@@ -4723,12 +4740,27 @@ mod tests {
         assert_eq!(fx.fp.count("clone"), 1);
     }
 
+    fn holds_open(path: &Path) -> bool {
+        let want = fs::canonicalize(path).unwrap();
+        fs::read_dir("/proc/self/fd").unwrap().flatten().any(|e| fs::read_link(e.path()).is_ok_and(|t| t == want))
+    }
+
     #[test]
     fn the_host_slot_is_free_again_once_a_host_round_ends() {
         let fx = fixture();
         let plan = host_plan(FakeRemote::green(), CALM);
         go_with_host(&fx, &FakeRemote::green(), &plan, &round_args(&fx));
-        assert!(crate::host::HostSlot::try_take(&fx.cfg.state_dir).unwrap().is_some());
+        assert!(!holds_open(&fx.cfg.state_dir.join(crate::host::SLOT_FILE)), "this process still holds the host slot after the round ended");
+    }
+
+    #[test]
+    fn a_held_host_slot_is_seen_as_held_by_this_process() {
+        let fx = fixture();
+        fs::create_dir_all(&fx.cfg.state_dir).unwrap();
+        let held = crate::host::HostSlot::try_take(&fx.cfg.state_dir).unwrap();
+        assert!(holds_open(&fx.cfg.state_dir.join(crate::host::SLOT_FILE)));
+        drop(held);
+        assert!(!holds_open(&fx.cfg.state_dir.join(crate::host::SLOT_FILE)));
     }
 
     #[test]
@@ -4830,5 +4862,59 @@ mod tests {
         assert!(out.join("test-c.sh.result").is_file());
     }
 
+    fn serve_all(jobs: &[(&str, &str)]) -> FakeRemote {
+        let d = TempDir::new();
+        let spool = Spool { dir: d.path().join("spool") };
+        fs::create_dir_all(spool.req_dir()).unwrap();
+        for (job, branch) in jobs {
+            fs::write(spool.req_dir().join(format!("{job}.req")), format!("branch={branch}\nsuites=test-a.sh\nbuild=artifacts\n")).unwrap();
+        }
+        fs::write(d.path().join("spool/close"), "").unwrap();
+        let remote = FakeRemote::green();
+        let (host, in_flight, lock, queue, time) = (FakeHost, std::sync::atomic::AtomicUsize::new(0), Mutex::new(()), crate::spool::TreeQueue::default(), crate::spool::AttrTime::default());
+        std::thread::scope(|sc| {
+            let mut server = Server {
+                spool,
+                host: &host,
+                remote: &remote,
+                tree_dir: d.path(),
+                addr: "a",
+                host_addr: "h",
+                mirror_port: 1,
+                toolchain: None,
+                scratch: d.path().join("scratch"),
+                taken: BTreeSet::new(),
+                in_flight: &in_flight,
+                mirror_lock: &lock,
+                tree_queue: &queue,
+                attr_time: &time,
+            };
+            crate::spool::linger(&mut server, sc, Duration::from_secs(10), Duration::from_millis(5));
+        });
+        remote
+    }
 
+    #[test]
+    fn attribution_jobs_for_one_tree_run_one_after_another() {
+        let remote = serve_all(&[("j1", "m1@c1"), ("j2", "m1@c2"), ("j3", "m1@c3")]);
+        assert_eq!(remote.attrs.lock().unwrap().len(), 3);
+        assert!(!remote.attr_overlap.load(std::sync::atomic::Ordering::SeqCst), "two runs of one tree were live at once");
+    }
+
+    #[test]
+    fn attribution_jobs_for_different_trees_still_run_together() {
+        let remote = serve_all(&[("j1", "m1"), ("j2", "m2")]);
+        assert!(remote.attr_overlap.load(std::sync::atomic::Ordering::SeqCst), "distinct trees were queued behind each other");
+    }
+
+    #[test]
+    fn every_attribution_run_of_testenv_carries_a_repeat_reason() {
+        let runs: Vec<&str> = crate::spool::REMOTE_ATTR_SCRIPT.lines().filter(|l| l.contains("\"$tenv\"")).collect();
+        assert_eq!(runs.len(), 3);
+        for l in runs {
+            assert!(l.contains("--repeat-reason \"$reason\""), "{l}");
+        }
+        let reason = crate::spool::REMOTE_ATTR_SCRIPT.lines().find_map(|l| l.strip_prefix("reason=\"")).expect("a reason is set");
+        assert!(reason.trim_end_matches('"').chars().count() >= 10);
+    }
 }

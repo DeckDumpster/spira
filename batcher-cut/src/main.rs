@@ -986,6 +986,10 @@ fn stabilize_round(
             println!("batcher {}: round blocked — {why}", repo.name);
             Ok(Stabilized::Blocked)
         }
+        drive::RoundEnd::Faulted(why) => {
+            println!("batcher {}: {why}", repo.name);
+            Ok(Stabilized::Blocked)
+        }
         drive::RoundEnd::Emptied(why) => {
             println!("batcher {}: round emptied — {why}", repo.name);
             Ok(Stabilized::Emptied)
@@ -2179,6 +2183,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         },
         Ok(drive::RoundEnd::Blocked(why)) => Attribution::Blocked(why),
         Ok(drive::RoundEnd::Emptied(why)) => Attribution::Emptied(why),
+        Ok(drive::RoundEnd::Faulted(why)) => Attribution::Faulted(why),
         Ok(drive::RoundEnd::Abandoned) => Attribution::Blocked("the round was abandoned".into()),
         Err(e) if batcher_cut::attribute::is_round_vm_fault(&e) => {
             Attribution::Fault(format!("the attribution did not finish: {e}"))

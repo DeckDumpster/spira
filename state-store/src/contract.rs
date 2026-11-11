@@ -310,6 +310,33 @@ struct Staged {
 }
 
 const PAGE: usize = 1_000;
+const TRIM_TXNS: usize = 16;
+pub(crate) const COMPACT_STEP: u64 = 5_000;
+pub(crate) const COMPACT_STEPS: usize = 8;
+
+/// What a gc pass reads from the store: every key, and the items it may act on.
+#[derive(Default)]
+pub(crate) struct GcScan {
+    pub head: u64,
+    pub keys: std::collections::BTreeSet<String>,
+    pub finalized: Vec<Item>,
+    pub owned: Vec<Item>,
+}
+
+/// The wall time an audit record was written at, when it carries one.
+fn recorded_at(v: &Version) -> Result<Option<u64>> {
+    #[derive(Deserialize)]
+    struct Data {
+        at: Option<u64>,
+    }
+    #[derive(Deserialize)]
+    struct Rec {
+        data: Option<Data>,
+    }
+    let r: Rec = serde_json::from_slice(&v.value)
+        .map_err(|e| Error::Backend(format!("undecodable value: {e}")))?;
+    Ok(r.data.and_then(|d| d.at))
+}
 const WATCH_MAINS: usize = 1_000;
 /// The real-time slice a waiting watch re-reads the injected clock at: the virtual clock has
 /// no wake-up of its own.
@@ -1071,7 +1098,7 @@ impl<B: Backend> Contract<B> {
         if rec.audited {
             let record = serde_json::json!({
                 "actor": req.actor, "kind": req.kind, "evidence": req.evidence,
-                "request": req.id, "refused": !ok, "subs": subs,
+                "request": req.id, "refused": !ok, "subs": subs, "at": self.ports.wall.now_ms(),
             });
             staged.push(Staged {
                 key: events_key(main),
@@ -1298,22 +1325,128 @@ impl<B: Backend> Contract<B> {
         Ok(done)
     }
 
-    /// Every key but the audit history, from one snapshot at the returned head.
-    pub(crate) fn gc_items(&self) -> Result<(Vec<Item>, u64)> {
+    /// Every key but the audit history, from one snapshot at the returned head, reduced to what
+    /// a gc pass acts on: the key set, and the items that are finalized or owned. A page the
+    /// store ends for outliving its read limit is retried at half the size, so a pass over
+    /// large values finishes in reads that each fit.
+    pub(crate) fn gc_scan(&self) -> Result<GcScan> {
         let head = self.head()?;
-        let mut items = Vec::new();
+        let mut scan = GcScan::default();
         let mut after: Option<String> = None;
+        let mut page_size = PAGE;
         loop {
-            let page = self.backend.gc_range(after.as_deref(), PAGE, head)?;
-            let full = page.len() == PAGE;
+            let page = match self.backend.gc_range(after.as_deref(), page_size, head) {
+                Err(Error::Backend(m)) if m.starts_with(crate::READ_ENDED) && page_size > 1 => {
+                    page_size /= 2;
+                    continue;
+                }
+                r => r?,
+            };
+            let full = page.len() == page_size;
             after = page.last().map(|(k, _)| k.clone());
             for (k, v) in page {
-                items.push(item(k, v)?);
+                let i = item(k, v)?;
+                scan.keys.insert(i.key.clone());
+                let m = &i.value.metadata;
+                if m.deletion_timestamp.is_some() && m.finalizers.is_empty() {
+                    scan.finalized.push(i);
+                } else if !m.owner_references.is_empty() && m.deletion_timestamp.is_none() {
+                    scan.owned.push(i);
+                }
             }
             if !full {
-                return Ok((items, head));
+                scan.head = head;
+                return Ok(scan);
             }
         }
+    }
+
+    /// Deletes the audit records older than `window_ms` on the wall clock, oldest first, at most
+    /// [`TRIM_TXNS`] pages of [`limits::MAX_TXN_OPS`]; returns how many. A record written before
+    /// records were stamped is as old as the first stamped one, so nothing is cut until stamping
+    /// itself is older than the window. Retention writes no `events/` key.
+    pub(crate) fn trim_events(&self, window_ms: u64) -> Result<usize> {
+        let Some(unstamped_age) = self.first_stamped_at()? else {
+            return Ok(0);
+        };
+        let cutoff = self.ports.wall.now_ms().saturating_sub(window_ms);
+        let rec = Record {
+            audited: false,
+            idempotent: false,
+            compare_bytes: 0,
+        };
+        let mut gone = 0;
+        for _ in 0..TRIM_TXNS {
+            let head = self.head()?;
+            let page = self
+                .backend
+                .range(EVENTS_PREFIX, None, limits::MAX_TXN_OPS, head)?;
+            let full = page.len() == limits::MAX_TXN_OPS;
+            let mut old = Vec::new();
+            for (k, v) in page {
+                if recorded_at(&v)?.unwrap_or(unstamped_age) >= cutoff {
+                    break;
+                }
+                old.push(k);
+            }
+            if old.is_empty() {
+                break;
+            }
+            let all = full && old.len() == limits::MAX_TXN_OPS;
+            self.engine(&Request::new("", "gc", "gc.trim"), rec, |_| {
+                Ok(Step::<Infallible>::Apply {
+                    ok: true,
+                    ops: old.iter().cloned().map(Op::Delete).collect(),
+                })
+            })?;
+            gone += old.len();
+            if !all {
+                break;
+            }
+        }
+        Ok(gone)
+    }
+
+    /// The `at` of the oldest stamped audit record. Stamped records are a suffix of the
+    /// history, so it is found by bisecting the revisions.
+    fn first_stamped_at(&self) -> Result<Option<u64>> {
+        let head = self.head()?;
+        let probe = |m: u64| -> Result<Option<(bool, Option<u64>)>> {
+            let after = m.checked_sub(1).map(events_key);
+            let page = self.backend.range(EVENTS_PREFIX, after.as_deref(), 1, head)?;
+            page.first()
+                .map(|(_, v)| recorded_at(v).map(|at| (at.is_some(), at)))
+                .transpose()
+        };
+        let (mut lo, mut hi) = (0, head + 1);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            match probe(mid)? {
+                Some((false, _)) => lo = mid + 1,
+                _ => hi = mid,
+            }
+        }
+        Ok(probe(lo)?.and_then(|(_, at)| at))
+    }
+
+    /// Drops superseded versions in steps of `step` revisions, each its own transaction, up to
+    /// `keep` revisions behind the head; at most `steps` steps.
+    pub(crate) fn compact_behind(&self, keep: u64, step: u64, steps: usize) -> Result<()> {
+        let target = self.head()?.saturating_sub(keep);
+        let mut at = self.backend.compacted()?;
+        for _ in 0..steps {
+            let next = at.saturating_add(step).min(target);
+            if next <= at {
+                break;
+            }
+            self.backend.compact(next)?;
+            let now = self.backend.compacted()?;
+            if now <= at {
+                break;
+            }
+            at = now;
+        }
+        Ok(())
     }
 
     /// Whether `key` exists at `head`.

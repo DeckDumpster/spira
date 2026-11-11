@@ -191,7 +191,9 @@ fn two_members_each_breaking_a_suite_alone_is_unattributed() {
         if without_both { JobResult::Green } else { JobResult::Red }
     };
     let (a, _) = replay(Budget { slots: 8, maxpar: 2 }, flat(&["m1", "m2", "m3"]), &[("s", false, 1)], 2, 2, verdict);
-    assert_eq!(a.decision().unattributed, ids(&["s"]));
+    let d = a.decision();
+    assert_eq!(d.unattributed, ids(&["s"]));
+    assert!(d.faulted.is_empty(), "reruns that ran and found no single owner are not a fault");
 }
 
 #[test]
@@ -243,7 +245,32 @@ fn a_fault_is_retried_once_and_never_read_as_a_result() {
     assert_eq!(retry[0].purpose, Purpose::Plain);
     a.on_job_result(retry[0].id, JobResult::Fault, 2);
     assert!(a.settled());
-    assert_eq!(a.decision().unattributed, ids(&["s"]));
+    let d = a.decision();
+    assert_eq!(d.faulted, ids(&["s"]));
+    assert_eq!(d.records[0].outcome, Some(Outcome::Faulted));
+}
+
+#[test]
+fn a_removal_rerun_that_faults_past_its_retry_leaves_the_suite_faulted_not_unattributed() {
+    let mut a = Attributor::new(Budget { slots: 8, maxpar: 1 }, flat(&["m1", "m2"]), 1);
+    a.on_main_result("s", false, &ids(&["m1", "m2"]), 0);
+    a.on_main_done(0);
+    let plain = a.next_jobs();
+    a.on_job_result(plain[0].id, JobResult::Red, 1);
+    let mut t = 2;
+    while !a.settled() {
+        for j in a.next_jobs() {
+            let r = match j.purpose {
+                Purpose::Without(ref x) if x == "m1" => JobResult::Fault,
+                Purpose::Base => JobResult::Green,
+                _ => JobResult::Red,
+            };
+            a.on_job_result(j.id, r, t);
+            t += 1;
+        }
+        assert!(t < 100, "never settled");
+    }
+    assert_eq!(a.decision().faulted, ids(&["s"]));
 }
 
 #[test]

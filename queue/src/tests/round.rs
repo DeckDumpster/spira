@@ -776,6 +776,36 @@ fn abandoning_a_round_stops_its_running_legs_and_records_them_in_the_reason() {
     assert!(t.lc.has("abandon-batch hand-1 OPEN 1 base moved — stopped spira-run-batcher.local-leg-attribute2.service"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test]
+fn an_abandon_ends_the_build_still_in_the_worktree_before_it_removes_the_tree() {
+    let t = round_world();
+    t.git.materialise.set(true);
+    open_hand_round(&t);
+    let wt = PathBuf::from(&kv_of(&t, "round")["worktree"]);
+    let building = wt.join("target/release");
+    fs::create_dir_all(&building).unwrap();
+    t.scripts.tree_holders.borrow_mut().push(building.clone());
+    assert_eq!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0, "{}", t.err());
+    assert_eq!(
+        *t.scripts.stopped_holders.borrow(),
+        [(building, true)],
+        "the build was ended while its tree still stood"
+    );
+    assert!(!wt.exists(), "nothing is left at the worktree path");
+}
+
+#[test]
+fn an_abandon_that_cannot_end_the_build_keeps_the_tree() {
+    let t = round_world();
+    t.git.materialise.set(true);
+    open_hand_round(&t);
+    let wt = PathBuf::from(&kv_of(&t, "round")["worktree"]);
+    t.scripts.tree_holders_stubborn.set(true);
+    assert_eq!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0, "{}", t.err());
+    assert!(wt.exists(), "a tree something still builds in is kept");
+    assert!(t.err().contains("still running"), "{}", t.err());
+}
+
 fn open_hand_round(t: &T) {
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-1"]),
