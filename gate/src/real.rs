@@ -1037,7 +1037,17 @@ mod tests {
         use std::fs;
         use std::process::Command;
         let git = |d: &std::path::Path, a: &[&str]| {
-            let o = Command::new("git").arg("-C").arg(d).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).output().unwrap();
+            // Fixed dates: the two fixture repositories must hold the same commit, and a commit's
+            // id includes its time.
+            let o = Command::new("git")
+                .arg("-C")
+                .arg(d)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(a)
+                .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+                .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
+                .output()
+                .unwrap();
             assert!(o.status.success(), "{a:?}");
         };
         let t = testkit::TempDir::new("gate-world-warm");
