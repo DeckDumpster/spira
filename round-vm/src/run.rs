@@ -782,6 +782,9 @@ disk_report build
 # otherwise looks the same as one that recorded everything until its re-run skips nothing.
 if [ -z "$resume_url" ]; then
     echo "round-vm: RESUME-OFF: no resume prefix is configured (round_vm_resume_url); a re-run of this tree runs every suite" >&2
+elif [ "${resume_url#dir:}" != "$resume_url" ]; then
+    export SPIRA_TESTENV_RESUME="$resume_url"
+    echo "round-vm: RESUME: recording passed suites to ${resume_url#dir:}" >&2
 else
     if [ -d "$HOME/round-resume-aws" ]; then
         export AWS_SHARED_CREDENTIALS_FILE="$HOME/round-resume-aws/credentials"
@@ -2561,12 +2564,12 @@ fn on_vm_run(
         round_sha: commit_sha.to_string(),
         ssh_log: results_dir.join(SSH_LOG_FILE),
         ci_entry: args.ci_entry.clone(),
-        resume_url: args.ci_entry.is_none().then(|| cfg.resume_url.clone()).flatten(),
+        resume_url: resume_url_for(&vm.handle, args.ci_entry.is_none(), cfg.resume_url.as_deref(), env.host_plan.map(|p| p.home.as_path())),
         fences: args.fences.clone().unwrap_or_default(),
         cancel: Default::default(),
     };
     if let (Some(dir), None) = (&cfg.resume_credentials, &args.ci_entry) {
-        if job.resume_url.is_some() && !crate::ec2::is_ec2_handle(&vm.handle) {
+        if job.resume_url.as_deref().is_some_and(|u| u.starts_with("s3://")) && !crate::ec2::is_ec2_handle(&vm.handle) {
             push_resume_credentials(env.remote, &vm.addr, dir);
         }
     }
@@ -2949,6 +2952,20 @@ const TSD_DIR: &str = "round-work/.runtime/spira/tsd/";
 /// The scoped credentials the VM reads the resume prefix with, pushed beside the round and
 /// never passed on a command line.
 pub const REMOTE_RESUME_CREDENTIALS: &str = "round-resume-aws/";
+
+/// The host has no instance role for the bucket, so its resume state is a directory under the
+/// round's own home and no S3 call is made for it; EC2 and Proxmox keep the configured prefix.
+fn resume_url_for(handle: &str, recording: bool, configured: Option<&str>, host_home: Option<&Path>) -> Option<String> {
+    if !recording {
+        return None;
+    }
+    match host_home.filter(|_| handle == crate::host::HOST_HANDLE) {
+        Some(home) => Some(format!("dir:{}", home.join(HOST_RESUME_DIR).display())),
+        None => configured.map(str::to_string),
+    }
+}
+
+const HOST_RESUME_DIR: &str = "round-resume";
 
 fn push_resume_credentials(remote: &dyn Remote, addr: &str, dir: &Path) {
     match remote.push(addr, dir, REMOTE_RESUME_CREDENTIALS) {
@@ -3998,6 +4015,18 @@ mod tests {
             assert!(script[cfg..].contains(end), "{name}");
             assert!(!line.contains('/') && !line.contains('$'), "a path as the repo name is an unsafe resume key segment ({name}): {line}");
         }
+    }
+
+    #[test]
+    fn a_host_round_resumes_from_a_local_directory_and_makes_no_s3_call() {
+        let home = Path::new("/round/home");
+        let url = resume_url_for(crate::host::HOST_HANDLE, true, Some("s3://bkt/pre"), Some(home)).unwrap();
+        assert_eq!(url, "dir:/round/home/round-resume");
+        assert_eq!(resume_url_for("i-1", true, Some("s3://bkt/pre"), Some(home)).as_deref(), Some("s3://bkt/pre"));
+        assert_eq!(resume_url_for(crate::host::HOST_HANDLE, false, Some("s3://bkt/pre"), Some(home)), None);
+        let dir_branch = REMOTE_SCRIPT.find(r#"elif [ "${resume_url#dir:}""#).expect("a dir: prefix has its own branch");
+        let probe = REMOTE_SCRIPT.find("resume_probe() {").unwrap();
+        assert!(dir_branch < probe, "the dir: branch precedes the S3 probe");
     }
 
     #[test]
