@@ -79,6 +79,10 @@ pub trait Backend: Send + Sync {
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>>;
     /// Drops the watch log and superseded versions at or below `rev`.
     fn compact(&self, rev: u64) -> Result<()>;
+    /// The revision compaction has reached.
+    fn compacted(&self) -> Result<u64> {
+        Ok(0)
+    }
     /// `range("")` without the keys under `events/`: what the GC controller and the TTL restart
     /// read, since the audit history never carries metadata or a TTL and grows without bound.
     /// The default filters `range`; a backend whose index can skip the prefix overrides it.
