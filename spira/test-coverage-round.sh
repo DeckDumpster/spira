@@ -62,9 +62,11 @@ want "file names lose the VM root" '"src/x.rs"' "$(cat "$TMP/r1/coverage.json")"
 suite "UC-dispatch-01 UC-dispatch-02"
 lines "$TMP/r2" 7
 out="$(run "$TMP/r2" "$STATE" r2 0)"
+[ -z "$out" ] && [ ! -e "$TMP/r2/coverage.json" ] && ok "a red round runs no coverage step" || bad "a red round runs no coverage step" "$out"
+want "a red round does not replace the kept report" '"round": "r1"' "$(cat "$STATE/coverage-latest.json")"
+out="$(run "$TMP/r2" "$STATE" r2 1)"
 want "second round carries the delta line" "coverage: delta: lines 70.00% (+20.00 pts); use cases 2/2 (+1 gained, -0 lost)" "$out"
 want "delta text names the moved file" "file src/x.rs" "$(cat "$TMP/r2/coverage.txt")"
-want "a red round does not replace the kept report" '"round": "r1"' "$(cat "$STATE/coverage-latest.json")"
 
 mkdir -p "$TMP/r3"
 out="$(run "$TMP/r3" "$STATE" r3 1)"
