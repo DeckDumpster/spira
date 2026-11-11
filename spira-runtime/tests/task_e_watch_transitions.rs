@@ -27,13 +27,14 @@ fn config() -> Config {
         ask_bound_s: 60 * MIN,
         release_repo: "spira".into(),
         heartbeat_bound_s: 120,
+        round_max_open: 1,
         releases: "/rel".into(),
         repo_map: "/map".into(),
     }
 }
 
 fn bead(id: &str, repo: &str, state: &str, since: u64) -> Bead {
-    Bead { id: id.into(), repo: repo.into(), state: state.into(), since, ask_held: false, ask_since: None }
+    Bead { id: id.into(), repo: repo.into(), state: state.into(), since, ask_held: false, ask_since: None, held: false, tip: None, landed: false }
 }
 
 fn last(repo: &str, kinds: &[(&str, u64)]) -> BTreeMap<String, BTreeMap<String, u64>> {
@@ -928,4 +929,49 @@ fn a_stall_already_paged_neither_repages_nor_clears_across_a_halt() {
     assert!(acts.is_empty());
     let (_, acts) = decide(&carry, &todays_case(now + 600), (now + 600) * 1000, &config());
     assert!(acts.iter().all(|a| !a.input.contains("STALL")), "{:?}", acts.iter().map(|a| &a.input).collect::<Vec<_>>());
+}
+
+fn waiting_keys(s: &Snapshot, now: u64, round_max_open: u64) -> Vec<String> {
+    let cfg = Config { cut_bound_s: 5 * MIN, round_max_open, ..config() };
+    spira_runtime::tasks::e::watch_transitions::stalls(s, now, &cfg).into_iter().map(|x| x.key()).collect()
+}
+
+#[test]
+fn a_round_open_at_the_limit_silences_the_cut_stall_and_a_free_slot_below_the_limit_does_not() {
+    let (mut s, now) = submitted_ago(10, 1, 6);
+    assert!(!waiting_keys(&s, now, 1).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "one round open at a limit of one");
+    assert!(waiting_keys(&s, now, 2).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()), "one round open at a limit of two leaves a slot");
+    s.open_rounds = Some(rounds_in("spira", 2));
+    assert!(!waiting_keys(&s, now, 2).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "two open at a limit of two");
+}
+
+fn certified_tipped(id: &str, now: u64) -> Bead {
+    Bead { tip: Some("t".into()), ..bead(id, "-", "CERTIFIED", now - 9 * HOUR) }
+}
+
+#[test]
+fn a_held_bead_or_one_whose_tip_is_on_the_landing_ref_is_not_counted_as_waiting() {
+    let now = T0;
+    let mut s = healthy(now);
+    s.last = last("spira", &[("Cut", now - 6 * MIN)]);
+    s.beads = vec![certified_tipped("sp-a", now), Bead { held: true, ..certified_tipped("sp-b", now) }, Bead { landed: true, ..certified_tipped("sp-c", now) }];
+    let t = table(&s, ALL, now);
+    assert_eq!(t["CERTIFIED"].count, 1, "only the unheld, unlanded bead waits");
+    s.beads.truncate(1);
+    assert!(waiting_keys(&s, now, 1).contains(&"SUBMITTED→IN_DELIVERY -".to_string()), "the control: a waiting bead pages");
+    s.beads = vec![Bead { held: true, ..certified_tipped("sp-b", now) }, Bead { landed: true, ..certified_tipped("sp-c", now) }];
+    assert!(!waiting_keys(&s, now, 1).iter().any(|k| k.starts_with("SUBMITTED→IN_DELIVERY")), "{:?}", waiting_keys(&s, now, 1));
+}
+
+#[test]
+fn mark_landed_flags_the_tip_the_ref_contains_and_leaves_an_untestable_tip_waiting() {
+    let now = T0;
+    let mut s = healthy(now);
+    s.beads = vec![Bead { tip: Some("on".into()), ..bead("sp-a", "-", "SUBMITTED", now) }, Bead { tip: Some("off".into()), ..bead("sp-b", "-", "SUBMITTED", now) }, Bead { tip: Some("err".into()), ..bead("sp-c", "-", "SUBMITTED", now) }, bead("sp-d", "-", "SUBMITTED", now)];
+    mark_landed(&mut s, &|_, tip| match tip {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err("unknown commit".into()),
+    });
+    assert_eq!(s.beads.iter().map(|b| b.landed).collect::<Vec<_>>(), [true, false, false, false]);
 }

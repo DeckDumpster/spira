@@ -61,6 +61,9 @@ pub struct Waiting {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ask_since: Option<i64>,
     pub ask_held: bool,
+    pub held: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tip: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -214,7 +217,7 @@ impl<B: Backend> Store<B> {
             repos.insert(row.bead_id.clone(), Some(repo_of(&r.value)));
             let ask_held = row.holds.contains(&HoldKind::Ask);
             let ask_since = if ask_held { ask_raised(self.history(&row.bead_id, Some("bead"))?.iter().map(|c| &c.audit)) } else { None };
-            beads.push(Waiting { id: row.bead_id.clone(), repo: repo_of(&r.value), state: row.state.as_str().to_string(), since: row.since.unwrap_or(r.value.updated_at), ask_since, ask_held });
+            beads.push(Waiting { id: row.bead_id.clone(), repo: repo_of(&r.value), state: row.state.as_str().to_string(), since: row.since.unwrap_or(r.value.updated_at), ask_since, ask_held, held: !row.holds.is_empty(), tip: row.tip.clone() });
         }
         let floor = now.saturating_sub(window_s as i64);
         let mut d = Dwell { rev: head, now, window_s, horizon: now, beads, ..Default::default() };
