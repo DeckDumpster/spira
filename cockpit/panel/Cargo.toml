@@ -33,9 +33,5 @@ path = "../../spira-otel"
 [dependencies.mail]
 path = "../../mail"
 
-[dev-dependencies.spira-config]
-path = "../../spira-config"
-features = ["fake-content"]
-
 [dev-dependencies.testkit]
 path = "../../testkit"

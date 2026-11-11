@@ -575,7 +575,6 @@ mod tests {
 /// A scripted `content list` over rows held in memory, answering as bd does: closed rows only
 /// with `--all`, 50 rows unless `--limit`, and the whole-history read refused as the store
 /// refuses it. Every request it sees is recorded.
-#[cfg(any(test, feature = "fake-content"))]
 pub mod fake {
     use super::{reads_whole_history, Reply, Transport, REFUSED};
     use serde_json::Value;
