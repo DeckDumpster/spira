@@ -128,7 +128,7 @@ pub struct BatchJob {
     /// everyone who clones it). Empty: the VM's image records its own (EC2).
     pub cache_home: Option<String>,
     pub testenv_registry: Option<String>,
-    /// `s3://<bucket>/<prefix>` the VM records each passed suite to (`SPIRA_TESTENV_RESUME`); a
+    /// `s3://<bucket>/<prefix>`, or `dir:<absolute path>` on the host, that the VM records each passed suite to (`SPIRA_TESTENV_RESUME`); a
     /// dead VM loses nothing, and the next pass for the tree reads the same prefix.
     pub resume_url: Option<String>,
     /// Seconds of setup (script start to the suites launching) beyond which the run reports SETUP-SLOW.
@@ -782,6 +782,9 @@ disk_report build
 # otherwise looks the same as one that recorded everything until its re-run skips nothing.
 if [ -z "$resume_url" ]; then
     echo "round-vm: RESUME-OFF: no resume prefix is configured (round_vm_resume_url); a re-run of this tree runs every suite" >&2
+elif [ "${resume_url#dir:}" != "$resume_url" ]; then
+    export SPIRA_TESTENV_RESUME="$resume_url"
+    echo "round-vm: RESUME: recording passed suites to ${resume_url#dir:}" >&2
 else
     if [ -d "$HOME/round-resume-aws" ]; then
         export AWS_SHARED_CREDENTIALS_FILE="$HOME/round-resume-aws/credentials"
@@ -2561,12 +2564,12 @@ fn on_vm_run(
         round_sha: commit_sha.to_string(),
         ssh_log: results_dir.join(SSH_LOG_FILE),
         ci_entry: args.ci_entry.clone(),
-        resume_url: args.ci_entry.is_none().then(|| cfg.resume_url.clone()).flatten(),
+        resume_url: resume_url_for(&vm.handle, args.ci_entry.is_none(), cfg.resume_url.as_deref(), env.host_plan.map(|p| p.home.as_path())),
         fences: args.fences.clone().unwrap_or_default(),
         cancel: Default::default(),
     };
     if let (Some(dir), None) = (&cfg.resume_credentials, &args.ci_entry) {
-        if job.resume_url.is_some() && !crate::ec2::is_ec2_handle(&vm.handle) {
+        if job.resume_url.as_deref().is_some_and(|u| u.starts_with("s3://")) && !crate::ec2::is_ec2_handle(&vm.handle) {
             push_resume_credentials(env.remote, &vm.addr, dir);
         }
     }
@@ -2949,6 +2952,20 @@ const TSD_DIR: &str = "round-work/.runtime/spira/tsd/";
 /// The scoped credentials the VM reads the resume prefix with, pushed beside the round and
 /// never passed on a command line.
 pub const REMOTE_RESUME_CREDENTIALS: &str = "round-resume-aws/";
+
+/// The host has no instance role for the bucket, so its resume state is a directory under the
+/// round's own home and no S3 call is made for it; EC2 and Proxmox keep the configured prefix.
+fn resume_url_for(handle: &str, recording: bool, configured: Option<&str>, host_home: Option<&Path>) -> Option<String> {
+    if !recording {
+        return None;
+    }
+    match host_home.filter(|_| handle == crate::host::HOST_HANDLE) {
+        Some(home) => Some(format!("dir:{}", home.join(HOST_RESUME_DIR).display())),
+        None => configured.map(str::to_string),
+    }
+}
+
+const HOST_RESUME_DIR: &str = "round-resume";
 
 fn push_resume_credentials(remote: &dyn Remote, addr: &str, dir: &Path) {
     match remote.push(addr, dir, REMOTE_RESUME_CREDENTIALS) {
@@ -4001,6 +4018,18 @@ mod tests {
     }
 
     #[test]
+    fn a_host_round_resumes_from_a_local_directory_and_makes_no_s3_call() {
+        let home = Path::new("/round/home");
+        let url = resume_url_for(crate::host::HOST_HANDLE, true, Some("s3://bkt/pre"), Some(home)).unwrap();
+        assert_eq!(url, "dir:/round/home/round-resume");
+        assert_eq!(resume_url_for("i-1", true, Some("s3://bkt/pre"), Some(home)).as_deref(), Some("s3://bkt/pre"));
+        assert_eq!(resume_url_for(crate::host::HOST_HANDLE, false, Some("s3://bkt/pre"), Some(home)), None);
+        let dir_branch = REMOTE_SCRIPT.find(r#"elif [ "${resume_url#dir:}""#).expect("a dir: prefix has its own branch");
+        let probe = REMOTE_SCRIPT.find("resume_probe() {").unwrap();
+        assert!(dir_branch < probe, "the dir: branch precedes the S3 probe");
+    }
+
+    #[test]
     fn resume_credentials_reach_only_a_proxmox_vm_and_never_the_command_line() {
         let job = BatchJob {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
@@ -4727,6 +4756,35 @@ mod tests {
         assert_eq!(fx.fp.count("clone"), 0, "no VM is cloned for a host round");
         assert!(vm_remote.jobs.lock().unwrap().is_empty(), "the VM's ssh is never touched");
         assert_eq!(recorded_where(&fx), "host");
+    }
+
+    struct SharedRemote(std::sync::Arc<FakeRemote>);
+    impl Remote for SharedRemote {
+        fn reachable(&self, a: &str) -> bool { self.0.reachable(a) }
+        fn run_batch(&self, a: &str, j: &BatchJob) -> Result<i32, String> { self.0.run_batch(a, j) }
+        fn round_started(&self, a: &str) -> bool { self.0.round_started(a) }
+        fn boot_log_tail(&self, a: &str) -> Result<String, String> { self.0.boot_log_tail(a) }
+        fn pull(&self, a: &str, r: &str, l: &Path) -> Result<(), String> { self.0.pull(a, r, l) }
+        fn push(&self, a: &str, l: &Path, r: &str) -> Result<(), String> { self.0.push(a, l, r) }
+        fn await_exit(&self, a: &str, w: Duration, s: &Path) -> Result<Option<i32>, String> { self.0.await_exit(a, w, s) }
+        fn run_attr(&self, a: &str, j: &crate::spool::AttrJob) -> Result<i32, String> { self.0.run_attr(a, j) }
+        fn clear_results(&self, a: &str) -> Result<(), String> { self.0.clear_results(a) }
+    }
+
+    #[test]
+    fn a_host_round_is_handed_a_local_resume_directory_and_its_credentials_are_not_pushed() {
+        let mut fx = fixture();
+        fx.cfg.resume_url = Some("s3://bkt/pre".into());
+        fx.cfg.resume_credentials = Some(PathBuf::from("/creds"));
+        let host_remote = std::sync::Arc::new(FakeRemote::green());
+        let mut plan = host_plan(FakeRemote::green(), CALM);
+        plan.home = PathBuf::from("/round/home");
+        plan.remote = Box::new(SharedRemote(host_remote.clone()));
+        go_with_host(&fx, &FakeRemote::green(), &plan, &round_args(&fx));
+        let jobs = host_remote.jobs.lock().unwrap();
+        let batch = jobs.iter().find(|j| j.contains("dir:")).unwrap_or_else(|| panic!("{jobs:?}"));
+        assert!(batch.contains("'dir:/round/home/round-resume'") && !batch.contains("s3://"), "{batch}");
+        assert!(host_remote.pushes.lock().unwrap().is_empty(), "no S3 credentials go to the host");
     }
 
     #[test]
