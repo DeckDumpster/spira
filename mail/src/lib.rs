@@ -2,6 +2,8 @@
 //! `main.rs` is the thin CLI shell; everything testable lives in these modules.
 
 pub mod bead;
+#[cfg(test)]
+mod channel_tests;
 pub mod cmds;
 pub mod content;
 pub mod env;
