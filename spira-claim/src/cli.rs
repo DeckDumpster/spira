@@ -821,14 +821,15 @@ fn urgent_over(a: &Args, env: &Env, st: &Store) -> Result<String, String> {
     } else {
         None
     };
-    let (rows, rework, express): (_, BTreeSet<String>, _) = match published {
+    let (rows, rework, express) = match published {
         Some(p) => {
-            let rework = p.lifecycle.values().filter(|r| r.state == lifecycle::bead::BeadState::Rework).map(|r| r.bead_id.clone()).collect();
+            let rework: BTreeSet<String> = p.rows.iter().filter(|r| p.lifecycle.get(&r.id).is_some_and(|l| l.state == lifecycle::bead::BeadState::Rework)).map(|r| r.id.clone()).collect();
             (p.rows, rework, p.express)
         }
         None => {
             let rows = machine_judged(a, env, st, false)?.0;
-            (rows, st.lifecycle_in_states(&["REWORK"])?.into_keys().collect(), st.express_ids()?)
+            let rework = st.lifecycle_in_states(&["REWORK"])?.into_keys().collect::<BTreeSet<_>>();
+            (rows, rework, st.express_ids()?)
         }
     };
     let queue_wait = queue_wait_label(env);
