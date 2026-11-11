@@ -4248,6 +4248,10 @@ mod tests {
             }
             self.rc.clone()
         }
+        fn clear_results(&self, _: &str) -> Result<(), String> {
+            self.jobs.lock().unwrap().push("clear-results".into());
+            Ok(())
+        }
         fn round_started(&self, _: &str) -> bool {
             !self.never_starts
         }
@@ -4471,6 +4475,17 @@ mod tests {
         assert!(REMOTE_SCRIPT[..unit_wait].contains("test_phase_bound \"$unit_pid\" \"$cap\""), "the unit phase's wait has its own guard, outside the cap clock");
         assert!(REMOTE_SCRIPT[stop..bins].contains("test_phase_bound \"$integ_pid\" \"$post_guard\""), "the integration phase's wait after the suites has its own guard");
         assert_eq!(exit_for_remote(124), 124, "over-cap reaches the caller as itself");
+    }
+
+    #[test]
+    fn a_round_clears_the_earlier_rounds_results_before_its_batch_starts() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let a = RunArgs { tree_dir: fx.d.path().join("tree"), maxpar: Some(24), base: Some("main".into()), ..Default::default() };
+        go(&fx, &remote, &a);
+        let jobs = remote.jobs.lock().unwrap();
+        assert_eq!(jobs.first().map(String::as_str), Some("clear-results"), "{jobs:?}");
+        assert_eq!(jobs.len(), 2, "{jobs:?}");
     }
 
     #[test]
