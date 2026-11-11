@@ -104,7 +104,8 @@ reached the bash.
 | `SPIRA_VERDICTS` | the verdict cache | `$SPIRA_RUN/verdicts` |
 | `SPIRA_VERDICT_TTL` | seconds a cached PASS is good; non-numeric reads 0 | 0 |
 | `SPIRA_GATE_TIMEOUT` | `timeout` on the gate command | 2700 |
-| `SPIRA_GATE_DEADLINE` | whole-gate wall clock from the end of the waits: every phase, base trial included. At expiry NO_VERDICT `reason=deadline` naming the running phase; never a pass | 300 |
+| `SPIRA_GATE_DEADLINE` | wall clock for the gate's own tests, charged from the first test phase: the base trial's reruns count, the tools, fences and build phases (base trial's too) do not and carry no phase cap. At expiry NO_VERDICT `reason=deadline` naming the running test phase; never a pass | 300 |
+| `SPIRA_GATE_BUILD_STALL` | seconds a tools, fences or build phase may show no progress (a compiler output line, or CPU time in the phase's process group) before it is ended as NO_VERDICT `reason=build-stall` naming the phase and the last compiler line. A phase that keeps progressing is never ended; only `SPIRA_GATE_TIMEOUT` bounds it | 300 |
 | `SPIRA_GATE_BUDGET` | the selector's prediction of suite time (testenv `--deadline`); with the fixed phases it fits the deadline | 140 |
 | `SPIRA_GATE_LOCK_WAIT` | wait for an admission slot and for the tree lock | `4 × SPIRA_GATE_TIMEOUT` |
 | `SPIRA_CERTIFY_PAR` | admission pool size; unset or non-numeric derives `min(nproc/4, MemAvailable/400MiB)`, at least 1, re-read every second | derived |
@@ -1227,10 +1228,15 @@ With `SPIRA_GATE_CPU_QUOTA` set (percent, `400` = four cores), the binary re-exe
 reason=cgroup-unavailable`, never an unconfined run. The suite width defaults to the
 cgroup-aware core count, so `SPIRA_GATE_HOST_CORES` is gone.
 
-## The deadline and the phase caps (sp-juboj)
+## The deadline bounds the tests; a stalled build is named (sp-t7fv4i)
 
-`SPIRA_GATE_DEADLINE` is enforced: each phase and each base-side call runs under
-`min(SPIRA_GATE_TIMEOUT, what is left of the deadline)`, and a phase with a cap (`phase_cap`: fences 90 s, gate 260 s; `base-` ignored) is cut at it. The branch trial's fixed caps sum under the
-deadline. A kill at either is NO_VERDICT `deadline` naming the last phase in `gate.log`'s `phases=`. An
-operator `SPIRA_GATE_TIMEOUT` shorter than the deadline keeps reason `timeout`. The watchtower pages
+`SPIRA_GATE_DEADLINE` is the tests' clock. The phases `tools`, `fences` and `build` (`base-` ignored) are
+not charged to it and have no cap; the other phases and the base side's reruns are, and a charged phase runs
+under `min(SPIRA_GATE_TIMEOUT, what is left of the deadline)`, the `gate` phase also under its 260 s cap. A kill
+at either is NO_VERDICT `deadline` (or `phase-cap`) naming the test phase. `gate.log` carries `test_clock=<s>`,
+the seconds charged, beside `ran=`.
+
+Compilation has no clock. An uncharged phase is watched instead: no compiler output line and no growth in the
+CPU time of its process group for `SPIRA_GATE_BUILD_STALL` seconds ends it as NO_VERDICT `reason=build-stall`.
+Only an operator `SPIRA_GATE_TIMEOUT` bounds a build that keeps progressing (reason `timeout`). The watchtower pages
 (`GATE SLOW`) when the p90 of `ran` less `waited` over 24 h exceeds `SPIRA_WATCH_GATE_P90_LIMIT` (300).

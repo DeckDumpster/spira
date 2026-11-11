@@ -170,6 +170,19 @@ pub trait World {
         cmd: &str,
     ) -> (i32, String);
 
+    /// `run_gate` for a phase no clock bounds: ended with [`crate::stall::RC`] when it shows no
+    /// progress for `stall` seconds. The operator's `timeout` still applies.
+    fn run_build(
+        &self,
+        tree: &Path,
+        env: &[(String, String)],
+        timeout: &str,
+        _stall: u64,
+        cmd: &str,
+    ) -> (i32, String) {
+        self.run_gate(tree, env, timeout, cmd)
+    }
+
     // ---- the gate machine (machine.rs)
     /// Persist the run's record. Err is a refusal: a gate that cannot record its moves judges nothing.
     fn machine_save(&self, run: &Path, r: &crate::machine::Run) -> Result<(), String>;

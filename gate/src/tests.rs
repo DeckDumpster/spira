@@ -73,6 +73,8 @@ struct Fake {
     cmds: RefCell<Vec<String>>,
     /// Seconds each run_gate advances the clock by, per command kind.
     phase_secs: Cell<u64>,
+    /// (seconds, a compiler line every n seconds, until this second; 0 = silent) a build phase takes.
+    build_script: Cell<Option<(u64, u64, u64)>>,
     // ---- per-suite base judgement (sp-hh5h0)
     /// What `<landing ref>^{commit}` resolves to on each successive read; the last repeats.
     /// Empty: the ref is its own commit (the name).
@@ -177,6 +179,7 @@ fn ctx() -> Ctx {
         ("SPIRA_GATE_SUITES", "on"),
         ("SPIRA_GATE_BUDGET", "300"),
         ("SPIRA_GATE_DEADLINE", "300"),
+        ("SPIRA_GATE_BUILD_STALL", "300"),
     ] {
         vars.insert(k.to_string(), v.to_string());
     }
@@ -253,6 +256,7 @@ impl Fake {
             timing_report: RefCell::new(None),
             cmds: RefCell::new(Vec::new()),
             phase_secs: Cell::new(7),
+            build_script: Cell::new(None),
             landref_tips: RefCell::new(Vec::new()),
             reruns: RefCell::new(HashMap::new()),
             base_lacks: RefCell::new(HashSet::new()),
@@ -286,6 +290,108 @@ impl Fake {
             machine_err: RefCell::default(),
             cancel_at: Cell::new(None),
         }
+    }
+    fn plain_run(&self, tree: &Path, env: &[(String, String)], timeout: &str, cmd: &str) -> (i32, String) {
+        self.timeouts.borrow_mut().push((cmd.to_string(), timeout.to_string()));
+        self.ran.borrow_mut().push(env.to_vec());
+        self.cmds.borrow_mut().push(cmd.to_string());
+        self.clock.set(self.clock.get() + self.phase_secs.get());
+        // sp-kqger: the base-suite cache's fourth key component, queried once per base trial
+        // that has an uncached red suite to ask about. Kept apart from the `--suites`/`cargo`
+        // branches below so it is never mistaken for a rerun or a unit phase.
+        if cmd == "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag" {
+            return self.image_tag.borrow().clone();
+        }
+        let br = env
+            .iter()
+            .find(|(k, _)| k == "SPIRA_GATE_BRANCH")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        if let Some(list) = cmd
+            .split_once("--suites ")
+            .and_then(|(_, r)| r.split_whitespace().next())
+        {
+            // The base re-run (sp-hh5h0) names itself; anything else is the re-entry phase.
+            if cmd.starts_with(BASE_RERUN_MARK) {
+                if let Some(r) = self.reruns.borrow().get(&(br.clone(), list.to_string())) {
+                    return r.clone();
+                }
+                let lines: Vec<String> = list
+                    .split(',')
+                    .map(|s| format!("  {s:<32} ok      1s"))
+                    .collect();
+                return (0, lines.join("\n"));
+            }
+            let at = self.checkouts.borrow().last().cloned().unwrap_or_default();
+            if let Some(r) = self.reentry_runs.borrow().get(&at) {
+                return r.clone();
+            }
+            let out: Vec<String> = list
+                .split(',')
+                .map(|s| format!("  {s:<32} ok      3s"))
+                .collect();
+            return (0, out.join("\n") + "\nVERDICT GREEN");
+        }
+        if cmd.starts_with("cargo ") {
+            let kind = if cmd.starts_with("cargo build") || cmd.starts_with("cargo test --no-run") {
+                "build"
+            } else {
+                "test"
+            };
+            let at = self.checkouts.borrow().last().cloned().unwrap_or_default();
+            return self
+                .unit_runs
+                .borrow()
+                .get(&(at, kind))
+                .cloned()
+                .unwrap_or((0, format!("{kind} ok")));
+        }
+        self.trees.borrow_mut().push(tree.to_path_buf());
+        let lint = env.iter().find(|(k, _)| k == "SPIRA_LINT_BIN").map(|(_, v)| v.clone());
+        if let Some(r) = lint.and_then(|l| self.lint_by_bin.borrow().get(&l).cloned()) {
+            return r;
+        }
+        let (rc, out) = self
+            .runs
+            .borrow()
+            .get(&br)
+            .cloned()
+            .unwrap_or((0, String::new()));
+        if rc != 0 {
+            return (rc, out);
+        }
+        // The fences ran and passed: each prints its positive control, unless told not to.
+        let silent = self.silent_fences.borrow();
+        let mut lines: Vec<String> = crate::fence::expected(cmd)
+            .into_iter()
+            .filter(|f| !silent.contains(f))
+            .map(|f| format!("fence: {f} checked 1 files"))
+            .collect();
+        if !out.is_empty() {
+            lines.push(out);
+        }
+        (0, lines.join("\n"))
+    }
+    /// A build phase the script drives; `stall` None is a phase nothing watches.
+    fn scripted_build(&self, tree: &Path, env: &[(String, String)], timeout: &str, stall: Option<u64>, cmd: &str) -> (i32, String) {
+        let scripted = self.build_script.get().filter(|_| cmd.starts_with("cargo build") || cmd.starts_with("cargo test --no-run"));
+        let Some((secs, every, until)) = scripted else { return self.plain_run(tree, env, timeout, cmd) };
+        self.timeouts.borrow_mut().push((cmd.to_string(), timeout.to_string()));
+        self.cmds.borrow_mut().push(cmd.to_string());
+        let t0 = self.clock.get();
+        let mut watch = crate::stall::Watch::new(stall.unwrap_or(u64::MAX), t0);
+        for t in 1..=secs {
+            let now = t0 + t;
+            if every > 0 && t % every == 0 && t <= until {
+                watch.line(now, &format!("   Compiling crate-{t}"));
+            }
+            if watch.stalled(now) {
+                self.clock.set(now);
+                return (crate::stall::RC, watch.message());
+            }
+        }
+        self.clock.set(t0 + secs);
+        (0, "build ok".into())
     }
     fn put_var(&self, k: &str, v: &str) {
         self.ctx
@@ -556,86 +662,11 @@ impl World for Fake {
     fn remove_worktree(&self, _: &Path, _: &Path) {
         self.removed_trees.set(self.removed_trees.get() + 1);
     }
+    fn run_build(&self, tree: &Path, env: &[(String, String)], timeout: &str, stall: u64, cmd: &str) -> (i32, String) {
+        self.scripted_build(tree, env, timeout, Some(stall), cmd)
+    }
     fn run_gate(&self, tree: &Path, env: &[(String, String)], timeout: &str, cmd: &str) -> (i32, String) {
-        self.timeouts.borrow_mut().push((cmd.to_string(), timeout.to_string()));
-        self.ran.borrow_mut().push(env.to_vec());
-        self.cmds.borrow_mut().push(cmd.to_string());
-        self.clock.set(self.clock.get() + self.phase_secs.get());
-        // sp-kqger: the base-suite cache's fourth key component, queried once per base trial
-        // that has an uncached red suite to ask about. Kept apart from the `--suites`/`cargo`
-        // branches below so it is never mistaken for a rerun or a unit phase.
-        if cmd == "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag" {
-            return self.image_tag.borrow().clone();
-        }
-        let br = env
-            .iter()
-            .find(|(k, _)| k == "SPIRA_GATE_BRANCH")
-            .map(|(_, v)| v.clone())
-            .unwrap_or_default();
-        if let Some(list) = cmd
-            .split_once("--suites ")
-            .and_then(|(_, r)| r.split_whitespace().next())
-        {
-            // The base re-run (sp-hh5h0) names itself; anything else is the re-entry phase.
-            if cmd.starts_with(BASE_RERUN_MARK) {
-                if let Some(r) = self.reruns.borrow().get(&(br.clone(), list.to_string())) {
-                    return r.clone();
-                }
-                let lines: Vec<String> = list
-                    .split(',')
-                    .map(|s| format!("  {s:<32} ok      1s"))
-                    .collect();
-                return (0, lines.join("\n"));
-            }
-            let at = self.checkouts.borrow().last().cloned().unwrap_or_default();
-            if let Some(r) = self.reentry_runs.borrow().get(&at) {
-                return r.clone();
-            }
-            let out: Vec<String> = list
-                .split(',')
-                .map(|s| format!("  {s:<32} ok      3s"))
-                .collect();
-            return (0, out.join("\n") + "\nVERDICT GREEN");
-        }
-        if cmd.starts_with("cargo ") {
-            let kind = if cmd.starts_with("cargo build") || cmd.starts_with("cargo test --no-run") {
-                "build"
-            } else {
-                "test"
-            };
-            let at = self.checkouts.borrow().last().cloned().unwrap_or_default();
-            return self
-                .unit_runs
-                .borrow()
-                .get(&(at, kind))
-                .cloned()
-                .unwrap_or((0, format!("{kind} ok")));
-        }
-        self.trees.borrow_mut().push(tree.to_path_buf());
-        let lint = env.iter().find(|(k, _)| k == "SPIRA_LINT_BIN").map(|(_, v)| v.clone());
-        if let Some(r) = lint.and_then(|l| self.lint_by_bin.borrow().get(&l).cloned()) {
-            return r;
-        }
-        let (rc, out) = self
-            .runs
-            .borrow()
-            .get(&br)
-            .cloned()
-            .unwrap_or((0, String::new()));
-        if rc != 0 {
-            return (rc, out);
-        }
-        // The fences ran and passed: each prints its positive control, unless told not to.
-        let silent = self.silent_fences.borrow();
-        let mut lines: Vec<String> = crate::fence::expected(cmd)
-            .into_iter()
-            .filter(|f| !silent.contains(f))
-            .map(|f| format!("fence: {f} checked 1 files"))
-            .collect();
-        if !out.is_empty() {
-            lines.push(out);
-        }
-        (0, lines.join("\n"))
+        self.scripted_build(tree, env, timeout, None, cmd)
     }
     fn diff_raw(&self, _: &Path, _: &str, _: &str) -> Result<Vec<Changed>, String> {
         self.touched.borrow().clone()
@@ -1419,7 +1450,7 @@ fn a_base_trial_that_did_not_run_leaves_it_untestable() {
         .borrow_mut()
         .insert(BASE.into(), (124, String::new()));
     assert_eq!(f.run(), NOVERDICT);
-    assert!(f.verdict_line().contains("reason=deadline"), "a base trial killed at the whole-gate deadline judged nothing");
+    assert!(f.verdict_line().contains("reason=base-untestable"), "{}", f.verdict_line());
 }
 
 #[test]
@@ -1763,7 +1794,7 @@ fn a_held_tree_times_out_and_meters_the_wait() {
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=lock-timeout"));
     let row = f.appended.borrow()[0].clone();
-    assert!(row.contains("waited=3s ran=0s rc=75 lock-timeout"), "{row}");
+    assert!(row.contains("waited=3s ran=0s test_clock=0s rc=75 lock-timeout"), "{row}");
     assert_eq!(
         f.removed_trees.get(),
         0,
@@ -1953,7 +1984,7 @@ fn the_meter_row_and_yield_on_a_pass() {
     f.run();
     assert_eq!(
         f.appended.borrow()[0],
-        "2026-09-29T00:00:00Z spira spira/sp-a waited=0s ran=7s rc=0 pass compose=suites(mode) phases=gate:7\n",
+        "2026-09-29T00:00:00Z spira spira/sp-a waited=0s ran=7s test_clock=7s rc=0 pass compose=suites(mode) phases=gate:7\n",
         "the composition and its phase walls trail the reason (sp-2ghui)"
     );
     assert_eq!(
@@ -3633,6 +3664,44 @@ fn a_phase_that_outlasts_the_deadline_is_no_verdict_naming_the_phase() {
 }
 
 #[test]
+fn a_build_that_outlasts_the_deadline_still_reaches_a_verdict() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.phase_secs.set(20);
+    f.build_script.set(Some((900, 60, 900)));
+    assert_eq!(f.run(), PASS, "{}", f.verdict_line());
+}
+
+#[test]
+fn tests_that_outlast_the_deadline_are_a_deadline_naming_the_test_phase() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.phase_secs.set(20);
+    f.build_script.set(Some((900, 60, 900)));
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (124, String::new()));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=deadline"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("phase `test` was running"), "{}", f.stderr());
+}
+
+#[test]
+fn a_build_with_no_progress_for_the_stall_bound_is_a_build_stall() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.build_script.set(Some((900, 0, 0)));
+    assert_eq!(f.run(), NOVERDICT);
+    let line = f.verdict_line();
+    assert!(line.contains("reason=build-stall"), "{line}");
+    assert!(f.stderr().contains("phase `build`"), "{}", f.stderr());
+}
+
+#[test]
+fn a_build_stall_names_the_last_compiler_line() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.put_var("SPIRA_GATE_BUILD_STALL", "100");
+    f.build_script.set(Some((900, 60, 120)));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.stderr().contains("last compiler output: Compiling crate-120"), "{}", f.stderr());
+}
+
+#[test]
 fn an_operator_timeout_shorter_than_the_deadline_stays_a_timeout() {
     let f = Fake::new();
     f.put_var("SPIRA_GATE_TIMEOUT", "10");
@@ -3655,12 +3724,12 @@ fn phase_caps_sum_under_the_deadline() {
 #[test]
 fn a_phase_killed_at_its_cap_is_not_a_deadline() {
     use crate::engine::killed_verdict;
-    let ph = |n: &str, s: u64| vec![("gate".to_string(), 8), (n.to_string(), s)];
-    let at_cap = killed_verdict(&ph("base-fences", 90), 300, 100, "c", "o");
+    let ph = |n: &str, s: u64| vec![("tools".to_string(), 8), (n.to_string(), s)];
+    let at_cap = killed_verdict(&ph("gate", 260), 300, 270, "c", "o");
     assert_eq!(at_cap.reason, "phase-cap");
-    assert!(at_cap.msg.contains("base-fences") && at_cap.msg.contains("90s cap"), "{}", at_cap.msg);
-    assert_eq!(killed_verdict(&ph("base-fences", 40), 300, 300, "c", "o").reason, "deadline");
-    assert_eq!(killed_verdict(&ph("base-fences", 90), 100, 100, "c", "o").reason, "deadline");
+    assert!(at_cap.msg.contains("`gate`") && at_cap.msg.contains("260s cap"), "{}", at_cap.msg);
+    assert_eq!(killed_verdict(&ph("gate", 40), 300, 300, "c", "o").reason, "deadline");
+    assert_eq!(killed_verdict(&ph("gate", 260), 270, 270, "c", "o").reason, "deadline");
     assert_eq!(killed_verdict(&ph("reentry", 500), 300, 100, "c", "o").reason, "deadline");
 }
 

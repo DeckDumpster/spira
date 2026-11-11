@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=gate
+DOC=SECONDS A GATE BUILD PHASE MAY SHOW NO PROGRESS before it is ended as NO_VERDICT reason=build-stall
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Progress is a compiler output line or CPU time in the phase's process group. A build
+    # that keeps progressing is never ended: no clock bounds compilation.
+    : "${SPIRA_GATE_BUILD_STALL:=300}"
+SPIRA_CONF_DEFAULT_EOF

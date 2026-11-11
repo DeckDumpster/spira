@@ -4,6 +4,7 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 heimdall_restarts = "5"
 heimdall_restart_window = "3600"
 gate_deadline = 300
+gate_build_stall = 300
 git_lock_stale_secs = 600
 stack_shared_files = "Cargo.lock Cargo.toml spira/config-delta.toml spira/conf.d/ spira-lint/"
 scratch_max_age_hours = 24
