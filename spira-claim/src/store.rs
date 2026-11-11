@@ -204,6 +204,23 @@ impl Store {
         Ok(out)
     }
 
+    /// The dispatcher's last judgement of the READY and REWORK beads, in one read.
+    pub fn ready_set(&self) -> Result<ReadySet, String> {
+        let text = self.lc_run(&["ready-set"]).map_err(|e| format!("spira-lc ready-set: {e}"))?;
+        let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc ready-set: not JSON: {e}"))?;
+        let part = |k: &str| v.get(k).filter(|x| x.is_array()).map(|x| x.to_string()).ok_or_else(|| format!("spira-lc ready-set: no {k} array"));
+        let lifecycle = part("lifecycle")?;
+        let stamp = |k: &str| v.get(k).and_then(serde_json::Value::as_str).map(str::to_string);
+        Ok(ReadySet {
+            rows: rank::parse_ready(&part("items")?)?,
+            express: rank::express_ids(&lifecycle)?,
+            lifecycle: rank::parse_lifecycle(&lifecycle)?,
+            planning_watermark: stamp("planning_watermark"),
+            judged_at: stamp("judged_at"),
+            unjudged: v.get("unjudged").and_then(serde_json::Value::as_u64).ok_or("spira-lc ready-set: no unjudged count")?,
+        })
+    }
+
     pub fn express_ids(&self) -> Result<std::collections::BTreeSet<String>, String> {
         Ok(self.lc_list(&["--express", "--live", "--snapshot"])?.into_keys().collect())
     }
@@ -296,6 +313,19 @@ impl Store {
 /// The first non-empty line a failed answer gave, stderr first (a socket answer has only stdout).
 fn first_reason(r: &Ran) -> &str {
     r.stderr.lines().chain(r.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("no output")
+}
+
+/// What [`Store::ready_set`] read: the beads the dispatcher judged claimable, the planning
+/// watermark and time of the oldest judgement among them, and how many READY or REWORK beads
+/// no pass has judged yet.
+#[derive(Debug)]
+pub struct ReadySet {
+    pub rows: Vec<ReadyRow>,
+    pub lifecycle: HashMap<String, LifecycleRow>,
+    pub express: std::collections::BTreeSet<String>,
+    pub planning_watermark: Option<String>,
+    pub judged_at: Option<String>,
+    pub unjudged: u64,
 }
 
 /// The condition key a refused readiness publish raises.

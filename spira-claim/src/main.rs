@@ -11,6 +11,9 @@ fn main() {
         eprintln!("{}", o.err.trim_end());
     }
     let code = o.code;
+    if code == 0 && spira_claim::cli::is_hot_read(&args) {
+        spira_otel::run::discard();
+    }
     spira_otel::run::finish(code);
     std::process::exit(code)
 }

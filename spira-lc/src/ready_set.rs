@@ -25,11 +25,11 @@ pub fn run(conn: &Conn) -> (i32, String) {
         Some(Err(e)) => return cannot(e),
         None => return cannot("SPIRA_LC_STORE_PATH is unset".into()),
     };
-    let judged = match store.judged_claimable() {
+    let (judged, unjudged) = match store.judged_claimable() {
         Ok(j) => j,
         Err(e) => return cannot(e.to_string()),
     };
-    match answer(&judged, plan::current_watermark(), &ITEMS, &|ids| fetch(conn, ids)) {
+    match answer(&judged, unjudged, plan::current_watermark(), &ITEMS, &|ids| fetch(conn, ids)) {
         Ok(v) => (0, v.to_string()),
         Err(e) => cannot(e),
     }
@@ -48,6 +48,7 @@ fn fetch(conn: &Conn, ids: &[&str]) -> Result<Vec<Value>, String> {
 /// good to. `held` keeps items read at `watermark`; with no watermark nothing is kept.
 fn answer(
     judged: &[(LifecycleRecord, Readiness)],
+    unjudged: usize,
     watermark: Option<u64>,
     held: &Mutex<Held>,
     fetch: &dyn Fn(&[&str]) -> Result<Vec<Value>, String>,
@@ -58,6 +59,7 @@ fn answer(
     Ok(json!({
         "planning_watermark": oldest(|j| j.judged_at_planning_watermark.as_ref()),
         "judged_at": oldest(|j| j.judged_at.as_ref()),
+        "unjudged": unjudged,
         "lifecycle": judged.iter().map(|(r, j)| crate::control::state::listed(r, Some(j))).collect::<Vec<_>>(),
         "items": items,
     }))
@@ -116,7 +118,7 @@ mod tests {
     fn the_answer_names_the_oldest_planning_watermark_and_judgement_it_is_good_to() {
         let held = Mutex::new((None, BTreeMap::new()));
         let rows = [judged("sp-a", "9", "2026-11-11T10:00:05Z"), judged("sp-b", "7", "2026-11-11T10:00:09Z")];
-        let v = answer(&rows, Some(9), &held, &|ids| bd(ids)).unwrap();
+        let v = answer(&rows, 0, Some(9), &held, &|ids| bd(ids)).unwrap();
         assert_eq!((v["planning_watermark"].as_str(), v["judged_at"].as_str()), (Some("7"), Some("2026-11-11T10:00:05Z")));
         assert_eq!(v["lifecycle"].as_array().unwrap().len(), 2);
         assert_eq!(v["items"].as_array().unwrap().len(), 2);
@@ -132,14 +134,14 @@ mod tests {
             bd(ids)
         };
         for _ in 0..3 {
-            assert_eq!(answer(&rows, Some(9), &held, &fetch).unwrap()["items"].as_array().unwrap().len(), 2);
+            assert_eq!(answer(&rows, 0, Some(9), &held, &fetch).unwrap()["items"].as_array().unwrap().len(), 2);
         }
         assert_eq!(reads.get(), 1, "the same watermark is served from memory");
-        answer(&rows, Some(10), &held, &fetch).unwrap();
+        answer(&rows, 0, Some(10), &held, &fetch).unwrap();
         assert_eq!(reads.get(), 2, "a planning write moved the watermark, so bd is asked again");
         let more = [judged("sp-a", "9", "t"), judged("sp-b", "9", "t"), judged("sp-c", "9", "t")];
         let asked = std::cell::RefCell::new(Vec::new());
-        answer(&more, Some(10), &held, &|ids| {
+        answer(&more, 0, Some(10), &held, &|ids| {
             asked.borrow_mut().extend(ids.iter().map(|i| i.to_string()));
             bd(ids)
         })
@@ -156,8 +158,8 @@ mod tests {
             reads.set(reads.get() + 1);
             bd(ids)
         };
-        answer(&rows, None, &held, &fetch).unwrap();
-        answer(&rows, None, &held, &fetch).unwrap();
+        answer(&rows, 0, None, &held, &fetch).unwrap();
+        answer(&rows, 0, None, &held, &fetch).unwrap();
         assert_eq!(reads.get(), 2);
     }
 
@@ -171,7 +173,7 @@ mod tests {
             bd(&ids.iter().copied().filter(|i| *i != "sp-gone").collect::<Vec<_>>())
         };
         for _ in 0..2 {
-            let v = answer(&rows, Some(9), &held, &fetch).unwrap();
+            let v = answer(&rows, 0, Some(9), &held, &fetch).unwrap();
             assert_eq!(v["items"].as_array().unwrap().len(), 1);
         }
         assert_eq!(reads.get(), 1);

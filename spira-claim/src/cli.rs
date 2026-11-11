@@ -194,6 +194,12 @@ fn thresholds(a: &Args) -> Result<Thresholds, String> {
     })
 }
 
+/// The verbs a dwarf or the sentinel asks on the critical path, many times a minute: a success
+/// pushes no run metric, so the answer is not held for a network call.
+pub fn is_hot_read(raw: &[String]) -> bool {
+    matches!(raw.first().map(String::as_str), Some("rune-ready" | "ready-count" | "urgent"))
+}
+
 const THRESH: &[&str] = &["--poison-at", "--requeue-at", "--reclaim-at"];
 
 /// Every verb, reading this process's own environment — the binary's entry point.
@@ -903,8 +909,40 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
 /// blockers), never for status or assignee — the same rule `select --blockers machine`
 /// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
 fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
-    let st = store(a)?;
-    machine_judged(a, env, &st, false).map(|(rows, _)| rows)
+    claimable_over(a, env, &store(a)?)
+}
+
+/// The claimable rows by the dispatcher's published judgement when the control store holds one,
+/// else judged here. Reading never publishes.
+fn claimable_over(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>, String> {
+    if env.config.control_store {
+        match published_claimable(a, env, st) {
+            Ok(Some(rows)) => return Ok(rows),
+            Ok(None) => {}
+            Err(e) => eprintln!("spira-claim: published readiness unread, judging here: {}", first_line(&e)),
+        }
+    }
+    machine_judged(a, env, st, false).map(|(rows, _)| rows)
+}
+
+/// `None` when the dispatcher has judged nothing claimable and has not judged every ready
+/// bead: an empty answer then may mean "not yet", which only judging here can tell apart.
+/// The lifecycle rows are read now, so a hold or claim since the pass keeps a bead out; scope
+/// and stops are applied here as `judge_rows` applies them.
+fn published_claimable(a: &Args, env: &Env, st: &Store) -> Result<Option<Vec<rank::ReadyRow>>, String> {
+    let set = st.ready_set()?;
+    if set.rows.is_empty() && set.unjudged > 0 {
+        return Ok(None);
+    }
+    let want: BTreeSet<String> = ready::lifecycle_ready_ids(&set.lifecycle).into_iter().collect();
+    let (scope, no_loop) = (scope_label(a, env), no_loop_label(a, env));
+    let mut rows: Vec<rank::ReadyRow> = set.rows.into_iter().filter(|r| want.contains(&r.id) && ready::in_scope(r, &scope, &no_loop)).collect();
+    rows.sort_by(|x, y| x.id.cmp(&y.id));
+    retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
+    if a.has("--express") {
+        rows.retain(|r| set.express.contains(&r.id));
+    }
+    Ok(Some(rows))
 }
 
 /// [`machine_claimable`] with the verdict of every READY/REWORK row it judged. `publish`
@@ -930,7 +968,7 @@ fn ready_cache_key(a: &Args, env: &Env) -> String {
 }
 
 fn claimable_base(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>, String> {
-    judge_rows(a, env, st, None, false).map(|(rows, _)| rows)
+    claimable_over(a, env, st)
 }
 
 /// The dispatcher's one computation: the claimable rows, and a verdict for every READY/REWORK

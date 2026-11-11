@@ -37,19 +37,25 @@ pub struct Pass {
 
 impl<B: Backend> Store<B> {
     /// The READY and REWORK records the dispatcher's last pass judged claimable, each with that
-    /// judgement, from one revision. A record no pass has judged is absent.
-    pub fn judged_claimable(&self) -> Result<Vec<(LifecycleRecord, Readiness)>> {
+    /// judgement, from one revision, and how many no pass has judged yet.
+    pub fn judged_claimable(&self) -> Result<(Vec<(LifecycleRecord, Readiness)>, usize)> {
         let rev = self.contract.head()?;
         let records = self.records_page(rev, Some(&[BeadState::Ready, BeadState::Rework]), None, None, None, |_| true)?;
         let ids: Vec<&str> = records.iter().map(|r| r.value.row.bead_id.as_str()).collect();
         let mut judged = self.readiness_of(&ids, rev)?;
-        Ok(records
-            .into_iter()
-            .filter_map(|r| {
-                let j = judged.remove(&r.value.row.bead_id)?;
-                (j.judged_for_claim && j.claimable).then_some((r.value, j))
-            })
-            .collect())
+        let mut unjudged = 0;
+        let mut claimable = Vec::new();
+        for r in records {
+            match judged.remove(&r.value.row.bead_id) {
+                Some(j) if j.judged_for_claim => {
+                    if j.claimable {
+                        claimable.push((r.value, j));
+                    }
+                }
+                _ => unjudged += 1,
+            }
+        }
+        Ok((claimable, unjudged))
     }
 
     /// Publishes each judgement onto `readiness/<id>`. A record that does not exist gets none; a

@@ -502,8 +502,9 @@ fn the_judged_claimable_set_is_the_ready_records_a_pass_judged_claimable_and_not
         { "id": "sp-taken", "claimable": true },
     ]));
     assert_eq!(r.claim("sp-taken").0, 0);
-    let ids = |r: &Rig| -> Vec<String> { r.store.judged_claimable().unwrap().into_iter().map(|(rec, _)| rec.row.bead_id).collect() };
+    let ids = |r: &Rig| -> Vec<String> { r.store.judged_claimable().unwrap().0.into_iter().map(|(rec, _)| rec.row.bead_id).collect() };
     assert_eq!(ids(&r), ["sp-yes"]);
-    let (_, judged) = r.store.judged_claimable().unwrap().remove(0);
+    assert_eq!(r.store.judged_claimable().unwrap().1, 1, "sp-unjudged has no judgement; sp-taken is no longer READY");
+    let (_, judged) = r.store.judged_claimable().unwrap().0.remove(0);
     assert_eq!(judged.judged_at_planning_watermark.as_deref(), Some("w-7"));
 }
