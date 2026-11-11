@@ -1492,6 +1492,7 @@ impl<'w, W: World> Trial<'w, W> {
             let env: Vec<(String, String)> = vec![
                 e("PATH", &self.s.path),
                 e(spira_config::RELEASE_ENV, ctx.var(spira_config::RELEASE_ENV)),
+                e("SPIRA_TOML", ctx.var("SPIRA_TOML")),
                 e("HOME", ctx.var("HOME")),
                 e("TERM", "dumb"),
             ]
