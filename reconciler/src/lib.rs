@@ -2641,11 +2641,21 @@ mod tests {
     #[test]
     fn a_content_read_that_knows_none_of_the_ready_ids_is_unobservable_not_a_gap_per_row() {
         let dir = scratch_dir("junk-rows-blank");
-        let host: Arc<dyn Host> = Arc::new(Quiet { asked: Default::default(), server: None, blank_content: true });
+        let host: Arc<dyn Host> = Arc::new(Quiet { asked: Default::default(), server: None, blank_content: true, no_ready: false });
         let (cfg, _log) = tripwired(&dir, Some(host));
         let checks = observe_junk_rows(&cfg);
         assert_eq!(checks.len(), 1, "{checks:?}");
         assert!(matches!(&checks[0].raw, RawStatus::Unobservable { reason } if reason.contains("knows none of 2")), "{checks:?}");
+    }
+
+    #[test]
+    fn no_ready_rows_means_no_content_read_and_no_checks() {
+        let dir = scratch_dir("junk-rows-none");
+        let quiet = Arc::new(Quiet { asked: Default::default(), server: None, blank_content: false, no_ready: true });
+        let host: Arc<dyn Host> = quiet.clone();
+        let (cfg, _log) = tripwired(&dir, Some(host));
+        assert!(observe_junk_rows(&cfg).is_empty());
+        assert!(!quiet.asked.lock().unwrap().iter().any(|a| a.starts_with("content")));
     }
 
     #[test]
@@ -2720,6 +2730,7 @@ mod tests {
         server: Option<Option<String>>,
         /// Whether a `content list --id` read answers `[]` for every id.
         blank_content: bool,
+        no_ready: bool,
     }
 
     impl Host for Quiet {
@@ -2738,6 +2749,7 @@ mod tests {
                 return Err("refused: reads every bead ever filed".into());
             }
             match argv {
+                ["list", "--state", "READY"] if self.no_ready => Ok("[]".into()),
                 ["list", "--state", "READY"] => Ok(r#"[{"bead_id":"sp-real","state":"READY"},{"bead_id":"prose key","state":"READY"}]"#.into()),
                 ["content", "list", .., "--id", _] if self.blank_content => Ok("[]".into()),
                 ["content", "list", .., "--id", _] => Ok(r#"[{"id":"sp-real"}]"#.into()),
@@ -2812,7 +2824,7 @@ mod tests {
     }
 
     fn quiet(server: Option<Option<String>>) -> Arc<dyn Host> {
-        Arc::new(Quiet { asked: Default::default(), server, blank_content: false })
+        Arc::new(Quiet { asked: Default::default(), server, blank_content: false, no_ready: false })
     }
 
     #[test]
