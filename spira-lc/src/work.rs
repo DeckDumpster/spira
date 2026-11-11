@@ -1686,10 +1686,6 @@ fn split_piece_args(a: &[String]) -> Result<(), (i32, String)> {
     Ok(())
 }
 
-/// The kinds mail has a template for; a test holds this equal to `spira/mail/kinds`.
-/// `work list`: lifecycle state decides which beads, bd supplies what they say. A state filter
-/// is the machine's; `--label`/`--title-contains` narrow by content through bd, and the two are
-/// intersected here so neither side's idea of "open" is consulted.
 struct ListAsk<'a> {
     states: &'a [String],
     all: bool,
@@ -1699,6 +1695,9 @@ struct ListAsk<'a> {
     limit: Option<usize>,
 }
 
+/// `work list`: lifecycle state decides which beads, the SQL reader supplies what they say. A state
+/// filter is the machine's; `--label`/`--title-contains` narrow by content in the reader, and the
+/// two are intersected here so neither side's idea of "open" is consulted.
 fn list_with_content(conn: &Conn, reader: &ReadFn, ask: ListAsk) -> (i32, String) {
     let ListAsk { states, all, filters, json, full, limit } = ask;
     let narrowing = if !states.is_empty() {
@@ -1795,9 +1794,13 @@ fn run_read(step: Step, reader: &ReadFn, conn: &Conn) -> (i32, String) {
             if json {
                 return (0, rows);
             }
-            let found: Vec<serde_json::Value> = serde_json::from_str(rows.trim()).unwrap_or_default();
-            let lines: Vec<String> =
-                found.iter().map(|b| format!("{} P{} {}", b["id"].as_str().unwrap_or("?"), b["priority"], b["title"].as_str().unwrap_or(""))).collect();
+            let Ok(found) = serde_json::from_str::<Vec<serde_json::Value>>(rows.trim()) else {
+                return (CANNOT_TELL, "cannot tell: the reader's search was not JSON".to_string());
+            };
+            let lines: Vec<String> = found
+                .iter()
+                .map(|b| format!("{} P{} {}", b["id"].as_str().unwrap_or("?"), b["priority"].as_i64().map_or("?".to_string(), |p| p.to_string()), b["title"].as_str().unwrap_or("")))
+                .collect();
             (0, lines.join("\n"))
         }
         Step::LcList { states, all, filters, json, full, limit } => list_with_content(conn, reader, ListAsk { states: &states, all, filters: &filters, json, full, limit }),
@@ -1817,6 +1820,7 @@ fn project_row(row: &serde_json::Value) -> serde_json::Value {
 /// Ids per reader `list --id`: it is asked only for the beads the lifecycle kept, never the whole store.
 const LIST_ID_CHUNK: usize = 400;
 
+/// The kinds mail has a template for; a test holds this equal to `spira/mail/kinds`.
 const MAIL_KINDS: &[&str] = &["alert", "decision", "event", "note", "question", "suit"];
 
 /// An ask citing a bead no lifecycle row names is refused by name, never delivered.
@@ -2499,6 +2503,16 @@ mod tests {
             assert_eq!(code, CANNOT_TELL);
             assert!(out.contains("the held connection is gone"), "{out}");
         }
+    }
+
+    #[test]
+    fn a_search_reply_that_is_not_json_is_cannot_tell_and_a_missing_priority_is_a_question_mark() {
+        let seen = std::cell::RefCell::new(Vec::new());
+        let step = || Step::Search { query: s("q"), limit: None, json: false };
+        let (code, _) = run_read(step(), &scripted("not json", &seen), &Conn::unreachable());
+        assert_eq!(code, CANNOT_TELL);
+        let (code, out) = run_read(step(), &scripted(r#"[{"id":"sp-a1","title":"t"}]"#, &seen), &Conn::unreachable());
+        assert_eq!((code, out.as_str()), (0, "sp-a1 P? t"));
     }
 
     #[test]
