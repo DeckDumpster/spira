@@ -59,10 +59,13 @@ pub(super) const TEST_PHASES: [(&str, &str); 2] = [
     ("integration.json", "integration-tests"),
 ];
 
-/// The testenv step a red test phase is charged to: both phases are red on `unit-tests`.
+/// The step a named red is charged to: both test phases are red on `unit-tests`, and `lint` is
+/// the round step `spira-lint`.
 fn test_phase_step(suite: &str) -> &str {
     if TEST_PHASES.iter().any(|(_, stage)| *stage == suite) {
         UNIT_RED
+    } else if suite == "lint" {
+        LINT_RED
     } else {
         suite
     }

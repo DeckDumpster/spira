@@ -316,6 +316,24 @@ fn a_repo_whose_testenv_knows_only_gate_refuses_ci_and_accepts_gate_and_the_whol
 }
 
 #[test]
+fn an_eject_red_on_lint_is_accepted_and_forces_the_lint_step_on_recertification() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "lint red", "--red", "--suites", "lint", "--no-rebuild"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.lib.has("bead_reopen"),
+        "the ejected bead is returned: {:?}",
+        t.err()
+    );
+}
+
+#[test]
 fn an_eject_forcing_a_suite_testenv_does_not_know_is_refused_naming_the_known_ones_and_changes_nothing(
 ) {
     let t = round_world();
