@@ -5,7 +5,6 @@ use std::collections::BTreeSet;
 
 use lifecycle::batch::{BatchRow, BatchState};
 use lifecycle::bead::{BeadRow, BeadState, HoldKind};
-use lifecycle::delivery::{DeliveryRow, DeliveryState, Exit, Mode};
 use serde_json::Value;
 
 use crate::db::{Conn, DbError};
@@ -111,50 +110,6 @@ pub fn bead_set_clause(row: &BeadRow) -> String {
         opt_str(&row.sifted_tip),
         row.claimed_from.map_or_else(|| "NULL".to_string(), |s| format!("'{}'", s.as_str())),
         crate::db::now_epoch(),
-    )
-}
-
-pub fn fetch_delivery(conn: &Conn, bead_id: &str) -> Result<Option<DeliveryRow>, DbError> {
-    let rows = conn.query(&format!(
-        "SELECT bead_id, mode, state, batch_id, pr, merge_sha, ci, version FROM delivery WHERE bead_id = '{}'",
-        escape(bead_id)
-    ))?;
-    let Some(row) = rows.first() else { return Ok(None) };
-    delivery_of(bead_id, row).map(Some).map_err(DbError::CannotTell)
-}
-
-pub fn delivery_of(bead_id: &str, row: &Value) -> Result<DeliveryRow, String> {
-    let mode = Mode::from_str(&text(row, "mode").unwrap_or_default()).ok_or_else(|| format!("bad mode in delivery row: {row}"))?;
-    let state = DeliveryState::from_str(&text(row, "state").unwrap_or_default()).ok_or_else(|| format!("bad state in delivery row: {row}"))?;
-    Ok(DeliveryRow {
-        bead_id: bead_id.to_string(),
-        mode,
-        state,
-        batch_id: text(row, "batch_id"),
-        pr: number(row, "pr").map(|n| n as u64),
-        merge_sha: text(row, "merge_sha"),
-        exit: None,
-        ci: text(row, "ci").and_then(|c| lifecycle::delivery::CiState::from_str(&c)),
-        version: number(row, "version").unwrap_or(0) as u64,
-    })
-}
-
-pub fn delivery_set_clause(row: &DeliveryRow) -> String {
-    let exit_note = match row.exit {
-        Some(Exit::Delivered) => "delivered",
-        Some(Exit::Returned) => "returned",
-        Some(Exit::Requeued) => "requeued",
-        None => "",
-    };
-    let _ = exit_note; // the exit itself is recorded on the event, not on this cache row.
-    format!(
-        "state = '{}', batch_id = {}, pr = {}, merge_sha = {}, ci = {}, version = {}",
-        row.state.as_str(),
-        opt_str(&row.batch_id),
-        opt_num(row.pr.map(|n| n as i64)),
-        opt_str(&row.merge_sha),
-        opt_str(&row.ci.map(|c| c.as_str().to_string())),
-        row.version,
     )
 }
 

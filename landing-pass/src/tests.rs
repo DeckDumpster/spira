@@ -439,8 +439,12 @@ struct FakeLc {
     refuse_pass: Cell<bool>,
     held_tip: RefCell<Option<String>>,
     resubmits: RefCell<Vec<String>>,
+    waiting: RefCell<Vec<(String, String)>>,
 }
 impl crate::lifecycle::Lc for FakeLc {
+    fn waiting_tips(&self, _: &str) -> Result<Vec<(String, String)>, String> {
+        Ok(self.waiting.borrow().clone())
+    }
     fn certify(&self, id: &str, tip: &str, outcome: &str, _: &str) -> Result<String, String> {
         self.certified.borrow_mut().push(format!("{id} {tip} {outcome}"));
         let mismatched = self.held_tip.borrow().as_deref().is_some_and(|h| h != tip);
@@ -988,6 +992,17 @@ fn the_budget_cut_defers_the_rest_writes_the_cursor_and_escalates_at_the_thresho
     assert!(h.lib.has("ask_budget_deferred spira/sp-c spira 5"));
     assert!(!h.lib.has("ask_budget_deferred spira/sp-b"));
     assert!(!files.deferred_dir().join("spira_sp-a").exists());
+}
+
+#[test]
+fn a_waiting_row_whose_tip_is_on_the_landing_ref_is_settled_with_no_branch_to_walk() {
+    let h = H::new(LandMode::QueueLocal);
+    h.git.shas.borrow_mut().insert("local/main".into(), "b00".into());
+    h.git.ancestors.borrow_mut().insert(("t-on".into(), "local/main".into()));
+    h.lc.waiting.borrow_mut().extend([("sp-on".to_string(), "t-on".to_string()), ("sp-off".to_string(), "t-off".to_string())]);
+    h.run();
+    assert_eq!(h.lib.count("content_on_base sp-on settle-landed:t-on ancestor-of:local/main@b00"), 1, "{:?}", h.lib.calls.borrow());
+    assert!(!h.lib.has("content_on_base sp-off"), "a tip off the ref is left waiting: {:?}", h.lib.calls.borrow());
 }
 
 const NOTHING_TO_LAND: &str = "already contains every change on spira/sp-empty — nothing to land";

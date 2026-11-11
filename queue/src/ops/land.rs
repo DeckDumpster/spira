@@ -576,6 +576,37 @@ fn record_land(w: &World, run: &Path, repo: &str, m: &Member) {
     }
 }
 
+/// Settles a SUBMITTED or CERTIFIED row to LANDED when, and only when, its recorded tip is an
+/// ancestor of `base` (and equals `evidence_tip`, when one is given). Returns the tip settled.
+pub fn settle_landed_row(
+    w: &World,
+    path: &Path,
+    base: &str,
+    id: &str,
+    evidence_tip: Option<&str>,
+    by: &str,
+) -> Result<String, String> {
+    let row = w.lc.bead_row(id).ok_or("no lifecycle row")?;
+    if !matches!(row.state.as_str(), "SUBMITTED" | "CERTIFIED") {
+        return Err(format!("is {}, not SUBMITTED or CERTIFIED", row.state));
+    }
+    let tip = row.tip.filter(|t| !t.is_empty()).ok_or("has no recorded tip")?;
+    if let Some(given) = evidence_tip.filter(|g| *g != tip) {
+        return Err(format!("--evidence-tip {given} is not its recorded tip {tip}"));
+    }
+    let base_sha = w.git.rev_parse(path, base).ok_or_else(|| format!("cannot resolve {base}"))?;
+    if !w.git.is_ancestor(path, &tip, &base_sha) {
+        return Err(format!("its tip {tip} is not an ancestor of {base} ({base_sha})"));
+    }
+    let (state, version) = w.lc.bead_state(id).ok_or("no lifecycle row")?;
+    let proof = format!("settle-landed:{tip} ancestor-of:{base}@{base_sha}");
+    let kind = serde_json::json!({"ContentOnBase": {"proof": proof}}).to_string();
+    w.lc
+        .bead_event(id, &state, version.trim(), by, &kind)
+        .map_err(|(rc, e)| format!("spira-lc refused (rc={rc}): {e}"))?;
+    Ok(tip)
+}
+
 /// A landed member's walk on spira-lc: Deliver (CERTIFIED -> IN_DELIVERY) then Delivered
 /// (-> LANDED), from the row's own state and version. The landing is already recorded, so a
 /// refusal is reported, never undone; false when the member did not reach LANDED.

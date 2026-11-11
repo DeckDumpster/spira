@@ -12,6 +12,8 @@ pub trait Lc {
     fn certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> Result<String, String>;
     /// `spira-lc resubmit-submitted <id> <tip>`: make a SUBMITTED row hold the branch tip the gate judged.
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String>;
+    /// `spira-lc list --state SUBMITTED,CERTIFIED --repo <name>`: each waiting row's `(id, tip)`; a row with no tip is omitted.
+    fn waiting_tips(&self, repo: &str) -> Result<Vec<(String, String)>, String>;
 }
 
 /// The store's client: `pinned` (a test's scripted one) when given, else the route the
@@ -59,6 +61,22 @@ impl Lc for RealLc {
             return Err(format!("spira-lc certify exited {rc}: {out} {}", se.lines().next().unwrap_or("")));
         }
         Ok(out)
+    }
+
+    fn waiting_tips(&self, repo: &str) -> Result<Vec<(String, String)>, String> {
+        let c = client(self.client.as_ref(), self.bin.as_deref())?;
+        let (rc, so, se) = run(&c, &["list", "--state", "SUBMITTED,CERTIFIED", "--repo", repo]);
+        if rc != 0 {
+            return Err(format!("spira-lc list exited {rc}: {}", se.lines().next().unwrap_or("")));
+        }
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&so).map_err(|e| format!("spira-lc list: {e}"))?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let tip = r["tip"].as_str().filter(|t| !t.is_empty())?;
+                Some((r["bead_id"].as_str()?.to_string(), tip.to_string()))
+            })
+            .collect())
     }
 
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String> {

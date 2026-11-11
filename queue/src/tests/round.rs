@@ -6157,6 +6157,43 @@ fn a_hand_eject_for_red_must_name_the_failing_suite() {
 }
 
 #[test]
+fn settle_landed_moves_a_certified_bead_whose_tip_is_on_the_landing_ref_to_landed() {
+    let t = round_world();
+    t.git.ancestor("ta", "b0");
+    assert_eq!(
+        t.run(&["settle-landed", "sp-a", "--by=concierge", "--evidence-tip=ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let calls = t.lc.calls.borrow().join("\n");
+    assert!(calls.contains("event bead sp-a CERTIFIED"), "{calls}");
+    assert!(calls.contains("ContentOnBase"), "{calls}");
+}
+
+#[test]
+fn settle_landed_refuses_a_tip_off_the_landing_ref_naming_both_shas() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["settle-landed", "sp-b", "--by=concierge", "--evidence-tip=tb"]),
+        1
+    );
+    assert!(t.err().contains("tb") && t.err().contains("b0"), "{}", t.err());
+    assert!(!t.lc.has("event bead sp-b"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn settle_landed_refuses_an_evidence_tip_that_is_not_the_recorded_tip() {
+    let t = round_world();
+    t.git.ancestor("ta", "b0");
+    assert_eq!(
+        t.run(&["settle-landed", "sp-a", "--by=concierge", "--evidence-tip=zz"]),
+        1
+    );
+    assert!(!t.lc.has("event bead sp-a"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
 fn absolve_refuses_without_evidence_and_with_it_readmits_a_red_tip() {
     let t = round_world();
     t.lc.rows
