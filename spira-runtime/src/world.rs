@@ -879,6 +879,10 @@ impl World {
         );
         snap.open_rounds = self.open_rounds();
         snap.halt = read_halt(&self.run_dir);
+        wt::mark_landed(&mut snap, &|repo, tip| {
+            let root = wt::repo_root(&self.repo_map, repo).or_else(|_| wt::repo_root(&self.repo_map, &p.release_repo))?;
+            wt::ancestor_in(&root, tip, &crate::tasks::d::sweep::landing_ref(&root))
+        });
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 

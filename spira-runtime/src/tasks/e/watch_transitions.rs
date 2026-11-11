@@ -14,7 +14,7 @@
 //!
 //! - WORKING→SUBMITTED: WORKING ≥ `SPIRA_TRANSITIONS_WORKING_MIN` and no Submit inside
 //!   `SPIRA_TRANSITIONS_SUBMIT_BOUND` seconds.
-//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead has itself waited `SPIRA_TRANSITIONS_CUT_BOUND`, no round is open on the repo, and no Delivered inside the bound. A bead waiting behind an open round is queued, not stalled, and the round that just closed has not been closed that long.
+//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead has itself waited `SPIRA_TRANSITIONS_CUT_BOUND`, fewer rounds are open on the repo than `SPIRA_ROUND_MAX_OPEN`, and no Delivered inside the bound. A bead waiting behind a full set of open rounds is queued, not stalled, and the round that just closed has not been closed that long. A held bead, and one whose tip is already on the landing ref, is not waiting and is left out of the SUBMITTED and CERTIFIED rows.
 //! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
 //!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
 //! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed a commit the
@@ -59,6 +59,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_TRANSITIONS_ASK_BOUND",
     "SPIRA_TRANSITIONS_RELEASE_REPO",
     "SPIRA_TRANSITIONS_HEARTBEAT_BOUND",
+    "SPIRA_ROUND_MAX_OPEN",
     "SPIRA_RELEASES",
     "SPIRA_REPO_MAP",
 ];
@@ -85,6 +86,7 @@ pub struct Config {
     pub ask_bound_s: u64,
     pub release_repo: String,
     pub heartbeat_bound_s: u64,
+    pub round_max_open: u64,
     pub releases: std::path::PathBuf,
     pub repo_map: std::path::PathBuf,
 }
@@ -105,6 +107,7 @@ impl Config {
             ask_bound_s: cfg_parse("SPIRA_TRANSITIONS_ASK_BOUND")?,
             release_repo: cfg("SPIRA_TRANSITIONS_RELEASE_REPO")?,
             heartbeat_bound_s: cfg_parse("SPIRA_TRANSITIONS_HEARTBEAT_BOUND")?,
+            round_max_open: cfg_parse("SPIRA_ROUND_MAX_OPEN")?,
             releases: cfg("SPIRA_RELEASES")?.into(),
             repo_map: cfg("SPIRA_REPO_MAP")?.into(),
         })
@@ -138,6 +141,22 @@ pub struct Bead {
     pub ask_held: bool,
     #[serde(default)]
     pub ask_since: Option<u64>,
+    /// Any hold on the record: a held bead is not waiting for a cut.
+    #[serde(default)]
+    pub held: bool,
+    /// The tip the record names; the host tests it against the landing ref.
+    #[serde(default)]
+    pub tip: Option<String>,
+    /// The tip is already an ancestor of the landing ref: the bead is landed, not waiting.
+    #[serde(default)]
+    pub landed: bool,
+}
+
+impl Bead {
+    /// Whether the bead is waiting for a cut: SUBMITTED or CERTIFIED, not held, not landed.
+    fn awaits_cut(&self) -> bool {
+        matches!(self.state.as_str(), "SUBMITTED" | "CERTIFIED") && !self.held && !self.landed
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,7 +263,8 @@ fn ages(snap: &Snapshot, scope: &str, name: &str, now: u64) -> Vec<u64> {
     if name == "ASK" {
         return snap.beads.iter().filter(in_scope).filter(|b| b.ask_held).map(|b| now.saturating_sub(b.ask_since.unwrap_or(b.since))).collect();
     }
-    snap.beads.iter().filter(in_scope).filter(|b| b.state == name).map(|b| now.saturating_sub(b.since)).collect()
+    let waiting = |b: &&Bead| b.state == name && (!matches!(name, "SUBMITTED" | "CERTIFIED") || b.awaits_cut());
+    snap.beads.iter().filter(in_scope).filter(waiting).map(|b| now.saturating_sub(b.since)).collect()
 }
 
 pub fn table(snap: &Snapshot, scope: &str, now: u64) -> BTreeMap<&'static str, Row> {
@@ -346,16 +366,17 @@ fn evidence(snap: &Snapshot, scope: &str, now: u64, held: &[&str], exit: &str, b
     format!("{}; no {exit} for {} (bound {}); last: {}", held.join(", "), ago(since_last(snap, scope, exit, now), snap, now), dur(bound), lasts.join(", "))
 }
 
-fn round_open_in(snap: &Snapshot, repo: &str) -> bool {
-    snap.open_rounds.as_ref().is_some_and(|open| open.get(repo).is_some_and(|n| *n > 0))
+/// Whether `repo` has no free round slot: as many rounds open as the limit allows.
+fn round_slots_full(snap: &Snapshot, repo: &str, cfg: &Config) -> bool {
+    snap.open_rounds.as_ref().is_some_and(|open| open.get(repo).is_some_and(|n| *n > 0 && *n >= cfg.round_max_open))
 }
 
-/// The oldest wait at SUBMITTED or CERTIFIED in `scope` among repos with no round open; the `*`
-/// scope counts only the repos an open round does not already cover.
-fn uncovered_wait(snap: &Snapshot, scope: &str, now: u64) -> u64 {
+/// The oldest wait for a cut in `scope` among repos with a free round slot; the `*` scope counts
+/// only the repos a full set of open rounds does not already cover.
+fn uncovered_wait(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> u64 {
     snap.beads
         .iter()
-        .filter(|b| (scope == ALL || b.repo == scope) && matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED") && !round_open_in(snap, &b.repo))
+        .filter(|b| (scope == ALL || b.repo == scope) && b.awaits_cut() && !round_slots_full(snap, &b.repo, cfg))
         .map(|b| now.saturating_sub(b.since))
         .max()
         .unwrap_or(0)
@@ -371,7 +392,7 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
             let found = match edge {
                 "WORKING→SUBMITTED" => (t["WORKING"].count as u64 >= cfg.working_min.max(1) && quiet(snap, &scope, "Submit", now, cfg.submit_bound_s)).then(|| evidence(snap, &scope, now, &["WORKING"], "Submit", cfg.submit_bound_s)),
                 "SUBMITTED→IN_DELIVERY" => {
-                    (quiet(snap, &scope, "Delivered", now, cfg.cut_bound_s) && uncovered_wait(snap, &scope, now) >= cfg.cut_bound_s).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s))
+                    (quiet(snap, &scope, "Delivered", now, cfg.cut_bound_s) && uncovered_wait(snap, &scope, now, cfg) >= cfg.cut_bound_s).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s))
                 }
                 "IN_DELIVERY→LANDED" => (t["IN_DELIVERY"].oldest >= cfg.deliver_bound_s && quiet(snap, &scope, "Delivered", now, cfg.deliver_bound_s)).then(|| evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", cfg.deliver_bound_s)),
                 "LANDED→ACTIVATED" if scope == cfg.release_repo => snap.landed_after.get(&scope).copied().filter(|l| now.saturating_sub(*l) >= cfg.activate_bound_s).map(|landed| {
@@ -461,19 +482,34 @@ fn releases_in_effect(releases: &[release::machine::Release], releases_dir: &std
 /// or why it could not be asked.
 pub type Ancestor<'a> = &'a dyn Fn(&str, &str) -> Result<bool, String>;
 
+/// The checkout `repo` has in the repo map.
+pub fn repo_root(repo_map: &std::path::Path, repo: &str) -> Result<String, String> {
+    let text = std::fs::read_to_string(repo_map).map_err(|e| format!("{}: {e}", repo_map.display()))?;
+    let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), repo.to_string())]);
+    let registry = spira_config::repos::Registry::new(Some(&text), &env, std::path::Path::new("/"));
+    registry.root(repo).map(|r| r.to_string()).ok_or_else(|| format!("repo map has no checkout for {repo}"))
+}
+
 /// The ancestry test against the checkout `repo` has in the repo map. A commit the checkout
 /// does not know is an error, not "not contained".
 pub fn repo_ancestor<'a>(repo_map: &'a std::path::Path, repo: &'a str) -> impl Fn(&str, &str) -> Result<bool, String> + 'a {
-    move |commit, release| {
-        let text = std::fs::read_to_string(repo_map).map_err(|e| format!("{}: {e}", repo_map.display()))?;
-        let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), repo.to_string())]);
-        let registry = spira_config::repos::Registry::new(Some(&text), &env, std::path::Path::new("/"));
-        let root = registry.root(repo).ok_or_else(|| format!("repo map has no checkout for {repo}"))?;
-        match crate::wiki_git::git(std::path::Path::new(&root), &["merge-base", "--is-ancestor", commit, release])? {
-            (Some(0), _) => Ok(true),
-            (Some(1), _) => Ok(false),
-            (code, _) => Err(format!("git merge-base --is-ancestor {commit} {release} exited {code:?}")),
-        }
+    move |commit, release| ancestor_in(&repo_root(repo_map, repo)?, commit, release)
+}
+
+/// `git merge-base --is-ancestor commit of` in the checkout at `root`.
+pub fn ancestor_in(root: &str, commit: &str, of: &str) -> Result<bool, String> {
+    match crate::wiki_git::git(std::path::Path::new(root), &["merge-base", "--is-ancestor", commit, of])? {
+        (Some(0), _) => Ok(true),
+        (Some(1), _) => Ok(false),
+        (code, _) => Err(format!("git merge-base --is-ancestor {commit} {of} exited {code:?}")),
+    }
+}
+
+/// Marks each bead waiting for a cut whose tip `on_landing_ref(repo, tip)` says is landed. A tip
+/// that cannot be tested stays waiting: the page errs toward speaking.
+pub fn mark_landed(snap: &mut Snapshot, on_landing_ref: &dyn Fn(&str, &str) -> Result<bool, String>) {
+    for b in snap.beads.iter_mut().filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED")) {
+        b.landed = b.tip.as_deref().is_some_and(|tip| on_landing_ref(&b.repo, tip) == Ok(true));
     }
 }
 
