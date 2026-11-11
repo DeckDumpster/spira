@@ -23,6 +23,7 @@ use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
 use crate::watchers::publish_backlog::{self, Read};
 use crate::watchers::reconciler_flow::{FlowSnapshot, Params, Slots, Stage, Statuses};
+use crate::watchers::halt::Halt;
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 const STORE_ATTEMPTS: u32 = 3;
@@ -78,6 +79,18 @@ fn map_rows(text: &str) -> Vec<MapRow> {
             (f.len() >= 3 && !f[0].is_empty()).then(|| MapRow { name: f[0].into(), path: f[1].into(), land: f[2].into(), base: f.get(3).copied().unwrap_or("").into() })
         })
         .collect()
+}
+
+/// The work plane's stamp, if the plane is halted. Its age is its mtime; the present stands in
+/// when the filesystem will not say.
+pub fn read_halt(run_dir: &Path) -> Option<Halt> {
+    let stamp = run_dir.join("world.halted");
+    let meta = fs::metadata(&stamp).ok()?;
+    let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let since = meta.modified().ok().and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map_or_else(now, |d| d.as_secs());
+    let text = fs::read_to_string(&stamp).unwrap_or_default();
+    let why = text.lines().find_map(|l| l.strip_prefix("why: ")).unwrap_or("unstated").to_string();
+    Some(Halt { since, why })
 }
 
 fn lane_stopped(run_dir: &Path, repo: &str, lane: &str) -> bool {
@@ -227,6 +240,7 @@ impl World {
             unadvanced: open.map(|o| o.1).unwrap_or_default(),
             lines,
             fresh,
+            halt: read_halt(&self.run_dir),
         };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
@@ -788,7 +802,8 @@ impl World {
     pub fn throughput_snapshot(&self, input: &str) -> Result<String, String> {
         let p: ThroughputParams = serde_json::from_str(input).map_err(|e| format!("throughput params unparsed: {e}"))?;
         let day = 24 * 3600;
-        let blind = ThroughputSnapshot { readable: false, ..Default::default() };
+        let halt = read_halt(&self.run_dir);
+        let blind = ThroughputSnapshot { readable: false, halt: halt.clone(), ..Default::default() };
         let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&blind) };
         let Ok(mut landings) = self.landed_on_refs(p.now, &prefix) else { return to_json(&blind) };
         let Ok(waiting) = self.lc_json(&["list", "--state", "SUBMITTED,IN_DELIVERY"]) else { return to_json(&blind) };
@@ -803,7 +818,7 @@ impl World {
         let unlanded = unlanded_rounds(batches, p.now);
         let parts = self.round_record_partition();
         let records = Records { clear: parts.clear.iter().map(|f| f.display().to_string()).collect(), held: parts.held };
-        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records })
+        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt })
     }
 
     /// The beads landed over the 24 h ending `now`, per registered repo, read from its landing ref
@@ -863,6 +878,7 @@ impl World {
             p.window_s,
         );
         snap.open_rounds = self.open_rounds();
+        snap.halt = read_halt(&self.run_dir);
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 

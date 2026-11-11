@@ -5,7 +5,7 @@ use spira_runtime::watchers::round_duty::*;
 use spira_runtime::watchers::INBOX_APPEND;
 
 fn registration() -> runtime::Registration {
-    RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300 }.registration()
+    RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300, halt_page_secs: 3_600 }.registration()
 }
 
 fn certified_work_and_no_round() -> Snapshot {

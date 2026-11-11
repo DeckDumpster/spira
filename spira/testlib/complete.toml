@@ -506,6 +506,7 @@ round_certify_wall_secs = 900
 round_fault_backoff_secs = 1
 round_fault_retries = 1
 round_lease_ttl_secs = 300
+halt_page_after = 3600
 round_phase_deadline_secs_boot = 300
 round_phase_deadline_secs_build = 600
 round_phase_deadline_secs_suites = 900

@@ -40,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use spira_config::process::{cfg, cfg_parse};
 
 use crate::tasks::d::pattern;
+use crate::watchers::halt::Halt;
 use crate::watchers::{answers_observe, carried, iso8601, INBOX_APPEND};
 
 pub const NAME: &str = "watch.transitions";
@@ -165,6 +166,8 @@ pub struct Snapshot {
     /// Per edge, the owner that acts when the edge's bound expires.
     #[serde(default)]
     pub owners: BTreeMap<String, Owner>,
+    #[serde(default)]
+    pub halt: Option<Halt>,
 }
 
 /// An edge owner's last sign of life, epoch seconds, and the action of its that failed, if one did.
@@ -206,6 +209,10 @@ pub struct Carry {
     /// Per repo, when a bead was last seen to leave delivery for good.
     #[serde(default)]
     pub delivered: BTreeMap<String, u64>,
+    /// What holds the stall edges while the work plane is halted; empty when it is not.
+    pub halted: String,
+    /// The last time a halt was seen: no edge's wait counts from before it.
+    pub resumed_at: u64,
 }
 
 /// One state's waiting work: count and ages, seconds.
@@ -300,6 +307,17 @@ pub fn table_line(snap: &Snapshot, now: u64, cfg: &Config) -> String {
         repos.push(format!("{repo}: {}", parts.join(" ")));
     }
     format!("WAIT {} || since last — {}", states.join(" | "), if repos.is_empty() { "no repo has work or events".into() } else { repos.join("; ") })
+}
+
+/// The wait an edge tolerates before it stalls.
+fn edge_bound(edge: &str, cfg: &Config) -> u64 {
+    match edge {
+        "WORKING→SUBMITTED" => cfg.submit_bound_s,
+        "SUBMITTED→IN_DELIVERY" => cfg.cut_bound_s,
+        "IN_DELIVERY→LANDED" => cfg.deliver_bound_s,
+        "LANDED→ACTIVATED" => cfg.activate_bound_s,
+        _ => cfg.ask_bound_s,
+    }
 }
 
 /// One stalled edge in one scope, with its evidence.
@@ -411,6 +429,7 @@ pub fn snapshot_of(
         landed_after,
         open_rounds: None,
         owners: BTreeMap::new(),
+        halt: None,
     })
 }
 
@@ -585,6 +604,12 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     let now = now_ms / 1000;
     let mut next = carry.clone();
     let mut acts = vec![];
+    if let Some(h) = &snap.halt {
+        next.halted = h.held_text(now);
+        next.resumed_at = now;
+        return (next, acts);
+    }
+    next.halted.clear();
     if !snap.readable {
         if !carry.blind {
             acts.push(say(now_ms, &format!("P0 BLIND: the lifecycle control store cannot be read ({}), so no state's wait is being watched — this is not an all-clear", snap.why)));
@@ -604,7 +629,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     let amended = with_delivered(snap, &next.delivered);
     let snap = &amended;
     acts.push(say(now_ms, &table_line(snap, now, cfg)));
-    let found = stalls(snap, now, cfg);
+    let found: Vec<Stall> = stalls(snap, now, cfg).into_iter().filter(|s| carry.stalled.contains(&s.key()) || now.saturating_sub(carry.resumed_at) >= edge_bound(s.edge, cfg)).collect();
     let keys: BTreeSet<String> = found.iter().map(Stall::key).collect();
     for s in &found {
         if !carry.stalled.contains(&s.key()) {
@@ -641,7 +666,7 @@ impl WatchTransitions {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at")];
 
 impl Handler for WatchTransitions {
     fn interests(&self) -> &[EventKindTag] {

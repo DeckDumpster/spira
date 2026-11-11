@@ -367,7 +367,7 @@ fn filed_and_said() -> TaskRig {
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_and_said(), NAME);
-    assert_eq!(rows, ["blind", "diluted", "held", "stalled/alpha", "starved", "unlanded"]);
+    assert_eq!(rows, ["blind", "diluted", "halted", "held", "resumed_at", "stalled/alpha", "starved", "unlanded"]);
 }
 
 #[test]
@@ -391,4 +391,40 @@ fn the_last_landing_is_when_the_round_landed_not_when_it_was_cut() {
     assert!(filed.line.contains("(7000s ago)"), "{}", filed.line);
     assert_eq!(filed.reference(), format!("incident:throughput-stall:a:{}", cut + 2_400));
     assert_eq!(landings[1].last_landing, 500, "a repo with no landed round keeps the ref's time");
+}
+
+fn stalled_snapshot(now_s: u64) -> Snapshot {
+    Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly: vec![0; 24], last_landing: now_s - 10_000, waiting: 3 }], ..Default::default() }
+}
+
+fn halt(since: u64) -> Option<spira_runtime::watchers::halt::Halt> {
+    Some(spira_runtime::watchers::halt::Halt { since, why: "operator order: freeze".into() })
+}
+
+#[test]
+fn a_landing_stall_while_the_work_plane_is_halted_files_nothing_and_the_row_names_the_halt() {
+    let now = 3 * DAY_MS;
+    let snap = Snapshot { halt: halt(now / 1000 - 600), ..stalled_snapshot(now / 1000) };
+    let v = decide(&Carry::default(), &snap, now, &config());
+    assert!(v.acts.is_empty(), "{:?}", v.acts.iter().map(|a| &a.name).collect::<Vec<_>>());
+    assert!(v.carry.halted.contains("operator order: freeze") && v.carry.halted.contains("600s"), "{}", v.carry.halted);
+}
+
+#[test]
+fn the_same_landing_stall_with_the_plane_running_files_the_incident() {
+    let now = 3 * DAY_MS;
+    let v = decide(&Carry::default(), &stalled_snapshot(now / 1000), now, &config());
+    assert_eq!(v.acts.iter().filter(|a| a.name == FILE).count(), 1);
+    assert!(v.carry.halted.is_empty());
+}
+
+#[test]
+fn after_a_halt_lifts_the_stall_clock_restarts() {
+    let now = 3 * DAY_MS;
+    let held = decide(&Carry::default(), &Snapshot { halt: halt(now / 1000 - 600), ..stalled_snapshot(now / 1000) }, now, &config());
+    let v = decide(&held.carry, &stalled_snapshot((now + 60_000) / 1000), now + 60_000, &config());
+    assert!(v.acts.is_empty(), "no page inside one stall bound of the resume");
+    let later = now + 7_300_000;
+    let v = decide(&held.carry, &stalled_snapshot(later / 1000), later, &config());
+    assert_eq!(v.acts.iter().filter(|a| a.name == FILE).count(), 1);
 }

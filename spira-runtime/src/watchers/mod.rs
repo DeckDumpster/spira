@@ -4,6 +4,7 @@
 
 pub mod asks;
 pub mod design_asks;
+pub mod halt;
 pub mod brain_dirty;
 pub mod bead_sweep;
 pub mod inbox_keeper;

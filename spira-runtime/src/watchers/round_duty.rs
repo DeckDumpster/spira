@@ -8,6 +8,7 @@ use runtime::event::*;
 use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
+use super::halt::Halt;
 use super::{answers_observe, carried, iso8601, INBOX_APPEND};
 
 pub const STREAM: &str = "watch.round-duty";
@@ -16,7 +17,7 @@ pub const STATE: EventKindTag = "round-duty.state";
 pub const OBSERVE: &str = "round-duty.observe";
 pub const NAME: &str = "round-duty";
 
-const ROW_PARTS: &[Part] = &[Part::Field("last_due"), Part::Field("last_unknown"), Part::Field("last_c"), Part::Field("last_change"), Part::Field("last_stopped"), Part::Field("starved_since"), Part::Field("last_starved"), Part::Field("last_unadvanced"), Part::Map { name: "lines", drop: &[] }];
+const ROW_PARTS: &[Part] = &[Part::Field("last_due"), Part::Field("last_unknown"), Part::Field("last_c"), Part::Field("last_change"), Part::Field("last_stopped"), Part::Field("starved_since"), Part::Field("last_starved"), Part::Field("last_unadvanced"), Part::Field("held"), Part::Field("halt_paged"), Part::Map { name: "lines", drop: &[] }];
 
 const DEADLINE_MS: u64 = 10_000;
 
@@ -28,6 +29,7 @@ pub struct RoundDuty {
     pub remind_secs: u64,
     pub idle_cut_secs: u64,
     pub lease_ttl_secs: u64,
+    pub halt_page_secs: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -54,6 +56,8 @@ pub struct Snapshot {
     pub unadvanced: Vec<(String, u64)>,
     pub lines: BTreeMap<String, u64>,
     pub fresh: Vec<(String, String)>,
+    #[serde(default)]
+    pub halt: Option<Halt>,
 }
 
 /// Carried between ticks, as the body of the latest `round-duty.state` event.
@@ -68,6 +72,8 @@ pub struct Carry {
     pub last_starved: u64,
     pub last_unadvanced: u64,
     pub lines: BTreeMap<String, u64>,
+    pub held: String,
+    pub halt_paged: Option<u64>,
 }
 
 fn verdictless(line: &str) -> bool {
@@ -92,6 +98,21 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
         say.push(format!("ROUNDS STOPPED ON PURPOSE: {shown} (world.sh status names owner and release condition) — not counted as due"));
         c.last_stopped = snap.stopped.clone();
     }
+    if let Some(h) = &snap.halt {
+        c.held = h.held_text(now);
+        c.last_c = Some(certified);
+        c.last_change = now;
+        c.starved_since = None;
+        c.last_starved = 0;
+        c.last_due = 0;
+        if now.saturating_sub(h.since) >= cfg.halt_page_secs && c.halt_paged != Some(h.since) {
+            say.push(format!("WORLD HALT OUTLASTS {}s: halted since {} — why: {}; round and landing watchers are held, not paging, until the plane starts", cfg.halt_page_secs, iso8601(h.since), h.why));
+            c.halt_paged = Some(h.since);
+        }
+        return (c, say);
+    }
+    c.held.clear();
+    c.halt_paged = None;
     if c.last_c != Some(certified) {
         c.last_c = Some(certified);
         c.last_change = now;
@@ -191,7 +212,7 @@ mod tests {
     use super::*;
 
     fn cfg() -> RoundDuty {
-        RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300 }
+        RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300, halt_page_secs: 3_600 }
     }
 
     fn snap(state: RoundState, certified: u64) -> Snapshot {
@@ -282,5 +303,46 @@ mod tests {
         assert_eq!(say.iter().filter(|m| m.starts_with("ROUND NO VERDICTS 300")).count(), 1);
         assert!(say.iter().any(|m| m.starts_with("ROUNDS STOPPED ON PURPOSE: spira ")));
         assert!(decide(&cfg(), &c, &Snapshot { stopped: "spira".into(), ..snap(RoundState::None, 0) }, 1100).1.is_empty());
+    }
+
+    fn halted(since: u64) -> Snapshot {
+        Snapshot { halt: Some(Halt { since, why: "operator order: freeze".into() }), ..snap(RoundState::None, 2) }
+    }
+
+    #[test]
+    fn a_halted_plane_holds_round_due_and_not_cutting_and_the_row_names_the_halt() {
+        let (c, say) = decide(&cfg(), &Carry::default(), &halted(400), 1000);
+        assert!(say.is_empty(), "{say:?}");
+        assert!(c.held.contains("operator order: freeze") && c.held.contains("600s"), "{}", c.held);
+        let (_, say) = decide(&cfg(), &c, &halted(400), 3000);
+        assert!(say.iter().all(|m| !m.starts_with("ROUND DUE") && !m.starts_with("ROUND NOT CUTTING")), "{say:?}");
+    }
+
+    #[test]
+    fn the_same_pool_with_the_plane_running_is_due() {
+        let (c, say) = decide(&cfg(), &Carry::default(), &snap(RoundState::None, 2), 1000);
+        assert!(say[0].starts_with("ROUND DUE"), "{say:?}");
+        assert!(c.held.is_empty());
+    }
+
+    #[test]
+    fn a_halt_older_than_the_configured_age_pages_once_naming_its_reason() {
+        let (c, say) = decide(&cfg(), &Carry::default(), &halted(1000), 1000 + 3_599);
+        assert!(say.is_empty(), "{say:?}");
+        let (c, say) = decide(&cfg(), &c, &halted(1000), 1000 + 3_600);
+        assert_eq!(say.len(), 1, "{say:?}");
+        assert!(say[0].starts_with("WORLD HALT OUTLASTS 3600s") && say[0].contains("operator order: freeze"), "{say:?}");
+        assert!(decide(&cfg(), &c, &halted(1000), 1000 + 9_000).1.is_empty(), "paged once per halt");
+    }
+
+    #[test]
+    fn after_a_halt_lifts_the_idle_clock_restarts() {
+        let (c, _) = decide(&cfg(), &Carry::default(), &halted(0), 5000);
+        let (c, say) = decide(&cfg(), &c, &snap(RoundState::None, 2), 5100);
+        assert!(say[0].starts_with("ROUND DUE"), "min certified is met, so due at once: {say:?}");
+        assert!(c.held.is_empty() && c.halt_paged.is_none());
+        let s = Snapshot { submitted: 1, ..snap(RoundState::None, 0) };
+        let (c, _) = decide(&cfg(), &Carry::default(), &Snapshot { halt: halted(0).halt, ..s.clone() }, 5000);
+        assert!(decide(&cfg(), &c, &s, 5900).1.is_empty(), "the not-cutting wait starts at the resume");
     }
 }

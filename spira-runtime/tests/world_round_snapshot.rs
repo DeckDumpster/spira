@@ -53,7 +53,7 @@ fn an_unreadable_round_source_is_unknown_never_none() {
 }
 
 fn cfg() -> RoundDuty {
-    RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300 }
+    RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300, halt_page_secs: 3_600 }
 }
 
 #[test]
@@ -73,4 +73,33 @@ fn a_certifying_round_with_a_certified_bead_set_aside_pages_nothing_and_no_round
     assert_eq!(first.len(), 1, "{first:?}");
     let (_, later) = decide(&cfg(), &c, &snap, 1100);
     assert!(later.is_empty(), "{later:?}");
+}
+
+#[test]
+fn a_work_halt_stamp_reaches_the_snapshot_with_its_reason_and_no_stamp_is_no_halt() {
+    let (dir, w) = world(true);
+    let snap: Snapshot = serde_json::from_str(&w.round_snapshot("{}").unwrap()).unwrap();
+    assert_eq!(snap.halt, None);
+    std::fs::create_dir_all(dir.path().join("run")).unwrap();
+    std::fs::write(dir.path().join("run/world.halted"), "2026-11-11T05:10:52Z\nwhy: operator order: freeze\n").unwrap();
+    let snap: Snapshot = serde_json::from_str(&w.round_snapshot("{}").unwrap()).unwrap();
+    let h = snap.halt.expect("halted");
+    assert_eq!(h.why, "operator order: freeze");
+    assert!(h.since > 1_000_000_000);
+}
+
+fn stamp(dir: &testkit::TempDir) {
+    std::fs::create_dir_all(dir.path().join("run")).unwrap();
+    std::fs::write(dir.path().join("run/world.halted"), "2026-11-11T05:10:52Z\nwhy: operator order: freeze\n").unwrap();
+}
+
+#[test]
+fn the_throughput_and_transitions_snapshots_carry_the_halt_even_when_unreadable() {
+    let (dir, w) = world(true);
+    stamp(&dir);
+    let t: spira_runtime::tasks::e::watch_throughput::Snapshot = serde_json::from_str(&w.throughput_snapshot(r#"{"now":1700000000,"abandon_window_s":3600}"#).unwrap()).unwrap();
+    assert_eq!(t.halt.map(|h| h.why), Some("operator order: freeze".to_string()));
+    let input = format!(r#"{{"now":1700000000,"window_s":3600,"releases":"{}","release_repo":"alpha"}}"#, dir.path().join("rel").display());
+    let x: spira_runtime::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&w.transitions_snapshot(&input).unwrap()).unwrap();
+    assert_eq!(x.halt.map(|h| h.why), Some("operator order: freeze".to_string()));
 }

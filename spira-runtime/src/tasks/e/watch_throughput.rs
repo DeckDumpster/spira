@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 use spira_config::process::cfg_parse;
 
 use crate::tasks::d::pattern;
+use crate::watchers::halt::Halt;
 use crate::watchers::{carried, INBOX_APPEND};
 
 pub const NAME: &str = "watch.throughput";
@@ -107,6 +108,8 @@ pub struct Snapshot {
     pub repos: Vec<RepoRounds>,
     pub unlanded: Vec<Unlanded>,
     pub records: Records,
+    #[serde(default)]
+    pub halt: Option<Halt>,
 }
 
 /// What `watch.throughput.file` is handed: one stall episode and the incident that names it.
@@ -137,6 +140,10 @@ pub struct Carry {
     pub diluted: Vec<String>,
     pub unlanded: Vec<String>,
     pub held: Vec<String>,
+    /// What holds the stall conditions while the work plane is halted; empty when it is not.
+    pub halted: String,
+    /// The last time a halt was seen: no wait counts from before it.
+    pub resumed_at: u64,
 }
 
 pub struct Verdict {
@@ -162,9 +169,19 @@ fn is_stalled(l: &RepoLanding, now_ms: u64, cfg: &Config) -> bool {
     l.waiting > 0 && (now_ms / 1000).saturating_sub(l.last_landing) >= cfg.stall_s
 }
 
+fn past_halt(carry: &Carry, now_ms: u64, bound_s: u64) -> bool {
+    (now_ms / 1000).saturating_sub(carry.resumed_at) >= bound_s
+}
+
 pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verdict {
     let mut next = carry.clone();
     let mut acts = vec![];
+    if let Some(h) = &snap.halt {
+        next.halted = h.held_text(now_ms / 1000);
+        next.resumed_at = now_ms / 1000;
+        return Verdict { carry: next, acts };
+    }
+    next.halted.clear();
     if !snap.readable {
         if !carry.blind {
             acts.push(say(now_ms, "P0 BLIND: the landings cannot be read, so landing stalls are not being checked"));
@@ -176,7 +193,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
 
     next.stalled.retain(|repo, _| snap.landings.iter().any(|l| l.repo == *repo && is_stalled(l, now_ms, cfg)));
     for l in snap.landings.iter().filter(|l| is_stalled(l, now_ms, cfg)) {
-        if next.stalled.get(&l.repo) == Some(&l.last_landing) {
+        if next.stalled.get(&l.repo) == Some(&l.last_landing) || !past_halt(carry, now_ms, cfg.stall_s) {
             continue;
         }
         let f = stall_filing(l, snap.repos.iter().find(|r| r.repo == l.repo), now_ms, cfg);
@@ -199,7 +216,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     }
     next.diluted = diluted.iter().map(|r| r.repo.clone()).collect();
 
-    let stuck: Vec<&Unlanded> = snap.unlanded.iter().filter(|u| u.age_s >= cfg.passed_grace_s).collect();
+    let stuck: Vec<&Unlanded> = snap.unlanded.iter().filter(|u| u.age_s >= cfg.passed_grace_s && past_halt(carry, now_ms, cfg.passed_grace_s)).collect();
     for u in &stuck {
         if !carry.unlanded.contains(&u.batch) {
             acts.push(say(now_ms, &format!("P0 {}: round {} passed {}s ago and has not landed (still {})", u.repo, u.batch, u.age_s, u.state)));
@@ -241,7 +258,7 @@ impl WatchThroughput {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at")];
 
 impl Handler for WatchThroughput {
     fn interests(&self) -> &[EventKindTag] {
