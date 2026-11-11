@@ -141,7 +141,7 @@ impl Rule for LockfileLint {
     }
 
     fn hint(&self) -> &'static str {
-        "a Cargo.lock bump has no matching Cargo.toml change — either the dependency change belongs in a Cargo.toml, or the lockfile drifted under an unpinned local toolchain and should be regenerated under rust-toolchain.toml"
+        "if cargo says the lock needs updating, the manifests and Cargo.lock disagree: regenerate it (cargo update -w) and commit it with the manifest change. Otherwise a Cargo.lock bump has no matching Cargo.toml change — either the dependency change belongs in a Cargo.toml, or the lockfile drifted under an unpinned local toolchain and should be regenerated under rust-toolchain.toml"
     }
 }
 
@@ -179,6 +179,32 @@ mod tests {
         let t = project("");
         let why = lock_drift(t.path()).unwrap();
         assert!(why.is_some(), "the lock still lists b under a; --locked must refuse");
+    }
+
+    fn git(t: &crate::testutil::TempDir, args: &[&str]) {
+        let ok = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(t.path())
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?}");
+    }
+
+    #[test]
+    fn check_reports_a_manifest_that_dropped_a_dependency_the_lock_keeps() {
+        let t = project("b = { path = \"../b\" }\n");
+        git(&t, &["init", "-q"]);
+        git(&t, &["add", "-A"]);
+        git(&t, &["commit", "-qm", "base"]);
+        t.write("a/Cargo.toml", &manifest(""));
+        let rule = LockfileLint::default();
+        let tree = Tree::from_paths(t.path(), ["Cargo.lock", "Cargo.toml"], Vec::<String>::new()).with_base(Some("HEAD".into()));
+        let got = rule.check(&tree).unwrap();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].message.contains("not what the manifests resolve to"), "{got:?}");
+        assert_eq!(rule.checked(), None);
     }
 
     #[test]
