@@ -149,13 +149,51 @@ pub fn parse_iso(s: &str) -> Option<i64> {
 /// logic, so it takes them as arguments rather than reading config itself (per Ryan
 /// 2026-10-05: one source of config); callers resolve them through
 /// `spira_config::process::cfg` at their own top level.
-pub fn notify_live_dwarf(id: &str, message: &str, run: &str, mail: &str) {
+pub fn notify_live_dwarf(id: &str, message: &str, run: &str, mail: &str) -> Notified {
     if message.is_empty() {
-        return;
+        return Notified::NothingToSay;
     }
-    if let Some(to) = live_dwarf_mailbox(id, run, mail) {
-        mail_send(&to, message);
+    let Some(to) = live_dwarf_mailbox(id, run, mail) else {
+        return Notified::NoLiveHolder;
+    };
+    let new_dir = format!("{mail}/{to}/new");
+    let before = mailbox_files(&new_dir);
+    mail_send(&to, message);
+    let arrived = mailbox_files(&new_dir).into_iter().find(|f| !before.contains(f));
+    match arrived {
+        Some(file) => {
+            let msg_id = std::fs::read_to_string(format!("{new_dir}/{file}"))
+                .ok()
+                .and_then(|t| t.lines().find_map(|l| l.strip_prefix("Message-ID:").map(|v| v.trim().to_string())))
+                .unwrap_or(file);
+            Notified::Mailed { mailbox: to, msg_id }
+        }
+        None => Notified::Undelivered { mailbox: to },
     }
+}
+
+/// What `notify_live_dwarf` did, in the words `bead.sh amend` prints.
+#[derive(Debug, PartialEq)]
+pub enum Notified {
+    NothingToSay,
+    NoLiveHolder,
+    Mailed { mailbox: String, msg_id: String },
+    Undelivered { mailbox: String },
+}
+
+impl Notified {
+    pub fn report(&self, id: &str) -> Option<String> {
+        match self {
+            Notified::NothingToSay => None,
+            Notified::NoLiveHolder => Some(format!("no live holder on {id}; the amendment is on the bead and reaches the next builder that claims it")),
+            Notified::Mailed { mailbox, msg_id } => Some(format!("mailed the live holder ({mailbox}): message {msg_id}")),
+            Notified::Undelivered { mailbox } => Some(format!("live holder {mailbox} found but no message arrived in its mailbox")),
+        }
+    }
+}
+
+fn mailbox_files(dir: &str) -> Vec<String> {
+    std::fs::read_dir(dir).into_iter().flatten().filter_map(|e| e.ok()).filter_map(|e| e.file_name().into_string().ok()).collect()
 }
 
 /// Adds one change to the amend message, set off from what is already there by a blank line.
@@ -283,6 +321,27 @@ mod tests {
         append_change(&mut m, "Marked express.");
         append_change(&mut m, "Scope expanded: add acceptance tests");
         assert_eq!(m, "Marked express.\n\nScope expanded: add acceptance tests");
+    }
+
+    #[test]
+    fn amending_an_unheld_bead_says_no_live_holder() {
+        let (_t, run, mail) = fixture(false, false);
+        let n = notify_live_dwarf("sp-amend2", "Description appended.", &run, &mail);
+        assert_eq!(n, Notified::NoLiveHolder);
+        assert!(n.report("sp-amend2").unwrap().contains("no live holder on sp-amend2"));
+    }
+
+    #[test]
+    fn a_mailed_holder_is_reported_with_its_mailbox_and_message_id() {
+        let n = Notified::Mailed { mailbox: "dwarf-sp-amend2".into(), msg_id: "<42@spira>".into() };
+        let line = n.report("sp-amend2").unwrap();
+        assert!(line.contains("dwarf-sp-amend2") && line.contains("<42@spira>"), "{line}");
+    }
+
+    #[test]
+    fn an_amend_with_nothing_to_say_prints_nothing() {
+        let (_t, run, mail) = fixture(true, true);
+        assert_eq!(notify_live_dwarf("sp-amend2", "", &run, &mail).report("sp-amend2"), None);
     }
 
     fn a(v: &[&str]) -> Vec<String> {

@@ -1694,8 +1694,9 @@ pub fn append(p: &Path, text: &str) {
 /// The `habits` dispatcher, a release binary on the launcher's PATH like `work`.
 const HABITS_STOP_TIMEOUT_S: u32 = 600;
 
-fn habit_hook(timeout_s: u32) -> String {
-    format!("{{\"type\": \"command\", \"command\": \"habits\", \"timeout\": {timeout_s}}}")
+fn habit_hook(habits: &Path, timeout_s: u32) -> String {
+    let cmd = serde_json::to_string(&habits.display().to_string()).unwrap();
+    format!("{{\"type\": \"command\", \"command\": {cmd}, \"timeout\": {timeout_s}}}")
 }
 
 /// `dwarf_settings`: the --settings JSON, spelled as python's json.dumps spells it.
@@ -1708,13 +1709,14 @@ pub fn dwarf_settings(home: &Path, habits: bool) -> String {
     if is_executable(&deliver) {
         post.push(hook(&deliver));
     }
+    let habits_bin = home.parent().unwrap_or(home).join("bin").join("habits");
     let mut groups = vec![format!("{{\"hooks\": [{}]}}", post.join(", "))];
     if habits {
-        groups.push(format!("{{\"matcher\": \"Edit|Write|MultiEdit\", \"hooks\": [{}]}}", habit_hook(10)));
+        groups.push(format!("{{\"matcher\": \"Edit|Write|MultiEdit\", \"hooks\": [{}]}}", habit_hook(&habits_bin, 10)));
     }
     let mut hooks = format!("\"PostToolUse\": [{}]", groups.join(", "));
     if habits {
-        hooks.push_str(&format!(", \"Stop\": [{{\"hooks\": [{}]}}]", habit_hook(HABITS_STOP_TIMEOUT_S)));
+        hooks.push_str(&format!(", \"Stop\": [{{\"hooks\": [{}]}}]", habit_hook(&habits_bin, HABITS_STOP_TIMEOUT_S)));
     }
     let mut pre = Vec::new();
     for p in [
@@ -1750,8 +1752,10 @@ mod tests {
         let post = on["hooks"]["PostToolUse"].as_array().unwrap();
         assert_eq!(post.len(), 2);
         assert_eq!(post[1]["matcher"], "Edit|Write|MultiEdit");
-        assert_eq!(post[1]["hooks"][0]["command"], "habits");
-        assert_eq!(on["hooks"]["Stop"][0]["hooks"][0]["command"], "habits");
+        let release = d.path().parent().unwrap();
+        let abs = format!("{}/bin/habits", release.display());
+        assert_eq!(post[1]["hooks"][0]["command"], abs.as_str(), "the model's PATH holds no habits; a bare name never runs");
+        assert_eq!(on["hooks"]["Stop"][0]["hooks"][0]["command"], abs.as_str());
         assert_eq!(post[0], off["hooks"]["PostToolUse"][0], "the existing group is untouched");
     }
 
