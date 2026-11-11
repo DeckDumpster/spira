@@ -559,11 +559,10 @@ const NEEDS_BUILT: [(&str, &str); 1] = [("spira-sim", "spira-config")];
 
 /// The unit phases' commands, in order: build (the `dwarf` profile), then the tests.
 ///
-/// The build is `cargo build --all-targets` (sp-aprxm), not `cargo test --no-run`: the latter
-/// compiles a binary crate only under `cfg(test)` unless it has integration tests, so code
-/// behind `#[cfg(not(test))]` (spira-claim's `main`) would go uncompiled once the build fence
-/// no longer runs in front of it. `--all-targets` builds every lib and bin both ways and the
-/// test harnesses; the test phase reuses those harnesses (same profile, same mode).
+/// The build is `cargo test --no-run`: it compiles the test harnesses only, with the flags the
+/// test phase uses, so the test phase recompiles nothing. The non-test build of each lib and
+/// bin (code behind `cfg(not(test))`) is the round's job, which builds the whole workspace in
+/// release before anything lands (operator ruling 2026-11-10: build targets once).
 ///
 /// Only the named crates build: linking every workspace binary on each gate is what pushed the
 /// build phase to the gate cap, and a test reaches its own package's binaries through
@@ -580,7 +579,7 @@ pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2
         (
             "build",
             format!(
-                "cargo build --profile dwarf {cfg} -j {jobs} --all-targets --features integration{p}{built}"
+                "cargo test --no-run --profile dwarf {cfg} -j {jobs} --features integration{p}{built}"
             ),
         ),
         (
@@ -1099,8 +1098,21 @@ mod tests {
     fn the_unit_build_and_test_name_only_the_changed_crates() {
         let [b, t] = unit_commands(&["spira-runtime".into()], 4);
         assert!(!b.1.contains("--workspace") && !b.1.contains("&&"), "{}", b.1);
-        assert!(b.1.ends_with(" --all-targets --features integration -p spira-runtime"), "{}", b.1);
+        assert!(b.1.ends_with(" --features integration -p spira-runtime"), "{}", b.1);
         assert!(!t.1.contains("--workspace") && !t.1.contains("spira-config"), "{}", t.1);
+    }
+
+    #[test]
+    fn the_build_compiles_the_test_harnesses_once_and_the_test_phase_reuses_them() {
+        let [b, t] = unit_commands(&["gate".into(), "queue".into()], 4);
+        assert!(!b.1.contains("--all-targets"), "{}", b.1);
+        let (test_flags, _) = t.1.split_once(" -- ").unwrap();
+        assert_eq!(b.1, test_flags.replacen("cargo test ", "cargo test --no-run ", 1));
+
+        let [b, t] = unit_commands(&["spira-sim".into()], 4);
+        let (test_flags, _) = t.1.split_once(" -- ").unwrap();
+        let expected = test_flags.replacen("cargo test ", "cargo test --no-run ", 1) + " -p spira-config";
+        assert_eq!(b.1, expected, "only the extra built package differs");
     }
 
     #[test]
@@ -1118,7 +1130,7 @@ mod tests {
         assert_eq!(b.0, "build");
         assert_eq!(
             b.1,
-            "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --all-targets --features integration -p gate -p queue"
+            "cargo test --no-run --profile dwarf --config profile.dwarf.incremental=false -j 4 --features integration -p gate -p queue"
         );
         assert_eq!(t.0, "test");
         assert_eq!(
@@ -1277,10 +1289,10 @@ cargo: test tests::x ... ok";
             r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/wiki-add-fence.sh && { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" x)" || exit 75; [ -n "$_s" ] || exit 0; }"#
         );
         assert!(!g.contains("build-fence"));
-        // …and its build phase is the compile check that replaces it: every target.
+        // …and its build phase compiles the test harnesses the test phase then reuses.
         let [b, _] = unit_commands(&["tsd".into()], 4);
         assert!(
-            b.1.starts_with("cargo build ") && b.1.contains("--all-targets"),
+            b.1.starts_with("cargo test --no-run "),
             "{}",
             b.1
         );
