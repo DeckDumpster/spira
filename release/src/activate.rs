@@ -768,11 +768,14 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
     let (out, late) = match switch_with_config(ctx, sha, txn.as_ref(), true, &live) {
         Ok(done) => done,
         Err(e) => {
-            if recorded.get() {
-                let _ = write_history(&state, &history);
-                let _ = machine::enter(&state, sha, ReleaseState::RolledBack, "activation failed and was undone");
-            }
-            return Err(e);
+            let unrecorded = recorded
+                .get()
+                .then(|| write_history(&state, &history).and(machine::enter(&state, sha, ReleaseState::RolledBack, "activation failed and was undone")))
+                .and_then(Result::err);
+            return Err(match unrecorded {
+                Some(why) => format!("{e}\n  THE RECORD OF THE UNDONE ACTIVATION IS STILL THERE: {why}"),
+                None => e,
+            });
         }
     };
     if let Some(t) = &txn {

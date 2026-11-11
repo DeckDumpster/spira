@@ -581,6 +581,12 @@ fn a_landing_before_the_current_release_was_published_is_no_stall_though_no_acti
 }
 
 #[test]
+fn a_landing_the_current_release_contains_is_no_stall_when_only_its_publication_was_recorded() {
+    let found = stalls_with_current_published_only(130, LANDED, true, 130 + 30 * MIN);
+    assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
+}
+
+#[test]
 fn a_landing_after_the_current_release_was_published_and_not_in_it_stalls_past_the_bound() {
     let found = stalls_with_current_published_only(130, "", false, 130 + 30 * MIN);
     assert!(found.contains(&"LANDED→ACTIVATED spira".to_string()), "{found:?}");

@@ -530,11 +530,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
                 if activate::current(&cfg).as_deref() != Some(rest[0].as_str()) {
                     record(&cfg, &rest[0], ReleaseState::Published, "activation started").map_err(fail)?;
                 }
-                let activated = release::prune::activate_and_prune(&ctx, &rest[0], a.hotfix.as_deref());
-                if activated.is_ok() || activate::current(&cfg).as_deref() == Some(rest[0].as_str()) {
-                    record(&cfg, &rest[0], ReleaseState::Activated, "current switched").map_err(fail)?;
-                }
-                let (s, p) = activated.map_err(fail)?;
+                let (s, p) = release::prune::activate_and_prune(&ctx, &rest[0], a.hotfix.as_deref()).map_err(fail)?;
                 println!("release: {} active; {} unit file(s) rewritten, restarted [{}], deferred to next start [{}]; {} release(s) pruned", rest[0], s.rewritten.len(), s.restarted.join(" "), s.deferred.join(" "), p.removed.len());
                 if !p.failed.is_empty() {
                     eprintln!("release: WARN: prune could not remove: {}", p.failed.join("; "));
