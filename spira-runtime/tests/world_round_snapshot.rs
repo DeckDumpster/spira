@@ -87,3 +87,19 @@ fn a_work_halt_stamp_reaches_the_snapshot_with_its_reason_and_no_stamp_is_no_hal
     assert_eq!(h.why, "operator order: freeze");
     assert!(h.since > 1_000_000_000);
 }
+
+fn stamp(dir: &testkit::TempDir) {
+    std::fs::create_dir_all(dir.path().join("run")).unwrap();
+    std::fs::write(dir.path().join("run/world.halted"), "2026-11-11T05:10:52Z\nwhy: operator order: freeze\n").unwrap();
+}
+
+#[test]
+fn the_throughput_and_transitions_snapshots_carry_the_halt_even_when_unreadable() {
+    let (dir, w) = world(true);
+    stamp(&dir);
+    let t: spira_runtime::tasks::e::watch_throughput::Snapshot = serde_json::from_str(&w.throughput_snapshot(r#"{"now":1700000000,"abandon_window_s":3600}"#).unwrap()).unwrap();
+    assert_eq!(t.halt.map(|h| h.why), Some("operator order: freeze".to_string()));
+    let input = format!(r#"{{"now":1700000000,"window_s":3600,"releases":"{}","release_repo":"alpha"}}"#, dir.path().join("rel").display());
+    let x: spira_runtime::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&w.transitions_snapshot(&input).unwrap()).unwrap();
+    assert_eq!(x.halt.map(|h| h.why), Some("operator order: freeze".to_string()));
+}

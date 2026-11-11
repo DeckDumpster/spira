@@ -918,3 +918,14 @@ fn after_a_halt_lifts_each_edge_waits_its_bound_again_before_paging() {
     let (_, acts) = decide(&carry, &todays_case(later), later * 1000, &config());
     assert_eq!(pages(&acts).len(), 1, "{:?}", pages(&acts));
 }
+
+#[test]
+fn a_stall_already_paged_neither_repages_nor_clears_across_a_halt() {
+    let now = T0;
+    let (carry, acts) = decide(&Carry::default(), &todays_case(now), now * 1000, &config());
+    assert_eq!(pages(&acts).len(), 1);
+    let (carry, acts) = decide(&carry, &halted(todays_case(now + 300), now), (now + 300) * 1000, &config());
+    assert!(acts.is_empty());
+    let (_, acts) = decide(&carry, &todays_case(now + 600), (now + 600) * 1000, &config());
+    assert!(acts.iter().all(|a| !a.input.contains("STALL")), "{:?}", acts.iter().map(|a| &a.input).collect::<Vec<_>>());
+}
