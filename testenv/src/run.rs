@@ -2921,6 +2921,9 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
         ran.rc.map(|c| c.to_string()).unwrap_or_else(|| "-".into()),
         ran.timed_out
     ));
+    if let Some(l) = text.lines().find(|l| l.starts_with("unit-tests: skipped ")) {
+        deps.log(l);
+    }
     let status = match (ran.timed_out, ran.rc) {
         (true, _) => Status::Timeout,
         (false, Some(0)) => Status::Ok,
