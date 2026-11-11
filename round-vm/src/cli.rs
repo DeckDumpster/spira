@@ -299,7 +299,6 @@ pub fn ec2_api() -> Result<(AwsCli, Ec2Config), String> {
     Ok((AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2")), ec2cfg))
 }
 
-/// `round-vm ami-prune`: removes superseded, unreferenced round images and their snapshots.
 /// `section`: publishes `VmPool/pool` from the hour's `cert-pass` rows and the pool's leases.
 fn section_pass() -> i32 {
     match publish_section() {
@@ -328,15 +327,14 @@ impl reconciler_engine::goodput_pass::Lc for SpiraLc {
 fn publish_section() -> Result<crate::section::Reading, String> {
     let cfg = Config::load()?;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs();
-    let rows = tsd::query::Source { reader: None, root: &cfg.run_dir }
-        .rows(tsd::pass::FAMILY, now.saturating_sub(crate::section::HOUR))
-        .or_else(|f| if f.code == tsd::query::ERR_NO_FAMILY { Ok(Vec::new()) } else { Err(f.message) })?;
+    let rows = crate::section::pass_rows(tsd::query::Source { reader: None, root: &cfg.run_dir }.rows(tsd::pass::FAMILY, now.saturating_sub(crate::section::HOUR)))?;
     let pool = pool_for(&cfg);
     let state = crate::pool::read_state(&pool.state_file())?;
     let lc = SpiraLc(spira_config::lc_call::LcClient::configured()?);
     crate::section::run(&lc, now, &rows, crate::section::slots_by_pool(&state.leases))
 }
 
+/// `round-vm ami-prune`: removes superseded, unreferenced round images and their snapshots.
 fn ami_prune() -> i32 {
     let (api, ec2cfg) = match ec2_api() {
         Ok(a) => a,

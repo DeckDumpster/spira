@@ -44,10 +44,18 @@ pub fn measure(rows: &[Value], now: u64, slots_in_use: Vec<(String, u64)>) -> Re
     }
 }
 
-/// Leases held per pool, every pool named even at zero.
+/// The pool words are the round controller's (`proxmox`, `ec2`).
 pub fn slots_by_pool(leases: &[crate::schema::Lease]) -> Vec<(String, u64)> {
     let ec2 = leases.iter().filter(|l| crate::ec2::is_ec2_handle(&l.vm.handle)).count() as u64;
-    vec![("local".to_string(), leases.len() as u64 - ec2), ("ec2".to_string(), ec2)]
+    vec![("proxmox".to_string(), leases.len() as u64 - ec2), ("ec2".to_string(), ec2)]
+}
+
+/// The family's rows, or none when no pass was ever recorded; any other failure stops the publish.
+pub fn pass_rows(read: Result<Vec<Value>, tsd::query::Failure>) -> Result<Vec<Value>, String> {
+    match read {
+        Err(f) if f.code == tsd::query::ERR_NO_FAMILY => Ok(Vec::new()),
+        other => other.map_err(|f| f.message),
+    }
 }
 
 pub fn status_of(prev: Option<&Section>, r: &Reading) -> Value {
@@ -68,7 +76,7 @@ pub fn section_body(status: &Value, now: u64) -> Value {
         "metadata": { "name": kind::SECTION, "owner": kind::OWNER, "observedAt": format_rfc3339(now), "target_latency": TARGET_LATENCY, "max_age": MAX_AGE },
         "status": status,
         "flow": { "consumes": ["host/io"], "produces": ["vm-pool/slots"] },
-        "distance": { "fn": kind::DISTANCE, "open": 0.05, "close": 0.0 },
+        "distance": { "fn": kind::DISTANCE, "open": kind::OPEN, "close": 0.0 },
         "actions": [],
     })
 }

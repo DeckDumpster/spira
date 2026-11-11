@@ -23,6 +23,9 @@ pub const OVER_CAP_SPEC: &str = "over_cap_share";
 /// The distance's literals follow the spec's targets (a test holds them together).
 pub const DISTANCE: &str = "max(0, infra_incomplete_share_1h - 0.05) + max(0, over_cap_share_1h - 0.05)";
 
+/// The section is a gap once its distance passes this.
+pub const OPEN: f64 = 0.05;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(dead_code)]
@@ -86,7 +89,7 @@ mod tests {
             "metadata": { "name": SECTION, "owner": OWNER, "observedAt": "2026-10-31T04:10:00Z", "target_latency": "5m", "max_age": "30m" },
             "status": status,
             "flow": { "consumes": ["host/io"], "produces": ["vm-pool/slots"] },
-            "distance": { "fn": DISTANCE, "open": 0.05, "close": 0.0 },
+            "distance": { "fn": DISTANCE, "open": OPEN, "close": 0.0 },
             "actions": actions,
         })
     }

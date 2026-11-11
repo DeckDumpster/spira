@@ -38,3 +38,7 @@ name = "lc_ok"
 [[function]]
 file = "src/section.rs"
 name = "run"
+
+[[function]]
+file = "src/section.rs"
+name = "pass_rows"

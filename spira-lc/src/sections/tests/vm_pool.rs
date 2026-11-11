@@ -45,7 +45,7 @@ fn at_five() -> Rig<MemBackend> {
 }
 
 fn slots() -> Vec<(String, u64)> {
-    vec![("local".into(), 2), ("ec2".into(), 0)]
+    vec![("proxmox".into(), 2), ("ec2".into(), 0)]
 }
 
 fn publish(r: &Rig<MemBackend>, rows: &[Value]) -> Result<Reading, String> {
@@ -65,7 +65,7 @@ fn the_hours_shares_are_the_fixtures_infra_and_over_cap_passes_over_its_passes()
     assert!((reading.over_cap_share - 2.0 / 12.0).abs() < 1e-9);
     let s = published(&r);
     assert_eq!(s["status"][kind::PASSES]["value"], 12.0);
-    assert_eq!(s["status"][kind::SLOTS_IN_USE], json!([{ "pool": "local", "in_use": 2 }, { "pool": "ec2", "in_use": 0 }]));
+    assert_eq!(s["status"][kind::SLOTS_IN_USE], json!([{ "pool": "proxmox", "in_use": 2 }, { "pool": "ec2", "in_use": 0 }]));
     assert_eq!(s["metadata"]["owner"], kind::OWNER);
 }
 
@@ -168,9 +168,9 @@ fn a_store_that_cannot_answer_the_read_stops_the_publish_before_any_write() {
 fn leases_are_counted_per_pool_and_every_pool_is_named_at_zero() {
     use round_vm::schema::{Lease, Vm};
     let lease = |handle: &str| Lease { vm: Vm { handle: handle.into(), addr: String::new() }, owner: None, since: 0, holder: None, held: false, kept_at: 0, pulling: None, run: None, pulled: false };
-    assert_eq!(section::slots_by_pool(&[]), [("local".to_string(), 0), ("ec2".to_string(), 0)]);
+    assert_eq!(section::slots_by_pool(&[]), [("proxmox".to_string(), 0), ("ec2".to_string(), 0)]);
     let mixed = section::slots_by_pool(&[lease("9001"), lease("ec2-0abc123"), lease("9002")]);
-    assert_eq!(mixed, [("local".to_string(), 2), ("ec2".to_string(), 1)]);
+    assert_eq!(mixed, [("proxmox".to_string(), 2), ("ec2".to_string(), 1)]);
 }
 
 fn spec_for_pool(r: &Rig<MemBackend>) {
@@ -178,4 +178,12 @@ fn spec_for_pool(r: &Rig<MemBackend>) {
     for s in spira_desired_state::compose::section_specs(&compose(&[fragment]).unwrap()) {
         r.apply_spec(&s);
     }
+}
+
+#[test]
+fn a_family_with_no_file_reads_as_no_passes_and_any_other_failure_stops_the_publish() {
+    use tsd::query::{Failure, ERR_NO_FAMILY};
+    assert_eq!(section::pass_rows(Ok(vec![json!({ "cause": "green" })])).unwrap().len(), 1);
+    assert_eq!(section::pass_rows(Err(Failure { code: ERR_NO_FAMILY, message: "no rows yet".into() })).unwrap(), Vec::<Value>::new());
+    assert_eq!(section::pass_rows(Err(Failure { code: 1, message: "unreadable".into() })).unwrap_err(), "unreadable");
 }
