@@ -763,6 +763,28 @@ fn a_round_with_a_recorded_pass_and_no_live_leg_is_not_abandoned_as_never_began(
     assert_eq!(r.state("sp-a"), BeadState::InDelivery);
 }
 
+#[test]
+fn at_121_seconds_a_round_with_a_started_pass_is_left_and_one_with_none_is_abandoned() {
+    let begun = Rig::new();
+    open_round(&begun);
+    let (_, rec) = begun.s.batch("b-1").unwrap().unwrap();
+    let ev = BatchEvent {
+        expect: BatchState::Open,
+        version: rec.value.row.version,
+        kind: BatchEventKind::PassStarted { n: 1, head: "h1".into() },
+        actor: "test".into(),
+    };
+    begun.s.batch_event_with("b-1", &ev, AT + 10, &begun.req(), None).unwrap();
+    let left = begun.s.requeue_orphans("test", true, 120, AT + 121, &none(), &begun.req()).unwrap();
+    assert!(left.phantom_batches.is_empty() && left.abandoned.is_empty() && left.requeued.is_empty(), "{left:?}");
+    assert_ne!(round_state(&begun), BatchState::Abandoned);
+
+    let never = Rig::new();
+    open_round(&never);
+    let gone = never.s.requeue_orphans("test", true, 120, AT + 121, &none(), &never.req()).unwrap();
+    assert_eq!(gone.abandoned, vec!["b-1".to_string()]);
+}
+
 fn none() -> std::collections::BTreeSet<String> {
     Default::default()
 }
@@ -807,6 +829,29 @@ fn the_requeue_orphans_command_leaves_the_round_it_is_told_is_live() {
     assert_eq!(rc, 0, "{out}");
     assert!(out.contains(r#""running":["b-1"]"#) && out.contains(r#""abandoned":[]"#), "{out}");
     assert_eq!(round_state(&r), BatchState::Open);
+}
+
+#[test]
+fn the_requeue_orphans_command_abandons_a_round_with_no_driver_after_two_minutes_by_default() {
+    let r = Rig::new();
+    open_round(&r);
+    let at = |now: i64| {
+        let args: Vec<String> = ["requeue-orphans", "--actor", "test"].iter().map(|s| s.to_string()).collect();
+        let req = r.req();
+        state::run(&r.s, &args, &Call { now, request: &req.id })
+    };
+    let (rc, early) = at(AT + 60);
+    assert_eq!(rc, 0, "{early}");
+    assert!(!early.contains(r#""b-1""#), "a minute is not yet a stall: {early}");
+    let (rc, late) = at(AT + 180);
+    assert_eq!(rc, 0, "{late}");
+    assert!(late.contains(r#""repos":{"b-1":"spira"}"#), "{late}");
+    assert_eq!(round_state(&r), BatchState::Open, "a dry run writes nothing");
+    let args: Vec<String> = ["requeue-orphans", "--actor", "test", "--apply"].iter().map(|s| s.to_string()).collect();
+    let req = r.req();
+    let (rc, out) = state::run(&r.s, &args, &Call { now: AT + 180, request: &req.id });
+    assert_eq!(rc, 0, "{out}");
+    assert_eq!(round_state(&r), BatchState::Abandoned);
 }
 
 #[test]
