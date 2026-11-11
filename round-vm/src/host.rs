@@ -3,12 +3,11 @@
 //! time, held by a kernel lock that dies with its holder; anything else goes to the spill provider.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use crate::procs::{command, FileLock};
+use crate::procs::{command, feed_script, FileLock};
 use crate::run::{remote_command, BatchJob, Remote, FOREIGN_SCRIPT, REMOTE_EXIT_FILE, REMOTE_SCRIPT};
 use crate::spill::{HostLoad, HostRule};
 
@@ -107,9 +106,7 @@ impl Remote for LocalRemote {
     fn run_batch(&self, _addr: &str, job: &BatchJob) -> Result<i32, String> {
         fs::create_dir_all(&self.home).map_err(|e| format!("{}: {e}", self.home.display()))?;
         let mut child = self.shell(&remote_command(job)).stdin(Stdio::piped()).spawn().map_err(|e| format!("bash: {e}"))?;
-        if let Some(mut si) = child.stdin.take() {
-            si.write_all(if job.ci_entry.is_some() { FOREIGN_SCRIPT } else { REMOTE_SCRIPT }.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
-        }
+        feed_script(&mut child, if job.ci_entry.is_some() { FOREIGN_SCRIPT } else { REMOTE_SCRIPT }.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
         loop {
             if let Some(st) = child.try_wait().map_err(|e| format!("bash: {e}"))? {
                 return Ok(st.code().unwrap_or(255));
@@ -173,9 +170,7 @@ impl Remote for LocalRemote {
 
     fn run_attr(&self, _addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String> {
         let mut child = self.shell(&crate::spool::attr_command(job)).stdin(Stdio::piped()).stdout(Stdio::null()).spawn().map_err(|e| format!("bash: {e}"))?;
-        if let Some(mut si) = child.stdin.take() {
-            si.write_all(crate::spool::REMOTE_ATTR_SCRIPT.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
-        }
+        feed_script(&mut child, crate::spool::REMOTE_ATTR_SCRIPT.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
         Ok(child.wait().map_err(|e| format!("bash: {e}"))?.code().unwrap_or(255))
     }
 }
@@ -289,5 +284,17 @@ mod tests {
         let out = c.output().unwrap();
         let said = String::from_utf8_lossy(&out.stdout).to_string();
         assert_eq!(said.lines().collect::<Vec<_>>(), vec![d.path().to_str().unwrap(); 2]);
+    }
+
+    fn attr_job() -> crate::spool::AttrJob {
+        crate::spool::AttrJob { host_addr: "h".into(), mirror_port: 1, job: "j".into(), mirror_ref: "r".into(), suites: String::new(), build: crate::spool::Build::Artifacts, toolchain: None }
+    }
+
+    #[test]
+    fn a_host_script_that_refuses_before_reading_itself_is_reported_by_its_exit_not_as_a_stdin_error() {
+        let home = dir("attr-refuses");
+        let remote = LocalRemote { home: home.path().to_path_buf() };
+        let rc = remote.run_attr("h", &attr_job()).expect("the script's exit, not a stdin error");
+        assert_ne!(rc, 0);
     }
 }

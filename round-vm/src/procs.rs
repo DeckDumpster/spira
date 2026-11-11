@@ -94,6 +94,17 @@ fn guarded_set() -> libc::sigset_t {
     }
 }
 
+/// Sends `script` to the child's stdin and closes it. A BrokenPipe is the shell having exited
+/// before reading all of it: not a fault here, so the caller goes on to the shell's own status.
+pub fn feed_script(child: &mut std::process::Child, script: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let Some(mut si) = child.stdin.take() else { return Ok(()) };
+    match si.write_all(script) {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e),
+        _ => Ok(()),
+    }
+}
+
 /// A `Command` whose child starts with the termination signals unblocked, whatever this
 /// process has blocked for its own signal thread (see [`block_termination_signals`]).
 pub fn command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
@@ -135,6 +146,30 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exited_early_shell() -> (std::process::Child, String) {
+        use std::io::Read;
+        let mut c = command("sh").args(["-c", "echo refused >&2; exit 7"]).stdin(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+        let mut said = String::new();
+        c.stderr.take().unwrap().read_to_string(&mut said).unwrap();
+        (c, said)
+    }
+
+    #[test]
+    fn a_script_fed_to_a_shell_that_already_exited_reports_the_shells_status_and_stderr() {
+        let (mut c, said) = exited_early_shell();
+        feed_script(&mut c, &vec![b'#'; 200_000]).unwrap();
+        assert_eq!(c.wait().unwrap().code(), Some(7));
+        assert_eq!(said.trim(), "refused");
+    }
+
+    #[test]
+    fn a_stdin_write_error_other_than_broken_pipe_is_still_returned() {
+        let mut c = command("sh").args(["-c", "exit 0"]).stdin(std::process::Stdio::null()).spawn().unwrap();
+        c.stdin = Some(std::process::ChildStdin::from(std::os::fd::OwnedFd::from(File::open("/dev/null").unwrap())));
+        assert!(feed_script(&mut c, b"x").is_err());
+        let _ = c.wait();
+    }
 
     #[test]
     fn current_process_is_alive_and_a_different_start_time_is_not() {

@@ -1329,9 +1329,7 @@ impl Remote for SshRemote {
             .stdin(Stdio::piped())
             .spawn()
             .map_err(|e| format!("ssh: {e}"))?;
-        if let Some(mut si) = child.stdin.take() {
-            si.write_all(if job.ci_entry.is_some() { FOREIGN_SCRIPT } else { REMOTE_SCRIPT }.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
-        }
+        crate::procs::feed_script(&mut child, if job.ci_entry.is_some() { FOREIGN_SCRIPT } else { REMOTE_SCRIPT }.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
         loop {
             if let Some(st) = child.try_wait().map_err(|e| format!("ssh: {e}"))? {
                 return Ok(st.code().unwrap_or(255));
@@ -1412,9 +1410,7 @@ impl Remote for SshRemote {
             .stdout(Stdio::null())
             .spawn()
             .map_err(|e| format!("ssh: {e}"))?;
-        if let Some(mut si) = child.stdin.take() {
-            si.write_all(crate::spool::REMOTE_ATTR_SCRIPT.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
-        }
+        crate::procs::feed_script(&mut child, crate::spool::REMOTE_ATTR_SCRIPT.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
         let st = child.wait().map_err(|e| format!("ssh: {e}"))?;
         Ok(st.code().unwrap_or(255))
     }
@@ -3611,7 +3607,6 @@ mod tests {
     }
 
     fn preflight_tag(home: &Path, cache_home: &str, limits: &str, tag: &str) -> (i32, String, String) {
-        use std::io::Write;
         let mut c = command("bash")
             .args(["-s", "--", "127.0.0.1", "1", "", "1", "", cache_home, "", "0", "0", "", "", "", "refs/x", "0000", "", limits, "", "", tag])
             .env_clear()
@@ -3622,12 +3617,7 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        // The script may refuse and exit before it has read all of itself: the write then ends in
-        // EPIPE, which is the script's early exit and not a fault of the test.
-        match c.stdin.take().unwrap().write_all(REMOTE_SCRIPT.as_bytes()) {
-            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => panic!("stdin: {e}"),
-            _ => {}
-        }
+        crate::procs::feed_script(&mut c, REMOTE_SCRIPT.as_bytes()).unwrap();
         let o = c.wait_with_output().unwrap();
         let err = String::from_utf8_lossy(&o.stderr).to_string();
         let out = fs::read_to_string(home.join("round-runner.out")).unwrap_or_default();
@@ -4995,5 +4985,13 @@ mod tests {
         }
         let reason = crate::spool::REMOTE_ATTR_SCRIPT.lines().find_map(|l| l.strip_prefix("reason=\"")).expect("a reason is set");
         assert!(reason.trim_end_matches('"').chars().count() >= 10);
+    }
+
+    #[test]
+    fn an_ssh_that_exits_before_reading_the_script_is_reported_by_its_exit_not_as_a_stdin_error() {
+        let d = TempDir::new();
+        let remote = SshRemote { user: "u".into(), port: 1, key: d.path().join("no-key") };
+        let job = crate::spool::AttrJob { host_addr: "h".into(), mirror_port: 1, job: "j".into(), mirror_ref: "r".into(), suites: String::new(), build: crate::spool::Build::Artifacts, toolchain: None };
+        assert_eq!(remote.run_attr("127.0.0.1", &job).expect("ssh's exit, not a stdin error"), 255);
     }
 }
