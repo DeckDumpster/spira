@@ -37,6 +37,10 @@
 //! admin to fall back to — the run fails naming exactly those two variables and the pending
 //! file. A credential is never printed.
 //!
+//! A statement whose own WHERE is too costly to scan on every activation declares its probe on
+//! the line above it: `-- probe: SELECT ...`, a read that returns a row while it still has work.
+//! `admin-grants` applies and reads back the grants the binary ships without any migration.
+//!
 //! A ledger table was rejected: a database `schema.sql` created fresh already has every
 //! column, so a ledger would still need this same detection to know 0001/0002 are moot, and
 //! it would be a second record that can disagree with the real table shape.
@@ -58,6 +62,10 @@ pub enum Stmt {
     UnguardedAlter(String),
     /// Anything else — run as written (must be idempotent itself).
     Plain(String),
+    /// A statement whose file declared its own applied-probe (`-- probe: SELECT ...` on the line
+    /// above it): `pending` returns a row while the statement still has work to do. For a data
+    /// correction whose own WHERE is too costly to scan on every activation.
+    Probed { sql: String, pending: String },
 }
 
 /// The migration files named by `args`, in the order they apply: every `*.sql` directly in a
@@ -92,10 +100,26 @@ pub fn sort_by_name(files: &mut [PathBuf]) {
 /// Split a SQL file into statements: `--` line comments dropped, split on `;` outside
 /// single-quoted, double-quoted and backtick-quoted text, empty statements discarded.
 pub fn split_statements(text: &str) -> Vec<String> {
+    split_with_probes(text).into_iter().map(|(sql, _)| sql).collect()
+}
+
+const PROBE_DIRECTIVE: &str = "probe:";
+
+/// [`split_statements`], each statement with the `-- probe: <select>` comment line directly
+/// before it, if any.
+pub fn split_with_probes(text: &str) -> Vec<(String, Option<String>)> {
     let mut out = Vec::new();
     let mut cur = String::new();
+    let mut declared: Option<String> = None;
     let mut quote: Option<char> = None;
     let mut chars = text.chars().peekable();
+    let mut emit = |cur: &mut String, declared: &mut Option<String>| {
+        let s = cur.trim().to_string();
+        if !s.is_empty() {
+            out.push((s, declared.take()));
+        }
+        cur.clear();
+    };
     while let Some(c) = chars.next() {
         match quote {
             Some(q) => {
@@ -114,28 +138,24 @@ pub fn split_statements(text: &str) -> Vec<String> {
                     cur.push(c);
                 }
                 '-' if chars.peek() == Some(&'-') => {
+                    let mut comment = String::new();
                     for n in chars.by_ref() {
                         if n == '\n' {
                             cur.push('\n');
                             break;
                         }
+                        comment.push(n);
+                    }
+                    if let Some(sel) = comment.trim_start_matches('-').trim().strip_prefix(PROBE_DIRECTIVE) {
+                        declared = Some(sel.trim().to_string());
                     }
                 }
-                ';' => {
-                    let s = cur.trim().to_string();
-                    if !s.is_empty() {
-                        out.push(s);
-                    }
-                    cur.clear();
-                }
+                ';' => emit(&mut cur, &mut declared),
                 _ => cur.push(c),
             },
         }
     }
-    let s = cur.trim().to_string();
-    if !s.is_empty() {
-        out.push(s);
-    }
+    emit(&mut cur, &mut declared);
     out
 }
 
@@ -182,7 +202,11 @@ const LONGTEXT_WIDTH: u32 = u32::MAX;
 pub fn plan(files: &[(String, String)]) -> Result<Vec<(String, Stmt)>, String> {
     let mut out = Vec::new();
     for (name, text) in files {
-        for s in split_statements(text) {
+        for (s, declared) in split_with_probes(text) {
+            if let Some(pending) = declared {
+                out.push((name.clone(), Stmt::Probed { sql: s, pending }));
+                continue;
+            }
             match classify(&s) {
                 Stmt::UnguardedAlter(sql) => {
                     return Err(format!("{name}: refusing an ALTER that cannot be applied idempotently (only `ALTER TABLE t ADD COLUMN c ...` and `ALTER TABLE t MODIFY c VARCHAR(n) ...` or `... LONGTEXT` are guarded): {sql}"));
@@ -416,6 +440,7 @@ pub fn probe_for(st: &Stmt) -> Probe {
         Stmt::AddColumn { table, column, .. } => return Probe::Column { table: table.clone(), column: column.clone() },
         Stmt::WidenColumn { table, column, width, .. } => return Probe::Width { table: table.clone(), column: column.clone(), width: *width },
         Stmt::UnguardedAlter(_) => return Probe::Unprobeable,
+        Stmt::Probed { pending, .. } => return Probe::NoRowMatches(pending.clone()),
         Stmt::Plain(sql) => sql.as_str(),
     };
     let toks: Vec<&str> = sql.split_whitespace().collect();
@@ -465,7 +490,7 @@ fn any_cell_is(rows: &[Value], want: &str) -> bool {
 fn target_table(st: &Stmt) -> Option<String> {
     match st {
         Stmt::AddColumn { table, .. } | Stmt::WidenColumn { table, .. } => Some(table.clone()),
-        Stmt::UnguardedAlter(_) => None,
+        Stmt::UnguardedAlter(_) | Stmt::Probed { .. } => None,
         Stmt::Plain(sql) => match probe_for(st) {
             Probe::Table(t) if !sql.trim_start().to_ascii_uppercase().starts_with("RENAME") => Some(t),
             Probe::Index { table, .. } => Some(table),
@@ -615,6 +640,7 @@ const CONTENT_READERS: [(&str, &str); 2] = [("spira_lc", SERVICE_GRANTEE), ("spi
 fn apply_content_grants(admin: &dyn Sql, cdb: Option<&str>) -> Result<(), String> {
     let Some(cdb) = cdb else { return Ok(()) };
     let schema = cdb.trim_matches('`');
+    let mut held = Vec::new();
     for (user, grantee) in CONTENT_READERS {
         let who = format!("SELECT user FROM mysql.user WHERE user = '{user}'");
         if admin.rows(&who).map_err(|e| format!("cannot tell whether user {user} exists: {e}"))?.is_empty() {
@@ -627,9 +653,48 @@ fn apply_content_grants(admin: &dyn Sql, cdb: Option<&str>) -> Result<(), String
             }
             let stmt = format!("GRANT SELECT ON {cdb}.{table} TO {grantee}");
             admin.exec(&stmt).map_err(|e| format!("`{stmt}` failed: {e}"))?;
+            held.push((grantee, table, stmt));
+        }
+        let shown = admin.rows(&format!("SHOW GRANTS FOR {grantee}")).map_err(|e| format!("cannot tell what {user} may read: {e}"))?;
+        for (_, table, stmt) in held.drain(..) {
+            if !grants_cover(&shown, schema, table) {
+                return Err(format!("{user} cannot SELECT {schema}.{table} after `{stmt}`: SHOW GRANTS does not list it"));
+            }
         }
     }
     Ok(())
+}
+
+/// Whether the rows of `SHOW GRANTS` give SELECT on `schema.table`: named, or by `schema.*`,
+/// `*.*` or ALL PRIVILEGES.
+fn grants_cover(rows: &[Value], schema: &str, table: &str) -> bool {
+    rows.iter().flat_map(|r| r.as_object().into_iter().flat_map(|o| o.values())).filter_map(Value::as_str).any(|line| {
+        let line = line.replace(['`', '\''], "");
+        let Some(rest) = line.strip_prefix("GRANT ") else { return false };
+        let Some((privs, rest)) = rest.split_once(" ON ") else { return false };
+        let object = rest.split(" TO ").next().unwrap_or("").trim();
+        let privs = privs.to_ascii_uppercase();
+        let may = privs.split(',').any(|p| matches!(p.trim(), "SELECT" | "ALL" | "ALL PRIVILEGES"));
+        may && [format!("{schema}.{table}"), format!("{schema}.*"), "*.*".to_string()].iter().any(|o| o == object)
+    })
+}
+
+/// `spira-lc admin-grants`: the grants a release's own code ships, applied as the database admin
+/// and read back. Run on every activation: a release may grow its grants without a migration file.
+pub fn run_grants(conn: &Conn) -> (i32, String) {
+    let admin = match admin_conn(conn) {
+        Ok(Some(a)) => a,
+        Ok(None) => return (2, format!("admin-grants: no database admin — set {ADMIN_VARS}; the grants cannot be applied or checked")),
+        Err(e) => return (2, format!("admin-grants: the admin password file (SPIRA_LC_ADMIN_PASSWORD_FILE): {e}")),
+    };
+    grants_report(&admin, GRANTS_SQL)
+}
+
+fn grants_report(admin: &dyn Sql, grants: &str) -> (i32, String) {
+    match apply_grants(admin, grants) {
+        Ok(()) => (0, "admin-grants: every grant applied and read back".into()),
+        Err(e) => (2, format!("admin-grants: {e}")),
+    }
 }
 
 /// Who applies a pending migration file.
@@ -729,7 +794,7 @@ fn migrate_paced(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, admi
             Err(e) => return (2, format!("admin-migrate: {name}: cannot tell whether it is applied (read as the lifecycle service user): {e}")),
         }
         let sql = match st {
-            Stmt::AddColumn { sql, .. } | Stmt::WidenColumn { sql, .. } | Stmt::Plain(sql) => sql,
+            Stmt::AddColumn { sql, .. } | Stmt::WidenColumn { sql, .. } | Stmt::Plain(sql) | Stmt::Probed { sql, .. } => sql,
             Stmt::UnguardedAlter(_) => unreachable!("plan refuses these"),
         };
         let touched = rows_touched(prober, st);
@@ -863,9 +928,15 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
 mod tests {
     use super::*;
 
+    /// Records every exec and shows each `GRANT SELECT` back through `SHOW GRANTS`, as a server
+    /// that keeps what it is given does.
     struct Recorder(std::cell::RefCell<Vec<String>>);
     impl Sql for Recorder {
-        fn rows(&self, _: &str) -> Result<Vec<Value>, String> {
+        fn rows(&self, sql: &str) -> Result<Vec<Value>, String> {
+            if let Some(grantee) = sql.strip_prefix("SHOW GRANTS FOR ") {
+                let held = self.0.borrow().iter().filter(|g| g.ends_with(&format!(" TO {grantee}"))).map(|g| serde_json::json!({ "Grants": g })).collect();
+                return Ok(held);
+            }
             Ok(vec![serde_json::json!({"x": 1})])
         }
         fn exec(&self, sql: &str) -> Result<(), String> {
@@ -926,6 +997,63 @@ mod tests {
         let none = Recorder(Default::default());
         apply_content_grants(&none, None).unwrap();
         assert!(none.0.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_grant_the_server_does_not_show_back_refuses_naming_the_user_and_table() {
+        struct Forgetful(Recorder);
+        impl Sql for Forgetful {
+            fn rows(&self, sql: &str) -> Result<Vec<Value>, String> {
+                if sql.starts_with("SHOW GRANTS") { Ok(vec![]) } else { self.0.rows(sql) }
+            }
+            fn exec(&self, sql: &str) -> Result<(), String> {
+                self.0.exec(sql)
+            }
+        }
+        let e = apply_content_grants(&Forgetful(Recorder(Default::default())), Some("`spira`")).unwrap_err();
+        assert!(e.contains("spira_lc cannot SELECT spira.issues") && e.contains("GRANT SELECT ON `spira`.issues TO 'spira_lc'@'%'"), "{e}");
+    }
+
+    #[test]
+    fn grants_cover_reads_named_wildcard_and_all_privilege_lines_and_nothing_else() {
+        let row = |l: &str| vec![serde_json::json!({ "Grants": l })];
+        assert!(grants_cover(&row("GRANT SELECT ON `spira`.`issues` TO `u`@`%`"), "spira", "issues"));
+        assert!(grants_cover(&row("GRANT SELECT, SHOW VIEW ON `spira`.* TO `u`@`%`"), "spira", "issues"));
+        assert!(grants_cover(&row("GRANT ALL PRIVILEGES ON *.* TO `u`@`%`"), "spira", "issues"));
+        assert!(!grants_cover(&row("GRANT SELECT ON `spira`.`labels` TO `u`@`%`"), "spira", "issues"));
+        assert!(!grants_cover(&row("GRANT INSERT ON `spira`.`issues` TO `u`@`%`"), "spira", "issues"));
+        assert!(!grants_cover(&row("GRANT USAGE ON *.* TO `u`@`%`"), "spira", "issues"));
+        assert!(!grants_cover(&[], "spira", "issues"));
+    }
+
+    #[test]
+    fn a_grant_set_that_grew_is_applied_with_no_migration_pending() {
+        let db = migrated();
+        let adm = admin(&db, false);
+        let (rc, out) = migrate(&real_steps(), &service(&db), Some(&adm));
+        assert_eq!(rc, 0, "{out}");
+        let (rc, out) = grants_report(&adm, "GRANT SELECT ON spira_lifecycle.bead_dep TO 'spira_lc'@'%';\n");
+        assert_eq!(rc, 0, "{out}");
+        assert!(adm.attempts.borrow().iter().filter(|s| s.contains("ON spira_lifecycle.bead_dep TO")).count() >= 2, "{:?}", adm.attempts.borrow());
+        let refused = admin(&db, true);
+        let (rc, out) = grants_report(&refused, "GRANT SELECT ON spira_lifecycle.bead_dep TO 'spira_lc'@'%';\n");
+        assert_eq!(rc, 2, "{out}");
+    }
+
+    #[test]
+    fn a_declared_probe_stands_in_for_the_statements_own_where() {
+        let text = "-- probe: SELECT 1 FROM t WHERE c = 2 LIMIT 1\nUPDATE t SET a = 1 WHERE c = 2;\nUPDATE t SET a = 3 WHERE c = 4;\n";
+        let steps = plan(&[("0099-x.sql".into(), text.into())]).unwrap();
+        assert_eq!(probe_for(&steps[0].1), Probe::NoRowMatches("SELECT 1 FROM t WHERE c = 2 LIMIT 1".into()));
+        assert_eq!(probe_for(&steps[1].1), Probe::NoRowMatches("SELECT 1 FROM t WHERE c = 4 LIMIT 1".into()));
+    }
+
+    #[test]
+    fn the_event_continuity_correction_is_probed_by_a_window_scan_not_a_correlated_one() {
+        for (name, st) in real_steps().iter().filter(|(n, _)| n.starts_with("0019-")) {
+            let Probe::NoRowMatches(q) = probe_for(st) else { panic!("{name}: not a read probe") };
+            assert!(q.contains("OVER (PARTITION BY machine, lc_key ORDER BY seq)") && !q.contains("EXISTS"), "{name}: {q}");
+        }
     }
 
     #[test]
@@ -1101,7 +1229,7 @@ mod tests {
             if sql.starts_with("SELECT 1 FROM bead WHERE") || sql.starts_with("SELECT 1 FROM bead JOIN") {
                 return Ok(if st.stale_terminal_rows { vec![serde_json::json!({ "1": "1" })] } else { vec![] });
             }
-            if sql.starts_with("SELECT 1 FROM event WHERE") || sql.starts_with("SELECT 1 FROM runtime_event WHERE") {
+            if sql.starts_with("SELECT 1 FROM (SELECT") || sql.starts_with("SELECT 1 FROM event WHERE") || sql.starts_with("SELECT 1 FROM runtime_event WHERE") {
                 return Ok(vec![]);
             }
             Err(format!("fake: unexpected read {sql}"))
