@@ -25,7 +25,7 @@
 //! (`Snapshot::owners`) is older than `SPIRA_TRANSITIONS_HEARTBEAT_BOUND`, was never seen, or
 //! carries a failed action. An owner beating with nothing failed is handling the expiry itself
 //! (the round driver abandoning a stalled pass, a requeue sweep), and the table line says so
-//! without waking anyone. Only IN_DELIVERY→LANDED has an owner heartbeat so far (round-progress, whose `stalled:` detail is `round-vm`'s own expiry report); every other edge is unowned and pages on its bound alone.
+//! without waking anyone. Two edges have an owner heartbeat: IN_DELIVERY→LANDED (round-progress, whose `stalled:` detail is `round-vm`'s own expiry report) and, per repo, SUBMITTED→IN_DELIVERY (the batcher's `rounds-pace/<repo>/state` rewritten each pass; a standing `pause` is its failed action). Every other edge is unowned and pages on its bound alone.
 //!
 //! Each edge is judged per repo, and over all repos together (scope `*`) where no one repo is
 //! stalled on it. A store or release
@@ -210,10 +210,28 @@ pub fn round_owner(progress: &str) -> Option<Owner> {
     Some(Owner { beat: Some(beat), failed })
 }
 
-/// Whether `edge`'s owner beat inside the bound and has no failed action: an edge with no
-/// owner record is unowned, so never acting.
-fn owner_acting(snap: &Snapshot, edge: &str, now: u64, cfg: &Config) -> bool {
-    snap.owners.get(edge).is_some_and(|o| o.failed.is_none() && o.beat.is_some_and(|b| now.saturating_sub(b) < cfg.heartbeat_bound_s))
+/// The edge a repo's batcher pass owns: a cut is the batcher's to make, repo by repo.
+pub const CUT_EDGE: &str = "SUBMITTED→IN_DELIVERY";
+
+pub fn cut_owner_key(repo: &str) -> String {
+    format!("{CUT_EDGE} {repo}")
+}
+
+/// The owner a repo's rounds-pace files make: the batcher beats at the mtime of `state`, which
+/// every cut pass rewrites, and a standing `pause` is its action failing. No `state` is no beat.
+pub fn pace_owner(state_mtime: Option<u64>, pause: Option<&str>) -> Owner {
+    Owner { beat: state_mtime, failed: pause.map(|p| format!("paused: {}", p.trim())) }
+}
+
+/// Whether the owner of `edge` in `scope` (its own record first, else the edge's) beat inside
+/// the bound and has no failed action: an edge with no owner record is unowned, so never acting.
+fn owner_acting(snap: &Snapshot, edge: &str, scope: &str, now: u64, cfg: &Config) -> bool {
+    let beating = |o: &Owner| o.failed.is_none() && o.beat.is_some_and(|b| now.saturating_sub(b) < cfg.heartbeat_bound_s);
+    if scope == ALL && edge == CUT_EDGE {
+        let waiting: BTreeSet<&str> = snap.beads.iter().filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED")).map(|b| b.repo.as_str()).collect();
+        return !waiting.is_empty() && waiting.iter().all(|r| snap.owners.get(&cut_owner_key(r)).is_some_and(beating));
+    }
+    snap.owners.get(&format!("{edge} {scope}")).or_else(|| snap.owners.get(edge)).is_some_and(beating)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -409,7 +427,7 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
                 }
                 _ => None,
             };
-            if let Some(evidence) = found.filter(|_| !owner_acting(snap, edge, now, cfg)) {
+            if let Some(evidence) = found.filter(|_| !owner_acting(snap, edge, &scope, now, cfg)) {
                 out.push(Stall { edge, scope: scope.clone(), evidence });
             }
         }
@@ -614,11 +632,26 @@ pub fn observe(
         .and_then(|t| round_owner(&t));
     snap.owners
         .extend(progress.map(|o| (DELIVERY_EDGE.to_string(), o)));
+    snap.owners.extend(pace_owners(run_dir));
     snap
 }
 
 fn say(now_ms: u64, line: &str) -> EffectSpec {
     EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:{now_ms}:{:016x}", fnv1a(line)), pattern::inbox_line(now_ms, TAG, line), DEADLINE_MS)
+}
+
+fn pace_owners(run_dir: &std::path::Path) -> Vec<(String, Owner)> {
+    let mtime = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
+    let Ok(repos) = std::fs::read_dir(run_dir.join("rounds-pace")) else { return vec![] };
+    repos
+        .flatten()
+        .filter_map(|e| {
+            let dir = e.path();
+            let state = mtime(dir.join("state"))?;
+            let pause = std::fs::read_to_string(dir.join("pause")).ok();
+            Some((cut_owner_key(&e.file_name().to_string_lossy()), pace_owner(Some(state), pause.as_deref())))
+        })
+        .collect()
 }
 
 /// A snapshot that is not there: the store or the release records could not be read.

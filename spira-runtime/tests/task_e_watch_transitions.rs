@@ -975,3 +975,35 @@ fn mark_landed_flags_the_tip_the_ref_contains_and_leaves_an_untestable_tip_waiti
     });
     assert_eq!(s.beads.iter().map(|b| b.landed).collect::<Vec<_>>(), [true, false, false, false]);
 }
+
+fn stuck_cut(now: u64) -> Snapshot {
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-s1", "spira", "SUBMITTED", now - 50 * MIN)];
+    s.last = last("spira", &[("Cut", now - 50 * MIN)]);
+    s
+}
+
+fn cut_pages(s: &Snapshot, now: u64) -> usize {
+    stalls_of(s, now).iter().filter(|x| x.edge == CUT_EDGE).count()
+}
+
+fn paced(mut s: Snapshot, repo: &str, owner: Owner) -> Snapshot {
+    s.owners.insert(cut_owner_key(repo), owner);
+    s
+}
+
+#[test]
+fn a_cut_stall_with_the_repos_batcher_passing_and_no_pause_is_not_paged() {
+    let now = T0;
+    assert_eq!(cut_pages(&stuck_cut(now), now), 1, "no owner heartbeat: paged as before");
+    assert_eq!(cut_pages(&paced(stuck_cut(now), "spira", pace_owner(Some(now - 30), None)), now), 0);
+}
+
+#[test]
+fn a_cut_stall_pages_when_the_repos_batcher_is_silent_paused_or_only_another_repos_beats() {
+    let now = T0;
+    assert_eq!(cut_pages(&paced(stuck_cut(now), "spira", pace_owner(Some(now - 121), None)), now), 1);
+    assert_eq!(cut_pages(&paced(stuck_cut(now), "spira", pace_owner(Some(now - 5), Some("red:1"))), now), 1);
+    assert_eq!(cut_pages(&paced(stuck_cut(now), "other", pace_owner(Some(now - 5), None)), now), 1);
+    assert_eq!(pace_owner(None, None), Owner::default());
+}
