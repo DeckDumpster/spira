@@ -324,6 +324,11 @@ fn requeue_orphans<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -
     let req = Request::new(call.request, &actor, "lc.requeue-orphans");
     match store.requeue_orphans(&actor, apply, stale_secs, call.now, &live, &req) {
         Ok(o) => {
+            if apply {
+                if let Some(said) = log_abandons(sweep_run_dir(), &o.abandoned, &o.repos, stale_secs, call.now) {
+                    eprintln!("{said}");
+                }
+            }
             let out = json!({
                 "orphans": o.orphans,
                 "phantom_batches": o.phantom_batches,
@@ -338,5 +343,75 @@ fn requeue_orphans<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -
             (code, out.to_string())
         }
         Err(e) => cannot_tell(e),
+    }
+}
+
+/// Tests of the handler never write to an ambient run directory.
+fn sweep_run_dir() -> Result<std::path::PathBuf, String> {
+    if cfg!(test) {
+        return Err("no run directory under test".into());
+    }
+    crate::lifecycle_run_dir()
+}
+
+/// One `ROUND-ABANDON` line in `landing.log` for each round the sweep abandoned, in the shape
+/// the queue writes for its own abandons; the failure to write is returned for the caller to say.
+fn log_abandons(
+    run: Result<std::path::PathBuf, String>,
+    abandoned: &[String],
+    repos: &BTreeMap<String, String>,
+    stale_secs: i64,
+    now: i64,
+) -> Option<String> {
+    use std::io::Write;
+    if abandoned.is_empty() {
+        return None;
+    }
+    let file = run.and_then(|dir| {
+        std::fs::OpenOptions::new().create(true).append(true).open(dir.join("landing.log")).map_err(|e| e.to_string())
+    });
+    match file {
+        Ok(mut f) => {
+            for id in abandoned {
+                let repo = repos.get(id).map_or("unknown", String::as_str);
+                let _ = writeln!(f, "QUEUE ROUND-ABANDON {now} repo={repo} batch={id} reason=requeue-orphans: opened and never began, no driver in {stale_secs}s");
+            }
+            None
+        }
+        Err(e) => Some(format!("spira-lc: {e} — landing.log not written for {}", abandoned.join(", "))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn abandoned() -> (Vec<String>, BTreeMap<String, String>) {
+        (vec!["b-1".into()], [("b-1".to_string(), "spira".to_string()), ("b-2".to_string(), "other".to_string())].into())
+    }
+
+    #[test]
+    fn sp_pi2ojm_a_round_the_sweep_abandons_is_logged_as_a_round_abandon() {
+        let dir = testkit::TempDir::new("lc-sweep-abandon-log");
+        let (ids, repos) = abandoned();
+        assert_eq!(log_abandons(Ok(dir.path().to_path_buf()), &ids, &repos, 120, 1_794_368_406), None);
+        let log = std::fs::read_to_string(dir.path().join("landing.log")).unwrap();
+        assert_eq!(log.lines().count(), 1, "{log}");
+        assert!(log.starts_with("QUEUE ROUND-ABANDON 1794368406 repo=spira batch=b-1 reason=requeue-orphans: "), "{log}");
+        assert!(log.contains("120s"), "{log}");
+    }
+
+    #[test]
+    fn sp_pi2ojm_a_sweep_that_abandons_nothing_writes_no_log() {
+        let dir = testkit::TempDir::new("lc-sweep-abandon-none");
+        assert_eq!(log_abandons(Ok(dir.path().to_path_buf()), &[], &abandoned().1, 120, 1), None);
+        assert!(!dir.path().join("landing.log").exists());
+    }
+
+    #[test]
+    fn sp_pi2ojm_an_unreadable_run_dir_is_said_not_swallowed() {
+        let (ids, repos) = abandoned();
+        let said = log_abandons(Err("no run".into()), &ids, &repos, 120, 1);
+        assert!(said.is_some_and(|s| s.contains("no run") && s.contains("landing.log")));
     }
 }
