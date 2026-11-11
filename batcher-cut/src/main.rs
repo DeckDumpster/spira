@@ -1377,11 +1377,6 @@ fn cut_new_round_inner(
         .join("worktree")
         .join(format!(".batcher-{}", repo.name));
     io::worktree_reset(repo, &wt, &base_sha)?;
-    if repo.land == Land::Local {
-        if let Err(e) = io::template_refresh(env_, &wt) {
-            println!("batcher {}: template refresh before the lease failed ({e}) — cutting on the template as it stands", repo.name);
-        }
-    }
 
     let mut merges = BTreeMap::new();
     for m in &sorted {
@@ -2592,5 +2587,36 @@ mod fork_fence {
         let got =
             forge::fork_scan::scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
         assert!(got.is_empty(), "unmarked children:\n{}", got.join("\n"));
+    }
+}
+
+#[cfg(test)]
+mod cut_tests {
+    use super::*;
+
+    #[test]
+    fn a_cut_on_an_ec2_only_repo_never_calls_round_vm_refresh() {
+        let d = testkit::TempDir::new("batcher-cut-no-refresh");
+        let repo_dir = d.join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        testkit::git(&repo_dir, &["init", "-q", "-b", "main"]);
+        testkit::git(&repo_dir, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        let mut env = io::lifecycle_tests_env(&d);
+        let calls = d.join("round-vm-calls");
+        env.round_vm = d.join("round-vm-stub");
+        testkit::write_exe(
+            &env.round_vm,
+            &format!("#!/bin/sh\necho \"$@\" >> {}\nexit 2\n", calls.display()),
+        );
+        let repo = io::Repo {
+            name: "fx".into(),
+            path: repo_dir,
+            base: "main".into(),
+            forge: PathBuf::new(),
+            land: io::Land::Local,
+        };
+        let _ = cut_new_round_inner(&env, &repo, &[], &TriggerReason::MainRed);
+        let got = std::fs::read_to_string(&calls).unwrap_or_default();
+        assert_eq!(got, "", "the cut called round-vm: {got}");
     }
 }
