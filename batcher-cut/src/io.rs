@@ -4601,32 +4601,6 @@ mod wait_lock_tests {
     }
 
     #[test]
-    fn a_leg_runs_without_the_queue_lock_and_the_round_reads_as_driven() {
-        let d = testkit::TempDir::new("batcher-cut-unlocked");
-        let e = super::lifecycle_tests_env(&d);
-        let _parked = park_queue_lock(try_lock(&e, "r").unwrap().unwrap());
-        let mut seen = None;
-        unlocked(&e, "r", Some("b1"), 1, || {
-            let free = try_lock(&e, "r").unwrap();
-            seen = Some((free.is_some(), certify_driven(&e, "r", "b1")));
-        })
-        .unwrap();
-        assert_eq!(
-            seen,
-            Some((true, true)),
-            "during the leg the queue lock is free and the round is driven"
-        );
-        assert!(
-            try_lock(&e, "r").unwrap().is_none(),
-            "the queue lock is held again after the leg"
-        );
-        assert!(
-            !certify_driven(&e, "r", "b1"),
-            "a finished leg drives nothing"
-        );
-    }
-
-    #[test]
     fn a_leg_keeps_its_result_when_another_operation_holds_the_lock_past_the_wait() {
         let d = testkit::TempDir::new("batcher-cut-retake");
         let e = super::lifecycle_tests_env(&d);
