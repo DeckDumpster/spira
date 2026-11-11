@@ -480,6 +480,36 @@ mod tests {
         assert!(store.iter().all(|b| b.id != "sp-gone"));
     }
 
+    #[test]
+    fn sp_yf8lf0_many_named_blockers_are_read_in_chunks_of_500_each_once() {
+        let mut rows: Vec<_> = (0..1100).map(|i| row(&format!("sp-b{i}"), "closed", None, &[])).collect();
+        rows.push(row("sp-a", "open", None, &(0..1100).map(|i| format!("sp-b{i}")).collect::<Vec<_>>().iter().map(String::as_str).collect::<Vec<_>>()));
+        rows.push(row("sp-d", "open", None, &["sp-b0"]));
+        let (fake, lc) = door(rows);
+        let store = load_store(&lc).unwrap();
+        assert_eq!(store.len(), 1102);
+        let seen = fake.requests();
+        assert_eq!(seen.len(), 4, "one open read and three by-id chunks");
+        let ids: Vec<&str> = seen[1..].iter().flat_map(|r| r[r.iter().position(|x| x == "--id").unwrap() + 1].split(',')).collect();
+        assert_eq!(ids.len(), 1100);
+        assert_eq!(ids.iter().collect::<HashSet<_>>().len(), 1100, "no id is asked twice");
+    }
+
+    #[test]
+    fn sp_yf8lf0_show_reads_one_bead_through_the_door_and_is_none_when_refused() {
+        struct Show(i32);
+        impl spira_config::lc_call::Transport for Show {
+            fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+                assert_eq!(argv, ["content", "show", "sp-x", "--json"]);
+                Ok(spira_config::lc_call::Reply { code: self.0, out: r#"[{"id":"sp-x","title":"t","status":"open"}]"#.into(), err: String::new() })
+            }
+        }
+        let ok = LcClient::over(std::sync::Arc::new(Show(0)), true);
+        assert_eq!(show(&ok, "sp-x").unwrap().id, "sp-x");
+        let refused = LcClient::over(std::sync::Arc::new(Show(spira_config::lc_call::REFUSED)), true);
+        assert!(show(&refused, "sp-x").is_none());
+    }
+
     // ---- holder_alive: delegates to hel::reap (wave 4.23, sp-0ffox) -------------------
 
     #[test]

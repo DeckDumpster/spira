@@ -647,7 +647,13 @@ fn escalate(cfg: &Config, part: &str, kind: &str, id: &str, detail: &str, action
         escalate_to_inbox(&title, detail, action);
         return;
     }
-    let bead = if id.is_empty() || id == "-" { None } else { spira_config::lc_call::LcClient::configured().ok().and_then(|lc| probe::show(&lc, id)) };
+    let bead = if id.is_empty() || id == "-" { None } else { match spira_config::lc_call::LcClient::configured() {
+            Ok(lc) => probe::show(&lc, id),
+            Err(e) => {
+                warn(&format!("WARN the escalation for {id} carries no bead context: {e}"));
+                None
+            }
+        } };
     let ctx = format!(
         "{}\n\nWHY THIS IS ESCALATED\n{}\n\nSENTINEL STATE\n{}",
         bead_context(bead.as_ref(), id, timefmt::now()),
