@@ -12,7 +12,7 @@ mod lc;
 mod queue;
 mod ratelim;
 mod reachable;
-mod round;
+pub mod round;
 mod tsd;
 mod unsent;
 

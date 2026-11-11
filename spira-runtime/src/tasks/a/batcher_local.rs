@@ -2103,7 +2103,7 @@ pub mod edge {
             .filter_map(|r| r.batch)
             .filter(|b| !seen.open_rounds().any(|o| &o.id == b))
             .filter(|b| {
-                let shown = io::lcq(env, &["show-batch", b]).ok().and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok());
+                let shown = io::lcq_held(env, &["show-batch", b]).ok().and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok());
                 matches!(shown.as_ref().and_then(|v| v.get("state")).and_then(|s| s.as_str()), Some("LANDED" | "ABANDONED"))
             })
             .collect()

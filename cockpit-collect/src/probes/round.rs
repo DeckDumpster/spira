@@ -43,7 +43,11 @@ pub(super) fn list_batches() -> Option<String> {
     super::lc::shared_live("batches", list_batches_live)
 }
 
-fn list_batches_live() -> Option<String> {
+/// `list --batches`, from the store views when the process keeps the store's watch.
+pub fn list_batches_live() -> Option<String> {
+    if let Some(held) = store_view::shared() {
+        return held.answer(&["list", "--batches"]).ok().filter(|r| r.value.code == 0).map(|r| r.value.out);
+    }
     let client = spira_config::lc_call::LcClient::configured().ok()?;
     crate::store::answer_on(&client, &["list", "--batches"])
 }

@@ -222,6 +222,29 @@ pub fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
     lc_answer(client.call(args))
 }
 
+/// [`lcq`] for a read the process's store views hold (content, `show-batch`, `list --batches`):
+/// answered from them when the process keeps the store's watch, else asked of the store.
+pub fn lcq_held(env: &Env, args: &[&str]) -> Result<String, String> {
+    match store_view::shared() {
+        Some(views) => lc_answer(views.answer(args).map(|r| r.value)),
+        None => lcq(env, args),
+    }
+}
+
+/// `spira-lc show <id>`, from the held lifecycle rows when the process keeps the store's watch: a
+/// row carries the `state` and `stack` that `show` does.
+fn show_bead(env: &Env, id: &str) -> Result<String, String> {
+    let Some(views) = store_view::shared() else {
+        return lcq(env, &["show", id]);
+    };
+    let ids = [id.to_string()];
+    let rows = views.rows(&store_view::RowQuery { ids: Some(&ids), ..Default::default() }).map_err(|e| format!("could not say: {e}"))?;
+    match rows.value.into_iter().next() {
+        Some(row) => Ok(serde_json::json!({ "bead": row }).to_string()),
+        None => Err(format!("spira-lc exited 1: no row for {id}")),
+    }
+}
+
 /// An answer as the `spira-lc` child's was read: its stdout when it applied; otherwise its exit
 /// and the last line it said.
 fn lc_answer(
@@ -304,7 +327,7 @@ pub fn lc_probe(env: &Env) -> Result<(), String> {
 /// also read as unstacked — never a hard error a round must refuse over, since `lc_probe`
 /// already proved the machine reachable — but is said loudly on stderr.
 fn read_stack(env: &Env, id: &str) -> BTreeMap<String, String> {
-    let out = match lcq(env, &["show", id]) {
+    let out = match show_bead(env, id) {
         Ok(o) => o,
         Err(e) => {
             eprintln!("batcher: LIFECYCLE: spira-lc show {id} failed (read as unstacked): {e}");
@@ -336,7 +359,7 @@ fn read_stack(env: &Env, id: &str) -> BTreeMap<String, String> {
 /// A prerequisite the machine records as LANDED, SUPERSEDED or DROPPED sequences nothing.
 /// An unreadable row is read as live: sequencing a member is the safe side.
 fn prereq_is_finished(env: &Env, id: &str) -> bool {
-    let Ok(out) = lcq(env, &["show", id]) else {
+    let Ok(out) = show_bead(env, id) else {
         return false;
     };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) else {
@@ -491,7 +514,7 @@ fn bd_show(env: &Env, ids: &[String]) -> Result<serde_json::Value, String> {
     if ids.is_empty() {
         return Ok(serde_json::Value::Array(vec![]));
     }
-    plan_items(&lcq(
+    plan_items(&lcq_held(
         env,
         &["plan", "items", "--full", "--ids", &ids.join(",")],
     )?)
@@ -683,7 +706,7 @@ fn base_fix_ids(
     // The content store lists the base-red beads; whether one is still open is its lifecycle
     // row's — not terminal (sp-mve9i). A base-red bead with no row, or a machine that cannot
     // answer, accelerates nothing: the lane is never a gate.
-    let Ok(text) = lcq(
+    let Ok(text) = lcq_held(
         env,
         &[
             "plan",
