@@ -1092,6 +1092,38 @@ pub fn utc_of(t: u64) -> String {
     )
 }
 
+/// Cumulative user+system CPU ticks of every process in group `pgid`, reaped children included.
+fn group_cpu_ticks(pgid: i32) -> u64 {
+    let Ok(dir) = std::fs::read_dir("/proc") else { return 0 };
+    let mut total = 0;
+    for e in dir.flatten() {
+        let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else { continue };
+        let Some((_, rest)) = stat.rsplit_once(')') else { continue };
+        let f: Vec<&str> = rest.split_whitespace().collect();
+        if f.get(2).and_then(|g| g.parse::<i32>().ok()) != Some(pgid) {
+            continue;
+        }
+        total += (11..=14).filter_map(|i| f.get(i)?.parse::<u64>().ok()).sum::<u64>();
+    }
+    total
+}
+
+fn end_group(pgid: i32) {
+    unsafe {
+        libc::kill(-pgid, libc::SIGTERM);
+    }
+    for _ in 0..20 {
+        if unsafe { libc::kill(-pgid, 0) } != 0 {
+            return;
+        }
+        // waits-on: the process group's exit; cap 2s
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1195,31 +1227,5 @@ mod tests {
         assert_eq!(super::utc_of(0), "1970-01-01T00:00:00Z");
         assert_eq!(super::utc_of(1790700000), "2026-09-29T16:40:00Z");
         assert_eq!(super::utc_of(951782400), "2000-02-29T00:00:00Z");
-    }
-}
-
-/// Cumulative user+system CPU ticks of every process in group `pgid`, reaped children included.
-fn group_cpu_ticks(pgid: i32) -> u64 {
-    let Ok(dir) = std::fs::read_dir("/proc") else { return 0 };
-    let mut total = 0;
-    for e in dir.flatten() {
-        let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else { continue };
-        let Some((_, rest)) = stat.rsplit_once(')') else { continue };
-        let f: Vec<&str> = rest.split_whitespace().collect();
-        if f.get(2).and_then(|g| g.parse::<i32>().ok()) != Some(pgid) {
-            continue;
-        }
-        total += (11..=14).filter_map(|i| f.get(i)?.parse::<u64>().ok()).sum::<u64>();
-    }
-    total
-}
-
-fn end_group(pgid: i32) {
-    unsafe {
-        libc::kill(-pgid, libc::SIGTERM);
-    }
-    std::thread::sleep(Duration::from_secs(2));
-    unsafe {
-        libc::kill(-pgid, libc::SIGKILL);
     }
 }
