@@ -472,6 +472,11 @@ struct FScripts {
     /// Live round legs as (repo, batch, unit); `stop_round_legs` ends the ones it is asked for.
     round_legs: RefCell<Vec<(String, String, String)>>,
     round_legs_stubborn: std::cell::Cell<bool>,
+    /// Working directories of processes that outlive their legs; `stop_tree_holders` ends those under the tree.
+    tree_holders: RefCell<Vec<PathBuf>>,
+    /// The holders ended, each with whether the tree they held still stood when they were.
+    tree_holders_stubborn: std::cell::Cell<bool>,
+    stopped_holders: RefCell<Vec<(PathBuf, bool)>>,
     /// Every `release` call: the bin it was run as, its argv joined, and the SPIRA_DB it
     /// was handed.
     release_calls: RefCell<Vec<(String, String, String)>>,
@@ -751,6 +756,15 @@ impl Scripts for FScripts {
             .partition(|(r, b, _)| r == repo && b == batch);
         *self.round_legs.borrow_mut() = rest;
         Ok(mine.into_iter().map(|(_, _, u)| u).collect())
+    }
+    fn stop_tree_holders(&self, tree: &Path) -> Result<Vec<String>, String> {
+        if self.tree_holders_stubborn.get() {
+            return Err("1 still running after its stop".into());
+        }
+        let (mine, rest): (Vec<_>, Vec<_>) = self.tree_holders.borrow().iter().cloned().partition(|d| d.starts_with(tree));
+        *self.tree_holders.borrow_mut() = rest;
+        self.stopped_holders.borrow_mut().extend(mine.iter().map(|d| (d.clone(), tree.exists())));
+        Ok(mine.iter().map(|d| d.display().to_string()).collect())
     }
     fn round_legs_live(&self, repo: &str, batch: &str) -> bool {
         self.round_legs

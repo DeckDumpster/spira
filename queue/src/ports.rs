@@ -341,6 +341,9 @@ pub trait Scripts {
     /// Stops every live unit and scope the legs of `batch` in `repo` run in and waits for each to
     /// exit: the names it stopped. `Err` when one outlived the wait or the units cannot be read.
     fn stop_round_legs(&self, repo: &str, batch: &str) -> Result<Vec<String>, String>;
+    /// Ends every process using `tree` as its working directory (a build the legs left behind)
+    /// and waits for each to exit: what it ended. `Err` when one outlived the wait.
+    fn stop_tree_holders(&self, tree: &Path) -> Result<Vec<String>, String>;
     /// Whether any unit or scope the legs of `batch` in `repo` run in is live; true when the
     /// units cannot be read, as a round that may be running is not abandoned.
     fn round_legs_live(&self, repo: &str, batch: &str) -> bool;

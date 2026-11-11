@@ -843,3 +843,49 @@ fn sp_pi2ojm_an_adopted_round_without_suites_certifies_in_its_own_testenv_or_is_
     let (_, acts) = decide(&bare, &queue_holds("r9", &["sp-a", "sp-b"]));
     assert!(acts.iter().all(|a| a.effect != CORPUS && a.effect != CERTIFY), "{acts:?}");
 }
+
+const LEFTOVER: &str = "git worktree add exited 128: fatal: '/run/worktree/.batcher-spira' already exists";
+
+/// One tick of a cut whose assemble fails with `err`: the carry after, and what the outcome asked.
+fn failed_assemble(carry: &Carry, err: &str) -> (Carry, Vec<Act>) {
+    let (carry, acts) = decide(carry, &busy());
+    let assemble = acts.iter().find(|a| a.effect == ASSEMBLE).expect("a cut asks for an assemble");
+    let leg: Leg = serde_json::from_str(&assemble.input).unwrap();
+    on_outcome(&carry, ASSEMBLE, false, err, &leg, NOW)
+}
+
+fn pages(acts: &[Act]) -> Vec<&Act> {
+    acts.iter().filter(|a| a.effect == INBOX_APPEND).collect()
+}
+
+#[test]
+fn a_failed_assemble_names_its_error_in_skip_why_from_the_first_tick() {
+    let (carry, acts) = failed_assemble(&Carry::default(), LEFTOVER);
+    let why = carry.repos["spira"].skip_why.as_deref().expect("the failure is carried");
+    assert!(why.contains(LEFTOVER), "{why}");
+    assert!(pages(&acts).is_empty(), "one failure is not yet a page");
+    let (carry, _) = decide(&carry, &busy());
+    assert!(carry.repos["spira"].skip_why.as_deref().unwrap_or("").contains(LEFTOVER), "the next cut does not wipe it before it runs");
+}
+
+#[test]
+fn the_same_assemble_failure_three_ticks_running_pages_once_with_the_error() {
+    let (c1, a1) = failed_assemble(&Carry::default(), LEFTOVER);
+    let (c2, a2) = failed_assemble(&c1, LEFTOVER);
+    assert!(pages(&a1).is_empty() && pages(&a2).is_empty());
+    let (c3, a3) = failed_assemble(&c2, LEFTOVER);
+    let paged = pages(&a3);
+    assert_eq!(paged.len(), 1, "{a3:?}");
+    assert!(paged[0].input.contains(LEFTOVER), "{}", paged[0].input);
+    let (_, a4) = failed_assemble(&c3, LEFTOVER);
+    assert!(pages(&a4).is_empty(), "a fourth tick does not page again");
+}
+
+#[test]
+fn a_different_assemble_failure_restarts_the_count() {
+    let (c1, _) = failed_assemble(&Carry::default(), LEFTOVER);
+    let (c2, _) = failed_assemble(&c1, LEFTOVER);
+    let (c3, a3) = failed_assemble(&c2, "git worktree add exited 128: something else");
+    assert!(pages(&a3).is_empty(), "{a3:?}");
+    assert!(c3.repos["spira"].skip_why.as_deref().unwrap().contains("something else"));
+}

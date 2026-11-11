@@ -524,6 +524,9 @@ pub struct RepoCarry {
     /// (law-a-failure-carries-its-own-explanation); logged once each time it changes.
     #[serde(default)]
     pub skip_why: Option<String>,
+    /// The assemble error of the last cut and the ticks it has now failed the same way running.
+    #[serde(default)]
+    pub assemble_failed: Option<(String, u32)>,
     /// Members `queue round open` refused, as id → (tip, base, kind): each stays out of the cut
     /// until its tip or the base moves.
     #[serde(default)]
@@ -701,6 +704,9 @@ pub struct Assembled {
     /// Members whose merge conflicted with the base itself: the rebase path's.
     #[serde(default)]
     pub base_conflicts: Vec<String>,
+    /// What the assemble cleared from the round tree's path before building there.
+    #[serde(default)]
+    pub cleared: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -856,6 +862,13 @@ pub fn select_why(repo: &Repo, max_members: usize) -> Result<(Vec<core::Member>,
     }
     let key = core::round_key(&pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>());
     Ok((pool, key))
+}
+
+/// Ticks the same assemble error must repeat before a person is paged.
+const ASSEMBLE_PAGE_AFTER: u32 = 3;
+
+fn assemble_failed_why(err: &str, n: u32) -> String {
+    format!("assemble failed {n} time(s) running, so no round is cut: {err}")
 }
 
 /// Why the round `key` is not cut again: its last assemble merged nothing new.
@@ -1164,7 +1177,7 @@ impl Machine<'_> {
             self.go(Trigger::Stopped);
             return;
         }
-        self.rc.skip_why = None;
+        self.rc.skip_why = self.rc.assemble_failed.as_ref().map(|(err, n)| assemble_failed_why(err, *n));
         if self.rc.state == State::Held {
             self.go(Trigger::Released);
         }
@@ -1431,6 +1444,7 @@ impl Machine<'_> {
     fn outcome(&mut self, effect: &str, ok: bool, body: &str, leg: &Leg) {
         match (self.rc.state, effect) {
             (State::Assembling, ASSEMBLE) if !ok => {
+                self.assemble_failed(body.trim());
                 self.go(Trigger::AssembledEmpty);
                 self.rc.round_key = None;
             }
@@ -1557,7 +1571,21 @@ impl Machine<'_> {
         self.certify();
     }
 
+    fn assemble_failed(&mut self, err: &str) {
+        let n = match &self.rc.assemble_failed {
+            Some((was, n)) if was == err => n + 1,
+            _ => 1,
+        };
+        self.rc.skip_why = Some(assemble_failed_why(err, n));
+        self.rc.assemble_failed = Some((err.to_string(), n));
+        if n == ASSEMBLE_PAGE_AFTER {
+            let page = format!("batcher {}: {}", self.repo, assemble_failed_why(err, n));
+            self.acts.push(Act::new(INBOX_APPEND, page.clone()).with_input(page_line(self.now_ms, &page)));
+        }
+    }
+
     fn assembled(&mut self, a: Assembled, leg: &Leg) {
+        self.rc.assemble_failed = None;
         if !a.base.is_empty() && self.rc.base_moved.as_ref().map(|b| &b.0) != Some(&a.base) {
             self.rc.base_moved = Some((a.base.clone(), self.now_ms));
         }
@@ -2107,13 +2135,16 @@ pub mod edge {
         } else {
             (env.run.join("worktree").join(format!(".batcher-{}-{}", repo.name, &super::digest(&leg.round_key)[..12])), leg.onto.clone())
         };
-        io::worktree_reset(&repo, &wt, &at)?;
+        let cleared = io::worktree_reset(&repo, &wt, &at)?;
+        if let Some(c) = &cleared {
+            eprintln!("{} {}: {c}", super::NAME, repo.name);
+        }
         let merges: BTreeMap<String, batcher::core::MergeResult> = sorted.iter().map(|m| (m.id.clone(), io::merge_member(&env, &wt, &m.id, &m.tip))).collect();
         let combined = batcher::core::combine(&batcher::core::CombineInput { pool: &sorted, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &sequenced, siblings: &BTreeMap::new() });
         let conflicts = sorted.iter().filter(|m| merges.get(&m.id) == Some(&batcher::core::MergeResult::Conflict)).map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>();
         let base_conflicts = conflicts.iter().filter(|(_, tip)| io::base_conflict(&repo, &base, tip).is_some()).map(|(id, _)| id.clone()).collect();
         let suites = !io::suites_in(&wt, "HEAD").is_empty();
-        json(&Assembled { merged: combined.merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), own_testenv: batcher_cut::declares_own_testenv(&wt), wt: wt.display().to_string(), base, suites, conflicts, base_conflicts })
+        json(&Assembled { merged: combined.merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), own_testenv: batcher_cut::declares_own_testenv(&wt), wt: wt.display().to_string(), base, suites, conflicts, base_conflicts, cleared })
     }
 
     pub fn round_open(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {

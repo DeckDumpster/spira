@@ -1386,7 +1386,9 @@ fn cut_new_round_inner(
         .run
         .join("worktree")
         .join(format!(".batcher-{}", repo.name));
-    io::worktree_reset(repo, &wt, &base_sha)?;
+    if let Some(cleared) = io::worktree_reset(repo, &wt, &base_sha)? {
+        println!("batcher {}: {cleared}", repo.name);
+    }
 
     let mut merges = BTreeMap::new();
     for m in &sorted {

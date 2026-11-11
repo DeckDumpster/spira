@@ -999,7 +999,10 @@ pub fn confirm_base(repo: &Repo, head: &str) -> Result<String, String> {
     Ok(base)
 }
 
-pub fn worktree_reset(repo: &Repo, wt: &Path, at_sha: &str) -> Result<(), String> {
+/// Resets `wt` to `at_sha`, adding the worktree when none stands there. A directory at the path
+/// that is no worktree of the repository is cleared first, unless a process works in it; the
+/// `Ok` text says what was cleared.
+pub fn worktree_reset(repo: &Repo, wt: &Path, at_sha: &str) -> Result<Option<String>, String> {
     let _ = run(
         Command::new("git")
             .arg("-C")
@@ -1007,6 +1010,7 @@ pub fn worktree_reset(repo: &Repo, wt: &Path, at_sha: &str) -> Result<(), String
             .args(["worktree", "prune"]),
         "git worktree prune",
     );
+    let cleared = clear_unregistered(repo, wt)?;
     if wt.join(".git").exists() {
         run(
             Command::new("git")
@@ -1036,7 +1040,47 @@ pub fn worktree_reset(repo: &Repo, wt: &Path, at_sha: &str) -> Result<(), String
             "git worktree add",
         )?;
     }
-    Ok(())
+    Ok(cleared)
+}
+
+fn clear_unregistered(repo: &Repo, wt: &Path) -> Result<Option<String>, String> {
+    if fs::symlink_metadata(wt).is_err() {
+        return Ok(None);
+    }
+    let listed = run(
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo.path)
+            .args(["worktree", "list", "--porcelain"]),
+        "git worktree list",
+    )?;
+    let here = fs::canonicalize(wt).unwrap_or_else(|_| wt.to_path_buf());
+    let registered = listed
+        .lines()
+        .filter_map(|l| l.strip_prefix("worktree "))
+        .any(|p| fs::canonicalize(p).unwrap_or_else(|_| p.into()) == here);
+    if registered {
+        return Ok(None);
+    }
+    let holders = runtime::holders::holders(Path::new("/proc"), &here, &[std::process::id()]);
+    if !holders.is_empty() {
+        return Err(format!(
+            "{} is not a worktree of {} and is in use by {}; not clearing it",
+            wt.display(),
+            repo.name,
+            holders.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    let removed = match fs::symlink_metadata(wt) {
+        Ok(m) if m.is_dir() => fs::remove_dir_all(wt),
+        _ => fs::remove_file(wt),
+    };
+    removed.map_err(|e| format!("clearing {}: {e}", wt.display()))?;
+    Ok(Some(format!(
+        "cleared {}: not a worktree of {}, no process using it",
+        wt.display(),
+        repo.name
+    )))
 }
 
 /// Is `tip` already an ancestor of the worktree's current HEAD? True for a member reset to
@@ -4976,4 +5020,62 @@ mod abandon_hold_tests {
         assert!(package_graph("not json").is_none());
     }
 
+}
+
+#[cfg(test)]
+mod leftover_path_tests {
+    use super::*;
+
+    fn repo_with_commit(d: &Path) -> (Repo, String) {
+        std::fs::create_dir_all(d).unwrap();
+        testkit::git(d, &["init", "-q", "-b", "main"]);
+        std::fs::write(d.join("f"), "a\n").unwrap();
+        testkit::git(d, &["add", "."]);
+        testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
+        let sha = testkit::git(d, &["rev-parse", "HEAD"]).trim().to_string();
+        let repo = Repo { name: "alpha".into(), path: d.to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+        (repo, sha)
+    }
+
+    fn leftover(root: &Path) -> PathBuf {
+        let wt = root.join("wt/.batcher-alpha");
+        std::fs::create_dir_all(wt.join("target/release")).unwrap();
+        std::fs::write(wt.join("target/release/spira-supervise"), "x").unwrap();
+        wt
+    }
+
+    #[test]
+    fn a_leftover_directory_at_the_worktree_path_is_cleared_and_the_outcome_says_so() {
+        let root = testkit::TempDir::new("leftover-clear");
+        let (repo, sha) = repo_with_commit(&root.path().join("r"));
+        let wt = leftover(root.path());
+        let cleared = worktree_reset(&repo, &wt, &sha).unwrap();
+        assert!(cleared.is_some_and(|c| c.contains("not a worktree")), "the outcome names the clearing");
+        assert!(wt.join(".git").exists(), "a worktree stands at the path now");
+        assert!(!wt.join("target").exists(), "the leftover files are gone");
+    }
+
+    #[test]
+    fn a_registered_worktree_is_reset_not_cleared() {
+        let root = testkit::TempDir::new("leftover-registered");
+        let (repo, sha) = repo_with_commit(&root.path().join("r"));
+        let wt = root.path().join("wt/.batcher-alpha");
+        assert_eq!(worktree_reset(&repo, &wt, &sha), Ok(None));
+        std::fs::write(wt.join("kept-untracked"), "x").unwrap();
+        assert_eq!(worktree_reset(&repo, &wt, &sha), Ok(None));
+    }
+
+    #[test]
+    fn a_leftover_directory_a_process_works_in_is_refused_naming_the_process() {
+        let root = testkit::TempDir::new("leftover-held");
+        let (repo, sha) = repo_with_commit(&root.path().join("r"));
+        let wt = leftover(root.path());
+        let mut holder = Command::new("sleep").arg("30").current_dir(wt.join("target")).spawn().unwrap();
+        let out = worktree_reset(&repo, &wt, &sha);
+        holder.kill().unwrap();
+        let _ = holder.wait();
+        let err = out.unwrap_err();
+        assert!(err.contains("sleep") && err.contains(&holder.id().to_string()), "{err}");
+        assert!(wt.join("target/release/spira-supervise").exists(), "nothing was removed");
+    }
 }
