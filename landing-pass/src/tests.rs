@@ -315,6 +315,8 @@ struct FakeTools {
     gate_calls: RefCell<Vec<(String, String, String)>>,
     confine: RefCell<HashMap<String, (i32, String)>>,
     status: RefCell<Option<String>>,
+    steps: RefCell<Vec<String>>,
+    no_queue: Cell<bool>,
     skews: RefCell<Vec<PathBuf>>,
     /// Advance the fake clock by this much per gate (to exercise the budget).
     gate_cost: Cell<u64>,
@@ -393,6 +395,13 @@ impl Tools for FakeTools {
     }
     fn confine(&self, id: &str, _: &str, _: &Path, _: &str, _: &str) -> (i32, String) {
         self.confine.borrow().get(id).cloned().unwrap_or((0, String::new()))
+    }
+    fn queue_step(&self, repo: &str) -> Result<Vec<String>, String> {
+        if self.no_queue.get() {
+            return Err("no queue program — the queue step did not run".into());
+        }
+        self.steps.borrow_mut().push(repo.into());
+        Ok(vec![format!("step {repo}")])
     }
     fn skew_refresh(&self, repo: &Path) -> String {
         self.skews.borrow_mut().push(repo.into());
@@ -1808,6 +1817,9 @@ impl Tools for Injecting<'_> {
     }
     fn confine(&self, a: &str, b: &str, c: &Path, d: &str, e: &str) -> (i32, String) {
         self.t.confine(a, b, c, d, e)
+    }
+    fn queue_step(&self, r: &str) -> Result<Vec<String>, String> {
+        self.t.queue_step(r)
     }
     fn skew_refresh(&self, r: &Path) -> String {
         self.t.skew_refresh(r)
