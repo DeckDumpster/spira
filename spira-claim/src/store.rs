@@ -13,7 +13,7 @@ use spira_config::lc_call::{LcClient, LcError};
 
 use crate::rank::{self, LifecycleRow, ReadyRow};
 
-/// Ids per `bd sql` events query and per `plan items --ids` call: keeps the argv bounded.
+/// Ids per `content events` request and per `plan items --ids` call: keeps the argv bounded.
 pub const EVENT_CHUNK: usize = 200;
 pub const LIST_CHUNK: usize = 100;
 
@@ -124,9 +124,8 @@ impl Store {
         Ok(r.stdout)
     }
 
-    /// bdq for what the lifecycle service's `content` verb does not serve: `sql` (the events
-    /// query), `note --stdin`, `update --set-metadata` and `claim-retry`'s arbitrary ready
-    /// queries. Content reads and label writes go through [`Store::lc`].
+    /// bdq for what the lifecycle service does not serve: `note --stdin`, `update --set-metadata`
+    /// and `claim-retry`'s arbitrary ready queries. Content reads and label writes go through [`Store::lc`].
     pub fn bdq_cmd(&self, args: &[&str]) -> Command {
         let mut c = Command::new(&self.bdq);
         c.args(args);
@@ -145,8 +144,8 @@ impl Store {
     pub fn events(&self, ids: &[String]) -> Result<Vec<EventRow>, String> {
         let mut out = Vec::new();
         for chunk in ids.chunks(EVENT_CHUNK) {
-            let q = events_sql(chunk);
-            let text = self.bdq(&["sql", "--json", &q])?;
+            let args = ["content".to_string(), "events".into(), "--id".into(), chunk.join(",")];
+            let text = self.lc_run(&args).map_err(|e| format!("spira-lc content events: {e}"))?;
             out.extend(events::parse_rows(&text)?);
             out.extend(self.facts(chunk)?);
         }
@@ -331,21 +330,6 @@ pub struct ReadySet {
 /// The condition key a refused readiness publish raises.
 pub const READINESS_ALERT: &str = "claim-readiness-refused";
 
-pub fn sql_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
-}
-
-/// The events query: only folded types, only needed columns, new_value truncated.
-pub fn events_sql(ids: &[String]) -> String {
-    let in_list = ids.iter().map(|i| sql_quote(i)).collect::<Vec<_>>().join(",");
-    format!(
-        "select issue_id, event_type, substring(coalesce(new_value,''),1,120) as new_value, created_at \
-         from events where issue_id in ({in_list}) and event_type in \
-         ('claimed','status_changed','closed','requeued','reopened','reopen','reclaimed','poison.cleared') \
-         order by issue_id, created_at"
-    )
-}
-
 /// Run a command to completion within `timeout`; stdout on exit 0, else an error naming
 /// the first stderr line. A timed-out child is killed.
 pub fn run(cmd: Command, timeout: Duration) -> Result<String, String> {
@@ -485,12 +469,22 @@ mod tests {
     }
 
     #[test]
-    fn events_sql_quotes_and_bounds() {
-        let q = events_sql(&["sp-a".into(), "o'hara".into()]);
-        assert!(q.contains("'sp-a','o\\'hara'"));
-        assert!(q.contains("substring(coalesce(new_value,''),1,120)"));
-        // 200 ids stay far below MAX_ARG_STRLEN (128 KiB).
-        let ids: Vec<String> = (0..EVENT_CHUNK).map(|i| format!("sp-{i:08}.12")).collect();
-        assert!(events_sql(&ids).len() < 16 * 1024);
+    fn events_read_content_events_then_facts_per_chunk_without_spawning_bdq() {
+        let (st, t) = store_over(|argv| match (argv[0].as_str(), argv.get(1).map(String::as_str)) {
+            ("content", Some("events")) => Reply {
+                code: 0,
+                out: r#"[{"issue_id":"sp-a","event_type":"claimed","new_value":"d1","created_at":"2026-01-01 00:00:00"},{"issue_id":"sp-a","event_type":"closed","new_value":"","created_at":"2026-01-02 00:00:00"}]"#.into(),
+                err: String::new(),
+            },
+            ("facts", _) => Reply { code: 0, out: r#"[{"issue_id":"sp-a","event_type":"requeued","new_value":"x","created_at":"2026-01-03 00:00:00"}]"#.into(), err: String::new() },
+            _ => Reply { code: 0, out: "[]".into(), err: String::new() },
+        });
+        assert_eq!(st.events(&["sp-a".into()]).unwrap().len(), 3);
+        assert_eq!(*t.seen.lock().unwrap(), vec![vec!["content", "events", "--id", "sp-a"], vec!["facts", "--ids", "sp-a"]]);
+        t.seen.lock().unwrap().clear();
+        let ids: Vec<String> = (0..EVENT_CHUNK + 1).map(|i| format!("sp-{i}")).collect();
+        st.events(&ids).unwrap();
+        let seen = t.seen.lock().unwrap();
+        assert_eq!(seen.iter().filter(|a| a[0] == "content").count(), 2);
     }
 }
