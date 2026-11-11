@@ -29,6 +29,8 @@ pub enum Build {
     Workspace,
     /// Only whether the job's tree passes the workspace unit tests; exit 5 when it does not.
     Unit,
+    /// Like `Unit`, for the `tests/` targets.
+    Integration,
 }
 
 impl Build {
@@ -39,6 +41,7 @@ impl Build {
             Build::Round => "round",
             Build::Workspace => "workspace",
             Build::Unit => "unit",
+            Build::Integration => "integration",
         }
     }
     pub fn parse(s: &str) -> Option<Build> {
@@ -48,6 +51,7 @@ impl Build {
             "round" => Some(Build::Round),
             "workspace" => Some(Build::Workspace),
             "unit" => Some(Build::Unit),
+            "integration" => Some(Build::Integration),
             _ => None,
         }
     }
@@ -135,6 +139,21 @@ unit)
     [ "$rc" -eq 101 ] && exit 5
     [ "$rc" -eq 0 ] || exit "$rc"
     echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/unit-tests.result"
+    exit 0 ;;
+integration)
+    d="$HOME/attr/$job"
+    rm -rf "$d"; mkdir -p "$HOME/attr"
+    git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
+    cd "$d" || exit 2
+    scope="--workspace"
+    if [ "$suites" != integration ]; then scope=""; for p in ${suites//,/ }; do scope="$scope -p $p"; done; fi
+    env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
+        cargo test -q --profile unittest $scope --features integration --no-fail-fast --test '*' --config profile.unittest.incremental=false >&2
+    rc=$?
+    cd "$HOME" && rm -rf "$d"
+    [ "$rc" -eq 101 ] && exit 5
+    [ "$rc" -eq 0 ] || exit "$rc"
+    echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/integration-tests.result"
     exit 0 ;;
 artifacts|dwarf)
     d="$HOME/attr/$job"
@@ -543,6 +562,25 @@ mod tests {
         assert_eq!(attr_job_rc("unit", 101, "unit-tests.result"), (5, false));
         assert_eq!(attr_job_rc("unit", 137, "unit-tests.result"), (137, false), "a killed run is a fault, not red");
         assert_eq!(attr_job_rc("unit", 0, "unit-tests.result"), (0, true));
+    }
+
+    #[test]
+    fn an_integration_job_runs_the_integration_targets_of_its_packages_and_exits_5_when_they_fail() {
+        let r = parse_request("i1", "branch=spira/batcher-attr/x-i1\nsuites=spira-runtime\nbuild=integration\n").unwrap();
+        assert_eq!(r.build, Build::Integration);
+        let (_, _, args) = attr_job("integration", "spira-runtime,gate", 0, "integration-tests.result");
+        assert!(args.contains("-p spira-runtime -p gate") && args.contains("--test *") && args.contains("--features integration"), "{args}");
+        assert_eq!(attr_job_rc("integration", 101, "integration-tests.result"), (5, false));
+        assert_eq!(attr_job_rc("integration", 0, "integration-tests.result"), (0, true));
+    }
+
+    #[test]
+    fn the_integration_probe_runs_the_command_the_round_runs_its_integration_phase_with() {
+        let arm = REMOTE_ATTR_SCRIPT.split("\nintegration)").nth(1).and_then(|a| a.split("exit 0 ;;").next()).expect("an integration arm");
+        let round_cmd = crate::run::REMOTE_SCRIPT.split("unit_cargo() {").nth(1).and_then(|a| a.split("\n}\n").next()).expect("unit_cargo");
+        for f in ["--profile unittest", "--features integration", "profile.unittest.incremental=false"] {
+            assert!(arm.contains(f) && round_cmd.contains(f), "{f}");
+        }
     }
 
     #[test]

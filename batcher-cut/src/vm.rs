@@ -219,7 +219,7 @@ pub fn survival_probe_result(rc: i32) -> Option<bool> {
 fn subset_scope(build: &str, packages: &[String]) -> String {
     let ok = |p: &&String| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
     let named: Vec<&str> = packages.iter().filter(ok).map(String::as_str).collect();
-    if build == "unit" && !named.is_empty() && named.len() == packages.len() {
+    if matches!(build, "unit" | INTEGRATION_BUILD) && !named.is_empty() && named.len() == packages.len() {
         named.join(",")
     } else {
         build.to_string()
@@ -312,18 +312,20 @@ fn filter_red_in(
             }
         }
     }
-    let failed = if phases.contains(&UNIT_TESTS) {
-        batcher::unitattr::failing_lines(&fs::read_to_string(results.join("unit-tests.out")).unwrap_or_default())
-    } else {
-        vec![]
-    };
+    let failed: Vec<String> = TEST_PHASES
+        .iter()
+        .filter(|(_, stage)| phases.contains(stage))
+        .flat_map(|(_, stage)| batcher::unitattr::failing_lines(&fs::read_to_string(results.join(format!("{stage}.out"))).unwrap_or_default()))
+        .collect();
     Some(FilterRed { name, named, failed })
 }
 
 const UNIT_TESTS: &str = "unit-tests";
+const INTEGRATION_TESTS: &str = "integration-tests";
+const INTEGRATION_BUILD: &str = "integration";
 const TEST_PHASES: [(&str, &str); 2] = [
     ("unit.json", UNIT_TESTS),
-    ("integration.json", "integration-tests"),
+    ("integration.json", INTEGRATION_TESTS),
 ];
 
 fn phase_red(results: &Path, json: &str) -> bool {
@@ -803,18 +805,14 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn filter_green(&mut self, name: &str, subset: &[Member]) -> Option<bool> {
-        if name == UNIT_TESTS {
-            self.probe_subset(subset, "unit", &[], unit_probe_result)
-        } else {
-            None
-        }
+        self.filter_green_in(name, &[], subset)
     }
 
     fn filter_green_in(&mut self, name: &str, packages: &[String], subset: &[Member]) -> Option<bool> {
-        if name == UNIT_TESTS {
-            self.probe_subset(subset, "unit", packages, unit_probe_result)
-        } else {
-            None
+        match name {
+            UNIT_TESTS => self.probe_subset(subset, "unit", packages, unit_probe_result),
+            INTEGRATION_TESTS => self.probe_subset(subset, INTEGRATION_BUILD, packages, unit_probe_result),
+            _ => None,
         }
     }
 
@@ -1095,6 +1093,30 @@ mod tests {
             "fence-x",
             "a red fence is a filter red, naming nobody"
         );
+    }
+
+    #[test]
+    fn a_red_integration_phase_lists_its_failing_tests_by_the_crate_directory_that_holds_them() {
+        let d = testkit::TempDir::new("vm-integration-red");
+        fs::write(
+            d.path().join("integration.json"),
+            "{\"stage\":\"integration-tests\",\"verdict\":\"red\",\"failed\":[\"leg_lost::a\"]}\n",
+        )
+        .unwrap();
+        fs::write(
+            d.path().join("integration-tests.out"),
+            "INTEGRATION-TESTS-RED: x\nFAIL dir:spira-runtime leg_lost::a\nFAIL dir:spira-runtime leg_lost::b\n",
+        )
+        .unwrap();
+        let red = filter_red_in(d.path(), &[], &BTreeMap::new()).expect("a red integration phase ends the pass");
+        assert_eq!(red.name, "integration-tests");
+        assert_eq!(red.failed, ["FAIL dir:spira-runtime leg_lost::a", "FAIL dir:spira-runtime leg_lost::b"]);
+    }
+
+    #[test]
+    fn an_integration_probe_scopes_to_the_failing_packages() {
+        assert_eq!(subset_scope("integration", &["loom".into(), "gate".into()]), "loom,gate");
+        assert_eq!(subset_scope("integration", &[]), "integration");
     }
 
     #[test]
