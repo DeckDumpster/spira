@@ -48,8 +48,11 @@ struct Fake {
     base: Option<Base>,
     wts: PathBuf,
     destroy_fails: bool,
+    /// The store's text when it refuses the branch read.
+    refuse: Option<String>,
     out: RefCell<Vec<String>>,
     calls: RefCell<Vec<String>>,
+    prefetched: RefCell<Vec<String>>,
 }
 
 impl Fake {
@@ -62,8 +65,10 @@ impl Fake {
 }
 
 impl World for Fake {
-    fn prefetch(&self) {
+    fn prefetch(&self, ids: &[String]) -> Result<(), String> {
         self.call("prefetch".into());
+        self.prefetched.borrow_mut().extend(ids.iter().cloned());
+        self.refuse.clone().map_or(Ok(()), Err)
     }
     fn base(&self, _root: &Path) -> Option<Base> {
         self.base.clone()
@@ -257,5 +262,53 @@ mod terminal_reaper {
         assert_eq!(run(&f, &HashMap::new(), Duration::from_secs(5000), false), 0);
         assert!(busy.exists(), "newest file is fresh: {}", f.out());
         assert!(!stale.exists(), "{}", f.out());
+    }
+}
+
+mod unreadable_store {
+    use super::*;
+
+    #[test]
+    fn a_stale_pass_over_a_store_that_refuses_reaps_nothing_and_says_why() {
+        let t = testkit::TempDir::new("hel-refused");
+        let wts = t.path().join("run/worktree");
+        std::fs::create_dir_all(wts.join("sp-x")).unwrap();
+        let f = Fake { wts, refuse: Some("store said no".into()), ..Default::default() };
+        let tally = crate::stale::run(&f, &[], crate::stale::Opts { dry: false, idle_secs: 0 });
+        assert_eq!(tally, Default::default());
+        assert_eq!(*f.prefetched.borrow(), ["sp-x"]);
+        assert!(f.out().contains("store unreadable: store said no"), "{}", f.out());
+    }
+
+    #[test]
+    fn a_sweep_over_a_store_that_refuses_judges_no_branch_and_says_why() {
+        let t = testkit::TempDir::new("hel-refused-sweep");
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        git(&root, &["branch", "spira/sp-x"]);
+        let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
+        let f = Fake { base: Some(base), wts: t.path().join("wt"), refuse: Some("store said no".into()), ..Default::default() };
+        let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None };
+        let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
+        s.repo(&crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false });
+        assert!(f.out().contains("SKIP   spira  store unreadable: store said no"), "{}", f.out());
+        assert!(!f.calls.borrow().iter().any(|c| c.starts_with("bead ")), "{:?}", f.calls.borrow());
+    }
+
+    #[test]
+    fn a_scan_over_a_store_that_refuses_is_a_store_error_not_a_skip() {
+        let t = testkit::TempDir::new("hel-refused-scan");
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        git(&root, &["branch", "spira/sp-x"]);
+        let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
+        let f = Fake { base: Some(base), wts: t.path().join("wt"), refuse: Some("store said no".into()), ..Default::default() };
+        let e = crate::sweep::scan_repo(&f, &root, "submitted", false).err().unwrap();
+        assert!(matches!(&e, crate::sweep::ScanError::Store(m) if m == "store said no"), "{e:?}");
+        assert_eq!(*f.prefetched.borrow(), ["sp-x"]);
     }
 }

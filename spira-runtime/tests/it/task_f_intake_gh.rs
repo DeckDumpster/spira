@@ -35,12 +35,11 @@ fn issue(n: u64, author: &str) -> GhIssue {
     GhIssue { number: n, title: format!("issue {n}"), body: "b".into(), author: author.into(), is_pr: false }
 }
 
-fn snap(store_total: u64, issues: Vec<GhIssue>, accept: Vec<Accept>) -> Snapshot {
+fn snap(issues: Vec<GhIssue>, accept: Vec<Accept>) -> Snapshot {
     Snapshot {
         halted: false,
         targets: vec![Target { slug: "o/r".into(), bead_repo: "spira".into(), root_ok: true }],
         store: vec![KnownRef { id: "sp-1".into(), ext_ref: "github:o/r#1".into(), labels: vec!["spira".into()] }],
-        store_total,
         now: 0,
         pages: [("o/r".to_string(), Pages::Issues(issues))].into(),
         accept,
@@ -72,7 +71,7 @@ fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
 
 #[test]
 fn t2_an_idle_tick_journals_nothing_and_asks_only_for_its_probe() {
-    let mut r = rig(1, |_| snap(1, vec![issue(1, "ryan")], vec![]));
+    let mut r = rig(1, |_| snap(vec![issue(1, "ryan")], vec![]));
     running(&r);
     assert_silent_tick(&mut r, STREAM);
     running(&r);
@@ -89,7 +88,7 @@ fn t3_every_legal_transition_is_taken_and_an_illegal_one_is_refused_naming_the_s
 
 #[test]
 fn t3_the_carry_read_is_the_carry_recorded() {
-    let (next, _) = decide(&Carry::default(), &snap(1, vec![issue(1, "ryan"), issue(2, "x")], vec![]));
+    let (next, _) = decide(&Carry::default(), &snap(vec![issue(1, "ryan"), issue(2, "x")], vec![]));
     assert_eq!(next.seen.get("o/r"), Some(&vec![1, 2]), "the first read records the open issues as seen");
     let back: Carry = serde_json::from_str(&serde_json::to_string(&next).unwrap()).unwrap();
     assert_eq!(back, next);
@@ -116,31 +115,24 @@ fn t4_the_module_launches_no_process() {
 
 #[test]
 fn t5_parity_the_first_read_files_nothing_and_a_trusted_issue_becomes_work() {
-    let (seeded, acts) = decide(&Carry::default(), &snap(1, vec![issue(1, "ryan")], vec![]));
+    let (seeded, acts) = decide(&Carry::default(), &snap(vec![issue(1, "ryan")], vec![]));
     assert!(acts.is_empty(), "the first read of a slug files nothing: {acts:?}");
     let accepted = vec![Accept { slug: "o/r".into(), number: 2, actor: Some("ryan".into()), has_access: true, hidden: false }];
-    let (_, acts) = decide(&seeded, &snap(1, vec![issue(1, "ryan"), issue(2, "stranger")], accepted));
+    let (_, acts) = decide(&seeded, &snap(vec![issue(1, "ryan"), issue(2, "stranger")], accepted));
     assert_eq!(acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), [FILE_WORK]);
     assert!(acts[0].input.contains("github:o/r#2"), "{}", acts[0].input);
 }
 
-#[test]
-fn t5_parity_a_zero_bead_store_is_refused_on_the_inbox_and_files_nothing() {
-    let (_, acts) = decide(&Carry::default(), &snap(0, vec![issue(1, "ryan")], vec![]));
-    assert_eq!(acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), [f::INBOX]);
-    assert!(acts[0].input.contains("[watch:intake.gh] gh-intake:"), "{}", acts[0].input);
-}
-
 fn baselined(second: fn(u64) -> Snapshot) -> TaskRig {
-    rig(1, move |n| if n == 0 { snap(1, vec![issue(1, "ryan")], vec![]) } else { second(n) })
+    rig(1, move |n| if n == 0 { snap(vec![issue(1, "ryan")], vec![]) } else { second(n) })
 }
 
 fn a_new_issue(_: u64) -> Snapshot {
-    snap(1, vec![issue(1, "ryan"), issue(2, "stranger")], vec![])
+    snap(vec![issue(1, "ryan"), issue(2, "stranger")], vec![])
 }
 
 fn rate_limited_for_hours(_: u64) -> Snapshot {
-    Snapshot { now: 5 * 3_600, pages: [("o/r".to_string(), Pages::RateLimited { reset: 0 })].into(), ..snap(1, vec![], vec![]) }
+    Snapshot { now: 5 * 3_600, pages: [("o/r".to_string(), Pages::RateLimited { reset: 0 })].into(), ..snap(vec![], vec![]) }
 }
 
 fn boot_matches(make: impl Fn() -> TaskRig) {

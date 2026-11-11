@@ -261,23 +261,50 @@ pub struct OrphanScan {
     pub held: Option<String>,
 }
 
+/// Why a repository's reads gave nothing: it cannot be read (skipped, as ever), or the store
+/// did not answer the branch read (a failure the caller must report).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScanError {
+    Skip(String),
+    Store(String),
+}
+
+/// The beads a pass judges: each non-round branch's id and each registered worktree's name.
+fn judged_ids(w: &dyn World, g: &Git, brs: &[String]) -> Vec<String> {
+    let wts = w.worktrees();
+    let mut ids: Vec<String> = brs.iter().map(|b| b.strip_prefix("spira/").unwrap_or(b)).filter(|i| !i.starts_with("round-")).map(String::from).collect();
+    for (path, _) in g.worktrees() {
+        if !path.starts_with(&wts) || path == wts {
+            continue;
+        }
+        if let Some(n) = path.file_name().map(|n| n.to_string_lossy().into_owned()) {
+            if !n.starts_with('.') {
+                ids.push(n);
+            }
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 /// One repository's reads for a pass: its base, every `spira/*` branch's facts (after the
 /// fetch of the base's own remote, only when there is a branch), and its orphaned worktrees.
-/// `Err` names why the repository is skipped.
-pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool) -> Result<(Base, Vec<BranchScan>, Vec<OrphanScan>), String> {
+/// `Err` names why the repository is skipped, or that the store did not answer.
+pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool) -> Result<(Base, Vec<BranchScan>, Vec<OrphanScan>), ScanError> {
     if !root.join(".git").exists() {
-        return Err(format!("{} is not a git checkout", root.display()));
+        return Err(ScanError::Skip(format!("{} is not a git checkout", root.display())));
     }
     let g = Git(root);
     let brs = g.spira_branches();
-    let base = w.base(root).ok_or("cannot resolve the ref it lands on — configure its `base`")?;
+    let base = w.base(root).ok_or_else(|| ScanError::Skip("cannot resolve the ref it lands on — configure its `base`".into()))?;
     if let Some(rem) = base.remote.as_deref() {
         if fetch && !brs.is_empty() {
             g.fetch(rem);
         }
     }
     if !brs.is_empty() {
-        w.prefetch();
+        w.prefetch(&judged_ids(w, &g, &brs)).map_err(ScanError::Store)?;
     }
     let lr = base.landref.as_str();
     let mut branches = vec![];
@@ -432,7 +459,10 @@ impl<'a> Sweep<'a> {
         let c = Ctx { w: self.w, repo: root, name: &r.name, base: &base, submitted_label: &label };
 
         if !brs.is_empty() {
-            self.w.prefetch();
+            if let Err(e) = self.w.prefetch(&judged_ids(self.w, &g, &brs)) {
+                self.say(&format!("SKIP   {}  store unreadable: {e}", r.name));
+                return;
+            }
         }
 
         // PASS 1 — every spira/* branch, exactly one disposition.

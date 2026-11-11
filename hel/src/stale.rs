@@ -161,9 +161,21 @@ pub fn reason(v: &Verdict) -> Option<String> {
     }
 }
 
+/// The names of the entries under the run's worktree directory, dot-names skipped.
+fn tree_ids(w: &dyn World) -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(w.worktrees()) else { return vec![] };
+    let mut ids: Vec<String> = rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| !n.starts_with('.')).collect();
+    ids.sort();
+    ids
+}
+
 pub fn run(w: &dyn World, repos: &[Repo], opts: Opts) -> Tally {
     let mut t = Tally::default();
-    w.prefetch();
+    let ids = tree_ids(w);
+    if let Err(e) = w.prefetch(&ids) {
+        w.emit(&format!("SKIP   store unreadable: {e}"));
+        return t;
+    }
     let state_of = |id: &str| {
         w.bead(id).map(|b| {
             let s = b.get("status").and_then(|s| s.as_str()).unwrap_or_default().to_string();

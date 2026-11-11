@@ -32,6 +32,8 @@ pub fn json_only(text: &str) -> Option<Value> {
     serde_json::from_str(body.join("\n").trim()).ok()
 }
 
+const PREFETCH_IDS: usize = 100;
+
 pub struct Real {
     home: PathBuf,
     run: PathBuf,
@@ -203,18 +205,24 @@ impl World for Real {
         let remote = spira_config::repos::ref_remote(&landref, Some(&root_s));
         Some(Base { landref, landrefs, remote })
     }
-    fn prefetch(&self) {
-        if !self.status.is_empty() {
-            return;
+    fn prefetch(&self, ids: &[String]) -> Result<(), String> {
+        if !self.status.is_empty() || ids.is_empty() {
+            return Ok(());
         }
-        let Some(Value::Array(rows)) = self.content_json(&["list", "--all", "--limit", "0"]) else { return };
-        let map: BTreeMap<String, Value> = rows.into_iter().filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r))).collect();
-        if !map.is_empty() {
-            *self.beads.borrow_mut() = Some(map);
+        let c = self.lc()?;
+        let mut map: BTreeMap<String, Value> = BTreeMap::new();
+        for chunk in ids.chunks(PREFETCH_IDS) {
+            let out = c.answer(&["content", "list", "--all", "--limit", "0", "--json", "--id", &chunk.join(",")])?;
+            let Some(Value::Array(rows)) = json_only(&out) else { return Err("the store's bead read was not a JSON array".into()) };
+            map.extend(rows.into_iter().filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r))));
         }
-        if let Ok(rows) = self.lc().and_then(|c| spira_config::lc_state::list_live_on(&c)) {
-            *self.claims.borrow_mut() = Some(spira_config::lc_state::index(rows));
+        let mut rows = Vec::new();
+        for chunk in ids.chunks(PREFETCH_IDS) {
+            rows.extend(spira_config::lc_state::parse_rows(&c.answer(&["list", "--ids", &chunk.join(",")])?)?);
         }
+        *self.beads.borrow_mut() = Some(map);
+        *self.claims.borrow_mut() = Some(spira_config::lc_state::index(rows));
+        Ok(())
     }
     fn witness(&self, id: &str) -> Option<String> {
         if let Some(m) = self.claims.borrow().as_ref() {
@@ -412,6 +420,58 @@ mod tests {
         let (_s, r, _d) = over(|_| (2, "cannot tell".into()));
         assert!(!r.lc_landed("sp-a"));
         assert_eq!(r.bead("sp-a"), None);
+    }
+
+    fn bounded_store(a: &[String]) -> (i32, String) {
+        if spira_config::lc_call::reads_whole_history(a) {
+            return (3, "reads every bead ever filed and is refused".into());
+        }
+        match a[0].as_str() {
+            "content" if a.iter().any(|x| x == "--id") => (0, r#"[{"id":"sp-a","labels":[]},{"id":"sp-b","labels":[]},{"id":"sp-c","labels":[]}]"#.into()),
+            "list" if a.iter().any(|x| x == "--ids") => (
+                0,
+                r#"[{"bead_id":"sp-a","state":"LANDED"},{"bead_id":"sp-b","state":"WORKING","holder":"w"},{"bead_id":"sp-c","state":"READY"}]"#.into(),
+            ),
+            _ => (1, String::new()),
+        }
+    }
+
+    #[test]
+    fn a_prefetch_of_the_judged_ids_reads_no_whole_history_and_no_per_bead_show() {
+        let (store, r, _d) = over(bounded_store);
+        let ids: Vec<String> = ["sp-a", "sp-b", "sp-c"].map(String::from).to_vec();
+        r.prefetch(&ids).unwrap();
+        for id in &ids {
+            assert!(r.bead(id).is_some(), "{id} is served from the prefetch");
+            let _ = r.witness(id);
+        }
+        assert!(r.lc_past_builder("sp-a"));
+        assert!(!r.lc_past_builder("sp-c"));
+        let seen = store.seen.lock().unwrap();
+        assert!(!seen.iter().any(|s| s.starts_with("show ") || s.starts_with("content show")), "{seen:?}");
+    }
+
+    #[test]
+    fn a_refused_or_faulted_branch_read_is_an_error_with_the_stores_text_and_caches_nothing() {
+        let (_s, r, _d) = over(|a| if a[0] == "content" { (2, "store deadline passed".into()) } else { bounded_store(a) });
+        let e = r.prefetch(&["sp-a".to_string()]).unwrap_err();
+        assert!(e.contains("store deadline passed"), "{e}");
+        assert!(r.beads.borrow().is_none() && r.claims.borrow().is_none());
+    }
+
+    #[test]
+    fn a_faulted_lifecycle_read_is_an_error_with_the_stores_text_and_caches_nothing() {
+        let (_s, r, _d) = over(|a| if a[0] == "list" { (2, "lifecycle deadline passed".into()) } else { bounded_store(a) });
+        let e = r.prefetch(&["sp-a".to_string()]).unwrap_err();
+        assert!(e.contains("lifecycle deadline passed"), "{e}");
+        assert!(r.beads.borrow().is_none() && r.claims.borrow().is_none());
+    }
+
+    #[test]
+    fn an_empty_id_list_makes_no_store_call() {
+        let (store, r, _d) = over(bounded_store);
+        r.prefetch(&[]).unwrap();
+        assert!(store.seen.lock().unwrap().is_empty());
     }
 
     #[test]
