@@ -889,3 +889,15 @@ fn a_different_assemble_failure_restarts_the_count() {
     assert!(pages(&a3).is_empty(), "{a3:?}");
     assert!(c3.repos["spira"].skip_why.as_deref().unwrap().contains("something else"));
 }
+
+#[test]
+fn an_assemble_that_succeeds_after_failures_clears_the_failure_and_its_skip_why() {
+    let (failed, _) = failed_assemble(&Carry::default(), LEFTOVER);
+    let (carry, acts) = decide(&failed, &busy());
+    let assemble = acts.iter().find(|a| a.effect == ASSEMBLE).unwrap();
+    let leg: Leg = serde_json::from_str(&assemble.input).unwrap();
+    let ok = Assembled { merged: vec![("sp-a".into(), "t1".into())], wt: "/w".into(), base: "b1".into(), ..Assembled::default() };
+    let (carry, _) = on_outcome(&carry, ASSEMBLE, true, &serde_json::to_string(&ok).unwrap(), &leg, NOW);
+    assert_eq!(carry.repos["spira"].assemble_failed, None);
+    assert_eq!(carry.repos["spira"].skip_why, None);
+}

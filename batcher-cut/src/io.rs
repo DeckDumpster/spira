@@ -1011,6 +1011,9 @@ pub fn worktree_reset(repo: &Repo, wt: &Path, at_sha: &str) -> Result<Option<Str
         "git worktree prune",
     );
     let cleared = clear_unregistered(repo, wt)?;
+    if let Some(c) = &cleared {
+        eprintln!("batcher {}: {c}", repo.name);
+    }
     if wt.join(".git").exists() {
         run(
             Command::new("git")

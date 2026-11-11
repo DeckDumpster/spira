@@ -1585,7 +1585,9 @@ impl Machine<'_> {
     }
 
     fn assembled(&mut self, a: Assembled, leg: &Leg) {
-        self.rc.assemble_failed = None;
+        if self.rc.assemble_failed.take().is_some() {
+            self.rc.skip_why = None;
+        }
         if !a.base.is_empty() && self.rc.base_moved.as_ref().map(|b| &b.0) != Some(&a.base) {
             self.rc.base_moved = Some((a.base.clone(), self.now_ms));
         }
@@ -2136,9 +2138,6 @@ pub mod edge {
             (env.run.join("worktree").join(format!(".batcher-{}-{}", repo.name, &super::digest(&leg.round_key)[..12])), leg.onto.clone())
         };
         let cleared = io::worktree_reset(&repo, &wt, &at)?;
-        if let Some(c) = &cleared {
-            eprintln!("{} {}: {c}", super::NAME, repo.name);
-        }
         let merges: BTreeMap<String, batcher::core::MergeResult> = sorted.iter().map(|m| (m.id.clone(), io::merge_member(&env, &wt, &m.id, &m.tip))).collect();
         let combined = batcher::core::combine(&batcher::core::CombineInput { pool: &sorted, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &sequenced, siblings: &BTreeMap::new() });
         let conflicts = sorted.iter().filter(|m| merges.get(&m.id) == Some(&batcher::core::MergeResult::Conflict)).map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>();
