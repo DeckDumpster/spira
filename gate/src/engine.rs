@@ -1977,7 +1977,8 @@ pub fn describe(c: &Composition) -> String {
             "gate: composition=fences — the fences and the build fence, suites off (nothing buildable touched, or gate_mode=fences)".into()
         }
         Composition::Unit { touched, crates } => format!(
-            "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for: {} (touched: {})",
+            "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for {} crates: {} (touched: {})",
+            crates.len(),
             crates.join(" "),
             touched.join(" ")
         ),

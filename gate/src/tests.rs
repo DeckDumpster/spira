@@ -2077,7 +2077,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
         "cargo test --profile dwarf --config profile.dwarf.incremental=false -j 8 --features integration -p queue -p spira-config -- --test-threads=8"
     );
     assert!(f.stderr().contains(
-        "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for: queue spira-config (touched: spira-config)"
+        "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for 2 crates: queue spira-config (touched: spira-config)"
     ));
     assert!(
         meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7\n"),
