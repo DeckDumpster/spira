@@ -1080,6 +1080,7 @@ mod tests {
             ask_bound_s: 3600,
             release_repo: "spira".into(),
             heartbeat_bound_s: 300,
+            round_max_open: 1,
             releases: "/nonexistent-releases".into(),
             repo_map: "/nonexistent-map".into(),
         }
