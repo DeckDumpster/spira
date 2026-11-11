@@ -72,7 +72,7 @@ pub fn reaching(graph: &PackageGraph, packages: &[String], diffs: &[MemberDiff])
         .filter_map(|d| {
             reach.iter().find_map(|(failing, closure)| {
                 let hit = closure.iter().find(|p| d.paths.iter().any(|path| graph.owns(p, path)))?;
-                Some((d.id.clone(), if hit == failing { format!("{failing}") } else { format!("{hit} (a dependency of {failing})") }))
+                Some((d.id.clone(), if hit == failing { failing.to_string() } else { format!("{hit} (a dependency of {failing})") }))
             })
         })
         .collect()
