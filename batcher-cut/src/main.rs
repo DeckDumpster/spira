@@ -347,7 +347,7 @@ impl LiveOps<'_> {
         members: &[Member],
     ) -> Result<Option<drive::Mended>, String> {
         use batcher::mender::{self, Outcome};
-        let shown = io::lcq(self.env, &["show-batch", batch])?;
+        let shown = io::lcq_held(self.env, &["show-batch", batch])?;
         let pass = serde_json::from_str::<serde_json::Value>(&shown)
             .ok()
             .and_then(|v| v.get("pass").and_then(serde_json::Value::as_u64))

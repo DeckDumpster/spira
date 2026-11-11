@@ -731,7 +731,7 @@ fn client(e: &Effects, deadline_ms: u64) -> LcClient {
 /// (a closed child still counts toward its epic), and any live-row bead the open list lacks.
 /// Never the whole history; `None` when any of it is unreadable.
 pub fn beads_on(lc: &LcClient, epic_labels: &[String], live_ids: &[String]) -> Option<Vec<sentinel::model::Bead>> {
-    let read = |args: &[&str]| answer(lc, &[&["content", "list", "--limit", "0", "--json"][..], args].concat()).ok().and_then(|t| sentinel::model::parse_beads(&t).ok());
+    let read = |args: &[&str]| held_answer(lc, &[&["content", "list", "--limit", "0", "--json"][..], args].concat()).ok().and_then(|t| sentinel::model::parse_beads(&t).ok());
     let mut beads = read(&[])?;
     let mut have: std::collections::HashSet<String> = beads.iter().map(|b| b.id.clone()).collect();
     let mut extra = Vec::new();
@@ -748,6 +748,13 @@ pub fn beads_on(lc: &LcClient, epic_labels: &[String], live_ids: &[String]) -> O
 
 fn answer(lc: &LcClient, args: &[&str]) -> Result<String, String> {
     let r = lc.call(args).map_err(|e| e.to_string())?;
+    if r.code == 0 { Ok(r.out) } else { Err(format!("spira-lc {} exited {}: {}", args.first().copied().unwrap_or(""), r.code, r.why())) }
+}
+
+/// `answer` for a content read: the held answer when the process keeps the store's watch.
+fn held_answer(lc: &LcClient, args: &[&str]) -> Result<String, String> {
+    let Some(held) = store_view::shared() else { return answer(lc, args) };
+    let r = held.answer(args).map_err(|e| e.to_string())?.value;
     if r.code == 0 { Ok(r.out) } else { Err(format!("spira-lc {} exited {}: {}", args.first().copied().unwrap_or(""), r.code, r.why())) }
 }
 

@@ -269,6 +269,39 @@ fn lc_answer(
     Ok(r.out)
 }
 
+/// [`lcq`] for a read the process's store views hold (content, planning): the held answer when the
+/// process keeps the store's watch.
+fn lcq_held(env: &Env, args: &[&str]) -> Result<String, String> {
+    match store_view::shared() {
+        Some(views) => lc_answer(views.answer(args).map(|r| r.value)),
+        None => lcq(env, args),
+    }
+}
+
+fn lcq_held_with(lc: &LcClient, args: &[&str]) -> Result<String, String> {
+    match store_view::shared() {
+        Some(views) => lc_answer(views.answer(args).map(|r| r.value)),
+        None => lcq_with(lc, args),
+    }
+}
+
+/// The held lifecycle rows `q` keeps, as `list` printed them, when the process keeps the store's
+/// watch; `None` when it does not.
+fn held_rows(q: &store_view::RowQuery) -> Option<Result<Vec<Value>, String>> {
+    store_view::shared().map(|views| views.rows(q).map(|r| r.value).map_err(|e| format!("could not say: {e}")))
+}
+
+/// `show <id>`'s answer, from the held row when the process keeps the store's watch.
+fn show_text(lc: &LcClient, id: &str) -> Result<String, String> {
+    let Some(views) = store_view::shared() else {
+        return lcq_with(lc, &["show", id]);
+    };
+    match views.show(id).map_err(|e| format!("could not say: {e}"))?.value {
+        Some(shown) => Ok(shown.to_string()),
+        None => Err(format!("spira-lc exited 1: no row for {id}")),
+    }
+}
+
 fn parsed(text: &str, what: &str) -> Result<Value, String> {
     serde_json::from_str(text).map_err(|e| format!("{what}: unparsed reply: {e}"))
 }
@@ -276,6 +309,9 @@ fn parsed(text: &str, what: &str) -> Result<Value, String> {
 /// The SUBMITTED and CERTIFIED rows, read once per repository: the pool and the sifted tips
 /// are both filters of this one snapshot.
 fn pool_rows(env: &Env) -> Result<Vec<Value>, String> {
+    if let Some(rows) = held_rows(&store_view::RowQuery { states: &["SUBMITTED", "CERTIFIED"], ..Default::default() }) {
+        return rows;
+    }
     let text = lcq(
         env,
         &["list", "--state", "SUBMITTED,CERTIFIED", "--snapshot"],
@@ -286,6 +322,9 @@ fn pool_rows(env: &Env) -> Result<Vec<Value>, String> {
 fn rows_of(env: &Env, ids: &[String]) -> Result<Vec<Value>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
+    }
+    if let Some(rows) = held_rows(&store_view::RowQuery { ids: Some(ids), ..Default::default() }) {
+        return rows;
     }
     let text = lcq(env, &["list", "--ids", &ids.join(",")])?;
     serde_json::from_str(&text).map_err(|e| format!("spira-lc list --ids: unparsed reply: {e}"))
@@ -419,7 +458,7 @@ pub fn live_prereqs(stack: &[String], state: &BTreeMap<String, String>) -> Vec<S
 /// The prerequisites `id`'s recorded stack names that are not yet finished. A failed or
 /// unparsed read is unstacked, said on stderr: the machine already answered the pool's read.
 fn live_stack(env: &Env, id: &str) -> Vec<String> {
-    let text = match lcq(env, &["show", id]) {
+    let text = match client_of(env).and_then(|lc| show_text(&lc, id)) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("{WHO}: LIFECYCLE: spira-lc show {id} failed (read as unstacked): {e}");
@@ -462,7 +501,7 @@ fn stack_of(show: &Value) -> Vec<String> {
 /// A prerequisite recorded LANDED, SUPERSEDED or DROPPED sequences nothing; an unreadable row
 /// is live, the safe side.
 fn prereq_is_finished(env: &Env, id: &str) -> bool {
-    let Ok(text) = lcq(env, &["show", id]) else {
+    let Ok(text) = client_of(env).and_then(|lc| show_text(&lc, id)) else {
         return false;
     };
     let Ok(v) = serde_json::from_str::<Value>(&text) else {
@@ -498,7 +537,7 @@ fn bd_show(env: &Env, ids: &[String]) -> Result<Value, String> {
     if ids.is_empty() {
         return Ok(Value::Array(vec![]));
     }
-    plan_items(&lcq(env, &["plan", "items", "--full", "--ids", &ids.join(",")])?)
+    plan_items(&lcq_held(env, &["plan", "items", "--full", "--ids", &ids.join(",")])?)
 }
 
 /// The `items` of a `plan items` answer.
@@ -818,11 +857,14 @@ pub fn screened_repos(reg: &Registry) -> Vec<(String, bool)> {
 /// no git past the branch list and fetches nothing.
 pub fn observe_repo(r: &Reads, name: &str, local: bool) -> Result<RepoFacts, String> {
     let repo = find_repo(r.reg, name, local)?;
-    let rows: Vec<Value> = serde_json::from_str(&lcq_with(r.lc, &["list", "--state", "SUBMITTED,CERTIFIED", "--snapshot"])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
+    let rows: Vec<Value> = match held_rows(&store_view::RowQuery { states: &["SUBMITTED", "CERTIFIED"], ..Default::default() }) {
+        Some(rows) => rows?,
+        None => serde_json::from_str(&lcq_with(r.lc, &["list", "--state", "SUBMITTED,CERTIFIED", "--snapshot"])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?,
+    };
     let mut f = RepoFacts { rows: rows.iter().filter_map(PoolRow::of).collect(), branch_tips: branch_tips(&repo)?, ..RepoFacts::default() };
     let ids = at_live_tips(&rows, &f.branch_tips);
     if !ids.is_empty() {
-        let items = plan_items(&lcq_with(r.lc, &["plan", "items", "--full", "--ids", &ids.join(",")])?)?;
+        let items = plan_items(&lcq_held_with(r.lc, &["plan", "items", "--full", "--ids", &ids.join(",")])?)?;
         for row in items.as_array().into_iter().flatten() {
             if let Some(id) = str_of(row, "id") {
                 f.items.insert(id.to_string(), format!("{}\n{}", str_of(row, "description").unwrap_or(""), str_of(row, "notes").unwrap_or("")));
@@ -830,9 +872,9 @@ pub fn observe_repo(r: &Reads, name: &str, local: bool) -> Result<RepoFacts, Str
         }
     }
     for id in ids.iter().filter(|id| f.items.contains_key(*id)) {
-        let stack = lcq_with(r.lc, &["show", id]).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).map(|v| stack_of(&v)).unwrap_or_default();
+        let stack = show_text(r.lc, id).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).map(|v| stack_of(&v)).unwrap_or_default();
         for k in &stack {
-            if let Some(state) = lcq_with(r.lc, &["show", k]).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.get("bead").and_then(|b| str_of(b, "state")).map(str::to_string)) {
+            if let Some(state) = show_text(r.lc, k).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.get("bead").and_then(|b| str_of(b, "state")).map(str::to_string)) {
                 f.prereq_state.insert(k.clone(), state);
             }
         }
@@ -895,6 +937,9 @@ fn facts_of(probe: &GitProbe, base: &str, c: &Candidate) -> CandidateFacts {
 fn rows_of_with(lc: &LcClient, ids: &[String]) -> Result<Vec<Value>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
+    }
+    if let Some(rows) = held_rows(&store_view::RowQuery { ids: Some(ids), ..Default::default() }) {
+        return rows;
     }
     serde_json::from_str(&lcq_with(lc, &["list", "--ids", &ids.join(",")])?).map_err(|e| format!("spira-lc list --ids: unparsed reply: {e}"))
 }

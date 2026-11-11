@@ -8,13 +8,13 @@
 //! answers from [`shared`] memory and asks the store nothing (S7b). A process without one builds
 //! its own and reads the store afresh, as before.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use spira_config::lc_call::{LcClient, LcError};
+use spira_config::lc_call::{LcClient, LcError, Reply};
 use spira_config::lc_state::{self, BatchState, Row};
 
 /// How old a view's last confirmed revision may be before its reads refuse.
@@ -29,6 +29,8 @@ const IDS_PER_READ: usize = 200;
 const BATCHES: &str = "batches/";
 const LIFECYCLE: &str = "lifecycle/";
 const READINESS: &str = "readiness/";
+const PLANNING: &str = "planning/";
+const HISTORY: &str = "history/";
 /// The queue's fields of a round, in the order `round open` writes them; any other follows by name.
 const FIELD_ORDER: [&str; 7] = ["head", "base", "parent", "members", "worktree", "actor", "opened"];
 const FORGE_PHASE: &str = "forge.phase";
@@ -147,6 +149,43 @@ struct State {
     beads: Option<BTreeMap<String, Bead>>,
 }
 
+/// The kinds of change that end a held answer: a planning write (it moves the planning watermark)
+/// and a change to a round or its history.
+const CONTENT: u8 = 1;
+const ROUNDS: u8 = 2;
+const ALL: u8 = CONTENT | ROUNDS;
+
+/// The reads [`Projection::answer`] holds, with the changes that end each; `None` for any other.
+fn classes_of(argv: &[&str]) -> Option<u8> {
+    match argv {
+        ["content", "list" | "show", ..] | ["plan", "items" | "edges" | "children", ..] => Some(CONTENT),
+        ["show-batch", _] => Some(ROUNDS),
+        ["list", rest @ ..] if rest.contains(&"--batches") => Some(ROUNDS | CONTENT),
+        _ => None,
+    }
+}
+
+/// The store's answers held under the changes that would end them. A generation per kind only
+/// rises, so a read that started before a change cannot be kept after it.
+#[derive(Default)]
+struct Memo {
+    held: HashMap<String, (u8, Reply)>,
+    generation: [u64; 2],
+}
+
+impl Memo {
+    fn seen(&self, classes: u8) -> u64 {
+        (0..2).filter(|i| classes & (1 << i) != 0).map(|i| self.generation[i]).sum()
+    }
+
+    fn end(&mut self, classes: u8) {
+        for i in (0..2).filter(|i| classes & (1 << i) != 0) {
+            self.generation[i] += 1;
+        }
+        self.held.retain(|_, (held, _)| *held & classes == 0);
+    }
+}
+
 pub type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
 /// The in-memory views and the watch that keeps them current.
@@ -155,6 +194,7 @@ pub struct Projection {
     stale_after: Duration,
     clock: Clock,
     state: Mutex<State>,
+    memo: Mutex<Memo>,
     watching: AtomicBool,
     /// Why the last poll failed; cleared by one that applied.
     lost: Mutex<Option<String>>,
@@ -255,6 +295,23 @@ fn batches_of(items: Vec<Value>) -> BTreeMap<String, Batch> {
         .collect()
 }
 
+/// What a watch delivery ends among the held answers: a planning write, a change to a round, or a
+/// history entry of one (a bead's history ends nothing held).
+fn ended_by(s: &State, events: &[Value]) -> u8 {
+    let rounds: Vec<String> = s.batches.values().filter_map(|b| text(&b.data, "batch_id")).collect();
+    events.iter().fold(0, |ended, e| {
+        let key = e.get("key").and_then(Value::as_str).unwrap_or_default();
+        ended
+            | if key.starts_with(PLANNING) {
+                CONTENT
+            } else if key.starts_with(BATCHES) || key.strip_prefix(HISTORY).is_some_and(|h| rounds.iter().any(|r| h.strip_prefix(r.as_str()).is_some_and(|rest| rest.starts_with('/')))) {
+                ROUNDS
+            } else {
+                0
+            }
+    })
+}
+
 /// The beads `list` answered, with the dispatcher's verdict on each.
 fn beads_of(raw: &str) -> Result<Vec<(String, Bead)>, LcError> {
     let rows = lc_state::parse_rows(raw).map_err(fault)?;
@@ -277,7 +334,7 @@ fn beads_of(raw: &str) -> Result<Vec<(String, Bead)>, LcError> {
 
 impl Projection {
     pub fn new(client: LcClient, stale_after: Duration, clock: Clock) -> Self {
-        Projection { client, stale_after, clock, state: Mutex::new(State::default()), watching: AtomicBool::new(false), lost: Mutex::new(None) }
+        Projection { client, stale_after, clock, state: Mutex::new(State::default()), memo: Mutex::new(Memo::default()), watching: AtomicBool::new(false), lost: Mutex::new(None) }
     }
 
     /// This process's installed projection, else a fresh one on `client`. Pair it with
@@ -319,6 +376,10 @@ impl Projection {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    fn end_held(&self, classes: u8) {
+        self.memo.lock().unwrap_or_else(|e| e.into_inner()).end(classes);
+    }
+
     fn rc_list(&self, prefix: &str) -> Result<(Vec<Value>, u64), LcError> {
         let body = json!({ "prefixes": [prefix], "selector": "everything" }).to_string();
         let v = json_of(&self.client.answer(&["rc", "list", "--json", &body])?, "rc list")?;
@@ -342,6 +403,7 @@ impl Projection {
         let beads = beads_of(&self.client.answer(&["list"])?)?;
         let batches = batches_of(items);
         let mut s = self.lock();
+        self.end_held(ALL);
         *s = State { rev: Some(rev), confirmed: Some((self.clock)()), batches, beads: Some(beads.into_iter().collect()) };
         Ok(())
     }
@@ -353,6 +415,7 @@ impl Projection {
         let (items, rev) = self.rc_list(BATCHES)?;
         let batches = batches_of(items);
         let mut s = self.lock();
+        self.end_held(ALL);
         *s = State { rev: Some(rev), confirmed: Some((self.clock)()), batches, beads: None };
         Ok(())
     }
@@ -372,9 +435,9 @@ impl Projection {
         };
         let Some(from) = held else { return self.load() };
         let (from_s, wait) = (from.to_string(), WATCH_WAIT_MS.to_string());
-        // The three prefixes this view applies, as one watch (over-broad-scopes #10): a watch of
-        // `""` woke every holder on every event, telemetry and lock write it then discarded.
-        let w = json_of(&self.client.answer(&["watch", BATCHES, LIFECYCLE, READINESS, "--from-rev", &from_s, "--wait-ms", &wait])?, "watch")?;
+        // The prefixes this view applies or holds answers under, as one watch (over-broad-scopes #10):
+        // a watch of `""` woke every holder on every event, telemetry and lock write it then discarded.
+        let w = json_of(&self.client.answer(&["watch", BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY, "--from-rev", &from_s, "--wait-ms", &wait])?, "watch")?;
         if let Some(p) = w["progress_rev"].as_u64() {
             let mut s = self.lock();
             s.rev = Some(p.max(from));
@@ -401,6 +464,7 @@ impl Projection {
         let dirty: Vec<String> = dirty.into_iter().collect();
         let fresh: BTreeMap<String, Bead> = self.list_ids(&dirty)?.into_iter().collect();
         let mut s = self.lock();
+        self.end_held(ended_by(&s, events));
         for (key, value, create_rev) in batch_puts {
             match value {
                 None => {
@@ -542,6 +606,41 @@ impl Projection {
             };
             Ok(beads.values().filter(kept).map(|b| b.raw.clone()).collect())
         })
+    }
+
+    /// The store's answer to a content, planning, `show-batch` or `list --batches` read: held until
+    /// a change the watch delivers could alter it, else asked of the store once and held. A process
+    /// without a watch asks the store each time; one whose watch fell behind is refused.
+    pub fn answer(&self, argv: &[&str]) -> Result<Read<Reply>, LcError> {
+        let classes = classes_of(argv).ok_or_else(|| LcError::Refused(format!("`{}` is not a read the views hold", argv.join(" "))))?;
+        if !self.watching() {
+            return Ok(Read { rev: 0, value: self.client.call(argv)? });
+        }
+        let fresh = self.read(|_| Ok(()))?;
+        let key = argv.join("\u{1f}");
+        let before = {
+            let m = self.memo.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((_, reply)) = m.held.get(&key) {
+                return Ok(Read { rev: fresh.rev, value: reply.clone() });
+            }
+            m.seen(classes)
+        };
+        let reply = self.client.call(argv)?;
+        if reply.code == 0 {
+            let mut m = self.memo.lock().unwrap_or_else(|e| e.into_inner());
+            if m.seen(classes) == before {
+                m.held.insert(key, (classes, reply.clone()));
+            }
+        }
+        Ok(Read { rev: fresh.rev, value: reply })
+    }
+
+    /// `show <id>`'s answer, `{"bead": row}`, from the held row (it carries the `state`, `stack` and
+    /// `tip` a show does); `None` when the store holds no such row.
+    pub fn show(&self, id: &str) -> Result<Read<Option<Value>>, LcError> {
+        let ids = [id.to_string()];
+        let rows = self.rows(&RowQuery { ids: Some(&ids), ..Default::default() })?;
+        Ok(Read { rev: rows.rev, value: rows.value.into_iter().next().map(|row| json!({ "bead": row })) })
     }
 
     /// The ids of the rows in `state` for `repo` that hold nothing.

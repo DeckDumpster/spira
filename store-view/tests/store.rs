@@ -15,6 +15,8 @@ struct Script {
     rows: Vec<Value>,
     watches: VecDeque<(i32, String)>,
     seen: Vec<Vec<String>>,
+    /// A watch with nothing scripted waits a moment and reports no change, as a quiet store's does.
+    quiet: bool,
 }
 
 struct Double(Arc<Mutex<Script>>);
@@ -33,8 +35,15 @@ impl Transport for Double {
             }
             "watch" => match s.watches.pop_front() {
                 Some((code, out)) => Ok(Reply { code, out, err: String::new() }),
+                None if s.quiet => {
+                    drop(s);
+                    // clock-safe: the double's long-poll, ending after a pause
+                    std::thread::sleep(Duration::from_millis(5));
+                    ok(json!({ "progress_rev": 1 }).to_string())
+                }
                 None => Err("the script has no watch answer left".into()),
             },
+            "content" | "show-batch" => ok(format!("answer {}", s.seen.iter().filter(|a| a[0] == argv[0]).count())),
             other => Err(format!("unscripted {other}")),
         }
     }
@@ -290,7 +299,7 @@ fn the_watch_names_only_the_prefixes_the_view_applies() {
         w.p.poll().unwrap();
         let watch = w.script.lock().unwrap().seen.iter().find(|a| a[0] == "watch").cloned().unwrap();
         let prefixes: Vec<&str> = watch[1..].iter().take_while(|a| !a.starts_with("--")).map(String::as_str).collect();
-        assert_eq!(prefixes, ["batches/", "lifecycle/", "readiness/"], "{watch:?}");
+        assert_eq!(prefixes, ["batches/", "lifecycle/", "readiness/", "planning/", "history/"], "{watch:?}");
     });
 }
 
@@ -376,5 +385,77 @@ fn an_installed_projection_is_what_hot_serves_and_a_watched_one_reads_no_batch_r
         runner.join().unwrap();
         assert_eq!(rc_reads(&script), before, "a watched projection asks the store for no batch record");
         assert!(!p.watching());
+    });
+}
+
+fn asked(w: &World, verb: &str) -> usize {
+    w.script.lock().unwrap().seen.iter().filter(|a| a[0] == verb).count()
+}
+
+/// Delivers `keys` as one watch answer and returns once the projection has applied it and begun
+/// the next watch.
+fn deliver(w: &World, keys: &[&str], through: u64) {
+    let watches = |w: &World| w.script.lock().unwrap().seen.iter().filter(|a| a[0] == "watch").count();
+    let events: Vec<Value> = keys.iter().map(|k| json!({ "key": k, "rev": rev(through), "value": {}, "create_rev": null, "prev_mod_rev": null })).collect();
+    let before = watches(w);
+    w.watch(json!({ "events": events, "through": through }));
+    // clock-safe: a cap on the wait for the watch's next call, which is a named signal
+    let give_up = Instant::now() + Duration::from_secs(5);
+    while watches(w) < before + 2 {
+        // clock-safe: the cap on the wait for the watch's next call
+        assert!(Instant::now() < give_up, "the delivery was never applied");
+        // clock-safe: a poll interval under that cap
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn a_held_answer_lasts_until_a_change_that_could_alter_it_and_a_bead_history_alters_none() {
+    within(|| {
+        let batch = round("spira", "b-1", "Open", 100, 3, &[]);
+        let w = world(Script { batches: vec![batch], list_rev: 4, quiet: true, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|sc| {
+            sc.spawn(|| w.p.run(&stop));
+            // clock-safe: a cap on the wait for the watch to start
+            while !w.p.watching() {
+                // clock-safe: a poll interval under that cap
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let content = || w.p.answer(&["content", "list", "--all"]).unwrap().value.out;
+            let shown = || w.p.answer(&["show-batch", "b-1"]).unwrap().value.out;
+            let (c, b) = (content(), shown());
+            assert_eq!((content(), shown()), (c.clone(), b.clone()), "a quiet store is asked once");
+            assert_eq!((asked(&w, "content"), asked(&w, "show-batch")), (1, 1));
+
+            deliver(&w, &["history/sp-x/00000000000000000007/r1", "lifecycle/sp-x"], 8);
+            assert_eq!((content(), shown()), (c.clone(), b.clone()), "a bead's own history ends nothing held");
+
+            deliver(&w, &["planning/watermark"], 9);
+            assert_ne!(content(), c, "a planning write ends the content answer");
+            assert_eq!(shown(), b, "and not the round's");
+
+            deliver(&w, &["history/b-1/00000000000000000009/r2"], 10);
+            assert_ne!(shown(), b, "an entry in a round's history ends the round's answer");
+            let (c, b) = (content(), shown());
+
+            deliver(&w, &["batches/spira/b-1"], 11);
+            assert_ne!(shown(), b, "a change to a round ends the round's answer");
+            assert_eq!(content(), c);
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+    });
+}
+
+#[test]
+fn an_unwatched_view_holds_no_answer_and_a_verb_that_is_not_a_held_read_is_refused() {
+    within(|| {
+        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        assert_eq!(w.p.answer(&["content", "list"]).unwrap().value.out, "answer 1");
+        assert_eq!(w.p.answer(&["content", "list"]).unwrap().value.out, "answer 2", "no watch keeps it current, so nothing is held");
+        assert!(w.p.answer(&["close", "sp-a"]).is_err());
+        assert_eq!(asked(&w, "close"), 0, "and the store is not asked it");
     });
 }
