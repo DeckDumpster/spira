@@ -82,10 +82,51 @@ pub struct Socket {
 impl Transport for Socket {
     fn exchange(&self, argv: &[String], stdin: Option<&str>, _deadline: Duration) -> Result<Reply, String> {
         let down = |e: &dyn std::fmt::Display| format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", self.path.display());
-        let stream = UnixStream::connect(&self.path).map_err(|e| down(&e))?;
         let wait = if argv.first().is_some_and(|v| SWEEPS.contains(&v.as_str())) { SWEEP_DEADLINE } else { DEADLINE };
-        stream.set_read_timeout(Some(wait)).and_then(|_| stream.set_write_timeout(Some(wait))).map_err(|e| down(&e))?;
-        exchange(stream, argv, stdin)
+        retrying(argv, wait, |left| {
+            let stream = UnixStream::connect(&self.path).map_err(|e| Fail::Final(down(&e)))?;
+            let left = left.max(Duration::from_millis(1));
+            stream.set_read_timeout(Some(left)).and_then(|_| stream.set_write_timeout(Some(left))).map_err(|e| Fail::Final(down(&e)))?;
+            exchange_once(stream, argv, stdin)
+        })
+    }
+}
+
+/// Whether `argv` only reads: the one kind of call that may be sent again when the service
+/// drops it, because asking twice changes nothing. A write is never in this list.
+pub fn is_read(argv: &[String]) -> bool {
+    let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+    matches!(
+        a.as_slice(),
+        ["show" | "list" | "history" | "stats" | "facts", ..] | ["content", "list" | "show" | "memories" | "state", ..]
+    )
+}
+
+/// Why one attempt has no answer: `Dropped` is a connection the service took down or never
+/// answered (a restart), which a read may repeat; `Final` is anything else.
+#[derive(Debug)]
+pub enum Fail {
+    Dropped(String),
+    Final(String),
+}
+
+const RETRY_EVERY: Duration = Duration::from_millis(50);
+
+/// Runs `once` (given the time left) until it answers; a read whose attempt was `Dropped` is
+/// tried again after a pause, within `budget`. A write has exactly one attempt.
+pub fn retrying<T>(argv: &[String], budget: Duration, mut once: impl FnMut(Duration) -> Result<T, Fail>) -> Result<T, String> {
+    let began = Instant::now();
+    loop {
+        match once(budget.saturating_sub(began.elapsed())) {
+            Ok(v) => return Ok(v),
+            Err(Fail::Final(m)) => return Err(m),
+            Err(Fail::Dropped(m)) => {
+                if !is_read(argv) || began.elapsed() + RETRY_EVERY >= budget {
+                    return Err(m);
+                }
+                std::thread::sleep(RETRY_EVERY);
+            }
+        }
     }
 }
 
@@ -150,16 +191,17 @@ pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<
 ///
 /// Once a request is on the wire the service may apply it whatever happens to the reply, so a
 /// lost reply is "cannot tell", never a retry.
-pub fn exchange(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Result<Reply, String> {
-    let lost = |why: &str| format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})");
+pub fn exchange_once(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Result<Reply, Fail> {
+    let dropped = |why: &str| Fail::Dropped(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"));
+    let lost = |why: &str| Fail::Final(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"));
     let request = request_head(argv, stdin.map(str::len), &caller_of(argv)).map_err(|_| lost("unserialisable request"))?;
     let mut bytes = format!("{request}\n").into_bytes();
     bytes.extend_from_slice(stdin.unwrap_or_default().as_bytes());
-    (&stream).write_all(&bytes).map_err(|_| lost("write"))?;
+    (&stream).write_all(&bytes).map_err(|_| dropped("write"))?;
     let mut reader = BufReader::with_capacity(1 << 20, stream);
     let mut head = String::new();
     if !matches!(reader.read_line(&mut head), Ok(n) if n > 0) {
-        return Err(lost("no reply"));
+        return Err(dropped("no reply"));
     }
     let head: serde_json::Value = serde_json::from_str(head.trim()).map_err(|_| lost("malformed reply"))?;
     let (Some(code), Some(len)) = (head["exit_code"].as_i64(), head["len"].as_u64()) else { return Err(lost("malformed reply")) };
@@ -169,6 +211,11 @@ pub fn exchange(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Res
     let err = body.split_off(len as usize);
     let text = |b: Vec<u8>| String::from_utf8(b).map_err(|_| lost("non-utf8 reply"));
     Ok(Reply { code: code as i32, out: text(body)?, err: text(err)? })
+}
+
+/// [`exchange_once`] with the failure as its text: one attempt, never repeated.
+pub fn exchange(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Result<Reply, String> {
+    exchange_once(stream, argv, stdin).map_err(|(Fail::Dropped(m) | Fail::Final(m))| m)
 }
 
 /// A `spira-lc` program, run once per call: the stand-in a fixture declares, or the CLI in the
@@ -375,6 +422,72 @@ pub fn run_bounded(mut cmd: Command, limit: Duration) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A service that drops its first `drops` connections after reading the request (a restart
+    /// killing it mid-flight), then answers every later one. Returns the socket and the count
+    /// of connections it saw.
+    fn flaky(drops: usize) -> (testkit::TempDir, PathBuf, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::Ordering;
+        let dir = testkit::TempDir::new("lc-call-flaky");
+        let path = dir.join("sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let n = count.fetch_add(1, Ordering::SeqCst);
+                let mut line = String::new();
+                BufReader::new(&stream).read_line(&mut line).unwrap();
+                if n >= drops {
+                    (&stream).write_all(b"{\"exit_code\":0,\"len\":2}\nok").unwrap();
+                }
+            }
+        });
+        (dir, path, seen)
+    }
+
+    fn call(path: &std::path::Path, argv: &[&str]) -> Result<Reply, LcError> {
+        LcClient::socket(path).call(argv)
+    }
+
+    #[test]
+    fn a_read_whose_connection_the_service_dropped_is_asked_again_and_answered() {
+        let (_dir, path, seen) = flaky(2);
+        let r = call(&path, &["show", "sp-a"]).expect("a read survives a restart");
+        assert_eq!(r.out, "ok");
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn a_write_whose_reply_was_lost_is_never_sent_twice() {
+        let (_dir, path, seen) = flaky(1);
+        let e = call(&path, &["hold", "sp-a"]).unwrap_err();
+        assert!(e.to_string().starts_with("cannot tell"), "{e}");
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_read_the_service_never_answers_gives_up_inside_its_budget() {
+        let argv = vec!["list".to_string()];
+        let mut tries = 0;
+        let r: Result<(), String> = retrying(&argv, Duration::from_millis(200), |_| {
+            tries += 1;
+            Err(Fail::Dropped("gone".into()))
+        });
+        assert_eq!(r, Err("gone".to_string()));
+        assert!(tries > 1, "{tries}");
+    }
+
+    #[test]
+    fn only_reads_are_retried() {
+        let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        for r in [&["show", "x"][..], &["list", "--state", "WORKING"], &["content", "list"], &["content", "show", "x"]] {
+            assert!(is_read(&s(r)), "{r:?}");
+        }
+        for w in [&["hold", "x"][..], &["event", "x"], &["content", "close", "x"], &["content", "note", "x"], &["content", "comments", "add", "x", "text"], &["work", "x", "show"], &["create-bead"], &[]] {
+            assert!(!is_read(&s(w)), "{w:?}");
+        }
+    }
 
     fn whole(a: &[&str]) -> bool {
         reads_whole_history(&[&["content", "list"][..], a].concat())

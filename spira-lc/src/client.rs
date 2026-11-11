@@ -10,7 +10,6 @@
 //! outage and was the connection churn on :3307. Direct mode is a declared choice, never a
 //! fallback: `spira.lc_socket = ""` (test fixtures, which run no service).
 
-use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
@@ -86,55 +85,28 @@ pub(crate) fn forward(socket_path: &str, args: &[String]) -> (i32, String) {
 
 /// One request with `stdin` as its body; the answer's stdout and stderr apart.
 pub(crate) fn forward_with(socket_path: &str, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
-    let stream = match UnixStream::connect(socket_path) {
-        Ok(s) => s,
-        Err(e) => return split(down(socket_path, &e)),
-    };
+    use spira_config::lc_call::{retrying, Fail};
     let batch = args.first().is_some_and(|v| v == "facts-query" || crate::composed::SWEEPS.contains(&v.as_str()));
     let limit = if batch { BATCH_TIMEOUT } else { TIMEOUT };
-    if let Err(e) = stream.set_read_timeout(Some(limit)).and_then(|_| stream.set_write_timeout(Some(limit))) {
-        return split(down(socket_path, &e));
+    let answer = retrying(args, limit, |left| {
+        let stream = UnixStream::connect(socket_path).map_err(|e| Fail::Final(down(socket_path, &e).1))?;
+        let left = left.max(Duration::from_millis(1));
+        stream.set_read_timeout(Some(left)).and_then(|_| stream.set_write_timeout(Some(left))).map_err(|e| Fail::Final(down(socket_path, &e).1))?;
+        spira_config::lc_call::exchange_once(stream, args, stdin)
+    });
+    match answer {
+        Ok(r) => (r.code, r.out, r.err),
+        Err(msg) => (2, msg, String::new()),
     }
-    exchange(stream, args, stdin)
 }
 
-fn split((code, out): (i32, String)) -> (i32, String, String) {
-    (code, out, String::new())
-}
-
-/// Once the request is on the wire the service may apply it whatever happens to the reply, so a
-/// lost reply is "cannot tell" and never a fallback: a direct run would repeat the write and
-/// bypass the service's live rows.
+/// One attempt on `stream`. Once the request is on the wire the service may apply it whatever
+/// happens to the reply, so a lost reply is "cannot tell" and never a fallback.
+#[cfg(test)]
 pub(crate) fn exchange(stream: UnixStream, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
-    let lost = |why: &str| split((2, format!("cannot tell: the service took the request but its reply was lost ({why})")));
-    // A content write carries the guard variables bdq would have read here (bead::guard).
-    let request = spira_config::lc_call::request_head(args, stdin.map(str::len), &spira_config::lc_call::caller_of(args));
-    let Ok(request) = request else { return lost("unserialisable request") };
-    let Ok(mut writer) = stream.try_clone() else { return lost("clone") };
-    let mut bytes = format!("{request}\n").into_bytes();
-    bytes.extend_from_slice(stdin.unwrap_or_default().as_bytes());
-    if writer.write_all(&bytes).is_err() {
-        return lost("write");
-    }
-
-    let mut reader = BufReader::with_capacity(1 << 20, stream);
-    let mut line = String::new();
-    if !matches!(reader.read_line(&mut line), Ok(n) if n > 0) {
-        return lost("no reply");
-    }
-    let Ok(resp) = serde_json::from_str::<serde_json::Value>(line.trim()) else { return lost("malformed reply") };
-    let (Some(code), Some(len)) = (resp.get("exit_code").and_then(|v| v.as_i64()), resp.get("len").and_then(|v| v.as_u64())) else {
-        return lost("malformed reply");
-    };
-    let err_len = resp.get("err_len").and_then(|v| v.as_u64()).unwrap_or(0);
-    let mut body = vec![0u8; (len + err_len) as usize];
-    if reader.read_exact(&mut body).is_err() {
-        return lost("truncated reply");
-    }
-    let err = body.split_off(len as usize);
-    match (String::from_utf8(body), String::from_utf8(err)) {
-        (Ok(out), Ok(err)) => (code as i32, out, err),
-        _ => lost("non-utf8 reply"),
+    match spira_config::lc_call::exchange(stream, args, stdin) {
+        Ok(r) => (r.code, r.out, r.err),
+        Err(msg) => (2, msg, String::new()),
     }
 }
 
@@ -191,6 +163,42 @@ mod tests {
             assert_eq!(code, 2, "{reply:?}");
             assert!(out.starts_with("cannot tell"), "{out}");
         }
+    }
+
+    fn flaky_socket(drops: usize) -> (testkit::TempDir, String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::Ordering;
+        let dir = testkit::TempDir::new("lc-client-flaky");
+        let path = dir.join("sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = std::sync::Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let n = count.fetch_add(1, Ordering::SeqCst);
+                let mut line = String::new();
+                std::io::BufRead::read_line(&mut std::io::BufReader::new(&stream), &mut line).unwrap();
+                if n >= drops {
+                    std::io::Write::write_all(&mut &stream, b"{\"exit_code\":0,\"len\":2}\nok").unwrap();
+                }
+            }
+        });
+        (dir, path.to_str().unwrap().to_string(), seen)
+    }
+
+    #[test]
+    fn a_read_dropped_by_a_restarting_service_is_answered_on_the_next_try() {
+        let (_dir, path, seen) = flaky_socket(2);
+        let (code, out, _) = super::forward_with(&path, &["content".to_string(), "list".to_string()], None);
+        assert_eq!((code, out.as_str()), (0, "ok"));
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn a_write_dropped_by_a_restarting_service_is_cannot_tell_after_one_attempt() {
+        let (_dir, path, seen) = flaky_socket(1);
+        let (code, out, _) = super::forward_with(&path, &["hold".to_string(), "sp-a".to_string()], None);
+        assert!(code == 2 && out.starts_with("cannot tell"), "{out}");
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]

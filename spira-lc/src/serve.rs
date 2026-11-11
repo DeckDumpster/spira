@@ -16,6 +16,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -123,6 +124,7 @@ pub fn run(args: &[String]) -> i32 {
         },
     };
 
+    stop_on_sigterm();
     crate::plan::serve_on(Arc::clone(&conn));
     match crate::plan::read_watermark(&conn) {
         Ok(w) => crate::plan::install_mirror(w),
@@ -141,11 +143,11 @@ pub fn run(args: &[String]) -> i32 {
     if crate::control::served::configured().is_none() {
         eprintln!("spira-lc serve: SPIRA_LC_STORE_PATH is unset: every lifecycle verb answers cannot-tell");
     }
-    std::thread::scope(|scope| {
+    {
         match (spira_config::process::cfg_parse::<u64>("SPIRA_LC_SNAPSHOT_SECS"), spira_config::process::cfg("SPIRA_LC_SNAPSHOT")) {
             (Ok(secs), Ok(path)) if secs > 0 && !path.is_empty() => {
                 let refresher = Arc::clone(&conn);
-                scope.spawn(move || loop {
+                std::thread::spawn(move || loop {
                     if let Err(e) = crate::snapshot::write(&refresher, &path) {
                         eprintln!("spira-lc serve: snapshot {path}: {e}");
                     }
@@ -156,7 +158,7 @@ pub fn run(args: &[String]) -> i32 {
             (Err(e), _) | (_, Err(e)) => eprintln!("spira-lc serve: snapshot not written: {e}"),
         }
         if let Some(mut shipping) = shipping {
-            scope.spawn(move || {
+            std::thread::spawn(move || {
                 let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
                 let metrics = spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", Duration::from_millis(250));
                 let mut red = false;
@@ -167,13 +169,13 @@ pub fn run(args: &[String]) -> i32 {
             });
         }
         if let Some(store) = control {
-            scope.spawn(move || loop {
+            std::thread::spawn(move || loop {
                 std::thread::sleep(SWEEP_EVERY);
                 gc_tick(&store);
             });
         }
-        scope.spawn(crate::plan::run_mirror);
-        scope.spawn(move || loop {
+        std::thread::spawn(crate::plan::run_mirror);
+        std::thread::spawn(move || loop {
             std::thread::sleep(SWEEP_EVERY);
             alarm_tick();
             match crate::control::served::configured() {
@@ -186,18 +188,66 @@ pub fn run(args: &[String]) -> i32 {
                 None => {}
             }
         });
-        for conn_stream in listener.incoming() {
-            match conn_stream {
-                Ok(stream) => {
-                    let conn = Arc::clone(&conn);
-                    let accepted = Instant::now();
-                    scope.spawn(move || handle(stream, &conn, accepted));
-                }
-                Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
-            }
-        }
-    });
+    }
+    // The scope ends when the accept loop has stopped and every request it took is answered.
+    std::thread::scope(|scope| accept_until_stopped(&listener, scope, &STOPPING, |stream| handle(stream, &conn, Instant::now())));
+    eprintln!("spira-lc serve: stopped");
     0
+}
+
+static STOPPING: AtomicBool = AtomicBool::new(false);
+const SIGTERM: i32 = 15;
+const POLLIN: i16 = 1;
+
+#[repr(C)]
+struct PollFd {
+    fd: i32,
+    events: i16,
+    revents: i16,
+}
+
+extern "C" {
+    fn signal(signum: i32, handler: extern "C" fn(i32)) -> usize;
+    fn poll(fds: *mut PollFd, nfds: u64, timeout_ms: i32) -> i32;
+}
+
+extern "C" fn on_sigterm(_: i32) {
+    STOPPING.store(true, Ordering::SeqCst);
+}
+
+/// SIGTERM stops accepting and drains instead of killing the requests this process has taken.
+fn stop_on_sigterm() {
+    // SAFETY: the handler only stores to an atomic, which is async-signal-safe.
+    unsafe { signal(SIGTERM, on_sigterm) };
+}
+
+/// Accept on `listener` until `stopping`, serving each connection on its own thread. A
+/// connection not yet accepted stays in the kernel queue, which the socket unit keeps for the
+/// next process; one accepted is served to its answer before the scope that owns it ends.
+fn accept_until_stopped<'scope, 'env, F>(
+    listener: &UnixListener,
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    stopping: &AtomicBool,
+    serve: F,
+) where
+    F: Fn(UnixStream) + Send + Sync + Clone + 'scope,
+{
+    use std::os::unix::io::AsRawFd;
+    let mut ready = PollFd { fd: listener.as_raw_fd(), events: POLLIN, revents: 0 };
+    while !stopping.load(Ordering::SeqCst) {
+        ready.revents = 0;
+        // SAFETY: one valid pollfd for a descriptor this function borrows.
+        if unsafe { poll(&mut ready, 1, 100) } <= 0 || ready.revents & POLLIN == 0 {
+            continue;
+        }
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let serve = serve.clone();
+                scope.spawn(move || serve(stream));
+            }
+            Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
+        }
+    }
 }
 
 /// One pass of the control store's GC controller: finalized keys, orphans and lapsed TTLs.
@@ -646,6 +696,59 @@ mod tests {
             assert_eq!(w(verb), super::TOOL_DEADLINE, "{verb}");
         }
         assert_eq!(d("facts-query"), crate::db::QUERY_DEADLINE);
+    }
+
+    #[test]
+    fn a_stopping_server_finishes_the_request_it_took_and_leaves_the_next_in_the_queue() {
+        use super::accept_until_stopped;
+        use std::io::BufReader;
+        use std::os::unix::net::{UnixListener, UnixStream};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc;
+        let dir = testkit::TempDir::new("lc-drain");
+        let path = dir.join("sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let stopping = AtomicBool::new(false);
+        let mut first = UnixStream::connect(&path).unwrap();
+        std::io::Write::write_all(&mut first, b"x\n").unwrap();
+        let (began_tx, began) = mpsc::channel::<()>();
+        let (release, released) = mpsc::channel::<()>();
+        let released = std::sync::Mutex::new(released);
+        let began_tx = std::sync::Mutex::new(began_tx);
+        std::thread::scope(|scope| {
+            let stopping = &stopping;
+            scope.spawn(move || {
+                began.recv().unwrap();
+                stopping.store(true, Ordering::SeqCst);
+                release.send(()).unwrap();
+            });
+            let (released, began_tx) = (&released, &began_tx);
+            accept_until_stopped(&listener, scope, stopping, move |stream: UnixStream| {
+                began_tx.lock().unwrap().send(()).unwrap();
+                released.lock().unwrap().recv().unwrap();
+                let mut line = String::new();
+                std::io::BufRead::read_line(&mut BufReader::new(&stream), &mut line).unwrap();
+                std::io::Write::write_all(&mut &stream, b"served\n").unwrap();
+            });
+        });
+        let mut line = String::new();
+        std::io::BufRead::read_line(&mut BufReader::new(&first), &mut line).unwrap();
+        assert_eq!(line, "served\n", "the request taken before the stop is answered");
+        let _later = UnixStream::connect(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        assert!(listener.accept().is_ok(), "a connection arriving after the stop is still queued for the next process");
+    }
+
+    #[test]
+    fn sigterm_sets_the_stop_flag_instead_of_ending_the_process() {
+        extern "C" {
+            fn raise(sig: i32) -> i32;
+        }
+        super::stop_on_sigterm();
+        assert!(!super::STOPPING.load(std::sync::atomic::Ordering::SeqCst));
+        // SAFETY: the handler installed above only stores to an atomic.
+        unsafe { raise(15) };
+        assert!(super::STOPPING.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]
