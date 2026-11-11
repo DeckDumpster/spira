@@ -489,7 +489,8 @@ mod published_read {
             assert!(entries
                 .iter()
                 .any(|e| e.id == "sp-blocked" && e.verdict == verdicts::Kind::Blocked));
-            let read = claimable_over(&a, env, &st).unwrap();
+            let (read, fresh) = claimable_over(&a, env, &st).unwrap();
+            assert_eq!(fresh.expect("a published answer says what it is from").planning_watermark.as_deref(), Some("7"));
             assert_eq!(ids(&read), ids(&judged));
             assert_eq!(read, judged);
             assert!(
@@ -515,7 +516,7 @@ mod published_read {
                 }
             }
             *svc.published.lock().unwrap() = Some(p);
-            assert!(!ids(&claimable_over(&a, env, &st).unwrap())
+            assert!(!ids(&claimable_over(&a, env, &st).unwrap().0)
                 .iter()
                 .any(|i| *i == "sp-held" || *i == "sp-snoozed"));
         });
@@ -549,7 +550,8 @@ mod published_read {
             timeout: Duration::from_secs(1),
         };
         env_over(|env| {
-            let rows = claimable_over(&Args::parse(&[]).unwrap(), env, &st).unwrap();
+            let (rows, fresh) = claimable_over(&Args::parse(&[]).unwrap(), env, &st).unwrap();
+            assert_eq!(fresh, None, "rows judged here name no pass");
             assert_eq!(ids(&rows), ["sp-free", "sp-rework", "sp-stacked"]);
         });
     }

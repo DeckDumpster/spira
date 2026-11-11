@@ -58,7 +58,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim urgent [<rune>...]                                                  (claimable P0 and REWORK beads: id, priority, rework 0|1, express 0|1, tab-separated)
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
        spira-claim rune-exclude <rune> [own-exclusions]                    (rune_exclude; resolves $SPIRA_HOME in-process, $SPIRA_RUNES)
-       spira-claim rune-ready <rune> [--json] [--express]                             (rune_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
+       spira-claim rune-ready <rune> [--json [--freshness]] [--express]                             (rune_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
        spira-claim bulk-ready-by-rune                                      (bulk_ready_by_rune; the machine's claimable set)
        spira-claim republish-dependents --changed a,b                     (judge and publish the records waiting on or under them)
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--dry-run]
@@ -909,27 +909,35 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
 /// blockers), never for status or assignee — the same rule `select --blockers machine`
 /// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
 fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
-    claimable_over(a, env, &store(a)?)
+    claimable_over(a, env, &store(a)?).map(|(rows, _)| rows)
+}
+
+/// What a published answer is good to: the oldest planning watermark and judgement time among
+/// the beads in it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+struct Freshness {
+    planning_watermark: Option<String>,
+    judged_at: Option<String>,
 }
 
 /// The claimable rows by the dispatcher's published judgement when the control store holds one,
 /// else judged here. Reading never publishes.
-fn claimable_over(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>, String> {
+fn claimable_over(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow>, Option<Freshness>), String> {
     if env.config.control_store {
         match published_claimable(a, env, st) {
-            Ok(Some(rows)) => return Ok(rows),
+            Ok(Some(answer)) => return Ok((answer.0, Some(answer.1))),
             Ok(None) => {}
             Err(e) => eprintln!("spira-claim: published readiness unread, judging here: {}", first_line(&e)),
         }
     }
-    machine_judged(a, env, st, false).map(|(rows, _)| rows)
+    machine_judged(a, env, st, false).map(|(rows, _)| (rows, None))
 }
 
 /// `None` when the dispatcher has judged nothing claimable and has not judged every ready
 /// bead: an empty answer then may mean "not yet", which only judging here can tell apart.
 /// The lifecycle rows are read now, so a hold or claim since the pass keeps a bead out; scope
 /// and stops are applied here as `judge_rows` applies them.
-fn published_claimable(a: &Args, env: &Env, st: &Store) -> Result<Option<Vec<rank::ReadyRow>>, String> {
+fn published_claimable(a: &Args, env: &Env, st: &Store) -> Result<Option<(Vec<rank::ReadyRow>, Freshness)>, String> {
     let set = st.ready_set()?;
     if set.rows.is_empty() && set.unjudged > 0 {
         return Ok(None);
@@ -942,7 +950,7 @@ fn published_claimable(a: &Args, env: &Env, st: &Store) -> Result<Option<Vec<ran
     if a.has("--express") {
         rows.retain(|r| set.express.contains(&r.id));
     }
-    Ok(Some(rows))
+    Ok(Some((rows, Freshness { planning_watermark: set.planning_watermark, judged_at: set.judged_at })))
 }
 
 /// [`machine_claimable`] with the verdict of every READY/REWORK row it judged. `publish`
@@ -968,7 +976,7 @@ fn ready_cache_key(a: &Args, env: &Env) -> String {
 }
 
 fn claimable_base(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>, String> {
-    claimable_over(a, env, st)
+    claimable_over(a, env, st).map(|(rows, _)| rows)
 }
 
 /// The dispatcher's one computation: the claimable rows, and a verdict for every READY/REWORK
@@ -1139,9 +1147,11 @@ fn retain_unstopped(rows: &mut Vec<rank::ReadyRow>, run: &std::path::Path) -> Ve
 /// cache hit skips [`spira_config::runes::rune_predicate`] entirely, on purpose.
 ///
 /// `--json` prints the counted rows instead of their number: a dwarf's ready set, so what it
-/// claims from is what the sentinel called it for.
+/// claims from is what the sentinel called it for. With `--freshness` it prints
+/// `{freshness, rows}` instead, `freshness` naming the planning watermark and judgement time
+/// of a published answer, `null` when the rows were judged here.
 fn cmd_rune_ready(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json", "--express"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json", "--express", "--freshness"]) {
         return Outcome::usage(e);
     }
     let me = match a.pos.first() {
@@ -1177,13 +1187,16 @@ fn cmd_rune_ready(a: &Args, env: &mut Env) -> Outcome {
     };
     let exclude = rune_exclude_str(env, &home, &me, &predicate.exclude_labels);
     let store_read = std::time::Instant::now();
-    let rows = match machine_claimable(a, env) {
+    let (rows, freshness) = match store(a).and_then(|st| claimable_over(a, env, &st)) {
         Ok(r) => r,
         Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: rune_ready: {}", first_line(&e)) },
     };
     spira_otel::run::phase("store", store_read.elapsed().as_millis() as u64);
     let part = ready::RunePart { name: me, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exclude) };
     let mine = ready::partition(&rows, &part, &queue_wait_label(env));
+    if json && a.has("--freshness") {
+        return Outcome::ok(format!("{}\n", serde_json::json!({ "freshness": freshness, "rows": mine })));
+    }
     if json {
         return Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()));
     }
