@@ -904,12 +904,13 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
 /// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
 fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
     let st = store(a)?;
-    machine_judged(a, env, &st).map(|(rows, _)| rows)
+    machine_judged(a, env, &st, false).map(|(rows, _)| rows)
 }
 
-/// [`machine_claimable`] with the verdict of every READY/REWORK row it judged.
-fn machine_judged(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow>, Vec<verdicts::Entry>), String> {
-    let (rows, entries) = judge_rows(a, env, st, None)?;
+/// [`machine_claimable`] with the verdict of every READY/REWORK row it judged. `publish`
+/// is the dispatcher's alone: a reader that publishes pays a live-set read and a group commit.
+fn machine_judged(a: &Args, env: &Env, st: &Store, publish: bool) -> Result<(Vec<rank::ReadyRow>, Vec<verdicts::Entry>), String> {
+    let (rows, entries) = judge_rows(a, env, st, None, publish)?;
     let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
     Ok((rows.into_iter().filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id))).collect(), entries))
 }
@@ -929,14 +930,14 @@ fn ready_cache_key(a: &Args, env: &Env) -> String {
 }
 
 fn claimable_base(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>, String> {
-    judge_rows(a, env, st, None).map(|(rows, _)| rows)
+    judge_rows(a, env, st, None, false).map(|(rows, _)| rows)
 }
 
 /// The dispatcher's one computation: the claimable rows, and a verdict for every READY/REWORK
 /// row the content store could describe. The rows are derived from the verdicts, so what is
-/// published and what is claimed cannot diverge.
+/// published and what is claimed cannot diverge. Only a `publish` pass writes readiness.
 /// `only` narrows the pass to those records: the claimable rows, the verdicts and what is published.
-fn judge_rows(a: &Args, env: &Env, st: &Store, only: Option<&BTreeSet<String>>) -> Result<(Vec<rank::ReadyRow>, Vec<verdicts::Entry>), String> {
+fn judge_rows(a: &Args, env: &Env, st: &Store, only: Option<&BTreeSet<String>>, publish: bool) -> Result<(Vec<rank::ReadyRow>, Vec<verdicts::Entry>), String> {
     use verdicts::Kind;
     let mut lc = st.lifecycle_in_states(&["READY", "REWORK"])?;
     if let Some(only) = only {
@@ -991,7 +992,7 @@ fn judge_rows(a: &Args, env: &Env, st: &Store, only: Option<&BTreeSet<String>>) 
     let carried = retain_uncarried(&mut claimable, &mut lc, Some(st), &env.config.queue_dir)?;
     entries.extend(carried.into_iter().map(|(id, carrier)| entry(&id, Kind::Carried, Some(carrier))));
     entries.extend(claimable.iter().map(|r| entry(&r.id, Kind::Claimable, None)));
-    if env.config.control_store {
+    if publish && env.config.control_store {
         match publish_readiness(st, &entries, only) {
             Ok(()) => {
                 if let Err(e) = st.clear_readiness_refused() {
@@ -1194,7 +1195,7 @@ fn cmd_bulk_ready_by_rune(a: &Args, env: &mut Env) -> Outcome {
         Ok(st) => st,
         Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-rune: {}", first_line(&e))),
     };
-    let (rows, mut entries) = match machine_judged(a, env, &st) {
+    let (rows, mut entries) = match machine_judged(a, env, &st, true) {
         Ok(r) => r,
         Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-rune: {}", first_line(&e))),
     };
@@ -1237,7 +1238,7 @@ fn cmd_republish_dependents(a: &Args, env: &Env) -> Outcome {
 fn republish_dependents(a: &Args, env: &Env, st: &Store) -> Result<usize, String> {
     let dependents = st.dependents_of(&ready::split_csv(a.get("--changed").unwrap_or("")))?;
     if !dependents.is_empty() {
-        judge_rows(a, env, st, Some(&dependents))?;
+        judge_rows(a, env, st, Some(&dependents), true)?;
     }
     Ok(dependents.len())
 }

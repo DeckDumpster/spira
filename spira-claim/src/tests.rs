@@ -154,7 +154,7 @@ mod published {
     }
     impl Pipe for String {}
 
-    fn judged(control_store: bool) -> (Vec<Vec<String>>, Vec<verdicts::Entry>) {
+    fn judged(control_store: bool, publish: bool) -> (Vec<Vec<String>>, Vec<verdicts::Entry>) {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
         let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) };
         let mut stdin = std::io::empty();
@@ -162,7 +162,7 @@ mod published {
         let config = Config { control_store, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
         let env = Env { stdin: &mut stdin, config, lookup: &none };
         let a = Args::parse(&[]).unwrap();
-        let (_, entries) = judge_rows(&a, &env, &st, None).unwrap();
+        let (_, entries) = judge_rows(&a, &env, &st, None, publish).unwrap();
         let seen = svc.0.lock().unwrap().clone();
         (seen, entries)
     }
@@ -174,7 +174,7 @@ mod published {
 
     #[test]
     fn judge_rows_publishes_readiness_for_certified_and_submitted_records_with_the_gates_it_read() {
-        let (seen, _) = judged(true);
+        let (seen, _) = judged(true, true);
         let p = published(&seen).expect("no publish-readiness call");
         assert_eq!(p["planning_watermark"], "7");
         let entry = |id: &str| p["entries"].as_array().unwrap().iter().find(|e| e["id"] == id).unwrap_or_else(|| panic!("no entry for {id}: {p}")).clone();
@@ -186,14 +186,38 @@ mod published {
 
     #[test]
     fn the_planning_watermark_is_read_before_the_rows_it_stamps() {
-        let (seen, _) = judged(true);
+        let (seen, _) = judged(true, true);
         let at = |what: &[&str]| seen.iter().position(|c| c.iter().map(String::as_str).take(what.len()).eq(what.iter().copied())).unwrap();
         assert!(at(&["plan", "watermark"]) < at(&["list", "--state", LIVE]));
     }
 
     #[test]
+    fn a_reading_pass_publishes_nothing_and_reads_no_live_set() {
+        let (seen, entries) = judged(true, false);
+        assert!(published(&seen).is_none());
+        assert!(seen.iter().all(|c| c[0] != "publish-readiness" && c[..] != ["plan", "watermark"]), "{seen:?}");
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn machine_claimable_is_a_reading_pass_and_machine_judged_publishes_only_when_told_to() {
+        let run = |publish: bool| {
+            let svc = Arc::new(Service(Mutex::new(Vec::new())));
+            let mut stdin = std::io::empty();
+            let none = |_: &str| None;
+            let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+            let env = Env { stdin: &mut stdin, config, lookup: &none };
+            machine_judged(&Args::parse(&[]).unwrap(), &env, &store_over(svc.clone()), publish).unwrap();
+            let seen = svc.0.lock().unwrap().clone();
+            seen
+        };
+        assert!(published(&run(false)).is_none());
+        assert!(published(&run(true)).is_some());
+    }
+
+    #[test]
     fn nothing_is_published_while_the_control_store_is_not_in_use() {
-        let (seen, entries) = judged(false);
+        let (seen, entries) = judged(false, true);
         assert!(published(&seen).is_none());
         assert_eq!(entries.len(), 1);
     }
@@ -207,7 +231,7 @@ mod published {
         let none = |_: &str| None;
         let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
         let env = Env { stdin: &mut stdin, config, lookup: &none };
-        judge_rows(&Args::parse(&[]).unwrap(), &env, &store_over(t), None).unwrap();
+        judge_rows(&Args::parse(&[]).unwrap(), &env, &store_over(t), None, true).unwrap();
     }
 
     #[test]
