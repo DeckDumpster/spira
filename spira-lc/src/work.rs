@@ -11,6 +11,7 @@
 use lifecycle::bead::{self, BeadEventKind, HoldKind};
 use lifecycle::reason::HoldCause;
 
+use crate::content_sql;
 use crate::db::Conn;
 use crate::{apply_bead_event, flag, rows, CANNOT_TELL, REFUSED};
 
@@ -1176,8 +1177,12 @@ fn gate(verb: &str, rest: &[String]) -> Result<(), (i32, String)> {
 pub enum Step {
     Bd { args: Vec<String>, stdin: Option<String> },
     /// `work list`: the lifecycle rows in these states (every non-terminal state when empty,
-    /// every state with `all`), joined to bd's content rows filtered by `bd_args`.
-    LcList { states: Vec<String>, all: bool, bd_args: Vec<String>, json: bool, full: bool, limit: Option<usize> },
+    /// every state with `all`), joined to the SQL reader's content rows narrowed by `filters`.
+    LcList { states: Vec<String>, all: bool, filters: Vec<String>, json: bool, full: bool, limit: Option<usize> },
+    /// `work read`: another bead, answered by the SQL reader.
+    Read { id: String, json: bool },
+    /// `work search`: the SQL reader's `search`, ranked as the door ranks it.
+    Search { query: String, limit: Option<String>, json: bool },
     Tool { program: &'static str, args: Vec<String>, stdin: Option<String> },
     CreateRow,
     /// `Hold { Ask, OperatorQuestion }` on `bead`: the bead waits on the operator's answer
@@ -1270,7 +1275,7 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
         "read" => {
             let id = bead_arg(verb, a, 0, "<bead-id>")?;
             let f = parse_flags(verb, a, 1, &[], &["--json"])?;
-            Ok(vec![bd([vec![s("show"), id], flatten(&f)].concat())])
+            Ok(vec![Step::Read { id, json: f.iter().any(|(k, _)| k == "--json") }])
         }
         "list" => {
             if a.iter().any(|x| x == "--status") {
@@ -1289,20 +1294,20 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
                 Some(n) => Some(n.parse::<usize>().map_err(|_| usage(verb, &format!("--limit {n:?} is not a number")))?),
                 None => None,
             };
-            let mut bd_args = Vec::new();
+            let mut filters = Vec::new();
             for k in ["--label", "--title-contains"] {
                 if let Some(v) = get(&f, k) {
-                    bd_args.extend([s(k), v.to_string()]);
+                    filters.extend([s(k), v.to_string()]);
                 }
             }
-            Ok(vec![Step::LcList { states, all: f.iter().any(|(k, _)| k == "--all"), bd_args, json: f.iter().any(|(k, _)| k == "--json"), full: f.iter().any(|(k, _)| k == "--full"), limit }])
+            Ok(vec![Step::LcList { states, all: f.iter().any(|(k, _)| k == "--all"), filters, json: f.iter().any(|(k, _)| k == "--json"), full: f.iter().any(|(k, _)| k == "--full"), limit }])
         }
         "search" => {
             let Some(q) = a.first().filter(|q| !q.is_empty() && !q.starts_with('-')) else {
                 return Err(usage(verb, "missing <query>"));
             };
             let f = parse_flags(verb, a, 1, &["--limit"], &["--json"])?;
-            Ok(vec![bd([vec![s("search"), q.clone()], flatten(&f)].concat())])
+            Ok(vec![Step::Search { query: q.clone(), limit: get(&f, "--limit").map(str::to_string), json: f.iter().any(|(k, _)| k == "--json") }])
         }
         "note-on" => {
             let id = bead_arg(verb, a, 0, "<bead-id>")?;
@@ -1685,7 +1690,7 @@ fn split_piece_args(a: &[String]) -> Result<(), (i32, String)> {
 /// `work list`: lifecycle state decides which beads, bd supplies what they say. A state filter
 /// is the machine's; `--label`/`--title-contains` narrow by content through bd, and the two are
 /// intersected here so neither side's idea of "open" is consulted.
-fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[String], json: bool, full: bool, limit: Option<usize>) -> (i32, String) {
+fn list_with_content(conn: &Conn, reader: &ReadFn, states: &[String], all: bool, filters: &[String], json: bool, full: bool, limit: Option<usize>) -> (i32, String) {
     let narrowing = if !states.is_empty() {
         vec![s("--state"), states.join(","), s("--cached")]
     } else if all {
@@ -1706,18 +1711,16 @@ fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[Strin
     ids.sort_unstable();
     let mut content: Vec<serde_json::Value> = Vec::new();
     for chunk in ids.chunks(LIST_ID_CHUNK) {
-        if bd_args.is_empty() && !full {
+        if filters.is_empty() && !full {
             match crate::plan::fetch(conn, chunk) {
                 Ok(rows) => content.extend(rows),
                 Err(e) => return (CANNOT_TELL, e),
             }
             continue;
         }
-        let mut args = vec![s("list"), s("--id"), chunk.join(","), s("--status"), s("all"), s("--limit"), s("0"), s("--json")];
-        args.extend(bd_args.iter().cloned());
-        match crate::bd::run_stdin(&args, None) {
-            Ok(t) => content.extend(serde_json::from_str::<Vec<serde_json::Value>>(t.trim()).unwrap_or_default()),
-            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+        match content_chunk(reader, chunk, filters, full) {
+            Ok(rows) => content.extend(rows),
+            Err(e) => return (CANNOT_TELL, e),
         }
     }
     let mut out = Vec::new();
@@ -1746,6 +1749,52 @@ fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[Strin
     (0, lines.join("\n"))
 }
 
+/// One id chunk of `work list`'s content rows, read as SQL on the reader's held connection.
+fn content_chunk(reader: &ReadFn, chunk: &[&str], filters: &[String], full: bool) -> Result<Vec<serde_json::Value>, String> {
+    let mut args = vec![s("list"), s("--all"), s("--limit"), s("0"), s("--id"), chunk.join(",")];
+    args.extend(filters.iter().cloned());
+    if !full {
+        args.push(s("--brief"));
+    }
+    let rows = reader(&args).map_err(|e| format!("cannot tell: {}", e.text()))?;
+    serde_json::from_str(rows.trim()).map_err(|e| format!("cannot tell: the reader's list was not JSON: {e}"))
+}
+
+/// The content reader a read step asks: production's is the one held SQL connection.
+type ReadFn<'a> = dyn Fn(&[String]) -> Result<String, content_sql::Failure> + 'a;
+
+fn served_read(args: &[String]) -> Result<String, content_sql::Failure> {
+    content_sql::served().map_err(content_sql::Failure::Store)?.read(args)
+}
+
+/// The steps that read bead content, answered by `reader`; no `bd` process, no fallback to one.
+fn run_read(step: Step, reader: &ReadFn, conn: &Conn) -> (i32, String) {
+    let cannot = |e: content_sql::Failure| (CANNOT_TELL, format!("cannot tell: {}", e.text()));
+    match step {
+        Step::Read { id, json: false } => cmd_show(&id, conn),
+        Step::Read { id, json: true } => reader(&[s("show"), id]).map_or_else(cannot, |t| (0, t)),
+        Step::Search { query, limit, json } => {
+            let mut args = vec![s("search"), query];
+            if let Some(n) = limit {
+                args.extend([s("--limit"), n]);
+            }
+            let rows = match reader(&args) {
+                Ok(t) => t,
+                Err(e) => return cannot(e),
+            };
+            if json {
+                return (0, rows);
+            }
+            let found: Vec<serde_json::Value> = serde_json::from_str(rows.trim()).unwrap_or_default();
+            let lines: Vec<String> =
+                found.iter().map(|b| format!("{} P{} {}", b["id"].as_str().unwrap_or("?"), b["priority"], b["title"].as_str().unwrap_or(""))).collect();
+            (0, lines.join("\n"))
+        }
+        Step::LcList { states, all, filters, json, full, limit } => list_with_content(conn, reader, &states, all, &filters, json, full, limit),
+        other => (CANNOT_TELL, format!("work: {other:?} is not a read")),
+    }
+}
+
 /// What `work list --json` carries per bead unless `--full`: the fields a lister decides on.
 /// Descriptions, notes and comments are `work read`'s; a whole-store dump of them is what
 /// made the reply cost dolt time for every caller.
@@ -1755,7 +1804,7 @@ fn project_row(row: &serde_json::Value) -> serde_json::Value {
     LIST_PROJECTION.iter().filter_map(|k| row.get(*k).map(|v| (k.to_string(), v.clone()))).collect::<serde_json::Map<_, _>>().into()
 }
 
-/// Ids per `bd list --id`: bd is asked only for the beads the lifecycle kept, never the whole store.
+/// Ids per reader `list --id`: it is asked only for the beads the lifecycle kept, never the whole store.
 const LIST_ID_CHUNK: usize = 400;
 
 const MAIL_KINDS: &[&str] = &["alert", "decision", "event", "note", "question", "suit"];
@@ -1811,7 +1860,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
                 Ok(t) => (0, t),
                 Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
             },
-            Step::LcList { states, all, bd_args, json, full, limit } => list_with_content(conn, &states, all, &bd_args, json, full, limit),
+            read @ (Step::Read { .. } | Step::Search { .. } | Step::LcList { .. }) => run_read(read, &served_read, conn),
             Step::Tool { program, args, stdin } => {
                 // mail, by name; SPIRA_MAIL_SH is the harness-wide binary-override seam.
                 let prog = if program == "mail" { std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail")) } else { s(program) };
@@ -2353,7 +2402,8 @@ mod tests {
 
     #[test]
     fn read_shows_another_bead() {
-        assert_eq!(plan("read", "sp-me", &call(&["sp-x1", "--json"], "spike")).unwrap(), vec![Step::Bd { args: v(&["show", "sp-x1", "--json"]), stdin: None }]);
+        assert_eq!(plan("read", "sp-me", &call(&["sp-x1", "--json"], "spike")).unwrap(), vec![Step::Read { id: s("sp-x1"), json: true }]);
+        assert_eq!(plan("read", "sp-me", &call(&["sp-x1"], "spike")).unwrap(), vec![Step::Read { id: s("sp-x1"), json: false }]);
         assert!(plan("read", "sp-me", &call(&["not-an-id"], "spike")).is_err());
         assert!(plan("read", "sp-me", &call(&["sp-x1", "-C", "/elsewhere"], "spike")).is_err());
     }
@@ -2362,7 +2412,7 @@ mod tests {
     fn list_filters_by_lifecycle_state_and_content() {
         assert_eq!(
             plan("list", "-", &call(&["--state", "ready,rework", "--label", "plan", "--json"], "warden")).unwrap(),
-            vec![Step::LcList { states: v(&["READY", "REWORK"]), all: false, bd_args: v(&["--label", "plan"]), json: true, full: false, limit: None }]
+            vec![Step::LcList { states: v(&["READY", "REWORK"]), all: false, filters: v(&["--label", "plan"]), json: true, full: false, limit: None }]
         );
         assert!(plan("list", "-", &call(&["--db", "/x"], "warden")).is_err());
         assert!(plan("list", "-", &call(&["--state", "closed"], "warden")).is_err(), "a bd status word is not a lifecycle state");
@@ -2401,9 +2451,77 @@ mod tests {
         assert!(!out.contains("holder"), "{out}");
     }
 
+
+    fn scripted<'a>(answer: &str, seen: &'a std::cell::RefCell<Vec<Vec<String>>>) -> impl Fn(&[String]) -> Result<String, content_sql::Failure> + 'a {
+        let answer = answer.to_string();
+        move |a: &[String]| {
+            seen.borrow_mut().push(a.to_vec());
+            Ok(answer.clone())
+        }
+    }
+
+    #[test]
+    fn search_asks_the_reader_once_and_prints_id_priority_title_without_a_status_word() {
+        let seen = std::cell::RefCell::new(Vec::new());
+        let reader = scripted(r#"[{"id":"sp-a1","title":"merge queue stalls","priority":1,"status":"open"},{"id":"sp-b2","title":"queue docs","priority":3,"status":"closed"}]"#, &seen);
+        let step = Step::Search { query: s("merge queue"), limit: Some(s("7")), json: false };
+        let (code, out) = run_read(step, &reader, &Conn::unreachable());
+        assert_eq!((code, out.as_str()), (0, "sp-a1 P1 merge queue stalls\nsp-b2 P3 queue docs"));
+        assert_eq!(*seen.borrow(), vec![v(&["search", "merge queue", "--limit", "7"])]);
+    }
+
+    #[test]
+    fn search_json_passes_the_readers_rows_through_and_a_read_json_is_the_readers_show() {
+        let seen = std::cell::RefCell::new(Vec::new());
+        let reader = scripted(r#"[{"id":"sp-a1"}]"#, &seen);
+        let (_, out) = run_read(Step::Search { query: s("q"), limit: None, json: true }, &reader, &Conn::unreachable());
+        assert_eq!(out, r#"[{"id":"sp-a1"}]"#);
+        let (_, out) = run_read(Step::Read { id: s("sp-a1"), json: true }, &reader, &Conn::unreachable());
+        assert_eq!(out, r#"[{"id":"sp-a1"}]"#);
+        assert_eq!(*seen.borrow(), vec![v(&["search", "q"]), v(&["show", "sp-a1"])]);
+    }
+
+    #[test]
+    fn a_reader_failure_is_cannot_tell_with_its_text_and_nothing_else_is_tried() {
+        let reader = |_: &[String]| -> Result<String, content_sql::Failure> { Err(content_sql::Failure::Store("the held connection is gone".into())) };
+        for step in [Step::Search { query: s("q"), limit: None, json: false }, Step::Read { id: s("sp-a1"), json: true }] {
+            let (code, out) = run_read(step, &reader, &Conn::unreachable());
+            assert_eq!(code, CANNOT_TELL);
+            assert!(out.contains("the held connection is gone"), "{out}");
+        }
+    }
+
+    #[test]
+    fn a_filtered_list_asks_the_reader_once_per_id_chunk_and_never_forks_bd() {
+        let ids: Vec<String> = (0..LIST_ID_CHUNK + 1).map(|i| format!("sp-{i:04}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let seen = std::cell::RefCell::new(Vec::new());
+        let reader = scripted("[]", &seen);
+        for chunk in refs.chunks(LIST_ID_CHUNK) {
+            content_chunk(&reader, chunk, &v(&["--label", "repo:spira"]), false).unwrap();
+        }
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 2, "401 ids are two requests");
+        assert_eq!(seen[0][..6], v(&["list", "--all", "--limit", "0", "--id", &ids[..LIST_ID_CHUNK].join(",")])[..]);
+        assert_eq!(seen[0][6..], v(&["--label", "repo:spira", "--brief"])[..]);
+        assert_eq!(seen[1][5], ids[LIST_ID_CHUNK]);
+    }
+
+    #[test]
+    fn a_full_list_asks_for_the_whole_row() {
+        let seen = std::cell::RefCell::new(Vec::new());
+        let reader = scripted("[]", &seen);
+        content_chunk(&reader, &["sp-a"], &[], true).unwrap();
+        assert!(!seen.borrow()[0].contains(&s("--brief")));
+    }
+
     #[test]
     fn search_needs_a_query() {
-        assert_eq!(plan("search", "-", &call(&["merge queue"], "groomer")).unwrap(), vec![Step::Bd { args: v(&["search", "merge queue"]), stdin: None }]);
+        assert_eq!(plan("search", "-", &call(&["merge queue"], "groomer")).unwrap(), vec![Step::Search { query: s("merge queue"), limit: None, json: false }]);
+        assert_eq!(
+            plan("search", "-", &call(&["merge queue", "--limit", "5", "--json"], "groomer")).unwrap(),
+            vec![Step::Search { query: s("merge queue"), limit: Some(s("5")), json: true }]
+        );
         assert!(plan("search", "-", &call(&["--status", "open"], "groomer")).is_err());
     }
 
