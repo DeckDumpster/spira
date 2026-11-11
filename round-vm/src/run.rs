@@ -3586,7 +3586,12 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        c.stdin.take().unwrap().write_all(REMOTE_SCRIPT.as_bytes()).unwrap();
+        // The script may refuse and exit before it has read all of itself: the write then ends in
+        // EPIPE, which is the script's early exit and not a fault of the test.
+        match c.stdin.take().unwrap().write_all(REMOTE_SCRIPT.as_bytes()) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => panic!("stdin: {e}"),
+            _ => {}
+        }
         let o = c.wait_with_output().unwrap();
         let err = String::from_utf8_lossy(&o.stderr).to_string();
         let out = fs::read_to_string(home.join("round-runner.out")).unwrap_or_default();
