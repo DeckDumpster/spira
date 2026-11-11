@@ -473,7 +473,7 @@ fn sp_esyv8o_an_attribution_leg_stopped_by_a_signal_writes_no_pause() {
     let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
     assert!(!names.contains(&PAUSE) && !names.contains(&ABANDON), "{names:?}");
     assert_eq!(carry.repos.get("spira").and_then(|r| r.paused_on.clone()), None);
-    assert!(carry.repos.get("spira").map_or(true, |r| r.state == State::Idle), "the round is let go");
+    assert!(carry.repos.get("spira").is_none_or(|r| r.state == State::Idle), "the round is let go");
 }
 
 /// An operator's deliberate hold (`hold:`) is never lifted by a landing.
