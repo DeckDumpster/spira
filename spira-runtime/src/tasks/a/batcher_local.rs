@@ -134,9 +134,6 @@ pub const OBSERVE_DEADLINE_MS: u64 = 10_000;
 /// `unit.ran`.
 pub const UNIT_START_DEADLINE_MS: u64 = 10_000;
 /// Past the longest effect this task waits on (`land`, 900 s): an outcome that has not come is lost.
-/// The body the scheduler gives an effect it found open at boot and will never answer.
-pub const LOST_AT_RESTART: &str = "lost at restart";
-
 pub const OUTCOME_WAIT_MS: u64 = 1_200_000;
 
 pub const ACTS: &[(&str, u64)] = &[
@@ -1065,7 +1062,7 @@ impl Machine<'_> {
             self.rc.reconciled = batch;
             return;
         }
-        if self.voided(repo) || self.outcome_lost() {
+        if self.voided(repo) || self.outcome_lost() || self.assemble_unsent(repo) {
             self.forget_round();
             return;
         }
@@ -1073,7 +1070,6 @@ impl Machine<'_> {
         match self.rc.state {
             State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > leg_deadline_ms(policy, self.rc.state == State::Attributing, self.rc.members.len()) => self.leg_ended(Exit::Unknown),
             State::Corpus | State::Attributing | State::Certifying => self.watch_leg(repo),
-            State::Assembling if self.unsent(repo, ASSEMBLE) => self.forget_round(),
             State::Opened if self.rc.batch.is_none() => {
                 self.adopt_opened(repo);
                 if self.rc.batch.is_none() && self.unsent(repo, ROUND_OPEN) {
@@ -1094,6 +1090,10 @@ impl Machine<'_> {
     /// the request died with a restart, and no outcome will come.
     fn unsent(&self, repo: &Repo, effect: &str) -> bool {
         repo.in_flight.as_ref().is_some_and(|f| !f.iter().any(|e| e == effect))
+    }
+
+    fn assemble_unsent(&self, repo: &Repo) -> bool {
+        self.rc.state == State::Assembling && self.unsent(repo, ASSEMBLE)
     }
 
     fn awaits_outcome(&self) -> bool {
@@ -1470,7 +1470,7 @@ impl Machine<'_> {
     /// The outcome of one of this task's own effects.
     fn outcome(&mut self, effect: &str, ok: bool, body: &str, leg: &Leg) {
         match (self.rc.state, effect) {
-            (State::Assembling, ASSEMBLE) if !ok && body == LOST_AT_RESTART => self.forget_round(),
+            (State::Assembling, ASSEMBLE) if !ok && body == runtime::engine::LOST_AT_RESTART => self.forget_round(),
             (State::Assembling, ASSEMBLE) if !ok => {
                 self.assemble_failed(body.trim());
                 self.go(Trigger::AssembledEmpty);
@@ -1480,6 +1480,7 @@ impl Machine<'_> {
                 let a: Assembled = serde_json::from_str(body).unwrap_or_default();
                 self.assembled(a, leg);
             }
+            (State::Opened, ROUND_OPEN) if !ok && body == runtime::engine::LOST_AT_RESTART => {}
             (State::Opened, ROUND_OPEN) => {
                 let o: Opened = if ok { serde_json::from_str(body).unwrap_or_default() } else { Opened::default() };
                 if o.batch.is_empty() && !o.refused.is_empty() {
@@ -1692,7 +1693,7 @@ fn decide_repo(policy: &Policy, name: &str, rc: &RepoCarry, repo: &Repo, now_ms:
     let (mut shared, mut live, mut acts, mut ended) = (rc.clone(), Vec::<RepoCarry>::new(), vec![], false);
     for round in rc.rounds() {
         let mut m = Machine { repo: name, rc: shared.holding(&round), acts: vec![], now_ms, below: !live.is_empty() };
-        let voided = m.voided(repo) || m.outcome_lost() || m.settled(repo) || (m.rc.state == State::Assembling && m.unsent(repo, ASSEMBLE));
+        let voided = m.voided(repo) || m.outcome_lost() || m.settled(repo) || m.assemble_unsent(repo);
         m.observe(policy, repo);
         acts.extend(m.acts);
         if m.rc.live() {

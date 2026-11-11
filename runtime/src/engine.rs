@@ -25,7 +25,7 @@ const POISON_RECHECK_MS: u64 = 300_000;
 /// Memory-only events a stream keeps in the projection; older ones are dropped.
 pub const LOCAL_KEEP: usize = 64;
 
-const LOST_AT_RESTART: &str = "lost at restart";
+pub const LOST_AT_RESTART: &str = "lost at restart";
 
 /// Hears whether a submitted event's turn was committed.
 pub type Reply = tokio::sync::oneshot::Sender<std::result::Result<(), String>>;

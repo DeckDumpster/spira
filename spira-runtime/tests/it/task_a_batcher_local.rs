@@ -956,27 +956,42 @@ fn an_assemble_in_flight_is_left_alone() {
     assert!(acts.is_empty(), "{acts:?}");
 }
 
-/// A round is cut within a minute of a restart that took the assemble's outcome with it.
+/// A scheduler restart while the assemble is open ends it lost; a round is cut within a minute.
 #[test]
-fn a_round_is_cut_within_a_minute_of_a_restart_that_lost_the_assemble() {
-    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let seen = calls.clone();
+fn a_round_is_cut_within_a_minute_of_a_restart_that_interrupted_the_assemble() {
     let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
     let mut r = TaskRig::new(1, registration())
         .unwrap()
+        .hanging(ASSEMBLE)
         .double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()))
-        .double(ASSEMBLE, move |_| match seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
-            0 => Err("lost at restart".into()),
-            _ => Ok(serde_json::to_string(&assembled).unwrap()),
-        })
+        .double(ASSEMBLE, move |_| Ok(serde_json::to_string(&assembled).unwrap()))
         .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap()));
     for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, ROUND_OPEN].contains(e)) {
         r = r.double(e, |_| Ok("{}".into()));
     }
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 3).unwrap();
+    let asked = |r: &TaskRig, name: &str| r.requested().iter().filter(|q| q.name == name).count();
+    assert_eq!((asked(&r, ASSEMBLE), asked(&r, ROUND_OPEN)), (1, 0), "an open assemble is waited for, not asked again");
+    r.reopen(registration()).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     r.advance(60_000).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
-    let names: Vec<&str> = r.requested().iter().map(|q| q.name.as_str()).collect();
-    assert_eq!(names.iter().filter(|n| **n == ASSEMBLE).count(), 2, "{names:?}");
-    assert!(names.contains(&ROUND_OPEN), "the second assemble opened a round: {names:?}");
+    assert_eq!((asked(&r, ASSEMBLE), asked(&r, ROUND_OPEN)), (2, 1), "{:?}", r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>());
+}
+
+/// A round open that ends lost is neither a failed open nor a reason to wait out the outcome timer.
+#[test]
+fn a_round_open_lost_at_restart_is_asked_again() {
+    let mut carry = Carry::default();
+    carry.repos.insert("spira".into(), RepoCarry { state: State::Opened, round_key: Some("k".into()), members: vec![("sp-a".into(), "t1".into())], wt: "/w".into(), base: "b1".into(), suites: Some(true), ..RepoCarry::default() });
+    let mut world = Snapshot { now_ms: NOW, ..idle() };
+    world.repos.get_mut("spira").unwrap().in_flight = Some(vec![]);
+    let (carry, acts) = decide(&carry, &world);
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [ROUND_OPEN], "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Opened);
+    let leg = Leg { repo: "spira".into(), ..Leg::default() };
+    let (carry, acts) = on_outcome(&carry, ROUND_OPEN, false, "lost at restart", &leg, NOW);
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Opened, "not an open failure");
 }

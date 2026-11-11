@@ -60,6 +60,8 @@ pub struct TaskRig {
     read_to: usize,
     journaled_requests: BTreeSet<String>,
     timing_out: bool,
+    hung: BTreeSet<String>,
+    parked: BTreeSet<String>,
 }
 
 impl TaskRig {
@@ -67,18 +69,27 @@ impl TaskRig {
         let journal = MemJournal::new();
         let clock = VirtualClock::new(0);
         let engine = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![reg], seed)?;
-        Ok(TaskRig { journal, clock, engine, doubles: BTreeMap::new(), requested: vec![], refused: vec![], ticks: BTreeMap::new(), read_to: 0, journaled_requests: BTreeSet::new(), timing_out: false })
+        Ok(TaskRig { journal, clock, engine, doubles: BTreeMap::new(), requested: vec![], refused: vec![], ticks: BTreeMap::new(), read_to: 0, journaled_requests: BTreeSet::new(), timing_out: false, hung: BTreeSet::new(), parked: BTreeSet::new() })
     }
 
     /// Stop the engine and open a new one on the same journal and clock: a runtime restart.
     pub fn reopen(&mut self, reg: Registration) -> Result<()> {
         self.engine = Engine::open(self.journal.clone(), Arc::new(self.clock.clone()), vec![reg], 0)?;
+        self.parked.clear();
+        self.hung.clear();
         Ok(())
     }
 
     /// Every effect and probe times out instead of being answered.
     pub fn timing_out(mut self) -> Self {
         self.timing_out = true;
+        self
+    }
+
+    /// Effects named `name` are requested and never answered, until a [`reopen`](Self::reopen)
+    /// finds them open and ends them lost; the reopened runtime answers them again.
+    pub fn hanging(mut self, name: &str) -> Self {
+        self.hung.insert(name.into());
         self
     }
 
@@ -115,7 +126,7 @@ impl TaskRig {
     pub fn run_until_idle(&mut self) -> Result<()> {
         loop {
             self.engine.run_until_idle()?;
-            let pending = self.engine.pending_effects();
+            let pending: Vec<_> = self.engine.pending_effects().into_iter().filter(|p| !self.parked.contains(&p.key)).collect();
             if pending.is_empty() {
                 return Ok(());
             }
@@ -129,6 +140,10 @@ impl TaskRig {
             for p in pending {
                 let journaled = self.journaled_requests.contains(&p.key);
                 self.requested.push(Requested { name: p.spec.name.clone(), key: p.spec.key.clone(), input: p.spec.input.clone(), at: p.requested_at, journaled });
+                if self.hung.contains(&p.spec.name) {
+                    self.parked.insert(p.key);
+                    continue;
+                }
                 let outcome = match self.doubles.get(&p.spec.name).filter(|_| !self.timing_out) {
                     Some(f) => match f(&p.spec.input) {
                         Ok(o) => Outcome::Succeeded(o),
