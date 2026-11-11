@@ -153,7 +153,7 @@ pub struct Snapshot {
     /// Per repo, the newest `Claim`, `Submit`, `Cut` and `Delivered`, epoch seconds.
     #[serde(default)]
     pub last: BTreeMap<String, BTreeMap<String, u64>>,
-    /// The newest release activation; `None` when no release was ever activated.
+    /// The newest release activation, counting the release `current` names from its publication; `None` when there is none.
     #[serde(default)]
     pub activated_at: Option<u64>,
     /// Per repo, the oldest Delivered after `activated_at`.
@@ -515,15 +515,20 @@ pub fn observe(
     if releases.is_empty() {
         return blind("no release machine record under run/release/machine");
     }
+    let current = in_effect_commit(releases_dir);
     let recorded = releases
         .iter()
-        .flat_map(|r| r.events.iter())
-        .filter(|e| e.to == release::machine::ReleaseState::Activated)
-        .map(|e| e.at)
+        .flat_map(|r| r.events.iter().map(move |e| (r, e)))
+        .filter(|(r, e)| match e.to {
+            release::machine::ReleaseState::Activated => true,
+            release::machine::ReleaseState::Published => current.as_deref() == Some(r.sha.as_str()),
+            _ => false,
+        })
+        .map(|(_, e)| e.at)
         .max();
     let in_effect = releases_in_effect(&releases, releases_dir);
     let window = window_s.to_string();
-    let after = if in_effect_commit(releases_dir).is_some() {
+    let after = if current.is_some() {
         0
     } else {
         recorded.unwrap_or(0)
