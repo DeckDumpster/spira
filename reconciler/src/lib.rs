@@ -2628,11 +2628,14 @@ mod tests {
     #[test]
     fn junk_rows_are_read_from_the_ready_rows_and_exactly_those_ids() {
         let dir = scratch_dir("junk-rows");
-        let (cfg, _log) = tripwired(&dir, Some(quiet(None)));
+        let (mut cfg, _log) = tripwired(&dir, Some(quiet(None)));
+        cfg.log = dir.join("reconciler.log");
         let checks = observe_junk_rows(&cfg);
         assert_eq!(checks.len(), 1, "{checks:?}");
         assert_eq!(checks[0].key, "junk-row:prose key");
         assert!(matches!(checks[0].raw, RawStatus::Gap { .. }));
+        let logged = fs::read_to_string(&cfg.log).unwrap_or_default();
+        assert!(logged.contains("invariant junk-row: 2 READY row(s) read, 1 without a bead"), "{logged}");
     }
 
     #[test]
