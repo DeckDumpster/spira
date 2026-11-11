@@ -935,7 +935,7 @@ fn claimable_base(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>
 
 /// The dispatcher's one computation: the claimable rows, and a verdict for every READY/REWORK
 /// row the content store could describe. The rows are derived from the verdicts, so what is
-/// published and what is claimed cannot diverge.
+/// published and what is claimed cannot diverge. Only a `publish` pass writes readiness.
 /// `only` narrows the pass to those records: the claimable rows, the verdicts and what is published.
 fn judge_rows(a: &Args, env: &Env, st: &Store, only: Option<&BTreeSet<String>>, publish: bool) -> Result<(Vec<rank::ReadyRow>, Vec<verdicts::Entry>), String> {
     use verdicts::Kind;
