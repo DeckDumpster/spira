@@ -655,8 +655,9 @@ land with is what its gate runs.
   (BASE_FAIL `base-gate-definition` when the landing ref already names a file it lacks). A
   column keeps today's check against the base (NO_VERDICT `cmd-missing-file`).
 * **Tools from the tree.** Each `bin <VAR> <package>` is built before any step, in a `tools`
-  phase (`cargo build --profile dwarf -j <jobs> -p <package>…`, then `[ -x
-  target/dwarf/<package> ]`), and the steps get `<VAR>=<gate tree>/target/gate-tools/<tree id>/<package>` (the
+  phase when the tree changes the tools' source — otherwise the active release's binaries
+  are used and nothing is built, see "Tools from the active release" — (`cargo build --profile dwarf -j <jobs> -p <package>…`, then `[ -x
+  target/dwarf/<package> ]`), and the steps get `<VAR>=<gate tree>/target/tree-tools/<tree id>/<package>` (the
   build's output, copied into a directory keyed by the tree it was built from — see "Tools
   keyed by the tree they were built from") in place of the installed value. The dwarf profile is the unit phases' profile, so a unit
   composition's build reuses it. The spira repository declares `bin SPIRA_LINT_BIN
@@ -716,7 +717,7 @@ gate that cannot answer the question cannot rule it out either.)
   that trial judges (the merge's for the branch trial, the pinned base commit's for the base
   trial). A mismatch, or an unreadable HEAD, is `tools-unattributed`: NO_VERDICT for the
   branch trial; for the base trial, no base trial (BaseUntestable, NO_VERDICT). Never a guess.
-* **Tools live in a directory keyed by that tree id:** `<gate tree>/target/gate-tools/<tree
+* **Tools live in a directory keyed by that tree id:** `<gate tree>/target/tree-tools/<tree
   id>/<package>`, with `TREE` holding the id. The steps get `<VAR>=` that path — never
   `target/dwarf/<package>`. After a build, the gate (Rust, `World::install_tools`) copies each
   `target/dwarf/<package>` into `<dir>.tmp`, writes `TREE`, renames it into place, and removes
@@ -729,45 +730,30 @@ gate that cannot answer the question cannot rule it out either.)
   re-reads `TREE` and checks every package exists there; otherwise `tools-unattributed`
   exactly as above. An install that fails is the same.
 
-### Tools keyed by their source closure (2026-10-06)
+### Tools from the active release
 
-"Reuse only for the same tree" made every new branch rebuild every tool from an empty target
-(20-35 s idle, 100-296 s under load, of the 300 s cap), though a tool depends on far less than
-the tree. `toolkey.rs` adds a shared store, `<run>/gate-tools/<repo>/<base>-<h>`:
+A gate run uses the tool binaries of the active release (`$SPIRA_RELEASE/bin`) and builds
+none, unless the tree under test changes the tools' own source. The release is built from the
+landing ref at every landing, so for a diff that leaves the tools' source alone its binaries
+are what the gate would have built; the landing round builds the whole merged tree and runs
+the fences with those before anything lands, so a changed tool is still judged from its own
+tree there.
 
-* **Base key** (known before any build, read from tree `<want>`'s objects): the recipe (the
-  `bin` packages, the dwarf profile words), the object ids of the root build inputs
-  (`Cargo.toml`, `Cargo.lock`, `rust-toolchain(.toml)`, `.cargo`), and the git tree id of each
-  workspace package in the normal+build dependency closure of the `bin` packages (cargo
-  metadata; dev dependencies are not in a binary).
-* **Recorded inputs** (known only after a build): every other in-tree file the build read —
-  cargo's dep-info for each binary plus each build script's `rerun-if-changed` — as `INPUTS` lines `<path>\t<object id>`; `<h>` hashes them. Paths
-  outside the tree (registry crates: `Cargo.lock`) and under `target/` (generated) are not
-  recorded.
-* **Reuse:** when the tree-keyed directory is absent, the newest entry under the base key whose
-  `KEY` stamp is its own name, whose `INPUTS` hash to its name, which holds every package and
-  every one of whose recorded inputs has the same object id in `<want>`, is copied into the
-  tree-keyed directory (stamped with the tree id) — no build, no `tools` phase. Everything
-  after is unchanged: the steps read the tree-keyed directory, proved as above. An entry that
-  cannot be installed (evicted mid-copy) is built instead.
-* **Publish:** after a build, install and proof, the tools are copied to a dot-named temporary
-  in the store, `INPUTS` and `KEY` written, and renamed into place (an existing entry of the
-  same name is someone else's identical publish). The eight most recently used entries are
-  kept.
-* **The tools cap is for reuse.** sp-juboj's 40 s `tools` cap bounds the reuse path (the
-  build that replaces a failed store install). A cold build on a store miss, or of tools that
-  cannot be keyed, runs under the cap name `tools-cold` — bounded only by what is left of
-  `SPIRA_GATE_DEADLINE` — so the first gate of a new key can finish and publish it. It is
-  metered as `tools`.
-* **`gate warm-tools [--rev <rev>] [--repo <name>]`** builds and publishes the tools of
-  `<rev>` (default: the landing ref) exactly as a cold tools phase would — in its own gate
-  tree `<run>/worktree/.gate-warm.<repo>` (locked, on tmpfs, removed after), through the build
-  cache, bounded by an hour, never a gate's clock — and prints `warmed <entry>`; a key the
-  store already holds is a no-op, `already warm <entry>`. Run it after a landing that moves
-  the key, so the next gates reuse.
-* **No key, no sharing:** when any part of the base key cannot be read (no metadata, a `bin`
-  package that is not a member, a closure directory with no tree) the tools are built and kept
-  for the tree alone, as before, and the trial says why. The tree-mismatch refusal is unchanged.
+* **The choice** is made per run from the touched set (`git diff --raw` of the landing ref
+  against the branch, as the composition reads it) and the closure `toolkey::closure` computes
+  from `cargo metadata`: the `bin` packages and, transitively, their normal and build
+  dependencies among the workspace members, plus root `Cargo.toml`, `Cargo.lock`, the
+  toolchain pin and `.cargo/`. A touched path inside it builds from the tree. A touched set or
+  metadata that cannot be read builds from the tree too: the choice fails closed.
+* **Release:** the steps get `<VAR>=$SPIRA_RELEASE/bin/<package>`; there is no `tools` phase,
+  no build and nothing installed. A release whose `bin` lacks a package the steps name is
+  `tools-unattributed` naming the tool: a harness fault, never a silent build. The base trial
+  touches nothing, so it always takes the release.
+* **Tree:** the tools are built and installed as in "Contract" above, for this run only.
+  Nothing is published or reused by another run. The `tools` phase has no cap of its own,
+  only what is left of the deadline.
+* **gate.log** says which: `tools=release`, or `tools=tree:<secs>` (the phase's wall), after
+  `phases=`.
 
 ### The finding (sp-g9f3t)
 
@@ -937,7 +923,7 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   profile.dwarf.incremental=false` (never `CARGO_INCREMENTAL`, which sccache hashes into every
   key and so would split the cache from a dwarf's interactive builds).
 * **The gate tree builds on tmpfs** (`src/target.rs`, `World::target_on_tmpfs`): after the
-  checkout, `target/{dwarf,release,debug,gate-tools}` are links into
+  checkout, `target/{dwarf,release,debug,tree-tools}` are links into
   `$SPIRA_GATE_TARGET_ROOT` (default `/tmp/spira-gate-target-<run hash>`); orphaned
   directories are removed, the least recently used unlocked ones evicted over
   `SPIRA_GATE_TARGET_CAP_MIB`, and short of room (`_MIN_FREE_MIB`, `_MIN_MEM_MIB`) is
@@ -1237,8 +1223,7 @@ cgroup-aware core count, so `SPIRA_GATE_HOST_CORES` is gone.
 ## The deadline and the phase caps (sp-juboj)
 
 `SPIRA_GATE_DEADLINE` is enforced: each phase and each base-side call runs under
-`min(SPIRA_GATE_TIMEOUT, what is left of the deadline)`, and a phase with a cap (`phase_cap`: tools 40 s,
-fences 90 s, gate 260 s; `base-` ignored) is cut at it. The branch trial's fixed caps sum under the
+`min(SPIRA_GATE_TIMEOUT, what is left of the deadline)`, and a phase with a cap (`phase_cap`: fences 90 s, gate 260 s; `base-` ignored) is cut at it. The branch trial's fixed caps sum under the
 deadline. A kill at either is NO_VERDICT `deadline` naming the last phase in `gate.log`'s `phases=`. An
 operator `SPIRA_GATE_TIMEOUT` shorter than the deadline keeps reason `timeout`. The watchtower pages
 (`GATE SLOW`) when the p90 of `ran` less `waited` over 24 h exceeds `SPIRA_WATCH_GATE_P90_LIMIT` (300).

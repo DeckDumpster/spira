@@ -50,19 +50,18 @@
 //!
 //! ### States
 //!
-//! `idle`, `claimed`, `warming`, `gating`, `filing`, `dropped` (transient, back to `idle`).
+//! `idle`, `claimed`, `gating`, `filing`, `dropped` (transient, back to `idle`).
 //!
 //! | state × event | → state | effects |
 //! |---|---|---|
 //! | idle × tick/`gate.queued`, `pick` = Some, admission free | claimed | `gate.worker.claim` |
 //! | idle × tick, inbox empty or no admission | idle | none (silent) |
 //! | claimed × tip probe: gone or moved | dropped → idle | `gate.worker.discard` |
-//! | claimed × tip probe: matches | warming | `unit.start` warm leg |
-//! | warming × `unit.ran` (any rc) | gating | `unit.start` gate leg. A warm failure costs only a cold build (`lib.rs:323-333`) |
+//! | claimed × tip probe: matches | gating | `unit.start` gate leg |
 //! | gating × `unit.ran` rc, out | filing | `gate.worker.retain_output` if not PASS, then `gate.worker.complete` |
 //! | gating × `unit.ran` killed or timed out | filing | the same, with `classify` giving NO_VERDICT `gate-killed` |
 //! | filing × complete succeeded | idle | re-tick at once, because the drain continues (`lib.rs:292-307`) |
-//! | claimed/warming/gating × scheduler restart | idle | `gate.worker.recover`: the slot's claims go back to the inbox (`gateq.rs:223-234`) |
+//! | claimed/gating × scheduler restart | idle | `gate.worker.recover`: the slot's claims go back to the inbox (`gateq.rs:223-234`) |
 //! | any other pair | refused, naming the state | none |
 //!
 //! `release_is_current` (`lib.rs:218-228`, `main.rs:138-144`) is dropped. The scheduler is the
@@ -74,7 +73,6 @@
 //! |---|---|---|---|---|
 //! | `gate.worker.claim` | store (queue) | 5 s | `repo.branch.tip` (`gateq.rs:74-76`) | a job already claimed (it is a rename-once today, `gateq.rs:249`) |
 //! | `gate.worker.discard` | store | 5 s | `slot/repo.branch.tip` | a job this slot does not hold |
-//! | `unit.start` warm: `gate warm-tools --repo R` (`main.rs:19-24`) | unit | `SPIRA_GATE_TIMEOUT` (2700 s) | `warm/<repo>/<landref sha>` | an unknown repo |
 //! | `unit.start` gate: `gate.sh <branch> <repo>` with `SPIRA_GATE_LOCK_WAIT` and `SPIRA_GATE_BEAD` (`landing-pass/src/real.rs:1106-1117`). It runs `gate`, which runs testenv/podman | unit (container ≤2 inside) | 300 s hard cap (`spira/gate.sh:27`) plus the lock wait (unverified that the wait sits inside gate.sh) | `gate/<repo>/<branch>/<tip>` | no free admission slot. That is `effect.deferred`, never a drop |
 //! | `gate.worker.retain_output` | host | 5 s | the job file name with `.out` | none. It keeps the newest 300 (`gateq.rs:263-278`) |
 //! | `gate.worker.complete` | store | 5 s | `done/<repo.branch.tip>` (`gateq.rs:280-285`) | a job not claimed by this slot |
@@ -94,7 +92,6 @@
 //! - Children:
 //!   - the N−1 `gate-worker run --worker` self re-execs (`main.rs:95-107`)
 //!   - `bash` lib.sh context (`landing-pass/src/real.rs:33`)
-//!   - `timeout gate warm-tools` (`main.rs:20`)
 //!   - `gate.sh`, `gate`, then testenv and podman (`real.rs:1107`)
 //!   - `git rev-parse` (`main.rs:31`)
 //! - Pinned keys: `SPIRA_CERTIFY_PAR`, `SPIRA_GATE_TIMEOUT`, `SPIRA_GATE_LOCK_WAIT`, `SPIRA_RUN`,
@@ -130,7 +127,7 @@ pub const DISCARD: &str = "gate.worker.discard";
 pub const RETAIN_OUTPUT: &str = "gate.worker.retain_output";
 pub const COMPLETE: &str = "gate.worker.complete";
 pub const RECOVER: &str = "gate.worker.recover";
-/// The warm and gate legs: the Units port's start (S6), shared by every unit-starting task.
+/// The gate leg: the Units port's start (S6), shared by every unit-starting task.
 pub const UNIT_START: &str = runtime::units::UNIT_START;
 
 pub const CADENCE_MS: u64 = 30_000;
@@ -177,7 +174,7 @@ pub struct Snapshot {
     pub running_by_repo: BTreeMap<String, u32>,
     /// Free slots of the host gate admission (the `container` class depth).
     pub free_slots: u32,
-    /// Each slot's running leg, for the slots in `warming` or `gating` whose leg started.
+    /// Each slot's running leg, for the slots in `gating` whose leg started.
     #[serde(default)]
     pub legs: BTreeMap<usize, Leg>,
     /// `SPIRA_GATE_TIMEOUT` and the folded `SPIRA_GATE_LOCK_WAIT`, as pinned, in seconds.
@@ -211,7 +208,6 @@ pub enum State {
     #[default]
     Idle,
     Claimed,
-    Warming,
     Gating,
     Filing,
     Dropped,
@@ -227,7 +223,6 @@ pub enum Trigger {
     TipGoneOrMoved,
     Discarded,
     TipMatches,
-    WarmRan,
     GateRan,
     GateKilledOrTimedOut,
     Completed,
@@ -240,13 +235,11 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Idle, Trigger::Nothing, State::Idle),
     (State::Claimed, Trigger::TipGoneOrMoved, State::Dropped),
     (State::Dropped, Trigger::Discarded, State::Idle),
-    (State::Claimed, Trigger::TipMatches, State::Warming),
-    (State::Warming, Trigger::WarmRan, State::Gating),
+    (State::Claimed, Trigger::TipMatches, State::Gating),
     (State::Gating, Trigger::GateRan, State::Filing),
     (State::Gating, Trigger::GateKilledOrTimedOut, State::Filing),
     (State::Filing, Trigger::Completed, State::Idle),
     (State::Claimed, Trigger::SchedulerRestart, State::Idle),
-    (State::Warming, Trigger::SchedulerRestart, State::Idle),
     (State::Gating, Trigger::SchedulerRestart, State::Idle),
 ];
 
@@ -415,10 +408,7 @@ pub fn leg_paths(run_dir: &str, slot: usize, leg: &str, job: &Job) -> (String, S
 
 /// The leg's unit key: slot first so its outcome names the slot it belongs to.
 fn leg_key(slot: usize, leg: &str, job: &Job) -> String {
-    match leg {
-        "warm" => format!("{slot}/warm/{}/{}", job.repo, job.tip),
-        _ => format!("{slot}/gate/{}/{}/{}", job.repo, job.branch, job.tip),
-    }
+    format!("{slot}/{leg}/{}/{}/{}", job.repo, job.branch, job.tip)
 }
 
 /// The slot a leg's unit key names.
@@ -432,13 +422,8 @@ fn leg_act(snap: &Snapshot, slot: usize, leg: &str, job: &Job) -> Act {
     let (out, rc) = leg_paths(&snap.run_dir, slot, leg, job);
     let script = r#"out=$1 rc=$2; shift 2; mkdir -p "$(dirname "$out")"; rm -f "$rc"; "$@" > "$out" 2>&1; echo $? > "$rc.tmp" && mv "$rc.tmp" "$rc""#;
     let mut argv: Vec<String> = ["sh", "-c", script, "leg", &out, &rc].map(String::from).to_vec();
-    let mut env = vec![];
-    if leg == "warm" {
-        argv.extend(["timeout", "-k", "10", &snap.gate_timeout.max(1).to_string(), "gate", "warm-tools", "--repo", &job.repo].map(String::from));
-    } else {
-        argv.extend(["gate.sh", &job.branch, &job.repo].map(String::from));
-        env = vec![("SPIRA_GATE_LOCK_WAIT".to_string(), snap.lock_wait.to_string()), ("SPIRA_GATE_BEAD".to_string(), job.bead.clone())];
-    }
+    argv.extend(["gate.sh", &job.branch, &job.repo].map(String::from));
+    let env = vec![("SPIRA_GATE_LOCK_WAIT".to_string(), snap.lock_wait.to_string()), ("SPIRA_GATE_BEAD".to_string(), job.bead.clone())];
     let env = super::batcher_local::edge::with_defaults(env, &snap.base_env);
     let spec = runtime::units::UnitSpec { task: NAME.into(), key: leg_key(slot, leg, job), argv, env, cwd: None };
     Act::new(UNIT_START, spec.key.clone()).with_input(serde_json::to_string(&spec).unwrap_or_default())
@@ -454,7 +439,7 @@ fn watchdog(slot: &mut Slot, now_ms: u64) -> bool {
     let quick = match slot.state {
         State::Idle => false,
         State::Claimed | State::Dropped | State::Filing => true,
-        State::Warming | State::Gating => !slot.leg_started,
+        State::Gating => !slot.leg_started,
     };
     if !quick {
         slot.stall = None;
@@ -471,8 +456,7 @@ fn watchdog(slot: &mut Slot, now_ms: u64) -> bool {
 }
 
 /// What the probe's snapshot moves each slot to. An idle slot claims the next job while host
-/// admission has room; a slot whose leg ended moves on: a warm leg to the gate leg, a gate leg
-/// to filing; a slot whose leg is gone with no status, after a restart, gives its claim back.
+/// admission has room; a slot whose leg ended moves on: a gate leg to filing; a slot whose leg is gone with no status, after a restart, gives its claim back.
 /// The CLAIM, TIP, DISCARD and COMPLETE outcomes move a slot in `on_outcome`.
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
@@ -494,25 +478,16 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
                 acts.push(Act::new(CLAIM, job.key()).with_input(slot_input(i, &job)));
                 *slot = Slot { state: State::Claimed, job: Some(job), started_ms: Some(snap.now_ms), leg_started: false, stall: None };
             }
-            (State::Warming | State::Gating, Some(job)) if slot.leg_started => {
+            (State::Gating, Some(job)) if slot.leg_started => {
                 let Some(leg) = snap.legs.get(&i).filter(|l| !l.running) else { continue };
-                if slot.state == State::Warming && leg.rc.is_some() {
-                    acts.push(leg_act(snap, i, "gate", &job));
-                    *slot = Slot { state: State::Gating, leg_started: false, ..slot.clone() };
-                } else if slot.state == State::Gating {
-                    let (out_path, _) = leg_paths(&snap.run_dir, i, "gate", &job);
-                    let filing = Filing { slot: i, job: job.clone(), rc: leg.rc, out_path, started_ms: slot.started_ms.unwrap_or(snap.now_ms), finished_ms: snap.now_ms };
-                    let input = serde_json::to_string(&filing).unwrap_or_default();
-                    if leg.verdict.as_deref() != Some("PASS") {
-                        acts.push(Act::new(RETAIN_OUTPUT, format!("{}.out", job.key())).with_input(input.clone()));
-                    }
-                    acts.push(Act::new(COMPLETE, format!("done/{}", job.key())).with_input(input));
-                    *slot = Slot { state: State::Filing, leg_started: false, ..slot.clone() };
-                } else {
-                    // A warm leg gone with no status: the scheduler (or the host) restarted.
-                    acts.push(Act::new(RECOVER, i.to_string()).with_input(i.to_string()));
-                    *slot = Slot::default();
+                let (out_path, _) = leg_paths(&snap.run_dir, i, "gate", &job);
+                let filing = Filing { slot: i, job: job.clone(), rc: leg.rc, out_path, started_ms: slot.started_ms.unwrap_or(snap.now_ms), finished_ms: snap.now_ms };
+                let input = serde_json::to_string(&filing).unwrap_or_default();
+                if leg.verdict.as_deref() != Some("PASS") {
+                    acts.push(Act::new(RETAIN_OUTPUT, format!("{}.out", job.key())).with_input(input.clone()));
                 }
+                acts.push(Act::new(COMPLETE, format!("done/{}", job.key())).with_input(input));
+                *slot = Slot { state: State::Filing, leg_started: false, ..slot.clone() };
             }
             _ => {}
         }
@@ -520,7 +495,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     (next, acts)
 }
 
-/// A slot's step on one of its own effects' outcomes: CLAIM → TIP; TIP → warm leg, or drop;
+/// A slot's step on one of its own effects' outcomes: CLAIM → TIP; TIP → gate leg, or drop;
 /// a leg's start recorded; DISCARD → idle; COMPLETE → idle (the drain goes on at once).
 pub fn on_outcome(carry: &Carry, effect: &str, input: &str, ok: bool, body: &str, pins: &Snapshot) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
@@ -530,15 +505,7 @@ pub fn on_outcome(carry: &Carry, effect: &str, input: &str, ok: bool, body: &str
         let Some(i) = slot_of_leg(&spec.key) else { return (next, acts) };
         let Some(slot) = next.slots.get_mut(i) else { return (next, acts) };
         match (slot.state, ok) {
-            (State::Warming | State::Gating, true) => slot.leg_started = true,
-            // A warm leg that would not start costs only a cold build: on to the gate.
-            (State::Warming, false) => {
-                if let Some(job) = slot.job.clone() {
-                    slot.state = State::Gating;
-                    slot.leg_started = false;
-                    acts.push(leg_act(pins, i, "gate", &job));
-                }
-            }
+            (State::Gating, true) => slot.leg_started = true,
             (State::Gating, false) => {
                 if let Some(job) = slot.job.clone() {
                     let (out_path, _) = leg_paths(&pins.run_dir, i, "gate", &job);
@@ -563,8 +530,8 @@ pub fn on_outcome(carry: &Carry, effect: &str, input: &str, ok: bool, body: &str
         (State::Claimed, CLAIM, false) => *slot = Slot::default(),
         (State::Claimed, TIP, true) => match check_tip(&sj.job, Some(body.trim()).filter(|t| !t.is_empty())) {
             TipCheck::Proceed => {
-                acts.push(leg_act(pins, sj.slot, "warm", &sj.job));
-                slot.state = State::Warming;
+                acts.push(leg_act(pins, sj.slot, "gate", &sj.job));
+                slot.state = State::Gating;
             }
             TipCheck::Gone | TipCheck::Moved => {
                 acts.push(Act::new(DISCARD, format!("{}/{}", sj.slot, sj.job.key())).with_input(input.to_string()));
@@ -702,7 +669,6 @@ pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
     for (i, slot) in carry.slots.iter().enumerate() {
         let (Some(job), true) = (&slot.job, slot.leg_started) else { continue };
         let leg = match slot.state {
-            State::Warming => "warm",
             State::Gating => "gate",
             _ => continue,
         };
@@ -774,7 +740,7 @@ pub fn complete(e: &crate::Effects, input: &str) -> Result<String, String> {
     let word = run.outcome.word();
     let settled = q.settle(f.slot, &landing_pass::gateq::Done { job, run, started_ms: f.started_ms, finished_ms: f.finished_ms, gate: String::new() }).map_err(|e| format!("{COMPLETE}: {e}"))?;
     let word = if settled == landing_pass::gateq::Settled::Requeued { "died at the cap, queued again" } else { word };
-    for leg in ["warm", "gate"] {
+    for leg in ["gate"] {
         let (out, rc) = leg_paths(&e.world.run_dir.display().to_string(), f.slot, leg, &f.job);
         let _ = std::fs::remove_file(out);
         let _ = std::fs::remove_file(rc);

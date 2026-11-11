@@ -1,7 +1,7 @@
 //! The world scenarios `gate-verdict-red` and `gate-verdict-silent`, ported to the loop world
 //! (`spira_sim::loopworld`): the service's registrations on the `VirtualDriver`, every effect a
 //! double (ruling D6). The task under test is `gate.worker` (`spira_runtime::tasks::a::
-//! gate_worker`): its queue effects are answered over an in-memory gate queue, its warm and gate
+//! gate_worker`): its queue effects are answered over an in-memory gate queue, its gate
 //! legs are units on the loop's scripted manager, and its probe reads each ended leg's status
 //! and classifies the gate's output with the task's own `classify`, as the live probe does from
 //! the leg's files.
@@ -30,7 +30,6 @@ use sim::doubles::Doubles;
 use spira_runtime::tasks::a::gate_worker::{self as gw, Carry, Filing, Job, Leg, SlotJob, Snapshot, State};
 use spira_sim::loopworld::{self, Bead, Run, Script, World, MIN, REPO};
 
-const WARM_MS: u64 = 30_000;
 const GATE_MS: u64 = 90_000;
 /// Free slots of the host gate admission.
 const ADMISSION: u32 = 2;
@@ -71,10 +70,7 @@ fn parse<T: serde::de::DeserializeOwned>(what: &str, input: &str) -> Result<T, S
 
 /// The leg's unit key, as the task names it (slot first).
 fn leg_key(slot: usize, leg: &str, job: &Job) -> String {
-    match leg {
-        "warm" => format!("{slot}/warm/{}/{}", job.repo, job.tip),
-        _ => format!("{slot}/gate/{}/{}/{}", job.repo, job.branch, job.tip),
-    }
+    format!("{slot}/{leg}/{}/{}/{}", job.repo, job.branch, job.tip)
 }
 
 /// `landing-pass land`'s CHECK 6 with gate-worker, over the store: take and apply each SUBMITTED
@@ -118,7 +114,6 @@ fn observe(w: &World, s: &Shared, input: &str) -> Result<String, String> {
     for (i, slot) in carry.slots.iter().enumerate() {
         let (Some(job), true) = (&slot.job, slot.leg_started) else { continue };
         let leg = match slot.state {
-            State::Warming => "warm",
             State::Gating => "gate",
             _ => continue,
         };
@@ -141,18 +136,13 @@ fn unit_start(w: &World, s: &Shared, input: &str) -> Result<String, String> {
     let start: StartSpec = parse(UNIT_START, input)?;
     if start.unit.task == gw::NAME {
         let mut g = gate(s);
-        let gating = start.unit.key.contains("/gate/");
-        let (rc, out) = if gating {
-            let bead = start.unit.env.iter().find(|(k, _)| k == "SPIRA_GATE_BEAD").map(|(_, v)| v.clone()).ok_or("a gate leg carries SPIRA_GATE_BEAD")?;
-            let n = g.runs.get(&bead).copied().unwrap_or(0);
-            g.runs.insert(bead.clone(), n + 1);
-            let answers = g.answers.get(&bead).cloned().unwrap_or_default();
-            answers.get(n).or(answers.last()).cloned().unwrap_or((PASS.0, PASS.1.into()))
-        } else {
-            (0, "warmed".into())
-        };
+        let bead = start.unit.env.iter().find(|(k, _)| k == "SPIRA_GATE_BEAD").map(|(_, v)| v.clone()).ok_or("a gate leg carries SPIRA_GATE_BEAD")?;
+        let n = g.runs.get(&bead).copied().unwrap_or(0);
+        g.runs.insert(bead.clone(), n + 1);
+        let answers = g.answers.get(&bead).cloned().unwrap_or_default();
+        let (rc, out) = answers.get(n).or(answers.last()).cloned().unwrap_or((PASS.0, PASS.1.into()));
         g.legs.insert(start.unit.key.clone(), (rc, out));
-        w.units.script(gw::NAME, if gating { GATE_MS } else { WARM_MS }, Exit::Code(rc));
+        w.units.script(gw::NAME, GATE_MS, Exit::Code(rc));
     }
     units::effect(&*w.units, UNIT_START, input)
 }

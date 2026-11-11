@@ -4,23 +4,15 @@ use landing_pass::model::RepoRow;
 use landing_pass::ports::{Git, Tools};
 use landing_pass::real::{load_context, RealGit, RealTools};
 use landing_pass::report::Reporter;
-use landing_pass::util::{command, run_capture};
+use landing_pass::util::command;
 use std::path::PathBuf;
 use std::process::{Child, ExitCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-struct RealGate<'a>(&'a RealTools, &'a str);
+struct RealGate<'a>(&'a RealTools);
 impl Gate for RealGate<'_> {
     fn gate(&self, branch: &str, repo: &str, lock_wait: &str, bead: &str) -> (i32, String) {
         self.0.gate(branch, repo, lock_wait, bead)
-    }
-    /// `gate warm-tools`, by name on the launcher's PATH as gate.sh finds it, bounded by the
-    /// gate timeout (`self.1`, SPIRA_GATE_TIMEOUT) like the gate it runs ahead of.
-    fn warm(&self, repo: &str) -> Option<(i32, String)> {
-        let mut c = command("timeout");
-        c.args(["-k", "10", self.1, "gate", "warm-tools", "--repo", repo]).stdin(std::process::Stdio::null());
-        let (rc, so, se) = run_capture(c);
-        Some((rc, format!("{}{}", String::from_utf8_lossy(&so), String::from_utf8_lossy(&se))))
     }
 }
 
@@ -125,7 +117,7 @@ fn real_main(meter: &spira_otel::metrics::Run) -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let gate = RealGate(&tools, &gate_timeout);
+            let gate = RealGate(&tools);
             let w = Worker {
                 queue: &queue,
                 gate: &gate,

@@ -23,7 +23,7 @@ pub const PATH: &str = "gate.steps";
 
 /// The gate tree's directory of tools keyed by tree id (sp-g9f3t; DESIGN.md "Tools keyed by
 /// the tree they were built from"). Under `target/`, which `git clean -e target` keeps.
-pub const TOOLS_DIR: &str = "target/gate-tools";
+pub const TOOLS_DIR: &str = "target/tree-tools";
 
 /// The stamp in a keyed tools directory: the tree id its binaries were built from.
 pub const TOOLS_STAMP: &str = "TREE";

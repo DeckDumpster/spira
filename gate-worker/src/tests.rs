@@ -306,63 +306,6 @@ fn a_fault_keeps_the_gates_whole_output_and_a_pass_does_not() {
     }
 }
 
-/// Records warm and gate calls in order; the warm answers `warm_rc`.
-struct Warming<'a>(&'a RefCell<Vec<String>>, i32);
-impl Gate for Warming<'_> {
-    fn gate(&self, branch: &str, repo: &str, _: &str, _: &str) -> (i32, String) {
-        self.0.borrow_mut().push(format!("gate {repo} {branch}"));
-        (0, "gate: VERDICT=PASS".into())
-    }
-    fn warm(&self, repo: &str) -> Option<(i32, String)> {
-        self.0.borrow_mut().push(format!("warm {repo}"));
-        Some((self.1, if self.1 == 0 { "already warm abc-def\n".into() } else { "gate warm-tools: build failed\n".into() }))
-    }
-}
-
-#[test]
-fn the_landing_refs_tools_are_warmed_before_each_gate_off_its_clock() {
-    for warm_rc in [0, 1] {
-        let d = tmp(&format!("warm-{warm_rc}"));
-        let q = GateQueue::new(&d);
-        q.enqueue(&Job::new("spira", "spira/sp-1", "sp-1", "t1", false)).unwrap();
-        q.enqueue(&Job::new("deck", "deck/sp-2", "sp-2", "t2", false)).unwrap();
-        struct AnyTip;
-        impl Branches for AnyTip {
-            fn tip(&self, _: &str, b: &str) -> Option<String> {
-                Some(format!("t{}", b.rsplit("sp-").next().unwrap()))
-            }
-        }
-        let calls = RefCell::new(Vec::new());
-        let logged = RefCell::new(Vec::new());
-        let log = |m: &str| logged.borrow_mut().push(m.to_string());
-        let g = Warming(&calls, warm_rc);
-        let w = Worker { queue: &q, gate: &g, branches: &AnyTip, clock: &Tick(AtomicU64::new(0)), lock_wait: 1, log: &log, slot: 0 };
-        // A warm that fails never holds the gate back: the gate builds its own tools, as before.
-        assert_eq!(w.drain(), 2, "warm rc {warm_rc}");
-        let calls = calls.borrow();
-        let mut want = vec!["warm spira", "gate spira spira/sp-1", "warm deck", "gate deck deck/sp-2"];
-        if calls.first().map(String::as_str) == Some("warm deck") {
-            want = vec!["warm deck", "gate deck deck/sp-2", "warm spira", "gate spira spira/sp-1"];
-        }
-        assert_eq!(*calls, want, "each gate is preceded by a warm of its own repository");
-        let warm_lines: Vec<_> = logged.borrow().iter().filter(|l| l.contains("warm-tools")).cloned().collect();
-        assert_eq!(warm_lines.len(), 2, "{warm_lines:?}");
-        assert!(warm_lines.iter().all(|l| l.contains(&format!("(rc {warm_rc})"))), "{warm_lines:?}");
-    }
-}
-
-#[test]
-fn a_dropped_job_is_never_warmed_for() {
-    let d = tmp("warm-gone");
-    let q = GateQueue::new(&d);
-    q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", "t1", false)).unwrap();
-    let calls = RefCell::new(Vec::new());
-    let g = Warming(&calls, 0);
-    let w = Worker { queue: &q, gate: &g, branches: &Tip(None), clock: &Tick(AtomicU64::new(0)), lock_wait: 1, log: &|_| {}, slot: 0 };
-    assert_eq!(w.drain(), 0);
-    assert!(calls.borrow().is_empty(), "{:?}", calls.borrow());
-}
-
 const CAP_DEATH: &str = "gate: signalled during the trial of spira/sp-a\ngate: VERDICT=NO_VERDICT reason=died branch=spira/sp-a repo=r suite=-\ngate: VERDICT=FAIL reason=over-cap branch=spira/sp-a repo=r suite=- (killed at the 300s hard cap)\n";
 
 fn worker_over<'a>(q: &'a GateQueue, g: &'a Scripted, tip: &'a Tip, clock: &'a Tick) -> Worker<'a> {
@@ -396,45 +339,4 @@ fn a_second_death_at_the_cap_is_filed_with_both_deaths_as_evidence() {
 #[test]
 fn a_gate_that_ends_for_another_reason_is_filed_at_once() {
     assert_eq!(drain_one(75, "gate: VERDICT=NO_VERDICT reason=lock").reason.as_deref(), Some("lock"));
-}
-
-/// The warm is held for `held` asks, then answers; records warms, pauses and the gate.
-struct Held<'a>(&'a RefCell<Vec<String>>, std::cell::Cell<u32>, u32);
-impl Gate for Held<'_> {
-    fn gate(&self, _: &str, _: &str, _: &str, _: &str) -> (i32, String) {
-        self.0.borrow_mut().push("gate".into());
-        (0, "gate: VERDICT=PASS".into())
-    }
-    fn warm(&self, _: &str) -> Option<(i32, String)> {
-        self.0.borrow_mut().push("warm".into());
-        let n = self.1.get();
-        self.1.set(n + 1);
-        Some(if n < self.2 { (1, "gate warm-tools: another warm-tools holds x.lock\n".into()) } else { (0, "already warm abc-def\n".into()) })
-    }
-    fn pause(&self, _: u64) {
-        self.0.borrow_mut().push("pause".into());
-    }
-}
-
-fn drain_held(name: &str, held: u32) -> Vec<String> {
-    let d = tmp(name);
-    let q = GateQueue::new(&d);
-    q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", "t1", false)).unwrap();
-    let calls = RefCell::new(Vec::new());
-    let g = Held(&calls, std::cell::Cell::new(0), held);
-    let w = Worker { queue: &q, gate: &g, branches: &Tip(Some("t1".into())), clock: &Tick(AtomicU64::new(0)), lock_wait: 1, log: &|_| {}, slot: 0 };
-    assert_eq!(w.drain(), 1);
-    calls.into_inner()
-}
-
-#[test]
-fn a_warm_held_by_another_process_is_waited_for_before_the_gate_starts() {
-    assert_eq!(drain_held("warm-held", 2), ["warm", "pause", "warm", "pause", "warm", "gate"]);
-}
-
-#[test]
-fn a_warm_held_forever_stops_waiting_and_the_gate_runs_anyway() {
-    let calls = drain_held("warm-held-forever", u32::MAX);
-    assert_eq!(calls.iter().filter(|c| *c == "pause").count(), WARM_POLLS as usize);
-    assert_eq!(calls.last().map(String::as_str), Some("gate"));
 }
