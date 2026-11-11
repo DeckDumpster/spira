@@ -135,7 +135,7 @@ mod tests {
 
     fn bead(id: &str, labels: &[&str], blocks: &[&str]) -> Value {
         json!({
-            "id": id, "status": "open", "issue_type": "task", "description": "", "labels": labels,
+            "id": id, "status": "open", "issue_type": "task", "description": "", "labels": [labels, &["repo:r"][..]].concat(),
             "dependencies": blocks.iter().map(|b| json!({"issue_id": id, "depends_on_id": b, "type": "blocks"})).collect::<Vec<_>>(),
         })
     }
@@ -180,7 +180,7 @@ mod tests {
     fn lint_all_reads_the_set_once_and_the_absent_blocker_by_id() {
         let fake = Arc::new(Content::new(vec![
             bead("sp-a", &["needs-op-test"], &["sp-d"]),
-            json!({"id": "sp-d", "status": "closed", "issue_type": "task", "labels": ["needs-op-test"], "dependencies": []}),
+            json!({"id": "sp-d", "status": "closed", "issue_type": "task", "labels": ["needs-op-test", "repo:r"], "dependencies": []}),
         ]));
         let client = LcClient::over(fake.clone(), true);
         let src = DoorSource::load(&client, Set::All, || Ok(HashMap::new()));
