@@ -732,3 +732,5 @@ beads_sql_host
 beads_sql_port
 beads_sql_user
 beads_sql_password_file
+disk_fill_hours
+disk_watch_paths

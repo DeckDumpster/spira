@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=watchtower
+DOC=Hours: watchtower pages when a watched filesystem's measured fill rate would empty it within this many.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_DISK_FILL_HOURS:=6}"
+SPIRA_CONF_DEFAULT_EOF

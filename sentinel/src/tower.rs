@@ -133,6 +133,9 @@ fn conditions_check(n: i64, run: &Path) -> Result<(), String> {
         tmp_path: getenv("SPIRA_TMP_PROBE_PATH").unwrap_or_else(|| "/tmp".into()),
         tmp_floor_mib: getenv_i64("SPIRA_TMPFS_SHED_FREE_MIB", 6144),
         disk_floor_pct: reg_i64("SPIRA_DISK_FLOOR_PCT")?,
+        disk_fill_hours: reg_i64("SPIRA_DISK_FILL_HOURS")?,
+        disk_watch_paths: probes::watch_paths(run, &reg("SPIRA_DISK_WATCH_PATHS")?, &reg("SPIRA_DWARF_BUILD_BASE")?),
+        disk_state: run.join("conditions").join("disk-fill.state"),
         psi_dir: getenv("SPIRA_PSI_DIR").unwrap_or_else(|| "/proc/pressure".into()),
         psi_full_avg60: spira_config::process::cfg_parse::<f64>("SPIRA_PSI_FULL_AVG60")?,
         psi_sustain_secs: reg_i64("SPIRA_PSI_SUSTAIN_SECS")?,
@@ -145,6 +148,7 @@ fn conditions_check(n: i64, run: &Path) -> Result<(), String> {
     conditions::reconcile(n, &ctx, "failing-units", probes::failing_units(&cfg, run));
     conditions::reconcile(n, &ctx, "oom-restarts", probes::oom_restarts(&cfg, n, run));
     conditions::reconcile(n, &ctx, "pressure", probes::pressure(&cfg));
+    conditions::reconcile(n, &ctx, "disk-room", probes::disk_room(&cfg, n, &probes::read_fs));
     conditions::reconcile(n, &ctx, "cold-overlap", probes::cold_overlap(&cfg, run));
     conditions::reconcile(n, &ctx, "release-store", probes::release_store(&cfg));
     let rowless = probes::RowlessCfg { lc: client()?, cap: getenv_i64("SPIRA_ROWLESS_CAP", 20).max(1) as usize, sustain_secs: getenv_i64("SPIRA_ROWLESS_SUSTAIN_SECS", 300), state: run.join("conditions").join("rowless.state"), full_secs: getenv_i64("SPIRA_ROWLESS_FULL_SWEEP_SECS", 3600).max(1) };
