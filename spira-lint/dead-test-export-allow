@@ -1,0 +1,4 @@
+# dead-test-export: `<NAME> <path>` per assignment of an unread variable. SHRINK-ONLY; never add a line for new code.
+SPIRA_CAPACITY_PAUSE_FILE spira/test-dwarf-sweep.sh
+SPIRA_RECONCILER_GRACE_SECS spira/test-reconciler.sh
+SPIRA_PREFLIGHT_WALL_SECS spira/test-reconciler.sh
