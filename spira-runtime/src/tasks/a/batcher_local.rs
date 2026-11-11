@@ -15,7 +15,7 @@
 //! Probe `batcher.local.observe` (deadline 10 s) returns one snapshot per admitted repo, from:
 //!
 //! - **LcClient (S7a):** `list --state SUBMITTED,CERTIFIED --snapshot` — pool and `sifted_tip` (`io.rs:212`, `:928-937`); `list --ids` for blockers (`io.rs:221`); `show <id>` for `stack` and the gate-red mark (`io.rs:244`, `:1614-1626`); `plan items --full --ids` for title, priority and dependencies (`io.rs:372-377`); `plan items --external-contains basefail:<repo>:` (`io.rs:495`).
-//! - **Round projection (S7b):** today `queue round status <repo>` — open round id, members, head, worktree (`io.rs:1705`, `:1728`, `:1742`) — and whether a `round certify` holds the round (`certify-<batch>.lock`, `io.rs:2316-2327`). The snapshot carries the "driven" bit from the projection.
+//! - **Round projection (S7b):** the open round id, members, head, worktree and phase, read in-process from the store's watched projection (`store_view`, `io::open_rounds`), no `queue round status` — and whether a `round certify` holds the round (`certify-<batch>.lock`, `io.rs:2316-2327`). The snapshot carries the "driven" bit from the projection.
 //! - **Config (S10), pinned:** the repo registry (`io.rs:135`; `spira_config::repos`), and the keys below.
 //! - Git is read at the edge (allowed child): branch tips `for-each-ref refs/heads/spira/*` (`io.rs:394-412`).
 //! - Raw files read today become **carried state**, not observe: `run/rounds-pace/<repo>/{state,pause,refusals}` (`pace.rs:166-194`, `:227`), `queue/<repo>/{base-moved,integration-hold,local-verdict}` (`io.rs:641`, `:1356-1373`, `:1434`, `:1815`), conflict streaks (`io.rs:793-817`). The scoped stop (`spira_config::scoped_stop::stop_for`, `main.rs:227`) is read through the world store verb (unverified that one exists).

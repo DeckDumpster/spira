@@ -24,7 +24,7 @@
 //! Probe `batcher.forge.observe` (deadline 10 s), per repo:
 //!
 //! - **LcClient (S7a):** the same pool reads as [[batcher-local]] (`io.rs:212`, `:221`, `:244`, `:372-377`, `:495`, `:928`).
-//! - **Batch projection (S7b):** today `queue batch show --repo <r>` → open batch PR, members (`io.rs:552-575`).
+//! - **Batch projection (S7b):** the open batch PR and members, read in-process from the store's watched projection (`io::read_open_batch`), no `queue batch show`.
 //!   An open batch means *no cut* (`main.rs:285-288`).
 //! - **Config (S10):** registry `land/root/landref/forge` (`main.rs:142-167`), `SPIRA_LOOM_ADDR` (`main.rs:1132`).
 //! - Git edge reads: branch tips (`io.rs:394`), `confirm_base` and `foreign_beads` (`io.rs:625-692`).
