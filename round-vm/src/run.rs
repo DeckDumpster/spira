@@ -3844,6 +3844,20 @@ mod tests {
     }
 
     #[test]
+    fn a_plain_cargo_test_log_yields_one_fail_line_per_failed_test_naming_its_crate_directory() {
+        let log = "     Running tests/it/main.rs (target/unittest/deps/it-1)\ntest a::b ... FAILED\n     Running spira-runtime/tests/it/x.rs (target/y)\ntest c ... ok\ntest d::e ... FAILED\n     Running unittests src/lib.rs (t)\ntest z ... FAILED\n";
+        let f = REMOTE_SCRIPT.find("cargo_test_reds() {").unwrap();
+        let func = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap() + 3];
+        let d = crate::testutil::TempDir::new();
+        std::fs::write(d.path().join("log"), log).unwrap();
+        let out = std::process::Command::new("bash")
+            .args(["-c", &format!("{func}\ncargo_test_reds \"$1\""), "bash", d.path().join("log").to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "FAIL dir:. a::b\nFAIL dir:spira-runtime d::e\n");
+    }
+
+    #[test]
     fn base_is_parsed_and_asks_the_job_to_lint() {
         let a = parse_run_args(&["/t".into(), "--base".into(), "local/main".into()]).unwrap();
         assert_eq!(a.base.as_deref(), Some("local/main"));

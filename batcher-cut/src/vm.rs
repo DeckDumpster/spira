@@ -1114,7 +1114,7 @@ mod tests {
     }
 
     #[test]
-    fn an_integration_probe_scopes_to_the_failing_packages_and_reads_exit_5_as_red() {
+    fn an_integration_probe_scopes_to_the_failing_packages() {
         assert_eq!(subset_scope("integration", &["loom".into(), "gate".into()]), "loom,gate");
         assert_eq!(subset_scope("integration", &[]), "integration");
     }

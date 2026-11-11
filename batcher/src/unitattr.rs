@@ -45,7 +45,7 @@ impl PackageGraph {
         packages
             .iter()
             .map(|p| match p.strip_prefix("dir:") {
-                Some(dir) => self.dirs.iter().find(|(_, d)| d.as_str() == dir).map_or(p.clone(), |(name, _)| name.clone()),
+                Some(dir) => self.dirs.iter().find(|(_, d)| d.as_str() == if dir == "." { "" } else { dir }).map_or(p.clone(), |(name, _)| name.clone()),
                 None => p.clone(),
             })
             .collect()
@@ -135,6 +135,8 @@ mod tests {
     #[test]
     fn a_dir_word_resolves_to_the_package_in_that_directory_and_an_unowned_one_stays() {
         assert_eq!(graph().resolve(&["dir:spira-runtime".into(), "gate".into(), "dir:nowhere".into()]), ["runtime", "gate", "dir:nowhere"]);
+        let root = PackageGraph { dirs: BTreeMap::from([("root".to_string(), String::new())]), deps: BTreeMap::new() };
+        assert_eq!(root.resolve(&["dir:.".into()]), ["root"]);
     }
 
     #[test]
