@@ -194,6 +194,15 @@ pub fn build_probe_result(rc: i32) -> Option<bool> {
     }
 }
 
+/// What a testenv suite job's exit code says: 0 it passed, 1 it did not, anything else is a fault.
+pub fn suite_probe_result(rc: i32) -> Option<bool> {
+    match rc {
+        0 => Some(true),
+        1 => Some(false),
+        _ => None,
+    }
+}
+
 /// What a `build=unit` job's exit code says: 0 the unit tests passed, 5 they did not, anything else is a fault.
 pub fn unit_probe_result(rc: i32) -> Option<bool> {
     match rc {
@@ -406,6 +415,17 @@ impl<'a> VmRunner<'a> {
         packages: &[String],
         verdict: fn(i32) -> Option<bool>,
     ) -> Option<bool> {
+        self.probe_scoped(subset, build, &subset_scope(build, packages), verdict)
+    }
+
+    /// `probe_subset` with the request's `suites=` given.
+    fn probe_scoped(
+        &mut self,
+        subset: &[Member],
+        build: &str,
+        scope: &str,
+        verdict: fn(i32) -> Option<bool>,
+    ) -> Option<bool> {
         self.build_n += 1;
         let job = format!("b{}", self.build_n);
         let removal: Vec<Id> = self
@@ -423,7 +443,7 @@ impl<'a> VmRunner<'a> {
             .tree_without(self.branch(&job), &job, &removal)
             .inspect_err(|e| eprintln!("batcher: {build} probe tree not built: {e}"))
             .ok()?;
-        self.request(&job, &branch, &[subset_scope(build, packages)], build)
+        self.request(&job, &branch, &[scope.to_string()], build)
             .inspect_err(|e| eprintln!("batcher: {e}"))
             .ok()?;
         let done = self.spool.join("res").join(format!("{job}.done"));
@@ -808,8 +828,17 @@ impl RoundRunner for VmRunner<'_> {
         self.filter_green_in(name, &[], subset)
     }
 
+    fn suite_green(&mut self, suite: &str, subset: &[Member]) -> Option<bool> {
+        let removal: Vec<Id> = self.members.iter().filter(|m| !subset.iter().any(|s| s.id == m.id)).map(|m| m.id.clone()).collect();
+        let build = build_for(&removal, &self.changed);
+        let green = self.probe_scoped(subset, build, suite, suite_probe_result)?;
+        let seen = io::result_status(&self.spool.join("res").join(format!("b{}", self.build_n)), suite);
+        (seen == Some(green)).then_some(green)
+    }
+
     fn filter_green_in(&mut self, name: &str, packages: &[String], subset: &[Member]) -> Option<bool> {
         match name {
+            LINT => self.probe_subset(subset, "lint", &[], unit_probe_result),
             UNIT_TESTS => self.probe_subset(subset, "unit", packages, unit_probe_result),
             INTEGRATION_TESTS => self.probe_subset(subset, INTEGRATION_BUILD, packages, unit_probe_result),
             _ => None,
@@ -1019,6 +1048,15 @@ mod tests {
         assert_eq!(unit_probe_result(5), Some(false));
         for rc in [1, 2, 4, 124, 137] {
             assert_eq!(unit_probe_result(rc), None, "rc {rc}");
+        }
+    }
+
+    #[test]
+    fn a_suite_probe_reads_exit_0_as_green_1_as_red_and_anything_else_as_a_fault() {
+        assert_eq!(suite_probe_result(0), Some(true));
+        assert_eq!(suite_probe_result(1), Some(false));
+        for rc in [2, 4, 5, 137] {
+            assert_eq!(suite_probe_result(rc), None, "rc {rc}");
         }
     }
 

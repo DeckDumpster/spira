@@ -81,6 +81,11 @@ pub trait RoundRunner {
     fn filter_green(&mut self, _name: &str, _members: &[Member]) -> Option<bool> {
         None
     }
+    /// Whether testenv suite `suite` is green with exactly `members` merged onto the base; `None`
+    /// when the runner cannot run a suite on a subset or the run faulted.
+    fn suite_green(&mut self, _suite: &str, _members: &[Member]) -> Option<bool> {
+        None
+    }
     /// Whether testenv runs to a verdict, rather than dying on a signal, with exactly `members`
     /// merged onto the base; `None` when the runner cannot probe a subset or the probe faulted.
     fn runner_survives(&mut self, _members: &[Member]) -> Option<bool> {
@@ -476,11 +481,26 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
                 actions = sole_member_culprit(&red, members);
             }
         }
+        let mut kind = "unattributed";
+        let mut cleared = String::new();
+        if actions.is_empty() && members.len() > 1 {
+            match red_alone(&format!("{} red{tests}", f.name), &mut |m| runner.filter_green_in(&f.name, &packages, m), members) {
+                Alone::Owners(found) => actions = found,
+                Alone::Base(said) => {
+                    kind = "base";
+                    cleared = said;
+                }
+                Alone::Cleared(said) => cleared = said,
+            }
+        }
         if actions.is_empty() {
             let mut page = vec![f.name.clone()];
             page.extend(f.failed.iter().take(MAX_NOTED_TESTS).cloned());
-            ops.incident("unattributed", &page);
-            return Ok(FilterEject::Unnamed(tests));
+            if !cleared.is_empty() {
+                page.push(format!("run alone: {cleared}"));
+            }
+            ops.incident(kind, &page);
+            return Ok(FilterEject::Unnamed(format!("{tests}{}", if cleared.is_empty() { String::new() } else { format!(" (run alone: {cleared})") })));
         }
         return Ok(match apply_build_actions(ops, members, &actions, &f.name)? {
             Some(next) => FilterEject::Survivors(next),
@@ -613,6 +633,59 @@ fn apply_build_actions<O: RoundOps>(ops: &mut O, members: &[Member], actions: &[
     }
     let rebuilt = ops.rebuild(&survivors)?;
     Ok((!rebuilt.is_empty()).then_some(rebuilt))
+}
+
+fn action_id(a: &Action) -> &Id {
+    let (Action::Eject { id, .. } | Action::Sequence { id, .. }) = a;
+    id
+}
+
+/// What running a red check on the base and on the base plus each member alone found.
+enum Alone {
+    /// Members whose tree alone is red, each with the per-member verdicts as its evidence.
+    Owners(Vec<Action>),
+    /// The base alone is red: no member is at fault.
+    Base(String),
+    /// No member's tree alone is red, or a run faulted before one could be named.
+    Cleared(String),
+}
+
+fn verdict_word(v: Option<bool>) -> &'static str {
+    match v {
+        Some(true) => "green",
+        Some(false) => "red",
+        None => "unknown",
+    }
+}
+
+/// Runs a check no output ties to a member on the base and then on the base plus each member
+/// alone, and names every member whose tree is red. The verdicts are printed to the round log.
+fn red_alone(red: &str, green: &mut dyn FnMut(&[Member]) -> Option<bool>, members: &[Member]) -> Alone {
+    let base = green(&[]);
+    match base {
+        None => return Alone::Cleared(String::new()),
+        Some(false) => {
+            println!("batcher: {red}: run alone: base red");
+            return Alone::Base("base red".into());
+        }
+        Some(true) => {}
+    }
+    let verdicts: Vec<(&Member, Option<bool>)> = members.iter().map(|m| (m, green(std::slice::from_ref(m)))).collect();
+    let said = std::iter::once("base green".to_string())
+        .chain(verdicts.iter().map(|(m, v)| format!("{} {}", m.id, verdict_word(*v))))
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!("batcher: {red}: run alone: {said}");
+    let owners: Vec<Action> = verdicts
+        .iter()
+        .filter(|(_, v)| *v == Some(false))
+        .map(|(m, _)| Action::Eject { id: m.id.clone(), line: format!("{red} with only {} merged onto the base (run alone: {said})", m.id) })
+        .collect();
+    if owners.is_empty() {
+        Alone::Cleared(said)
+    } else {
+        Alone::Owners(owners)
+    }
 }
 
 /// A main run that died on a signal belongs to one member: the only one that changes the code that
@@ -810,9 +883,49 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                 apply_build_actions(ops, &members, &alone, &suites)?;
                 return Ok(RoundEnd::Emptied(format!("{suites} red ejected the only member")));
             }
+            let mut found: Vec<Action> = vec![];
+            let mut base_red: Vec<String> = vec![];
+            let mut said: Vec<String> = vec![];
+            if members.len() > 1 {
+                for suite in &d.unattributed {
+                    match red_alone(&format!("{suite} red"), &mut |m| runner.suite_green(suite, m), &members) {
+                        Alone::Owners(a) => {
+                            for act in a {
+                                if !found.iter().any(|f| action_id(f) == action_id(&act)) {
+                                    found.push(act);
+                                }
+                            }
+                        }
+                        Alone::Base(w) => {
+                            base_red.push(suite.clone());
+                            said.push(format!("{suite}: {w}"));
+                        }
+                        Alone::Cleared(w) => said.push(format!("{suite}: {w}")),
+                    }
+                }
+            }
+            if !found.is_empty() {
+                let named = d.unattributed.join(",");
+                match apply_build_actions(ops, &members, &found, &named)? {
+                    Some(next) => {
+                        println!("batcher: {named} red names no member; run alone it was red for {} — re-cutting {} member(s)", found.iter().map(|a| action_id(a).as_str()).collect::<Vec<_>>().join(","), next.len());
+                        runner.stop_main()?;
+                        members = next;
+                        suites = d.unattributed.clone();
+                        kind = MainKind::Verify;
+                        continue;
+                    }
+                    None => return Ok(RoundEnd::Emptied(format!("{named} red ejected every member"))),
+                }
+            }
+            if !base_red.is_empty() {
+                ops.incident("base", &base_red);
+                return Ok(RoundEnd::Blocked(format!("base red: {} ({})", base_red.join(","), said.join("; "))));
+            }
             let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
             ops.judge(&d.unattributed, &ids);
-            return Ok(RoundEnd::Blocked(format!("unattributed red: {}", d.unattributed.join(","))));
+            let alone = if said.is_empty() { String::new() } else { format!(" (run alone: {})", said.join("; ")) };
+            return Ok(RoundEnd::Blocked(format!("unattributed red: {}{alone}", d.unattributed.join(","))));
         }
         if d.owners.is_empty() {
             if !d.flaky.is_empty() {
@@ -953,6 +1066,9 @@ pub(crate) mod tests {
         /// Whether the fake can build a member subset, and each subset it was asked to build.
         pub bisects: bool,
         pub probes: Vec<Vec<String>>,
+        /// Whether the fake can run a suite on a member subset, and each (suite, subset) it was asked for.
+        pub runs_alone: bool,
+        pub alone: Vec<(String, Vec<String>)>,
         /// The packages each scoped filter probe was asked to judge.
         pub scoped: Vec<Vec<String>>,
         /// A runner that cannot build a tree with members taken out: every such job fails to launch.
@@ -997,6 +1113,8 @@ pub(crate) mod tests {
                 aborts_with: None,
                 bisects: false,
                 probes: vec![],
+                runs_alone: false,
+                alone: vec![],
                 scoped: vec![],
                 refuses_removals: false,
                 added_by: BTreeMap::new(),
@@ -1091,10 +1209,15 @@ pub(crate) mod tests {
             self.probes.push(tree.iter().cloned().collect());
             self.bisects.then(|| self.compiler.as_ref().and_then(|c| c(&tree)).is_none())
         }
+        fn suite_green(&mut self, suite: &str, members: &[Member]) -> Option<bool> {
+            let tree: BTreeSet<String> = members.iter().map(|m| m.id.clone()).collect();
+            self.alone.push((suite.to_string(), tree.iter().cloned().collect()));
+            self.runs_alone.then(|| !(self.red)(suite, &tree))
+        }
         fn filter_green(&mut self, _name: &str, members: &[Member]) -> Option<bool> {
             let tree: BTreeSet<String> = members.iter().map(|m| m.id.clone()).collect();
             self.probes.push(tree.iter().cloned().collect());
-            self.bisects.then(|| self.filter.as_ref().is_none_or(|f| f(&tree).is_none()))
+            (self.bisects || self.runs_alone).then(|| self.filter.as_ref().is_none_or(|f| f(&tree).is_none()))
         }
         fn filter_green_in(&mut self, name: &str, packages: &[String], members: &[Member]) -> Option<bool> {
             self.scoped.push(packages.to_vec());
@@ -1440,6 +1563,44 @@ pub(crate) mod tests {
         assert_eq!(f.stopped, 0);
         assert!(ops.preempts.is_empty() && ops.ejected.is_empty());
         assert_eq!(ops.judged.len(), 1, "an unattributed red goes to the judge, not to an eject");
+    }
+
+    #[test]
+    fn a_red_no_rerun_attributes_is_run_on_the_base_and_each_member_alone_and_every_red_member_is_ejected() {
+        let mut f = Fake::new(|s, tree| s == "test-00.sh" && (tree.contains("m2") || tree.contains("m3")));
+        f.maxpar = 4;
+        f.runs_alone = true;
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        let ejected: Vec<&str> = ops.ejected.iter().map(|(m, _)| m.as_str()).collect();
+        assert_eq!(ejected, ["m2", "m3"], "{:?}", ops.eject_evidence);
+        assert!(ops.eject_evidence.iter().all(|(_, l)| l.contains("base green, m1 green, m2 red, m3 red")), "{:?}", ops.eject_evidence);
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 1 && members[0].id == "m1"), "{end:?}");
+        assert!(f.alone.contains(&("test-00.sh".to_string(), vec![])), "the base was run: {:?}", f.alone);
+        assert!(ops.judged.is_empty());
+    }
+
+    #[test]
+    fn a_red_every_member_is_green_alone_for_is_judged_with_the_per_member_verdicts_in_the_reason() {
+        let mut f = Fake::new(|s, tree| s == "test-00.sh" && tree.len() >= 2);
+        f.maxpar = 4;
+        f.runs_alone = true;
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert!(ops.ejected.is_empty() && ops.judged.len() == 1, "{:?}", ops.ejected);
+        assert!(matches!(&end, RoundEnd::Blocked(why) if why.contains("run alone: test-00.sh: base green, m1 green, m2 green, m3 green")), "{end:?}");
+    }
+
+    #[test]
+    fn a_filter_red_naming_no_member_whose_base_is_red_is_filed_as_the_base() {
+        let mut f = Fake::new(|_, _| false);
+        f.runs_alone = true;
+        f.filter = Some(Box::new(|_| Some(FilterRed { name: "spira-lint".into(), named: vec![], failed: vec![] })));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(ops.incidents.first().map(|(k, _)| k.as_str()), Some("base"), "{:?}", ops.incidents);
+        assert!(ops.ejected.is_empty());
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
     }
 
     #[test]
@@ -2139,7 +2300,7 @@ pub(crate) mod tests {
         let mut ops = Ops::default();
         let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
-        assert_eq!(ops.incidents, vec![("unattributed".to_string(), vec!["unit-tests".to_string()])]);
+        assert_eq!(ops.incidents, vec![("unattributed".to_string(), vec!["unit-tests".to_string(), "run alone: base green, m1 green, m2 green, m3 green".to_string()])]);
     }
 
     const INTEG_FAILING: [&str; 2] = ["FAIL dir:spira-runtime leg_lost::pauses", "FAIL dir:spira-runtime leg_lost::abandons"];

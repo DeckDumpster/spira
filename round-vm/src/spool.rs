@@ -31,6 +31,8 @@ pub enum Build {
     Unit,
     /// Like `Unit`, for the `tests/` targets.
     Integration,
+    /// Only whether `spira-lint` is clean on the job's tree against the landing ref; exit 5 when it is not.
+    Lint,
 }
 
 impl Build {
@@ -42,6 +44,7 @@ impl Build {
             Build::Workspace => "workspace",
             Build::Unit => "unit",
             Build::Integration => "integration",
+            Build::Lint => "lint",
         }
     }
     pub fn parse(s: &str) -> Option<Build> {
@@ -52,6 +55,7 @@ impl Build {
             "workspace" => Some(Build::Workspace),
             "unit" => Some(Build::Unit),
             "integration" => Some(Build::Integration),
+            "lint" => Some(Build::Lint),
             _ => None,
         }
     }
@@ -154,6 +158,18 @@ integration)
     [ "$rc" -eq 101 ] && exit 5
     [ "$rc" -eq 0 ] || exit "$rc"
     echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/integration-tests.result"
+    exit 0 ;;
+lint)
+    d="$HOME/attr/$job"
+    rm -rf "$d"; mkdir -p "$HOME/attr"
+    git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
+    cd "$d" || exit 2
+    CARGO_TARGET_DIR="$HOME/attr-target" cargo build -q --profile release --locked -p spira-lint --config profile.release.incremental=false >&2 || { cd "$HOME" && rm -rf "$d"; exit 4; }
+    "$HOME/attr-target/release/spira-lint" --root "$d" --base origin/base >&2
+    rc=$?
+    cd "$HOME" && rm -rf "$d"
+    [ "$rc" -eq 0 ] || exit 5
+    echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/spira-lint.result"
     exit 0 ;;
 artifacts|dwarf)
     d="$HOME/attr/$job"
@@ -581,6 +597,16 @@ mod tests {
         for f in ["--profile unittest", "--features integration", "profile.unittest.incremental=false"] {
             assert!(arm.contains(f) && round_cmd.contains(f), "{f}");
         }
+    }
+
+    #[test]
+    fn a_lint_job_builds_spira_lint_from_its_own_tree_and_exits_5_when_it_finds_something() {
+        let r = parse_request("l1", "branch=spira/batcher-attr/x-l1\nsuites=spira-lint\nbuild=lint\n").unwrap();
+        assert_eq!(r.build, Build::Lint);
+        let (rc, _, ran) = attr_job("lint", "spira-lint", 0, "spira-lint.result");
+        assert!(ran.contains("-p spira-lint") && ran.contains("--locked"), "{ran}");
+        assert_ne!(rc, 4, "a built linter is not a build failure");
+        assert_eq!(attr_job_rc("lint", 101, "spira-lint.result"), (4, false), "a tree that does not build is a fault, not a lint verdict");
     }
 
     #[test]
