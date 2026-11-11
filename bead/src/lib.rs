@@ -9,6 +9,7 @@
 pub mod bdq;
 #[path = "../tests/fixtures/bdsim.rs"]
 pub mod bdsim;
+pub mod door;
 pub mod claimdesc;
 pub mod guard;
 pub mod lc;

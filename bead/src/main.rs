@@ -2,7 +2,6 @@
 //! this binary by bare name on the release PATH, passing its own directory as `--home`
 //! (the same convention `gate.sh` established).
 
-use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -11,7 +10,7 @@ use spira_config::amendment;
 use bead::claimdesc::notify_live_dwarf;
 use bead::{
     runes_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
-    lane_check, stack_after_refusal, find_id_by_title, lint_judge, parse_created_id, non_work_labels, parse_blocks_targets, relates_only_targets, parse_list_ids, parse_show_row,
+    lane_check, stack_after_refusal, find_id_by_title, lint_judge, parse_created_id, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
 
@@ -56,7 +55,7 @@ fn main() {
         "dep" => match rest.first().map(String::as_str) {
             Some("add") => cmd_dep_add(&home, &rest[1..]),
             Some("remove") => cmd_dep_remove(&home, &rest[1..]),
-            Some("epic-edges") => cmd_dep_epic_edges(&home),
+            Some("epic-edges") => cmd_dep_epic_edges(),
             Some("convert") => cmd_dep_convert(&home, &rest[1..]),
             _ => {
                 eprintln!("usage: bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>");
@@ -117,12 +116,6 @@ fn bdq_status(home: &str, args: &[String]) -> i32 {
     cmd.args(args).status().map(|s| s.code().unwrap_or(1)).unwrap_or(127)
 }
 
-/// Runs `bdq` capturing stdout, discarding stderr (`2>/dev/null`, matching every read call
-/// `bead.sh`'s own sweep made).
-fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
-    bdq_capture_with(home, args, Stdio::null())
-}
-
 fn bdq_capture_with(home: &str, args: &[String], stderr: Stdio) -> (i32, String) {
     let mut cmd = match bdq_command(home) {
         Ok(c) => c,
@@ -142,10 +135,21 @@ fn bdq_capture_with(home: &str, args: &[String], stderr: Stdio) -> (i32, String)
     }
 }
 
+/// A read through the content door; never forks `bdq`.
+fn door(args: &[String]) -> (i32, String) {
+    match spira_config::lc_call::LcClient::configured() {
+        Ok(c) => bead::door::read(&c, args),
+        Err(e) => {
+            eprintln!("bead: {e}");
+            (BRIDGE_FAILED, String::new())
+        }
+    }
+}
+
 /// The labels of `id`; empty when it cannot be read. A bd parent cannot be blocked on its own
 /// child, so a remedy filed under an incident is wired as a plain blocks edge instead.
-fn parent_labels(home: &str, id: &str) -> Vec<String> {
-    let (_, out) = bdq_capture(home, &s(&["show", id, "--json"]));
+fn parent_labels(id: &str) -> Vec<String> {
+    let (_, out) = door(&s(&["show", id, "--json"]));
     parse_show_row(&out).map(|r| r.labels).unwrap_or_default()
 }
 
@@ -160,7 +164,7 @@ fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, 
     let (code, mut stdout) = bdq_capture_with(home, args, Stdio::inherit());
     if parse_created_id(&stdout).is_none() {
         if let Some(title) = title {
-            let (_, listing) = bdq_capture(home, &s(&["list", "--limit", "0", "--json"]));
+            let (_, listing) = door(&s(&["list", "--limit", "0", "--json"]));
             if let Some(found) = find_id_by_title(&listing, title) {
                 eprintln!("bead: file: bd create printed no id; found {found} by its title and creating its lifecycle row");
                 stdout = format!("{found}\n");
@@ -615,7 +619,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     }
 
     let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
-    let parent_labels = parent.as_deref().map(|p| parent_labels(home, p)).unwrap_or_default();
+    let parent_labels = parent.as_deref().map(|p| parent_labels(p)).unwrap_or_default();
     let incident_parent: Option<(String, Vec<String>)> = match &parent {
         Some(_) if bead::is_incident(&parent_labels, &incident_label) => parent.take().map(|p| (p, parent_labels)),
         _ => None,
@@ -779,8 +783,8 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         }
 
         if let Some(base) = &stack_after {
-            let (_, shown) = bdq_capture(home, &s(&["show", base, "--json"]));
-            let terminal = bead::lc_done(&BdqSource { home, ids: Vec::new() }, &mut None, base);
+            let (_, shown) = door(&s(&["show", base, "--json"]));
+            let terminal = bead::lc_done(&bead::door::DoorSource::lifecycle_only(lifecycle_rows), &mut None, base);
             if let Some(why) = stack_after_refusal(base, parse_show_row(&shown).as_ref(), terminal, &repo) {
                 eprintln!("bead: {why}");
                 return 2;
@@ -1116,7 +1120,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
 
     let mut override_note: Option<String> = None;
     if note.is_some() || body_file.is_some() || append_file.is_some() {
-        let (_, shown) = bdq_capture(home, &s(&["show", &id, "--json"]));
+        let (_, shown) = door(&s(&["show", &id, "--json"]));
         let repo = bead::parse_show_row(&shown)
             .and_then(|r| r.labels.iter().find_map(|l| l.strip_prefix("repo:").map(str::to_string)));
         if let Some(repo) = repo {
@@ -1166,7 +1170,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         rc |= bdq_status(home, &s(&["note", &id, line]));
     }
     if let Some(new) = priority {
-        let (_, out) = bdq_capture(home, &s(&["show", &id, "--json"]));
+        let (_, out) = door(&s(&["show", &id, "--json"]));
         let Some(old) = bead::parse_priority(&out) else {
             eprintln!("bead: amend: cannot read the current priority of {id}; refusing");
             return 1;
@@ -1205,7 +1209,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         bead::claimdesc::append_change(&mut changed, n);
     }
     if body_file.is_some() || append_file.is_some() {
-        let (_, out) = bdq_capture(home, &s(&["show", &id, "--json"]));
+        let (_, out) = door(&s(&["show", &id, "--json"]));
         let Some(old) = bead::parse_description(&out) else {
             eprintln!("bead: amend: cannot read the current description of {id}; refusing");
             return 1;
@@ -1272,7 +1276,7 @@ fn amend_mail_cfg() -> Option<String> {
 }
 
 fn merge_into_body(home: &str, id: &str, addition: &str) -> i32 {
-    let (_, out) = bdq_capture(home, &s(&["show", id, "--json"]));
+    let (_, out) = door(&s(&["show", id, "--json"]));
     let Some(old) = bead::parse_description(&out) else {
         eprintln!("bead: amend: cannot read the current description of {id}; refusing");
         return 1;
@@ -1448,15 +1452,20 @@ fn cmd_ideas(home: &str, args: &[String]) -> i32 {
         eprintln!("bead: ideas: the schema names no idea label");
         return 1;
     }
-    let mut argv = s(&["list"]);
-    argv.extend(spira_config::nonwork::status_args(spira_config::nonwork::Kind::Idea, spira_config::nonwork::Which::Open));
-    argv.extend(s(&["--label", &label, "--limit", "0", "--json"]));
-    let (code, out) = bdq_capture(home, &argv);
-    if code != 0 {
-        eprintln!("bead: ideas: bd list exited {code}");
-        return 1;
-    }
-    let rows = bead::idea_rows(&out);
+    let client = match spira_config::lc_call::LcClient::configured() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("bead: {e}");
+            return BRIDGE_FAILED;
+        }
+    };
+    let rows = match bead::door::ideas(&client, &label) {
+        Ok(rows) => rows,
+        Err(code) => {
+            eprintln!("bead: ideas: content list exited {code}");
+            return 1;
+        }
+    };
     if json {
         println!("{}", serde_json::Value::Array(rows.iter().map(|r| serde_json::json!({"id": r.id, "title": r.title, "created_at": r.created_at})).collect()));
     } else {
@@ -1571,46 +1580,16 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
     0
 }
 
-struct BdqSource<'a> {
-    home: &'a str,
-    ids: Vec<String>,
-}
-
-impl bead::LintSource for BdqSource<'_> {
-    fn ids(&self) -> Vec<String> {
-        self.ids.clone()
-    }
-    fn show(&self, id: &str) -> Option<bead::ShowRow> {
-        let (code, out) = bdq_capture(self.home, &s(&["show", id, "--json"]));
-        if code != 0 {
-            return None;
-        }
-        parse_show_row(&out)
-    }
-    fn blocks_targets(&self, id: &str) -> Option<Vec<String>> {
-        let (code, out) = bdq_capture(self.home, &s(&["dep", "list", id, "--type", "blocks", "--json"]));
-        (code == 0).then(|| parse_blocks_targets(&out))
-    }
-    fn relates_targets(&self, id: &str) -> Result<Vec<String>, String> {
-        let (code, out) = bdq_capture(self.home, &s(&["dep", "list", id, "--type", "relates-to", "--json"]));
-        if code != 0 {
-            return Err(" failed".into());
-        }
-        relates_only_targets(&[], &out).map_err(|e| format!(": {e}"))
-    }
-    fn lifecycle(&self) -> Result<HashMap<String, spira_config::lc_state::Row>, String> {
-        spira_config::lc_state::list().map(spira_config::lc_state::index)
-    }
+fn lifecycle_rows() -> bead::door::LifecycleRows {
+    spira_config::lc_state::list().map(spira_config::lc_state::index)
 }
 
 fn cmd_lint(home: &str, args: &[String]) -> i32 {
-    let ids: Vec<String> = if args.is_empty() || args[0] == "--all" {
-        let (_, out) = bdq_capture(home, &s(&["list", "--limit", "0", "--json"]));
-        parse_list_ids(&out)
+    let set = if args.is_empty() || args[0] == "--all" {
+        bead::door::Set::All
     } else {
-        args.to_vec()
+        bead::door::Set::Ids(args.to_vec())
     };
-    let n = ids.iter().filter(|i| !i.is_empty()).count();
 
     let personas: Vec<(String, String)> = rune_names(home)
         .into_iter()
@@ -1634,7 +1613,16 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
         incident_label: cfg_label("SPIRA_INCIDENT_LABEL"),
     };
 
-    let (rc, lines) = bead::lint(&BdqSource { home, ids }, &cfg);
+    let client = match spira_config::lc_call::LcClient::configured() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("bead: {e}");
+            return BRIDGE_FAILED;
+        }
+    };
+    let src = bead::door::DoorSource::load(&client, set, lifecycle_rows);
+    let n = bead::LintSource::ids(&src).len();
+    let (rc, lines) = bead::lint(&src, &cfg);
     for l in &lines {
         eprintln!("{l}");
     }
@@ -1702,7 +1690,7 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
 
     if is_blocks_type(dep_type.as_deref()) {
         let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
-        let (_, out) = bdq_capture(home, &s(&["show", &depid, "--json"]));
+        let (_, out) = door(&s(&["show", &depid, "--json"]));
         let target = parse_show_row(&out);
         if target.as_ref().is_some_and(|r| r.issue_type == "epic") {
             eprintln!("{}", epic_blocks_refusal(&id, &depid));
@@ -1761,8 +1749,8 @@ fn mirror_dep(verb: &str, id: &str, depid: &str, dep_type: Option<&str>) {
 // onto an open epic.
 // =========================================================================================
 
-fn cmd_dep_epic_edges(home: &str) -> i32 {
-    let (code, out) = bdq_capture(home, &s(&["list", "--type", "epic", "--brief", "--json", "--limit", "0"]));
+fn cmd_dep_epic_edges() -> i32 {
+    let (code, out) = door(&s(&["list", "--type", "epic", "--brief", "--json", "--limit", "0"]));
     if code != 0 {
         eprintln!("bead: dep epic-edges: bd list exited {code}");
         return 1;
@@ -1772,7 +1760,7 @@ fn cmd_dep_epic_edges(home: &str) -> i32 {
         return 0;
     }
     for epic in &epics {
-        let (code, out) = bdq_capture(home, &s(&["dep", "list", epic, "--direction", "up", "--type", "blocks", "--json"]));
+        let (code, out) = door(&s(&["dep", "list", epic, "--direction", "up", "--type", "blocks", "--json"]));
         if code != 0 {
             eprintln!("bead: dep epic-edges: bd dep list {epic} exited {code}");
             return 1;
@@ -1792,7 +1780,7 @@ fn cmd_dep_convert(home: &str, args: &[String]) -> i32 {
             return 2;
         }
     };
-    let (_, out) = bdq_capture(home, &s(&["show", &epic, "--json"]));
+    let (_, out) = door(&s(&["show", &epic, "--json"]));
     if parse_show_row(&out).is_none_or(|r| r.issue_type != "epic") {
         eprintln!("bead: dep convert: refusing — {epic} is not an epic");
         return 1;
@@ -1854,7 +1842,7 @@ fn cmd_label(home: &str, args: &[String]) -> i32 {
         return 1;
     }
 
-    let (_, out) = bdq_capture(home, &s(&["show", &id, "--json"]));
+    let (_, out) = door(&s(&["show", &id, "--json"]));
     let Some(row) = parse_show_row(&out) else {
         eprintln!("bead: label {verb}: refusing — unknown bead {id}");
         return 1;
@@ -1924,7 +1912,7 @@ fn cmd_drop(home: &str, args: &[String]) -> i32 {
         return 2;
     };
 
-    let (_, out) = bdq_capture(home, &s(&["show", &id, "--json"]));
+    let (_, out) = door(&s(&["show", &id, "--json"]));
     if parse_show_row(&out).is_none() {
         eprintln!("bead: drop: refusing — unknown bead {id}");
         return 1;
@@ -1960,14 +1948,14 @@ fn cmd_dep_remove(home: &str, args: &[String]) -> i32 {
     };
 
     for b in [&id, &depid] {
-        let (_, out) = bdq_capture(home, &s(&["show", b, "--json"]));
+        let (_, out) = door(&s(&["show", b, "--json"]));
         if parse_show_row(&out).is_none() {
             eprintln!("bead: dep remove: refusing — unknown bead {b}");
             return 1;
         }
     }
 
-    let (_, out) = bdq_capture(home, &s(&["dep", "list", &id, "--json"]));
+    let (_, out) = door(&s(&["dep", "list", &id, "--json"]));
     if !parse_blocks_targets(&out).iter().any(|t| t == &depid) {
         eprintln!("bead: dep remove: refusing — {id} has no dependency edge on {depid}");
         return 1;
