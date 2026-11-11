@@ -474,10 +474,9 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         "machine" => true,
         v => return Outcome::usage(format!("--blockers takes bd or machine, not {v:?}")),
     };
-    let stack_max = match a.num("--stack-max-depth", env.config.stack_max_depth) {
-        Ok(n) => n.min(rank::STACK_CEILING),
-        Err(e) => return Outcome::usage(e),
-    };
+    if let Err(e) = a.num("--stack-max-depth", env.config.stack_max_depth) {
+        return Outcome::usage(e);
+    }
     let mut rows = match read_ready(a, env) {
         Ok(r) => r,
         Err(o) => return o,
@@ -488,43 +487,10 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Ok(s) => s,
             Err(e) => return Outcome::usage(e),
         };
-        let mut ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
-        ids.extend(rank::all_blockers(&rows));
-        let lc_text = a.get("--lifecycle").map(|p| read_source(p, env.stdin));
-        let lc_rows = match &lc_text {
-            Some(t) => t.clone().and_then(|t| rank::parse_lifecycle(&t)),
-            None => st.lifecycle_of(&ids),
-        };
-        let mut lc = match lc_rows {
-            Ok(m) => m,
-            Err(e) => {
-                return Outcome::cannot_tell(format!(
-                    "{rune}: lifecycle snapshot: {e} (the machine must answer)"
-                ))
-            }
-        };
-        rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
-        match lc_text.map_or_else(|| st.express_ids(), |t| t.and_then(|t| rank::express_ids(&t))) {
-            Ok(e) => rank::mark_express(&mut rows, &e),
-            Err(e) => return Outcome::cannot_tell(format!("{rune}: express set: {e}")),
+        match machine_filter(a, env, &st, &mut rows) {
+            Ok(lc) => machine_lc = Some(lc),
+            Err(o) => return o,
         }
-        let wanted = rank::all_blockers(&rows);
-        let recs = match a.get("--blocker-records") {
-            Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_ready(&t)),
-            None if wanted.is_empty() => Ok(Vec::new()),
-            None => st.items_by_ids(&wanted),
-        };
-        let bd = match recs {
-            Ok(r) => rank::index_rows(r),
-            Err(e) => return Outcome::cannot_tell(format!("{rune}: blocker records: {e}")),
-        };
-        rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }));
-        retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
-        let fixture = a.get("--lifecycle").is_some();
-        if let Err(e) = retain_uncarried(&mut rows, &mut lc, (!fixture).then_some(&st), &env.config.queue_dir) {
-            return Outcome::cannot_tell(format!("{rune}: integrations: {e}"));
-        }
-        machine_lc = Some(lc);
     }
 
     if a.has("--count") {
@@ -570,6 +536,50 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         s.push('\n');
         s
     }))
+}
+
+/// The machine's claimability filter for `select --blockers machine`: keeps the claimable
+/// `rows` and returns the lifecycle snapshot the ranking reads its REWORK set from.
+fn machine_filter(a: &Args, env: &mut Env, st: &Store, rows: &mut Vec<rank::ReadyRow>) -> Result<HashMap<String, LifecycleRow>, Outcome> {
+    let rune = a.get("--rune").unwrap_or("");
+    let stack_max = a.num("--stack-max-depth", env.config.stack_max_depth).unwrap_or(env.config.stack_max_depth).min(rank::STACK_CEILING);
+    let mut ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    ids.extend(rank::all_blockers(rows));
+    let lc_text = a.get("--lifecycle").map(|p| read_source(p, env.stdin));
+    let lc_rows = match &lc_text {
+        Some(t) => t.clone().and_then(|t| rank::parse_lifecycle(&t)),
+        None => st.lifecycle_of(&ids),
+    };
+    let mut lc = match lc_rows {
+        Ok(m) => m,
+        Err(e) => {
+            return Err(Outcome::cannot_tell(format!(
+                "{rune}: lifecycle snapshot: {e} (the machine must answer)"
+            )))
+        }
+    };
+    rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
+    match lc_text.map_or_else(|| st.express_ids(), |t| t.and_then(|t| rank::express_ids(&t))) {
+        Ok(e) => rank::mark_express(rows, &e),
+        Err(e) => return Err(Outcome::cannot_tell(format!("{rune}: express set: {e}"))),
+    }
+    let wanted = rank::all_blockers(rows);
+    let recs = match a.get("--blocker-records") {
+        Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_ready(&t)),
+        None if wanted.is_empty() => Ok(Vec::new()),
+        None => st.items_by_ids(&wanted),
+    };
+    let bd = match recs {
+        Ok(r) => rank::index_rows(r),
+        Err(e) => return Err(Outcome::cannot_tell(format!("{rune}: blocker records: {e}"))),
+    };
+    rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }));
+    retain_unstopped(rows, std::path::Path::new(&env.config.run));
+    let fixture = a.get("--lifecycle").is_some();
+    if let Err(e) = retain_uncarried(rows, &mut lc, (!fixture).then_some(st), &env.config.queue_dir) {
+        return Err(Outcome::cannot_tell(format!("{rune}: integrations: {e}")));
+    }
+    Ok(lc)
 }
 
 /// `stack <bead>`: the same claimability rule `select --blockers machine` applies, but for
@@ -728,15 +738,23 @@ fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json", "--express"]) {
         return Outcome::usage(e);
     }
-    let (labels, exclude) = match a.pos.as_slice() {
-        [l, e] => (l.as_str(), e.as_str()),
-        [l] => (l.as_str(), ""),
-        _ => return Outcome::usage("ready-count needs <labels> [<exclude-labels>]"),
-    };
-    if a.has("--json") {
-        return ready_rows_json(a, env, labels, exclude);
+    if !(1..=2).contains(&a.pos.len()) {
+        return Outcome::usage("ready-count needs <labels> [<exclude-labels>]");
     }
-    match machine_claimable_shared(a, env) {
+    let st = match store(a) {
+        Ok(s) => s,
+        Err(e) => return Outcome { code: 1, out: if a.has("--json") { String::new() } else { "0".into() }, err: format!("spira-claim: ready_count: {}", first_line(&e)) },
+    };
+    ready_count_over(a, env, &st)
+}
+
+fn ready_count_over(a: &Args, env: &Env, st: &Store) -> Outcome {
+    let labels = a.pos.first().map_or("", String::as_str);
+    let exclude = a.pos.get(1).map_or("", String::as_str);
+    if a.has("--json") {
+        return ready_rows_json(a, env, st, labels, exclude);
+    }
+    match machine_claimable_shared(a, env, st) {
         Ok(rows) => Outcome::ok(ready::count_matching(&rows, &ready::split_csv(labels), &ready::split_csv(exclude)).to_string()),
         Err(e) => Outcome { code: 1, out: "0".into(), err: format!("spira-claim: ready_count: {}", first_line(&e)) },
     }
@@ -775,26 +793,17 @@ fn cmd_urgent(a: &Args, env: &mut Env) -> Outcome {
         return Outcome::usage(e);
     }
     let fail = |e: String| Outcome { code: 1, out: String::new(), err: format!("spira-claim: urgent: {}", first_line(&e)) };
-    let st = match store(a) {
-        Ok(s) => s,
-        Err(e) => return fail(e),
-    };
-    let rows = match machine_claimable(a, env) {
-        Ok(r) => r,
-        Err(e) => return fail(e),
-    };
-    let rework = match st.lifecycle_in_states(&["REWORK"]) {
-        Ok(m) => m,
-        Err(e) => return fail(e),
-    };
-    let express = match st.express_ids() {
-        Ok(e) => e,
-        Err(e) => return fail(e),
-    };
-    let parts = match urgent_scope(a, env) {
-        Ok(p) => p,
-        Err(e) => return fail(e),
-    };
+    match store(a).and_then(|st| urgent_over(a, env, &st)) {
+        Ok(out) => Outcome::ok(out),
+        Err(e) => fail(e),
+    }
+}
+
+fn urgent_over(a: &Args, env: &Env, st: &Store) -> Result<String, String> {
+    let rows = machine_claimable(a, env)?;
+    let rework = st.lifecycle_in_states(&["REWORK"])?;
+    let express = st.express_ids()?;
+    let parts = urgent_scope(a, env)?;
     let queue_wait = queue_wait_label(env);
     let mut out = String::new();
     for r in rows.iter().filter(|r| !rank::is_container(r)) {
@@ -806,13 +815,13 @@ fn cmd_urgent(a: &Args, env: &mut Env) -> Outcome {
             out.push_str(&format!("{}\t{}\t{}\t{}\n", r.id, r.prio(), u8::from(rw), u8::from(express.contains(&r.id))));
         }
     }
-    Outcome::ok(out)
+    Ok(out)
 }
 
 /// `ready-count --json`: [`machine_claimable`]'s rows matching the labels. A machine that
 /// cannot answer is a refusal, never an empty queue.
-fn ready_rows_json(a: &Args, env: &Env, labels: &str, exclude: &str) -> Outcome {
-    let rows = match machine_claimable_shared(a, env) {
+fn ready_rows_json(a: &Args, env: &Env, st: &Store, labels: &str, exclude: &str) -> Outcome {
+    let rows = match machine_claimable_shared(a, env, st) {
         Ok(rows) => rows,
         Err(e) => return Outcome { code: 1, out: String::new(), err: format!("spira-claim: ready_count: {}", first_line(&e)) },
     };
@@ -917,6 +926,10 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
     claimable_over(a, env, &store(a)?).map(|(rows, _)| rows)
 }
 
+fn accepts(_judged_at: Option<&str>, _now: i64, _max_age_s: u32) -> bool {
+    true
+}
+
 /// What a published answer is good to: the oldest planning watermark and judgement time among
 /// the beads in it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -970,9 +983,8 @@ fn machine_judged(a: &Args, env: &Env, st: &Store, publish: bool) -> Result<(Vec
 /// [`machine_claimable`] for the counting readers (`ready-count`): one computation per
 /// `ready_ttl_s` shared by every process, so a tick of watchers does not each recompute the
 /// whole set. Claiming never reads this.
-fn machine_claimable_shared(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
-    let st = store(a)?;
-    let rows = ready_cache::read_or(&env.config, &ready_cache_key(a, env), || claimable_base(a, env, &st))?;
+fn machine_claimable_shared(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>, String> {
+    let rows = ready_cache::read_or(&env.config, &ready_cache_key(a, env), || claimable_base(a, env, st))?;
     let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
     Ok(rows.into_iter().filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id))).collect())
 }

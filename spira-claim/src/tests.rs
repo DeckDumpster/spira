@@ -119,6 +119,7 @@ mod published {
                 .pipe(|rows| format!("[{rows}]")),
                 ["list", "--ids", _] => r#"[{"bead_id":"sp-w","state":"WORKING","holds":[]}]"#.to_string(),
                 ["plan", "watermark"] => r#"{"watermark":7}"#.to_string(),
+                ["plan", "edges", "--ids", "sp-n", "--dependents"] => r#"{"watermark":7,"edges":[]}"#.to_string(),
                 ["plan", "edges", "--ids", "sp-w", "--dependents"] => r#"{"watermark":7,"edges":[
                     {"issue_id":"sp-r","depends_on_id":"sp-w","type":"blocks"},
                     {"issue_id":"sp-s","depends_on_id":"sp-w","type":"parent-child"},
@@ -264,11 +265,26 @@ mod published {
         let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
         let env = Env { stdin: &mut stdin, config, lookup: &none };
         let a = Args::parse(&["--changed".into(), "sp-w".into()]).unwrap();
-        assert_eq!(republish_dependents(&a, &env, &st), Ok(2));
+        assert_eq!(republish_dependents(&a, &env, &st), Ok(3));
         let p = published(&svc.0.lock().unwrap()).expect("no publish-readiness call");
         let mut ids: Vec<&str> = p["entries"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap()).collect();
         ids.sort();
-        assert_eq!(ids, ["sp-r", "sp-s"], "sp-c is neither waiting on sp-w nor under it, and a related edge holds nothing back");
+        assert_eq!(ids, ["sp-r", "sp-s", "sp-w"], "sp-c is neither waiting on sp-w nor under it, and a related edge holds nothing back; the changed record is judged with them");
+    }
+
+    #[test]
+    fn republish_dependents_judges_the_changed_record_itself_when_nothing_waits_on_it() {
+        let svc = Arc::new(Service(Mutex::new(Vec::new())));
+        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) };
+        let mut stdin = std::io::empty();
+        let none = |_: &str| None;
+        let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+        let env = Env { stdin: &mut stdin, config, lookup: &none };
+        let a = Args::parse(&["--changed".into(), "sp-n".into()]).unwrap();
+        assert_eq!(republish_dependents(&a, &env, &st), Ok(1));
+        let p = published(&svc.0.lock().unwrap()).expect("no publish-readiness call");
+        let ids: Vec<&str> = p["entries"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["sp-n"]);
     }
 }
 
@@ -434,17 +450,22 @@ mod published_read {
         (svc, st)
     }
 
-    fn env_over<R>(f: impl FnOnce(&Env) -> R) -> R {
+    fn env_over<R>(f: impl FnOnce(&mut Env) -> R) -> R {
+        env_with(true, f)
+    }
+
+    fn env_with<R>(control_store: bool, f: impl FnOnce(&mut Env) -> R) -> R {
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
         let config = Config {
-            control_store: true,
+            control_store,
+            ready_ttl_s: 60,
             stack_max_depth: 4,
             run: "/nonexistent/run".into(),
             queue_dir: "/nonexistent/queue".into(),
             ..Config::default()
         };
-        f(&Env {
+        f(&mut Env {
             stdin: &mut stdin,
             config,
             lookup: &none,
@@ -554,6 +575,101 @@ mod published_read {
             assert_eq!(fresh, None, "rows judged here name no pass");
             assert_eq!(ids(&rows), ["sp-free", "sp-rework", "sp-stacked"]);
         });
+    }
+    fn seen_of(svc: &Store0) -> Vec<Vec<String>> {
+        svc.seen.lock().unwrap().clone()
+    }
+
+    fn only_ready_set() -> Vec<Vec<String>> {
+        vec![vec!["ready-set".to_string()]]
+    }
+
+    #[test]
+    fn urgent_over_a_published_pass_reads_the_ready_set_once() {
+        let (svc, st) = setup();
+        let out = env_over(|env| {
+            let a = Args::parse(&[]).unwrap();
+            judge_rows(&a, env, &st, None, true).unwrap();
+            svc.seen.lock().unwrap().clear();
+            urgent_over(&a, env, &st).unwrap()
+        });
+        assert_eq!(seen_of(&svc), only_ready_set());
+        assert_eq!(out, "sp-rework\t2\t1\t0\n");
+    }
+
+    #[test]
+    fn ready_count_express_over_a_published_pass_reads_the_ready_set_once() {
+        let (svc, st) = setup();
+        env_over(|env| {
+            judge_rows(&Args::parse(&[]).unwrap(), env, &st, None, true).unwrap();
+            svc.seen.lock().unwrap().clear();
+            let a = Args::parse(&["".into(), "--express".into()]).unwrap();
+            let o = ready_count_over(&a, env, &st);
+            assert_eq!((o.code, o.out.as_str()), (0, "0"), "{o:?}");
+        });
+        assert_eq!(seen_of(&svc), only_ready_set());
+    }
+
+    #[test]
+    fn select_machine_over_the_published_rows_reads_the_ready_set_once_and_ranks_as_judging_does() {
+        let (svc, st) = setup();
+        let a = Args::parse(&["--rune".into(), "builder".into(), "--blockers".into(), "machine".into()]).unwrap();
+        let (mut fast, fast_rework) = env_over(|env| {
+            judge_rows(&a, env, &st, None, true).unwrap();
+            let mut rows = claimable_over(&a, env, &st).unwrap().0;
+            svc.seen.lock().unwrap().clear();
+            let lc = machine_filter(&a, env, &st, &mut rows).unwrap_or_else(|o| panic!("{o:?}"));
+            (rows, lc.into_iter().filter(|(_, r)| r.state == lifecycle::bead::BeadState::Rework).map(|(k, _)| k).collect::<BTreeSet<_>>())
+        });
+        assert_eq!(seen_of(&svc), only_ready_set());
+        let (mut slow, slow_rework) = env_with(false, |env| {
+            let mut rows = claimable_over(&a, env, &st).unwrap().0;
+            let lc = machine_filter(&a, env, &st, &mut rows).unwrap_or_else(|o| panic!("{o:?}"));
+            (rows, lc.into_iter().filter(|(_, r)| r.state == lifecycle::bead::BeadState::Rework).map(|(k, _)| k).collect::<BTreeSet<_>>())
+        });
+        fast.sort_by(|x, y| x.id.cmp(&y.id));
+        slow.sort_by(|x, y| x.id.cmp(&y.id));
+        assert_eq!(fast, slow);
+        assert_eq!(fast_rework, slow_rework);
+    }
+
+    fn fixed_ready_set(judged_at: &str) -> (Arc<Store0>, Store) {
+        struct Fixed(Arc<Store0>, String);
+        impl Transport for Fixed {
+            fn exchange(&self, argv: &[String], stdin: Option<&str>, d: Duration) -> Result<Reply, String> {
+                if argv[0] == "ready-set" {
+                    self.0.seen.lock().unwrap().push(argv.to_vec());
+                    let at = &self.1;
+                    return Ok(Reply { code: 0, out: format!(r#"{{"planning_watermark":"7","judged_at":"{at}","unjudged":0,"lifecycle":[{{"bead_id":"sp-free","state":"READY","holds":[]}}],"items":[{{"id":"sp-free","labels":["repo:spira"]}}]}}"#), err: String::new() });
+                }
+                self.0.exchange(argv, stdin, d)
+            }
+        }
+        let inner = Arc::new(Store0 { seen: Mutex::new(Vec::new()), published: Mutex::new(None) });
+        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(Arc::new(Fixed(inner.clone(), judged_at.into())), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) };
+        (inner, st)
+    }
+
+    #[test]
+    fn a_published_answer_older_than_the_accepted_age_is_judged_here() {
+        let (_, old) = fixed_ready_set("2020-01-01T00:00:00Z");
+        let (_, new) = fixed_ready_set(&verdicts::stamp(ready::now_epoch()));
+        env_over(|env| {
+            let a = Args::parse(&[]).unwrap();
+            assert_eq!(claimable_over(&a, env, &old).unwrap().1, None, "a stale verdict is not accepted");
+            assert!(claimable_over(&a, env, &new).unwrap().1.is_some(), "a fresh verdict is");
+        });
+    }
+
+    #[test]
+    fn accepts_a_stamp_up_to_the_age_and_refuses_beyond_it_or_without_one() {
+        let now = 1_800_000_000;
+        let at = |age: i64| Some(verdicts::stamp(now - age));
+        assert!(accepts(at(60).as_deref(), now, 60));
+        assert!(!accepts(at(61).as_deref(), now, 60));
+        assert!(!accepts(None, now, 60));
+        assert!(!accepts(Some("not a stamp"), now, 60));
+        assert!(!accepts(at(0).as_deref(), now, 0), "0 means always judge");
     }
 }
 
