@@ -172,6 +172,20 @@ impl Files {
         fs::read_to_string(self.content_settled_file(branch)).map(|t| t.trim() == tip).unwrap_or(false)
     }
 
+    fn gated_file(&self, branch: &str) -> PathBuf {
+        self.run.join("gate-judged").join(branch_key(branch))
+    }
+
+    /// Record that a gate verdict on `branch` at `tip` was applied: a round cut later needs no second gate.
+    pub fn note_gated(&self, branch: &str, tip: &str) {
+        let _ = fs::create_dir_all(self.run.join("gate-judged"));
+        let _ = atomic_write(&self.gated_file(branch), &format!("{tip}\n"));
+    }
+
+    pub fn gated(&self, branch: &str, tip: &str) -> bool {
+        fs::read_to_string(self.gated_file(branch)).map(|t| t.trim() == tip).unwrap_or(false)
+    }
+
     fn round_deferred_file(&self, branch: &str) -> PathBuf {
         self.run.join("gate-deferred").join(branch_key(branch))
     }
