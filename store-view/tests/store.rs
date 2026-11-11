@@ -318,6 +318,9 @@ fn a_state_change_the_watch_delivers_is_served_as_a_row_and_a_pool_with_no_furth
         assert_eq!(by(&["CERTIFIED"]), ["sp-a", "sp-c"]);
         let live = w.p.rows(&RowQuery { live: true, ..Default::default() }).unwrap().value;
         assert_eq!(live.len(), 3, "a terminal row updated within the window is live");
+        let later = 4_000_000_000 + store_view::LIVE_WINDOW_SECS + 1;
+        let aged: Vec<_> = w.p.rows_at(&RowQuery { live: true, ..Default::default() }, later).unwrap().value.iter().map(|r| r["bead_id"].as_str().unwrap().to_string()).collect();
+        assert_eq!(aged, ["sp-a", "sp-c"], "a terminal row older than the window is dropped from live");
         assert_eq!(w.script.lock().unwrap().seen.len(), asked, "serving rows asks the store nothing");
     });
 }

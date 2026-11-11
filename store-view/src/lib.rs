@@ -520,6 +520,11 @@ impl Projection {
     /// The held lifecycle rows `q` keeps, in id order, as `list` printed them.
     pub fn rows(&self, q: &RowQuery) -> Result<Read<Vec<Value>>, LcError> {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        self.rows_at(q, now)
+    }
+
+    /// [`Self::rows`] with the epoch second `live` is measured from given, so the window is testable.
+    pub fn rows_at(&self, q: &RowQuery, now: i64) -> Result<Read<Vec<Value>>, LcError> {
         self.read(|s| {
             let beads = s.beads.as_ref().ok_or_else(|| LcError::Refused("the lifecycle rows are not loaded: the views hold the batch records only".into()))?;
             let kept = |b: &&Bead| {

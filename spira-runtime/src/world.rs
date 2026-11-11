@@ -148,7 +148,7 @@ impl World {
     /// when the lifecycle did not answer: no answer is not "no round open".
     fn open_round_facts(&self) -> Option<(u64, Vec<(String, u64)>)> {
         if let Some(views) = store_view::shared() {
-            let rounds = views.round_view(&self.home_repo).ok()?.value.rounds;
+            let rounds: Vec<_> = views.round_view(&self.home_repo).ok()?.value.rounds.into_iter().filter(|r| round_unended(&r.record.state)).collect();
             let unadvanced = rounds.iter().filter(|r| r.record.state == "OPEN").filter_map(|r| Some((r.record.id.clone(), r.record.get("opened")?.parse().ok()?))).collect();
             return Some((rounds.len() as u64, unadvanced));
         }
