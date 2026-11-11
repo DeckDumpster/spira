@@ -114,25 +114,9 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 /// The one shell-quoting layer `cockpit.env` itself carries: every value is wrapped in
 /// single quotes, with an embedded `'` escaped as `'\''` (close-quote, backslash-quote,
 /// open-quote — the standard POSIX idiom), so the file sources safely with no parser.
-/// Applied exactly once, at merge/write time ([`unquote_shell_single`] is this function's
-/// inverse, used to make that one application idempotent against an already-quoted input).
+/// Applied exactly once, when the snapshot is written.
 pub fn self_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
-}
-
-/// The inverse of [`self_quote`]: if `v` is wrapped in a single-quote pair using that exact
-/// escaping, return the unescaped inner value; otherwise return `v` unchanged.
-///
-/// A value that is already wrapped the way `self_quote` wraps it (written by an older binary
-/// or a producer that quotes its own output) is unwrapped here, so quoting it again never
-/// doubles the escaping.
-pub fn unquote_shell_single(v: &str) -> String {
-    let bytes = v.as_bytes();
-    if bytes.len() >= 2 && bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'' {
-        v[1..v.len() - 1].replace("'\\''", "'")
-    } else {
-        v.to_string()
-    }
 }
 
 #[cfg(test)]
@@ -190,29 +174,5 @@ mod tests {
     fn self_quote_escapes_embedded_quotes() {
         assert_eq!(self_quote("plain"), "'plain'");
         assert_eq!(self_quote("a'b"), "'a'\\''b'");
-    }
-
-    #[test]
-    fn unquote_shell_single_is_self_quotes_exact_inverse() {
-        for raw in ["", "plain", "a b", "a'b", "can't stop"] {
-            assert_eq!(unquote_shell_single(&self_quote(raw)), raw);
-        }
-    }
-
-    #[test]
-    fn unquote_shell_single_leaves_an_unquoted_value_alone() {
-        // A probe's own raw, never-quoted output must round-trip unchanged — this is not
-        // a guess that every value is quoted, only a correction when one already is.
-        assert_eq!(unquote_shell_single("plain"), "plain");
-        assert_eq!(unquote_shell_single(""), "");
-        assert_eq!(unquote_shell_single("a b"), "a b");
-    }
-
-    #[test]
-    fn unquote_shell_single_matches_the_production_fixture() {
-        // The exact values found in run/cockpit.d/*.env (the operator, 2026-09-30): an
-        // already-quoted empty string, and a quoted non-empty one.
-        assert_eq!(unquote_shell_single("''"), "");
-        assert_eq!(unquote_shell_single("'a b'"), "a b");
     }
 }
