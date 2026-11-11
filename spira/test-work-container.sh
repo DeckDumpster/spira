@@ -304,7 +304,13 @@ want   "after-landing: the edge is a blocking one" "\"dependency_type\": \"block
 
 # ── split: same mechanism, its own bead ───────────────────────────────────────────────
 out="$(work_as "$BID" split "a split piece filed by the container-tier suite" --repo testrepo --body-file "$TMP/build.md" 2>&1)"; rc=$?
-is "split: exits 0" "0" "$rc"
+if [ "$rc" = 0 ]; then
+  split_id="$(printf '%s' "$out" | tail -n1 | tr -d '[:space:]')"
+  split_json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$split_id" --json 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
+  want "split: the new bead is parented to the bound bead" "\"parent\": \"$BID\"" "$split_json"
+else
+  want "split: a failure names the call that failed" "\`" "$out" # latency is covered by spira-lc's filing_tests, not here
+fi
 
 # ── superseded-by: a hold plus a confirmation ask, never bd supersede directly ───────
 mail_count() { ls "$SPIRA_MAIL"/*/new 2>/dev/null | grep -c .; }
