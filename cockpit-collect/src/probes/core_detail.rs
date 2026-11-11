@@ -86,7 +86,7 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg, rea
     for mut r in all {
         let Some(id) = r.get("id").and_then(Value::as_str).map(String::from) else { continue };
         let labels: HashSet<&str> = r.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        let Some(name) = parts.iter().find(|(lset, _)| lset.split(',').all(|l| labels.contains(l))).map(|(_, n)| (*n).clone()) else { continue };
+        let Some(name) = parts.iter().find(|(lset, _)| lset.split(',').filter(|l| !l.is_empty()).all(|l| labels.contains(l))).map(|(_, n)| (*n).clone()) else { continue };
         if seen.insert(id) {
             if let Value::Object(ref mut m) = r {
                 m.insert("_partition".to_string(), Value::String(name));
@@ -514,6 +514,16 @@ mod tests {
         assert_eq!(kv(&out, "SP_NEXT0"), Some("P1 beta sp-2 two"));
         assert_eq!(kv(&out, "SP_NEXT1"), Some("P2 alpha sp-1 one"));
         assert_eq!(kv(&out, "SP_NEXT2"), Some("P3 gamma sp-3 three"));
+    }
+
+    #[test]
+    fn a_partition_with_no_labels_takes_every_row_no_other_partition_claimed() {
+        let part_map: HashMap<String, String> = [("repo:a", "alpha"), ("", "rest")].iter().map(|(l, n)| (l.to_string(), n.to_string())).collect();
+        let rows: Vec<Value> = serde_json::from_str(r#"[{"id":"sp-1","priority":2,"title":"one","labels":["repo:a"]}]"#).unwrap();
+        let mut out = Kv::new();
+        next_section(&mut out, &part_map, &Cfg::default(), &|_| Some(rows.clone()));
+        assert_eq!(kv(&out, "SP_READY"), Some("1"));
+        assert_eq!(kv(&out, "SP_NEXT0"), Some("P2 rest sp-1 one"));
     }
 
     #[test]
