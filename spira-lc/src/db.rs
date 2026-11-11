@@ -151,7 +151,7 @@ fn connect_backoff(attempt: u32) -> std::time::Duration {
 /// The socket limit a verb's connection uses.
 pub fn io_timeout_for(verb: &str) -> std::time::Duration {
     match verb {
-        "admin-apply-ddl" | "admin-migrate" => ADMIN_IO_TIMEOUT,
+        "admin-apply-ddl" | "admin-migrate" | "admin-grants" => ADMIN_IO_TIMEOUT,
         "facts-query" => FACTS_QUERY_IO_TIMEOUT,
         _ => QUERY_DEADLINE,
     }

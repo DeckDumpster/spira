@@ -25,7 +25,9 @@
 #              pending one is applied, as the database admin SPIRA_LC_ADMIN_USER/PASSWORD,
 #              and with those unset or refused the check fails naming them (sp-p1z81). Runs
 #              last and only when every other check passed: a refused release must not
-#              change the live schema. A failing migration refuses the release.
+#              change the live schema. A failing migration refuses the release. Then,
+#              always, `spira-lc admin-grants`: the release's own grants applied and read
+#              back, so a release is refused if its read-only user cannot SELECT.
 set -uo pipefail
 
 REL="${1:?usage: pre-activate.sh <release-dir>}"
@@ -268,7 +270,7 @@ check_lifecycle() {
             cmp -s "$f" "$live/lifecycle/migrations/${f##*/}" || pending+=("$f")
         done
         if [ "${#pending[@]}" -eq 0 ]; then
-            ok "lifecycle (every migration carried unchanged from the live release ${live##*/}, applied when it went live)"
+            lifecycle_grants "every migration carried unchanged from the live release ${live##*/}, applied when it went live"
             return
         fi
     else
@@ -279,10 +281,24 @@ check_lifecycle() {
     # No --if-enforced: there is no off to gate on (sp-v62vn).
     out="$("$lc" admin-migrate "${pending[@]}" 2>&1)"
     rc=$?
-    if [ "$rc" -eq 0 ]; then
-        ok "lifecycle ($(printf '%s' "$out" | tail -1))"
-    else
+    if [ "$rc" -ne 0 ]; then
         fail lifecycle "$out"
+        return
+    fi
+    lifecycle_grants "$(printf '%s' "$out" | tail -1)"
+}
+
+# The grants the release's own code ships, applied and read back on every activation: a release
+# can grow them without touching a migration file, and a read-only user that cannot SELECT is
+# refused here, never first seen on the live release.
+lifecycle_grants() {
+    local out rc
+    out="$("$REL/bin/spira-lc" admin-grants 2>&1)"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        ok "lifecycle ($1; $(printf '%s' "$out" | tail -1))"
+    else
+        fail lifecycle-grants "$out"
     fi
 }
 
