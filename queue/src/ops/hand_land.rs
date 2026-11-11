@@ -298,6 +298,13 @@ pub fn hand_land(w: &World, a: &Args) -> i32 {
         return FAIL;
     }
     let _hold = HoldGuard { c: &c, pid: hold.pid };
+    let rounds = match open_rounds(w, &c, &path) {
+        Ok(r) => r,
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot tell which rounds are open for {}: {e} — refused, nothing changed", c.r.name));
+            return FAIL;
+        }
+    };
 
     let voided = match policy {
         Policy::Subvert => match subvert(w, &c, a, &reason, &rounds) {
@@ -343,7 +350,7 @@ fn subvert(w: &World, c: &Ctx, a: &Args, reason: &str, rounds: &[OpenRound]) -> 
         }
         for (id, was) in before {
             let now = w.lc.bead_row(&id).map(|b| b.state).unwrap_or_default();
-            w.out(format!("queue.sh hand-land: member {id}: was {was}, now {now}"));
+            w.out(format!("queue.sh hand-land: member {id}: {was} in the round, returned as {now}"));
         }
         voided.push(r.batch.clone());
     }
@@ -355,8 +362,8 @@ fn wait_out(w: &World, c: &Ctx, path: &Path, rounds: &[OpenRound], bound: u64) -
         return Ok(());
     }
     w.out(format!(
-        "queue.sh hand-land: cut held; waiting for round {} to land or end — at most {bound}s (the round wall {}s plus the image wait {}s)",
-        names(rounds), c.s.round_wall_secs, c.s.round_ami_wait_secs
+        "queue.sh hand-land: cut held; waiting for round {} to land or end — at most {bound}s (the round wall {}s plus the image wait {}s); a round that lands moves {}, and a tip that does not contain it is then refused",
+        names(rounds), c.s.round_wall_secs, c.s.round_ami_wait_secs, c.r.landref.as_deref().unwrap_or("the landing ref")
     ));
     let deadline = w.clock.now() + bound;
     loop {

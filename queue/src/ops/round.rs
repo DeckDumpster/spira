@@ -3065,12 +3065,10 @@ fn faulted_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 
     FAULT
 }
 
-const TREE_MISMATCH: &str = "refusing binaries: tree sha";
-
 /// Why a pass whose tree was refused did not build the tree the round was cut for, when the
 /// landing ref moved off the round's head: the old base, the new one and the landing between.
 fn base_moved_cause(w: &World, c: &Ctx, path: &Path, head: &str, err: &str) -> Option<String> {
-    if !err.contains(TREE_MISMATCH) {
+    if !err.contains(spira_config::cut_hold::TREE_MISMATCH) {
         return None;
     }
     let new = w.git.rev_parse(path, c.r.landref.as_deref()?)?;

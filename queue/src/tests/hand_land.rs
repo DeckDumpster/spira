@@ -127,7 +127,7 @@ fn subvert_voids_the_round_with_the_cause_lands_and_hands_the_members_back() {
     for id in ["sp-a", "sp-b"] {
         assert_eq!(state(&t, id), "CERTIFIED", "{id} is back as it was");
     }
-    assert!(t.out().contains("member sp-a: was") && t.out().contains("now CERTIFIED"), "{}", t.out());
+    assert!(t.out().contains("member sp-a: ") && t.out().contains(" in the round, returned as CERTIFIED"), "{}", t.out());
     assert!(!t.qfile("cut-hold").exists(), "the cut hold is lifted when the landing is done");
 }
 
@@ -281,4 +281,22 @@ fn a_pass_refused_for_its_tree_with_the_base_unmoved_stays_a_round_fault() {
     let e = t.err();
     assert!(!e.contains("base moved from"), "{e}");
     assert!(!t.landing_log().contains("QUEUE ROUND-REMERGE"));
+}
+
+#[test]
+fn wait_refuses_a_tip_that_the_round_it_waited_for_landed_past() {
+    let t = world();
+    let lc: *const FLc = &t.lc;
+    let git: *const FGit = &t.git;
+    *t.clock.on_sleep.borrow_mut() = Some(Box::new(move || {
+        // SAFETY: the world outlives the verb that sleeps.
+        unsafe { &*lc }.batch_states.borrow_mut().insert("hand-1".into(), ("LANDED".into(), "9".into()));
+        unsafe { &*git }.set("refs/heads/local/main", "b9");
+    }));
+    assert_eq!(hand_land(&t, &["--round", "wait"]), 1);
+    let e = t.err();
+    assert!(e.contains("moved to b9 while this waited") && e.contains("rebase the tip"), "{e}");
+    assert_eq!(t.landed_ref().as_deref(), Some("b9"), "this landed nothing");
+    assert!(!t.qfile("cut-hold").exists());
+    assert!(t.landing_log().contains("verify=refused: base moved"), "{}", t.landing_log());
 }

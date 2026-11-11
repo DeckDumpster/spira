@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// What round-vm prints when the tree a pass built is not the tree the host sent; the queue and
+/// the batcher match on it to tell a moved base from a fault.
+pub const TREE_MISMATCH: &str = "refusing binaries: tree sha";
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct CutHold {
     pub owner: String,

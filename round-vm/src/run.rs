@@ -1806,7 +1806,7 @@ pub fn install_bins(pulled: &Path, expected: &str, reported: Option<&str>, batch
             return Err(format!("round-vm run: the VM reported no tested tree (batch did not complete{how}) — nothing installed"));
         }
         Some(r) if r != expected => {
-            return Err(format!("round-vm run: refusing binaries: tree sha {r} does not match expected {expected} — nothing installed"))
+            return Err(format!("round-vm run: {} {r} does not match expected {expected} — nothing installed", spira_config::cut_hold::TREE_MISMATCH))
         }
         Some(_) => {}
     }

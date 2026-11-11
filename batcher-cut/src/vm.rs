@@ -125,13 +125,10 @@ pub fn corpus_end(
     Err(format!("{why}{}", stderr_tail(stderr)))
 }
 
-/// The text round-vm prints when the tree the VM built is not the tree the host sent.
-const TREE_MISMATCH: &str = "refusing binaries: tree sha";
-
 /// A pass refused for a tree it was not cut for, explained by a base that moved under the round:
 /// not a harness fault, and the round is rebuilt once on the new base.
 pub fn base_moved_error(stderr: &str, moved: Option<(String, String, String)>) -> Option<String> {
-    if !stderr.contains(TREE_MISMATCH) {
+    if !stderr.contains(spira_config::cut_hold::TREE_MISMATCH) {
         return None;
     }
     let (old, new, landing) = moved?;
