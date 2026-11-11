@@ -71,7 +71,7 @@ impl<'a, B: Backend> Controller<'a, B> {
         let mut tick = Tick::default();
         let fail = |tick: &mut Tick, step: &'static str, error: Error| tick.failed.push(StepFailure { step, error });
 
-        let scan_due = self.last_scan.get().map_or(true, |last| now_ms.saturating_sub(last) >= self.scan_every_ms);
+        let scan_due = self.last_scan.get().is_none_or(|last| now_ms.saturating_sub(last) >= self.scan_every_ms);
         if scan_due {
             self.last_scan.set(Some(now_ms));
             match c.gc_scan() {

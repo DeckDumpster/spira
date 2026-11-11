@@ -258,7 +258,7 @@ fn accept_until_stopped<'scope, 'env, F>(
 fn gc_tick<B: state_store::Backend>(gc: &state_store::gc::Controller<B>, contract: &state_store::Contract<B>) {
     for failure in gc.pass(contract.now_ms()).failed {
         let wall_ms = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
-        eprintln!("spira-lc serve: {} control-store gc {failure}", crate::sections::rfc3339(wall_ms));
+        eprintln!("spira-lc serve: {} control-store gc {failure}", spira_lc::sections::rfc3339(wall_ms));
     }
 }
 
