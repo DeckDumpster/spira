@@ -303,6 +303,7 @@ impl Progress {
         let red: Vec<&str> = fresh.iter().filter(|(_, v)| v == "red").map(|(n, _)| n.as_str()).collect();
         let failed: Vec<&str> = fresh.iter().filter(|(_, v)| matches!(v.as_str(), "red" | "timeout" | "fault")).map(|(n, _)| n.as_str()).collect();
         self.notify(&failed);
+        let counting = self.suites_started.is_some();
         let mut body = json!({
             "round": self.round,
             "pass": self.pass,
@@ -311,8 +312,8 @@ impl Progress {
             "detail": detail,
             "phases": self.phases.iter().map(|(p, t)| json!({"phase": p, "started": t})).collect::<Vec<_>>(),
             "verdict": verdict,
-            "done": fresh.len(),
-            "total": self.total,
+            "done": counting.then_some(fresh.len()),
+            "total": counting.then_some(self.total),
             "red": red,
             "unit": unit.map(|(k, m, r)| json!({"done": k, "total": m, "red": r})),
             "build_started": self.build_started,
@@ -408,7 +409,7 @@ mod tests {
         assert_eq!(read(&run)["phase"], "vm");
         p.enter(&res, "build", None);
         let v = read(&run);
-        assert_eq!((v["phase"].as_str(), v["done"].as_u64(), v["total"].as_u64(), v["cap"].as_u64()), (Some("build"), Some(0), Some(3), Some(777)));
+        assert_eq!((v["phase"].as_str(), v["done"].as_u64(), v["total"].as_u64(), v["cap"].as_u64()), (Some("build"), None, None, Some(777)));
         assert!(v["suites_started"].is_null() && v["verdict"].is_null());
 
         fs::write(res.join("runner.meta"), "build_wall_s=90\n").unwrap();
@@ -416,6 +417,7 @@ mod tests {
         let v = read(&run);
         assert_eq!(v["phase"], "suites");
         assert!(v["suites_started"].as_u64().unwrap() > 0);
+        assert_eq!((v["done"].as_u64(), v["total"].as_u64()), (Some(0), Some(3)));
 
         fs::write(res.join("test-a.sh.result"), "ok 1 30 - p e 0\n").unwrap();
         fs::write(res.join("test-b.sh.result"), "red 1 12 fp p e 1\n").unwrap();
@@ -566,5 +568,33 @@ mod tests {
         at(&t, 1600);
         p.tick(&res);
         assert_eq!(read(&run)["detail"], "stalled: no progress in 600s");
+    }
+
+    #[test]
+    fn no_suite_count_is_written_before_the_suites_phase() {
+        let d = TempDir::new();
+        let (run, res) = (d.path().join("run"), d.path().join("res"));
+        fs::create_dir_all(&res).unwrap();
+        let (mut p, t) = clocked(&run, &res);
+        let counts = |v: &Value| (v["done"].clone(), v["total"].clone());
+        assert_eq!(counts(&read(&run)), (Value::Null, Value::Null), "leasing");
+        at(&t, 1100);
+        p.enter(&res, "build", None);
+        assert_eq!((read(&run)["phase"].as_str(), counts(&read(&run))), (Some("build"), (Value::Null, Value::Null)));
+        fs::write(res.join(UNIT_BUILD_FILE), "building\n").unwrap();
+        at(&t, 1200);
+        p.update(&res);
+        assert_eq!((read(&run)["phase"].as_str(), counts(&read(&run))), (Some("unit-build"), (Value::Null, Value::Null)));
+        fs::write(res.join("runner.meta"), "build_wall_s=9\n").unwrap();
+        at(&t, 1300);
+        p.update(&res);
+        let v = read(&run);
+        assert_eq!((v["phase"].as_str(), v["done"].as_u64(), v["total"].as_u64()), (Some("suites"), Some(0), Some(2)));
+        fs::write(res.join("test-a.sh.result"), "ok 1 3 - p e 0\n").unwrap();
+        at(&t, 1310);
+        p.update(&res);
+        assert_eq!(read(&run)["done"], 1);
+        let starts: Vec<u64> = read(&run)["phases"].as_array().unwrap().iter().map(|e| e["started"].as_u64().unwrap()).collect();
+        assert_eq!(starts, [1000, 1100, 1200, 1300]);
     }
 }

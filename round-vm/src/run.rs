@@ -177,6 +177,10 @@ pub trait Remote: Sync {
     fn await_exit(&self, addr: &str, within: Duration, ssh_log: &Path) -> Result<Option<i32>, String>;
     /// Runs one attribution rerun (DESIGN.md §2.2a); its testenv exit code (255: ssh).
     fn run_attr(&self, addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String>;
+    /// Drops results an earlier round left where this one's are pulled from; a fresh VM has none.
+    fn clear_results(&self, _addr: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// The probe for the round script's log: [`REMOTE_SCRIPT`] writes it at `~/round-script.log`.
@@ -2555,6 +2559,9 @@ fn on_vm_run(
         if job.resume_url.is_some() && !crate::ec2::is_ec2_handle(&vm.handle) {
             push_resume_credentials(env.remote, &vm.addr, dir);
         }
+    }
+    if let Err(e) = env.remote.clear_results(&vm.addr) {
+        eprintln!("round-vm run: clearing the earlier round's results: {e}");
     }
     let t0 = Instant::now();
     let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{}", std::process::id()));
