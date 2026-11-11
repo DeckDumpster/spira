@@ -430,7 +430,7 @@ fn cmd_bdq(args: &[String]) -> i32 {
         let dir = format!("{run}/bdq");
         let _ = std::fs::create_dir_all(&dir);
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(format!("{dir}/latency.log")) {
-            let _ = writeln!(f, "{} rc={} tries={} ms={} verb={}", date_now_utc_nanos(), rc, try_n, t_start.elapsed().as_millis(), args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or(""));
+            let _ = writeln!(f, "{} rc={} tries={} ms={} verb={} caller={}", date_now_utc_nanos(), rc, try_n, t_start.elapsed().as_millis(), args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or(""), bead::latency::parent_name());
         }
     }
 

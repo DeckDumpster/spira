@@ -39,6 +39,6 @@ pub fn run(views: Projection) -> Result<Store, String> {
     }
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
-    std::thread::Builder::new().name("store-watch".into()).spawn(move || views.run(&flag)).map_err(|e| format!("store watch thread: {e}"))?;
+    std::thread::Builder::new().name("store-watch".into()).spawn(move || spira_config::lc_call::as_task("store-watch", || views.run(&flag))).map_err(|e| format!("store watch thread: {e}"))?;
     Ok(Store { stop })
 }

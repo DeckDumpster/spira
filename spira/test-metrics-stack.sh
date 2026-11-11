@@ -118,6 +118,8 @@ for p in json.load(open(sys.argv[1]))["panels"]:
 want "dashboard graphs call rate" "spira_bead_store_calls" "$exprs"
 want "dashboard graphs latency quantiles" "quantile_over_time(0.9" "$exprs"
 want "dashboard groups by verb label" "by (verb)" "$exprs"
+want "dashboard graphs store time by task" "spira_lc_request_seconds" "$exprs"
+want "dashboard groups store calls by caller and task" "by (caller, task)" "$exprs"
 want "datasource uid matches the dashboard" "uid: spira-vm" "$(cat "$HERE/metrics/grafana/provisioning/datasources/victoriametrics.yaml")"
 
 tl_summary

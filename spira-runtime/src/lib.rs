@@ -327,6 +327,10 @@ impl EffectRunner for Effects {
         answered
     }
 
+    fn run_for_task(&self, task: &str, key: &str, spec: &EffectSpec) -> Result<String, String> {
+        spira_config::lc_call::as_task(task, || self.run(key, spec))
+    }
+
     /// The class in [`classes::CLASSES`]. A name no task registers has no runner either; it
     /// runs, and fails at once, under Host.
     fn class(&self, spec: &EffectSpec) -> runtime::pools::EffectClass {
