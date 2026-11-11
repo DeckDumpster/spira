@@ -752,6 +752,9 @@ impl Policy {
     }
 }
 
+/// How a stopped unit ends: the abandon of a round stops its legs with this.
+const SIGTERM: i32 = 15;
+
 /// The `why` of a [`CORPUS`] leg that is the attribution (`batcher attribute`), not the corpus.
 pub const ATTRIBUTE: &str = "attribute";
 /// The line `queue round certify` names its red output file by (`io::round_certify`).
@@ -1331,7 +1334,7 @@ impl Machine<'_> {
                     self.go(Trigger::RerunBlocked);
                     self.red(&format!("local corpus red — held before reaching CI: {why}"));
                 }
-                None if matches!(exit, Exit::Signal(_)) => {
+                None if exit == Exit::Signal(SIGTERM) => {
                     self.go(Trigger::RerunBlocked);
                     self.finish(pace::Outcome::Quiet, "");
                 }

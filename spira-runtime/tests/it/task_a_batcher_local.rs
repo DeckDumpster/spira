@@ -476,6 +476,16 @@ fn sp_esyv8o_an_attribution_leg_stopped_by_a_signal_writes_no_pause() {
     assert!(carry.repos.get("spira").is_none_or(|r| r.state == State::Idle), "the round is let go");
 }
 
+/// Only the stop an abandon sends is let go: a leg killed or crashed is a red with no outcome.
+#[test]
+fn sp_esyv8o_an_attribution_leg_killed_by_another_signal_still_pauses() {
+    for sig in [9, 11] {
+        let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.a2").unwrap(), exit: runtime::units::Exit::Signal(sig), duration_ms: 1 };
+        let (_, acts) = on_ran_with(&driving(State::Attributing, "spira.a2"), &ran, &runtime::units::RanOutput::default(), NOW).expect("its own leg");
+        assert!(acts.iter().any(|a| a.effect == PAUSE), "signal {sig}: {acts:?}");
+    }
+}
+
 /// An operator's deliberate hold (`hold:`) is never lifted by a landing.
 #[test]
 fn sp_8nlvra_a_deliberate_hold_survives_a_landing() {
