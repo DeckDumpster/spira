@@ -257,7 +257,7 @@ pub struct Host<'a> {
     pub svc: &'a dyn crate::services::Services,
     pub clock: &'a dyn Clock,
     pub sink: &'a dyn Sink,
-    /// Added to every child: the snapshot paths (snapshot paths).
+    /// Added to every child.
     pub extra_env: RefCell<Vec<(String, String)>>,
 }
 
