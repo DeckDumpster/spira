@@ -1,8 +1,8 @@
 //! `content <bd-subcommand> …` — the one door for bead content: its reads, and the narrow
 //! writes a task makes (labels, comments, notes, metadata, a close, a filing), so nothing
-//! outside the store forks `bd`. The server forks bd for them with bd's own argv: the content
-//! store is out of scope, and this is the one place allowed to run it. State is never served
-//! here: the machine's own verbs answer that. Anything outside the allowlist is refused.
+//! outside the store forks `bd`. Reads are SQL against the beads database (`content_sql`); the
+//! writes fork bd with bd's own argv, which owns id allocation and events. State is never
+//! served here: the machine's own verbs answer that. Anything outside the allowlist is refused.
 
 use crate::callers::Answer;
 

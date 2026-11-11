@@ -234,3 +234,9 @@ fn the_readers_columns_include_every_column_the_queries_name() {
         assert!(named.contains(&col) && sql.contains(col), "{col}");
     }
 }
+
+#[test]
+fn the_read_only_secret_is_the_service_secrets_ro_sibling_and_never_a_guess() {
+    assert_eq!(ro_credential("/c/spira-lc.credential"), "/c/spira-lc.credential-ro");
+    assert_eq!(ro_credential(" "), "", "no service credential names no read-only one");
+}
