@@ -1173,3 +1173,15 @@ mod locator_tests {
         assert!(e.contains("SPIRA_TOML"), "{e}");
     }
 }
+
+#[cfg(test)]
+mod content_sql_tests {
+    use super::content_sql_settings;
+
+    #[test]
+    fn a_worlds_content_reads_name_its_fixtures_port_not_the_bases() {
+        let s = content_sql_settings("41234");
+        assert!(s.contains(&("spira.beads_sql_port".to_string(), "41234".to_string())));
+        assert!(s.contains(&("spira.beads_sql_user".to_string(), "root".to_string())));
+    }
+}
