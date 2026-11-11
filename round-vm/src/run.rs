@@ -4723,14 +4723,27 @@ mod tests {
         assert_eq!(fx.fp.count("clone"), 1);
     }
 
+    fn holds_open(path: &Path) -> bool {
+        let want = fs::canonicalize(path).unwrap();
+        fs::read_dir("/proc/self/fd").unwrap().flatten().any(|e| fs::read_link(e.path()).is_ok_and(|t| t == want))
+    }
+
     #[test]
     fn the_host_slot_is_free_again_once_a_host_round_ends() {
         let fx = fixture();
         let plan = host_plan(FakeRemote::green(), CALM);
         go_with_host(&fx, &FakeRemote::green(), &plan, &round_args(&fx));
-        // A sibling test's fork holds the descriptor until its exec closes it, longer under host load.
-        let freed = (0..500).any(|_| matches!(crate::host::HostSlot::try_take(&fx.cfg.state_dir), Ok(Some(_))) || { std::thread::sleep(Duration::from_millis(10)); false }); // clock-safe: a cap on the wait for a forked sibling's exec to close the descriptor
-        assert!(freed, "the slot stayed taken after the host round ended");
+        assert!(!holds_open(&fx.cfg.state_dir.join(crate::host::SLOT_FILE)), "this process still holds the host slot after the round ended");
+    }
+
+    #[test]
+    fn a_held_host_slot_is_seen_as_held_by_this_process() {
+        let fx = fixture();
+        fs::create_dir_all(&fx.cfg.state_dir).unwrap();
+        let held = crate::host::HostSlot::try_take(&fx.cfg.state_dir).unwrap();
+        assert!(holds_open(&fx.cfg.state_dir.join(crate::host::SLOT_FILE)));
+        drop(held);
+        assert!(!holds_open(&fx.cfg.state_dir.join(crate::host::SLOT_FILE)));
     }
 
     #[test]
