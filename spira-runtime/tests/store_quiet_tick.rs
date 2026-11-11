@@ -132,6 +132,7 @@ fn a_quiet_tick_of_each_task_that_read_the_store_every_tick_never_reaches_its_so
         if installed.watching() {
             break;
         }
+        // clock-safe: a poll interval under that cap
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(installed.watching());

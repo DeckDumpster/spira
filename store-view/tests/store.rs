@@ -402,7 +402,9 @@ fn deliver(w: &World, keys: &[&str], through: u64) {
     // clock-safe: a cap on the wait for the watch's next call, which is a named signal
     let give_up = Instant::now() + Duration::from_secs(5);
     while watches(w) < before + 2 {
+        // clock-safe: the cap on the wait for the watch's next call
         assert!(Instant::now() < give_up, "the delivery was never applied");
+        // clock-safe: a poll interval under that cap
         std::thread::sleep(Duration::from_millis(2));
     }
 }
@@ -418,6 +420,7 @@ fn a_held_answer_lasts_until_a_change_that_could_alter_it_and_a_bead_history_alt
             sc.spawn(|| w.p.run(&stop));
             // clock-safe: a cap on the wait for the watch to start
             while !w.p.watching() {
+                // clock-safe: a poll interval under that cap
                 std::thread::sleep(Duration::from_millis(2));
             }
             let content = || w.p.answer(&["content", "list", "--all"]).unwrap().value.out;
