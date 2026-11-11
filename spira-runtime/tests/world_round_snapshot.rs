@@ -74,3 +74,16 @@ fn a_certifying_round_with_a_certified_bead_set_aside_pages_nothing_and_no_round
     let (_, later) = decide(&cfg(), &c, &snap, 1100);
     assert!(later.is_empty(), "{later:?}");
 }
+
+#[test]
+fn a_work_halt_stamp_reaches_the_snapshot_with_its_reason_and_no_stamp_is_no_halt() {
+    let (dir, w) = world(true);
+    let snap: Snapshot = serde_json::from_str(&w.round_snapshot("{}").unwrap()).unwrap();
+    assert_eq!(snap.halt, None);
+    std::fs::create_dir_all(dir.path().join("run")).unwrap();
+    std::fs::write(dir.path().join("run/world.halted"), "2026-11-11T05:10:52Z\nwhy: operator order: freeze\n").unwrap();
+    let snap: Snapshot = serde_json::from_str(&w.round_snapshot("{}").unwrap()).unwrap();
+    let h = snap.halt.expect("halted");
+    assert_eq!(h.why, "operator order: freeze");
+    assert!(h.since > 1_000_000_000);
+}

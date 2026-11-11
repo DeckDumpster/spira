@@ -81,6 +81,18 @@ fn map_rows(text: &str) -> Vec<MapRow> {
         .collect()
 }
 
+/// The work plane's stamp, if the plane is halted. Its age is its mtime; the present stands in
+/// when the filesystem will not say.
+pub fn read_halt(run_dir: &Path) -> Option<Halt> {
+    let stamp = run_dir.join("world.halted");
+    let meta = fs::metadata(&stamp).ok()?;
+    let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let since = meta.modified().ok().and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map_or_else(now, |d| d.as_secs());
+    let text = fs::read_to_string(&stamp).unwrap_or_default();
+    let why = text.lines().find_map(|l| l.strip_prefix("why: ")).unwrap_or("unstated").to_string();
+    Some(Halt { since, why })
+}
+
 fn lane_stopped(run_dir: &Path, repo: &str, lane: &str) -> bool {
     let Ok(text) = fs::read_to_string(run_dir.join("scoped-stops").join(format!("repo-{repo}.json"))) else { return false };
     serde_json::from_str::<Value>(&text).ok().and_then(|v| v["lanes"].as_array().map(|a| a.iter().any(|l| l == lane))).unwrap_or(false)
@@ -228,7 +240,7 @@ impl World {
             unadvanced: open.map(|o| o.1).unwrap_or_default(),
             lines,
             fresh,
-            halt: Halt::read(&self.run_dir),
+            halt: read_halt(&self.run_dir),
         };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
@@ -790,7 +802,7 @@ impl World {
     pub fn throughput_snapshot(&self, input: &str) -> Result<String, String> {
         let p: ThroughputParams = serde_json::from_str(input).map_err(|e| format!("throughput params unparsed: {e}"))?;
         let day = 24 * 3600;
-        let halt = Halt::read(&self.run_dir);
+        let halt = read_halt(&self.run_dir);
         let blind = ThroughputSnapshot { readable: false, halt: halt.clone(), ..Default::default() };
         let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&blind) };
         let Ok(mut landings) = self.landed_on_refs(p.now, &prefix) else { return to_json(&blind) };
@@ -866,7 +878,7 @@ impl World {
             p.window_s,
         );
         snap.open_rounds = self.open_rounds();
-        snap.halt = Halt::read(&self.run_dir);
+        snap.halt = read_halt(&self.run_dir);
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 
