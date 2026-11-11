@@ -11,6 +11,10 @@ pub const SCRIPT: &str = "unit-tests.sh";
 pub const CRATES_REL: &str = "target/unit-tests.crates";
 pub const BINS_REL: &str = "target/unit-tests.bins";
 pub const FILTER_REL: &str = "target/unit-tests.filter";
+pub const SKIP_REL: &str = "target/unit-tests.skip";
+const MAX_FAILING: usize = 5;
+const MAX_DETAIL: usize = 3;
+const MAX_LINE: usize = 160;
 
 pub fn resolve(list: &str) -> String {
     list.split(',').map(|n| if n.trim() == NAME { SCRIPT } else { n }).collect::<Vec<_>>().join(",")
@@ -41,6 +45,72 @@ pub fn write_filter(tree: &Path, tests: Option<&[String]>) -> Result<(), String>
         },
     }
     .map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+/// Leaves the names the script must skip, one per line, or removes the file when there are
+/// none, so a later run of this tree skips nothing it was not told to.
+pub fn write_skip(tree: &Path, names: &[String]) -> Result<(), String> {
+    let path = tree.join(SKIP_REL);
+    if names.is_empty() {
+        return match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("cannot remove {}: {e}", path.display())),
+            _ => Ok(()),
+        };
+    }
+    std::fs::create_dir_all(path.parent().unwrap_or(tree))
+        .and_then(|_| std::fs::write(&path, names.iter().map(|n| format!("{n}\n")).collect::<String>()))
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+/// Each failing test's name and the first lines of its `---- name stdout ----` block.
+pub fn failing(output: &str) -> Vec<(String, Vec<String>)> {
+    let lines: Vec<&str> = output.lines().collect();
+    let mut names: Vec<String> = Vec::new();
+    for n in lines.iter().filter_map(|l| l.trim().strip_prefix("test ")?.strip_suffix(" ... FAILED")) {
+        if !names.iter().any(|seen| seen == n) {
+            names.push(n.to_string());
+        }
+    }
+    names
+        .into_iter()
+        .map(|n| {
+            let head = format!("---- {n} stdout ----");
+            let detail = lines
+                .iter()
+                .position(|l| l.trim() == head)
+                .map(|i| {
+                    lines[i + 1..]
+                        .iter()
+                        .take_while(|l| !l.starts_with("---- ") && !l.starts_with("failures:"))
+                        .filter(|l| !l.trim().is_empty())
+                        .take(MAX_DETAIL)
+                        .map(|l| {
+                            let l = l.trim();
+                            if l.chars().count() > MAX_LINE { format!("{}…", l.chars().take(MAX_LINE).collect::<String>()) } else { l.to_string() }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            (n, detail)
+        })
+        .collect()
+}
+
+/// The log lines that name a red run's failing tests, at most [`MAX_FAILING`] of them.
+pub fn failing_report(output: &str) -> Vec<String> {
+    let failed = failing(output);
+    if failed.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![format!("unit-tests: {} failing test(s):", failed.len())];
+    for (name, detail) in failed.iter().take(MAX_FAILING) {
+        out.push(format!("  {name}"));
+        out.extend(detail.iter().map(|d| format!("    {d}")));
+    }
+    if failed.len() > MAX_FAILING {
+        out.push(format!("  (+{} more)", failed.len() - MAX_FAILING));
+    }
+    out
 }
 
 /// The tests libtest reports it ran, from its `test <name> ... ok|FAILED` lines; an ignored
@@ -231,6 +301,36 @@ fn doubt(paths: &[String]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const RED: &str = "running 2 tests\ntest a::ok ... ok\ntest a::bad ... FAILED\n\nfailures:\n\n---- a::bad stdout ----\nthread 'a::bad' panicked at src/a.rs:9:5:\nassertion `left == right` failed\n  left: 1\n right: 2\n\nfailures:\n    a::bad\n\nVERDICT RED ran=1 red=unit-tests.sh\n";
+
+    #[test]
+    fn a_red_output_names_the_failing_test_and_its_first_three_lines() {
+        let f = failing(RED);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].0, "a::bad");
+        assert_eq!(f[0].1.len(), 3);
+        assert!(f[0].1[1].contains("assertion"));
+        assert_eq!(failing_report(RED)[0], "unit-tests: 1 failing test(s):");
+        assert_eq!(failing("test a ... FAILED\ntest b ... FAILED\ntest a ... FAILED\n").len(), 2);
+    }
+
+    #[test]
+    fn a_green_output_names_no_failing_test() {
+        assert!(failing("test a::ok ... ok\ntest result: ok.\n").is_empty());
+        assert!(failing_report("test a::ok ... ok\n").is_empty());
+    }
+
+    #[test]
+    fn write_skip_writes_the_names_and_removes_the_file_when_none_remain() {
+        let dir = testkit::TempDir::new("skip");
+        let path = dir.path().join(SKIP_REL);
+        write_skip(dir.path(), &["a".into(), "b".into()]).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\nb\n");
+        write_skip(dir.path(), &[]).unwrap();
+        assert!(!path.exists());
+        write_skip(dir.path(), &[]).unwrap();
+    }
 
     #[test]
     fn an_empty_crate_list_is_doubted_for_an_empty_diff_or_a_rust_path_and_believed_for_docs() {

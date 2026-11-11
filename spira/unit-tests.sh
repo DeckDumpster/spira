@@ -36,6 +36,12 @@ if [ -f "$ROOT/target/unit-tests.filter" ]; then
   while IFS= read -r t; do [ -n "$t" ] && filters+=("$t"); done < "$ROOT/target/unit-tests.filter"
   echo "unit-tests: filtered to tests named ${filters[*]}"
 fi
+skips=()
+if [ -f "$ROOT/target/unit-tests.skip" ]; then
+  names=()
+  while IFS= read -r t; do [ -n "$t" ] && skips+=(--skip "$t") && names+=("$t"); done < "$ROOT/target/unit-tests.skip"
+  [ "${#names[@]}" -eq 0 ] || echo "unit-tests: skipped (needs a running system): ${names[*]}"
+fi
 # The round runs this tier with no declared release, config or harness home and no release
 # on PATH (round-vm's unit_cargo: env -i); a test that passes only because the fixture's
 # launcher declared them must fail here too.
@@ -45,4 +51,4 @@ for d in "${_dirs[@]}"; do
   [ -x "$d/spira-config" ] || [ -f "$d/conf.sh" ] || unit_path="${unit_path:+$unit_path:}$d"
 done
 env -u SPIRA_RELEASE -u SPIRA_TOML -u SPIRA_HOME PATH="$unit_path" \
-    cargo test "${words[@]}" --features integration -j "$jobs" -- --test-threads="$threads" "${filters[@]}"
+    cargo test "${words[@]}" --features integration -j "$jobs" -- --test-threads="$threads" "${filters[@]}" "${skips[@]}"

@@ -99,4 +99,16 @@ out="$(fake_run env CARGO_BUILD_JOBS=2 RUST_TEST_THREADS=1)"
 want "CARGO_BUILD_JOBS overrides the jobs" "-j 2 --" "$out"
 want "RUST_TEST_THREADS overrides the threads" "--test-threads=1" "$out"
 
+echo "7. target/unit-tests.skip adds a --skip per name and says so; absent or empty adds none:"
+out="$(fake_run env)"
+nowant "no skip file, no --skip" "--skip" "$out"
+printf 'slow_one\nslow_two\n' > "$WS/target/unit-tests.skip"
+out="$(fake_run env)"
+want "each name becomes a --skip after --" "-- --test-threads=4 --skip slow_one --skip slow_two" "$out"
+want "the names are printed" "unit-tests: skipped (needs a running system): slow_one slow_two" "$out"
+: > "$WS/target/unit-tests.skip"
+out="$(fake_run env)"
+nowant "an empty skip file adds no --skip" "--skip" "$out"
+nowant "and prints nothing skipped" "skipped (needs" "$out"
+
 tl_summary
