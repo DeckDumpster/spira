@@ -682,6 +682,14 @@ mod tests {
     }
 
     #[test]
+    fn sp_yf8lf0_a_blocker_absent_from_the_store_is_unknown_never_closed() {
+        let s = store(vec![epic("E", PLAN), bead("c", "open", PLAN, Some("E"), &["gone"])]);
+        let rows = run(&s, &[]);
+        assert_eq!(kinds(&rows), vec![("blocked-external".into(), "E".into())]);
+        assert!(rows[0].detail.contains("not in the store: gone"), "{rows:?}");
+    }
+
+    #[test]
     fn submitted_dependent_is_not_reported() {
         let s = store(vec![
             epic("E", PLAN),
