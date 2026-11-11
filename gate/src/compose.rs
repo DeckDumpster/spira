@@ -1108,6 +1108,11 @@ mod tests {
         assert!(!b.1.contains("--all-targets"), "{}", b.1);
         let (test_flags, _) = t.1.split_once(" -- ").unwrap();
         assert_eq!(b.1, test_flags.replacen("cargo test ", "cargo test --no-run ", 1));
+
+        let [b, t] = unit_commands(&["spira-sim".into()], 4);
+        let (test_flags, _) = t.1.split_once(" -- ").unwrap();
+        let expected = test_flags.replacen("cargo test ", "cargo test --no-run ", 1) + " -p spira-config";
+        assert_eq!(b.1, expected, "only the extra built package differs");
     }
 
     #[test]
