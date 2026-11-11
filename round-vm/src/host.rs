@@ -3,7 +3,6 @@
 //! time, held by a kernel lock that dies with its holder; anything else goes to the spill provider.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -285,5 +284,17 @@ mod tests {
         let out = c.output().unwrap();
         let said = String::from_utf8_lossy(&out.stdout).to_string();
         assert_eq!(said.lines().collect::<Vec<_>>(), vec![d.path().to_str().unwrap(); 2]);
+    }
+
+    fn attr_job() -> crate::spool::AttrJob {
+        crate::spool::AttrJob { host_addr: "h".into(), mirror_port: 1, job: "j".into(), mirror_ref: "r".into(), suites: String::new(), build: crate::spool::Build::Artifacts, toolchain: None }
+    }
+
+    #[test]
+    fn a_host_script_that_refuses_before_reading_itself_is_reported_by_its_exit_not_as_a_stdin_error() {
+        let home = dir("attr-refuses");
+        let remote = LocalRemote { home: home.path().to_path_buf() };
+        let rc = remote.run_attr("h", &attr_job()).expect("the script's exit, not a stdin error");
+        assert_ne!(rc, 0);
     }
 }
