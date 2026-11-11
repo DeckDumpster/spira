@@ -249,7 +249,7 @@ fn watch(child: &Child, limit: Duration, expired: Arc<AtomicBool>) -> io::Result
     let end = Instant::now() + limit;
     std::thread::Builder::new().name("bounded-watchdog".into()).spawn(move || loop {
         let left = end.saturating_duration_since(Instant::now());
-        let ms = left.as_millis().saturating_add(u128::from(left.subsec_nanos() % 1_000_000 != 0));
+        let ms = left.as_millis().saturating_add(u128::from(!left.subsec_nanos().is_multiple_of(1_000_000)));
         let mut p = libc::pollfd { fd: pidfd.as_raw_fd(), events: libc::POLLIN, revents: 0 };
         let n = unsafe { libc::poll(&mut p, 1, ms.min(i32::MAX as u128) as i32) };
         if n > 0 {
@@ -363,7 +363,7 @@ mod tests {
                 .map(|s| !s.rsplit(") ").next().unwrap_or("").starts_with('Z'))
                 .unwrap_or(false);
             if alive {
-                std::thread::sleep(Duration::from_millis(10));
+                std::thread::sleep(Duration::from_millis(10)); // clock-safe: cap on waiting for init to reap the killed group
             }
             !alive
         });
