@@ -10,6 +10,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/rel/bin" "$T/empty" "$T/fx"
+# The stub fixture has what a server-mode fixture has: its port file and database name, which
+# testdb_up reads to create the read-only SQL user (through TESTDB_DOLT, stubbed below).
+mkdir -p "$T/fx/.beads"
+echo 1 > "$T/fx/.beads/dolt-server.port"
+printf '{"dolt_database": "stub"}\n' > "$T/fx/.beads/metadata.json"
 cat > "$T/rel/bin/testenv" <<EOF
 #!/bin/sh
 echo "\$*" >> "$T/calls"
@@ -18,14 +23,14 @@ EOF
 chmod +x "$T/rel/bin/testenv"
 
 mkdir -p "$T/tools"
-for t in sed head cat tr spira-config; do ln -s "$(command -v $t)" "$T/tools/$t"; done
+for t in sed head cat tr timeout spira-config; do ln -s "$(command -v $t)" "$T/tools/$t"; done
 
 run_up() {   # run_up <release> — testdb_up under a PATH holding no testenv
     (
         . "$HERE/testdb.sh"
         unset TESTDB_TESTENV TESTDB_SHARED TESTDB_MODE SPIRA_TESTDB_MODE
         PATH="$T/tools"; SPIRA_RELEASE="$1"
-        TESTDB_SERVER_BD=/bin/true TESTDB_OWNER_PID=0 testdb_up tag
+        TESTDB_SERVER_BD=/bin/true TESTDB_DOLT=/bin/true TESTDB_OWNER_PID=0 testdb_up tag
     ) 2>&1
 }
 
