@@ -117,17 +117,22 @@ impl Proc for SysProc {
         let out = drain(Box::new(child.stdout.take().ok_or("no stdout pipe")?));
         let err = drain(Box::new(child.stderr.take().ok_or("no stderr pipe")?));
         let started = Instant::now();
-        let status = loop {
-            match child.try_wait().map_err(|e| e.to_string())? {
-                Some(st) => break st,
-                None if started.elapsed() >= spec.deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!("{} exceeded its {:?} deadline", spec.prog, spec.deadline));
-                }
-                None => std::thread::sleep(Duration::from_millis(2)),
+        let mut status = None;
+        loop {
+            if status.is_none() {
+                status = child.try_wait().map_err(|e| e.to_string())?;
             }
-        };
+            if status.is_some() && out.is_finished() && err.is_finished() {
+                break;
+            }
+            if started.elapsed() >= spec.deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{} exceeded its {:?} deadline", spec.prog, spec.deadline));
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let status = status.expect("loop exits with a status");
         Ok(ProcOutput { code: status.code(), stdout: out.join().unwrap_or_default(), stderr: err.join().unwrap_or_default() })
     }
 }

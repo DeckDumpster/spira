@@ -4,6 +4,7 @@
 
 use perf_watch::happy::{self, Sim};
 use perf_watch::{parse_probes, run_pass, Clock, Health, Runner, Settings};
+use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -70,6 +71,16 @@ impl Runner for Spawn {
             .stderr(if self.scoped { Stdio::piped() } else { Stdio::null() })
             .spawn()
             .map_err(|e| format!("{}: {e}", argv[0]))?;
+        let drain = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+            std::thread::spawn(move || {
+                let mut buf = String::new();
+                if let Some(mut p) = pipe {
+                    let _ = p.read_to_string(&mut buf);
+                }
+                buf
+            })
+        };
+        let (so, se) = (drain(child.stdout.take().map(|p| Box::new(p) as _)), drain(child.stderr.take().map(|p| Box::new(p) as _)));
         let start = Instant::now();
         let status = loop {
             match child.try_wait() {
@@ -83,13 +94,9 @@ impl Runner for Spawn {
                 Err(e) => return Err(format!("{}: {e}", argv[0])),
             }
         };
-        let mut out = String::new();
-        if let Some(mut so) = child.stdout.take() {
-            let _ = std::io::Read::read_to_string(&mut so, &mut out);
-        }
-        if let Some(mut se) = child.stderr.take() {
-            let mut err = String::new();
-            let _ = std::io::Read::read_to_string(&mut se, &mut err);
+        let out = so.join().unwrap_or_default();
+        let err = se.join().unwrap_or_default();
+        if self.scoped {
             self.measured = err.lines().rev().find_map(|l| l.strip_prefix(TIMER_PREFIX)).and_then(|n| n.trim().parse().ok());
             self.phases = err.lines().rev().find_map(|l| l.strip_prefix(spira_otel::run::PHASES_PREFIX)).map(str::to_string);
         }
@@ -209,6 +216,16 @@ impl Sim for RealSim {
         let errfile = std::path::Path::new(&self.scratch).join("sim.stderr");
         let errors = std::fs::File::create(&errfile).map_err(|e| format!("{}: {e}", errfile.display()))?;
         let mut child = self.sim(&cwd, &["run", &self.scenario, "--seed", &seed, "--keep"]).stderr(errors).spawn().map_err(|e| format!("{}: {e}", self.sim))?;
+        let drain = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+            std::thread::spawn(move || {
+                let mut buf = String::new();
+                if let Some(mut p) = pipe {
+                    let _ = p.read_to_string(&mut buf);
+                }
+                buf
+            })
+        };
+        let (so, se) = (drain(child.stdout.take().map(|p| Box::new(p) as _)), drain(child.stderr.take().map(|p| Box::new(p) as _)));
         let start = Instant::now();
         let status = loop {
             match child.try_wait() {
