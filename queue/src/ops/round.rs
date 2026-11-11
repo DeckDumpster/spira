@@ -373,6 +373,20 @@ fn start_pass_with(
 
 const STALE_TRIES: u32 = 5;
 
+/// The round record's `pass-trees`: `<n>=<tree>` per pass, the tree the pass built from.
+pub(super) const PASS_TREES: &str = "pass-trees";
+
+fn record_pass_tree(kv: &mut Kv, n: u32, tree: &str) {
+    let kept: Vec<&str> = kv
+        .get(PASS_TREES)
+        .unwrap_or("")
+        .split_whitespace()
+        .filter(|e| e.split_once('=').is_some_and(|(k, _)| k != n.to_string()))
+        .collect();
+    let all = kept.iter().map(|e| e.to_string()).chain([format!("{n}={tree}")]).collect::<Vec<_>>().join(" ");
+    set(kv, PASS_TREES, &all);
+}
+
 fn suites_started(w: &World, batch: &str, strict: bool) -> Result<(), (i32, String)> {
     let send = || {
         pass_event(w, batch, |_, n, phase| {
@@ -3277,6 +3291,12 @@ fn certify_pass(
         }
         mark_running(c, batch);
         let pass = w.lc.batch_pass(batch).map(|(n, _)| n);
+        if let (Some(n), Some(tree)) = (pass, w.git.rev_parse(&wt, "HEAD^{tree}")) {
+            record_pass_tree(&mut kv, n, &tree);
+            if save(w, label, c, &kv).is_err() {
+                return FAIL;
+            }
+        }
         (head, wt, run_id, pass)
     };
 
