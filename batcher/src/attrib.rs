@@ -50,6 +50,8 @@ pub enum Outcome {
     Base,
     /// No single removal turned it green and the base is green (or the reruns faulted).
     Unattributed,
+    /// The reruns that would have decided it faulted twice: the harness, not the suite, failed.
+    Faulted,
 }
 
 impl Outcome {
@@ -59,6 +61,7 @@ impl Outcome {
             Outcome::Flaky => "flaky",
             Outcome::Base => "base",
             Outcome::Unattributed => "unattributed",
+            Outcome::Faulted => "faulted",
         }
     }
 }
@@ -164,6 +167,8 @@ struct SuiteState {
     owners: Vec<(Id, Vec<Id>)>,
     reruns: u32,
     faults: BTreeMap<Purpose, u32>,
+    /// A rerun of this suite faulted past its retry.
+    faulted: bool,
     /// Jobs of this suite queued or running.
     outstanding: BTreeSet<u64>,
     base_green: bool,
@@ -179,6 +184,9 @@ pub struct Decision {
     pub flaky: Vec<String>,
     pub base: Vec<String>,
     pub unattributed: Vec<String>,
+    /// Reds whose attribution could not run to a verdict, also listed in `unattributed` until
+    /// something else owns them.
+    pub faulted: Vec<String>,
     pub records: Vec<RedRecord>,
 }
 
@@ -308,6 +316,7 @@ impl Attributor {
                 owners: vec![],
                 reruns: 0,
                 faults: BTreeMap::new(),
+                faulted: false,
                 outstanding: BTreeSet::new(),
                 base_green: false,
                 adders,
@@ -374,8 +383,11 @@ impl Attributor {
             *n += 1;
             if *n < 2 && st.settled.is_none() {
                 self.enqueue(&suite, job.removal.clone(), job.purpose.clone(), true);
-            } else if job.purpose == Purpose::Plain {
-                self.settle(&suite, Outcome::Unattributed, now);
+            } else {
+                st.faulted = true;
+                if job.purpose == Purpose::Plain {
+                    self.settle(&suite, Outcome::Faulted, now);
+                }
             }
             self.maybe_exhausted(&suite, now);
             return;
@@ -462,7 +474,8 @@ impl Attributor {
     fn maybe_exhausted(&mut self, suite: &str, now: u64) {
         let Some(st) = self.suites.get(suite) else { return };
         if st.settled.is_none() && st.outstanding.is_empty() && st.plain_red {
-            self.settle(suite, Outcome::Unattributed, now);
+            let outcome = if st.faulted { Outcome::Faulted } else { Outcome::Unattributed };
+            self.settle(suite, outcome, now);
         }
     }
 
@@ -501,6 +514,10 @@ impl Attributor {
                 }
                 Some(Outcome::Flaky) => d.flaky.push(suite.clone()),
                 Some(Outcome::Base) => d.base.push(suite.clone()),
+                Some(Outcome::Faulted) => {
+                    d.faulted.push(suite.clone());
+                    d.unattributed.push(suite.clone());
+                }
                 Some(Outcome::Unattributed) | None => d.unattributed.push(suite.clone()),
             }
             let settled_at = st.settled.as_ref().map(|(_, t)| *t);

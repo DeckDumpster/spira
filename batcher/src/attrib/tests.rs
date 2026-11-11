@@ -191,7 +191,9 @@ fn two_members_each_breaking_a_suite_alone_is_unattributed() {
         if without_both { JobResult::Green } else { JobResult::Red }
     };
     let (a, _) = replay(Budget { slots: 8, maxpar: 2 }, flat(&["m1", "m2", "m3"]), &[("s", false, 1)], 2, 2, verdict);
-    assert_eq!(a.decision().unattributed, ids(&["s"]));
+    let d = a.decision();
+    assert_eq!(d.unattributed, ids(&["s"]));
+    assert!(d.faulted.is_empty(), "reruns that ran and found no single owner are not a fault");
 }
 
 #[test]
@@ -243,7 +245,9 @@ fn a_fault_is_retried_once_and_never_read_as_a_result() {
     assert_eq!(retry[0].purpose, Purpose::Plain);
     a.on_job_result(retry[0].id, JobResult::Fault, 2);
     assert!(a.settled());
-    assert_eq!(a.decision().unattributed, ids(&["s"]));
+    let d = a.decision();
+    assert_eq!(d.faulted, ids(&["s"]));
+    assert_eq!(d.records[0].outcome, Some(Outcome::Faulted));
 }
 
 #[test]

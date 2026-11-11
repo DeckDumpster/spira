@@ -425,6 +425,9 @@ pub enum RoundEnd {
     Land { members: Vec<Member>, attribution_secs: Option<u64> },
     /// Nothing lands; the reason was already reported.
     Blocked(String),
+    /// The attribution itself failed to run: nothing is judged, no member is charged, and the
+    /// round stays open.
+    Faulted(String),
     /// Nothing lands, but every culprit was ejected: the pool holds only survivors to cut again.
     Emptied(String),
     /// Someone else abandoned the round: it is over, and this driver writes no verdict.
@@ -771,6 +774,12 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             return Ok(RoundEnd::Blocked(format!("integration red survived the in-round fix: {}", integration.join(","))));
         }
         own_by_touch(&*ops, &mut d, &members);
+        let faulted: Vec<&String> = d.unattributed.iter().filter(|s| d.faulted.contains(s)).collect();
+        if !faulted.is_empty() {
+            let why = format!("attribution faulted: its reruns of {} could not run", faulted.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(","));
+            println!("batcher: {why}");
+            return Ok(RoundEnd::Faulted(why));
+        }
         if !d.unattributed.is_empty() {
             if !retried && d.owners.is_empty() {
                 retried = true;
@@ -1382,27 +1391,33 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_red_attribution_could_not_rerun_stays_unattributed_when_two_members_touch_the_suite() {
+    fn a_two_member_round_with_one_red_member_ejects_it_and_certifies_the_other() {
+        let mut f = Fake::new(breaks("m2", "test-01.sh"));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-01.sh".to_string()])]);
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1"]), "{end:?}");
+    }
+
+    #[test]
+    fn a_red_whose_attribution_reruns_faulted_is_a_fault_when_two_members_touch_the_suite() {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
         f.refuses_removals = true;
         let touch = vec!["m1".to_string(), "m2".to_string()];
         let mut ops = Ops { touch: BTreeMap::from([("test-01.sh".to_string(), touch)]), ..Ops::default() };
         let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
-        assert!(ops.ejected.is_empty());
-        assert_eq!(ops.judged.len(), 1);
+        assert!(matches!(&end, RoundEnd::Faulted(why) if why.starts_with("attribution faulted") && why.contains("test-01.sh")), "{end:?}");
+        assert!(ops.ejected.is_empty() && ops.judged.is_empty());
     }
 
     #[test]
-    fn sp_evwve7_an_unattributed_red_in_a_one_member_round_ejects_that_member() {
+    fn a_one_member_round_whose_attribution_reruns_faulted_charges_nobody() {
         let mut f = Fake::new(breaks("m1", "test-01.sh"));
         f.refuses_removals = true;
         let mut ops = Ops::default();
         let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
-        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-01.sh".to_string()])]);
-        assert_eq!(ops.owner_flags, vec![("m1".to_string(), true)]);
-        assert!(ops.judged.is_empty());
+        assert!(matches!(end, RoundEnd::Faulted(_)), "{end:?}");
+        assert!(ops.ejected.is_empty() && ops.judged.is_empty());
     }
 
     #[test]
