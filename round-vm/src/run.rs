@@ -385,7 +385,9 @@ disk_base="$(fs_used)"
 case "$disk_base" in ''|*[!0-9]*) ;; *) disk_sampler "$disk_base" & disk_sampler_pid=$! ;; esac
 phase spira-env
 nix_bin=/nix/var/nix/profiles/default/bin
-flake_ref="path:$HOME/round-work#spira-env"
+env_flake="$HOME/spira-env-flake"
+rm -rf "$env_flake" && mkdir -p "$env_flake" && cp ~/round-work/flake.nix ~/round-work/flake.lock "$env_flake/"
+flake_ref="path:$env_flake#spira-env"
 build_env() { PATH="$nix_bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" nix --extra-experimental-features 'nix-command flakes' build "$flake_ref" -o "$HOME/spira-env" >&2; }
 if ! build_env; then
     echo "round-vm: spira-env build failed for flake ref $flake_ref (git checkout: $(git -C ~/round-work rev-parse --short HEAD 2>&1); flake.nix on disk: $([ -f ~/round-work/flake.nix ] && echo present || echo MISSING)) — dropping nix's fetcher cache and retrying once" >&2
@@ -3610,8 +3612,16 @@ mod tests {
     }
 
     #[test]
+    fn the_spira_env_flake_ref_never_names_the_work_tree_so_the_store_gains_no_copy_of_it() {
+        let line = REMOTE_SCRIPT.lines().find(|l| l.starts_with("flake_ref=")).expect("flake_ref is set");
+        assert!(!line.contains("round-work"), "a path: ref to the work tree copies target/ into the store: {line}");
+        let stage = REMOTE_SCRIPT.lines().find(|l| l.contains("cp ~/round-work/flake.nix")).expect("the flake files are staged");
+        assert!(stage.contains("flake.lock") && stage.contains("\"$env_flake/\""), "{stage}");
+    }
+
+    #[test]
     fn the_round_runs_with_spira_env_from_its_own_tree_first_in_path() {
-        let build = REMOTE_SCRIPT.find("flake_ref=\"path:$HOME/round-work#spira-env\"").expect("spira-env is built from the round's own tree");
+        let build = REMOTE_SCRIPT.find("flake_ref=\"path:$env_flake#spira-env\"").expect("spira-env is built from the round's own flake files");
         let path = REMOTE_SCRIPT.find("export PATH=\"$HOME/spira-env/bin:").expect("spira-env/bin first");
         let first_build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
         assert!(build < path && path < first_build);
