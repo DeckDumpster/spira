@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use spira_config::repos::{self, Registry};
 
-use crate::git_evidence::{git_output, is_ancestor};
+use crate::git_evidence::git_output;
 
 /// The server's bound on the verb: past the call's own deadline, so only a wedged run reaches it.
 pub const DEADLINE: Duration = Duration::from_millis(4500);
@@ -20,14 +20,18 @@ const FETCH_SECS: &str = "2";
 pub fn run(args: &[String]) -> (i32, String) {
     let [name] = args else { return (2, "unpublished: usage: unpublished <repo>".into()) };
     let owned = name.clone();
+    answer_within(name, CALL_BUDGET, move || measure(&owned))
+}
+
+fn answer_within(name: &str, budget: Duration, f: impl FnOnce() -> Result<serde_json::Value, String> + Send + 'static) -> (i32, String) {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(measure(&owned));
+        let _ = tx.send(f());
     });
-    match rx.recv_timeout(CALL_BUDGET) {
+    match rx.recv_timeout(budget) {
         Ok(Ok(v)) => (0, v.to_string()),
         Ok(Err(why)) => (2, format!("unpublished {name}: {why}")),
-        Err(_) => (2, format!("unpublished {name}: not measured within {}s", CALL_BUDGET.as_secs())),
+        Err(_) => (2, format!("unpublished {name}: not measured within {}s", budget.as_secs())),
     }
 }
 
@@ -108,23 +112,27 @@ fn rev(repo: &Path, name: &str) -> Result<String, String> {
     git_output(repo, &["rev-parse", "-q", "--verify", name]).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).ok_or_else(|| format!("cannot resolve {name}"))
 }
 
-/// The first landing-ref update, oldest first, whose new tip already contains the range's oldest commit.
+/// When the landing ref first moved onto the unpublished range: two git calls, both bounded by the
+/// range and the reflog, never by history.
 fn arrival(repo: &Path, base: &str, forge_tip: &str, landing_tip: &str) -> Result<u64, String> {
-    let range = format!("{forge_tip}..{landing_tip}");
-    let oldest = git_output(repo, &["rev-list", "--reverse", &range]).and_then(|s| s.lines().next().map(str::to_string)).ok_or("cannot find the oldest unpublished commit")?;
+    let range = git_output(repo, &["rev-list", &format!("{forge_tip}..{landing_tip}")]).ok_or("cannot list the unpublished range")?;
     let reflog = git_output(repo, &["log", "-g", "--date=unix", "--format=%H %gd", base]).ok_or("the landing ref has no readable reflog")?;
-    let entries: Vec<(&str, u64)> = reflog
+    arrival_in(&range, &reflog)
+}
+
+/// The oldest reflog update (`<tip> <ref>@{<unix>}` per line, newest first) whose tip is a commit of the range.
+fn arrival_in(range: &str, reflog: &str) -> Result<u64, String> {
+    let range: std::collections::HashSet<&str> = range.split_whitespace().collect();
+    reflog
         .lines()
         .rev()
         .filter_map(|l| {
             let (tip, gd) = l.split_once(' ')?;
             let secs = gd.rsplit_once('{')?.1.strip_suffix('}')?.parse().ok()?;
-            Some((tip, secs))
+            range.contains(tip).then_some(secs)
         })
-        .collect();
-    // The landing ref only advances, so containment is monotone along its reflog: bisect, one git call per step.
-    let first = entries.partition_point(|(tip, _)| !is_ancestor(repo, &oldest, tip));
-    entries.get(first).map(|(_, secs)| *secs).ok_or_else(|| "no reflog entry of the landing ref contains the oldest unpublished commit".into())
+        .next()
+        .ok_or_else(|| "no reflog entry of the landing ref lands on the unpublished range".into())
 }
 
 #[cfg(test)]
@@ -140,5 +148,34 @@ mod tests {
     fn a_timed_out_fetch_with_an_earlier_tip_is_measured_against_it_with_its_age() {
         assert_eq!(tip_age_of(Some("refs/remotes/origin/main@{900}\n".into()), 1_000), Ok(100));
         assert_eq!(tip_age_of(Some("garbage".into()), 1_000), Err("the forge fetch timed out and the last tip's age is unreadable".into()));
+    }
+
+    #[test]
+    fn the_arrival_is_the_oldest_reflog_update_landing_on_the_range_whatever_the_history_before_it() {
+        let reflog = "ddd x@{400}\nccc x@{300}\nbbb x@{200}\naaa x@{100}\n";
+        assert_eq!(arrival_in("ddd\nccc\nbbb\n", reflog), Ok(200));
+        let deep: String = (0..5000).map(|i| format!("old{i} x@{{{i}}}\n")).collect();
+        assert_eq!(arrival_in("ddd\nccc\nbbb\n", &format!("{reflog}{deep}")), Ok(200));
+    }
+
+    #[test]
+    fn an_arrival_no_reflog_entry_records_is_refused() {
+        assert!(arrival_in("zzz", "aaa x@{100}\n").is_err());
+    }
+
+    #[test]
+    fn a_measurement_that_overruns_its_budget_exits_nonzero() {
+        let (code, out) = answer_within("r", Duration::from_millis(50), || {
+            std::thread::sleep(Duration::from_millis(500));
+            Ok(serde_json::json!({}))
+        });
+        assert_eq!(code, 2);
+        assert!(out.contains("not measured within"), "{out}");
+    }
+
+    #[test]
+    fn a_measurement_that_fails_exits_nonzero_naming_why() {
+        assert_eq!(run(&["no-such-repo-sp-hnsjdu".into()]).0, 2);
+        assert_eq!(run(&[]).0, 2);
     }
 }
