@@ -301,7 +301,6 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // MemberAdded/Deliver/Cut cascade `cut` performs, minus the batch row's own INSERT.
         // A round assembled behind a running one, and its promotion (queue round stage/promote).
         Some("event-continuity") => cutover::cmd_event_continuity(&args[1..], conn),
-        Some("reconcile-landed") => cutover::cmd_reconcile_landed(&args[1..], conn),
         // Not part of the show/list/history/event surface: a plumbing verb the install
         // step and the test fixture use to apply schema.sql/grants.sql through the same
         // connection code the rest of this binary uses, instead of a second copy in shell.

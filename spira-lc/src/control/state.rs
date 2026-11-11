@@ -22,6 +22,7 @@ pub fn is_verb(verb: &str) -> bool {
         || asks::VERBS.contains(&verb)
         || mending::VERBS.contains(&verb)
         || conditions::VERBS.contains(&verb)
+        || landed::VERBS.contains(&verb)
 }
 
 /// What one call carries besides its argv: the clock it is judged at and the request id its
@@ -47,6 +48,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         Some(v) if asks::VERBS.contains(&v) => asks::run(store, args, call),
         Some(v) if mending::VERBS.contains(&v) => mending::run(store, args, call),
         Some(v) if conditions::VERBS.contains(&v) => conditions::run(store, args, call),
+        Some(v) if landed::VERBS.contains(&v) => landed::run(store, args, call),
         Some("promote-filed") => promote(store, rest, call),
         other => (
             CANNOT_TELL,
@@ -543,6 +545,7 @@ fn create<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, S
 mod asks;
 mod cascades;
 mod conditions;
+pub(crate) mod landed;
 mod mending;
 mod rounds;
 
