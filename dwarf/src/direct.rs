@@ -9,7 +9,8 @@
 //! per bead. A bead a dwarf holds is taken over: that dwarf is stopped with its work kept, then
 //! the bead is claimed on the same branch.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::ports::{Exec, s};
 use crate::util::{self, Sink};
@@ -107,8 +108,39 @@ fn row_of(exec: &dyn Exec, bead: &str) -> Result<Option<(String, Option<String>)
     }
 }
 
+/// How long the launcher waits on the called dwarf, and for a stopped dwarf's row to settle.
+const WAIT_TICKS: u32 = 60;
+const TICK: Duration = Duration::from_secs(1);
+
+/// Where a called dwarf leaves its refusal for the launcher, which cannot see the unit's output.
+/// One directed dwarf per bead, so the bead names it.
+pub fn refusal_path(run: &Path, bead: &str) -> PathBuf {
+    run.join("direct-refused").join(bead)
+}
+
+/// Records why this directed dwarf turned the bead away. Best effort: the ledger and stderr
+/// carry the same reason.
+pub fn write_refusal(run: &Path, bead: &str, reason: &str) {
+    let path = refusal_path(run, bead);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, format!("{reason}\n"));
+}
+
+/// The refusal in words: the row the dwarf saw, and what each claim attempt said.
+pub fn refusal_reason(bead: &str, by: &str, row: &Result<Option<spira_config::lc_state::Row>, String>, attempts: &[String]) -> String {
+    let seen = match row {
+        Ok(Some(r)) => format!("it reads state={} holder={} holds=[{}]", r.state, r.holder.as_deref().unwrap_or("none"), r.holds.join(",")),
+        Ok(None) => "it has no lifecycle row".to_string(),
+        Err(e) => format!("its row could not be read ({e})"),
+    };
+    let said = if attempts.is_empty() { String::new() } else { format!("; the claim said: {}", attempts.join(" | ")) };
+    format!("{bead} was not claimable for {by} — {seen}{said}")
+}
+
 #[allow(clippy::too_many_arguments)]
-pub fn run(exec: &dyn Exec, sink: &dyn Sink, req: &Request, home: &Path, dwarf_path: Option<&str>, call_bin: &str, call_argv: &[String], now: i64) -> i32 {
+pub fn run(exec: &dyn Exec, sink: &dyn Sink, sleep: &dyn Fn(Duration), run_dir: &Path, req: &Request, home: &Path, dwarf_path: Option<&str>, call_bin: &str, call_argv: &[String], now: i64) -> i32 {
     let fatal = |m: String| {
         sink.err(&util::log_line(now, &format!("FATAL direct {}: {m}", req.bead)));
         1
@@ -126,6 +158,18 @@ pub fn run(exec: &dyn Exec, sink: &dyn Sink, req: &Request, home: &Path, dwarf_p
                 return fatal(format!("could not stop the dwarf holding it (slay rc={}): {} — nothing directed", o.code, o.first_err_line()));
             }
             let _ = exec.exec("spira-lc", &s(&["unhold", &req.bead, "wait", "dwarf"]), None, None);
+            let mut seen = String::new();
+            let settled = (0..WAIT_TICKS).any(|_| match row_of(exec, &req.bead) {
+                Ok(Some((state, _))) if CLAIMABLE.contains(&state.as_str()) => true,
+                other => {
+                    seen = format!("{other:?}");
+                    sleep(TICK);
+                    false
+                }
+            });
+            if !settled {
+                return fatal(format!("the stopped dwarf's row never left WORKING (last read {seen}) — nothing directed"));
+            }
             sink.out(&util::log_line(now, &format!("direct {}: stopped {} with its branch and worktree kept", req.bead, holder.as_deref().unwrap_or("its holder"))));
             replaced = Some(holder.unwrap_or_else(|| "unknown".to_string()));
         } else if !CLAIMABLE.contains(&state.as_str()) {
@@ -134,16 +178,34 @@ pub fn run(exec: &dyn Exec, sink: &dyn Sink, req: &Request, home: &Path, dwarf_p
     }
     let argv = build_argv(req, replaced.as_deref(), home, dwarf_path, call_argv, now);
     sink.out(&util::log_line(now, &format!("direct {}: calling a {} dwarf directly (caps and the world's state bypassed)", req.bead, req.rune)));
+    let refusal = refusal_path(run_dir, &req.bead);
+    let _ = std::fs::remove_file(&refusal);
     let o = exec.exec(call_bin, &argv, None, None);
     o.stdout.lines().for_each(|l| sink.out(l));
     o.stderr.lines().for_each(|l| sink.err(l));
-    o.code
+    if o.code != 0 {
+        return o.code;
+    }
+    for _ in 0..WAIT_TICKS {
+        if let Ok(why) = std::fs::read_to_string(&refusal) {
+            let _ = std::fs::remove_file(&refusal);
+            return fatal(format!("the dwarf refused it: {}", why.trim_end()));
+        }
+        if let Ok(Some((state, Some(holder)))) = row_of(exec, &req.bead) {
+            if state == HELD && replaced.as_deref() != Some(holder.as_str()) {
+                return 0;
+            }
+        }
+        sleep(TICK);
+    }
+    fatal(format!("the dwarf neither claimed nor refused it within {WAIT_TICKS}s — it exited without a reason; see its unit's journal"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::util::{MemSink, Out};
+    use std::path::PathBuf;
     use std::sync::Mutex;
 
     fn a(v: &[&str]) -> Vec<String> {
@@ -187,16 +249,42 @@ mod tests {
         show: Out,
         slay_rc: i32,
         calls: Mutex<Vec<(String, Vec<String>)>>,
+        /// Reads of the row that still see the stopped dwarf holding it, after `slay`.
+        teardown_reads: Mutex<u32>,
+        /// What the row reads once the unit is launched; and what the unit leaves behind.
+        after_launch: Option<Out>,
+        refusal: Option<String>,
+        run_dir: PathBuf,
     }
     impl Exec for Fake {
         fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            let launched = self.calls.lock().unwrap().iter().any(|c| c.0 == "systemd-run");
+            let slain = self.calls.lock().unwrap().iter().any(|c| c.0 == "slay");
             self.calls.lock().unwrap().push((prog.to_string(), args.to_vec()));
             match prog {
+                "spira-lc" if launched && self.after_launch.is_some() => self.after_launch.clone().unwrap(),
+                "spira-lc" if slain && args[0] == "show" => {
+                    let mut n = self.teardown_reads.lock().unwrap();
+                    if *n > 0 {
+                        *n -= 1;
+                        return self.show.clone();
+                    }
+                    row("READY", None)
+                }
                 "spira-lc" => self.show.clone(),
                 "slay" => Out { code: self.slay_rc, stdout: String::new(), stderr: "slay said no".into() },
+                "systemd-run" => {
+                    if let Some(why) = &self.refusal {
+                        write_refusal(&self.run_dir, "sp-x", why);
+                    }
+                    Out::ok("")
+                }
                 _ => Out::ok(""),
             }
         }
+    }
+    fn fake(show: Out, slay_rc: i32) -> Fake {
+        Fake { show, slay_rc, calls: Mutex::default(), teardown_reads: Mutex::new(0), after_launch: None, refusal: None, run_dir: PathBuf::from("/nonexistent") }
     }
     fn row(state: &str, holder: Option<&str>) -> Out {
         let h = holder.map_or("null".to_string(), |h| format!("\"{h}\""));
@@ -204,36 +292,39 @@ mod tests {
     }
     fn go(f: &Fake) -> (i32, MemSink) {
         let sink = MemSink::default();
-        let rc = run(f, &sink, &req(), Path::new("/h"), Some("/rel/bin/dwarf"), "systemd-run", &[], 1000);
+        let rc = run(f, &sink, &|_| {}, &f.run_dir, &req(), Path::new("/h"), Some("/rel/bin/dwarf"), "systemd-run", &[], 1000);
         (rc, sink)
     }
     fn progs(f: &Fake) -> Vec<String> {
-        f.calls.lock().unwrap().iter().map(|c| c.0.clone()).collect()
+        let mut p: Vec<String> = f.calls.lock().unwrap().iter().map(|c| c.0.clone()).collect();
+        p.dedup();
+        p
     }
 
     #[test]
     fn a_ready_bead_is_called_without_a_takeover() {
-        let f = Fake { show: row("READY", None), slay_rc: 0, calls: Mutex::default() };
+        let f = { let mut f = fake(row("READY", None), 0); f.after_launch = Some(row("WORKING", Some("dwarf-new"))); f };
         let (rc, _) = go(&f);
-        assert_eq!((rc, progs(&f)), (0, a(&["spira-lc", "systemd-run"])));
+        assert_eq!((rc, progs(&f)), (0, a(&["spira-lc", "systemd-run", "spira-lc"])));
     }
 
     #[test]
     fn a_held_bead_is_taken_over_with_its_work_kept_and_the_requester_in_the_why() {
-        let f = Fake { show: row("WORKING", Some("dwarf-old")), slay_rc: 0, calls: Mutex::default() };
+        let f = { let mut f = fake(row("WORKING", Some("dwarf-old")), 0); f.after_launch = Some(row("WORKING", Some("dwarf-new"))); f };
         let (rc, sink) = go(&f);
         assert_eq!(rc, 0);
-        assert_eq!(progs(&f), a(&["spira-lc", "slay", "spira-lc", "systemd-run"]), "the old dwarf stops and its leftover hold is lifted before the new one starts");
+        assert_eq!(progs(&f), a(&["spira-lc", "slay", "spira-lc", "systemd-run", "spira-lc"]), "the old dwarf stops and its leftover hold is lifted before the new one starts");
         let calls = f.calls.lock().unwrap();
-        assert_eq!(calls[2].1, a(&["unhold", "sp-x", "wait", "dwarf"]));
-        assert_eq!(calls[1].1, a(&["--bead", "sp-x", "--keep-work", "--why", "directed by concierge: loop fix"]));
-        assert!(calls[3].1.windows(2).any(|w| w == ["--replaced", "dwarf-old"]), "{:?}", calls[3].1);
+        let at = |p: &str| calls.iter().find(|c| c.0 == p && c.1[0] != "show").unwrap().1.clone();
+        assert_eq!(at("spira-lc"), a(&["unhold", "sp-x", "wait", "dwarf"]));
+        assert_eq!(at("slay"), a(&["--bead", "sp-x", "--keep-work", "--why", "directed by concierge: loop fix"]));
+        assert!(at("systemd-run").windows(2).any(|w| w == ["--replaced", "dwarf-old"]), "{:?}", at("systemd-run"));
         assert!(sink.all().contains("stopped dwarf-old"));
     }
 
     #[test]
     fn a_dwarf_that_will_not_stop_means_nothing_is_directed() {
-        let f = Fake { show: row("WORKING", Some("dwarf-old")), slay_rc: 1, calls: Mutex::default() };
+        let f = fake(row("WORKING", Some("dwarf-old")), 1);
         let (rc, sink) = go(&f);
         assert_eq!((rc, progs(&f)), (1, a(&["spira-lc", "slay"])));
         assert!(sink.all().contains("slay said no"), "{}", sink.all());
@@ -241,11 +332,68 @@ mod tests {
 
     #[test]
     fn a_bead_past_the_builder_or_an_unreadable_row_is_refused_before_anything_runs() {
-        let f = Fake { show: row("SUBMITTED", None), slay_rc: 0, calls: Mutex::default() };
+        let f = fake(row("SUBMITTED", None), 0);
         assert_eq!((go(&f).0, progs(&f)), (1, a(&["spira-lc"])));
-        let f = Fake { show: Out { code: 2, stdout: String::new(), stderr: "store down".into() }, slay_rc: 0, calls: Mutex::default() };
+        let f = fake(Out { code: 2, stdout: String::new(), stderr: "store down".into() }, 0);
         assert_eq!((go(&f).0, progs(&f)), (1, a(&["spira-lc"])));
-        let f = Fake { show: Out { code: 1, stdout: String::new(), stderr: String::new() }, slay_rc: 0, calls: Mutex::default() };
-        assert_eq!((go(&f).0, progs(&f)), (0, a(&["spira-lc", "systemd-run"])), "no row yet: the claim creates it");
+        let f = { let mut f = fake(Out { code: 1, stdout: String::new(), stderr: String::new() }, 0); f.after_launch = Some(row("WORKING", Some("dwarf-new"))); f };
+        assert_eq!((go(&f).0, progs(&f)), (0, a(&["spira-lc", "systemd-run", "spira-lc"])), "no row yet: the claim creates it");
+    }
+
+    #[test]
+    fn a_dwarf_that_refuses_the_bead_fails_the_direct_call_with_its_reason() {
+        let dir = testkit::TempDir::new("dwarf-direct-refused");
+        let mut f = fake(row("READY", None), 0);
+        f.run_dir = dir.to_path_buf();
+        f.refusal = Some("sp-x was not claimable for concierge — it reads state=READY holder=none holds=[]; the claim said: Blocked by parent sp-p".into());
+        let (rc, sink) = go(&f);
+        assert_eq!(rc, 1);
+        assert!(sink.all().contains("ERR") && sink.all().contains("Blocked by parent sp-p") && sink.all().contains("state=READY"), "{}", sink.all());
+    }
+
+    #[test]
+    fn a_takeover_waits_for_the_stopped_dwarfs_row_before_calling_the_next() {
+        let mut f = fake(row("WORKING", Some("dwarf-old")), 0);
+        f.teardown_reads = Mutex::new(3);
+        f.after_launch = Some(row("WORKING", Some("dwarf-new")));
+        let (rc, _) = go(&f);
+        assert_eq!(rc, 0);
+        let calls = f.calls.lock().unwrap();
+        let launch = calls.iter().position(|c| c.0 == "systemd-run").unwrap();
+        let slay = calls.iter().position(|c| c.0 == "slay").unwrap();
+        let shows = calls[slay..launch].iter().filter(|c| c.0 == "spira-lc" && c.1[0] == "show").count();
+        assert_eq!(shows, 4, "three reads still saw the old holder, the fourth saw READY");
+    }
+
+    #[test]
+    fn a_row_that_never_leaves_working_after_the_stop_means_nothing_is_directed() {
+        let mut f = fake(row("WORKING", Some("dwarf-old")), 0);
+        f.teardown_reads = Mutex::new(u32::MAX);
+        let (rc, sink) = go(&f);
+        assert_eq!((rc, progs(&f).contains(&"systemd-run".to_string())), (1, false));
+        assert!(sink.all().contains("never left WORKING"), "{}", sink.all());
+    }
+
+    #[test]
+    fn the_refusal_names_the_row_it_saw_and_what_the_claim_said() {
+        let r = spira_config::lc_state::parse_show(&row("READY", None).stdout);
+        let why = refusal_reason("sp-x", "concierge", &r, &["lost to another claim".into()]);
+        assert!(why.contains("sp-x") && why.contains("concierge") && why.contains("state=READY holder=none") && why.contains("lost to another claim"), "{why}");
+        assert!(refusal_reason("sp-x", "c", &Ok(None), &[]).contains("no lifecycle row"));
+    }
+
+    #[test]
+    fn a_dwarf_that_neither_claims_nor_refuses_fails_the_call() {
+        let f = fake(row("READY", None), 0);
+        let (rc, sink) = go(&f);
+        assert_eq!(rc, 1);
+        assert!(sink.all().contains("neither claimed nor refused"), "{}", sink.all());
+    }
+
+    #[test]
+    fn a_refusal_is_left_where_the_launcher_looks_for_that_bead() {
+        let dir = testkit::TempDir::new("dwarf-direct-refusal-path");
+        write_refusal(&dir, "sp-x", "because");
+        assert_eq!(std::fs::read_to_string(refusal_path(&dir, "sp-x")).unwrap(), "because\n");
     }
 }

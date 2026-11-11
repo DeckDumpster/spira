@@ -187,7 +187,7 @@ fn show_row(o: &Out) -> Result<Option<spira_config::lc_state::Row>, String> {
 }
 
 /// `spira-lc show <id>`, retried on a non-answer with a doubling backoff from `delay`, `tries` in all.
-fn ask_row(
+pub(crate) fn ask_row(
     exec: &dyn Exec,
     id: &str,
     tries: u32,
