@@ -2,6 +2,7 @@
 //! ref; a branch that does not merge is red (FAIL reason=no-rebase), never NO_VERDICT.
 
 pub mod basecache;
+pub mod buildtiming;
 pub mod cert;
 pub mod cgroup;
 pub mod compose;

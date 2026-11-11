@@ -87,6 +87,10 @@ pub struct GateRun {
     pub branch_type: String,
     /// `name:secs,…` as gate.log's `phases=`.
     pub phases: String,
+    pub compiled: u64,
+    pub fresh: u64,
+    pub admit_wait_secs: u64,
+    pub slowest: String,
 }
 
 /// Render the row through tsd's own builder. `wall_secs` is waited + ran: the certification
@@ -114,6 +118,10 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
         ("compose".into(), s(&r.compose)),
         ("branch_type".into(), s(bt)),
         ("phases".into(), s(&r.phases)),
+        ("compiled".into(), Value::from(r.compiled)),
+        ("fresh".into(), Value::from(r.fresh)),
+        ("admit_wait_secs".into(), Value::from(r.admit_wait_secs)),
+        ("slowest".into(), s(&r.slowest)),
     ];
     tsd::build_row(ts, host, FAMILY, &fields)
 }
@@ -145,6 +153,17 @@ pub fn append<W: World>(w: &W, run: &str, ts: &str, r: &GateRun) {
 
 /// Pushes the trial's run, queue and wait seconds and a run count to the metrics store; the
 /// TSD row stays the record. Labels are bounded: no branch or bead.
+/// Cargo's timing report, kept in the directory of the run record, named by the run's timestamp.
+pub fn keep_report<W: World>(w: &W, run: &str, ts: &str, html: &str) {
+    if run.is_empty() {
+        return;
+    }
+    if let Some(dir) = tsd::family_path(Path::new(run), FAMILY).parent() {
+        w.mkdir_p(dir);
+        w.write_atomic(dir, &format!("cargo-timing-{ts}.html"), html);
+    }
+}
+
 pub fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &GateRun) {
     use spira_otel::metrics::Point;
     let mode = if r.gate_mode.is_empty() { "unknown" } else { &r.gate_mode };
@@ -242,6 +261,7 @@ mod tests {
             compose: "unit".into(),
             branch_type: "rust-only".into(),
             phases: "fences:30,unit:120".into(),
+            ..Default::default()
         };
         let line = render("2026-09-29T00:00:00Z", "h1", &r).unwrap();
         let v: Value = serde_json::from_str(&line).unwrap();

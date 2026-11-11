@@ -62,6 +62,8 @@ struct Fake {
     /// (status, output) of a unit phase by (tree revision, the phase's first word after
     /// `cargo build …` is the build, `cargo test …` the tests.
     unit_runs: RefCell<UnitRuns>,
+    /// What a tree's `target/cargo-timings/cargo-timing.html` reads as.
+    timing_report: RefCell<Option<String>>,
     /// Every command run_gate was handed, in order.
     cmds: RefCell<Vec<String>>,
     /// Seconds each run_gate advances the clock by, per command kind.
@@ -246,6 +248,7 @@ impl Fake {
             touched: RefCell::new(Ok(Vec::new())),
             metadata: RefCell::new(HashMap::new()),
             unit_runs: RefCell::new(HashMap::new()),
+            timing_report: RefCell::new(None),
             cmds: RefCell::new(Vec::new()),
             phase_secs: Cell::new(7),
             landref_tips: RefCell::new(Vec::new()),
@@ -342,6 +345,9 @@ impl World for Fake {
         self.files.borrow().contains_key(p)
     }
     fn read(&self, p: &Path) -> Option<String> {
+        if p.ends_with(crate::buildtiming::REPORT) {
+            return self.timing_report.borrow().clone();
+        }
         self.files.borrow().get(p).cloned()
     }
     fn mkdir_p(&self, _: &Path) {}
@@ -2052,6 +2058,29 @@ fn meter(f: &Fake) -> String {
 }
 
 #[test]
+fn a_unit_builds_with_timings_and_the_gate_log_and_run_row_say_where_the_build_went() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    *f.timing_report.borrow_mut() = Some(
+        r#"<td>Fresh units:</td><td>3</td><td>Dirty units:</td><td>7</td>
+const UNIT_DATA = [{"name":"runtime","target":"","start":4.2,"duration":88.4},{"name":"gate","target":" gate \"bin\" (test)","start":90.0,"duration":31.0}];"#
+            .into(),
+    );
+    f.unit_runs.borrow_mut().insert(
+        (MERGE_SHA.into(), "build"),
+        (0, "spira-admit: admitted to compile slot 1 after 86s\nspira-admit: admitted to compile slot 2 after 14s".into()),
+    );
+    assert_eq!(f.run(), PASS);
+    assert!(f.cmds.borrow().iter().any(|c| c.starts_with("cargo test --no-run") && c.contains(" --timings")), "{:?}", f.cmds.borrow());
+    let m = meter(&f);
+    assert!(
+        m.contains(" compiled=7 fresh=3 admit_wait=100 slowest=runtime/lib:88.4@4.2,gate/bin-test:31.0@90.0"),
+        "{m}"
+    );
+    assert!(f.tsd.borrow().iter().any(|r| r.contains("\"admit_wait_secs\":100") && r.contains("\"compiled\":7")), "{:?}", f.tsd.borrow());
+    assert!(f.written.borrow().iter().any(|(p, c)| p.to_string_lossy().contains("cargo-timing") && c.contains("UNIT_DATA")));
+}
+
+#[test]
 fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() {
     let f = unit_fake(&["spira-config/src/lib.rs", "docs/x.md"]);
     f.runs
@@ -2070,7 +2099,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     // spira-config brings its dependent queue
     assert_eq!(
         cmds[1],
-        "cargo test --no-run --profile dwarf --config profile.dwarf.incremental=false -j 8 --features integration -p queue -p spira-config"
+        "cargo test --no-run --timings --profile dwarf --config profile.dwarf.incremental=false -j 8 --features integration -p queue -p spira-config"
     );
     assert_eq!(
         cmds[2],
@@ -2106,7 +2135,7 @@ fn a_unit_gate_builds_once_and_every_other_composition_keeps_the_build_fence() {
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds[0], "bash spira/lint.sh && run-suites", "{cmds:?}");
     assert!(
-        cmds[1].starts_with("cargo test --no-run --profile dwarf"),
+        cmds[1].starts_with("cargo test --no-run --timings --profile dwarf"),
         "{cmds:?}"
     );
     assert!(cmds.iter().all(|c| !c.contains("build-fence")), "{cmds:?}");
@@ -2592,7 +2621,7 @@ fn a_red_fence_in_unit_mode_still_runs_the_unit_phases() {
     // a red fence does not stop the unit phases: they report too, then the base's fences
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds[0], "bash spira/fence.sh && run-suites");
-    assert!(cmds[1].starts_with("cargo test --no-run"), "{cmds:?}");
+    assert!(cmds[1].starts_with("cargo test --no-run --timings"), "{cmds:?}");
     assert!(cmds[2].starts_with("cargo test --profile"), "{cmds:?}");
     assert!(cmds[3].starts_with("bash spira/fence.sh"), "{cmds:?}");
 }
