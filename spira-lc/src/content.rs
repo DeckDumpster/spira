@@ -1,8 +1,8 @@
 //! `content <bd-subcommand> …` — the one door for bead content: its reads, and the narrow
 //! writes a task makes (labels, comments, notes, metadata, a close, a filing), so nothing
-//! outside the store forks `bd`. The server forks bd for them with bd's own argv: the content
-//! store is out of scope, and this is the one place allowed to run it. State is never served
-//! here: the machine's own verbs answer that. Anything outside the allowlist is refused.
+//! outside the store forks `bd`. Reads are SQL against the beads database (`content_sql`); the
+//! writes fork bd with bd's own argv, which owns id allocation and events. State is never
+//! served here: the machine's own verbs answer that. Anything outside the allowlist is refused.
 
 use crate::callers::Answer;
 
@@ -202,7 +202,7 @@ pub fn run(
     stdin: &mut dyn FnMut() -> Result<String, String>,
     guard: Guard<'_>,
     after: After<'_>,
-    read: &dyn Fn(&[String]) -> Result<String, String>,
+    read: &dyn Fn(&[String]) -> Result<String, crate::composed::ReadError>,
     write: Write<'_>,
 ) -> Answer {
     if args.is_empty() {
@@ -213,7 +213,12 @@ pub fn run(
         Err(e) => return Answer { code: REFUSED, stderr: format!("spira-lc content: {e}\n"), ..Default::default() },
     };
     let body = match kind {
-        Kind::Read => return answer_of(read(args), String::new()),
+        Kind::Read => {
+            return match read(args) {
+                Err(e) if e.cannot_tell => Answer { code: CANNOT_TELL, stderr: format!("spira-lc content: cannot tell: {}\n", e.text.trim_end()), ..Default::default() },
+                res => answer_of(res.map_err(|e| e.text), String::new()),
+            }
+        }
         Kind::Write { body: false } => None,
         Kind::Write { body: true } => match stdin() {
             Ok(b) => Some(b),
@@ -611,7 +616,7 @@ mod tests {
     #[test]
     fn a_guard_refusal_is_the_answer_and_bd_never_runs() {
         let never_w = |_: &[String], _: Option<&str>| -> Result<String, String> { panic!("bd must not run") };
-        let never = |_: &[String]| -> Result<String, String> { panic!("bd must not run") };
+        let never = |_: &[String]| -> Result<String, crate::composed::ReadError> { panic!("bd must not run") };
         let env = caller(&[("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock")]);
         let ask = || Ok::<_, String>(ASK.to_string());
         let g = Guards { caller: &env, ask_label: &ask, registry: &registry, now: NOW };
@@ -646,7 +651,7 @@ mod tests {
 
     #[test]
     fn run_refuses_before_calling_bd() {
-        let never = |_: &[String]| -> Result<String, String> { panic!("bd must not run") };
+        let never = |_: &[String]| -> Result<String, crate::composed::ReadError> { panic!("bd must not run") };
         let never_w = |_: &[String], _: Option<&str>| -> Result<String, String> { panic!("bd must not run") };
         let mut no_stdin = || Err::<String, String>("nothing was sent".into());
         let mut admit = |_: &[String], _: Option<&str>| Ok(String::new());

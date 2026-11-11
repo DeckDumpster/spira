@@ -728,3 +728,7 @@ ready_scheduler_wait_s
 victorialogs_url
 unit_test_deadline_secs
 unit_test_deadline_periods
+beads_sql_host
+beads_sql_port
+beads_sql_user
+beads_sql_password_file

@@ -207,6 +207,25 @@ impl Conn {
         }
     }
 
+    /// A read-only connection to the beads database: `user` logs in with the secret `password_file`
+    /// holds. Lazy: nothing connects until the first query.
+    pub fn reader(host: &str, port: u16, user: &str, password_file: &str, database: &str) -> Result<Conn, String> {
+        let password = password_from(Some(password_file.to_string()), None, |p| std::fs::read_to_string(p))?;
+        Ok(Conn {
+            host: host.to_string(),
+            port,
+            user: user.to_string(),
+            password: Mutex::new(password),
+            password_file: Some(password_file.to_string()).filter(|p| !p.is_empty()),
+            database: database.to_string(),
+            session: Mutex::new(None),
+            read_sessions: std::array::from_fn(|_| Mutex::new(None)),
+            read_turn: std::sync::atomic::AtomicUsize::new(0),
+            writes: WriteQueue::default(),
+            io_timeout: QUERY_DEADLINE,
+        })
+    }
+
     /// A connection to a port nothing listens on: whatever answers through it was not read from Dolt.
     #[cfg(test)]
     pub fn unreachable() -> Conn {

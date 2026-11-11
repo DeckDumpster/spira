@@ -602,25 +602,32 @@ fn apply_grants(admin: &dyn Sql, grants: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The bead-content tables the service user reads (`plan items`, sift, reconcile-content).
-pub const CONTENT_TABLES: [&str; 3] = ["issues", "labels", "dependencies"];
+/// The bead-content tables the service user and the read-only user read (`plan items`, sift,
+/// reconcile-content, and every `content` read).
+pub const CONTENT_TABLES: [&str; 5] = ["issues", "labels", "dependencies", "comments", "config"];
 
-/// `GRANT SELECT` on each content table of `cdb` (a quoted identifier) to the service user,
-/// for each table that exists. SELECT only: the content store is never written through lc.
+/// The users that read the content store: the service user and the read-only user the content
+/// door's SQL reads log in as (`beads_sql_user`).
+const CONTENT_READERS: [(&str, &str); 2] = [("spira_lc", SERVICE_GRANTEE), ("spira_lc_ro", "'spira_lc_ro'@'%'")];
+
+/// `GRANT SELECT` on each content table of `cdb` (a quoted identifier) to each reader that
+/// exists, for each table that exists. SELECT only: the content store is never written through lc.
 fn apply_content_grants(admin: &dyn Sql, cdb: Option<&str>) -> Result<(), String> {
     let Some(cdb) = cdb else { return Ok(()) };
     let schema = cdb.trim_matches('`');
-    let who = "SELECT user FROM mysql.user WHERE user = 'spira_lc'";
-    if admin.rows(who).map_err(|e| format!("cannot tell whether user spira_lc exists: {e}"))?.is_empty() {
-        return Ok(());
-    }
-    for table in CONTENT_TABLES {
-        let probe = format!("SELECT table_name FROM information_schema.tables WHERE table_schema = {} AND table_name = {}", quote(schema), quote(table));
-        if admin.rows(&probe).map_err(|e| format!("cannot tell whether {schema}.{table} exists: {e}"))?.is_empty() {
+    for (user, grantee) in CONTENT_READERS {
+        let who = format!("SELECT user FROM mysql.user WHERE user = '{user}'");
+        if admin.rows(&who).map_err(|e| format!("cannot tell whether user {user} exists: {e}"))?.is_empty() {
             continue;
         }
-        let stmt = format!("GRANT SELECT ON {cdb}.{table} TO {SERVICE_GRANTEE}");
-        admin.exec(&stmt).map_err(|e| format!("`{stmt}` failed: {e}"))?;
+        for table in CONTENT_TABLES {
+            let probe = format!("SELECT table_name FROM information_schema.tables WHERE table_schema = {} AND table_name = {}", quote(schema), quote(table));
+            if admin.rows(&probe).map_err(|e| format!("cannot tell whether {schema}.{table} exists: {e}"))?.is_empty() {
+                continue;
+            }
+            let stmt = format!("GRANT SELECT ON {cdb}.{table} TO {grantee}");
+            admin.exec(&stmt).map_err(|e| format!("`{stmt}` failed: {e}"))?;
+        }
     }
     Ok(())
 }
@@ -909,10 +916,13 @@ mod tests {
         let r = Recorder(Default::default());
         apply_content_grants(&r, Some("`acme_beads`")).unwrap();
         let got = r.0.borrow().clone();
-        assert_eq!(got.len(), CONTENT_TABLES.len(), "{got:?}");
-        for (g, t) in got.iter().zip(CONTENT_TABLES) {
-            assert_eq!(g, &format!("GRANT SELECT ON `acme_beads`.{t} TO 'spira_lc'@'%'"));
+        assert_eq!(got.len(), CONTENT_TABLES.len() * 2, "{got:?}");
+        for (user, grantee) in [("service", "'spira_lc'@'%'"), ("read-only", "'spira_lc_ro'@'%'")] {
+            for t in CONTENT_TABLES {
+                assert!(got.contains(&format!("GRANT SELECT ON `acme_beads`.{t} TO {grantee}")), "{user} user lacks {t}: {got:?}");
+            }
         }
+        assert!(got.iter().all(|g| g.starts_with("GRANT SELECT ON")), "{got:?}");
         let none = Recorder(Default::default());
         apply_content_grants(&none, None).unwrap();
         assert!(none.0.borrow().is_empty());

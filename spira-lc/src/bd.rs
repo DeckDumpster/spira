@@ -2,7 +2,8 @@
 //! titles, descriptions, dependencies, notes and filing stay bd's job (§3.3/3.4) — this
 //! module never touches `spira_lifecycle`. `SPIRA_BD`/`SPIRA_DB` are declared config
 //! (spira/conf.d), resolved from `$SPIRA_TOML` (one source of config, per Ryan 2026-10-05) —
-//! never this process's own environment.
+//! never this process's own environment. The content door's reads are not here: they are SQL
+//! (`content_sql`).
 
 use std::process::Command;
 

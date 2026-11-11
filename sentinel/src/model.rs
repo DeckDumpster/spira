@@ -27,8 +27,6 @@ pub struct Bead {
     #[serde(default)]
     pub parent: Option<String>,
     #[serde(default, deserialize_with = "nullable")]
-    pub dependency_count: u64,
-    #[serde(default, deserialize_with = "nullable")]
     pub dependencies: Vec<Dep>,
 }
 

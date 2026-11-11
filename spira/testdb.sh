@@ -154,7 +154,7 @@ testdb_up() {            # testdb_up <tag>
     # so the suite must build its own fresh server fixture or skip.
     if [ "${TESTDB_SHARED:-0}" = 1 ] && [ -n "${TESTDB_NAME:-}" ] && \
        [ -n "${TESTDB_BASELINE:-}" ] && [ "${TESTDB_MODE:-}" != server ] && \
-       [ "${SPIRA_TESTDB_MODE:-}" != server ]; then
+       [ "${SPIRA_TESTDB_MODE:-server}" != server ]; then
         local _te _out
         _te="$(_testdb_testenv)" || {
             printf 'testdb: no testenv binary for a shared fixture\n' >&2
@@ -206,7 +206,10 @@ testdb_up() {            # testdb_up <tag>
     # got an embedded fixture, every statement was refused, and the failure read as schema
     # drift. An unsatisfiable request fails rather than silently downgrading, because a
     # silent downgrade is how that read as drift in the first place.
-    if [ "${SPIRA_TESTDB_MODE:-}" = server ]; then
+    # SERVER IS THE DEFAULT (sp-7tz6jb): `spira-lc content` reads are SQL over the MySQL protocol,
+    # and an embedded store has no server to answer them. A suite that needs the embedded engine
+    # asks for it with SPIRA_TESTDB_MODE=embedded and then has no content reads.
+    if [ "${SPIRA_TESTDB_MODE:-server}" = server ]; then
         :
     elif _testdb_embedded_check; then
         # EMBEDDED MODE: private tmpdir, cleanup is rm -rf. The init (env -i, so a gate or
@@ -289,7 +292,25 @@ testdb_up() {            # testdb_up <tag>
     # Registered keys: declared via tl_config too, same reason as the embedded-mode
     # branches above — a compiled binary never sees this shell's own exports for them.
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
+    _testdb_sql_reader || { printf 'testdb: could not create the read-only SQL user for %s\n' "$TESTDB_NAME" >&2; return 1; }
     return 0
+}
+
+# The read-only SQL user `spira-lc content` reads log in as (sp-7tz6jb), for a server-mode fixture:
+# created on the fixture's private server with SELECT on its beads database and nothing else, its
+# secret in a file beside the fixture, and the connection declared through tl_config. Run after
+# every `up` and every `reset`, since a reset restarts the server on a fresh template.
+_testdb_sql_reader() {
+    local _port _db _cred
+    _port="$(cat "$SPIRA_DB/.beads/dolt-server.port" 2>/dev/null)" || return 1
+    _db="$(sed -n 's/.*"dolt_database"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SPIRA_DB/.beads/metadata.json" 2>/dev/null | head -n1)"
+    [ -n "$_port" ] && [ -n "$_db" ] || return 1
+    _cred="$SPIRA_DB/.beads/sql-ro.credential"
+    # batch-job: fixture setup against the suite's own throwaway server
+    timeout 10 "${TESTDB_DOLT:-dolt}" --host 127.0.0.1 --port "$_port" --no-tls -u root -p "" sql -q \
+        "CREATE USER IF NOT EXISTS 'spira_lc_ro'@'%' IDENTIFIED BY 'testdb-ro'; GRANT SELECT ON \`$_db\`.* TO 'spira_lc_ro'@'%'" >/dev/null 2>&1 || return 1
+    printf 'testdb-ro\n' > "$_cred" || return 1
+    tl_config SPIRA_BEADS_SQL_HOST=127.0.0.1 SPIRA_BEADS_SQL_PORT="$_port" SPIRA_BEADS_SQL_USER=spira_lc_ro SPIRA_BEADS_SQL_PASSWORD_FILE="$_cred"
 }
 
 # Back to an empty database. For embedded mode: a directory swap rather than a table wipe.
@@ -305,6 +326,7 @@ testdb_reset() {
         _te="$(_testdb_testenv)" || return 1
         _out="$("$_te" testdb reset --fixture "$TESTDB_FIXTURE")" || {
             printf 'testdb: server reset failed for %s\n' "$TESTDB_NAME" >&2; return 1; }
+        _testdb_sql_reader || { printf 'testdb: could not recreate the read-only SQL user for %s\n' "$TESTDB_NAME" >&2; return 1; }
         return 0
     fi
     # Embedded mode: testenv does the directory swap (DESIGN-testdb.md §6, sp-k2oyn) —

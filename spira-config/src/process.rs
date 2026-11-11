@@ -161,3 +161,20 @@ pub fn fixture_metrics_env(dir: &std::path::Path, endpoint: &str, declare: &[(&s
     let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
     vec![("SPIRA_TOML", toml.display().to_string()), ("SPIRA_HOME", home.display().to_string())]
 }
+
+/// The read-only database user's secret file, kept beside the service user's: `<file>-ro`.
+/// Empty when the service credential is unnamed.
+pub fn ro_credential(service_file: &str) -> String {
+    if service_file.trim().is_empty() { String::new() } else { format!("{service_file}-ro") }
+}
+
+#[cfg(test)]
+mod ro_credential_tests {
+    use super::ro_credential;
+
+    #[test]
+    fn the_read_only_secret_is_the_service_secrets_ro_sibling_and_never_a_guess() {
+        assert_eq!(ro_credential("/c/spira-lc.credential"), "/c/spira-lc.credential-ro");
+        assert_eq!(ro_credential(" "), "", "no service credential names no read-only one");
+    }
+}

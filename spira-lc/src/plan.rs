@@ -15,9 +15,17 @@ use crate::rows;
 /// Every bd column the reader names, by table: the conformance gate checks each exists in the
 /// pinned bd, so a renamed column fails there and not as a claim check in production.
 pub const READER_COLUMNS: &[(&str, &[&str])] = &[
-    ("issues", &["id", "title", "priority", "issue_type", "status", "defer_until", "created_at", "updated_at", "closed_at", "description", "notes", "external_ref"]),
+    (
+        "issues",
+        &[
+            "id", "title", "description", "design", "acceptance_criteria", "notes", "status", "priority", "issue_type", "assignee", "owner", "created_by", "external_ref", "close_reason", "await_type", "await_id", "metadata",
+            "is_template", "defer_until", "created_at", "updated_at", "closed_at",
+        ],
+    ),
     ("labels", &["issue_id", "label"]),
     ("dependencies", &["issue_id", "depends_on_issue_id", "type"]),
+    ("comments", &["id", "issue_id", "author", "text", "created_at"]),
+    ("config", &["key", "value"]),
 ];
 
 /// The key bd's kv keeps the watermark under, so a restored bd carries its own.
@@ -440,7 +448,6 @@ pub fn stamp(conn: &Conn) -> Result<u64, String> {
         None => stamp_lifecycle(conn)?,
     };
     mirror(seq);
-    crate::content_cache::moved();
     Ok(seq)
 }
 

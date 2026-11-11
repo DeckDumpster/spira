@@ -131,6 +131,9 @@ pub fn run(args: &[String]) -> i32 {
             crate::plan::install_mirror(0);
         }
     }
+    if let Err(e) = crate::content_sql::check_at_startup() {
+        eprintln!("spira-lc serve: content reads are refused until this is fixed: {e}");
+    }
     eprintln!("spira-lc serve: listening on {socket_path}");
     // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
     // socket; serving one connection at a time deadlocks on that. The session mutex still
@@ -294,7 +297,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
                 crate::db::set_request_deadline(Some(received + limit));
                 state_store::model::track(!min_rev.is_none_or(model_reached));
                 let mut local = Local(&worker);
-                let ans = answer(req, &mut local, &mut crate::bd::LiveBd, crate::content_cache::served(), &crate::lifecycle_run_dir);
+                let ans = answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir);
                 (ans, state_store::model::stamp())
             })
             .unwrap_or_else(|| (Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)), None))
@@ -688,7 +691,7 @@ mod tests {
     struct Content(std::cell::RefCell<Vec<String>>);
 
     impl crate::composed::Content for Content {
-        fn read(&self, args: &[String]) -> Result<String, String> {
+        fn read(&self, args: &[String]) -> Result<String, crate::composed::ReadError> {
             Ok(format!("read {}", args.join(" ")))
         }
         fn write(&self, args: &[&str]) -> Result<String, String> {
@@ -881,7 +884,7 @@ mod tests {
     struct Filing<'w>(&'w World, &'w str);
 
     impl crate::composed::Content for Filing<'_> {
-        fn read(&self, _: &[String]) -> Result<String, String> {
+        fn read(&self, _: &[String]) -> Result<String, crate::composed::ReadError> {
             Ok(String::new())
         }
         fn write(&self, _: &[&str]) -> Result<String, String> {

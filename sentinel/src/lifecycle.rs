@@ -58,7 +58,7 @@ pub fn wait_decisions(
     for r in rows.iter().filter(|r| lc_state::is_working(&r.state)) {
         let Some(b) = snap.get(&r.bead_id) else { continue };
         let has_skip = held.contains(&b.id);
-        if !(has_skip || b.dependency_count > 0) {
+        if !(has_skip || !b.dependencies.is_empty()) {
             continue;
         }
         let deps: Vec<(String, Vec<String>, bool)> = b
@@ -96,7 +96,7 @@ pub fn wait_decisions(
         if has_skip && ask_open == 0 {
             out.push((false, b.id.clone()));
         } else if !has_skip
-            && b.dependency_count > 0
+            && !b.dependencies.is_empty()
             && !deps.is_empty()
             && ask_open > 0
             && non_ask_open == 0
@@ -485,6 +485,21 @@ mod tests {
         let mut rows: Vec<LcRow> = ["w1", "w2", "w3", "w4", "w5"].iter().map(|i| lc5_row(i, "WORKING")).collect();
         rows.push(lc5_row("o1", "READY"));
         rows
+    }
+
+    #[test]
+    fn the_wait_decision_reads_the_door_rows_edges_not_a_count_the_row_does_not_carry() {
+        let doored = Snapshot::from_json(
+            r#"[
+            {"id":"w1","status":"in_progress","labels":[],"parent":null,"dependencies":[{"issue_id":"w1","depends_on_id":"q1","type":"blocks"}]},
+            {"id":"w4","status":"in_progress","labels":[],"parent":null,"dependencies":[]},
+            {"id":"q1","status":"open","labels":["ask"],"parent":null,"dependencies":[]}
+        ]"#,
+            None,
+        )
+        .with_lc(Some(&working()));
+        let d = wait_decisions(&doored, &working(), &HashSet::new(), "ask");
+        assert_eq!(d, vec![(true, "w1".to_string())], "w1 waits on an open ask; w4 has no edge");
     }
 
     #[test]
