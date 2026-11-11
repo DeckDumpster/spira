@@ -232,6 +232,26 @@ fn q_a_plumbing_file_falls_back_even_when_claimed() {
 }
 
 #[test]
+fn a_suite_reach_selects_still_answers_to_the_tier_filter() {
+    let t = testkit::TempDir::new("suite-select-reach-tier");
+    let p = t.path();
+    std::fs::write(p.join("Cargo.toml"), "[workspace]\nmembers = [\"a\", \"b\"]\n").unwrap();
+    std::fs::create_dir_all(p.join("a/src")).unwrap();
+    std::fs::create_dir_all(p.join("b/src")).unwrap();
+    std::fs::write(p.join("a/Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
+    std::fs::write(p.join("b/Cargo.toml"), "[package]\nname = \"b\"\n[dependencies]\na = { path = \"../a\" }\n").unwrap();
+    std::fs::write(p.join("b/src/main.rs"), "").unwrap();
+    let c = Corpus::new(vec![Suite::parse("test-s.sh", "# tier: T1\n# covers: spira/s.sh\n\"$BIN/b\" run\n").unwrap()]);
+    let o = Options {
+        tiers: parse_tiers("T2,T3"),
+        covers_outrank_tiers: true,
+        reach: crate::reach::Reach::load(p).unwrap(),
+        ..nofallback()
+    };
+    assert!(run(&c, &m(&["a/src/lib.rs"]), &o).unwrap().suites.is_empty());
+}
+
+#[test]
 fn a_covering_suite_is_selected_whatever_its_tier_when_covers_outrank_tiers() {
     let c = corpus(&[
         ("test-t1.sh", "# tier: T1\n# covers: spira/testdb.sh\n"),
@@ -246,6 +266,7 @@ fn a_covering_suite_is_selected_whatever_its_tier_when_covers_outrank_tiers() {
     };
     let got = run(&c, &m(&["spira/testdb.sh"]), &o).unwrap().suites;
     assert_eq!(got, ["test-t1.sh", "test-t2.sh"]);
+
     let o = Options { covers_outrank_tiers: false, ..o };
     assert_eq!(run(&c, &m(&["spira/testdb.sh"]), &o).unwrap().suites, ["test-t2.sh"]);
 }

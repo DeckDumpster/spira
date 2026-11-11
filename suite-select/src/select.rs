@@ -275,6 +275,7 @@ pub fn select(
 
     // 2. Covers match.
     let mut selected: Vec<String> = Vec::new();
+    let mut covered: Vec<String> = Vec::new();
     let mut unmapped: Vec<&Change> = Vec::new();
     let mut log: Vec<String> = Vec::new();
     for c in &live {
@@ -302,7 +303,10 @@ pub fn select(
                     if s.selects_on.is_empty() {
                         match &narrowed {
                             Some(a) if !reaches(s, a) => cut += 1,
-                            _ => push_once(&mut selected, &s.name),
+                            _ => {
+                                push_once(&mut selected, &s.name);
+                                push_once(&mut covered, &s.name);
+                            }
                         }
                     }
                 }
@@ -321,11 +325,13 @@ pub fn select(
                 if fns.iter().any(|x| x == fname) {
                     any = true;
                     push_once(&mut selected, s);
+                    push_once(&mut covered, s);
                 }
             }
             if !any {
                 for (s, _) in &fn_pairs {
                     push_once(&mut selected, s);
+                    push_once(&mut covered, s);
                 }
             }
         }
@@ -397,17 +403,17 @@ pub fn select(
         });
         if fires {
             push_once(&mut selected, &s.name);
+            push_once(&mut covered, &s.name);
         }
     }
 
     // 6–7. Always-run suites, then the tier filter.
-    let covered = if opts.covers_outrank_tiers { selected.clone() } else { vec![] };
     for n in nocov(corpus, opts) {
         push_once(&mut selected, &n);
     }
     let suites: Vec<String> = selected
         .into_iter()
-        .filter(|n| covered.contains(n) || corpus.get(n).is_some_and(|s| opts.tier_ok(s)))
+        .filter(|n| (opts.covers_outrank_tiers && covered.contains(n)) || corpus.get(n).is_some_and(|s| opts.tier_ok(s)))
         .collect();
     log.push(format!("select: {} suite(s) selected", suites.len()));
     Ok(Selection {
