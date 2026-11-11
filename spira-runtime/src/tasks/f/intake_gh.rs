@@ -140,7 +140,6 @@ pub struct Snapshot {
     pub halted: bool,
     pub targets: Vec<Target>,
     pub store: Vec<KnownRef>,
-    pub store_total: u64,
     pub now: u64,
     pub pages: BTreeMap<String, Pages>,
     pub accept: Vec<Accept>,
@@ -239,9 +238,6 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
     let mut acts = vec![];
     if snap.halted || snap.targets.is_empty() {
         return (next, acts);
-    }
-    if snap.store_total == 0 {
-        return (next, vec![refusal(snap.now, "the store reports zero beads — the query is broken, not the store empty")]);
     }
     if let Some(t) = snap.targets.iter().find(|t| !t.root_ok) {
         let msg = format!("repo:{r} does not resolve to a checkout through $SPIRA_REPO_MAP — every ingested bead would be parked on first claim; add {r} to that map, or set SPIRA_GH_INTAKE_BEAD_REPO to a name that resolves", r = t.bead_repo);
@@ -400,10 +396,6 @@ fn get<'a>(cfg: &'a BTreeMap<String, String>, k: &str) -> &'a str {
     cfg.get(k).map(String::as_str).unwrap_or("")
 }
 
-fn store(e: &Effects) -> Result<serde_json::Value, String> {
-    gh_intake::real::list_all_on(&spira_config::lc_call::LcClient::socket(&e.world.lc_socket)).ok_or_else(|| "could not read the store".to_string())
-}
-
 fn bd() -> Result<gh_intake::real::RealBd, String> {
     Ok(gh_intake::real::RealBd { bdq: spira_config::release_env::tool("bdq")? })
 }
@@ -453,9 +445,14 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
     if targets.is_empty() {
         return serde_json::to_string(&empty).map_err(|e| e.to_string());
     }
-    let listed = store(e)?;
-    let store: Vec<KnownRef> = gh_intake::store::ingested(&listed).into_iter().map(|k| KnownRef { id: k.id, ext_ref: k.ext_ref, labels: k.labels }).collect();
-    let store_total = gh_intake::store::total_beads(&listed) as u64;
+    let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket);
+    let mut listed = vec![];
+    for t in &targets {
+        if let serde_json::Value::Array(rows) = gh_intake::real::github_refs_on(&lc, &format!("{}#", t.slug))? {
+            listed.extend(rows);
+        }
+    }
+    let store: Vec<KnownRef> = gh_intake::store::ingested(&serde_json::Value::Array(listed)).into_iter().map(|k| KnownRef { id: k.id, ext_ref: k.ext_ref, labels: k.labels }).collect();
     let api = Some(get(cfg, "SPIRA_GH_INTAKE_API")).filter(|a| !a.is_empty()).unwrap_or(gh::GITHUB_API).to_string();
     let http = gh_intake::real::RealHttp::from_broker();
     let (mut pages, mut accept, mut hidden) = (BTreeMap::new(), vec![], vec![]);
@@ -497,13 +494,13 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
             }
         }
     }
-    serde_json::to_string(&Snapshot { halted, targets, store, store_total, now, pages, accept, contributor_hidden: hidden }).map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot { halted, targets, store, now, pages, accept, contributor_hidden: hidden }).map_err(|e| e.to_string())
 }
 
 fn file(e: &Effects, s: &EffectSpec, labels: impl Fn(&BTreeMap<String, String>, &Filing) -> (String, String)) -> Result<String, String> {
     use gh_intake::ports::Bd;
     let p: Pinned<Filing> = parse(&s.input)?;
-    let known = gh_intake::store::ingested(&store(e)?);
+    let known = gh_intake::store::ingested(&gh_intake::real::github_refs_on(&spira_config::lc_call::LcClient::socket(&e.world.lc_socket), &p.act.ext_ref)?);
     if gh_intake::store::find_ref(&known, &p.act.ext_ref).is_some() {
         return Err(format!("{} is already in the store — refusing a second bead", p.act.ext_ref));
     }
