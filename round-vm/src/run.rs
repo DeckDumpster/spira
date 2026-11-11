@@ -1329,9 +1329,7 @@ impl Remote for SshRemote {
             .stdin(Stdio::piped())
             .spawn()
             .map_err(|e| format!("ssh: {e}"))?;
-        if let Some(mut si) = child.stdin.take() {
-            si.write_all(if job.ci_entry.is_some() { FOREIGN_SCRIPT } else { REMOTE_SCRIPT }.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
-        }
+        crate::procs::feed_script(&mut child, if job.ci_entry.is_some() { FOREIGN_SCRIPT } else { REMOTE_SCRIPT }.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
         loop {
             if let Some(st) = child.try_wait().map_err(|e| format!("ssh: {e}"))? {
                 return Ok(st.code().unwrap_or(255));
@@ -1412,9 +1410,7 @@ impl Remote for SshRemote {
             .stdout(Stdio::null())
             .spawn()
             .map_err(|e| format!("ssh: {e}"))?;
-        if let Some(mut si) = child.stdin.take() {
-            si.write_all(crate::spool::REMOTE_ATTR_SCRIPT.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
-        }
+        crate::procs::feed_script(&mut child, crate::spool::REMOTE_ATTR_SCRIPT.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
         let st = child.wait().map_err(|e| format!("ssh: {e}"))?;
         Ok(st.code().unwrap_or(255))
     }

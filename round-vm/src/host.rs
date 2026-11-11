@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use crate::procs::{command, FileLock};
+use crate::procs::{command, feed_script, FileLock};
 use crate::run::{remote_command, BatchJob, Remote, FOREIGN_SCRIPT, REMOTE_EXIT_FILE, REMOTE_SCRIPT};
 use crate::spill::{HostLoad, HostRule};
 
@@ -107,9 +107,7 @@ impl Remote for LocalRemote {
     fn run_batch(&self, _addr: &str, job: &BatchJob) -> Result<i32, String> {
         fs::create_dir_all(&self.home).map_err(|e| format!("{}: {e}", self.home.display()))?;
         let mut child = self.shell(&remote_command(job)).stdin(Stdio::piped()).spawn().map_err(|e| format!("bash: {e}"))?;
-        if let Some(mut si) = child.stdin.take() {
-            si.write_all(if job.ci_entry.is_some() { FOREIGN_SCRIPT } else { REMOTE_SCRIPT }.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
-        }
+        feed_script(&mut child, if job.ci_entry.is_some() { FOREIGN_SCRIPT } else { REMOTE_SCRIPT }.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
         loop {
             if let Some(st) = child.try_wait().map_err(|e| format!("bash: {e}"))? {
                 return Ok(st.code().unwrap_or(255));
@@ -173,9 +171,7 @@ impl Remote for LocalRemote {
 
     fn run_attr(&self, _addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String> {
         let mut child = self.shell(&crate::spool::attr_command(job)).stdin(Stdio::piped()).stdout(Stdio::null()).spawn().map_err(|e| format!("bash: {e}"))?;
-        if let Some(mut si) = child.stdin.take() {
-            si.write_all(crate::spool::REMOTE_ATTR_SCRIPT.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
-        }
+        feed_script(&mut child, crate::spool::REMOTE_ATTR_SCRIPT.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
         Ok(child.wait().map_err(|e| format!("bash: {e}"))?.code().unwrap_or(255))
     }
 }
