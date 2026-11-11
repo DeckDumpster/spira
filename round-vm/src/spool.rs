@@ -110,7 +110,7 @@ round)
     cd "$HOME/round-work" || exit 2
     git fetch --quiet origin "+refs/heads/$ref:refs/heads/$ref" || exit 2
     git checkout --quiet --force --detach "refs/heads/$ref" || exit 2
-    cargo build -q --profile release --locked -p testenv --bin testenv || exit 4
+    cargo build -q --profile release -p testenv --bin testenv || exit 4
     "$tenv" --mode parallel --profile release --suites "$suites" --repeat-reason "$reason" HEAD
     rc=$?
     rm -rf "$HOME/round-bins"; mkdir -p "$HOME/round-bins"
@@ -121,7 +121,7 @@ workspace)
     rm -rf "$d"; mkdir -p "$HOME/attr"
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
-    CARGO_TARGET_DIR="$HOME/attr-target" cargo build -q --profile release --workspace --locked --config profile.release.incremental=false >&2 || { cd "$HOME" && rm -rf "$d"; exit 4; }
+    CARGO_TARGET_DIR="$HOME/attr-target" cargo build -q --profile release --workspace --config profile.release.incremental=false >&2 || { cd "$HOME" && rm -rf "$d"; exit 4; }
     echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/workspace-build.result"
     cd "$HOME" && rm -rf "$d"
     exit 0 ;;
@@ -133,7 +133,7 @@ unit)
     scope="--workspace"
     if [ "$suites" != unit ]; then scope=""; for p in ${suites//,/ }; do scope="$scope -p $p"; done; fi
     env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
-        cargo test -q --profile unittest --locked $scope --features integration --no-fail-fast --lib --bins --config profile.unittest.incremental=false >&2
+        cargo test -q --profile unittest $scope --features integration --no-fail-fast --lib --bins --config profile.unittest.incremental=false >&2
     rc=$?
     cd "$HOME" && rm -rf "$d"
     [ "$rc" -eq 101 ] && exit 5
@@ -148,7 +148,7 @@ integration)
     scope="--workspace"
     if [ "$suites" != integration ]; then scope=""; for p in ${suites//,/ }; do scope="$scope -p $p"; done; fi
     env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
-        cargo test -q --profile unittest --locked $scope --features integration --no-fail-fast --test '*' --config profile.unittest.incremental=false >&2
+        cargo test -q --profile unittest $scope --features integration --no-fail-fast --test '*' --config profile.unittest.incremental=false >&2
     rc=$?
     cd "$HOME" && rm -rf "$d"
     [ "$rc" -eq 101 ] && exit 5

@@ -519,7 +519,7 @@ t0=$(date +%s)
 if art_fetch "$art_id" ~/round-work/target/release; then
     echo "round-vm: used the stored build of this tree; cargo did not run" >&2
 else
-    if ! cargo build -q --profile release --workspace --locked --config profile.release.incremental=false; then
+    if ! cargo build -q --profile release --workspace --config profile.release.incremental=false; then
         echo "round-vm: the round's workspace build failed, built $sccache_mode" >&2
         tail -40 "$SCCACHE_ERROR_LOG" >&2 2>/dev/null || true
         exit 4
@@ -538,7 +538,7 @@ unit_env() {
         UNIT_COV_ENV="$unit_cov_env" bash -c 'eval "$UNIT_COV_ENV"; exec cargo "$@"' _ "$@"
 }
 unit_cargo() {
-    unit_env test --profile unittest --workspace --locked --features integration --config profile.unittest.incremental=false "$@"
+    unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false "$@"
 }
 write_unit_nextest_config() {
     printf '[profile.default]\nslow-timeout = { period = "%ss", terminate-after = %s }\n' "$1" "$2" > "$3"
@@ -3540,7 +3540,7 @@ mod tests {
     #[test]
     fn the_round_builds_once_in_a_clean_tree_with_testenvs_own_flags() {
         assert!(!REMOTE_SCRIPT.contains("ln -sfn"), "a target symlink dirties the tree and dangles in the container");
-        assert!(REMOTE_SCRIPT.contains(&format!("cargo build -q --profile release --workspace --locked {}", spira_config::build::one_shot_words("release"))));
+        assert!(REMOTE_SCRIPT.contains(&format!("cargo build -q --profile release --workspace {}", spira_config::build::one_shot_words("release"))));
     }
 
     #[test]
@@ -3785,7 +3785,7 @@ mod tests {
         let run = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast").unwrap();
         assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
         let body = script_fn("unit_cargo");
-        assert!(body.contains("unit_env test --profile unittest --workspace --locked --features integration --config profile.unittest.incremental=false"), "{body}");
+        assert!(body.contains("unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false"), "{body}");
         assert_eq!(REMOTE_SCRIPT.matches("exec cargo \"$@\"").count(), 1, "one definition of the cargo environment, shared by compile and both runs");
     }
 

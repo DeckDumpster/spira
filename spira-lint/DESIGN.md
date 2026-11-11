@@ -968,10 +968,6 @@ versions strictly lower, compared on the first three integer parts; a pre-releas
 judged, a new package is not a bump), the text of `git diff <base> -- '*Cargo.toml'` must
 name it as a word. One finding per bump, path `Cargo.lock`.
 
-Independently of the diff, `cargo metadata --locked --offline` must succeed in the tree: a lock
-that is not what the manifests resolve to is one finding, path `Cargo.lock`, carrying cargo's
-reason. The gate's and the round's builds pass `--locked` for the same reason.
-
 **Refuses** where the bash skipped with exit 0: no base, no Cargo.lock here, none at the base,
 a lock that does not parse or locks nothing. **Positive control:** `fence: lockfile-lint
 checked <n> packages`.

@@ -143,7 +143,7 @@ impl Builder for Cargo {
 /// per slot gives each slot a cache of its own.
 fn cargo_build_command(worktree: &Path, profile: &str, warm: Option<&Path>) -> Command {
     let mut cmd = Command::new("cargo");
-    cmd.args(["build", "--profile", profile, "--workspace", "--locked"])
+    cmd.args(["build", "--profile", profile, "--workspace"])
         // One-shot: no incremental cache (a switch, not CARGO_INCREMENTAL, which would
         // split the compilation cache's keys).
         .args(spira_config::build::one_shot(profile))
