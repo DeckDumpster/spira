@@ -832,6 +832,13 @@ fn a_landing_the_newest_activated_release_contains_is_no_stall_while_the_current
 fn with_no_current_link_a_landing_whose_ancestry_cannot_be_tested_stalls() {
     let l = lineage();
     std::fs::remove_file(l.rel.path().join("current")).unwrap();
-    let found = landing_stalls(&l, 200, &"8".repeat(40), 200 + 40 * MIN);
+    let found = landing_stalls(&l, 400, &"8".repeat(40), 400 + 40 * MIN);
     assert_eq!(found.iter().filter(|k| k.starts_with("LANDED→ACTIVATED")).count(), 1, "{found:?}");
+}
+
+#[test]
+fn a_landing_an_activated_ancestor_of_the_active_release_is_no_stall() {
+    let l = lineage();
+    let found = landing_stalls(&l, 200, &l.a, 200 + 40 * MIN);
+    assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
 }

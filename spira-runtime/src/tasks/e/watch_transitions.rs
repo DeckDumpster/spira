@@ -523,7 +523,7 @@ pub fn observe(
         .max();
     let in_effect = releases_in_effect(&releases, releases_dir);
     let window = window_s.to_string();
-    let after = if !in_effect.is_empty() {
+    let after = if in_effect_commit(releases_dir).is_some() {
         0
     } else {
         recorded.unwrap_or(0)
