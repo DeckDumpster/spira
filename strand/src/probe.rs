@@ -104,6 +104,12 @@ pub fn load_store(lc: &LcClient) -> Result<Vec<Bead>, String> {
     for chunk in named.chunks(NAMED_CHUNK) {
         beads.extend(read(&["--all", "--limit", "0", "--id", &chunk.join(",")])?);
     }
+    // An open epic with no open child may have only closed ones; without them it reads as empty.
+    let parents: HashSet<&str> = beads.iter().filter_map(|b| b.parent.as_deref()).collect();
+    let childless: Vec<String> = beads.iter().filter(|b| b.is_epic() && !b.is_closed() && !parents.contains(b.id.as_str())).map(|b| b.id.clone()).collect();
+    for epic in childless {
+        beads.extend(read(&["--all", "--limit", "0", "--parent", &epic])?);
+    }
     Ok(beads)
 }
 
@@ -459,6 +465,18 @@ mod tests {
         assert_eq!(seen.len(), 2, "{seen:?}");
         let at = seen[1].iter().position(|x| x == "--id").expect("the second read is by id");
         assert_eq!(seen[1][at + 1], "sp-c,sp-e");
+        assert!(seen[1..].iter().all(|r| r.iter().any(|x| x == "--id")), "{seen:?}");
+    }
+
+    #[test]
+    fn sp_yf8lf0_an_open_epic_with_only_closed_children_keeps_them() {
+        let mut epic = row("sp-e", "open", None, &[]);
+        epic["issue_type"] = "epic".into();
+        let (fake, lc) = door(vec![epic, row("sp-k", "closed", Some("sp-e"), &[]), row("sp-z", "closed", None, &[])]);
+        let mut ids: Vec<String> = load_store(&lc).unwrap().into_iter().map(|b| b.id).collect();
+        ids.sort();
+        assert_eq!(ids, ["sp-e", "sp-k"]);
+        assert!(fake.requests().iter().skip(1).all(|r| r.iter().any(|x| x == "--parent")), "{:?}", fake.requests());
     }
 
     #[test]
