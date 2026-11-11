@@ -492,6 +492,9 @@ pub struct RepoCarry {
     pub base: String,
     #[serde(default)]
     pub own_testenv: bool,
+    /// The assembled tree carries `test-*.sh` suites; `None` for a row written before this was kept.
+    #[serde(default)]
+    pub suites: Option<bool>,
     /// Certify passes of this round whose VM was lost under them (sp-e30jhh).
     #[serde(default)]
     pub lost_vms: u32,
@@ -568,6 +571,7 @@ impl RepoCarry {
             wt: self.wt.clone(),
             base: self.base.clone(),
             own_testenv: self.own_testenv,
+            suites: self.suites,
             lost_vms: self.lost_vms,
             attributed: self.attributed,
             leg: self.leg.clone(),
@@ -597,6 +601,7 @@ impl RepoCarry {
             wt: round.wt.clone(),
             base: round.base.clone(),
             own_testenv: round.own_testenv,
+            suites: round.suites,
             lost_vms: round.lost_vms,
             attributed: round.attributed,
             leg: round.leg.clone(),
@@ -1048,6 +1053,7 @@ impl Machine<'_> {
         match self.rc.state {
             State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > leg_deadline_ms(policy, self.rc.state == State::Attributing, self.rc.members.len()) => self.leg_ended(Exit::Unknown),
             State::Corpus | State::Attributing | State::Certifying => self.watch_leg(repo),
+            State::Opened if self.rc.batch.is_none() => self.adopt_opened(repo),
             State::Certified if !self.below => {
                 self.go(Trigger::LowerEnded);
                 self.land_now();
@@ -1443,16 +1449,7 @@ impl Machine<'_> {
                     return;
                 }
                 self.rc.batch = Some(o.batch);
-                if leg.why == "suites" {
-                    self.go(Trigger::OpenedWithSuites);
-                    self.corpus(1);
-                } else if self.rc.own_testenv {
-                    self.go(Trigger::OpenedOwnTestenv);
-                    self.certify();
-                } else {
-                    self.go(Trigger::OpenFailed);
-                    self.red("round blocked — the merged tree has no test-*.sh suites; an empty corpus certifies nothing");
-                }
+                self.opened(leg.why == "suites");
             }
             (State::Corpus | State::Attributing, CORPUS) | (State::Certifying, CERTIFY) if !ok && self.rc.leg.as_deref() == Some(leg.unit.as_str()) => self.leg_unstarted(&format!("it could not be started ({})", body.trim())),
             (State::Landing, LAND) if ok => {
@@ -1496,6 +1493,30 @@ impl Machine<'_> {
             }
             _ => {}
         }
+    }
+
+    /// The round is open and named: its first leg starts.
+    fn opened(&mut self, suites: bool) {
+        if suites {
+            self.go(Trigger::OpenedWithSuites);
+            self.corpus(1);
+        } else if self.rc.own_testenv {
+            self.go(Trigger::OpenedOwnTestenv);
+            self.certify();
+        } else {
+            self.go(Trigger::OpenFailed);
+            self.red("round blocked — the merged tree has no test-*.sh suites; an empty corpus certifies nothing");
+        }
+    }
+
+    /// An opened round whose `round open` outcome has not arrived, and which the queue already
+    /// holds with exactly our members in our tree, is driven now rather than after [`OUTCOME_WAIT_MS`].
+    fn adopt_opened(&mut self, repo: &Repo) {
+        let ours: std::collections::BTreeSet<&str> = self.rc.members.iter().map(|(id, _)| id.as_str()).collect();
+        let held = repo.open_rounds().find(|r| !ours.is_empty() && (self.rc.wt.is_empty() || r.worktree == self.rc.wt) && r.members.iter().map(String::as_str).collect::<std::collections::BTreeSet<_>>() == ours);
+        let Some(held) = held else { return };
+        self.rc.batch = Some(held.id.clone());
+        self.opened(self.rc.suites.unwrap_or(true));
     }
 
     /// `round open` refused the members it names (typed, sp-822b8l): each is set aside at its tip
@@ -1572,6 +1593,7 @@ impl Machine<'_> {
         self.rc.base = if leg.onto.is_empty() { a.base } else { leg.onto.clone() };
         self.rc.landing_base = leg.base.clone();
         self.rc.own_testenv = a.own_testenv;
+        self.rc.suites = Some(a.suites);
         let why = if a.suites { "suites" } else { "" };
         self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), why: why.into(), ..self.leg() }.act(ROUND_OPEN));
     }

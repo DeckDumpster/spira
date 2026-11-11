@@ -784,3 +784,61 @@ fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_sto
     kit::assert_unpoisoned(&r, STREAM);
     assert!(r.requested().iter().any(|q| q.name == LC_CERTIFY), "the green certify reaches lc_certify");
 }
+
+// --- sp-pi2ojm: an opened round is driven on the next tick, not after its outcome's 20-minute wait ---
+
+fn opened_unadvanced() -> Carry {
+    let rc = RepoCarry { state: State::Opened, round_key: Some("k".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), waiting: Some(Waiting { state: State::Opened, since_ms: NOW - 40_000 }), ..RepoCarry::default() };
+    Carry { repos: [("spira".to_string(), rc)].into() }
+}
+
+fn queue_holds(id: &str, members: &[&str]) -> Snapshot {
+    let round = Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), head: "h1".into(), worktree: "/w".into(), ..Round::default() };
+    Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), ..repo(vec![]) })].into(), now_ms: NOW }
+}
+
+#[test]
+fn sp_pi2ojm_the_tick_after_round_open_launches_the_corpus_leg_when_the_outcome_never_arrived() {
+    let (carry, acts) = decide(&opened_unadvanced(), &queue_holds("r9", &["sp-a", "sp-b"]));
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [CORPUS], "{acts:?}");
+    let rc = &carry.repos["spira"];
+    assert_eq!((rc.state, rc.batch.as_deref()), (State::Corpus, Some("r9")));
+    let leg: Leg = serde_json::from_str(&acts[0].input).unwrap();
+    assert_eq!(leg.batch, "r9");
+}
+
+#[test]
+fn sp_pi2ojm_an_opened_round_the_queue_does_not_hold_yet_is_left_waiting() {
+    let (carry, acts) = decide(&opened_unadvanced(), &queue_holds("other", &["sp-x"]));
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Opened);
+}
+
+#[test]
+fn sp_pi2ojm_the_late_round_open_outcome_after_the_adoption_launches_no_second_leg() {
+    let (carry, _) = decide(&opened_unadvanced(), &queue_holds("r9", &["sp-a", "sp-b"]));
+    let (_, acts) = on_outcome(&carry, ROUND_OPEN, true, &serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap(), &Leg { why: "suites".into(), ..Leg::on("spira") }, NOW);
+    assert!(acts.is_empty(), "{acts:?}");
+}
+
+#[test]
+fn sp_pi2ojm_an_opened_round_in_another_tree_is_not_ours_to_adopt() {
+    let mut snap = queue_holds("r9", &["sp-a", "sp-b"]);
+    snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().worktree = "/elsewhere".into();
+    let (carry, acts) = decide(&opened_unadvanced(), &snap);
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Opened);
+}
+
+#[test]
+fn sp_pi2ojm_an_adopted_round_without_suites_certifies_in_its_own_testenv_or_is_blocked() {
+    let mut own = opened_unadvanced();
+    let rc = own.repos.get_mut("spira").unwrap();
+    (rc.suites, rc.own_testenv) = (Some(false), true);
+    let (carry, acts) = decide(&own, &queue_holds("r9", &["sp-a", "sp-b"]));
+    assert_eq!((carry.repos["spira"].state, acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>()), (State::Certifying, vec![CERTIFY]));
+    let mut bare = opened_unadvanced();
+    bare.repos.get_mut("spira").unwrap().suites = Some(false);
+    let (_, acts) = decide(&bare, &queue_holds("r9", &["sp-a", "sp-b"]));
+    assert!(acts.iter().all(|a| a.effect != CORPUS && a.effect != CERTIFY), "{acts:?}");
+}
