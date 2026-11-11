@@ -3,7 +3,6 @@ use spira_config::bounded::{bounded, bounded_for};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
 
@@ -16,7 +15,7 @@ pub struct Real {
     lc: spira_config::lc_call::LcClient,
 }
 
-fn run(mut c: Command) -> Result<String, String> {
+fn run(mut c: spira_config::bounded::Bounded) -> Result<String, String> {
     let out = c.output().map_err(|e| e.to_string())?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())

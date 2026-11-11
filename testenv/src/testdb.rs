@@ -258,25 +258,30 @@ fn signal(pid: u32, sig: i32) {
 /// Detach a child: own session, and mark every inherited fd >= 3 close-on-exec so the
 /// child never holds a caller's `$(...)` pipe or a suite's lock fd.
 fn detach(cmd: &mut Command) {
-    // SAFETY: only async-signal-safe calls (setsid, syscall, fcntl) between fork and exec.
+    // SAFETY: `detach_hook` makes only async-signal-safe calls between fork and exec.
     unsafe {
-        cmd.pre_exec(|| {
-            libc::setsid();
-            const CLOSE_RANGE_CLOEXEC: libc::c_uint = 1 << 2;
-            let r = libc::syscall(
-                libc::SYS_close_range,
-                3 as libc::c_uint,
-                libc::c_uint::MAX,
-                CLOSE_RANGE_CLOEXEC,
-            );
-            if r != 0 {
-                for fd in 3..4096 {
-                    libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
-                }
-            }
-            Ok(())
-        });
+        cmd.pre_exec(detach_hook);
     }
+}
+
+fn detach_hook() -> std::io::Result<()> {
+    // SAFETY: only async-signal-safe calls (setsid, syscall, fcntl).
+    unsafe {
+        libc::setsid();
+        const CLOSE_RANGE_CLOEXEC: libc::c_uint = 1 << 2;
+        let r = libc::syscall(
+            libc::SYS_close_range,
+            3 as libc::c_uint,
+            libc::c_uint::MAX,
+            CLOSE_RANGE_CLOEXEC,
+        );
+        if r != 0 {
+            for fd in 3..4096 {
+                libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            }
+        }
+    }
+    Ok(())
 }
 
 // ---- the server ----------------------------------------------------------------------
@@ -1100,7 +1105,8 @@ fn background_rm(p: &Path) {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    detach(&mut cmd);
+    // SAFETY: see `detach`.
+    unsafe { cmd.pre_exec(detach_hook) };
     let _ = cmd.spawn();
 }
 

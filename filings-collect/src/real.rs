@@ -1,7 +1,6 @@
 use crate::{Filing, Host, World};
 use spira_config::bounded::bounded_for;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static BODY_SEQ: AtomicUsize = AtomicUsize::new(0);
@@ -30,7 +29,7 @@ fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-fn run(mut c: Command) -> Result<String, String> {
+fn run(mut c: spira_config::bounded::Bounded) -> Result<String, String> {
     let out = c.output().map_err(|e| e.to_string())?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())

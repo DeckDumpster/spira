@@ -269,7 +269,7 @@ impl Ops for Real {
             Err(e) => return ToolRun::Unavailable(format!("{e}; {program} would run without config")),
         };
         // FORK-EDGE: a release tool run in its own transient unit with --wait --pipe: needs a Units start that pipes output and waits (Units::start returns at once).
-        let mut cmd = Command::new(&self.systemd_run);
+        let mut cmd = spira_config::bounded::bounded_for(&self.systemd_run, "0");
         cmd.args(["--user", "--collect", "--wait", "--pipe", "--quiet"]).arg(format!("--setenv=SPIRA_TOML={spec}"));
         for (k, v) in child_env {
             cmd.arg(format!("--setenv={k}={v}"));
@@ -334,7 +334,7 @@ impl Ops for Real {
 
 /// Runs `cmd` with `stdin_body` on stdin; returns its exit code and stdout+stderr together.
 /// `Err` only when the process could not be started or waited on.
-fn run_capture(cmd: &mut Command, stdin_body: &str) -> Result<(i32, String), String> {
+fn run_capture(cmd: &mut spira_config::bounded::Bounded, stdin_body: &str) -> Result<(i32, String), String> {
     use std::io::Write;
     let mut child = cmd
         .stdin(Stdio::piped())
