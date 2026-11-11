@@ -417,6 +417,7 @@ mod published_read {
                     )
                     .to_string()
                 }
+                ["list", "--express", ..] => "[]".to_string(),
                 ["list", "--ids", ids] => {
                     let wanted: Vec<&str> = ids.split(',').collect();
                     Value::Array(pick(&all, "bead_id", &wanted)).to_string()
