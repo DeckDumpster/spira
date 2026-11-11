@@ -1413,9 +1413,7 @@ impl<B: Backend> Contract<B> {
         let head = self.head()?;
         let probe = |m: u64| -> Result<Option<(bool, Option<u64>)>> {
             let after = m.checked_sub(1).map(events_key);
-            let page = self
-                .backend
-                .range(EVENTS_PREFIX, after.as_deref(), 1, head)?;
+            let page = self.backend.range(EVENTS_PREFIX, after.as_deref(), 1, head)?;
             page.first()
                 .map(|(_, v)| recorded_at(v).map(|at| (at.is_some(), at)))
                 .transpose()

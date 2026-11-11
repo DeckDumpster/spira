@@ -77,14 +77,7 @@ fn through() -> bool {
 /// Starts recording, on this thread, the revisions the request's reads and writes are made at;
 /// `read_through` sends every read of the request to the inner backend. [`stamp`] ends it.
 pub fn track(read_through: bool) {
-    SEEN.with(|s| {
-        s.set(Seen {
-            on: true,
-            read: None,
-            wrote: None,
-            through: read_through,
-        })
-    });
+    SEEN.with(|s| s.set(Seen { on: true, read: None, wrote: None, through: read_through }));
 }
 
 /// The revision the request [`track`] began reflects, and stops recording: its highest commit,
@@ -166,20 +159,13 @@ impl Model {
     fn raise_floor(&mut self, floor: u64) {
         self.floor = self.floor.max(floor);
         while self.deleted.front().is_some_and(|(m, _)| *m <= self.floor) {
-            let Some((_, key)) = self.deleted.pop_front() else {
-                break;
-            };
+            let Some((_, key)) = self.deleted.pop_front() else { break };
             let gone = self.keys.get(&key).is_some_and(|v| {
-                v.iter()
-                    .rposition(|(m, _)| *m <= self.floor)
-                    .is_some_and(|i| i == v.len() - 1 && v[i].1.is_none())
+                v.iter().rposition(|(m, _)| *m <= self.floor).is_some_and(|i| i == v.len() - 1 && v[i].1.is_none())
             });
             if gone {
                 if let Some(v) = self.keys.remove(&key) {
-                    self.bytes -= v
-                        .into_iter()
-                        .map(|(_, s)| s.map_or(0, |s| s.version.value.len()))
-                        .sum::<usize>();
+                    self.bytes -= v.into_iter().map(|(_, s)| s.map_or(0, |s| s.version.value.len())).sum::<usize>();
                 }
             }
         }
@@ -193,13 +179,7 @@ impl<B: Backend> Modeled<B> {
             inner,
             skip: skip.iter().map(|s| s.to_string()).collect(),
             window,
-            model: RwLock::new(Model {
-                rev: 0,
-                floor: 0,
-                keys: BTreeMap::new(),
-                deleted: VecDeque::new(),
-                bytes: 0,
-            }),
+            model: RwLock::new(Model { rev: 0, floor: 0, keys: BTreeMap::new(), deleted: VecDeque::new(), bytes: 0 }),
             order: Mutex::new(()),
             published: Mutex::new(0),
             moved: Condvar::new(),
@@ -229,10 +209,7 @@ impl<B: Backend> Modeled<B> {
 
     /// Reads answered from memory, and reads sent to the inner backend, since the copy opened.
     pub fn reads(&self) -> (u64, u64) {
-        (
-            self.from_memory.load(Ordering::Relaxed),
-            self.from_inner.load(Ordering::Relaxed),
-        )
+        (self.from_memory.load(Ordering::Relaxed), self.from_inner.load(Ordering::Relaxed))
     }
 
     /// Waits up to `timeout` for the copy to reach `rev`; whether it did.
@@ -244,11 +221,7 @@ impl<B: Backend> Modeled<B> {
             if left.is_zero() {
                 return false;
             }
-            at = self
-                .moved
-                .wait_timeout(at, left)
-                .unwrap_or_else(|p| p.into_inner())
-                .0;
+            at = self.moved.wait_timeout(at, left).unwrap_or_else(|p| p.into_inner()).0;
         }
         true
     }
@@ -267,9 +240,7 @@ impl<B: Backend> Modeled<B> {
 
     /// Whether a range over `prefix` may reach a skipped key.
     fn overlaps_skipped(&self, prefix: &str) -> bool {
-        self.skip
-            .iter()
-            .any(|s| s.starts_with(prefix) || prefix.starts_with(s.as_str()))
+        self.skip.iter().any(|s| s.starts_with(prefix) || prefix.starts_with(s.as_str()))
     }
 
     fn publish(&self, rev: u64) {
@@ -292,23 +263,14 @@ impl<B: Backend> Modeled<B> {
                     continue;
                 }
                 bytes += v.value.len();
-                let s = Slot {
-                    state: state_of(&v.value),
-                    version: v,
-                };
+                let s = Slot { state: state_of(&v.value), version: v };
                 keys.insert(k, vec![(s.version.mod_rev.main, Some(s))]);
             }
             if !full {
                 break;
             }
         }
-        *self.write_model() = Model {
-            rev: head,
-            floor: head,
-            keys,
-            deleted: VecDeque::new(),
-            bytes,
-        };
+        *self.write_model() = Model { rev: head, floor: head, keys, deleted: VecDeque::new(), bytes };
         self.publish(head);
         Ok(())
     }
@@ -332,13 +294,7 @@ impl<B: Backend> Modeled<B> {
             };
             self.advance(through, |m| {
                 for e in log.into_iter().filter(|e| !self.skipped(&e.key)) {
-                    let LogEntry {
-                        key,
-                        rev,
-                        value,
-                        create_rev,
-                        ..
-                    } = e;
+                    let LogEntry { key, rev, value, create_rev, .. } = e;
                     let s = value.map(|v| slot(&v, rev, create_rev.unwrap_or(rev)));
                     m.put(&key, rev.main, s);
                 }
@@ -368,14 +324,7 @@ impl<B: Backend> Modeled<B> {
     }
 
     /// Up to `limit` visible keys under `prefix` after `after` at `at`, with `state` when given.
-    fn scan(
-        m: &Model,
-        prefix: &str,
-        state: Option<&str>,
-        after: Option<&str>,
-        limit: usize,
-        at: u64,
-    ) -> Vec<(String, Version)> {
+    fn scan(m: &Model, prefix: &str, state: Option<&str>, after: Option<&str>, limit: usize, at: u64) -> Vec<(String, Version)> {
         let start = match after {
             Some(a) if a >= prefix => Bound::Excluded(a.to_string()),
             _ => Bound::Included(prefix.to_string()),
@@ -421,11 +370,7 @@ impl<B: Backend> Backend for Modeled<B> {
         if !through() && !self.skipped(key) {
             let m = self.read_model();
             if m.holds(at) {
-                let v = m
-                    .keys
-                    .get(key)
-                    .and_then(|v| visible(v, at))
-                    .map(|s| s.version.clone());
+                let v = m.keys.get(key).and_then(|v| visible(v, at)).map(|s| s.version.clone());
                 drop(m);
                 self.served(at);
                 return Ok(v);
@@ -435,13 +380,7 @@ impl<B: Backend> Backend for Modeled<B> {
         self.inner.get(key, at)
     }
 
-    fn range(
-        &self,
-        prefix: &str,
-        after: Option<&str>,
-        limit: usize,
-        at: u64,
-    ) -> Result<Vec<(String, Version)>> {
+    fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
         if let Some(out) = self.ranged(prefix, None, after, limit, at) {
             return Ok(out);
         }
@@ -476,16 +415,10 @@ impl<B: Backend> Backend for Modeled<B> {
             Ok(rev) if self.revision() == expect => {
                 let rev = *rev;
                 self.advance(rev, |m| {
-                    for (i, w) in batch
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, w)| !self.skipped(w.key()))
-                    {
+                    for (i, w) in batch.iter().enumerate().filter(|(_, w)| !self.skipped(w.key())) {
                         let mod_rev = Rev::new(rev, i as u32);
                         let s = match w {
-                            Write::Put {
-                                value, create_rev, ..
-                            } => Some(slot(value, mod_rev, *create_rev)),
+                            Write::Put { value, create_rev, .. } => Some(slot(value, mod_rev, *create_rev)),
                             Write::Delete { .. } => None,
                         };
                         m.put(w.key(), rev, s);
@@ -518,12 +451,7 @@ impl<B: Backend> Backend for Modeled<B> {
         Ok(())
     }
 
-    fn gc_range(
-        &self,
-        after: Option<&str>,
-        limit: usize,
-        at: u64,
-    ) -> Result<Vec<(String, Version)>> {
+    fn gc_range(&self, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
         self.passed(at);
         self.inner.gc_range(after, limit, at)
     }

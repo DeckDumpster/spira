@@ -227,8 +227,7 @@ mod tests {
             limit: Some(64),
         });
         // A caller built before `states` sends no such field: it reads the whole prefix.
-        let old: List =
-            serde_json::from_str(r#"{"prefixes":["batches/"],"selector":"everything"}"#).unwrap();
+        let old: List = serde_json::from_str(r#"{"prefixes":["batches/"],"selector":"everything"}"#).unwrap();
         assert!(old.states.is_empty() && old.limit.is_none());
         round_trip(TxnCall {
             txn,
