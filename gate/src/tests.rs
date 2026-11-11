@@ -123,6 +123,7 @@ struct Fake {
     target_swept: Cell<bool>,
     targets: RefCell<Vec<PathBuf>>,
     released: RefCell<Vec<(PathBuf, bool)>>,
+    judged: RefCell<Vec<bool>>,
     // ---- the base-suite cache (sp-kqger)
     /// What `testenv container tag` answers; a real image tag by default so every test not
     /// about this cache specifically exercises it exactly as it would for real.
@@ -274,6 +275,7 @@ impl Fake {
             target_clears_tools: Cell::new(false),
             targets: RefCell::new(Vec::new()),
             released: RefCell::new(Vec::new()),
+            judged: RefCell::new(Vec::new()),
             image_tag: RefCell::new((0, "tag1".into())),
             base_tree_override: RefCell::new(None),
             certify_par_live: Cell::new(None),
@@ -534,7 +536,8 @@ impl World for Fake {
     fn target_intact(&self, _: &Path) -> bool {
         !self.target_swept.get()
     }
-    fn release_target(&self, tree: &Path, keep_release: bool) {
+    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool) {
+        self.judged.borrow_mut().push(judged);
         self.released.borrow_mut().push((tree.to_path_buf(), keep_release));
     }
     fn install_tools(&self, _: &Path, pkgs: &[String], dir: &Path, id: &str) -> Result<(), String> {
@@ -3394,6 +3397,19 @@ fn the_gate_tree_builds_on_tmpfs_and_short_room_is_no_verdict() {
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=scratch-short"), "{}", f.verdict_line());
     assert!(f.cmds.borrow().is_empty(), "nothing built: {:?}", f.cmds.borrow());
+}
+
+/// Only a tree the gate judged hands its build directory on; a cut or refused one does not.
+#[test]
+fn a_build_directory_is_handed_on_only_when_the_gate_judged_the_tree() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(f.judged.borrow().as_slice(), &[true]);
+
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nNo space left on device".into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(!f.judged.borrow().contains(&true), "{:?}", f.judged.borrow());
 }
 
 /// A build that dies on the exhausted scratch filesystem is infrastructure — never the

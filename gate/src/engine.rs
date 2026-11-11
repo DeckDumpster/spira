@@ -1717,7 +1717,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.remove(&f);
         }
         if let Some(t) = &self.s.tree {
-            w.release_target(t, vd.status == PASS && self.a.release_bins);
+            w.release_target(t, vd.status == PASS && self.a.release_bins, vd.status != NOVERDICT);
             w.remove(&PathBuf::from(format!("{}.lock.holder", t.display())));
             if self.s.held_lock && vd.status != PASS && w.exists(&t.join(".git")) {
                 w.remove_worktree(&self.s.repo, t);

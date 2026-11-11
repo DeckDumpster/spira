@@ -158,7 +158,7 @@ pub trait World {
     fn target_intact(&self, tree: &Path) -> bool;
     /// Drop the tmpfs build output of a finished trial (target::release_tree); `keep_release`
     /// spares `release` for a caller that still has to stage it.
-    fn release_target(&self, tree: &Path, keep_release: bool);
+    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool);
 
     /// `timeout <secs> bash -c <cmd>` in `tree` under exactly `env` → (status, combined output
     /// with trailing newlines stripped).

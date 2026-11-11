@@ -21,9 +21,7 @@ fn compiled(out: &str) -> Vec<String> {
     out.lines().filter_map(|l| l.trim().strip_prefix("Compiling ")).filter_map(|l| l.split(' ').next()).map(String::from).collect()
 }
 
-#[test]
-fn an_adopted_build_directory_rebuilds_only_the_crate_that_changed() {
-    let t = testkit::TempDir::new("gate-warm-cargo");
+fn seeded(t: &testkit::TempDir, change: &str, contents: &str) -> Vec<String> {
     let (root, a, b) = (t.path().join("root"), t.path().join("tree-a"), t.path().join("tree-b"));
     std::fs::create_dir_all(a.join("leaf/src")).unwrap();
     std::fs::create_dir_all(a.join("base/src")).unwrap();
@@ -49,8 +47,8 @@ fn an_adopted_build_directory_rebuilds_only_the_crate_that_changed() {
     assert!(gate::warm::donate_tree(&a));
 
     run(t.path(), "git", &["clone", "-q", a.to_str().unwrap(), b.to_str().unwrap()]);
-    std::fs::write(b.join("leaf/src/lib.rs"), "pub fn g() -> u8 { base::f() + 1 }\n").unwrap();
-    run(&b, "git", &["commit", "-qam", "change leaf"]);
+    std::fs::write(b.join(change), contents).unwrap();
+    run(&b, "git", &["commit", "-qam", "change"]);
     let bdest = root.join("tree-b").join("dwarf");
     std::fs::create_dir_all(&bdest).unwrap();
     std::fs::create_dir_all(b.join("target")).unwrap();
@@ -58,5 +56,17 @@ fn an_adopted_build_directory_rebuilds_only_the_crate_that_changed() {
     let line = gate::warm::warm_start(&root, &bdest, &b).unwrap();
     assert!(line.contains("warm from"), "{line}");
 
-    assert_eq!(build(&b), vec!["leaf".to_string()], "base is fresh, leaf changed and rebuilds");
+    build(&b)
+}
+
+#[test]
+fn an_adopted_build_directory_rebuilds_only_the_crate_that_changed() {
+    let t = testkit::TempDir::new("gate-warm-leaf");
+    assert_eq!(seeded(&t, "leaf/src/lib.rs", "pub fn g() -> u8 { base::f() + 1 }\n"), ["leaf"]);
+}
+
+#[test]
+fn an_adopted_build_directory_rebuilds_the_dependents_of_a_changed_crate() {
+    let t = testkit::TempDir::new("gate-warm-dep");
+    assert_eq!(seeded(&t, "base/src/lib.rs", "pub fn f() -> u8 { 2 }\n"), ["base", "leaf"]);
 }

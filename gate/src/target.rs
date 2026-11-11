@@ -188,7 +188,11 @@ pub fn prepare(
     }
 
     // 3. The room this trial needs — short is a refusal, never the disk.
-    let free = free_mib(root).ok_or_else(|| format!("gate: cannot statvfs {}", root.display()))?;
+    let mut free = free_mib(root).ok_or_else(|| format!("gate: cannot statvfs {}", root.display()))?;
+    if free < lim.min_free_mib {
+        crate::warm::shed(root);
+        free = free_mib(root).unwrap_or(free);
+    }
     if free < lim.min_free_mib {
         return Err(format!(
             "gate: the gate-tree target root {} has {free} MiB free, below the {} MiB a trial needs (SPIRA_GATE_TARGET_MIN_FREE_MIB) — refusing to build on the disk",
@@ -325,7 +329,7 @@ pub fn reap_stale(
     for e in rd.flatten() {
         let n = e.file_name().to_string_lossy().into_owned();
         let p = e.path();
-        if !p.is_dir() || now.duration_since(mtime(&p)).unwrap_or_default() < max_age {
+        if n == crate::warm::POOL || !p.is_dir() || now.duration_since(mtime(&p)).unwrap_or_default() < max_age {
             continue;
         }
         if !lock_free(&trees_dir.join(format!("{n}.lock"))) || pinned(&p) || busy(&p) || busy(&trees_dir.join(&n)) || held(&n) {
@@ -421,6 +425,19 @@ mod tests {
         assert!(root.join(crate::warm::POOL).join("e1").is_dir());
         prepare(&root, &trees, &tree, &lim(0), &roomy, &mem, &|_| false).unwrap();
         assert!(!root.join(crate::warm::POOL).exists());
+    }
+
+    #[test]
+    fn a_root_short_of_room_gives_up_its_warm_pool_before_refusing() {
+        let s = Scratch::new("pool-room");
+        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
+        let tree = trees.join(".gate.harness.r");
+        fs::create_dir_all(&tree).unwrap();
+        write_mib(&root.join(crate::warm::POOL).join("e1/dwarf/deps/libz.rlib"), 1);
+        let pool = root.join(crate::warm::POOL);
+        let free = |_: &Path| Some(if pool.exists() { 1 } else { 1 << 20 });
+        prepare(&root, &trees, &tree, &lim(100), &free, &mem, &|_| false).unwrap();
+        assert!(!pool.exists());
     }
 
     #[test]
@@ -598,6 +615,9 @@ mod tests {
         assert!(root.join("stale").exists(), "dry run removes nothing");
         assert_eq!(reap_stale(&root, &trees, two_h, false, &busy, &|_| false), vec!["stale".to_string()]);
         assert!(!root.join("stale").exists());
+        write_mib(&root.join(crate::warm::POOL).join("e/dwarf/x"), 1);
+        fs::File::open(root.join(crate::warm::POOL)).unwrap().set_modified(old).unwrap();
+        assert!(reap_stale(&root, &trees, two_h, false, &busy, &|_| false).is_empty(), "an idle warm pool is not a stale tree");
         for n in ["held", "busy", "fresh"] {
             assert!(root.join(n).join("dwarf/x").is_file(), "{n} kept");
         }
