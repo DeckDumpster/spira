@@ -326,6 +326,6 @@ mod tests {
             .map(|(from, d)| format!("{from} -> {}", d["name"].as_str().unwrap()))
             .collect();
         asked.sort();
-        assert_eq!(asked, ["release -> round-controller", "round-controller -> round-controller"]);
+        assert!(asked.is_empty(), "{asked:?}");
     }
 }
