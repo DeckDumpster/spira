@@ -634,6 +634,12 @@ test_phase_bound() {
 nextest_reds() {
     awk '/^ *Summary \[/ { exit } match($0, /^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[[ >]*[0-9.]+s\] +\( *[0-9]+\/[0-9]+\) +[^ ]+ +/) { n = split(substr($0, 1, RLENGTH), head, " "); print $1, substr($0, RLENGTH + 1), head[n] }' "$1"
 }
+# `FAIL dir:<crate directory> <test>` per failed test of a plain `cargo test` log, the directory read off the
+# `Running <dir>/tests/...` line of the binary that ran it.
+cargo_test_reds() {
+    awk '/^ *Running / { d = ""; if (match($0, /[^ ]*\/?tests\//)) { d = substr($0, RSTART, RLENGTH); sub(/\/?tests\/$/, "", d); if (d == "") d = "." } }
+         d != "" && /^test .* \.\.\. FAILED/ { print "FAIL dir:" d, $2 }' "$1"
+}
 # A red with no failing test, classified by what happened: "<KIND> binary=<name> [detail]" with
 # KIND SIGNAL (a test binary killed), TIMEOUT (the guard killed the phase) or BUILD (cargo could not
 # compile); empty when a test failed on its own.
@@ -666,6 +672,7 @@ test_phase_red() {
         echo "${stage^^}-CAUSE: $cause after ${secs}s; last binary=${last:-none-started}; failures=$(( $(grep -c -E '^test .* FAILED|^test result: FAILED' "$log") + $(nextest_reds "$log" | wc -l) ))"
         nextest_reds "$log" | awk '{ print "test " $2 " ... FAILED" }'
         nextest_reds "$log" | awk '{ print $1, $3, $2 }'
+        cargo_test_reds "$log"
         grep -E -A8 '^(test .* FAILED|---- |error(\[|:))|panicked at|^test result: FAILED|^failures:' "$log" | head -400
         echo "--- last output of the log ---"
         tail -100 "$log"

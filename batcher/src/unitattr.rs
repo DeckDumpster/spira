@@ -38,6 +38,20 @@ impl PackageGraph {
     }
 }
 
+impl PackageGraph {
+    /// Each `dir:<directory>` word (what a plain `cargo test` log can name) as the package that
+    /// lives there; a word no package owns stays as it is, and so maps to no member.
+    pub fn resolve(&self, packages: &[String]) -> Vec<String> {
+        packages
+            .iter()
+            .map(|p| match p.strip_prefix("dir:") {
+                Some(dir) => self.dirs.iter().find(|(_, d)| d.as_str() == dir).map_or(p.clone(), |(name, _)| name.clone()),
+                None => p.clone(),
+            })
+            .collect()
+    }
+}
+
 /// The package of each failing-test line (`FAIL <binary> <test>`, the binary id's package being
 /// the part before `::`), once each.
 pub fn failing_packages(lines: &[String]) -> Vec<String> {
@@ -116,6 +130,11 @@ mod tests {
         let got = reaching(&graph(), &["loom".to_string()], &diffs);
         assert_eq!(got.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>(), ["b", "c"]);
         assert!(got[0].1.contains("dependency of loom"), "{got:?}");
+    }
+
+    #[test]
+    fn a_dir_word_resolves_to_the_package_in_that_directory_and_an_unowned_one_stays() {
+        assert_eq!(graph().resolve(&["dir:spira-runtime".into(), "gate".into(), "dir:nowhere".into()]), ["runtime", "gate", "dir:nowhere"]);
     }
 
     #[test]

@@ -458,13 +458,13 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
     let named: Vec<&(Id, String)> = f.named.iter().filter(|(id, _)| members.iter().any(|m| &m.id == id)).collect();
     if named.is_empty() {
         let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
-        let packages = unitattr::failing_packages(&f.failed);
-        let tests = match f.failed.len() {
-            0 => String::new(),
-            n if n <= MAX_NOTED_TESTS => format!(": {}", f.failed.join("; ")),
-            n => format!(": {}; and {} more", f.failed[..MAX_NOTED_TESTS].join("; "), n - MAX_NOTED_TESTS),
-        };
-        let mapped = ops.package_graph().map(|g| unitattr::reaching(&g, &packages, &ops.diffs(&ids))).unwrap_or_default();
+        let graph = ops.package_graph();
+        let mut packages = unitattr::failing_packages(&f.failed);
+        if let Some(g) = &graph {
+            packages = g.resolve(&packages);
+        }
+        let tests = noted_tests(&f.failed);
+        let mapped = graph.map(|g| unitattr::reaching(&g, &packages, &ops.diffs(&ids))).unwrap_or_default();
         let mut actions: Vec<Action> = mapped
             .into_iter()
             .map(|(id, via)| Action::Eject { line: format!("{} red{tests} (mapped by package: this member's diff touches {via})", f.name), id })
@@ -477,8 +477,10 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
             }
         }
         if actions.is_empty() {
-            ops.incident("unattributed", std::slice::from_ref(&f.name));
-            return Ok(FilterEject::Unnamed);
+            let mut page = vec![f.name.clone()];
+            page.extend(f.failed.iter().take(MAX_NOTED_TESTS).cloned());
+            ops.incident("unattributed", &page);
+            return Ok(FilterEject::Unnamed(tests));
         }
         return Ok(match apply_build_actions(ops, members, &actions, &f.name)? {
             Some(next) => FilterEject::Survivors(next),
@@ -506,6 +508,14 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
 /// How many failing tests an eject note lists before it counts the rest.
 const MAX_NOTED_TESTS: usize = 20;
 
+fn noted_tests(failed: &[String]) -> String {
+    match failed.len() {
+        0 => String::new(),
+        n if n <= MAX_NOTED_TESTS => format!(": {}", failed.join("; ")),
+        n => format!(": {}; and {} more", failed[..MAX_NOTED_TESTS].join("; "), n - MAX_NOTED_TESTS),
+    }
+}
+
 /// A round of one member has no one else to blame: a red nothing else names is that member's.
 fn sole_member_culprit(red: &str, members: &[Member]) -> Vec<Action> {
     match members {
@@ -515,7 +525,7 @@ fn sole_member_culprit(red: &str, members: &[Member]) -> Vec<Action> {
 }
 
 enum FilterEject {
-    Unnamed,
+    Unnamed(String),
     Emptied,
     Survivors(Vec<Member>),
 }
@@ -728,7 +738,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             let next = match eject_filter_owners(runner, ops, f, &members)? {
                 FilterEject::Survivors(next) => next,
                 FilterEject::Emptied => return Ok(RoundEnd::Emptied(format!("{} red ejected every member", f.name))),
-                FilterEject::Unnamed => return Ok(RoundEnd::Blocked(format!("{} red names no member that can be ejected", f.name))),
+                FilterEject::Unnamed(tests) => return Ok(RoundEnd::Blocked(format!("{} red{tests} names no member that can be ejected", f.name))),
             };
             runner.stop_main()?;
             members = next;
@@ -2130,6 +2140,55 @@ pub(crate) mod tests {
         let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
         assert_eq!(ops.incidents, vec![("unattributed".to_string(), vec!["unit-tests".to_string()])]);
+    }
+
+    const INTEG_FAILING: [&str; 2] = ["FAIL dir:spira-runtime leg_lost::pauses", "FAIL dir:spira-runtime leg_lost::abandons"];
+
+    fn integration_red_when(culprits: &'static [&'static str]) -> FilterFn {
+        Box::new(move |tree| {
+            culprits.iter().all(|c| tree.contains(*c)).then(|| FilterRed { name: "integration-tests".into(), named: vec![], failed: INTEG_FAILING.iter().map(|l| l.to_string()).collect() })
+        })
+    }
+
+    #[test]
+    fn an_integration_red_in_a_crate_dir_only_one_members_diff_touches_ejects_that_member_and_certifies_the_rest() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(integration_red_when(&["m3"]));
+        let mut ops = Ops {
+            graph: Some(loom_graph()),
+            diffs: vec![diff_of("m1", "gate/src/engine.rs"), diff_of("m2", "docs/x.md"), diff_of("m3", "spira-runtime/src/tasks/a/batcher_local.rs")],
+            ..Ops::default()
+        };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(ops.ejected, vec![("m3".to_string(), vec!["integration-tests".to_string()])]);
+        assert_eq!(land_ids(end), vec!["m1", "m2"]);
+    }
+
+    #[test]
+    fn an_integration_red_no_member_maps_to_is_bisected_on_the_failing_crate_alone() {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.filter = Some(integration_red_when(&["m2"]));
+        let mut ops = Ops { graph: Some(loom_graph()), ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["integration-tests".to_string()])]);
+        assert!(f.scoped.iter().all(|p| p == &["runtime".to_string()]), "{:?}", f.scoped);
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+    }
+
+    #[test]
+    fn an_integration_red_no_single_removal_fixes_is_left_open_and_pages_with_the_failing_test_names() {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.filter = Some(integration_red_when(&["m1", "m2", "m3"]));
+        let mut ops = Ops { graph: Some(loom_graph()), ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let RoundEnd::Blocked(why) = end else { panic!("{end:?}") };
+        assert!(ops.ejected.is_empty());
+        assert!(why.contains("leg_lost::pauses") && why.contains("leg_lost::abandons"), "{why}");
+        let (kind, named) = &ops.incidents[0];
+        assert_eq!(kind, "unattributed");
+        assert!(named.iter().any(|n| n.contains("leg_lost::pauses")), "{named:?}");
     }
 
     #[test]
