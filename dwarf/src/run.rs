@@ -682,7 +682,7 @@ impl<'a> Run<'a> {
                 let reason = self.direct_refusal(&bead, &by);
                 self.d.sink.err(&util::log_line(self.now(), &format!("FATAL direct {bead}: {reason}")));
                 self.ledger.awake(self.now(), self.f(), &format!("direct-refused {reason}"));
-                direct::write_refusal(self.run_dir(), &self.own_unit, &reason);
+                direct::write_refusal(self.run_dir(), &bead, &reason);
                 return Err(1);
             }
             self.log(&format!("{}: nothing ready to claim", self.f()));

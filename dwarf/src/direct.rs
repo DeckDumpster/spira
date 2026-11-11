@@ -112,22 +112,16 @@ fn row_of(exec: &dyn Exec, bead: &str) -> Result<Option<(String, Option<String>)
 const WAIT_TICKS: u32 = 60;
 const TICK: Duration = Duration::from_secs(1);
 
-fn unit_stem(unit: &str) -> &str {
-    unit.strip_suffix(".service").unwrap_or(unit)
-}
-
 /// Where a called dwarf leaves its refusal for the launcher, which cannot see the unit's output.
-pub fn refusal_path(run: &Path, unit: &str) -> PathBuf {
-    run.join("direct-refused").join(unit_stem(unit))
+/// One directed dwarf per bead, so the bead names it.
+pub fn refusal_path(run: &Path, bead: &str) -> PathBuf {
+    run.join("direct-refused").join(bead)
 }
 
 /// Records why this directed dwarf turned the bead away. Best effort: the ledger and stderr
 /// carry the same reason.
-pub fn write_refusal(run: &Path, unit: &str, reason: &str) {
-    if unit.is_empty() {
-        return;
-    }
-    let path = refusal_path(run, unit);
+pub fn write_refusal(run: &Path, bead: &str, reason: &str) {
+    let path = refusal_path(run, bead);
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -184,13 +178,14 @@ pub fn run(exec: &dyn Exec, sink: &dyn Sink, sleep: &dyn Fn(Duration), run_dir: 
     }
     let argv = build_argv(req, replaced.as_deref(), home, dwarf_path, call_argv, now);
     sink.out(&util::log_line(now, &format!("direct {}: calling a {} dwarf directly (caps and the world's state bypassed)", req.bead, req.rune)));
+    let refusal = refusal_path(run_dir, &req.bead);
+    let _ = std::fs::remove_file(&refusal);
     let o = exec.exec(call_bin, &argv, None, None);
     o.stdout.lines().for_each(|l| sink.out(l));
     o.stderr.lines().for_each(|l| sink.err(l));
     if o.code != 0 {
         return o.code;
     }
-    let refusal = refusal_path(run_dir, &runtime::units::directed_unit_stem(&req.rune, now));
     for _ in 0..WAIT_TICKS {
         if let Ok(why) = std::fs::read_to_string(&refusal) {
             let _ = std::fs::remove_file(&refusal);
@@ -281,7 +276,7 @@ mod tests {
                 "slay" => Out { code: self.slay_rc, stdout: String::new(), stderr: "slay said no".into() },
                 "systemd-run" => {
                     if let Some(why) = &self.refusal {
-                        write_refusal(&self.run_dir, "spira-dwarf-builder-directed-1000.service", why);
+                        write_refusal(&self.run_dir, "sp-x", why);
                     }
                     Out::ok("")
                 }
