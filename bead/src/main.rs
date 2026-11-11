@@ -619,7 +619,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     }
 
     let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
-    let parent_labels = parent.as_deref().map(|p| parent_labels(p)).unwrap_or_default();
+    let parent_labels = parent.as_deref().map(parent_labels).unwrap_or_default();
     let incident_parent: Option<(String, Vec<String>)> = match &parent {
         Some(_) if bead::is_incident(&parent_labels, &incident_label) => parent.take().map(|p| (p, parent_labels)),
         _ => None,
