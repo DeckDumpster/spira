@@ -918,3 +918,64 @@ fn an_assemble_that_succeeds_after_failures_clears_the_failure_and_its_skip_why(
     assert_eq!(carry.repos["spira"].assemble_failed, None);
     assert_eq!(carry.repos["spira"].skip_why, None);
 }
+
+#[test]
+fn an_assemble_lost_at_restart_is_requested_again_on_the_next_tick() {
+    let (carry, _) = failed_assemble(&Carry::default(), "lost at restart");
+    let (carry, acts) = decide(&carry, &busy());
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE], "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Assembling);
+}
+
+#[test]
+fn a_lost_assemble_is_not_counted_as_an_assemble_failure() {
+    let (carry, acts) = failed_assemble(&Carry::default(), "lost at restart");
+    assert!(carry.repos.get("spira").is_none_or(|rc| rc.skip_why.is_none() && rc.assemble_failed.is_none() && rc.state == State::Idle), "{carry:?}");
+    assert!(acts.is_empty(), "{acts:?}");
+}
+
+#[test]
+fn a_restart_with_assembling_carried_and_no_assemble_in_flight_requests_it_on_the_next_tick() {
+    let (carry, _) = decide(&Carry::default(), &busy());
+    let mut quiet = busy();
+    quiet.now_ms = NOW + CADENCE_MS;
+    quiet.repos.get_mut("spira").unwrap().in_flight = Some(vec![]);
+    let (carry, acts) = decide(&carry, &quiet);
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE], "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Assembling);
+}
+
+#[test]
+fn an_assemble_in_flight_is_left_alone() {
+    let (carry, _) = decide(&Carry::default(), &busy());
+    let mut flying = busy();
+    flying.now_ms = NOW + CADENCE_MS;
+    flying.repos.get_mut("spira").unwrap().in_flight = Some(vec![ASSEMBLE.into()]);
+    let (_, acts) = decide(&carry, &flying);
+    assert!(acts.is_empty(), "{acts:?}");
+}
+
+/// A round is cut within a minute of a restart that took the assemble's outcome with it.
+#[test]
+fn a_round_is_cut_within_a_minute_of_a_restart_that_lost_the_assemble() {
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = calls.clone();
+    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()))
+        .double(ASSEMBLE, move |_| match seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+            0 => Err("lost at restart".into()),
+            _ => Ok(serde_json::to_string(&assembled).unwrap()),
+        })
+        .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, ROUND_OPEN].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(60_000).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let names: Vec<&str> = r.requested().iter().map(|q| q.name.as_str()).collect();
+    assert_eq!(names.iter().filter(|n| **n == ASSEMBLE).count(), 2, "{names:?}");
+    assert!(names.contains(&ROUND_OPEN), "the second assemble opened a round: {names:?}");
+}
