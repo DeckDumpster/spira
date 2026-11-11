@@ -134,6 +134,9 @@ pub struct Options {
     pub no_nocov: bool,
     /// Keep only suites whose tier is listed (and every untiered suite). `None`: no filter.
     pub tiers: Option<Vec<String>>,
+    /// A suite selected because the diff touches what its `# covers:` names (or what it
+    /// selects-on) is kept whatever its tier; `tiers` then filters only the always-run suites.
+    pub covers_outrank_tiers: bool,
     /// The workspace's reverse-dependency reach; `None`: only `# covers:` selects.
     pub reach: Option<crate::reach::Reach>,
 }
@@ -398,10 +401,14 @@ pub fn select(
     }
 
     // 6–7. Always-run suites, then the tier filter.
+    let covered = if opts.covers_outrank_tiers { selected.clone() } else { vec![] };
     for n in nocov(corpus, opts) {
         push_once(&mut selected, &n);
     }
-    let suites = tier_filter(selected);
+    let suites: Vec<String> = selected
+        .into_iter()
+        .filter(|n| covered.contains(n) || corpus.get(n).is_some_and(|s| opts.tier_ok(s)))
+        .collect();
     log.push(format!("select: {} suite(s) selected", suites.len()));
     Ok(Selection {
         suites,

@@ -1270,6 +1270,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                 no_all_fallback: true,
                 no_nocov: false,
                 tiers: suite_select::select::parse_tiers(&s.tiers),
+                covers_outrank_tiers: true,
                 reach: match suite_select::reach::Reach::load(&repo.path) {
                     Ok(r) => r,
                     Err(r) => {

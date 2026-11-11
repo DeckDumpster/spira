@@ -116,7 +116,7 @@ mode; the file buckets; the options.
 5. **Selects-on.** A suite with `# selects-on: added|mode` is selected when an added
    (status `A`) or mode-changed file matches one of its plain globs.
 6. **Always-run** suites are appended (unless `--no-nocov`); duplicates dropped.
-7. **Tiers.** `--tiers T0,T1` keeps a suite whose tier is listed, and every untiered suite.
+7. **Tiers.** `--tiers T0,T1` keeps a suite whose tier is listed, and every untiered suite. With `covers_outrank_tiers` (testenv's diff selection) a suite the diff selected by `# covers:` is kept whatever its tier; the filter then drops only always-run suites.
 
 `--mode-file` receives `diff` or `all`; `--report-file` receives `unplaced:<file>` for each
 unplaced changed file and `unclaimed:<file>` for each tracked `*.sh`/`*.py` (not a suite)

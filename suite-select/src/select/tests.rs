@@ -232,6 +232,25 @@ fn q_a_plumbing_file_falls_back_even_when_claimed() {
 }
 
 #[test]
+fn a_covering_suite_is_selected_whatever_its_tier_when_covers_outrank_tiers() {
+    let c = corpus(&[
+        ("test-t1.sh", "# tier: T1\n# covers: spira/testdb.sh\n"),
+        ("test-t2.sh", "# tier: T2\n# covers: spira/testdb.sh\n"),
+        ("test-other-t1.sh", "# tier: T1\n# covers: other.sh\n"),
+        ("test-nocov-t1.sh", "# tier: T1\n"),
+    ]);
+    let o = Options {
+        tiers: parse_tiers("T2,T3"),
+        covers_outrank_tiers: true,
+        ..nofallback()
+    };
+    let got = run(&c, &m(&["spira/testdb.sh"]), &o).unwrap().suites;
+    assert_eq!(got, ["test-t1.sh", "test-t2.sh"]);
+    let o = Options { covers_outrank_tiers: false, ..o };
+    assert_eq!(run(&c, &m(&["spira/testdb.sh"]), &o).unwrap().suites, ["test-t2.sh"]);
+}
+
+#[test]
 fn tiers_keep_listed_and_untiered_suites_everywhere() {
     let c = corpus(&[
         ("test-t1.sh", "# tier: T1\n# covers: a.sh\n"),
