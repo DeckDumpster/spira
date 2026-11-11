@@ -373,6 +373,15 @@ fn start_pass_with(
 
 const STALE_TRIES: u32 = 5;
 
+/// The round record's `pass-trees`: `<n>=<tree>` per pass, the tree the pass built from.
+pub(super) const PASS_TREES: &str = "pass-trees";
+
+fn record_pass_tree(kv: &mut Kv, tree: &str) {
+    let mut entries: Vec<String> = kv.get(PASS_TREES).unwrap_or("").split_whitespace().map(String::from).collect();
+    entries.push(format!("{}={tree}", entries.len() + 1));
+    set(kv, PASS_TREES, &entries.join(" "));
+}
+
 fn suites_started(w: &World, batch: &str, strict: bool) -> Result<(), (i32, String)> {
     let send = || {
         pass_event(w, batch, |_, n, phase| {
@@ -3263,6 +3272,10 @@ fn certify_pass(
             );
         }
         kv.remove("red");
+        match w.git.rev_parse(&wt, "HEAD^{tree}") {
+            Some(tree) => record_pass_tree(&mut kv, &tree),
+            None => w.err(format!("queue.sh {label}: WARNING — the tree of this pass of {batch} could not be read; the round record does not name it")),
+        }
         let ride = Ride::with(w, &kv);
         let started = start_pass_with(w, batch, &head, false, &ride);
         if let Err((rc, out)) = started {

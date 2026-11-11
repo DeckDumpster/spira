@@ -568,7 +568,9 @@ pub fn main_with(args: Vec<String>) -> i32 {
             let sig_results = run_args.as_ref().and_then(|a| a.results_dir.clone()).unwrap_or_else(|| cfg.run_dir.join("batch-results"));
             let sig_run_dir = cfg.run_dir.clone();
             let sig_scratch = cfg.state_dir.join(format!(".salvage.{}", me.pid));
+            let sig_host = crate::host::LocalRemote { home: crate::host::round_home(&cfg.run_dir) };
             block_termination_signals(move |sig| {
+                sig_host.stop_pass_of(Some(me.pid));
                 for vm in sig_pool.leased_to(me) {
                     match salvage_results(&sig_remote, &vm.addr, &sig_results, &sig_scratch, Duration::from_secs(6)) {
                         Some(n) => eprintln!("round-vm run: signal {sig}: salvaged {n} suite result(s) from {} before release", vm.handle),
