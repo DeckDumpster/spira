@@ -635,6 +635,14 @@ impl Projection {
         Ok(Read { rev: fresh.rev, value: reply })
     }
 
+    /// `show <id>`'s answer, `{"bead": row}`, from the held row (it carries the `state`, `stack` and
+    /// `tip` a show does); `None` when the store holds no such row.
+    pub fn show(&self, id: &str) -> Result<Read<Option<Value>>, LcError> {
+        let ids = [id.to_string()];
+        let rows = self.rows(&RowQuery { ids: Some(&ids), ..Default::default() })?;
+        Ok(Read { rev: rows.rev, value: rows.value.into_iter().next().map(|row| json!({ "bead": row })) })
+    }
+
     /// The ids of the rows in `state` for `repo` that hold nothing.
     pub fn unheld(&self, state: &str, repo: &str) -> Result<Read<Vec<String>>, LcError> {
         self.read(|s| {

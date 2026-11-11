@@ -291,13 +291,14 @@ fn held_rows(q: &store_view::RowQuery) -> Option<Result<Vec<Value>, String>> {
     store_view::shared().map(|views| views.rows(q).map(|r| r.value).map_err(|e| format!("could not say: {e}")))
 }
 
-/// `show <id>`'s answer: from the held row (it carries the `state`, `stack` and `tip` a show does)
-/// when the process keeps the store's watch.
+/// `show <id>`'s answer, from the held row when the process keeps the store's watch.
 fn show_text(lc: &LcClient, id: &str) -> Result<String, String> {
-    let ids = [id.to_string()];
-    match held_rows(&store_view::RowQuery { ids: Some(&ids), ..Default::default() }) {
-        Some(rows) => rows?.into_iter().next().map(|row| serde_json::json!({ "bead": row }).to_string()).ok_or_else(|| format!("spira-lc exited 1: no row for {id}")),
-        None => lcq_with(lc, &["show", id]),
+    let Some(views) = store_view::shared() else {
+        return lcq_with(lc, &["show", id]);
+    };
+    match views.show(id).map_err(|e| format!("could not say: {e}"))?.value {
+        Some(shown) => Ok(shown.to_string()),
+        None => Err(format!("spira-lc exited 1: no row for {id}")),
     }
 }
 

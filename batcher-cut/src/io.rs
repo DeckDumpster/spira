@@ -237,10 +237,8 @@ fn show_bead(env: &Env, id: &str) -> Result<String, String> {
     let Some(views) = store_view::shared() else {
         return lcq(env, &["show", id]);
     };
-    let ids = [id.to_string()];
-    let rows = views.rows(&store_view::RowQuery { ids: Some(&ids), ..Default::default() }).map_err(|e| format!("could not say: {e}"))?;
-    match rows.value.into_iter().next() {
-        Some(row) => Ok(serde_json::json!({ "bead": row }).to_string()),
+    match views.show(id).map_err(|e| format!("could not say: {e}"))?.value {
+        Some(shown) => Ok(shown.to_string()),
         None => Err(format!("spira-lc exited 1: no row for {id}")),
     }
 }
