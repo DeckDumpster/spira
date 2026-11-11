@@ -442,58 +442,6 @@ fn the_stagger_never_holds_an_empty_pool_or_a_disabled_one() {
     assert_eq!(t, Take::Admitted { slot: 2, fresh: true });
 }
 
-fn batches(state: &str, phase: &str) -> String {
-    format!(r#"[{{"batch_id":"r-auto-9","state":"{state}","phase":"{phase}"}},{{"batch_id":"r-old","state":"LANDED","phase":null}}]"#)
-}
-
-#[test]
-fn suites_round_names_only_a_round_in_its_suite_phase() {
-    assert_eq!(suites_round(&batches("CI_RUNNING", "suites")).as_deref(), Some("r-auto-9"));
-    assert_eq!(suites_round(&batches("CI_RUNNING", "build")), None);
-    assert_eq!(suites_round(&batches("GREEN", "suites")), None);
-    assert_eq!(suites_round("cannot tell: store down"), None);
-}
-
-fn yield_run(cap: u64, ends_after: Option<u64>) -> (u64, Vec<String>) {
-    let clock = std::cell::Cell::new(1000u64);
-    let probe = || match ends_after {
-        Some(n) if clock.get() >= 1000 + n => None,
-        _ => Some("r-auto-9".to_string()),
-    };
-    let now = || clock.get();
-    let sleep = |d: Duration| clock.set(clock.get() + d.as_secs());
-    let mut said = Vec::new();
-    let held = yield_to_round(cap, &probe, &now, &sleep, &mut |l: &str| said.push(l.to_string()));
-    (held, said)
-}
-
-#[test]
-fn no_round_in_suites_admits_at_once_and_a_zero_cap_disables_the_yield() {
-    let (held, said) = yield_run(900, Some(0));
-    assert_eq!((held, said.len()), (0, 0));
-    assert_eq!(yield_run(0, None).0, 0);
-}
-
-#[test]
-fn concurrent_compilers_share_one_round_probe_per_ttl_window() {
-    let tmp = testkit::TempDir::new("round-phase");
-    let dir = tmp.path().join("admission");
-    let calls = std::sync::atomic::AtomicU64::new(0);
-    let probe = || {
-        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Some("r-auto-9".to_string())
-    };
-    for _ in 0..200 {
-        assert_eq!(shared_round_probe(&dir, 5000, &probe).as_deref(), Some("r-auto-9"));
-    }
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-    shared_round_probe(&dir, 5000 + ROUND_POLL_SECS, &probe);
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
-    let none = || None;
-    assert_eq!(shared_round_probe(&dir, 5000 + 2 * ROUND_POLL_SECS, &none), None);
-    assert_eq!(shared_round_probe(&dir, 5000 + 2 * ROUND_POLL_SECS, &probe), None);
-}
-
 #[test]
 fn a_second_cold_build_waits_on_the_cold_slot_until_the_first_releases() {
     let d = run_dir();

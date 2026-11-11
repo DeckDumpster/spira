@@ -17,7 +17,6 @@ SPIRA_ACTIVATE_SH spira/deploy.sh
 SPIRA_ADMISSION spira-config/src/admission.rs
 SPIRA_ADMIT_INNER dwarf/src/restrict.rs
 SPIRA_ADMIT_INNER spira-config/src/admission.rs
-SPIRA_ADMIT_ROUND_HOLD_SECS spira-config/src/admission.rs
 SPIRA_ADMIT_WHO dwarf/src/restrict.rs
 SPIRA_ADMIT_WHO spira-config/src/admission.rs
 SPIRA_ADOPT_CONFIGURE_DEFAULT spira/conf.sh

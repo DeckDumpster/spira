@@ -82,7 +82,6 @@ fn wrapper(args: Vec<OsString>) -> ExitCode {
             // A gate's build (D11): a lease for the cargo at once, oversubscribing a full pool.
             admission::take_now_guard(&q, admission::size_from_env(Pool::Compile), &RealProcs, &mut |l: &str| say(l))
         } else {
-            admission::yield_to_round_real(&run, &mut |l: &str| say(l));
             admission::acquire_real(&q, &mut |l: &str| say(l))
         };
         // The lease is the cargo's, not ours: it ends when the cargo does.
