@@ -823,8 +823,7 @@ impl<'a> Run<'a> {
         }
 
         // ---- the branch is recorded on the bead ----
-        let br = c.row.label_value("branch:").unwrap_or_default();
-        let mut br = br;
+        let mut br = c.row.label_value("branch:").unwrap_or_default();
         if br.is_empty() {
             br = format!("spira/{}", c.id);
             let _ = self.d.bd.bd(&s(&["set-state", &c.id, &format!("branch={br}")]));

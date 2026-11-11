@@ -35,10 +35,7 @@ impl Run<'_> {
         let _ = self.d.exec.exec("bash", &s(&["-c", FIXTURE_DROP]), Some(data), None);
     }
 
-    /// `gate-run.sh --status <branch> <repo>`: (exit code, stdout), by name on the
-    /// launcher's PATH (sp-gypjk). A suite fixture scripts it by putting its own
-    /// `gate-run.sh` first on PATH.
-    fn ask_blocked(&self, id: &str) -> bool {
+    pub(crate) fn ask_blocked(&self, id: &str) -> bool {
         let row = bd::json(self.d.bd, &["show", id]);
         let ids = decide::blocks_targets(&row);
         if ids.is_empty() {
@@ -48,6 +45,9 @@ impl Run<'_> {
         decide::open_ask_blocker(&row, &targets, id, &self.conf.ask_label())
     }
 
+    /// `gate-run.sh --status <branch> <repo>`: (exit code, stdout), by name on the
+    /// launcher's PATH (sp-gypjk). A suite fixture scripts it by putting its own
+    /// `gate-run.sh` first on PATH.
     fn gate_status(&self) -> Option<(i32, String)> {
         let o = self.d.exec.exec(
             "gate-run.sh",

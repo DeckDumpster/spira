@@ -218,6 +218,13 @@ mod tests {
     }
 
     #[test]
+    fn the_bead_text_is_one_work_show_through_the_door() {
+        let (bd, fake) = door(vec![]);
+        assert_eq!(bd.text("sp-a").code, 0);
+        assert_eq!(fake.requests(), vec![args(&["work", "sp-a", "show"])]);
+    }
+
+    #[test]
     fn a_write_never_reaches_the_door() {
         let (bd, fake) = door(vec![]);
         assert_ne!(bd.bd(&args(&["note", "sp-a", "x"])).code, 0, "the missing bdq is what answers a write");

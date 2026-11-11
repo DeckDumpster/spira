@@ -139,6 +139,27 @@ pub(crate) mod verdict_run {
         }
     }
 
+    struct AskBd;
+    impl Bd for AskBd {
+        fn bd(&self, a: &[String]) -> Out {
+            match a.first().map(String::as_str) {
+                Some("show") => Out::ok(r#"[{"id":"sp-x","dependencies":[{"issue_id":"sp-x","depends_on_id":"sp-ask","type":"blocks"}]}]"#),
+                Some("list") if a.join(" ") == "list --all --limit 0 --id sp-ask --json" => Out::ok(r#"[{"id":"sp-ask","status":"open","labels":["needs-operator"],"title":"decide"}]"#),
+                _ => Out::ok("[]"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_teardown_reads_the_blocks_targets_in_one_list() {
+        let seam = Seams(Default::default());
+        let blocked = with_run(&AskBd, &seam, Dirty(vec![]), "", |r| {
+            r.conf = Conf::new(&Snapshot { vars: { let mut v = super::complete_vars(); v.insert("SPIRA_ASK_LABEL".into(), "needs-operator".into()); v }, ..Default::default() }, Path::new("/home/spira"));
+            r.ask_blocked("sp-x")
+        });
+        assert!(blocked);
+    }
+
     #[test]
     fn the_claimed_bead_is_read_once_however_many_steps_ask_for_it() {
         let (seam, bd) = (Seams(Default::default()), CountingBd(Default::default()));
