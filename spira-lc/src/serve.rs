@@ -16,6 +16,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -123,6 +124,7 @@ pub fn run(args: &[String]) -> i32 {
         },
     };
 
+    stop_on_sigterm();
     crate::plan::serve_on(Arc::clone(&conn));
     match crate::plan::read_watermark(&conn) {
         Ok(w) => crate::plan::install_mirror(w),
@@ -186,18 +188,87 @@ pub fn run(args: &[String]) -> i32 {
                 None => {}
             }
         });
-        for conn_stream in listener.incoming() {
-            match conn_stream {
-                Ok(stream) => {
-                    let conn = Arc::clone(&conn);
-                    let accepted = Instant::now();
-                    scope.spawn(move || handle(stream, &conn, accepted));
-                }
-                Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
-            }
-        }
+        accept_until_stopped(&listener, scope, &STOPPING, &INFLIGHT, |stream| handle(stream, &conn, Instant::now()));
     });
-    0
+    eprintln!("spira-lc serve: stopping, {} request(s) in flight", INFLIGHT.load(Ordering::SeqCst));
+    if !wait_idle(&INFLIGHT, DRAIN) {
+        eprintln!("spira-lc serve: {} request(s) still running after {DRAIN:?}, exiting anyway", INFLIGHT.load(Ordering::SeqCst));
+    }
+    std::process::exit(0)
+}
+
+static STOPPING: AtomicBool = AtomicBool::new(false);
+static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
+/// Longer than a request's own bound (`request_deadline`), so a drained request is never cut.
+const DRAIN: Duration = Duration::from_secs(15);
+const SIGTERM: i32 = 15;
+const POLLIN: i16 = 1;
+
+#[repr(C)]
+struct PollFd {
+    fd: i32,
+    events: i16,
+    revents: i16,
+}
+
+extern "C" {
+    fn signal(signum: i32, handler: extern "C" fn(i32)) -> usize;
+    fn poll(fds: *mut PollFd, nfds: u64, timeout_ms: i32) -> i32;
+}
+
+extern "C" fn on_sigterm(_: i32) {
+    STOPPING.store(true, Ordering::SeqCst);
+}
+
+/// SIGTERM stops accepting and drains instead of killing the requests this process has taken.
+fn stop_on_sigterm() {
+    // SAFETY: the handler only stores to an atomic, which is async-signal-safe.
+    unsafe { signal(SIGTERM, on_sigterm) };
+}
+
+/// Accept on `listener` until `stopping`, serving each connection on its own thread. A
+/// connection not yet accepted stays in the kernel queue, which the socket unit keeps for the
+/// next process; one accepted is counted in `inflight` before this returns.
+fn accept_until_stopped<'scope, 'env, F>(
+    listener: &UnixListener,
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    stopping: &AtomicBool,
+    inflight: &'env AtomicUsize,
+    serve: F,
+) where
+    F: Fn(UnixStream) + Send + Sync + Clone + 'scope,
+{
+    use std::os::unix::io::AsRawFd;
+    let mut ready = PollFd { fd: listener.as_raw_fd(), events: POLLIN, revents: 0 };
+    while !stopping.load(Ordering::SeqCst) {
+        ready.revents = 0;
+        // SAFETY: one valid pollfd for a descriptor this function borrows.
+        if unsafe { poll(&mut ready, 1, 100) } <= 0 || ready.revents & POLLIN == 0 {
+            continue;
+        }
+        match listener.accept() {
+            Ok((stream, _)) => {
+                inflight.fetch_add(1, Ordering::SeqCst);
+                let serve = serve.clone();
+                scope.spawn(move || {
+                    serve(stream);
+                    inflight.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+            Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
+        }
+    }
+}
+
+fn wait_idle(inflight: &AtomicUsize, limit: Duration) -> bool {
+    let began = Instant::now();
+    while inflight.load(Ordering::SeqCst) > 0 {
+        if began.elapsed() >= limit {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
 }
 
 /// One pass of the control store's GC controller: finalized keys, orphans and lapsed TTLs.
@@ -646,6 +717,51 @@ mod tests {
             assert_eq!(w(verb), super::TOOL_DEADLINE, "{verb}");
         }
         assert_eq!(d("facts-query"), crate::db::QUERY_DEADLINE);
+    }
+
+    #[test]
+    fn a_stopping_server_finishes_the_request_it_took_and_leaves_the_next_in_the_queue() {
+        use super::{accept_until_stopped, wait_idle};
+        use std::io::BufReader;
+        use std::os::unix::net::{UnixListener, UnixStream};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::time::Duration;
+        let dir = testkit::TempDir::new("lc-drain");
+        let path = dir.join("sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let stopping = AtomicBool::new(false);
+        let inflight = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(AtomicBool::new(false));
+        let first = UnixStream::connect(&path).unwrap();
+        let reply = std::thread::spawn(move || {
+            let mut line = String::new();
+            let mut first = first;
+            std::io::Write::write_all(&mut first, b"x\n").unwrap();
+            std::io::BufRead::read_line(&mut BufReader::new(&first), &mut line).map(|_| line)
+        });
+        std::thread::scope(|scope| {
+            let (flag, begun) = (&stopping, Arc::clone(&started));
+            scope.spawn(move || {
+                while !begun.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                flag.store(true, Ordering::SeqCst);
+            });
+            let begun = Arc::clone(&started);
+            accept_until_stopped(&listener, scope, &stopping, &inflight, move |stream: UnixStream| {
+                begun.store(true, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(300));
+                let mut line = String::new();
+                std::io::BufRead::read_line(&mut BufReader::new(&stream), &mut line).unwrap();
+                std::io::Write::write_all(&mut &stream, b"served\n").unwrap();
+            });
+        });
+        assert!(wait_idle(&inflight, Duration::from_secs(2)));
+        assert_eq!(reply.join().unwrap().unwrap(), "served\n", "the request taken before the stop is answered");
+        let _later = UnixStream::connect(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        assert!(listener.accept().is_ok(), "a connection arriving after the stop is still queued for the next process");
     }
 
     #[test]
