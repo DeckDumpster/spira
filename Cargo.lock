@@ -1623,12 +1623,14 @@ name = "round-vm"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "reconciler-engine",
  "rustls",
  "rustls-pemfile",
  "serde",
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-desired-state",
  "spira-otel",
  "testkit",
  "toml",
@@ -2089,6 +2091,7 @@ dependencies = [
  "lifecycle",
  "opentelemetry-proto",
  "reconciler-engine",
+ "round-vm",
  "runtime",
  "sentinel",
  "serde",

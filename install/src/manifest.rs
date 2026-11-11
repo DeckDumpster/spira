@@ -97,6 +97,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("lc-backup-drill.timer", true));
     m.units.push(t("spira-exec-census.service", true));
     m.units.push(t("spira-runtime.service", true));
+    m.units.push(t("spira-vm-pool-section.service", false));
+    m.units.push(t("spira-vm-pool-section.timer", true));
     // The one timer outside the scheduler (S15): it restarts and pages when the scheduler is
     // wedged or absent. Rendered from watchdog::render, not from a template file.
     m.units.push(t("spira-watchdog.service", false));
@@ -345,6 +347,19 @@ mod tests {
         for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-dolt-boot-check.timer", "spira-unit-run-dbus.service", "spira-loom.service", "spira-cockpit.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.timer"] {
             assert!(union.iter().any(|n| n == keep), "positive control: {keep} is still shipped");
         }
+    }
+
+    #[test]
+    fn the_vm_pool_section_publisher_is_a_timer_the_manifest_enables() {
+        let m = build(&inputs()).unwrap();
+        assert!(m.units.iter().any(|u| u.name == "spira-vm-pool-section.timer" && u.enable));
+        assert!(m.units.iter().any(|u| u.name == "spira-vm-pool-section.service" && !u.enable), "the timer runs it, never boot");
+        assert!(m.enable("prod").contains(&"spira-vm-pool-section-prod.timer".to_string()));
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let timer = std::fs::read_to_string(dir.join("spira-vm-pool-section.timer")).unwrap();
+        assert!(timer.contains("OnUnitActiveSec=300s") && timer.contains("Plane=observability"), "{timer}");
+        let service = std::fs::read_to_string(dir.join("spira-vm-pool-section.service")).unwrap();
+        assert!(service.contains("bin/round-vm section") && service.contains("Plane=observability"), "{service}");
     }
 
     #[test]

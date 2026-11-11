@@ -1,0 +1,14 @@
+[Unit]
+Description=Publish the VmPool section every five minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=300s
+AccuracySec=5s
+Unit=spira-vm-pool-section.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability

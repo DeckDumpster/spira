@@ -24,3 +24,9 @@ kind = "DwarfFleet"
 weight = 24.0
 unit = "landed per day per unit of distance"
 source = "throughput-bounds §3: each slot adds about +24 landed a day"
+
+[[weight]]
+kind = "VmPool"
+weight = 5.0
+unit = "landed per day per unit of distance"
+source = "throughput-bounds §2: 469 infra and 52 over-cap passes of 1,402 were rerun; a wasted pass costs one round's wall, judgement not measured"

@@ -18,6 +18,7 @@ pub mod pve;
 pub mod route;
 pub mod run;
 pub mod schema;
+pub mod section;
 pub mod spill;
 pub mod spool;
 pub mod telemetry;

@@ -12,3 +12,33 @@ name = "after_batch"
 [[function]]
 file = "src/run.rs"
 name = "record_treeless_end"
+
+# The VmPool section's status core and publisher: the bead's own gate reports any branch in
+# them no test takes.
+[[function]]
+file = "src/section.rs"
+name = "measure"
+
+[[function]]
+file = "src/section.rs"
+name = "slots_by_pool"
+
+[[function]]
+file = "src/section.rs"
+name = "status_of"
+
+[[function]]
+file = "src/section.rs"
+name = "section_body"
+
+[[function]]
+file = "src/section.rs"
+name = "lc_ok"
+
+[[function]]
+file = "src/section.rs"
+name = "run"
+
+[[function]]
+file = "src/section.rs"
+name = "pass_rows"
