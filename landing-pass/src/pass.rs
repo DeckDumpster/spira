@@ -193,6 +193,7 @@ impl<'a> Pass<'a> {
         self.log(&format!("landing: starting a pass over [{listing}]"));
         Files::prune_verdicts(&self.s.verdicts, self.s.verdict_ttl, self.clock.now());
 
+        let (seen_before, settled_before) = (self.out.branches(), self.settled_from_memory.get());
         for repo in self.rotated() {
             self.settle_landed_rows(repo);
             self.walk_repo(repo);
@@ -200,8 +201,8 @@ impl<'a> Pass<'a> {
 
         self.log(&format!(
             "landing: walk complete — {} branch(es), {} settled from memory",
-            self.out.branches(),
-            self.settled_from_memory.get()
+            self.out.branches() - seen_before,
+            self.settled_from_memory.get() - settled_before
         ));
 
         for r in self.repos {
