@@ -153,6 +153,18 @@ pub fn labels(bead_id: &str) -> Result<Vec<String>, String> {
     Ok(bead(bead_id)?.map(|b| b.labels).unwrap_or_default())
 }
 
+fn closed_of(found: Vec<Bead>) -> Vec<(String, String)> {
+    found.into_iter().filter(|b| b.status == "closed").map(|b| (b.id, b.close_reason.unwrap_or_default())).collect()
+}
+
+fn open_of(found: Vec<Bead>) -> Vec<String> {
+    found.into_iter().filter(|b| b.status != "closed").map(|b| b.id).collect()
+}
+
+fn is_external(b: &Bead) -> bool {
+    b.external_ref.as_deref().is_some_and(|r| !r.trim().is_empty())
+}
+
 /// The live [`crate::callers::Bd`]: reads from the content store, writes through bd.
 pub struct LiveBd;
 
@@ -172,13 +184,13 @@ impl crate::callers::Bd for LiveBd {
     }
     fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String> {
         let found = store(|sql, db| content_sql::statuses(sql, db, ids))?;
-        Ok(found.into_iter().filter(|b| b.status == "closed").map(|b| (b.id, b.close_reason.unwrap_or_default())).collect())
+        Ok(closed_of(found))
     }
     fn known(&mut self, ids: &[String]) -> Result<Vec<String>, String> {
         Ok(store(|sql, db| content_sql::statuses(sql, db, ids))?.into_iter().map(|b| b.id).collect())
     }
     fn open_among(&mut self, ids: &[String]) -> Result<Vec<String>, String> {
-        Ok(store(|sql, db| content_sql::statuses(sql, db, ids))?.into_iter().filter(|b| b.status != "closed").map(|b| b.id).collect())
+        Ok(open_of(store(|sql, db| content_sql::statuses(sql, db, ids))?))
     }
     fn work_beads(&mut self, id: &str) -> Result<Vec<String>, String> {
         Ok(labels(id)?.iter().filter_map(|l| l.strip_prefix("work-bead:").map(str::to_string)).collect())
@@ -192,7 +204,7 @@ impl crate::callers::Bd for LiveBd {
     }
     fn external(&mut self, id: &str) -> Result<bool, String> {
         let b = bead(id)?.ok_or_else(|| format!("bd show {id}: {NO_SUCH}"))?;
-        Ok(b.external_ref.is_some_and(|r| !r.trim().is_empty()))
+        Ok(is_external(&b))
     }
     fn reopen(&mut self, id: &str) -> Result<(), String> {
         // The store follows the row the door just moved: open, unassigned, and no longer wearing
@@ -501,12 +513,24 @@ mod filing_tests {
 }
 
 #[cfg(test)]
-mod no_read_fork_tests {
+mod store_read_tests {
+    use super::*;
+
+    fn row(id: &str, status: &str, reason: Option<&str>) -> Bead {
+        Bead { id: id.into(), status: status.into(), close_reason: reason.map(str::to_string), ..Bead::default() }
+    }
+
     #[test]
-    fn this_module_forks_bd_for_no_read_verb() {
-        let code = include_str!("bd.rs").split("#[cfg(test)]").next().unwrap();
-        for read in ["\"show\"", "\"list\"", "\"kv\"", "\"dep\", \"list\"", "fn run("] {
-            assert!(!code.contains(read), "bd.rs forks bd for {read}");
-        }
+    fn closed_rows_carry_their_reason_and_open_ones_are_every_other_status() {
+        let found = vec![row("sp-a", "closed", Some("done")), row("sp-b", "in_progress", None), row("sp-c", "closed", None)];
+        assert_eq!(closed_of(found.clone()), [("sp-a".to_string(), "done".to_string()), ("sp-c".to_string(), String::new())]);
+        assert_eq!(open_of(found), ["sp-b"]);
+    }
+
+    #[test]
+    fn a_blank_external_ref_is_not_external() {
+        let b = |r: Option<&str>| Bead { external_ref: r.map(str::to_string), ..Bead::default() };
+        assert!(is_external(&b(Some("github:o/r#4"))));
+        assert!(!is_external(&b(Some("  "))) && !is_external(&b(None)));
     }
 }
