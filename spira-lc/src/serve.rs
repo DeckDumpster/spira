@@ -740,6 +740,18 @@ mod tests {
     }
 
     #[test]
+    fn sigterm_sets_the_stop_flag_instead_of_ending_the_process() {
+        extern "C" {
+            fn raise(sig: i32) -> i32;
+        }
+        super::stop_on_sigterm();
+        assert!(!super::STOPPING.load(std::sync::atomic::Ordering::SeqCst));
+        // SAFETY: the handler installed above only stores to an atomic.
+        unsafe { raise(15) };
+        assert!(super::STOPPING.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
     fn inherited_listener_needs_this_process_and_a_descriptor() {
         assert!(super::inherited_listener(None, None, 7).is_none());
         assert!(super::inherited_listener(Some("8"), Some("1"), 7).is_none(), "another process's descriptors are not ours");
