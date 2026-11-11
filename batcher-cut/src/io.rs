@@ -3114,6 +3114,27 @@ pub fn read_local_verdict(env: &Env, repo: &str) -> Option<(String, u64)> {
 }
 
 /// `cause` is the one word the round's `.result` line carries as `abandoned:<cause>`.
+/// A host pass records its start on the batch before its first long step, as the EC2 place does,
+/// so the store sees a round that has begun. Best effort: a refusal is logged and the pass runs.
+pub fn round_pass_start(env: &Env, repo: &Repo, batch: &str) {
+    match round_verb(env, &["pass-start", "--resume", batch, &repo.name], "") {
+        Ok(r) if r.code == Some(0) => {}
+        Ok(r) => eprintln!("batcher {}: {}", repo.name, verb_failed("queue round pass-start", &r)),
+        Err(e) => eprintln!("batcher {}: {e}", repo.name),
+    }
+}
+
+/// An attribution that ended without an outcome leaves its failure text on the batch as the
+/// pass's incomplete verdict; a pass that already has its verdict ignores it.
+pub fn round_attribution_failed(env: &Env, repo: &Repo, batch: &str, why: &str) {
+    let reason = format!("the attribution leg failed: {why}");
+    match round_verb(env, &["pass-verdict", "--verdict", "incomplete", "--reason", &reason, batch, &repo.name], "") {
+        Ok(r) if r.code == Some(0) => {}
+        Ok(r) => eprintln!("batcher {}: {}", repo.name, verb_failed("queue round pass-verdict", &r)),
+        Err(e) => eprintln!("batcher {}: {e}", repo.name),
+    }
+}
+
 /// The batcher abandons only after it has ejected every member it can implicate, so its abandon
 /// of a red round is a considered one; `queue round abandon` refuses any other.
 pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str) -> bool {

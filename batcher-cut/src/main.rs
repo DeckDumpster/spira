@@ -2064,6 +2064,21 @@ fn judgement_ci(o: &Opts) -> Result<(), String> {
 /// re-runs only the owners' suites on the survivors. The outcome is the last stdout line
 /// (`attribute::Attribution::line`); exit 0 whenever an outcome was printed.
 fn attribute(o: &Opts) -> Result<(), String> {
+    let failed = attribute_run(o);
+    if let Err(why) = &failed {
+        println!("{}", batcher_cut::attribute::Attribution::Blocked(why.clone()).line());
+        if let (Some(batch), Some(home), Some(run)) = (o.batch.as_deref(), o.home.clone(), o.run.clone()) {
+            if let Ok(env_) = env_for(o, home, run) {
+                if let Ok(repo) = find_repo(&env_, &o.repo) {
+                    io::round_attribution_failed(&env_, &repo, batch, why);
+                }
+            }
+        }
+    }
+    failed
+}
+
+fn attribute_run(o: &Opts) -> Result<(), String> {
     use batcher_cut::attribute::{parse_members, Attribution};
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
