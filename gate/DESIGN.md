@@ -420,7 +420,7 @@ A fence red is still a `branch-red`; a unit test the branch breaks is the round'
 | `unit`, any **script** touched | `suites(script)` | the same |
 | `unit`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the same — the caller asked for the corpus |
 | `unit`, the touched set or the graph unreadable | `suites(no-diff)` / `suites(no-metadata)` | the same — no guessing a cheaper gate |
-| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `cargo build --profile dwarf -j J --all-targets --features integration -p …` (build) and `cargo test --profile dwarf -j J --features integration -p … -- --test-threads=J` (test) |
+| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `cargo test --no-run --profile dwarf -j J --features integration -p …` (build) and `cargo test --profile dwarf -j J --features integration -p … -- --test-threads=J` (test) |
 | `unit`, nothing buildable | `fences` | the gate string with **suites off** |
 | `fences`, a fresh bead | `fences` | the gate string **without its suites step** ("Fences mode") |
 | `fences`, a re-entering bead (named suites) or a changed suite | `fences+reentry` | the same, then the re-entry phase: exactly those suites |
@@ -460,11 +460,7 @@ string as the branch trial. `gate-touched.sh` no longer calls `build-fence.sh` (
 sp-9uro3, a second call once the gate string named the fence itself); `doctor.sh` fails a row
 whose gate names no `build-fence.sh`.
 
-**The build phase is `cargo build --all-targets`**, not `cargo test --no-run`: without
-integration tests (23 of the workspace's binary crates have none) the latter compiles a binary
-only under `cfg(test)`, so `#[cfg(not(test))]` code (spira-claim's `main`) would go uncompiled.
-Only the touched crates and their direct dependents are built: the former `--workspace --bins` pre-build linked every workspace binary on every gate and tipped the build phase over the 300 s cap, and a test reaches its own package's binaries through `CARGO_BIN_EXE_*`. `--all-targets` builds every library and binary both ways plus the test harnesses, and the test
-phase reuses the harnesses.
+**The build phase is `cargo test --no-run`** with the test phase's own flags, so the harnesses are compiled once and the test phase recompiles nothing (operator ruling 2026-11-10: build targets once). The non-test build of each lib and bin, where `#[cfg(not(test))]` code (spira-claim's `main`) lives, is the round's job. Only the touched crates and their direct dependents are built: the former `--workspace --bins` pre-build linked every workspace binary on every gate and tipped the build phase over the 300 s cap, and a test reaches its own package's binaries through `CARGO_BIN_EXE_*`.
 
 **What the build fence caught that the unit gate does not, and where it is caught now:**
 
@@ -472,7 +468,7 @@ phase reuses the harnesses.
 |---|---|
 | a crate that does not compile (the touched crates and their direct dependents) | the unit build phase |
 | a workspace input that breaks every crate (`Cargo.lock` the toolchain cannot parse, sp-upkae; `Cargo.toml`, the toolchain pin, `Makefile`) | the unit build phase: a workspace input touches every member |
-| `#[cfg(not(test))]` code in a binary | the unit build phase (`--all-targets`) |
+| `#[cfg(not(test))]` code in a binary | **the round**: its release build of the whole workspace |
 | `cockpit/panel` | the unit build phase: it is a workspace member |
 | a failure only the **release profile** shows (LTO or link errors, `opt-level = "z"`, `strip`; the workspace has no `debug_assertions` code) | **the round**: its corpus run builds `testenv --profile release` of the whole workspace (`round-vm` `REMOTE_SCRIPT`); then main CI (`gate.yml`'s `make build`) and `release.yml` |
 | the `Makefile`'s binary list | nothing new: `make build` never read it (the list is in `install`); `make install` and `release.yml` do |
