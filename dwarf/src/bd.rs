@@ -1,4 +1,5 @@
-//! The bead store: every call the dwarf makes itself goes through `bdq`, under a timeout
+//! The bead store: every read goes through the content door (`spira-lc content`); every write
+//! goes through `bdq`, under a timeout
 //! (BD_TIMEOUT, 180 s), one retry on a pooled connection the server already dropped
 //! ("invalid connection"), and SPIRA_BDJSON_FIXTURE → bdsim.
 
@@ -15,6 +16,16 @@ pub struct BdCli<'a> {
     pub conn_retries: u32,
     pub fixture: Option<String>,
     pub env: &'a Env,
+    pub lc: spira_config::lc_call::LcClient,
+}
+
+/// A read the content door serves: `show`, `list`, `state`, `memories`, `comments` not `add`.
+fn is_door_read(args: &[String]) -> bool {
+    match args.first().map(String::as_str) {
+        Some("show" | "list" | "state" | "memories") => true,
+        Some("comments") => args.get(1).map(String::as_str) != Some("add"),
+        _ => false,
+    }
 }
 
 impl Bd for BdCli<'_> {
@@ -24,6 +35,14 @@ impl Bd for BdCli<'_> {
             let mut a = vec![fx.clone()];
             a.extend(args.iter().cloned());
             return util::run(Spec { prog: "bdsim", args: a, env: Some(&env), cwd: None, stdin: None, timeout: None });
+        }
+        if is_door_read(args) {
+            let mut argv = vec!["content".to_string()];
+            argv.extend(args.iter().cloned());
+            return match self.lc.call(&argv) {
+                Ok(r) => Out { code: r.code, stdout: r.out, stderr: r.err },
+                Err(e) => Out { code: 1, stdout: String::new(), stderr: e.to_string() },
+            };
         }
         let tries = self.conn_retries.max(1);
         let mut last = Out::default();
@@ -41,6 +60,16 @@ impl Bd for BdCli<'_> {
             }
         }
         last
+    }
+
+    fn text(&self, id: &str) -> Out {
+        if self.fixture.as_ref().is_some_and(|f| !f.is_empty()) {
+            return self.bd(&args(&["show", id]));
+        }
+        match self.lc.call(&["work", id, "show"]) {
+            Ok(r) => Out { code: r.code, stdout: r.out, stderr: r.err },
+            Err(e) => Out { code: 1, stdout: String::new(), stderr: e.to_string() },
+        }
     }
 }
 
@@ -94,6 +123,8 @@ pub struct Dep {
     pub labels: Option<Vec<String>>,
     #[serde(default)]
     pub title: Option<String>,
+    #[serde(default)]
+    pub depends_on_id: Option<String>,
 }
 
 impl Dep {
@@ -166,6 +197,32 @@ pub fn note(bd: &dyn Bd, id: &str, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn door(rows: Vec<serde_json::Value>) -> (BdCli<'static>, std::sync::Arc<spira_config::lc_call::fake::Content>) {
+        let env: &'static Env = Box::leak(Box::new(Env::new(Default::default(), Default::default())));
+        let fake = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows));
+        let lc = spira_config::lc_call::LcClient::over(fake.clone(), true);
+        (BdCli { bdq: "/nonexistent/bdq".into(), timeout_s: 5, conn_retries: 1, fixture: None, env, lc }, fake)
+    }
+
+    #[test]
+    fn reads_go_through_the_door_and_spawn_no_bdq() {
+        let (bd, fake) = door(vec![serde_json::json!({"id":"sp-a","status":"open"})]);
+        for a in [&["show", "sp-a", "--json"][..], &["list", "--type", "decision", "--label", "x", "--json"], &["memories", "--json"]] {
+            assert_eq!(bd.bd(&args(a)).code, 0, "{a:?}");
+        }
+        let seen = fake.requests();
+        assert_eq!(seen[0], args(&["content", "show", "sp-a", "--json"]));
+        assert_eq!(seen[1][..2], args(&["content", "list"])[..]);
+        assert_eq!(seen[2], args(&["content", "memories", "--json"]));
+    }
+
+    #[test]
+    fn a_write_never_reaches_the_door() {
+        let (bd, fake) = door(vec![]);
+        assert_ne!(bd.bd(&args(&["note", "sp-a", "x"])).code, 0, "the missing bdq is what answers a write");
+        assert!(fake.requests().is_empty());
+    }
 
     #[test]
     fn first_row_accepts_object_or_list() {

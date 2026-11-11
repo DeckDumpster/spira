@@ -93,16 +93,26 @@ pub(crate) mod verdict_run {
     /// Runs `verdict()` for a SUBMITTED restricted bead whose own worktree is `/w/own` and
     /// whose shared checkout is `/shared`; returns the bead_reopen calls and the requeue cause.
     pub(crate) fn run(dirty_dirs: Vec<&'static str>) -> (Vec<Vec<String>>, Option<String>) {
+        let seam = Seams(Default::default());
+        let cause = with_run(&NoBd, &seam, Dirty(dirty_dirs), "", |r| {
+            r.verdict();
+            r.s.requeue_cause.clone()
+        });
+        let reopens = seam.0.lock().unwrap().iter().filter(|(f, _)| f == "bead_reopen").map(|(_, a)| a.clone()).collect();
+        (reopens, cause)
+    }
+
+    fn with_run<T>(bd: &dyn Bd, seam: &Seams, git: Dirty, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
         let mut vars = super::complete_vars();
         vars.insert("SPIRA_REPO".into(), "/shared".into());
         vars.insert("SPIRA_ALLOW_PROD_DIRTY".into(), String::new());
         let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("/home/spira"));
         let rune = Rune::from_vars("builder", &Default::default());
         let env = Env::new(Default::default(), Default::default());
-        let (seam, git, stop) = (Seams(Default::default()), Dirty(dirty_dirs), Arc::new(Stop::default()));
+        let stop = Arc::new(Stop::default());
         let clock = || 0i64;
         let mut r = Run {
-            d: Deps { bd: &NoBd, seam: &seam, git: &git, exec: &Lc, launcher: &NoLaunch, sink: &Mute, env: &env, clock: &clock, sleep: &|_| {} },
+            d: Deps { bd, seam, git: &git, exec: &Lc, launcher: &NoLaunch, sink: &Mute, env: &env, clock: &clock, sleep: &|_| {} },
             ledger: Ledger { path: PathBuf::from("/nonexistent/ledger"), dry: true },
             conf,
             rune,
@@ -116,11 +126,34 @@ pub(crate) mod verdict_run {
             hb_shutdown: Arc::new(AtomicBool::new(false)),
             hb_done: Arc::new(AtomicBool::new(false)),
             rune_file: PathBuf::new(),
-            s: State { bead: "sp-x".into(), branch: "b".into(), repo: PathBuf::from("/repo"), work: Some(PathBuf::from("/w/own")), lc_model_restricted: true, ..Default::default() },
+            s: State { bead: "sp-x".into(), branch: "b".into(), repo: PathBuf::from("/repo"), work: Some(PathBuf::from("/w/own")), lc_model_restricted: true, claimed_raw: claimed_raw.into(), ..Default::default() },
         };
-        r.verdict();
-        let reopens = seam.0.lock().unwrap().iter().filter(|(f, _)| f == "bead_reopen").map(|(_, a)| a.clone()).collect();
-        (reopens, r.s.requeue_cause.clone())
+        f(&mut r)
+    }
+
+    struct CountingBd(Mutex<Vec<String>>);
+    impl Bd for CountingBd {
+        fn bd(&self, a: &[String]) -> Out {
+            self.0.lock().unwrap().push(a.join(" "));
+            Out::ok(r#"[{"id":"sp-x"}]"#)
+        }
+    }
+
+    #[test]
+    fn the_claimed_bead_is_read_once_however_many_steps_ask_for_it() {
+        let (seam, bd) = (Seams(Default::default()), CountingBd(Default::default()));
+        with_run(&bd, &seam, Dirty(vec![]), r#"[{"id":"sp-x"}]"#, |r| {
+            for _ in 0..3 {
+                r.held_raw();
+            }
+        });
+        assert!(bd.0.lock().unwrap().is_empty(), "a held claim-time row is never re-read");
+        with_run(&bd, &seam, Dirty(vec![]), "", |r| {
+            for _ in 0..3 {
+                assert!(r.held_raw().contains("sp-x"));
+            }
+        });
+        assert_eq!(*bd.0.lock().unwrap(), vec!["show sp-x --json".to_string()], "a directed call with no held row reads once and keeps it");
     }
 
 

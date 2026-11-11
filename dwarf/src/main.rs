@@ -246,6 +246,7 @@ fn main() {
         // Not a registered config key — `Conf::or`, not the strict `Conf::s`.
         fixture: Some(conf.or("SPIRA_BDJSON_FIXTURE", "")).filter(|s| !s.is_empty()),
         env: &env,
+        lc: spira_config::lc_call::LcClient::configured().unwrap_or_else(|e| fatal(&format!("dwarf: {e}"))),
     };
     let git = RealGit { env: &env };
     let exec = RealExec { env: &env, timeout: None };

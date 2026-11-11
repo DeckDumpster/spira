@@ -12,6 +12,10 @@ use crate::util::{self, Out, Spec};
 /// `bdq <args>`.
 pub trait Bd: Send + Sync {
     fn bd(&self, args: &[String]) -> Out;
+    /// The bead as `work <id> show` prints it.
+    fn text(&self, id: &str) -> Out {
+        self.bd(&[String::from("show"), id.to_string()])
+    }
 }
 
 /// One lib.sh function through the fixed seam script (seam.rs).

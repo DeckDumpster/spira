@@ -225,27 +225,35 @@ pub fn ledger_word(row: Option<&spira_config::lc_state::Row>) -> &'static str {
     }
 }
 
-/// `open_ask_blocker <bd-show-json> <bead-id> <ask-label>`: does the bead carry an open,
-/// ask-labelled `blocks` dependency? (the teardown's decision_blocked input). Unparseable or
-/// empty JSON fails closed — not blocked, proceeds (sp-eq8a4.2.1).
+/// The ids a bead's `blocks` edges point at, from its row: what the teardown reads next.
+pub fn blocks_targets(row_json: &str) -> Vec<String> {
+    let Some(row) = bd::first_row(row_json) else { return vec![] };
+    row.dependencies.as_deref().unwrap_or(&[]).iter().filter(|d| d.kind() == Some("blocks")).filter_map(|d| d.depends_on_id.clone()).filter(|i| !i.is_empty()).collect()
+}
+
+/// Does the bead carry an open, ask-labelled `blocks` dependency? (the teardown's
+/// decision_blocked input). `row_json` is the bead's row, `targets_json` the rows of the
+/// beads its `blocks` edges point at. Unparseable or empty input fails closed — not blocked,
+/// proceeds (sp-eq8a4.2.1).
 ///
 /// A RELATES-TO EDGE IS NOT A BLOCKER (sp-dvsqc): mail wires a non-decision cited bead's ask
-/// via `dep relate`, dependency_type "relates-to", not "blocks".
+/// via `dep relate`, type "relates-to", not "blocks".
 ///
 /// THIS BEAD'S OWN gh-closeout ASK IS NOT ITS OWN BLOCKER (sp-2a4hd): a "Close GitHub issue
 /// ... for bead <id>" ask targeting this same bead is excluded, or a reopened bead would
 /// decision-block on the ask it is itself waiting to close.
-pub fn open_ask_blocker(json: &str, bead_id: &str, ask_label: &str) -> bool {
-    let Some(row) = bd::first_row(json) else { return false };
+pub fn open_ask_blocker(row_json: &str, targets_json: &str, bead_id: &str, ask_label: &str) -> bool {
+    let Some(row) = bd::first_row(row_json) else { return false };
+    let Ok(serde_json::Value::Array(targets)) = serde_json::from_str::<serde_json::Value>(targets_json.trim()) else { return false };
     let close_sfx = (!bead_id.is_empty()).then(|| format!(" for bead {bead_id}"));
-    row.dependencies.as_deref().unwrap_or(&[]).iter().any(|d| {
+    row.dependencies.as_deref().unwrap_or(&[]).iter().filter(|d| d.kind() == Some("blocks")).any(|d| {
+        let Some(t) = targets.iter().filter_map(|t| serde_json::from_value::<bd::BeadRow>(t.clone()).ok()).find(|t| Some(t.id.as_str()) == d.depends_on_id.as_deref()) else { return false };
         // An ask is not a work bead: bd's status is its only state (spira_config::nonwork).
-        let open = !nonwork::is_closed(nonwork::Kind::Ask, d.status.as_deref().unwrap_or(""));
-        let has_ask = d.labels.as_deref().unwrap_or(&[]).iter().any(|l| l == ask_label);
-        let blocks = d.kind() == Some("blocks");
-        let title = d.title.as_deref().unwrap_or("");
+        let open = !nonwork::is_closed(nonwork::Kind::Ask, t.status.as_deref().unwrap_or(""));
+        let has_ask = t.has_label(ask_label);
+        let title = t.title.as_deref().unwrap_or("");
         let own_closeout = close_sfx.as_deref().is_some_and(|sfx| title.contains("Close GitHub issue ") && title.contains(sfx));
-        open && has_ask && blocks && !own_closeout
+        open && has_ask && !own_closeout
     })
 }
 
@@ -563,14 +571,19 @@ mod tests {
     fn open_ask_blocker_table() {
         // literal-ok: a test fixture's own ask label, substituted into every row below so the literal appears exactly once, here.
         let ask = "needs-operator";
-        let row = |status: &str, label: &str, kind: &str, title: &str| format!(r#"[{{"dependencies":[{{"status":"{status}","labels":["{label}"],"dependency_type":"{kind}","title":"{title}"}}]}}]"#);
-        assert!(open_ask_blocker(&row("open", ask, "blocks", "decide"), "sp-x", ask), "positive control: an open ask-labelled blocks dep IS a blocker");
-        assert!(!open_ask_blocker(&row("open", ask, "relates-to", "decide"), "sp-x", ask), "sp-dvsqc: relates-to is not a blocker");
-        assert!(!open_ask_blocker(&row("closed", ask, "blocks", "decide"), "sp-x", ask), "a closed ask dep is not a blocker");
-        assert!(!open_ask_blocker(&row("open", "plan", "blocks", "decide"), "sp-x", ask), "an open blocks dep with no ask label is not a blocker");
-        assert!(!open_ask_blocker(&row("open", ask, "blocks", "Close GitHub issue 5 for bead sp-x"), "sp-x", ask), "sp-2a4hd: this bead's own gh-closeout ask is not its own blocker");
-        assert!(open_ask_blocker(&row("open", ask, "blocks", "Close GitHub issue 5 for bead sp-OTHER"), "sp-x", ask), "a gh-closeout ask for a DIFFERENT bead IS still a blocker");
-        assert!(!open_ask_blocker("", "sp-x", ask), "unparseable JSON fails closed");
+        let own = |kind: &str| format!(r#"[{{"id":"sp-x","dependencies":[{{"issue_id":"sp-x","depends_on_id":"sp-ask","type":"{kind}"}}]}}]"#);
+        let target = |status: &str, label: &str, title: &str| format!(r#"[{{"id":"sp-ask","status":"{status}","labels":["{label}"],"title":"{title}"}}]"#);
+        let blocked = |kind: &str, status: &str, label: &str, title: &str| open_ask_blocker(&own(kind), &target(status, label, title), "sp-x", ask);
+        assert!(blocked("blocks", "open", ask, "decide"), "positive control: an open ask-labelled blocks dep IS a blocker");
+        assert!(!blocked("relates-to", "open", ask, "decide"), "sp-dvsqc: relates-to is not a blocker");
+        assert!(!blocked("blocks", "closed", ask, "decide"), "a closed ask dep is not a blocker");
+        assert!(!blocked("blocks", "open", "plan", "decide"), "an open blocks dep with no ask label is not a blocker");
+        assert!(!blocked("blocks", "open", ask, "Close GitHub issue 5 for bead sp-x"), "sp-2a4hd: this bead's own gh-closeout ask is not its own blocker");
+        assert!(blocked("blocks", "open", ask, "Close GitHub issue 5 for bead sp-OTHER"), "a gh-closeout ask for a DIFFERENT bead IS still a blocker");
+        assert!(!open_ask_blocker("", &target("open", ask, "decide"), "sp-x", ask), "unparseable row fails closed");
+        assert!(!open_ask_blocker(&own("blocks"), "", "sp-x", ask), "unparseable targets fail closed");
+        assert_eq!(blocks_targets(&own("blocks")), vec!["sp-ask".to_string()]);
+        assert!(blocks_targets(&own("relates-to")).is_empty());
     }
 
     // test-attempts.sh's session_outcome table.
