@@ -1346,7 +1346,8 @@ impl Machine<'_> {
                 }
                 None => {
                     self.go(Trigger::RerunBlocked);
-                    self.red(&format!("local corpus red — the attribution leg ended ({exit:?}) with no outcome"));
+                    let said = out.trim().lines().last().map(|l| format!(": {l}")).unwrap_or_default();
+                    self.red(&format!("local corpus red — the attribution leg ended ({exit:?}) with no outcome{said}"));
                 }
             },
             (State::Certifying, true) if self.below => {
@@ -2143,6 +2144,9 @@ pub mod edge {
             return attribute_for(task, e, &env, &leg);
         }
         let repo = repo_of(&env, &leg)?;
+        if !leg.batch.is_empty() {
+            io::round_pass_start(&env, &repo, &leg.batch);
+        }
         let wt = PathBuf::from(&leg.wt);
         let history = std::fs::read_to_string(tsd::family_path(&env.run, "suite-timing")).unwrap_or_default();
         let suites = batcher_cut::order::longest_first(&io::suites_in(&wt, "HEAD"), &history).list;

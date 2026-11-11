@@ -217,8 +217,9 @@ fn t3_the_attribution_line_decides_certify_mending_or_blocked() {
     let mut r = carried(&driving(State::Attributing, "spira.a2"));
     let n = r.requested().len();
     r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(1), "batcher: spira-lc unreachable")).unwrap();
-    let after: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
-    assert!(after.contains(&ABANDON.to_string()), "an attribution with no outcome blocks the round: {after:?}");
+    let after = asked_after(&r, n);
+    let abandon = after.iter().find(|(e, _)| e == ABANDON).unwrap_or_else(|| panic!("an attribution with no outcome blocks the round: {after:?}"));
+    assert!(abandon.1.why.contains("batcher: spira-lc unreachable"), "the leg's own failure text is the round's reason: {}", abandon.1.why);
 }
 
 /// A round whose VM could not be acquired never ran: the attribution leg says so as a fault, and
