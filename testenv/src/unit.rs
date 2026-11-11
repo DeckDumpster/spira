@@ -65,8 +65,12 @@ pub fn write_skip(tree: &Path, names: &[String]) -> Result<(), String> {
 /// Each failing test's name and the first lines of its `---- name stdout ----` block.
 pub fn failing(output: &str) -> Vec<(String, Vec<String>)> {
     let lines: Vec<&str> = output.lines().collect();
-    let mut names: Vec<String> = lines.iter().filter_map(|l| l.trim().strip_prefix("test ")?.strip_suffix(" ... FAILED").map(str::to_string)).collect();
-    names.dedup();
+    let mut names: Vec<String> = Vec::new();
+    for n in lines.iter().filter_map(|l| l.trim().strip_prefix("test ")?.strip_suffix(" ... FAILED")) {
+        if !names.iter().any(|seen| seen == n) {
+            names.push(n.to_string());
+        }
+    }
     names
         .into_iter()
         .map(|n| {
@@ -308,6 +312,7 @@ mod tests {
         assert_eq!(f[0].1.len(), 3);
         assert!(f[0].1[1].contains("assertion"));
         assert_eq!(failing_report(RED)[0], "unit-tests: 1 failing test(s):");
+        assert_eq!(failing("test a ... FAILED\ntest b ... FAILED\ntest a ... FAILED\n").len(), 2);
     }
 
     #[test]
