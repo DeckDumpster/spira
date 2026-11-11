@@ -523,7 +523,7 @@ mod published_read {
     }
 
     #[test]
-    fn a_reader_judges_for_itself_while_nothing_is_published_and_beads_wait_to_be_judged() {
+    fn a_reader_judges_for_itself_while_any_ready_bead_awaits_its_first_judgement() {
         struct Fresh(Store0);
         impl Transport for Fresh {
             fn exchange(
@@ -534,7 +534,7 @@ mod published_read {
             ) -> Result<Reply, String> {
                 if argv[0] == "ready-set" {
                     self.0.seen.lock().unwrap().push(argv.to_vec());
-                    return Ok(Reply { code: 0, out: r#"{"planning_watermark":null,"judged_at":null,"unjudged":2,"lifecycle":[],"items":[]}"#.into(), err: String::new() });
+                    return Ok(Reply { code: 0, out: r#"{"planning_watermark":"7","judged_at":"2026-11-11T10:00:05Z","unjudged":1,"lifecycle":[{"bead_id":"sp-free","state":"READY","holds":[]}],"items":[{"id":"sp-free","labels":["repo:spira"]}]}"#.into(), err: String::new() });
                 }
                 self.0.exchange(argv, stdin, d)
             }

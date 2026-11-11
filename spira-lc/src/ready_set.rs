@@ -58,14 +58,20 @@ fn answer(
 ) -> Result<Value, String> {
     let ids: Vec<&str> = judged.iter().map(|(r, _)| r.row.bead_id.as_str()).collect();
     let items = items_of(&ids, watermark, held, fetch)?;
-    let oldest = |f: fn(&Readiness) -> Option<&String>| judged.iter().map(|(_, j)| f(j).cloned()).min().flatten();
     Ok(json!({
-        "planning_watermark": oldest(|j| j.judged_at_planning_watermark.as_ref()),
-        "judged_at": oldest(|j| j.judged_at.as_ref()),
+        "planning_watermark": oldest(judged, |j| j.judged_at_planning_watermark.as_deref(), |w| w.parse::<u64>().ok()),
+        "judged_at": oldest(judged, |j| j.judged_at.as_deref(), |t| Some(t.to_string())),
         "unjudged": unjudged,
         "lifecycle": judged.iter().map(|(r, j)| crate::control::state::listed(r, Some(j))).collect::<Vec<_>>(),
         "items": items,
     }))
+}
+
+/// The smallest `key` among the judgements' `field`, or `None` when there is none to compare or
+/// any judgement lacks it or has one that is not a key: a set is only as fresh as its oldest member.
+fn oldest<K: Ord>(judged: &[(LifecycleRecord, Readiness)], field: fn(&Readiness) -> Option<&str>, key: fn(&str) -> Option<K>) -> Option<String> {
+    let all: Option<Vec<(K, &str)>> = judged.iter().map(|(_, j)| field(j).and_then(|v| Some((key(v)?, v)))).collect();
+    all?.into_iter().min_by(|a, b| a.0.cmp(&b.0)).map(|(_, v)| v.to_string())
 }
 
 fn items_of(ids: &[&str], watermark: Option<u64>, held: &Mutex<Held>, fetch: &Fetch) -> Result<Vec<Value>, String> {
@@ -125,6 +131,28 @@ mod tests {
         assert_eq!((v["planning_watermark"].as_str(), v["judged_at"].as_str()), (Some("7"), Some("2026-11-11T10:00:05Z")));
         assert_eq!(v["lifecycle"].as_array().unwrap().len(), 2);
         assert_eq!(v["items"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn watermarks_are_compared_as_numbers_and_a_missing_one_leaves_the_set_unstamped() {
+        let held = Mutex::new((None, BTreeMap::new()));
+        let rows = [judged("sp-a", "10", "t"), judged("sp-b", "9", "t")];
+        assert_eq!(answer(&rows, 0, Some(10), &held, &|ids| bd(ids)).unwrap()["planning_watermark"], "9");
+        let mut unmarked = judged("sp-c", "1", "t");
+        unmarked.1.judged_at_planning_watermark = None;
+        let rows = [judged("sp-a", "10", "t"), unmarked];
+        assert_eq!(answer(&rows, 0, Some(10), &held, &|ids| bd(ids)).unwrap()["planning_watermark"], Value::Null);
+    }
+
+    #[test]
+    fn the_answer_has_the_shape_spira_claim_reads() {
+        let held = Mutex::new((None, BTreeMap::new()));
+        let v = answer(&[judged("sp-a", "9", "2026-11-11T10:00:05Z")], 0, Some(9), &held, &|ids| bd(ids)).unwrap();
+        let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(keys, ["items", "judged_at", "lifecycle", "planning_watermark", "unjudged"]);
+        assert_eq!(v["lifecycle"][0]["bead_id"], "sp-a");
+        assert_eq!(v["items"][0]["id"], "sp-a");
     }
 
     #[test]

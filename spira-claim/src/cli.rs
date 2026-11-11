@@ -933,13 +933,14 @@ fn claimable_over(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow
     machine_judged(a, env, st, false).map(|(rows, _)| (rows, None))
 }
 
-/// `None` when the dispatcher has judged nothing claimable and has not judged every ready
-/// bead: an empty answer then may mean "not yet", which only judging here can tell apart.
+/// `None` while any ready bead is unjudged: the answer would lack it, and only judging here
+/// has it. A pass judges every live record, so that holds only between a bead's arrival and the
+/// next pass.
 /// The lifecycle rows are read now, so a hold or claim since the pass keeps a bead out; scope
 /// and stops are applied here as `judge_rows` applies them.
 fn published_claimable(a: &Args, env: &Env, st: &Store) -> Result<Option<(Vec<rank::ReadyRow>, Freshness)>, String> {
     let set = st.ready_set()?;
-    if set.rows.is_empty() && set.unjudged > 0 {
+    if set.unjudged > 0 {
         return Ok(None);
     }
     let want: BTreeSet<String> = ready::lifecycle_ready_ids(&set.lifecycle).into_iter().collect();
