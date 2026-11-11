@@ -410,7 +410,7 @@ A fence red is still a `branch-red`; a unit test the branch breaks is the round'
 | config | anything else (units, data, examples) |
 
 * **Touched crates** = the crate classes' members, plus every member that depends on one of
-  them, directly (direct dependents: their own tests exercise the changed code).
+  them, directly or through others (dependents: their own tests exercise the changed code).
 
 ### The decision
 
@@ -460,13 +460,13 @@ string as the branch trial. `gate-touched.sh` no longer calls `build-fence.sh` (
 sp-9uro3, a second call once the gate string named the fence itself); `doctor.sh` fails a row
 whose gate names no `build-fence.sh`.
 
-**The build phase is `cargo test --no-run`** with the test phase's own flags, so the harnesses are compiled once and the test phase recompiles nothing (operator ruling 2026-11-10: build targets once). The non-test build of each lib and bin, where `#[cfg(not(test))]` code (spira-claim's `main`) lives, is the round's job. Only the touched crates and their direct dependents are built: the former `--workspace --bins` pre-build linked every workspace binary on every gate and tipped the build phase over the 300 s cap, and a test reaches its own package's binaries through `CARGO_BIN_EXE_*`.
+**The build phase is `cargo test --no-run`** with the test phase's own flags, so the harnesses are compiled once and the test phase recompiles nothing (operator ruling 2026-11-10: build targets once). The non-test build of each lib and bin, where `#[cfg(not(test))]` code (spira-claim's `main`) lives, is the round's job. Only the touched crates and their dependents, direct and transitive, are built: the former `--workspace --bins` pre-build linked every workspace binary on every gate and tipped the build phase over the 300 s cap, and a test reaches its own package's binaries through `CARGO_BIN_EXE_*`.
 
 **What the build fence caught that the unit gate does not, and where it is caught now:**
 
 | the build fence caught | now caught by |
 |---|---|
-| a crate that does not compile (the touched crates and their direct dependents) | the unit build phase |
+| a crate that does not compile (the touched crates and their dependents) | the unit build phase |
 | a workspace input that breaks every crate (`Cargo.lock` the toolchain cannot parse, sp-upkae; `Cargo.toml`, the toolchain pin, `Makefile`) | the unit build phase: a workspace input touches every member |
 | `#[cfg(not(test))]` code in a binary | **the round**: its release build of the whole workspace |
 | `cockpit/panel` | the unit build phase: it is a workspace member |
