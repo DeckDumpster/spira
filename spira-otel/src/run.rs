@@ -126,6 +126,12 @@ pub fn seconds(name: &str, value: f64, labels: &[(&str, &str)]) {
     with(|r| r.seconds(name, value, labels));
 }
 
+/// Ends this run without pushing anything: a read on a critical path that pays no network call
+/// when it succeeds. A failing run is still `finish`ed.
+pub fn discard() {
+    drop(CURRENT.lock().ok().and_then(|mut g| g.take()));
+}
+
 /// Pushes the run's standard metrics; a second call, or one with no `begin`, pushes nothing.
 pub fn finish(code: i32) {
     let run = CURRENT.lock().ok().and_then(|mut g| g.take());
@@ -191,6 +197,17 @@ mod tests {
     #[test]
     fn phases_render_in_the_order_they_were_recorded() {
         assert_eq!(render_phases(&[("reply".into(), 12), ("push".into(), 250)]), "reply=12,push=250");
+    }
+
+    #[test]
+    fn a_discarded_run_pushes_nothing_not_even_as_an_unrecorded_exit() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        l.set_nonblocking(true).unwrap();
+        begin("x", Some(&l.local_addr().unwrap().to_string()));
+        discard();
+        finish(0);
+        at_exit();
+        assert!(l.accept().is_err(), "no connection was made to the metrics endpoint");
     }
 
     #[test]

@@ -271,3 +271,296 @@ mod published {
         assert_eq!(ids, ["sp-r", "sp-s"], "sp-c is neither waiting on sp-w nor under it, and a related edge holds nothing back");
     }
 }
+
+// ---- a reader answers from the readiness the dispatcher published -------------------------
+
+mod published_read {
+    use super::*;
+    use serde_json::{json, Value};
+    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    fn snooze() -> String {
+        spira_config::lc_state::snooze_reason(ready::now_epoch() + 3_600)
+    }
+
+    fn lifecycle() -> Vec<Value> {
+        let row = |id: &str,
+                   state: &str,
+                   holds: Value,
+                   reason: Option<String>,
+                   tip: Option<&str>| {
+            json!({ "bead_id": id, "state": state, "holds": holds, "reason": reason, "tip": tip })
+        };
+        vec![
+            row("sp-free", "READY", json!([]), None, None),
+            row("sp-held", "READY", json!(["manual"]), None, None),
+            row("sp-snoozed", "READY", json!(["wait"]), Some(snooze()), None),
+            row("sp-blocked", "READY", json!([]), None, None),
+            row("sp-stacked", "READY", json!([]), None, None),
+            row("sp-epic", "READY", json!([]), None, None),
+            row("sp-rework", "REWORK", json!([]), None, None),
+            row("sp-working", "WORKING", json!([]), None, None),
+            row(
+                "sp-certified",
+                "CERTIFIED",
+                json!([]),
+                None,
+                Some("0123456789abcdef0123456789abcdef01234567"),
+            ),
+        ]
+    }
+
+    fn item(id: &str, kind: &str, blocked_on: Option<&str>) -> Value {
+        let deps: Vec<Value> = blocked_on
+            .map(|b| json!({ "issue_id": id, "depends_on_id": b, "type": "blocks" }))
+            .into_iter()
+            .collect();
+        json!({ "id": id, "title": id, "priority": 2, "issue_type": kind, "labels": ["repo:spira"], "dependencies": deps })
+    }
+
+    fn items() -> Vec<Value> {
+        vec![
+            item("sp-free", "task", None),
+            item("sp-held", "task", None),
+            item("sp-snoozed", "task", None),
+            item("sp-blocked", "task", Some("sp-working")),
+            item("sp-stacked", "task", Some("sp-certified")),
+            item("sp-epic", "epic", None),
+            item("sp-rework", "task", None),
+            item("sp-working", "task", None),
+            item("sp-certified", "task", None),
+        ]
+    }
+
+    fn pick(rows: &[Value], key: &str, ids: &[&str]) -> Vec<Value> {
+        let mut out: Vec<Value> = rows
+            .iter()
+            .filter(|r| ids.contains(&r[key].as_str().unwrap()))
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| a[key].as_str().cmp(&b[key].as_str()));
+        out
+    }
+
+    /// The store as the dispatcher left it, answering the reads a judging pass makes and, once
+    /// `published` holds a pass, the one `ready-set` read.
+    struct Store0 {
+        seen: Mutex<Vec<Vec<String>>>,
+        published: Mutex<Option<Value>>,
+    }
+
+    impl Transport for Store0 {
+        fn exchange(
+            &self,
+            argv: &[String],
+            stdin: Option<&str>,
+            _d: Duration,
+        ) -> Result<Reply, String> {
+            self.seen.lock().unwrap().push(argv.to_vec());
+            let words: Vec<&str> = argv.iter().map(String::as_str).collect();
+            let all = lifecycle();
+            let out = match words.as_slice() {
+                ["publish-readiness"] => {
+                    *self.published.lock().unwrap() = serde_json::from_str(stdin.unwrap()).ok();
+                    String::new()
+                }
+                ["ready-set"] => {
+                    let p = self
+                        .published
+                        .lock()
+                        .unwrap()
+                        .clone()
+                        .expect("a dispatcher pass before the read");
+                    let claimable: Vec<&str> = p["entries"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter(|e| e["claimable"] == true)
+                        .map(|e| e["id"].as_str().unwrap())
+                        .collect();
+                    let ready: Vec<Value> = all
+                        .iter()
+                        .filter(|r| matches!(r["state"].as_str(), Some("READY" | "REWORK")))
+                        .filter(|r| claimable.contains(&r["bead_id"].as_str().unwrap()))
+                        .cloned()
+                        .collect();
+                    let ids: Vec<&str> = ready
+                        .iter()
+                        .map(|r| r["bead_id"].as_str().unwrap())
+                        .collect();
+                    json!({ "planning_watermark": p["planning_watermark"], "judged_at": p["computed_at"], "unjudged": 0, "lifecycle": ready, "items": pick(&items(), "id", &ids) }).to_string()
+                }
+                ["list", "--state", states, ..] => {
+                    let wanted: Vec<&str> = states.split(',').collect();
+                    Value::Array(
+                        all.into_iter()
+                            .filter(|r| wanted.contains(&r["state"].as_str().unwrap()))
+                            .collect(),
+                    )
+                    .to_string()
+                }
+                ["list", "--ids", ids] => {
+                    let wanted: Vec<&str> = ids.split(',').collect();
+                    Value::Array(pick(&all, "bead_id", &wanted)).to_string()
+                }
+                ["plan", "watermark"] => r#"{"watermark":7}"#.to_string(),
+                ["plan", "items", "--ids", ids] => {
+                    let wanted: Vec<&str> = ids.split(',').collect();
+                    json!({ "watermark": 7, "items": pick(&items(), "id", &wanted) }).to_string()
+                }
+                _ => String::new(),
+            };
+            Ok(Reply {
+                code: 0,
+                out,
+                err: String::new(),
+            })
+        }
+    }
+
+    fn setup() -> (Arc<Store0>, Store) {
+        let svc = Arc::new(Store0 {
+            seen: Mutex::new(Vec::new()),
+            published: Mutex::new(None),
+        });
+        let st = Store {
+            bdq: "/nonexistent/bdq".into(),
+            lc: LcClient::over(svc.clone(), true),
+            lc_bin: "/nonexistent/spira-lc".into(),
+            timeout: Duration::from_secs(1),
+        };
+        (svc, st)
+    }
+
+    fn env_over<R>(f: impl FnOnce(&Env) -> R) -> R {
+        let mut stdin = std::io::empty();
+        let none = |_: &str| None;
+        let config = Config {
+            control_store: true,
+            stack_max_depth: 4,
+            run: "/nonexistent/run".into(),
+            queue_dir: "/nonexistent/queue".into(),
+            ..Config::default()
+        };
+        f(&Env {
+            stdin: &mut stdin,
+            config,
+            lookup: &none,
+        })
+    }
+
+    fn ids(rows: &[rank::ReadyRow]) -> Vec<&str> {
+        rows.iter().map(|r| r.id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_reader_asks_the_store_once_for_the_ready_set() {
+        let (svc, st) = setup();
+        env_over(|env| {
+            let a = Args::parse(&[]).unwrap();
+            judge_rows(&a, env, &st, None, true).unwrap();
+            svc.seen.lock().unwrap().clear();
+            claimable_over(&a, env, &st).unwrap();
+        });
+        let seen = svc.seen.lock().unwrap().clone();
+        assert_eq!(seen, [vec!["ready-set".to_string()]], "{seen:?}");
+    }
+
+    #[test]
+    fn the_published_read_returns_the_rows_judge_rows_returns_for_the_same_store() {
+        let (svc, st) = setup();
+        env_over(|env| {
+            let a = Args::parse(&[]).unwrap();
+            let (judged, entries) = judge_rows(&a, env, &st, None, true).unwrap();
+            let kinds: Vec<verdicts::Kind> = entries.iter().map(|e| e.verdict).collect();
+            for k in [
+                verdicts::Kind::Claimable,
+                verdicts::Kind::Held,
+                verdicts::Kind::Snoozed,
+                verdicts::Kind::OutOfScope,
+            ] {
+                assert!(
+                    kinds.contains(&k),
+                    "the fixture must reach {k:?}: {entries:?}"
+                );
+            }
+            assert!(entries
+                .iter()
+                .any(|e| e.id == "sp-blocked" && e.verdict == verdicts::Kind::Blocked));
+            let (read, fresh) = claimable_over(&a, env, &st).unwrap();
+            assert_eq!(fresh.expect("a published answer says what it is from").planning_watermark.as_deref(), Some("7"));
+            assert_eq!(ids(&read), ids(&judged));
+            assert_eq!(read, judged);
+            assert!(
+                ids(&read).contains(&"sp-stacked") && ids(&read).contains(&"sp-rework"),
+                "{:?} {:?}",
+                ids(&read),
+                entries
+            );
+            drop(svc);
+        });
+    }
+
+    #[test]
+    fn a_reader_does_not_trust_a_judgement_for_a_bead_whose_hold_has_changed_since() {
+        let (svc, st) = setup();
+        env_over(|env| {
+            let a = Args::parse(&[]).unwrap();
+            judge_rows(&a, env, &st, None, true).unwrap();
+            let mut p = svc.published.lock().unwrap().take().unwrap();
+            for e in p["entries"].as_array_mut().unwrap() {
+                if e["id"] == "sp-held" || e["id"] == "sp-snoozed" {
+                    e["claimable"] = json!(true);
+                }
+            }
+            *svc.published.lock().unwrap() = Some(p);
+            assert!(!ids(&claimable_over(&a, env, &st).unwrap().0)
+                .iter()
+                .any(|i| *i == "sp-held" || *i == "sp-snoozed"));
+        });
+    }
+
+    #[test]
+    fn a_reader_judges_for_itself_while_any_ready_bead_awaits_its_first_judgement() {
+        struct Fresh(Store0);
+        impl Transport for Fresh {
+            fn exchange(
+                &self,
+                argv: &[String],
+                stdin: Option<&str>,
+                d: Duration,
+            ) -> Result<Reply, String> {
+                if argv[0] == "ready-set" {
+                    self.0.seen.lock().unwrap().push(argv.to_vec());
+                    return Ok(Reply { code: 0, out: r#"{"planning_watermark":"7","judged_at":"2026-11-11T10:00:05Z","unjudged":1,"lifecycle":[{"bead_id":"sp-free","state":"READY","holds":[]}],"items":[{"id":"sp-free","labels":["repo:spira"]}]}"#.into(), err: String::new() });
+                }
+                self.0.exchange(argv, stdin, d)
+            }
+        }
+        let svc = Arc::new(Fresh(Store0 {
+            seen: Mutex::new(Vec::new()),
+            published: Mutex::new(None),
+        }));
+        let st = Store {
+            bdq: "/nonexistent/bdq".into(),
+            lc: LcClient::over(svc, true),
+            lc_bin: "/nonexistent/spira-lc".into(),
+            timeout: Duration::from_secs(1),
+        };
+        env_over(|env| {
+            let (rows, fresh) = claimable_over(&Args::parse(&[]).unwrap(), env, &st).unwrap();
+            assert_eq!(fresh, None, "rows judged here name no pass");
+            assert_eq!(ids(&rows), ["sp-free", "sp-rework", "sp-stacked"]);
+        });
+    }
+}
+
+#[test]
+fn the_verbs_a_caller_waits_on_push_no_run_metric_when_they_succeed() {
+    let hot = |v: &str, code| discards_run_metric(&[v.to_string(), "builder".into()], code);
+    assert!(hot("rune-ready", 0) && hot("ready-count", 0) && hot("urgent", 0));
+    assert!(!hot("rune-ready", 1), "a failing read still reports its failure");
+    assert!(!hot("bulk-ready-by-rune", 0) && !hot("unpoison", 0) && !discards_run_metric(&[], 0));
+}

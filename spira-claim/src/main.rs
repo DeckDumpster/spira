@@ -11,6 +11,9 @@ fn main() {
         eprintln!("{}", o.err.trim_end());
     }
     let code = o.code;
+    if spira_claim::cli::discards_run_metric(&args, code) {
+        spira_otel::run::discard();
+    }
     spira_otel::run::finish(code);
     std::process::exit(code)
 }

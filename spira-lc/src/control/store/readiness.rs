@@ -9,7 +9,8 @@ use state_store::{Backend, Compare, Error, Object, Request, Result, Txn};
 
 use super::{sub_request, Store, MERGE_ATTEMPTS, PASS_CHUNK};
 use crate::control::keys;
-use crate::control::records::{encode, Readiness};
+use crate::control::records::{encode, LifecycleRecord, Readiness};
+use lifecycle::bead::BeadState;
 
 /// One record as the dispatcher judged it: whether it may be claimed, what holds it back, and
 /// every blocker it read with that blocker's gate.
@@ -35,6 +36,28 @@ pub struct Pass {
 }
 
 impl<B: Backend> Store<B> {
+    /// The READY and REWORK records the dispatcher's last pass judged claimable, each with that
+    /// judgement, from one revision, and how many no pass has judged yet.
+    pub fn judged_claimable(&self) -> Result<(Vec<(LifecycleRecord, Readiness)>, usize)> {
+        let rev = self.contract.head()?;
+        let records = self.records_page(rev, Some(&[BeadState::Ready, BeadState::Rework]), None, None, None, |_| true)?;
+        let ids: Vec<&str> = records.iter().map(|r| r.value.row.bead_id.as_str()).collect();
+        let mut judged = self.readiness_of(&ids, rev)?;
+        let mut unjudged = 0;
+        let mut claimable = Vec::new();
+        for r in records {
+            match judged.remove(&r.value.row.bead_id) {
+                Some(j) if j.judged_for_claim => {
+                    if j.claimable {
+                        claimable.push((r.value, j));
+                    }
+                }
+                _ => unjudged += 1,
+            }
+        }
+        Ok((claimable, unjudged))
+    }
+
     /// Publishes each judgement onto `readiness/<id>`. A record that does not exist gets none; a
     /// judgement with no verdict leaves the verdict pass's verdict, blocker and runes.
     pub fn publish_readiness(&self, judged: &[Judged], pass: &Pass, req: &Request) -> Result<u64> {
