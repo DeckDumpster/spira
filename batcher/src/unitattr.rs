@@ -45,7 +45,11 @@ impl PackageGraph {
         packages
             .iter()
             .map(|p| match p.strip_prefix("dir:") {
-                Some(dir) => self.dirs.iter().find(|(_, d)| d.as_str() == if dir == "." { "" } else { dir }).map_or(p.clone(), |(name, _)| name.clone()),
+                Some(dir) => self
+                    .dirs
+                    .iter()
+                    .find(|(_, d)| d.as_str() == if dir == "." { "" } else { dir })
+                    .map_or(p.clone(), |(name, _)| name.clone()),
                 None => p.clone(),
             })
             .collect()
@@ -74,7 +78,9 @@ pub fn failing_lines(out: &str) -> Vec<String> {
     let mut lines: Vec<String> = vec![];
     for l in out.lines() {
         let w: Vec<&str> = l.split_whitespace().collect();
-        let ok = w.len() == 3 && (STATUS.contains(&w[0]) || w[0].starts_with("SIG")) && w[0].chars().all(|c| c.is_ascii_uppercase() || c == '-');
+        let ok = w.len() == 3
+            && (STATUS.contains(&w[0]) || w[0].starts_with("SIG"))
+            && w[0].chars().all(|c| c.is_ascii_uppercase() || c == '-');
         if ok && !lines.iter().any(|x| x == &w.join(" ")) {
             lines.push(w.join(" "));
         }
@@ -85,17 +91,34 @@ pub fn failing_lines(out: &str) -> Vec<String> {
 /// Each member whose diff touches one of `packages` or a package one of them depends on, with
 /// the first such package it reaches. Empty when the graph does not know every failing package:
 /// a partial map would stop looking while a culprit sits in the part it cannot see.
-pub fn reaching(graph: &PackageGraph, packages: &[String], diffs: &[MemberDiff]) -> Vec<(Id, String)> {
+pub fn reaching(
+    graph: &PackageGraph,
+    packages: &[String],
+    diffs: &[MemberDiff],
+) -> Vec<(Id, String)> {
     if packages.iter().any(|p| !graph.dirs.contains_key(p)) {
         return vec![];
     }
-    let reach: Vec<(&str, BTreeSet<&str>)> = packages.iter().filter(|p| graph.dirs.contains_key(*p)).map(|p| (p.as_str(), graph.closure(p))).collect();
+    let reach: Vec<(&str, BTreeSet<&str>)> = packages
+        .iter()
+        .filter(|p| graph.dirs.contains_key(*p))
+        .map(|p| (p.as_str(), graph.closure(p)))
+        .collect();
     diffs
         .iter()
         .filter_map(|d| {
             reach.iter().find_map(|(failing, closure)| {
-                let hit = closure.iter().find(|p| d.paths.iter().any(|path| graph.owns(p, path)))?;
-                Some((d.id.clone(), if hit == failing { failing.to_string() } else { format!("{hit} (a dependency of {failing})") }))
+                let hit = closure
+                    .iter()
+                    .find(|p| d.paths.iter().any(|path| graph.owns(p, path)))?;
+                Some((
+                    d.id.clone(),
+                    if hit == failing {
+                        failing.to_string()
+                    } else {
+                        format!("{hit} (a dependency of {failing})")
+                    },
+                ))
             })
         })
         .collect()
@@ -106,36 +129,68 @@ mod tests {
     use super::*;
 
     fn graph() -> PackageGraph {
-        let dirs = [("loom", "loom"), ("runtime", "spira-runtime"), ("gate", "gate")];
+        let dirs = [
+            ("loom", "loom"),
+            ("runtime", "spira-runtime"),
+            ("gate", "gate"),
+        ];
         PackageGraph {
-            dirs: dirs.iter().map(|(p, d)| (p.to_string(), d.to_string())).collect(),
+            dirs: dirs
+                .iter()
+                .map(|(p, d)| (p.to_string(), d.to_string()))
+                .collect(),
             deps: BTreeMap::from([("loom".to_string(), vec!["runtime".to_string()])]),
         }
     }
 
     fn diff(id: &str, path: &str) -> MemberDiff {
-        MemberDiff { id: id.into(), paths: vec![path.into()], added: String::new() }
+        MemberDiff {
+            id: id.into(),
+            paths: vec![path.into()],
+            added: String::new(),
+        }
     }
 
     #[test]
     fn failing_lines_are_read_once_each_and_a_log_tail_is_not_mistaken_for_them() {
         let out = "FAIL loom factory::tests::a\nFAIL loom factory::tests::a\nTIMEOUT loom::bin/x t::b\ntest result: FAILED. 1 passed\nFAIL [ 0.1s] ( 1/2) loom t::c\n";
-        assert_eq!(failing_lines(out), ["FAIL loom factory::tests::a", "TIMEOUT loom::bin/x t::b"]);
+        assert_eq!(
+            failing_lines(out),
+            ["FAIL loom factory::tests::a", "TIMEOUT loom::bin/x t::b"]
+        );
         assert_eq!(failing_packages(&failing_lines(out)), ["loom"]);
     }
 
     #[test]
     fn a_member_reaches_a_failing_package_through_its_own_dir_or_a_dependency_and_no_other() {
-        let diffs = [diff("a", "gate/src/engine.rs"), diff("b", "spira-runtime/src/x.rs"), diff("c", "loom/src/y.rs"), diff("d", "spira-runtime-extra/z.rs")];
+        let diffs = [
+            diff("a", "gate/src/engine.rs"),
+            diff("b", "spira-runtime/src/x.rs"),
+            diff("c", "loom/src/y.rs"),
+            diff("d", "spira-runtime-extra/z.rs"),
+        ];
         let got = reaching(&graph(), &["loom".to_string()], &diffs);
-        assert_eq!(got.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>(), ["b", "c"]);
+        assert_eq!(
+            got.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>(),
+            ["b", "c"]
+        );
         assert!(got[0].1.contains("dependency of loom"), "{got:?}");
     }
 
     #[test]
     fn a_dir_word_resolves_to_the_package_in_that_directory_and_an_unowned_one_stays() {
-        assert_eq!(graph().resolve(&["dir:spira-runtime".into(), "gate".into(), "dir:nowhere".into()]), ["runtime", "gate", "dir:nowhere"]);
-        let root = PackageGraph { dirs: BTreeMap::from([("root".to_string(), String::new())]), deps: BTreeMap::new() };
+        assert_eq!(
+            graph().resolve(&[
+                "dir:spira-runtime".into(),
+                "gate".into(),
+                "dir:nowhere".into()
+            ]),
+            ["runtime", "gate", "dir:nowhere"]
+        );
+        let root = PackageGraph {
+            dirs: BTreeMap::from([("root".to_string(), String::new())]),
+            deps: BTreeMap::new(),
+        };
         assert_eq!(root.resolve(&["dir:.".into()]), ["root"]);
     }
 
@@ -149,10 +204,19 @@ mod tests {
     #[test]
     fn a_root_package_owns_only_the_paths_no_other_package_directory_holds() {
         let g = PackageGraph {
-            dirs: BTreeMap::from([("root".to_string(), String::new()), ("gate".to_string(), "gate".to_string())]),
+            dirs: BTreeMap::from([
+                ("root".to_string(), String::new()),
+                ("gate".to_string(), "gate".to_string()),
+            ]),
             deps: BTreeMap::new(),
         };
         let d = [diff("a", "gate/src/x.rs"), diff("b", "Cargo.toml")];
-        assert_eq!(reaching(&g, &["root".to_string()], &d).iter().map(|(i, _)| i.to_string()).collect::<Vec<_>>(), ["b"]);
+        assert_eq!(
+            reaching(&g, &["root".to_string()], &d)
+                .iter()
+                .map(|(i, _)| i.to_string())
+                .collect::<Vec<_>>(),
+            ["b"]
+        );
     }
 }

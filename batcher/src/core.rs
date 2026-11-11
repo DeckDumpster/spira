@@ -35,7 +35,11 @@ pub struct Member {
 /// merges — combine() only sorts what already merged, but merge order decides who wins a
 /// batch-accumulation conflict, and that has to be the same express/priority/arrival order.
 pub fn order_key(m: &Member) -> (u8, u8, u64) {
-    (if m.express { 0 } else { 1 }, m.priority.unwrap_or(u8::MAX), m.certified_at)
+    (
+        if m.express { 0 } else { 1 },
+        m.priority.unwrap_or(u8::MAX),
+        m.certified_at,
+    )
 }
 
 /// The pool a round may cut from: while any certified member is a base-red fix, only the
@@ -64,13 +68,23 @@ pub fn topo_order(members: &[Member]) -> Vec<Member> {
         let ready: Vec<usize> = remaining
             .iter()
             .enumerate()
-            .filter(|(_, m)| m.stack.keys().chain(m.blocked_by.iter()).all(|p| !ids.contains(p) || placed.contains(p)))
+            .filter(|(_, m)| {
+                m.stack
+                    .keys()
+                    .chain(m.blocked_by.iter())
+                    .all(|p| !ids.contains(p) || placed.contains(p))
+            })
             .map(|(i, _)| i)
             .collect();
         let idx = if ready.is_empty() {
-            (0..remaining.len()).min_by_key(|&i| order_key(&remaining[i])).unwrap()
+            (0..remaining.len())
+                .min_by_key(|&i| order_key(&remaining[i]))
+                .unwrap()
         } else {
-            *ready.iter().min_by_key(|&&i| order_key(&remaining[i])).unwrap()
+            *ready
+                .iter()
+                .min_by_key(|&&i| order_key(&remaining[i]))
+                .unwrap()
         };
         let picked = remaining.remove(idx);
         placed.insert(picked.id.clone());
@@ -171,10 +185,16 @@ pub fn should_cut(t: &TriggerInputs) -> Option<TriggerReason> {
 /// Drops every member with an unlanded `blocked_by` prerequisite. A blocker in the same round
 /// does not count: its fix acts only once released.
 pub fn refuse_blocked(pool: Vec<Member>) -> (Vec<Member>, Vec<String>) {
-    let (ok, blocked): (Vec<Member>, Vec<Member>) = pool.into_iter().partition(|m| m.blocked_by.is_empty());
+    let (ok, blocked): (Vec<Member>, Vec<Member>) =
+        pool.into_iter().partition(|m| m.blocked_by.is_empty());
     let refusals = blocked
         .iter()
-        .map(|m| format!("{}: depends on {} (unlanded) — not cut", m.id, m.blocked_by[0]))
+        .map(|m| {
+            format!(
+                "{}: depends on {} (unlanded) — not cut",
+                m.id, m.blocked_by[0]
+            )
+        })
         .collect();
     (ok, refusals)
 }
@@ -183,7 +203,10 @@ pub fn refuse_blocked(pool: Vec<Member>) -> (Vec<Member>, Vec<String>) {
 /// refuses the rest to a later round.
 pub fn cap_round(mut pool: Vec<Member>, cap: usize) -> (Vec<Member>, Vec<String>) {
     let over = pool.split_off(cap.min(pool.len()));
-    let refusals = over.iter().map(|m| format!("{}: the round is full at {cap} members — not cut", m.id)).collect();
+    let refusals = over
+        .iter()
+        .map(|m| format!("{}: the round is full at {cap} members — not cut", m.id))
+        .collect();
     (pool, refusals)
 }
 
@@ -210,15 +233,31 @@ pub fn select_round(pool: Vec<Member>) -> (Vec<Member>, RoundKind) {
     for m in &pool {
         *groups.entry(epic_root(&m.id)).or_default() += 1;
     }
-    let best = groups.iter().filter(|(_, n)| **n >= 2).max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0))).map(|(r, _)| r.to_string());
-    let Some(root) = best else { return (pool, RoundKind::CatchAll) };
-    let mut keep: std::collections::BTreeSet<Id> =
-        pool.iter().filter(|m| m.express || epic_root(&m.id) == root).map(|m| m.id.clone()).collect();
+    let best = groups
+        .iter()
+        .filter(|(_, n)| **n >= 2)
+        .max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
+        .map(|(r, _)| r.to_string());
+    let Some(root) = best else {
+        return (pool, RoundKind::CatchAll);
+    };
+    let mut keep: std::collections::BTreeSet<Id> = pool
+        .iter()
+        .filter(|m| m.express || epic_root(&m.id) == root)
+        .map(|m| m.id.clone())
+        .collect();
     loop {
         let before = keep.len();
         for m in &pool {
-            let needs_kept = m.stack.keys().chain(m.blocked_by.iter()).any(|p| keep.contains(p));
-            let needed_by_kept = pool.iter().any(|o| keep.contains(&o.id) && (o.stack.contains_key(&m.id) || o.blocked_by.contains(&m.id)));
+            let needs_kept = m
+                .stack
+                .keys()
+                .chain(m.blocked_by.iter())
+                .any(|p| keep.contains(p));
+            let needed_by_kept = pool.iter().any(|o| {
+                keep.contains(&o.id)
+                    && (o.stack.contains_key(&m.id) || o.blocked_by.contains(&m.id))
+            });
             if needs_kept || needed_by_kept {
                 keep.insert(m.id.clone());
             }
@@ -227,7 +266,10 @@ pub fn select_round(pool: Vec<Member>) -> (Vec<Member>, RoundKind) {
             break;
         }
     }
-    (pool.into_iter().filter(|m| keep.contains(&m.id)).collect(), RoundKind::Feature(root))
+    (
+        pool.into_iter().filter(|m| keep.contains(&m.id)).collect(),
+        RoundKind::Feature(root),
+    )
 }
 
 // ---------------------------------------------------------------------------------------
@@ -294,20 +336,36 @@ pub fn combine(input: &CombineInput) -> Combined {
     let mut set_aside = Vec::new();
     for m in input.pool {
         if let Some(dep) = input.sequenced.get(&m.id) {
-            set_aside.push(SetAside { id: m.id.clone(), reason: SetAsideReason::Dependency { waits_on: dep.clone() } });
+            set_aside.push(SetAside {
+                id: m.id.clone(),
+                reason: SetAsideReason::Dependency {
+                    waits_on: dep.clone(),
+                },
+            });
             continue;
         }
         match input.merges.get(&m.id) {
             Some(MergeResult::Ok) => merged.push(m.clone()),
             Some(MergeResult::Empty) if stacked_into(input.pool, &m.id) => merged.push(m.clone()),
-            Some(MergeResult::Empty) => set_aside.push(SetAside { id: m.id.clone(), reason: SetAsideReason::Empty }),
+            Some(MergeResult::Empty) => set_aside.push(SetAside {
+                id: m.id.clone(),
+                reason: SetAsideReason::Empty,
+            }),
             _ if input.siblings.contains_key(&m.id) => {
                 let (lost_to, files) = input.siblings[&m.id].clone();
-                set_aside.push(SetAside { id: m.id.clone(), reason: SetAsideReason::SiblingConflict { lost_to, files } });
+                set_aside.push(SetAside {
+                    id: m.id.clone(),
+                    reason: SetAsideReason::SiblingConflict { lost_to, files },
+                });
             }
             _ => {
                 let deleted = input.deleted_suites.get(&m.id).cloned().unwrap_or_default();
-                set_aside.push(SetAside { id: m.id.clone(), reason: SetAsideReason::Conflict { deleted_suites: deleted } });
+                set_aside.push(SetAside {
+                    id: m.id.clone(),
+                    reason: SetAsideReason::Conflict {
+                        deleted_suites: deleted,
+                    },
+                });
             }
         }
     }
@@ -377,7 +435,8 @@ pub struct SuiteVerdict {
 /// red there classifies as Flip only when it clearly reports Green — an unreadable or
 /// missing re-run leaves it DoubleRed, so a lookup failure never manufactures a green.
 pub fn classify(first: &[SuiteRun], rerun: &[SuiteRun]) -> Vec<SuiteVerdict> {
-    let rerun_by_name: BTreeMap<&str, &SuiteRun> = rerun.iter().map(|r| (r.name.as_str(), r)).collect();
+    let rerun_by_name: BTreeMap<&str, &SuiteRun> =
+        rerun.iter().map(|r| (r.name.as_str(), r)).collect();
     first
         .iter()
         .map(|f| {
@@ -388,7 +447,11 @@ pub fn classify(first: &[SuiteRun], rerun: &[SuiteRun]) -> Vec<SuiteVerdict> {
                     _ => Classification::DoubleRed,
                 },
             };
-            SuiteVerdict { name: f.name.clone(), classification, failing_assertions: f.failing_assertions.clone() }
+            SuiteVerdict {
+                name: f.name.clone(),
+                classification,
+                failing_assertions: f.failing_assertions.clone(),
+            }
         })
         .collect()
 }
@@ -413,7 +476,9 @@ pub fn waits_on(assertion_text: &str) -> Option<Id> {
         // A digit, or the full five-letter suffix current ids are minted with, keeps prose
         // like "sp-" alone or "sp-ish" from being mistaken for a bead id.
         let base = candidate[3..].split('.').next().unwrap_or("");
-        if base.chars().any(|c| c.is_ascii_digit()) || (base.len() == 5 && base.bytes().all(|b| b.is_ascii_lowercase())) {
+        if base.chars().any(|c| c.is_ascii_digit())
+            || (base.len() == 5 && base.bytes().all(|b| b.is_ascii_lowercase()))
+        {
             return Some(candidate.trim_end_matches('.').to_string());
         }
         i = end.max(start + 1);
@@ -433,7 +498,10 @@ pub fn test_ahead_of_code(member_id: &Id, own_suites: &[SuiteRun]) -> Option<Set
         .iter()
         .filter(|s| s.outcome == SuiteOutcome::Red)
         .find_map(|s| s.failing_assertions.iter().find_map(|a| waits_on(a)))
-        .map(|dep| SetAside { id: member_id.clone(), reason: SetAsideReason::TestAheadOfCode { waits_on: dep } })
+        .map(|dep| SetAside {
+            id: member_id.clone(),
+            reason: SetAsideReason::TestAheadOfCode { waits_on: dep },
+        })
 }
 
 // ---------------------------------------------------------------------------------------
@@ -446,11 +514,18 @@ pub struct BisectState {
     pub tips: BTreeMap<Id, String>,
 }
 
-pub fn bisect_expired(state: &BisectState, current_tips: &BTreeMap<Id, String>, batch_landed_since: bool) -> bool {
+pub fn bisect_expired(
+    state: &BisectState,
+    current_tips: &BTreeMap<Id, String>,
+    batch_landed_since: bool,
+) -> bool {
     if batch_landed_since {
         return true;
     }
-    state.members.iter().any(|id| current_tips.get(id) != state.tips.get(id))
+    state
+        .members
+        .iter()
+        .any(|id| current_tips.get(id) != state.tips.get(id))
 }
 
 /// Narrow the bisect group to the half that reproduced the failure. A group of one is not
@@ -461,7 +536,12 @@ pub fn bisect_next(state: &BisectState, bad_half: &[Id]) -> Option<BisectState> 
     }
     let mid = bad_half.len() / 2;
     let members: Vec<Id> = bad_half[..mid].to_vec();
-    let tips = state.tips.iter().filter(|(k, _)| members.contains(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let tips = state
+        .tips
+        .iter()
+        .filter(|(k, _)| members.contains(k))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     Some(BisectState { members, tips })
 }
 
@@ -471,7 +551,10 @@ pub fn bisect_split(members: &[Id], tips: &BTreeMap<Id, String>) -> (BisectState
     let (a, b) = members.split_at(mid);
     let group = |ids: &[Id]| BisectState {
         members: ids.to_vec(),
-        tips: ids.iter().filter_map(|id| tips.get(id).map(|t| (id.clone(), t.clone()))).collect(),
+        tips: ids
+            .iter()
+            .filter_map(|id| tips.get(id).map(|t| (id.clone(), t.clone())))
+            .collect(),
     };
     (group(a), group(b))
 }
@@ -495,7 +578,10 @@ pub fn pr_record(members: &[Member]) -> PrRecord {
         .map(|m| {
             let title = clean_title(&m.title);
             let x = if m.express { " express" } else { "" };
-            let p = m.priority.map(|p| format!("P{p}")).unwrap_or_else(|| "P?".into());
+            let p = m
+                .priority
+                .map(|p| format!("P{p}"))
+                .unwrap_or_else(|| "P?".into());
             if title.is_empty() {
                 format!("- {} ({}{x})", m.id, p)
             } else {
@@ -504,7 +590,10 @@ pub fn pr_record(members: &[Member]) -> PrRecord {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    PrRecord { members: members.iter().map(|m| m.id.clone()).collect(), body }
+    PrRecord {
+        members: members.iter().map(|m| m.id.clone()).collect(),
+        body,
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -531,7 +620,11 @@ pub fn cut_event(reason: &TriggerReason, combined: &Combined) -> Event {
         TriggerReason::BaseFix(id) => format!("base-red fix {id}, landing alone"),
         TriggerReason::Prepare(n) => format!("{n} certified while a batch is open"),
     };
-    ev("cut", ids.clone(), format!("round cut ({why}): {} member(s)", ids.len()))
+    ev(
+        "cut",
+        ids.clone(),
+        format!("round cut ({why}): {} member(s)", ids.len()),
+    )
 }
 
 pub fn skipped_event(reason: &str) -> Event {
@@ -539,7 +632,11 @@ pub fn skipped_event(reason: &str) -> Event {
 }
 
 pub fn opened_event(pr: &PrRecord) -> Event {
-    ev("opened", pr.members.clone(), format!("PR opened with {} member(s)", pr.members.len()))
+    ev(
+        "opened",
+        pr.members.clone(),
+        format!("PR opened with {} member(s)", pr.members.len()),
+    )
 }
 
 pub fn evicted_event(set_aside: &SetAside) -> Event {
@@ -567,7 +664,11 @@ pub fn evicted_event(set_aside: &SetAside) -> Event {
 }
 
 pub fn abandoned_event(id: &Id, why: &str) -> Event {
-    ev("abandoned", vec![id.clone()], format!("{id} abandoned: {why}"))
+    ev(
+        "abandoned",
+        vec![id.clone()],
+        format!("{id} abandoned: {why}"),
+    )
 }
 
 // ---------------------------------------------------------------------------------------
@@ -588,13 +689,28 @@ pub struct Ejection {
 }
 
 pub fn ejected_event(e: &Ejection) -> Event {
-    ev("ejected", vec![e.id.clone()], format!("{} ejected: red on {} (local attribution, pre-PR)", e.id, e.suites.join(",")))
+    ev(
+        "ejected",
+        vec![e.id.clone()],
+        format!(
+            "{} ejected: red on {} (local attribution, pre-PR)",
+            e.id,
+            e.suites.join(",")
+        ),
+    )
 }
 
 /// A suite red against the base itself blocks the whole round — no member is at fault, so
 /// none is ejected — and is filed as an incident instead (base_fail_body).
 pub fn base_fail_event(repo: &str, suites: &[Id]) -> Event {
-    ev("basefail", vec![], format!("{repo}: base itself red on {} — held for Ops, no member ejected", suites.join(",")))
+    ev(
+        "basefail",
+        vec![],
+        format!(
+            "{repo}: base itself red on {} — held for Ops, no member ejected",
+            suites.join(",")
+        ),
+    )
 }
 
 /// The body of the incident filed for a base-red or an unattributable local red: same shape
@@ -632,11 +748,18 @@ pub struct Judgement {
 /// Every suite still DoubleRed after `classify`'s own re-run is a judgement call: re-run
 /// already happened, so a flip would have shown up as `Flip`, not this.
 pub fn judgement_for(verdicts: &[SuiteVerdict]) -> Option<Judgement> {
-    let suites: Vec<Id> = verdicts.iter().filter(|v| v.classification == Classification::DoubleRed).map(|v| v.name.clone()).collect();
+    let suites: Vec<Id> = verdicts
+        .iter()
+        .filter(|v| v.classification == Classification::DoubleRed)
+        .map(|v| v.name.clone())
+        .collect();
     if suites.is_empty() {
         None
     } else {
-        Some(Judgement { source: RedSource::Local, suites })
+        Some(Judgement {
+            source: RedSource::Local,
+            suites,
+        })
     }
 }
 
@@ -647,14 +770,20 @@ pub fn judgement_for_ci(red_suites: &[Id]) -> Option<Judgement> {
     if red_suites.is_empty() {
         None
     } else {
-        Some(Judgement { source: RedSource::Ci, suites: red_suites.to_vec() })
+        Some(Judgement {
+            source: RedSource::Ci,
+            suites: red_suites.to_vec(),
+        })
     }
 }
 
 /// Identity of a round for hold purposes: the same members at the same tips, whatever order
 /// the pool listed them in.
 pub fn round_key(members: &[(Id, String)]) -> String {
-    let mut v: Vec<String> = members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect();
+    let mut v: Vec<String> = members
+        .iter()
+        .map(|(id, tip)| format!("{id}:{tip}"))
+        .collect();
     v.sort();
     v.join(" ")
 }
@@ -675,7 +804,14 @@ pub fn judgement_event(j: &Judgement, repo: &str) -> Event {
         RedSource::Local => "local corpus",
         RedSource::Ci => "CI",
     };
-    ev("judgement", vec![], format!("{repo}: {where_} double-red ({}) — called batcher for judgement", j.suites.join(",")))
+    ev(
+        "judgement",
+        vec![],
+        format!(
+            "{repo}: {where_} double-red ({}) — called batcher for judgement",
+            j.suites.join(",")
+        ),
+    )
 }
 
 /// The body of the bead filed for the called dwarf: everything a person doing this by hand
@@ -706,7 +842,9 @@ pub enum Refusal {
 impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Refusal::MemberNotNamed { id } => write!(f, "{id} is not named by any commit reachable from head"),
+            Refusal::MemberNotNamed { id } => {
+                write!(f, "{id} is not named by any commit reachable from head")
+            }
             Refusal::BinsMissing => write!(f, "no --with-bins corpus artifacts for this head"),
         }
     }
@@ -714,7 +852,11 @@ impl std::fmt::Display for Refusal {
 
 /// Refuses unless every one of `members` is in `named_ids` AND `bins_present`. Checked in that
 /// order so the message a refusal prints is always the first thing actually wrong.
-pub fn terminal_ready(members: &[Member], named_ids: &[Id], bins_present: bool) -> Result<(), Refusal> {
+pub fn terminal_ready(
+    members: &[Member],
+    named_ids: &[Id],
+    bins_present: bool,
+) -> Result<(), Refusal> {
     for m in members {
         if !named_ids.iter().any(|id| id == &m.id) {
             return Err(Refusal::MemberNotNamed { id: m.id.clone() });
@@ -727,7 +869,11 @@ pub fn terminal_ready(members: &[Member], named_ids: &[Id], bins_present: bool) 
 }
 
 pub fn judgement_body(repo: &str, j: &Judgement, members: &[Id], evidence: &str) -> String {
-    let members_line = if members.is_empty() { "(none)".to_string() } else { members.join(", ") };
+    let members_line = if members.is_empty() {
+        "(none)".to_string()
+    } else {
+        members.join(", ")
+    };
     let where_ = match j.source {
         RedSource::Local => "local corpus (pre-PR)",
         RedSource::Ci => "CI (batcher-owned batch PR)",

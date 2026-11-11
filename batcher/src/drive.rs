@@ -92,7 +92,12 @@ pub trait RoundRunner {
         None
     }
     /// Like `filter_green`, judging only the tests of `packages`, the ones that failed.
-    fn filter_green_in(&mut self, name: &str, _packages: &[String], members: &[Member]) -> Option<bool> {
+    fn filter_green_in(
+        &mut self,
+        name: &str,
+        _packages: &[String],
+        members: &[Member],
+    ) -> Option<bool> {
         self.filter_green(name, members)
     }
 }
@@ -140,7 +145,12 @@ pub trait RoundOps {
     /// Holds `member` behind `behind` — it leaves this round and is admitted again only once
     /// they have landed — carrying the compiler error as the reason.
     fn sequence(&mut self, member: &Member, behind: &[Id], line: &str) {
-        self.eject_on(member, WORKSPACE_BUILD, &format!("held behind {}: {line}", behind.join(",")), false);
+        self.eject_on(
+            member,
+            WORKSPACE_BUILD,
+            &format!("held behind {}: {line}", behind.join(",")),
+            false,
+        );
     }
     /// `kind`: `base`, `unattributed`, `integration` or `workspace-build`.
     fn incident(&mut self, kind: &str, suites: &[String]);
@@ -177,7 +187,12 @@ const RERUN_ID_BASE: u64 = 1 << 40;
 
 /// `suite` once more on the round tree with every member present, to the end.
 fn rerun_with_members<R: RoundRunner>(runner: &mut R, suite: &str, n: u64) -> Option<JobResult> {
-    let job = Job { id: RERUN_ID_BASE + n, suite: suite.to_string(), removal: vec![], purpose: Purpose::Plain };
+    let job = Job {
+        id: RERUN_ID_BASE + n,
+        suite: suite.to_string(),
+        removal: vec![],
+        purpose: Purpose::Plain,
+    };
     if runner.launch(&job).is_err() {
         return None;
     }
@@ -218,8 +233,19 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
     budget: Budget,
 ) -> Result<Settled, String> {
     let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
-    let prereqs: BTreeMap<Id, Vec<Id>> =
-        members.iter().map(|m| (m.id.clone(), m.stack.keys().filter(|p| ids.contains(p)).cloned().collect())).collect();
+    let prereqs: BTreeMap<Id, Vec<Id>> = members
+        .iter()
+        .map(|m| {
+            (
+                m.id.clone(),
+                m.stack
+                    .keys()
+                    .filter(|p| ids.contains(p))
+                    .cloned()
+                    .collect(),
+            )
+        })
+        .collect();
     let mut a = Attributor::new(budget, Shape::new(&ids, &prereqs), suites.len());
     runner.set_members(members);
     runner.start_main(kind, suites)?;
@@ -230,7 +256,14 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
         if runner.abandoned() {
             runner.stop_main()?;
             let now = runner.now();
-            return Ok(Settled { preempt: None, decision: Decision::default(), end: MainEnd::Abandoned, main_end_at: now, settled_at: now, filter: None });
+            return Ok(Settled {
+                preempt: None,
+                decision: Decision::default(),
+                end: MainEnd::Abandoned,
+                main_end_at: now,
+                settled_at: now,
+                filter: None,
+            });
         }
         let poll = runner.poll_main()?;
         let now = runner.now();
@@ -248,11 +281,25 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
         }
         if let Some(end) = poll.done {
             if end == MainEnd::WorkspaceBuild {
-                return Ok(Settled { preempt: None, decision: Decision::default(), end, main_end_at: now, settled_at: now, filter: None });
+                return Ok(Settled {
+                    preempt: None,
+                    decision: Decision::default(),
+                    end,
+                    main_end_at: now,
+                    settled_at: now,
+                    filter: None,
+                });
             }
             if kind == MainKind::Corpus && main_end_at.is_none() {
                 if let Some(filter) = runner.filter_red() {
-                    return Ok(Settled { preempt: None, decision: Decision::default(), end, main_end_at: now, settled_at: now, filter: Some(filter) });
+                    return Ok(Settled {
+                        preempt: None,
+                        decision: Decision::default(),
+                        end,
+                        main_end_at: now,
+                        settled_at: now,
+                        filter: Some(filter),
+                    });
                 }
             }
             if main_end_at.is_none() {
@@ -274,7 +321,10 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 break;
             }
             if let Err(e) = runner.launch(&job) {
-                eprintln!("batcher: attribution job {} ({} without {:?}) not launched: {e}", job.id, job.suite, job.removal);
+                eprintln!(
+                    "batcher: attribution job {} ({} without {:?}) not launched: {e}",
+                    job.id, job.suite, job.removal
+                );
                 a.on_job_result(job.id, JobResult::Fault, now);
             }
         }
@@ -283,14 +333,36 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 runner.stop_main()?;
                 let preempt = Preempt {
                     owner,
-                    unreached: suites.iter().filter(|s| !seen.contains(*s)).cloned().collect(),
-                    rerun: suites.iter().filter(|s| !green_suites.contains(*s)).cloned().collect(),
+                    unreached: suites
+                        .iter()
+                        .filter(|s| !seen.contains(*s))
+                        .cloned()
+                        .collect(),
+                    rerun: suites
+                        .iter()
+                        .filter(|s| !green_suites.contains(*s))
+                        .cloned()
+                        .collect(),
                 };
-                return Ok(Settled { preempt: Some(preempt), decision: a.decision_of(&owned), end: MainEnd::Ran, main_end_at: now, settled_at: now, filter: None });
+                return Ok(Settled {
+                    preempt: Some(preempt),
+                    decision: a.decision_of(&owned),
+                    end: MainEnd::Ran,
+                    main_end_at: now,
+                    settled_at: now,
+                    filter: None,
+                });
             }
         }
         if a.settled() {
-            return Ok(Settled { preempt: None, decision: a.decision(), end: MainEnd::Ran, main_end_at: main_end_at.unwrap_or(now), settled_at: now, filter: None });
+            return Ok(Settled {
+                preempt: None,
+                decision: a.decision(),
+                end: MainEnd::Ran,
+                main_end_at: main_end_at.unwrap_or(now),
+                settled_at: now,
+                filter: None,
+            });
         }
         runner.wait();
     }
@@ -304,9 +376,17 @@ fn red_main<O: RoundOps + ?Sized>(a: &mut Attributor, ops: &O, suite: &str, ids:
 }
 
 /// Drops the suites that exist only through a member that has left the tree.
-fn present_on<O: RoundOps>(ops: &O, suites: Vec<String>, start: &[Id], now: &[Member]) -> Vec<String> {
+fn present_on<O: RoundOps>(
+    ops: &O,
+    suites: Vec<String>,
+    start: &[Id],
+    now: &[Member],
+) -> Vec<String> {
     let now: Vec<Id> = now.iter().map(|m| m.id.clone()).collect();
-    suites.into_iter().filter(|s| ops.adding(s, start).is_empty() || !ops.adding(s, &now).is_empty()).collect()
+    suites
+        .into_iter()
+        .filter(|s| ops.adding(s, start).is_empty() || !ops.adding(s, &now).is_empty())
+        .collect()
 }
 
 const FLIP_JOB_BASE: u64 = 1 << 40;
@@ -326,7 +406,12 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
     let mut queue: VecDeque<Job> = VecDeque::new();
     let mut next = FLIP_JOB_BASE;
     let mut push = |suite: &str, removal: Vec<Id>, purpose: Purpose| {
-        queue.push_back(Job { id: next, suite: suite.to_string(), removal, purpose });
+        queue.push_back(Job {
+            id: next,
+            suite: suite.to_string(),
+            removal,
+            purpose,
+        });
         next += 1;
     };
     for suite in flaky {
@@ -335,15 +420,32 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
         push(suite, ids.clone(), Purpose::Base);
         for x in ops.touching(suite, &ids) {
             let mut keep = vec![x.clone()];
-            while let Some(p) = members.iter().filter(|m| keep.contains(&m.id)).flat_map(|m| m.stack.keys()).find(|p| ids.contains(*p) && !keep.contains(*p)) {
+            while let Some(p) = members
+                .iter()
+                .filter(|m| keep.contains(&m.id))
+                .flat_map(|m| m.stack.keys())
+                .find(|p| ids.contains(*p) && !keep.contains(*p))
+            {
                 keep.push(p.clone());
             }
-            push(suite, ids.iter().filter(|i| !keep.contains(i)).cloned().collect(), Purpose::Without(x));
+            push(
+                suite,
+                ids.iter().filter(|i| !keep.contains(i)).cloned().collect(),
+                Purpose::Without(x),
+            );
         }
     }
     let suite_of: BTreeMap<u64, String> = queue.iter().map(|j| (j.id, j.suite.clone())).collect();
-    let base_jobs: BTreeSet<u64> = queue.iter().filter(|j| j.purpose == Purpose::Base).map(|j| j.id).collect();
-    let plain_jobs: BTreeSet<u64> = queue.iter().filter(|j| j.purpose == Purpose::Plain).map(|j| j.id).collect();
+    let base_jobs: BTreeSet<u64> = queue
+        .iter()
+        .filter(|j| j.purpose == Purpose::Base)
+        .map(|j| j.id)
+        .collect();
+    let plain_jobs: BTreeSet<u64> = queue
+        .iter()
+        .filter(|j| j.purpose == Purpose::Plain)
+        .map(|j| j.id)
+        .collect();
     let mut plain_green: BTreeSet<String> = BTreeSet::new();
     let mut plain_red: BTreeSet<String> = BTreeSet::new();
     let lone = members.len() == 1;
@@ -360,7 +462,10 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
             match runner.launch(&job) {
                 Ok(()) => running += 1,
                 Err(e) => {
-                    eprintln!("batcher: flip proof job {} ({}) not launched: {e}", job.id, job.suite);
+                    eprintln!(
+                        "batcher: flip proof job {} ({}) not launched: {e}",
+                        job.id, job.suite
+                    );
                     faulted = true;
                     unproven.insert(job.suite);
                 }
@@ -394,9 +499,15 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
     unproven.extend(plain_red.into_iter().filter(|s| !plain_green.contains(s)));
     if !unproven.is_empty() {
         let reds: Vec<String> = unproven.into_iter().collect();
-        return Err(NotAFlip { reds, member_owns: base_green && !faulted });
+        return Err(NotAFlip {
+            reds,
+            member_owns: base_green && !faulted,
+        });
     }
-    println!("batcher: flip proven, deleting from the round: {}", flaky.join(","));
+    println!(
+        "batcher: flip proven, deleting from the round: {}",
+        flaky.join(",")
+    );
     ops.delete_flips(flaky).map_err(NotAFlip::fault)
 }
 
@@ -409,7 +520,10 @@ struct NotAFlip {
 
 impl NotAFlip {
     fn fault(why: String) -> Self {
-        NotAFlip { reds: vec![why], member_owns: false }
+        NotAFlip {
+            reds: vec![why],
+            member_owns: false,
+        }
     }
 
     fn reason(&self) -> String {
@@ -427,7 +541,10 @@ pub struct Mended {
 #[derive(Debug, PartialEq, Eq)]
 pub enum RoundEnd {
     /// Land these members; `attribution_secs` is the longest per-red attribution wall.
-    Land { members: Vec<Member>, attribution_secs: Option<u64> },
+    Land {
+        members: Vec<Member>,
+        attribution_secs: Option<u64>,
+    },
     /// Nothing lands; the reason was already reported.
     Blocked(String),
     /// The attribution itself failed to run: nothing is judged, no member is charged, and the
@@ -459,8 +576,17 @@ fn with_dependents(members: &[Member], out: &mut BTreeMap<Id, Vec<String>>) {
 /// run the corpus again. A red naming no member cannot be attributed: it is filed (which holds
 /// this membership) instead of re-cut — unless the runner can run the filter on member subsets,
 /// which bisects the members.
-fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O, f: &FilterRed, members: &[Member]) -> Result<FilterEject, String> {
-    let named: Vec<&(Id, String)> = f.named.iter().filter(|(id, _)| members.iter().any(|m| &m.id == id)).collect();
+fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
+    runner: &mut R,
+    ops: &mut O,
+    f: &FilterRed,
+    members: &[Member],
+) -> Result<FilterEject, String> {
+    let named: Vec<&(Id, String)> = f
+        .named
+        .iter()
+        .filter(|(id, _)| members.iter().any(|m| &m.id == id))
+        .collect();
     if named.is_empty() {
         let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
         let graph = ops.package_graph();
@@ -469,14 +595,27 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
             packages = g.resolve(&packages);
         }
         let tests = noted_tests(&f.failed);
-        let mapped = graph.map(|g| unitattr::reaching(&g, &packages, &ops.diffs(&ids))).unwrap_or_default();
+        let mapped = graph
+            .map(|g| unitattr::reaching(&g, &packages, &ops.diffs(&ids)))
+            .unwrap_or_default();
         let mut actions: Vec<Action> = mapped
             .into_iter()
-            .map(|(id, via)| Action::Eject { line: format!("{} red{tests} (mapped by package: this member's diff touches {via})", f.name), id })
+            .map(|(id, via)| Action::Eject {
+                line: format!(
+                    "{} red{tests} (mapped by package: this member's diff touches {via})",
+                    f.name
+                ),
+                id,
+            })
             .collect();
         if actions.is_empty() {
             let red = format!("{} red{tests}", f.name);
-            actions = bisect_members(&red, &mut |m| runner.filter_green_in(&f.name, &packages, m), members).unwrap_or_default();
+            actions = bisect_members(
+                &red,
+                &mut |m| runner.filter_green_in(&f.name, &packages, m),
+                members,
+            )
+            .unwrap_or_default();
             if actions.is_empty() {
                 actions = sole_member_culprit(&red, members);
             }
@@ -484,7 +623,11 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
         let mut kind = "unattributed";
         let mut cleared = String::new();
         if actions.is_empty() && members.len() > 1 {
-            match red_alone(&format!("{} red{tests}", f.name), &mut |m| runner.filter_green_in(&f.name, &packages, m), members) {
+            match red_alone(
+                &format!("{} red{tests}", f.name),
+                &mut |m| runner.filter_green_in(&f.name, &packages, m),
+                members,
+            ) {
                 Alone::Owners(found) => actions = found,
                 Alone::Base(said) => {
                     kind = "base";
@@ -500,14 +643,26 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
                 page.push(format!("run alone: {cleared}"));
             }
             ops.incident(kind, &page);
-            return Ok(FilterEject::Unnamed(format!("{tests}{}", if cleared.is_empty() { String::new() } else { format!(" (run alone: {cleared})") })));
+            return Ok(FilterEject::Unnamed(format!(
+                "{tests}{}",
+                if cleared.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (run alone: {cleared})")
+                }
+            )));
         }
-        return Ok(match apply_build_actions(ops, members, &actions, &f.name)? {
-            Some(next) => FilterEject::Survivors(next),
-            None => FilterEject::Emptied,
-        });
+        return Ok(
+            match apply_build_actions(ops, members, &actions, &f.name)? {
+                Some(next) => FilterEject::Survivors(next),
+                None => FilterEject::Emptied,
+            },
+        );
     }
-    let mut out: BTreeMap<Id, Vec<String>> = named.iter().map(|(id, _)| (id.clone(), vec![f.name.clone()])).collect();
+    let mut out: BTreeMap<Id, Vec<String>> = named
+        .iter()
+        .map(|(id, _)| (id.clone(), vec![f.name.clone()]))
+        .collect();
     with_dependents(members, &mut out);
     for m in members {
         if out.contains_key(&m.id) {
@@ -517,12 +672,20 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
             }
         }
     }
-    let survivors: Vec<Member> = members.iter().filter(|m| !out.contains_key(&m.id)).cloned().collect();
+    let survivors: Vec<Member> = members
+        .iter()
+        .filter(|m| !out.contains_key(&m.id))
+        .cloned()
+        .collect();
     if survivors.is_empty() {
         return Ok(FilterEject::Emptied);
     }
     let rebuilt = ops.rebuild(&survivors)?;
-    Ok(if rebuilt.is_empty() { FilterEject::Emptied } else { FilterEject::Survivors(rebuilt) })
+    Ok(if rebuilt.is_empty() {
+        FilterEject::Emptied
+    } else {
+        FilterEject::Survivors(rebuilt)
+    })
 }
 
 /// How many failing tests an eject note lists before it counts the rest.
@@ -532,14 +695,21 @@ fn noted_tests(failed: &[String]) -> String {
     match failed.len() {
         0 => String::new(),
         n if n <= MAX_NOTED_TESTS => format!(": {}", failed.join("; ")),
-        n => format!(": {}; and {} more", failed[..MAX_NOTED_TESTS].join("; "), n - MAX_NOTED_TESTS),
+        n => format!(
+            ": {}; and {} more",
+            failed[..MAX_NOTED_TESTS].join("; "),
+            n - MAX_NOTED_TESTS
+        ),
     }
 }
 
 /// A round of one member has no one else to blame: a red nothing else names is that member's.
 fn sole_member_culprit(red: &str, members: &[Member]) -> Vec<Action> {
     match members {
-        [only] => vec![Action::Eject { id: only.id.clone(), line: format!("{red} in a round whose only member is {}", only.id) }],
+        [only] => vec![Action::Eject {
+            id: only.id.clone(),
+            line: format!("{red} in a round whose only member is {}", only.id),
+        }],
         _ => vec![],
     }
 }
@@ -551,7 +721,10 @@ enum FilterEject {
 }
 
 /// The smallest `k` for which the first `k` of `members` fail to build, given that all of them do.
-fn first_failing_prefix(green: &mut dyn FnMut(&[Member]) -> Option<bool>, members: &[Member]) -> Option<usize> {
+fn first_failing_prefix(
+    green: &mut dyn FnMut(&[Member]) -> Option<bool>,
+    members: &[Member],
+) -> Option<usize> {
     let (mut lo, mut hi) = (0, members.len());
     while hi - lo > 1 {
         let mid = (lo + hi) / 2;
@@ -567,7 +740,11 @@ fn first_failing_prefix(green: &mut dyn FnMut(&[Member]) -> Option<bool>, member
 /// Finds by prefix search what turns `red` on when no output names a member: one member alone,
 /// or a pair, whose later member is held behind the earlier. `None` for three or more, or when
 /// the runner cannot probe subsets.
-fn bisect_members(red: &str, green: &mut dyn FnMut(&[Member]) -> Option<bool>, members: &[Member]) -> Option<Vec<Action>> {
+fn bisect_members(
+    red: &str,
+    green: &mut dyn FnMut(&[Member]) -> Option<bool>,
+    members: &[Member],
+) -> Option<Vec<Action>> {
     let k = first_failing_prefix(green, members)?;
     if k == 1 && members.len() > 1 && !green(&[])? {
         return None;
@@ -575,9 +752,18 @@ fn bisect_members(red: &str, green: &mut dyn FnMut(&[Member]) -> Option<bool>, m
     let last = &members[k - 1];
     let line = |what: &str| format!("{red} {what} (bisected by running member subsets)");
     if !green(std::slice::from_ref(last))? {
-        return Some(vec![Action::Eject { id: last.id.clone(), line: line(&format!("with only {} merged", last.id)) }]);
+        return Some(vec![Action::Eject {
+            id: last.id.clone(),
+            line: line(&format!("with only {} merged", last.id)),
+        }]);
     }
-    let with_last = |n: usize| -> Vec<Member> { members[..n].iter().chain(std::iter::once(last)).cloned().collect() };
+    let with_last = |n: usize| -> Vec<Member> {
+        members[..n]
+            .iter()
+            .chain(std::iter::once(last))
+            .cloned()
+            .collect()
+    };
     let (mut lo, mut hi) = (0, k - 1);
     while hi - lo > 1 {
         let mid = (lo + hi) / 2;
@@ -591,25 +777,46 @@ fn bisect_members(red: &str, green: &mut dyn FnMut(&[Member]) -> Option<bool>, m
     if green(&[partner.clone(), last.clone()])? {
         return None;
     }
-    Some(vec![Action::Sequence { id: last.id.clone(), behind: vec![partner.id.clone()], line: line(&format!("only with {} merged", partner.id)) }])
+    Some(vec![Action::Sequence {
+        id: last.id.clone(),
+        behind: vec![partner.id.clone()],
+        line: line(&format!("only with {} merged", partner.id)),
+    }])
 }
 
 /// A workspace-build red whose compiler errors map to members: owners leave with the error as
 /// their evidence, a member lacking what another adds is held behind it, the rest re-cut. An
 /// error that maps to no file is bisected by building member subsets. `None` when no member can
 /// be named, which leaves the red to be filed.
-fn eject_build_culprits<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O, members: &[Member]) -> Result<Option<Vec<Member>>, String> {
+fn eject_build_culprits<R: RoundRunner, O: RoundOps>(
+    runner: &mut R,
+    ops: &mut O,
+    members: &[Member],
+) -> Result<Option<Vec<Member>>, String> {
     let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
-    let mut actions = buildattr::attribute(&buildattr::compile_errors(&runner.build_output()), &ops.diffs(&ids));
+    let mut actions = buildattr::attribute(
+        &buildattr::compile_errors(&runner.build_output()),
+        &ops.diffs(&ids),
+    );
     if actions.is_empty() {
-        actions = bisect_members("the workspace fails to build", &mut |m| runner.builds(m), members).unwrap_or_default();
+        actions = bisect_members(
+            "the workspace fails to build",
+            &mut |m| runner.builds(m),
+            members,
+        )
+        .unwrap_or_default();
     }
     apply_build_actions(ops, members, &actions, WORKSPACE_BUILD)
 }
 
 /// Ejects or sequences the members `actions` name, and the members stacked on them, and
 /// re-cuts the rest; `None` when there is nothing to name or nobody left.
-fn apply_build_actions<O: RoundOps>(ops: &mut O, members: &[Member], actions: &[Action], filter: &str) -> Result<Option<Vec<Member>>, String> {
+fn apply_build_actions<O: RoundOps>(
+    ops: &mut O,
+    members: &[Member],
+    actions: &[Action],
+    filter: &str,
+) -> Result<Option<Vec<Member>>, String> {
     if actions.is_empty() {
         return Ok(None);
     }
@@ -620,14 +827,20 @@ fn apply_build_actions<O: RoundOps>(ops: &mut O, members: &[Member], actions: &[
     }
     with_dependents(members, &mut out);
     for m in members {
-        match actions.iter().find(|a| matches!(a, Action::Eject { id, .. } | Action::Sequence { id, .. } if *id == m.id)) {
+        match actions.iter().find(
+            |a| matches!(a, Action::Eject { id, .. } | Action::Sequence { id, .. } if *id == m.id),
+        ) {
             Some(Action::Eject { line, .. }) => ops.eject_on(m, filter, line, true),
             Some(Action::Sequence { behind, line, .. }) => ops.sequence(m, behind, line),
             None if out.contains_key(&m.id) => ops.eject(m, &[filter.to_string()], false),
             None => {}
         }
     }
-    let survivors: Vec<Member> = members.iter().filter(|m| !out.contains_key(&m.id)).cloned().collect();
+    let survivors: Vec<Member> = members
+        .iter()
+        .filter(|m| !out.contains_key(&m.id))
+        .cloned()
+        .collect();
     if survivors.is_empty() {
         return Ok(None);
     }
@@ -660,7 +873,11 @@ fn verdict_word(v: Option<bool>) -> &'static str {
 
 /// Runs a check no output ties to a member on the base and then on the base plus each member
 /// alone, and names every member whose tree is red. The verdicts are printed to the round log.
-fn red_alone(red: &str, green: &mut dyn FnMut(&[Member]) -> Option<bool>, members: &[Member]) -> Alone {
+fn red_alone(
+    red: &str,
+    green: &mut dyn FnMut(&[Member]) -> Option<bool>,
+    members: &[Member],
+) -> Alone {
     let base = green(&[]);
     match base {
         None => return Alone::Cleared(String::new()),
@@ -670,16 +887,29 @@ fn red_alone(red: &str, green: &mut dyn FnMut(&[Member]) -> Option<bool>, member
         }
         Some(true) => {}
     }
-    let verdicts: Vec<(&Member, Option<bool>)> = members.iter().map(|m| (m, green(std::slice::from_ref(m)))).collect();
+    let verdicts: Vec<(&Member, Option<bool>)> = members
+        .iter()
+        .map(|m| (m, green(std::slice::from_ref(m))))
+        .collect();
     let said = std::iter::once("base green".to_string())
-        .chain(verdicts.iter().map(|(m, v)| format!("{} {}", m.id, verdict_word(*v))))
+        .chain(
+            verdicts
+                .iter()
+                .map(|(m, v)| format!("{} {}", m.id, verdict_word(*v))),
+        )
         .collect::<Vec<_>>()
         .join(", ");
     println!("batcher: {red}: run alone: {said}");
     let owners: Vec<Action> = verdicts
         .iter()
         .filter(|(_, v)| *v == Some(false))
-        .map(|(m, _)| Action::Eject { id: m.id.clone(), line: format!("{red} with only {} merged onto the base (run alone: {said})", m.id) })
+        .map(|(m, _)| Action::Eject {
+            id: m.id.clone(),
+            line: format!(
+                "{red} with only {} merged onto the base (run alone: {said})",
+                m.id
+            ),
+        })
         .collect();
     if owners.is_empty() {
         Alone::Cleared(said)
@@ -692,7 +922,12 @@ fn red_alone(red: &str, green: &mut dyn FnMut(&[Member]) -> Option<bool>, member
 /// runs the suites, else the one whose tree alone kills the runner, found by running member subsets.
 /// It leaves with the failure as its evidence; `None` when no single member can be named, an empty
 /// survivor list when it was the last.
-fn eject_runner_abort<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O, members: &[Member], err: &str) -> Result<Option<Vec<Member>>, String> {
+fn eject_runner_abort<R: RoundRunner, O: RoundOps>(
+    runner: &mut R,
+    ops: &mut O,
+    members: &[Member],
+    err: &str,
+) -> Result<Option<Vec<Member>>, String> {
     if !buildattr::is_signal_death(err) {
         return Ok(None);
     }
@@ -709,8 +944,12 @@ fn eject_runner_abort<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O, 
             found.into_iter().find(|a| matches!(a, Action::Eject { .. }))
         }
     };
-    let Some(action) = action else { return Ok(None) };
-    Ok(Some(apply_build_actions(ops, members, &[action], RUNNER_ABORT)?.unwrap_or_default()))
+    let Some(action) = action else {
+        return Ok(None);
+    };
+    Ok(Some(
+        apply_build_actions(ops, members, &[action], RUNNER_ABORT)?.unwrap_or_default(),
+    ))
 }
 
 /// A red the reruns could not attribute belongs to the member when exactly one member's diff
@@ -753,13 +992,20 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         }
         suites = present_on(&*ops, suites, &start, &members);
         if suites.is_empty() {
-            return Ok(RoundEnd::Land { members, attribution_secs: worst });
+            return Ok(RoundEnd::Land {
+                members,
+                attribution_secs: worst,
+            });
         }
         let s = match drive(runner, &*ops, kind, &suites, &members, budget) {
             Ok(s) => s,
             Err(_) if runner.abandoned() => return Ok(RoundEnd::Abandoned),
             Err(e) => match eject_runner_abort(runner, ops, &members, &e)? {
-                Some(next) if next.is_empty() => return Ok(RoundEnd::Emptied("testenv died on a signal and every member left".into())),
+                Some(next) if next.is_empty() => {
+                    return Ok(RoundEnd::Emptied(
+                        "testenv died on a signal and every member left".into(),
+                    ))
+                }
                 Some(next) => {
                     println!("batcher: testenv died on a signal — its one runner-touching member left, re-cutting {} member(s)", next.len());
                     let _ = runner.stop_main();
@@ -778,8 +1024,19 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                 let diffs = ops.diffs(&members.iter().map(|m| m.id.clone()).collect::<Vec<_>>());
                 match buildattr::recipe_touchers(&diffs)[..] {
                     [owner] => {
-                        let line = format!("the round image build failed and this member changes its recipe: {}", buildattr::error_tail(&output));
-                        if let Some(next) = apply_build_actions(ops, &members, &[Action::Eject { id: owner.id.clone(), line }], WORKSPACE_BUILD)? {
+                        let line = format!(
+                            "the round image build failed and this member changes its recipe: {}",
+                            buildattr::error_tail(&output)
+                        );
+                        if let Some(next) = apply_build_actions(
+                            ops,
+                            &members,
+                            &[Action::Eject {
+                                id: owner.id.clone(),
+                                line,
+                            }],
+                            WORKSPACE_BUILD,
+                        )? {
                             println!("batcher: the round image build failed — {} left, re-cutting {} member(s)", owner.id, next.len());
                             runner.stop_main()?;
                             members = next;
@@ -804,14 +1061,30 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                 continue;
             }
             ops.incident("workspace-build", &[WORKSPACE_BUILD.to_string()]);
-            return Ok(RoundEnd::Blocked("the round's workspace failed to build".into()));
+            return Ok(RoundEnd::Blocked(
+                "the round's workspace failed to build".into(),
+            ));
         }
         if let Some(f) = &s.filter {
-            println!("batcher: {} red before any suite ran, naming {} member(s)", f.name, f.named.len());
+            println!(
+                "batcher: {} red before any suite ran, naming {} member(s)",
+                f.name,
+                f.named.len()
+            );
             let next = match eject_filter_owners(runner, ops, f, &members)? {
                 FilterEject::Survivors(next) => next,
-                FilterEject::Emptied => return Ok(RoundEnd::Emptied(format!("{} red ejected every member", f.name))),
-                FilterEject::Unnamed(tests) => return Ok(RoundEnd::Blocked(format!("{} red{tests} names no member that can be ejected", f.name))),
+                FilterEject::Emptied => {
+                    return Ok(RoundEnd::Emptied(format!(
+                        "{} red ejected every member",
+                        f.name
+                    )))
+                }
+                FilterEject::Unnamed(tests) => {
+                    return Ok(RoundEnd::Blocked(format!(
+                        "{} red{tests} names no member that can be ejected",
+                        f.name
+                    )))
+                }
             };
             runner.stop_main()?;
             members = next;
@@ -839,7 +1112,11 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                 },
                 r.attribution_secs().unwrap_or(0),
                 r.reruns,
-                if r.settled_before_main_end { ", settled before the main run ended" } else { "" }
+                if r.settled_before_main_end {
+                    ", settled before the main run ended"
+                } else {
+                    ""
+                }
             );
         }
         if !d.base.is_empty() {
@@ -854,12 +1131,26 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         }
         if fixed && !integration.is_empty() {
             ops.incident("integration", &integration);
-            return Ok(RoundEnd::Blocked(format!("integration red survived the in-round fix: {}", integration.join(","))));
+            return Ok(RoundEnd::Blocked(format!(
+                "integration red survived the in-round fix: {}",
+                integration.join(",")
+            )));
         }
         own_by_touch(&*ops, &mut d, &members);
-        let faulted: Vec<&String> = d.unattributed.iter().filter(|s| d.faulted.contains(s)).collect();
+        let faulted: Vec<&String> = d
+            .unattributed
+            .iter()
+            .filter(|s| d.faulted.contains(s))
+            .collect();
         if !faulted.is_empty() {
-            let why = format!("attribution faulted: its reruns of {} could not run", faulted.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(","));
+            let why = format!(
+                "attribution faulted: its reruns of {} could not run",
+                faulted
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
             println!("batcher: {why}");
             return Ok(RoundEnd::Faulted(why));
         }
@@ -867,7 +1158,10 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             if !retried && d.owners.is_empty() {
                 retried = true;
                 if let Some((sha, rebuilt)) = ops.base_moved(&members)? {
-                    println!("batcher: unattributed red {} — base moved, retrying once on {sha}", d.unattributed.join(","));
+                    println!(
+                        "batcher: unattributed red {} — base moved, retrying once on {sha}",
+                        d.unattributed.join(",")
+                    );
                     runner.set_base(&sha);
                     members = rebuilt;
                     suites = d.unattributed.clone();
@@ -879,16 +1173,24 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             let alone = sole_member_culprit(&red, &members);
             if !alone.is_empty() {
                 let suites = d.unattributed.join(",");
-                println!("batcher: {suites} red names no member; the round's only member is the culprit");
+                println!(
+                    "batcher: {suites} red names no member; the round's only member is the culprit"
+                );
                 apply_build_actions(ops, &members, &alone, &suites)?;
-                return Ok(RoundEnd::Emptied(format!("{suites} red ejected the only member")));
+                return Ok(RoundEnd::Emptied(format!(
+                    "{suites} red ejected the only member"
+                )));
             }
             let mut found: Vec<Action> = vec![];
             let mut base_red: Vec<String> = vec![];
             let mut said: Vec<String> = vec![];
             if members.len() > 1 {
                 for suite in &d.unattributed {
-                    match red_alone(&format!("{suite} red"), &mut |m| runner.suite_green(suite, m), &members) {
+                    match red_alone(
+                        &format!("{suite} red"),
+                        &mut |m| runner.suite_green(suite, m),
+                        &members,
+                    ) {
                         Alone::Owners(a) => {
                             for act in a {
                                 if !found.iter().any(|f| action_id(f) == action_id(&act)) {
@@ -915,17 +1217,32 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                         kind = MainKind::Verify;
                         continue;
                     }
-                    None => return Ok(RoundEnd::Emptied(format!("{named} red ejected every member"))),
+                    None => {
+                        return Ok(RoundEnd::Emptied(format!(
+                            "{named} red ejected every member"
+                        )))
+                    }
                 }
             }
             if !base_red.is_empty() {
                 ops.incident("base", &base_red);
-                return Ok(RoundEnd::Blocked(format!("base red: {} ({})", base_red.join(","), said.join("; "))));
+                return Ok(RoundEnd::Blocked(format!(
+                    "base red: {} ({})",
+                    base_red.join(","),
+                    said.join("; ")
+                )));
             }
             let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
             ops.judge(&d.unattributed, &ids);
-            let alone = if said.is_empty() { String::new() } else { format!(" (run alone: {})", said.join("; ")) };
-            return Ok(RoundEnd::Blocked(format!("unattributed red: {}{alone}", d.unattributed.join(","))));
+            let alone = if said.is_empty() {
+                String::new()
+            } else {
+                format!(" (run alone: {})", said.join("; "))
+            };
+            return Ok(RoundEnd::Blocked(format!(
+                "unattributed red: {}{alone}",
+                d.unattributed.join(",")
+            )));
         }
         if d.owners.is_empty() {
             if !d.flaky.is_empty() {
@@ -938,17 +1255,33 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                     return Ok(RoundEnd::Blocked(red.reason()));
                 }
             }
-            return Ok(RoundEnd::Land { members, attribution_secs: worst });
+            return Ok(RoundEnd::Land {
+                members,
+                attribution_secs: worst,
+            });
         }
         if let Some(p) = &preempt {
-            println!("batcher: pass preempted at +{}s: {} alone owns {}; {} suite(s) unreached", s.settled_at.saturating_sub(t0), p.owner, d.owned_suites().join(","), p.unreached.len());
+            println!(
+                "batcher: pass preempted at +{}s: {} alone owns {}; {} suite(s) unreached",
+                s.settled_at.saturating_sub(t0),
+                p.owner,
+                d.owned_suites().join(","),
+                p.unreached.len()
+            );
             ops.preempted(&p.owner, &p.unreached);
         }
-        let mended = if preempt.is_some() { None } else { ops.settle_mending(&d, &members) };
+        let mended = if preempt.is_some() {
+            None
+        } else {
+            ops.settle_mending(&d, &members)
+        };
         if let Some(settled) = mended {
             let m = settled?;
             if !m.unattributed.is_empty() {
-                println!("batcher: ALARM mender returns named no member: {}", m.unattributed.join(","));
+                println!(
+                    "batcher: ALARM mender returns named no member: {}",
+                    m.unattributed.join(",")
+                );
                 ops.incident("unattributed", &m.unattributed);
             }
             match m.next {
@@ -956,19 +1289,33 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                     ops.incident("mender-page", &m.suites);
                     return Ok(RoundEnd::Blocked(page));
                 }
-                crate::mender::Next::Pass { members: next, left, retry } => {
+                crate::mender::Next::Pass {
+                    members: next,
+                    left,
+                    retry,
+                } => {
                     for l in &left {
                         if let Some(member) = members.iter().find(|x| x.id == l.id) {
-                            let own = d.owners.get(&l.id).cloned().unwrap_or_else(|| m.suites.clone());
+                            let own = d
+                                .owners
+                                .get(&l.id)
+                                .cloned()
+                                .unwrap_or_else(|| m.suites.clone());
                             ops.eject(member, &own, d.owners.contains_key(&l.id));
                         }
                     }
                     if next.is_empty() {
                         return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
                     }
-                    members = if retry && left.is_empty() { next } else { ops.rebuild(&next)? };
+                    members = if retry && left.is_empty() {
+                        next
+                    } else {
+                        ops.rebuild(&next)?
+                    };
                     if members.is_empty() {
-                        return Ok(RoundEnd::Emptied("round emptied rebuilding the tree after the menders".into()));
+                        return Ok(RoundEnd::Emptied(
+                            "round emptied rebuilding the tree after the menders".into(),
+                        ));
                     }
                     suites = m.suites;
                     kind = MainKind::Verify;
@@ -992,20 +1339,28 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                 ops.eject(m, s, d.owners.contains_key(&m.id));
             }
         }
-        let survivors: Vec<Member> = members.iter().filter(|m| !out.contains_key(&m.id)).cloned().collect();
+        let survivors: Vec<Member> = members
+            .iter()
+            .filter(|m| !out.contains_key(&m.id))
+            .cloned()
+            .collect();
         if survivors.is_empty() {
             return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
         }
         members = ops.rebuild(&survivors)?;
         if members.is_empty() {
-            return Ok(RoundEnd::Emptied("round emptied rebuilding the tree after ejection".into()));
+            return Ok(RoundEnd::Emptied(
+                "round emptied rebuilding the tree after ejection".into(),
+            ));
         }
         (suites, kind) = match preempt {
             Some(p) => (p.rerun, MainKind::Corpus),
             None => (d.owned_suites(), MainKind::Verify),
         };
     }
-    Ok(RoundEnd::Blocked(format!("still ejecting after {bound} iterations")))
+    Ok(RoundEnd::Blocked(format!(
+        "still ejecting after {bound} iterations"
+    )))
 }
 
 #[cfg(test)]
@@ -1129,10 +1484,17 @@ pub(crate) mod tests {
             !(self.red)(suite, tree)
         }
         fn corpus_running(&self) -> usize {
-            self.main.iter().filter(|(_, fin, _)| *fin > self.t).count().min(self.maxpar)
+            self.main
+                .iter()
+                .filter(|(_, fin, _)| *fin > self.t)
+                .count()
+                .min(self.maxpar)
         }
         fn jobs_running(&self) -> usize {
-            self.jobs.iter().filter(|(j, fin, _)| *fin > self.t && !self.done_jobs.contains(&j.id)).count()
+            self.jobs
+                .iter()
+                .filter(|(j, fin, _)| *fin > self.t && !self.done_jobs.contains(&j.id))
+                .count()
         }
     }
 
@@ -1154,7 +1516,11 @@ pub(crate) mod tests {
             self.reported.clear();
             self.main_ended = None;
             let tree: BTreeSet<String> = self.members.iter().cloned().collect();
-            if let Some(s) = suites.iter().find(|s| self.added_by.get(*s).is_some_and(|a| !a.iter().any(|m| tree.contains(m)))) {
+            if let Some(s) = suites.iter().find(|s| {
+                self.added_by
+                    .get(*s)
+                    .is_some_and(|a| !a.iter().any(|m| tree.contains(m)))
+            }) {
                 return Err(format!("round-vm: suite list mismatch, not a harness fault — batch: unknown suite: {s}"));
             }
             self.filtered = self.filter.as_ref().and_then(|f| f(&tree));
@@ -1207,25 +1573,38 @@ pub(crate) mod tests {
         fn builds(&mut self, members: &[Member]) -> Option<bool> {
             let tree: BTreeSet<String> = members.iter().map(|m| m.id.clone()).collect();
             self.probes.push(tree.iter().cloned().collect());
-            self.bisects.then(|| self.compiler.as_ref().and_then(|c| c(&tree)).is_none())
+            self.bisects
+                .then(|| self.compiler.as_ref().and_then(|c| c(&tree)).is_none())
         }
         fn suite_green(&mut self, suite: &str, members: &[Member]) -> Option<bool> {
             let tree: BTreeSet<String> = members.iter().map(|m| m.id.clone()).collect();
-            self.alone.push((suite.to_string(), tree.iter().cloned().collect()));
+            self.alone
+                .push((suite.to_string(), tree.iter().cloned().collect()));
             self.runs_alone.then(|| !(self.red)(suite, &tree))
         }
         fn filter_green(&mut self, _name: &str, members: &[Member]) -> Option<bool> {
             let tree: BTreeSet<String> = members.iter().map(|m| m.id.clone()).collect();
             self.probes.push(tree.iter().cloned().collect());
-            (self.bisects || self.runs_alone).then(|| self.filter.as_ref().is_none_or(|f| f(&tree).is_none()))
+            (self.bisects || self.runs_alone)
+                .then(|| self.filter.as_ref().is_none_or(|f| f(&tree).is_none()))
         }
-        fn filter_green_in(&mut self, name: &str, packages: &[String], members: &[Member]) -> Option<bool> {
+        fn filter_green_in(
+            &mut self,
+            name: &str,
+            packages: &[String],
+            members: &[Member],
+        ) -> Option<bool> {
             self.scoped.push(packages.to_vec());
             self.filter_green(name, members)
         }
         fn runner_survives(&mut self, members: &[Member]) -> Option<bool> {
-            self.probes.push(members.iter().map(|m| m.id.clone()).collect());
-            self.bisects.then(|| self.aborts_with.as_ref().is_none_or(|(m, _)| !members.iter().any(|x| &x.id == m)))
+            self.probes
+                .push(members.iter().map(|m| m.id.clone()).collect());
+            self.bisects.then(|| {
+                self.aborts_with
+                    .as_ref()
+                    .is_none_or(|(m, _)| !members.iter().any(|x| &x.id == m))
+            })
         }
         fn stop_main(&mut self) -> Result<(), String> {
             self.stopped += 1;
@@ -1238,10 +1617,25 @@ pub(crate) mod tests {
                 return Err("no tree without those members".into());
             }
             self.first_launch.get_or_insert(self.t);
-            let tree: BTreeSet<String> = self.members.iter().filter(|m| !job.removal.contains(m)).cloned().collect();
-            let flips_again = job.id >= FLIP_JOB_BASE && job.purpose == Purpose::Plain && self.flips_again.remove(&job.suite);
+            let tree: BTreeSet<String> = self
+                .members
+                .iter()
+                .filter(|m| !job.removal.contains(m))
+                .cloned()
+                .collect();
+            let flips_again = job.id >= FLIP_JOB_BASE
+                && job.purpose == Purpose::Plain
+                && self.flips_again.remove(&job.suite);
             let green = !flips_again && self.verdict(&job.suite, &tree);
-            self.jobs.push((job.clone(), self.t + self.job_secs, if green { JobResult::Green } else { JobResult::Red }));
+            self.jobs.push((
+                job.clone(),
+                self.t + self.job_secs,
+                if green {
+                    JobResult::Green
+                } else {
+                    JobResult::Red
+                },
+            ));
             Ok(())
         }
         fn poll_jobs(&mut self) -> Vec<(u64, JobResult)> {
@@ -1257,10 +1651,13 @@ pub(crate) mod tests {
             self.t
         }
         fn abandoned(&mut self) -> bool {
-            self.abandoned_after_starts.is_some_and(|n| self.main_kind.len() >= n) || self.abandoned_at.is_some_and(|t| self.t >= t)
+            self.abandoned_after_starts
+                .is_some_and(|n| self.main_kind.len() >= n)
+                || self.abandoned_at.is_some_and(|t| self.t >= t)
         }
         fn wait(&mut self) {
-            self.use_log.push((self.t, self.corpus_running(), self.jobs_running()));
+            self.use_log
+                .push((self.t, self.corpus_running(), self.jobs_running()));
             self.t += 1;
             assert!(self.t < 100_000, "the loop never settled");
         }
@@ -1305,7 +1702,8 @@ pub(crate) mod tests {
             self.owner_flags.push((member.id.clone(), owner));
         }
         fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) {
-            self.eject_evidence.push((member.id.clone(), line.to_string()));
+            self.eject_evidence
+                .push((member.id.clone(), line.to_string()));
             self.eject(member, &[filter.to_string()], owner);
         }
         fn diffs(&self, _: &[Id]) -> Vec<MemberDiff> {
@@ -1316,10 +1714,12 @@ pub(crate) mod tests {
         }
         fn sequence(&mut self, member: &Member, behind: &[Id], line: &str) {
             self.sequenced.push((member.id.clone(), behind.to_vec()));
-            self.eject_evidence.push((member.id.clone(), line.to_string()));
+            self.eject_evidence
+                .push((member.id.clone(), line.to_string()));
         }
         fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
-            self.rebuilt.push(survivors.iter().map(|m| m.id.clone()).collect());
+            self.rebuilt
+                .push(survivors.iter().map(|m| m.id.clone()).collect());
             Ok(survivors.to_vec())
         }
         fn fix_integration(&mut self, _: &[Member], _: &[String]) -> bool {
@@ -1331,8 +1731,15 @@ pub(crate) mod tests {
             }
             self.can_fix
         }
-        fn base_moved(&mut self, members: &[Member]) -> Result<Option<(String, Vec<Member>)>, String> {
-            Ok(if self.moves.is_empty() { None } else { Some((self.moves.remove(0), members.to_vec())) })
+        fn base_moved(
+            &mut self,
+            members: &[Member],
+        ) -> Result<Option<(String, Vec<Member>)>, String> {
+            Ok(if self.moves.is_empty() {
+                None
+            } else {
+                Some((self.moves.remove(0), members.to_vec()))
+            })
         }
         fn judge(&mut self, suites: &[String], members: &[Id]) {
             self.judged.push((suites.to_vec(), members.to_vec()));
@@ -1359,13 +1766,18 @@ pub(crate) mod tests {
             if self.menders.is_empty() {
                 return None;
             }
-            Some(Ok(Mended { next: self.menders.remove(0), unattributed: vec![], suites: d.owned_suites() }))
+            Some(Ok(Mended {
+                next: self.menders.remove(0),
+                unattributed: vec![],
+                suites: d.owned_suites(),
+            }))
         }
         fn preempted(&mut self, owner: &Id, unreached: &[String]) {
             self.preempts.push((owner.clone(), unreached.to_vec()));
         }
         fn escape(&mut self, member: &Member, suite: &str, rerun: Option<JobResult>) {
-            self.escaped.push((member.id.clone(), suite.to_string(), rerun));
+            self.escaped
+                .push((member.id.clone(), suite.to_string(), rerun));
         }
     }
 
@@ -1377,7 +1789,10 @@ pub(crate) mod tests {
         vec![member("m1"), member("m2"), member("m3")]
     }
 
-    fn breaks(culprit: &'static str, suite: &'static str) -> impl Fn(&str, &BTreeSet<String>) -> bool {
+    fn breaks(
+        culprit: &'static str,
+        suite: &'static str,
+    ) -> impl Fn(&str, &BTreeSet<String>) -> bool {
         move |s, tree| s == suite && tree.contains(culprit)
     }
 
@@ -1386,17 +1801,34 @@ pub(crate) mod tests {
         let mut f = Fake::new(breaks("m2", "test-00.sh"));
         f.maxpar = 4;
         f.dur.insert("test-00.sh".into(), 2);
-        let budget = Budget { slots: 6, maxpar: 4 };
+        let budget = Budget {
+            slots: 6,
+            maxpar: 4,
+        };
         let mut ops = Ops::default();
         let end = attribute_round(&mut f, &mut ops, &corpus(40), three(), budget).unwrap();
         let main_end = f.main_ended.unwrap();
         let first = f.first_launch.unwrap();
-        assert!(first <= 3, "first rerun at t={first}, the red landed at t=2");
-        assert!(first < main_end, "attribution began before the corpus ended ({first} < {main_end})");
+        assert!(
+            first <= 3,
+            "first rerun at t={first}, the red landed at t=2"
+        );
+        assert!(
+            first < main_end,
+            "attribution began before the corpus ended ({first} < {main_end})"
+        );
         let rec = &ops.recorded[0].1.records[0];
-        assert!(rec.settled_before_main_end, "{rec:?} vs corpus end {main_end}");
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-00.sh".to_string()])]);
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1", "m3"]));
+        assert!(
+            rec.settled_before_main_end,
+            "{rec:?} vs corpus end {main_end}"
+        );
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec!["test-00.sh".to_string()])]
+        );
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1", "m3"])
+        );
     }
 
     #[test]
@@ -1405,19 +1837,43 @@ pub(crate) mod tests {
         f.maxpar = 4;
         f.dur.insert("test-00.sh".into(), 2);
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(40), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(40),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
         assert_eq!(f.stopped, 1, "the first pass was stopped, not run out");
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-00.sh".to_string()])]);
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec!["test-00.sh".to_string()])]
+        );
         assert_eq!(ops.rebuilt, vec![vec!["m1".to_string(), "m3".to_string()]]);
         assert_eq!(f.main_kind.len(), 2);
         let (kind, restart) = &f.main_kind[1];
         assert_eq!(*kind, MainKind::Corpus);
-        assert!(restart.contains(&"test-00.sh".to_string()) && restart.contains(&"test-39.sh".to_string()));
-        assert!(restart.len() < 40, "suites that finished green are not run again");
+        assert!(
+            restart.contains(&"test-00.sh".to_string())
+                && restart.contains(&"test-39.sh".to_string())
+        );
+        assert!(
+            restart.len() < 40,
+            "suites that finished green are not run again"
+        );
         let (owner, unreached) = &ops.preempts[0];
         assert_eq!(owner, "m2");
-        assert!(unreached.contains(&"test-39.sh".to_string()) && !unreached.contains(&"test-00.sh".to_string()));
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1", "m3"]));
+        assert!(
+            unreached.contains(&"test-39.sh".to_string())
+                && !unreached.contains(&"test-00.sh".to_string())
+        );
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1", "m3"])
+        );
     }
 
     #[test]
@@ -1426,39 +1882,111 @@ pub(crate) mod tests {
         f.maxpar = 4;
         f.dur.insert("test-00.sh".into(), 2);
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(40), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(40),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
         assert_eq!(f.stopped, 0);
         assert!(ops.preempts.is_empty() && ops.ejected.is_empty());
-        assert_eq!(ops.incidents, vec![("base".to_string(), vec!["test-00.sh".to_string()])]);
+        assert_eq!(
+            ops.incidents,
+            vec![("base".to_string(), vec!["test-00.sh".to_string()])]
+        );
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3));
     }
 
     fn adds(suite: &str, who: &[&str]) -> BTreeMap<String, Vec<String>> {
-        BTreeMap::from([(suite.to_string(), who.iter().map(|w| w.to_string()).collect())])
+        BTreeMap::from([(
+            suite.to_string(),
+            who.iter().map(|w| w.to_string()).collect(),
+        )])
     }
 
     #[test]
     fn a_red_suite_only_one_member_adds_ejects_that_member_and_is_never_run_without_it() {
         let mut f = Fake::new(breaks("m1", "test-01.sh"));
-        let mut ops = Ops { adds: adds("test-01.sh", &["m1"]), ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 4 }).unwrap();
-        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-01.sh".to_string()])]);
-        assert!(f.jobs.iter().all(|(j, _, _)| j.suite != "test-01.sh" || j.removal.is_empty()), "a rerun lacked the adder: {:?}", f.jobs.iter().map(|(j, _, _)| j).collect::<Vec<_>>());
-        assert!(f.main_kind.iter().skip(1).all(|(_, s)| !s.contains(&"test-01.sh".to_string())), "{:?}", f.main_kind);
+        let mut ops = Ops {
+            adds: adds("test-01.sh", &["m1"]),
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            vec![member("m1"), member("m2")],
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected,
+            vec![("m1".to_string(), vec!["test-01.sh".to_string()])]
+        );
+        assert!(
+            f.jobs
+                .iter()
+                .all(|(j, _, _)| j.suite != "test-01.sh" || j.removal.is_empty()),
+            "a rerun lacked the adder: {:?}",
+            f.jobs.iter().map(|(j, _, _)| j).collect::<Vec<_>>()
+        );
+        assert!(
+            f.main_kind
+                .iter()
+                .skip(1)
+                .all(|(_, s)| !s.contains(&"test-01.sh".to_string())),
+            "{:?}",
+            f.main_kind
+        );
         assert!(ops.incidents.is_empty() && ops.judged.is_empty());
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m2"]), "{end:?}");
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m2"]),
+            "{end:?}"
+        );
     }
 
     #[test]
-    fn a_three_member_round_whose_only_red_suite_member_b_adds_ejects_b_with_no_subset_run_and_no_pause() {
+    fn a_three_member_round_whose_only_red_suite_member_b_adds_ejects_b_with_no_subset_run_and_no_pause(
+    ) {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
         f.added_by = adds("test-01.sh", &["m2"]);
-        let mut ops = Ops { adds: adds("test-01.sh", &["m2"]), ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-01.sh".to_string()])]);
-        assert!(f.jobs.is_empty(), "a rerun on a member subset ran: {:?}", f.jobs.iter().map(|(j, _, _)| j).collect::<Vec<_>>());
+        let mut ops = Ops {
+            adds: adds("test-01.sh", &["m2"]),
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec!["test-01.sh".to_string()])]
+        );
+        assert!(
+            f.jobs.is_empty(),
+            "a rerun on a member subset ran: {:?}",
+            f.jobs.iter().map(|(j, _, _)| j).collect::<Vec<_>>()
+        );
         assert!(ops.incidents.is_empty() && ops.judged.is_empty());
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2), "{end:?}");
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2),
+            "{end:?}"
+        );
     }
 
     #[test]
@@ -1466,10 +1994,30 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.added_by = adds("test-01.sh", &["m2"]);
         f.filter = Some(lint_naming("m2"));
-        let mut ops = Ops { adds: adds("test-01.sh", &["m2"]), ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2), "{end:?}");
-        assert!(f.main_kind[1].1.iter().all(|s| s != "test-01.sh"), "{:?}", f.main_kind);
+        let mut ops = Ops {
+            adds: adds("test-01.sh", &["m2"]),
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2),
+            "{end:?}"
+        );
+        assert!(
+            f.main_kind[1].1.iter().all(|s| s != "test-01.sh"),
+            "{:?}",
+            f.main_kind
+        );
     }
 
     #[test]
@@ -1477,59 +2025,181 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.added_by = adds("test-01.sh", &["m2"]);
         f.compiler = Some(broken_by(&["m2"]));
-        let mut ops = Ops { adds: adds("test-01.sh", &["m2"]), diffs: vec![md("m1", "doc/x.md", "+p\n"), md("m2", "lc/src/callers.rs", "+x\n"), md("m3", "doc/y.md", "+q\n")], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2), "{end:?}");
+        let mut ops = Ops {
+            adds: adds("test-01.sh", &["m2"]),
+            diffs: vec![
+                md("m1", "doc/x.md", "+p\n"),
+                md("m2", "lc/src/callers.rs", "+x\n"),
+                md("m3", "doc/y.md", "+q\n"),
+            ],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2),
+            "{end:?}"
+        );
     }
 
     #[test]
     fn a_red_suite_no_member_adds_is_still_attributed_by_rerun_after_an_adder_is_ejected() {
-        let mut f = Fake::new(|s, tree| (s == "test-01.sh" && tree.iter().any(|m| m == "m1")) || (s == "test-02.sh" && tree.iter().any(|m| m == "m2")));
-        let mut ops = Ops { adds: adds("test-01.sh", &["m1"]), ..Ops::default() };
-        attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        let mut f = Fake::new(|s, tree| {
+            (s == "test-01.sh" && tree.iter().any(|m| m == "m1"))
+                || (s == "test-02.sh" && tree.iter().any(|m| m == "m2"))
+        });
+        let mut ops = Ops {
+            adds: adds("test-01.sh", &["m1"]),
+            ..Ops::default()
+        };
+        attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
         let ejected: Vec<&str> = ops.ejected.iter().map(|(m, _)| m.as_str()).collect();
         assert_eq!(ejected, ["m1", "m2"], "{:?}", ops.ejected);
     }
 
     #[test]
-    fn a_stacked_dependent_carrying_the_added_suite_does_not_share_the_blame_with_its_prerequisite() {
+    fn a_stacked_dependent_carrying_the_added_suite_does_not_share_the_blame_with_its_prerequisite()
+    {
         let mut f = Fake::new(breaks("m1", "test-01.sh"));
         let mut dep = member("m2");
         dep.stack.insert("m1".into(), "m1-tip".into());
-        let mut ops = Ops { adds: adds("test-01.sh", &["m1", "m2"]), ..Ops::default() };
-        attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), dep], Budget { slots: 6, maxpar: 4 }).unwrap();
-        assert_eq!(ops.ejected.first(), Some(&("m1".to_string(), vec!["test-01.sh".to_string()])), "{:?}", ops.ejected);
-        assert!(f.jobs.iter().all(|(j, _, _)| j.suite != "test-01.sh" || j.removal.is_empty()), "a rerun lacked the adder");
+        let mut ops = Ops {
+            adds: adds("test-01.sh", &["m1", "m2"]),
+            ..Ops::default()
+        };
+        attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            vec![member("m1"), dep],
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected.first(),
+            Some(&("m1".to_string(), vec!["test-01.sh".to_string()])),
+            "{:?}",
+            ops.ejected
+        );
+        assert!(
+            f.jobs
+                .iter()
+                .all(|(j, _, _)| j.suite != "test-01.sh" || j.removal.is_empty()),
+            "a rerun lacked the adder"
+        );
     }
 
     #[test]
     fn a_red_suite_two_members_add_is_bisected_between_those_two_only() {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
-        let mut ops = Ops { adds: adds("test-01.sh", &["m1", "m2"]), ..Ops::default() };
-        attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-01.sh".to_string()])]);
-        let removals: Vec<Vec<String>> = f.jobs.iter().filter(|(j, _, _)| j.suite == "test-01.sh").map(|(j, _, _)| j.removal.clone()).collect();
-        assert!(removals.iter().all(|r| r.len() < 2 && !r.contains(&"m3".to_string())), "{removals:?}");
+        let mut ops = Ops {
+            adds: adds("test-01.sh", &["m1", "m2"]),
+            ..Ops::default()
+        };
+        attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec!["test-01.sh".to_string()])]
+        );
+        let removals: Vec<Vec<String>> = f
+            .jobs
+            .iter()
+            .filter(|(j, _, _)| j.suite == "test-01.sh")
+            .map(|(j, _, _)| j.removal.clone())
+            .collect();
+        assert!(
+            removals
+                .iter()
+                .all(|r| r.len() < 2 && !r.contains(&"m3".to_string())),
+            "{removals:?}"
+        );
     }
 
     #[test]
     fn a_red_attribution_could_not_rerun_is_owned_by_the_one_member_whose_diff_the_suite_covers() {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
         f.refuses_removals = true;
-        let mut ops = Ops { touch: BTreeMap::from([("test-01.sh".to_string(), vec!["m2".to_string()])]), ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-01.sh".to_string()])]);
+        let mut ops = Ops {
+            touch: BTreeMap::from([("test-01.sh".to_string(), vec!["m2".to_string()])]),
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            vec![member("m1"), member("m2")],
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec!["test-01.sh".to_string()])]
+        );
         assert!(ops.judged.is_empty() && ops.incidents.is_empty());
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1"]), "{end:?}");
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1"]),
+            "{end:?}"
+        );
     }
 
     #[test]
     fn a_two_member_round_with_one_red_member_ejects_it_and_certifies_the_other() {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-01.sh".to_string()])]);
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1"]), "{end:?}");
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            vec![member("m1"), member("m2")],
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec!["test-01.sh".to_string()])]
+        );
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1"]),
+            "{end:?}"
+        );
     }
 
     #[test]
@@ -1537,9 +2207,25 @@ pub(crate) mod tests {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
         f.refuses_removals = true;
         let touch = vec!["m1".to_string(), "m2".to_string()];
-        let mut ops = Ops { touch: BTreeMap::from([("test-01.sh".to_string(), touch)]), ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert!(matches!(&end, RoundEnd::Faulted(why) if why.starts_with("attribution faulted") && why.contains("test-01.sh")), "{end:?}");
+        let mut ops = Ops {
+            touch: BTreeMap::from([("test-01.sh".to_string(), touch)]),
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            vec![member("m1"), member("m2")],
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(&end, RoundEnd::Faulted(why) if why.starts_with("attribution faulted") && why.contains("test-01.sh")),
+            "{end:?}"
+        );
         assert!(ops.ejected.is_empty() && ops.judged.is_empty());
     }
 
@@ -1548,7 +2234,17 @@ pub(crate) mod tests {
         let mut f = Fake::new(breaks("m1", "test-01.sh"));
         f.refuses_removals = true;
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            vec![member("m1")],
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Faulted(_)), "{end:?}");
         assert!(ops.ejected.is_empty() && ops.judged.is_empty());
     }
@@ -1559,46 +2255,124 @@ pub(crate) mod tests {
         f.maxpar = 4;
         f.dur.insert("test-00.sh".into(), 2);
         let mut ops = Ops::default();
-        attribute_round(&mut f, &mut ops, &corpus(40), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(40),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
         assert_eq!(f.stopped, 0);
         assert!(ops.preempts.is_empty() && ops.ejected.is_empty());
-        assert_eq!(ops.judged.len(), 1, "an unattributed red goes to the judge, not to an eject");
+        assert_eq!(
+            ops.judged.len(),
+            1,
+            "an unattributed red goes to the judge, not to an eject"
+        );
     }
 
     #[test]
-    fn a_red_no_rerun_attributes_is_run_on_the_base_and_each_member_alone_and_every_red_member_is_ejected() {
-        let mut f = Fake::new(|s, tree| s == "test-00.sh" && (tree.contains("m2") || tree.contains("m3")));
+    fn a_red_no_rerun_attributes_is_run_on_the_base_and_each_member_alone_and_every_red_member_is_ejected(
+    ) {
+        let mut f =
+            Fake::new(|s, tree| s == "test-00.sh" && (tree.contains("m2") || tree.contains("m3")));
         f.maxpar = 4;
         f.runs_alone = true;
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
         let ejected: Vec<&str> = ops.ejected.iter().map(|(m, _)| m.as_str()).collect();
         assert_eq!(ejected, ["m2", "m3"], "{:?}", ops.eject_evidence);
-        assert!(ops.eject_evidence.iter().all(|(_, l)| l.contains("base green, m1 green, m2 red, m3 red")), "{:?}", ops.eject_evidence);
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 1 && members[0].id == "m1"), "{end:?}");
-        assert!(f.alone.contains(&("test-00.sh".to_string(), vec![])), "the base was run: {:?}", f.alone);
+        assert!(
+            ops.eject_evidence
+                .iter()
+                .all(|(_, l)| l.contains("base green, m1 green, m2 red, m3 red")),
+            "{:?}",
+            ops.eject_evidence
+        );
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 1 && members[0].id == "m1"),
+            "{end:?}"
+        );
+        assert!(
+            f.alone.contains(&("test-00.sh".to_string(), vec![])),
+            "the base was run: {:?}",
+            f.alone
+        );
         assert!(ops.judged.is_empty());
     }
 
     #[test]
-    fn a_red_every_member_is_green_alone_for_is_judged_with_the_per_member_verdicts_in_the_reason() {
+    fn a_red_every_member_is_green_alone_for_is_judged_with_the_per_member_verdicts_in_the_reason()
+    {
         let mut f = Fake::new(|s, tree| s == "test-00.sh" && tree.len() >= 2);
         f.maxpar = 4;
         f.runs_alone = true;
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
-        assert!(ops.ejected.is_empty() && ops.judged.len() == 1, "{:?}", ops.ejected);
-        assert!(matches!(&end, RoundEnd::Blocked(why) if why.contains("run alone: test-00.sh: base green, m1 green, m2 green, m3 green")), "{end:?}");
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
+        assert!(
+            ops.ejected.is_empty() && ops.judged.len() == 1,
+            "{:?}",
+            ops.ejected
+        );
+        assert!(
+            matches!(&end, RoundEnd::Blocked(why) if why.contains("run alone: test-00.sh: base green, m1 green, m2 green, m3 green")),
+            "{end:?}"
+        );
     }
 
     #[test]
     fn a_filter_red_naming_no_member_whose_base_is_red_is_filed_as_the_base() {
         let mut f = Fake::new(|_, _| false);
         f.runs_alone = true;
-        f.filter = Some(Box::new(|_| Some(FilterRed { name: "spira-lint".into(), named: vec![], failed: vec![] })));
+        f.filter = Some(Box::new(|_| {
+            Some(FilterRed {
+                name: "spira-lint".into(),
+                named: vec![],
+                failed: vec![],
+            })
+        }));
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert_eq!(ops.incidents.first().map(|(k, _)| k.as_str()), Some("base"), "{:?}", ops.incidents);
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.incidents.first().map(|(k, _)| k.as_str()),
+            Some("base"),
+            "{:?}",
+            ops.incidents
+        );
         assert!(ops.ejected.is_empty());
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
     }
@@ -1609,10 +2383,26 @@ pub(crate) mod tests {
         f.maxpar = 4;
         f.dur.insert("test-03.sh".into(), 1);
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
         assert_eq!(f.stopped, 0);
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-03.sh".to_string()])]);
-        assert_eq!(f.main_kind[1], (MainKind::Verify, vec!["test-03.sh".into()]));
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec!["test-03.sh".to_string()])]
+        );
+        assert_eq!(
+            f.main_kind[1],
+            (MainKind::Verify, vec!["test-03.sh".into()])
+        );
         assert!(matches!(end, RoundEnd::Land { .. }));
     }
 
@@ -1621,16 +2411,38 @@ pub(crate) mod tests {
         let mut f = Fake::new(breaks("m2", "test-00.sh"));
         f.maxpar = 4;
         let mut ops = Ops::default();
-        attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
-        assert_eq!(ops.escaped, vec![("m2".to_string(), "test-00.sh".to_string(), Some(JobResult::Red))]);
+        attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.escaped,
+            vec![(
+                "m2".to_string(),
+                "test-00.sh".to_string(),
+                Some(JobResult::Red)
+            )]
+        );
     }
 
     #[test]
     fn the_slot_budget_holds_at_every_tick_and_the_corpus_is_never_starved() {
-        let mut f = Fake::new(|s, tree| (s == "test-03.sh" && tree.contains("m1")) || (s == "test-07.sh" && tree.contains("m3")));
+        let mut f = Fake::new(|s, tree| {
+            (s == "test-03.sh" && tree.contains("m1")) || (s == "test-07.sh" && tree.contains("m3"))
+        });
         f.maxpar = 3;
         f.job_secs = 7;
-        let budget = Budget { slots: 5, maxpar: 3 };
+        let budget = Budget {
+            slots: 5,
+            maxpar: 3,
+        };
         let mut ops = Ops::default();
         attribute_round(&mut f, &mut ops, &corpus(30), three(), budget).unwrap();
         for (t, c, j) in &f.use_log {
@@ -1640,7 +2452,10 @@ pub(crate) mod tests {
         // was fixed at start and attribution never delayed a corpus result.
         let corpus_first_run = &f.main_kind[0];
         assert_eq!(corpus_first_run.1.len(), 30);
-        assert!(f.use_log.iter().any(|(_, _, j)| *j == 2), "the two spare slots were used");
+        assert!(
+            f.use_log.iter().any(|(_, _, j)| *j == 2),
+            "the two spare slots were used"
+        );
     }
 
     #[test]
@@ -1649,13 +2464,38 @@ pub(crate) mod tests {
         f.flaky.insert("test-04.sh".into());
         let mut ops = Ops::default();
         ops.touch.insert("test-04.sh".into(), vec!["m2".into()]);
-        let end = attribute_round(&mut f, &mut ops, &corpus(6), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(6),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3));
         assert_eq!(ops.deleted, vec![vec!["test-04.sh".to_string()]]);
-        let proofs: Vec<_> = f.jobs.iter().filter(|(j, _, _)| j.id >= FLIP_JOB_BASE).map(|(j, _, _)| j.removal.clone()).collect();
-        assert_eq!(proofs.len(), 4, "two alone, the base, one touching member: {proofs:?}");
-        assert!(proofs.contains(&vec!["m1".to_string(), "m3".to_string()]), "the touching member alone: {proofs:?}");
-        assert!(proofs.contains(&vec!["m1".to_string(), "m2".to_string(), "m3".to_string()]), "the base alone: {proofs:?}");
+        let proofs: Vec<_> = f
+            .jobs
+            .iter()
+            .filter(|(j, _, _)| j.id >= FLIP_JOB_BASE)
+            .map(|(j, _, _)| j.removal.clone())
+            .collect();
+        assert_eq!(
+            proofs.len(),
+            4,
+            "two alone, the base, one touching member: {proofs:?}"
+        );
+        assert!(
+            proofs.contains(&vec!["m1".to_string(), "m3".to_string()]),
+            "the touching member alone: {proofs:?}"
+        );
+        assert!(
+            proofs.contains(&vec!["m1".to_string(), "m2".to_string(), "m3".to_string()]),
+            "the base alone: {proofs:?}"
+        );
     }
 
     #[test]
@@ -1664,8 +2504,21 @@ pub(crate) mod tests {
         f.flaky.insert("test-04.sh".into());
         f.flips_again.insert("test-04.sh".into());
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(6), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3), "{end:?}");
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(6),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3),
+            "{end:?}"
+        );
         assert_eq!(ops.deleted, vec![vec!["test-04.sh".to_string()]]);
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
@@ -1674,7 +2527,17 @@ pub(crate) mod tests {
     fn a_round_whose_every_member_is_ejected_ends_emptied_not_blocked() {
         let mut f = Fake::new(breaks("m1", "test-01.sh"));
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            vec![member("m1")],
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(end, RoundEnd::Emptied("round emptied by ejection".into()));
         assert_eq!(ops.ejected.len(), 1);
     }
@@ -1690,9 +2553,26 @@ pub(crate) mod tests {
         });
         f.flaky.insert("test-04.sh".into());
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(6), vec![member("m1")], Budget { slots: 1, maxpar: 1 }).unwrap();
-        assert_eq!(end, RoundEnd::Emptied("round emptied by ejection".into()), "{end:?}");
-        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-04.sh".to_string()])]);
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(6),
+            vec![member("m1")],
+            Budget {
+                slots: 1,
+                maxpar: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            end,
+            RoundEnd::Emptied("round emptied by ejection".into()),
+            "{end:?}"
+        );
+        assert_eq!(
+            ops.ejected,
+            vec![("m1".to_string(), vec!["test-04.sh".to_string()])]
+        );
         assert!(ops.deleted.is_empty());
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
@@ -1702,7 +2582,17 @@ pub(crate) mod tests {
         let mut f = Fake::new(|s, tree| s == "test-04.sh" && tree.is_empty());
         f.flaky.insert("test-04.sh".into());
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(6), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(6),
+            vec![member("m1")],
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
         assert!(ops.ejected.is_empty());
     }
@@ -1712,10 +2602,23 @@ pub(crate) mod tests {
         let mut f = Fake::new(|s, tree| s == "test-04.sh" && tree.is_empty());
         f.flaky.insert("test-04.sh".into());
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(6), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(6),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
         assert!(ops.deleted.is_empty());
-        assert_eq!(ops.incidents, vec![("unattributed".to_string(), vec!["test-04.sh".to_string()])]);
+        assert_eq!(
+            ops.incidents,
+            vec![("unattributed".to_string(), vec!["test-04.sh".to_string()])]
+        );
     }
 
     #[test]
@@ -1726,11 +2629,29 @@ pub(crate) mod tests {
             _ => false,
         });
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(8), three(), Budget { slots: 4, maxpar: 2 }).unwrap();
-        let all = |pick: fn(&Decision) -> Vec<String>| -> Vec<String> { ops.recorded.iter().flat_map(|(_, d)| pick(d)).collect() };
-        assert_eq!(ops.recorded[0].1.owners.get("m3"), Some(&vec!["test-01.sh".to_string()]));
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(8),
+            three(),
+            Budget {
+                slots: 4,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        let all = |pick: fn(&Decision) -> Vec<String>| -> Vec<String> {
+            ops.recorded.iter().flat_map(|(_, d)| pick(d)).collect()
+        };
+        assert_eq!(
+            ops.recorded[0].1.owners.get("m3"),
+            Some(&vec!["test-01.sh".to_string()])
+        );
         assert_eq!(all(|d| d.base.clone()), vec!["test-02.sh".to_string()]);
-        assert_eq!(ops.incidents, vec![("base".to_string(), vec!["test-02.sh".to_string()])]);
+        assert_eq!(
+            ops.incidents,
+            vec![("base".to_string(), vec!["test-02.sh".to_string()])]
+        );
         assert!(matches!(end, RoundEnd::Land { .. }));
     }
 
@@ -1739,7 +2660,17 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.flaky.insert("test-04.sh".into());
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(8), three(), Budget { slots: 4, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(8),
+            three(),
+            Budget {
+                slots: 4,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(f.stopped, 0);
         assert!(ops.preempts.is_empty() && ops.ejected.is_empty());
         assert_eq!(ops.recorded[0].1.flaky, vec!["test-04.sh".to_string()]);
@@ -1755,49 +2686,129 @@ pub(crate) mod tests {
         });
         let mut ops = Ops::default();
         let members = vec![member("m1"), member("m2"), member("m3"), member("m4")];
-        let end = attribute_round(&mut f, &mut ops, &corpus(10), members, Budget { slots: 5, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(10),
+            members,
+            Budget {
+                slots: 5,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         let mut ej: Vec<String> = ops.ejected.iter().map(|(id, _)| id.clone()).collect();
         ej.sort();
         assert_eq!(ej, vec!["m1".to_string(), "m3".to_string()]);
-        assert_eq!(ops.rebuilt.last(), Some(&vec!["m2".to_string(), "m4".to_string()]));
+        assert_eq!(
+            ops.rebuilt.last(),
+            Some(&vec!["m2".to_string(), "m4".to_string()])
+        );
         assert_eq!(f.stopped, 2, "each owner stopped the pass it was found in");
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2));
     }
 
     #[test]
-    fn a_red_pass_with_menders_takes_its_next_pass_from_their_outcomes_and_ejects_only_the_returned() {
+    fn a_red_pass_with_menders_takes_its_next_pass_from_their_outcomes_and_ejects_only_the_returned(
+    ) {
         use crate::mender::{Left, Next};
         let mut f = Fake::new(|s, tree| match s {
             "test-03.sh" => tree.contains("m1") && tree.contains("m3"),
             _ => false,
         });
         let mut ops = Ops::default();
-        let mended = Member { tip: "m1-mended".into(), ..member("m1") };
-        ops.menders = vec![Next::Pass { members: vec![mended, member("m2")], left: vec![Left { id: "m3".into(), why: "returned".into() }], retry: false }];
-        let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 8, maxpar: 2 }).unwrap();
-        assert_eq!(ops.ejected[0], ("m3".to_string(), vec!["test-03.sh".to_string()]));
+        let mended = Member {
+            tip: "m1-mended".into(),
+            ..member("m1")
+        };
+        ops.menders = vec![Next::Pass {
+            members: vec![mended, member("m2")],
+            left: vec![Left {
+                id: "m3".into(),
+                why: "returned".into(),
+            }],
+            retry: false,
+        }];
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(10),
+            three(),
+            Budget {
+                slots: 8,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected[0],
+            ("m3".to_string(), vec!["test-03.sh".to_string()])
+        );
         assert_eq!(ops.rebuilt[0], vec!["m1".to_string(), "m2".to_string()]);
-        assert_eq!(f.main_kind[1], (MainKind::Verify, vec!["test-03.sh".into()]));
+        assert_eq!(
+            f.main_kind[1],
+            (MainKind::Verify, vec!["test-03.sh".into()])
+        );
         assert!(matches!(end, RoundEnd::Land { .. } | RoundEnd::Blocked(_)));
     }
 
     #[test]
-    fn a_mender_pass_that_returns_the_adder_does_not_verify_the_suite_it_adds_on_the_tree_without_it() {
+    fn a_mender_pass_that_returns_the_adder_does_not_verify_the_suite_it_adds_on_the_tree_without_it(
+    ) {
         use crate::mender::{Left, Next};
-        let mut f = Fake::new(|s, tree| s == "test-03.sh" && tree.contains("m1") && tree.contains("m3"));
+        let mut f =
+            Fake::new(|s, tree| s == "test-03.sh" && tree.contains("m1") && tree.contains("m3"));
         f.added_by = adds("test-03.sh", &["m3"]);
-        let menders = vec![Next::Pass { members: vec![member("m1"), member("m2")], left: vec![Left { id: "m3".into(), why: "returned".into() }], retry: false }];
-        let mut ops = Ops { menders, adds: adds("test-03.sh", &["m3"]), ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 8, maxpar: 2 }).unwrap();
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2), "{end:?}");
+        let menders = vec![Next::Pass {
+            members: vec![member("m1"), member("m2")],
+            left: vec![Left {
+                id: "m3".into(),
+                why: "returned".into(),
+            }],
+            retry: false,
+        }];
+        let mut ops = Ops {
+            menders,
+            adds: adds("test-03.sh", &["m3"]),
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(10),
+            three(),
+            Budget {
+                slots: 8,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2),
+            "{end:?}"
+        );
     }
 
     #[test]
     fn a_page_from_the_menders_stops_the_round() {
         use crate::mender::Next;
-        let mut f = Fake::new(|s, tree| s == "test-01.sh" && tree.contains("m1") && tree.contains("m3"));
-        let mut ops = Ops { menders: vec![Next::Stop { page: "box".into() }], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 8, maxpar: 2 }).unwrap();
+        let mut f =
+            Fake::new(|s, tree| s == "test-01.sh" && tree.contains("m1") && tree.contains("m3"));
+        let mut ops = Ops {
+            menders: vec![Next::Stop { page: "box".into() }],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(10),
+            three(),
+            Budget {
+                slots: 8,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(end, RoundEnd::Blocked("box".into()));
         assert!(ops.ejected.is_empty());
         assert_eq!(ops.incidents.len(), 1);
@@ -1809,11 +2820,25 @@ pub(crate) mod tests {
         let mut dep = member("m2");
         dep.stack.insert("m1".into(), "m1-tip".into());
         let mut ops = Ops::default();
-        attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), dep, member("m3")], Budget { slots: 4, maxpar: 2 }).unwrap();
+        attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            vec![member("m1"), dep, member("m3")],
+            Budget {
+                slots: 4,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         let ids: Vec<&str> = ops.ejected.iter().map(|(i, _)| i.as_str()).collect();
         assert_eq!(ids, ["m1", "m2"]);
         assert_eq!(ops.rebuilt, vec![vec!["m3".to_string()]]);
-        assert_eq!(ops.owner_flags, [("m1".to_string(), true), ("m2".to_string(), false)], "the owner keeps its charge; the dependent is collateral");
+        assert_eq!(
+            ops.owner_flags,
+            [("m1".to_string(), true), ("m2".to_string(), false)],
+            "the owner keeps its charge; the dependent is collateral"
+        );
     }
 
     #[test]
@@ -1821,7 +2846,17 @@ pub(crate) mod tests {
         let mut f = Fake::new(|s, _| s == "test-06.sh");
         f.flaky.insert("test-02.sh".into());
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(8), three(), Budget { slots: 4, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(8),
+            three(),
+            Budget {
+                slots: 4,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(ops.ejected.is_empty());
         assert!(ops.rebuilt.is_empty());
         assert_eq!(f.main_kind.len(), 1, "no verification run");
@@ -1834,10 +2869,29 @@ pub(crate) mod tests {
     fn an_integration_red_is_fixed_in_the_round_and_every_member_lands() {
         let fixed = std::rc::Rc::new(std::cell::Cell::new(false));
         let flag = fixed.clone();
-        let mut f = Fake::new(move |s, tree| s == "test-01.sh" && !flag.get() && tree.contains("m1") && tree.contains("m2"));
-        let mut ops = Ops { can_fix: true, fixed: Some(fixed), ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3), "{end:?}");
+        let mut f = Fake::new(move |s, tree| {
+            s == "test-01.sh" && !flag.get() && tree.contains("m1") && tree.contains("m2")
+        });
+        let mut ops = Ops {
+            can_fix: true,
+            fixed: Some(fixed),
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3),
+            "{end:?}"
+        );
         assert_eq!(ops.fix_calls, 1);
         assert!(ops.ejected.is_empty());
         assert!(ops.incidents.is_empty());
@@ -1845,12 +2899,29 @@ pub(crate) mod tests {
 
     #[test]
     fn an_integration_red_the_fix_does_not_clear_is_held_not_ejected() {
-        let mut f = Fake::new(|s, tree| s == "test-01.sh" && tree.contains("m1") && tree.contains("m2"));
-        let mut ops = Ops { can_fix: true, ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let mut f =
+            Fake::new(|s, tree| s == "test-01.sh" && tree.contains("m1") && tree.contains("m2"));
+        let mut ops = Ops {
+            can_fix: true,
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
         assert_eq!(ops.fix_calls, 1, "the fix is tried once");
-        assert_eq!(ops.incidents, vec![("integration".to_string(), vec!["test-01.sh".to_string()])]);
+        assert_eq!(
+            ops.incidents,
+            vec![("integration".to_string(), vec!["test-01.sh".to_string()])]
+        );
         assert!(ops.ejected.is_empty());
     }
 
@@ -1858,27 +2929,55 @@ pub(crate) mod tests {
         Box::new(move |tree| {
             tree.contains(culprit).then(|| FilterRed {
                 name: "spira-lint".into(),
-                named: vec![(culprit.to_string(), format!("member={culprit} ffx-vocabulary: dwarf/src/lib.rs:26: the term \"banned\""))],
+                named: vec![(
+                    culprit.to_string(),
+                    format!(
+                        "member={culprit} ffx-vocabulary: dwarf/src/lib.rs:26: the term \"banned\""
+                    ),
+                )],
                 failed: vec![],
             })
         })
     }
 
-    const FAILING: [&str; 2] = ["FAIL loom factory::tests::a_refused_dwell_blinds", "FAIL loom factory::tests::a_round_open_elsewhere"];
+    const FAILING: [&str; 2] = [
+        "FAIL loom factory::tests::a_refused_dwell_blinds",
+        "FAIL loom factory::tests::a_round_open_elsewhere",
+    ];
 
     fn unit_red_when(culprit: &'static str) -> FilterFn {
-        Box::new(move |tree| tree.contains(culprit).then(|| FilterRed { name: "unit-tests".into(), named: vec![], failed: FAILING.iter().map(|l| l.to_string()).collect() }))
+        Box::new(move |tree| {
+            tree.contains(culprit).then(|| FilterRed {
+                name: "unit-tests".into(),
+                named: vec![],
+                failed: FAILING.iter().map(|l| l.to_string()).collect(),
+            })
+        })
     }
 
     fn loom_graph() -> PackageGraph {
         PackageGraph {
-            dirs: [("loom", "loom"), ("runtime", "spira-runtime"), ("gate", "gate")].iter().map(|(p, d)| (p.to_string(), d.to_string())).collect(),
-            deps: std::collections::BTreeMap::from([("loom".to_string(), vec!["runtime".to_string()])]),
+            dirs: [
+                ("loom", "loom"),
+                ("runtime", "spira-runtime"),
+                ("gate", "gate"),
+            ]
+            .iter()
+            .map(|(p, d)| (p.to_string(), d.to_string()))
+            .collect(),
+            deps: std::collections::BTreeMap::from([(
+                "loom".to_string(),
+                vec!["runtime".to_string()],
+            )]),
         }
     }
 
     fn diff_of(id: &str, path: &str) -> MemberDiff {
-        MemberDiff { id: id.into(), paths: vec![path.into()], added: String::new() }
+        MemberDiff {
+            id: id.into(),
+            paths: vec![path.into()],
+            added: String::new(),
+        }
     }
 
     fn four() -> Vec<Member> {
@@ -1886,47 +2985,126 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_unit_red_in_a_package_only_the_last_members_dependency_touches_ejects_that_member_and_no_other() {
+    fn a_unit_red_in_a_package_only_the_last_members_dependency_touches_ejects_that_member_and_no_other(
+    ) {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(unit_red_when("m4"));
         let mut ops = Ops {
             graph: Some(loom_graph()),
-            diffs: vec![diff_of("m1", "gate/src/engine.rs"), diff_of("m2", "docs/x.md"), diff_of("m3", "gate/src/tests.rs"), diff_of("m4", "spira-runtime/src/tasks/e/watch.rs")],
+            diffs: vec![
+                diff_of("m1", "gate/src/engine.rs"),
+                diff_of("m2", "docs/x.md"),
+                diff_of("m3", "gate/src/tests.rs"),
+                diff_of("m4", "spira-runtime/src/tasks/e/watch.rs"),
+            ],
             ..Ops::default()
         };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert_eq!(ops.ejected, vec![("m4".to_string(), vec!["unit-tests".to_string()])]);
-        assert!(f.probes.is_empty(), "a mapped red runs no subset: {:?}", f.probes);
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            four(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected,
+            vec![("m4".to_string(), vec!["unit-tests".to_string()])]
+        );
+        assert!(
+            f.probes.is_empty(),
+            "a mapped red runs no subset: {:?}",
+            f.probes
+        );
         let note = &ops.eject_evidence[0].1;
-        assert!(note.contains("mapped by package") && FAILING.iter().all(|l| note.contains(l)), "{note}");
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3), "{end:?}");
+        assert!(
+            note.contains("mapped by package") && FAILING.iter().all(|l| note.contains(l)),
+            "{note}"
+        );
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3),
+            "{end:?}"
+        );
     }
 
     #[test]
-    fn a_unit_red_no_member_maps_to_runs_the_failing_packages_on_subsets_and_ejects_only_the_red_one() {
+    fn a_unit_red_no_member_maps_to_runs_the_failing_packages_on_subsets_and_ejects_only_the_red_one(
+    ) {
         let mut f = Fake::new(|_, _| false);
         f.bisects = true;
         f.filter = Some(unit_red_when("m3"));
         let mut ops = Ops {
             graph: Some(loom_graph()),
-            diffs: vec![diff_of("m1", "gate/src/engine.rs"), diff_of("m2", "docs/x.md"), diff_of("m3", "scripts/odd.sh"), diff_of("m4", "gate/src/tests.rs")],
+            diffs: vec![
+                diff_of("m1", "gate/src/engine.rs"),
+                diff_of("m2", "docs/x.md"),
+                diff_of("m3", "scripts/odd.sh"),
+                diff_of("m4", "gate/src/tests.rs"),
+            ],
             ..Ops::default()
         };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert_eq!(ops.ejected, vec![("m3".to_string(), vec!["unit-tests".to_string()])]);
-        assert!(!f.probes.is_empty() && f.scoped.iter().all(|p| p == &["loom".to_string()]), "{:?} {:?}", f.probes, f.scoped);
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            four(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected,
+            vec![("m3".to_string(), vec!["unit-tests".to_string()])]
+        );
+        assert!(
+            !f.probes.is_empty() && f.scoped.iter().all(|p| p == &["loom".to_string()]),
+            "{:?} {:?}",
+            f.probes,
+            f.scoped
+        );
         let note = &ops.eject_evidence[0].1;
-        assert!(note.contains("bisected by running member subsets") && FAILING.iter().all(|l| note.contains(l)), "{note}");
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3), "{end:?}");
+        assert!(
+            note.contains("bisected by running member subsets")
+                && FAILING.iter().all(|l| note.contains(l)),
+            "{note}"
+        );
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3),
+            "{end:?}"
+        );
     }
 
     #[test]
     fn a_unit_red_the_base_has_too_ejects_nobody_by_list_position() {
         let mut f = Fake::new(|_, _| false);
         f.bisects = true;
-        f.filter = Some(Box::new(|_| Some(FilterRed { name: "unit-tests".into(), named: vec![], failed: vec![FAILING[0].to_string()] })));
-        let mut ops = Ops { graph: Some(loom_graph()), ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        f.filter = Some(Box::new(|_| {
+            Some(FilterRed {
+                name: "unit-tests".into(),
+                named: vec![],
+                failed: vec![FAILING[0].to_string()],
+            })
+        }));
+        let mut ops = Ops {
+            graph: Some(loom_graph()),
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            four(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
     }
@@ -1936,13 +3114,39 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(lint_naming("m2"));
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
-        assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["m1", "m3"]);
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["spira-lint".to_string()])]);
-        assert!(ops.eject_evidence[0].1.contains("ffx-vocabulary"), "{:?}", ops.eject_evidence);
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        let RoundEnd::Land { members, .. } = end else {
+            panic!("{end:?}")
+        };
+        assert_eq!(
+            members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["m1", "m3"]
+        );
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec!["spira-lint".to_string()])]
+        );
+        assert!(
+            ops.eject_evidence[0].1.contains("ffx-vocabulary"),
+            "{:?}",
+            ops.eject_evidence
+        );
         assert!(ops.incidents.is_empty());
-        assert_eq!(f.main_kind.len(), 2, "the corpus ran again on the survivors");
+        assert_eq!(
+            f.main_kind.len(),
+            2,
+            "the corpus ran again on the survivors"
+        );
         assert_eq!(f.main_kind[1], (MainKind::Corpus, corpus(3)));
     }
 
@@ -1953,34 +3157,93 @@ pub(crate) mod tests {
         let mut ops = Ops::default();
         let mut ms = three();
         ms[1].stack.insert("m1".into(), "m1-tip".into());
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), ms, Budget { slots: 6, maxpar: 2 }).unwrap();
-        let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
-        assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["m3"]);
-        assert_eq!(ops.owner_flags, vec![("m1".to_string(), true), ("m2".to_string(), false)]);
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            ms,
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        let RoundEnd::Land { members, .. } = end else {
+            panic!("{end:?}")
+        };
+        assert_eq!(
+            members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["m3"]
+        );
+        assert_eq!(
+            ops.owner_flags,
+            vec![("m1".to_string(), true), ("m2".to_string(), false)]
+        );
     }
 
     const E0063: &str = "error[E0063]: missing field `directed` in initializer of `Kind`\n --> lc/src/callers.rs:726:13\n";
 
     fn md(id: &str, path: &str, added: &str) -> MemberDiff {
-        MemberDiff { id: id.into(), paths: vec![path.into()], added: added.into() }
+        MemberDiff {
+            id: id.into(),
+            paths: vec![path.into()],
+            added: added.into(),
+        }
     }
 
     /// A tree that fails to build while every named member is in it.
     fn broken_by(all: &'static [&'static str]) -> BuildFn {
-        Box::new(move |tree| all.iter().all(|m| tree.contains(*m)).then(|| E0063.to_string()))
+        Box::new(move |tree| {
+            all.iter()
+                .all(|m| tree.contains(*m))
+                .then(|| E0063.to_string())
+        })
     }
 
     #[test]
     fn a_workspace_build_red_at_a_file_one_member_touches_ejects_it_and_recuts_without_a_pause() {
         let mut f = Fake::new(|_, _| false);
         f.compiler = Some(broken_by(&["m2"]));
-        let mut ops = Ops { diffs: vec![md("m1", "doc/x.md", "+p\n"), md("m2", "lc/src/callers.rs", "+x\n"), md("m3", "doc/y.md", "+q\n")], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
-        assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["m1", "m3"]);
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
-        assert!(ops.eject_evidence[0].1.contains("callers.rs:726"), "{:?}", ops.eject_evidence);
-        assert!(ops.incidents.is_empty(), "a mapped build red writes no pause: {:?}", ops.incidents);
+        let mut ops = Ops {
+            diffs: vec![
+                md("m1", "doc/x.md", "+p\n"),
+                md("m2", "lc/src/callers.rs", "+x\n"),
+                md("m3", "doc/y.md", "+q\n"),
+            ],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        let RoundEnd::Land { members, .. } = end else {
+            panic!("{end:?}")
+        };
+        assert_eq!(
+            members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["m1", "m3"]
+        );
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec![WORKSPACE_BUILD.to_string()])]
+        );
+        assert!(
+            ops.eject_evidence[0].1.contains("callers.rs:726"),
+            "{:?}",
+            ops.eject_evidence
+        );
+        assert!(
+            ops.incidents.is_empty(),
+            "a mapped build red writes no pause: {:?}",
+            ops.incidents
+        );
     }
 
     const IMAGE_RED: &str = "build-error: round image build 42553374751 failed at build / Build, image and tag\nround image setup failed rc=1\n";
@@ -1995,11 +3258,35 @@ pub(crate) mod tests {
     fn testenv_killed_by_a_signal_ejects_the_one_member_that_changes_the_round_vm() {
         let mut f = Fake::new(|_, _| false);
         f.aborts_with = Some(("m2".into(), ABORT.into()));
-        let mut ops = Ops { diffs: vec![md("m1", "doc/x.md", "+p\n"), md("m2", "round-vm/src/run.rs", "+x\n"), md("m3", "doc/y.md", "+q\n")], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let mut ops = Ops {
+            diffs: vec![
+                md("m1", "doc/x.md", "+p\n"),
+                md("m2", "round-vm/src/run.rs", "+x\n"),
+                md("m3", "doc/y.md", "+q\n"),
+            ],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![RUNNER_ABORT.to_string()])]);
-        assert!(ops.eject_evidence[0].1.contains("rc=134"), "{:?}", ops.eject_evidence);
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec![RUNNER_ABORT.to_string()])]
+        );
+        assert!(
+            ops.eject_evidence[0].1.contains("rc=134"),
+            "{:?}",
+            ops.eject_evidence
+        );
     }
 
     #[test]
@@ -2007,46 +3294,131 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.added_by = adds("test-01.sh", &["m2"]);
         f.aborts_with = Some(("m2".into(), ABORT.into()));
-        let mut ops = Ops { adds: adds("test-01.sh", &["m2"]), diffs: vec![md("m1", "doc/x.md", "+p\n"), md("m2", "round-vm/src/run.rs", "+x\n"), md("m3", "doc/y.md", "+q\n")], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let mut ops = Ops {
+            adds: adds("test-01.sh", &["m2"]),
+            diffs: vec![
+                md("m1", "doc/x.md", "+p\n"),
+                md("m2", "round-vm/src/run.rs", "+x\n"),
+                md("m3", "doc/y.md", "+q\n"),
+            ],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
     }
 
     #[test]
-    fn testenv_killed_by_a_signal_with_no_or_several_runner_touching_members_stays_a_harness_fault() {
-        for diffs in [vec![md("m1", "doc/x.md", "+p\n")], vec![md("m1", "round-vm/a.rs", "+p\n"), md("m2", "testenv/b.rs", "+p\n")]] {
+    fn testenv_killed_by_a_signal_with_no_or_several_runner_touching_members_stays_a_harness_fault()
+    {
+        for diffs in [
+            vec![md("m1", "doc/x.md", "+p\n")],
+            vec![
+                md("m1", "round-vm/a.rs", "+p\n"),
+                md("m2", "testenv/b.rs", "+p\n"),
+            ],
+        ] {
             let mut f = Fake::new(|_, _| false);
             f.aborts_with = Some(("m1".into(), ABORT.into()));
-            let mut ops = Ops { diffs, ..Ops::default() };
-            let err = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap_err();
+            let mut ops = Ops {
+                diffs,
+                ..Ops::default()
+            };
+            let err = attribute_round(
+                &mut f,
+                &mut ops,
+                &corpus(3),
+                three(),
+                Budget {
+                    slots: 6,
+                    maxpar: 2,
+                },
+            )
+            .unwrap_err();
             assert!(err.contains("rc=134"), "{err}");
             assert!(ops.ejected.is_empty());
         }
     }
 
     #[test]
-    fn a_testenv_abort_no_member_touches_the_runner_for_ejects_the_member_whose_tree_alone_aborts_it() {
+    fn a_testenv_abort_no_member_touches_the_runner_for_ejects_the_member_whose_tree_alone_aborts_it(
+    ) {
         let mut f = Fake::new(|_, _| false);
         f.aborts_with = Some(("m2".into(), ABORT.into()));
         f.bisects = true;
-        let mut ops = Ops { diffs: vec![md("m1", "doc/x.md", "+p\n"), md("m2", "doc/z.md", "+x\n"), md("m3", "doc/y.md", "+q\n")], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let mut ops = Ops {
+            diffs: vec![
+                md("m1", "doc/x.md", "+p\n"),
+                md("m2", "doc/z.md", "+x\n"),
+                md("m3", "doc/y.md", "+q\n"),
+            ],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![RUNNER_ABORT.to_string()])]);
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec![RUNNER_ABORT.to_string()])]
+        );
         assert_eq!(ops.owner_flags, vec![("m2".to_string(), true)]);
-        assert!(ops.eject_evidence[0].1.contains("rc=134") && ops.eject_evidence[0].1.contains("bisected"), "{:?}", ops.eject_evidence);
+        assert!(
+            ops.eject_evidence[0].1.contains("rc=134")
+                && ops.eject_evidence[0].1.contains("bisected"),
+            "{:?}",
+            ops.eject_evidence
+        );
         assert!(ops.judged.is_empty() && ops.incidents.is_empty());
     }
 
     #[test]
-    fn a_testenv_abort_several_members_touch_the_runner_for_is_bisected_to_the_member_that_aborts_it() {
+    fn a_testenv_abort_several_members_touch_the_runner_for_is_bisected_to_the_member_that_aborts_it(
+    ) {
         let mut f = Fake::new(|_, _| false);
         f.aborts_with = Some(("m3".into(), ABORT.into()));
         f.bisects = true;
-        let mut ops = Ops { diffs: vec![md("m1", "round-vm/a.rs", "+p\n"), md("m2", "testenv/b.rs", "+p\n"), md("m3", "doc/y.md", "+q\n")], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let mut ops = Ops {
+            diffs: vec![
+                md("m1", "round-vm/a.rs", "+p\n"),
+                md("m2", "testenv/b.rs", "+p\n"),
+                md("m3", "doc/y.md", "+q\n"),
+            ],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(land_ids(end), vec!["m1", "m2"]);
-        assert_eq!(ops.ejected, vec![("m3".to_string(), vec![RUNNER_ABORT.to_string()])]);
+        assert_eq!(
+            ops.ejected,
+            vec![("m3".to_string(), vec![RUNNER_ABORT.to_string()])]
+        );
     }
 
     #[test]
@@ -2054,7 +3426,17 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.aborts_with = Some(("m1".into(), ABORT.into()));
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            vec![member("m1")],
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
         assert_eq!(ops.owner_flags, vec![("m1".to_string(), true)]);
         assert!(f.probes.is_empty());
@@ -2067,7 +3449,17 @@ pub(crate) mod tests {
         f.dur.insert("test-00.sh".into(), 2);
         f.abandoned_at = Some(1);
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(40), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(40),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 4,
+            },
+        )
+        .unwrap();
         assert_eq!(end, RoundEnd::Abandoned);
         assert!(f.t <= 2, "ended at t={}, abandoned at t=1", f.t);
         assert!(f.jobs.is_empty(), "no attribution job launched");
@@ -2082,7 +3474,17 @@ pub(crate) mod tests {
         f.compiler = Some(Box::new(|_| Some(IMAGE_RED.to_string())));
         f.abandoned_after_starts = Some(1);
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(8), three(), Budget { slots: 4, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(8),
+            three(),
+            Budget {
+                slots: 4,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(end, RoundEnd::Abandoned);
         assert_eq!(f.main_kind.len(), 1, "the retry leg never started");
         assert!(ops.incidents.is_empty(), "an abandoned round files nothing");
@@ -2095,23 +3497,57 @@ pub(crate) mod tests {
         f.bisects = true;
         f.abandoned_after_starts = Some(1);
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(8), three(), Budget { slots: 4, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(8),
+            three(),
+            Budget {
+                slots: 4,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(end, RoundEnd::Abandoned);
         assert!(f.probes.is_empty(), "no probe leg launched");
     }
 
     #[test]
-    fn an_image_build_red_ejects_the_one_member_whose_diff_touches_the_image_recipe_without_a_pause() {
+    fn an_image_build_red_ejects_the_one_member_whose_diff_touches_the_image_recipe_without_a_pause(
+    ) {
         let mut f = Fake::new(|_, _| false);
         f.compiler = Some(image_broken_while("m2"));
         let mut ops = Ops {
-            diffs: vec![md("m1", "doc/x.md", "+p\n"), md("m2", ".github/workflows/round-ami-build.yml", "+x\n"), md("m3", "doc/y.md", "+q\n")],
+            diffs: vec![
+                md("m1", "doc/x.md", "+p\n"),
+                md("m2", ".github/workflows/round-ami-build.yml", "+x\n"),
+                md("m3", "doc/y.md", "+q\n"),
+            ],
             ..Ops::default()
         };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
-        assert!(ops.eject_evidence[0].1.contains("round image setup failed rc=1"), "{:?}", ops.eject_evidence);
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec![WORKSPACE_BUILD.to_string()])]
+        );
+        assert!(
+            ops.eject_evidence[0]
+                .1
+                .contains("round image setup failed rc=1"),
+            "{:?}",
+            ops.eject_evidence
+        );
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
@@ -2119,20 +3555,55 @@ pub(crate) mod tests {
     fn an_image_build_red_no_member_touches_the_recipe_for_is_retried_once_then_filed() {
         let mut f = Fake::new(|_, _| false);
         f.compiler = Some(image_broken_while("m1"));
-        let mut ops = Ops { diffs: vec![md("m1", "doc/x.md", "+p\n")], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let mut ops = Ops {
+            diffs: vec![md("m1", "doc/x.md", "+p\n")],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
         assert_eq!(f.main_kind.len(), 2, "one retry of the same members");
         assert!(ops.ejected.is_empty());
-        assert_eq!(ops.incidents, vec![("workspace-build".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
+        assert_eq!(
+            ops.incidents,
+            vec![(
+                "workspace-build".to_string(),
+                vec![WORKSPACE_BUILD.to_string()]
+            )]
+        );
     }
 
     #[test]
     fn an_image_build_red_with_two_recipe_touching_members_ejects_neither_and_files() {
         let mut f = Fake::new(|_, _| false);
         f.compiler = Some(image_broken_while("m1"));
-        let mut ops = Ops { diffs: vec![md("m1", "flake.nix", "+a\n"), md("m2", "rust-toolchain.toml", "+b\n")], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let mut ops = Ops {
+            diffs: vec![
+                md("m1", "flake.nix", "+a\n"),
+                md("m2", "rust-toolchain.toml", "+b\n"),
+            ],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
         assert!(ops.ejected.is_empty());
         assert_eq!(ops.incidents.len(), 1);
@@ -2142,9 +3613,22 @@ pub(crate) mod tests {
     fn an_image_build_red_whose_recipe_toucher_is_the_only_member_ejects_it_and_files() {
         let mut f = Fake::new(|_, _| false);
         f.compiler = Some(image_broken_while("m1"));
-        let mut ops = Ops { diffs: vec![md("m1", "flake.nix", "+a\n")], ..Ops::default() };
+        let mut ops = Ops {
+            diffs: vec![md("m1", "flake.nix", "+a\n")],
+            ..Ops::default()
+        };
         let only = vec![three()[0].clone()];
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), only, Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            only,
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
         assert_eq!(ops.ejected.len(), 1);
     }
@@ -2153,9 +3637,24 @@ pub(crate) mod tests {
     fn an_image_build_red_that_clears_on_the_retry_lands_every_member() {
         let mut f = Fake::new(|_, _| false);
         let tried = std::cell::Cell::new(false);
-        f.compiler = Some(Box::new(move |_| (!tried.replace(true)).then(|| IMAGE_RED.to_string())));
-        let mut ops = Ops { diffs: vec![md("m1", "doc/x.md", "+p\n")], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        f.compiler = Some(Box::new(move |_| {
+            (!tried.replace(true)).then(|| IMAGE_RED.to_string())
+        }));
+        let mut ops = Ops {
+            diffs: vec![md("m1", "doc/x.md", "+p\n")],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
         assert!(ops.ejected.is_empty() && ops.incidents.is_empty());
     }
@@ -2164,15 +3663,36 @@ pub(crate) mod tests {
     fn a_workspace_build_red_naming_what_another_member_adds_sequences_the_caller_behind_it() {
         let mut f = Fake::new(|_, _| false);
         f.compiler = Some(broken_by(&["m1", "m2"]));
-        let mut ops = Ops { diffs: vec![
-            md("m1", "lc/src/events.rs", "+    directed: bool,\n"),
-            md("m2", "lc/src/callers.rs", "+    Kind::Claim { x: 1 }\n"),
-            md("m3", "doc/y.md", "+q\n"),
-        ], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
-        assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["m1", "m3"]);
-        assert_eq!(ops.sequenced, vec![("m2".to_string(), vec!["m1".to_string()])]);
+        let mut ops = Ops {
+            diffs: vec![
+                md("m1", "lc/src/events.rs", "+    directed: bool,\n"),
+                md("m2", "lc/src/callers.rs", "+    Kind::Claim { x: 1 }\n"),
+                md("m3", "doc/y.md", "+q\n"),
+            ],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        let RoundEnd::Land { members, .. } = end else {
+            panic!("{end:?}")
+        };
+        assert_eq!(
+            members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["m1", "m3"]
+        );
+        assert_eq!(
+            ops.sequenced,
+            vec![("m2".to_string(), vec!["m1".to_string()])]
+        );
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
@@ -2180,10 +3700,29 @@ pub(crate) mod tests {
     fn a_workspace_build_red_that_maps_to_no_member_still_files_the_incident() {
         let mut f = Fake::new(|_, _| false);
         f.compiler = Some(broken_by(&["m1"]));
-        let mut ops = Ops { diffs: vec![md("m1", "doc/x.md", "+p\n")], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let mut ops = Ops {
+            diffs: vec![md("m1", "doc/x.md", "+p\n")],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
-        assert_eq!(ops.incidents, vec![("workspace-build".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
+        assert_eq!(
+            ops.incidents,
+            vec![(
+                "workspace-build".to_string(),
+                vec![WORKSPACE_BUILD.to_string()]
+            )]
+        );
         assert!(ops.ejected.is_empty());
     }
 
@@ -2191,78 +3730,200 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.compiler = Some(broken_by(broken));
         f.bisects = true;
-        let ops = Ops { diffs: (1..=n).map(|i| md(&format!("m{i}"), "doc/x.md", "+p\n")).collect(), ..Ops::default() };
+        let ops = Ops {
+            diffs: (1..=n)
+                .map(|i| md(&format!("m{i}"), "doc/x.md", "+p\n"))
+                .collect(),
+            ..Ops::default()
+        };
         (f, ops)
     }
 
     fn land_ids(end: RoundEnd) -> Vec<String> {
-        let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
+        let RoundEnd::Land { members, .. } = end else {
+            panic!("{end:?}")
+        };
         members.iter().map(|m| m.id.clone()).collect()
     }
 
     #[test]
-    fn an_unmapped_workspace_build_red_that_one_member_breaks_alone_ejects_that_member_by_bisection() {
+    fn an_unmapped_workspace_build_red_that_one_member_breaks_alone_ejects_that_member_by_bisection(
+    ) {
         let (mut f, mut ops) = unmapped_build_red(&["m2"], 3);
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
-        assert!(ops.eject_evidence[0].1.contains("bisected"), "{:?}", ops.eject_evidence);
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec![WORKSPACE_BUILD.to_string()])]
+        );
+        assert!(
+            ops.eject_evidence[0].1.contains("bisected"),
+            "{:?}",
+            ops.eject_evidence
+        );
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
     #[test]
-    fn an_unmapped_workspace_build_red_that_only_a_pair_breaks_holds_the_later_member_behind_the_earlier() {
+    fn an_unmapped_workspace_build_red_that_only_a_pair_breaks_holds_the_later_member_behind_the_earlier(
+    ) {
         let (mut f, mut ops) = unmapped_build_red(&["m1", "m3"], 3);
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(land_ids(end), vec!["m1", "m2"]);
-        assert_eq!(ops.sequenced, vec![("m3".to_string(), vec!["m1".to_string()])]);
-        assert!(ops.eject_evidence[0].1.contains("fails to build only with m1 merged"), "{:?}", ops.eject_evidence);
+        assert_eq!(
+            ops.sequenced,
+            vec![("m3".to_string(), vec!["m1".to_string()])]
+        );
+        assert!(
+            ops.eject_evidence[0]
+                .1
+                .contains("fails to build only with m1 merged"),
+            "{:?}",
+            ops.eject_evidence
+        );
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
     #[test]
     fn an_unmapped_workspace_build_red_that_needs_three_members_is_still_filed() {
         let (mut f, mut ops) = unmapped_build_red(&["m1", "m2", "m3"], 3);
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
-        assert_eq!(ops.incidents, vec![("workspace-build".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
+        assert_eq!(
+            ops.incidents,
+            vec![(
+                "workspace-build".to_string(),
+                vec![WORKSPACE_BUILD.to_string()]
+            )]
+        );
         assert!(ops.ejected.is_empty() && ops.sequenced.is_empty());
     }
 
     #[test]
     fn bisecting_an_unmapped_workspace_build_red_builds_few_subsets() {
         let (mut f, mut ops) = unmapped_build_red(&["m7"], 8);
-        let ms: Vec<Member> = (1..=8).map(|i| Member { id: format!("m{i}"), ..three()[0].clone() }).collect();
-        attribute_round(&mut f, &mut ops, &corpus(3), ms, Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert_eq!(ops.ejected.iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), vec!["m7"]);
+        let ms: Vec<Member> = (1..=8)
+            .map(|i| Member {
+                id: format!("m{i}"),
+                ..three()[0].clone()
+            })
+            .collect();
+        attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            ms,
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected.iter().map(|e| e.0.as_str()).collect::<Vec<_>>(),
+            vec!["m7"]
+        );
         assert!(f.probes.len() <= 4, "{:?}", f.probes);
     }
 
     #[test]
     fn bisecting_an_unmapped_pair_in_eight_members_builds_at_most_two_searches_and_a_check() {
         let (mut f, mut ops) = unmapped_build_red(&["m2", "m7"], 8);
-        let ms: Vec<Member> = (1..=8).map(|i| Member { id: format!("m{i}"), ..three()[0].clone() }).collect();
-        attribute_round(&mut f, &mut ops, &corpus(3), ms, Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert_eq!(ops.sequenced, vec![("m7".to_string(), vec!["m2".to_string()])]);
+        let ms: Vec<Member> = (1..=8)
+            .map(|i| Member {
+                id: format!("m{i}"),
+                ..three()[0].clone()
+            })
+            .collect();
+        attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            ms,
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.sequenced,
+            vec![("m7".to_string(), vec!["m2".to_string()])]
+        );
         assert!(f.probes.len() <= 9, "{:?}", f.probes);
     }
 
     fn unit_red_together(culprits: &'static [&'static str]) -> FilterFn {
         Box::new(move |tree| {
-            culprits.iter().all(|c| tree.contains(*c)).then(|| FilterRed { name: "unit-tests".into(), named: vec![], failed: vec![] })
+            culprits
+                .iter()
+                .all(|c| tree.contains(*c))
+                .then(|| FilterRed {
+                    name: "unit-tests".into(),
+                    named: vec![],
+                    failed: vec![],
+                })
         })
     }
 
     #[test]
-    fn a_unit_test_red_only_a_pair_causes_holds_the_later_member_behind_the_earlier_and_lands_the_rest() {
+    fn a_unit_test_red_only_a_pair_causes_holds_the_later_member_behind_the_earlier_and_lands_the_rest(
+    ) {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(unit_red_together(&["m1", "m3"]));
         f.bisects = true;
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(land_ids(end), vec!["m1", "m2"]);
-        assert_eq!(ops.sequenced, vec![("m3".to_string(), vec!["m1".to_string()])]);
-        assert!(ops.eject_evidence[0].1.contains("red only with m1"), "{:?}", ops.eject_evidence);
+        assert_eq!(
+            ops.sequenced,
+            vec![("m3".to_string(), vec!["m1".to_string()])]
+        );
+        assert!(
+            ops.eject_evidence[0].1.contains("red only with m1"),
+            "{:?}",
+            ops.eject_evidence
+        );
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
@@ -2272,9 +3933,22 @@ pub(crate) mod tests {
         f.filter = Some(unit_red_together(&["m2"]));
         f.bisects = true;
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["unit-tests".to_string()])]);
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec!["unit-tests".to_string()])]
+        );
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
@@ -2284,11 +3958,25 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(Box::new(move |_| {
             seen.set(seen.get() + 1);
-            (seen.get() == 1).then(|| FilterRed { name: "unit-tests".into(), named: vec![], failed: vec![] })
+            (seen.get() == 1).then(|| FilterRed {
+                name: "unit-tests".into(),
+                named: vec![],
+                failed: vec![],
+            })
         }));
         f.bisects = true;
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
     }
 
@@ -2298,30 +3986,77 @@ pub(crate) mod tests {
         f.filter = Some(unit_red_together(&["m1", "m2", "m3"]));
         f.bisects = true;
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
-        assert_eq!(ops.incidents, vec![("unattributed".to_string(), vec!["unit-tests".to_string(), "run alone: base green, m1 green, m2 green, m3 green".to_string()])]);
+        assert_eq!(
+            ops.incidents,
+            vec![(
+                "unattributed".to_string(),
+                vec![
+                    "unit-tests".to_string(),
+                    "run alone: base green, m1 green, m2 green, m3 green".to_string()
+                ]
+            )]
+        );
     }
 
-    const INTEG_FAILING: [&str; 2] = ["FAIL dir:spira-runtime leg_lost::pauses", "FAIL dir:spira-runtime leg_lost::abandons"];
+    const INTEG_FAILING: [&str; 2] = [
+        "FAIL dir:spira-runtime leg_lost::pauses",
+        "FAIL dir:spira-runtime leg_lost::abandons",
+    ];
 
     fn integration_red_when(culprits: &'static [&'static str]) -> FilterFn {
         Box::new(move |tree| {
-            culprits.iter().all(|c| tree.contains(*c)).then(|| FilterRed { name: "integration-tests".into(), named: vec![], failed: INTEG_FAILING.iter().map(|l| l.to_string()).collect() })
+            culprits
+                .iter()
+                .all(|c| tree.contains(*c))
+                .then(|| FilterRed {
+                    name: "integration-tests".into(),
+                    named: vec![],
+                    failed: INTEG_FAILING.iter().map(|l| l.to_string()).collect(),
+                })
         })
     }
 
     #[test]
-    fn an_integration_red_in_a_crate_dir_only_one_members_diff_touches_ejects_that_member_and_certifies_the_rest() {
+    fn an_integration_red_in_a_crate_dir_only_one_members_diff_touches_ejects_that_member_and_certifies_the_rest(
+    ) {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(integration_red_when(&["m3"]));
         let mut ops = Ops {
             graph: Some(loom_graph()),
-            diffs: vec![diff_of("m1", "gate/src/engine.rs"), diff_of("m2", "docs/x.md"), diff_of("m3", "spira-runtime/src/tasks/a/batcher_local.rs")],
+            diffs: vec![
+                diff_of("m1", "gate/src/engine.rs"),
+                diff_of("m2", "docs/x.md"),
+                diff_of("m3", "spira-runtime/src/tasks/a/batcher_local.rs"),
+            ],
             ..Ops::default()
         };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert_eq!(ops.ejected, vec![("m3".to_string(), vec!["integration-tests".to_string()])]);
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected,
+            vec![("m3".to_string(), vec!["integration-tests".to_string()])]
+        );
         assert_eq!(land_ids(end), vec!["m1", "m2"]);
     }
 
@@ -2330,26 +4065,68 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.bisects = true;
         f.filter = Some(integration_red_when(&["m2"]));
-        let mut ops = Ops { graph: Some(loom_graph()), ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["integration-tests".to_string()])]);
-        assert!(f.scoped.iter().all(|p| p == &["runtime".to_string()]), "{:?}", f.scoped);
+        let mut ops = Ops {
+            graph: Some(loom_graph()),
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec!["integration-tests".to_string()])]
+        );
+        assert!(
+            f.scoped.iter().all(|p| p == &["runtime".to_string()]),
+            "{:?}",
+            f.scoped
+        );
         assert_eq!(land_ids(end), vec!["m1", "m3"]);
     }
 
     #[test]
-    fn an_integration_red_no_single_removal_fixes_is_left_open_and_pages_with_the_failing_test_names() {
+    fn an_integration_red_no_single_removal_fixes_is_left_open_and_pages_with_the_failing_test_names(
+    ) {
         let mut f = Fake::new(|_, _| false);
         f.bisects = true;
         f.filter = Some(integration_red_when(&["m1", "m2", "m3"]));
-        let mut ops = Ops { graph: Some(loom_graph()), ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        let RoundEnd::Blocked(why) = end else { panic!("{end:?}") };
+        let mut ops = Ops {
+            graph: Some(loom_graph()),
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        let RoundEnd::Blocked(why) = end else {
+            panic!("{end:?}")
+        };
         assert!(ops.ejected.is_empty());
-        assert!(why.contains("leg_lost::pauses") && why.contains("leg_lost::abandons"), "{why}");
+        assert!(
+            why.contains("leg_lost::pauses") && why.contains("leg_lost::abandons"),
+            "{why}"
+        );
         let (kind, named) = &ops.incidents[0];
         assert_eq!(kind, "unattributed");
-        assert!(named.iter().any(|n| n.contains("leg_lost::pauses")), "{named:?}");
+        assert!(
+            named.iter().any(|n| n.contains("leg_lost::pauses")),
+            "{named:?}"
+        );
     }
 
     #[test]
@@ -2357,42 +4134,141 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(lint_naming("m1"));
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            vec![member("m1")],
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
-        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["spira-lint".to_string()])]);
+        assert_eq!(
+            ops.ejected,
+            vec![("m1".to_string(), vec!["spira-lint".to_string()])]
+        );
     }
 
     #[test]
     fn sp_evwve7_a_filter_red_naming_no_member_ejects_the_only_member_of_the_round() {
         let mut f = Fake::new(|_, _| false);
-        f.filter = Some(Box::new(|_| Some(FilterRed { name: "integration-tests".into(), named: vec![], failed: vec![] })));
+        f.filter = Some(Box::new(|_| {
+            Some(FilterRed {
+                name: "integration-tests".into(),
+                named: vec![],
+                failed: vec![],
+            })
+        }));
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            vec![member("m1")],
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
-        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["integration-tests".to_string()])]);
+        assert_eq!(
+            ops.ejected,
+            vec![("m1".to_string(), vec!["integration-tests".to_string()])]
+        );
         assert_eq!(ops.owner_flags, vec![("m1".to_string(), true)]);
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
     #[test]
+    fn a_lint_red_naming_no_member_is_run_alone_and_ejects_the_member_whose_tree_is_red() {
+        let mut f = Fake::new(|_, _| false);
+        f.runs_alone = true;
+        f.filter = Some(Box::new(|tree| {
+            (tree.contains("m2") || tree.contains("m3")).then(|| FilterRed {
+                name: "spira-lint".into(),
+                named: vec![],
+                failed: vec![],
+            })
+        }));
+        let mut ops = Ops::default();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        let ejected: Vec<&str> = ops.ejected.iter().map(|(m, _)| m.as_str()).collect();
+        assert_eq!(ejected, ["m2", "m3"], "{:?}", ops.eject_evidence);
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 1),
+            "{end:?}"
+        );
+    }
+
+    #[test]
     fn a_lint_red_naming_no_member_is_filed_once_and_does_not_run_the_corpus_again() {
         let mut f = Fake::new(|_, _| false);
-        f.filter = Some(Box::new(|_| Some(FilterRed { name: "spira-lint".into(), named: vec![], failed: vec![] })));
+        f.filter = Some(Box::new(|_| {
+            Some(FilterRed {
+                name: "spira-lint".into(),
+                named: vec![],
+                failed: vec![],
+            })
+        }));
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
-        assert_eq!(ops.incidents, vec![("unattributed".to_string(), vec!["spira-lint".to_string()])]);
+        assert_eq!(
+            ops.incidents,
+            vec![("unattributed".to_string(), vec!["spira-lint".to_string()])]
+        );
         assert!(ops.ejected.is_empty());
         assert_eq!(f.main_kind.len(), 1);
     }
 
     #[test]
     fn an_unattributed_red_with_the_base_unmoved_goes_straight_to_the_judge() {
-        let mut f = Fake::new(|s, tree| s == "test-01.sh" && (tree.contains("m1") || tree.contains("m2")));
+        let mut f =
+            Fake::new(|s, tree| s == "test-01.sh" && (tree.contains("m1") || tree.contains("m2")));
         let mut ops = Ops::default();
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)));
-        assert_eq!(ops.judged, vec![(vec!["test-01.sh".to_string()], vec!["m1".to_string(), "m2".to_string(), "m3".to_string()])]);
+        assert_eq!(
+            ops.judged,
+            vec![(
+                vec!["test-01.sh".to_string()],
+                vec!["m1".to_string(), "m2".to_string(), "m3".to_string()]
+            )]
+        );
         assert!(ops.incidents.is_empty());
         assert!(ops.ejected.is_empty());
         assert_eq!(f.main_kind.len(), 1, "no retry: the base did not move");
@@ -2400,13 +4276,34 @@ pub(crate) mod tests {
 
     #[test]
     fn an_unattributed_red_is_retried_once_on_the_moved_base_then_judged() {
-        let mut f = Fake::new(|s, tree| s == "test-01.sh" && (tree.contains("m1") || tree.contains("m2")));
-        let mut ops = Ops { moves: vec!["base2".into(), "base3".into()], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let mut f =
+            Fake::new(|s, tree| s == "test-01.sh" && (tree.contains("m1") || tree.contains("m2")));
+        let mut ops = Ops {
+            moves: vec!["base2".into(), "base3".into()],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)));
-        assert_eq!(f.bases, vec!["base2".to_string()], "retried once, never twice");
+        assert_eq!(
+            f.bases,
+            vec!["base2".to_string()],
+            "retried once, never twice"
+        );
         assert_eq!(f.main_kind.len(), 2);
-        assert_eq!(f.main_kind[1], (MainKind::Verify, vec!["test-01.sh".to_string()]));
+        assert_eq!(
+            f.main_kind[1],
+            (MainKind::Verify, vec!["test-01.sh".to_string()])
+        );
         assert_eq!(ops.judged.len(), 1);
     }
 
@@ -2414,11 +4311,29 @@ pub(crate) mod tests {
     fn an_unattributed_red_that_clears_on_the_moved_base_lands() {
         let moved = std::rc::Rc::new(std::cell::Cell::new(false));
         let m2 = moved.clone();
-        let mut f = Fake::new(move |s, tree| !m2.get() && s == "test-01.sh" && (tree.contains("m1") || tree.contains("m2")));
+        let mut f = Fake::new(move |s, tree| {
+            !m2.get() && s == "test-01.sh" && (tree.contains("m1") || tree.contains("m2"))
+        });
         f.on_base = Some(moved);
-        let mut ops = Ops { moves: vec!["base2".into()], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
-        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3), "{end:?}");
+        let mut ops = Ops {
+            moves: vec!["base2".into()],
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3),
+            "{end:?}"
+        );
         assert!(ops.judged.is_empty());
         assert!(ops.ejected.is_empty());
     }
@@ -2458,9 +4373,24 @@ pub(crate) mod tests {
             }
         }
         let mut f = Silent(Fake::new(|_, _| false));
-        let s = drive(&mut f, &Ops::default(), MainKind::Corpus, &corpus(3), &three(), Budget { slots: 4, maxpar: 2 }).unwrap();
+        let s = drive(
+            &mut f,
+            &Ops::default(),
+            MainKind::Corpus,
+            &corpus(3),
+            &three(),
+            Budget {
+                slots: 4,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
         assert_eq!(s.decision.records.len(), 1);
         assert_eq!(s.decision.records[0].suite, "test-01.sh");
-        assert_eq!(s.decision.flaky, vec!["test-01.sh".to_string()], "its reruns were green");
+        assert_eq!(
+            s.decision.flaky,
+            vec!["test-01.sh".to_string()],
+            "its reruns were green"
+        );
     }
 }

@@ -39,7 +39,15 @@ pub enum Verdict {
     Ambiguous(Vec<Row>),
 }
 
-const GENERIC: [&str; 7] = ["mod.rs", "main.rs", "lib.rs", "tests.rs", "Cargo.toml", "Cargo.lock", "README.md"];
+const GENERIC: [&str; 7] = [
+    "mod.rs",
+    "main.rs",
+    "lib.rs",
+    "tests.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+];
 
 fn trim_token(raw: &str) -> Option<String> {
     let mut t = raw.trim_matches(':');
@@ -50,14 +58,20 @@ fn trim_token(raw: &str) -> Option<String> {
             break;
         }
     }
-    let t = t.trim_end_matches(['.', ':']).trim_start_matches('.').trim_start_matches('/');
+    let t = t
+        .trim_end_matches(['.', ':'])
+        .trim_start_matches('.')
+        .trim_start_matches('/');
     let t = t.trim_start_matches("./");
     if t.is_empty() {
         return None;
     }
     let base = t.rsplit('/').next().unwrap_or(t);
     let ext_ok = base.rsplit_once('.').is_some_and(|(stem, ext)| {
-        !stem.is_empty() && (2..=10).contains(&ext.len()) && ext.starts_with(|c: char| c.is_ascii_alphabetic()) && ext.chars().all(|c| c.is_ascii_alphanumeric())
+        !stem.is_empty()
+            && (2..=10).contains(&ext.len())
+            && ext.starts_with(|c: char| c.is_ascii_alphabetic())
+            && ext.chars().all(|c| c.is_ascii_alphanumeric())
     });
     if !ext_ok && !t.contains('/') {
         return None;
@@ -70,11 +84,14 @@ fn trim_token(raw: &str) -> Option<String> {
 
 /// Every path-looking token in `text`: contains a `/`, or a basename with an extension.
 pub fn named_paths(text: &str) -> BTreeSet<String> {
-    text.split(|c: char| c.is_whitespace() || "\"'()[]<>,;=`{}|".contains(c)).filter_map(trim_token).collect()
+    text.split(|c: char| c.is_whitespace() || "\"'()[]<>,;=`{}|".contains(c))
+        .filter_map(trim_token)
+        .collect()
 }
 
 fn names(token: &str, path: &str) -> bool {
-    if path == token || path.ends_with(&format!("/{token}")) || token.ends_with(&format!("/{path}")) {
+    if path == token || path.ends_with(&format!("/{token}")) || token.ends_with(&format!("/{path}"))
+    {
         return true;
     }
     let base = path.rsplit('/').next().unwrap_or(path);
@@ -121,7 +138,11 @@ fn row(red: &Red, members: &[MemberPaths]) -> Row {
     let tokens = named_paths(&red.evidence);
     let mut candidates: BTreeMap<Id, Vec<String>> = BTreeMap::new();
     for m in members {
-        let hit: BTreeSet<&String> = m.paths.iter().filter(|p| tokens.iter().any(|t| names(t, p))).collect();
+        let hit: BTreeSet<&String> = m
+            .paths
+            .iter()
+            .filter(|p| tokens.iter().any(|t| names(t, p)))
+            .collect();
         if !hit.is_empty() {
             candidates.insert(m.id.clone(), hit.into_iter().cloned().collect());
         }
@@ -129,7 +150,11 @@ fn row(red: &Red, members: &[MemberPaths]) -> Row {
     if candidates.is_empty() {
         let crates: BTreeSet<&str> = tokens.iter().filter_map(|t| crate_dir(t)).collect();
         for m in members {
-            let hit: BTreeSet<&String> = m.paths.iter().filter(|p| crates.iter().any(|c| p.starts_with(&format!("{c}/")))).collect();
+            let hit: BTreeSet<&String> = m
+                .paths
+                .iter()
+                .filter(|p| crates.iter().any(|c| p.starts_with(&format!("{c}/"))))
+                .collect();
             if !hit.is_empty() {
                 candidates.insert(m.id.clone(), hit.into_iter().cloned().collect());
             }
@@ -137,13 +162,20 @@ fn row(red: &Red, members: &[MemberPaths]) -> Row {
     }
     if candidates.is_empty() {
         for m in members {
-            let hit: BTreeSet<&String> = m.paths.iter().filter(|p| red.own.iter().any(|g| glob(g, p))).collect();
+            let hit: BTreeSet<&String> = m
+                .paths
+                .iter()
+                .filter(|p| red.own.iter().any(|g| glob(g, p)))
+                .collect();
             if !hit.is_empty() {
                 candidates.insert(m.id.clone(), hit.into_iter().cloned().collect());
             }
         }
     }
-    Row { suite: red.suite.clone(), candidates }
+    Row {
+        suite: red.suite.clone(),
+        candidates,
+    }
 }
 
 pub fn attribute(reds: &[Red], members: &[MemberPaths]) -> Verdict {
@@ -155,7 +187,10 @@ pub fn attribute(reds: &[Red], members: &[MemberPaths]) -> Verdict {
     for r in &rows {
         let (id, paths) = r.candidates.iter().next().expect("one candidate");
         let line = format!("{}: names {}", r.suite, paths.join(", "));
-        owners.entry(id.clone()).and_modify(|e| *e = format!("{e}; {line}")).or_insert(line);
+        owners
+            .entry(id.clone())
+            .and_modify(|e| *e = format!("{e}; {line}"))
+            .or_insert(line);
     }
     Verdict::Eject(owners.into_iter().collect())
 }
@@ -166,9 +201,21 @@ pub fn parse_reds(text: &str) -> Result<Vec<Red>, String> {
     for line in text.lines() {
         if let Some(head) = line.strip_prefix("@@ ") {
             let mut w = head.split_whitespace();
-            let suite = w.next().ok_or("reds: '@@' block with no suite name")?.to_string();
-            let own = w.filter_map(|a| a.strip_prefix("own=")).flat_map(|o| o.split(',')).filter(|g| !g.is_empty()).map(str::to_string).collect();
-            out.push(Red { suite, evidence: String::new(), own });
+            let suite = w
+                .next()
+                .ok_or("reds: '@@' block with no suite name")?
+                .to_string();
+            let own = w
+                .filter_map(|a| a.strip_prefix("own="))
+                .flat_map(|o| o.split(','))
+                .filter(|g| !g.is_empty())
+                .map(str::to_string)
+                .collect();
+            out.push(Red {
+                suite,
+                evidence: String::new(),
+                own,
+            });
         } else if let Some(last) = out.last_mut() {
             last.evidence.push_str(line);
             last.evidence.push('\n');

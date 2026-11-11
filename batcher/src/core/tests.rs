@@ -32,20 +32,36 @@ fn m(id: &str, rank: u8, express: bool, at: u64) -> Member {
 /// A member stacked on `prereqs` — `(prereq_id, prereq_id's tip in this pool)` pairs, matching
 /// the default tip `m()` gives that prereq (`"{id}-tip"`) unless the test wants a stale one.
 fn stacked(id: &str, rank: u8, at: u64, prereqs: &[(&str, &str)]) -> Member {
-    Member { stack: prereqs.iter().map(|(p, t)| (p.to_string(), t.to_string())).collect(), ..m(id, rank, false, at) }
+    Member {
+        stack: prereqs
+            .iter()
+            .map(|(p, t)| (p.to_string(), t.to_string()))
+            .collect(),
+        ..m(id, rank, false, at)
+    }
 }
 
 fn suite(name: &str, outcome: SuiteOutcome, asserts: &[&str]) -> SuiteRun {
-    SuiteRun { name: name.into(), outcome, failing_assertions: asserts.iter().map(|s| s.to_string()).collect() }
+    SuiteRun {
+        name: name.into(),
+        outcome,
+        failing_assertions: asserts.iter().map(|s| s.to_string()).collect(),
+    }
 }
 
 // -- clean_title --------------------------------------------------------------------------
 
 #[test]
 fn clean_title_drops_a_foreign_bead_prefix_never_mid_word() {
-    assert_eq!(clean_title("sp-ui46l: census.sh orphaned remedy"), "census.sh orphaned remedy");
+    assert_eq!(
+        clean_title("sp-ui46l: census.sh orphaned remedy"),
+        "census.sh orphaned remedy"
+    );
     assert_eq!(clean_title("sp-s088v.5: x"), "x");
-    assert_eq!(clean_title("plain title: with colon"), "plain title: with colon");
+    assert_eq!(
+        clean_title("plain title: with colon"),
+        "plain title: with colon"
+    );
     assert_eq!(clean_title("sp-: not an id"), "sp-: not an id");
     assert_eq!(clean_title("  sp-abc: padded  "), "padded");
 }
@@ -57,13 +73,21 @@ fn clean_title_drops_a_foreign_bead_prefix_never_mid_word() {
 #[test]
 fn a_pool_of_one_cuts_at_once() {
     let pool = vec![m("sp-a", 2, false, 0)];
-    let t = TriggerInputs { pool: &pool, main_red: false, batch_open: false };
+    let t = TriggerInputs {
+        pool: &pool,
+        main_red: false,
+        batch_open: false,
+    };
     assert_eq!(should_cut(&t), Some(TriggerReason::PoolFull(1)));
 }
 
 #[test]
 fn no_shared_epic_is_a_catch_all_of_the_whole_pool() {
-    let pool = vec![m("sp-a", 2, false, 0), m("sp-b.1", 2, false, 1), m("sp-c.1", 2, false, 2)];
+    let pool = vec![
+        m("sp-a", 2, false, 0),
+        m("sp-b.1", 2, false, 1),
+        m("sp-c.1", 2, false, 2),
+    ];
     let (round, kind) = select_round(pool);
     assert_eq!(kind, RoundKind::CatchAll);
     assert_eq!(round_ids(&round), ["sp-a", "sp-b.1", "sp-c.1"]);
@@ -71,7 +95,12 @@ fn no_shared_epic_is_a_catch_all_of_the_whole_pool() {
 
 #[test]
 fn two_members_of_one_epic_cut_that_feature_alone() {
-    let pool = vec![m("sp-a", 2, false, 0), m("sp-f.1", 2, false, 1), m("sp-f.2", 2, false, 2), m("sp-z", 2, false, 3)];
+    let pool = vec![
+        m("sp-a", 2, false, 0),
+        m("sp-f.1", 2, false, 1),
+        m("sp-f.2", 2, false, 2),
+        m("sp-z", 2, false, 3),
+    ];
     let (round, kind) = select_round(pool);
     assert_eq!(kind, RoundKind::Feature("sp-f".into()));
     assert_eq!(round_ids(&round), ["sp-f.1", "sp-f.2"]);
@@ -79,7 +108,11 @@ fn two_members_of_one_epic_cut_that_feature_alone() {
 
 #[test]
 fn the_epic_parent_itself_belongs_to_its_feature() {
-    let pool = vec![m("sp-f", 2, false, 0), m("sp-f.1", 2, false, 1), m("sp-o", 2, false, 2)];
+    let pool = vec![
+        m("sp-f", 2, false, 0),
+        m("sp-f.1", 2, false, 1),
+        m("sp-o", 2, false, 2),
+    ];
     let (round, kind) = select_round(pool);
     assert_eq!(kind, RoundKind::Feature("sp-f".into()));
     assert_eq!(round_ids(&round), ["sp-f", "sp-f.1"]);
@@ -87,9 +120,20 @@ fn the_epic_parent_itself_belongs_to_its_feature() {
 
 #[test]
 fn the_larger_feature_wins_and_a_tie_goes_to_the_lower_root() {
-    let pool = vec![m("sp-b.1", 2, false, 0), m("sp-b.2", 2, false, 1), m("sp-a.1", 2, false, 2), m("sp-a.2", 2, false, 3)];
+    let pool = vec![
+        m("sp-b.1", 2, false, 0),
+        m("sp-b.2", 2, false, 1),
+        m("sp-a.1", 2, false, 2),
+        m("sp-a.2", 2, false, 3),
+    ];
     assert_eq!(select_round(pool).1, RoundKind::Feature("sp-a".into()));
-    let pool = vec![m("sp-b.1", 2, false, 0), m("sp-b.2", 2, false, 1), m("sp-b.3", 2, false, 2), m("sp-a.1", 2, false, 3), m("sp-a.2", 2, false, 4)];
+    let pool = vec![
+        m("sp-b.1", 2, false, 0),
+        m("sp-b.2", 2, false, 1),
+        m("sp-b.3", 2, false, 2),
+        m("sp-a.1", 2, false, 3),
+        m("sp-a.2", 2, false, 4),
+    ];
     assert_eq!(select_round(pool).1, RoundKind::Feature("sp-b".into()));
 }
 
@@ -101,43 +145,79 @@ fn what_the_feature_stacks_on_and_what_stacks_on_it_ride_along() {
     second.stack.insert("sp-d".into(), "sp-d-tip".into());
     let mut f2 = m("sp-f.2", 2, false, 2);
     f2.stack.insert("sp-p".into(), "sp-p-tip".into());
-    let pool = vec![m("sp-f.1", 2, false, 1), f2, m("sp-p", 2, false, 0), dep, second, m("sp-z", 2, false, 6)];
+    let pool = vec![
+        m("sp-f.1", 2, false, 1),
+        f2,
+        m("sp-p", 2, false, 0),
+        dep,
+        second,
+        m("sp-z", 2, false, 6),
+    ];
     let (round, kind) = select_round(pool);
     assert_eq!(kind, RoundKind::Feature("sp-f".into()));
-    assert_eq!(round_ids(&round), ["sp-f.1", "sp-f.2", "sp-p", "sp-d", "sp-e"]);
+    assert_eq!(
+        round_ids(&round),
+        ["sp-f.1", "sp-f.2", "sp-p", "sp-d", "sp-e"]
+    );
 }
 
 #[test]
 fn an_express_member_rides_in_a_feature_round() {
-    let pool = vec![m("sp-f.1", 2, false, 0), m("sp-f.2", 2, false, 1), m("sp-x", 1, true, 2), m("sp-z", 2, false, 3)];
+    let pool = vec![
+        m("sp-f.1", 2, false, 0),
+        m("sp-f.2", 2, false, 1),
+        m("sp-x", 1, true, 2),
+        m("sp-z", 2, false, 3),
+    ];
     let (round, _) = select_round(pool);
     assert_eq!(round_ids(&round), ["sp-f.1", "sp-f.2", "sp-x"]);
 }
 
 #[test]
 fn pool_full_cuts_a_round() {
-    let pool = vec![m("sp-a", 2, false, 0), m("sp-b", 2, false, 10), m("sp-c", 2, false, 20), m("sp-d", 2, false, 30)];
-    let t = TriggerInputs { pool: &pool, main_red: false, batch_open: false };
+    let pool = vec![
+        m("sp-a", 2, false, 0),
+        m("sp-b", 2, false, 10),
+        m("sp-c", 2, false, 20),
+        m("sp-d", 2, false, 30),
+    ];
+    let t = TriggerInputs {
+        pool: &pool,
+        main_red: false,
+        batch_open: false,
+    };
     assert_eq!(should_cut(&t), Some(TriggerReason::PoolFull(4)));
 }
 
 #[test]
 fn empty_pool_never_cuts_on_idle() {
-    let t = TriggerInputs { pool: &[], main_red: false, batch_open: false };
+    let t = TriggerInputs {
+        pool: &[],
+        main_red: false,
+        batch_open: false,
+    };
     assert_eq!(should_cut(&t), None);
 }
 
 #[test]
 fn express_member_cuts_at_once_regardless_of_pool_size() {
     let pool = vec![m("sp-a", 2, false, 0), m("sp-x", 1, true, 5)];
-    let t = TriggerInputs { pool: &pool, main_red: false, batch_open: false };
+    let t = TriggerInputs {
+        pool: &pool,
+        main_red: false,
+        batch_open: false,
+    };
     assert_eq!(should_cut(&t), Some(TriggerReason::Express("sp-x".into())));
 }
 
 #[test]
 fn main_red_cuts_at_once_and_outranks_express() {
     let pool = vec![m("sp-x", 1, true, 0)];
-    let t = TriggerInputs { pool: &pool, main_red: true, batch_open: false };
+    let t = TriggerInputs {
+        pool: &pool,
+        main_red: true,
+        batch_open: false,
+    };
     assert_eq!(should_cut(&t), Some(TriggerReason::MainRed));
 }
 
@@ -145,8 +225,17 @@ fn main_red_cuts_at_once_and_outranks_express() {
 /// round is ready the moment the PR lands (law-queue-back-pressure-is-an-open-pr).
 #[test]
 fn open_batch_pr_prepares_rather_than_cuts() {
-    let pool = vec![m("sp-a", 2, false, 0), m("sp-b", 2, false, 10), m("sp-c", 2, false, 20), m("sp-d", 2, false, 30)];
-    let t = TriggerInputs { pool: &pool, main_red: false, batch_open: true };
+    let pool = vec![
+        m("sp-a", 2, false, 0),
+        m("sp-b", 2, false, 10),
+        m("sp-c", 2, false, 20),
+        m("sp-d", 2, false, 30),
+    ];
+    let t = TriggerInputs {
+        pool: &pool,
+        main_red: false,
+        batch_open: true,
+    };
     assert_eq!(should_cut(&t), Some(TriggerReason::Prepare(4)));
     let t = TriggerInputs { pool: &[], ..t };
     assert_eq!(should_cut(&t), None);
@@ -157,7 +246,11 @@ fn open_batch_pr_prepares_rather_than_cuts() {
 #[test]
 fn express_triggers_while_a_batch_pr_is_open() {
     let pool = vec![m("sp-x", 1, true, 0)];
-    let t = TriggerInputs { pool: &pool, main_red: false, batch_open: true };
+    let t = TriggerInputs {
+        pool: &pool,
+        main_red: false,
+        batch_open: true,
+    };
     assert_eq!(should_cut(&t), Some(TriggerReason::Express("sp-x".into())));
 }
 
@@ -165,11 +258,25 @@ fn express_triggers_while_a_batch_pr_is_open() {
 
 #[test]
 fn combine_orders_express_first_then_rank_then_arrival() {
-    let pool = vec![m("sp-late", 1, false, 100), m("sp-early", 1, false, 10), m("sp-low", 3, false, 5), m("sp-x", 5, true, 50)];
-    let merges: BTreeMap<Id, MergeResult> = pool.iter().map(|p| (p.id.clone(), MergeResult::Ok)).collect();
+    let pool = vec![
+        m("sp-late", 1, false, 100),
+        m("sp-early", 1, false, 10),
+        m("sp-low", 3, false, 5),
+        m("sp-x", 5, true, 50),
+    ];
+    let merges: BTreeMap<Id, MergeResult> = pool
+        .iter()
+        .map(|p| (p.id.clone(), MergeResult::Ok))
+        .collect();
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
+    let combined = combine(&CombineInput {
+        pool: &pool,
+        merges: &merges,
+        deleted_suites: &deleted,
+        sequenced: &sequenced,
+        siblings: &BTreeMap::new(),
+    });
     let ids: Vec<&str> = combined.merged.iter().map(|m| m.id.as_str()).collect();
     assert_eq!(ids, vec!["sp-x", "sp-early", "sp-late", "sp-low"]);
     assert!(combined.set_aside.is_empty());
@@ -183,9 +290,30 @@ fn a_conflicting_member_is_set_aside_never_merged() {
     merges.insert("sp-b".to_string(), MergeResult::Conflict);
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
-    assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
-    assert_eq!(combined.set_aside, vec![SetAside { id: "sp-b".into(), reason: SetAsideReason::Conflict { deleted_suites: vec![] } }]);
+    let combined = combine(&CombineInput {
+        pool: &pool,
+        merges: &merges,
+        deleted_suites: &deleted,
+        sequenced: &sequenced,
+        siblings: &BTreeMap::new(),
+    });
+    assert_eq!(
+        combined
+            .merged
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sp-a"]
+    );
+    assert_eq!(
+        combined.set_aside,
+        vec![SetAside {
+            id: "sp-b".into(),
+            reason: SetAsideReason::Conflict {
+                deleted_suites: vec![]
+            }
+        }]
+    );
 }
 
 /// Synthetic: an all-conflict round — every member set aside, nothing merged, and the
@@ -193,11 +321,24 @@ fn a_conflicting_member_is_set_aside_never_merged() {
 /// to "merge everyone".
 #[test]
 fn all_conflict_round_merges_nothing() {
-    let pool = vec![m("sp-a", 1, false, 0), m("sp-b", 2, false, 0), m("sp-c", 3, false, 0)];
-    let merges: BTreeMap<Id, MergeResult> = pool.iter().map(|p| (p.id.clone(), MergeResult::Conflict)).collect();
+    let pool = vec![
+        m("sp-a", 1, false, 0),
+        m("sp-b", 2, false, 0),
+        m("sp-c", 3, false, 0),
+    ];
+    let merges: BTreeMap<Id, MergeResult> = pool
+        .iter()
+        .map(|p| (p.id.clone(), MergeResult::Conflict))
+        .collect();
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
+    let combined = combine(&CombineInput {
+        pool: &pool,
+        merges: &merges,
+        deleted_suites: &deleted,
+        sequenced: &sequenced,
+        siblings: &BTreeMap::new(),
+    });
     assert!(combined.merged.is_empty());
     assert_eq!(combined.set_aside.len(), 3);
 }
@@ -213,9 +354,28 @@ fn an_empty_member_is_set_aside_never_merged() {
     merges.insert("sp-b".to_string(), MergeResult::Empty);
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
-    assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
-    assert_eq!(combined.set_aside, vec![SetAside { id: "sp-b".into(), reason: SetAsideReason::Empty }]);
+    let combined = combine(&CombineInput {
+        pool: &pool,
+        merges: &merges,
+        deleted_suites: &deleted,
+        sequenced: &sequenced,
+        siblings: &BTreeMap::new(),
+    });
+    assert_eq!(
+        combined
+            .merged
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sp-a"]
+    );
+    assert_eq!(
+        combined.set_aside,
+        vec![SetAside {
+            id: "sp-b".into(),
+            reason: SetAsideReason::Empty
+        }]
+    );
 }
 
 // -- Stacked dependents: closure and topological order (design stacked-dependents-2026-09-28) --
@@ -230,35 +390,58 @@ fn topo_order_sorts_a_stack_prerequisite_first_regardless_of_pool_order() {
     let c = stacked("sp-c", 1, 0, &[("sp-b", "sp-b-tip")]);
     let pool = vec![c.clone(), a.clone(), b.clone()];
     let ordered = topo_order(&pool);
-    assert_eq!(ordered.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a", "sp-b", "sp-c"]);
+    assert_eq!(
+        ordered.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        vec!["sp-a", "sp-b", "sp-c"]
+    );
 }
 
 fn blocked(id: &str, by: &[&str]) -> Member {
-    Member { blocked_by: by.iter().map(|b| b.to_string()).collect(), ..m(id, 1, false, 0) }
+    Member {
+        blocked_by: by.iter().map(|b| b.to_string()).collect(),
+        ..m(id, 1, false, 0)
+    }
 }
 
 #[test]
 fn a_member_whose_blocker_has_not_landed_is_not_cut_and_the_refusal_names_it() {
-    let (kept, refused) = refuse_blocked(vec![m("sp-a", 1, false, 0), blocked("sp-b", &["sp-eeg"])]);
-    assert_eq!(kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
+    let (kept, refused) =
+        refuse_blocked(vec![m("sp-a", 1, false, 0), blocked("sp-b", &["sp-eeg"])]);
+    assert_eq!(
+        kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        vec!["sp-a"]
+    );
     assert_eq!(refused.len(), 1);
-    assert!(refused[0].contains("sp-b") && refused[0].contains("sp-eeg"), "{refused:?}");
+    assert!(
+        refused[0].contains("sp-b") && refused[0].contains("sp-eeg"),
+        "{refused:?}"
+    );
 }
 
 #[test]
 fn a_member_whose_blocker_is_only_in_the_same_round_is_not_cut() {
     let (kept, refused) = refuse_blocked(vec![blocked("sp-b", &["sp-a"]), m("sp-a", 3, false, 0)]);
-    assert_eq!(kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
+    assert_eq!(
+        kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        vec!["sp-a"]
+    );
     assert!(refused[0].contains("sp-b: depends on sp-a"), "{refused:?}");
 }
 
 #[test]
 fn a_round_at_the_cap_is_cut_whole_and_one_more_member_is_refused_naming_it() {
-    let pool = |n: usize| (0..n).map(|i| m(&format!("sp-{i}"), 1, false, 0)).collect::<Vec<_>>();
+    let pool = |n: usize| {
+        (0..n)
+            .map(|i| m(&format!("sp-{i}"), 1, false, 0))
+            .collect::<Vec<_>>()
+    };
     let (kept, refused) = cap_round(pool(3), 3);
     assert_eq!((kept.len(), refused.len()), (3, 0));
     let (kept, refused) = cap_round(pool(4), 3);
-    assert_eq!(kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-0", "sp-1", "sp-2"]);
+    assert_eq!(
+        kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        ["sp-0", "sp-1", "sp-2"]
+    );
     assert_eq!(refused, ["sp-3: the round is full at 3 members — not cut"]);
 }
 
@@ -270,14 +453,22 @@ fn a_member_whose_blocker_has_landed_is_cut() {
 
 #[test]
 fn a_blocker_that_is_itself_refused_refuses_its_dependent_too() {
-    let (kept, refused) = refuse_blocked(vec![blocked("sp-c", &["sp-b"]), blocked("sp-b", &["sp-eeg"])]);
+    let (kept, refused) = refuse_blocked(vec![
+        blocked("sp-c", &["sp-b"]),
+        blocked("sp-b", &["sp-eeg"]),
+    ]);
     assert!(kept.is_empty());
     assert_eq!(refused.len(), 2, "{refused:?}");
 }
 
 #[test]
 fn a_feature_round_carries_the_in_pool_blocker_of_a_kept_member() {
-    let pool = vec![blocked("sp-f.2", &["sp-x"]), m("sp-f.1", 1, false, 0), m("sp-x", 1, false, 0), m("sp-y", 1, false, 0)];
+    let pool = vec![
+        blocked("sp-f.2", &["sp-x"]),
+        m("sp-f.1", 1, false, 0),
+        m("sp-x", 1, false, 0),
+        m("sp-y", 1, false, 0),
+    ];
     let (round, _) = select_round(pool);
     let ids: Vec<_> = round.iter().map(|m| m.id.as_str()).collect();
     assert!(ids.contains(&"sp-x") && !ids.contains(&"sp-y"), "{ids:?}");
@@ -285,9 +476,17 @@ fn a_feature_round_carries_the_in_pool_blocker_of_a_kept_member() {
 
 #[test]
 fn topo_order_with_no_stacking_reduces_to_order_key() {
-    let pool = vec![m("sp-late", 1, false, 100), m("sp-early", 1, false, 10), m("sp-low", 3, false, 5), m("sp-x", 5, true, 50)];
+    let pool = vec![
+        m("sp-late", 1, false, 100),
+        m("sp-early", 1, false, 10),
+        m("sp-low", 3, false, 5),
+        m("sp-x", 5, true, 50),
+    ];
     let ordered = topo_order(&pool);
-    assert_eq!(ordered.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-x", "sp-early", "sp-late", "sp-low"]);
+    assert_eq!(
+        ordered.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        vec!["sp-x", "sp-early", "sp-late", "sp-low"]
+    );
 }
 
 #[test]
@@ -334,14 +533,36 @@ fn combine_keeps_a_stacked_prerequisite_whose_tip_merged_empty() {
     merges.insert("sp-z".to_string(), MergeResult::Empty); // genuinely no commits of its own
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
-    assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a", "sp-b"]);
-    assert_eq!(combined.set_aside, vec![SetAside { id: "sp-z".into(), reason: SetAsideReason::Empty }]);
+    let combined = combine(&CombineInput {
+        pool: &pool,
+        merges: &merges,
+        deleted_suites: &deleted,
+        sequenced: &sequenced,
+        siblings: &BTreeMap::new(),
+    });
+    assert_eq!(
+        combined
+            .merged
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sp-a", "sp-b"]
+    );
+    assert_eq!(
+        combined.set_aside,
+        vec![SetAside {
+            id: "sp-z".into(),
+            reason: SetAsideReason::Empty
+        }]
+    );
 }
 
 #[test]
 fn evicted_event_for_an_empty_member_names_it_not_a_member() {
-    let sa = SetAside { id: "sp-b".into(), reason: SetAsideReason::Empty };
+    let sa = SetAside {
+        id: "sp-b".into(),
+        reason: SetAsideReason::Empty,
+    };
     let e = evicted_event(&sa);
     assert_eq!(e.kind, "evicted");
     assert!(e.text.contains("sp-b"));
@@ -356,7 +577,13 @@ fn a_member_missing_from_merge_results_fails_closed_to_set_aside() {
     let merges: BTreeMap<Id, MergeResult> = BTreeMap::new();
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
+    let combined = combine(&CombineInput {
+        pool: &pool,
+        merges: &merges,
+        deleted_suites: &deleted,
+        sequenced: &sequenced,
+        siblings: &BTreeMap::new(),
+    });
     assert!(combined.merged.is_empty());
     assert_eq!(combined.set_aside[0].id, "sp-a");
 }
@@ -371,9 +598,23 @@ fn a_sequenced_member_stays_set_aside_even_if_it_now_merges() {
     let deleted = BTreeMap::new();
     let mut sequenced = BTreeMap::new();
     sequenced.insert("sp-a".to_string(), "sp-dep".to_string());
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
+    let combined = combine(&CombineInput {
+        pool: &pool,
+        merges: &merges,
+        deleted_suites: &deleted,
+        sequenced: &sequenced,
+        siblings: &BTreeMap::new(),
+    });
     assert!(combined.merged.is_empty());
-    assert_eq!(combined.set_aside, vec![SetAside { id: "sp-a".into(), reason: SetAsideReason::Dependency { waits_on: "sp-dep".into() } }]);
+    assert_eq!(
+        combined.set_aside,
+        vec![SetAside {
+            id: "sp-a".into(),
+            reason: SetAsideReason::Dependency {
+                waits_on: "sp-dep".into()
+            }
+        }]
+    );
 }
 
 // -- F. Staleness: compare against when the base ref moved, not the base commit's time ------
@@ -387,7 +628,10 @@ fn stale_retry_fires_on_ref_move_even_when_commit_time_predates_certification() 
     let member_certified_at = 1_000;
     let base_commit_time = 900; // the batch merge commit's own (earlier) timestamp
     let base_ref_moved_at = 1_100; // when the fetch actually observed the base move
-    assert!(!stale_retry_due(member_certified_at, base_commit_time), "commit-time comparison misses it, as it did on 2026-09-25");
+    assert!(
+        !stale_retry_due(member_certified_at, base_commit_time),
+        "commit-time comparison misses it, as it did on 2026-09-25"
+    );
     assert!(stale_retry_due(member_certified_at, base_ref_moved_at));
 }
 
@@ -420,7 +664,11 @@ fn a_green_suite_stays_green() {
 /// attributed to any member.
 #[test]
 fn red_then_green_on_rerun_flips() {
-    let first = vec![suite("test-flaky", SuiteOutcome::Red, &["assertion X failed"])];
+    let first = vec![suite(
+        "test-flaky",
+        SuiteOutcome::Red,
+        &["assertion X failed"],
+    )];
     let rerun = vec![suite("test-flaky", SuiteOutcome::Green, &[])];
     let v = classify(&first, &rerun);
     assert_eq!(v[0].classification, Classification::Flip);
@@ -428,8 +676,16 @@ fn red_then_green_on_rerun_flips() {
 
 #[test]
 fn red_on_both_runs_is_double_red() {
-    let first = vec![suite("test-real", SuiteOutcome::Red, &["assertion Y failed"])];
-    let rerun = vec![suite("test-real", SuiteOutcome::Red, &["assertion Y failed"])];
+    let first = vec![suite(
+        "test-real",
+        SuiteOutcome::Red,
+        &["assertion Y failed"],
+    )];
+    let rerun = vec![suite(
+        "test-real",
+        SuiteOutcome::Red,
+        &["assertion Y failed"],
+    )];
     let v = classify(&first, &rerun);
     assert_eq!(v[0].classification, Classification::DoubleRed);
     assert_eq!(v[0].failing_assertions, vec!["assertion Y failed"]);
@@ -440,7 +696,11 @@ fn red_on_both_runs_is_double_red() {
 /// assumed fixed.
 #[test]
 fn a_red_suite_missing_from_the_rerun_fails_closed_to_double_red() {
-    let first = vec![suite("test-real", SuiteOutcome::Red, &["assertion Y failed"])];
+    let first = vec![suite(
+        "test-real",
+        SuiteOutcome::Red,
+        &["assertion Y failed"],
+    )];
     let v = classify(&first, &[]);
     assert_eq!(v[0].classification, Classification::DoubleRed);
 }
@@ -459,10 +719,17 @@ fn a_red_suite_missing_from_the_rerun_fails_closed_to_double_red() {
 /// here — see `waits_on_finds_a_real_dependency_id_with_no_digit_in_its_suffix`.
 #[test]
 fn a_recorded_test_ahead_of_code_shape_sequences_behind_its_dependency() {
-    let assertion = "test-testlib-migrated: a lint ahead of the migration it checks, sequenced behind sp-29g55";
+    let assertion =
+        "test-testlib-migrated: a lint ahead of the migration it checks, sequenced behind sp-29g55";
     let own = vec![suite("test-own", SuiteOutcome::Red, &[assertion])];
-    let sa = test_ahead_of_code(&"sp-q4swv".to_string(), &own).expect("should sequence behind the named dependency");
-    assert_eq!(sa.reason, SetAsideReason::TestAheadOfCode { waits_on: "sp-29g55".into() });
+    let sa = test_ahead_of_code(&"sp-q4swv".to_string(), &own)
+        .expect("should sequence behind the named dependency");
+    assert_eq!(
+        sa.reason,
+        SetAsideReason::TestAheadOfCode {
+            waits_on: "sp-29g55".into()
+        }
+    );
 }
 
 /// sp-29g55's real round-1 dependency was sp-qvjzb (concierge-as-batcher-2026-09-24.md,
@@ -471,13 +738,20 @@ fn a_recorded_test_ahead_of_code_shape_sequences_behind_its_dependency() {
 /// suffix as well as one containing a digit.
 #[test]
 fn waits_on_finds_a_real_dependency_id_with_no_digit_in_its_suffix() {
-    assert_eq!(waits_on("adds a lint that cannot pass until sp-qvjzb lands"), Some("sp-qvjzb".to_string()));
+    assert_eq!(
+        waits_on("adds a lint that cannot pass until sp-qvjzb lands"),
+        Some("sp-qvjzb".to_string())
+    );
     assert_eq!(waits_on("see sp-ish thing"), None);
 }
 
 #[test]
 fn a_double_red_naming_no_bead_is_not_test_ahead_of_code() {
-    let own = vec![suite("test-own", SuiteOutcome::Red, &["some unrelated assertion failed"])];
+    let own = vec![suite(
+        "test-own",
+        SuiteOutcome::Red,
+        &["some unrelated assertion failed"],
+    )];
     assert_eq!(test_ahead_of_code(&"sp-a".to_string(), &own), None);
 }
 
@@ -495,18 +769,27 @@ fn waits_on_ignores_a_bare_sp_dash_with_no_digits() {
 
 #[test]
 fn waits_on_strips_trailing_punctuation() {
-    assert_eq!(waits_on("blocked on sp-abc12."), Some("sp-abc12".to_string()));
+    assert_eq!(
+        waits_on("blocked on sp-abc12."),
+        Some("sp-abc12".to_string())
+    );
 }
 
 // -- Bisect: bound to tips, expired on any tip change or any batch landing -------------------
 
 fn tips(pairs: &[(&str, &str)]) -> BTreeMap<Id, String> {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 #[test]
 fn bisect_state_is_not_expired_while_nothing_changed() {
-    let state = BisectState { members: vec!["sp-a".into(), "sp-b".into()], tips: tips(&[("sp-a", "t1"), ("sp-b", "t2")]) };
+    let state = BisectState {
+        members: vec!["sp-a".into(), "sp-b".into()],
+        tips: tips(&[("sp-a", "t1"), ("sp-b", "t2")]),
+    };
     let current = tips(&[("sp-a", "t1"), ("sp-b", "t2")]);
     assert!(!bisect_expired(&state, &current, false));
 }
@@ -516,22 +799,36 @@ fn bisect_state_is_not_expired_while_nothing_changed() {
 /// current branch and must be expired rather than reused.
 #[test]
 fn bisect_state_expires_when_a_members_tip_changes() {
-    let state = BisectState { members: vec!["sp-a".into(), "sp-b".into()], tips: tips(&[("sp-a", "t1"), ("sp-b", "t2")]) };
+    let state = BisectState {
+        members: vec!["sp-a".into(), "sp-b".into()],
+        tips: tips(&[("sp-a", "t1"), ("sp-b", "t2")]),
+    };
     let current = tips(&[("sp-a", "t1-new"), ("sp-b", "t2")]);
     assert!(bisect_expired(&state, &current, false));
 }
 
 #[test]
 fn bisect_state_expires_when_any_batch_lands_even_with_unchanged_tips() {
-    let state = BisectState { members: vec!["sp-a".into()], tips: tips(&[("sp-a", "t1")]) };
+    let state = BisectState {
+        members: vec!["sp-a".into()],
+        tips: tips(&[("sp-a", "t1")]),
+    };
     let current = tips(&[("sp-a", "t1")]);
     assert!(bisect_expired(&state, &current, true));
 }
 
 #[test]
 fn bisect_next_halves_toward_the_bad_group_until_pinned() {
-    let tips_all = tips(&[("sp-a", "ta"), ("sp-b", "tb"), ("sp-c", "tc"), ("sp-d", "td")]);
-    let state = BisectState { members: vec!["sp-a".into(), "sp-b".into(), "sp-c".into(), "sp-d".into()], tips: tips_all.clone() };
+    let tips_all = tips(&[
+        ("sp-a", "ta"),
+        ("sp-b", "tb"),
+        ("sp-c", "tc"),
+        ("sp-d", "td"),
+    ]);
+    let state = BisectState {
+        members: vec!["sp-a".into(), "sp-b".into(), "sp-c".into(), "sp-d".into()],
+        tips: tips_all.clone(),
+    };
     let bad = vec!["sp-a".to_string(), "sp-b".to_string()];
     let next = bisect_next(&state, &bad).expect("two members still need splitting");
     assert_eq!(next.members, vec!["sp-a".to_string()]);
@@ -553,12 +850,34 @@ fn bisect_split_divides_evenly_rounding_up_the_first_half() {
 #[test]
 fn pr_record_lists_full_titles_with_foreign_prefixes_dropped_and_express_first() {
     let members = vec![
-        Member { id: "sp-a".into(), tip: "ta".into(), title: "sp-a: a fairly long descriptive title that must not be cut".into(), priority: Some(2), express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() },
-        Member { id: "sp-x".into(), tip: "tx".into(), title: "an express fix".into(), priority: Some(9), express: true, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() },
+        Member {
+            id: "sp-a".into(),
+            tip: "ta".into(),
+            title: "sp-a: a fairly long descriptive title that must not be cut".into(),
+            priority: Some(2),
+            express: false,
+            base_fix: false,
+            certified_at: 0,
+            stack: BTreeMap::new(),
+            blocked_by: Vec::new(),
+        },
+        Member {
+            id: "sp-x".into(),
+            tip: "tx".into(),
+            title: "an express fix".into(),
+            priority: Some(9),
+            express: true,
+            base_fix: false,
+            certified_at: 0,
+            stack: BTreeMap::new(),
+            blocked_by: Vec::new(),
+        },
     ];
     let pr = pr_record(&members);
     assert_eq!(pr.members, vec!["sp-a".to_string(), "sp-x".to_string()]);
-    assert!(pr.body.contains("a fairly long descriptive title that must not be cut"));
+    assert!(pr
+        .body
+        .contains("a fairly long descriptive title that must not be cut"));
     assert!(!pr.body.contains("sp-a: a fairly"));
     assert!(pr.body.contains("express"));
 }
@@ -566,10 +885,19 @@ fn pr_record_lists_full_titles_with_foreign_prefixes_dropped_and_express_first()
 #[test]
 fn combine_then_pr_record_puts_express_first_regardless_of_pool_order() {
     let pool = vec![m("sp-a", 1, false, 0), m("sp-x", 9, true, 5)];
-    let merges: BTreeMap<Id, MergeResult> = pool.iter().map(|p| (p.id.clone(), MergeResult::Ok)).collect();
+    let merges: BTreeMap<Id, MergeResult> = pool
+        .iter()
+        .map(|p| (p.id.clone(), MergeResult::Ok))
+        .collect();
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
+    let combined = combine(&CombineInput {
+        pool: &pool,
+        merges: &merges,
+        deleted_suites: &deleted,
+        sequenced: &sequenced,
+        siblings: &BTreeMap::new(),
+    });
     let pr = pr_record(&combined.merged);
     assert_eq!(pr.members, vec!["sp-x".to_string(), "sp-a".to_string()]);
 }
@@ -578,7 +906,10 @@ fn combine_then_pr_record_puts_express_first_regardless_of_pool_order() {
 
 #[test]
 fn cut_event_names_the_trigger_and_membership() {
-    let combined = Combined { merged: vec![m("sp-a", 1, false, 0)], set_aside: vec![] };
+    let combined = Combined {
+        merged: vec![m("sp-a", 1, false, 0)],
+        set_aside: vec![],
+    };
     let e = cut_event(&TriggerReason::PoolFull(4), &combined);
     assert_eq!(e.kind, "cut");
     assert_eq!(e.ids, vec!["sp-a".to_string()]);
@@ -594,7 +925,12 @@ fn skipped_event_carries_its_reason() {
 
 #[test]
 fn evicted_event_for_a_conflict_names_deleted_suites() {
-    let sa = SetAside { id: "sp-a".into(), reason: SetAsideReason::Conflict { deleted_suites: vec!["test-old.sh".into()] } };
+    let sa = SetAside {
+        id: "sp-a".into(),
+        reason: SetAsideReason::Conflict {
+            deleted_suites: vec!["test-old.sh".into()],
+        },
+    };
     let e = evicted_event(&sa);
     assert_eq!(e.kind, "evicted");
     assert!(e.text.contains("test-old.sh"));
@@ -610,7 +946,10 @@ fn opened_event_names_every_member() {
 
 #[test]
 fn abandoned_event_names_the_member_and_why() {
-    let e = abandoned_event(&"sp-a".to_string(), "judgement found main itself red; reverted on main instead");
+    let e = abandoned_event(
+        &"sp-a".to_string(),
+        "judgement found main itself red; reverted on main instead",
+    );
     assert_eq!(e.kind, "abandoned");
     assert!(e.text.contains("sp-a"));
 }
@@ -619,7 +958,10 @@ fn abandoned_event_names_the_member_and_why() {
 
 #[test]
 fn ejected_event_names_the_member_and_every_suite() {
-    let e = ejected_event(&Ejection { id: "sp-a".into(), suites: vec!["test-x.sh".into(), "test-y.sh".into()] });
+    let e = ejected_event(&Ejection {
+        id: "sp-a".into(),
+        suites: vec!["test-x.sh".into(), "test-y.sh".into()],
+    });
     assert_eq!(e.kind, "ejected");
     assert_eq!(e.ids, vec!["sp-a".to_string()]);
     assert!(e.text.contains("test-x.sh"));
@@ -637,7 +979,12 @@ fn base_fail_event_names_no_member_and_every_suite() {
 
 #[test]
 fn base_fail_body_carries_repo_branch_suites_and_evidence() {
-    let body = base_fail_body("spira", "spira/queue/123", &["test-x.sh".to_string()], "/run/batch-results/spira-123");
+    let body = base_fail_body(
+        "spira",
+        "spira/queue/123",
+        &["test-x.sh".to_string()],
+        "/run/batch-results/spira-123",
+    );
     assert!(body.contains("Repo: spira"));
     assert!(body.contains("spira/queue/123"));
     assert!(body.contains("test-x.sh"));
@@ -653,8 +1000,16 @@ fn base_fail_body_carries_repo_branch_suites_and_evidence() {
 /// double-red that sequences behind its dependency rather than reaching judgement.
 #[test]
 fn a_full_round_from_trigger_through_pr_record() {
-    let pool = vec![m("sp-a", 2, false, 0), m("sp-b", 3, false, 10), m("sp-x", 1, true, 20)];
-    let trig = TriggerInputs { pool: &pool, main_red: false, batch_open: false };
+    let pool = vec![
+        m("sp-a", 2, false, 0),
+        m("sp-b", 3, false, 10),
+        m("sp-x", 1, true, 20),
+    ];
+    let trig = TriggerInputs {
+        pool: &pool,
+        main_red: false,
+        batch_open: false,
+    };
     let reason = should_cut(&trig).expect("the express member forces an immediate cut");
     assert_eq!(reason, TriggerReason::Express("sp-x".into()));
 
@@ -665,39 +1020,83 @@ fn a_full_round_from_trigger_through_pr_record() {
     let mut deleted = BTreeMap::new();
     deleted.insert("sp-b".to_string(), vec!["test-retired.sh".to_string()]);
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
-    assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-x", "sp-a"]);
+    let combined = combine(&CombineInput {
+        pool: &pool,
+        merges: &merges,
+        deleted_suites: &deleted,
+        sequenced: &sequenced,
+        siblings: &BTreeMap::new(),
+    });
+    assert_eq!(
+        combined
+            .merged
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sp-x", "sp-a"]
+    );
     assert_eq!(combined.set_aside.len(), 1);
 
     let first = vec![
-        suite("test-flaky", SuiteOutcome::Red, &["timing assertion failed"]),
+        suite(
+            "test-flaky",
+            SuiteOutcome::Red,
+            &["timing assertion failed"],
+        ),
         suite("test-real", SuiteOutcome::Red, &["waits on sp-dep99"]),
         suite("test-fine", SuiteOutcome::Green, &[]),
     ];
-    let rerun = vec![suite("test-flaky", SuiteOutcome::Green, &[]), suite("test-real", SuiteOutcome::Red, &["waits on sp-dep99"])];
+    let rerun = vec![
+        suite("test-flaky", SuiteOutcome::Green, &[]),
+        suite("test-real", SuiteOutcome::Red, &["waits on sp-dep99"]),
+    ];
     let verdicts = classify(&first, &rerun);
-    let by_name: BTreeMap<&str, &SuiteVerdict> = verdicts.iter().map(|v| (v.name.as_str(), v)).collect();
+    let by_name: BTreeMap<&str, &SuiteVerdict> =
+        verdicts.iter().map(|v| (v.name.as_str(), v)).collect();
     assert_eq!(by_name["test-flaky"].classification, Classification::Flip);
-    assert_eq!(by_name["test-real"].classification, Classification::DoubleRed);
+    assert_eq!(
+        by_name["test-real"].classification,
+        Classification::DoubleRed
+    );
     assert_eq!(by_name["test-fine"].classification, Classification::Green);
 
     let double_red = &by_name["test-real"];
-    let own = vec![SuiteRun { name: "test-real".into(), outcome: SuiteOutcome::Red, failing_assertions: double_red.failing_assertions.clone() }];
-    let sa = test_ahead_of_code(&"sp-a".to_string(), &own).expect("the double-red names its dependency");
-    assert_eq!(sa.reason, SetAsideReason::TestAheadOfCode { waits_on: "sp-dep99".into() });
+    let own = vec![SuiteRun {
+        name: "test-real".into(),
+        outcome: SuiteOutcome::Red,
+        failing_assertions: double_red.failing_assertions.clone(),
+    }];
+    let sa =
+        test_ahead_of_code(&"sp-a".to_string(), &own).expect("the double-red names its dependency");
+    assert_eq!(
+        sa.reason,
+        SetAsideReason::TestAheadOfCode {
+            waits_on: "sp-dep99".into()
+        }
+    );
 
     let pr = pr_record(&combined.merged);
     assert_eq!(pr.members, vec!["sp-x".to_string(), "sp-a".to_string()]);
 
-    let events = [cut_event(&reason, &combined), evicted_event(&combined.set_aside[0]), opened_event(&pr)];
-    assert_eq!(events.iter().map(|e| e.kind).collect::<Vec<_>>(), vec!["cut", "evicted", "opened"]);
+    let events = [
+        cut_event(&reason, &combined),
+        evicted_event(&combined.set_aside[0]),
+        opened_event(&pr),
+    ];
+    assert_eq!(
+        events.iter().map(|e| e.kind).collect::<Vec<_>>(),
+        vec!["cut", "evicted", "opened"]
+    );
 }
 
 // -- Judgement: when the crate cannot resolve a red mechanically, call the persona --------
 
 #[test]
 fn judgement_for_is_none_when_nothing_survives_the_rerun_as_double_red() {
-    let first = vec![suite("test-flaky", SuiteOutcome::Red, &[]), suite("test-fine", SuiteOutcome::Green, &[])];
+    let first = vec![
+        suite("test-flaky", SuiteOutcome::Red, &[]),
+        suite("test-fine", SuiteOutcome::Green, &[]),
+    ];
     let rerun = vec![suite("test-flaky", SuiteOutcome::Green, &[])];
     let verdicts = classify(&first, &rerun);
     assert_eq!(judgement_for(&verdicts), None);
@@ -730,7 +1129,10 @@ fn judgement_for_ci_wraps_the_suites_ci_reported_red() {
 
 #[test]
 fn judgement_event_names_source_and_suites() {
-    let j = Judgement { source: RedSource::Ci, suites: vec!["test-x".into(), "test-y".into()] };
+    let j = Judgement {
+        source: RedSource::Ci,
+        suites: vec!["test-x".into(), "test-y".into()],
+    };
     let e = judgement_event(&j, "spira");
     assert_eq!(e.kind, "judgement");
     assert!(e.text.contains("spira"));
@@ -740,8 +1142,16 @@ fn judgement_event_names_source_and_suites() {
 
 #[test]
 fn judgement_body_carries_repo_suites_members_and_evidence() {
-    let j = Judgement { source: RedSource::Local, suites: vec!["test-real".into()] };
-    let body = judgement_body("spira", &j, &["sp-a".to_string(), "sp-x".to_string()], "/run/batch-results/spira-123");
+    let j = Judgement {
+        source: RedSource::Local,
+        suites: vec!["test-real".into()],
+    };
+    let body = judgement_body(
+        "spira",
+        &j,
+        &["sp-a".to_string(), "sp-x".to_string()],
+        "/run/batch-results/spira-123",
+    );
     assert!(body.contains("Repo: spira"));
     assert!(body.contains("local corpus"));
     assert!(body.contains("test-real"));
@@ -751,7 +1161,10 @@ fn judgement_body_carries_repo_suites_members_and_evidence() {
 
 #[test]
 fn judgement_body_renders_no_members_explicitly() {
-    let j = Judgement { source: RedSource::Local, suites: vec!["test-real".into()] };
+    let j = Judgement {
+        source: RedSource::Local,
+        suites: vec!["test-real".into()],
+    };
     let body = judgement_body("spira", &j, &[], "/evidence");
     assert!(body.contains("Round member(s): (none)"));
 }
@@ -780,10 +1193,20 @@ fn round_1s_three_double_reds_are_flagged_for_judgement_and_resolve_like_what_wa
         ("test-script-exec", "gate-lib.sh and tap-jsonl.sh sourced-only headers not recognised by the lint"),
         ("test-testlib-migrated", "adds a lint that cannot pass until sp-qvjzb lands"),
     ];
-    let first: Vec<SuiteRun> = round1.iter().map(|(suite_name, assertion)| suite(suite_name, SuiteOutcome::Red, &[assertion])).collect();
+    let first: Vec<SuiteRun> = round1
+        .iter()
+        .map(|(suite_name, assertion)| suite(suite_name, SuiteOutcome::Red, &[assertion]))
+        .collect();
     let verdicts = classify(&first, &first); // re-run reproduces the same failure: still red both times
     for (suite_name, _) in round1 {
-        assert_eq!(verdicts.iter().find(|v| v.name == suite_name).unwrap().classification, Classification::DoubleRed);
+        assert_eq!(
+            verdicts
+                .iter()
+                .find(|v| v.name == suite_name)
+                .unwrap()
+                .classification,
+            Classification::DoubleRed
+        );
     }
 
     let j = judgement_for(&verdicts).expect("round 1 has three surviving double-reds");
@@ -792,9 +1215,15 @@ fn round_1s_three_double_reds_are_flagged_for_judgement_and_resolve_like_what_wa
 
     for (suite_name, assertion) in round1 {
         let own = vec![suite(suite_name, SuiteOutcome::Red, &[assertion])];
-        let expected = (suite_name == "test-testlib-migrated")
-            .then(|| SetAsideReason::TestAheadOfCode { waits_on: "sp-qvjzb".into() });
-        assert_eq!(test_ahead_of_code(&"member".to_string(), &own).map(|sa| sa.reason), expected, "{suite_name}");
+        let expected =
+            (suite_name == "test-testlib-migrated").then(|| SetAsideReason::TestAheadOfCode {
+                waits_on: "sp-qvjzb".into(),
+            });
+        assert_eq!(
+            test_ahead_of_code(&"member".to_string(), &own).map(|sa| sa.reason),
+            expected,
+            "{suite_name}"
+        );
     }
 }
 
@@ -814,29 +1243,49 @@ fn terminal_ready_passes_when_named_and_binned() {
 fn terminal_ready_refuses_a_member_no_commit_names() {
     let members = vec![m("sp-a", 2, false, 0), m("sp-b", 2, false, 10)];
     let named = vec!["sp-a".to_string()]; // sp-b's own commit never merged, or its tip changed
-    assert_eq!(terminal_ready(&members, &named, true), Err(Refusal::MemberNotNamed { id: "sp-b".into() }));
+    assert_eq!(
+        terminal_ready(&members, &named, true),
+        Err(Refusal::MemberNotNamed { id: "sp-b".into() })
+    );
 }
 
 #[test]
 fn terminal_ready_refuses_missing_with_bins_artifacts() {
     let members = vec![m("sp-a", 2, false, 0)];
     let named = vec!["sp-a".to_string()];
-    assert_eq!(terminal_ready(&members, &named, false), Err(Refusal::BinsMissing));
+    assert_eq!(
+        terminal_ready(&members, &named, false),
+        Err(Refusal::BinsMissing)
+    );
 }
 
 #[test]
 fn terminal_ready_checks_membership_before_bins() {
     let members = vec![m("sp-a", 2, false, 0)];
     // Every input is wrong at once; the membership refusal must be the one reported.
-    assert_eq!(terminal_ready(&members, &[], false), Err(Refusal::MemberNotNamed { id: "sp-a".into() }));
+    assert_eq!(
+        terminal_ready(&members, &[], false),
+        Err(Refusal::MemberNotNamed { id: "sp-a".into() })
+    );
 }
 
 #[test]
 fn base_fix_member_triggers_ahead_of_express_and_lands_alone() {
-    let fix = Member { base_fix: true, priority: Some(0), ..m("sp-f", 0, false, 9) };
+    let fix = Member {
+        base_fix: true,
+        priority: Some(0),
+        ..m("sp-f", 0, false, 9)
+    };
     let pool = base_fix_lane(vec![m("sp-a", 1, false, 0), m("sp-x", 1, true, 5), fix]);
-    assert_eq!(pool.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), vec!["sp-f"]);
-    let t = TriggerInputs { pool: &pool, main_red: false, batch_open: false };
+    assert_eq!(
+        pool.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+        vec!["sp-f"]
+    );
+    let t = TriggerInputs {
+        pool: &pool,
+        main_red: false,
+        batch_open: false,
+    };
     assert_eq!(should_cut(&t), Some(TriggerReason::BaseFix("sp-f".into())));
 }
 
@@ -858,11 +1307,30 @@ fn a_sibling_loser_names_the_p0_it_lost_to_not_the_base() {
     merges.insert("sp-p0".to_string(), MergeResult::Ok);
     merges.insert("sp-p2".to_string(), MergeResult::Conflict);
     let mut siblings = BTreeMap::new();
-    siblings.insert("sp-p2".to_string(), ("sp-p0".to_string(), vec!["a.rs".to_string()]));
-    let combined = combine(&CombineInput { pool: &sorted, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &BTreeMap::new(), siblings: &siblings });
-    assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-p0"]);
+    siblings.insert(
+        "sp-p2".to_string(),
+        ("sp-p0".to_string(), vec!["a.rs".to_string()]),
+    );
+    let combined = combine(&CombineInput {
+        pool: &sorted,
+        merges: &merges,
+        deleted_suites: &BTreeMap::new(),
+        sequenced: &BTreeMap::new(),
+        siblings: &siblings,
+    });
+    assert_eq!(
+        combined
+            .merged
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sp-p0"]
+    );
     let text = evicted_event(&combined.set_aside[0]).text;
-    assert!(text.contains("sibling sp-p0") && text.contains("a.rs") && !text.contains("with base"), "{text}");
+    assert!(
+        text.contains("sibling sp-p0") && text.contains("a.rs") && !text.contains("with base"),
+        "{text}"
+    );
 }
 
 fn round_ids(pool: &[Member]) -> Vec<&str> {

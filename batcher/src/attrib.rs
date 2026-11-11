@@ -86,7 +86,12 @@ impl RedRecord {
     /// The `round-attribution` TSD row's fields (DESIGN.md "Record"), in the order written.
     /// An unsettled red has no attribution time: the field is empty, never `0`, so a reader
     /// cannot mistake "never settled" for "settled at once" (sp-cln99).
-    pub fn tsd_fields(&self, repo: &str, round: &str, iteration: u32) -> Vec<(&'static str, String)> {
+    pub fn tsd_fields(
+        &self,
+        repo: &str,
+        round: &str,
+        iteration: u32,
+    ) -> Vec<(&'static str, String)> {
         let owner = match &self.outcome {
             Some(Outcome::Owner(o)) => o.join(","),
             _ => String::new(),
@@ -96,11 +101,26 @@ impl RedRecord {
             ("round", round.to_string()),
             ("iteration", iteration.to_string()),
             ("suite", self.suite.clone()),
-            ("outcome", self.outcome.as_ref().map(|o| o.word()).unwrap_or("unsettled").to_string()),
+            (
+                "outcome",
+                self.outcome
+                    .as_ref()
+                    .map(|o| o.word())
+                    .unwrap_or("unsettled")
+                    .to_string(),
+            ),
             ("owner", owner),
-            ("attribution_secs", self.attribution_secs().map(|s| s.to_string()).unwrap_or_default()),
+            (
+                "attribution_secs",
+                self.attribution_secs()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default(),
+            ),
             ("reruns", self.reruns.to_string()),
-            ("settled_before_corpus_end", self.settled_before_main_end.to_string()),
+            (
+                "settled_before_corpus_end",
+                self.settled_before_main_end.to_string(),
+            ),
         ]
     }
 }
@@ -125,7 +145,10 @@ impl Shape {
             loop {
                 let before = set.len();
                 for m in members {
-                    if prereqs.get(m).is_some_and(|ps| ps.iter().any(|p| set.contains(p))) {
+                    if prereqs
+                        .get(m)
+                        .is_some_and(|ps| ps.iter().any(|p| set.contains(p)))
+                    {
                         set.insert(m);
                     }
                 }
@@ -133,13 +156,26 @@ impl Shape {
                     break;
                 }
             }
-            closure.insert(x.clone(), members.iter().filter(|m| set.contains(m)).cloned().collect());
+            closure.insert(
+                x.clone(),
+                members
+                    .iter()
+                    .filter(|m| set.contains(m))
+                    .cloned()
+                    .collect(),
+            );
         }
-        Shape { members: members.to_vec(), closure }
+        Shape {
+            members: members.to_vec(),
+            closure,
+        }
     }
 
     fn removal_of(&self, x: &Id) -> Vec<Id> {
-        self.closure.get(x).cloned().unwrap_or_else(|| vec![x.clone()])
+        self.closure
+            .get(x)
+            .cloned()
+            .unwrap_or_else(|| vec![x.clone()])
     }
 }
 
@@ -154,7 +190,10 @@ pub struct Budget {
 impl Budget {
     /// `SPIRA_BATCHER_ROUND_SLOTS`, else `maxpar + 4` (DESIGN §4.2).
     pub fn with_default(maxpar: u32, slots: Option<u32>) -> Budget {
-        Budget { slots: slots.unwrap_or(maxpar + 4).max(1), maxpar }
+        Budget {
+            slots: slots.unwrap_or(maxpar + 4).max(1),
+            maxpar,
+        }
     }
 }
 
@@ -205,7 +244,12 @@ impl Decision {
             *count.entry(s).or_default() += 1;
         }
         let mut out: BTreeSet<String> = self.unattributed.iter().cloned().collect();
-        out.extend(count.into_iter().filter(|(_, n)| *n >= 2).map(|(s, _)| s.clone()));
+        out.extend(
+            count
+                .into_iter()
+                .filter(|(_, n)| *n >= 2)
+                .map(|(s, _)| s.clone()),
+        );
         out.into_iter().collect()
     }
 }
@@ -259,17 +303,29 @@ impl Attributor {
 
     /// Slots attribution may take right now.
     pub fn spare(&self) -> u32 {
-        self.budget.slots.saturating_sub(self.main_in_flight()).saturating_sub(self.running.len() as u32)
+        self.budget
+            .slots
+            .saturating_sub(self.main_in_flight())
+            .saturating_sub(self.running.len() as u32)
     }
 
     fn enqueue(&mut self, suite: &str, removal: Vec<Id>, purpose: Purpose, front: bool) {
         let id = self.next_id;
         self.next_id += 1;
-        let job = Job { id, suite: suite.to_string(), removal, purpose };
+        let job = Job {
+            id,
+            suite: suite.to_string(),
+            removal,
+            purpose,
+        };
         if let Some(st) = self.suites.get_mut(suite) {
             st.outstanding.insert(id);
         }
-        let q = if job.purpose == Purpose::Plain { &mut self.plain_q } else { &mut self.attr_q };
+        let q = if job.purpose == Purpose::Plain {
+            &mut self.plain_q
+        } else {
+            &mut self.attr_q
+        };
         if front {
             q.push_front(job);
         } else {
@@ -293,7 +349,15 @@ impl Attributor {
         if !self.main_seen.insert(suite.to_string()) {
             return;
         }
-        let roots: Vec<Id> = adders.iter().filter(|x| !adders.iter().any(|y| y != *x && self.shape.removal_of(y).contains(x))).cloned().collect();
+        let roots: Vec<Id> = adders
+            .iter()
+            .filter(|x| {
+                !adders
+                    .iter()
+                    .any(|y| y != *x && self.shape.removal_of(y).contains(x))
+            })
+            .cloned()
+            .collect();
         self.register_red(suite, &roots, Some(roots.clone()), now);
         match &roots[..] {
             [only] => {
@@ -339,7 +403,9 @@ impl Attributor {
     pub fn next_jobs(&mut self) -> Vec<Job> {
         let mut out = vec![];
         while self.spare() > 0 {
-            let Some(job) = self.plain_q.pop_front().or_else(|| self.attr_q.pop_front()) else { break };
+            let Some(job) = self.plain_q.pop_front().or_else(|| self.attr_q.pop_front()) else {
+                break;
+            };
             if let Some(st) = self.suites.get_mut(&job.suite) {
                 st.reruns += 1;
             }
@@ -352,7 +418,13 @@ impl Attributor {
 
     fn cancel_queued(&mut self, suite: &str) {
         let keep = |j: &Job| j.suite != suite;
-        let dropped: Vec<u64> = self.attr_q.iter().chain(self.plain_q.iter()).filter(|j| !keep(j)).map(|j| j.id).collect();
+        let dropped: Vec<u64> = self
+            .attr_q
+            .iter()
+            .chain(self.plain_q.iter())
+            .filter(|j| !keep(j))
+            .map(|j| j.id)
+            .collect();
         self.attr_q.retain(keep);
         self.plain_q.retain(keep);
         if let Some(st) = self.suites.get_mut(suite) {
@@ -372,10 +444,14 @@ impl Attributor {
     }
 
     pub fn on_job_result(&mut self, job_id: u64, result: JobResult, now: u64) {
-        let Some(job) = self.running.remove(&job_id) else { return };
+        let Some(job) = self.running.remove(&job_id) else {
+            return;
+        };
         let all = self.shape.members.clone();
         let suite = job.suite.clone();
-        let Some(st) = self.suites.get_mut(&suite) else { return };
+        let Some(st) = self.suites.get_mut(&suite) else {
+            return;
+        };
         st.outstanding.remove(&job_id);
 
         if result == JobResult::Fault {
@@ -448,7 +524,9 @@ impl Attributor {
     /// owner's explains nothing new (a prerequisite of the owner); one strictly inside an
     /// owner's replaces it.
     fn add_owner(&mut self, suite: &str, x: Id, removal: Vec<Id>, now: u64) {
-        let Some(st) = self.suites.get_mut(suite) else { return };
+        let Some(st) = self.suites.get_mut(suite) else {
+            return;
+        };
         match &st.settled {
             None => {}
             Some((Outcome::Owner(_), _)) => {}
@@ -456,7 +534,11 @@ impl Attributor {
         }
         let r: BTreeSet<&Id> = removal.iter().collect();
         let sub = |a: &BTreeSet<&Id>, b: &[Id]| b.iter().all(|m| a.contains(m));
-        if st.owners.iter().any(|(_, o)| o.len() < removal.len() && sub(&r, o)) {
+        if st
+            .owners
+            .iter()
+            .any(|(_, o)| o.len() < removal.len() && sub(&r, o))
+        {
             return;
         }
         st.owners.retain(|(_, o)| {
@@ -472,9 +554,15 @@ impl Attributor {
 
     /// Nothing left to run for `suite` and still unsettled: unattributed.
     fn maybe_exhausted(&mut self, suite: &str, now: u64) {
-        let Some(st) = self.suites.get(suite) else { return };
+        let Some(st) = self.suites.get(suite) else {
+            return;
+        };
         if st.settled.is_none() && st.outstanding.is_empty() && st.plain_red {
-            let outcome = if st.faulted { Outcome::Faulted } else { Outcome::Unattributed };
+            let outcome = if st.faulted {
+                Outcome::Faulted
+            } else {
+                Outcome::Unattributed
+            };
             self.settle(suite, outcome, now);
         }
     }
@@ -492,11 +580,20 @@ impl Attributor {
     /// it owns. A red still awaiting a rerun may yet name a second owner, so it is not sole.
     pub fn sole_owner(&self) -> Option<(Id, Vec<String>)> {
         let sole = |suite: &String| match &self.suites[suite] {
-            SuiteState { outstanding, settled: Some((Outcome::Owner(o), _)), .. } if outstanding.is_empty() && o.len() == 1 => Some(o[0].clone()),
+            SuiteState {
+                outstanding,
+                settled: Some((Outcome::Owner(o), _)),
+                ..
+            } if outstanding.is_empty() && o.len() == 1 => Some(o[0].clone()),
             _ => None,
         };
         let owner = self.reds.iter().find_map(sole)?;
-        let owned = self.reds.iter().filter(|s| sole(s).as_ref() == Some(&owner)).cloned().collect();
+        let owned = self
+            .reds
+            .iter()
+            .filter(|s| sole(s).as_ref() == Some(&owner))
+            .cloned()
+            .collect();
         Some((owner, owned))
     }
 
@@ -550,7 +647,9 @@ pub use suite_select::glob::case_match as case_glob;
 /// `# covers:` globs are `covers` (`None`: no declaration — it covers everything, as in
 /// the selector). A `file#function` glob matches on its file.
 pub fn touches(suite: &str, covers: Option<&[String]>, paths: &[String]) -> bool {
-    let Some(globs) = covers else { return !paths.is_empty() };
+    let Some(globs) = covers else {
+        return !paths.is_empty();
+    };
     paths.iter().any(|p| {
         p.rsplit('/').next() == Some(suite)
             || globs.iter().any(|g| {
@@ -561,7 +660,12 @@ pub fn touches(suite: &str, covers: Option<&[String]>, paths: &[String]) -> bool
 }
 
 /// S's suspects: members that touch it first, then the rest; each group in round order.
-pub fn suspect_order(suite: &str, covers: Option<&[String]>, members: &[Id], changed: &BTreeMap<Id, Vec<String>>) -> Vec<Id> {
+pub fn suspect_order(
+    suite: &str,
+    covers: Option<&[String]>,
+    members: &[Id],
+    changed: &BTreeMap<Id, Vec<String>>,
+) -> Vec<Id> {
     let empty = vec![];
     let (mut hit, mut rest): (Vec<Id>, Vec<Id>) = (vec![], vec![]);
     for m in members {
@@ -589,7 +693,10 @@ pub enum InstallFault {
 /// "does the container install succeed on this tree" as the predicate. `probe` gets the removal
 /// set and answers `Green` (installs), `Red` (install fails) or `Fault` (the probe itself
 /// failed — retried once, then never read as either).
-pub fn attribute_install_fault(shape: &Shape, mut probe: impl FnMut(&[Id]) -> JobResult) -> InstallFault {
+pub fn attribute_install_fault(
+    shape: &Shape,
+    mut probe: impl FnMut(&[Id]) -> JobResult,
+) -> InstallFault {
     let mut ask = |removal: &[Id]| match probe(removal) {
         JobResult::Fault => probe(removal),
         r => r,
@@ -610,7 +717,9 @@ pub fn attribute_install_fault(shape: &Shape, mut probe: impl FnMut(&[Id]) -> Jo
             JobResult::Fault => return InstallFault::Unattributed,
         }
     }
-    let Some(culprit) = all.get(hi.wrapping_sub(1)) else { return InstallFault::Unattributed };
+    let Some(culprit) = all.get(hi.wrapping_sub(1)) else {
+        return InstallFault::Unattributed;
+    };
     match ask(&shape.removal_of(culprit)) {
         JobResult::Green => InstallFault::Owner(culprit.clone()),
         _ => InstallFault::Unattributed,

@@ -1,18 +1,38 @@
 use super::*;
 
 fn m(id: &str, paths: &[&str]) -> MemberPaths {
-    MemberPaths { id: id.into(), paths: paths.iter().map(|p| p.to_string()).collect() }
+    MemberPaths {
+        id: id.into(),
+        paths: paths.iter().map(|p| p.to_string()).collect(),
+    }
 }
 
 fn red(suite: &str, evidence: &str, own: &[&str]) -> Red {
-    Red { suite: suite.into(), evidence: evidence.into(), own: own.iter().map(|g| g.to_string()).collect() }
+    Red {
+        suite: suite.into(),
+        evidence: evidence.into(),
+        own: own.iter().map(|g| g.to_string()).collect(),
+    }
 }
 
 fn round() -> Vec<MemberPaths> {
     vec![
-        m("sp-2yclhz", &["sentinel/src/check4.rs", "sentinel/src/audit.rs", "sentinel/src/lib.rs"]),
-        m("sp-73vuz3", &["systemd/spira-nix-gc.service", "systemd/spira-nix-gc.timer"]),
-        m("sp-38qf5k", &["batcher-cut/src/pace.rs", "batcher-cut/src/io.rs"]),
+        m(
+            "sp-2yclhz",
+            &[
+                "sentinel/src/check4.rs",
+                "sentinel/src/audit.rs",
+                "sentinel/src/lib.rs",
+            ],
+        ),
+        m(
+            "sp-73vuz3",
+            &["systemd/spira-nix-gc.service", "systemd/spira-nix-gc.timer"],
+        ),
+        m(
+            "sp-38qf5k",
+            &["batcher-cut/src/pace.rs", "batcher-cut/src/io.rs"],
+        ),
         m("sp-other", &["doc/notes.md", "sentinel/src/lib.rs"]),
     ]
 }
@@ -26,7 +46,11 @@ fn eject_ids(v: &Verdict) -> Vec<&str> {
 
 #[test]
 fn r_auto_58_fence_names_check4() {
-    let r = red("fence: event-taxonomy", "event-taxonomy: sentinel/src/check4.rs: no call site emits bead.poisoned", &[]);
+    let r = red(
+        "fence: event-taxonomy",
+        "event-taxonomy: sentinel/src/check4.rs: no call site emits bead.poisoned",
+        &[],
+    );
     assert_eq!(eject_ids(&attribute(&[r], &round())), ["sp-2yclhz"]);
 }
 
@@ -38,24 +62,43 @@ fn r_auto_58_recert_names_units() {
 
 #[test]
 fn r_auto_59_two_reds_two_owners() {
-    let a = red("test-wire-token", "grep: /w/sentinel/src/audit.rs: No such file", &[]);
-    let b = red("test-batcher-cut-x", "wanted [PR 1 opened] in [no round cut: no trigger]", &["batcher-cut/"]);
+    let a = red(
+        "test-wire-token",
+        "grep: /w/sentinel/src/audit.rs: No such file",
+        &[],
+    );
+    let b = red(
+        "test-batcher-cut-x",
+        "wanted [PR 1 opened] in [no round cut: no trigger]",
+        &["batcher-cut/"],
+    );
     let v = attribute(&[a, b], &round());
     assert_eq!(eject_ids(&v), ["sp-2yclhz", "sp-38qf5k"]);
 }
 
 #[test]
 fn a_red_naming_two_members_is_ambiguous_with_both_listed() {
-    let r = red("s", "sentinel/src/audit.rs and batcher-cut/src/io.rs both failed", &[]);
+    let r = red(
+        "s",
+        "sentinel/src/audit.rs and batcher-cut/src/io.rs both failed",
+        &[],
+    );
     match attribute(&[r], &round()) {
-        Verdict::Ambiguous(rows) => assert_eq!(rows[0].candidates.keys().collect::<Vec<_>>(), ["sp-2yclhz", "sp-38qf5k"]),
+        Verdict::Ambiguous(rows) => assert_eq!(
+            rows[0].candidates.keys().collect::<Vec<_>>(),
+            ["sp-2yclhz", "sp-38qf5k"]
+        ),
         v => panic!("{v:?}"),
     }
 }
 
 #[test]
 fn a_red_naming_no_member_pauses() {
-    let r = red("s", "assertion failed at unrelated/thing.rs:3", &["elsewhere/"]);
+    let r = red(
+        "s",
+        "assertion failed at unrelated/thing.rs:3",
+        &["elsewhere/"],
+    );
     assert!(matches!(attribute(&[r], &round()), Verdict::Ambiguous(_)));
 }
 
@@ -63,7 +106,10 @@ fn a_red_naming_no_member_pauses() {
 fn one_ambiguous_red_pauses_the_round_even_if_another_is_owned() {
     let a = red("a", "sentinel/src/check4.rs", &[]);
     let b = red("b", "nothing here", &[]);
-    assert!(matches!(attribute(&[a, b], &round()), Verdict::Ambiguous(_)));
+    assert!(matches!(
+        attribute(&[a, b], &round()),
+        Verdict::Ambiguous(_)
+    ));
 }
 
 #[test]
@@ -105,25 +151,46 @@ const FEATURE_PANIC: &str = "thread 'x' panicked at round-vm/tests/unit_cov_real
 
 #[test]
 fn a_red_naming_a_test_file_no_member_touched_is_owned_by_the_one_member_that_touches_its_crate() {
-    let members = vec![m("sp-a", &["round-vm/src/run.rs", "round-vm/Cargo.toml"]), m("sp-b", &["docs/x.md"])];
+    let members = vec![
+        m("sp-a", &["round-vm/src/run.rs", "round-vm/Cargo.toml"]),
+        m("sp-b", &["docs/x.md"]),
+    ];
     let v = attribute(&[red("integration-tests", FEATURE_PANIC, &[])], &members);
     assert_eq!(eject_ids(&v), ["sp-a"]);
 }
 
 #[test]
 fn a_red_naming_a_crate_two_members_touch_stays_ambiguous() {
-    let members = vec![m("sp-a", &["round-vm/src/run.rs"]), m("sp-b", &["round-vm/src/vm.rs"])];
-    assert!(matches!(attribute(&[red("integration-tests", FEATURE_PANIC, &[])], &members), Verdict::Ambiguous(_)));
+    let members = vec![
+        m("sp-a", &["round-vm/src/run.rs"]),
+        m("sp-b", &["round-vm/src/vm.rs"]),
+    ];
+    assert!(matches!(
+        attribute(&[red("integration-tests", FEATURE_PANIC, &[])], &members),
+        Verdict::Ambiguous(_)
+    ));
 }
 
 #[test]
 fn the_exact_file_outranks_its_crate() {
-    let members = vec![m("sp-a", &["round-vm/tests/unit_cov_real.rs"]), m("sp-b", &["round-vm/src/vm.rs"])];
-    assert_eq!(eject_ids(&attribute(&[red("integration-tests", FEATURE_PANIC, &[])], &members)), ["sp-a"]);
+    let members = vec![
+        m("sp-a", &["round-vm/tests/unit_cov_real.rs"]),
+        m("sp-b", &["round-vm/src/vm.rs"]),
+    ];
+    assert_eq!(
+        eject_ids(&attribute(
+            &[red("integration-tests", FEATURE_PANIC, &[])],
+            &members
+        )),
+        ["sp-a"]
+    );
 }
 
 #[test]
 fn a_top_level_directory_that_is_not_a_crate_does_not_stand_for_its_crate() {
     let members = vec![m("sp-a", &["spira/test-other.sh"])];
-    assert!(matches!(attribute(&[red("fence", "spira/test-x.sh: bad", &[])], &members), Verdict::Ambiguous(_)));
+    assert!(matches!(
+        attribute(&[red("fence", "spira/test-x.sh: bad", &[])], &members),
+        Verdict::Ambiguous(_)
+    ));
 }
