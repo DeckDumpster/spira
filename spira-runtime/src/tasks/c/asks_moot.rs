@@ -311,9 +311,14 @@ pub fn observe(lc: &LcClient) -> Result<String, String> {
     if db.trim().is_empty() {
         return Err("no beads database (SPIRA_DB) — checked nothing".into());
     }
+    observe_on(lc, &label)
+}
+
+/// The open attention beads: a closed ask has nothing left to moot.
+pub fn observe_on(lc: &LcClient, label: &str) -> Result<String, String> {
     let labels = format!("insight,{label},overseer");
-    let rows = lc.answer(&["content", "list", "--all", "--limit", "0", "--label-any", &labels, "--json"]).map_err(|e| format!("the beads database is not reachable — checked nothing: {e}"))?;
-    serde_json::to_string(&Snapshot { asks: moot_asks(&rows, &label)? }).map_err(|e| e.to_string())
+    let rows = lc.answer(&["content", "list", "--limit", "0", "--label-any", &labels, "--json"]).map_err(|e| format!("the beads database is not reachable — checked nothing: {e}"))?;
+    serde_json::to_string(&Snapshot { asks: moot_asks(&rows, label)? }).map_err(|e| e.to_string())
 }
 
 /// The runner of [`CHECK`]: `bash -c <pred>` through `proc`, bounded at its timeout; a deadline
@@ -406,3 +411,22 @@ pub fn withdraw(lc: &LcClient, input: &str) -> Result<String, String> {
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "asks", drop: &[] }, runtime::rows::Part::Map { name: "timeouts", drop: &[] }, runtime::rows::Part::Map { name: "held", drop: &[] }];
 
 crate::tasks::b::hosted!(AsksMoot);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spira_config::lc_call::fake;
+    use std::sync::Arc;
+
+    fn ask(id: &str, status: &str) -> serde_json::Value {
+        serde_json::json!({"id": id, "status": status, "issue_type": "task", "labels": ["needs-x"], "description": "MOOT-WHEN: true"})
+    }
+
+    #[test]
+    fn the_observe_mootness_candidates_are_the_open_asks_and_no_history_is_read() {
+        let store = Arc::new(fake::Content::new(vec![ask("sp-open", "open"), ask("sp-done", "closed")]));
+        let snap: Snapshot = serde_json::from_str(&observe_on(&LcClient::over(store.clone(), true), "needs-x").unwrap()).unwrap();
+        assert_eq!(snap.asks.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["sp-open"]);
+        assert!(store.requests().iter().all(|r| !spira_config::lc_call::reads_whole_history(r)), "{:?}", store.requests());
+    }
+}

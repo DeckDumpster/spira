@@ -151,6 +151,9 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
             Err(e) => Answer { code: callers::CANNOT_TELL, stderr: format!("spira-lc content purge-alerts: {e}\n"), ..Default::default() },
         },
         "content" => {
+            if let Some(refused) = crate::content::refuse_whole_history(rest, &crate::slow::current_caller()) {
+                return refused;
+            }
             let (ask_label, registry) = (|| content.ask_label(), || content.registry());
             let guards = crate::content::Guards { caller, ask_label: &ask_label, registry: &registry, now };
             let (m, bd) = (std::cell::RefCell::new(m), std::cell::RefCell::new(bd));

@@ -785,6 +785,19 @@ mod tests {
         assert_eq!(*c.0.borrow(), ["note sp-a hello"]);
     }
 
+    #[test]
+    fn a_scheduler_task_is_refused_the_whole_history_over_the_served_door() {
+        let (w, c) = (World::new(), Content::default());
+        let whole = ["content", "list", "--all", "--limit", "0", "--json"];
+        crate::slow::set_caller("spira-runtime");
+        let (code, out, err) = over(&w, &c, &whole, None);
+        assert_eq!((code, out.as_str()), (3, ""), "{err}");
+        assert!(err.contains("exit 3"), "{err}");
+        assert!(c.0.borrow().is_empty(), "bd was never asked");
+        crate::slow::set_caller("spira-lc");
+        assert_eq!(over(&w, &c, &whole, None).0, 0, "any other caller is served");
+    }
+
     /// A content write's guard variables ride the request to the server, which refuses the
     /// czar's shadow-stage mutation with bdq's exit code and text, and writes nothing.
     #[test]

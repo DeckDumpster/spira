@@ -42,6 +42,7 @@ path = "tests/validate.rs"
 required-features = ["integration"]
 
 [features]
+fake-content = []
 integration = ["lifecycle/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]

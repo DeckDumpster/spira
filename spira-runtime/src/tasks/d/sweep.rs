@@ -734,17 +734,27 @@ pub fn members(repo: &str, window: &Option<(String, String)>) -> Vec<MemberAt> {
         .collect()
 }
 
+/// The (id, title) of each bead whose lifecycle row is not terminal: the live rows first, then
+/// only those beads from the content door, by id.
+pub fn open_beads(lc: &spira_config::lc_call::LcClient) -> Result<Vec<(String, String)>, String> {
+    let states = spira_config::lc_state::list_live_on(lc).map_err(|err| format!("lifecycle state unreadable: {err}"))?;
+    let live: Vec<String> = states.iter().filter(|r| !r.terminal()).map(|r| r.bead_id.clone()).collect();
+    let mut all = Vec::new();
+    for chunk in live.chunks(100) {
+        let listed = lc.answer(&["content", "list", "--all", "--limit", "0", "--brief", "--json", "--id", &chunk.join(",")]).map_err(|err| format!("open beads unreadable: {err}"))?;
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&listed).map_err(|err| format!("content list: {err}"))?;
+        all.extend(rows.iter().filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r.get("title")?.as_str()?.to_string()))));
+    }
+    Ok(cert_sweep::still_open(all, &spira_config::lc_state::index(states)))
+}
+
 /// The filing: the open-duplicate check over `content list` and the lifecycle's own rows, then
 /// `work - file` (which runs `bead.sh file` and creates the row). An unreadable open list is an
 /// error, so the suite is held.
 pub fn file_bead(e: &crate::Effects, spec: &EffectSpec) -> Result<String, String> {
     let req: FileReq = serde_json::from_str(&spec.input).map_err(|err| format!("{}: bad input: {err}", spec.name))?;
     let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket);
-    let listed = lc.answer(&["content", "list", "--all", "--limit", "0", "--brief", "--json"]).map_err(|err| format!("open beads unreadable: {err}"))?;
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&listed).map_err(|err| format!("content list: {err}"))?;
-    let all = rows.iter().filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r.get("title")?.as_str()?.to_string()))).collect();
-    let states = spira_config::lc_state::list_live_on(&lc).map_err(|err| format!("lifecycle state unreadable: {err}"))?;
-    let open = cert_sweep::still_open(all, &spira_config::lc_state::index(states));
+    let open = open_beads(&lc)?;
     if let Some(id) = cert_sweep::open_duplicate(&open, &req.suite, req.kind) {
         return Ok(format!("{DUPLICATE}{id}"));
     }
@@ -773,4 +783,24 @@ pub fn record_rows(run: &str, spec: &EffectSpec) -> Result<String, String> {
         cert_sweep::store::append(run, cert_sweep::EVENT_FAMILY, &iso, &host, &cert_sweep::event_fields(s))?;
     }
     Ok(rec.lines.join("\n"))
+}
+
+#[cfg(test)]
+mod open_beads_tests {
+    use super::open_beads;
+    use spira_config::lc_call::{fake, LcClient};
+    use std::sync::Arc;
+
+    fn bead(id: &str, status: &str) -> serde_json::Value {
+        serde_json::json!({"id": id, "status": status, "title": format!("{id} suite-a regressed")})
+    }
+
+    #[test]
+    fn the_duplicate_check_reads_the_non_terminal_beads_by_id_and_not_the_history() {
+        let live = vec![serde_json::json!({"bead_id": "sp-open", "state": "READY"}), serde_json::json!({"bead_id": "sp-old", "state": "LANDED"})];
+        let store = Arc::new(fake::Content::new(vec![bead("sp-open", "open"), bead("sp-old", "closed"), bead("sp-rowless", "open")]).with_live(live));
+        let open = open_beads(&LcClient::over(store.clone(), true)).unwrap();
+        assert_eq!(open, [("sp-open".to_string(), "sp-open suite-a regressed".to_string())]);
+        assert!(store.requests().iter().all(|r| !spira_config::lc_call::reads_whole_history(r)), "{:?}", store.requests());
+    }
 }

@@ -326,17 +326,20 @@ pub fn parse_rows(doc: &serde_json::Value, label: &str) -> (Vec<Ask>, Vec<(Strin
     (asks, bogus)
 }
 
-/// The observe: one `content list` narrowed to the ask label, and the lifecycle states of the
-/// work beads the asks name, both over the socket.
+/// The observe: one `content list` of the open beads carrying the ask label, and the lifecycle
+/// states of the work beads the asks name, both over the socket.
 pub fn observe(e: &crate::Effects, label: &str) -> Result<String, String> {
-    let lc = super::lc(e);
-    let text = lc.answer(&["content", "list", "--all", "--limit", "0", "--json", "--label-any", label]).map_err(String::from)?;
+    observe_on(&super::lc(e), label)
+}
+
+pub fn observe_on(lc: &spira_config::lc_call::LcClient, label: &str) -> Result<String, String> {
+    let text = lc.answer(&["content", "list", "--limit", "0", "--json", "--label-any", label]).map_err(String::from)?;
     let doc: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("content list: {e}"))?;
     let (asks, mislabelled) = parse_rows(&doc, label);
     let mut work_states = BTreeMap::new();
     if asks.iter().any(|a| !a.works.is_empty()) {
         let works: Vec<String> = asks.iter().flat_map(|a| a.works.iter().cloned()).collect();
-        for row in spira_config::lc_state::list_ids_on(&lc, &works)? {
+        for row in spira_config::lc_state::list_ids_on(lc, &works)? {
             work_states.insert(row.bead_id, row.state);
         }
     }
@@ -389,3 +392,22 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("mislabelled_seen"), runtime::rows::Part::Map { name: "asks", drop: &[] }, runtime::rows::Part::Map { name: "checks", drop: &[] }];
 
 super::hosted!(AsksVerify);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spira_config::lc_call::{fake, LcClient};
+    use std::sync::Arc;
+
+    fn ask(id: &str, status: &str) -> serde_json::Value {
+        serde_json::json!({"id": id, "status": status, "issue_type": "task", "labels": ["needs-x"], "description": "VERIFY: true"})
+    }
+
+    #[test]
+    fn the_observe_checks_the_open_asks_and_never_reads_the_whole_history() {
+        let store = Arc::new(fake::Content::new(vec![ask("sp-open", "open"), ask("sp-done", "closed")]));
+        let snap: Snapshot = serde_json::from_str(&observe_on(&LcClient::over(store.clone(), true), "needs-x").unwrap()).unwrap();
+        assert_eq!(snap.asks.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["sp-open"]);
+        assert!(store.requests().iter().all(|r| !spira_config::lc_call::reads_whole_history(r)), "{:?}", store.requests());
+    }
+}

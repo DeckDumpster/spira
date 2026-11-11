@@ -171,7 +171,10 @@ pub fn child_path(cfg: &Cfg) -> String {
 /// One call through the store's content door (`content <args>`), in-process over the declared
 /// socket: its stdout, unless it failed and printed nothing.
 pub fn content(args: &[&str]) -> Result<String, String> {
-    let lc = spira_config::lc_call::LcClient::configured()?;
+    content_on(&spira_config::lc_call::LcClient::configured()?, args)
+}
+
+fn content_on(lc: &spira_config::lc_call::LcClient, args: &[&str]) -> Result<String, String> {
     let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
     let r = lc.call(&argv).map_err(|e| format!("spira-lc content: {e}"))?;
     if r.code != 0 && r.out.is_empty() {
@@ -191,17 +194,41 @@ fn rows(text: &str, key: &str) -> Result<Vec<Value>, String> {
     })
 }
 
-/// `--all` is required: insights AND events are created CLOSED, and `bd list` hides closed
-/// issues. Every view the panel has is a filter over this one result — decisions, FYI and
-/// now events too, which were already in this payload and dropped on the floor because
-/// neither surviving filter matched them.
+/// How far back the pane reads the closed beads: insights and events are created CLOSED and
+/// `bd list` hides closed issues, so they come from a window on `updated_at` (archiving one
+/// touches it). Never the whole history; open beads are read whole.
+pub const CLOSED_WINDOW_DAYS: i64 = 14;
+
+/// `YYYY-MM-DD` of the day `days` before the epoch second `now`.
+fn day_before(now: i64, days: i64) -> String {
+    let z = (now.div_euclid(86_400) - days) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    format!("{:04}-{m:02}-{d:02}", yoe + era * 400 + i64::from(m <= 2))
+}
+
+/// Every view the panel has is a filter over this result: the open beads (decisions), and the
+/// closed ones touched in the last [`CLOSED_WINDOW_DAYS`] (insights, FYI, events).
 ///
-/// One call against one database. An error here is a real error and reaches the pane as one:
-/// there is no other database whose rows could stand in for these, so silently returning an
-/// empty list would render "nothing is waiting" over an unread queue.
+/// An error here is a real error and reaches the pane as one: there is no other database whose
+/// rows could stand in for these, so silently returning an empty list would render "nothing is
+/// waiting" over an unread queue.
 fn fetch_beads() -> Result<Vec<Value>, String> {
-    let out = content(&["list", "--all", "--limit", "0", "--json"])?;
-    rows(&out, "issues")
+    fetch_beads_on(&spira_config::lc_call::LcClient::configured()?, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64))
+}
+
+fn fetch_beads_on(lc: &spira_config::lc_call::LcClient, now: i64) -> Result<Vec<Value>, String> {
+    let mut all = rows(&content_on(lc, &["list", "--limit", "0", "--json"])?, "issues")?;
+    let since = day_before(now, CLOSED_WINDOW_DAYS);
+    let recent = rows(&content_on(lc, &["list", "--all", "--limit", "0", "--json", "--updated-after", &since])?, "issues")?;
+    let have: std::collections::HashSet<String> = all.iter().filter_map(|r| r["id"].as_str().map(str::to_string)).collect();
+    all.extend(recent.into_iter().filter(|r| r["id"].as_str().is_some_and(|id| !have.contains(id))));
+    Ok(all)
 }
 
 /// Every condition the watchdog keeps, the write probe included: its presence is the positive
@@ -845,6 +872,30 @@ pub fn view_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(id: &str, status: &str, updated: &str) -> Value {
+        serde_json::json!({"id": id, "status": status, "labels": ["overseer"], "updated_at": updated})
+    }
+
+    #[test]
+    fn the_window_starts_the_stated_days_before_now() {
+        assert_eq!(day_before(1_794_000_000, 14), "2026-10-23"); // 2026-11-06T21:20Z
+        assert_eq!(day_before(1_735_689_600, 0), "2025-01-01");
+        assert_eq!(day_before(1_735_689_600, 1), "2024-12-31");
+    }
+
+    #[test]
+    fn the_pane_reads_open_beads_and_a_closed_window_and_never_the_history() {
+        let mut rows = vec![row("sp-open", "open", "2026-11-01"), row("sp-event", "closed", "2026-11-09")];
+        rows.extend((0..80).map(|i| row(&format!("sp-h{i}"), "closed", "2025-01-01")));
+        let store = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows));
+        let lc = spira_config::lc_call::LcClient::over(store.clone(), true);
+        let got = fetch_beads_on(&lc, 1_794_000_000).unwrap();
+        assert!(!got.iter().any(|r| r["id"].as_str().unwrap_or("").starts_with("sp-h")), "closed beads outside the window stay out");
+        assert!(got.iter().any(|r| r["id"] == "sp-open") && got.iter().any(|r| r["id"] == "sp-event"));
+        assert!(store.requests().iter().all(|r| !spira_config::lc_call::reads_whole_history(r)), "{:?}", store.requests());
+        assert!(store.requests().iter().any(|r| r.contains(&"--updated-after".to_string()) && r.contains(&"2026-10-23".to_string())));
+    }
 
     #[test]
     fn the_alert_conditions_are_read_in_process() {

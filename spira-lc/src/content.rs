@@ -80,6 +80,24 @@ fn create_flags(args: &[&str]) -> Result<Kind, String> {
     Ok(Kind::Write { body })
 }
 
+/// The programs whose ticks must not read the whole bead history (a caller is named
+/// `<program>` or `<program>/<subcommand>`).
+const TICK_DRIVEN: &[&str] = &["spira-runtime", "cockpit-collect", "panel"];
+
+/// Refuses `content list --all --limit 0` (exit 3) from a scheduler task or the cockpit collector.
+pub fn refuse_whole_history(args: &[String], caller: &str) -> Option<Answer> {
+    let argv: Vec<&str> = std::iter::once("content").chain(args.iter().map(String::as_str)).collect();
+    let program = caller.split('/').next().unwrap_or("");
+    if !spira_config::lc_call::reads_whole_history(&argv) || !TICK_DRIVEN.contains(&program) {
+        return None;
+    }
+    Some(Answer {
+        code: REFUSED,
+        stderr: format!("spira-lc content: `list --all --limit 0` reads every bead ever filed and is refused from {caller} (exit {REFUSED}); read open beads, or bound the read with --id, --parent or --updated-after/--closed-after\n"),
+        ..Default::default()
+    })
+}
+
 /// A content write: bd's argv, and its stdin when the sub-verb takes the request body.
 pub type Write<'a> = &'a dyn Fn(&[String], Option<&str>) -> Result<String, String>;
 
@@ -307,6 +325,30 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    fn argv(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_tick_driven_caller_is_refused_the_whole_history_with_exit_3_named() {
+        let whole = argv(&["list", "--all", "--limit", "0", "--json"]);
+        for caller in ["spira-runtime", "spira-runtime/list", "cockpit-collect/list", "panel"] {
+            let r = refuse_whole_history(&whole, caller).unwrap_or_else(|| panic!("{caller} was served the whole history"));
+            assert_eq!(r.code, REFUSED);
+            assert!(r.stderr.contains("exit 3") && r.stderr.contains(caller), "{}", r.stderr);
+        }
+    }
+
+    #[test]
+    fn other_callers_and_bounded_reads_are_not_refused() {
+        let whole = argv(&["list", "--all", "--limit", "0", "--json"]);
+        assert!(refuse_whole_history(&whole, "spira-lc").is_none(), "an operator's own read stands");
+        for bounded in [&["list", "--limit", "0", "--json"][..], &["list", "--all", "--limit", "0", "--id", "sp-a"], &["list", "--all", "--limit", "0", "--parent", "sp-e"], &["list", "--all", "--limit", "0", "--closed-after", "2026-11-01"], &["list", "--all", "--json"]] {
+            assert!(refuse_whole_history(&argv(bounded), "spira-runtime/list").is_none(), "{bounded:?}");
+        }
+        assert!(refuse_whole_history(&argv(&["list", "--all", "--limit", "0", "--label-any", "x"]), "spira-runtime").is_some(), "a label can match every bead");
     }
 
     #[test]
