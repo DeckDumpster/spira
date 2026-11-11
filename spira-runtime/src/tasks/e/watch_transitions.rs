@@ -366,9 +366,14 @@ fn evidence(snap: &Snapshot, scope: &str, now: u64, held: &[&str], exit: &str, b
     format!("{}; no {exit} for {} (bound {}); last: {}", held.join(", "), ago(since_last(snap, scope, exit, now), snap, now), dur(bound), lasts.join(", "))
 }
 
-/// Whether `repo` has no free round slot: as many rounds open as the limit allows.
+/// The repo of a bead whose lifecycle record names none.
+const UNATTRIBUTED: &str = "-";
+
+/// Whether `repo` has no free round slot: as many rounds open as the limit allows. A bead with
+/// no recorded repo waits behind any repo's full set of rounds, as it cannot be told apart.
 fn round_slots_full(snap: &Snapshot, repo: &str, cfg: &Config) -> bool {
-    snap.open_rounds.as_ref().is_some_and(|open| open.get(repo).is_some_and(|n| *n > 0 && *n >= cfg.round_max_open))
+    let full = |n: &u64| *n > 0 && *n >= cfg.round_max_open;
+    snap.open_rounds.as_ref().is_some_and(|open| if repo == UNATTRIBUTED { open.values().any(full) } else { open.get(repo).is_some_and(full) })
 }
 
 /// The oldest wait for a cut in `scope` among repos with a free round slot; the `*` scope counts
