@@ -151,8 +151,6 @@ pub fn append<W: World>(w: &W, run: &str, ts: &str, r: &GateRun) {
     }
 }
 
-/// Pushes the trial's run, queue and wait seconds and a run count to the metrics store; the
-/// TSD row stays the record. Labels are bounded: no branch or bead.
 /// Cargo's timing report, kept in the directory of the run record, named by the run's timestamp.
 pub fn keep_report<W: World>(w: &W, run: &str, ts: &str, html: &str) {
     if run.is_empty() {
@@ -164,6 +162,8 @@ pub fn keep_report<W: World>(w: &W, run: &str, ts: &str, html: &str) {
     }
 }
 
+/// Pushes the trial's run, queue and wait seconds and a run count to the metrics store; the
+/// TSD row stays the record. Labels are bounded: no branch or bead.
 pub fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &GateRun) {
     use spira_otel::metrics::Point;
     let mode = if r.gate_mode.is_empty() { "unknown" } else { &r.gate_mode };
