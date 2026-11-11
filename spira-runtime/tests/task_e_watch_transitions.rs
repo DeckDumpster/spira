@@ -463,6 +463,18 @@ fn a_submitted_bead_waiting_twenty_minutes_behind_an_open_round_is_queued_not_st
     assert!(keys(&s).contains(&"SUBMITTED→IN_DELIVERY spira".to_string()), "no round open and the wait past the bound pages");
 }
 
+#[test]
+fn submitted_beads_with_no_recorded_repo_wait_behind_a_full_round_in_a_named_repo() {
+    let now = T0;
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-s1", "-", "SUBMITTED", now - 7 * MIN), bead("sp-s2", "-", "SUBMITTED", now - 5 * MIN)];
+    s.last = BTreeMap::from([("-".to_string(), BTreeMap::from([("Cut".to_string(), now - 9 * MIN)])), ("spira".to_string(), BTreeMap::from([("Deliver".to_string(), now - 9 * MIN)]))]);
+    s.open_rounds = Some(rounds_in("spira", 1));
+    assert!(five_minute_cut_bound(&s, now).is_empty(), "{:?}", five_minute_cut_bound(&s, now));
+    s.open_rounds = Some(rounds_in("spira", 0));
+    assert!(five_minute_cut_bound(&s, now).contains(&"SUBMITTED→IN_DELIVERY -".to_string()), "no round open: the wait pages");
+}
+
 const IN_EFFECT: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const LANDED: &str = "cccccccccccccccccccccccccccccccccccccccc";
 
