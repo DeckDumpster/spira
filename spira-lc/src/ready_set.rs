@@ -16,6 +16,9 @@ const FETCH_CHUNK: usize = 500;
 /// The watermark the items were read at, and each id's item (`None`: bd has no such bead).
 type Held = (Option<u64>, BTreeMap<String, Option<Value>>);
 
+/// Reads plan items from bd.
+type Fetch<'a> = dyn Fn(&[&str]) -> Result<Vec<Value>, String> + 'a;
+
 static ITEMS: Mutex<Held> = Mutex::new((None, BTreeMap::new()));
 
 pub fn run(conn: &Conn) -> (i32, String) {
@@ -51,7 +54,7 @@ fn answer(
     unjudged: usize,
     watermark: Option<u64>,
     held: &Mutex<Held>,
-    fetch: &dyn Fn(&[&str]) -> Result<Vec<Value>, String>,
+    fetch: &Fetch,
 ) -> Result<Value, String> {
     let ids: Vec<&str> = judged.iter().map(|(r, _)| r.row.bead_id.as_str()).collect();
     let items = items_of(&ids, watermark, held, fetch)?;
@@ -65,7 +68,7 @@ fn answer(
     }))
 }
 
-fn items_of(ids: &[&str], watermark: Option<u64>, held: &Mutex<Held>, fetch: &dyn Fn(&[&str]) -> Result<Vec<Value>, String>) -> Result<Vec<Value>, String> {
+fn items_of(ids: &[&str], watermark: Option<u64>, held: &Mutex<Held>, fetch: &Fetch) -> Result<Vec<Value>, String> {
     let Some(w) = watermark else { return fetch(ids) };
     let lock = || held.lock().unwrap_or_else(|p| p.into_inner());
     let (mut out, missing) = {
