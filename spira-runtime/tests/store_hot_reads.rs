@@ -5,7 +5,7 @@
 use std::os::unix::net::UnixListener;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -19,10 +19,38 @@ struct Store {
     rows: Vec<Value>,
 }
 
+/// Counts of the watch calls the double answered and refused, with a signal on each.
+#[derive(Default)]
+struct Calls {
+    answered: Mutex<(usize, usize)>,
+    moved: Condvar,
+}
+
+impl Calls {
+    fn bump(&self, answered: bool) {
+        let mut n = self.answered.lock().unwrap();
+        if answered {
+            n.0 += 1;
+        } else {
+            n.1 += 1;
+        }
+        self.moved.notify_all();
+    }
+
+    /// Blocks until `ready` holds of (answered, refused) calls.
+    fn until(&self, what: &str, ready: impl Fn((usize, usize)) -> bool) {
+        let n = self.answered.lock().unwrap();
+        // clock-safe: a cap on the wait for the watch's next call, which is a named signal
+        let (_held, timeout) = self.moved.wait_timeout_while(n, Duration::from_secs(10), |n| !ready(*n)).unwrap();
+        assert!(!timeout.timed_out(), "never saw: {what}");
+    }
+}
+
 struct Double {
     store: Arc<Mutex<Store>>,
     deliveries: Mutex<Receiver<String>>,
     cut: Arc<AtomicBool>,
+    calls: Arc<Calls>,
 }
 
 fn bead(id: &str, state: &str, holds: &str) -> Value {
@@ -48,25 +76,21 @@ impl Transport for Double {
                 let kept: Vec<Value> = rows.into_iter().filter(|r| ids.as_ref().is_none_or(|ids| ids.contains(&r["bead_id"].as_str().unwrap()))).collect();
                 ok(Value::Array(kept).to_string())
             }
-            "watch" if self.cut.load(Ordering::SeqCst) => Err("the watch is cut".into()),
-            "watch" => match self.deliveries.lock().unwrap().recv_timeout(Duration::from_millis(20)) {
-                Ok(answer) => ok(answer),
-                Err(RecvTimeoutError::Timeout) => ok(json!({ "progress_rev": 5 }).to_string()),
-                Err(RecvTimeoutError::Disconnected) => Err("closed".into()),
-            },
+            "watch" if self.cut.load(Ordering::SeqCst) => {
+                self.calls.bump(false);
+                Err("the watch is cut".into())
+            }
+            "watch" => {
+                let answer = match self.deliveries.lock().unwrap().recv_timeout(Duration::from_millis(20)) {
+                    Ok(answer) => answer,
+                    Err(RecvTimeoutError::Timeout) => json!({ "progress_rev": 5 }).to_string(),
+                    Err(RecvTimeoutError::Disconnected) => return Err("closed".into()),
+                };
+                self.calls.bump(true);
+                ok(answer)
+            }
             other => Err(format!("unscripted {other}")),
         }
-    }
-}
-
-fn until<T>(what: &str, mut probe: impl FnMut() -> Option<T>) -> T {
-    let began = Instant::now();
-    loop {
-        if let Some(v) = probe() {
-            return v;
-        }
-        assert!(began.elapsed() < Duration::from_secs(5), "never saw: {what}");
-        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -90,8 +114,11 @@ fn hot_reads_follow_the_watch_refuse_when_it_is_cut_and_never_ask_the_store() {
     let store = Arc::new(Mutex::new(Store { rows: vec![bead("a-1", "SUBMITTED", "[]"), bead("a-2", "SUBMITTED", "[]"), bead("a-3", "SUBMITTED", "[\"ask\"]"), bead("a-9", "CERTIFIED", "[]")] }));
     let (deliver, deliveries): (Sender<String>, Receiver<String>) = channel();
     let cut = Arc::new(AtomicBool::new(false));
-    let double = Double { store: store.clone(), deliveries: Mutex::new(deliveries), cut: cut.clone() };
-    let views = Projection::new(LcClient::over(Arc::new(double), true), Duration::from_millis(400), Arc::new(Instant::now));
+    let calls = Arc::new(Calls::default());
+    let double = Double { store: store.clone(), deliveries: Mutex::new(deliveries), cut: cut.clone(), calls: calls.clone() };
+    let now = Arc::new(Mutex::new(Instant::now()));
+    let clock = now.clone();
+    let views = Projection::new(LcClient::over(Arc::new(double), true), Duration::from_millis(400), Arc::new(move || *clock.lock().unwrap()));
     let _watch = spira_runtime::store::run(views).expect("the first install stands");
 
     let snap = snapshot().unwrap();
@@ -100,16 +127,20 @@ fn hot_reads_follow_the_watch_refuse_when_it_is_cut_and_never_ask_the_store() {
 
     store.lock().unwrap().rows[0] = bead("a-1", "CERTIFIED", "[]");
     deliver.send(json!({ "events": [{ "key": "lifecycle/a-1", "rev": { "main": 6, "sub": 0 }, "value": {}, "create_rev": null, "prev_mod_rev": null }], "through": 6 }).to_string()).unwrap();
-    let moved = until("the delivered change in the round snapshot", || snapshot().ok().filter(|s| s.certified == 2));
-    assert_eq!(moved.submitted, 1);
+    let delivered = calls.answered.lock().unwrap().0;
+    calls.until("the delivery applied and the next watch begun", |n| n.0 >= delivered + 2);
+    let moved = snapshot().unwrap();
+    assert_eq!((moved.certified, moved.submitted), (2, 1));
     let lc = LcClient::socket(&sock);
     assert_eq!(certified_pool(&lc, "alpha"), Read::Observed(vec!["a-1".to_string(), "a-9".to_string()]));
 
-    let second = Projection::new(LcClient::over(Arc::new(Double { store, deliveries: Mutex::new(channel().1), cut: cut.clone() }), true), Duration::from_secs(1), Arc::new(Instant::now));
+    let second = Projection::new(LcClient::over(Arc::new(Double { store, deliveries: Mutex::new(channel().1), cut: cut.clone(), calls: calls.clone() }), true), Duration::from_secs(1), Arc::new(Instant::now));
     assert!(spira_runtime::store::run(second).is_err(), "a second projection never replaces the one readers hold");
 
     cut.store(true, Ordering::SeqCst);
-    until("the round snapshot refusing once the watch is cut", || snapshot().err());
+    calls.until("the cut watch refused", |n| n.1 >= 1);
+    *now.lock().unwrap() += Duration::from_secs(1);
+    assert!(snapshot().is_err(), "a round snapshot read from a cut watch refuses");
     assert!(matches!(certified_pool(&lc, "alpha"), Read::Unobservable(why) if why.contains("the watch is lost")));
     assert_eq!(asked.load(Ordering::SeqCst), 0, "no hot read reached the store's socket, cut or not");
 }

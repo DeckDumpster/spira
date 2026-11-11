@@ -80,7 +80,7 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     let deadline = max_sleep.map_or(NO_WATCHDOG_BOOT, |m| m * 2);
     let boot = {
         let (settings, clock, sink, board) = (settings.clone(), clock.clone(), sink.clone(), board.clone());
-        move || -> Result<runtime::Engine, String> {
+        move || -> Result<(runtime::Engine, Option<spira_runtime::store::Store>), String> {
             // A journal that cannot tell is asked again until most of the startup deadline is spent.
             let (began, mut wait) = (std::time::Instant::now(), OPEN_BACKOFF_FIRST);
             let opened = loop {
@@ -94,25 +94,18 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
             };
             let mut engine = opened.map_err(|e| e.to_string())?.with_status_board(board);
             spira_runtime::start_tasks(&mut engine);
-            Ok(engine)
+            let store = spira_runtime::store::start(&settings.lc_socket).inspect_err(|e| eprintln!("spira-runtime: no store views, tasks read the store per tick: {e}")).ok(); // loop-safe: runs on the startup offload thread
+            Ok((engine, store))
         }
     };
     let mut starting = runtime::offload::offload("startup", None, boot).map_err(|e| e.to_string())?;
-    let engine = tokio::time::timeout(deadline, &mut starting).await.map_err(|_| format!("startup did not finish within {deadline:?}"))?.map_err(|e| e.to_string())??;
+    let (engine, _store) = tokio::time::timeout(deadline, &mut starting).await.map_err(|_| format!("startup did not finish within {deadline:?}"))?.map_err(|e| e.to_string())??;
     let (tx, rx) = mpsc::channel(SUBMIT_QUEUE);
     // One unit manager: the `unit.*` effects and the `unit.ran` source share it, so one reader drains its signals.
     let backend = runtime::units::from_env(clock.clone()).map_err(|e| format!("unit manager: {e}"))?;
     let _sources = spira_runtime::sources::real(&|k: &str| spira_config::process::cfg(k), backend.completions(), clock.clone())?.start(tx.clone()).map_err(|e| e.to_string())?;
     let control = spira_runtime::status::Control::new(board, spira_runtime::control_submit(tx), clock.clone());
     spira_runtime::spawn_control(&settings.control_socket, control)?;
-    // Held to the end of `serve`: dropping it stops the watch.
-    let _store = match spira_runtime::store::start(&settings.lc_socket) {
-        Ok(s) => Some(s),
-        Err(e) => {
-            eprintln!("spira-runtime: no store views, tasks read the store per tick: {e}");
-            None
-        }
-    };
     notifier.ready();
     let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None };
     let units = backend.units();
