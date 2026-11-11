@@ -516,13 +516,19 @@ fn a_snapshot_is_compacted_straight_to_its_destination_in_rollback_mode() {
         put(&c, &format!("b/{i:03}"), json!(big), &format!("seed{i}"));
     }
     let dest = dir.path().join("copy.db");
-    c.backend().snapshot_to(&dest).unwrap();
+    let rev = c.backend().snapshot_to(&dest).unwrap();
     // Header bytes 18 and 19 are 2 only for a file a WAL travels with: the copy-then-VACUUM
     // path wrote a WAL of the whole store beside it.
     let head = std::fs::read(&dest).unwrap();
     assert_eq!((head[18], head[19]), (1, 1), "the snapshot is not a WAL-mode file");
     assert!(!dir.path().join("copy.db-wal").exists());
-    let copy = rusqlite::Connection::open(&dest).unwrap();
-    let ok: String = copy.query_row("PRAGMA integrity_check", [], |r| r.get(0)).unwrap();
-    assert_eq!(ok, "ok");
+    let copy = SqliteBackend::open(
+        &dest,
+        Options {
+            jump_on_open: false,
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(copy.head().unwrap(), rev);
 }

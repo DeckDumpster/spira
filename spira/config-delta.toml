@@ -262,6 +262,7 @@ testenv_foreign_target_idle_hours = 48
 lc_ship_secs = 2
 lc_ship_max_age_secs = 60
 lc_ship_snapshot_secs = 3600
+lc_ship_dir = ""
 plane_skew_max = 25
 runtime_reconciler_secs = 60
 testenv_scratch_root = ""

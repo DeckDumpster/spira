@@ -64,6 +64,7 @@ lc_lifecycle_on_store = 1
 lc_ship_secs = 3
 lc_ship_max_age_secs = 45
 lc_ship_snapshot_secs = 1800
+lc_ship_dir = ""
 plane_skew_max = 7
 lc_backup_db = "spira_lifecycle"
 lc_backup_max_age = 25200
