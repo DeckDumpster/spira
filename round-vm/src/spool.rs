@@ -95,7 +95,8 @@ host_addr="$1" port="$2" job="$3" ref="$4" suites="$5" build="$6" toolchain="$7"
 # The launcher the corpus set up (run.rs REMOTE_SCRIPT): the round's staged release on PATH and its SPIRA_TOML.
 . "$HOME/round-launcher.env" || { echo "round-vm: no staged release on this VM (round-launcher.env)" >&2; exit 2; }
 if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
-export SPIRA_VERDICT_TTL=0 SPIRA_BATCH_MAXPAR=1 SPIRA_BATCH_RESULTS="$HOME/attr-results/$job"
+reason="attribution re-run $job of the round's red"
+export SPIRA_BATCH_MAXPAR=1 SPIRA_BATCH_RESULTS="$HOME/attr-results/$job"
 rm -rf "$SPIRA_BATCH_RESULTS"; mkdir -p "$SPIRA_BATCH_RESULTS"
 # path-ok: the round's own testenv, built on this VM from the round tree by the corpus run
 tenv="$HOME/round-work/target/release/testenv"
@@ -106,7 +107,7 @@ round)
     git fetch --quiet origin "+refs/heads/$ref:refs/heads/$ref" || exit 2
     git checkout --quiet --force --detach "refs/heads/$ref" || exit 2
     cargo build -q --profile release -p testenv --bin testenv || exit 4
-    "$tenv" --mode parallel --profile release --suites "$suites" HEAD
+    "$tenv" --mode parallel --profile release --suites "$suites" --repeat-reason "$reason" HEAD
     rc=$?
     rm -rf "$HOME/round-bins"; mkdir -p "$HOME/round-bins"
     find target/release -maxdepth 1 -type f -executable -exec cp {} "$HOME/round-bins/" \; 2>/dev/null
@@ -141,9 +142,9 @@ artifacts|dwarf)
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
     if [ "$build" = artifacts ]; then
-        "$tenv" --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" HEAD
+        "$tenv" --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" --repeat-reason "$reason" HEAD
     else
-        "$tenv" --mode parallel --profile dwarf --suites "$suites" HEAD
+        "$tenv" --mode parallel --profile dwarf --suites "$suites" --repeat-reason "$reason" HEAD
     fi
     rc=$?
     cd "$HOME" && rm -rf "$d"
@@ -225,6 +226,18 @@ impl AttrTime {
     }
 }
 
+/// One lock per (tree, suites, build): testenv keys a run by exactly those, and refuses a second
+/// live run of a key. Jobs for one key wait their turn here instead of being refused there.
+#[derive(Default)]
+pub struct TreeQueue(Mutex<std::collections::HashMap<String, std::sync::Arc<Mutex<()>>>>);
+
+impl TreeQueue {
+    pub fn lock_for(&self, tree: &str, suites: &str, build: Build) -> std::sync::Arc<Mutex<()>> {
+        let key = format!("{tree}\t{suites}\t{}", build.word());
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).entry(key).or_default().clone()
+    }
+}
+
 pub struct Spool {
     pub dir: PathBuf,
 }
@@ -276,6 +289,7 @@ pub struct Server<'a> {
     pub taken: BTreeSet<String>,
     pub in_flight: &'a AtomicUsize,
     pub mirror_lock: &'a Mutex<()>,
+    pub tree_queue: &'a TreeQueue,
     pub attr_time: &'a AttrTime,
 }
 
@@ -304,10 +318,10 @@ impl<'a> Server<'a> {
             let (host_addr, port, toolchain) = (self.host_addr.to_string(), self.mirror_port, self.toolchain.clone());
             let res_dir = self.spool.res_dir();
             let scratch = self.scratch.join(format!("job-{job}"));
-            let (in_flight, lock, attr_time) = (self.in_flight, self.mirror_lock, self.attr_time);
+            let (in_flight, lock, queue, attr_time) = (self.in_flight, self.mirror_lock, self.tree_queue, self.attr_time);
             sc.spawn(move || {
                 let began = Instant::now();
-                let rc = run_job(host, remote, tree, addr, &host_addr, port, toolchain, &req, &res_dir, &scratch, lock);
+                let rc = run_job(host, remote, tree, addr, &host_addr, port, toolchain, &req, &res_dir, &scratch, lock, queue);
                 attr_time.add(began.elapsed());
                 let _ = write_atomic(&res_dir.join(format!("{}.done", req.job)), &format!("rc={rc}\n"));
                 in_flight.fetch_sub(1, Ordering::SeqCst);
@@ -333,15 +347,19 @@ fn run_job(
     res_dir: &Path,
     scratch: &Path,
     lock: &Mutex<()>,
+    queue: &TreeQueue,
 ) -> i32 {
     let mirror_ref = format!("attr-{}", req.job);
-    {
+    let tree_sha = {
         let _g = lock.lock().unwrap_or_else(|p| p.into_inner());
-        if let Err(e) = host.mirror_ref(tree, &req.branch, &mirror_ref) {
-            eprintln!("round-vm run: job {}: {e}", req.job);
-            return 2;
+        match host.mirror_ref(tree, &req.branch, &mirror_ref) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("round-vm run: job {}: {e}", req.job);
+                return 2;
+            }
         }
-    }
+    };
     let job = AttrJob {
         host_addr: host_addr.to_string(),
         mirror_port: port,
@@ -351,7 +369,12 @@ fn run_job(
         build: req.build,
         toolchain,
     };
-    let mut rc = match remote.run_attr(addr, &job) {
+    let turn = queue.lock_for(&tree_sha, &req.suites, req.build);
+    let ran = {
+        let _turn = turn.lock().unwrap_or_else(|p| p.into_inner());
+        remote.run_attr(addr, &job)
+    };
+    let mut rc = match ran {
         Ok(rc) => rc,
         Err(e) => {
             eprintln!("round-vm run: job {}: {e}", req.job);

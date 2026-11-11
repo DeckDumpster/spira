@@ -79,6 +79,8 @@ pub enum Outcome {
     Quiet,
     Red,
     Infra,
+    /// The round's attribution reruns faulted: the round stays open and a person is told.
+    AttributionFaulted,
     NoVm,
     StaleImage,
     OpenFailed,
@@ -153,6 +155,9 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, detail: &str) -> (Stat
             ));
         }
         Outcome::StaleImage => {}
+        Outcome::AttributionFaulted => {
+            fx.pages.push(format!("ATTRIBUTION FAULTED {repo} — the round is left open, no member charged ({detail})"));
+        }
         Outcome::NoVm => {
             next.no_vm += 1;
             if next.no_vm >= NO_VM_STOP_AFTER {
@@ -1234,5 +1239,15 @@ mod tests {
         assert_eq!(classify(&Ok(()), Some(("red", 4)), 5), Outcome::Quiet);
         assert_eq!(classify(&Ok(()), Some(("green", 9)), 5), Outcome::Quiet);
         assert_eq!(classify(&Ok(()), None, 5), Outcome::Quiet);
+    }
+
+    #[test]
+    fn a_faulted_attribution_pages_at_once_and_neither_pauses_nor_counts_toward_a_stop() {
+        let st = State::default();
+        let (next, fx) = advance(&st, &Outcome::AttributionFaulted, "spira", "its reruns of test-x.sh could not run");
+        assert!(!fx.pause && !fx.stop);
+        assert_eq!(next.infra, st.infra);
+        assert_eq!(fx.pages.len(), 1);
+        assert!(fx.pages[0].starts_with("ATTRIBUTION FAULTED spira") && fx.pages[0].contains("test-x.sh"), "{:?}", fx.pages);
     }
 }

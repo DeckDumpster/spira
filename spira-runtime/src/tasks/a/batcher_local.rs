@@ -1336,6 +1336,10 @@ impl Machine<'_> {
                     self.abandon_naming(&why, Vec::new());
                     self.finish(pace::Outcome::NoVm, &why);
                 }
+                Some(Attribution::Faulted(why)) => {
+                    self.go(Trigger::RerunBlocked);
+                    self.finish(pace::Outcome::AttributionFaulted, &why);
+                }
                 Some(Attribution::Blocked(why)) => {
                     self.go(Trigger::RerunBlocked);
                     self.red(&format!("local corpus red — held before reaching CI: {why}"));

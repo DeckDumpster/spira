@@ -239,6 +239,21 @@ fn sp_lgffas_a_fault_in_the_attribution_leg_re_cuts_on_the_next_tick_without_a_p
     assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE], "cut again on the next tick");
 }
 
+/// A leg whose reruns faulted is not a red: no abandon, no pause, and the page says so.
+#[test]
+fn sp_xslgtq_a_faulted_attribution_leaves_the_round_open_and_pages_attribution_faulted() {
+    use batcher_cut::attribute::Attribution;
+    let why = "attribution faulted: its reruns of test-sim-controls.sh could not run";
+    let line = Attribution::Faulted(why.into()).line();
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.a2").unwrap(), exit: runtime::units::Exit::Code(0), duration_ms: 1 };
+    let out = runtime::units::RanOutput::captured(line.as_bytes(), b"");
+    let (_, acts) = on_ran_with(&driving(State::Attributing, "spira.a2"), &ran, &out, NOW).expect("its own leg");
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert!(!names.contains(&ABANDON) && !names.contains(&PAUSE) && !names.contains(&CERTIFY), "{names:?}");
+    let page = acts.iter().find(|a| a.effect == INBOX_APPEND).unwrap_or_else(|| panic!("no page: {names:?}"));
+    assert!(page.input.contains("ATTRIBUTION FAULTED") && page.input.contains("test-sim-controls.sh") && !page.input.contains("unattributed"), "{}", page.input);
+}
+
 /// Certifying × `unit.ran` red: the guilty are ejected from the round by the certify output
 /// `queue round certify` names (`red-output=`, `io::implicated`), then the round is abandoned.
 #[test]
