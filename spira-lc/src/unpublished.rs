@@ -60,10 +60,7 @@ fn measure(name: &str) -> Result<serde_json::Value, String> {
     };
     let forge_tip = rev(repo, &tracking)?;
     let landing_tip = rev(repo, &base)?;
-    let count: u64 = git_output(repo, &["rev-list", "--count", &format!("{forge_tip}..{landing_tip}")])
-        .and_then(|s| s.trim().parse().ok())
-        .ok_or("cannot count the range")?;
-    let oldest_arrival = if count == 0 { None } else { Some(arrival(repo, &base, &forge_tip, &landing_tip)?) };
+    let (count, oldest_arrival) = range_facts(repo, &base, &forge_tip, &landing_tip)?;
     let mut answer = serde_json::json!({ "forge_tip": forge_tip, "landing_tip": landing_tip, "count": count, "oldest_arrival": oldest_arrival });
     if let Some(age) = stale {
         answer["stale"] = true.into();
@@ -112,12 +109,16 @@ fn rev(repo: &Path, name: &str) -> Result<String, String> {
     git_output(repo, &["rev-parse", "-q", "--verify", name]).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).ok_or_else(|| format!("cannot resolve {name}"))
 }
 
-/// When the landing ref first moved onto the unpublished range: two git calls, both bounded by the
-/// range and the reflog, never by history.
-fn arrival(repo: &Path, base: &str, forge_tip: &str, landing_tip: &str) -> Result<u64, String> {
+/// The unpublished count and when the landing ref first moved onto it: one `rev-list` of the range
+/// and one reflog read, bounded by the range and the reflog, never by history.
+fn range_facts(repo: &Path, base: &str, forge_tip: &str, landing_tip: &str) -> Result<(u64, Option<u64>), String> {
     let range = git_output(repo, &["rev-list", &format!("{forge_tip}..{landing_tip}")]).ok_or("cannot list the unpublished range")?;
+    let count = range.split_whitespace().count() as u64;
+    if count == 0 {
+        return Ok((0, None));
+    }
     let reflog = git_output(repo, &["log", "-g", "--date=unix", "--format=%H %gd", base]).ok_or("the landing ref has no readable reflog")?;
-    arrival_in(&range, &reflog)
+    Ok((count, Some(arrival_in(&range, &reflog)?)))
 }
 
 /// The oldest reflog update (`<tip> <ref>@{<unix>}` per line, newest first) whose tip is a commit of the range.
@@ -156,6 +157,34 @@ mod tests {
         assert_eq!(arrival_in("ddd\nccc\nbbb\n", reflog), Ok(200));
         let deep: String = (0..5000).map(|i| format!("old{i} x@{{{i}}}\n")).collect();
         assert_eq!(arrival_in("ddd\nccc\nbbb\n", &format!("{reflog}{deep}")), Ok(200));
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.logAllRefUpdates=always"]).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    }
+
+    fn landed(history: usize) -> (u64, Option<u64>) {
+        let scratch = testkit::TempDir::new("unpublished-range");
+        let dir = scratch.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        for _ in 0..history {
+            git(dir, &["commit", "-q", "--allow-empty", "-m", "old"]);
+        }
+        let forge = git(dir, &["rev-parse", "HEAD"]);
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "two"]);
+        let tip = git(dir, &["rev-parse", "HEAD"]);
+        range_facts(dir, "main", &forge, &tip).unwrap()
+    }
+
+    #[test]
+    fn a_long_history_before_the_published_commit_measures_the_same_range_as_a_short_one() {
+        let (short, long) = (landed(2), landed(20));
+        assert_eq!(short.0, 2);
+        assert_eq!(long.0, 2);
+        assert!(short.1.is_some() && long.1.is_some());
     }
 
     #[test]
