@@ -1861,10 +1861,10 @@ spira_repos() {
 }
 
 bead_repo() {            # bead_repo <id> -> its repo name, or the home repo if it names none
-    # bd state prints "(no repo state set)" when the dimension has never been written;
+    # content state prints "(no repo state set)" when the dimension has never been written;
     # strip the sentinel before the fallback test.
     local id="$1" name
-    name="$(bdq state "$id" repo 2>/dev/null)"
+    name="$(spira-lc content state "$id" repo 2>/dev/null)"
     case "$name" in '('*) name="" ;; esac
     printf '%s' "${name:-$(spira_home_repo)}"
 }
@@ -2075,7 +2075,7 @@ spira_status_seam() {    # spira_status_seam <file|-> — load the map once
 
 spira_bead_status() {    # <id> -> open|in_progress|blocked|closed|"" (unknown)
     if [ "$SPIRA_STATUS_SEAM" = 1 ]; then printf '%s' "${SPIRA_STATUS_MAP[$1]:-}"; return; fi
-    bdjson show "$1" 2>/dev/null | python3 -c '
+    spira-lc content show "$1" --json 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: print(""); sys.exit()
@@ -2093,7 +2093,7 @@ SPIRA_DB_OK=""
 spira_db_reachable() {
     [ "$SPIRA_STATUS_SEAM" = 1 ] && return 0
     if [ -z "$SPIRA_DB_OK" ]; then
-        if [ -n "$(bdjson list --all --limit 1 2>/dev/null | tr -d '[:space:]' | sed -n '/^\[{/p')" ]; then
+        if [ -n "$(spira-lc content list --limit 1 --json 2>/dev/null | tr -d '[:space:]' | sed -n '/^\[{/p')" ]; then
             SPIRA_DB_OK=1
         else
             SPIRA_DB_OK=0
