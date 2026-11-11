@@ -1711,6 +1711,7 @@ pub fn dwarf_settings(home: &Path, habits: bool) -> String {
     }
     let habits_bin = home.parent().unwrap_or(home).join("bin").join("habits");
     let mut groups = vec![format!("{{\"hooks\": [{}]}}", post.join(", "))];
+    let habits = habits && is_executable(&habits_bin);
     if habits {
         groups.push(format!("{{\"matcher\": \"Edit|Write|MultiEdit\", \"hooks\": [{}]}}", habit_hook(&habits_bin, 10)));
     }
@@ -1744,19 +1745,26 @@ mod tests {
 
     #[test]
     fn habits_group_only_when_the_rune_sets_it() {
-        let d = testkit::TempDir::new("dwarf-settings-habits");
-        let off: serde_json::Value = serde_json::from_str(&dwarf_settings(&d, false)).unwrap();
+        let rel = testkit::TempDir::new("dwarf-settings-habits");
+        let home = rel.path().join("spira");
+        let hb = rel.path().join("bin").join("habits");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(hb.parent().unwrap()).unwrap();
+        testkit::write_exe(&hb, "#!/bin/sh\n");
+        let off: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, false)).unwrap();
         assert_eq!(off["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
         assert!(off["hooks"]["Stop"].is_null());
-        let on: serde_json::Value = serde_json::from_str(&dwarf_settings(&d, true)).unwrap();
+        let on: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, true)).unwrap();
         let post = on["hooks"]["PostToolUse"].as_array().unwrap();
         assert_eq!(post.len(), 2);
         assert_eq!(post[1]["matcher"], "Edit|Write|MultiEdit");
-        let release = d.path().parent().unwrap();
-        let abs = format!("{}/bin/habits", release.display());
+        let abs = hb.display().to_string();
         assert_eq!(post[1]["hooks"][0]["command"], abs.as_str(), "the model's PATH holds no habits; a bare name never runs");
         assert_eq!(on["hooks"]["Stop"][0]["hooks"][0]["command"], abs.as_str());
         assert_eq!(post[0], off["hooks"]["PostToolUse"][0], "the existing group is untouched");
+        std::fs::remove_file(&hb).unwrap();
+        let gone: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, true)).unwrap();
+        assert!(gone["hooks"]["Stop"].is_null(), "no habits binary, no habits hooks");
     }
 
     #[test]
