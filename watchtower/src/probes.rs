@@ -23,6 +23,9 @@ pub struct Cfg {
     pub tmp_path: String,
     pub tmp_floor_mib: i64,
     pub disk_floor_pct: i64,
+    pub disk_fill_hours: i64,
+    pub disk_watch_paths: Vec<String>,
+    pub disk_state: std::path::PathBuf,
     pub psi_dir: String,
     pub psi_full_avg60: f64,
     pub psi_sustain_secs: i64,
@@ -268,18 +271,6 @@ pub fn pressure(cfg: &Cfg) -> Reading {
             ));
         }
     }
-    if let Some((_, used, _)) = df("/") {
-        readable = true;
-        let free = 100 - used;
-        if free < cfg.disk_floor_pct {
-            standing.push(cond(
-                "root-disk",
-                format!("LOW DISK: root has {free}% free, below the {}% floor", cfg.disk_floor_pct),
-                format!("The root filesystem has {free}% free (floor {}%).\n\nCheck release trees, worktrees and logs: `du -xh --max-depth=2 / | sort -h | tail -30`.\n", cfg.disk_floor_pct),
-                0,
-            ));
-        }
-    }
     for res in ["io", "memory"] {
         if let Some(v) = std::fs::read_to_string(Path::new(&cfg.psi_dir).join(res)).ok().and_then(|t| psi_full_avg60(&t)) {
             readable = true;
@@ -298,6 +289,28 @@ pub fn pressure(cfg: &Cfg) -> Reading {
     } else {
         Reading::Unknown
     }
+}
+
+
+// ---- (c2) room on every watched filesystem -------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FsReading {
+    pub dev: u64,
+    pub avail_mib: i64,
+    pub size_mib: i64,
+    pub used_pct: i64,
+}
+
+pub fn read_fs(path: &str) -> Option<FsReading> {
+    use std::os::unix::fs::MetadataExt;
+    let dev = std::fs::metadata(path).ok()?.dev();
+    let u = crate::fsstat::usage(path)?;
+    Some(FsReading { dev, avail_mib: u.avail_mib, size_mib: u.size_mib, used_pct: u.used_pct })
+}
+
+pub fn disk_room(_cfg: &Cfg, _now: i64, _read: &dyn Fn(&str) -> Option<FsReading>) -> Reading {
+    Reading::Standing(Vec::new())
 }
 
 /// Two or more cold builds running while the host's io `full avg60` is at the threshold: the
@@ -771,6 +784,9 @@ mod tests {
             tmp_path: "/tmp".into(),
             tmp_floor_mib: 100,
             disk_floor_pct: 15,
+            disk_fill_hours: 6,
+            disk_watch_paths: vec!["/run-dir".into(), "/nix-store".into(), "/build-pool".into()],
+            disk_state: dir.join("disk-fill.state"),
             psi_dir: dir.join("psi").to_string_lossy().into_owned(),
             psi_full_avg60: 10.0,
             psi_sustain_secs: 300,
@@ -814,6 +830,64 @@ mod tests {
         assert!(keys(Some(91.0), Some(1)).is_empty());
         assert!(keys(Some(1.0), Some(3)).is_empty());
         assert!(matches!(cold_overlap_reading(None, Some(2), &c), Reading::Unknown));
+    }
+
+
+    fn fs(dev: u64, avail_gib: i64, used_pct: i64) -> Option<FsReading> {
+        Some(FsReading { dev, avail_mib: avail_gib * 1024, size_mib: 540 * 1024, used_pct })
+    }
+
+    fn keys(r: Reading) -> Vec<String> {
+        standing(r).into_iter().map(|c| c.key).collect()
+    }
+
+    #[test]
+    fn disk_room_pages_a_filesystem_at_95_percent_used() {
+        let d = testkit::TempDir::new("wt-disk-full");
+        let c = cfg(&d);
+        let read = |p: &str| if p == "/run-dir" { fs(1, 28, 95) } else { fs(2, 400, 20) };
+        let s = standing(disk_room(&c, 1_000, &read));
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].key, "disk-free-_run-dir");
+        assert!(s[0].title.contains("5% free"), "{}", s[0].title);
+    }
+
+    #[test]
+    fn disk_room_pages_a_fill_rate_that_empties_the_disk_inside_the_bound() {
+        let d = testkit::TempDir::new("wt-disk-rate");
+        let c = cfg(&d);
+        let t0 = 1_000_000;
+        assert!(keys(disk_room(&c, t0, &|_| fs(1, 192, 64))).is_empty(), "the first sample has no rate");
+        let five_hours = t0 + 5 * 3600;
+        let s = standing(disk_room(&c, five_hours, &|_| fs(1, 29, 95 - 10)));
+        assert_eq!(s.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(), vec!["disk-fill-_run-dir"]);
+        assert!(s[0].title.contains("FILLING"), "{}", s[0].title);
+    }
+
+    #[test]
+    fn disk_room_is_quiet_when_the_fill_rate_outlasts_the_bound() {
+        let d = testkit::TempDir::new("wt-disk-slow");
+        let c = cfg(&d);
+        let t0 = 1_000_000;
+        disk_room(&c, t0, &|_| fs(1, 200, 60));
+        assert!(keys(disk_room(&c, t0 + 5 * 3600, &|_| fs(1, 190, 62))).is_empty());
+    }
+
+    #[test]
+    fn disk_room_reads_a_shared_filesystem_once_and_every_distinct_one() {
+        let d = testkit::TempDir::new("wt-disk-dev");
+        let c = cfg(&d);
+        let read = |p: &str| match p {
+            "/run-dir" | "/nix-store" => fs(1, 10, 98),
+            _ => fs(2, 10, 98),
+        };
+        assert_eq!(keys(disk_room(&c, 1_000, &read)), vec!["disk-free-_run-dir", "disk-free-_build-pool"]);
+    }
+
+    #[test]
+    fn disk_room_is_unknown_when_nothing_reads() {
+        let d = testkit::TempDir::new("wt-disk-unk");
+        assert!(matches!(disk_room(&cfg(&d), 1, &|_| None), Reading::Unknown));
     }
 
 }
