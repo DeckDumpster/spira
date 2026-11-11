@@ -413,7 +413,6 @@ fn model_bead(b: &Bead) -> sentinel::model::Bead {
         status: b.status.clone(),
         issue_type: (!b.kind.is_empty()).then(|| b.kind.clone()),
         labels: b.labels.clone(),
-        dependency_count: b.deps.len() as u64,
         dependencies: b.deps.iter().map(|d| dep(d, "blocks")).chain(b.parents.iter().map(|p| dep(p, "parent-child"))).collect(),
         ..sentinel::model::Bead::default()
     }

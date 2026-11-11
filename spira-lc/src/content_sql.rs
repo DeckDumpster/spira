@@ -18,6 +18,8 @@ const RFC3339: &str = "%Y-%m-%dT%H:%i:%sZ";
 const DEFAULT_LIMIT: u64 = 50;
 const ID_CHUNK: usize = 500;
 /// The prefix `bd remember` stores a memory under in the config table.
+/// How long a refused layout stands before the store is asked again.
+const LAYOUT_RECHECK: std::time::Duration = std::time::Duration::from_secs(30);
 const MEMORY_PREFIX: &str = "kv.memory.";
 /// Issue types `bd list` hides unless asked for by type or id.
 const HIDDEN_TYPES: &[&str] = &["gate", "agent", "role", "message"];
@@ -87,6 +89,7 @@ pub struct Bead {
     pub labels: Vec<String>,
     pub parent: Option<String>,
     pub dependencies: Vec<Edge>,
+    pub comment_count: u64,
 }
 
 impl Bead {
@@ -122,6 +125,7 @@ impl Bead {
         }
         put("labels", json!(self.labels));
         put("parent", json!(self.parent));
+        put("comment_count", json!(self.comment_count));
         put("dependencies", Value::Array(self.dependencies.iter().map(|e| json!({ "issue_id": e.issue_id, "depends_on_id": e.depends_on_id, "type": e.kind })).collect()));
         Value::Object(m)
     }
@@ -405,8 +409,14 @@ fn fill(sql: &dyn Sql, db: &str, issues: &[Value], brief: bool) -> Res<Vec<Bead>
     let ids: Vec<String> = beads.iter().map(|b| b.id.clone()).collect();
     let mut labels: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut edges: BTreeMap<String, Vec<Edge>> = BTreeMap::new();
+    let mut comments: BTreeMap<String, u64> = BTreeMap::new();
     for chunk in ids.chunks(ID_CHUNK) {
         let list = quoted(chunk);
+        for r in sql.rows(&format!("SELECT issue_id, COUNT(*) AS n FROM {db}.comments WHERE issue_id IN ({list}) GROUP BY issue_id"))? {
+            if let (Some(id), Some(n)) = (present(&r, "issue_id"), cell(&r, "n").and_then(|n| n.parse().ok())) {
+                comments.insert(id, n);
+            }
+        }
         for r in sql.rows(&format!("SELECT issue_id, label FROM {db}.labels WHERE issue_id IN ({list}) ORDER BY issue_id, label"))? {
             if let (Some(id), Some(l)) = (present(&r, "issue_id"), present(&r, "label")) {
                 labels.entry(id).or_default().push(l);
@@ -419,6 +429,7 @@ fn fill(sql: &dyn Sql, db: &str, issues: &[Value], brief: bool) -> Res<Vec<Bead>
         }
     }
     for b in &mut beads {
+        b.comment_count = comments.remove(&b.id).unwrap_or(0);
         b.labels = labels.remove(&b.id).unwrap_or_default();
         b.dependencies = edges.remove(&b.id).unwrap_or_default();
         b.parent = b.dependencies.iter().find(|e| e.kind == "parent-child").map(|e| e.depends_on_id.clone());
@@ -439,9 +450,8 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
         }
         Read::Show(ids) => {
             let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE id IN ({}) ORDER BY id", issue_columns(), quoted(&ids)))?;
-            let found: BTreeSet<&str> = issues.iter().filter_map(|r| cell(r, "id")).collect();
-            if let Some(missing) = ids.iter().find(|i| !found.contains(i.as_str())) {
-                return Err(Failure::Request(format!("no issue found matching {missing:?}")));
+            if issues.is_empty() {
+                return Err(Failure::Request(format!("no issue found matching {}", ids.iter().map(|i| format!("{i:?}")).collect::<Vec<_>>().join(", "))));
             }
             Ok(array(fill(sql, db, &issues, false)?))
         }
@@ -482,18 +492,12 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
     }
 }
 
-/// Every column the reads name, as `table.column`, that `have` (the database's own
-/// `table.column` pairs) lacks.
-pub fn missing_columns(have: &BTreeSet<(String, String)>) -> Vec<String> {
-    crate::plan::missing_columns(have)
-}
-
 /// The layout check: the `table.column` names the reads query that the beads database lacks.
 pub fn layout_gaps(sql: &dyn Sql, db: &str) -> Res<Vec<String>> {
     let schema = db.trim_matches('`');
     let rows = sql.rows(&format!("SELECT table_name AS t, column_name AS c FROM information_schema.columns WHERE table_schema = '{}'", escape(schema)))?;
     let have: BTreeSet<(String, String)> = rows.iter().filter_map(|r| Some((cell(r, "t")?.to_lowercase(), cell(r, "c")?.to_lowercase()))).collect();
-    Ok(missing_columns(&have))
+    Ok(crate::plan::missing_columns(&have))
 }
 
 fn refusal(db: &str, gaps: &[String]) -> String {
@@ -508,24 +512,32 @@ fn refusal(db: &str, gaps: &[String]) -> String {
 pub struct Reader {
     sql: Box<dyn Sql + Send + Sync>,
     db: String,
-    /// The refusal for a layout found wanting; a layout that could not be read is asked again.
-    refused: Mutex<Option<Option<String>>>,
+    /// The verdict on the layout and when it was reached: a refusal is asked again after
+    /// `recheck`, so a repaired store is served without a restart; an unreadable server is asked again at once.
+    verdict: Mutex<Option<(std::time::Instant, Option<String>)>>,
+    recheck: std::time::Duration,
 }
 
 impl Reader {
     pub fn new(sql: Box<dyn Sql + Send + Sync>, db: String) -> Self {
-        Reader { sql, db, refused: Mutex::new(None) }
+        Reader { sql, db, verdict: Mutex::new(None), recheck: LAYOUT_RECHECK }
     }
 
-    /// `Ok` when the layout is known; the refusal otherwise. A match or a mismatch is decided
-    /// once; a server that could not be asked is asked again.
+    #[cfg(test)]
+    fn rechecking_at(mut self, every: std::time::Duration) -> Self {
+        self.recheck = every;
+        self
+    }
+
+    /// `Ok` when the layout is known; the refusal otherwise.
     pub fn layout(&self) -> Res<()> {
-        let mut held = self.refused.lock().unwrap_or_else(|p| p.into_inner());
-        if held.is_none() {
+        let mut held = self.verdict.lock().unwrap_or_else(|p| p.into_inner());
+        let stale = held.as_ref().is_some_and(|(at, refusal)| refusal.is_some() && at.elapsed() >= self.recheck);
+        if held.is_none() || stale {
             let gaps = layout_gaps(self.sql.as_ref(), &self.db)?;
-            *held = Some((!gaps.is_empty()).then(|| refusal(&self.db, &gaps)));
+            *held = Some((std::time::Instant::now(), (!gaps.is_empty()).then(|| refusal(&self.db, &gaps))));
         }
-        match held.as_ref().and_then(Option::as_ref) {
+        match held.as_ref().and_then(|(_, r)| r.as_ref()) {
             Some(r) => Err(Failure::Store(r.clone())),
             None => Ok(()),
         }
@@ -552,14 +564,9 @@ impl Settings {
         let port = get("SPIRA_BEADS_SQL_PORT")?;
         let user = get("SPIRA_BEADS_SQL_USER")?;
         let file = get("SPIRA_BEADS_SQL_PASSWORD_FILE")?;
-        let file = if file.trim().is_empty() { ro_credential(&get("SPIRA_LC_PASSWORD_FILE")?) } else { file };
+        let file = if file.trim().is_empty() { spira_config::process::ro_credential(&get("SPIRA_LC_PASSWORD_FILE")?) } else { file };
         Ok(Settings { host: get("SPIRA_BEADS_SQL_HOST")?, port: port.trim().parse().map_err(|e| format!("SPIRA_BEADS_SQL_PORT {port:?}: {e}"))?, user, password_file: file })
     }
-}
-
-/// The read-only credential kept beside the service credential: `<file>-ro`.
-fn ro_credential(service_file: &str) -> String {
-    if service_file.trim().is_empty() { String::new() } else { format!("{service_file}-ro") }
 }
 
 static READER: OnceLock<Result<Reader, String>> = OnceLock::new();

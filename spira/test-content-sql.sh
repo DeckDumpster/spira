@@ -26,7 +26,6 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 BD="${TESTDB_SERVER_BD:-bd}"
 port="$(cat "$SPIRA_DB/.beads/dolt-server.port" 2>/dev/null)" || bail "the testdb names no server port"
-: > "$TMP/credential"
 # A bd that records its own start: a content read must never reach it.
 cat > "$TMP/bd-forked" <<EOF
 #!/usr/bin/env bash
@@ -34,8 +33,15 @@ echo "\$@" >> "$TMP/bd-forks"
 exit 1
 EOF
 chmod +x "$TMP/bd-forked"
-tl_config SPIRA_LC_SOCKET="" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$TMP/bd-forked" \
-    SPIRA_BEADS_SQL_HOST=127.0.0.1 SPIRA_BEADS_SQL_PORT="$port" SPIRA_BEADS_SQL_USER=root SPIRA_BEADS_SQL_PASSWORD_FILE="$TMP/credential" \
+# The reads log in as a user holding SELECT on the beads database and nothing else, with its secret
+# in the -ro sibling of the lifecycle credential: SPIRA_BEADS_SQL_PASSWORD_FILE is left empty.
+db="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dolt_database"])' "$SPIRA_DB/.beads/metadata.json")"
+dsql() { timeout 5 dolt --host 127.0.0.1 --port "$port" --no-tls "$@"; }
+dsql -u root -p "" sql -q "CREATE USER 'rd'@'%' IDENTIFIED BY 'sekret'; GRANT SELECT ON \`$db\`.* TO 'rd'@'%'" >/dev/null 2>&1 || bail "could not create the read-only user"
+printf 'service-secret\n' > "$TMP/lc-credential"
+printf 'sekret\n' > "$TMP/lc-credential-ro"
+tl_config SPIRA_LC_SOCKET="" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$TMP/bd-forked" SPIRA_LC_PASSWORD_FILE="$TMP/lc-credential" \
+    SPIRA_BEADS_SQL_HOST=127.0.0.1 SPIRA_BEADS_SQL_PORT="$port" SPIRA_BEADS_SQL_USER=rd SPIRA_BEADS_SQL_PASSWORD_FILE="" \
     || bail "cannot declare the connection"
 
 mk() { timeout 5 "$BD" -C "$SPIRA_DB" create "$@" --silent 2>/dev/null; }
@@ -105,6 +111,11 @@ is "config get reads the store's config" "sp" "$(rd config get issue_prefix | tr
 timeout 5 "$BD" -C "$SPIRA_DB" label add "$b" fresh-label >/dev/null 2>&1
 out="$(rd list --limit 0 --label-any fresh-label --json | ids)"
 is "a label written by another process is selected at once" "$b" "$out"
+
+dsql -u rd -p sekret --use-db "$db" sql -q "UPDATE issues SET title = 'tampered'" >/dev/null 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "the read-only user cannot write the beads" || bad "the read-only user cannot write the beads" "an UPDATE as rd succeeded"
+dsql -u rd -p sekret --use-db "$db" sql -q "SELECT COUNT(*) FROM issues" >/dev/null 2>&1
+is "the read-only user can read the beads" "0" "$?"
 
 is "no content read started bd" "no" "$([ -s "$TMP/bd-forks" ] && echo yes || echo no)"
 

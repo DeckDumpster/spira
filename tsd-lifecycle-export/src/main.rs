@@ -205,7 +205,7 @@ struct LcRoConn {
 /// log `spira_lc_ro` in with the wrong password.
 fn credential_path(user: &str, configured: &str) -> String {
     if user == "spira_lc_ro" && !configured.is_empty() {
-        format!("{configured}-ro")
+        spira_config::process::ro_credential(configured)
     } else {
         configured.to_string()
     }

@@ -7,7 +7,8 @@ struct Fake {
     issues: Vec<Value>,
     labels: Vec<Value>,
     deps: Vec<Value>,
-    columns: Vec<(String, String)>,
+    counts: Vec<Value>,
+    columns: Mutex<Vec<(String, String)>>,
     seen: Mutex<Vec<String>>,
     reply: Mutex<Vec<Value>>,
 }
@@ -16,7 +17,10 @@ impl Sql for Fake {
     fn rows(&self, sql: &str) -> Res<Vec<Value>> {
         self.seen.lock().unwrap().push(sql.to_string());
         if sql.contains("FROM information_schema.columns") {
-            return Ok(self.columns.iter().map(|(t, c)| json!({ "t": t, "c": c })).collect());
+            return Ok(self.columns.lock().unwrap().iter().map(|(t, c)| json!({ "t": t, "c": c })).collect());
+        }
+        if sql.contains("COUNT(*) AS n FROM `beads`.comments") {
+            return Ok(self.counts.clone());
         }
         if sql.contains(".labels WHERE issue_id IN") {
             return Ok(self.labels.clone());
@@ -156,6 +160,21 @@ fn show_names_the_bead_it_cannot_find() {
 }
 
 #[test]
+fn show_of_several_ids_answers_the_ones_it_finds_and_refuses_only_when_it_finds_none() {
+    let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
+    let rows: Vec<Value> = serde_json::from_str(&answer(&f, DB, &v(&["show", "sp-a", "sp-gone", "--json"])).unwrap()).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(matches!(answer(&Fake::default(), DB, &v(&["show", "sp-a", "sp-gone"])), Err(Failure::Request(t)) if t.contains("sp-gone")));
+}
+
+#[test]
+fn a_row_carries_how_many_comments_its_bead_has() {
+    let f = Fake { issues: vec![issue("sp-a", "A"), issue("sp-b", "B")], counts: vec![json!({ "issue_id": "sp-b", "n": "3" })], ..Fake::default() };
+    let rows: Vec<Value> = serde_json::from_str(&answer(&f, DB, &v(&["list"])).unwrap()).unwrap();
+    assert_eq!((rows[0]["comment_count"].clone(), rows[1]["comment_count"].clone()), (json!(0), json!(3)));
+}
+
+#[test]
 fn show_answers_the_bead_with_its_text() {
     let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
     let rows: Vec<Value> = serde_json::from_str(&answer(&f, DB, &v(&["show", "sp-a", "--long", "--json"])).unwrap()).unwrap();
@@ -202,7 +221,7 @@ fn a_renamed_column_refuses_every_read_naming_it_and_the_exit_and_asks_no_bead_q
     let mut columns = full_layout();
     columns.retain(|(t, c)| !(t == "labels" && c == "label"));
     columns.push(("labels".into(), "tag".into()));
-    let reader = Reader::new(Box::new(Fake { columns, issues: vec![issue("sp-a", "A")], ..Fake::default() }), DB.into());
+    let reader = Reader::new(Box::new(Fake { columns: Mutex::new(columns), issues: vec![issue("sp-a", "A")], ..Fake::default() }), DB.into());
     for args in [v(&["list"]), v(&["show", "sp-a"]), v(&["memories"])] {
         let e = reader.read(&args).unwrap_err();
         assert!(matches!(&e, Failure::Store(t) if t.contains("labels.label") && t.contains("exit 2")), "{e:?}");
@@ -217,7 +236,7 @@ impl Sql for Arc<Fake> {
 
 #[test]
 fn a_known_layout_is_checked_once_and_serves_reads() {
-    let f = Arc::new(Fake { columns: full_layout(), issues: vec![issue("sp-a", "A")], ..Fake::default() });
+    let f = Arc::new(Fake { columns: Mutex::new(full_layout()), issues: vec![issue("sp-a", "A")], ..Fake::default() });
     let reader = Reader::new(Box::new(f.clone()), DB.into());
     reader.read(&v(&["list"])).unwrap();
     reader.read(&v(&["list"])).unwrap();
@@ -236,7 +255,23 @@ fn the_readers_columns_include_every_column_the_queries_name() {
 }
 
 #[test]
-fn the_read_only_secret_is_the_service_secrets_ro_sibling_and_never_a_guess() {
-    assert_eq!(ro_credential("/c/spira-lc.credential"), "/c/spira-lc.credential-ro");
-    assert_eq!(ro_credential(" "), "", "no service credential names no read-only one");
+fn a_refused_layout_is_asked_again_and_a_repaired_store_is_served_without_a_restart() {
+    let mut broken = full_layout();
+    broken.retain(|(t, c)| !(t == "labels" && c == "label"));
+    let f = Arc::new(Fake { columns: Mutex::new(broken), issues: vec![issue("sp-a", "A")], ..Fake::default() });
+    let reader = Reader::new(Box::new(f.clone()), DB.into()).rechecking_at(std::time::Duration::ZERO);
+    assert!(reader.read(&v(&["list"])).is_err());
+    *f.columns.lock().unwrap() = full_layout();
+    assert!(reader.read(&v(&["list"])).is_ok());
+}
+
+#[test]
+fn a_refusal_stands_until_the_recheck_interval_has_passed() {
+    let mut broken = full_layout();
+    broken.retain(|(t, c)| !(t == "labels" && c == "label"));
+    let f = Arc::new(Fake { columns: Mutex::new(broken), issues: vec![issue("sp-a", "A")], ..Fake::default() });
+    let reader = Reader::new(Box::new(f.clone()), DB.into());
+    assert!(reader.read(&v(&["list"])).is_err());
+    *f.columns.lock().unwrap() = full_layout();
+    assert!(reader.read(&v(&["list"])).is_err(), "inside the interval the refusal is not re-asked");
 }
