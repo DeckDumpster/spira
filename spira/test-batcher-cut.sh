@@ -6,7 +6,7 @@
 # own cut retired). This checks WIRING, not behaviour — the pure core's replay tests
 # (test-batcher.sh) already cover triggers, membership, set-asides and classification as
 # fixtures with no IO at all. round-vm's OWN contract (a real VM, a real testenv run) is
-# test-round-vm-e2e.sh's job, not this suite's — the stub here only proves batcher-cut calls
+# the round-vm end-to-end run's job, not this suite's — the stub here only proves batcher-cut calls
 # round-vm run correctly and reads its results back.
 #
 # FOUR CASES:

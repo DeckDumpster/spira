@@ -3,14 +3,14 @@
 //! Every expectation is taken from the fixtures; per-replay wall time is reported against the
 //! 100 ms goal, never asserted. A whole-slice replay costs seconds, so those tests are ignored
 //! by the unit tier; `sim-replay` runs their bodies (sim::replay::checks), optimised, from
-//! spira/test-sim-replay.sh.
+//! the sim-replay binary.
 
 use sim::replay::checks;
 
 macro_rules! slice_sized {
     ($($name:ident),* $(,)?) => {$(
         #[test]
-        #[ignore = "slice-sized: run by sim-replay (spira/test-sim-replay.sh)"]
+        #[ignore = "slice-sized: run by sim-replay"]
         fn $name() {
             checks::$name();
         }

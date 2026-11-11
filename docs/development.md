@@ -120,7 +120,7 @@ Never run a `spira/test-*.sh` suite directly on the host.
 
 ```sh
 testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--report [N]] <branch> [<repo-name>]
-testenv --suites test-asks.sh,test-bead-file.sh <branch>
+testenv --suites test-asks,test-bead-file.sh <branch>
 testenv status [--json] <results-dir>
 ```
 

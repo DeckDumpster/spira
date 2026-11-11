@@ -48,7 +48,7 @@ step bash spira/build-fence.sh
 step bash spira/round-image-preflight.sh
 # Every provisioned CI workflow spills to EC2 only; prints `fence: ci-spill-guard checked <n> provision steps`.
 step bash spira/ci-spill-guard.sh --gate .
-# README is rendered from spira/boundary; the suite selector runs test-boundary.sh only when a
+# README is rendered from spira/boundary; the suite selector runs test-boundary only when a
 # boundary file is touched, so a change to what ships would otherwise land with a stale README.
 step bash spira/boundary.sh check
 

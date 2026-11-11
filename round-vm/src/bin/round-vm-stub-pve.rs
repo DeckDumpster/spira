@@ -1,4 +1,4 @@
-//! A stub Proxmox HTTPS API for test-round-vm-e2e.sh only: real TLS, real request/response
+//! A stub Proxmox HTTPS API for the round-vm end-to-end run only: real TLS, real request/response
 //! shapes (round-vm/DESIGN.md §3.3), but next_id/clone/start/stop/destroy answer synchronously
 //! (the task-polling loop is round-vm/src/pve.rs's own unit tests' job). agent/exec and
 //! agent/file-write are NOT faked: each really execs inside the given podman container, so

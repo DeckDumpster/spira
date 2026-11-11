@@ -1,7 +1,7 @@
 //! The whole-slice replay checks: what the round-controller sections a reader would have seen
 //! say about the captured days, read back through the store, and what the replay guarantees of
 //! itself. Every expectation is taken from the fixtures. Each check panics on a failure; they
-//! cost seconds each, so `sim-replay` runs them (spira/test-sim-replay.sh) and the unit tier's
+//! cost seconds each, so `sim-replay` runs them and the unit tier's
 //! copies in sim/tests/it/replay.rs are ignored. Wall time is reported against the 100 ms goal,
 //! never asserted.
 

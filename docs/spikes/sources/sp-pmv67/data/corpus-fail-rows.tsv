@@ -306,11 +306,11 @@ epoch	batch	mode	branch	suite	status	verdict	label
 1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	error mentions containment
 1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	D2
 1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	D2
-1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo.sh	red	fail	the bead ends closed
-1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo.sh	red	fail	commit naming the bead is in second repo's history
-1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo.sh	red	fail	second repo owns the spira branch
-1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo.sh	red	fail	log says works repo:second
-1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo.sh	red	fail	log shows the second repo path
+1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo	red	fail	the bead ends closed
+1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo	red	fail	commit naming the bead is in second repo's history
+1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo	red	fail	second repo owns the spira branch
+1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo	red	fail	log says works repo:second
+1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo	red	fail	log shows the second repo path
 1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	a first outcome is recorded
 1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	with the kind the panel badges
 1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	the bead it happened to, in its own column
@@ -718,7 +718,7 @@ epoch	batch	mode	branch	suite	status	verdict	label
 1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	G3
 1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	G5
 1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	H3
-1789530114	bd4a55cc4ec1	parallel	spira/sp-ge0v	test-boundary.sh	red	fail	the shipped tree passes check
+1789530114	bd4a55cc4ec1	parallel	spira/sp-ge0v	test-boundary	red	fail	the shipped tree passes check
 1789509359	bdf65529f5b0	parallel	spira/sp-utvi	test-landing.sh	red	fail	the push is rejected, as the case requires
 1789509359	bdf65529f5b0	parallel	spira/sp-utvi	test-landing.sh	red	fail	and the retry says it could not attempt a rebase
 1789509359	bdf65529f5b0	parallel	spira/sp-utvi	test-landing.sh	red	fail	naming the reason rather than a file list

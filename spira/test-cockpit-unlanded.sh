@@ -33,7 +33,7 @@
 # SPIRA_BDJSON_FIXTURE, NOT A REAL STORE. This classification lives in the same unsent_keys
 # function as the unsent backlog (test-cockpit-unsent.sh); its only bd read is a `list
 # --status closed` folded into that function. The query shape itself is covered once in
-# test-cockpit-bd-contract.sh, against real bd. Git stays real — it is cheap, and the
+# the real-bd cockpit contract suite. Git stays real — it is cheap, and the
 # landing detection this suite exists for is exactly a question about commit history.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

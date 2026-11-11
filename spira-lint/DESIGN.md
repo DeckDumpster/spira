@@ -496,7 +496,7 @@ Every invariant this rule held the script's text to is now structural in the Rus
 constructor per kind of call, so a deploy without `--allow-draft` or a tool without the
 release's launcher environment cannot be written) or a unit test of the `acceptance`
 module (the override key against `SPIRA_CONF_KEYS`, the whole run against a fake host).
-`acceptance-agent.sh` stays bash; `test-acceptance-agent.sh` drives it for real.
+`acceptance-agent.sh` stays bash; `test-acceptance-agent` drives it for real.
 
 ## Rule `workflow-config`
 

@@ -286,7 +286,7 @@ sp-htrqk: retire test-batch-red-main.sh — subject covered by queue crate unit 
 spira: land sp-ak7qm
 sp-ak7qm: merge local/main
 spira: land sp-uy2gd
-sp-uy2gd: delete flipping suite test-install-exec.sh
+sp-uy2gd: delete flipping install suite
 spira: land sp-s0e1k
 ";
         assert_eq!(

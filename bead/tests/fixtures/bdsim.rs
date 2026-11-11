@@ -9,7 +9,7 @@
 //! Only the shapes the fixture suites issue are simulated: list's `--status/--all/--label/
 //! --limit/--closed-after`, show's positional ids, bare `memories`. Anything else exits naming
 //! what it does not simulate; a hand-written model of bd's filtering would drift from the real
-//! one (law-prefer-the-real-dependency), and such queries belong in test-cockpit-bd-contract.sh.
+//! one (law-prefer-the-real-dependency), and such queries belong in test-cockpit-bd-contract.
 
 use std::collections::BTreeSet;
 

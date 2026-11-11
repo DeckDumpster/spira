@@ -97,7 +97,7 @@ mkdir -p "$SPIRA_RUN"
 # needs a pure classification result, not bd's own filtering behaviour, points it at a
 # canned-JSON file and bdsim answers `list`/`show`/`memories` from that file instead of a
 # live store. Query shapes bdsim does not simulate stay on real bd, in
-# test-cockpit-bd-contract.sh.
+# the real-bd cockpit contract check.
 # bdq AND ITS THREE CREATE-TIME FENCES ARE NOW bead::bdq (sp-w3h16, wave 4.14,
 # wave4-decomposition.md row A, safety note (c1)): one library plus a `bdq` binary every
 # caller already types by that bare name. Every fence, the czar-fence dispatch, the
@@ -1554,7 +1554,7 @@ detect_livelocked() {
 # detect_landed_but_open, detect_closed_unlanded_states and detect_false_blockers are gone:
 # their strand subcommands were deleted in sp-mve9i (each read a work bead's state from bd
 # status) and the groomer stopped calling them at sp-jnwbn, so the shims had no target and
-# no caller (test-landstate-checks-deleted.sh keeps them out).
+# no caller.
 
 # detect_incident_needs_builder -> "STATE <id> incident-is-code — <evidence>" for every open
 # or in_progress bead carrying SPIRA_INCIDENT_LABEL whose recorded branch: already has a

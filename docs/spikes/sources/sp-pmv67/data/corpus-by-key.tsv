@@ -919,15 +919,15 @@ test-bin-manifest.sh	manifest loaded (16 programs)	0	0	2	0	0	1
 test-bin-manifest.sh	manifest loaded (17 programs)	0	0	17	0	0	0
 test-bin-manifest.sh	no declared program is unchecked by doctor.sh	0	0	36	0	0	1
 test-bin-manifest.sh	the consequence names the engine it falls back to	0	0	36	0	0	1
-test-boundary.sh	-	0	1	0	0	0	0
-test-boundary.sh	GREEN: existing path + fresh README passes check	0	0	6	0	0	0
-test-boundary.sh	SEEN RED: nonexistent path fails check	0	0	6	0	0	0
-test-boundary.sh	and names the missing path	0	0	6	0	0	0
-test-boundary.sh	and no 'does not exist' error appears for it	0	0	6	0	0	0
-test-boundary.sh	but check still fails because README is stale	0	0	6	0	0	0
-test-boundary.sh	existing path does not trigger a filesystem error	0	0	6	0	0	0
-test-boundary.sh	prose in a brain row is not checked against the filesystem	0	0	6	0	0	0
-test-boundary.sh	the shipped tree passes check	1	0	5	0	0	0
+test-boundary	-	0	1	0	0	0	0
+test-boundary	GREEN: existing path + fresh README passes check	0	0	6	0	0	0
+test-boundary	SEEN RED: nonexistent path fails check	0	0	6	0	0	0
+test-boundary	and names the missing path	0	0	6	0	0	0
+test-boundary	and no 'does not exist' error appears for it	0	0	6	0	0	0
+test-boundary	but check still fails because README is stale	0	0	6	0	0	0
+test-boundary	existing path does not trigger a filesystem error	0	0	6	0	0	0
+test-boundary	prose in a brain row is not checked against the filesystem	0	0	6	0	0	0
+test-boundary	the shipped tree passes check	1	0	5	0	0	0
 test-branch-guard.sh	-	0	1	0	0	0	0
 test-branch-guard.sh	aeon on base branch: guard exits 1	0	0	3	0	0	0
 test-branch-guard.sh	aeon on base branch: names the branch	0	0	3	0	0	0
@@ -2163,15 +2163,15 @@ test-covers-entries.sh	-	0	1	0	0	0	0
 test-covers-entries.sh	N suite(s) with declarations all resolve; 0 without	0	0	58	0	0	0
 test-covers-entries.sh	git ls-files returned nothing in /workspace	1	0	0	0	0	0
 test-covers-entries.sh	positive control — unresolvable token is detected	0	0	58	0	0	0
-test-cross-repo.sh	-	0	1	0	0	0	0
-test-cross-repo.sh	commit naming the bead is in second repo's history	1	0	32	0	0	0
-test-cross-repo.sh	home repo does not own the spira branch	0	0	33	0	0	0
-test-cross-repo.sh	home repo has no commit naming the bead	0	0	33	0	0	0
-test-cross-repo.sh	log does not say it used the home repo	0	0	33	0	0	0
-test-cross-repo.sh	log says works repo:second	1	0	32	0	0	0
-test-cross-repo.sh	log shows the second repo path	1	0	32	0	0	0
-test-cross-repo.sh	second repo owns the spira branch	1	0	32	0	0	0
-test-cross-repo.sh	the bead ends closed	1	0	32	0	0	0
+test-cross-repo	-	0	1	0	0	0	0
+test-cross-repo	commit naming the bead is in second repo's history	1	0	32	0	0	0
+test-cross-repo	home repo does not own the spira branch	0	0	33	0	0	0
+test-cross-repo	home repo has no commit naming the bead	0	0	33	0	0	0
+test-cross-repo	log does not say it used the home repo	0	0	33	0	0	0
+test-cross-repo	log says works repo:second	1	0	32	0	0	0
+test-cross-repo	log shows the second repo path	1	0	32	0	0	0
+test-cross-repo	second repo owns the spira branch	1	0	32	0	0	0
+test-cross-repo	the bead ends closed	1	0	32	0	0	0
 test-ctrl.sh	-	0	1	0	0	0	0
 test-ctrl.sh	check after resume exits 1	0	0	9	0	0	0
 test-ctrl.sh	check after suspend exits 0	0	0	9	0	0	0
@@ -3332,19 +3332,19 @@ test-install-dolt.sh	positive control: output says not on PATH	0	0	5	0	0	0
 test-install-dolt.sh	positive control: renderer exits non-zero when DOLT is empty	0	0	5	0	0	0
 test-install-dolt.sh	positive control: template file named	0	0	5	0	0	0
 test-install-dolt.sh	refusal: no ExecStart= sql-server in output	0	0	5	0	0	0
-test-install-exec.sh	-	0	1	0	0	0	0
-test-install-exec.sh	clean: exit 0 when all ExecStart targets are executable	0	0	37	0	0	0
-test-install-exec.sh	clean: no 'not executable' in output	0	0	37	0	0	0
-test-install-exec.sh	conf empty: SPIRA_PROD= preserved as empty (no-colon form)	0	0	37	0	0	0
-test-install-exec.sh	missing: exit non-zero when ExecStart target does not exist	0	0	37	0	0	0
-test-install-exec.sh	missing: output names install as the reporter	0	0	37	0	0	0
-test-install-exec.sh	missing: output names the bad path	0	0	37	0	0	0
-test-install-exec.sh	missing: output says 'not executable'	0	0	37	0	0	0
-test-install-exec.sh	noexec: exit non-zero when ExecStart target exists but lacks +x	0	0	37	0	0	0
-test-install-exec.sh	noexec: output names the non-executable script path	0	0	37	0	0	0
-test-install-exec.sh	noexec: output says 'not executable'	0	0	37	0	0	0
-test-install-exec.sh	render fallback: --render exits 0 with empty SPIRA_PROD	0	0	37	0	0	0
-test-install-exec.sh	render fallback: sentinel ExecStart contains SPIRA_HOME	0	0	37	0	0	0
+test-install-exec	-	0	1	0	0	0	0
+test-install-exec	clean: exit 0 when all ExecStart targets are executable	0	0	37	0	0	0
+test-install-exec	clean: no 'not executable' in output	0	0	37	0	0	0
+test-install-exec	conf empty: SPIRA_PROD= preserved as empty (no-colon form)	0	0	37	0	0	0
+test-install-exec	missing: exit non-zero when ExecStart target does not exist	0	0	37	0	0	0
+test-install-exec	missing: output names install as the reporter	0	0	37	0	0	0
+test-install-exec	missing: output names the bad path	0	0	37	0	0	0
+test-install-exec	missing: output says 'not executable'	0	0	37	0	0	0
+test-install-exec	noexec: exit non-zero when ExecStart target exists but lacks +x	0	0	37	0	0	0
+test-install-exec	noexec: output names the non-executable script path	0	0	37	0	0	0
+test-install-exec	noexec: output says 'not executable'	0	0	37	0	0	0
+test-install-exec	render fallback: --render exits 0 with empty SPIRA_PROD	0	0	37	0	0	0
+test-install-exec	render fallback: sentinel ExecStart contains SPIRA_HOME	0	0	37	0	0	0
 test-install-halt.sh	-	0	1	0	0	0	0
 test-install-halt.sh	halted: enable --now does NOT appear	0	0	9	0	0	0
 test-install-halt.sh	halted: enable appears in systemctl calls	0	0	9	0	0	0
@@ -6531,13 +6531,13 @@ test-testenv-suites.sh	A1: error names the unknown suite	0	0	7	0	0	0
 test-testenv-suites.sh	A1: unknown suite exits non-zero (rc=2)	0	0	7	0	0	0
 test-testenv-suites.sh	A2: known suite does not trigger 'unknown option' (positive control)	0	0	7	0	0	0
 test-testenv-suites.sh	A2: known suite is not reported as 'unknown suite' (positive control)	0	0	7	0	0	0
-test-testenv-systemctl.sh	-	0	7	0	0	0	0
+test-testenv-systemctl	-	0	7	0	0	0	0
 test-testenv-timeout.sh	-	0	8	0	0	0	0
 test-testenv-tmux-isolation.sh	-	0	3	0	0	0	0
 test-testenv-tmux-isolation.sh	C-ctrl: pre-fix RUNNER_VARS loop does not strip TMUX (positive control)	0	0	3	0	0	0
 test-testenv-tmux-isolation.sh	C1: suites.sh inline path strips TMUX	0	0	3	0	0	0
 test-testenv-tmux-isolation.sh	C2: testenv-batch.sh clears TMUX on suite exec calls (4 occurrences)	0	0	3	0	0	0
-test-testenv.sh	-	0	7	0	0	0	0
+test-testenv	-	0	7	0	0	0	0
 test-thrash.sh	-	0	3	0	0	0	0
 test-thrash.sh	.thrash check (line N) is after .slain check (line N)	0	0	34	0	0	0
 test-thrash.sh	SPIRA_THRASH_MINUTES default is a number (20)	0	0	34	0	0	0
@@ -7797,13 +7797,13 @@ test-work-services-exclusion.sh	loom-prod not stopped	0	0	32	0	0	0
 test-work-services-exclusion.sh	old pattern lets cockpit-prod through (confirms bug)	0	0	32	0	0	0
 test-work-services-exclusion.sh	old pattern lets loom-prod through (confirms bug)	0	0	32	0	0	0
 test-work-services-exclusion.sh	sentinel timer was stopped	0	0	32	0	0	0
-test-worktree-absent.sh	-	0	4	0	0	0	0
-test-worktree-absent.sh	REFUSED is written to the reap log for an existing out-of-root path	0	0	24	0	0	0
-test-worktree-absent.sh	directory still exists after refusal	0	0	24	0	0	0
-test-worktree-absent.sh	out-of-root worktree is registered before removal	0	0	24	0	0	0
-test-worktree-absent.sh	registry entry is pruned after absent-path removal	0	0	24	0	0	0
-test-worktree-absent.sh	spira_destroy_worktree returns 0 for absent out-of-root path	0	0	24	0	0	0
-test-worktree-absent.sh	spira_destroy_worktree returns 1 for existing out-of-root path	0	0	24	0	0	0
+test-worktree-absent	-	0	4	0	0	0	0
+test-worktree-absent	REFUSED is written to the reap log for an existing out-of-root path	0	0	24	0	0	0
+test-worktree-absent	directory still exists after refusal	0	0	24	0	0	0
+test-worktree-absent	out-of-root worktree is registered before removal	0	0	24	0	0	0
+test-worktree-absent	registry entry is pruned after absent-path removal	0	0	24	0	0	0
+test-worktree-absent	spira_destroy_worktree returns 0 for absent out-of-root path	0	0	24	0	0	0
+test-worktree-absent	spira_destroy_worktree returns 1 for existing out-of-root path	0	0	24	0	0	0
 test-world-drain.sh	-	0	3	0	0	0	0
 test-world-drain.sh	35m stamp renders without error	0	0	5	0	0	0
 test-world-drain.sh	35m stamp shows DRAINING	0	0	5	0	0	0

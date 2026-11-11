@@ -803,4 +803,4 @@ script includes) when the repository variable `ARTIFACT_STORE_URL` names a store
 the runner; a hosted runner that cannot reach the box builds as before and says why. `CurlDav` is
 tested over the real wire against an in-process `sccache-dav` (`release/tests/curl_dav.rs`), the
 VM's build section against a fake cargo that fails when it runs on a hit, and the workflow's
-steps by `spira/test-gate-stored-build.sh`.
+steps by `spira/test-gate-stored-build`.

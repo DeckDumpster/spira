@@ -33,7 +33,7 @@
 //!   - `probe-<cksum>` → "ROUND SPILL LAUNCH: a real EC2 launch failed; EC2 rounds cannot launch: …" (`:80`) or "…round-vm ec2-probe --dry-run failed…" (`:97`); `probe-timeout` → "ROUND SPILL LAUNCH: probe could not decide: …" (`:93`). Recent ok or probe ok clears `probe-*` (`:69-73`).
 //!   - `nofile` (`:122`), `unrecorded` (`:125`), `expired-<exp>` (`:131`), `warn-<exp>` (`:133`, `SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS`, default 14).
 //! - The probe deadline is `max(SPIRA_ROUND_VM_EC2_PROBE_DEADLINE, 4 × last latency)` (`:83`) — decide computes it from carry and passes it in the next observe's input.
-//! - Fixtures to port: `spira/test-round-spill-key.sh` (169 lines; tier T1): warn once, expiry, unrecorded, spill off, recent-launch stand-in, probe timeout, template missing.
+//! - Fixtures to port: `spira/test-round-spill-key` (169 lines; tier T1): warn once, expiry, unrecorded, spill off, recent-launch stand-in, probe timeout, template missing.
 //!
 //! ## Act
 //!

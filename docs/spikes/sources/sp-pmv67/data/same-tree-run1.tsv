@@ -88,14 +88,14 @@ test-bin-manifest.sh	ok	POSITIVE CONTROL: hunk stub present → ok
 test-bin-manifest.sh	ok	hunk absent with SPIRA_OPERATED=1 → FAIL
 test-bin-manifest.sh	ok	hunk absent with SPIRA_OPERATED=0 → warn
 test-bin-manifest.sh	ok	COCKPIT_MAIL=mutt present: aerc absence is not flagged
-test-boundary.sh	ok	SEEN RED: nonexistent path fails check
-test-boundary.sh	ok	and names the missing path
-test-boundary.sh	ok	prose in a brain row is not checked against the filesystem
-test-boundary.sh	ok	and no 'does not exist' error appears for it
-test-boundary.sh	ok	existing path does not trigger a filesystem error
-test-boundary.sh	ok	but check still fails because README is stale
-test-boundary.sh	ok	GREEN: existing path + fresh README passes check
-test-boundary.sh	ok	the shipped tree passes check
+test-boundary	ok	SEEN RED: nonexistent path fails check
+test-boundary	ok	and names the missing path
+test-boundary	ok	prose in a brain row is not checked against the filesystem
+test-boundary	ok	and no 'does not exist' error appears for it
+test-boundary	ok	existing path does not trigger a filesystem error
+test-boundary	ok	but check still fails because README is stale
+test-boundary	ok	GREEN: existing path + fresh README passes check
+test-boundary	ok	the shipped tree passes check
 test-branch-guard.sh	ok	aeon on base branch: guard exits 1
 test-branch-guard.sh	ok	aeon on base branch: names the committer email
 test-branch-guard.sh	ok	aeon on base branch: names the branch

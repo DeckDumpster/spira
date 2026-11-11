@@ -343,7 +343,7 @@ ref, the remote branch delete and `branch:` label removal (with the dwarf log co
 kept), and the FAILED/non-zero-exit path (a worktree whose `.git` pointer is corrupted, so
 salvage refuses rather than guessing the tree is clean).
 
-`test-destroy-branch.sh`, `test-worktree-absent.sh` and `test-hel-metrics.sh` were not
+`test-destroy-branch.sh`, `test-worktree-absent` and `test-hel-metrics.sh` were not
 touched beyond what already stood (KEEP, per the coverage map). Cluster 7 (the content_landed
 self-check duplicates) resolves automatically: four of its five sources are deleted outright
 and the fifth, `test-content-landed-empty-branch.sh`, keeps only its content_landed-direct

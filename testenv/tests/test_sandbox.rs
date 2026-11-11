@@ -1,6 +1,6 @@
 //! Every test binary runs under cargo's target runner, `tools/test-sandbox/runner`, which
 //! `.cargo/config.toml` names: a bubblewrap sandbox in which the caller's installation is out of
-//! reach (sp-bpenvh). What a binary can reach inside it is spira/test-test-sandbox.sh's to prove
+//! reach (sp-bpenvh). What a binary can reach inside it is spira/test-test-sandbox's to prove
 //! with a probe binary; these tests read files and spawn nothing.
 
 use std::fs;

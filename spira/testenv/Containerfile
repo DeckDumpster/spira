@@ -78,7 +78,7 @@ RUN mkdir /out && \
 FROM docker.io/library/rust:${RUST_VERSION}-slim AS rust-builder
 
 # ── Stage 2b: habit-hook tools from the flake's pinned nixpkgs ────────────────
-# NIXPKGS_REV must equal the nixpkgs input in flake.nix (spira-env); test-testenv-nixpkgs-pin.sh checks it.
+# NIXPKGS_REV must equal the nixpkgs input in flake.nix (spira-env); a suite checks it.
 FROM docker.io/nixos/nix:2.24.10 AS nix-tools
 ARG NIXPKGS_REV=7fd4004d0511991fff3a0524856a9be09e28c5f0
 RUN nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths \

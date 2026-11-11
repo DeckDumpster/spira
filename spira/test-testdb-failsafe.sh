@@ -23,7 +23,7 @@
 # the fix, confirming this test detects the leak rather than passing for an unrelated reason.
 #
 # tier: T3
-# covers: spira/testdb.sh spira/test-cockpit-bd-contract.sh UC-test-infrastructure-22
+# covers: spira/testdb.sh UC-test-infrastructure-22
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

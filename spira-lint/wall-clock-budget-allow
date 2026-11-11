@@ -3,5 +3,4 @@
 round-vm/src/pool.rs
 round-vm/src/run.rs
 spira/test-czar-pass.sh
-spira/test-gate-wait.sh
 testenv/src/reap.rs

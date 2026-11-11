@@ -54,7 +54,7 @@ done < <(tracked | grep -E '^(README\.md|docs/.*\.md)$' | grep -vE -- '-evidence
 
 while IFS= read -r r; do
     has_anchor "$root/README.md" "${r#*#}" || bad+=("$r: dangling README anchor")
-done < <(tracked | grep -vx spira/test-docs-links.sh | (cd "$root" && xargs -d '\n' grep -shoI 'README\.md#[A-Za-z0-9_-]*') | sort -u)
+done < <(tracked | (cd "$root" && xargs -d '\n' grep -shoI 'README\.md#[A-Za-z0-9_-]*') | sort -u)
 
 [ "$seen" -gt 0 ] || bad+=("no link found in README.md or docs/: the extractor read nothing")
 n="$(wc -l < "$root/README.md")"

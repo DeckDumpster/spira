@@ -24,7 +24,7 @@
 # row 13). well_keys issues two `list` calls (label=spira-poison, and label=<scope>,plan)
 # against the same underlying bead set; bdsim's list filter reproduces bd's own AND-label
 # and default-exclude-closed semantics so one fixture array answers both. The query shape
-# itself is covered once, against real bd, in test-cockpit-bd-contract.sh.
+# itself is covered once, against real bd, in the real-bd cockpit contract suite.
 #
 # defect: sp-b3ub
 # tier: T2
