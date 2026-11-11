@@ -704,6 +704,10 @@ fn a_round_that_opened_and_never_began_is_abandoned_and_its_members_requeued() {
     );
     assert_eq!(round_state(&r), BatchState::Abandoned);
     assert_eq!(r.state("sp-a"), BeadState::Certified);
+    let noted = r.s.history("sp-a", Some("bead")).unwrap().into_iter().any(|c| {
+        c.audit.evidence.get("note").and_then(|n| n.as_str()).is_some_and(|n| n.contains("never began"))
+    });
+    assert!(noted, "the sweep's reason rides on the released member");
 }
 
 #[test]
