@@ -1,6 +1,6 @@
 //! # watch.throughput — the landing stall
 //!
-//! Every 15 minutes, per registered repo: no landing for `SPIRA_THROUGHPUT_STALL_SECS` while
+//! Every minute, per registered repo: no landing for `SPIRA_THROUGHPUT_STALL_SECS` while
 //! beads sit SUBMITTED or IN_DELIVERY there is a stall. A stall files one express P0 incident
 //! (hourly landings, the repo's rounds, the last landing) for the ops lane to root-cause and
 //! repair, and appends one inbox line once the filing succeeded. The episode is cleared by the
@@ -37,7 +37,7 @@ pub const FILE: &str = "watch.throughput.file";
 pub const CLEAR: &str = "watch.throughput.clear";
 pub const EFFECTS: &[&str] = &[OBSERVE, FILE, CLEAR, INBOX_APPEND];
 pub const KEYS: &[&str] = &["SPIRA_THROUGHPUT_STALL_SECS", "SPIRA_THROUGHPUT_ABANDON_COUNT", "SPIRA_THROUGHPUT_ABANDON_WINDOW", "SPIRA_THROUGHPUT_RATIO_MIN_PCT", "SPIRA_THROUGHPUT_RATIO_MIN_RUNS", "SPIRA_THROUGHPUT_PASSED_GRACE", "SPIRA_ID_PREFIX"];
-pub const CADENCE_MS: u64 = 900_000;
+pub const CADENCE_MS: u64 = 60_000;
 const DEADLINE_MS: u64 = 60_000;
 const FILE_DEADLINE_MS: u64 = 120_000;
 const TAG: &str = "throughput";
