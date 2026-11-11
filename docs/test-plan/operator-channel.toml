@@ -48,8 +48,8 @@ statement = "Aged unread backlog in a registered mailbox alerts the operator onc
 
 [[use_case]]
 id = "UC-operator-channel-10"
-tier = "T2"
-statement = "Mail wake is the scheduler's: a registered reader is woken after the settle window (SPIRA_MAIL_SETTLE_EVENT for a machine event), retried on SPIRA_MAIL_WAKE_BACKOFF while mail stays unread, and never doubled while a wake is in flight. World starts no mail-delivery unit."
+tier = "T1"
+statement = "Mail wake is the scheduler's: a registered reader is woken after the settle window (SPIRA_MAIL_SETTLE_EVENT for a machine event), retried on SPIRA_MAIL_WAKE_BACKOFF while mail stays unread, and never doubled while a wake is in flight."
 
 [[use_case]]
 id = "UC-operator-channel-11"
