@@ -235,6 +235,9 @@ impl<B: Backend> Store<B> {
         for m in &rec.members {
             let kind = self.release_kind(&m.bead_id, m.tip.clone())?;
             self.exit(&mut c, &m.bead_id, kind, &ev.actor, at)?;
+            if let BatchEventKind::Abandon { reason } = &ev.kind {
+                c.note_released(&m.bead_id, reason);
+            }
         }
         Ok(Planned::Cascade(c))
     }

@@ -189,15 +189,24 @@ impl Cascade {
     /// Names, in each `Returned` audit of `id` on either branch, the prerequisite it followed
     /// out of the round.
     fn name_prerequisite(&mut self, id: &str, prereq: &str) {
+        self.annotate(id, Some("Returned"), "stacked_on", prereq);
+    }
+
+    /// Records `reason` as the note on every audit of `id` on either branch: why it was released.
+    fn note_released(&mut self, id: &str, reason: &str) {
+        self.annotate(id, None, "note", reason);
+    }
+
+    fn annotate(&mut self, id: &str, event: Option<&str>, field: &str, text: &str) {
         for a in self.then.iter_mut().chain(self.els.iter_mut()) {
-            if a.lc_key != id || a.event != "Returned" {
+            if a.lc_key != id || event.is_some_and(|e| a.event != e) {
                 continue;
             }
             let mut evidence = match std::mem::take(&mut a.evidence) {
                 Value::Object(m) => m,
                 other => serde_json::Map::from_iter([("evidence".to_string(), other)]),
             };
-            evidence.insert("stacked_on".into(), Value::String(prereq.into()));
+            evidence.insert(field.into(), Value::String(text.into()));
             a.evidence = Value::Object(evidence);
         }
     }

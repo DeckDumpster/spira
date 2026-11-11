@@ -1347,7 +1347,9 @@ impl Machine<'_> {
                 None => {
                     self.go(Trigger::RerunBlocked);
                     let said = out.trim().lines().last().map(|l| format!(": {l}")).unwrap_or_default();
-                    self.red(&format!("local corpus red — the attribution leg ended ({exit:?}) with no outcome{said}"));
+                    // No outcome means nothing was judged: the round stays OPEN, and the pause carries the leg's text.
+                    let why = format!("local corpus red — the attribution leg ended ({exit:?}) with no outcome{said}");
+                    self.finish(pace::Outcome::Red, &why);
                 }
             },
             (State::Certifying, true) if self.below => {
