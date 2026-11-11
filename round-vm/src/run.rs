@@ -178,9 +178,7 @@ pub trait Remote: Sync {
     /// Runs one attribution rerun (DESIGN.md §2.2a); its testenv exit code (255: ssh).
     fn run_attr(&self, addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String>;
     /// Drops results an earlier round left where this one's are pulled from; a fresh VM has none.
-    fn clear_results(&self, _addr: &str) -> Result<(), String> {
-        Ok(())
-    }
+    fn clear_results(&self, addr: &str) -> Result<(), String>;
 }
 
 /// The probe for the round script's log: [`REMOTE_SCRIPT`] writes it at `~/round-script.log`.
@@ -1294,6 +1292,9 @@ fn rsync_said(stderr: &[u8]) -> String {
 }
 
 impl Remote for SshRemote {
+    fn clear_results(&self, _addr: &str) -> Result<(), String> {
+        Ok(())
+    }
     fn reachable(&self, addr: &str) -> bool {
         command("ssh")
             .args(self.ssh_opts())

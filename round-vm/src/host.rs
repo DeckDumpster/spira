@@ -255,7 +255,10 @@ mod tests {
         r.clear_results("").unwrap();
         r.clear_results("").unwrap();
         let got = d.path().join("got");
-        let _ = r.pull("", crate::run::REMOTE_RESULTS, &got);
+        fs::create_dir_all(&res).unwrap();
+        fs::write(res.join("test-new.sh.result"), "ok 1 3 - p e 0\n").unwrap();
+        r.pull("", crate::run::REMOTE_RESULTS, &got).unwrap();
+        assert!(got.join("test-new.sh.result").exists());
         assert!(!got.join("test-old.sh.result").exists());
     }
 
