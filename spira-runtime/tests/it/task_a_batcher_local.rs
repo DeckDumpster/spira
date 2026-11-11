@@ -820,3 +820,25 @@ fn sp_pi2ojm_the_late_round_open_outcome_after_the_adoption_launches_no_second_l
     let (_, acts) = on_outcome(&carry, ROUND_OPEN, true, &serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap(), &Leg { why: "suites".into(), ..Leg::on("spira") }, NOW);
     assert!(acts.is_empty(), "{acts:?}");
 }
+
+#[test]
+fn sp_pi2ojm_an_opened_round_in_another_tree_is_not_ours_to_adopt() {
+    let mut snap = queue_holds("r9", &["sp-a", "sp-b"]);
+    snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().worktree = "/elsewhere".into();
+    let (carry, acts) = decide(&opened_unadvanced(), &snap);
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Opened);
+}
+
+#[test]
+fn sp_pi2ojm_an_adopted_round_without_suites_certifies_in_its_own_testenv_or_is_blocked() {
+    let mut own = opened_unadvanced();
+    let rc = own.repos.get_mut("spira").unwrap();
+    (rc.suites, rc.own_testenv) = (Some(false), true);
+    let (carry, acts) = decide(&own, &queue_holds("r9", &["sp-a", "sp-b"]));
+    assert_eq!((carry.repos["spira"].state, acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>()), (State::Certifying, vec![CERTIFY]));
+    let mut bare = opened_unadvanced();
+    bare.repos.get_mut("spira").unwrap().suites = Some(false);
+    let (_, acts) = decide(&bare, &queue_holds("r9", &["sp-a", "sp-b"]));
+    assert!(acts.iter().all(|a| a.effect != CORPUS && a.effect != CERTIFY), "{acts:?}");
+}
