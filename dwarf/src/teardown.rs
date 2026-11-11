@@ -35,6 +35,16 @@ impl Run<'_> {
         let _ = self.d.exec.exec("bash", &s(&["-c", FIXTURE_DROP]), Some(data), None);
     }
 
+    pub(crate) fn ask_blocked(&self, id: &str) -> bool {
+        let row = bd::json(self.d.bd, &["show", id]);
+        let ids = decide::blocks_targets(&row);
+        if ids.is_empty() {
+            return false;
+        }
+        let targets = util::json_only(&self.d.bd.bd(&s(&["list", "--all", "--limit", "0", "--id", &ids.join(","), "--json"])).stdout);
+        decide::open_ask_blocker(&row, &targets, id, &self.conf.ask_label())
+    }
+
     /// `gate-run.sh --status <branch> <repo>`: (exit code, stdout), by name on the
     /// launcher's PATH (sp-gypjk). A suite fixture scripts it by putting its own
     /// `gate-run.sh` first on PATH.
@@ -214,7 +224,7 @@ impl Run<'_> {
         } else if let Some((2, why)) = self.gate_status() {
             i.gate_unfinished = true;
             gw = why;
-        } else if decide::open_ask_blocker(&bd::json(self.d.bd, &["show", &id]), &id, &self.conf.ask_label()) {
+        } else if self.ask_blocked(&id) {
             i.decision_blocked = true;
         } else if self.s.session_rc == 124 && !self.s.committed {
             // timeout — decided from session_rc / committed

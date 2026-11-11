@@ -72,6 +72,8 @@ pub struct State {
     pub holder: String,
     pub bead: String,
     pub claimed: Option<BeadRow>,
+    /// The claimed bead's `show --json`, read once; the hash, the label checks, the branch and the notes read it.
+    pub claimed_raw: String,
     pub repo_name: String,
     pub repo: PathBuf,
     pub repo_land: String,
@@ -692,13 +694,14 @@ impl<'a> Run<'a> {
         self.s.bead = c.id.clone();
         self.s.claimed_at = Some(self.now());
         self.s.claimed = Some(c.row.clone());
+        self.s.claimed_raw = c.raw.clone();
         self.log(&format!("{who}: claimed {}", c.id));
         self.ledger.awake(self.now(), self.f(), &c.id);
         self.sdo("spira_event", &s(&["dwarf.claimed", &c.id, &format!("{} claimed {}", self.s.dwarf, c.id), &format!("called from the {} rune", self.f())]));
 
         // The baseline verdict compares the description against at close. A metadata write, so
         // not a description edit as bdq's live-claim fence reads it.
-        if let Some(h) = bead::claimdesc::desc_hash(&bd::json(self.d.bd, &["show", &c.id])) {
+        if let Some(h) = bead::claimdesc::desc_hash(&c.raw) {
             let _ = self.d.bd.bd(&s(&["update", &c.id, "--set-metadata", &format!("{}={h}", bead::claimdesc::HASH_KEY)]));
         }
 
@@ -736,7 +739,7 @@ impl<'a> Run<'a> {
 
         // ---- world-stop fence ----
         let label = self.conf.s("SPIRA_WORLD_STOP_LABEL");
-        let has = bd::show(self.d.bd, &c.id).is_some_and(|r| r.has_label(&label));
+        let has = c.row.has_label(&label);
         let live = self.live_peers();
         let skip = self.conf.set_nonempty("SPIRA_WORLD_STOP_SKIP");
         match decide::world_stop(has, &live, skip) {
@@ -820,11 +823,7 @@ impl<'a> Run<'a> {
         }
 
         // ---- the branch is recorded on the bead ----
-        let st = self.d.bd.bd(&s(&["state", &c.id, "branch"]));
-        let mut br = if st.success() { st.text() } else { String::new() };
-        if br.starts_with('(') {
-            br.clear();
-        }
+        let mut br = c.row.label_value("branch:").unwrap_or_default();
         if br.is_empty() {
             br = format!("spira/{}", c.id);
             let _ = self.d.bd.bd(&s(&["set-state", &c.id, &format!("branch={br}")]));
@@ -1090,6 +1089,14 @@ impl<'a> Run<'a> {
         ms
     }
 
+    /// The claimed bead's row as read once: held from the claim, or read now and kept (a directed or resumed call).
+    pub(crate) fn held_raw(&mut self) -> String {
+        if self.s.claimed_raw.trim().is_empty() {
+            self.s.claimed_raw = bd::json(self.d.bd, &["show", &self.s.bead]);
+        }
+        self.s.claimed_raw.clone()
+    }
+
     fn write_static_prompt(&mut self, work: &Path, n_prior: &str, prior_log: &str, rebase: &str) -> Result<(), Abort> {
         let bead = self.s.bead.clone();
         let wdisp = work.display().to_string();
@@ -1097,7 +1104,7 @@ impl<'a> Run<'a> {
         let template = std::fs::read_to_string(&runes_file).map_err(|e| Abort::Die(format!("{}: cannot read {}: {e}", self.f(), runes_file.display())))?;
         let sys = brief::static_system(&template, &bead, &wdisp, &self.s.repo.display().to_string());
 
-        let shown: serde_json::Value = serde_json::from_str(&bd::json(self.d.bd, &["show", &bead])).unwrap_or_default();
+        let shown: serde_json::Value = serde_json::from_str(&self.held_raw()).unwrap_or_default();
         let row = if shown.is_array() { shown[0].clone() } else { shown };
         let field = |k: &str| row.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
         let max = self.conf.i("SPIRA_BRIEF_NOTES_MAX_CHARS").max(0) as usize;
@@ -1159,7 +1166,7 @@ impl<'a> Run<'a> {
         }
 
         // The bead, bounded; then who else holds the files it names.
-        let shown = self.d.bd.bd(&s(&["show", &bead]));
+        let shown = self.d.bd.text(&bead);
         let body = util::strip_bd_hints(&shown.stdout).trim_end_matches('\n').to_string();
         let keep = self.conf.i("SPIRA_BRIEF_KEEP_RECURRENCES").max(0) as usize;
         let max = self.conf.i("SPIRA_BRIEF_NOTES_MAX_CHARS").max(0) as usize;
