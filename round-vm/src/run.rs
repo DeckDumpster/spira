@@ -386,11 +386,14 @@ case "$disk_base" in ''|*[!0-9]*) ;; *) disk_sampler "$disk_base" & disk_sampler
 phase spira-env
 nix_bin=/nix/var/nix/profiles/default/bin
 env_flake="$HOME/spira-env-flake"
-rm -rf "$env_flake" && mkdir -p "$env_flake" && cp ~/round-work/flake.nix ~/round-work/flake.lock "$env_flake/"
+if ! { rm -rf "$env_flake" && mkdir -p "$env_flake" && cp ~/round-work/flake.nix ~/round-work/flake.lock "$env_flake/"; }; then
+    echo "round-vm: cannot stage flake.nix and flake.lock from the round's checkout into $env_flake" >&2
+    exit 3
+fi
 flake_ref="path:$env_flake#spira-env"
 build_env() { PATH="$nix_bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" nix --extra-experimental-features 'nix-command flakes' build "$flake_ref" -o "$HOME/spira-env" >&2; }
 if ! build_env; then
-    echo "round-vm: spira-env build failed for flake ref $flake_ref (git checkout: $(git -C ~/round-work rev-parse --short HEAD 2>&1); flake.nix on disk: $([ -f ~/round-work/flake.nix ] && echo present || echo MISSING)) — dropping nix's fetcher cache and retrying once" >&2
+    echo "round-vm: spira-env build failed for flake ref $flake_ref (git checkout: $(git -C ~/round-work rev-parse --short HEAD 2>&1); staged: $(ls "$env_flake" 2>&1 | tr '\n' ' ')) — dropping nix's fetcher cache and retrying once" >&2
     rm -f ~/.cache/nix/fetcher-cache-v*.sqlite*
     if ! build_env; then
         echo "round-vm: cannot build spira-env from the round's flake.lock (flake ref $flake_ref)" >&2
@@ -3615,8 +3618,10 @@ mod tests {
     fn the_spira_env_flake_ref_never_names_the_work_tree_so_the_store_gains_no_copy_of_it() {
         let line = REMOTE_SCRIPT.lines().find(|l| l.starts_with("flake_ref=")).expect("flake_ref is set");
         assert!(!line.contains("round-work"), "a path: ref to the work tree copies target/ into the store: {line}");
-        let stage = REMOTE_SCRIPT.lines().find(|l| l.contains("cp ~/round-work/flake.nix")).expect("the flake files are staged");
-        assert!(stage.contains("flake.lock") && stage.contains("\"$env_flake/\""), "{stage}");
+        assert!(REMOTE_SCRIPT.contains("env_flake=\"$HOME/spira-env-flake\"\n"), "the staging dir is not the work tree");
+        let stage = REMOTE_SCRIPT.find("cp ~/round-work/flake.nix ~/round-work/flake.lock \"$env_flake/\"").expect("both flake files are staged");
+        assert!(stage < REMOTE_SCRIPT.find("flake_ref=").unwrap() && stage < REMOTE_SCRIPT.find("build_env()").unwrap());
+        assert!(REMOTE_SCRIPT[stage..].contains("cannot stage flake.nix") && REMOTE_SCRIPT[stage..].find("cannot stage").unwrap() < REMOTE_SCRIPT[stage..].find("build_env()").unwrap(), "a failed staging stops the round");
     }
 
     #[test]
