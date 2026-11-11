@@ -10,7 +10,7 @@ use spira_runtime::tasks::e::watch_throughput::*;
 use spira_runtime::watchers::INBOX_APPEND;
 
 fn config() -> Config {
-    Config { stall_s: 600, abandon_count: 5, abandon_window_s: 7_200, ratio_min_pct: 40, ratio_min_runs: 6, passed_grace_s: 300 }
+    Config { stall_s: 7_200, abandon_count: 5, abandon_window_s: 7_200, ratio_min_pct: 40, ratio_min_runs: 6, passed_grace_s: 300 }
 }
 
 /// When the fake host says the last landing happened, relative to the clock it is asked at.
@@ -75,12 +75,12 @@ fn halts(r: &TaskRig) -> usize {
 }
 
 #[test]
-fn the_row_is_registered_and_its_boot_arms_the_one_minute_tick() {
+fn the_row_is_registered_and_its_boot_arms_the_fifteen_minute_tick() {
     let t = acc::row(NAME);
     assert_eq!((t.stream(), t.effects, t.keys.concat()), (STREAM, EFFECTS, KEYS.to_vec()));
     let s = acc::pinned_settings(&[]).expect("settings from the complete fixture");
     assert_eq!((t.cadence_ms)(&s), CADENCE_MS);
-    assert_eq!(CADENCE_MS, 60_000);
+    assert_eq!(CADENCE_MS, 15 * 60_000);
     assert_eq!(Config::pinned().map(|_| ()), Ok(()), "every key resolves through the config door");
 }
 
@@ -92,7 +92,7 @@ fn episodes(r: &TaskRig) -> Vec<std::collections::BTreeMap<String, u64>> {
 
 #[test]
 fn fifty_five_landings_in_a_day_with_steady_landings_file_no_incident_and_halt_nothing() {
-    let w = Arc::new(Mutex::new(waiting(landed(55), 4, Last::Ago(60))));
+    let w = Arc::new(Mutex::new(waiting(landed(55), 4, Last::Ago(1_800))));
     let mut r = rig(w);
     r.advance(12 * CADENCE_MS).unwrap();
     assert_eq!((halts(&r), named(&r, FILE).len(), named(&r, INBOX_APPEND).len()), (0, 0, 0));
@@ -100,14 +100,14 @@ fn fifty_five_landings_in_a_day_with_steady_landings_file_no_incident_and_halt_n
 }
 
 #[test]
-fn no_landing_for_ten_minutes_with_beads_waiting_files_exactly_one_incident_and_halts_nothing() {
+fn no_landing_for_two_hours_with_beads_waiting_files_exactly_one_incident_and_halts_nothing() {
     let w = Arc::new(Mutex::new(waiting(landed(55), 3, Last::FirstSight)));
     let mut r = rig(w);
-    r.advance(9 * CADENCE_MS).unwrap();
-    assert!(named(&r, FILE).is_empty(), "nine minutes is not yet a stall");
+    r.advance(7 * CADENCE_MS).unwrap();
+    assert!(named(&r, FILE).is_empty(), "an hour and three quarters is not yet a stall");
     r.advance(CADENCE_MS).unwrap();
-    assert_eq!(600, 10 * CADENCE_S, "the tenth tick is the ten-minute mark");
-    r.advance(10 * CADENCE_MS).unwrap();
+    assert_eq!(7_200, 8 * CADENCE_S, "the eighth tick is the two-hour mark");
+    r.advance(8 * CADENCE_MS).unwrap();
     let filings = named(&r, FILE);
     assert_eq!(filings.len(), 1, "one incident for the whole episode: {filings:?}");
     let f: Filing = serde_json::from_str(&filings[0]).unwrap();

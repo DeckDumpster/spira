@@ -25,7 +25,7 @@ pub const VERBS: &[&str] = &[
 ];
 
 /// A round that opened and showed no sign of life for this long is a phantom.
-const PHANTOM_BATCH_SECS: i64 = 120;
+const PHANTOM_BATCH_SECS: i64 = 1800;
 
 pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let rest = &args[1..];
