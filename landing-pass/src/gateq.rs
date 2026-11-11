@@ -53,11 +53,23 @@ pub struct Done {
     pub gate: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The hold a tip earns by ending without a verdict twice, and the one inbox line saying so.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hold {
+    pub bead: String,
+    pub reason: String,
+    pub line: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Settled {
     Filed,
     Requeued,
+    /// Filed, and the bead is to be held: this tip has now ended without a verdict twice.
+    Held(Hold),
 }
+
+pub const BUILD_STALL: &str = "build-stall";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Where {
@@ -349,17 +361,23 @@ impl GateQueue {
         Ok(path)
     }
 
-    /// File a finished run. A first death at the cap goes back to the inbox, behind what is
-    /// queued now, instead of reaching the pass; a second is filed as `died-twice`, with both
-    /// deaths' timings in its output, so the pass moves the bead out of SUBMITTED at once.
+    /// File a finished run. A run that ended without a verdict (a death at the cap, a build
+    /// stall) goes back to the inbox only while nothing else is gating; a second such run of
+    /// the tip is filed and the bead held, so the same tip is never run blind a third time.
     pub fn settle(&self, slot: usize, d: &Done) -> std::io::Result<Settled> {
-        if !d.run.cap_death() {
+        let reason = d.run.reason_or("unspecified");
+        let blind = d.run.cap_death() || (d.run.outcome == crate::model::GateOutcome::NoVerdict && reason == BUILD_STALL);
+        if !blind {
             self.complete(slot, d)?;
             return Ok(Settled::Filed);
         }
         let mut job = d.job.clone();
         job.deaths.push(self.death_evidence(&job, d));
         if job.deaths.len() < 2 {
+            if self.another_gate_runs(slot) {
+                self.complete(slot, d)?;
+                return Ok(Settled::Filed);
+            }
             job.queued = nanos();
             job.priority = no_priority();
             let body = serde_json::to_string(&job).map_err(std::io::Error::other)?;
@@ -367,19 +385,33 @@ impl GateQueue {
             let _ = fs::remove_file(self.claimed_slot(slot).join(job.file()));
             return Ok(Settled::Requeued);
         }
-        let out = format!(
-            "{}\ngate: VERDICT=NO_VERDICT reason={} branch={} repo={} suite=-\ngate-worker: the gate died at its cap on {} runs of {}: {}\n",
-            d.run.out,
-            DIED_TWICE,
-            job.branch,
-            job.repo,
-            job.deaths.len(),
-            job.tip,
-            job.deaths.join("; ")
-        );
-        let run = GateRun::parse(crate::model::GATE_NOVERDICT, out);
-        self.complete(slot, &Done { job, run, started_ms: d.started_ms, finished_ms: d.finished_ms, gate: String::new() })?;
-        Ok(Settled::Filed)
+        let hold = Hold {
+            bead: job.bead.clone(),
+            line: format!("gate: {} ended without a verdict twice on {} ({reason}): {}", job.bead, job.tip, job.deaths.join("; ")),
+            reason: format!("gate: no verdict twice on {} ({reason})", job.tip),
+        };
+        let filed = if reason == BUILD_STALL {
+            Done { job, gate: String::new(), ..d.clone() }
+        } else {
+            let out = format!(
+                "{}\ngate: VERDICT=NO_VERDICT reason={} branch={} repo={} suite=-\ngate-worker: the gate died at its cap on {} runs of {}: {}\n",
+                d.run.out,
+                DIED_TWICE,
+                job.branch,
+                job.repo,
+                job.deaths.len(),
+                job.tip,
+                job.deaths.join("; ")
+            );
+            let run = GateRun::parse(crate::model::GATE_NOVERDICT, out);
+            Done { job, run, started_ms: d.started_ms, finished_ms: d.finished_ms, gate: String::new() }
+        };
+        self.complete(slot, &filed)?;
+        Ok(Settled::Held(hold))
+    }
+
+    fn another_gate_runs(&self, slot: usize) -> bool {
+        self.claimed_slots().into_iter().any(|s| s != slot && !self.claimed(s).is_empty())
     }
 
     fn death_evidence(&self, job: &Job, d: &Done) -> String {
@@ -428,6 +460,50 @@ mod tests {
         assert_eq!(q.queued()[1].deaths, ["ran=2000ms (no phase timings in gate.log)"]);
     }
 
+    const STALL: &str = "gate: VERDICT=NO_VERDICT reason=build-stall branch=b repo=r suite=-\n";
+
+    fn stalled(job: &Job) -> Done {
+        Done { job: job.clone(), run: GateRun::parse(75, STALL.into()), started_ms: 1, finished_ms: 2001, gate: String::new() }
+    }
+
+    #[test]
+    fn a_death_at_an_unchanged_tip_while_another_gate_runs_is_filed_not_queued() {
+        let d = tmpdir("settle-busy");
+        let q = GateQueue::new(&d);
+        q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", "t1", false)).unwrap();
+        q.enqueue(&Job::new("r", "spira/sp-b", "sp-b", "t2", false)).unwrap();
+        let a = q.claim(0).unwrap();
+        let _b = q.claim(1).unwrap();
+        assert_eq!(q.settle(0, &dead(&a)).unwrap(), Settled::Filed);
+        assert_eq!(q.find("r", "spira/sp-a", "t1"), Some(Where::Done));
+    }
+
+    #[test]
+    fn a_build_stall_alone_is_queued_again_once() {
+        let d = tmpdir("settle-stall");
+        let q = GateQueue::new(&d);
+        q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", "t1", false)).unwrap();
+        let a = q.claim(0).unwrap();
+        assert_eq!(q.settle(0, &stalled(&a)).unwrap(), Settled::Requeued);
+        assert_eq!(q.find("r", "spira/sp-a", "t1"), Some(Where::Inbox));
+    }
+
+    #[test]
+    fn a_second_verdictless_run_of_one_tip_holds_the_bead_with_one_line_naming_tip_reason_and_both_runs() {
+        let d = tmpdir("settle-hold");
+        let q = GateQueue::new(&d);
+        let mut job = Job::new("r", "spira/sp-a", "sp-a", "t1", false);
+        job.deaths = vec!["ran=297s rc=75 died phases=build:200".into()];
+        q.enqueue(&job).unwrap();
+        let claimed = q.claim(0).unwrap();
+        let Settled::Held(h) = q.settle(0, &stalled(&claimed)).unwrap() else { panic!("not held") };
+        assert_eq!(h.bead, "sp-a");
+        for want in ["t1", "build-stall", "ran=297s rc=75 died phases=build:200", "ran=2000ms"] {
+            assert!(h.line.contains(want), "{want}: {}", h.line);
+        }
+        assert_eq!(q.find("r", "spira/sp-a", "t1"), Some(Where::Done));
+    }
+
     #[test]
     fn a_second_cap_death_is_filed_naming_both_runs_and_a_pass_is_filed_as_it_is() {
         let d = tmpdir("settle-second");
@@ -436,7 +512,7 @@ mod tests {
         job.deaths = vec!["ran=297s phases=build:200".into()];
         q.enqueue(&job).unwrap();
         let claimed = q.claim(0).unwrap();
-        assert_eq!(q.settle(0, &dead(&claimed)).unwrap(), Settled::Filed);
+        assert!(matches!(q.settle(0, &dead(&claimed)).unwrap(), Settled::Held(_)));
         let run = q.take_done("r", "spira/sp-a", "t1").unwrap().run;
         assert_eq!(run.reason.as_deref(), Some(DIED_TWICE));
         assert!(run.out.contains("ran=297s phases=build:200; ran=2000ms"), "{}", run.out);

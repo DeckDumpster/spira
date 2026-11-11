@@ -739,7 +739,19 @@ pub fn complete(e: &crate::Effects, input: &str) -> Result<String, String> {
     let job = q.claimed_job(f.slot, &f.job.repo, &f.job.branch, &f.job.tip).ok_or_else(|| format!("{COMPLETE}: slot {} does not hold {} — refused", f.slot, f.job.key()))?;
     let word = run.outcome.word();
     let settled = q.settle(f.slot, &landing_pass::gateq::Done { job, run, started_ms: f.started_ms, finished_ms: f.finished_ms, gate: String::new() }).map_err(|e| format!("{COMPLETE}: {e}"))?;
-    let word = if settled == landing_pass::gateq::Settled::Requeued { "died at the cap, queued again" } else { word };
+    let mut word = match &settled {
+        landing_pass::gateq::Settled::Requeued => "ended without a verdict, queued again".to_string(),
+        _ => word.to_string(),
+    };
+    if let landing_pass::gateq::Settled::Held(h) = &settled {
+        let held = spira_config::lc_call::LcClient::socket(&e.world.lc_socket)
+            .within(std::time::Duration::from_secs(5))
+            .call(&["hold", &h.bead, "wait", &h.reason, NAME])
+            .map_err(|e| e.to_string())
+            .and_then(|r| if r.code == 0 { Ok(()) } else { Err(format!("spira-lc hold exited {}: {}", r.code, r.why())) });
+        let said = e.world.inbox_append(&h.line);
+        word = format!("held ({}; inbox: {})", held.err().unwrap_or_else(|| "hold placed".into()), said.unwrap_or_else(|e| e));
+    }
     let (out, rc) = leg_paths(&e.world.run_dir.display().to_string(), f.slot, "gate", &f.job);
     let _ = std::fs::remove_file(out);
     let _ = std::fs::remove_file(rc);
