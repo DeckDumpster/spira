@@ -194,6 +194,19 @@ impl Shipper {
         Ok(s)
     }
 
+    /// How long ago the newest snapshot that reached the off-box copy was cut; `None` when none
+    /// has reached it from this host.
+    pub fn newest_shipped_snapshot_age_ms(&self) -> Result<Option<u64>, String> {
+        let dir = self.sent(SNAPSHOT);
+        let newest = names(&dir)?
+            .into_iter()
+            .filter_map(|n| revlog::parse_snapshot_name(&n).map(|r| (r, n)))
+            .max();
+        Ok(newest
+            .and_then(|(_, n)| mtime_ms(&dir.join(n)))
+            .map(|at| self.clock.now_ms().saturating_sub(at)))
+    }
+
     pub fn dir(&self) -> &Path {
         &self.cfg.dir
     }
@@ -390,14 +403,19 @@ impl Shipper {
 
 /// The ship-age alarm's state change: a line on the crossing into red past `max_ms`, and one on
 /// the crossing back, never one per tick.
-pub fn alarm(was_red: bool, oldest_ms: Option<u64>, max_ms: u64) -> (bool, Option<String>) {
+pub fn alarm(was_red: bool, oldest_ms: Option<u64>, max_ms: u64, snapshot_ms: Result<Option<u64>, String>) -> (bool, Option<String>) {
     let age = oldest_ms.unwrap_or(0);
     let red = age > max_ms;
     let line = match (was_red, red) {
         (false, true) => Some(format!(
-            "RED: the oldest unshipped control-store revision has waited {}s, past {}s: the off-box copy is falling behind",
+            "RED: the oldest unshipped control-store revision has waited {}s, past {}s: the off-box copy is falling behind; {}",
             age / 1_000,
-            max_ms / 1_000
+            max_ms / 1_000,
+            match snapshot_ms {
+                Ok(Some(a)) => format!("the newest snapshot that shipped is {}s old", a / 1_000),
+                Ok(None) => "no snapshot has shipped from this host".into(),
+                Err(e) => format!("the age of the newest snapshot that shipped could not be read: {e}"),
+            }
         )),
         (true, false) => Some("CLEAR: every control-store revision is shipped within the bound again".into()),
         _ => None,
@@ -411,15 +429,15 @@ mod tests {
 
     #[test]
     fn the_alarm_speaks_on_each_crossing_and_is_silent_between() {
-        assert_eq!(alarm(false, Some(5_000), 10_000), (false, None));
-        let (red, line) = alarm(false, Some(11_000), 10_000);
+        assert_eq!(alarm(false, Some(5_000), 10_000, Ok(None)), (false, None));
+        let (red, line) = alarm(false, Some(11_000), 10_000, Ok(Some(7_200_000)));
         assert!(
-            red && line.unwrap().starts_with(
+            red && line.clone().unwrap().starts_with(
                 "RED: the oldest unshipped control-store revision has waited 11s, past 10s"
-            )
+            ) && line.unwrap().ends_with("the newest snapshot that shipped is 7200s old")
         );
-        assert_eq!(alarm(true, Some(12_000), 10_000), (true, None));
-        let (red, line) = alarm(true, None, 10_000);
+        assert_eq!(alarm(true, Some(12_000), 10_000, Ok(None)), (true, None));
+        let (red, line) = alarm(true, None, 10_000, Ok(None));
         assert!(!red && line.unwrap().starts_with("CLEAR"));
     }
 }

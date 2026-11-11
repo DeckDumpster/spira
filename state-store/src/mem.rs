@@ -162,6 +162,10 @@ impl Backend for MemBackend {
         Ok(out)
     }
 
+    fn compacted(&self) -> Result<u64> {
+        Ok(self.state().compacted)
+    }
+
     fn compact(&self, rev: u64) -> Result<()> {
         let mut s = self.state();
         let rev = rev.min(s.head);

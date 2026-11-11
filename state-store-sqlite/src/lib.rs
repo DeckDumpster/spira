@@ -162,7 +162,7 @@ fn migrate(conn: &Connection) -> Result<()> {
 /// means a rewound store never reissues a revision a client was already handed.
 pub const JUMP: u64 = 1_000;
 
-const READ_ENDED: &str = "read ended: held past max_read_ms";
+use state_store::READ_ENDED;
 
 /// Whether `e` is a read the store ended for outliving `max_read_ms`.
 pub fn is_read_ended(e: &Error) -> bool {
@@ -783,6 +783,8 @@ impl SqliteBackend {
                 )));
             }
         }
+        drop(_read);
+        exec(&dest_conn, "VACUUM", [])?;
         Ok(rev)
     }
 
@@ -1067,6 +1069,10 @@ impl Backend for SqliteBackend {
             }
             Ok(out)
         })
+    }
+
+    fn compacted(&self) -> Result<u64> {
+        SqliteBackend::compacted(self)
     }
 
     /// Drops the superseded versions at or below `rev`, and the deletes there, but never above

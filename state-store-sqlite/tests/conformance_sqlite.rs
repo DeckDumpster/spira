@@ -483,3 +483,25 @@ fn gc_range_skips_the_audit_history_and_pages_across_it() {
     }
     assert_eq!(got, ["a", "f", "g"]);
 }
+
+#[test]
+fn a_snapshot_copy_does_not_carry_the_pages_deleted_rows_left_free_in_the_live_file() {
+    let dir = TempDir::new("sqlite-snapshot-vacuum");
+    let path = dir.path().join("s.db");
+    let b = open(&path);
+    let clock = VirtualClock::new(0);
+    let c = contract(b, &clock);
+    for i in 0..200 {
+        put(&c, &format!("k/{i}"), json!("x".repeat(16_384)), &format!("p{i}"));
+    }
+    for i in 0..200 {
+        c.delete(&format!("k/{i}"), None, &req(&format!("d{i}"))).unwrap();
+    }
+    c.backend().clear_compaction_floor().unwrap();
+    c.compact(c.head().unwrap()).unwrap();
+    let dest = dir.path().join("snap.db");
+    c.backend().snapshot_to(&dest).unwrap();
+    let live = std::fs::metadata(&path).unwrap().len();
+    let snap = std::fs::metadata(&dest).unwrap().len();
+    assert!(snap * 4 < live, "snapshot {snap} bytes beside a live file of {live}");
+}
