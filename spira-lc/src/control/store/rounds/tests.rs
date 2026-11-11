@@ -713,22 +713,24 @@ fn a_round_with_an_ejected_member_and_no_phase_write_is_not_abandoned_as_never_b
 fn a_round_with_a_recorded_pass_and_no_live_leg_is_not_abandoned_as_never_began() {
     let r = Rig::new();
     open_round(&r);
-    let (_, rec) = r.s.batch("b-1").unwrap().unwrap();
-    let ev = BatchEvent {
-        expect: BatchState::Open,
-        version: rec.value.row.version,
-        kind: BatchEventKind::PassStarted { n: 1, head: "h1".into() },
-        actor: "test".into(),
+    let send = |expect: BatchState, kind: BatchEventKind| {
+        let (_, rec) = r.s.batch("b-1").unwrap().unwrap();
+        let ev = BatchEvent { expect, version: rec.value.row.version, kind, actor: "test".into() };
+        r.s.batch_event_with("b-1", &ev, AT + 10, &r.req(), None).unwrap();
     };
-    r.s.batch_event_with("b-1", &ev, AT + 10, &r.req(), None).unwrap();
+    send(BatchState::Open, BatchEventKind::PassStarted { n: 1, head: "h1".into() });
+    send(BatchState::CiRunning, BatchEventKind::PassIncomplete { n: 1, reason: "lost".into() });
+    send(BatchState::Attributing, BatchEventKind::PassRebuilt { head: "h2".into() });
+    assert_eq!(round_state(&r), BatchState::Open);
     let applied =
         r.s.requeue_orphans("test", true, 1800, AT + 3600, &none(), &r.req())
             .unwrap();
+    assert_eq!(applied.running, vec!["b-1".to_string()]);
     assert!(
         applied.phantom_batches.is_empty() && applied.abandoned.is_empty() && applied.requeued.is_empty(),
         "{applied:?}"
     );
-    assert_eq!(round_state(&r), BatchState::CiRunning);
+    assert_eq!(round_state(&r), BatchState::Open);
     assert_eq!(r.state("sp-a"), BeadState::InDelivery);
 }
 
