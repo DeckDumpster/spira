@@ -3,7 +3,6 @@
 //! hours old, and then `drop-orphans` would drop READY records bd lacks and the rowless repair
 //! would create records for beads the control plane already closed.
 
-use serde_json::Value;
 
 use crate::callers::{Bd, Machine};
 
@@ -52,19 +51,9 @@ pub fn exit() -> String {
     )
 }
 
-/// bd's `kv get --json` answer: `{"found": bool, "value": "N"}`.
-pub fn parse_bd_kv(out: &str) -> Result<Option<u64>, String> {
-    let v: Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd kv get: {e}"))?;
-    if !v["found"].as_bool().unwrap_or(false) {
-        return Ok(None);
-    }
-    let text = match &v["value"] {
-        Value::String(s) => s.trim().to_string(),
-        other => other.to_string(),
-    };
-    text.parse()
-        .map(Some)
-        .map_err(|_| format!("{BD_KV_KEY} is {text}, not a sequence"))
+/// bd's kv value of the watermark; `None` while unset.
+pub fn parse_kv(value: Option<&str>) -> Result<Option<u64>, String> {
+    value.map(|text| text.trim().parse().map_err(|_| format!("{BD_KV_KEY} is {}, not a sequence", text.trim()))).transpose()
 }
 
 pub const CHECK_VERB: &str = "skew-check";
@@ -142,9 +131,9 @@ mod tests {
 
     #[test]
     fn each_plane_s_answer_parses_and_a_garbled_one_cannot_tell() {
-        assert_eq!(parse_bd_kv(r#"{"found": true, "value": "41"}"#), Ok(Some(41)));
-        assert_eq!(parse_bd_kv(r#"{"found": false}"#), Ok(None));
-        assert!(parse_bd_kv(r#"{"found": true, "value": "w-7"}"#).is_err());
+        assert_eq!(parse_kv(Some("41\n")), Ok(Some(41)));
+        assert_eq!(parse_kv(None), Ok(None));
+        assert!(parse_kv(Some("w-7")).is_err());
     }
 
     struct Kv(Result<Option<u64>, String>);

@@ -492,6 +492,75 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
     }
 }
 
+const KV_PREFIX: &str = "kv.";
+
+/// The bead `id` with its labels and edges; `None` when the store holds none.
+pub fn bead(sql: &dyn Sql, db: &str, id: &str) -> Res<Option<Bead>> {
+    let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE id = '{}'", issue_columns(), escape(id)))?;
+    Ok(fill(sql, db, &issues, false)?.into_iter().next())
+}
+
+/// The rows of `ids` the store holds, any status, without labels or edges.
+pub fn statuses(sql: &dyn Sql, db: &str, ids: &[String]) -> Res<Vec<Bead>> {
+    let mut found = Vec::new();
+    for chunk in ids.chunks(ID_CHUNK) {
+        let l = List { all: true, brief: true, limit: None, ids: chunk.to_vec(), ..List::default() };
+        found.extend(sql.rows(&l.issues_sql(db))?.iter().filter_map(|r| bead_of(r, true)));
+    }
+    Ok(found)
+}
+
+/// The ids `id` blocks: beads with a `blocks` edge onto it.
+pub fn blocked_by(sql: &dyn Sql, db: &str, id: &str) -> Res<Vec<String>> {
+    let rows = sql.rows(&format!("SELECT issue_id FROM {db}.dependencies WHERE type = 'blocks' AND depends_on_issue_id = '{}' ORDER BY issue_id", escape(id)))?;
+    Ok(rows.iter().filter_map(|r| present(r, "issue_id")).collect())
+}
+
+/// bd's kv value under `key`; `None` while unset.
+pub fn kv(sql: &dyn Sql, db: &str, key: &str) -> Res<Option<String>> {
+    let rows = sql.rows(&format!("SELECT value FROM {db}.config WHERE `key` = '{KV_PREFIX}{}'", escape(key)))?;
+    Ok(rows.first().and_then(|r| cell(r, "value")).map(str::to_string))
+}
+
+/// The open beads whose title contains `needle`.
+pub fn titled(sql: &dyn Sql, db: &str, needle: &str) -> Res<Vec<Bead>> {
+    let l = List { brief: true, limit: None, title_contains: Some(needle.to_string()), ..List::default() };
+    Ok(sql.rows(&l.issues_sql(db))?.iter().filter_map(|r| bead_of(r, true)).collect())
+}
+
+/// `work show`'s text for `id`: the head line `work show` rewrites the status word of, the
+/// fields, then the comments. `None` when the store holds no such bead.
+pub fn show_text(sql: &dyn Sql, db: &str, id: &str) -> Res<Option<String>> {
+    let Some(b) = bead(sql, db, id)? else { return Ok(None) };
+    let mut out = format!("○ {} · {}   [P{} · {}]\n", b.id, b.title, b.priority, b.status);
+    let mut field = |k: &str, v: &str| {
+        if !v.is_empty() {
+            out.push_str(&format!("{k}: {v}\n"));
+        }
+    };
+    field("Type", &b.issue_type);
+    field("Assignee", b.assignee.as_deref().unwrap_or(""));
+    field("Owner", b.owner.as_deref().unwrap_or(""));
+    field("External", b.external_ref.as_deref().unwrap_or(""));
+    field("Parent", b.parent.as_deref().unwrap_or(""));
+    field("Labels", &b.labels.join(", "));
+    let deps: Vec<String> = b.dependencies.iter().filter(|e| e.kind != "parent-child").map(|e| format!("{} ({})", e.depends_on_id, e.kind)).collect();
+    field("Depends on", &deps.join(", "));
+    for (col, head) in [("description", "DESCRIPTION"), ("design", "DESIGN"), ("acceptance_criteria", "ACCEPTANCE CRITERIA"), ("notes", "NOTES")] {
+        if let Some(t) = b.text.get(col).filter(|t| !t.is_empty()) {
+            out.push_str(&format!("\n{head}\n{t}\n"));
+        }
+    }
+    let comments = sql.rows(&format!("SELECT author, text FROM {db}.comments WHERE issue_id = '{}' ORDER BY created_at, id", escape(id)))?;
+    if !comments.is_empty() {
+        out.push_str("\nCOMMENTS\n");
+        for c in &comments {
+            out.push_str(&format!("  {}: {}\n", cell(c, "author").unwrap_or(""), cell(c, "text").unwrap_or("")));
+        }
+    }
+    Ok(Some(out))
+}
+
 /// The layout check: the `table.column` names the reads query that the beads database lacks.
 pub fn layout_gaps(sql: &dyn Sql, db: &str) -> Res<Vec<String>> {
     let schema = db.trim_matches('`');
@@ -541,6 +610,12 @@ impl Reader {
             Some(r) => Err(Failure::Store(r.clone())),
             None => Ok(()),
         }
+    }
+
+    /// `ask` against this store once its layout is known.
+    pub fn with<T>(&self, ask: impl FnOnce(&dyn Sql, &str) -> Res<T>) -> Res<T> {
+        self.layout()?;
+        ask(self.sql.as_ref(), &self.db)
     }
 
     pub fn read(&self, args: &[String]) -> Res<String> {

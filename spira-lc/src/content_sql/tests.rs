@@ -275,3 +275,56 @@ fn a_refusal_stands_until_the_recheck_interval_has_passed() {
     *f.columns.lock().unwrap() = full_layout();
     assert!(reader.read(&v(&["list"])).is_err(), "inside the interval the refusal is not re-asked");
 }
+
+#[test]
+fn kv_is_the_config_row_under_the_kv_prefix() {
+    let f = Fake { reply: Mutex::new(vec![json!({ "value": "41" })]), ..Fake::default() };
+    assert_eq!(kv(&f, DB, "spira.planning_watermark"), Ok(Some("41".to_string())));
+    assert!(first_sql(&f).contains("`key` = 'kv.spira.planning_watermark'"), "{}", first_sql(&f));
+    assert_eq!(kv(&Fake::default(), DB, "spira.planning_watermark"), Ok(None));
+}
+
+#[test]
+fn statuses_are_the_rows_of_the_ids_in_any_status_without_labels() {
+    let mut closed = issue("sp-a", "A");
+    closed["status"] = json!("closed");
+    closed["close_reason"] = json!("done");
+    let f = Fake { issues: vec![closed], ..Fake::default() };
+    let found = statuses(&f, DB, &v(&["sp-a", "sp-b"])).unwrap();
+    assert_eq!((found[0].id.as_str(), found[0].status.as_str(), found[0].close_reason.as_deref()), ("sp-a", "closed", Some("done")));
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1, "no label or edge queries: {seen:?}");
+    assert!(seen[0].contains("id IN ('sp-a','sp-b')") && !seen[0].contains("status <> 'closed'"), "{}", seen[0]);
+    assert!(statuses(&f, DB, &[]).unwrap().is_empty());
+}
+
+#[test]
+fn blockers_are_the_blocks_edges_onto_the_bead() {
+    let f = Fake { reply: Mutex::new(vec![json!({ "issue_id": "sp-d" })]), ..Fake::default() };
+    assert_eq!(blocked_by(&f, DB, "sp-a"), Ok(v(&["sp-d"])));
+    let sql = first_sql(&f);
+    assert!(sql.contains("type = 'blocks'") && sql.contains("depends_on_issue_id = 'sp-a'"), "{sql}");
+}
+
+#[test]
+fn a_title_search_reads_open_beads_unlimited() {
+    let f = Fake { issues: vec![issue("sp-m", "mend sp-t: does not merge onto main")], ..Fake::default() };
+    let found = titled(&f, DB, "mend sp-t: does not merge onto").unwrap();
+    assert_eq!(found[0].id, "sp-m");
+    let sql = first_sql(&f);
+    assert!(sql.contains("LOCATE(LOWER('mend sp-t: does not merge onto'), LOWER(title))") && sql.contains("status <> 'closed'") && !sql.contains("LIMIT"), "{sql}");
+}
+
+#[test]
+fn show_text_leads_with_the_head_line_work_show_rewrites_and_carries_the_description() {
+    let f = Fake {
+        issues: vec![issue("sp-a", "A title")],
+        labels: vec![json!({ "issue_id": "sp-a", "label": "repo:spira" })],
+        reply: Mutex::new(vec![json!({ "author": "me", "text": "a comment" })]),
+        ..Fake::default()
+    };
+    let text = show_text(&f, DB, "sp-a").unwrap().unwrap();
+    assert!(text.starts_with("○ sp-a · A title   [P1 · open]\n"), "{text}");
+    assert!(text.contains("Labels: repo:spira\n") && text.contains("DESCRIPTION\nthe body\n") && text.contains("me: a comment"), "{text}");
+    assert_eq!(show_text(&Fake::default(), DB, "sp-none").unwrap(), None);
+}
