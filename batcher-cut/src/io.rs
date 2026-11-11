@@ -1729,16 +1729,28 @@ pub fn utc_stamp(t: u64) -> String {
     )
 }
 
+pub fn head_of(wt: &Path) -> Result<String, String> {
+    Ok(run(
+        Command::new("git")
+            .arg("-C")
+            .arg(wt)
+            .args(["rev-parse", "HEAD"]),
+        "git rev-parse HEAD",
+    )?
+    .trim()
+    .to_string())
+}
+
 /// How the base moved under a round worktree: `(old, new, landing)` when the base is no longer
 /// an ancestor of the worktree's head. `old` is the last commit the two share and `landing` the
 /// newest commit since it. `None` while the round still sits on the base.
 pub fn base_move(repo: &Repo, wt: &Path) -> Option<(String, String, String)> {
     let git = |args: &[&str]| {
-        run(Command::new("git").arg("-C").arg(&repo.path).args(args), "git").ok().map(|s| s.trim().to_string())
+        run(spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(args), "git").ok().map(|s| s.trim().to_string())
     };
     let new = resolve_base_sha(repo).ok()?;
     let head = head_of(wt).ok()?;
-    let sits_on_it = Command::new("git")
+    let sits_on_it = spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(&repo.path)
         .args(["merge-base", "--is-ancestor", &new, &head])
@@ -1751,18 +1763,6 @@ pub fn base_move(repo: &Repo, wt: &Path) -> Option<(String, String, String)> {
     let old = git(&["merge-base", &new, &head])?;
     let landing = git(&["log", "-1", "--format=%h %s", &format!("{old}..{new}")]).unwrap_or_default();
     Some((old, new, landing))
-}
-
-pub fn head_of(wt: &Path) -> Result<String, String> {
-    Ok(run(
-        Command::new("git")
-            .arg("-C")
-            .arg(wt)
-            .args(["rev-parse", "HEAD"]),
-        "git rev-parse HEAD",
-    )?
-    .trim()
-    .to_string())
 }
 
 /// The member ids `terminal_ready` (core) can treat as actually landed at `head`: every merge
