@@ -4728,7 +4728,9 @@ mod tests {
         let fx = fixture();
         let plan = host_plan(FakeRemote::green(), CALM);
         go_with_host(&fx, &FakeRemote::green(), &plan, &round_args(&fx));
-        assert!(crate::host::HostSlot::try_take(&fx.cfg.state_dir).unwrap().is_some());
+        // A sibling test's fork holds the descriptor until its exec closes it, longer under host load.
+        let freed = (0..500).any(|_| matches!(crate::host::HostSlot::try_take(&fx.cfg.state_dir), Ok(Some(_))) || { std::thread::sleep(Duration::from_millis(10)); false }); // clock-safe: a cap on the wait for a forked sibling's exec to close the descriptor
+        assert!(freed, "the slot stayed taken after the host round ended");
     }
 
     #[test]
