@@ -752,6 +752,9 @@ impl Policy {
     }
 }
 
+/// How a stopped unit ends: the abandon of a round stops its legs with this.
+const SIGTERM: i32 = 15;
+
 /// The `why` of a [`CORPUS`] leg that is the attribution (`batcher attribute`), not the corpus.
 pub const ATTRIBUTE: &str = "attribute";
 /// The line `queue round certify` names its red output file by (`io::round_certify`).
@@ -1245,7 +1248,9 @@ impl Machine<'_> {
     /// lifted (removed, and the lift logged). An operator's `hold:` is never lifted here.
     fn pause_in_force(&mut self, repo: &Repo) -> bool {
         let Some(text) = repo.paused.as_deref() else {
-            self.rc.paused_on = None;
+            if self.rc.paused_on.as_deref().is_some_and(|on| !repo.base_sha.is_empty() && on != repo.base_sha) {
+                self.rc.paused_on = None;
+            }
             return false;
         };
         if text.starts_with("hold:") {
@@ -1328,6 +1333,10 @@ impl Machine<'_> {
                 Some(Attribution::Blocked(why)) => {
                     self.go(Trigger::RerunBlocked);
                     self.red(&format!("local corpus red — held before reaching CI: {why}"));
+                }
+                None if exit == Exit::Signal(SIGTERM) => {
+                    self.go(Trigger::RerunBlocked);
+                    self.finish(pace::Outcome::Quiet, "");
                 }
                 None => {
                     self.go(Trigger::RerunBlocked);
