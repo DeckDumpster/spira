@@ -23,6 +23,7 @@ use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
 use crate::watchers::publish_backlog::{self, Read};
 use crate::watchers::reconciler_flow::{FlowSnapshot, Params, Slots, Stage, Statuses};
+use crate::watchers::halt::Halt;
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 const STORE_ATTEMPTS: u32 = 3;
@@ -227,6 +228,7 @@ impl World {
             unadvanced: open.map(|o| o.1).unwrap_or_default(),
             lines,
             fresh,
+            halt: Halt::read(&self.run_dir),
         };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
@@ -788,7 +790,8 @@ impl World {
     pub fn throughput_snapshot(&self, input: &str) -> Result<String, String> {
         let p: ThroughputParams = serde_json::from_str(input).map_err(|e| format!("throughput params unparsed: {e}"))?;
         let day = 24 * 3600;
-        let blind = ThroughputSnapshot { readable: false, ..Default::default() };
+        let halt = Halt::read(&self.run_dir);
+        let blind = ThroughputSnapshot { readable: false, halt: halt.clone(), ..Default::default() };
         let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&blind) };
         let Ok(mut landings) = self.landed_on_refs(p.now, &prefix) else { return to_json(&blind) };
         let Ok(waiting) = self.lc_json(&["list", "--state", "SUBMITTED,IN_DELIVERY"]) else { return to_json(&blind) };
@@ -803,7 +806,7 @@ impl World {
         let unlanded = unlanded_rounds(batches, p.now);
         let parts = self.round_record_partition();
         let records = Records { clear: parts.clear.iter().map(|f| f.display().to_string()).collect(), held: parts.held };
-        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records })
+        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt })
     }
 
     /// The beads landed over the 24 h ending `now`, per registered repo, read from its landing ref
@@ -863,6 +866,7 @@ impl World {
             p.window_s,
         );
         snap.open_rounds = self.open_rounds();
+        snap.halt = Halt::read(&self.run_dir);
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 

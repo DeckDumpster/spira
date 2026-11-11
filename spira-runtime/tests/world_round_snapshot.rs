@@ -53,7 +53,7 @@ fn an_unreadable_round_source_is_unknown_never_none() {
 }
 
 fn cfg() -> RoundDuty {
-    RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300 }
+    RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300, halt_page_secs: 3_600 }
 }
 
 #[test]

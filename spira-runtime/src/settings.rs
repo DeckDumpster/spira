@@ -198,6 +198,7 @@ impl Settings {
             remind_secs: secs("SPIRA_ROUND_DUE_REMIND")?,
             idle_cut_secs: secs("SPIRA_ROUND_IDLE_CUT")?,
             lease_ttl_secs: secs("SPIRA_ROUND_LEASE_TTL_SECS")?,
+            halt_page_secs: secs("SPIRA_HALT_PAGE_AFTER")?,
         };
         let home_repo = get("SPIRA_HOME_REPO")?;
         if home_repo.is_empty() {

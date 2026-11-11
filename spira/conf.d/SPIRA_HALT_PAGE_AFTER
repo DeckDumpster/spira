@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=round
+DOC=Seconds a work-plane halt may stand before the round watcher pages once, naming the halt's reason. Until then every watcher whose condition is "nothing is cutting or landing" reports itself held by the halt and does not page.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Seconds a work-plane halt stands before one page names it.
+    : "${SPIRA_HALT_PAGE_AFTER:=3600}"
+SPIRA_CONF_DEFAULT_EOF

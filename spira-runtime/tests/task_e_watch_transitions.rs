@@ -52,6 +52,7 @@ fn healthy(now: u64) -> Snapshot {
         landed_after: BTreeMap::new(),
         open_rounds: Some(BTreeMap::new()),
         owners: BTreeMap::new(),
+        halt: None,
     }
 }
 
@@ -881,4 +882,39 @@ fn a_landing_an_activated_ancestor_of_the_active_release_is_no_stall() {
     let l = lineage();
     let found = landing_stalls(&l, 200, &l.a, 200 + 40 * MIN);
     assert!(!found.iter().any(|k| k.starts_with("LANDED→ACTIVATED")), "{found:?}");
+}
+
+fn halted(snap: Snapshot, since: u64) -> Snapshot {
+    Snapshot { halt: Some(spira_runtime::watchers::halt::Halt { since, why: "operator order: freeze".into() }), ..snap }
+}
+
+fn pages(acts: &[runtime::event::EffectSpec]) -> Vec<String> {
+    acts.iter().map(|a| a.input.clone()).filter(|l| l.contains("P0 ")).collect()
+}
+
+#[test]
+fn a_stall_while_the_work_plane_is_halted_pages_nothing_and_the_row_names_the_halt() {
+    let now = T0;
+    let (carry, acts) = decide(&Carry::default(), &halted(todays_case(now), now - 600), now * 1000, &config());
+    assert!(acts.is_empty(), "{:?}", acts.iter().map(|a| &a.input).collect::<Vec<_>>());
+    assert!(carry.halted.contains("operator order: freeze") && carry.halted.contains("600s"), "{}", carry.halted);
+}
+
+#[test]
+fn the_same_stall_with_the_plane_running_pages() {
+    let now = T0;
+    let (carry, acts) = decide(&Carry::default(), &todays_case(now), now * 1000, &config());
+    assert_eq!(pages(&acts).len(), 1, "{:?}", pages(&acts));
+    assert!(carry.halted.is_empty());
+}
+
+#[test]
+fn after_a_halt_lifts_each_edge_waits_its_bound_again_before_paging() {
+    let now = T0;
+    let (carry, _) = decide(&Carry::default(), &halted(todays_case(now), now - 600), now * 1000, &config());
+    let (carry, acts) = decide(&carry, &todays_case(now + 60), (now + 60) * 1000, &config());
+    assert!(pages(&acts).is_empty(), "{:?}", pages(&acts));
+    let later = now + 90 * MIN + 60;
+    let (_, acts) = decide(&carry, &todays_case(later), later * 1000, &config());
+    assert_eq!(pages(&acts).len(), 1, "{:?}", pages(&acts));
 }
