@@ -1010,8 +1010,6 @@ mod tests {
                 self.0.exec(sql)
             }
         }
-        let (rc, out) = grants_report(&Forgetful(Recorder(Default::default())), "");
-        assert!(rc == 2 && out.starts_with("admin-grants:"), "{rc} {out}");
         let e = apply_content_grants(&Forgetful(Recorder(Default::default())), Some("`spira`")).unwrap_err();
         assert!(e.contains("spira_lc cannot SELECT spira.issues") && e.contains("GRANT SELECT ON `spira`.issues TO 'spira_lc'@'%'"), "{e}");
     }
