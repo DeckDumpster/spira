@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=lc
+DOC=Port of the Dolt SQL server holding the beads database.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_BEADS_SQL_PORT:=3307}"
+SPIRA_CONF_DEFAULT_EOF

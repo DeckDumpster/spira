@@ -365,6 +365,10 @@ watchdog_every_secs = 60
 watchdog_unit = "spira-runtime-prod.service"
 watchdog_unit_log = ""
 ready_scheduler_wait_s = "60"
+beads_sql_host = "127.0.0.1"
+beads_sql_port = "3307"
+beads_sql_user = "spira_lc_ro"
+beads_sql_password_file = ""
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

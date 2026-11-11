@@ -40,7 +40,7 @@ pub fn is_served(verb: &str) -> bool {
     OWN.contains(&verb) || (callers::is_verb(verb) && !CALLER_SIDE.contains(&verb))
 }
 
-/// The bead-content store (bd): reads, the narrow writes `bd-note`/`bd-supersede` and the
+/// The bead-content store: reads (SQL, `content_sql`), the narrow writes (bd) `bd-note`/`bd-supersede` and the
 /// `content` door make, and the alert purge's delete.
 pub trait Content {
     fn read(&self, args: &[String]) -> Result<String, String>;
@@ -59,7 +59,7 @@ pub struct LiveContent;
 
 impl Content for LiveContent {
     fn read(&self, args: &[String]) -> Result<String, String> {
-        crate::bd::run_stdin(args, None)
+        crate::content_sql::served()?.read(args)
     }
     fn write(&self, args: &[&str]) -> Result<String, String> {
         crate::bd::write(args)

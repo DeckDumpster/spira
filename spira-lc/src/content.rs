@@ -213,7 +213,12 @@ pub fn run(
         Err(e) => return Answer { code: REFUSED, stderr: format!("spira-lc content: {e}\n"), ..Default::default() },
     };
     let body = match kind {
-        Kind::Read => return answer_of(read(args), String::new()),
+        Kind::Read => {
+            return match read(args) {
+                Err(e) if e.starts_with("cannot tell:") => Answer { code: CANNOT_TELL, stderr: format!("spira-lc content: {}\n", e.trim_end()), ..Default::default() },
+                res => answer_of(res, String::new()),
+            }
+        }
         Kind::Write { body: false } => None,
         Kind::Write { body: true } => match stdin() {
             Ok(b) => Some(b),
