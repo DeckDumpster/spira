@@ -113,11 +113,20 @@ pub fn alarms(timings: &[Timing], limit_ms: u64, callers: &[String]) -> Vec<Stri
     timings
         .iter()
         .filter_map(|t| match (&t.error, t.millis > limit_ms) {
-            (Some(e), _) => Some(format!("PERF UNRUNNABLE {}: {e}", t.name)),
-            (None, true) => Some(format!("PERF SLOW {} {}ms (limit {limit_ms}ms) top callers: {top}", t.name, t.millis)),
+            (Some(e), _) => Some(format!("PERF UNRUNNABLE {}: {e} (after {}ms; {})", t.name, t.millis, breakdown(t))),
+            (None, true) => Some(format!("PERF SLOW {} {}ms (limit {limit_ms}ms) {}; top callers: {top}", t.name, t.millis, breakdown(t))),
             _ => None,
         })
         .collect()
+}
+
+/// Where a probe's time went, for the page: the phases the probe reported plus `rest`, the time
+/// none of them claims (process start, exit, the wait for a loaded host).
+fn breakdown(t: &Timing) -> String {
+    match t.phases.as_deref() {
+        Some(p) => format!("phases {p} rest={}ms", t.millis.saturating_sub(phase_sum(p))),
+        None => "phases unreported".to_string(),
+    }
 }
 
 fn phase_sum(phases: &str) -> u64 {
@@ -397,7 +406,7 @@ mod tests {
     fn a_probe_past_the_limit_alarms_with_its_time_and_the_top_callers() {
         let (lines, asked) = run(&[("list", 730), ("show", 120), ("gone", 0)], 500);
         assert!(asked);
-        assert!(lines.contains(&"PERF SLOW list 730ms (limit 500ms) top callers: watcher/list=28.0/min, cockpit/list=5.0/min, watcher/show=2.0/min".to_string()), "{lines:?}");
+        assert!(lines.contains(&"PERF SLOW list 730ms (limit 500ms) phases unreported; top callers: watcher/list=28.0/min, cockpit/list=5.0/min, watcher/show=2.0/min".to_string()), "{lines:?}");
         assert!(lines.iter().all(|l| !l.contains(" show ")), "{lines:?}");
     }
 
@@ -426,6 +435,15 @@ mod tests {
         r.inside = 700;
         let t = time_probes(&probes, &clock, &mut r);
         assert_eq!(alarms(&t, 500, &[]).len(), 1);
+    }
+
+    #[test]
+    fn the_page_carries_the_probes_breakdown_slow_or_unrunnable() {
+        let t = |millis, error: Option<&str>| Timing { name: "claim-check".into(), millis, micros: millis * 1000, error: error.map(String::from), phases: Some("store=30,push=2000".into()) };
+        assert_eq!(alarms(&[t(2100, None)], 500, &[]), vec!["PERF SLOW claim-check 2100ms (limit 500ms) phases store=30,push=2000 rest=70ms; top callers: unknown"]);
+        assert_eq!(alarms(&[t(5000, Some("x exceeded its 5s deadline"))], 500, &[]), vec!["PERF UNRUNNABLE claim-check: x exceeded its 5s deadline (after 5000ms; phases store=30,push=2000 rest=2970ms)"]);
+        let bare = Timing { phases: None, ..t(900, None) };
+        assert!(alarms(&[bare], 500, &[])[0].contains("phases unreported"));
     }
 
     struct Phased<'a>(&'a Stub);
@@ -503,7 +521,7 @@ mod tests {
     #[test]
     fn a_probe_that_cannot_run_is_its_own_alarm_never_a_fast_pass() {
         let (lines, _) = run(&[("list", 1), ("show", 1)], 500);
-        assert_eq!(lines, vec!["PERF UNRUNNABLE missing: not found".to_string()]);
+        assert_eq!(lines, vec!["PERF UNRUNNABLE missing: not found (after 0ms; phases unreported)".to_string()]);
     }
 
     #[test]
