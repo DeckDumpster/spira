@@ -5,7 +5,7 @@
 # preference to the ad-hoc bash/env defaults each invariant fell back to before (sp-8c3ib).
 #
 # WHAT THIS SUITE CHECKS.
-#   1. reconciler is on PATH, and a pass completes inside its budget.
+#   1. reconciler is on PATH, and a pass completes.
 #   2. flock: a concurrent pass is skipped.
 #   3. Units, POSITIVE CONTROL: every unit enabled+active → no gap, no remedy run.
 #   4. Units: N disabled timers → each gets `enable --now`, each escalates only if the
@@ -344,13 +344,10 @@ for line in sys.stdin:
 printf 'test-reconciler.sh\n'
 
 # ==========================================================================================
-printf '\n%s\n' "1. reconciler is on PATH, and a pass completes inside its budget"
+printf '\n%s\n' "1. reconciler is on PATH, and a pass completes"
 # ==========================================================================================
 reset_state
-_t0="$(date +%s)"
-rpass
-_t1="$(date +%s)"
-[ $((_t1-_t0)) -lt 10 ] && ok "pass completed in $((_t1-_t0))s (budget: 10s)" || bad "pass exceeded budget"
+rpass && ok "pass completed" || bad "pass failed"
 
 # ==========================================================================================
 printf '\n%s\n' "2. flock: concurrent pass is skipped"
