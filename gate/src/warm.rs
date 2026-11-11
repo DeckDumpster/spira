@@ -98,7 +98,8 @@ pub fn adopt(root: &Path, dest: &Path) -> Option<String> {
 /// Age every tracked file of `tree` that is unchanged from `built_from` to HEAD.
 pub fn normalize_mtimes(tree: &Path, built_from: &str) -> Result<usize, String> {
     let git = |args: &[&str]| -> Result<Vec<u8>, String> {
-        let o = Command::new("git").arg("-C").arg(tree).args(args).output().map_err(|e| format!("git: {e}"))?;
+        let o = Command::new("git").arg("-C").arg(tree).args(args).output() // batch-job: git over the gate tree, under the gate's own cap
+            .map_err(|e| format!("git: {e}"))?;
         if o.status.success() { Ok(o.stdout) } else { Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&o.stderr).trim())) }
     };
     let changed = git(&["diff", "--name-only", "-z", "--no-renames", built_from, "HEAD"])?;
@@ -137,7 +138,7 @@ pub fn warm_start(root: &Path, dest: &Path, tree: &Path) -> Option<String> {
 pub fn donate_tree(tree: &Path) -> bool {
     let Ok(dest) = fs::read_link(tree.join("target").join(BUILD_DIR)) else { return false };
     let Some(root) = dest.parent().and_then(Path::parent).filter(|_| !crate::target::is_warm(&dest)) else { return false };
-    let out = Command::new("git").arg("-C").arg(tree).args(["rev-parse", "HEAD"]).output();
+    let out = Command::new("git").arg("-C").arg(tree).args(["rev-parse", "HEAD"]).output(); // batch-job: local rev-parse in the gate tree
     let commit = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     donate(root, &dest, &commit)
 }
@@ -208,7 +209,8 @@ mod tests {
             let d = root.join(format!("t{i}/dwarf"));
             built(&d);
             assert!(donate(root, &d, &format!("c{i}")));
-            std::thread::sleep(Duration::from_millis(5));
+            let e = entries(root).pop().unwrap();
+            fs::File::open(&e).unwrap().set_modified(UNIX_EPOCH + Duration::from_secs(1000 + i as u64)).unwrap();
         }
         assert_eq!(entries(root).len(), KEEP);
     }
