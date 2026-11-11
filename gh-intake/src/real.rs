@@ -189,6 +189,17 @@ pub fn list_all_on(lc: &spira_config::lc_call::LcClient) -> Option<serde_json::V
     serde_json::from_str(&r.out).ok()
 }
 
+/// The beads whose external reference contains `needle`, as the rows `store::ingested` reads.
+/// Err carries the store's own text: a refusal, a deadline or a reply that is no item list.
+pub fn github_refs_on(lc: &spira_config::lc_call::LcClient, needle: &str) -> Result<serde_json::Value, String> {
+    let out = lc.answer(&["plan", "items", "--external-contains", needle, "--full"])?;
+    let mut v: serde_json::Value = serde_json::from_str(&out).map_err(|e| format!("plan items: unparsed reply: {e}"))?;
+    match v.get_mut("items").map(serde_json::Value::take) {
+        Some(items @ serde_json::Value::Array(_)) => Ok(items),
+        _ => Err(format!("plan items: no items in {}", out.chars().take(200).collect::<String>())),
+    }
+}
+
 impl RealBd {
     fn cmd(&self) -> Command {
         // FORK-EDGE: dep remove / dep relate — the content door serves no dep verb
@@ -592,6 +603,30 @@ mod transport_tests {
         assert_eq!(list_all_on(&LcClient::over(t.clone(), true)).unwrap()[0]["id"], "sp-1");
         assert_eq!(t.0.lock().unwrap()[0], ["content", "list", "--all", "--limit", "0", "--json"]);
         assert_eq!(list_all_on(&LcClient::over(Arc::new(Content(Mutex::default(), 1)), true)), None, "a failed read is no list");
+    }
+
+    struct Bounded(Mutex<Vec<Vec<String>>>, i32);
+
+    impl Transport for Bounded {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push(argv.to_vec());
+            if spira_config::lc_call::reads_whole_history(argv) || self.1 != 0 {
+                return Ok(Reply { code: if self.1 != 0 { self.1 } else { 3 }, out: "refused: reads every bead ever filed".into(), err: String::new() });
+            }
+            let out = r#"{"watermark":1,"items":[{"id":"sp-1","external_ref":"github:o/r#1","labels":["x"]}]}"#;
+            Ok(Reply { code: 0, out: out.into(), err: String::new() })
+        }
+    }
+
+    #[test]
+    fn the_github_refs_are_a_bounded_plan_read_the_store_serves_to_a_scheduler_task() {
+        let t = Arc::new(Bounded(Mutex::default(), 0));
+        let got = github_refs_on(&LcClient::over(t.clone(), true), "o/r#").unwrap();
+        assert!(t.0.lock().unwrap().iter().all(|a| !spira_config::lc_call::reads_whole_history(a)));
+        assert_eq!(crate::store::ingested(&got)[0].id, "sp-1");
+        let refused = github_refs_on(&LcClient::over(Arc::new(Bounded(Mutex::default(), 3)), true), "o/r#").unwrap_err();
+        assert!(refused.contains("reads every bead"), "{refused}");
+        assert_eq!(list_all_on(&LcClient::over(Arc::new(Bounded(Mutex::default(), 0)), true)), None, "the whole-history read is what the store refuses");
     }
 
     type Sent = Arc<Mutex<Vec<(String, String, String, String, String, String)>>>;

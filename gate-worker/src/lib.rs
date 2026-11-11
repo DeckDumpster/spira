@@ -173,7 +173,7 @@ impl Worker<'_> {
                 (self.log)(&format!("gate-worker: {} died at the gate's cap — queued again behind the rest, not filed", job.branch));
                 false
             }
-            Ok(Settled::Filed) => true,
+            Ok(Settled::Filed | Settled::Held(_)) => true,
             Err(_) => false,
         }
     }

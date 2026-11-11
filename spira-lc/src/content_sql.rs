@@ -163,6 +163,10 @@ pub enum Read {
     Memories,
     State { id: String, dimension: String },
     ConfigGet(String),
+    Search { query: String, all: bool, limit: Option<u64> },
+    DepList { id: String, up: bool, kind: Option<String> },
+    Labels(String),
+    Events(Vec<String>),
 }
 
 fn csv(v: &str) -> impl Iterator<Item = String> + '_ {
@@ -255,6 +259,57 @@ fn parse_list(a: &[String]) -> Result<List, String> {
     Ok(l)
 }
 
+fn parse_search(a: &[String]) -> Result<Read, String> {
+    let (mut query, mut all, mut limit) = (Vec::new(), false, Some(DEFAULT_LIMIT));
+    let mut i = 0;
+    while i < a.len() {
+        match a[i].as_str() {
+            "--all" => all = true,
+            "--json" | "--long" | "-q" | "--quiet" | "--no-pager" => {}
+            s if s.starts_with('-') => {
+                let (f, v) = take(a, &mut i)?;
+                match f {
+                    "--limit" | "-n" => {
+                        let n: u64 = v.parse().map_err(|_| format!("--limit takes a count, not {v:?}"))?;
+                        limit = (n != 0).then_some(n);
+                    }
+                    other => return Err(format!("search takes only --all and --limit, not `{other}`")),
+                }
+            }
+            w => query.push(w.to_string()),
+        }
+        i += 1;
+    }
+    if query.is_empty() {
+        return Err("search needs a query".into());
+    }
+    Ok(Read::Search { query: query.join(" "), all, limit })
+}
+
+fn parse_dep_list(a: &[String]) -> Result<Read, String> {
+    let (mut id, mut up, mut kind) = (None, false, None);
+    let mut i = 0;
+    while i < a.len() {
+        match a[i].as_str() {
+            "--json" => {}
+            s if s.starts_with('-') => {
+                let (f, v) = take(a, &mut i)?;
+                match (f, v.as_str()) {
+                    ("--direction", "up") => up = true,
+                    ("--direction", "down") => up = false,
+                    ("--direction", other) => return Err(format!("--direction takes down or up, not {other:?}")),
+                    ("--type", t) if !t.is_empty() => kind = Some(t.to_string()),
+                    (other, _) => return Err(format!("dep list takes only --direction and --type, not `{other}`")),
+                }
+            }
+            w if id.is_none() => id = Some(w.to_string()),
+            _ => return Err("dep list takes one bead id".into()),
+        }
+        i += 1;
+    }
+    Ok(Read::DepList { id: id.ok_or("dep list needs a bead id")?, up, kind })
+}
+
 /// The content args (after `content`) of a read verb, parsed.
 pub fn parse(args: &[String]) -> Result<Read, String> {
     let words = |a: &[String]| -> Vec<String> { a.iter().filter(|x| !matches!(x.as_str(), "--json" | "--long" | "-q" | "--quiet" | "--no-pager")).cloned().collect() };
@@ -289,6 +344,28 @@ pub fn parse(args: &[String]) -> Result<Read, String> {
             _ => Err("state takes a bead id and a dimension".into()),
         },
         ["config", "get", key] if !key.starts_with('-') => Ok(Read::ConfigGet(key.to_string())),
+        ["search", ..] => parse_search(&args[1..]),
+        ["dep", "list", ..] => parse_dep_list(&args[2..]),
+        ["label", "list", ..] => match words(&args[2..]).as_slice() {
+            [id] if !id.starts_with('-') => Ok(Read::Labels(id.clone())),
+            _ => Err("label list takes one bead id".into()),
+        },
+        ["events", ..] => {
+            let mut ids = Vec::new();
+            let mut i = 1;
+            while i < args.len() {
+                if args[i] == "--json" {
+                    i += 1;
+                    continue;
+                }
+                match take(args, &mut i)? {
+                    ("--id", v) => ids.extend(csv(&v)),
+                    (other, _) => return Err(format!("events takes only --id <a,b,...>, not `{other}`")),
+                }
+                i += 1;
+            }
+            Ok(Read::Events(ids))
+        }
         _ => Err(format!("`{}` is not a content read", a.join(" "))),
     }
 }
@@ -359,8 +436,11 @@ impl List {
     }
 
     pub fn issues_sql(&self, db: &str) -> String {
-        let limit = self.limit.map_or(String::new(), |n| format!(" LIMIT {n}"));
-        format!("SELECT {} FROM {db}.issues WHERE {} ORDER BY priority ASC, created_at DESC, id ASC{limit}", issue_columns(), self.where_clause(db))
+        format!("SELECT {} FROM {db}.issues WHERE {}{}", issue_columns(), self.where_clause(db), Self::order(self.limit))
+    }
+
+    fn order(limit: Option<u64>) -> String {
+        format!(" ORDER BY priority ASC, created_at DESC, id ASC{}", limit.map_or(String::new(), |n| format!(" LIMIT {n}")))
     }
 }
 
@@ -482,6 +562,41 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
                 None => format!("(no {dimension} state set)\n"),
             })
         }
+        Read::Search { query, all, limit } => {
+            let l = List { all, limit, ..List::default() };
+            let q = escape(&query);
+            let hit = ["id", "title", "description", "notes"].iter().map(|c| format!("LOCATE(LOWER('{q}'), LOWER({c})) > 0")).collect::<Vec<_>>().join(" OR ");
+            let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE {} AND ({hit}){}", issue_columns(), l.where_clause(db), List::order(limit)))?;
+            Ok(array(fill(sql, db, &issues, true)?))
+        }
+        Read::DepList { id, up, kind } => {
+            let (near, far) = if up { ("depends_on_issue_id", "issue_id") } else { ("issue_id", "depends_on_issue_id") };
+            let kind = kind.map_or(String::new(), |t| format!(" AND type = '{}'", escape(&t)));
+            let rows = sql.rows(&format!("SELECT issue_id, depends_on_issue_id, `type` FROM {db}.dependencies WHERE {near} = '{}'{kind} ORDER BY {far}", escape(&id)))?;
+            Ok(Value::Array(rows.iter().filter_map(|r| Some(json!({ "id": present(r, far)?, "type": present(r, "type")? }))).collect()).to_string())
+        }
+        Read::Labels(id) => {
+            let rows = sql.rows(&format!("SELECT label FROM {db}.labels WHERE issue_id = '{}' ORDER BY label", escape(&id)))?;
+            let mut labels: Vec<String> = rows.iter().filter_map(|r| present(r, "label")).collect();
+            labels.sort();
+            Ok(json!(labels).to_string())
+        }
+        Read::Events(ids) => {
+            if ids.is_empty() {
+                return Err(Failure::Request("events needs --id <a,b,...>".into()));
+            }
+            let mut out = Vec::new();
+            for chunk in ids.chunks(ID_CHUNK) {
+                let kinds: Vec<String> = EVENT_KINDS.iter().map(|k| k.to_string()).collect();
+                let q = format!(
+                    "SELECT issue_id, event_type, SUBSTRING(COALESCE(new_value,''),1,120) AS new_value, DATE_FORMAT(created_at, '{RFC3339}') AS created_at FROM {db}.events WHERE issue_id IN ({}) AND event_type IN ({}) ORDER BY issue_id, created_at",
+                    quoted(chunk),
+                    quoted(&kinds)
+                );
+                out.extend(sql.rows(&q)?);
+            }
+            Ok(Value::Array(out).to_string())
+        }
         Read::ConfigGet(key) => {
             let rows = sql.rows(&format!("SELECT value FROM {db}.config WHERE `key` = '{}'", escape(&key)))?;
             Ok(match rows.first().and_then(|r| cell(r, "value")) {
@@ -491,6 +606,9 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
         }
     }
 }
+
+/// The event types the claim fold reads.
+const EVENT_KINDS: &[&str] = &["claimed", "status_changed", "closed", "requeued", "reopened", "reopen", "reclaimed", "poison.cleared"];
 
 const KV_PREFIX: &str = "kv.";
 

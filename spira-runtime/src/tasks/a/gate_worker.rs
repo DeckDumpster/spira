@@ -739,11 +739,35 @@ pub fn complete(e: &crate::Effects, input: &str) -> Result<String, String> {
     let job = q.claimed_job(f.slot, &f.job.repo, &f.job.branch, &f.job.tip).ok_or_else(|| format!("{COMPLETE}: slot {} does not hold {} — refused", f.slot, f.job.key()))?;
     let word = run.outcome.word();
     let settled = q.settle(f.slot, &landing_pass::gateq::Done { job, run, started_ms: f.started_ms, finished_ms: f.finished_ms, gate: String::new() }).map_err(|e| format!("{COMPLETE}: {e}"))?;
-    let word = if settled == landing_pass::gateq::Settled::Requeued { "died at the cap, queued again" } else { word };
+    let mut word = match &settled {
+        landing_pass::gateq::Settled::Requeued => "ended without a verdict, queued again".to_string(),
+        _ => word.to_string(),
+    };
+    if let landing_pass::gateq::Settled::Held(h) = &settled {
+        let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_secs(5));
+        let hold = |bead: &str, why: &str| {
+            lc.call(&["hold", bead, "wait", why, NAME])
+                .map_err(|e| e.to_string())
+                .and_then(|r| if r.code == 0 { Ok(()) } else { Err(format!("spira-lc hold exited {}: {}", r.code, r.why())) })
+        };
+        word = hold_verdictless(h, hold, |line| e.world.inbox_append(line));
+    }
     let (out, rc) = leg_paths(&e.world.run_dir.display().to_string(), f.slot, "gate", &f.job);
     let _ = std::fs::remove_file(out);
     let _ = std::fs::remove_file(rc);
     Ok(format!("{} → {word}", f.job.key()))
+}
+
+/// Hold the bead and say so in the inbox, once. A hold that could not be placed is named in
+/// the same line: the filed verdict is already in, so the failure is reported, never retried.
+fn hold_verdictless(h: &landing_pass::gateq::Hold, hold: impl FnOnce(&str, &str) -> Result<(), String>, say: impl FnOnce(&str) -> Result<String, String>) -> String {
+    let placed = hold(&h.bead, &h.reason);
+    let line = match &placed {
+        Ok(()) => h.line.clone(),
+        Err(why) => format!("{} — the hold was NOT placed: {why}", h.line),
+    };
+    let said = say(&line).unwrap_or_else(|e| format!("inbox line not written: {e}"));
+    format!("held ({}; {said})", placed.err().unwrap_or_else(|| "hold placed".into()))
 }
 
 /// A slot's claims go back to the inbox.
@@ -778,5 +802,34 @@ mod slot_row_tests {
         rows.remove("width");
         let back: Carry = serde_json::from_str(&join_slots(&rows)).unwrap();
         assert_eq!(back.slots.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod hold_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    fn held() -> landing_pass::gateq::Hold {
+        landing_pass::gateq::Hold { bead: "sp-a".into(), reason: "gate: no verdict twice on t1 (build-stall)".into(), line: "gate: sp-a ended without a verdict twice on t1".into() }
+    }
+
+    #[test]
+    fn a_second_verdictless_run_places_the_wait_hold_and_writes_one_inbox_line() {
+        let holds = RefCell::new(Vec::new());
+        let lines = RefCell::new(Vec::new());
+        let word = hold_verdictless(&held(), |b, w| { holds.borrow_mut().push((b.to_string(), w.to_string())); Ok(()) }, |l| { lines.borrow_mut().push(l.to_string()); Ok("appended".into()) });
+        assert_eq!(*holds.borrow(), [("sp-a".to_string(), "gate: no verdict twice on t1 (build-stall)".to_string())]);
+        assert_eq!(*lines.borrow(), ["gate: sp-a ended without a verdict twice on t1"]);
+        assert!(word.contains("hold placed"), "{word}");
+    }
+
+    #[test]
+    fn a_hold_that_could_not_be_placed_is_named_in_the_inbox_line() {
+        let lines = RefCell::new(Vec::new());
+        let word = hold_verdictless(&held(), |_, _| Err("socket gone".into()), |l| { lines.borrow_mut().push(l.to_string()); Ok("appended".into()) });
+        assert_eq!(lines.borrow().len(), 1);
+        assert!(lines.borrow()[0].contains("NOT placed: socket gone"), "{:?}", lines.borrow());
+        assert!(word.contains("socket gone"), "{word}");
     }
 }

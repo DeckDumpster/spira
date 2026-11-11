@@ -12,7 +12,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The yield record follows the verdict row; a stall there must not outlive the gate's own cap.
 const YIELD_DEADLINE_SECS: &str = "60";
@@ -113,6 +113,7 @@ pub const RETIRED_VARS: &[&str] = &[
     "SPIRA_GATE_SUITES",
     "SPIRA_GATE_BUDGET",
     "SPIRA_GATE_DEADLINE",
+    "SPIRA_GATE_BUILD_STALL",
     "SPIRA_CERTIFY_ALWAYS_COVERS",
     "SPIRA_BATCH_MAXPAR",
     "SPIRA_PATH",
@@ -155,6 +156,124 @@ pub struct Real {
 }
 
 impl Real {
+    /// `timeout <secs> bash -c <cmd>`; with `stall`, the phase is also ended when it shows no progress.
+    fn run_watched(
+        &self,
+        tree: &Path,
+        env: &[(String, String)],
+        timeout: &str,
+        stall_ms: Option<u64>,
+        sample_ms: u64,
+        cmd: &str,
+    ) -> (i32, String) {
+        let stall = stall_ms;
+        let mut fds = [0i32; 2];
+        if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+            return (
+                NOVERDICT_RC,
+                "gate: cannot open a pipe for the gate command".into(),
+            );
+        }
+        let (r, wr) = unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) };
+        let Ok(wr2) = wr.try_clone() else {
+            return (NOVERDICT_RC, "gate: cannot duplicate the pipe".into());
+        };
+        let mut stall_note = String::new();
+        let mut c = Command::new("timeout");
+        if stall.is_some() {
+            c.process_group(0);
+        }
+        c.arg(timeout)
+            .arg("bash")
+            .arg("-c")
+            .arg(crate::compose::run_all(cmd))
+            .current_dir(tree)
+            .env_clear();
+        c.envs(spira_config::vtime::passthrough());
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        if let Some(home) = tree_home(tree) {
+            c.env("SPIRA_HOME", home);
+        }
+        c.stdout(Stdio::from(wr)).stderr(Stdio::from(wr2));
+        // Caught signals reset to their default at exec, so the trial does not inherit the
+        // handler; every descriptor THIS PROCESS opened is close-on-exec (DESIGN.md). That
+        // claim does not cover a descriptor this process never opened — one inherited from
+        // whatever spawned it (a bash lander's `exec 9>…` lock with no O_CLOEXEC, surviving
+        // this binary's own `exec -a` from gate.sh) — and the trial started here can run
+        // testenv, which starts podman, whose conmon daemonizes and outlives the trial,
+        // holding that fd (and the lock it names) forever (sp-ohwg7). close_inherited_fds
+        // drops every fd ≥ 3 right before exec so none of them reach the trial at all.
+        close_inherited_fds(&mut c);
+        let mut child = match c.spawn() {
+            Ok(ch) => ch,
+            Err(e) => return (127, format!("gate: cannot run the gate command: {e}")),
+        };
+        drop(c);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new((Instant::now(), String::new())));
+        let reader_seen = seen.clone();
+        let mut r = r;
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 8192];
+            while let Ok(n) = r.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(line) = String::from_utf8_lossy(&chunk[..n]).lines().rev().find(|l| !l.trim().is_empty()) {
+                    *reader_seen.lock().unwrap() = (Instant::now(), line.to_string());
+                }
+            }
+            let _ = tx.send(buf);
+        });
+        let began = Instant::now();
+        let mut watch = stall.map(|b| crate::stall::Watch::new(b, 0));
+        let mut stalled = false;
+        let mut termed = false;
+        let mut last_sample = Duration::ZERO;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break s.code().unwrap_or(-1),
+                Ok(None) => {}
+                Err(_) => break -1,
+            }
+            if self.signalled() && !termed {
+                unsafe {
+                    libc::kill(child.id() as i32, libc::SIGTERM);
+                }
+                termed = true;
+            }
+            if let Some(wt) = watch.as_mut().filter(|_| !stalled) {
+                let at = began.elapsed();
+                if at - last_sample >= Duration::from_millis(sample_ms) {
+                    last_sample = at;
+                    let (heard, line) = seen.lock().unwrap().clone();
+                    if !line.is_empty() {
+                        wt.line(heard.saturating_duration_since(began).as_millis() as u64, &line);
+                    }
+                    wt.cpu(at.as_millis() as u64, group_cpu_ticks(child.id() as i32));
+                    if wt.stalled(at.as_millis() as u64) {
+                        stalled = true;
+                        stall_note = wt.message(stall_ms.unwrap_or(0) / 1000);
+                        end_group(child.id() as i32);
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        // A leaked grandchild holding the pipe must not hold the verdict hostage forever.
+        // batch-job: waits for a gate step's output pipe to close
+        let buf = rx.recv_timeout(Duration::from_secs(30)).unwrap_or_default();
+        let out = trim_nl(String::from_utf8_lossy(&buf).into_owned());
+        if stalled {
+            return (crate::stall::RC, format!("{out}\n{stall_note}"));
+        }
+        (status, out)
+    }
+
     pub fn new(home: PathBuf) -> Real {
         Real {
             home,
@@ -845,72 +964,18 @@ impl World for Real {
         timeout: &str,
         cmd: &str,
     ) -> (i32, String) {
-        let mut fds = [0i32; 2];
-        if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
-            return (
-                NOVERDICT_RC,
-                "gate: cannot open a pipe for the gate command".into(),
-            );
-        }
-        let (r, wr) = unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) };
-        let Ok(wr2) = wr.try_clone() else {
-            return (NOVERDICT_RC, "gate: cannot duplicate the pipe".into());
-        };
-        let mut c = Command::new("timeout");
-        c.arg(timeout)
-            .arg("bash")
-            .arg("-c")
-            .arg(crate::compose::run_all(cmd))
-            .current_dir(tree)
-            .env_clear();
-        c.envs(spira_config::vtime::passthrough());
-        for (k, v) in env {
-            c.env(k, v);
-        }
-        if let Some(home) = tree_home(tree) {
-            c.env("SPIRA_HOME", home);
-        }
-        c.stdout(Stdio::from(wr)).stderr(Stdio::from(wr2));
-        // Caught signals reset to their default at exec, so the trial does not inherit the
-        // handler; every descriptor THIS PROCESS opened is close-on-exec (DESIGN.md). That
-        // claim does not cover a descriptor this process never opened — one inherited from
-        // whatever spawned it (a bash lander's `exec 9>…` lock with no O_CLOEXEC, surviving
-        // this binary's own `exec -a` from gate.sh) — and the trial started here can run
-        // testenv, which starts podman, whose conmon daemonizes and outlives the trial,
-        // holding that fd (and the lock it names) forever (sp-ohwg7). close_inherited_fds
-        // drops every fd ≥ 3 right before exec so none of them reach the trial at all.
-        close_inherited_fds(&mut c);
-        let mut child = match c.spawn() {
-            Ok(ch) => ch,
-            Err(e) => return (127, format!("gate: cannot run the gate command: {e}")),
-        };
-        drop(c);
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut r = r;
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = r.read_to_end(&mut buf);
-            let _ = tx.send(buf);
-        });
-        let mut termed = false;
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(s)) => break s.code().unwrap_or(-1),
-                Ok(None) => {}
-                Err(_) => break -1,
-            }
-            if self.signalled() && !termed {
-                unsafe {
-                    libc::kill(child.id() as i32, libc::SIGTERM);
-                }
-                termed = true;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        };
-        // A leaked grandchild holding the pipe must not hold the verdict hostage forever.
-        // batch-job: waits for a gate step's output pipe to close
-        let buf = rx.recv_timeout(Duration::from_secs(30)).unwrap_or_default();
-        (status, trim_nl(String::from_utf8_lossy(&buf).into_owned()))
+        self.run_watched(tree, env, timeout, None, SAMPLE_MS, cmd)
+    }
+
+    fn run_build(
+        &self,
+        tree: &Path,
+        env: &[(String, String)],
+        timeout: &str,
+        stall: u64,
+        cmd: &str,
+    ) -> (i32, String) {
+        self.run_watched(tree, env, timeout, Some(stall * 1000), SAMPLE_MS, cmd)
     }
 
     fn now(&self) -> u64 {
@@ -1029,8 +1094,78 @@ pub fn utc_of(t: u64) -> String {
     )
 }
 
+const SAMPLE_MS: u64 = 2000;
+
+/// Cumulative user+system CPU ticks of every process in group `root` or descended from it
+/// (a nested `timeout` or `setsid` leaves the group), reaped children included.
+fn group_cpu_ticks(root: i32) -> u64 {
+    let Ok(dir) = std::fs::read_dir("/proc") else { return 0 };
+    let mut procs: Vec<(i32, i32, i32, u64)> = Vec::new();
+    for e in dir.flatten() {
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<i32>().ok()) else { continue };
+        let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else { continue };
+        let Some((_, rest)) = stat.rsplit_once(')') else { continue };
+        let f: Vec<&str> = rest.split_whitespace().collect();
+        let num = |i: usize| f.get(i).and_then(|v| v.parse::<i64>().ok());
+        let (Some(ppid), Some(pgrp)) = (num(1), num(2)) else { continue };
+        let cpu = (11..=14).filter_map(|i| f.get(i)?.parse::<u64>().ok()).sum();
+        procs.push((pid, ppid as i32, pgrp as i32, cpu));
+    }
+    let mut ours: std::collections::HashSet<i32> = procs.iter().filter(|p| p.2 == root || p.0 == root).map(|p| p.0).collect();
+    loop {
+        let before = ours.len();
+        let more: Vec<i32> = procs.iter().filter(|p| ours.contains(&p.1)).map(|p| p.0).collect();
+        ours.extend(more);
+        if ours.len() == before {
+            break;
+        }
+    }
+    procs.iter().filter(|p| ours.contains(&p.0)).map(|p| p.3).sum()
+}
+
+fn end_group(pgid: i32) {
+    unsafe {
+        libc::kill(-pgid, libc::SIGTERM);
+    }
+    for _ in 0..20 {
+        if unsafe { libc::kill(-pgid, 0) } != 0 {
+            return;
+        }
+        // waits-on: the process group's exit; cap 2s
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    fn watched(stall_ms: u64, cmd: &str) -> (i32, String) {
+        let t = testkit::TempDir::new("gate-watch");
+        let tmp = t.path().to_path_buf();
+        super::Real::new(tmp.clone()).run_watched(&tmp, &[("PATH".into(), "/usr/bin:/bin".into())], "60", Some(stall_ms), 20, cmd)
+    }
+
+    #[test]
+    fn a_silent_build_is_ended_as_a_stall_naming_its_last_line() {
+        let (rc, out) = watched(400, "echo Compiling last-crate; exec sleep 30");
+        assert!(crate::stall::is_stall(rc, &out), "{rc} {out}");
+        assert!(out.contains("last compiler output: Compiling last-crate"), "{out}");
+    }
+
+    #[test]
+    fn a_build_printing_within_the_bound_is_not_ended() {
+        let (rc, out) = watched(400, "for i in 1 2 3 4 5 6; do echo Compiling c$i; sleep 0.1; done");
+        assert_eq!(rc, 0, "{out}");
+    }
+
+    #[test]
+    fn a_silent_build_that_burns_cpu_is_not_ended() {
+        let (rc, out) = watched(250, "timeout 0.7 sh -c 'while :; do :; done'; true");
+        assert_eq!(rc, 0, "{out}");
+    }
+
     #[test]
     fn a_finished_gate_hands_its_build_directory_to_the_next_through_the_world() {
         use crate::ports::World;

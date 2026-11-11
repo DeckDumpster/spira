@@ -12,6 +12,7 @@ pub mod fence;
 pub mod fencecache;
 pub mod fences;
 pub mod redcache;
+pub mod stall;
 pub mod key;
 pub mod machine;
 pub mod own;

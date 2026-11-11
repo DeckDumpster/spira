@@ -18,10 +18,16 @@ thread_local! {
 #[derive(Default)]
 struct Counters {
     verbs: BTreeMap<String, (u64, u64)>,
-    callers: BTreeMap<(String, String), u64>,
+    tasks: BTreeMap<Key, (u64, u64)>,
 }
 
-static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), callers: BTreeMap::new() });
+/// (verb, caller, task): what a request is counted under.
+type Key = (String, String, String);
+
+static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), tasks: BTreeMap::new() });
+
+/// How often the counts are pushed over OTLP.
+pub const METRICS_EVERY: Duration = Duration::from_secs(60);
 
 /// Who the request on this thread is for, as [`caller_of_pid`] named it.
 pub fn current_caller() -> String {
@@ -104,13 +110,15 @@ pub fn caller_of_pid(pid: i32) -> String {
     clean(&named.or_else(parent).unwrap_or(comm))
 }
 
-pub fn request_done(verb: &str, method: &str, caller: &str, took: Duration) {
-    let (verb, caller) = (clean(verb), clean(caller));
+pub fn request_done(verb: &str, method: &str, caller: &str, task: Option<&str>, took: Duration) {
+    let (verb, caller, task) = (clean(verb), clean(caller), clean(task.unwrap_or("")));
     if let Ok(mut c) = COUNTERS.lock() {
         let v = c.verbs.entry(verb.clone()).or_default();
         v.0 += 1;
         v.1 += took.as_millis() as u64;
-        *c.callers.entry((verb.clone(), caller.clone())).or_default() += 1;
+        let t = c.tasks.entry((verb.clone(), caller.clone(), task)).or_default();
+        t.0 += 1;
+        t.1 += took.as_millis() as u64;
     }
     if !is_batch_method(method) {
         append(took, &verb, &caller, "REQUEST");
@@ -193,8 +201,36 @@ pub fn stats_json() -> String {
     let verbs: serde_json::Map<String, serde_json::Value> =
         c.verbs.iter().map(|(v, (n, ms))| (v.clone(), serde_json::json!({"count": n, "total_ms": ms}))).collect();
     let callers: Vec<serde_json::Value> =
-        c.callers.iter().map(|((v, who), n)| serde_json::json!({"verb": v, "caller": who, "count": n})).collect();
+        c.tasks.iter().map(|((v, who, task), (n, ms))| serde_json::json!({"verb": v, "caller": who, "task": task, "count": n, "total_ms": ms})).collect();
     serde_json::json!({"verbs": verbs, "callers": callers, "writes": crate::db::write_stats()}).to_string()
+}
+
+/// The counts that moved since `pushed`, as one request series and one store-time series per
+/// moved key, both holding the delta.
+fn series_since(c: &Counters, pushed: &BTreeMap<Key, (u64, u64)>, at: std::time::SystemTime) -> Vec<spira_otel::metrics::Series> {
+    let mut out = Vec::new();
+    for (key, &(n, ms)) in &c.tasks {
+        let (pn, pms) = pushed.get(key).copied().unwrap_or_default();
+        if n == pn {
+            continue;
+        }
+        let labels = vec![("verb".to_string(), key.0.clone()), ("caller".to_string(), key.1.clone()), ("task".to_string(), key.2.clone())];
+        let series = |name: &str, value: f64| spira_otel::metrics::Series { name: name.into(), value, labels: labels.clone(), at };
+        out.push(series("spira_lc_requests", (n - pn) as f64));
+        out.push(series("spira_lc_request_seconds", (ms - pms) as f64 / 1000.0));
+    }
+    out
+}
+
+/// Pushes what moved since `pushed`; `pushed` advances only when the push succeeds. The
+/// counters are not locked during the post.
+pub fn push_counts(sink: &spira_otel::metrics::MetricsSink, pushed: &mut BTreeMap<Key, (u64, u64)>) {
+    let Ok(c) = COUNTERS.lock() else { return };
+    let (series, now) = (series_since(&c, pushed, std::time::SystemTime::now()), c.tasks.clone());
+    drop(c);
+    if !series.is_empty() && sink.try_push_series(&series).is_ok() {
+        *pushed = now;
+    }
 }
 
 pub fn set_verb(verb: &str) {
@@ -393,10 +429,10 @@ mod tests {
         let d = testkit::TempDir::new("slow-req");
         let log = d.join("s.log");
         let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap())), ("SPIRA_SLOW_QUERY_MS", Some("0"))]);
-        request_done("probe-verb", "probe-verb", "probe\tcaller", Duration::from_millis(40));
-        request_done("other-verb", "other-verb", "other", Duration::from_millis(7));
-        request_done("probe-verb", "probe-verb", "probe\tcaller", Duration::from_millis(60));
-        request_done("work", "work:submit", "probe\tcaller", Duration::from_millis(9000));
+        request_done("probe-verb", "probe-verb", "probe\tcaller", None, Duration::from_millis(40));
+        request_done("other-verb", "other-verb", "other", None, Duration::from_millis(7));
+        request_done("probe-verb", "probe-verb", "probe\tcaller", None, Duration::from_millis(60));
+        request_done("work", "work:submit", "probe\tcaller", None, Duration::from_millis(9000));
         let got: String = std::fs::read_to_string(&log).unwrap().lines().filter(|l| l.contains("\tprobe-verb\t")).map(|l| format!("{l}\n")).collect();
         assert_eq!(got.lines().count(), 2, "{got}");
         let all = std::fs::read_to_string(&log).unwrap();
@@ -404,7 +440,43 @@ mod tests {
         assert!(got.lines().all(|l| l.split('\t').collect::<Vec<_>>()[1..] == ["probe-verb", "probe_caller", l.split('\t').nth(3).unwrap(), "REQUEST"][..]), "{got}");
         let s: serde_json::Value = serde_json::from_str(&stats_json()).unwrap();
         assert_eq!(s["verbs"]["probe-verb"], serde_json::json!({"count": 2, "total_ms": 100}));
-        assert!(s["callers"].as_array().unwrap().iter().any(|c| c["verb"] == "probe-verb" && c["caller"] == "probe_caller" && c["count"] == 2));
+        assert!(s["callers"].as_array().unwrap().iter().any(|c| c["verb"] == "probe-verb" && c["caller"] == "probe_caller" && c["task"] == "-" && c["count"] == 2 && c["total_ms"] == 100));
+    }
+
+    #[test]
+    fn series_carry_verb_caller_and_task_and_only_the_delta() {
+        let mut c = Counters::default();
+        let key = ("v".to_string(), "who".to_string(), "asks".to_string());
+        let idle = ("w".to_string(), "who".to_string(), "-".to_string());
+        c.tasks.insert(key.clone(), (3, 1500));
+        c.tasks.insert(idle.clone(), (2, 40));
+        let sink = spira_otel::metrics::MetricsSink::new(None, "spira-lc", Duration::from_millis(1));
+        let at = std::time::SystemTime::now();
+        let mut pushed = BTreeMap::new();
+        pushed.insert(idle.clone(), (2, 40));
+        let got = series_since(&c, &pushed, at);
+        let flat: Vec<(String, f64)> = got.iter().map(|s| (s.name.clone(), s.value)).collect();
+        assert_eq!(flat, [("spira_lc_requests".to_string(), 3.0), ("spira_lc_request_seconds".to_string(), 1.5)], "the unmoved key yields nothing");
+        let encoded = format!("{:?}", sink.encode_series(&got));
+        for l in ["verb", "caller", "task", "asks", "who", "spira_lc_requests", "spira_lc_request_seconds"] {
+            assert!(encoded.contains(l), "{l} missing from {encoded}");
+        }
+        pushed.insert(key.clone(), (3, 1500));
+        c.tasks.insert(key, (4, 1700));
+        let got = series_since(&c, &pushed, at);
+        let flat: Vec<f64> = got.iter().map(|s| s.value).collect();
+        assert_eq!(flat, [1.0, 0.2]);
+    }
+
+    #[test]
+    fn a_failed_push_keeps_the_delta_for_the_next_period() {
+        request_done("push-probe", "push-probe", "who", Some("t"), Duration::from_millis(3));
+        let unreachable = spira_otel::metrics::MetricsSink::new(None, "spira-lc", Duration::from_millis(1));
+        let mut pushed = BTreeMap::new();
+        push_counts(&unreachable, &mut pushed);
+        assert!(!pushed.keys().any(|k| k.0 == "push-probe"), "a failed push advances nothing");
+        let c = COUNTERS.lock().unwrap();
+        assert!(series_since(&c, &pushed, std::time::SystemTime::now()).iter().any(|s| s.labels.contains(&("verb".into(), "push-probe".into()))));
     }
 
     #[test]

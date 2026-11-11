@@ -26,7 +26,9 @@ fn word(s: &str) -> bool {
 pub fn check(args: &[String]) -> Result<Kind, String> {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
     match a.as_slice() {
-        ["list" | "show" | "memories" | "state", ..] => Ok(Kind::Read),
+        ["list" | "show" | "memories" | "state" | "search" | "events", ..] => Ok(Kind::Read),
+        ["dep", "list", ..] => Ok(Kind::Read),
+        ["label", "list", id] | ["label", "list", id, "--json"] if word(id) => Ok(Kind::Read),
         ["gate", "list", ..] => Ok(Kind::Read),
         // The planning store's id prefix, which a caller filing beads stamps its ids with.
         ["config", "get", key] if !key.starts_with('-') => Ok(Kind::Read),
@@ -39,8 +41,17 @@ pub fn check(args: &[String]) -> Result<Kind, String> {
         ["close", id, "--reason", reason] if word(id) && !reason.trim().is_empty() => WRITE,
         ["update", id, flags @ ..] if !id.starts_with('-') && !flags.is_empty() => update_flags(flags),
         ["create", rest @ ..] if !rest.is_empty() => create_flags(rest),
+        ["ready", ..] => Err(unserved("ready", "`spira-lc list --state READY,REWORK` (the published claim_verdict) or `spira-claim rune-ready`")),
+        ["blocked", ..] => Err(unserved("blocked", "`spira-lc list` (the published blocked_by)")),
+        ["history", ..] => Err(unserved("history", "`spira-lc facts --ids` or `content list --updated-after`")),
+        ["children", ..] => Err(unserved("children", "`content list --all --limit 0 --parent <id>`")),
+        ["sql", ..] => Err(unserved("sql", "a typed read: add the read this query stands for to the door (content_sql) rather than sending SQL")),
         _ => Err(format!("`{}` is not a content verb", a.join(" "))),
     }
+}
+
+fn unserved(verb: &str, instead: &str) -> String {
+    format!("`{verb}` is not a content verb; use {instead}")
 }
 
 fn update_flags(flags: &[&str]) -> Result<Kind, String> {
@@ -206,7 +217,7 @@ pub fn run(
     write: Write<'_>,
 ) -> Answer {
     if args.is_empty() {
-        return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc content <list|show|comments|gate list|memories|state|config get|comments add|label add|label remove|note|close|update|create> …\n".into(), ..Default::default() };
+        return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc content <list|show|search|dep list|label list|events|comments|gate list|memories|state|config get|comments add|label add|label remove|note|close|update|create> …\n".into(), ..Default::default() };
     }
     let kind = match check(args) {
         Ok(k) => k,
@@ -404,6 +415,10 @@ mod tests {
             (&["gate", "list", "--json"], Kind::Read),
             (&["state", "sp-a", "rune"], Kind::Read),
             (&["memories", "--json"], Kind::Read),
+            (&["search", "merge queue", "--json"], Kind::Read),
+            (&["dep", "list", "sp-a", "--direction=up", "--json"], Kind::Read),
+            (&["label", "list", "sp-a", "--json"], Kind::Read),
+            (&["events", "--id", "sp-a,sp-b"], Kind::Read),
             (&["comments", "add", "sp-a", "text"], Kind::Write { body: false }),
             (&["update", "sp-a", "--add-label", "x", "--remove-label", "y"], Kind::Write { body: false }),
             (&["update", "sp-a", "--set-metadata", "k=v", "--add-label", "x"], Kind::Write { body: false }),
@@ -418,6 +433,20 @@ mod tests {
             (&["create", "--parent", "sp-e", "--silent", "--title", "T"], Kind::Write { body: false }),
         ] {
             assert_eq!(check(&v(ok)), Ok(kind), "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn a_read_the_door_does_not_serve_is_refused_naming_its_exit() {
+        for (args, exit) in [
+            (&["ready"][..], "claim_verdict"),
+            (&["blocked"], "blocked_by"),
+            (&["history", "sp-a"], "facts"),
+            (&["children", "sp-a"], "--parent"),
+            (&["sql", "select 1"], "typed read"),
+        ] {
+            let e = check(&v(args)).unwrap_err();
+            assert!(e.contains(exit), "{args:?}: {e}");
         }
     }
 

@@ -3147,6 +3147,48 @@ fn a_round_through_a_red_pass_an_eject_and_a_green_pass_records_both_passes() {
     );
 }
 
+const TREE_WITH_B: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const TREE_WITHOUT_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+#[test]
+fn the_round_record_names_the_tree_each_pass_built_from() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![
+        ("test-a.sh".into(), "ok".into()),
+        ("test-b.sh".into(), "red 1 2 fp p e 1".into()),
+    ];
+    t.git.trees.borrow_mut().insert("merged-tc".into(), TREE_WITH_B.into());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 1);
+    assert_eq!(kv_of(&t, "round")["pass-trees"], format!("1={TREE_WITH_B}"));
+
+    seed_suite(&t, "test-b.sh");
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "red on test-b.sh", "--suites", "test-b.sh"]),
+        0,
+        "{}",
+        t.err()
+    );
+    t.git.trees.borrow_mut().insert("merged-tc".into(), TREE_WITHOUT_B.into());
+    *t.scripts.round_vm_results.borrow_mut() = vec![
+        ("test-a.sh".into(), "ok".into()),
+        ("test-b.sh".into(), "ok".into()),
+    ];
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert_eq!(
+        kv_of(&t, "round")["pass-trees"],
+        format!("1={TREE_WITH_B} 2={TREE_WITHOUT_B}"),
+        "each pass keeps the tree it built from"
+    );
+}
+
 #[test]
 fn a_pass_the_vm_could_not_finish_is_incomplete_not_red_or_green() {
     let t = round_world();

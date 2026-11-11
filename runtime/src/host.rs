@@ -29,6 +29,12 @@ pub trait EffectRunner: Send + Sync {
     /// Must be idempotent under `key`: a restart re-issues every effect that has no outcome.
     fn run(&self, key: &str, spec: &EffectSpec) -> std::result::Result<String, String>;
 
+    /// [`run`](Self::run) for the effect `task` asked for; a runner that names its store calls
+    /// by task overrides this.
+    fn run_for_task(&self, _task: &str, key: &str, spec: &EffectSpec) -> std::result::Result<String, String> {
+        self.run(key, spec)
+    }
+
     /// The effector class whose cap `spec` runs under.
     fn class(&self, _spec: &EffectSpec) -> EffectClass {
         EffectClass::Host
@@ -389,11 +395,11 @@ fn launch_effect(workers: &Arc<Pool>, permit: OwnedSemaphorePermit, runner: &Arc
     let permit = Arc::new(Mutex::new(Some(permit)));
     tokio::spawn(async move {
         let outcome = async {
-            let (r, k, spec, held) = (runner, p.key.clone(), p.spec.clone(), permit.clone());
+            let (r, k, spec, held, task) = (runner, p.key.clone(), p.spec.clone(), permit.clone(), p.task.clone());
             let (began_tx, began) = oneshot::channel::<()>();
             let job = move || {
                 let _ = began_tx.send(());
-                let out = r.run(&k, &spec);
+                let out = r.run_for_task(&task, &k, &spec);
                 drop(held.lock().unwrap_or_else(|e| e.into_inner()).take()); // loop-safe: runs on the offload pool; the lock is held only to take the permit
                 out
             };
@@ -540,7 +546,7 @@ impl VirtualDriver {
             }
             for p in pending {
                 self.engine.note_attempt(&p.key);
-                let outcome = match self.runner.run(&p.key, &p.spec) {
+                let outcome = match self.runner.run_for_task(&p.task, &p.key, &p.spec) {
                     Ok(d) => Outcome::Succeeded(d),
                     Err(e) => Outcome::Failed(e),
                 };

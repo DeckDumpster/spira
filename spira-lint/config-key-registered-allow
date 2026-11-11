@@ -259,7 +259,6 @@ SPIRA_GATE_BRANCH gate/src/engine.rs
 SPIRA_GATE_BRANCH spira/round-image-preflight.sh
 SPIRA_GATE_CALLER gate/src/engine.rs
 SPIRA_GATE_CALLER gate/src/real.rs
-SPIRA_GATE_CAP_SECS spira/gate.sh
 SPIRA_GATE_COVERED gate/src/engine.rs
 SPIRA_GATE_COVERED suite-select/src/gate.rs
 SPIRA_GATE_CPU_QUOTA gate/src/cgroup.rs

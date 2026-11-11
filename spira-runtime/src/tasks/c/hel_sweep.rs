@@ -567,6 +567,11 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
     }
 }
 
+/// The failure of a pass whose repository's bead read the store did not answer.
+pub fn store_failure(repo: &str, store_text: &str) -> String {
+    format!("{NAME}: {repo}: the store did not answer the branch read: {store_text}")
+}
+
 /// The pinned values the runners read.
 pub struct Pinned {
     pub submitted_label: String,
@@ -607,7 +612,11 @@ pub fn observe(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient, p: 
     snap.repos = names.iter().skip(at + 1).map(|r| r.name.clone()).collect();
     let Some(root) = r.root.as_deref() else { return serde_json::to_string(&snap).map_err(|e| e.to_string()) };
     // A repository the pass cannot read is skipped, as today: its snapshot carries nothing.
-    let Ok((base, branches, orphans)) = hel::sweep::scan_repo(real, root, &p.submitted_label, true) else { return serde_json::to_string(&snap).map_err(|e| e.to_string()) };
+    let (base, branches, orphans) = match hel::sweep::scan_repo(real, root, &p.submitted_label, true) {
+        Ok(scan) => scan,
+        Err(hel::sweep::ScanError::Skip(_)) => return serde_json::to_string(&snap).map_err(|e| e.to_string()),
+        Err(hel::sweep::ScanError::Store(e)) => return Err(store_failure(&r.name, &e)),
+    };
     snap.base = Base { landref: base.landref, landrefs: base.landrefs, remote: base.remote.unwrap_or_default() };
     let ids: Vec<String> = branches.iter().map(|b| b.id.clone()).chain(orphans.iter().map(|o| o.id.clone())).collect();
     snap.rows = spira_config::lc_state::list_ids_on(lc, &ids).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();

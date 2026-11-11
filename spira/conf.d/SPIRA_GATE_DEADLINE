@@ -1,9 +1,9 @@
 TYPE=u32
 GROUP=gate
-DOC=THE WHOLE GATE'S WALL-CLOCK DEADLINE, in seconds: every phase, base trial included
+DOC=THE GATE'S TEST DEADLINE, in seconds: the tests only; tools, fences and builds are not charged
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # THE WHOLE GATE'S WALL-CLOCK DEADLINE, in seconds: every phase, base trial included.
-    # The gate stops at it and answers NO_VERDICT reason=deadline naming the running phase.
+    # THE GATE'S TEST DEADLINE, in seconds: the tests only; tools, fences and builds are not charged.
+    # The gate stops at it and answers NO_VERDICT reason=deadline naming the running test phase.
     # SPIRA_GATE_BUDGET is only the selector's prediction of suite time; this is enforced.
     : "${SPIRA_GATE_DEADLINE:=300}"
 SPIRA_CONF_DEFAULT_EOF

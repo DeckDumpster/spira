@@ -9,6 +9,7 @@ use crate::key::{self, KeyInputs};
 use crate::machine::{self, GateState, Run};
 use crate::parse::{self, Attribution};
 use crate::ports::{Ctx, Merge, World};
+use crate::stall;
 use crate::toolkey;
 use spira_config::GateMode;
 use std::path::{Path, PathBuf};
@@ -130,6 +131,8 @@ struct State {
     timeout: String,
     replayed: bool,
     replay_note: String,
+    /// Seconds the tests have used of SPIRA_GATE_DEADLINE; builds are not charged to it.
+    test_secs: u64,
 }
 
 pub struct Trial<'w, W: World> {
@@ -814,10 +817,13 @@ impl<'w, W: World> Trial<'w, W> {
         let Some(deadline) = key::digits(ctx.var("SPIRA_GATE_DEADLINE")) else {
             return v(NOVERDICT, "config", format!("gate: SPIRA_GATE_DEADLINE={:?} is not a number of seconds — refusing to run a gate with no wall-clock bound.", ctx.var("SPIRA_GATE_DEADLINE")));
         };
+        let Some(stall) = key::digits(ctx.var("SPIRA_GATE_BUILD_STALL")).filter(|s| *s > 0) else {
+            return v(NOVERDICT, "config", format!("gate: SPIRA_GATE_BUILD_STALL={:?} is not a number of seconds — refusing to run a build nothing watches.", ctx.var("SPIRA_GATE_BUILD_STALL")));
+        };
+        let limits = Limits { deadline, stall };
         let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
-        let t_start = self.s.start;
-        let eff = || {
-            let rem = deadline.saturating_sub(w.now().saturating_sub(t_start)).max(1);
+        let eff = |spent: u64| {
+            let rem = deadline.saturating_sub(spent).max(1);
             key::digits(&timeout).map_or(rem, |t| t.min(rem)).to_string()
         };
         let fkey = self.fences_key(&want_tree);
@@ -840,7 +846,9 @@ impl<'w, W: World> Trial<'w, W> {
                     tree_def.as_ref(),
                     tools.as_ref(),
                 ),
-                &eff(),
+                &timeout,
+                &limits,
+                &mut self.s.test_secs,
                 &cmd,
                 tools.as_ref(),
                 jobs,
@@ -862,6 +870,9 @@ impl<'w, W: World> Trial<'w, W> {
             return v(NOVERDICT, "machine-fault", format!("gate: cannot record the gate's moves: {e} — refusing to judge what it cannot record"));
         }
         self.s.queue_secs = parse::queue_secs(&out);
+        if stall::is_stall(rc, &out) {
+            return stall_verdict(&self.s.phases, &out);
+        }
         if w.signalled() {
             return v(
                 NOVERDICT,
@@ -958,8 +969,8 @@ impl<'w, W: World> Trial<'w, W> {
             return v(NOVERDICT, "harness-fault", format!(
                 "gate: {name}'s batch reported a harness fault — container died mid-batch ({d}).\ngate: command: {cmd}\n{out}"));
         }
-        if rc == 124 && by_deadline {
-            return killed_verdict(&self.s.phases, deadline, w.now().saturating_sub(t_start), &cmd, &out);
+        if rc == 124 && by_deadline && last_phase_charged(&self.s.phases) {
+            return killed_verdict(&self.s.phases, deadline, self.s.test_secs, &cmd, &out);
         }
         if rc == 124 {
             return v(NOVERDICT, "timeout", format!(
@@ -1046,6 +1057,7 @@ impl<'w, W: World> Trial<'w, W> {
             } else {
                 base_cmd
             };
+            let base_fkey = self.fences_key(&base_tree);
             let (r, o, ph) = run_composed(
                 w,
                 &tree,
@@ -1059,20 +1071,25 @@ impl<'w, W: World> Trial<'w, W> {
                     bdef.as_ref(),
                     base_tools.as_ref(),
                 ),
-                &eff(),
+                &timeout,
+                &limits,
+                &mut self.s.test_secs,
                 base_cmd,
                 base_tools.as_ref(),
                 jobs,
                 &base_required,
                 "base-",
-                self.fences_key(&base_tree).as_ref(),
+                base_fkey.as_ref(),
                 &mut |_, _| {},
                 &mut None,
             );
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
-            if r == 124 && by_deadline {
-                return killed_verdict(&self.s.phases, deadline, w.now().saturating_sub(t_start), base_cmd, &o);
+            if stall::is_stall(r, &o) {
+                return stall_verdict(&self.s.phases, &o);
+            }
+            if r == 124 && by_deadline && last_phase_charged(&self.s.phases) {
+                return killed_verdict(&self.s.phases, deadline, self.s.test_secs, base_cmd, &o);
             }
             base_rc = r;
             base_out = o;
@@ -1139,9 +1156,10 @@ impl<'w, W: World> Trial<'w, W> {
                                 base_bdef,
                                 base_tools_ref,
                             ),
-                            &eff(),
+                            &eff(self.s.test_secs),
                             "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag",
                         );
+                        self.s.test_secs += w.now().saturating_sub(t);
                         self.s
                             .phases
                             .push(("base-image-tag".into(), w.now().saturating_sub(t)));
@@ -1183,14 +1201,15 @@ impl<'w, W: World> Trial<'w, W> {
                         base_bdef,
                         base_tools_ref,
                     ),
-                    &eff(),
+                    &eff(self.s.test_secs),
                     &rerun,
                 );
+                self.s.test_secs += w.now().saturating_sub(t);
                 self.s
                     .phases
                     .push(("base-rerun".into(), w.now().saturating_sub(t)));
                 if r == 124 && by_deadline {
-                    return deadline_verdict(deadline, "base-rerun", w.now().saturating_sub(t_start), &rerun, &o);
+                    return deadline_verdict(deadline, "base-rerun", self.s.test_secs, &rerun, &o);
                 }
                 if w.signalled() {
                     return v(
@@ -1277,14 +1296,15 @@ impl<'w, W: World> Trial<'w, W> {
                         base_bdef,
                         base_tools_ref,
                     ),
-                    &eff(),
+                    &eff(self.s.test_secs),
                     &base_rerun_cmd(&reds),
                 );
+                self.s.test_secs += w.now().saturating_sub(t);
                 self.s
                     .phases
                     .push(("base-retry".into(), w.now().saturating_sub(t)));
                 if rr == 124 && by_deadline {
-                    return deadline_verdict(deadline, "base-retry", w.now().saturating_sub(t_start), &base_rerun_cmd(&reds), &o);
+                    return deadline_verdict(deadline, "base-retry", self.s.test_secs, &base_rerun_cmd(&reds), &o);
                 }
                 if w.signalled() {
                     return v(
@@ -1728,7 +1748,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.append(
                 &self.s.gate_log,
                 &format!(
-                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{}\n",
+                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{} test_clock={}s\n",
                     w.utc(),
                     self.s.repo_name,
                     self.a.branch,
@@ -1740,7 +1760,8 @@ impl<'w, W: World> Trial<'w, W> {
                     self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.suffix()),
                     tools_field(&self.s.tools_from, &self.s.phases),
                     self.s.replay_note,
-                    if self.s.waited_ms > 0 { format!(" waited_ms={}", self.s.waited_ms) } else { String::new() }
+                    if self.s.waited_ms > 0 { format!(" waited_ms={}", self.s.waited_ms) } else { String::new() },
+                    self.s.test_secs
                 ),
             );
             let run = crate::telemetry::GateRun {
@@ -1916,15 +1937,34 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
     Some(s)
 }
 
-/// The most a named phase may take, seconds (`base-` prefix ignored). They are the branch
-/// trial's fixed phases and sum to SPIRA_GATE_DEADLINE's 300 s, and the gate cap is no shorter than the suites budget handed to testenv;
-/// phases not listed take whatever of the deadline is left.
-///
-/// The `tools` phase, run only for a tree that changes the tools' source, has no cap of its
-/// own: it is bounded by what is left of the deadline.
+/// Whether a phase's wall counts against SPIRA_GATE_DEADLINE (`base-` prefix ignored).
+/// Compilation is never charged: a build is ended for stalling, not for taking long.
+pub fn charged(name: &str) -> bool {
+    !matches!(name.strip_prefix("base-").unwrap_or(name), "tools" | "fences" | "build")
+}
+
+pub fn last_phase_charged(phases: &[(String, u64)]) -> bool {
+    phases.last().is_none_or(|(n, _)| charged(n))
+}
+
+/// NO_VERDICT: a build phase showed no progress for SPIRA_GATE_BUILD_STALL seconds.
+pub fn stall_verdict(phases: &[(String, u64)], out: &str) -> Verdict {
+    let phase = phases.last().map_or("-", |p| p.0.as_str());
+    v(NOVERDICT, "build-stall", format!(
+        "gate: build-stall — phase `{phase}` stopped making progress and was ended; it judged nothing.\n{}",
+        parse::tail_bytes(out, 4000)))
+}
+
+pub struct Limits {
+    pub deadline: u64,
+    pub stall: u64,
+}
+
+/// The most a charged phase may take, seconds (`base-` prefix ignored); the gate cap is no
+/// shorter than the suites budget handed to testenv. Phases not listed take what is left of
+/// the deadline.
 pub fn phase_cap(name: &str) -> Option<u64> {
     match name.strip_prefix("base-").unwrap_or(name) {
-        "fences" => Some(90),
         "gate" => Some(260),
         _ => None,
     }
@@ -2129,6 +2169,8 @@ pub fn run_composed<W: World>(
     comp: &Composition,
     env: &[(String, String)],
     timeout: &str,
+    limits: &Limits,
+    test_secs: &mut u64,
     cmd: &str,
     tools: Option<&Tools>,
     jobs: u64,
@@ -2141,15 +2183,28 @@ pub fn run_composed<W: World>(
     let first_state = if comp.suites_off() { GateState::Fences } else { GateState::Trial };
     let budget = key::digits(timeout);
     let start = w.now();
-    let left = |name: &str| {
-        let cap = phase_cap(name);
-        match budget {
-            Some(b) => {
-                let rem = b.saturating_sub(w.now().saturating_sub(start)).max(1);
-                cap.map_or(rem, |c| rem.min(c)).to_string()
-            }
-            None => cap.map_or(timeout.to_string(), |c| c.to_string()),
+    let left = |name: &str, spent: u64| {
+        let outer = budget.map(|b| b.saturating_sub(w.now().saturating_sub(start)).max(1));
+        let test = charged(name).then(|| limits.deadline.saturating_sub(spent).max(1));
+        [outer, test, phase_cap(name)]
+            .into_iter()
+            .flatten()
+            .min()
+            .map_or(timeout.to_string(), |r| r.to_string())
+    };
+    let go = |name: &str, env: &[(String, String)], cmd: &str, spent: &mut u64| {
+        let t = w.now();
+        let to = left(name, *spent);
+        let (rc, out) = if charged(name) {
+            w.run_gate(tree, env, &to, cmd)
+        } else {
+            w.run_build(tree, env, &to, limits.stall, cmd)
+        };
+        let wall = w.now().saturating_sub(t);
+        if charged(name) {
+            *spent += wall;
         }
+        (rc, out, wall)
     };
     let mut phases = Vec::new();
     // THE TOOLS PHASE (sp-quu2w): the binaries the steps call, built from the tree under
@@ -2159,9 +2214,8 @@ pub fn run_composed<W: World>(
     if let Some(tl) = tools.filter(|t| !t.release) {
         mark(first_state, "tools");
         if let Some(t) = &tl.build {
-            let t0 = w.now();
-            let (rc, out) = w.run_gate(tree, env, &left("tools"), t);
-            phases.push((format!("{prefix}tools"), w.now().saturating_sub(t0)));
+            let (rc, out, wall) = go("tools", env, t, test_secs);
+            phases.push((format!("{prefix}tools"), wall));
             if rc != 0 || w.signalled() {
                 return (rc, format!("{out}\ngate: phase 'tools' failed (exit {rc}): {t}"), phases);
             }
@@ -2187,10 +2241,9 @@ pub fn run_composed<W: World>(
             o
         }
         None => {
-            let t = w.now();
-            let (rc, out) = w.run_gate(tree, env, &left(first), &cmd);
-            phases.push((format!("{prefix}{first}"), w.now().saturating_sub(t)));
-            if w.signalled() || rc == 124 || rc == NOVERDICT || (rc != 0 && !matches!(comp, Composition::Unit { .. })) {
+            let (rc, out, wall) = go(first, env, &cmd, test_secs);
+            phases.push((format!("{prefix}{first}"), wall));
+            if w.signalled() || rc == 124 || rc == NOVERDICT || stall::is_stall(rc, &out) || (rc != 0 && !matches!(comp, Composition::Unit { .. })) {
                 return (rc, out, phases);
             }
             fences_rc = rc;
@@ -2226,15 +2279,16 @@ pub fn run_composed<W: World>(
         } else {
             break;
         };
-        if budget.is_some_and(|b| w.now().saturating_sub(start) >= b) {
+        let out_of_time = budget.is_some_and(|b| w.now().saturating_sub(start) >= b);
+        if out_of_time || (charged(name) && *test_secs >= limits.deadline) {
             out.push_str(&format!(
-                "\ngate: SPIRA_GATE_TIMEOUT ({timeout}s) spent before the {name} phase"
+                "\ngate: {} spent before the {name} phase",
+                if out_of_time { format!("SPIRA_GATE_TIMEOUT ({timeout}s)") } else { format!("SPIRA_GATE_DEADLINE ({}s)", limits.deadline) }
             ));
             phases.push((format!("{prefix}{name}"), 0));
             return (124, out, phases);
         }
         mark(GateState::Trial, name);
-        let t = w.now();
         let hermetic;
         let step_env = if name == "test" {
             hermetic = compose::test_phase_env(env);
@@ -2247,8 +2301,8 @@ pub fn run_composed<W: World>(
         if timed {
             w.remove(&report);
         }
-        let (r, o) = w.run_gate(tree, step_env, &left(name), &c);
-        phases.push((format!("{prefix}{name}"), w.now().saturating_sub(t)));
+        let (r, o, wall) = go(name, step_env, &c, test_secs);
+        phases.push((format!("{prefix}{name}"), wall));
         if timed {
             *timing = w
                 .read(&report)

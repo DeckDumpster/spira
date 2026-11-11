@@ -4,6 +4,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
@@ -13,6 +14,12 @@ use crate::spill::{HostLoad, HostRule};
 
 pub const HOST_HANDLE: &str = "host";
 pub const SLOT_FILE: &str = "host-round.lock";
+pub const PASS_GROUP_FILE: &str = "round-pass.group";
+
+/// The home a host round runs under: one per `run_dir`, shared by every pass on this host.
+pub fn round_home(run_dir: &Path) -> PathBuf {
+    run_dir.join("host-round")
+}
 
 pub struct HostPlan {
     pub rule: HostRule,
@@ -37,8 +44,8 @@ impl HostPlan {
         };
         Ok(Some(HostPlan {
             rule: HostRule { io_full_avg60: num("SPIRA_ROUND_VM_HOST_IO_FULL_AVG60", 30.0)?, cpu_some_avg60: num("SPIRA_ROUND_VM_HOST_CPU_SOME_AVG60", 60.0)? },
-            home: run_dir.join("host-round"),
-            remote: Box::new(LocalRemote { home: run_dir.join("host-round") }),
+            home: round_home(run_dir),
+            remote: Box::new(LocalRemote { home: round_home(run_dir) }),
             load: Box::new(|| HostLoad {
                 io_full_avg60: crate::spill::read_io_full_avg60(crate::spill::PSI_IO),
                 cpu_some_avg60: crate::spill::read_cpu_some_avg60(crate::spill::PSI_CPU),
@@ -87,6 +94,57 @@ impl LocalRemote {
         c
     }
 
+    fn group_file(&self) -> PathBuf {
+        self.home.join(PASS_GROUP_FILE)
+    }
+
+    /// Kills the pass script this home last started, with everything it started. A pass left
+    /// running here shares the checkout, the build target and the results of the pass after it.
+    pub fn stop_pass(&self) {
+        self.stop_pass_of(None);
+    }
+
+    /// [`Self::stop_pass`], only when the recorded pass was started by `owner`: a round that
+    /// ends must not kill the pass of another round-vm process.
+    pub fn stop_pass_of(&self, owner: Option<u32>) {
+        let text = fs::read_to_string(self.group_file()).unwrap_or_default();
+        let mut words = text.split_whitespace();
+        let pgid = words.next().and_then(|p| p.parse::<i32>().ok()).filter(|p| *p > 1);
+        let started = words.next().map(str::to_string);
+        let by = words.next().and_then(|p| p.parse::<u32>().ok());
+        if owner.is_some() && by != owner {
+            return;
+        }
+        let _ = fs::remove_file(self.group_file());
+        let Some(pgid) = pgid else { return };
+        let ours = match (proc_start(pgid), started) {
+            (Some(now), Some(then)) => now == then,
+            (None, _) => true,
+            (Some(_), None) => false,
+        };
+        if !ours || !group_live(pgid) {
+            return;
+        }
+        // SAFETY: SIGKILL to the process group this home's pass script leads.
+        unsafe { libc::kill(-pgid, libc::SIGKILL) };
+        // clock-safe: a cap on the wait for the killed group to be reaped
+        for _ in 0..500 {
+            if !group_live(pgid) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn start_pass(&self, mut cmd: std::process::Command) -> std::io::Result<std::process::Child> {
+        self.stop_pass();
+        let child = cmd.process_group(0).spawn()?;
+        let id = child.id();
+        let line = format!("{id} {} {}\n", proc_start(id as i32).unwrap_or_default(), std::process::id());
+        let _ = fs::write(self.group_file(), line);
+        Ok(child)
+    }
+
     fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
         fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
         let st = command("cp").arg("-a").arg(format!("{}/.", from.display())).arg(to).stdin(Stdio::null()).output().map_err(|e| format!("cp: {e}"))?;
@@ -105,14 +163,17 @@ impl Remote for LocalRemote {
 
     fn run_batch(&self, _addr: &str, job: &BatchJob) -> Result<i32, String> {
         fs::create_dir_all(&self.home).map_err(|e| format!("{}: {e}", self.home.display()))?;
-        let mut child = self.shell(&remote_command(job)).stdin(Stdio::piped()).spawn().map_err(|e| format!("bash: {e}"))?;
+        let mut shell = self.shell(&remote_command(job));
+        shell.stdin(Stdio::piped());
+        let mut child = self.start_pass(shell).map_err(|e| format!("bash: {e}"))?;
         feed_script(&mut child, if job.ci_entry.is_some() { FOREIGN_SCRIPT } else { REMOTE_SCRIPT }.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
         loop {
             if let Some(st) = child.try_wait().map_err(|e| format!("bash: {e}"))? {
+                self.stop_pass();
                 return Ok(st.code().unwrap_or(255));
             }
             if job.cancel.load(std::sync::atomic::Ordering::SeqCst) {
-                let _ = child.kill();
+                self.stop_pass();
                 let _ = child.wait();
                 return Ok(255);
             }
@@ -173,6 +234,24 @@ impl Remote for LocalRemote {
         feed_script(&mut child, crate::spool::REMOTE_ATTR_SCRIPT.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
         Ok(child.wait().map_err(|e| format!("bash: {e}"))?.code().unwrap_or(255))
     }
+}
+
+/// Whether any process still running (a zombie is not) belongs to process group `pgid`.
+fn group_live(pgid: i32) -> bool {
+    let Ok(rd) = fs::read_dir("/proc") else { return false };
+    rd.flatten().any(|e| {
+        let Ok(stat) = fs::read_to_string(e.path().join("stat")) else { return false };
+        let mut f = stat.rsplit_once(')').map(|x| x.1).unwrap_or("").split_whitespace();
+        let state = f.next();
+        let group = f.nth(1).and_then(|g| g.parse::<i32>().ok());
+        state.is_some_and(|s| s != "Z") && group == Some(pgid)
+    })
+}
+
+/// When the process started, which tells a pid's reuse.
+fn proc_start(pid: i32) -> Option<String> {
+    use spira_config::admission::{Procs, RealProcs};
+    RealProcs.start_of(u32::try_from(pid).ok()?).map(|t| t.to_string())
 }
 
 #[cfg(test)]
@@ -284,6 +363,59 @@ mod tests {
         let out = c.output().unwrap();
         let said = String::from_utf8_lossy(&out.stdout).to_string();
         assert_eq!(said.lines().collect::<Vec<_>>(), vec![d.path().to_str().unwrap(); 2]);
+    }
+
+    fn alive(pid: i32) -> bool {
+        fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|s| s.rsplit_once(')').is_some_and(|x| !x.1.trim_start().starts_with('Z')))
+    }
+
+    #[test]
+    fn starting_a_pass_kills_what_the_earlier_pass_left_running_in_the_home() {
+        let home = dir("stop-pass");
+        let remote = LocalRemote { home: home.path().to_path_buf() };
+        let mut sh = remote.shell("sleep 300 & echo $! > straggler.tmp; mv straggler.tmp straggler; wait");
+        sh.stdin(Stdio::null());
+        let mut child = remote.start_pass(sh).unwrap();
+        let straggler = (0..500).find_map(|_| fs::read_to_string(home.path().join("straggler")).ok().or_else(|| { std::thread::sleep(Duration::from_millis(10)); None })).expect("the script started its job"); // clock-safe: a cap on the wait for the shell to start its job
+        let straggler: i32 = straggler.trim().parse().unwrap();
+        assert!(alive(straggler));
+        let mut next = remote.shell("exit 0");
+        next.stdin(Stdio::null());
+        let mut second = remote.start_pass(next).unwrap();
+        let gone = !alive(straggler);
+        remote.stop_pass();
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = second.wait();
+        assert!(gone, "the earlier pass's job outlived the start of the next pass");
+    }
+
+    #[test]
+    fn a_round_that_ends_stops_its_own_pass_and_leaves_another_round_vms_running() {
+        let home = dir("owner");
+        let remote = LocalRemote { home: home.path().to_path_buf() };
+        let mut sh = remote.shell("sleep 300");
+        sh.stdin(Stdio::null());
+        let mut child = remote.start_pass(sh).unwrap();
+        let id = child.id() as i32;
+        remote.stop_pass_of(Some(std::process::id() + 1));
+        assert!(alive(id), "another round-vm's end killed this pass");
+        remote.stop_pass_of(Some(std::process::id()));
+        let _ = child.wait();
+        assert!(!alive(id));
+    }
+
+    #[test]
+    fn a_group_file_naming_a_recycled_pid_kills_nothing() {
+        let home = dir("recycled");
+        let remote = LocalRemote { home: home.path().to_path_buf() };
+        let mut bystander = command("sleep").arg("300").process_group(0).spawn().unwrap();
+        let id = bystander.id();
+        fs::write(home.path().join(PASS_GROUP_FILE), format!("{id} 1 1\n")).unwrap();
+        remote.stop_pass();
+        assert!(alive(id as i32), "a process that is not the recorded script was killed");
+        let _ = bystander.kill();
+        let _ = bystander.wait();
     }
 
     fn attr_job() -> crate::spool::AttrJob {
