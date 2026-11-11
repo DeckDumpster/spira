@@ -140,6 +140,7 @@ mod tests {
         })
     }
 
+    // literal-ok: test fixture label vocabulary, not the configured names
     fn cfg() -> LintCfg {
         LintCfg { partitions: vec![], spec_partitions: vec![], no_loop_label: "no-loop".into(), ask_label: "needs-op-test".into(), incident_label: "incident-test".into() }
     }
