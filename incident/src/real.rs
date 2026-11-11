@@ -145,6 +145,7 @@ pub fn json_only_pub(s: &str) -> &str {
     json_only(s)
 }
 
+#[cfg(test)]
 fn rows_from_json(text: &str) -> Vec<BeadRow> {
     let parsed: serde_json::Value = match serde_json::from_str(json_only(text)) {
         Ok(v) => v,
