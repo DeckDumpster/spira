@@ -456,7 +456,11 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
     if named.is_empty() {
         let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
         let packages = unitattr::failing_packages(&f.failed);
-        let tests = if f.failed.is_empty() { String::new() } else { format!(": {}", f.failed.join("; ")) };
+        let tests = match f.failed.len() {
+            0 => String::new(),
+            n if n <= MAX_NOTED_TESTS => format!(": {}", f.failed.join("; ")),
+            n => format!(": {}; and {} more", f.failed[..MAX_NOTED_TESTS].join("; "), n - MAX_NOTED_TESTS),
+        };
         let mapped = ops.package_graph().map(|g| unitattr::reaching(&g, &packages, &ops.diffs(&ids))).unwrap_or_default();
         let mut actions: Vec<Action> = mapped
             .into_iter()
@@ -495,6 +499,9 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
     let rebuilt = ops.rebuild(&survivors)?;
     Ok(if rebuilt.is_empty() { FilterEject::Emptied } else { FilterEject::Survivors(rebuilt) })
 }
+
+/// How many failing tests an eject note lists before it counts the rest.
+const MAX_NOTED_TESTS: usize = 20;
 
 /// A round of one member has no one else to blame: a red nothing else names is that member's.
 fn sole_member_culprit(red: &str, members: &[Member]) -> Vec<Action> {

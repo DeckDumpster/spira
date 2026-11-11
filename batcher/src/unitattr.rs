@@ -64,8 +64,12 @@ pub fn failing_lines(out: &str) -> Vec<String> {
 }
 
 /// Each member whose diff touches one of `packages` or a package one of them depends on, with
-/// the first such package it reaches. Empty when the graph does not know a failing package.
+/// the first such package it reaches. Empty when the graph does not know every failing package:
+/// a partial map would stop looking while a culprit sits in the part it cannot see.
 pub fn reaching(graph: &PackageGraph, packages: &[String], diffs: &[MemberDiff]) -> Vec<(Id, String)> {
+    if packages.iter().any(|p| !graph.dirs.contains_key(p)) {
+        return vec![];
+    }
     let reach: Vec<(&str, BTreeSet<&str>)> = packages.iter().filter(|p| graph.dirs.contains_key(*p)).map(|p| (p.as_str(), graph.closure(p))).collect();
     diffs
         .iter()
@@ -110,7 +114,9 @@ mod tests {
     }
 
     #[test]
-    fn a_package_the_graph_does_not_know_reaches_no_member() {
-        assert!(reaching(&graph(), &["ghost".to_string()], &[diff("a", "gate/src/x.rs")]).is_empty());
+    fn a_package_the_graph_does_not_know_reaches_no_member_even_beside_one_it_does() {
+        let d = [diff("a", "gate/src/x.rs"), diff("b", "loom/src/y.rs")];
+        assert!(reaching(&graph(), &["ghost".to_string()], &d).is_empty());
+        assert!(reaching(&graph(), &["loom".to_string(), "ghost".to_string()], &d).is_empty());
     }
 }
