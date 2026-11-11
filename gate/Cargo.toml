@@ -2,6 +2,7 @@
 name = "gate"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "gate — the certification gate: judges a branch merged onto its landing ref (sp-0tpcs, replaces the logic of spira/gate.sh and spira/gate-lib.sh)."
 
 [[bin]]
@@ -30,3 +31,8 @@ strip = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "warm_build"
+path = "tests/warm_build.rs"
+required-features = ["integration"]

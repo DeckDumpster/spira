@@ -808,6 +808,9 @@ impl World for Real {
         let held = |name: &str| target::held_by_gate(Path::new(run), name);
         let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &target::mem_available_mib, &held)?;
         let mut line = format!("gate: build on tmpfs at {}", p.dir.display());
+        if let Some(warm) = crate::warm::warm_start(&root, &p.dir.join("dwarf"), tree) {
+            line.push_str(&format!("\n{warm}"));
+        }
         if p.disk_freed_mib > 0 {
             line.push_str(&format!(" ({} MiB of build output moved off the disk)", p.disk_freed_mib));
         }
@@ -819,7 +822,10 @@ impl World for Real {
     fn target_intact(&self, tree: &Path) -> bool {
         crate::target::intact(tree)
     }
-    fn release_target(&self, tree: &Path, keep_release: bool) {
+    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool) {
+        if judged {
+            crate::warm::donate_tree(tree);
+        }
         crate::target::release_tree(tree, keep_release);
     }
     fn remove_worktree(&self, repo: &Path, tree: &Path) {
@@ -1025,6 +1031,36 @@ pub fn utc_of(t: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_finished_gate_hands_its_build_directory_to_the_next_through_the_world() {
+        use crate::ports::World;
+        use std::fs;
+        use std::process::Command;
+        let git = |d: &std::path::Path, a: &[&str]| {
+            let o = Command::new("git").arg("-C").arg(d).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).output().unwrap();
+            assert!(o.status.success(), "{a:?}");
+        };
+        let t = testkit::TempDir::new("gate-world-warm");
+        let (root, trees) = (t.path().join("root"), t.path().join("worktree"));
+        let (a, b) = (trees.join(".gate.h.a"), trees.join(".gate.h.b"));
+        for tree in [&a, &b] {
+            fs::create_dir_all(tree).unwrap();
+            git(tree, &["init", "-q"]);
+            fs::write(tree.join("f"), "1").unwrap();
+            git(tree, &["add", "."]);
+            git(tree, &["commit", "-qm", "c"]);
+        }
+        let lim = crate::target::Limits { cap_mib: 1 << 20, min_free_mib: 1, min_mem_mib: 1, shed_free_mib: 0 };
+        let r = super::Real::new(t.path().to_path_buf());
+        let run = t.path().to_str().unwrap();
+        r.target_on_tmpfs(&a, root.to_str().unwrap(), run, &lim).unwrap();
+        fs::create_dir_all(a.join("target/dwarf/deps")).unwrap();
+        fs::write(a.join("target/dwarf/deps/libx.rlib"), "x").unwrap();
+        r.release_target(&a, false, true);
+        let line = r.target_on_tmpfs(&b, root.to_str().unwrap(), run, &lim).unwrap();
+        assert!(line.contains("warm from"), "{line}");
+        assert!(b.join("target/dwarf/deps/libx.rlib").is_file());
+    }
 
     #[test]
     fn a_recorded_stamp_is_on_the_virtual_clock_and_a_wait_is_not() {

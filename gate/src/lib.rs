@@ -22,6 +22,7 @@ pub mod target;
 pub mod telemetry;
 pub mod toolkey;
 pub mod wait;
+pub mod warm;
 
 #[cfg(test)]
 mod tests;
