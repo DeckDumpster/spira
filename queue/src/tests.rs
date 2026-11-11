@@ -14,6 +14,7 @@ use crate::records::Kv;
 use crate::testutil::tmpdir;
 
 mod forge_store;
+mod hand_land;
 mod rebase;
 mod round;
 mod round_store;
@@ -1000,6 +1001,8 @@ type BatchView = (String, u64, u32, String);
 type SharedView = std::rc::Rc<RefCell<Option<BatchView>>>;
 
 struct FLc {
+    /// A fresh read whose argv contains `.0` is refused with `.1`.
+    fresh_refused: RefCell<Option<(&'static str, String)>>,
     churn: RefCell<Option<String>>,
     available: Cell<bool>,
     bead_rows: RefCell<std::collections::HashMap<String, (String, String)>>,
@@ -1060,6 +1063,7 @@ struct FLc {
 impl Default for FLc {
     fn default() -> Self {
         FLc {
+            fresh_refused: RefCell::default(),
             churn: RefCell::default(),
             available: Cell::new(false),
             bead_rows: RefCell::default(),
@@ -1115,6 +1119,14 @@ impl FLc {
 }
 
 impl Lc for FLc {
+    fn fresh_read(&self, args: &[&str]) -> Result<String, String> {
+        let line = args.join(" ");
+        self.calls.borrow_mut().push(format!("fresh-read {line}"));
+        match &*self.fresh_refused.borrow() {
+            Some((needle, why)) if line.contains(needle) => Err(why.clone()),
+            _ => Ok(String::new()),
+        }
+    }
     fn round_lease(&self, repo: &str, batch: &str) -> Result<Option<RoundLease>, String> {
         let key = format!("{repo}/{batch}");
         self.calls
@@ -1618,6 +1630,8 @@ impl ConfigStore for FConfig {
 
 struct FClock {
     now: Cell<u64>,
+    /// Runs on every sleep: the world moving while a verb waits.
+    on_sleep: RefCell<Option<Box<dyn Fn()>>>,
 }
 
 impl Clock for FClock {
@@ -1629,6 +1643,9 @@ impl Clock for FClock {
     }
     fn sleep(&self, s: u64) {
         self.now.set(self.now.get() + s.max(1));
+        if let Some(f) = self.on_sleep.borrow().as_ref() {
+            f();
+        }
     }
 }
 
@@ -1793,6 +1810,7 @@ impl T {
             config: FConfig::default(),
             clock: FClock {
                 now: Cell::new(1_000),
+                on_sleep: RefCell::default(),
             },
             env: FEnv::default(),
             io: Cap::default(),

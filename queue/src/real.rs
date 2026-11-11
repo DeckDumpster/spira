@@ -2138,6 +2138,13 @@ impl Lc for RealLc {
             serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))?;
         Ok(rows.into_iter().map(|r| r.bead_id).collect())
     }
+    fn fresh_read(&self, args: &[&str]) -> Result<String, String> {
+        let reply = LcClient::configured()?.call(args).map_err(|e| e.to_string())?;
+        if reply.code == 0 {
+            return Ok(reply.out);
+        }
+        Err(format!("`spira-lc {}` exited {}: {}", args.join(" "), reply.code, reply.text()))
+    }
     fn bead_row(&self, bead: &str) -> Option<LcBeadRow> {
         let out = self.stdout(&["show", bead]).ok()?;
         let v: serde_json::Value = serde_json::from_str(&out).ok()?;

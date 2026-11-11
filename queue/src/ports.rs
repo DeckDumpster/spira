@@ -704,6 +704,11 @@ pub trait Lc {
         evidence: &str,
         evidence_tip: &str,
     ) -> Result<(), (i32, String)>;
+    /// One spira-lc call made by a fresh process of the release now in force, never by a
+    /// client started before the release was switched. Err carries the call's full message.
+    fn fresh_read(&self, _args: &[&str]) -> Result<String, String> {
+        Err("no fresh read is available on this lifecycle".into())
+    }
     /// `lock show round/<repo>/<batch>`: the round's live lease, `None` when nothing holds it.
     /// Err = cannot tell.
     fn round_lease(&self, repo: &str, batch: &str) -> Result<Option<RoundLease>, String>;

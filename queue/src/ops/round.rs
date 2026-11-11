@@ -4926,6 +4926,30 @@ fn abandon(
     token: Option<&str>,
     cause: &str,
 ) -> i32 {
+    abandon_with(w, batch, repo, reason, token, cause, true)
+}
+
+/// A hand landing's void of the open round: the round's red is no reason to keep it, and a
+/// leased round is taken under its holder's own token.
+pub(super) fn abandon_for_landing(
+    w: &World,
+    batch: &str,
+    repo: &str,
+    reason: &str,
+    token: Option<&str>,
+) -> i32 {
+    abandon_with(w, batch, Some(repo), &Text::Arg(reason.to_string()), token, "hand-landing", false)
+}
+
+fn abandon_with(
+    w: &World,
+    batch: &str,
+    repo: Option<&str>,
+    reason: &Text,
+    token: Option<&str>,
+    cause: &str,
+    considered: bool,
+) -> i32 {
     let label = "round abandon";
     let reason = read_text(w, reason).unwrap_or_default();
     if reason.trim().is_empty() {
@@ -4959,6 +4983,7 @@ fn abandon(
         }
         Some(kv) => (kv, reason),
         None => match load(w, label, &c, batch) {
+            Ok(kv) if !considered => (kv, reason),
             Ok(kv) => match considered_abandon(w, label, &kv, reason) {
                 Ok(reason) => (kv, reason),
                 Err(rc) => return rc,

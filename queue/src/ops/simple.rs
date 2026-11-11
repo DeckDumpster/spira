@@ -681,7 +681,7 @@ pub fn claim(w: &World, repo: Option<&str>, reason: &Text, force: bool) -> i32 {
 
 const SANCTIONED_RESUBMITTER: &str = "concierge";
 
-fn is_full_sha(s: &str) -> bool {
+pub(super) fn is_full_sha(s: &str) -> bool {
     s.len() == 40
         && s.bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
