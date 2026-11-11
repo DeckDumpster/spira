@@ -404,6 +404,10 @@ mod tests {
             (&["gate", "list", "--json"], Kind::Read),
             (&["state", "sp-a", "rune"], Kind::Read),
             (&["memories", "--json"], Kind::Read),
+            (&["search", "merge queue", "--json"], Kind::Read),
+            (&["dep", "list", "sp-a", "--direction=up", "--json"], Kind::Read),
+            (&["label", "list", "sp-a", "--json"], Kind::Read),
+            (&["events", "--id", "sp-a,sp-b"], Kind::Read),
             (&["comments", "add", "sp-a", "text"], Kind::Write { body: false }),
             (&["update", "sp-a", "--add-label", "x", "--remove-label", "y"], Kind::Write { body: false }),
             (&["update", "sp-a", "--set-metadata", "k=v", "--add-label", "x"], Kind::Write { body: false }),
@@ -418,6 +422,20 @@ mod tests {
             (&["create", "--parent", "sp-e", "--silent", "--title", "T"], Kind::Write { body: false }),
         ] {
             assert_eq!(check(&v(ok)), Ok(kind), "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn a_read_the_door_does_not_serve_is_refused_naming_its_exit() {
+        for (args, exit) in [
+            (&["ready"][..], "claim_verdict"),
+            (&["blocked"], "blocked_by"),
+            (&["history", "sp-a"], "facts"),
+            (&["children", "sp-a"], "--parent"),
+            (&["sql", "select 1"], "typed read"),
+        ] {
+            let e = check(&v(args)).unwrap_err();
+            assert!(e.contains(exit), "{args:?}: {e}");
         }
     }
 
