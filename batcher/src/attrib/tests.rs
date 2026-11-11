@@ -251,6 +251,29 @@ fn a_fault_is_retried_once_and_never_read_as_a_result() {
 }
 
 #[test]
+fn a_removal_rerun_that_faults_past_its_retry_leaves_the_suite_faulted_not_unattributed() {
+    let mut a = Attributor::new(Budget { slots: 8, maxpar: 1 }, flat(&["m1", "m2"]), 1);
+    a.on_main_result("s", false, &ids(&["m1", "m2"]), 0);
+    a.on_main_done(0);
+    let plain = a.next_jobs();
+    a.on_job_result(plain[0].id, JobResult::Red, 1);
+    let mut t = 2;
+    while !a.settled() {
+        for j in a.next_jobs() {
+            let r = match j.purpose {
+                Purpose::Without(ref x) if x == "m1" => JobResult::Fault,
+                Purpose::Base => JobResult::Green,
+                _ => JobResult::Red,
+            };
+            a.on_job_result(j.id, r, t);
+            t += 1;
+        }
+        assert!(t < 100, "never settled");
+    }
+    assert_eq!(a.decision().faulted, ids(&["s"]));
+}
+
+#[test]
 fn nothing_is_owned_when_every_red_is_a_flake_or_the_base_s() {
     let main = vec![("flake", false, 1), ("basered", false, 2), ("ok", true, 3)];
     let verdict = |j: &Job| match (j.suite.as_str(), &j.purpose) {
