@@ -1090,3 +1090,17 @@ fn a_release_whose_lifecycle_read_is_refused_is_rolled_back() {
     let e = activate_reading(&w, &sc, &reads).unwrap_err();
     assert!(e.contains("lifecycle read refused") && e.contains("rolled back"), "{e}");
 }
+
+#[test]
+fn the_real_reads_run_the_releases_own_spira_lc_and_carry_a_refusal_in_its_words() {
+    let w = World::with_git(FakeGit::default());
+    let rel = w.cfg.releases.join(A);
+    exe(&rel.join("bin/spira-lc"), "#!/bin/sh\ncase \"$1\" in list) echo '[{\"bead_id\":\"sp-q\"}]';; *) echo 'spira-lc content: cannot tell: layout' >&2; exit 2;; esac\n");
+    let reads = activate::RealReads(&w.cfg);
+    let listed = activate::Reads::lc(&reads, &rel, &["list", "--state", "READY"]).unwrap();
+    assert!(listed.contains("sp-q"), "{listed}");
+    let e = activate::Reads::lc(&reads, &rel, &["content", "show", "sp-q"]).unwrap_err();
+    assert!(e.contains("content show sp-q") && e.contains("cannot tell: layout"), "{e}");
+    let missing = activate::Reads::lc(&reads, &w.cfg.releases.join(B), &["list"]).unwrap_err();
+    assert!(!missing.is_empty());
+}

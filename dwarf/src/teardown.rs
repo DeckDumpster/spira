@@ -48,7 +48,7 @@ impl Run<'_> {
         let now = self.now();
         let inbox = self.conf.s("SPIRA_CONCIERGE_INBOX");
         let append = |line: String| {
-            let o = self.d.exec.exec("inbox-triage", &s(&["append", &format!("{} [dwarf] {line}", util::iso_utc(now))]), None, None);
+            let o = self.d.exec.exec("inbox-triage", &s(&["append", &format!("[dwarf] {line}")]), None, None);
             if !o.success() {
                 self.log(&format!("{}: inbox-triage append refused (rc={}): {}", self.f(), o.code, o.first_err_line()));
             }

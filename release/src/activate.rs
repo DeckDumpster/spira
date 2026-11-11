@@ -421,6 +421,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn() -> Result
             }
         }
     }
+    // A rollback returns to a release that served before; refusing it would strand the box.
     if failed.is_empty() && install_new {
         if let Err(e) = serves_reads(ctx.reads, &rel) {
             failed.push(e);
