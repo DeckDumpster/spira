@@ -68,7 +68,17 @@ pub trait Gate {
     fn warm(&self, _repo: &str) -> Option<(i32, String)> {
         None
     }
+    fn pause(&self, ms: u64) {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
 }
+
+/// A warm held by another process is re-asked every `WARM_POLL_MS`, at most `WARM_POLLS` times
+/// (about the cold build it saves, 65-106 s, with margin): once the holder publishes, the
+/// re-ask answers "already warm" and the gate installs instead of building.
+pub const WARM_POLL_MS: u64 = 5000;
+pub const WARM_POLLS: u32 = 60;
+const WARM_HELD: &str = "another warm-tools holds";
 
 pub trait Branches {
     /// The branch's tip now; None when the branch (or its repository) is gone.
@@ -160,7 +170,14 @@ impl Worker<'_> {
         // first gate after every landing that moved the key paid a cold build of 65-106 s inside
         // its 300 s cap (58% of store misses, 2026-10-16..28). A warm that fails costs only that
         // build, inside the gate, as before.
-        if let Some((rc, out)) = self.gate.warm(&job.repo) {
+        if let Some((mut rc, mut out)) = self.gate.warm(&job.repo) {
+            let mut polls = 0;
+            while out.contains(WARM_HELD) && polls < WARM_POLLS {
+                self.gate.pause(WARM_POLL_MS);
+                polls += 1;
+                let Some(again) = self.gate.warm(&job.repo) else { break };
+                (rc, out) = again;
+            }
             let last = out.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
             (self.log)(&format!("gate-worker: warm-tools {} (rc {rc}): {last}", job.repo));
         }

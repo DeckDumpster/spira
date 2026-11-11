@@ -315,7 +315,7 @@ impl Gate for Warming<'_> {
     }
     fn warm(&self, repo: &str) -> Option<(i32, String)> {
         self.0.borrow_mut().push(format!("warm {repo}"));
-        Some((self.1, if self.1 == 0 { "already warm abc-def\n".into() } else { "gate warm-tools: another warm-tools holds x.lock\n".into() }))
+        Some((self.1, if self.1 == 0 { "already warm abc-def\n".into() } else { "gate warm-tools: build failed\n".into() }))
     }
 }
 
@@ -396,4 +396,45 @@ fn a_second_death_at_the_cap_is_filed_with_both_deaths_as_evidence() {
 #[test]
 fn a_gate_that_ends_for_another_reason_is_filed_at_once() {
     assert_eq!(drain_one(75, "gate: VERDICT=NO_VERDICT reason=lock").reason.as_deref(), Some("lock"));
+}
+
+/// The warm is held for `held` asks, then answers; records warms, pauses and the gate.
+struct Held<'a>(&'a RefCell<Vec<String>>, std::cell::Cell<u32>, u32);
+impl Gate for Held<'_> {
+    fn gate(&self, _: &str, _: &str, _: &str, _: &str) -> (i32, String) {
+        self.0.borrow_mut().push("gate".into());
+        (0, "gate: VERDICT=PASS".into())
+    }
+    fn warm(&self, _: &str) -> Option<(i32, String)> {
+        self.0.borrow_mut().push("warm".into());
+        let n = self.1.get();
+        self.1.set(n + 1);
+        Some(if n < self.2 { (1, "gate warm-tools: another warm-tools holds x.lock\n".into()) } else { (0, "already warm abc-def\n".into()) })
+    }
+    fn pause(&self, _: u64) {
+        self.0.borrow_mut().push("pause".into());
+    }
+}
+
+fn drain_held(name: &str, held: u32) -> Vec<String> {
+    let d = tmp(name);
+    let q = GateQueue::new(&d);
+    q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", "t1", false)).unwrap();
+    let calls = RefCell::new(Vec::new());
+    let g = Held(&calls, std::cell::Cell::new(0), held);
+    let w = Worker { queue: &q, gate: &g, branches: &Tip(Some("t1".into())), clock: &Tick(AtomicU64::new(0)), lock_wait: 1, log: &|_| {}, slot: 0 };
+    assert_eq!(w.drain(), 1);
+    calls.into_inner()
+}
+
+#[test]
+fn a_warm_held_by_another_process_is_waited_for_before_the_gate_starts() {
+    assert_eq!(drain_held("warm-held", 2), ["warm", "pause", "warm", "pause", "warm", "gate"]);
+}
+
+#[test]
+fn a_warm_held_forever_stops_waiting_and_the_gate_runs_anyway() {
+    let calls = drain_held("warm-held-forever", u32::MAX);
+    assert_eq!(calls.iter().filter(|c| *c == "pause").count(), WARM_POLLS as usize);
+    assert_eq!(calls.last().map(String::as_str), Some("gate"));
 }
