@@ -35,6 +35,11 @@ struct Fake {
     admission_free: Cell<bool>,
     admission_who: RefCell<Vec<String>>,
     lock_free: Cell<bool>,
+    /// The lock is held for this many `tree_lock_try` calls, then free.
+    lock_busy_tries: Cell<u32>,
+    lock_open: Cell<bool>,
+    locks_opened: RefCell<Vec<PathBuf>>,
+    checkout_err: RefCell<Option<String>>,
     worktree: Cell<bool>,
     /// (status, output) by the SPIRA_GATE_BRANCH the trial ran with.
     runs: RefCell<HashMap<String, (i32, String)>>,
@@ -225,6 +230,10 @@ impl Fake {
             admission_free: Cell::new(true),
             admission_who: RefCell::new(Vec::new()),
             lock_free: Cell::new(true),
+            lock_busy_tries: Cell::new(0),
+            lock_open: Cell::new(true),
+            locks_opened: RefCell::new(Vec::new()),
+            checkout_err: RefCell::new(None),
             worktree: Cell::new(true),
             runs: RefCell::new(runs),
             ran: RefCell::new(Vec::new()),
@@ -297,11 +306,14 @@ impl Fake {
         self.run_with(false)
     }
     fn run_with(&self, release_bins: bool) -> i32 {
+        self.run_on(BR, release_bins)
+    }
+    fn run_on(&self, branch: &str, release_bins: bool) -> i32 {
         Trial::new(
             self,
             Args {
                 home: PathBuf::from("/h"),
-                branch: BR.into(),
+                branch: branch.into(),
                 repo: Some("spira".into()),
                 release_bins,
             },
@@ -489,14 +501,23 @@ impl World for Fake {
     fn admission_wait_line(&self, _: &str, par: u64) -> String {
         format!("waiting for a gate slot: {par} of {par} held by fake")
     }
-    fn tree_lock_open(&self, _: &Path) -> bool {
-        true
+    fn tree_lock_open(&self, lock: &Path) -> bool {
+        self.locks_opened.borrow_mut().push(lock.to_path_buf());
+        self.lock_open.get()
     }
     fn tree_lock_try(&self) -> bool {
+        let busy = self.lock_busy_tries.get();
+        if busy > 0 {
+            self.lock_busy_tries.set(busy - 1);
+            return false;
+        }
         self.lock_free.get()
     }
     fn write_holder(&self, _: &Path) {}
     fn checkout(&self, _: &Path, _: &Path, rev: &str, want: &str) -> Result<(), String> {
+        if let Some(e) = self.checkout_err.borrow().clone() {
+            return Err(e);
+        }
         self.checkouts.borrow_mut().push(rev.to_string());
         self.checkout_wants.borrow_mut().push(want.to_string());
         Ok(())
@@ -1793,6 +1814,95 @@ fn a_held_tree_times_out_and_meters_the_wait() {
         0,
         "a tree it never held is not removed"
     );
+}
+
+#[test]
+fn a_timed_out_gate_says_it_is_a_queue_not_a_fault_and_leaves_the_holders_tree() {
+    let f = Fake::new();
+    f.lock_free.set(false);
+    f.put_var("SPIRA_GATE_LOCK_WAIT", "2");
+    assert!(f.exists(&Path::new(GATE_TREE).join(".git")), "the holder's tree is registered");
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.stderr().contains("not a fault in the branch"), "{}", f.stderr());
+    assert_eq!(f.removed_trees.get(), 0);
+    assert!(f.ran.borrow().is_empty(), "a gate that never got the tree judged nothing");
+}
+
+#[test]
+fn a_lockfile_that_cannot_be_opened_is_no_verdict_no_lockfile() {
+    let f = Fake::new();
+    f.lock_open.set(false);
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=no-lockfile"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("cannot open the gate tree's lock"), "{}", f.stderr());
+    assert_eq!(f.removed_trees.get(), 0);
+    assert!(f.ran.borrow().is_empty());
+}
+
+#[test]
+fn gates_on_different_branches_lock_different_trees_and_one_branch_locks_one() {
+    let lock_of = |branch: &str| {
+        let f = Fake::new();
+        f.run_on(branch, false);
+        let lock = f.locks_opened.borrow().first().cloned().expect("a lock was opened");
+        lock
+    };
+    let a = lock_of("spira/sp-a");
+    let b = lock_of("spira/sp-b");
+    assert_eq!(a, PathBuf::from("/run/worktree/.gate.spira.spira-sp-a.lock"));
+    assert_eq!(b, PathBuf::from("/run/worktree/.gate.spira.spira-sp-b.lock"));
+    assert_eq!(a, lock_of("spira/sp-a"), "the same branch always contends for the same lock");
+}
+
+#[test]
+fn a_gate_that_waits_for_its_branchs_tree_meters_the_wait_and_then_judges_it() {
+    let f = Fake::new();
+    f.lock_busy_tries.set(3);
+    f.put_var("SPIRA_GATE_LOCK_WAIT", "60");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.stderr().contains(&format!("gate: waited 3s for {GATE_TREE}")), "{}", f.stderr());
+    let row = f.appended.borrow()[0].clone();
+    assert!(row.contains("waited=3s") && row.contains("waited_ms=3000"), "{row}");
+}
+
+#[test]
+fn a_gate_that_never_waited_for_its_tree_meters_no_wait() {
+    let f = Fake::new();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(!f.stderr().contains("gate: waited"), "{}", f.stderr());
+    let row = f.appended.borrow()[0].clone();
+    assert!(row.contains("waited=0s") && !row.contains("waited_ms="), "{row}");
+}
+
+#[test]
+fn a_passing_gate_keeps_its_tree_and_a_red_one_removes_it() {
+    let pass = Fake::new();
+    assert_eq!(pass.run(), PASS, "{}", pass.stderr());
+    assert_eq!(pass.removed_trees.get(), 0, "a pass keeps the tree for the next gate's checkout");
+    let red = Fake::new();
+    red.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "  test-a.sh RED rc=1".into()));
+    red.runs.borrow_mut().insert(BASE.into(), (0, "test-a.sh ok".into()));
+    assert_eq!(red.run(), FAIL, "{}", red.stderr());
+    assert_eq!(red.removed_trees.get(), 1, "a red gate removes the tree it held");
+}
+
+#[test]
+fn a_tree_that_cannot_be_checked_out_is_no_verdict_tree_unidentified_and_is_removed() {
+    let f = Fake::new();
+    *f.checkout_err.borrow_mut() = Some("gate: worktree add failed".into());
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=tree-unidentified"), "{}", f.verdict_line());
+    assert!(f.ran.borrow().is_empty());
+    assert_eq!(f.removed_trees.get(), 1, "the half-made tree is this process's to remove");
+}
+
+#[test]
+fn a_tree_that_was_never_created_is_not_removed() {
+    let f = Fake::new();
+    f.worktree.set(false);
+    *f.checkout_err.borrow_mut() = Some("gate: worktree add failed".into());
+    assert_eq!(f.run(), NOVERDICT);
+    assert_eq!(f.removed_trees.get(), 0, "nothing to deregister");
 }
 
 #[test]
