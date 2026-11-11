@@ -24,6 +24,7 @@ use crate::callers::Answer;
 use crate::db::Conn;
 
 const SWEEP_EVERY: Duration = Duration::from_secs(5);
+const GC_SCAN_EVERY: Duration = Duration::from_secs(300);
 
 static SPANS: std::sync::OnceLock<spira_otel::Sink> = std::sync::OnceLock::new();
 
@@ -178,9 +179,12 @@ pub fn run(args: &[String]) -> i32 {
             }
         });
         if let Some(store) = control {
-            std::thread::spawn(move || loop {
-                std::thread::sleep(SWEEP_EVERY);
-                gc_tick(&store);
+            std::thread::spawn(move || {
+                let gc = state_store::gc::Controller::with_scan_every(store.contract(), GC_SCAN_EVERY.as_millis() as u64);
+                loop {
+                    std::thread::sleep(SWEEP_EVERY);
+                    gc_tick(&gc, store.contract());
+                }
             });
         }
         std::thread::spawn(crate::plan::run_mirror);
@@ -259,11 +263,11 @@ fn accept_until_stopped<'scope, 'env, F>(
     }
 }
 
-/// One pass of the control store's GC controller: finalized keys, orphans and lapsed TTLs.
-fn gc_tick<B: state_store::Backend>(store: &crate::control::store::Store<B>) {
-    let contract = store.contract();
-    if let Err(e) = state_store::gc::Controller::new(contract).tick(contract.now_ms()) {
-        eprintln!("spira-lc serve: control-store gc: {e}");
+/// One pass of the control store's GC controller; each failed step is logged under its name.
+fn gc_tick<B: state_store::Backend>(gc: &state_store::gc::Controller<B>, contract: &state_store::Contract<B>) {
+    for failure in gc.pass(contract.now_ms()).failed {
+        let wall_ms = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        eprintln!("spira-lc serve: {} control-store gc {failure}", spira_lc::sections::rfc3339(wall_ms));
     }
 }
 
