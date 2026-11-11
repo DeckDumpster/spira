@@ -8422,3 +8422,21 @@ fn a_mender_that_mends_its_own_failure_keeps_its_bead() {
     assert_eq!(t.run(&["round", "mended", &batch, "test-z.sh", &tip, "--checked=crate:queue"]), 0, "{}", t.err());
     assert!(!t.lib.has("bead_close"), "{:?}", t.lib.calls.borrow());
 }
+
+#[test]
+fn a_hand_mend_without_its_reason_evidence_or_evidence_tip_is_refused_before_spira_lc_hears_of_it() {
+    let t = round_world();
+    let batch = failed_round_with_mender(&t, "test-z.sh", "sp-m1");
+    let tip = format!("--tips=sp-a:{T_HAND}");
+    let ev_tip = format!("--evidence-tip={T_HAND}");
+    for extra in [
+        vec!["--reason=r", "--evidence=e"],
+        vec!["--reason=r", &ev_tip],
+        vec!["--evidence=e", &ev_tip],
+    ] {
+        let mut argv = vec!["round", "mended", &batch, "test-z.sh", &tip, "--checked=crate:queue", "--by=operator"];
+        argv.extend(extra);
+        assert_eq!(t.run(&argv), 2, "{argv:?}: {}", t.err());
+    }
+    assert!(!t.lc.has("mend "));
+}

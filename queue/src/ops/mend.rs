@@ -21,7 +21,7 @@ const SUITE_GLOB: &str = "**/test-*.sh";
 
 /// `--by`, `--evidence` and `--evidence-tip` of `round mended`: the person who put the tip on the
 /// branch, answering for it the way a resubmit does.
-pub struct HandFix {
+pub struct HandArgs {
     pub by: String,
     pub evidence: Text,
     pub evidence_tip: String,
@@ -38,7 +38,7 @@ pub fn run(
     checked: &str,
     ask: Option<&str>,
     reason: &Text,
-    hand: HandFix,
+    hand: HandArgs,
 ) -> i32 {
     let label = format!("round {outcome}");
     if !czar_ok(w) {
@@ -70,6 +70,16 @@ pub fn run(
     if !hand_by.is_empty() && !(outcome == "mended" && mending::may_settle_unpicked(&hand_by)) {
         w.err(format!(
             "queue.sh {label}: --by is for a hand-built `round mended` and names concierge or operator"
+        ));
+        return USAGE;
+    }
+    if !hand_by.is_empty()
+        && (hand.evidence_tip.trim().is_empty()
+            || read_text(w, &hand.evidence).unwrap_or_default().trim().is_empty()
+            || diagnosis.is_empty())
+    {
+        w.err(format!(
+            "queue.sh {label}: --by needs --reason, --evidence and --evidence-tip, as a resubmit does"
         ));
         return USAGE;
     }

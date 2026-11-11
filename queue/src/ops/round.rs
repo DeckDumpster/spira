@@ -270,7 +270,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             checked,
             ask.as_deref(),
             reason,
-            super::mend::HandFix {
+            super::mend::HandArgs {
                 by: by.clone(),
                 evidence: evidence.clone(),
                 evidence_tip: evidence_tip.clone(),
