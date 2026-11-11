@@ -136,6 +136,11 @@ id = "UC-landed-audit-reaping-14"
 tier = "T2"
 statement = "`content_landed repo br base` returns 0 only when the branch has commits ahead and merging them would leave the base tree unchanged. That covers squash, ancestor and empty-commit review branches. It returns 1 for zero-ahead, conflict or differing-tree branches."
 
+[use_case.uncovered]
+reason = "suite test-hel.sh deleted with sp-7tz6jb: it faked the store with a bd stub and content reads are SQL now; re-added as in-process unit tests by sp-js5e4e"
+date = "2026-11-10"
+bead = "sp-js5e4e"
+
 [[use_case]]
 id = "UC-landed-audit-reaping-15"
 tier = "T2"
@@ -146,35 +151,70 @@ id = "UC-landed-audit-reaping-16"
 tier = "T2"
 statement = "The Hel gives each `spira/*` branch exactly one disposition: `HELD` when a holder is live; `KEEP` when unlanded; `UNADOPTED` when there is no bead; `SENT` for content-landed, and for zero-ahead plus a naming commit (ff); `REAPED` for a squash-merged PR at the same tip, and for a superseded bead whose branch adds nothing to the base; `SKIP` for CERTIFIED/BATCHED. It never hands an unlanded branch to the destroyer."
 
+[use_case.uncovered]
+reason = "suite test-hel.sh deleted with sp-7tz6jb: it faked the store with a bd stub and content reads are SQL now; re-added as in-process unit tests by sp-js5e4e"
+date = "2026-11-10"
+bead = "sp-js5e4e"
+
 [[use_case]]
 id = "UC-landed-audit-reaping-17"
 tier = "T2"
 statement = "When the Hel reaps by content, it labels the bead `content-landed`, but only when the branch had commits of its own. That lets CHECK 5 still catch a zero-commit branch, and CHECK 5 reads the label (writer to reader seam)."
+
+[use_case.uncovered]
+reason = "suite test-hel.sh deleted with sp-7tz6jb: it faked the store with a bd stub and content reads are SQL now; re-added as in-process unit tests by sp-js5e4e"
+date = "2026-11-10"
+bead = "sp-js5e4e"
 
 [[use_case]]
 id = "UC-landed-audit-reaping-18"
 tier = "T2"
 statement = "Reaping a content-landed branch that has no landstate logs `ASSERT <id>` but does not block the reap."
 
+[use_case.uncovered]
+reason = "suite test-hel.sh deleted with sp-7tz6jb: it faked the store with a bd stub and content reads are SQL now; re-added as in-process unit tests by sp-js5e4e"
+date = "2026-11-10"
+bead = "sp-js5e4e"
+
 [[use_case]]
 id = "UC-landed-audit-reaping-19"
 tier = "T2"
 statement = "Once a branch is sent, the Hel also deletes the remote branch when one exists and removes the `branch:` label. It keeps the dwarf session log, because CHECK 5 depends on it."
+
+[use_case.uncovered]
+reason = "suite test-hel.sh deleted with sp-7tz6jb: it faked the store with a bd stub and content reads are SQL now; re-added as in-process unit tests by sp-js5e4e"
+date = "2026-11-10"
+bead = "sp-js5e4e"
 
 [[use_case]]
 id = "UC-landed-audit-reaping-20"
 tier = "T2"
 statement = "Hel pass 2 removes orphaned worktrees whose branch is gone, unless a holder is live, and never touches the shared checkout. `spira_destroy_worktree` prunes an absent out-of-root registration and refuses an existing out-of-root directory."
 
+[use_case.uncovered]
+reason = "suite test-hel.sh deleted with sp-7tz6jb: it faked the store with a bd stub and content reads are SQL now; re-added as in-process unit tests by sp-js5e4e"
+date = "2026-11-10"
+bead = "sp-js5e4e"
+
 [[use_case]]
 id = "UC-landed-audit-reaping-21"
 tier = "T2"
 statement = "The Hel skips loudly when a repo's land ref cannot be resolved, and exits non-zero when anything failed."
 
+[use_case.uncovered]
+reason = "suite test-hel.sh deleted with sp-7tz6jb: it faked the store with a bd stub and content reads are SQL now; re-added as in-process unit tests by sp-js5e4e"
+date = "2026-11-10"
+bead = "sp-js5e4e"
+
 [[use_case]]
 id = "UC-landed-audit-reaping-22"
 tier = "T1"
 statement = "The hel counters count distinct branches, not log lines. `SP_SENT_FAILED_AGE_M` renders `?` when there is no failure."
+
+[use_case.uncovered]
+reason = "suite test-hel.sh deleted with sp-7tz6jb: it faked the store with a bd stub and content reads are SQL now; re-added as in-process unit tests by sp-js5e4e"
+date = "2026-11-10"
+bead = "sp-js5e4e"
 
 [[use_case]]
 id = "UC-landed-audit-reaping-23"

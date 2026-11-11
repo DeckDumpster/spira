@@ -41,6 +41,11 @@ id = "UC-operator-channel-08"
 tier = "T2"
 statement = "tidy keeps open-ask mail (label from SPIRA_ASK_LABEL), fresh unread mail and X-Spira-Urgent mail younger than 7 days, plus only the newest of a repeated…"
 
+[use_case.uncovered]
+reason = "suite test-mail-tidy.sh deleted with sp-7tz6jb: it faked the store with a bd stub and content reads are SQL now; re-added as in-process unit tests by sp-js5e4e"
+date = "2026-11-10"
+bead = "sp-js5e4e"
+
 [[use_case]]
 id = "UC-operator-channel-09"
 tier = "T2"
