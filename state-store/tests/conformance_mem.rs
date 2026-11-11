@@ -69,6 +69,10 @@ const OVER_BUDGET: &[&str] = &["request_bytes_at_the_limit_pass_and_one_over_is_
 
 #[test]
 fn every_scenario_of_the_suite_is_its_own_test_here() {
-    let want: Vec<&str> = SCENARIOS.iter().copied().filter(|s| !OVER_BUDGET.contains(s)).collect();
+    let want: Vec<&str> = SCENARIOS
+        .iter()
+        .copied()
+        .filter(|s| !OVER_BUDGET.contains(s))
+        .collect();
     assert_eq!(COVERED, want.as_slice());
 }

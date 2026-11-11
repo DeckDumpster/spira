@@ -1066,7 +1066,9 @@ pub fn a_cut_at_the_member_cap_passes_the_limits_and_one_more_is_refused<R: Rig>
     let c = open(rig.fresh(), &clock);
     assert!(limits::cut_fits(limits::MAX_CUT_MEMBERS, 0));
     assert!(!limits::cut_fits(limits::MAX_CUT_MEMBERS + 1, 0));
-    let at = c.txn(&cut(limits::MAX_CUT_MEMBERS, "at"), &req("at")).unwrap();
+    let at = c
+        .txn(&cut(limits::MAX_CUT_MEMBERS, "at"), &req("at"))
+        .unwrap();
     assert!(at.succeeded);
     let head = c.head().unwrap();
     assert!(matches!(
@@ -1245,7 +1247,10 @@ pub fn a_txn_acquiring_a_lock_held_by_another_holder_fails_whole<R: Rig>(rig: &R
     assert!(r.fences.is_empty());
     assert_eq!(data(&c, "lifecycle/x"), Some(json!("open")));
     assert_eq!(data(&c, "markers/x"), Some(json!("refused")));
-    assert_eq!(c.get("locks/lifecycle/x").unwrap().unwrap().create_rev, b.token);
+    assert_eq!(
+        c.get("locks/lifecycle/x").unwrap().unwrap().create_rev,
+        b.token
+    );
     assert_eq!(
         data(&c, &events_key(r.rev)).unwrap()["refused"],
         json!(true)
@@ -1390,7 +1395,9 @@ pub fn a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below
     assert!(keys("B", None, 10, head).is_empty(), "p/b left B");
     assert_eq!(keys("A", None, 10, then), ["p/a", "p/c"]);
     assert_eq!(keys("B", None, 10, then), ["p/b"]);
-    let read = c.range_in_state("p/", "A", None, 10, head).expect("range_in_state");
+    let read = c
+        .range_in_state("p/", "A", None, 10, head)
+        .expect("range_in_state");
     assert_eq!(read[0].value.data, json!({ "state": "A" }));
     assert_eq!(read[0].mod_rev.main, head - 1, "p/b as rewritten");
 }
