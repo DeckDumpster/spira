@@ -217,7 +217,7 @@ fn blocks(v: &serde_json::Value, ask_id: &str) -> bool {
         .and_then(|d| d.as_array())
         .map(|deps| {
             deps.iter().any(|dep| {
-                dep.get("dependency_type").and_then(|x| x.as_str()) == Some("blocks") && dep.get("id").and_then(|x| x.as_str()) == Some(ask_id)
+                dep.get("type").and_then(|x| x.as_str()) == Some("blocks") && dep.get("depends_on_id").and_then(|x| x.as_str()) == Some(ask_id)
             })
         })
         .unwrap_or(false)
@@ -248,12 +248,7 @@ fn github_rows(v: &serde_json::Value) -> Vec<ClosedGhRow> {
             }
             let superseder = r.get("dependencies").and_then(|d| d.as_array()).and_then(|deps| {
                 deps.iter().find_map(|dep| {
-                    let t = dep.get("dependency_type").or_else(|| dep.get("type")).and_then(|x| x.as_str());
-                    if t == Some("supersedes") {
-                        dep.get("id").and_then(|x| x.as_str()).or_else(|| dep.get("blocked_by").and_then(|x| x.as_str())).map(String::from)
-                    } else {
-                        None
-                    }
+                    (dep.get("type").and_then(|x| x.as_str()) == Some("supersedes")).then(|| dep.get("depends_on_id").and_then(|x| x.as_str()).map(String::from)).flatten()
                 })
             });
             let repo_label = r
@@ -1167,7 +1162,7 @@ mod tests {
         let bd = FakeBd::default();
         let subj = close_issue_subject("github:fixture/testrepo#101", "sp-ct1");
         bd.open.borrow_mut().push(("sp-ask1".to_string(), subj.clone()));
-        bd.show.borrow_mut().insert("sp-ct1".into(), serde_json::json!({"dependencies": [{"dependency_type": "blocks", "id": "sp-ask1"}]}));
+        bd.show.borrow_mut().insert("sp-ct1".into(), serde_json::json!({"dependencies": [{"issue_id": "sp-ct1", "depends_on_id": "sp-ask1", "type": "blocks"}]}));
         let (gh, git, repo, mail) = (FakeGh::default(), FakeGit::default(), FakeRepo::default(), FakeMail::default());
         let lc = FakeLc::default();
         let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
@@ -1543,6 +1538,17 @@ mod tests {
         assert!(matches!(&by("sp-a").verdict, ProvVerdict::Settled(t) if t.contains("cafebabe") && t.contains("sp-a -> sp-x")), "{:?}", by("sp-a"));
         assert!(by("sp-b").is_broken(), "superseded by a bead that never landed");
         assert!(by("sp-c").is_broken(), "no lifecycle row at all");
+    }
+
+    #[test]
+    fn a_supersedes_edge_names_its_target_in_the_door_row_shape() {
+        let rows = github_rows(&serde_json::json!([
+            {"id": "sp-a", "external_ref": "github:fixture/testrepo#1", "labels": ["repo:spira"], "closed_at": "2026-11-01T00:00:00Z",
+             "dependencies": [{"issue_id": "sp-a", "depends_on_id": "sp-blk", "type": "blocks"}, {"issue_id": "sp-a", "depends_on_id": "sp-new", "type": "supersedes"}]}
+        ]));
+        assert_eq!(rows[0].superseder.as_deref(), Some("sp-new"));
+        let none = github_rows(&serde_json::json!([{"id": "sp-b", "external_ref": "github:fixture/testrepo#2", "dependencies": [{"issue_id": "sp-b", "depends_on_id": "sp-x", "type": "blocks"}]}]));
+        assert_eq!(none[0].superseder, None);
     }
 
     #[test]

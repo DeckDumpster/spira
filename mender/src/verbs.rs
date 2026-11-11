@@ -88,9 +88,9 @@ pub fn diff(w: &dyn World, spec_path: &str, bead_id: &str) -> Reply {
 /// Description, acceptance and notes (`content show`), comments, lifecycle history, and the
 /// design the description names.
 pub fn bead(w: &dyn World, id: &str) -> Reply {
-    let shown = lc_ok(w, &["content", "show", id])?;
+    let (shown, prose) = rendered(&lc_ok(w, &["content", "show", id])?)?;
     let mut out = format!("## Bead {id}\n\n{shown}\n\n### Comments\n\n{}\n\n### History\n\n{}\n", lc_ok(w, &["content", "comments", id])?, lc_ok(w, &["history", id])?);
-    for p in design_paths(&shown) {
+    for p in design_paths(&prose) {
         out.push_str(&format!("\n### Source design: {p}\n\n"));
         let full = w.wiki().map(|root| format!("{}/{p}", root.trim_end_matches('/')));
         match full.and_then(|f| w.read(&f)) {
@@ -100,6 +100,14 @@ pub fn bead(w: &dyn World, id: &str) -> Reply {
         out.push('\n');
     }
     Ok(out)
+}
+
+/// The bead rows `content show` answered, as the pack prints them, and their free text as the
+/// design paths are read from it (a JSON string holds its newlines escaped).
+fn rendered(shown: &str) -> Result<(String, String), String> {
+    let rows: Vec<serde_json::Value> = serde_json::from_str(shown).map_err(|e| format!("content show: not the bead rows ({e})"))?;
+    let prose = rows.iter().flat_map(|r| ["description", "design", "acceptance_criteria", "notes"].map(|k| r.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string())).collect::<Vec<_>>().join("\n");
+    Ok((serde_json::to_string_pretty(&rows).map_err(|e| e.to_string())?, prose))
 }
 
 pub fn round_members(w: &dyn World, spec_path: &str) -> Reply {
@@ -353,7 +361,7 @@ mod tests {
     #[test]
     fn the_pack_points_at_the_touching_member_and_gives_its_whole_bead() {
         let mut w = Fake::new();
-        w.lc_answers.insert("content show sp-a".into(), (0, "DESC see brain wiki/projects/x/design.md for it".into()));
+        w.lc_answers.insert("content show sp-a".into(), (0, r#"[{"id":"sp-a","title":"T","description":"DESC see brain\nwiki/projects/x/design.md for it","labels":[]}]"#.into()));
         w.files.insert("/wiki/projects/x/design.md".into(), "THE DESIGN".into());
         let text = pack(&w, "/spec").unwrap();
         assert!(text.contains("EAGAIN at output line 2"), "{text}");
@@ -367,7 +375,7 @@ mod tests {
     #[test]
     fn an_unreadable_design_says_so() {
         let mut w = Fake::new();
-        w.lc_answers.insert("content show sp-a".into(), (0, "see wiki/gone.md".into()));
+        w.lc_answers.insert("content show sp-a".into(), (0, r#"[{"id":"sp-a","description":"see wiki/gone.md"}]"#.into()));
         assert!(pack(&w, "/spec").unwrap().contains("(unreadable: no file /wiki/gone.md)"));
     }
 
