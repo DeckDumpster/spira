@@ -541,6 +541,18 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
 /// The machine's claimability filter for `select --blockers machine`: keeps the claimable
 /// `rows` and returns the lifecycle snapshot the ranking reads its REWORK set from.
 fn machine_filter(a: &Args, env: &mut Env, st: &Store, rows: &mut Vec<rank::ReadyRow>) -> Result<HashMap<String, LifecycleRow>, Outcome> {
+    if env.config.control_store && a.get("--lifecycle").is_none() && a.get("--blocker-records").is_none() {
+        match published_view(a, env, st) {
+            Ok(Some(p)) => {
+                let claimable: BTreeSet<&str> = p.rows.iter().map(|r| r.id.as_str()).collect();
+                rows.retain(|r| claimable.contains(r.id.as_str()));
+                rank::mark_express(rows, &p.express);
+                return Ok(p.lifecycle);
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!("spira-claim: published readiness unread, judging here: {}", first_line(&e)),
+        }
+    }
     let rune = a.get("--rune").unwrap_or("");
     let stack_max = a.num("--stack-max-depth", env.config.stack_max_depth).unwrap_or(env.config.stack_max_depth).min(rank::STACK_CEILING);
     let mut ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
@@ -800,17 +812,32 @@ fn cmd_urgent(a: &Args, env: &mut Env) -> Outcome {
 }
 
 fn urgent_over(a: &Args, env: &Env, st: &Store) -> Result<String, String> {
-    let rows = claimable_over(a, env, st)?.0;
-    let rework = st.lifecycle_in_states(&["REWORK"])?;
-    let express = st.express_ids()?;
     let parts = urgent_scope(a, env)?;
+    let published = if env.config.control_store {
+        published_view(a, env, st).unwrap_or_else(|e| {
+            eprintln!("spira-claim: published readiness unread, judging here: {}", first_line(&e));
+            None
+        })
+    } else {
+        None
+    };
+    let (rows, rework, express): (_, BTreeSet<String>, _) = match published {
+        Some(p) => {
+            let rework = p.lifecycle.values().filter(|r| r.state == lifecycle::bead::BeadState::Rework).map(|r| r.bead_id.clone()).collect();
+            (p.rows, rework, p.express)
+        }
+        None => {
+            let rows = machine_judged(a, env, st, false)?.0;
+            (rows, st.lifecycle_in_states(&["REWORK"])?.into_keys().collect(), st.express_ids()?)
+        }
+    };
     let queue_wait = queue_wait_label(env);
     let mut out = String::new();
     for r in rows.iter().filter(|r| !rank::is_container(r)) {
         if !parts.is_empty() && !ready::in_any_partition(r, &parts, &queue_wait) {
             continue;
         }
-        let (p0, rw) = (r.prio() == 0, rework.contains_key(&r.id));
+        let (p0, rw) = (r.prio() == 0, rework.contains(&r.id));
         if p0 || rw {
             out.push_str(&format!("{}\t{}\t{}\t{}\n", r.id, r.prio(), u8::from(rw), u8::from(express.contains(&r.id))));
         }
@@ -818,7 +845,7 @@ fn urgent_over(a: &Args, env: &Env, st: &Store) -> Result<String, String> {
     Ok(out)
 }
 
-/// `ready-count --json`: [`machine_claimable`]'s rows matching the labels. A machine that
+/// `ready-count --json`: [`machine_claimable_shared`]'s rows matching the labels. A machine that
 /// cannot answer is a refusal, never an empty queue.
 fn ready_rows_json(a: &Args, env: &Env, st: &Store, labels: &str, exclude: &str) -> Outcome {
     let rows = match machine_claimable_shared(a, env, st) {
@@ -918,18 +945,6 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
     0
 }
 
-/// The beads a claim could actually take. The candidates are the
-/// machine's READY/REWORK rows; bd is read only for their content (labels, type, priority,
-/// blockers), never for status or assignee — the same rule `select --blockers machine`
-/// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
-fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
-    claimable_over(a, env, &store(a)?).map(|(rows, _)| rows)
-}
-
-fn accepts(_judged_at: Option<&str>, _now: i64, _max_age_s: u32) -> bool {
-    true
-}
-
 /// What a published answer is good to: the oldest planning watermark and judgement time among
 /// the beads in it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -938,12 +953,33 @@ struct Freshness {
     judged_at: Option<String>,
 }
 
+/// One `ready-set` read, taken whole: the claimable rows, the lifecycle rows they were judged
+/// from and the express ids among them.
+struct Published {
+    rows: Vec<rank::ReadyRow>,
+    lifecycle: HashMap<String, LifecycleRow>,
+    express: BTreeSet<String>,
+    freshness: Freshness,
+}
+
+/// Whether a verdict stamped `judged_at` is young enough to answer from. A missing or unreadable
+/// stamp is refused, and `max_age_s == 0` means always judge.
+fn accepts(judged_at: Option<&str>, now: i64, max_age_s: u32) -> bool {
+    max_age_s > 0 && judged_at.and_then(verdicts::epoch).is_some_and(|at| now - at <= i64::from(max_age_s))
+}
+
 /// The claimable rows by the dispatcher's published judgement when the control store holds one,
 /// else judged here. Reading never publishes.
 fn claimable_over(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow>, Option<Freshness>), String> {
     if env.config.control_store {
-        match published_claimable(a, env, st) {
-            Ok(Some(answer)) => return Ok((answer.0, Some(answer.1))),
+        match published_view(a, env, st) {
+            Ok(Some(p)) => {
+                let mut rows = p.rows;
+                if a.has("--express") {
+                    rows.retain(|r| p.express.contains(&r.id));
+                }
+                return Ok((rows, Some(p.freshness)));
+            }
             Ok(None) => {}
             Err(e) => eprintln!("spira-claim: published readiness unread, judging here: {}", first_line(&e)),
         }
@@ -951,14 +987,13 @@ fn claimable_over(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow
     machine_judged(a, env, st, false).map(|(rows, _)| (rows, None))
 }
 
-/// `None` while any ready bead is unjudged: the answer would lack it, and only judging here
-/// has it. A pass judges every live record, so that holds only between a bead's arrival and the
-/// next pass.
-/// The lifecycle rows are read now, so a hold or claim since the pass keeps a bead out; scope
-/// and stops are applied here as `judge_rows` applies them.
-fn published_claimable(a: &Args, env: &Env, st: &Store) -> Result<Option<(Vec<rank::ReadyRow>, Freshness)>, String> {
+/// `None` while any ready bead is unjudged (the answer would lack it), or when the judgement is
+/// older than `ready_ttl_s`: the caller then judges for itself. The lifecycle rows are read now,
+/// so a hold or claim since the pass keeps a bead out; scope and stops are applied here as
+/// `judge_rows` applies them.
+fn published_view(a: &Args, env: &Env, st: &Store) -> Result<Option<Published>, String> {
     let set = st.ready_set()?;
-    if set.unjudged > 0 {
+    if set.unjudged > 0 || !accepts(set.judged_at.as_deref(), ready::now_epoch(), env.config.ready_ttl_s) {
         return Ok(None);
     }
     let want: BTreeSet<String> = ready::lifecycle_ready_ids(&set.lifecycle).into_iter().collect();
@@ -966,10 +1001,12 @@ fn published_claimable(a: &Args, env: &Env, st: &Store) -> Result<Option<(Vec<ra
     let mut rows: Vec<rank::ReadyRow> = set.rows.into_iter().filter(|r| want.contains(&r.id) && ready::in_scope(r, &scope, &no_loop)).collect();
     rows.sort_by(|x, y| x.id.cmp(&y.id));
     retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
-    if a.has("--express") {
-        rows.retain(|r| set.express.contains(&r.id));
-    }
-    Ok(Some((rows, Freshness { planning_watermark: set.planning_watermark, judged_at: set.judged_at })))
+    Ok(Some(Published {
+        rows,
+        lifecycle: set.lifecycle,
+        express: set.express,
+        freshness: Freshness { planning_watermark: set.planning_watermark, judged_at: set.judged_at },
+    }))
 }
 
 /// [`machine_claimable`] with the verdict of every READY/REWORK row it judged. `publish`
@@ -980,21 +1017,25 @@ fn machine_judged(a: &Args, env: &Env, st: &Store, publish: bool) -> Result<(Vec
     Ok((rows.into_iter().filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id))).collect(), entries))
 }
 
-/// [`machine_claimable`] for the counting readers (`ready-count`): one computation per
-/// `ready_ttl_s` shared by every process, so a tick of watchers does not each recompute the
-/// whole set. Claiming never reads this.
+/// The counting readers' rows (`ready-count`): a published answer when one is young enough, else
+/// one computation per `ready_ttl_s` shared by every process, so a tick of watchers does not each
+/// recompute the whole set. Claiming never reads this.
 fn machine_claimable_shared(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>, String> {
-    let rows = ready_cache::read_or(&env.config, &ready_cache_key(a, env), || claimable_base(a, env, st))?;
-    let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
+    let express_only = a.has("--express");
+    if env.config.control_store {
+        match published_view(a, env, st) {
+            Ok(Some(p)) => return Ok(p.rows.into_iter().filter(|r| !express_only || p.express.contains(&r.id)).collect()),
+            Ok(None) => {}
+            Err(e) => eprintln!("spira-claim: published readiness unread, judging here: {}", first_line(&e)),
+        }
+    }
+    let rows = ready_cache::read_or(&env.config, &ready_cache_key(a, env), || judge_rows(a, env, st, None, false).map(|(rows, _)| rows))?;
+    let express = if express_only { Some(st.express_ids()?) } else { None };
     Ok(rows.into_iter().filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id))).collect())
 }
 
 fn ready_cache_key(a: &Args, env: &Env) -> String {
     [env.config.db.as_deref().unwrap_or(""), &scope_label(a, env), &no_loop_label(a, env)].join("\x1f")
-}
-
-fn claimable_base(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>, String> {
-    claimable_over(a, env, st).map(|(rows, _)| rows)
 }
 
 /// The dispatcher's one computation: the claimable rows, and a verdict for every READY/REWORK
@@ -1305,11 +1346,13 @@ fn cmd_republish_dependents(a: &Args, env: &Env) -> Outcome {
 }
 
 fn republish_dependents(a: &Args, env: &Env, st: &Store) -> Result<usize, String> {
-    let dependents = st.dependents_of(&ready::split_csv(a.get("--changed").unwrap_or("")))?;
-    if !dependents.is_empty() {
-        judge_rows(a, env, st, Some(&dependents), true)?;
+    let changed = ready::split_csv(a.get("--changed").unwrap_or(""));
+    let mut judged = st.dependents_of(&changed)?;
+    judged.extend(changed);
+    if !judged.is_empty() {
+        judge_rows(a, env, st, Some(&judged), true)?;
     }
-    Ok(dependents.len())
+    Ok(judged.len())
 }
 
 /// `unpoison`'s arguments, validated, before anything is read (DESIGN.md §8.2).

@@ -70,7 +70,7 @@ pub struct Config {
     pub incident_label: String,
     /// `SPIRA_QUEUE_DIR` — where each repo's `integrations` record lives; a member it names is not claimable.
     pub queue_dir: String,
-    /// `SPIRA_READY_TTL_S` — how long `ready-count` shares one computed ready set; 0 = never.
+    /// `SPIRA_READY_TTL_S` — how old a published ready answer a reader accepts, and how long `ready-count` shares one it judged itself; 0 = always judge.
     pub ready_ttl_s: u32,
     /// `SPIRA_LC_STORE_PATH` is set: the control store is where readiness is published.
     pub control_store: bool,
