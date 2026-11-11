@@ -276,6 +276,29 @@ pub fn needing_container<'a>(filters: &'a [String], listed: &[String]) -> Vec<&'
     filters.iter().map(String::as_str).filter(|f| listed.iter().any(|l| l.contains(f) || f.contains(l.as_str()))).collect()
 }
 
+/// Where one unit run goes. `because` names the listed tests that sent a filtered run to the
+/// container; it is empty when the run is simply not a sandbox run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Route {
+    Sandbox { skip: Vec<String> },
+    Container { because: String },
+}
+
+/// An unfiltered sandbox run skips every listed test; a filtered one that names a listed test
+/// goes to the container, since skipping would run nothing it asked for.
+pub fn route(tests: Option<&[String]>, unit_only: bool, runner: Runner, listed: &[String]) -> Route {
+    if !unit_only || runner != Runner::Sandbox {
+        return Route::Container { because: String::new() };
+    }
+    match tests {
+        None => Route::Sandbox { skip: listed.to_vec() },
+        Some(t) => match needing_container(t, listed).join(",") {
+            b if b.is_empty() => Route::Sandbox { skip: Vec::new() },
+            because => Route::Container { because },
+        },
+    }
+}
+
 /// Removes the least recently used branch targets under `root` past `keep`, never `current`.
 /// Returns the paths removed. A target's age is its directory's mtime, which every run touches.
 pub fn prune_targets(root: &Path, current: &Path, keep: usize) -> Vec<PathBuf> {
@@ -376,6 +399,35 @@ pub fn usable(bwrap: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn an_unfiltered_unit_only_sandbox_run_is_sandboxed_with_the_listed_names_as_its_skip_list() {
+        let listed = names(&["a_run_pushes"]);
+        assert_eq!(route(None, true, Runner::Sandbox, &listed), Route::Sandbox { skip: listed.clone() });
+    }
+
+    #[test]
+    fn a_filtered_run_naming_a_listed_test_goes_to_the_container() {
+        let t = names(&["a_run_pushes"]);
+        assert_eq!(route(Some(&t), true, Runner::Sandbox, &t), Route::Container { because: "a_run_pushes".into() });
+    }
+
+    #[test]
+    fn a_filtered_run_naming_no_listed_test_is_sandboxed_with_nothing_skipped() {
+        let t = names(&["other"]);
+        assert_eq!(route(Some(&t), true, Runner::Sandbox, &names(&["a_run_pushes"])), Route::Sandbox { skip: vec![] });
+    }
+
+    #[test]
+    fn the_container_runner_and_a_run_of_other_suites_go_to_the_container() {
+        let listed = names(&["a_run_pushes"]);
+        assert_eq!(route(None, true, Runner::Container, &listed), Route::Container { because: String::new() });
+        assert_eq!(route(None, false, Runner::Sandbox, &listed), Route::Container { because: String::new() });
+    }
 
     fn profile() -> Profile {
         Profile {

@@ -1418,12 +1418,18 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     // identity explicitly, the same way suite-covers.sh's did before it.
     identity.extend(read_file_bytes(&deps.harness.bin("suite-select")));
     // sp-7p5la8: decided before the key, which names the runner.
-    let to_container = if args.tests.is_some() && selected.len() == 1 && crate::unit::selected(&selected) && args.runner.unwrap_or(s.unit_runner) == crate::sandbox::Runner::Sandbox {
-        crate::sandbox::needing_container(args.tests.as_deref().unwrap_or_default(), &crate::sandbox::container_tests(&wt.path)).join(",")
-    } else {
-        String::new()
+    let unit_only = selected.len() == 1 && crate::unit::selected(&selected);
+    let route = crate::sandbox::route(args.tests.as_deref(), unit_only, args.runner.unwrap_or(s.unit_runner), &crate::sandbox::container_tests(&wt.path));
+    let (runs_sandboxed, to_container, skip) = match route {
+        crate::sandbox::Route::Sandbox { skip } => (true, String::new(), skip),
+        crate::sandbox::Route::Container { because } => (false, because, Vec::new()),
     };
-    let runs_sandboxed = args.tests.is_some() && selected.len() == 1 && crate::unit::selected(&selected) && args.runner.unwrap_or(s.unit_runner) == crate::sandbox::Runner::Sandbox && to_container.is_empty();
+    if unit_only {
+        if let Err(e) = crate::unit::write_skip(&wt.path, &skip) {
+            stderr(&format!("batch: unit-tests: {e}"));
+            return Finish::fault(2, "unit-skip", 0);
+        }
+    }
     let key_inputs = KeyInputs {
         repo_name: repo.name.clone(),
         tree: tree.clone(),
@@ -2946,13 +2952,18 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
     match status {
         Status::Ok => Finish::green(1),
         Status::Timeout => Finish::fault(2, "deadline-suites", 0),
-        _ => Finish {
-            rc: 1,
-            ran: 1,
-            red: 1,
-            first_red: Some(format!("{script}: exit {}", ran.rc.map(|c| c.to_string()).unwrap_or_else(|| "signal".into())).into()),
-            ..Finish::green(1)
-        },
+        _ => {
+            for l in crate::unit::failing_report(&text) {
+                deps.log(&l);
+            }
+            Finish {
+                rc: 1,
+                ran: 1,
+                red: 1,
+                first_red: Some(format!("{script}: exit {}", ran.rc.map(|c| c.to_string()).unwrap_or_else(|| "signal".into())).into()),
+                ..Finish::green(1)
+            }
+        }
     }
 }
 
