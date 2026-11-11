@@ -128,7 +128,7 @@ pub struct BatchJob {
     /// everyone who clones it). Empty: the VM's image records its own (EC2).
     pub cache_home: Option<String>,
     pub testenv_registry: Option<String>,
-    /// `s3://<bucket>/<prefix>` the VM records each passed suite to (`SPIRA_TESTENV_RESUME`); a
+    /// `s3://<bucket>/<prefix>`, or `dir:<absolute path>` on the host, that the VM records each passed suite to (`SPIRA_TESTENV_RESUME`); a
     /// dead VM loses nothing, and the next pass for the tree reads the same prefix.
     pub resume_url: Option<String>,
     /// Seconds of setup (script start to the suites launching) beyond which the run reports SETUP-SLOW.
@@ -4756,6 +4756,35 @@ mod tests {
         assert_eq!(fx.fp.count("clone"), 0, "no VM is cloned for a host round");
         assert!(vm_remote.jobs.lock().unwrap().is_empty(), "the VM's ssh is never touched");
         assert_eq!(recorded_where(&fx), "host");
+    }
+
+    struct SharedRemote(std::sync::Arc<FakeRemote>);
+    impl Remote for SharedRemote {
+        fn reachable(&self, a: &str) -> bool { self.0.reachable(a) }
+        fn run_batch(&self, a: &str, j: &BatchJob) -> Result<i32, String> { self.0.run_batch(a, j) }
+        fn round_started(&self, a: &str) -> bool { self.0.round_started(a) }
+        fn boot_log_tail(&self, a: &str) -> Result<String, String> { self.0.boot_log_tail(a) }
+        fn pull(&self, a: &str, r: &str, l: &Path) -> Result<(), String> { self.0.pull(a, r, l) }
+        fn push(&self, a: &str, l: &Path, r: &str) -> Result<(), String> { self.0.push(a, l, r) }
+        fn await_exit(&self, a: &str, w: Duration, s: &Path) -> Result<Option<i32>, String> { self.0.await_exit(a, w, s) }
+        fn run_attr(&self, a: &str, j: &crate::spool::AttrJob) -> Result<i32, String> { self.0.run_attr(a, j) }
+        fn clear_results(&self, a: &str) -> Result<(), String> { self.0.clear_results(a) }
+    }
+
+    #[test]
+    fn a_host_round_is_handed_a_local_resume_directory_and_its_credentials_are_not_pushed() {
+        let mut fx = fixture();
+        fx.cfg.resume_url = Some("s3://bkt/pre".into());
+        fx.cfg.resume_credentials = Some(PathBuf::from("/creds"));
+        let host_remote = std::sync::Arc::new(FakeRemote::green());
+        let mut plan = host_plan(FakeRemote::green(), CALM);
+        plan.home = PathBuf::from("/round/home");
+        plan.remote = Box::new(SharedRemote(host_remote.clone()));
+        go_with_host(&fx, &FakeRemote::green(), &plan, &round_args(&fx));
+        let jobs = host_remote.jobs.lock().unwrap();
+        let batch = jobs.iter().find(|j| j.contains("dir:")).unwrap_or_else(|| panic!("{jobs:?}"));
+        assert!(batch.contains("'dir:/round/home/round-resume'") && !batch.contains("s3://"), "{batch}");
+        assert!(host_remote.pushes.lock().unwrap().is_empty(), "no S3 credentials go to the host");
     }
 
     #[test]
