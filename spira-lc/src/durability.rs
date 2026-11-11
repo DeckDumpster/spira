@@ -32,6 +32,14 @@ pub struct Shipping {
     pub alarm_log: PathBuf,
 }
 
+/// `SPIRA_LC_SHIP_DIR`, or `SPIRA_RUN/lc-ship` while it is unset.
+fn ship_dir(run: &Path) -> PathBuf {
+    spira_config::process::cfg("SPIRA_LC_SHIP_DIR")
+        .ok()
+        .filter(|d| !d.is_empty())
+        .map_or_else(|| run.join("lc-ship"), PathBuf::from)
+}
+
 fn cfg_u64(key: &str) -> Result<u64, String> {
     spira_config::process::cfg_parse::<u64>(key)
 }
@@ -52,7 +60,7 @@ pub fn configured(backend: SqliteBackend, run: &Path) -> Option<Result<Shipping,
         };
         let put = Uploader { dest, creds, proc: Arc::new(SysProc), deadline: PUT_DEADLINE };
         let cfg = ShipConfig {
-            dir: run.join("lc-ship"),
+            dir: ship_dir(run),
             max_mains: MAX_MAINS,
             snapshot_every_ms: cfg_u64("SPIRA_LC_SHIP_SNAPSHOT_SECS")?.saturating_mul(1_000),
         };
@@ -125,7 +133,7 @@ const DRILL_USAGE: &str = "usage: spira-lc admin-drill --scratch <dir> [--ship-d
 
 /// `admin-drill --scratch <dir> [--ship-dir <dir>]`: restores the local copies of the uploaded
 /// objects into `--scratch` and folds and compares them. Exit 0 passed, 1 failed, 2 could not
-/// run. `--ship-dir` defaults to `SPIRA_RUN/lc-ship`.
+/// run. `--ship-dir` defaults to `SPIRA_LC_SHIP_DIR`.
 pub fn admin_drill(args: &[String], run: impl FnOnce() -> Result<PathBuf, String>) -> (i32, String) {
     let Some(scratch) = flag(args, "--scratch") else {
         return (CANNOT_TELL, DRILL_USAGE.into());
@@ -133,7 +141,7 @@ pub fn admin_drill(args: &[String], run: impl FnOnce() -> Result<PathBuf, String
     let dir = match flag(args, "--ship-dir") {
         Some(d) => PathBuf::from(d),
         None => match run() {
-            Ok(r) => r.join("lc-ship"),
+            Ok(r) => ship_dir(&r),
             Err(e) => return (CANNOT_TELL, format!("admin-drill: cannot tell: {e}")),
         },
     };

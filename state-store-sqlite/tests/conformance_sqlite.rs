@@ -505,3 +505,24 @@ fn a_snapshot_copy_does_not_carry_the_pages_deleted_rows_left_free_in_the_live_f
     let snap = std::fs::metadata(&dest).unwrap().len();
     assert!(snap * 4 < live, "snapshot {snap} bytes beside a live file of {live}");
 }
+
+#[test]
+fn a_snapshot_is_compacted_straight_to_its_destination_in_rollback_mode() {
+    let dir = TempDir::new("sqlite-snapshot-direct");
+    let clock = VirtualClock::new(1_000);
+    let c = contract(open(&dir.path().join("live.db")), &clock);
+    let big = "x".repeat(2_000);
+    for i in 0..60 {
+        put(&c, &format!("b/{i:03}"), json!(big), &format!("seed{i}"));
+    }
+    let dest = dir.path().join("copy.db");
+    c.backend().snapshot_to(&dest).unwrap();
+    // Header bytes 18 and 19 are 2 only for a file a WAL travels with: the copy-then-VACUUM
+    // path wrote a WAL of the whole store beside it.
+    let head = std::fs::read(&dest).unwrap();
+    assert_eq!((head[18], head[19]), (1, 1), "the snapshot is not a WAL-mode file");
+    assert!(!dir.path().join("copy.db-wal").exists());
+    let copy = rusqlite::Connection::open(&dest).unwrap();
+    let ok: String = copy.query_row("PRAGMA integrity_check", [], |r| r.get(0)).unwrap();
+    assert_eq!(ok, "ok");
+}
