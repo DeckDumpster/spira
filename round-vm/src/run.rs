@@ -314,37 +314,49 @@ fi
 cd ~/round-work
 disk_out="$HOME/round-work/.runtime/spira/batch-results/disk-usage"
 mkdir -p "$(dirname "$disk_out")"
-# Bytes used per directory, one line each, into the pass's results. A directory du cannot read
-# whole is counted as a lower bound and says so; one it cannot read at all is `unread`, never a
-# zero it did not measure, and the total then says it is incomplete. A measurement never ends the pass.
-disk_report() {
-    local phase="$1" label path bytes total=0 whole=yes graph
-    graph="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null || true)"
-    for label in round-work tmpdir podman-graphroot cargo-target cargo-target-release round-scratch round-releases nix-store; do
+# Filesystem counters answer "how full" instantly, so the shared trees (the container store, /nix,
+# /tmp) are read with df and never walked. Only the round's own directories are walked, in the
+# background, and disk_report_last waits for them. A walk that fails is `unread`, never a zero.
+fs_line() {
+    local phase="$1" label="$2" path="$3" used=unread
+    if [ -z "$path" ]; then
+        path="(no path named)"
+    elif used="$(df -B1 --output=used "$path" 2>/dev/null | tail -n1 | tr -d ' ')"; then :; fi
+    case "$used" in ''|*[!0-9]*) used=unread ;; esac
+    echo "round-vm: DISK $phase $label $used $path" | tee -a "$disk_out" >&2
+}
+own_dirs() {
+    local phase="$1" label path bytes
+    for label in round-work cargo-target cargo-target-release round-scratch round-releases; do
         case "$label" in
             round-work) path="$HOME/round-work" ;;
-            tmpdir) path="${TMPDIR:-/tmp}" ;;
-            podman-graphroot) path="$graph" ;;
             cargo-target) path="$HOME/round-work/target" ;;
             cargo-target-release) path="$HOME/round-work/target/release" ;;
             round-scratch) path="$HOME/round-scratch" ;;
             round-releases) path="$HOME/round-releases" ;;
-            nix-store) path=/nix ;;
         esac
-        if [ -z "$path" ]; then
-            bytes=unread path="(podman named no graph root)"
-        elif [ ! -d "$path" ]; then
+        if [ ! -d "$path" ]; then
             bytes=0
         elif ! bytes="$(du -sxB1 "$path" 2>/dev/null | cut -f1)"; then
             path="$path (du could not read all of it: a lower bound)"
         fi
         case "$bytes" in ''|*[!0-9]*) bytes=unread ;; esac
-        case "$label" in cargo-target*) ;; *) if [ "$bytes" = unread ]; then whole=no; else total=$(( total + bytes )); fi ;; esac
         echo "round-vm: DISK $phase $label $bytes $path" | tee -a "$disk_out" >&2
     done
-    [ "$whole" = yes ] || total="$total+unread"
+}
+disk_walks=()
+disk_report() {
+    local phase="$1" graph total
+    graph="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null || true)"
+    fs_line "$phase" fs-home "$HOME"
+    fs_line "$phase" fs-tmpdir "${TMPDIR:-/tmp}"
+    fs_line "$phase" fs-podman-graphroot "$graph"
+    fs_line "$phase" fs-nix /nix
+    total="$(fs_used)"
+    case "$total" in ''|*[!0-9]*) total=unread ;; esac
     echo "round-vm: DISK $phase total $total -" | tee -a "$disk_out" >&2
-    [ "$phase" != start ] || disk_start_total="${total%%+*}"
+    [ "$phase" != start ] || disk_start_total="$total"
+    own_dirs "$phase" & disk_walks+=($!)
 }
 # The phase reports see only their instants; per-suite scratch rises and is cleaned between them.
 # The sampler keeps the largest growth of the filesystem since the pass began.
@@ -365,6 +377,7 @@ disk_report_last() {
     [ -z "${disk_sampler_pid:-}" ] || { kill "$disk_sampler_pid" 2>/dev/null; wait "$disk_sampler_pid" 2>/dev/null || true; }
     disk_report "$1"
     find "$HOME/round-work/target" \( -name '*.profraw' -o -name '*.profdata' \) -delete 2>/dev/null || true
+    [ -z "${disk_walks[*]-}" ] || wait "${disk_walks[@]}" 2>/dev/null || true
     growth="$(cat "$disk_growth_file" 2>/dev/null || true)"
     case "$growth" in
         ''|*[!0-9]*) echo "round-vm: DISK $1 peak unread -" | tee -a "$disk_out" >&2 ;;
@@ -3259,9 +3272,8 @@ mod tests {
 
     #[test]
     fn the_remote_script_reports_bytes_used_per_directory_at_start_build_and_suites() {
-        let a = REMOTE_SCRIPT.find("disk_report() {").expect("the disk report");
         let start = REMOTE_SCRIPT.find("disk_report start").unwrap();
-        let func = &REMOTE_SCRIPT[a..start];
+        let func = &REMOTE_SCRIPT[REMOTE_SCRIPT.find("fs_line() {").unwrap()..start];
         let build = REMOTE_SCRIPT.find("disk_report build").expect("reported after the build");
         let suites = REMOTE_SCRIPT.find("disk_report_last suites").expect("reported after the suites");
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
@@ -3269,12 +3281,11 @@ mod tests {
         let red = REMOTE_SCRIPT.find("UNIT-TESTS RED before the suites").unwrap();
         let red_exit = red + REMOTE_SCRIPT[red..].find("exit 1").unwrap();
         assert!(REMOTE_SCRIPT[red..red_exit].contains("disk_report_last unit-red"), "a pass that ends at a red unit tier still reports its last usage");
-        for (label, path) in [("round-work", "\"$HOME/round-work\""), ("tmpdir", "\"${TMPDIR:-/tmp}\""), ("podman-graphroot", "\"$graph\""), ("cargo-target", "\"$HOME/round-work/target\"")] {
-            assert!(func.contains(&format!("{label}) path={path}")), "{label} is measured at {path}: {func}");
+        for (label, path) in [("round-work", "\"$HOME/round-work\""), ("cargo-target", "\"$HOME/round-work/target\""), ("round-scratch", "\"$HOME/round-scratch\""), ("round-releases", "\"$HOME/round-releases\"")] {
+            assert!(func.contains(&format!("{label}) path={path}")), "{label} is walked at {path}: {func}");
         }
-        assert!(func.contains("case \"$label\" in cargo-target*) ;;"), "cargo-target lies inside round-work and is not added twice");
-        for (label, path) in [("round-scratch", "\"$HOME/round-scratch\""), ("round-releases", "\"$HOME/round-releases\""), ("nix-store", "/nix")] {
-            assert!(func.contains(&format!("{label}) path={path}")), "{label} is measured at {path}: {func}");
+        for (label, path) in [("fs-home", "\"$HOME\""), ("fs-tmpdir", "\"${TMPDIR:-/tmp}\""), ("fs-podman-graphroot", "\"$graph\""), ("fs-nix", "/nix")] {
+            assert!(func.contains(&format!("fs_line \"$phase\" {label} {path}")), "{label} is read from its filesystem at {path}: {func}");
         }
         assert!(func.contains("| tee -a \"$disk_out\" >&2"), "the stderr log and the results file carry the same lines");
         assert!(REMOTE_SCRIPT.contains("disk_out=\"$HOME/round-work/.runtime/spira/batch-results/disk-usage\""), "the lines land in the pass's results");
@@ -3429,14 +3440,30 @@ mod tests {
 
     #[test]
     fn a_directory_du_cannot_read_is_never_a_zero_and_never_ends_the_pass() {
-        let a = REMOTE_SCRIPT.find("disk_report() {").unwrap();
-        let func = &REMOTE_SCRIPT[a..REMOTE_SCRIPT.find("disk_report start").unwrap()];
+        let func = &REMOTE_SCRIPT[REMOTE_SCRIPT.find("fs_line() {").unwrap()..REMOTE_SCRIPT.find("disk_report start").unwrap()];
         assert!(func.contains("elif ! bytes=\"$(du -sxB1 \"$path\" 2>/dev/null | cut -f1)\"; then"), "du's failure is tested, so errexit cannot end the pass: {func}");
         assert!(func.contains("a lower bound"), "a partial read says it is partial");
         assert!(func.contains("''|*[!0-9]*) bytes=unread"), "no number read is unread, not 0");
-        assert!(func.contains("bytes=unread path=\"(podman named no graph root)\""), "an unnamed graph root is unread, not 0");
-        assert!(func.contains("[ \"$whole\" = yes ] || total=\"$total+unread\""), "an incomplete total says so");
+        assert!(func.contains("used=unread"), "an unnamed or unreadable filesystem is unread, not 0");
         assert!(!func.contains("bytes=0 ;;"), "no fallback to zero");
+    }
+
+    #[test]
+    fn the_disk_report_never_walks_nix_the_container_store_or_tmp() {
+        let func = &REMOTE_SCRIPT[REMOTE_SCRIPT.find("fs_line() {").unwrap()..REMOTE_SCRIPT.find("disk_report start").unwrap()];
+        let du_lines: Vec<&str> = func.lines().filter(|l| l.contains("du ")).collect();
+        assert!(!du_lines.is_empty(), "the round's own directories are still walked");
+        for l in du_lines {
+            for shared in ["/nix", "graph", "TMPDIR", "/tmp"] {
+                assert!(!l.contains(shared), "du over a shared tree ({shared}): {l}");
+            }
+        }
+        let own = script_fn("own_dirs");
+        for shared in ["/nix", "$graph", "TMPDIR", "/tmp"] {
+            assert!(!own.contains(shared), "the walked set names a shared tree ({shared}): {own}");
+        }
+        assert!(script_fn("disk_report").contains("own_dirs \"$phase\" &"), "the walk of the round's own directories runs beside the phase");
+        assert!(script_fn("disk_report_last").contains("wait \"${disk_walks[@]}\""), "the last report waits for the background walks");
     }
 
     #[test]
