@@ -85,7 +85,7 @@ impl RealBd {
         match serde_json::from_str::<serde_json::Value>(json_only(&out)) {
             Ok(serde_json::Value::Array(a)) => Ok(a),
             Ok(other) => Ok(vec![other]),
-            Err(_) => Ok(Vec::new()),
+            Err(e) => Err(format!("content list answered something that is not JSON: {e}")),
         }
     }
 
@@ -429,6 +429,43 @@ mod tests {
         assert_eq!(bd.label_list("", "sp-1"), vec!["payload-hash:abc", "incident"]);
         assert_eq!(bd.show_closed_at("", "sp-1"), None);
         assert!(bd.reachable(""));
+    }
+
+    /// sp-7crdc8: unfinished beads are read a request per 100 live ids, every one bounded by `--id`.
+    #[test]
+    fn a_list_of_many_live_beads_is_chunked_by_id() {
+        let live: Vec<_> = (0..250).map(|i| serde_json::json!({"bead_id": format!("sp-{i:03}"), "state": "READY"})).collect();
+        let rows: Vec<_> = (0..250).map(|i| serde_json::json!({"id": format!("sp-{i:03}"), "status": "open", "labels": ["incident"]})).collect();
+        let fake = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows).with_live(live));
+        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_config::lc_call::LcClient::over(fake.clone(), true)) };
+        assert_eq!(bd.list("", Scope::Unfinished, Some("incident"), None).unwrap().len(), 250);
+        let seen = fake.requests();
+        assert_eq!(seen.len(), 1 + 3, "{seen:?}");
+        assert!(seen[1..].iter().all(|r| r.iter().any(|a| a == "--id")), "{seen:?}");
+    }
+
+    #[test]
+    fn a_reply_that_is_not_json_is_an_error_never_no_incident() {
+        let t = std::sync::Arc::new(Scripted(Default::default(), "garbled".into()));
+        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_config::lc_call::LcClient::over(t, true)) };
+        assert!(bd.list_json(&["--id", "sp-1"]).is_err());
+    }
+
+    #[test]
+    fn live_successor_follows_a_supersedes_edge_to_a_live_bead() {
+        let edge = |to: &str| serde_json::json!([{"type": "supersedes", "depends_on_id": to}]);
+        let rows = vec![
+            serde_json::json!({"id": "sp-a", "dependencies": edge("sp-live")}),
+            serde_json::json!({"id": "sp-b", "dependencies": edge("sp-done")}),
+        ];
+        let live = vec![
+            serde_json::json!({"bead_id": "sp-live", "state": "READY"}),
+            serde_json::json!({"bead_id": "sp-done", "state": "LANDED"}),
+        ];
+        let fake = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows).with_live(live));
+        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_config::lc_call::LcClient::over(fake, true)) };
+        assert_eq!(bd.live_successor("", "sp-a"), Some("sp-live".to_string()));
+        assert_eq!(bd.live_successor("", "sp-b"), None);
     }
 
     #[test]

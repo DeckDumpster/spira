@@ -203,7 +203,9 @@ mod tests {
         let s = settler(&bd);
         let cands = s.candidates().unwrap();
         assert_eq!(cands.iter().map(|c| c.fixes.clone()).collect::<Vec<_>>(), vec![vec!["sp-f1".to_string()]; 2]);
-        let _ = s.landing_in_force("sp-f1");
+        if let Err(e) = s.landing_in_force("sp-f1") {
+            assert!(!e.contains("not found"), "a fix the tick read is answered from the cache: {e}");
+        }
         assert!(s.landing_in_force("sp-unread").unwrap_err().contains("not found"));
         let seen = fake.requests();
         assert_eq!(seen.len(), 3, "{seen:?}");
