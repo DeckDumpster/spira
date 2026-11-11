@@ -176,7 +176,8 @@ fn an_attribution_leg_is_judged_lost_past_its_iterations_deadline() {
     let p = Policy::default();
     let past_all = p.wall_ms * 3 + LEG_GRACE_MS + TICK;
     let (_, acts) = decide(&attributing(NOW), &snap(NOW + past_all, Some(vec!["spira.r9.attribute.2".into()])));
-    assert_eq!(names(&acts).first(), Some(&ABANDON), "{acts:?}");
+    assert_eq!(names(&acts).first(), Some(&PAUSE), "a lost leg judged nothing, so the round stays open: {acts:?}");
+    assert!(!names(&acts).contains(&ABANDON), "{acts:?}");
 }
 
 #[test]
@@ -195,7 +196,8 @@ fn an_attribution_leg_deadline_follows_the_member_count() {
     let (_, acts) = decide(&carry, &snap(NOW + wall * 5 - 1, listed.clone()));
     assert!(acts.is_empty(), "three members allow five runs: {acts:?}");
     let (_, acts) = decide(&carry, &snap(NOW + wall * 5 + LEG_GRACE_MS + 1, listed));
-    assert_eq!(names(&acts).first(), Some(&ABANDON), "{acts:?}");
+    assert_eq!(names(&acts).first(), Some(&PAUSE), "{acts:?}");
+    assert!(!names(&acts).contains(&ABANDON), "{acts:?}");
 }
 
 /// A leg that ended while the runtime was down left no `unit.ran`: the tick reads each leg in
