@@ -192,6 +192,7 @@ impl<'a> Pass<'a> {
         self.queue_step("queue early: ");
 
         for repo in self.rotated() {
+            self.settle_landed_rows(repo);
             self.walk_repo(repo);
         }
 
@@ -263,6 +264,31 @@ impl<'a> Pass<'a> {
         match all.iter().position(|r| r.name == c) {
             Some(i) => all[i..].iter().chain(all[..i].iter()).copied().collect(),
             None => all,
+        }
+    }
+
+    /// A SUBMITTED or CERTIFIED row whose recorded tip is already an ancestor of the landing
+    /// ref is settled LANDED, whether or not its branch still exists to be walked.
+    fn settle_landed_rows(&self, repo: &RepoRow) {
+        let (Some(base_fq), false) = (repo.base_fq.as_deref(), repo.path.as_os_str().is_empty()) else { return };
+        if !repo.mode.queued() || !repo.path.join(".git").exists() {
+            return;
+        }
+        let rows = match self.lc.waiting_tips(&repo.name) {
+            Ok(r) => r,
+            Err(e) => {
+                self.log(&format!("CHECK6 {}: waiting rows unreadable ({e}) — none settled against {base_fq} this pass", repo.name));
+                return;
+            }
+        };
+        for (id, tip) in rows {
+            if !self.git.is_ancestor(&repo.path, &tip, base_fq) {
+                continue;
+            }
+            let at = self.git.rev_parse(&repo.path, base_fq).unwrap_or_default();
+            if self.lib.content_on_base(&id, &format!("settle-landed:{tip} ancestor-of:{base_fq}@{at}")) {
+                self.log(&format!("CHECK6 {id}: tip {tip} is an ancestor of {base_fq} — settled LANDED"));
+            }
         }
     }
 
