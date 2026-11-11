@@ -1007,3 +1007,16 @@ fn a_cut_stall_pages_when_the_repos_batcher_is_silent_paused_or_only_another_rep
     assert_eq!(cut_pages(&paced(stuck_cut(now), "other", pace_owner(Some(now - 5), None)), now), 1);
     assert_eq!(pace_owner(None, None), Owner::default());
 }
+
+#[test]
+fn a_cut_stall_is_excused_per_repo_and_never_by_another_repos_batcher() {
+    let now = T0;
+    let mut s = healthy(now);
+    s.beads = vec![bead("sp-s1", "a", "SUBMITTED", now - 50 * MIN), bead("sp-s2", "b", "CERTIFIED", now - 50 * MIN)];
+    s.last = BTreeMap::new();
+    let keys = |s: &Snapshot| stalls_of(s, now).iter().filter(|x| x.edge == CUT_EDGE).map(Stall::key).collect::<Vec<_>>();
+    s.owners.insert(cut_owner_key("a"), pace_owner(Some(now - 5), None));
+    assert_eq!(keys(&s), [format!("{CUT_EDGE} b")], "b has no batcher beating and is paged alone");
+    s.owners.insert(cut_owner_key("b"), pace_owner(Some(now - 5), None));
+    assert!(keys(&s).is_empty(), "{:?}", keys(&s));
+}
