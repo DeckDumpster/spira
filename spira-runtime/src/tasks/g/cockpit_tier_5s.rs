@@ -1,13 +1,11 @@
-//! `cockpit-tier-5s`: the pane's fast tier, probes `now`, `round` and `inflight`. Replaces the
-//! three 5 s rows of `cockpit-collect`'s registry run by its supervisor
-//! (`spira-cockpit-prod.service`: `spira-supervise cockpit-collect collect`). Pattern P1.
+//! `cockpit-tier-5s`: the pane's fast tier, probes `now`, `round` and `inflight`. Pattern P1.
 //! Contract: `wiki/projects/spira/designs/tasks/cockpit-tier-5s.md`; siblings
 //! [`super::cockpit_tier_60s`] and [`super::cockpit_tier_600s`]. The decision, the merge and the
 //! runners are shared in [`super::cockpit`]; the probes run in-process (`cockpit_collect::tiers`).
 //!
 //! # Tick
 //!
-//! Every 5 s (`SPIRA_RUNTIME_COCKPIT_TIER_5S_SECS`; the collector's `SPIRA_COCKPIT_TICK` is not registry config). Also woken by `unit.ran` for a gate, round or dwarf unit, so
+//! Every 5 s (`SPIRA_RUNTIME_COCKPIT_TIER_5S_SECS`. Also woken by `unit.ran` for a gate, round or dwarf unit, so
 //! WORK IN FLIGHT moves on the event. The three probes ride one observe ([`OBSERVE`], its input
 //! naming [`PROBES`]), so an idle tick asks for one probe; each sub-probe keeps its own timeout
 //! (`now` 30 s, `round` 60 s, `inflight` 60 s) and its skip-if-running inside the runner.
@@ -33,8 +31,7 @@
 //! | `cockpit-tier-5s.publish` | host | 1 s | digest of the merged `Kv` | not the supervised instance (`may_write`) |
 //!
 //! One effect: the merged snapshot written atomically to `run/cockpit.env` (and its history row),
-//! the pane's read contract, unchanged. The `run/cockpit.d/` fragments go: the three tiers publish
-//! into one `Kv` and one writer merges. `publish` is skipped when the digest is unchanged.
+//! the pane's read contract, unchanged. The three tiers publish into one `Kv` and one writer merges. `publish` is skipped when the digest is unchanged.
 //!
 //! # Silence
 //!
@@ -50,8 +47,7 @@
 //!
 //! # Reverse
 //!
-//! Release rollback restores the service and supervisor; Observe mode shadows `publish`, and the
-//! old collector can run alongside for parity with `SPIRA_RUNTIME_COCKPIT_TIER_WRITE=1` on one side only (`SPIRA_COCKPIT_FORCE` on the other).
+//! Observe mode shadows `publish`; `SPIRA_RUNTIME_COCKPIT_TIER_WRITE` names the one writer.
 
 use std::collections::BTreeMap;
 

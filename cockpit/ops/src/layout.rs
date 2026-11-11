@@ -818,13 +818,6 @@ impl Layout {
             }
         }
 
-        // No watchdog over the collector's liveness — only over the code it is running,
-        // and only when at least one cockpit window exists. Process supervision belongs to
-        // systemd (`spira-cockpit.service`, Restart=always); this only checks whether a
-        // running collector predates its own source.
-        if !windows.is_empty() {
-            self.restart_spira_collector_if_stale();
-        }
         Ok(String::new())
     }
 
@@ -946,14 +939,6 @@ impl Layout {
         ));
         self.tmux.run_ok(&["respawn-pane", "-k", "-t", &pane, &self.conf.health_cmd()]);
         self.tag_pane(&pane, role);
-    }
-
-    fn restart_spira_collector_if_stale(&self) {
-        // Left to the collector's own crate (sp-kt4l3, concurrent — spira/cockpit.sh,
-        // collect.sh). `layout` only checked this because `health.sh` happened to source
-        // the same conf.sh; it belongs to the collector's supervision story, not the
-        // tmux layout's, and is intentionally not reimplemented here. See ../DESIGN.md
-        // Decisions.
     }
 }
 

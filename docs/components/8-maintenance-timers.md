@@ -16,5 +16,5 @@ not repeated here unless they have no other home.
 | `incident.settle` | `incident settle` | every 5 min | close incidents whose fix landed and detector is quiet |
 
 Long-running services with no timer: `spira-runtime`, `dolt-beads`, `dolt-persist`,
-`lc-serve` / `spira-lc` (+ sockets), `sccache-dav`, `spira-loom`, `spira-cockpit`,
+`lc-serve` / `spira-lc` (+ sockets), `sccache-dav`, `spira-loom`,
 `spira-metrics-*`, `spira-unit-run-dbus`, `spira-watch@<name>`.

@@ -297,30 +297,30 @@ json.dump(o, sys.stdout)' 2>/dev/null
 }
 
 # A unit whose restart count rose past the threshold fires.
-_ra='[{"unit":"spira-cockpit-prod.service","current":255,"baseline":0,"delta":255,"window":3600}]'
-check "restart count above threshold fires" "restart-loop:spira-cockpit-prod.service" \
+_ra='[{"unit":"spira-runtime-prod.service","current":255,"baseline":0,"delta":255,"window":3600}]'
+check "restart count above threshold fires" "restart-loop:spira-runtime-prod.service" \
     "$(obs_r "$_ra")"
-ev="$(evidence_of "$(obs_r "$_ra")" "restart-loop:spira-cockpit-prod.service")"
+ev="$(evidence_of "$(obs_r "$_ra")" "restart-loop:spira-runtime-prod.service")"
 case "$ev" in *"255"*) ok "evidence carries the restart count" ;;
     *) bad "evidence carries the restart count" "count 255 not in evidence" ;; esac
-case "$ev" in *"spira-cockpit-prod.service"*) ok "evidence names the unit" ;;
+case "$ev" in *"spira-runtime-prod.service"*) ok "evidence names the unit" ;;
     *) bad "evidence names the unit" "unit name not in evidence" ;; esac
 case "$ev" in *"incident intake misses it"*) ok "evidence explains why incident intake misses this" ;;
     *) bad "evidence explains why incident intake misses this" "explanation absent" ;; esac
 
 # A count below the threshold does not fire.
-_ra_low='[{"unit":"spira-cockpit-prod.service","current":3,"baseline":0,"delta":3,"window":3600}]'
+_ra_low='[{"unit":"spira-runtime-prod.service","current":3,"baseline":0,"delta":3,"window":3600}]'
 check "restart count below threshold fires nothing" - "$(obs_r "$_ra_low")"
 
 # An empty restart_alerts list fires nothing.
 check "no restart alerts fires nothing" - "$(obs_r '[]')"
 
 # Two units simultaneously: two distinct keys.
-_ra_two='[{"unit":"spira-cockpit-prod.service","current":50,"baseline":0,"delta":50,"window":3600},
+_ra_two='[{"unit":"spira-runtime-prod.service","current":50,"baseline":0,"delta":50,"window":3600},
            {"unit":"spira-sentinel-prod.service","current":20,"baseline":0,"delta":20,"window":3600}]'
 got_two="$(keys_of "$(obs_r "$_ra_two")")"
 case ",$got_two," in
-    *,restart-loop:spira-cockpit-prod.service,*) ok "first unit fires" ;;
+    *,restart-loop:spira-runtime-prod.service,*) ok "first unit fires" ;;
     *) bad "first unit fires" "cockpit not in [$got_two]" ;;
 esac
 case ",$got_two," in

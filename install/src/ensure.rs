@@ -167,7 +167,7 @@ mod tests {
     /// An existing host converges on activation (`release activate` runs `unit-ensure --retire`):
     /// against the real manifest and the real templates, every unit a previous release installed
     /// and this one no longer renders — a ported loop timer and its service, a retired timer
-    /// (watch-refresh), a retired watchd daemon instance (queue-watch) — is stopped, disabled and
+    /// (watch-refresh), a retired watchd daemon instance (queue-watch), the retired cockpit collector with its drop-in — is stopped, disabled and
     /// removed, ledgered or not, while the scheduler's own unit stays.
     #[test]
     fn activation_retires_every_installed_unit_the_manifest_dropped_and_keeps_the_scheduler() {
@@ -175,10 +175,13 @@ mod tests {
         let unit_dir = base.join("units");
         std::fs::create_dir_all(&unit_dir).unwrap();
         let tmpl_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
-        let dropped = ["spira-sentinel-prod.service", "spira-sentinel-prod.timer", "spira-refresh-prod.timer", "spira-watch-queue-watch-prod.service", "spira-mail-deliver-prod.service"];
+        let dropped = ["spira-sentinel-prod.service", "spira-sentinel-prod.timer", "spira-refresh-prod.timer", "spira-watch-queue-watch-prod.service", "spira-mail-deliver-prod.service", "spira-cockpit-prod.service"];
         for u in dropped {
             std::fs::write(unit_dir.join(u), "[Service]\nExecStart=/bin/true\n").unwrap();
         }
+        let dropin = unit_dir.join("spira-cockpit-prod.service.d");
+        std::fs::create_dir_all(&dropin).unwrap();
+        std::fs::write(dropin.join("tick-30.conf"), "[Service]\nEnvironment=X=1\n").unwrap();
         std::fs::write(unit_dir.join(".spira-installed-units"), "spira-sentinel-prod.service\nspira-sentinel-prod.timer\nspira-watch-queue-watch-prod.service\nspira-mail-deliver-prod.service\n").unwrap();
         let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         let h = host();
@@ -192,6 +195,7 @@ mod tests {
             assert!(!unit_dir.join(u).exists(), "{u} still on disk");
             assert!(sc.disabled_now.borrow().contains(&u.to_string()), "{u} not stopped and disabled");
         }
+        assert!(!dropin.exists(), "the retired collector's drop-in directory is removed with it");
         assert!(unit_dir.join("spira-runtime-prod.service").exists(), "the scheduler is installed");
         assert!(!r.retired.iter().any(|u| u.starts_with("spira-runtime-")), "{:?}", r.retired);
         assert!(run(&ctx, true).retired.is_empty(), "a second activation has nothing left to retire");

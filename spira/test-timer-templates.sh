@@ -250,16 +250,6 @@ for svc in "$UNIT_DIR"/*.service; do
 done
 [ "$_wd_checked" -gt 0 ] || bad "at least one bash/shell ExecStart unit was examined" "none found — are ExecStart patterns still .sh or bash?"
 
-# spira-cockpit.service is the one unit that MUST carry WatchdogSec (sp-mplcb wires
-# spira-supervise, a Rust binary, as its ExecStart, so the fence above does not apply to it).
-_wd_cockpit="$UNIT_DIR/spira-cockpit.service"
-if [ -r "$_wd_cockpit" ]; then
-    want "spira-cockpit.service: WatchdogSec present (Rust supervisor is main PID)" \
-        "WatchdogSec=" "$(grep -v '^[[:space:]]*#' "$_wd_cockpit")"
-else
-    bad "spira-cockpit.service is readable" "not found at $_wd_cockpit"
-fi
-
 # ============================================================================
 echo
 echo "render.py renders shared units against the release root, not the git checkout:"

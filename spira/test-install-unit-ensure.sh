@@ -84,11 +84,11 @@ sed -i "s|\$SC_LOG|$SC_LOG|" "$TMP/sc"
 chmod +x "$TMP/sc"
 
 # A release-shaped prod root (sp-gypjk): units ExecStart <root>/bin/<tool>, so the
-# spira-cockpit.service ExecStart is $PROD_ROOT/bin/spira-supervise. _ENSURE_PROD overrides it
-# per-call — the MISSING-TARGET case below points it at a root whose bin/spira-supervise is gone.
+# spira-runtime.service ExecStart is $PROD_ROOT/bin/spira-runtime. _ENSURE_PROD overrides it
+# per-call — the MISSING-TARGET case below points it at a root whose bin/spira-runtime is gone.
 PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
 BADPROD="$(install_fixture_prod "$TMP/badprod" "$HERE")"
-rm -f "$TMP/badprod/bin/spira-supervise"
+rm -f "$TMP/badprod/bin/spira-runtime"
 
 
 # ensure <args> — run unit-ensure.sh in a controlled environment. The mocks go first on
@@ -213,16 +213,16 @@ echo "MISSING-TARGET — unit with absent ExecStart binary is not enabled (real 
 # against a REAL template — not a reimplementation of the guard, which would
 # pass even if the guard in unit-ensure.sh were deleted.
 #
-# spira-cockpit.service's ExecStart is @SPIRA_PROD_ROOT@/bin/spira-supervise, a core unit
+# spira-runtime.service's ExecStart is @SPIRA_PROD_ROOT@/bin/spira-runtime, a core unit
 # units.sh always installs — so a prod root without that binary reaches _ue_execstart_ok
 # unchanged, exercising the guard end to end without editing UNITS/ENABLE from outside.
 #
 # Removing the installed file first makes ensure() see it as new — only new units
 # reach the enable step (an updated/DIFFERS unit is left for the operator to
 # restart, per unit-ensure.sh's own comment).
-BAD_SUPERVISE="$TMP/badprod/bin/spira-supervise"
+BAD_RUNTIME="$TMP/badprod/bin/spira-runtime"
 
-rm -f "$DEST/spira-cockpit-prod.service"
+rm -f "$DEST/spira-runtime-prod.service"
 : > "$SC_LOG"
 _ENSURE_PROD="$BADPROD"
 mt_out="$(ensure)"
@@ -231,11 +231,11 @@ unset _ENSURE_PROD
 is   "MISSING-TARGET: ensure still exits 0 (a refused enable is not a script failure)" \
      "0" "$mt_rc"
 want "MISSING-TARGET: absent ExecStart target produces MISSING-TARGET line" \
-     "MISSING-TARGET  spira-cockpit-prod.service" "$mt_out"
-want "MISSING-TARGET: names the unexecutable target" "$BAD_SUPERVISE" "$mt_out"
+     "MISSING-TARGET  spira-runtime-prod.service" "$mt_out"
+want "MISSING-TARGET: names the unexecutable target" "$BAD_RUNTIME" "$mt_out"
 nowant "MISSING-TARGET: absent target is NOT enabled" \
-     "enabled+started  spira-cockpit-prod.service" "$mt_out"
-if grep -q "enable spira-cockpit-prod.service" "$SC_LOG"; then
+     "enabled+started  spira-runtime-prod.service" "$mt_out"
+if grep -q "enable spira-runtime-prod.service" "$SC_LOG"; then
     bad "MISSING-TARGET: systemctl enable is never called for the refused unit" \
         "enable appeared in sc.log: $(cat "$SC_LOG")"
 else
@@ -243,11 +243,11 @@ else
 fi
 
 # PAIR: same unit, new again, this time with a valid executable ExecStart target.
-rm -f "$DEST/spira-cockpit-prod.service"
+rm -f "$DEST/spira-runtime-prod.service"
 : > "$SC_LOG"
 present_out="$(ensure)"
 want "MISSING-TARGET: present ExecStart target is enabled" \
-     "enabled+started  spira-cockpit-prod.service" "$present_out"
+     "enabled+started  spira-runtime-prod.service" "$present_out"
 
 # ==========================================================================
 echo

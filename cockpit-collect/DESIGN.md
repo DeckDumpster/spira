@@ -71,35 +71,20 @@ and the GATE/`landing.progress` block for `unsent` — note these five belong to
 `unsent_keys` in the bash, not `core_detail_keys`; they sit inside `unsent_keys`'s own
 closing brace at `spira/cockpit.sh:1551`).
 
-### The supervisor (`src/supervisor.rs`)
+### Retired: the supervisor
 
-A 1:1 port of `collect.sh`'s registry (`PROBES`, a real Rust `const` now — 18 entries,
-unit-tested for shape), fragment lifecycle (`never`/`ok`/`stale`/`error`/`timeout`) and
-merge (first-wins by fragment name, meta keys always, value keys only from `ok`/`stale`).
-Fully self-contained: no `bd`/`git` calls of its own, only the filesystem and spawning this
-same binary's `probe` subcommand with a `timeout`. The per-tick scheduling decision —
-which due, not-already-running probes to start, respecting `SLOW_CONCURRENT` *cumulatively
-within one tick* — is its own pure function (`due_probes`), unit tested directly (this is
-where `sp-ctag9`'s unadopted-ref false positive and the missing `queue` subcommand arm both
-trace back to; it is the highest-value part of this bead to have real tests over).
+The supervisor (`collect`, `merge`, `--supervised-run`, the `run/cockpit.d/` fragments and the
+`INVOCATION_ID` write fence) and the cockpit service unit are deleted. The scheduler's three
+cockpit tier tasks call [`tiers`] in-process and are the only writer of `run/cockpit.env`.
 
 ### `main.rs` — CLI dispatch, same subcommand names
 
 | subcommand | replaces | notes |
 |---|---|---|
-| `once` | `cockpit.sh once`/bare `cockpit.sh` | full serial pass; writes the snapshot if supervised, else prints to stdout + warns. No concierge-attach (that stayed root `cockpit.sh`'s job; dead in production here already — nothing but `cockpit.sh once` called this path). |
+| `once` | `cockpit.sh once`/bare `cockpit.sh` | full serial pass printed to stdout; never writes the snapshot. |
 | `history` | `cockpit.sh history` | `append_history` from the snapshot already on disk. |
 | `sweep-temps` | `cockpit.sh sweep-temps` | sweep `.cockpit.*` orphans. |
 | `probe <name>` | `cockpit.sh <name>` | one probe, raw `KEY=value` lines. |
-| `collect` | `collect.sh loop` | the supervisor loop; refuses unsupervised. |
-| `merge` | `collect.sh merge` | one-shot fragment merge, no supervision check. |
-| `--supervised-run <name> <timeout> <cmd>` | (collect.sh's own child invocation) | internal: one probe pass out-of-process. |
-| `_probe_body_test <name> <timeout> <cmd>` | `collect.sh _probe_body_test` | test-only seam, exit code relays the probe's own rc. |
-| `--test-may-write` / `--test-loop-guard` | sourcing `cockpit.sh` to call `cockpit_may_write`/`_loop_guard` directly | a compiled binary cannot be sourced; these are the CLI-level replacement, calling the exact same `supervisor::may_write`. |
-
-`COCK` (env var) still overrides the probe binary for tests, matching `collect.sh`'s own
-seam: unset, it is this binary's own `probe` subcommand; set, it is invoked directly with
-no subcommand prefix (a test's mock script, same shape the bash mock scripts always were).
 
 ### Formatting fidelity
 
@@ -130,30 +115,6 @@ fragment, anything — not just correct as long as every probe always behaves.
 `re.sub(...)[:80].replace("=", "-")`) can never fire: the allowlist already maps `=` to a
 space before that call runs. Ported as-is for the same reason.
 
-### The re-entry command: `self_exe`, never `probe_exe`
-
-`run_loop` schedules a probe by re-entering this same binary with `--supervised-run <name>
-<timeout> <subcmd>` — a TOP-LEVEL dispatch flag `main.rs`'s own `run()` matches on, not a
-probe invocation. `run_probe_body` separately spawns `<probe_exe> <probe_exe_args...>
-<subcmd>` to run one probe's actual logic (COCK-overridable in tests, defaulting to this
-binary's own `probe` subcommand). These are two different commands for two different
-purposes, and conflating them was a real production defect: `run_loop` built the re-entry
-command from `probe_exe`/`probe_exe_args` too, so the real argv was `<self> probe
---supervised-run now 30 now` — `main.rs` parsed that as subcommand `probe` with probe-name
-`--supervised-run`, printed usage, and exited 1, before ever reaching `run_probe_body` or
-writing a fragment. No probe the supervisor scheduled ever ran; `now`'s 5s cadence
-surfaced it first, because the pane's own staleness check keys on `SP_AT`, which only
-`now_keys` emits (the operator, 2026-10-01: production's `now.env` frozen at the
-pre-cutover bash collector's last pass, `cockpit.env` rewritten every tick by `merge` but
-`SP_AT` never advancing, `SP_PROBE_FAIL=0` because nothing ever got far enough to fail).
-
-`Config` now carries `self_exe` (always `current_exe()`, never `COCK`) separately from
-`probe_exe`/`probe_exe_args`, and `supervised_run_command` builds the re-entry command from
-`self_exe` alone, with nothing before `--supervised-run`. `run_loop`'s reap loop also now
-logs a scheduled child that exits non-zero — the class of failure this defect was, which
-previously left no trace anywhere (a fragment that is never written looks identical to a
-probe that has simply never been due).
-
 ## Decisions
 
 - **Root `cockpit.sh` is out of scope** (see "Scope" above) — a basename collision in the
@@ -174,18 +135,6 @@ probe that has simply never been due).
   are retired on this basis (rung 4 of the ladder — impossible, not refused); sweep-temps
   itself stays tested, since a previous process's own crash between write and rename is
   still possible and still needs clearing at startup.
-- **`_run_probe_body`'s bash-specific deferred-`local`-in-a-trap hazard (sp-2575x) has no
-  Rust analogue** — no traps, no unbound-variable class at all. The third section of
-  `test-cockpit-collector-quota.sh` asserting this is retired; the other two (unit
-  `CPUQuota`, the pass-log-line format) are kept and repointed.
-- **Probe-registry integrity is a Rust unit test, not a bash source-grep.**
-  `test-cockpit-collect-probes.sh`'s registry-shape half and
-  `test-cockpit-collect-concurrency.sh` in full are retired; `supervisor::tests::
-  probes_registry_is_well_formed` and `due_probes_caps_slow_tier_concurrency_cumulatively_
-  within_one_tick`/`due_probes_starts_only_one_slow_probe_per_tick_when_both_are_due`
-  check the same properties directly against the real `PROBES` const and the real
-  scheduling decision, not an extracted copy of either.
-
 - **A refusal-path double-print in `well_keys`/`czar_triggers_keys` is not replicated.**
   The bash's embedded python prints its own `?` fallback keys in its `except` handler and
   then `raise SystemExit`s non-zero, which makes the *shell's* `||` fallback fire too and
@@ -208,17 +157,14 @@ unilaterally.
 
 ## Test strategy
 
-- **Unit** (41 tests): the supervisor's fragment lifecycle and merge (never/ok/stale/
-  error/timeout, first-wins on a key clash), the scheduling decision (`due_probes`, the
-  SLOW_CONCURRENT cap enforced cumulatively within one tick), the registry's shape, every
-  quoting/date/sanitize helper, the `reachable` BFS (seeds, stoppers, suspended partitions,
+- **Unit**: every quoting/date/sanitize helper, the `reachable` BFS (seeds, stoppers, suspended partitions,
   scope), `strand_keys`' ghost/other classification, `dwarf_alive`'s cmdline match.
 - **Parity**: every rewritten `test-cockpit-*.sh` (and the handful of other suites that
   called a probe by name — `test-mail-pane.sh`, `test-mimir-closed-record.sh`,
   `test-livelock.sh`, `test-law-synth.sh`, `test-statute-projection.sh`,
   `test-watchtower.sh`, `test-closed-strand.sh`,
   `test-tsd-producers.sh`) is repointed to call the real compiled binary
-  (`cockpit-collect probe <name>` / `once` / `_probe_body_test` / `merge`) with the same
+  (`cockpit-collect probe <name>` / `once`) with the same
   fixtures, the same `SPIRA_BDJSON_FIXTURE`/fake-`systemctl`/mock-`COCK` seams the bash
   suites already used — never a copy of the logic under test.
 - **Cannot be verified without production**: the live collector's actual probe timings

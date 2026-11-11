@@ -4,27 +4,12 @@ area = "cockpit-observability"
 [[use_case]]
 id = "UC-cockpit-observability-01"
 tier = "T1"
-statement = "the collector writes `cockpit.env` only when it is the supervised unit or `SPIRA_COCKPIT_FORCE=1` (recorded as `SP_WRITER=force`), otherwise prints keys to stdout; `cockpit-collect once`/`cockpit-collect collect` (sp-kt4l3, formerly `cockpit.sh once`/`collect.sh loop`) refuse to run unsupervised"
+statement = "`cockpit-collect once` prints the full pass to stdout and never writes `cockpit.env`, whatever `INVOCATION_ID` or environment it runs under; the scheduler's cockpit tier tasks are its only writer, and a tier refuses to publish when `SPIRA_RUNTIME_COCKPIT_TIER_WRITE` is off (`may_write`)"
 
 [[use_case]]
 id = "UC-cockpit-observability-02"
 tier = "T1"
 statement = "`SP_AT` is stamped before any section data; `SP_WINDOW_HOURS`, `SP_PASS_SECS` and `SP_COLLECTOR_REV` are always emitted"
-
-[[use_case]]
-id = "UC-cockpit-observability-03"
-tier = "T0"
-statement = "every probe a reader depends on is registered in `cockpit-collect`'s `PROBES` registry (sp-kt4l3, formerly `collect.sh PROBES`)"
-
-[[use_case]]
-id = "UC-cockpit-observability-04"
-tier = "T1"
-statement = "fragment merge: an `ok` fragment contributes its keys; `never`/`timeout`/`error` contribute only `_PROBE_AT_<n>`/`_PROBE_STATUS_<n>`; `stale` keeps its last-known-good values; a key clash picks the alphabetically first fragment"
-
-[[use_case]]
-id = "UC-cockpit-observability-05"
-tier = "T1"
-statement = "a probe that times out writes `status=timeout`, logs its name, increments `_PROBE_KILLED` (surfaced as `SP_PROBE_KILLED_<n>`), and leaves no temp file; a success resets the counter and logs `probe <n> ok <N>s`"
 
 [[use_case]]
 id = "UC-cockpit-observability-06"
@@ -34,7 +19,7 @@ statement = "a collector pass killed by TERM/INT/HUP removes its `.cockpit.*` te
 [[use_case]]
 id = "UC-cockpit-observability-07"
 tier = "T1"
-statement = "the collector loop exits 1 after N consecutive merge failures, exits 0 with 'config changed' when `SPIRA_CONF` mtime changes, and otherwise keeps running; the same contract holds for `health.sh` and `loom.sh`"
+statement = "`loom.sh` exits 0 with 'config changed' when `SPIRA_CONF` mtime changes, and otherwise keeps running"
 
 [[use_case]]
 id = "UC-cockpit-observability-08"
@@ -320,16 +305,6 @@ statement = "`tmux-env.sh` scrubs the Claude session identity from the server's 
 id = "UC-cockpit-observability-48"
 tier = "T2"
 statement = "`cockpit-remote`: the dialer refuses an empty `COCKPIT_HOST`; a watcher that loses the lock exits non-zero promptly naming the holder; `start` delegates to systemd when the unit is enabled and forks with setsid otherwise; the orphan-lock probe names the holder's pid and path"
-
-[[use_case]]
-id = "UC-cockpit-observability-49"
-tier = "T1"
-statement = "the collector loop exits 1 and logs the count after `SPIRA_COCKPIT_MERGE_FAIL_MAX` consecutive merge failures"
-
-[use_case.uncovered]
-reason = "the merge-failure exit is the supervisor run loop, verified by cockpit-collect supervisor::tests::run_loop_exits_one_after_consecutive_merge_failures; a bash test would need a service-supervised collector loop"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-cockpit-observability-50"

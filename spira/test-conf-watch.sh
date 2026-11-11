@@ -71,7 +71,7 @@ run_loom() {      # run_loom <window> <marker>
 for name in loom; do
     label="loom.sh"
 
-    RUN="$TMP/$name-run"; mkdir -p "$RUN/cockpit.d"
+    RUN="$TMP/$name-run"; mkdir -p "$RUN"
 
     # ── NEGATIVE CASE: no config change — the loop stays running ──────────────────────
     ec_stay=0

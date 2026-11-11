@@ -12,8 +12,8 @@ fn unit_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd")
 }
 
-/// Shipped units world does not act on: the dashboard, its query engine, the socket.
-const UNPLANED: &[&str] = &["spira-cockpit.service", "spira-loom.service", "spira-lc.service"];
+/// Shipped units world does not act on: the dashboard's query engine, the socket.
+const UNPLANED: &[&str] = &["spira-loom.service", "spira-lc.service"];
 
 fn shipped_units() -> Vec<String> {
     let mut v: Vec<String> = std::fs::read_dir(unit_dir())

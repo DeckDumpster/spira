@@ -947,7 +947,7 @@ fn cmd_status() -> i32 {
     }
     for line in sysctl::run_lines(&["list-units", "spira-*.service", "--state=active", "--no-legend"]) {
         let Some(svc) = sysctl::first_field(&line) else { continue };
-        if scheduler::is_kept(svc, &sfx) || svc.starts_with("spira-cockpit") || svc.starts_with("spira-loom") || svc.starts_with("spira-watch@") {
+        if scheduler::is_kept(svc, &sfx) || svc.starts_with("spira-loom") || svc.starts_with("spira-watch@") {
             continue;
         }
         println!("  {:<30} {}", svc, sysctl::run(&["is-active", svc]));

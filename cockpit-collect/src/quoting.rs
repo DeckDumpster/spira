@@ -123,19 +123,9 @@ pub fn self_quote(s: &str) -> String {
 /// The inverse of [`self_quote`]: if `v` is wrapped in a single-quote pair using that exact
 /// escaping, return the unescaped inner value; otherwise return `v` unchanged.
 ///
-/// Fragment files (`cockpit.d/*.env`) are meant to carry each probe's RAW, unquoted value —
-/// but a fragment can legitimately carry an already-quoted one anyway: `run_probe_body`'s
-/// "stale" path copies a fragment's previous value lines forward VERBATIM on a failing
-/// pass (DESIGN.md), so a value written by an older binary (or any future producer that
-/// quotes its own output, by accident or on purpose) survives in that raw form until the
-/// probe succeeds again. Merging that straight through `self_quote` a second time produced
-/// the doubled `''\'''\'''` for an empty value in production (the operator, 2026-09-30,
-/// `cockpit-collect collect` release 51228489c) — found AFTER the first fix (removing the
-/// probe-level pre-quoting) had already landed, because that fix cannot retroactively
-/// unquote a value a stale-carried-forward fragment was still holding from before it took
-/// effect. Unquoting defensively at the one place every fragment value is read —
-/// `parse_fragment` — makes the merge idempotent regardless of what already produced the
-/// fragment's content, which the first fix alone could not guarantee.
+/// A value that is already wrapped the way `self_quote` wraps it (written by an older binary
+/// or a producer that quotes its own output) is unwrapped here, so quoting it again never
+/// doubles the escaping.
 pub fn unquote_shell_single(v: &str) -> String {
     let bytes = v.as_bytes();
     if bytes.len() >= 2 && bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'' {

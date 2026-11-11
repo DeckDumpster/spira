@@ -914,8 +914,7 @@ fn a_template_that_restarts_when_idle_gives_a_reason_and_a_bare_boolean_gives_no
 }
 
 #[test]
-fn the_cockpit_collector_is_restarted_by_activation_and_the_unit_run_watcher_restarts_itself_when_idle() {
-    assert_eq!(units::never_restart(&shipped_unit("spira-cockpit.service")), None, "a stale collector freezes the panel it feeds");
+fn the_unit_run_watcher_restarts_itself_when_idle() {
     assert!(units::restart_when_idle(&shipped_unit("spira-unit-run-dbus.service")).is_some());
     assert_eq!(units::never_restart(&shipped_unit("spira-unit-run-dbus.service")), None);
 }

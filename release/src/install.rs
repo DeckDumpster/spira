@@ -83,7 +83,7 @@ pub struct InstallOpts {
     /// whose `Exec*` actually changed) is what does that, moments later. Two restarts of
     /// the same unit within the same handful of seconds raced a socket/run-dir release the
     /// first instance was still tearing down and failed the second with "the control
-    /// process exited with error code" for spira-cockpit-prod.service, deterministically
+    /// process exited with error code" for a freshly restarted unit, deterministically
     /// enough under host load to roll back a release that added nothing wrong (acceptance
     /// phase B, sp-r15cf). Default false — a standalone `release install-tarball` with no
     /// render to follow still needs its own restart to bring the box up to date.

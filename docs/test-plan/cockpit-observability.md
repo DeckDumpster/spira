@@ -1,5 +1,12 @@
 # Test plan — Cockpit telemetry and operator views (`cockpit-observability`)
 
+> **2026-11-11 (sp-uapi6f): the cockpit service unit and the `cockpit-collect` supervisor are
+> deleted.** `collect`, `merge`, `--supervised-run`, the fragment directory `run/cockpit.d/`
+> and the `INVOCATION_ID` write fence go; `once` prints and never writes. UC-03, UC-04, UC-05
+> and UC-49 (the registry, fragment merge, probe-timeout fragment and merge-failure loop) went
+> with them, and `test-cockpit-collector-quota.sh` and `test-cockpit-collect-probes.sh` are
+> deleted. UC-01 is restated as above; the rows below that name the supervisor are history.
+
 > **2026-10-01 (sp-ogu8x): `spira_event` (UC-20) retired to `bead::event`, row 20's own
 > "DEMOTE" already applied.** `spira/lib.sh`'s `spira_event` is now `bead::event::emit` plus
 > a `bead event` subcommand (rewrite wave 4.24, family Z); `lib.sh` keeps a one-line shim
@@ -212,7 +219,7 @@ The cockpit gives the operator a view of Spira that is **read-only and honest**.
 
 | ID | Requirement | Dims | Tier / where |
 |---|---|---|---|
-| UC-cockpit-observability-01 | The collector writes `cockpit.env` only when it is the supervised unit (INVOCATION_ID matches) or `SPIRA_COCKPIT_FORCE=1`, which is recorded as `SP_WRITER=force`. Otherwise it prints keys to stdout. `cockpit.sh loop` and `collect.sh loop` refuse to run unsupervised. | FC, CON, CTR | T1 cert |
+| UC-cockpit-observability-01 | `cockpit-collect once` prints the full pass to stdout and never writes `cockpit.env`; the scheduler's cockpit tier tasks are its only writer and refuse to publish when `SPIRA_RUNTIME_COCKPIT_TIER_WRITE` is off. | FC, CON, CTR | T1 cert |
 | UC-cockpit-observability-02 | `SP_AT` is stamped before any section data. `SP_WINDOW_HOURS`, `SP_PASS_SECS` and `SP_COLLECTOR_REV` are always emitted. | CTR, OBS | T1 cert |
 | UC-cockpit-observability-03 | Every probe that a reader depends on is registered in `collect.sh PROBES`. | CTR | T0 cert |
 | UC-cockpit-observability-04 | Fragment merge:<br>• an `ok` fragment contributes its keys;<br>• `never`/`timeout`/`error` contribute only `_PROBE_AT_<n>` and `_PROBE_STATUS_<n>`;<br>• `stale` keeps its last-known-good values;<br>• on a key clash the alphabetically first fragment wins. | COR, FC, CTR | T1 cert, against the real `collect.sh merge` |
@@ -274,7 +281,6 @@ The cockpit gives the operator a view of Spira that is **read-only and honest**.
 | UC-cockpit-observability-46 | `rebuild.sh`:<br>• from a dead server, creates brain, hunk, chat and cockpit, with the dashboards in `brain:0` and the cockpit windows **linked**;<br>• verifies itself and fails naming the session pane when the brief is missing;<br>• is idempotent against a healthy server (same pid);<br>• reports an over-long socket as unusable. | REC, IDM | T3 mCI (the one end-to-end tmux case) |
 | UC-cockpit-observability-47 | `tmux-env.sh` scrubs the Claude session identity from the server's global env. Panes opened afterwards do not inherit it, and a second run is idempotent. | CON, IDM | T2 bCI |
 | UC-cockpit-observability-48 | `cockpit-remote`:<br>• the dialer refuses an empty `COCKPIT_HOST`;<br>• a watcher that loses the lock exits non-zero promptly, naming the holder;<br>• `start` delegates to systemd when the unit is enabled (lock holder = MainPID) and forks with setsid otherwise;<br>• the orphan-lock probe names the holder's pid and path. | CON, REC, FC | T2 bCI (real flock, stub systemd) |
-| UC-cockpit-observability-49 | The collector loop exits 1 and logs the count after `SPIRA_COCKPIT_MERGE_FAIL_MAX` consecutive merge failures. | REC | T1 cert (unit test, bounded wait) |
 | UC-cockpit-observability-50 | `ready.sh` loom grace pass: a loom that refuses the first probe and opens its port later is retried until it answers (pass, not FAIL). A loom that never answers is FAIL, bounded by `SPIRA_LOOM_READY_GRACE` rather than the default. | OBS, CTR | T1 cert (real probe loop, localhost port) |
 
 ## 3. Coverage map

@@ -166,8 +166,8 @@ pub mod cockpit {
 
     pub type Decide = fn(&Carry, &Snapshot) -> Result<(Carry, Vec<EffectSpec>), String>;
 
-    /// The pinned key that makes this scheduler the cockpit snapshot's one writer: the
-    /// supervisor's `may_write`, which was `INVOCATION_ID` or `SPIRA_COCKPIT_FORCE`.
+    /// The pinned key that names which scheduler instance is the cockpit snapshot's one
+    /// writer.
     pub const WRITE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_WRITE";
 
     /// Keys that move on every read and so never make a snapshot new on their own: the pass's

@@ -50,7 +50,7 @@
 //!
 //! # Reverse
 //!
-//! Release rollback restores the collector; Observe mode shadows both effects.
+//! Observe mode shadows both effects.
 
 use std::collections::BTreeMap;
 
