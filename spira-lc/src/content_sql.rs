@@ -354,6 +354,10 @@ pub fn parse(args: &[String]) -> Result<Read, String> {
             let mut ids = Vec::new();
             let mut i = 1;
             while i < args.len() {
+                if args[i] == "--json" {
+                    i += 1;
+                    continue;
+                }
                 match take(args, &mut i)? {
                     ("--id", v) => ids.extend(csv(&v)),
                     (other, _) => return Err(format!("events takes only --id <a,b,...>, not `{other}`")),
@@ -432,8 +436,11 @@ impl List {
     }
 
     pub fn issues_sql(&self, db: &str) -> String {
-        let limit = self.limit.map_or(String::new(), |n| format!(" LIMIT {n}"));
-        format!("SELECT {} FROM {db}.issues WHERE {} ORDER BY priority ASC, created_at DESC, id ASC{limit}", issue_columns(), self.where_clause(db))
+        format!("SELECT {} FROM {db}.issues WHERE {}{}", issue_columns(), self.where_clause(db), Self::order(self.limit))
+    }
+
+    fn order(limit: Option<u64>) -> String {
+        format!(" ORDER BY priority ASC, created_at DESC, id ASC{}", limit.map_or(String::new(), |n| format!(" LIMIT {n}")))
     }
 }
 
@@ -559,15 +566,14 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
             let l = List { all, limit, ..List::default() };
             let q = escape(&query);
             let hit = ["id", "title", "description", "notes"].iter().map(|c| format!("LOCATE(LOWER('{q}'), LOWER({c})) > 0")).collect::<Vec<_>>().join(" OR ");
-            let limit = limit.map_or(String::new(), |n| format!(" LIMIT {n}"));
-            let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE {} AND ({hit}) ORDER BY priority ASC, created_at DESC, id ASC{limit}", issue_columns(), l.where_clause(db)))?;
+            let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE {} AND ({hit}){}", issue_columns(), l.where_clause(db), List::order(limit)))?;
             Ok(array(fill(sql, db, &issues, true)?))
         }
         Read::DepList { id, up, kind } => {
             let (near, far) = if up { ("depends_on_issue_id", "issue_id") } else { ("issue_id", "depends_on_issue_id") };
             let kind = kind.map_or(String::new(), |t| format!(" AND type = '{}'", escape(&t)));
             let rows = sql.rows(&format!("SELECT issue_id, depends_on_issue_id, `type` FROM {db}.dependencies WHERE {near} = '{}'{kind} ORDER BY {far}", escape(&id)))?;
-            Ok(Value::Array(rows.iter().filter_map(|r| Some(json!({ "id": present(r, far)?, "type": present(r, "type").unwrap_or_else(|| "blocks".into()) }))).collect()).to_string())
+            Ok(Value::Array(rows.iter().filter_map(|r| Some(json!({ "id": present(r, far)?, "type": present(r, "type")? }))).collect()).to_string())
         }
         Read::Labels(id) => {
             let rows = sql.rows(&format!("SELECT label FROM {db}.labels WHERE issue_id = '{}' ORDER BY label", escape(&id)))?;
