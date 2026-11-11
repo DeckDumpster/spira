@@ -105,10 +105,21 @@ impl Proc for SysProc {
         std::thread::spawn(move || {
             let _ = stdin.write_all(&input);
         });
+        // Drained while the child runs: a child writing past the pipe buffer blocks until read,
+        // and a wait that reads only after exit reports that stall as a missed deadline.
+        let drain = |mut pipe: Box<dyn std::io::Read + Send>| {
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let _ = pipe.read_to_end(&mut buf);
+                buf
+            })
+        };
+        let out = drain(Box::new(child.stdout.take().ok_or("no stdout pipe")?));
+        let err = drain(Box::new(child.stderr.take().ok_or("no stderr pipe")?));
         let started = Instant::now();
-        loop {
+        let status = loop {
             match child.try_wait().map_err(|e| e.to_string())? {
-                Some(_) => break,
+                Some(st) => break st,
                 None if started.elapsed() >= spec.deadline => {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -116,9 +127,8 @@ impl Proc for SysProc {
                 }
                 None => std::thread::sleep(Duration::from_millis(2)),
             }
-        }
-        let out = child.wait_with_output().map_err(|e| e.to_string())?;
-        Ok(ProcOutput { code: out.status.code(), stdout: out.stdout, stderr: out.stderr })
+        };
+        Ok(ProcOutput { code: status.code(), stdout: out.join().unwrap_or_default(), stderr: err.join().unwrap_or_default() })
     }
 }
 
