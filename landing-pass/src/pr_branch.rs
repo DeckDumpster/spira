@@ -340,6 +340,9 @@ mod tests {
         fn spira_refs(&self, _: &Path) -> Vec<(String, String)> {
             Vec::new()
         }
+        fn merged_spira_refs(&self, _: &Path, _: &str) -> std::collections::HashSet<String> {
+            Default::default()
+        }
         fn branch_exists(&self, _: &Path, _: &str) -> bool {
             true
         }
@@ -725,6 +728,9 @@ mod tests {
         impl Git for DupGit {
             fn spira_refs(&self, r: &Path) -> Vec<(String, String)> {
                 self.0.spira_refs(r)
+            }
+            fn merged_spira_refs(&self, r: &Path, b: &str) -> std::collections::HashSet<String> {
+                self.0.merged_spira_refs(r, b)
             }
             fn branch_exists(&self, r: &Path, b: &str) -> bool {
                 self.0.branch_exists(r, b)

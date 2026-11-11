@@ -82,9 +82,19 @@ struct FakeGit {
     subjects: RefCell<HashMap<String, String>>,
     /// grep → `sha\tsubject` lines on the base
     grep: RefCell<HashMap<String, String>>,
+    /// Every per-branch call, as `method args`, in the order made.
+    calls: RefCell<Vec<String>>,
+    /// The branches `merged_spira_refs` answers for.
+    merged: RefCell<HashSet<String>>,
 }
 
 impl FakeGit {
+    fn rec(&self, s: String) {
+        self.calls.borrow_mut().push(s);
+    }
+    fn called(&self, method: &str, subject: &str) -> bool {
+        self.calls.borrow().iter().any(|c| c.starts_with(method) && c.contains(subject))
+    }
     fn add(&self, br: &str, tip: &str) {
         self.refs.borrow_mut().push((br.into(), tip.into()));
     }
@@ -94,10 +104,15 @@ impl Git for FakeGit {
     fn spira_refs(&self, _: &Path) -> Vec<(String, String)> {
         self.refs.borrow().clone()
     }
+    fn merged_spira_refs(&self, _: &Path, _: &str) -> HashSet<String> {
+        self.merged.borrow().clone()
+    }
     fn branch_exists(&self, _: &Path, b: &str) -> bool {
+        self.rec(format!("branch_exists {b}"));
         self.refs.borrow().iter().any(|(x, _)| x == b)
     }
     fn rev_parse(&self, _: &Path, rev: &str) -> Option<String> {
+        self.rec(format!("rev_parse {rev}"));
         if let Some((_, t)) = self.refs.borrow().iter().find(|(b, _)| b == rev) {
             return Some(t.clone());
         }
@@ -105,9 +120,11 @@ impl Git for FakeGit {
         self.shas.borrow().get(r).cloned()
     }
     fn is_ancestor(&self, _: &Path, a: &str, b: &str) -> bool {
+        self.rec(format!("is_ancestor {a} {b}"));
         self.ancestors.borrow().contains(&(a.to_string(), b.to_string()))
     }
     fn content_on_base(&self, _: &Path, b: &str, _: &str) -> bool {
+        self.rec(format!("content_on_base {b}"));
         self.content.borrow().contains(b)
     }
     fn count(&self, _: &Path, _: &str) -> Option<u64> {
@@ -298,8 +315,6 @@ struct FakeTools {
     gate_calls: RefCell<Vec<(String, String, String)>>,
     confine: RefCell<HashMap<String, (i32, String)>>,
     status: RefCell<Option<String>>,
-    steps: RefCell<Vec<String>>,
-    no_queue: Cell<bool>,
     skews: RefCell<Vec<PathBuf>>,
     /// Advance the fake clock by this much per gate (to exercise the budget).
     gate_cost: Cell<u64>,
@@ -378,13 +393,6 @@ impl Tools for FakeTools {
     }
     fn confine(&self, id: &str, _: &str, _: &Path, _: &str, _: &str) -> (i32, String) {
         self.confine.borrow().get(id).cloned().unwrap_or((0, String::new()))
-    }
-    fn queue_step(&self, repo: &str) -> Result<Vec<String>, String> {
-        if self.no_queue.get() {
-            return Err("no queue program — the queue step did not run".into());
-        }
-        self.steps.borrow_mut().push(repo.into());
-        Ok(vec![format!("step {repo}")])
     }
     fn skew_refresh(&self, repo: &Path) -> String {
         self.skews.borrow_mut().push(repo.into());
@@ -1213,23 +1221,64 @@ fn a_checkout_among_several_repositories_skipped_is_not_an_alert() {
 }
 
 #[test]
-fn the_queue_step_runs_before_and_after_the_walk_and_a_missing_binary_is_said() {
+fn the_pass_runs_no_queue_step_and_the_skew_refresh_stays() {
     let h = H::new(LandMode::QueueLocal);
     h.closed("sp-a", "t1");
     h.run();
-    assert_eq!(*h.tools.steps.borrow(), vec!["spira", "spira"]);
-    let lines = h.out.lines();
-    let early = lines.iter().position(|l| l == "queue early: step spira").unwrap();
-    let cert = lines.iter().position(|l| l.contains("certified spira/sp-a")).unwrap();
-    let late = lines.iter().position(|l| l == "queue late: step spira").unwrap();
-    assert!(early < cert && cert < late);
+    assert!(!h.out.lines().iter().any(|l| l.starts_with("queue early:") || l.starts_with("queue late:")), "{:?}", h.out.lines());
     assert!(h.tools.skews.borrow().is_empty(), "queue.local's base is local: no skew refresh");
 
     let h = H::new(LandMode::Queue);
-    h.tools.no_queue.set(true);
     h.run();
-    assert!(h.logged("queue early: spira: no queue program — the queue step did not run"));
+    assert!(!h.out.lines().iter().any(|l| l.starts_with("queue early:") || l.starts_with("queue late:")), "{:?}", h.out.lines());
     assert_eq!(h.tools.skews.borrow().len(), 1, "queue(forge) refreshes the checkout");
+}
+
+#[test]
+fn a_settled_branch_costs_no_git_call_and_the_walk_line_counts_it() {
+    let h = H::new(LandMode::Queue);
+    empty_submit(&h);
+    h.git.merged.borrow_mut().insert("spira/sp-empty".into());
+    h.run();
+    assert!(Files::new(&h.s.run).content_settled("spira/sp-empty", "t9"));
+    h.git.calls.borrow_mut().clear();
+    h.run();
+    assert!(!h.git.called("", "spira/sp-empty"), "{:?}", h.git.calls.borrow());
+    assert!(h.logged("landing: walk complete — 1 branch(es), 1 settled from memory"), "{:?}", h.out.lines());
+}
+
+#[test]
+fn a_merged_unsettled_branch_of_a_terminal_bead_settles_from_the_merged_read() {
+    let h = H::new(LandMode::Queue);
+    h.bead("sp-l", "LANDED", &[]);
+    h.git.add("spira/sp-l", "t5");
+    h.git.merged.borrow_mut().insert("spira/sp-l".into());
+    h.git.content.borrow_mut().insert("spira/sp-l".into());
+    h.run();
+    assert!(Files::new(&h.s.run).content_settled("spira/sp-l", "t5"));
+    assert!(!h.git.called("content_on_base", "spira/sp-l") && !h.git.called("rev_parse", "spira/sp-l"), "{:?}", h.git.calls.borrow());
+}
+
+#[test]
+fn a_terminal_bead_off_the_base_costs_no_content_read_in_a_queued_repository() {
+    let h = H::new(LandMode::Queue);
+    h.bead("sp-d", "DROPPED", &[]);
+    h.git.add("spira/sp-d", "t6");
+    h.run();
+    assert!(h.logged("spira/sp-d is DROPPED — the batcher's now, not certified again"), "{:?}", h.out.lines());
+    assert!(!h.git.called("content_on_base", "spira/sp-d"), "{:?}", h.git.calls.borrow());
+}
+
+#[test]
+fn a_waiting_row_at_a_merged_branch_tip_is_settled_without_an_ancestry_fork() {
+    let h = H::new(LandMode::QueueLocal);
+    h.git.shas.borrow_mut().insert("local/main".into(), "b00".into());
+    h.git.add("spira/sp-w", "tw");
+    h.git.merged.borrow_mut().insert("spira/sp-w".into());
+    h.lc.waiting.borrow_mut().push(("sp-w".to_string(), "tw".to_string()));
+    h.run();
+    assert_eq!(h.lib.count("content_on_base sp-w settle-landed:tw ancestor-of:local/main@b00"), 1, "{:?}", h.lib.calls.borrow());
+    assert!(!h.git.called("is_ancestor", "tw"), "{:?}", h.git.calls.borrow());
 }
 
 #[test]
@@ -1760,9 +1809,6 @@ impl Tools for Injecting<'_> {
     fn confine(&self, a: &str, b: &str, c: &Path, d: &str, e: &str) -> (i32, String) {
         self.t.confine(a, b, c, d, e)
     }
-    fn queue_step(&self, r: &str) -> Result<Vec<String>, String> {
-        self.t.queue_step(r)
-    }
     fn skew_refresh(&self, r: &Path) -> String {
         self.t.skew_refresh(r)
     }
@@ -2097,6 +2143,15 @@ fn the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails() {
         vec!["landing-pass: sp-merged: LIFECYCLE: the Delivered event did not happen (show exited 1: Access denied) — the delivery row stays PR_OPEN"]
     );
     assert!(pr_run(&h, &tools).len() == 1, "a refused delivery is tried again next pass");
+}
+
+#[test]
+fn the_pr_pass_reads_the_settled_marker_before_asking_git() {
+    let h = H::new(LandMode::Pr);
+    h.closed("sp-merged", "t3");
+    Files::new(&h.s.run).settle_content("spira/sp-merged", "t3");
+    pr_run(&h, &FakePr::default());
+    assert!(!h.git.called("content_on_base", "spira/sp-merged"), "{:?}", h.git.calls.borrow());
 }
 
 #[test]

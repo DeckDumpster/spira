@@ -879,6 +879,9 @@ impl Git for RealGit {
             .filter(|(a, b)| !a.is_empty() && !b.is_empty())
             .collect()
     }
+    fn merged_spira_refs(&self, _: &Path, _: &str) -> std::collections::HashSet<String> {
+        Default::default()
+    }
     fn branch_exists(&self, repo: &Path, branch: &str) -> bool {
         let mut c = git(repo);
         c.args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")]);

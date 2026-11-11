@@ -3,6 +3,7 @@
 //! in `real`; the unit tests use recording fakes (`tests`).
 
 use crate::model::{BeadRow, Rebase, Recut};
+use std::collections::HashSet;
 use std::path::Path;
 
 /// The bead store, read only. Writes go through [`Lib`].
@@ -28,6 +29,8 @@ pub trait Beads {
 pub trait Git {
     /// `for-each-ref refs/heads/spira/*` → (short name, tip).
     fn spira_refs(&self, repo: &Path) -> Vec<(String, String)>;
+    /// Short names of the `refs/heads/spira/*` branches merged into `base`: one `for-each-ref --merged`.
+    fn merged_spira_refs(&self, repo: &Path, base: &str) -> HashSet<String>;
     /// `show-ref --verify refs/heads/<branch>`.
     fn branch_exists(&self, repo: &Path, branch: &str) -> bool;
     fn rev_parse(&self, repo: &Path, rev: &str) -> Option<String>;
