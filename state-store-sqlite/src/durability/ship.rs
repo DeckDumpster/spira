@@ -403,7 +403,7 @@ impl Shipper {
 
 /// The ship-age alarm's state change: a line on the crossing into red past `max_ms`, and one on
 /// the crossing back, never one per tick.
-pub fn alarm(was_red: bool, oldest_ms: Option<u64>, max_ms: u64, snapshot_ms: Option<u64>) -> (bool, Option<String>) {
+pub fn alarm(was_red: bool, oldest_ms: Option<u64>, max_ms: u64, snapshot_ms: Result<Option<u64>, String>) -> (bool, Option<String>) {
     let age = oldest_ms.unwrap_or(0);
     let red = age > max_ms;
     let line = match (was_red, red) {
@@ -411,7 +411,11 @@ pub fn alarm(was_red: bool, oldest_ms: Option<u64>, max_ms: u64, snapshot_ms: Op
             "RED: the oldest unshipped control-store revision has waited {}s, past {}s: the off-box copy is falling behind; {}",
             age / 1_000,
             max_ms / 1_000,
-            snapshot_ms.map_or("no snapshot has shipped from this host".into(), |a| format!("the newest snapshot that shipped is {}s old", a / 1_000))
+            match snapshot_ms {
+                Ok(Some(a)) => format!("the newest snapshot that shipped is {}s old", a / 1_000),
+                Ok(None) => "no snapshot has shipped from this host".into(),
+                Err(e) => format!("the age of the newest snapshot that shipped could not be read: {e}"),
+            }
         )),
         (true, false) => Some("CLEAR: every control-store revision is shipped within the bound again".into()),
         _ => None,
@@ -425,15 +429,15 @@ mod tests {
 
     #[test]
     fn the_alarm_speaks_on_each_crossing_and_is_silent_between() {
-        assert_eq!(alarm(false, Some(5_000), 10_000, None), (false, None));
-        let (red, line) = alarm(false, Some(11_000), 10_000, Some(7_200_000));
+        assert_eq!(alarm(false, Some(5_000), 10_000, Ok(None)), (false, None));
+        let (red, line) = alarm(false, Some(11_000), 10_000, Ok(Some(7_200_000)));
         assert!(
             red && line.clone().unwrap().starts_with(
                 "RED: the oldest unshipped control-store revision has waited 11s, past 10s"
             ) && line.unwrap().ends_with("the newest snapshot that shipped is 7200s old")
         );
-        assert_eq!(alarm(true, Some(12_000), 10_000, None), (true, None));
-        let (red, line) = alarm(true, None, 10_000, None);
+        assert_eq!(alarm(true, Some(12_000), 10_000, Ok(None)), (true, None));
+        let (red, line) = alarm(true, None, 10_000, Ok(None));
         assert!(!red && line.unwrap().starts_with("CLEAR"));
     }
 }

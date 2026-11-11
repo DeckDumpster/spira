@@ -1071,12 +1071,12 @@ impl Backend for SqliteBackend {
         })
     }
 
-    /// Drops the superseded versions at or below `rev`, and the deletes there, but never above
-    /// the compaction floor.
     fn compacted(&self) -> Result<u64> {
         SqliteBackend::compacted(self)
     }
 
+    /// Drops the superseded versions at or below `rev`, and the deletes there, but never above
+    /// the compaction floor.
     fn compact(&self, rev: u64) -> Result<()> {
         let mut w = lock(&self.0.writer);
         let tx = w
