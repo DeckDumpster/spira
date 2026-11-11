@@ -125,6 +125,22 @@ pub fn corpus_end(
     Err(format!("{why}{}", stderr_tail(stderr)))
 }
 
+/// The text round-vm prints when the tree the VM built is not the tree the host sent.
+const TREE_MISMATCH: &str = "refusing binaries: tree sha";
+
+/// A pass refused for a tree it was not cut for, explained by a base that moved under the round:
+/// not a harness fault, and the round is rebuilt once on the new base.
+pub fn base_moved_error(stderr: &str, moved: Option<(String, String, String)>) -> Option<String> {
+    if !stderr.contains(TREE_MISMATCH) {
+        return None;
+    }
+    let (old, new, landing) = moved?;
+    Some(format!(
+        "{}{old} to {new} by {landing} — the pass built a tree the round was not cut for; not a harness fault",
+        batcher::drive::BASE_MOVED
+    ))
+}
+
 /// The host and ssh exit status round-vm's stderr names when it lost the VM: the last line
 /// that mentions ssh failing. `None` when the stderr says nothing of the kind.
 fn vm_unreachable(stderr: &str) -> Option<(String, String)> {
@@ -900,10 +916,18 @@ impl RoundRunner for VmRunner<'_> {
                 Main::Corpus { suites, seen } => (seen.len(), suites.len()),
                 _ => (0, 0),
             };
-            p.done = Some(
-                corpus_end(rc, &self.stderr_text(), self.env.wall_secs, reported, total)
-                    .inspect_err(|_| self.harness_fault = true)?,
-            );
+            let stderr = self.stderr_text();
+            let ended = corpus_end(rc, &stderr, self.env.wall_secs, reported, total);
+            p.done = Some(match ended {
+                Ok(end) => end,
+                Err(e) => match base_moved_error(&stderr, io::base_move(self.repo, &self.wt)) {
+                    Some(moved) => return Err(moved),
+                    None => {
+                        self.harness_fault = true;
+                        return Err(e);
+                    }
+                },
+            });
             self.main = Main::Finished(p.done.unwrap());
             return Ok(p);
         };
@@ -991,6 +1015,19 @@ impl RoundRunner for VmRunner<'_> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_tree_mismatch_after_the_base_moved_says_where_it_moved_and_is_not_a_harness_fault() {
+        let stderr = "round-vm run: refusing binaries: tree sha 3033 does not match expected cdc7 — nothing installed";
+        let moved = Some(("375a0f9".to_string(), "80c6b52".to_string(), "9abc12 sp-ixhu8a: landed by hand".to_string()));
+        let e = base_moved_error(stderr, moved).unwrap();
+        assert!(e.starts_with("round-vm: base moved from 375a0f9 to 80c6b52 by 9abc12 sp-ixhu8a"), "{e}");
+        assert!(!crate::attribute::is_round_vm_fault(&e), "{e}");
+        let e = corpus_end(2, stderr, 60, 0, 10).unwrap_err();
+        assert!(crate::attribute::is_round_vm_fault(&e), "without a base move it stays the harness fault: {e}");
+        assert!(base_moved_error(stderr, None).is_none(), "the base did not move: the mismatch is something else");
+        assert!(base_moved_error("round-vm: harness fault", Some(("a".into(), "b".into(), "c".into()))).is_none());
+    }
     use super::*;
 
     #[test]

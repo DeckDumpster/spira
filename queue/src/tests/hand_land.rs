@@ -238,3 +238,47 @@ fn a_release_whose_content_read_is_refused_is_rolled_back_and_the_read_is_named(
     assert_eq!(t.landed_ref().as_deref(), Some(TIP), "the landing ref stays moved");
     assert!(t.landing_log().contains("verify=failed"), "{}", t.landing_log());
 }
+
+const MISMATCH: &str = "round-vm run: refusing binaries: tree sha 3033 does not match expected cdc7 — nothing installed";
+
+fn round_vm_refuses_its_tree(t: &T) {
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 2, out: String::new(), err: MISMATCH.into() };
+}
+
+fn open_round_for_certify() -> (T, String) {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = t.lc.batch_states.borrow().keys().next().cloned().unwrap_or_else(|| "hand".into());
+    let batch = fs::read_to_string(t.qfile("round"))
+        .unwrap()
+        .lines()
+        .find_map(|l| l.strip_prefix("batch_id=").map(String::from))
+        .unwrap_or(batch);
+    (t, batch)
+}
+
+#[test]
+fn a_pass_refused_for_its_tree_after_the_base_moved_says_so_and_rebuilds_instead_of_faulting() {
+    let (t, batch) = open_round_for_certify();
+    t.git.set("refs/heads/local/main", "b1");
+    t.git.ancestor("b0", "b1");
+    t.git.bases.borrow_mut().insert(("b1".into(), "merged-tb".into()), "b0".into());
+    t.git.log.borrow_mut().push(RangeCommit { sha: "b1b1b1b1b1b1".into(), parents: vec!["b0".into()], subject: "sp-ixhu8a: landed by hand".into() });
+    round_vm_refuses_its_tree(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), crate::ops::LAND_BASE_MOVED);
+    let e = t.err();
+    assert!(e.contains("base moved from b0 to b1 by b1b1b1b sp-ixhu8a: landed by hand"), "{e}");
+    assert!(!e.contains("round-vm exited 2"), "not a harness fault: {e}");
+    assert!(e.contains("re-merged"), "the round was rebuilt on the new base: {e}");
+    assert!(t.landing_log().contains("QUEUE ROUND-REMERGE"), "{}", t.landing_log());
+}
+
+#[test]
+fn a_pass_refused_for_its_tree_with_the_base_unmoved_stays_a_round_fault() {
+    let (t, batch) = open_round_for_certify();
+    round_vm_refuses_its_tree(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    let e = t.err();
+    assert!(!e.contains("base moved from"), "{e}");
+    assert!(!t.landing_log().contains("QUEUE ROUND-REMERGE"));
+}
