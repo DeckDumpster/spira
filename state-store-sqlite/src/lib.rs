@@ -24,13 +24,12 @@ pub mod live;
 
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use runtime::ports::Clock;
-use rusqlite::{ffi, params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use state_store::{Backend, Error, LogEntry, Result, Rev, Version, Write, EVENTS_PREFIX};
 
 const SCHEMA: &[&str] = &[
@@ -758,33 +757,14 @@ impl SqliteBackend {
         .map_err(db)?;
         src.busy_timeout(Duration::from_millis(self.0.max_read_ms))
             .map_err(db)?;
-        let _read = src.unchecked_transaction().map_err(db)?;
-        let rev = meta(&src, "head")?.unwrap_or(0);
-        let dest_conn = connect(dest)?;
-        // SAFETY: both handles are open connections that outlive the backup, which is finished
-        // before either closes.
-        unsafe {
-            let raw = NonNull::new(ffi::sqlite3_backup_init(
-                dest_conn.handle(),
-                c"main".as_ptr(),
-                src.handle(),
-                c"main".as_ptr(),
-            ))
-            .ok_or_else(|| {
-                Error::Backend(format!("{}: backup could not start", dest.display()))
-            })?;
-            let step = ffi::sqlite3_backup_step(raw.as_ptr(), -1);
-            let fin = ffi::sqlite3_backup_finish(raw.as_ptr());
-            if step != ffi::SQLITE_DONE || fin != ffi::SQLITE_OK {
-                return Err(Error::Backend(format!(
-                    "backup to {}: {}",
-                    dest.display(),
-                    ffi::code_to_str(if step == ffi::SQLITE_DONE { fin } else { step })
-                )));
-            }
-        }
-        drop(_read);
-        exec(&dest_conn, "VACUUM", [])?;
+        // The compacted copy is written once, straight to `dest`: no full-size copy to vacuum
+        // and no WAL of that size beside it.
+        let into = dest.to_str().ok_or_else(|| {
+            Error::Backend(format!("{}: not a UTF-8 path", dest.display()))
+        })?;
+        exec(&src, "VACUUM INTO ?1", [into])?;
+        let copy = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(db)?;
+        let rev = meta(&copy, "head")?.unwrap_or(0);
         Ok(rev)
     }
 

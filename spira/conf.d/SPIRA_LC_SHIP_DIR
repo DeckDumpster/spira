@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=lc
+DOC=Directory the control-store shipper stages its revision runs and snapshots in, and keeps its sent copies in; empty means SPIRA_RUN/lc-ship. It may sit on a different disk from SPIRA_RUN so the hourly snapshot does not write to the disk builds use. Move an existing lc-ship directory here whole before changing it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_SHIP_DIR:=}"
+SPIRA_CONF_DEFAULT_EOF
