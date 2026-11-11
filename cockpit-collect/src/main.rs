@@ -28,9 +28,8 @@ fn main() {
 }
 
 fn run(args: &[String]) -> i32 {
-    match args.first().map(String::as_str) {
-        Some("check-config") => return spira_config::process::check_config_verb("cockpit-collect", &[]),
-        _ => {}
+    if args.first().map(String::as_str) == Some("check-config") {
+        return spira_config::process::check_config_verb("cockpit-collect", &[]);
     }
     match args.first().map(String::as_str) {
         Some("metrics") => return cmd_metrics(&args[1..]),
