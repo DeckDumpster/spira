@@ -3010,9 +3010,12 @@ pub const REMOTE_RESULTS: &str = "round-work/.runtime/spira/batch-results/";
 /// Everything after the remote corpus returned `remote_rc`: pull results, tsd and binaries,
 /// write the manifest, install by tree sha. Returns `run`'s exit code.
 #[allow(clippy::too_many_arguments)]
-/// The round's coverage artifacts and its delta against the last green round; a fault here is
-/// printed and never changes the round's verdict.
+/// The round's coverage artifacts and its delta against the last green round; a red round has
+/// none, and a fault here is printed and never changes the round's verdict.
 fn record_coverage(args: &RunArgs, state_dir: &Path, results_dir: &Path, round: &str, green: bool) {
+    if !green {
+        return;
+    }
     let script = args.tree_dir.join("spira").join("coverage-round.sh");
     let out = command("bash")
         .arg(&script)
@@ -3020,7 +3023,7 @@ fn record_coverage(args: &RunArgs, state_dir: &Path, results_dir: &Path, round: 
         .arg(results_dir)
         .arg(state_dir)
         .arg(round)
-        .arg(if green { "1" } else { "0" })
+        .arg("1")
         .stdin(Stdio::null())
         .output();
     match out {
@@ -3228,6 +3231,18 @@ mod tests {
         assert_eq!(log_tail("a\nb\nc\n", 2).as_deref(), Some("b\nc"));
         assert_eq!(log_tail("a\n", 60).as_deref(), Some("a"));
         assert_eq!(log_tail("", 60), None);
+    }
+
+    #[test]
+    fn a_red_pass_runs_no_coverage_step_and_a_green_pass_runs_one() {
+        let t = TempDir::new();
+        fs::create_dir_all(t.path().join("spira")).unwrap();
+        fs::write(t.path().join("spira/coverage-round.sh"), "touch \"$2/ran\"\n").unwrap();
+        let a = RunArgs { tree_dir: t.path().to_path_buf(), ..Default::default() };
+        record_coverage(&a, t.path(), t.path(), "r", false);
+        assert!(!t.path().join("ran").exists(), "a red pass must not start the coverage script");
+        record_coverage(&a, t.path(), t.path(), "r", true);
+        assert!(t.path().join("ran").exists(), "a green pass still reports");
     }
 
     #[test]
