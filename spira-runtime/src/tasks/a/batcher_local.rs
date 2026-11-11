@@ -84,7 +84,7 @@
 //!
 //! ## Replaces
 //!
-//! `spira-rounds-prod.{service,timer}`; children `systemd-run` (`vm.rs:381`), `timeout round-vm run` (`vm.rs:306`), `round-vm refresh` (`io.rs:695`), `queue round open|eject|certify|land|abandon|stage|stage-test|promote|status` (`io.rs:1531-1960`), `queue verdict` for a forge batch left by a mode switch (`main.rs:255`, `:1258`), `timeout spira-lc` (`io.rs:197`), `bash lib.sh bead_reopen` (`io.rs:144-154`), `rebase-stale` (`io.rs:180`), `round-recert` (`io.rs:1773`), `escape-classify.sh` (`io.rs:1212-1245`), `incident.sh` (`io.rs:1307`, `:1339`, `:1793`, `:2077`), `bead.sh` (`io.rs:946`, `:2146`, `:2188`), `bash plan-matrix.sh` (`io.rs:1407`), `tsd-write` (`io.rs:2110`), `date` (`io.rs:2198`). Keys pinned: `SPIRA_RUN`, `SPIRA_DB`, `SPIRA_QUEUE_DIR`, `SPIRA_FORGE`, `SPIRA_HYPERVISOR_MEM_MIB`, `SPIRA_ROUND_VM_MEM_MIB`, `SPIRA_CI_RUNNER_MEM_MIB`, `SPIRA_BATCH_MAXPAR`, `SPIRA_BATCHER_WALL_SECS`, `SPIRA_GIT_NAME/EMAIL`, `SPIRA_LC_TIMEOUT`, `SPIRA_BATCHER_ORPHAN_REDRIVE_SECS` (`main.rs:187-223`), `SPIRA_QUEUE_LOCK_WAIT` (`main.rs:261`), `SPIRA_BATCHER_ENABLE`, `SPIRA_ROUNDS_PACING`, `SPIRA_CONCIERGE_INBOX` (`main.rs:1299`, `:1313`, `:1282`); unregistered env reads to register:
+//! `spira-rounds-prod.{service,timer}`; children `systemd-run` (`vm.rs:381`), `timeout round-vm run` (`vm.rs:306`), `queue round open|eject|certify|land|abandon|stage|stage-test|promote|status` (`io.rs:1531-1960`), `queue verdict` for a forge batch left by a mode switch (`main.rs:255`, `:1258`), `timeout spira-lc` (`io.rs:197`), `bash lib.sh bead_reopen` (`io.rs:144-154`), `rebase-stale` (`io.rs:180`), `round-recert` (`io.rs:1773`), `escape-classify.sh` (`io.rs:1212-1245`), `incident.sh` (`io.rs:1307`, `:1339`, `:1793`, `:2077`), `bead.sh` (`io.rs:946`, `:2146`, `:2188`), `bash plan-matrix.sh` (`io.rs:1407`), `tsd-write` (`io.rs:2110`), `date` (`io.rs:2198`). Keys pinned: `SPIRA_RUN`, `SPIRA_DB`, `SPIRA_QUEUE_DIR`, `SPIRA_FORGE`, `SPIRA_HYPERVISOR_MEM_MIB`, `SPIRA_ROUND_VM_MEM_MIB`, `SPIRA_CI_RUNNER_MEM_MIB`, `SPIRA_BATCH_MAXPAR`, `SPIRA_BATCHER_WALL_SECS`, `SPIRA_GIT_NAME/EMAIL`, `SPIRA_LC_TIMEOUT`, `SPIRA_BATCHER_ORPHAN_REDRIVE_SECS` (`main.rs:187-223`), `SPIRA_QUEUE_LOCK_WAIT` (`main.rs:261`), `SPIRA_BATCHER_ENABLE`, `SPIRA_ROUNDS_PACING`, `SPIRA_CONCIERGE_INBOX` (`main.rs:1299`, `:1313`, `:1282`); unregistered env reads to register:
 //! `SPIRA_BATCHER_ROUND_SLOTS`, `_POLL_SECS`, `_LAND_LOCK_ATTEMPTS`, `_LAND_LOCK_WAIT`, `_LAND_UNPAUSE`, `_MEND_DEADLINE_SECS`, `SPIRA_VERDICTS`, `ROUND_CPU_QUOTA` (`main.rs:203-222`, `:378`; `vm.rs:382`).
 //!
 //! ## Reverse
@@ -2085,9 +2085,6 @@ pub mod edge {
             (env.run.join("worktree").join(format!(".batcher-{}-{}", repo.name, &super::digest(&leg.round_key)[..12])), leg.onto.clone())
         };
         io::worktree_reset(&repo, &wt, &at)?;
-        if let Err(e) = io::template_refresh(&env, &wt) {
-            eprintln!("batcher.local {}: template refresh before the lease failed ({e}) — cutting on the template as it stands", repo.name);
-        }
         let merges: BTreeMap<String, batcher::core::MergeResult> = sorted.iter().map(|m| (m.id.clone(), io::merge_member(&env, &wt, &m.id, &m.tip))).collect();
         let combined = batcher::core::combine(&batcher::core::CombineInput { pool: &sorted, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &sequenced, siblings: &BTreeMap::new() });
         let conflicts = sorted.iter().filter(|m| merges.get(&m.id) == Some(&batcher::core::MergeResult::Conflict)).map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>();

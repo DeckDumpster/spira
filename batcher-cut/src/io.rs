@@ -999,17 +999,6 @@ pub fn confirm_base(repo: &Repo, head: &str) -> Result<String, String> {
     Ok(base)
 }
 
-/// `round-vm refresh` of the template to the tree at `tree`: a no-op when it already holds that
-/// tree's recipe, and synchronous otherwise, so the next lease finds the landed recipe's image.
-pub fn template_refresh(env: &Env, tree: &Path) -> Result<(), String> {
-    // FORK-EDGE: machine leg round-vm (refresh)
-    run(
-        Command::new(&env.round_vm).arg("refresh").arg(tree),
-        "round-vm refresh",
-    )
-    .map(|_| ())
-}
-
 pub fn worktree_reset(repo: &Repo, wt: &Path, at_sha: &str) -> Result<(), String> {
     let _ = run(
         Command::new("git")
