@@ -433,6 +433,49 @@ fn sp_56d3l3_a_round_emptied_by_its_own_ejects_is_abandoned_without_a_pause() {
     }
 }
 
+/// The pause file is written by an effect a moment after the verdict, so a tick can see the repo
+/// unpaused with the verdict already carried: the base must survive that tick, or the pause is
+/// first read after the next landing and records the landed head, which nothing can move past.
+#[test]
+fn sp_esyv8o_a_pause_written_at_one_head_is_lifted_by_a_landing_though_a_tick_saw_no_file_first() {
+    let blocked = runtime::units::RanOutput::captured(batcher_cut::attribute::Attribution::Blocked("unattributed red test-x.sh".into()).line().as_bytes(), b"");
+    let (carry, acts) = on_ran_with(&driving(State::Attributing, "spira.a2"), &ran_of("spira.a2"), &blocked, NOW).expect("its own leg");
+    assert!(acts.iter().any(|a| a.effect == PAUSE), "{acts:?}");
+
+    let mut unwritten = paused("b1");
+    unwritten.repos.get_mut("spira").unwrap().paused = None;
+    let (carry, acts) = decide(&carry, &unwritten);
+    assert!(acts.iter().any(|a| a.effect == ASSEMBLE), "the file is not there yet, so the repo cuts: {acts:?}");
+    let landed = Carry { repos: [("spira".to_string(), RepoCarry { paused_on: carry.repos["spira"].paused_on.clone(), ..RepoCarry::default() })].into() };
+    assert_eq!(landed.repos["spira"].paused_on.as_deref(), Some("b1"), "the head the pause was written at is kept");
+
+    let (carry, acts) = decide(&landed, &paused("b2"));
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert_eq!(names, [PAUSE, FETCH, ASSEMBLE], "the landing lifts the pause and the waiting work is cut: {acts:?}");
+    assert_eq!(carry.repos["spira"].paused_on, None);
+}
+
+/// A pause file that is gone after the repo moved on is no pause of ours: the next one is a new pause.
+#[test]
+fn sp_esyv8o_a_vanished_pause_forgets_its_base_once_the_repo_has_moved_past_it() {
+    let mut gone = paused("b2");
+    gone.repos.get_mut("spira").unwrap().paused = None;
+    let (carry, _) = decide(&paused_on("b1"), &gone);
+    assert_eq!(carry.repos["spira"].paused_on, None);
+}
+
+/// An attribution leg stopped by a signal says nothing about the round: the Concierge's abandon
+/// stops it with SIGTERM, and a pause written for that holds the repo against nothing red.
+#[test]
+fn sp_esyv8o_an_attribution_leg_stopped_by_a_signal_writes_no_pause() {
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.a2").unwrap(), exit: runtime::units::Exit::Signal(15), duration_ms: 1 };
+    let (carry, acts) = on_ran_with(&driving(State::Attributing, "spira.a2"), &ran, &runtime::units::RanOutput::default(), NOW).expect("its own leg");
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert!(!names.contains(&PAUSE) && !names.contains(&ABANDON), "{names:?}");
+    assert_eq!(carry.repos.get("spira").and_then(|r| r.paused_on.clone()), None);
+    assert!(carry.repos.get("spira").map_or(true, |r| r.state == State::Idle), "the round is let go");
+}
+
 /// An operator's deliberate hold (`hold:`) is never lifted by a landing.
 #[test]
 fn sp_8nlvra_a_deliberate_hold_survives_a_landing() {
