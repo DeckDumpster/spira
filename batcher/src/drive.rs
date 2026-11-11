@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::attrib::{Attributor, Budget, Decision, Job, JobResult, Outcome, Purpose, Shape};
 use crate::buildattr::{self, Action, MemberDiff};
 use crate::core::{Id, Member};
+use crate::unitattr::{self, PackageGraph};
 
 /// What one poll of the main run returned: results that became final since the last poll,
 /// and whether it has ended.
@@ -85,6 +86,10 @@ pub trait RoundRunner {
     fn runner_survives(&mut self, _members: &[Member]) -> Option<bool> {
         None
     }
+    /// Like `filter_green`, judging only the tests of `packages`, the ones that failed.
+    fn filter_green_in(&mut self, name: &str, _packages: &[String], members: &[Member]) -> Option<bool> {
+        self.filter_green(name, members)
+    }
 }
 
 /// A filter's red. `named` is each member the filter's own output blames, with the line that does;
@@ -93,6 +98,8 @@ pub trait RoundRunner {
 pub struct FilterRed {
     pub name: String,
     pub named: Vec<(Id, String)>,
+    /// The failing tests the filter's output lists, as `<STATUS> <binary> <test>` lines.
+    pub failed: Vec<String>,
 }
 
 /// Everything the round does besides running suites.
@@ -117,6 +124,10 @@ pub trait RoundOps {
     fn base_moved(&mut self, members: &[Member]) -> Result<Option<(String, Vec<Member>)>, String>;
     /// A red no single member reproduces, still red on a changed input: call the Judge.
     fn judge(&mut self, suites: &[String], members: &[Id]);
+    /// The workspace's packages and their dependencies on the merged tree; `None` when it cannot be read.
+    fn package_graph(&self) -> Option<PackageGraph> {
+        None
+    }
     /// Each member's changed paths and added lines, for attributing a workspace-build red.
     fn diffs(&self, _members: &[Id]) -> Vec<MemberDiff> {
         vec![]
@@ -443,10 +454,24 @@ fn with_dependents(members: &[Member], out: &mut BTreeMap<Id, Vec<String>>) {
 fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O, f: &FilterRed, members: &[Member]) -> Result<FilterEject, String> {
     let named: Vec<&(Id, String)> = f.named.iter().filter(|(id, _)| members.iter().any(|m| &m.id == id)).collect();
     if named.is_empty() {
-        let red = format!("{} red", f.name);
-        let mut actions = bisect_members(&red, &mut |m| runner.filter_green(&f.name, m), members).unwrap_or_default();
+        let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
+        let packages = unitattr::failing_packages(&f.failed);
+        let tests = match f.failed.len() {
+            0 => String::new(),
+            n if n <= MAX_NOTED_TESTS => format!(": {}", f.failed.join("; ")),
+            n => format!(": {}; and {} more", f.failed[..MAX_NOTED_TESTS].join("; "), n - MAX_NOTED_TESTS),
+        };
+        let mapped = ops.package_graph().map(|g| unitattr::reaching(&g, &packages, &ops.diffs(&ids))).unwrap_or_default();
+        let mut actions: Vec<Action> = mapped
+            .into_iter()
+            .map(|(id, via)| Action::Eject { line: format!("{} red{tests} (mapped by package: this member's diff touches {via})", f.name), id })
+            .collect();
         if actions.is_empty() {
-            actions = sole_member_culprit(&red, members);
+            let red = format!("{} red{tests}", f.name);
+            actions = bisect_members(&red, &mut |m| runner.filter_green_in(&f.name, &packages, m), members).unwrap_or_default();
+            if actions.is_empty() {
+                actions = sole_member_culprit(&red, members);
+            }
         }
         if actions.is_empty() {
             ops.incident("unattributed", std::slice::from_ref(&f.name));
@@ -474,6 +499,9 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(runner: &mut R, ops: &mut O,
     let rebuilt = ops.rebuild(&survivors)?;
     Ok(if rebuilt.is_empty() { FilterEject::Emptied } else { FilterEject::Survivors(rebuilt) })
 }
+
+/// How many failing tests an eject note lists before it counts the rest.
+const MAX_NOTED_TESTS: usize = 20;
 
 /// A round of one member has no one else to blame: a red nothing else names is that member's.
 fn sole_member_culprit(red: &str, members: &[Member]) -> Vec<Action> {
@@ -508,6 +536,9 @@ fn first_failing_prefix(green: &mut dyn FnMut(&[Member]) -> Option<bool>, member
 /// the runner cannot probe subsets.
 fn bisect_members(red: &str, green: &mut dyn FnMut(&[Member]) -> Option<bool>, members: &[Member]) -> Option<Vec<Action>> {
     let k = first_failing_prefix(green, members)?;
+    if k == 1 && members.len() > 1 && !green(&[])? {
+        return None;
+    }
     let last = &members[k - 1];
     let line = |what: &str| format!("{red} {what} (bisected by running member subsets)");
     if !green(std::slice::from_ref(last))? {
@@ -903,6 +934,8 @@ pub(crate) mod tests {
         /// Whether the fake can build a member subset, and each subset it was asked to build.
         pub bisects: bool,
         pub probes: Vec<Vec<String>>,
+        /// The packages each scoped filter probe was asked to judge.
+        pub scoped: Vec<Vec<String>>,
         /// A runner that cannot build a tree with members taken out: every such job fails to launch.
         pub refuses_removals: bool,
         /// Suite → the members whose diff adds it: a run naming it on a tree holding none of them dies as round-vm does.
@@ -945,6 +978,7 @@ pub(crate) mod tests {
                 aborts_with: None,
                 bisects: false,
                 probes: vec![],
+                scoped: vec![],
                 refuses_removals: false,
                 added_by: BTreeMap::new(),
                 abandoned_after_starts: None,
@@ -1043,6 +1077,10 @@ pub(crate) mod tests {
             self.probes.push(tree.iter().cloned().collect());
             self.bisects.then(|| self.filter.as_ref().is_none_or(|f| f(&tree).is_none()))
         }
+        fn filter_green_in(&mut self, name: &str, packages: &[String], members: &[Member]) -> Option<bool> {
+            self.scoped.push(packages.to_vec());
+            self.filter_green(name, members)
+        }
         fn runner_survives(&mut self, members: &[Member]) -> Option<bool> {
             self.probes.push(members.iter().map(|m| m.id.clone()).collect());
             self.bisects.then(|| self.aborts_with.as_ref().is_none_or(|(m, _)| !members.iter().any(|x| &x.id == m)))
@@ -1110,6 +1148,7 @@ pub(crate) mod tests {
         pub menders: Vec<crate::mender::Next>,
         pub diffs: Vec<MemberDiff>,
         pub sequenced: Vec<(String, Vec<String>)>,
+        pub graph: Option<PackageGraph>,
     }
 
     impl RoundOps for Ops {
@@ -1129,6 +1168,9 @@ pub(crate) mod tests {
         }
         fn diffs(&self, _: &[Id]) -> Vec<MemberDiff> {
             self.diffs.clone()
+        }
+        fn package_graph(&self) -> Option<PackageGraph> {
+            self.graph.clone()
         }
         fn sequence(&mut self, member: &Member, behind: &[Id], line: &str) {
             self.sequenced.push((member.id.clone(), behind.to_vec()));
@@ -1631,8 +1673,76 @@ pub(crate) mod tests {
             tree.contains(culprit).then(|| FilterRed {
                 name: "spira-lint".into(),
                 named: vec![(culprit.to_string(), format!("member={culprit} ffx-vocabulary: dwarf/src/lib.rs:26: the term \"banned\""))],
+                failed: vec![],
             })
         })
+    }
+
+    const FAILING: [&str; 2] = ["FAIL loom factory::tests::a_refused_dwell_blinds", "FAIL loom factory::tests::a_round_open_elsewhere"];
+
+    fn unit_red_when(culprit: &'static str) -> FilterFn {
+        Box::new(move |tree| tree.contains(culprit).then(|| FilterRed { name: "unit-tests".into(), named: vec![], failed: FAILING.iter().map(|l| l.to_string()).collect() }))
+    }
+
+    fn loom_graph() -> PackageGraph {
+        PackageGraph {
+            dirs: [("loom", "loom"), ("runtime", "spira-runtime"), ("gate", "gate")].iter().map(|(p, d)| (p.to_string(), d.to_string())).collect(),
+            deps: std::collections::BTreeMap::from([("loom".to_string(), vec!["runtime".to_string()])]),
+        }
+    }
+
+    fn diff_of(id: &str, path: &str) -> MemberDiff {
+        MemberDiff { id: id.into(), paths: vec![path.into()], added: String::new() }
+    }
+
+    fn four() -> Vec<Member> {
+        vec![member("m1"), member("m2"), member("m3"), member("m4")]
+    }
+
+    #[test]
+    fn a_unit_red_in_a_package_only_the_last_members_dependency_touches_ejects_that_member_and_no_other() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(unit_red_when("m4"));
+        let mut ops = Ops {
+            graph: Some(loom_graph()),
+            diffs: vec![diff_of("m1", "gate/src/engine.rs"), diff_of("m2", "docs/x.md"), diff_of("m3", "gate/src/tests.rs"), diff_of("m4", "spira-runtime/src/tasks/e/watch.rs")],
+            ..Ops::default()
+        };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(ops.ejected, vec![("m4".to_string(), vec!["unit-tests".to_string()])]);
+        assert!(f.probes.is_empty(), "a mapped red runs no subset: {:?}", f.probes);
+        let note = &ops.eject_evidence[0].1;
+        assert!(note.contains("mapped by package") && FAILING.iter().all(|l| note.contains(l)), "{note}");
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3), "{end:?}");
+    }
+
+    #[test]
+    fn a_unit_red_no_member_maps_to_runs_the_failing_packages_on_subsets_and_ejects_only_the_red_one() {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.filter = Some(unit_red_when("m3"));
+        let mut ops = Ops {
+            graph: Some(loom_graph()),
+            diffs: vec![diff_of("m1", "gate/src/engine.rs"), diff_of("m2", "docs/x.md"), diff_of("m3", "scripts/odd.sh"), diff_of("m4", "gate/src/tests.rs")],
+            ..Ops::default()
+        };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(ops.ejected, vec![("m3".to_string(), vec!["unit-tests".to_string()])]);
+        assert!(!f.probes.is_empty() && f.scoped.iter().all(|p| p == &["loom".to_string()]), "{:?} {:?}", f.probes, f.scoped);
+        let note = &ops.eject_evidence[0].1;
+        assert!(note.contains("bisected by running member subsets") && FAILING.iter().all(|l| note.contains(l)), "{note}");
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3), "{end:?}");
+    }
+
+    #[test]
+    fn a_unit_red_the_base_has_too_ejects_nobody_by_list_position() {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.filter = Some(Box::new(|_| Some(FilterRed { name: "unit-tests".into(), named: vec![], failed: vec![FAILING[0].to_string()] })));
+        let mut ops = Ops { graph: Some(loom_graph()), ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
     }
 
     #[test]
@@ -1953,7 +2063,7 @@ pub(crate) mod tests {
 
     fn unit_red_together(culprits: &'static [&'static str]) -> FilterFn {
         Box::new(move |tree| {
-            culprits.iter().all(|c| tree.contains(*c)).then(|| FilterRed { name: "unit-tests".into(), named: vec![] })
+            culprits.iter().all(|c| tree.contains(*c)).then(|| FilterRed { name: "unit-tests".into(), named: vec![], failed: vec![] })
         })
     }
 
@@ -1988,7 +2098,7 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(Box::new(move |_| {
             seen.set(seen.get() + 1);
-            (seen.get() == 1).then(|| FilterRed { name: "unit-tests".into(), named: vec![] })
+            (seen.get() == 1).then(|| FilterRed { name: "unit-tests".into(), named: vec![], failed: vec![] })
         }));
         f.bisects = true;
         let mut ops = Ops::default();
@@ -2020,7 +2130,7 @@ pub(crate) mod tests {
     #[test]
     fn sp_evwve7_a_filter_red_naming_no_member_ejects_the_only_member_of_the_round() {
         let mut f = Fake::new(|_, _| false);
-        f.filter = Some(Box::new(|_| Some(FilterRed { name: "integration-tests".into(), named: vec![] })));
+        f.filter = Some(Box::new(|_| Some(FilterRed { name: "integration-tests".into(), named: vec![], failed: vec![] })));
         let mut ops = Ops::default();
         let end = attribute_round(&mut f, &mut ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
@@ -2032,7 +2142,7 @@ pub(crate) mod tests {
     #[test]
     fn a_lint_red_naming_no_member_is_filed_once_and_does_not_run_the_corpus_again() {
         let mut f = Fake::new(|_, _| false);
-        f.filter = Some(Box::new(|_| Some(FilterRed { name: "spira-lint".into(), named: vec![] })));
+        f.filter = Some(Box::new(|_| Some(FilterRed { name: "spira-lint".into(), named: vec![], failed: vec![] })));
         let mut ops = Ops::default();
         let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");

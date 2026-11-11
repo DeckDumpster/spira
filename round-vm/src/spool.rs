@@ -125,8 +125,10 @@ unit)
     rm -rf "$d"; mkdir -p "$HOME/attr"
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
+    scope="--workspace"
+    if [ "$suites" != unit ]; then scope=""; for p in ${suites//,/ }; do scope="$scope -p $p"; done; fi
     env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
-        cargo test -q --profile unittest --workspace --features integration --no-fail-fast --lib --bins --config profile.unittest.incremental=false >&2
+        cargo test -q --profile unittest $scope --features integration --no-fail-fast --lib --bins --config profile.unittest.incremental=false >&2
     rc=$?
     cd "$HOME" && rm -rf "$d"
     [ "$rc" -eq 101 ] && exit 5
@@ -460,6 +462,11 @@ mod tests {
     }
 
     fn attr_job_rc(build: &str, cargo_rc: i32, result: &str) -> (i32, bool) {
+        let (rc, made, _) = attr_job(build, build, cargo_rc, result);
+        (rc, made)
+    }
+
+    fn attr_job(build: &str, suites: &str, cargo_rc: i32, result: &str) -> (i32, bool, String) {
         let d = TempDir::new();
         let (bin, home) = (d.path().join("bin"), d.path().join("home"));
         fs::create_dir_all(&bin).unwrap();
@@ -469,7 +476,7 @@ mod tests {
         stub("git", "for a; do last=$a; done; mkdir -p \"$last\"");
         stub("cargo", &format!("echo \"$*\" > \"$HOME/cargo.args\"; env > \"$HOME/cargo.env\"; exit {cargo_rc}"));
         let status = std::process::Command::new("/bin/bash")
-            .args(["-c", REMOTE_ATTR_SCRIPT, "bash", "h", "9430", "j1", "attr-j1", build, build, ""])
+            .args(["-c", REMOTE_ATTR_SCRIPT, "bash", "h", "9430", "j1", "attr-j1", suites, build, ""])
             .env_clear()
             .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
             .env("HOME", &home)
@@ -478,10 +485,10 @@ mod tests {
         let ran = fs::read_to_string(home.join("cargo.args")).unwrap_or_default();
         let env = fs::read_to_string(home.join("cargo.env")).unwrap_or_default();
         if cargo_rc == 0 && build == "unit" {
-            assert!(ran.contains("--workspace") && ran.contains("--lib --bins"), "the unit phase's targets: {ran}");
+            assert!(ran.contains("--lib --bins"), "the unit phase's targets: {ran}");
             assert!(!env.contains("SPIRA_"), "a scrubbed environment: {env}");
         }
-        (status.code().unwrap(), home.join("attr-results/j1").join(result).exists())
+        (status.code().unwrap(), home.join("attr-results/j1").join(result).exists(), ran)
     }
 
     fn workspace_job_rc(cargo_rc: i32) -> (i32, bool) {
@@ -490,12 +497,20 @@ mod tests {
 
     #[test]
     fn the_unit_probe_runs_the_command_the_round_runs_its_unit_phase_with() {
-        let flags = ["--profile unittest --workspace --features integration", "profile.unittest.incremental=false"];
+        let flags = ["--profile unittest", "--features integration", "profile.unittest.incremental=false"];
         let unit_arm = REMOTE_ATTR_SCRIPT.split("\nunit)").nth(1).and_then(|a| a.split("exit 0 ;;").next()).expect("a unit arm");
         let round_cmd = crate::run::REMOTE_SCRIPT.split("unit_cargo() {").nth(1).and_then(|a| a.split("\n}\n").next()).expect("unit_cargo");
         for f in flags {
             assert!(unit_arm.contains(f) && round_cmd.contains(f), "{f}: the probe and the round must bisect the same run");
         }
+    }
+
+    #[test]
+    fn a_unit_job_naming_packages_tests_only_those_and_a_bare_one_the_whole_workspace() {
+        let (_, _, args) = attr_job("unit", "loom,gate", 0, "unit-tests.result");
+        assert!(args.contains("-p loom -p gate") && !args.contains("--workspace"), "{args}");
+        let (_, _, args) = attr_job("unit", "unit", 0, "unit-tests.result");
+        assert!(args.contains("--workspace") && !args.contains("-p "), "{args}");
     }
 
     #[test]

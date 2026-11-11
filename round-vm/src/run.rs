@@ -616,7 +616,7 @@ test_phase_bound() {
 }
 # "<STATUS> <test>" per red test of a nextest log, once each: the summary repeats them, so it is not read.
 nextest_reds() {
-    awk '/^ *Summary \[/ { exit } match($0, /^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[[ >]*[0-9.]+s\] +\( *[0-9]+\/[0-9]+\) +[^ ]+ +/) { print $1, substr($0, RLENGTH + 1) }' "$1"
+    awk '/^ *Summary \[/ { exit } match($0, /^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[[ >]*[0-9.]+s\] +\( *[0-9]+\/[0-9]+\) +[^ ]+ +/) { n = split(substr($0, 1, RLENGTH), head, " "); print $1, substr($0, RLENGTH + 1), head[n] }' "$1"
 }
 # A red with no failing test, classified by what happened: "<KIND> binary=<name> [detail]" with
 # KIND SIGNAL (a test binary killed), TIMEOUT (the guard killed the phase) or BUILD (cargo could not
@@ -649,6 +649,7 @@ test_phase_red() {
         [ -z "$class" ] || echo "${stage^^}-RED: $class"
         echo "${stage^^}-CAUSE: $cause after ${secs}s; last binary=${last:-none-started}; failures=$(( $(grep -c -E '^test .* FAILED|^test result: FAILED' "$log") + $(nextest_reds "$log" | wc -l) ))"
         nextest_reds "$log" | awk '{ print "test " $2 " ... FAILED" }'
+        nextest_reds "$log" | awk '{ print $1, $3, $2 }'
         grep -E -A8 '^(test .* FAILED|---- |error(\[|:))|panicked at|^test result: FAILED|^failures:' "$log" | head -400
         echo "--- last output of the log ---"
         tail -100 "$log"
@@ -3341,6 +3342,7 @@ mod tests {
         let (out, json) = red_phase_files(NEXTEST_LOG, "");
         assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: TIMEOUT test=t::sleeper", "{out}");
         assert!(out.contains("failures=2"), "{out}");
+        assert!(out.lines().any(|l| l == "FAIL fx t::bad") && out.lines().any(|l| l == "TIMEOUT fx t::sleeper"), "each red names its binary: {out}");
         assert!(json.contains(r#""failed":["t::bad","t::sleeper"]"#), "{json}");
     }
 

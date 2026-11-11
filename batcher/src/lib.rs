@@ -9,6 +9,7 @@ pub mod drive;
 
 pub mod mender;
 pub mod pathattr;
+pub mod unitattr;
 
 #[cfg(test)]
 mod fork_fence {
