@@ -113,13 +113,13 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 #[test]
 fn t5_the_lines_are_the_ones_perf_watch_wrote() {
     let r = rig(1, Arc::new(Mutex::new(slow("lc-list", 900))));
-    assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:perf-watch] PERF SLOW lc-list 900ms (limit 500ms) top callers: unknown"]);
+    assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:perf-watch] PERF SLOW lc-list 900ms (limit 500ms) phases unreported; top callers: unknown"]);
     let mut unrunnable = idle();
     unrunnable.timings[1].error = Some("exit status: 1".into());
     let r = rig(1, Arc::new(Mutex::new(unrunnable)));
-    assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:perf-watch] PERF UNRUNNABLE lc-show: exit status: 1"]);
+    assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:perf-watch] PERF UNRUNNABLE lc-show: exit status: 1 (after 40ms; phases unreported)"]);
     let logged: Vec<&str> = r.requested().iter().filter(|q| q.name == LOG).map(|q| q.input.as_str()).collect();
-    assert_eq!(logged, ["PERF UNRUNNABLE lc-show: exit status: 1"], "the log carries the bare alarm");
+    assert_eq!(logged, ["PERF UNRUNNABLE lc-show: exit status: 1 (after 40ms; phases unreported)"], "the log carries the bare alarm");
 }
 
 fn standing_alarm() -> TaskRig {

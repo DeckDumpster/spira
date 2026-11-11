@@ -15,6 +15,7 @@ mod open_bounded;
 mod open_retries;
 mod queued_deadline;
 mod status;
+mod sys_proc;
 mod turn_state;
 mod unit_ran;
 mod virtual_driver;

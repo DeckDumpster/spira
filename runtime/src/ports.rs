@@ -105,20 +105,35 @@ impl Proc for SysProc {
         std::thread::spawn(move || {
             let _ = stdin.write_all(&input);
         });
+        // Drained while the child runs: a child writing past the pipe buffer blocks until read,
+        // and a wait that reads only after exit reports that stall as a missed deadline.
+        let drain = |mut pipe: Box<dyn std::io::Read + Send>| {
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let _ = pipe.read_to_end(&mut buf);
+                buf
+            })
+        };
+        let out = drain(Box::new(child.stdout.take().ok_or("no stdout pipe")?));
+        let err = drain(Box::new(child.stderr.take().ok_or("no stderr pipe")?));
         let started = Instant::now();
+        let mut status = None;
         loop {
-            match child.try_wait().map_err(|e| e.to_string())? {
-                Some(_) => break,
-                None if started.elapsed() >= spec.deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!("{} exceeded its {:?} deadline", spec.prog, spec.deadline));
-                }
-                None => std::thread::sleep(Duration::from_millis(2)),
+            if status.is_none() {
+                status = child.try_wait().map_err(|e| e.to_string())?;
             }
+            if status.is_some() && out.is_finished() && err.is_finished() {
+                break;
+            }
+            if started.elapsed() >= spec.deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{} exceeded its {:?} deadline", spec.prog, spec.deadline));
+            }
+            std::thread::sleep(Duration::from_millis(2));
         }
-        let out = child.wait_with_output().map_err(|e| e.to_string())?;
-        Ok(ProcOutput { code: out.status.code(), stdout: out.stdout, stderr: out.stderr })
+        let status = status.expect("loop exits with a status");
+        Ok(ProcOutput { code: status.code(), stdout: out.join().unwrap_or_default(), stderr: err.join().unwrap_or_default() })
     }
 }
 

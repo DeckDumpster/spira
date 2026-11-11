@@ -34,7 +34,7 @@
 //! | `watch.perf.slow_sample` | host | 5 s | `watch.perf:slow:<probe>:<epoch>` | a path outside `SPIRA_RUN` |
 //! | `watch.perf.metrics` | host | 5 s | `watch.perf:metrics:<epoch>` | nothing; a lost push is a gap in the series, not a failure |
 //!
-//! - **`inbox.append`** carries `<UTC ISO> [watch:perf-watch] <alarm>` (`inbox_line`, `lib.rs:226-239`, test `lib.rs:350-352`). The alarm is one of `PERF SLOW <name> <ms>ms (limit <L>ms) top callers: <c1, c2, c3|unknown>` or `PERF UNRUNNABLE <name>: <err>` (`lib.rs:116-117`). The shared runner adds the newline, so the task drops the trailing `\n` that `inbox_line` appends.
+//! - **`inbox.append`** carries `<UTC ISO> [watch:perf-watch] <alarm>` (`inbox_line`, `lib.rs:226-239`, test `lib.rs:350-352`). The alarm is one of `PERF SLOW <name> <ms>ms (limit <L>ms) phases <p|unreported> [rest=<ms>ms]; top callers: <c1, c2, c3|unknown>` or `PERF UNRUNNABLE <name>: <err> (after <ms>ms; phases …)` (`lib.rs:116-117`). The shared runner adds the newline, so the task drops the trailing `\n` that `inbox_line` appends.
 //! - **`watch.perf.log`** appends the bare alarm line to `run/perf-watch.log`, the log row `spira/watchers:122` that the unit's stdout fills today (`main.rs:144`).
 //! - **`watch.perf.slow_sample`** appends `<epoch>\t<probe>\t<ms>\t<phases>\trest=<ms>\t<top callers>` to `run/perf-slow.log` (`lib.rs:128-141`, `main.rs:147-151`).
 //! - **`watch.perf.metrics`** pushes `spira_perf_watch_probe_seconds{probe}` for every answered probe (`lib.rs:101-109`, `main.rs:152`).
@@ -195,21 +195,29 @@ fn probes() -> Result<Vec<perf_watch::Probe>, String> {
     std::fs::read_to_string(&file).map_err(|e| e.to_string()).and_then(|t| perf_watch::parse_probes(&t)).map_err(|e| format!("perf-watch: {}: {e}", file.display()))
 }
 
+/// The phases line a probe printed to stderr, if it timed itself.
+fn phases_of(stderr: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(stderr).lines().rev().find_map(|l| l.strip_prefix(spira_otel::run::PHASES_PREFIX)).map(str::to_string)
+}
+
 /// One probe timed end to end: a `spira-lc` read goes over the in-process client (the path
 /// S7 left), any other probe is its program run through the `Proc` port.
 fn time_one(lc: &Result<spira_config::lc_call::LcClient, String>, argv: &[String]) -> Timing {
     let t0 = std::time::Instant::now();
+    let mut phases = None;
     let r: Result<(), String> = match (argv[0].as_str(), lc) {
         ("spira-lc", Ok(lc)) => lc.call(&argv[1..]).map(|_| ()).map_err(|e| format!("{}: {e}", argv[0])),
         ("spira-lc", Err(e)) => Err(format!("{}: {e}", argv[0])),
         _ => {
             use runtime::ports::Proc;
-            let spec = runtime::ports::ProcSpec { prog: argv[0].clone(), args: argv[1..].to_vec(), stdin: vec![], deadline: PROBE_DEADLINE };
-            runtime::ports::SysProc.run(&spec).map(|_| ()).map_err(|e| format!("{}: {e}", argv[0]))
+            let phases_on = format!("{}=1", spira_otel::run::PHASES_ENV);
+            let args = [phases_on, argv[0].clone()].into_iter().chain(argv[1..].iter().cloned()).collect();
+            let spec = runtime::ports::ProcSpec { prog: "env".into(), args, stdin: vec![], deadline: PROBE_DEADLINE };
+            runtime::ports::SysProc.run(&spec).map_err(|e| format!("{}: {e}", argv[0])).map(|o| phases = phases_of(&o.stderr))
         }
     };
     let micros = t0.elapsed().as_micros() as u64;
-    Timing { name: String::new(), micros, millis: micros / 1000, phases: None, error: r.err() }
+    Timing { name: String::new(), micros, millis: micros / 1000, phases, error: r.err() }
 }
 
 /// `watch.perf.observe`: every probe timed, then the store's caller counts.
@@ -290,5 +298,16 @@ impl Handler for WatchPerf {
                 c => c,
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::phases_of;
+
+    #[test]
+    fn the_last_phases_line_on_stderr_is_the_probes_breakdown() {
+        assert_eq!(phases_of(b"warn\nPERFWATCH_PHASES=store=30,push=12\n").as_deref(), Some("store=30,push=12"));
+        assert_eq!(phases_of(b"nothing here\n"), None);
     }
 }

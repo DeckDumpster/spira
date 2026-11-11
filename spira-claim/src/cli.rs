@@ -1137,10 +1137,12 @@ fn cmd_rune_ready(a: &Args, env: &mut Env) -> Outcome {
         Err(e) => return Outcome { code: 3, out: "0".into(), err: format!("spira-claim: rune_ready: {e}") },
     };
     let exclude = rune_exclude_str(env, &home, &me, &predicate.exclude_labels);
+    let store_read = std::time::Instant::now();
     let rows = match machine_claimable(a, env) {
         Ok(r) => r,
         Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: rune_ready: {}", first_line(&e)) },
     };
+    spira_otel::run::phase("store", store_read.elapsed().as_millis() as u64);
     let part = ready::RunePart { name: me, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exclude) };
     let mine = ready::partition(&rows, &part, &queue_wait_label(env));
     if json {
