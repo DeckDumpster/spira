@@ -263,13 +263,29 @@ pub fn note(bead_id: &str, text: &str) -> Result<String, String> {
 /// `--parent` doc for why an inherited `branch:` label made `groomer split-piece` a
 /// two-step dance that this avoids by filing with the right labels from the start.
 pub fn file_child(title: &str, persona: &str, repo: &str, parent: Option<&str>, body: Option<&str>) -> Result<String, String> {
-    // bead.sh, by name on the launcher's PATH (sp-gypjk) — never repository-relative.
-    let bead_sh = "bead.sh";
-    let mut cmd = spira_config::bounded::bounded(bead_sh);
-    cmd.args(["file", title, "--for", persona, "--repo", repo]);
-    if let Some(parent) = parent {
-        cmd.args(["--parent", parent]);
+    file_child_via("bead.sh", FILING_SECS, title, persona, repo, parent, body)
+}
+
+/// A filing is a store write that queues behind a loaded host's other writes; five seconds
+/// turned load into an answer with no reason.
+const FILING_SECS: &str = "60";
+
+fn failed(program: &str, secs: &str, args: &[&str], out: &std::process::Output) -> String {
+    let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    match out.status.code() {
+        Some(124) => format!("`{program} {}` timed out after {secs}s and may have applied; read the store before repeating it", args.join(" ")),
+        _ if said.trim().is_empty() => format!("`{program} {}` failed ({}) and said nothing", args.join(" "), out.status),
+        _ => said,
     }
+}
+
+fn file_child_via(program: &str, secs: &str, title: &str, persona: &str, repo: &str, parent: Option<&str>, body: Option<&str>) -> Result<String, String> {
+    let mut args = vec!["file", title, "--for", persona, "--repo", repo];
+    if let Some(parent) = parent {
+        args.extend(["--parent", parent]);
+    }
+    let mut cmd = spira_config::bounded::bounded_for(program, secs);
+    cmd.args(&args);
     let out = match body {
         None => cmd.output(),
         Some(b) => {
@@ -283,32 +299,33 @@ pub fn file_child(title: &str, persona: &str, repo: &str, parent: Option<&str>, 
             })
         }
     }
-    .map_err(|e| format!("running {bead_sh}: {e}"))?;
+    .map_err(|e| format!("running {program}: {e}"))?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     if !out.status.success() {
-        return Err(format!("{stdout}{}", String::from_utf8_lossy(&out.stderr)));
+        return Err(failed(program, secs, &["file", title], &out));
     }
     Ok(stdout.trim().to_string())
 }
 
-/// `bead.sh dep add <id> <depends-on>`: `id` is blocked until `depends-on` is closed.
-pub fn add_blocker(id: &str, depends_on: &str) -> Result<(), String> {
-    let out = spira_config::bounded::bounded("bead.sh")
-        .args(["dep", "add", id, depends_on, "--type", "blocks"])
-        .output()
-        .map_err(|e| format!("running bead.sh: {e}"))?;
+fn bead_sh(args: &[&str]) -> Result<(), String> {
+    bead_sh_via("bead.sh", FILING_SECS, args)
+}
+
+fn bead_sh_via(program: &str, secs: &str, args: &[&str]) -> Result<(), String> {
+    let out = spira_config::bounded::bounded_for(program, secs).args(args).output().map_err(|e| format!("running {program}: {e}"))?;
     if !out.status.success() {
-        return Err(format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
+        return Err(failed(program, secs, args, &out));
     }
     Ok(())
 }
 
+/// `bead.sh dep add <id> <depends-on>`: `id` is blocked until `depends-on` is closed.
+pub fn add_blocker(id: &str, depends_on: &str) -> Result<(), String> {
+    bead_sh(&["dep", "add", id, depends_on, "--type", "blocks"])
+}
+
 pub fn label_add(id: &str, label: &str) -> Result<(), String> {
-    let out = spira_config::bounded::bounded("bead.sh").args(["label", "add", id, label]).output().map_err(|e| format!("running bead.sh: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
-    }
-    Ok(())
+    bead_sh(&["label", "add", id, label])
 }
 
 /// `mail send operator` — an ask carrying the channel back (design §3.5's `work
@@ -495,5 +512,39 @@ mod resolve_tests {
     #[test]
     fn a_path_is_never_searched() {
         assert_eq!(resolve_tool("/x/y").unwrap(), "/x/y");
+    }
+}
+
+#[cfg(test)]
+mod filing_tests {
+    use super::*;
+
+    fn slow_bead_sh(dir: &std::path::Path) -> String {
+        let p = dir.join("bead.sh");
+        testkit::write_exe(&p, "#!/bin/sh\nsleep 5\n");
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_filing_that_outlives_its_deadline_names_the_call_that_timed_out() {
+        let dir = testkit::TempDir::new("filing");
+        let prog = slow_bead_sh(dir.path());
+        let err = file_child_via(&prog, "0.2", "t", "builder", "r", Some("sp-x"), None).unwrap_err();
+        assert!(err.contains("bead.sh file") && err.contains("timed out"), "reason names the call: {err:?}");
+    }
+
+    #[test]
+    fn a_label_or_dependency_call_that_outlives_its_deadline_names_itself() {
+        let dir = testkit::TempDir::new("filing-dep");
+        let prog = slow_bead_sh(dir.path());
+        let err = bead_sh_via(&prog, "0.2", &["label", "add", "sp-x", "split"]).unwrap_err();
+        assert!(err.contains("label add sp-x split") && err.contains("timed out"), "{err:?}");
+    }
+
+    #[test]
+    fn a_filing_waits_longer_than_the_plain_call_deadline() {
+        let filing: u64 = FILING_SECS.parse().unwrap();
+        let plain: u64 = spira_config::bounded::CALL_TIMEOUT_SECS.parse().unwrap();
+        assert!(filing > plain);
     }
 }
