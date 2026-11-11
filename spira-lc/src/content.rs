@@ -202,7 +202,7 @@ pub fn run(
     stdin: &mut dyn FnMut() -> Result<String, String>,
     guard: Guard<'_>,
     after: After<'_>,
-    read: &dyn Fn(&[String]) -> Result<String, String>,
+    read: &dyn Fn(&[String]) -> Result<String, crate::composed::ReadError>,
     write: Write<'_>,
 ) -> Answer {
     if args.is_empty() {
@@ -215,8 +215,8 @@ pub fn run(
     let body = match kind {
         Kind::Read => {
             return match read(args) {
-                Err(e) if e.starts_with("cannot tell:") => Answer { code: CANNOT_TELL, stderr: format!("spira-lc content: {}\n", e.trim_end()), ..Default::default() },
-                res => answer_of(res, String::new()),
+                Err(e) if e.cannot_tell => Answer { code: CANNOT_TELL, stderr: format!("spira-lc content: cannot tell: {}\n", e.text.trim_end()), ..Default::default() },
+                res => answer_of(res.map_err(|e| e.text), String::new()),
             }
         }
         Kind::Write { body: false } => None,
@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn a_guard_refusal_is_the_answer_and_bd_never_runs() {
         let never_w = |_: &[String], _: Option<&str>| -> Result<String, String> { panic!("bd must not run") };
-        let never = |_: &[String]| -> Result<String, String> { panic!("bd must not run") };
+        let never = |_: &[String]| -> Result<String, crate::composed::ReadError> { panic!("bd must not run") };
         let env = caller(&[("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock")]);
         let ask = || Ok::<_, String>(ASK.to_string());
         let g = Guards { caller: &env, ask_label: &ask, registry: &registry, now: NOW };
@@ -651,7 +651,7 @@ mod tests {
 
     #[test]
     fn run_refuses_before_calling_bd() {
-        let never = |_: &[String]| -> Result<String, String> { panic!("bd must not run") };
+        let never = |_: &[String]| -> Result<String, crate::composed::ReadError> { panic!("bd must not run") };
         let never_w = |_: &[String], _: Option<&str>| -> Result<String, String> { panic!("bd must not run") };
         let mut no_stdin = || Err::<String, String>("nothing was sent".into());
         let mut admit = |_: &[String], _: Option<&str>| Ok(String::new());

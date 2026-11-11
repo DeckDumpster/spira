@@ -38,17 +38,17 @@ tl_config SPIRA_LC_SOCKET="" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$TMP/bd-forked" \
     SPIRA_BEADS_SQL_HOST=127.0.0.1 SPIRA_BEADS_SQL_PORT="$port" SPIRA_BEADS_SQL_USER=root SPIRA_BEADS_SQL_PASSWORD_FILE="$TMP/credential" \
     || bail "cannot declare the connection"
 
-mk() { "$BD" -C "$SPIRA_DB" create "$@" --silent 2>/dev/null; }
+mk() { timeout 5 "$BD" -C "$SPIRA_DB" create "$@" --silent 2>/dev/null; }
 epic="$(mk "The epic" -t epic)"
-a="$(mk "Alpha bead" -t task -p 1 --labels needs-ryan,repo:spira --description "alpha body")"
-b="$(mk "Beta bead" -t bug -p 2 --labels overseer)"
+a="$(mk "Alpha bead" -t task -p 1 --labels tag-one,repo:spira --description "alpha body")"
+b="$(mk "Beta bead" -t bug -p 2 --labels tag-two)"
 c="$(mk "Gamma bead" -t task -p 3 --parent "$epic" --external-ref "incident:gamma")"
 d="$(mk "Delta bead" -t task -p 2)"
 [ -n "$epic" ] && [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ -n "$d" ] || bail "could not seed the beads"
-"$BD" -C "$SPIRA_DB" dep add "$a" "$b" >/dev/null 2>&1
-"$BD" -C "$SPIRA_DB" close "$d" --reason done >/dev/null 2>&1
-"$BD" -C "$SPIRA_DB" comments add "$a" "a remark" >/dev/null 2>&1
-"$BD" -C "$SPIRA_DB" remember "statute one: be good" >/dev/null 2>&1
+timeout 5 "$BD" -C "$SPIRA_DB" dep add "$a" "$b" >/dev/null 2>&1
+timeout 5 "$BD" -C "$SPIRA_DB" close "$d" --reason done >/dev/null 2>&1
+timeout 5 "$BD" -C "$SPIRA_DB" comments add "$a" "a remark" >/dev/null 2>&1
+timeout 5 "$BD" -C "$SPIRA_DB" remember "statute one: be good" >/dev/null 2>&1
 gate="$(mk "A gate" -t gate)"
 
 rd() { spira-lc content "$@" 2>"$TMP/err"; }
@@ -56,7 +56,7 @@ ids() { python3 -c 'import sys,json; print(" ".join(sorted(r["id"] for r in json
 want_ids() { is "$1" "$(printf '%s\n' "$2" | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')" "$3"; }
 
 # list --label-any
-out="$(rd list --limit 0 --label-any needs-ryan,overseer --json | ids)"
+out="$(rd list --limit 0 --label-any tag-one,tag-two --json | ids)"
 want_ids "list --label-any selects the beads carrying either label" "$a $b" "$out"
 out="$(rd list --limit 0 --label-any nobody-has-this --json | ids)"
 is "list --label-any with a label no bead has selects nothing" "" "$out"
@@ -73,9 +73,9 @@ is "list --limit bounds the rows" "2" "$(echo $out)"
 # --parent, --label (AND), --external-ref, --status, --closed-after
 out="$(rd list --limit 0 --parent "$epic" --json | ids)"
 is "list --parent selects the children" "$c" "$out"
-out="$(rd list --limit 0 --label needs-ryan,repo:spira --json | ids)"
+out="$(rd list --limit 0 --label tag-one,repo:spira --json | ids)"
 is "list --label requires every label" "$a" "$out"
-out="$(rd list --limit 0 --label needs-ryan,overseer --json | ids)"
+out="$(rd list --limit 0 --label tag-one,tag-two --json | ids)"
 is "list --label with labels no one bead has selects nothing" "" "$out"
 out="$(rd list --all --limit 0 --external-ref incident:gamma --json | ids)"
 is "list --external-ref is an exact match" "$c" "$out"
@@ -88,9 +88,9 @@ is "list --closed-after a future date selects nothing" "" "$out"
 # the row
 row="$(rd show "$a" --json)"
 want "show carries the description" '"description":"alpha body"' "$row"
-want "show carries the labels as an array" '"labels":["needs-ryan","repo:spira"]' "$row"
+want "show carries the labels as an array" '"labels":["repo:spira","tag-one"]' "$row"
 want "show carries the dependency edge" "\"depends_on_id\":\"$b\"" "$row"
-brief="$(rd list --limit 0 --brief --label-any needs-ryan --json)"
+brief="$(rd list --limit 0 --brief --label-any tag-one --json)"
 nowant "list --brief leaves out the description" "alpha body" "$brief"
 rd show nope-1 --json >/dev/null; rc=$?
 is "show of an unknown bead exits 1" "1" "$rc"
@@ -102,14 +102,14 @@ is "state reads a dimension label" "spira" "$("spira-lc" content state "$a" repo
 is "config get reads the store's config" "sp" "$(rd config get issue_prefix | tr -d '\n')"
 
 # A write that does not come through the door is seen by the next read: nothing is held.
-"$BD" -C "$SPIRA_DB" label add "$b" fresh-label >/dev/null 2>&1
+timeout 5 "$BD" -C "$SPIRA_DB" label add "$b" fresh-label >/dev/null 2>&1
 out="$(rd list --limit 0 --label-any fresh-label --json | ids)"
 is "a label written by another process is selected at once" "$b" "$out"
 
 is "no content read started bd" "no" "$([ -s "$TMP/bd-forks" ] && echo yes || echo no)"
 
 # A layout the reads do not know is refused by name, and bd is still not started.
-"$BD" -C "$SPIRA_DB" sql "ALTER TABLE labels RENAME COLUMN label TO tag" >/dev/null 2>&1 || bail "could not rename the column"
+timeout 5 "$BD" -C "$SPIRA_DB" sql "ALTER TABLE labels RENAME COLUMN label TO tag" >/dev/null 2>&1 || bail "could not rename the column"
 out="$(rd list --limit 0 --json)"; rc=$?
 is "a renamed column refuses the read with exit 2" "2" "$rc"
 err="$(cat "$TMP/err")"

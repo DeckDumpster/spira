@@ -43,7 +43,7 @@ pub fn is_served(verb: &str) -> bool {
 /// The bead-content store: reads (SQL, `content_sql`), the narrow writes (bd) `bd-note`/`bd-supersede` and the
 /// `content` door make, and the alert purge's delete.
 pub trait Content {
-    fn read(&self, args: &[String]) -> Result<String, String>;
+    fn read(&self, args: &[String]) -> Result<String, ReadError>;
     fn write(&self, args: &[&str]) -> Result<String, String>;
     /// A `content` write: bd's own argv, and the request body as its stdin when there is one.
     fn write_stdin(&self, args: &[String], stdin: Option<&str>) -> Result<String, String>;
@@ -54,12 +54,32 @@ pub trait Content {
     fn registry(&self) -> spira_config::repos::Registry;
 }
 
+/// A read that was not answered; `cannot_tell` is the store being unreadable, not the request
+/// being wrong.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReadError {
+    pub text: String,
+    pub cannot_tell: bool,
+}
+
+impl From<String> for ReadError {
+    fn from(text: String) -> Self {
+        ReadError { text, cannot_tell: false }
+    }
+}
+
+impl From<crate::content_sql::Failure> for ReadError {
+    fn from(f: crate::content_sql::Failure) -> Self {
+        ReadError { cannot_tell: matches!(f, crate::content_sql::Failure::Store(_)), text: f.text().to_string() }
+    }
+}
+
 /// bd itself, as this process's configuration declares it.
 pub struct LiveContent;
 
 impl Content for LiveContent {
-    fn read(&self, args: &[String]) -> Result<String, String> {
-        crate::content_sql::served()?.read(args)
+    fn read(&self, args: &[String]) -> Result<String, ReadError> {
+        crate::content_sql::served().map_err(crate::content_sql::Failure::Store)?.read(args).map_err(ReadError::from)
     }
     fn write(&self, args: &[&str]) -> Result<String, String> {
         crate::bd::write(args)
@@ -147,7 +167,7 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
         "bd-supersede" => crate::store_write::supersede(rest, &|a| content.write(a)),
         "bd-note" => crate::store_write::note(rest, &|a| content.write(a)),
         "content" if rest.first().map(String::as_str) == Some("purge-alerts") => match run_dir() {
-            Ok(dir) => crate::content::purge_alerts(&rest[1..], &|a| content.read(a), &|ids| content.delete(ids), &dir, now),
+            Ok(dir) => crate::content::purge_alerts(&rest[1..], &|a| content.read(a).map_err(|e| e.text), &|ids| content.delete(ids), &dir, now),
             Err(e) => Answer { code: callers::CANNOT_TELL, stderr: format!("spira-lc content purge-alerts: {e}\n"), ..Default::default() },
         },
         "content" => {

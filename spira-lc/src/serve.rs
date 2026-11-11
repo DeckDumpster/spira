@@ -691,7 +691,7 @@ mod tests {
     struct Content(std::cell::RefCell<Vec<String>>);
 
     impl crate::composed::Content for Content {
-        fn read(&self, args: &[String]) -> Result<String, String> {
+        fn read(&self, args: &[String]) -> Result<String, crate::composed::ReadError> {
             Ok(format!("read {}", args.join(" ")))
         }
         fn write(&self, args: &[&str]) -> Result<String, String> {
@@ -884,7 +884,7 @@ mod tests {
     struct Filing<'w>(&'w World, &'w str);
 
     impl crate::composed::Content for Filing<'_> {
-        fn read(&self, _: &[String]) -> Result<String, String> {
+        fn read(&self, _: &[String]) -> Result<String, crate::composed::ReadError> {
             Ok(String::new())
         }
         fn write(&self, _: &[&str]) -> Result<String, String> {

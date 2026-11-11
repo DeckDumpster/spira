@@ -13,7 +13,7 @@ struct Fake {
 }
 
 impl Sql for Fake {
-    fn rows(&self, sql: &str) -> Result<Vec<Value>, String> {
+    fn rows(&self, sql: &str) -> Res<Vec<Value>> {
         self.seen.lock().unwrap().push(sql.to_string());
         if sql.contains("FROM information_schema.columns") {
             return Ok(self.columns.iter().map(|(t, c)| json!({ "t": t, "c": c })).collect());
@@ -55,9 +55,9 @@ fn first_sql(f: &Fake) -> String {
 #[test]
 fn a_label_any_list_is_one_where_clause_over_the_labels_table() {
     let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
-    answer(&f, DB, &v(&["list", "--limit", "0", "--label-any", "needs-ryan,overseer", "--json"])).unwrap();
+    answer(&f, DB, &v(&["list", "--limit", "0", "--label-any", "tag-one,tag-two", "--json"])).unwrap();
     let sql = first_sql(&f);
-    assert!(sql.contains("id IN (SELECT issue_id FROM `beads`.labels WHERE label IN ('needs-ryan','overseer'))"), "{sql}");
+    assert!(sql.contains("id IN (SELECT issue_id FROM `beads`.labels WHERE label IN ('tag-one','tag-two'))"), "{sql}");
     assert!(sql.contains("status <> 'closed'") && !sql.contains("LIMIT"), "open beads, unlimited: {sql}");
 }
 
@@ -152,7 +152,7 @@ fn brief_leaves_out_the_free_text_and_the_metadata() {
 fn show_names_the_bead_it_cannot_find() {
     let f = Fake::default();
     let e = answer(&f, DB, &v(&["show", "sp-nope", "--json"])).unwrap_err();
-    assert!(e.contains("no issue found matching") && e.contains("sp-nope"), "{e}");
+    assert!(matches!(&e, Failure::Request(t) if t.contains("no issue found matching") && t.contains("sp-nope")), "{e:?}");
 }
 
 #[test]
@@ -205,12 +205,12 @@ fn a_renamed_column_refuses_every_read_naming_it_and_the_exit_and_asks_no_bead_q
     let reader = Reader::new(Box::new(Fake { columns, issues: vec![issue("sp-a", "A")], ..Fake::default() }), DB.into());
     for args in [v(&["list"]), v(&["show", "sp-a"]), v(&["memories"])] {
         let e = reader.read(&args).unwrap_err();
-        assert!(e.starts_with("cannot tell:") && e.contains("labels.label") && e.contains("exit 2"), "{e}");
+        assert!(matches!(&e, Failure::Store(t) if t.contains("labels.label") && t.contains("exit 2")), "{e:?}");
     }
 }
 
 impl Sql for Arc<Fake> {
-    fn rows(&self, sql: &str) -> Result<Vec<Value>, String> {
+    fn rows(&self, sql: &str) -> Res<Vec<Value>> {
         self.as_ref().rows(sql)
     }
 }

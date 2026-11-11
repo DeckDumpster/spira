@@ -25,14 +25,32 @@ const HIDDEN_TYPES: &[&str] = &["gate", "agent", "role", "message"];
 /// The text columns a `--brief` row leaves out.
 const TEXT: &[&str] = &["description", "design", "acceptance_criteria", "notes"];
 
+/// Why a read was not answered: the request is not one the door serves (or names a bead that is
+/// not there), or the store could not be asked or is not laid out as the reads expect.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Failure {
+    Request(String),
+    Store(String),
+}
+
+impl Failure {
+    pub fn text(&self) -> &str {
+        match self {
+            Failure::Request(t) | Failure::Store(t) => t,
+        }
+    }
+}
+
+type Res<T> = Result<T, Failure>;
+
 /// Where a query is sent. The live one is a read-only connection to the beads database.
 pub trait Sql {
-    fn rows(&self, sql: &str) -> Result<Vec<Value>, String>;
+    fn rows(&self, sql: &str) -> Res<Vec<Value>>;
 }
 
 impl Sql for Conn {
-    fn rows(&self, sql: &str) -> Result<Vec<Value>, String> {
-        self.query(sql).map_err(|e| format!("cannot tell: {e:?}"))
+    fn rows(&self, sql: &str) -> Res<Vec<Value>> {
+        self.query(sql).map_err(|e| Failure::Store(format!("{e:?}")))
     }
 }
 
@@ -382,7 +400,7 @@ fn bead_of(row: &Value, brief: bool) -> Option<Bead> {
 }
 
 /// The beads of `issues` rows with their labels and edges, in the rows' order.
-fn fill(sql: &dyn Sql, db: &str, issues: &[Value], brief: bool) -> Result<Vec<Bead>, String> {
+fn fill(sql: &dyn Sql, db: &str, issues: &[Value], brief: bool) -> Res<Vec<Bead>> {
     let mut beads: Vec<Bead> = issues.iter().filter_map(|r| bead_of(r, brief)).collect();
     let ids: Vec<String> = beads.iter().map(|b| b.id.clone()).collect();
     let mut labels: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -412,10 +430,9 @@ fn array(beads: Vec<Bead>) -> String {
     Value::Array(beads.iter().map(Bead::to_json).collect()).to_string()
 }
 
-/// Answers one content read from `sql`. `Err` is the message the caller is refused with; one that
-/// starts `cannot tell:` is the store being unreadable, not the request being wrong.
-pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Result<String, String> {
-    match parse(args)? {
+/// Answers one content read from `sql`.
+pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
+    match parse(args).map_err(Failure::Request)? {
         Read::List(l) => {
             let issues = sql.rows(&l.issues_sql(db))?;
             Ok(array(fill(sql, db, &issues, l.brief)?))
@@ -424,7 +441,7 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Result<String, String
             let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE id IN ({}) ORDER BY id", issue_columns(), quoted(&ids)))?;
             let found: BTreeSet<&str> = issues.iter().filter_map(|r| cell(r, "id")).collect();
             if let Some(missing) = ids.iter().find(|i| !found.contains(i.as_str())) {
-                return Err(format!("no issue found matching {missing:?}"));
+                return Err(Failure::Request(format!("no issue found matching {missing:?}")));
             }
             Ok(array(fill(sql, db, &issues, false)?))
         }
@@ -472,7 +489,7 @@ pub fn missing_columns(have: &BTreeSet<(String, String)>) -> Vec<String> {
 }
 
 /// The layout check: the `table.column` names the reads query that the beads database lacks.
-pub fn layout_gaps(sql: &dyn Sql, db: &str) -> Result<Vec<String>, String> {
+pub fn layout_gaps(sql: &dyn Sql, db: &str) -> Res<Vec<String>> {
     let schema = db.trim_matches('`');
     let rows = sql.rows(&format!("SELECT table_name AS t, column_name AS c FROM information_schema.columns WHERE table_schema = '{}'", escape(schema)))?;
     let have: BTreeSet<(String, String)> = rows.iter().filter_map(|r| Some((cell(r, "t")?.to_lowercase(), cell(r, "c")?.to_lowercase()))).collect();
@@ -481,7 +498,7 @@ pub fn layout_gaps(sql: &dyn Sql, db: &str) -> Result<Vec<String>, String> {
 
 fn refusal(db: &str, gaps: &[String]) -> String {
     format!(
-        "cannot tell: the beads database {} does not have the layout the content reads query (missing {}); content reads are refused (exit 2), not served by forking bd",
+        "the beads database {} does not have the layout the content reads query (missing {}); content reads are refused (exit 2), not served by forking bd",
         db.trim_matches('`'),
         gaps.join(", ")
     )
@@ -502,19 +519,19 @@ impl Reader {
 
     /// `Ok` when the layout is known; the refusal otherwise. A match or a mismatch is decided
     /// once; a server that could not be asked is asked again.
-    pub fn layout(&self) -> Result<(), String> {
+    pub fn layout(&self) -> Res<()> {
         let mut held = self.refused.lock().unwrap_or_else(|p| p.into_inner());
         if held.is_none() {
             let gaps = layout_gaps(self.sql.as_ref(), &self.db)?;
             *held = Some((!gaps.is_empty()).then(|| refusal(&self.db, &gaps)));
         }
         match held.as_ref().and_then(Option::as_ref) {
-            Some(r) => Err(r.clone()),
+            Some(r) => Err(Failure::Store(r.clone())),
             None => Ok(()),
         }
     }
 
-    pub fn read(&self, args: &[String]) -> Result<String, String> {
+    pub fn read(&self, args: &[String]) -> Res<String> {
         self.layout()?;
         answer(self.sql.as_ref(), &self.db, args)
     }
@@ -563,7 +580,7 @@ pub fn served() -> Result<&'static Reader, String> {
 /// Reads at server start: a layout the reads do not know is logged by name rather than found by
 /// the first caller.
 pub fn check_at_startup() -> Result<(), String> {
-    served()?.layout()
+    served()?.layout().map_err(|f| f.text().to_string())
 }
 
 #[cfg(test)]
