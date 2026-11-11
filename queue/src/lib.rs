@@ -146,6 +146,12 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
             evidence,
             evidence_tip,
         } => simple::absolve(w, id, repo.as_deref(), by, reason, evidence, evidence_tip),
+        Cmd::SettleLanded {
+            id,
+            repo,
+            by,
+            evidence_tip,
+        } => simple::settle_landed(w, id, repo.as_deref(), by, evidence_tip),
         Cmd::ForcedSuites {
             id,
             repo,

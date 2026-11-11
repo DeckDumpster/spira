@@ -951,6 +951,57 @@ pub fn rework(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) 
     OK
 }
 
+/// The exit for a SUBMITTED or CERTIFIED row whose recorded tip is already on the landing ref:
+/// the verb checks the ancestry itself, and a tip that is not an ancestor is refused naming both shas.
+pub fn settle_landed(
+    w: &World,
+    id: &str,
+    repo: Option<&str>,
+    by: &str,
+    evidence_tip: &str,
+) -> i32 {
+    let Ok(c) = resolve(w, "settle-landed", repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "settle-landed", &c) else {
+        return FAIL;
+    };
+    if idents(
+        w,
+        "settle-landed",
+        &[("bead id", id), ("repo", &c.r.name), ("by", by), ("evidence tip", evidence_tip)],
+    )
+    .is_err()
+    {
+        return FAIL;
+    }
+    let Some(base) = c.r.landref.clone() else {
+        w.err(format!("queue.sh settle-landed: cannot resolve landing ref for {}", c.r.name));
+        return FAIL;
+    };
+    if super::require_lc(w, "settle-landed").is_err() {
+        return FAIL;
+    }
+    let _g = match take_lock(w, "settle-landed", &c, "") {
+        Ok(g) => g,
+        Err(rc) => return rc,
+    };
+    match super::land::settle_landed_row(w, &path, &base, id, Some(evidence_tip), by) {
+        Ok(tip) => {
+            landing_log(
+                &c.s.run,
+                &format!("QUEUE SETTLE-LANDED {} branch={id} tip={tip} by={by} base={base}", w.clock.now()),
+            );
+            w.out(format!("queue.sh settle-landed: {id} -> LANDED; its tip {tip} is an ancestor of {base}"));
+            OK
+        }
+        Err(why) => {
+            w.err(format!("queue.sh settle-landed: {id}: {why} — refused, nothing changed"));
+            FAIL
+        }
+    }
+}
+
 /// Shows the suites an eject forces on `id`'s recertification, or with `clear` drops them so the
 /// next submit runs the normal gate.
 pub fn forced_suites(
