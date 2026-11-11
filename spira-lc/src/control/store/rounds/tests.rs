@@ -770,6 +770,12 @@ fn the_requeue_orphans_command_abandons_a_round_with_no_driver_after_two_minutes
     let (rc, late) = at(AT + 180);
     assert_eq!(rc, 0, "{late}");
     assert!(late.contains(r#""repos":{"b-1":"spira"}"#), "{late}");
+    assert_eq!(round_state(&r), BatchState::Open, "a dry run writes nothing");
+    let args: Vec<String> = ["requeue-orphans", "--actor", "test", "--apply"].iter().map(|s| s.to_string()).collect();
+    let req = r.req();
+    let (rc, out) = state::run(&r.s, &args, &Call { now: AT + 180, request: &req.id });
+    assert_eq!(rc, 0, "{out}");
+    assert_eq!(round_state(&r), BatchState::Abandoned);
 }
 
 #[test]
