@@ -330,7 +330,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn() -> Result
             }
         };
         let long_running = is_up(&st.active) && st.kind != "oneshot";
-        let why = fixed.or_else(|| (long_running && unit != KILL_RESTARTED).then(|| live_reason(old, new, &roots, ctx.sc.running_exe(unit).as_deref(), ctx.sc.running_release(unit).as_deref())).flatten());
+        let why = fixed.or_else(|| (long_running && unit != KILL_RESTARTED && unit != COMPILER_CACHE_BACKEND).then(|| live_reason(old, new, &roots, ctx.sc.running_exe(unit).as_deref(), ctx.sc.running_release(unit).as_deref())).flatten());
         let Some(why) = why else {
             if *changed {
                 eprintln!("release: {unit} differs only in the release root and runs the same bytes; left running");
@@ -565,6 +565,11 @@ fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
 /// `Restart=always` is the sanctioned way to cycle it.
 const KILL_RESTARTED: &str = "dolt-beads.service";
 
+/// The compiler cache's storage backend. Its launcher is a script, which the generic rule
+/// always counts as changed; every restart leaves the sccache server holding dead connections
+/// and wedges the next compile, so only its unit text and its own binary decide.
+const COMPILER_CACHE_BACKEND: &str = "sccache-dav.service";
+
 /// The two release roots a unit's paths resolve under (sp-m9rruh): the one `current` named
 /// before this switch, which the running process started from, and the one it switches to.
 /// Installed units name their programs through `<releases>/current/`, and the switch compares
@@ -610,7 +615,20 @@ fn restart_reason(unit: &str, old: &str, new: &str, roots: &Roots) -> Option<Str
     if unit == KILL_RESTARTED {
         return None;
     }
+    if unit == COMPILER_CACHE_BACKEND {
+        return backend_binary_changed(roots);
+    }
     program_changed(old, new, roots)
+}
+
+fn backend_binary_changed(roots: &Roots) -> Option<String> {
+    let Some(old) = roots.old else { return Some("cannot tell which release its backend ran before; restarted".into()) };
+    let bin = |root: &Path| std::fs::read(root.join("bin/sccache-dav"));
+    match (bin(old), bin(roots.new)) {
+        (Ok(a), Ok(b)) if a == b => None,
+        (Ok(_), Ok(_)) => Some("its backend binary changed".into()),
+        _ => Some("cannot compare its backend binaries; restarted".into()),
+    }
 }
 
 /// The first program an `Exec*=` line runs whose content differs between the two roots (or
@@ -699,10 +717,13 @@ fn unrooted(text: &str, root: &Path) -> String {
 
 fn restart_unit(sc: &dyn Systemctl, unit: &str) -> Result<(), String> {
     if unit == KILL_RESTARTED {
-        sc.kill(unit)
-    } else {
-        sc.restart(unit)
+        return sc.kill(unit);
     }
+    sc.restart(unit)?;
+    if unit == COMPILER_CACHE_BACKEND {
+        sc.stop_compiler_cache_server();
+    }
+    Ok(())
 }
 
 /// The binary that must perform `release activate <sha>`: the target release's own, so an

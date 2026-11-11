@@ -69,6 +69,9 @@ pub trait Systemctl {
     fn running_release(&self, _unit: &str) -> Option<String> {
         None
     }
+    /// Stop the running sccache server so the next compile starts one with fresh connections to
+    /// the cache backend. Best effort: a backend restart must not fail on it.
+    fn stop_compiler_cache_server(&self) {}
     /// `systemctl --user kill`: bypasses job control, for a unit that refuses a restart job.
     fn kill(&self, unit: &str) -> Result<(), String>;
     /// Names of the active units matching `glob` (`systemctl --user list-units
@@ -234,6 +237,17 @@ impl Systemctl for RealSystemctl {
             _ => self.run(&["restart", unit]).map(|_| ()),
         }
     }
+    fn stop_compiler_cache_server(&self) {
+        let _ = spira_config::bounded::bounded_for("sccache", "5").arg("--stop-server").output();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !cache_servers().is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        for pid in cache_servers() {
+            eprintln!("release: sccache server {pid} did not exit after --stop-server; killing it");
+            let _ = std::process::Command::new("kill").args(["-KILL", &pid.to_string()]).status();
+        }
+    }
     fn kill(&self, unit: &str) -> Result<(), String> {
         self.run(&["kill", unit]).map(|_| ())
     }
@@ -265,4 +279,15 @@ impl Systemctl for RealSystemctl {
         }
         Ok(names)
     }
+}
+
+/// Pids of this user's running sccache servers: an `sccache` process started with
+/// `SCCACHE_START_SERVER=1` (its clients lack it).
+fn cache_servers() -> Vec<u32> {
+    let Ok(rd) = std::fs::read_dir("/proc") else { return Vec::new() };
+    rd.flatten()
+        .filter_map(|e| e.file_name().to_string_lossy().parse::<u32>().ok())
+        .filter(|pid| std::fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim() == "sccache"))
+        .filter(|pid| std::fs::read(format!("/proc/{pid}/environ")).is_ok_and(|env| env.split(|b| *b == 0).any(|kv| kv == b"SCCACHE_START_SERVER=1")))
+        .collect()
 }

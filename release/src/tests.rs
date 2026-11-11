@@ -190,6 +190,7 @@ struct FakeSystemctl {
     at_restart: RefCell<Vec<String>>,
     /// Units that go inactive once `state` has been asked about them this many more times.
     exits_after: RefCell<BTreeMap<String, usize>>,
+    cache_server_stops: RefCell<usize>,
 }
 
 impl FakeSystemctl {
@@ -217,6 +218,7 @@ impl FakeSystemctl {
             on_restart: None,
             at_restart: RefCell::new(vec![]),
             exits_after: RefCell::new(BTreeMap::new()),
+            cache_server_stops: RefCell::new(0),
         }
     }
 }
@@ -256,6 +258,9 @@ impl Systemctl for FakeSystemctl {
     fn reset_failed(&self, unit: &str) -> Result<(), String> {
         self.resets.borrow_mut().push(unit.into());
         Ok(())
+    }
+    fn stop_compiler_cache_server(&self) {
+        *self.cache_server_stops.borrow_mut() += 1;
     }
     fn kill(&self, unit: &str) -> Result<(), String> {
         self.kills.borrow_mut().push(unit.into());
@@ -965,4 +970,48 @@ fn an_activation_whose_restart_fails_is_undone_in_the_record_as_in_the_link() {
     let record = crate::machine::load(&state, A).unwrap().unwrap();
     assert_eq!(record.state().map(|s| s.as_str()), Some("rolled_back"));
     assert!(!fs::read_to_string(state.join("history")).unwrap_or_default().contains(A));
+}
+
+const CACHE_UNIT: &str = "[Service]\nType=simple\nEnvironment=PATH=@SPIRA_RELEASE@/bin:/usr/bin\nExecStart=@SPIRA_PROD@/sccache-dav.sh\n";
+
+/// Release `A` over a previous release `P` (current), each with its own `sccache-dav` binary
+/// and launcher script; the installed unit names `P`. Returns the world.
+fn world_activating_over_a_running_cache(binary_changes: bool) -> World {
+    let w = World::with_git_and_reg(FakeGit::default(), Registered { sccache_dav_addr: "192.0.2.7:9431".into(), ..Default::default() });
+    let prev = "p".repeat(40);
+    for (name, bin) in [(prev.as_str(), "backend v1"), (A, if binary_changes { "backend v2" } else { "backend v1" })] {
+        let rel = w.cfg.releases.join(name);
+        file(&rel.join("systemd/sccache-dav.service"), CACHE_UNIT);
+        file(&rel.join("bin/sccache-dav"), bin);
+        file(&rel.join("spira/sccache-dav.sh"), &format!("#!/bin/sh\n# {name}\nexec sccache-dav\n"));
+    }
+    let rel = w.cfg.releases.join(A);
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    std::os::unix::fs::symlink(&prev, w.cfg.releases.join("current")).unwrap();
+    let old = CACHE_UNIT.replace("@SPIRA_RELEASE@", &w.cfg.releases.join(&prev).display().to_string()).replace("@SPIRA_PROD@", &format!("{}/spira", w.cfg.releases.join(&prev).display()));
+    file(&w.cfg.unit_dir.join("sccache-dav.service"), &old);
+    w
+}
+
+
+#[test]
+fn an_activation_that_changes_neither_the_cache_backends_unit_nor_its_binary_leaves_it_and_the_sccache_server_alone() {
+    let w = world_activating_over_a_running_cache(false);
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.states.borrow_mut().insert("sccache-dav.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
+    let out = activate_with(&w, &sc).unwrap();
+    assert_eq!(out.retired, Vec::<String>::new(), "the unit must be live for this to show anything");
+    assert!(!out.restarted.iter().any(|u| u == "sccache-dav.service"), "{:?}", out.restarted);
+    assert_eq!(*sc.cache_server_stops.borrow(), 0);
+}
+
+#[test]
+fn an_activation_that_changes_the_cache_backends_binary_restarts_it_and_stops_the_sccache_server() {
+    let w = world_activating_over_a_running_cache(true);
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.states.borrow_mut().insert("sccache-dav.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
+    activate_with(&w, &sc).unwrap();
+    assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
+    assert_eq!(*sc.cache_server_stops.borrow(), 1);
 }
