@@ -763,6 +763,28 @@ fn a_round_with_a_recorded_pass_and_no_live_leg_is_not_abandoned_as_never_began(
     assert_eq!(r.state("sp-a"), BeadState::InDelivery);
 }
 
+#[test]
+fn at_121_seconds_a_round_with_a_started_pass_is_left_and_one_with_none_is_abandoned() {
+    let begun = Rig::new();
+    open_round(&begun);
+    let (_, rec) = begun.s.batch("b-1").unwrap().unwrap();
+    let ev = BatchEvent {
+        expect: BatchState::Open,
+        version: rec.value.row.version,
+        kind: BatchEventKind::PassStarted { n: 1, head: "h1".into() },
+        actor: "test".into(),
+    };
+    begun.s.batch_event_with("b-1", &ev, AT + 10, &begun.req(), None).unwrap();
+    let left = begun.s.requeue_orphans("test", true, 120, AT + 121, &none(), &begun.req()).unwrap();
+    assert!(left.phantom_batches.is_empty() && left.abandoned.is_empty() && left.requeued.is_empty(), "{left:?}");
+    assert_ne!(round_state(&begun), BatchState::Abandoned);
+
+    let never = Rig::new();
+    open_round(&never);
+    let gone = never.s.requeue_orphans("test", true, 120, AT + 121, &none(), &never.req()).unwrap();
+    assert_eq!(gone.abandoned, vec!["b-1".to_string()]);
+}
+
 fn none() -> std::collections::BTreeSet<String> {
     Default::default()
 }
