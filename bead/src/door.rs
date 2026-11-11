@@ -135,7 +135,7 @@ mod tests {
 
     fn bead(id: &str, labels: &[&str], blocks: &[&str]) -> Value {
         json!({
-            "id": id, "status": "open", "issue_type": "task", "description": "", "labels": [labels, &["repo:r"][..]].concat(),
+            "id": id, "status": "open", "issue_type": "task", "description": "", "labels": labels.iter().copied().chain(["repo:r"]).collect::<Vec<_>>(),
             "dependencies": blocks.iter().map(|b| json!({"issue_id": id, "depends_on_id": b, "type": "blocks"})).collect::<Vec<_>>(),
         })
     }
