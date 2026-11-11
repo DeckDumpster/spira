@@ -3,7 +3,7 @@
 
 use crate::decide::Scope;
 use crate::ports::Bd;
-use crate::real::{json_only_pub, RealBd};
+use crate::real::RealBd;
 use crate::settle::{Candidate, Detector, FixState, Landing, Settler};
 
 pub struct RealSettler<'a> {
@@ -15,6 +15,8 @@ pub struct RealSettler<'a> {
     pub release_sha: Option<String>,
     /// The unit port the detector reads; `Err` says why there is none.
     pub units: Result<Box<dyn runtime::units::Units>, String>,
+    /// The fixes the last `candidates` read, by id.
+    pub fixes: std::cell::RefCell<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 /// What a unit's facts say of its detector: failed is firing, anything else quiet (what
@@ -37,15 +39,6 @@ pub fn host_units() -> Result<Box<dyn runtime::units::Units>, String> {
     {
         Err("no unit manager on this platform".into())
     }
-}
-
-fn show(bd: &RealBd, db: &str, id: &str) -> Result<serde_json::Value, String> {
-    let (rc, out, err) = bd.run(db, &["list", "--all", "--limit", "0", "--json", "--id", id])?;
-    if rc != 0 {
-        return Err(format!("bd list exited {rc}: {}", err.trim()));
-    }
-    let v: serde_json::Value = serde_json::from_str(json_only_pub(&out)).map_err(|e| e.to_string())?;
-    v.as_array().and_then(|a| a.first().cloned()).ok_or_else(|| format!("{id} not found"))
 }
 
 pub fn blocks_of(bead: &serde_json::Value) -> Vec<String> {
@@ -78,16 +71,19 @@ fn git(root: &str, args: &[&str]) -> Result<(i32, String), String> {
 
 impl Settler for RealSettler<'_> {
     fn candidates(&self) -> Result<Vec<Candidate>, String> {
-        let rows = self.bd.list(&self.db, Scope::Unfinished, Some(&self.incident_label), None)?;
-        Ok(rows
+        let open: Vec<_> = self
+            .bd
+            .list_beads(Scope::Unfinished, Some(&self.incident_label), None)?
             .into_iter()
-            .filter(|r| r.status == crate::decide::BeadStatus::Open)
-            .map(|r| Candidate { id: r.id, external_ref: r.external_ref, labels: r.labels })
-            .collect())
-    }
-
-    fn fixes(&self, incident: &str) -> Result<Vec<String>, String> {
-        Ok(blocks_of(&show(self.bd, &self.db, incident)?))
+            .filter(|(r, _)| r.status == crate::decide::BeadStatus::Open)
+            .map(|(r, bead)| Candidate { fixes: blocks_of(&bead), id: r.id, external_ref: r.external_ref, labels: r.labels })
+            .collect();
+        let mut all: Vec<String> = open.iter().flat_map(|c| c.fixes.clone()).collect();
+        all.sort();
+        all.dedup();
+        let read = self.bd.list_ids_json(&all, None)?;
+        *self.fixes.borrow_mut() = read.into_iter().filter_map(|b| Some((b.get("id")?.as_str()?.to_string(), b))).collect();
+        Ok(open)
     }
 
     fn fix_state(&self, fix: &str) -> Result<FixState, String> {
@@ -99,7 +95,7 @@ impl Settler for RealSettler<'_> {
     }
 
     fn landing_in_force(&self, fix: &str) -> Result<Option<Landing>, String> {
-        let bead = show(self.bd, &self.db, fix)?;
+        let bead = self.fixes.borrow().get(fix).cloned().ok_or_else(|| format!("{fix} not found"))?;
         let repo = bead
             .get("labels")
             .and_then(|l| l.as_array())
@@ -175,6 +171,46 @@ mod tests {
             assert!(matches!(detector_of("u.service", at(quiet)), Ok(Detector::Quiet)));
         }
         assert!(detector_of("u.service", Err("bus down".into())).is_err());
+    }
+
+    fn settler<'a>(bd: &'a RealBd) -> RealSettler<'a> {
+        RealSettler {
+            bd,
+            db: String::new(),
+            incident_label: "incident".into(),
+            home_repo: "home".into(),
+            registry: spira_config::repos::Registry::from_env(Default::default(), std::path::Path::new("/nonexistent")),
+            release_sha: None,
+            units: Err("none".into()),
+            fixes: Default::default(),
+        }
+    }
+
+    /// sp-7crdc8: a settle tick reads the lifecycle, the open incidents by id, then every
+    /// fix by id, all through the door and none by a spawned `bdq`.
+    #[test]
+    fn a_settle_tick_reads_incidents_and_their_fixes_in_three_door_requests() {
+        use serde_json::json;
+        let live = |id: &str, st: &str| json!({"bead_id": id, "state": st});
+        let inc = |id: &str, fix: &str| {
+            json!({"id": id, "labels": ["incident"], "dependencies": [{"issue_id": id, "depends_on_id": fix, "type": "blocks"}]})
+        };
+        let rows = vec![inc("sp-i1", "sp-f1"), inc("sp-i2", "sp-f1"), json!({"id": "sp-f1", "labels": ["repo:other"]})];
+        let fake = std::sync::Arc::new(
+            spira_config::lc_call::fake::Content::new(rows).with_live(vec![live("sp-i1", "READY"), live("sp-i2", "REWORK"), live("sp-f1", "LANDED")]),
+        );
+        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_config::lc_call::LcClient::over(fake.clone(), true)) };
+        let s = settler(&bd);
+        let cands = s.candidates().unwrap();
+        assert_eq!(cands.iter().map(|c| c.fixes.clone()).collect::<Vec<_>>(), vec![vec!["sp-f1".to_string()]; 2]);
+        let _ = s.landing_in_force("sp-f1");
+        assert!(s.landing_in_force("sp-unread").unwrap_err().contains("not found"));
+        let seen = fake.requests();
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert_eq!(seen[0], ["list", "--live"]);
+        for r in &seen[1..] {
+            assert!(r.iter().any(|a| a == "--id"), "{r:?}");
+        }
     }
 
     #[test]

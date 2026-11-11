@@ -794,6 +794,13 @@ pub mod fake {
             if argv == ["list", "--live"] {
                 return Ok(Reply { code: 0, out: Value::Array(self.live.clone()).to_string(), err: String::new() });
             }
+            if argv.get(..2) == Some(&["content".to_string(), "show".to_string()][..]) {
+                let row = self.rows.iter().find(|r| argv.get(2).map(String::as_str) == r["id"].as_str());
+                return Ok(match row {
+                    Some(r) => Reply { code: 0, out: r.to_string(), err: String::new() },
+                    None => Reply { code: 1, out: String::new(), err: "not found\n".into() },
+                });
+            }
             if argv.get(..2) != Some(&["content".to_string(), "list".to_string()][..]) {
                 return Ok(Reply { code: 0, out: "[]".into(), err: String::new() });
             }

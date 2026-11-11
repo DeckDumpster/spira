@@ -221,9 +221,6 @@ impl incident::settle::Settler for Observed<'_> {
     fn candidates(&self) -> Result<Vec<incident::settle::Candidate>, String> {
         Ok(vec![candidate(self.inc)])
     }
-    fn fixes(&self, _: &str) -> Result<Vec<String>, String> {
-        Ok(self.inc.fixes.iter().map(|f| f.id.clone()).collect())
-    }
     fn fix_state(&self, fix: &str) -> Result<incident::settle::FixState, String> {
         let f = self.inc.fixes.iter().find(|f| f.id == fix).ok_or_else(|| format!("{fix} was not observed"))?;
         Ok(if matches!(f.state.as_str(), "LANDED" | "DONE") { incident::settle::FixState::Landed } else { incident::settle::FixState::Unlanded(f.state.clone()) })
@@ -258,7 +255,7 @@ impl incident::settle::Settler for Observed<'_> {
 }
 
 fn candidate(inc: &Inc) -> incident::settle::Candidate {
-    incident::settle::Candidate { id: inc.id.clone(), external_ref: Some(inc.external_ref.clone()).filter(|r| !r.is_empty()), labels: inc.labels.clone() }
+    incident::settle::Candidate { id: inc.id.clone(), external_ref: Some(inc.external_ref.clone()).filter(|r| !r.is_empty()), labels: inc.labels.clone(), fixes: inc.fixes.iter().map(|f| f.id.clone()).collect() }
 }
 
 fn phase_name(p: Phase) -> &'static str {
@@ -417,12 +414,13 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
         registry: spira_config::repos::Registry::from_env(BTreeMap::new(), &home),
         release_sha: incident::settle_real::release_sha_of(&release),
         units: e.units.clone().map(|u| Box::new(Shared(u)) as Box<dyn runtime::units::Units>).ok_or_else(|| "no unit manager configured".to_string()),
+        fixes: Default::default(),
     };
     let mut incidents = vec![];
     for c in settler.candidates()? {
         let mut inc = Inc { id: c.id.clone(), external_ref: c.external_ref.clone().unwrap_or_default(), labels: c.labels.clone(), fixes: vec![], detector: Detector::NoProbe };
         let mut all_landed = true;
-        for fix in settler.fixes(&c.id).unwrap_or_default() {
+        for fix in c.fixes.clone() {
             let state = match settler.fix_state(&fix) {
                 Ok(incident::settle::FixState::Landed) => "LANDED".to_string(),
                 Ok(incident::settle::FixState::Unlanded(s)) => s,
