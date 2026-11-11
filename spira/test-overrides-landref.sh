@@ -22,6 +22,7 @@ TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up overrides_landref || { printf 'test-overrides-landref: could not build fixture database\n' >&2; exit 1; }
 testdb_seed <<'JSONL'
 {"id":"sp-testlag","title":"lagging checkout target","status":"open","issue_type":"task","labels":["repo:spira"],"updated_at":"2026-09-25T00:00:00Z"}
+{"id":"sp-testheld","title":"unlanded target","status":"open","issue_type":"task","labels":["repo:spira"],"updated_at":"2026-09-25T00:00:00Z"}
 JSONL
 
 # ── Fixture: a remote, a checkout of it, and the repo map naming origin/main as its landing ref
@@ -92,6 +93,31 @@ out="$(run_ov "$GHOSTDIR" apply)"
 want "unknown bead: named in the error" "sp-nosuchbead is not in the store" "$out"
 [ ! -e "$REPO/ghost-applied" ] && ok "unknown bead: nothing applied" || bad "unknown bead: nothing applied"
 want "unknown bead: doctor reports it" "ghost: sp-nosuchbead failed — unknown-bead" "$(run_ov "$GHOSTDIR" doctor)"
+
+# ===========================================================================
+echo
+echo "the store checks read through spira-lc content, never bdq:"
+# ===========================================================================
+STUBBIN="$TMP/stubbin"; mkdir -p "$STUBBIN"
+lc_path_stub "$STUBBIN" "$TMP/lcfix"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/bdq.calls"\nexit 1\n' "$TMP" > "$STUBBIN/bdq"; chmod +x "$STUBBIN/bdq"
+: > "$TMP/bdq.calls"
+NOBDQDIR="$TMP/overrides-nobdq"; mkdir -p "$NOBDQDIR"
+cat > "$NOBDQDIR/held.override" <<'SPEC'
+BEAD="sp-testheld"
+needed() { [ ! -f "$1/held-applied" ]; }
+apply()  { : > "$1/held-applied"; }
+SPEC
+cat > "$NOBDQDIR/ghost.override" <<'SPEC'
+BEAD="sp-nosuchbead"
+needed() { return 0; }
+apply()  { : > "$1/ghost2-applied"; }
+SPEC
+out="$(PATH="$STUBBIN:$PATH" run_ov "$NOBDQDIR" apply)"
+want "no bdq: known bead is applied" "held: applied" "$out"
+want "no bdq: unknown bead is the loud error" "sp-nosuchbead is not in the store" "$out"
+[ ! -e "$REPO/ghost2-applied" ] && ok "no bdq: unknown bead applies nothing" || bad "no bdq: unknown bead applies nothing"
+is "no bdq: no bdq process was started" "" "$(cat "$TMP/bdq.calls")"
 
 echo
 tl_summary
