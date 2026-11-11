@@ -54,7 +54,7 @@ pub enum Composition {
     Suites { why: String },
     /// The gate string with suites off and without the build fence ([`gate_string`]), then
     /// `cargo build` and `cargo test` of `crates` on the host. `touched` are the members whose files changed (or `*` for a workspace
-    /// input); `crates` adds their direct dependents, sorted.
+    /// input); `crates` adds their dependents, direct and transitive, sorted.
     Unit {
         touched: Vec<String>,
         crates: Vec<String>,
@@ -280,7 +280,7 @@ pub fn compose(
     if touched.is_empty() {
         return Composition::Fences;
     }
-    let crates = with_dependents(&touched, members);
+    let crates = with_transitive_dependents(&touched, members);
     Composition::Unit {
         touched: touched.into_iter().collect(),
         crates,
@@ -416,7 +416,7 @@ fn pkgs(crates: &[String]) -> String {
 pub const BUILD_FENCE_STEP: &str = "bash spira/build-fence.sh";
 
 /// THE GATE STRING A COMPOSITION RUNS (sp-aprxm). A unit composition has its own build
-/// phase, which compiles every touched crate and its direct dependents, every target, in the
+/// phase, which compiles every touched crate and its dependents, every target, in the
 /// `dwarf` profile; the build fence's cold release `make build` of the whole workspace in
 /// front of it only proved the same thing again, at 85% of a Rust-only gate's wall. So a unit
 /// composition runs the gate string with the build fence's step removed, and every other
@@ -807,6 +807,12 @@ mod tests {
             Composition::Unit { crates, .. } => crates.clone(),
             other => panic!("not unit: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_dependent_of_a_dependent_is_in_the_test_selection() {
+        assert_eq!(crates(&unit(GateMode::Unit, &["spira-config/src/lib.rs"])), v(&["dwarf", "landing-pass", "queue", "spira-config"]));
+        assert_eq!(crates(&unit(GateMode::Fences, &["queue/src/lib.rs"])), v(&["landing-pass", "queue"]));
     }
 
     #[test]
