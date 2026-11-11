@@ -138,8 +138,6 @@ pub trait Tools {
     fn gate_status(&self, branch: &str, repo: &str) -> Option<String>;
     /// confine.sh <id> <branch> <repo-path> <base> <labels> → (status, output).
     fn confine(&self, id: &str, branch: &str, repo: &Path, base: &str, labels: &str) -> (i32, String);
-    /// `queue step <repo>` → its output lines; Err when there is no queue binary to run.
-    fn queue_step(&self, repo: &str) -> Result<Vec<String>, String>;
     fn skew_refresh(&self, repo: &Path) -> String;
     /// An ensure program, by bare name (`unit-ensure`, `target-reap`), or a script path
     /// (systemd/ is not on PATH), when executable → its lines.

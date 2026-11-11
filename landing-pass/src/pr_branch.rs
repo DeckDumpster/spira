@@ -461,9 +461,6 @@ mod tests {
         fn confine(&self, _: &str, _: &str, _: &Path, _: &str, _: &str) -> (i32, String) {
             (self.confine.get(), "confine says no\n".into())
         }
-        fn queue_step(&self, _: &str) -> Result<Vec<String>, String> {
-            Ok(Vec::new())
-        }
         fn skew_refresh(&self, _: &Path) -> String {
             String::new()
         }
