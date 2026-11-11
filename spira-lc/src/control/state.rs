@@ -48,7 +48,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         Some(v) if asks::VERBS.contains(&v) => asks::run(store, args, call),
         Some(v) if mending::VERBS.contains(&v) => mending::run(store, args, call),
         Some(v) if conditions::VERBS.contains(&v) => conditions::run(store, args, call),
-        Some(v) if landed::VERBS.contains(&v) => landed::run(store, args, call),
+        Some(v) if landed::VERBS.contains(&v) => landed::run(store, rest, call),
         Some("promote-filed") => promote(store, rest, call),
         other => (
             CANNOT_TELL,

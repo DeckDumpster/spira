@@ -175,4 +175,41 @@ mod tests {
         assert_eq!(code, REFUSED, "{out}");
         assert!(out.contains("no bead row"), "{out}");
     }
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn sp_lrnzs9_the_verb_asks_git_itself_so_a_tip_on_the_ref_settles_and_one_off_it_does_not() {
+        let dir = testkit::TempDir::new("lc-reconcile-landed");
+        let repo = dir.path();
+        git(repo, &["init", "-q", "-b", "main"]);
+        git(repo, &["commit", "-q", "--allow-empty", "-m", "sp-on: landed work"]);
+        let on = git(repo, &["rev-parse", "HEAD"]);
+        git(repo, &["checkout", "-q", "-b", "side"]);
+        git(repo, &["commit", "-q", "--allow-empty", "-m", "sp-off: unlanded work"]);
+        let off = git(repo, &["rev-parse", "HEAD"]);
+        let s = store();
+        submitted(&s, "sp-on", &on);
+        submitted(&s, "sp-off", &off);
+        let verb = |id: &str, sha: &str| {
+            lc(&s, &["reconcile-landed", id, "--sha", sha, "--ref", "main", "--repo-path", &repo.to_string_lossy(), "--actor", "concierge"])
+        };
+        let (code, out) = verb("sp-off", &off);
+        assert_eq!(code, REFUSED, "{out}");
+        assert!(out.contains(&off) && out.contains("main"), "{out}");
+        assert_eq!(state_of(&s, "sp-off"), "SUBMITTED");
+        let (code, out) = verb("sp-on", &on);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(state_of(&s, "sp-on"), "LANDED");
+    }
 }
