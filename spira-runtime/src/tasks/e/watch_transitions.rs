@@ -18,7 +18,7 @@
 //! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
 //!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
 //! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed a commit the
-//!   release `SPIRA_RELEASES/current` names does not contain, and the oldest such landing is older than `SPIRA_TRANSITIONS_ACTIVATE_BOUND`.
+//!   release `SPIRA_RELEASES/current` names and the newest activated release both lack, and the oldest such landing is older than `SPIRA_TRANSITIONS_ACTIVATE_BOUND`.
 //! - ASK→ANSWERED: an ask held unanswered longer than `SPIRA_TRANSITIONS_ASK_BOUND`.
 //!
 //! A stall pages only when its edge's owner is not acting on it: the owner's heartbeat
@@ -422,6 +422,22 @@ fn in_effect_commit(releases_dir: &std::path::Path) -> Option<String> {
         .map(|m| m.commit)
 }
 
+/// The commits that count as in force: the one `current` names, and the newest the release
+/// machine records activated. Either may lag the other, so a landing either contains is live.
+fn releases_in_effect(releases: &[release::machine::Release], releases_dir: &std::path::Path) -> Vec<String> {
+    let newest_activated = releases
+        .iter()
+        .filter_map(|r| {
+            let at = r.events.iter().filter(|e| e.to == release::machine::ReleaseState::Activated).map(|e| e.at).max()?;
+            Some((at, r.sha.clone()))
+        })
+        .max()
+        .map(|(_, sha)| sha);
+    let mut out: Vec<String> = in_effect_commit(releases_dir).into_iter().collect();
+    out.extend(newest_activated.filter(|s| !out.contains(s)));
+    out
+}
+
 /// Whether `commit` is an ancestor of `release` (`git merge-base --is-ancestor`),
 /// or why it could not be asked.
 pub type Ancestor<'a> = &'a dyn Fn(&str, &str) -> Result<bool, String>;
@@ -442,12 +458,12 @@ pub fn repo_ancestor<'a>(repo_map: &'a std::path::Path, repo: &'a str) -> impl F
     }
 }
 
-/// When the oldest landing in `landed` that the release in effect does not contain landed.
-/// Landings with no commit, or with no release in effect, are judged by time; one whose
-/// ancestry cannot be tested counts as unreleased, so the edge pages.
+/// When the oldest landing in `landed` that no release in effect contains landed. Landings
+/// with no commit, or with no release in effect, are judged by time; one whose ancestry
+/// cannot be tested against any of them counts as unreleased, so the edge pages.
 fn oldest_unreleased(
     landed: &[serde_json::Value],
-    in_effect: Option<&str>,
+    in_effect: &[String],
     recorded: Option<u64>,
     ancestor: Ancestor,
 ) -> Option<u64> {
@@ -462,15 +478,17 @@ fn oldest_unreleased(
         .collect();
     landings.sort_unstable();
     // Landings are one line of history: a release containing the newest contains the rest.
-    if let (Some(release), Some((_, newest))) = (in_effect, landings.last()) {
-        if landings.len() > 1 && landings.iter().all(|(_, c)| !c.is_empty()) && ancestor(newest, release) == Ok(true) {
+    let contained = |commit: &str| in_effect.iter().any(|release| ancestor(commit, release) == Ok(true));
+    if let Some((_, newest)) = landings.last() {
+        if landings.len() > 1 && landings.iter().all(|(_, c)| !c.is_empty()) && contained(newest) {
             return None;
         }
     }
     for (at, commit) in landings {
-        let unreleased = match in_effect.filter(|_| !commit.is_empty()) {
-            Some(release) => !ancestor(commit, release).unwrap_or(false),
-            None => recorded.is_none_or(|r| at > r),
+        let unreleased = if in_effect.is_empty() || commit.is_empty() {
+            recorded.is_none_or(|r| at > r)
+        } else {
+            !contained(commit)
         };
         if unreleased {
             return Some(at);
@@ -503,9 +521,9 @@ pub fn observe(
         .filter(|e| e.to == release::machine::ReleaseState::Activated)
         .map(|e| e.at)
         .max();
-    let in_effect = in_effect_commit(releases_dir);
+    let in_effect = releases_in_effect(&releases, releases_dir);
     let window = window_s.to_string();
-    let after = if in_effect.is_some() {
+    let after = if in_effect_commit(releases_dir).is_some() {
         0
     } else {
         recorded.unwrap_or(0)
@@ -525,7 +543,7 @@ pub fn observe(
     let landed = dwell["landed_after"][release_repo]
         .as_array()
         .map_or(&[][..], Vec::as_slice);
-    let unreleased = oldest_unreleased(landed, in_effect.as_deref(), recorded, ancestor);
+    let unreleased = oldest_unreleased(landed, &in_effect, recorded, ancestor);
     let landed_after = unreleased
         .map(|at| (release_repo.to_string(), at))
         .into_iter()
