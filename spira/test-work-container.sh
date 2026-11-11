@@ -309,7 +309,8 @@ if [ "$rc" = 0 ]; then
   split_json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$split_id" --json 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
   want "split: the new bead is parented to the bound bead" "\"parent\": \"$BID\"" "$split_json"
 else
-  want "split: a failure names the call that failed" "\`" "$out" # latency is covered by spira-lc's filing_tests, not here
+  [ -n "$out" ] && said=1 || said=0
+  is "split: a failure carries a reason" "1" "$said" # latency itself is covered by spira-lc's filing_tests
 fi
 
 # ── superseded-by: a hold plus a confirmation ask, never bd supersede directly ───────

@@ -308,9 +308,13 @@ fn file_child_via(program: &str, secs: &str, title: &str, persona: &str, repo: &
 }
 
 fn bead_sh(args: &[&str]) -> Result<(), String> {
-    let out = spira_config::bounded::bounded_for("bead.sh", FILING_SECS).args(args).output().map_err(|e| format!("running bead.sh: {e}"))?;
+    bead_sh_via("bead.sh", FILING_SECS, args)
+}
+
+fn bead_sh_via(program: &str, secs: &str, args: &[&str]) -> Result<(), String> {
+    let out = spira_config::bounded::bounded_for(program, secs).args(args).output().map_err(|e| format!("running {program}: {e}"))?;
     if !out.status.success() {
-        return Err(failed("bead.sh", FILING_SECS, args, &out));
+        return Err(failed(program, secs, args, &out));
     }
     Ok(())
 }
@@ -527,5 +531,20 @@ mod filing_tests {
         let prog = slow_bead_sh(dir.path());
         let err = file_child_via(&prog, "0.2", "t", "builder", "r", Some("sp-x"), None).unwrap_err();
         assert!(err.contains("bead.sh file") && err.contains("timed out"), "reason names the call: {err:?}");
+    }
+
+    #[test]
+    fn a_label_or_dependency_call_that_outlives_its_deadline_names_itself() {
+        let dir = testkit::TempDir::new("filing-dep");
+        let prog = slow_bead_sh(dir.path());
+        let err = bead_sh_via(&prog, "0.2", &["label", "add", "sp-x", "split"]).unwrap_err();
+        assert!(err.contains("label add sp-x split") && err.contains("timed out"), "{err:?}");
+    }
+
+    #[test]
+    fn a_filing_waits_longer_than_the_plain_call_deadline() {
+        let filing: u64 = FILING_SECS.parse().unwrap();
+        let plain: u64 = spira_config::bounded::CALL_TIMEOUT_SECS.parse().unwrap();
+        assert!(filing > plain);
     }
 }
