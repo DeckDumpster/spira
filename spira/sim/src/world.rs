@@ -434,6 +434,8 @@ impl Steps for ProcessSteps {
         let toml = config.join("lc.toml");
         let credential = config.join("lc-credential");
         std::fs::write(&credential, "").map_err(|e| e.to_string())?;
+        let ro = spira_config::process::ro_credential(&credential.display().to_string());
+        std::fs::write(&ro, "").map_err(|e| format!("{ro}: {e}"))?;
         let world = config.parent().ok_or("config dir has no parent")?;
         // A complete config (spira-lc resolves only from one that declares every key) in
         // declared direct mode: a dead or absent socket is no longer a route to the store
