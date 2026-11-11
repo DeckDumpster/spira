@@ -59,7 +59,12 @@ pub fn lock_drift(root: &std::path::Path) -> Result<Option<String>, String> {
     if out.status.code() == Some(124) {
         return Err("cargo metadata --locked --offline: timed out after 120s".into());
     }
-    Ok(Some(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+    let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if why.contains("lock file") {
+        Ok(Some(why))
+    } else {
+        Err(format!("cargo metadata --locked --offline failed for another reason: {why}"))
+    }
 }
 
 /// `(name, base versions, the new version)` for each bump no Cargo.toml diff names.
@@ -91,11 +96,23 @@ impl Rule for LockfileLint {
     }
 
     fn applies_to(&self, e: &Entry) -> bool {
-        e.path == LOCK
+        e.path == LOCK || e.path.ends_with("Cargo.toml")
     }
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
         self.checked.set(None);
+        let mut drift = Vec::new();
+        if let Some(why) = lock_drift(&tree.root).map_err(LintError::Refused)? {
+            drift.push(Finding {
+                rule: NAME,
+                path: LOCK.into(),
+                line: None,
+                message: format!("{LOCK} is not what the manifests resolve to (cargo metadata --locked --offline): {why}"),
+            });
+        }
+        if !drift.is_empty() {
+            return Ok(drift);
+        }
         let base = tree.base_commit()?;
         let head = std::fs::read_to_string(tree.root.join(LOCK))
             .map_err(|_| LintError::Refused(format!("no {LOCK} in this tree — nothing to lint")))?;
@@ -112,15 +129,6 @@ impl Rule for LockfileLint {
             .git(&["diff", &base, "--", "*Cargo.toml"])
             .map(|b| String::from_utf8_lossy(&b).into_owned())
             .map_err(LintError::Refused)?;
-        let mut drift = Vec::new();
-        if let Some(why) = lock_drift(&tree.root).map_err(LintError::Refused)? {
-            drift.push(Finding {
-                rule: NAME,
-                path: LOCK.into(),
-                line: None,
-                message: format!("{LOCK} is not what the manifests resolve to (cargo metadata --locked --offline): {why}"),
-            });
-        }
         let out: Vec<Finding> = drift.into_iter().chain(offenders(&prior, &head, &diff)
             .into_iter()
             .map(|(n, bv, hv)| Finding {
@@ -200,11 +208,18 @@ mod tests {
         git(&t, &["commit", "-qm", "base"]);
         t.write("a/Cargo.toml", &manifest(""));
         let rule = LockfileLint::default();
-        let tree = Tree::from_paths(t.path(), ["Cargo.lock", "Cargo.toml"], Vec::<String>::new()).with_base(Some("HEAD".into()));
+        let tree = Tree::from_paths(t.path(), ["a/Cargo.toml"], Vec::<String>::new()).with_base(Some("HEAD".into()));
         let got = rule.check(&tree).unwrap();
         assert_eq!(got.len(), 1, "{got:?}");
         assert!(got[0].message.contains("not what the manifests resolve to"), "{got:?}");
         assert_eq!(rule.checked(), None);
+    }
+
+    #[test]
+    fn a_manifest_edit_alone_brings_the_rule_in() {
+        let t = project("");
+        let tree = Tree::from_paths(t.path(), ["a/Cargo.toml"], Vec::<String>::new());
+        assert!(tree.entries.iter().any(|e| LockfileLint::default().applies_to(e)));
     }
 
     #[test]
