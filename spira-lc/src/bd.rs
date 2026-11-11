@@ -7,6 +7,9 @@
 
 use std::process::Command;
 
+use crate::content_sql::{self, Failure, Sql};
+use crate::content_sql::Bead;
+
 fn bd_bin() -> Result<String, String> {
     // SPIRA_BD resolves empty when unset (no default in its registry entry); an empty program
     // name fails every call, so the door's store half silently never ran in such a setup
@@ -30,34 +33,12 @@ fn record_call(args: &[&str], started: std::time::Instant, ok: bool) {
     );
 }
 
-pub fn run(args: &[&str]) -> Result<String, String> {
-    let started = std::time::Instant::now();
-    let res = run_read(args);
-    record_call(args, started, res.is_ok());
-    stamped(args, res)
-}
-
 /// Every planning write this process makes moves the planning watermark once it has landed.
 fn stamped<S: AsRef<str>>(args: &[S], res: Result<String, String>) -> Result<String, String> {
     if res.is_ok() && spira_config::planning::is_planning_write(args) {
         crate::plan::stamp_after_write();
     }
     res
-}
-
-fn run_read(args: &[&str]) -> Result<String, String> {
-    let mut cmd = spira_config::bounded::bounded(bd_bin()?);
-    let db = spira_config::process::cfg("SPIRA_DB")?;
-    if !db.is_empty() {
-        cmd.args(["-C", &db]);
-    }
-    cmd.args(args);
-    let out = cmd.output().map_err(|e| format!("running bd {args:?}: {e}"))?;
-    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    if !out.status.success() {
-        return Err(format!("{stdout}{}", String::from_utf8_lossy(&out.stderr)));
-    }
-    Ok(stdout)
 }
 
 const WRITE_SECS: u64 = 60;
@@ -131,65 +112,69 @@ fn settled(res: Result<(), String>, id: &str, still_open: impl FnOnce() -> Resul
     }
 }
 
+/// Runs `ask` on the content store's read-only connection: lc-serve forks bd for writes only.
+fn store<T>(ask: impl FnOnce(&dyn Sql, &str) -> Result<T, Failure>) -> Result<T, String> {
+    crate::content_sql::served()?.with(ask).map_err(|f| f.text().to_string())
+}
+
+/// bd's kv value under `key`; `None` while unset.
+pub fn kv_get(key: &str) -> Result<Option<String>, String> {
+    store(|sql, db| content_sql::kv(sql, db, key))
+}
+
+/// `(id, title)` of the open beads whose title contains `needle`.
+pub fn titled(needle: &str) -> Result<Vec<(String, String)>, String> {
+    Ok(store(|sql, db| content_sql::titled(sql, db, needle))?.into_iter().map(|b| (b.id, b.title)).collect())
+}
+
+const NO_SUCH: &str = "no issue found matching";
+
 pub fn show(bead_id: &str) -> Result<String, String> {
-    run(&["show", bead_id])
+    store(|sql, db| content_sql::show_text(sql, db, bead_id))?.ok_or_else(|| format!("{NO_SUCH} {bead_id:?}"))
+}
+
+fn bead(bead_id: &str) -> Result<Option<Bead>, String> {
+    store(|sql, db| content_sql::bead(sql, db, bead_id))
 }
 
 /// The bound bead's own `repo:<name>` label, so `file-followup`/`split` never ask the
-/// dwarf for a repo it could get wrong — the layer reads it from the bead it was called
-/// for, the same one every filing must land in.
+/// dwarf for a repo it could get wrong.
 pub fn repo_label(bead_id: &str) -> Result<Option<String>, String> {
-    let out = run(&["show", bead_id, "--json"])?;
-    let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
-    let doc = match &parsed {
-        serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
-        v => v.clone(),
-    };
-    let labels = doc.get("labels").and_then(|l| l.as_array()).cloned().unwrap_or_default();
-    Ok(labels.iter().filter_map(|l| l.as_str()).find_map(|l| l.strip_prefix("repo:").map(str::to_string)))
+    Ok(labels(bead_id)?.iter().find_map(|l| l.strip_prefix("repo:").map(str::to_string)))
 }
 
-/// `bead_id`'s title; `Ok(None)` when bd holds no such bead.
+/// `bead_id`'s title; `Ok(None)` when the store holds no such bead.
 pub fn title(bead_id: &str) -> Result<Option<String>, String> {
-    let out = match run(&["show", bead_id, "--json"]) {
-        Ok(o) => o,
-        Err(e) if e.contains("no issue found matching") => return Ok(None),
-        Err(e) => return Err(e),
-    };
-    let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
-    let doc = match &parsed {
-        serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
-        v => v.clone(),
-    };
-    Ok(doc.get("title").and_then(|t| t.as_str()).map(str::to_string))
+    Ok(bead(bead_id)?.map(|b| b.title))
 }
 
-/// Every label on `bead_id`, read from bd.
+/// Every label on `bead_id`.
 pub fn labels(bead_id: &str) -> Result<Vec<String>, String> {
-    let out = run(&["show", bead_id, "--json"])?;
-    let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
-    let doc = match &parsed {
-        serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
-        v => v.clone(),
-    };
-    Ok(doc.get("labels").and_then(|l| l.as_array()).map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect()).unwrap_or_default())
+    Ok(bead(bead_id)?.map(|b| b.labels).unwrap_or_default())
 }
 
-/// The live [`crate::callers::Bd`]: bd itself, resolved as [`run`] resolves it.
+fn closed_of(found: Vec<Bead>) -> Vec<(String, String)> {
+    found.into_iter().filter(|b| b.status == "closed").map(|b| (b.id, b.close_reason.unwrap_or_default())).collect()
+}
+
+fn open_of(found: Vec<Bead>) -> Vec<String> {
+    found.into_iter().filter(|b| b.status != "closed").map(|b| b.id).collect()
+}
+
+fn is_external(b: &Bead) -> bool {
+    b.external_ref.as_deref().is_some_and(|r| !r.trim().is_empty())
+}
+
+/// The live [`crate::callers::Bd`]: reads from the content store, writes through bd.
 pub struct LiveBd;
 
 impl crate::callers::Bd for LiveBd {
     fn planning_watermark(&mut self) -> Result<Option<u64>, String> {
-        crate::skew::parse_bd_kv(&run(&["kv", "get", crate::skew::BD_KV_KEY, "--json"])?)
+        let held = kv_get(crate::skew::BD_KV_KEY)?;
+        crate::skew::parse_kv(held.as_deref())
     }
     fn issue_type(&mut self, id: &str) -> Result<String, String> {
-        let out = run(&["show", id, "--json"])?;
-        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
-        let doc = match &parsed {
-            serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
-            v => v.clone(),
-        };
-        doc.get("issue_type").and_then(|t| t.as_str()).map(str::to_string).ok_or_else(|| format!("bd show {id}: no issue_type"))
+        bead(id)?.map(|b| b.issue_type).ok_or_else(|| format!("bd show {id}: {NO_SUCH}"))
     }
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
         // --force: the lifecycle row is already terminal when `close` gets here, so the store
@@ -198,64 +183,42 @@ impl crate::callers::Bd for LiveBd {
         settled(res, id, || self.open_among(&[id.to_string()]))
     }
     fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String> {
-        crate::bd_facts::closed(&bd_bin()?, &spira_config::process::cfg("SPIRA_DB")?, ids)
+        let found = store(|sql, db| content_sql::statuses(sql, db, ids))?;
+        Ok(closed_of(found))
     }
     fn known(&mut self, ids: &[String]) -> Result<Vec<String>, String> {
-        crate::bd_facts::known(&bd_bin()?, &spira_config::process::cfg("SPIRA_DB")?, ids)
+        Ok(store(|sql, db| content_sql::statuses(sql, db, ids))?.into_iter().map(|b| b.id).collect())
     }
     fn open_among(&mut self, ids: &[String]) -> Result<Vec<String>, String> {
-        crate::bd_facts::open_among(&bd_bin()?, &spira_config::process::cfg("SPIRA_DB")?, ids)
+        Ok(open_of(store(|sql, db| content_sql::statuses(sql, db, ids))?))
     }
     fn work_beads(&mut self, id: &str) -> Result<Vec<String>, String> {
-        let out = run(&["show", id, "--json"])?;
-        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
-        let doc = match &parsed {
-            serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
-            v => v.clone(),
-        };
-        let labels = doc.get("labels").and_then(|l| l.as_array()).cloned().unwrap_or_default();
-        Ok(labels.iter().filter_map(|l| l.as_str()).filter_map(|l| l.strip_prefix("work-bead:").map(str::to_string)).collect())
+        Ok(labels(id)?.iter().filter_map(|l| l.strip_prefix("work-bead:").map(str::to_string)).collect())
     }
     fn blocking_dependents(&mut self, id: &str) -> Result<Vec<String>, String> {
-        let out = run(&["dep", "list", id, "--direction", "up", "--type", "blocks", "--json"])?;
-        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd dep list --json: {e}"))?;
-        let ids: Vec<String> = parsed
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|d| d.get("depends_on_id").or_else(|| d.get("id")).and_then(|x| x.as_str()))
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default();
+        let ids = store(|sql, db| content_sql::blocked_by(sql, db, id))?;
         if ids.is_empty() {
             return Ok(ids);
         }
         self.open_among(&ids)
     }
     fn external(&mut self, id: &str) -> Result<bool, String> {
-        let out = run(&["show", id, "--json"])?;
-        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
-        let doc = match &parsed {
-            serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
-            v => v.clone(),
-        };
-        Ok(doc.get("external_ref").and_then(|r| r.as_str()).is_some_and(|r| !r.trim().is_empty()))
+        let b = bead(id)?.ok_or_else(|| format!("bd show {id}: {NO_SUCH}"))?;
+        Ok(is_external(&b))
     }
     fn reopen(&mut self, id: &str) -> Result<(), String> {
         // The store follows the row the door just moved: open, unassigned, and no longer wearing
         // the submitted label (a legacy state label; best effort, it may not be there).
         run_write(&["update", id, "--status", "open", "--assignee", ""]).map(|_| ())?;
         if let Some(label) = spira_config::process::cfg("SPIRA_SUBMITTED_LABEL").ok().filter(|l| !l.is_empty()) {
-            let _ = run(&["label", "remove", id, &label]);
+            let _ = run_write(&["label", "remove", id, &label]);
         }
         Ok(())
     }
 }
 
 pub fn note(bead_id: &str, text: &str) -> Result<String, String> {
-    run(&["note", bead_id, text])
+    run_write(&["note", bead_id, text])
 }
 
 /// Files through `spira/bead.sh`'s contract (the labelling rules `bd create` alone does not
@@ -546,5 +509,39 @@ mod filing_tests {
         let filing: u64 = FILING_SECS.parse().unwrap();
         let plain: u64 = spira_config::bounded::CALL_TIMEOUT_SECS.parse().unwrap();
         assert!(filing > plain);
+    }
+}
+
+#[cfg(test)]
+mod store_read_tests {
+    use super::*;
+
+    fn row(id: &str, status: &str, reason: Option<&str>) -> Bead {
+        Bead { id: id.into(), status: status.into(), close_reason: reason.map(str::to_string), ..Bead::default() }
+    }
+
+    #[test]
+    fn closed_rows_carry_their_reason_and_open_ones_are_every_other_status() {
+        let found = vec![row("sp-a", "closed", Some("done")), row("sp-b", "in_progress", None), row("sp-c", "closed", None)];
+        assert_eq!(closed_of(found.clone()), [("sp-a".to_string(), "done".to_string()), ("sp-c".to_string(), String::new())]);
+        assert_eq!(open_of(found), ["sp-b"]);
+    }
+
+    #[test]
+    fn a_blank_external_ref_is_not_external() {
+        let b = |r: Option<&str>| Bead { external_ref: r.map(str::to_string), ..Bead::default() };
+        assert!(is_external(&b(Some("github:o/r#4"))));
+        assert!(!is_external(&b(Some("  "))) && !is_external(&b(None)));
+    }
+}
+
+#[cfg(test)]
+mod no_read_fork_tests {
+    #[test]
+    fn this_module_forks_bd_for_no_read_verb() {
+        let code = include_str!("bd.rs").split("#[cfg(test)]").next().unwrap();
+        for read in ["\"show\"", "\"list\"", "\"kv\"", "\"dep\", \"list\"", "fn run("] {
+            assert!(!code.contains(read), "bd.rs forks bd for {read}");
+        }
     }
 }

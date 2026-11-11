@@ -49,13 +49,7 @@ pub struct Live<'a>(pub &'a crate::db::Conn);
 impl Mends for Live<'_> {
     fn open_mends(&mut self, target: &str) -> Result<Vec<String>, String> {
         let needle = needle(target);
-        let out = bd::run(&["list", "--title-contains", &needle, "--limit", "0", "--json"])?;
-        let start = out.find(['[', '{']).ok_or("bd list: no JSON")?;
-        let v: serde_json::Value = serde_json::from_str(&out[start..]).map_err(|e| format!("bd list --json: {e}"))?;
-        let rows = match v {
-            serde_json::Value::Array(a) => a,
-            o => vec![o],
-        };
+        let titled = bd::titled(&needle)?;
         let (rc, listing) = crate::dispatch(&["list".into()], self.0);
         if rc != 0 {
             return Err(format!("lifecycle list exited {rc}: {listing}"));
@@ -70,12 +64,7 @@ impl Mends for Live<'_> {
                     .collect()
             })
             .unwrap_or_default();
-        Ok(rows
-            .iter()
-            .filter(|r| r.get("title").and_then(|t| t.as_str()).is_some_and(|t| t.starts_with(&needle)))
-            .filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string))
-            .filter(|id| !ended.contains(id))
-            .collect())
+        Ok(titled.into_iter().filter(|(_, t)| t.starts_with(&needle)).map(|(id, _)| id).filter(|id| !ended.contains(id)).collect())
     }
     fn retire(&mut self, mend: &str, _reason: &str) -> Result<(), String> {
         let (rc, msg) = crate::apply_bead_event(self.0, mend, "mend-retire", BeadEventKind::Drop { reason: DropReason::Unwanted });

@@ -525,7 +525,7 @@ fn mirror(seq: u64) {
 /// Writes `seq` into bd's kv unless kv already holds a later one: two processes that stamped
 /// can reach bd in either order, and the kv copy only moves forward.
 fn write_kv(seq: u64) -> Result<(), String> {
-    let held = crate::bd::run(&["kv", "get", KV_KEY]).ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0);
+    let held = crate::skew::parse_kv(crate::bd::kv_get(KV_KEY)?.as_deref())?.unwrap_or(0);
     if held >= seq {
         return Ok(());
     }

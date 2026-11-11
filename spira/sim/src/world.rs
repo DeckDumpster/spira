@@ -434,6 +434,8 @@ impl Steps for ProcessSteps {
         let toml = config.join("lc.toml");
         let credential = config.join("lc-credential");
         std::fs::write(&credential, "").map_err(|e| e.to_string())?;
+        let ro = spira_config::process::ro_credential(&credential.display().to_string());
+        std::fs::write(&ro, "").map_err(|e| format!("{ro}: {e}"))?;
         let world = config.parent().ok_or("config dir has no parent")?;
         // A complete config (spira-lc resolves only from one that declares every key) in
         // declared direct mode: a dead or absent socket is no longer a route to the store
@@ -652,10 +654,10 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         std::fs::write(&file, base_config(repo, &home)?).map_err(|e| e.to_string())?;
         let t = Instant::now();
         let bd = steps.bd()?;
-        let settings: Vec<(String, String)> = config_settings(dir, repos, &gh_bin).into_iter().chain(home_settings(dir, fixture, &bd)).chain(lc_settings(dir)).collect();
+        let port = std::fs::read_to_string(Path::new(fixture).join("server.port")).unwrap_or_default();
+        let settings: Vec<(String, String)> = config_settings(dir, repos, &gh_bin).into_iter().chain(home_settings(dir, fixture, &bd)).chain(lc_settings(dir)).chain(content_sql_settings(port.trim())).collect();
         steps.config_set_all(&release, &file, &settings)?;
         mark(dir, "up.config-set", t);
-        let port = std::fs::read_to_string(Path::new(fixture).join("server.port")).unwrap_or_default();
         std::fs::write(
             config.join("sim.env"),
             format!(
@@ -1063,6 +1065,15 @@ pub fn lc_settings(world: &Path) -> Vec<(String, String)> {
     ]
 }
 
+/// The world's content reads go to its own Dolt fixture as root, not to the base's port.
+pub fn content_sql_settings(port: &str) -> Vec<(String, String)> {
+    vec![
+        ("spira.beads_sql_host".to_string(), "127.0.0.1".to_string()),
+        ("spira.beads_sql_port".to_string(), port.to_string()),
+        ("spira.beads_sql_user".to_string(), "root".to_string()),
+    ]
+}
+
 /// The `SIM_PROBE` line's command: `sim probe <world>`, shell-quoted, since it runs under `sh -c`.
 pub fn probe_command(sim: &Path, world: &Path) -> String {
     let q = |p: &Path| format!("'{}'", p.display().to_string().replace('\'', "'\\''"));
@@ -1160,5 +1171,17 @@ mod locator_tests {
     fn a_world_is_refused_while_spira_toml_names_a_config() {
         let e = refuse_production(&|k| (k == "SPIRA_TOML").then(|| "/c/one-source.toml".to_string())).unwrap_err();
         assert!(e.contains("SPIRA_TOML"), "{e}");
+    }
+}
+
+#[cfg(test)]
+mod content_sql_tests {
+    use super::content_sql_settings;
+
+    #[test]
+    fn a_worlds_content_reads_name_its_fixtures_port_not_the_bases() {
+        let s = content_sql_settings("41234");
+        assert!(s.contains(&("spira.beads_sql_port".to_string(), "41234".to_string())));
+        assert!(s.contains(&("spira.beads_sql_user".to_string(), "root".to_string())));
     }
 }
