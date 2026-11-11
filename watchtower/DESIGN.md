@@ -135,7 +135,7 @@ duplication is exactly what let a timer added after a hand list was written esca
 - Probes: a `SPIRA_RELEASE_CURRENCY_UNITS` unit rendering a pinned release other than `current`, or rendering `current` while its MainPID runs from another release, for
   `SPIRA_RELEASE_STALE_SECS`; a spira unit failed `SPIRA_FAILED_UNIT_RUNS` consecutive
   invocations (shares `incident:failed-unit-<unit>` with the sweep, so the two never double-file);
-  `/tmp` free under `SPIRA_TMPFS_SHED_FREE_MIB`; every filesystem under `SPIRA_DISK_WATCH_PATHS` (root, run directory, Nix store, build pool; one reading per device) free under `SPIRA_DISK_FLOOR_PCT` or filling fast enough to empty within `SPIRA_DISK_FILL_HOURS` (rate from samples kept in `conditions/disk-fill.state`); io/memory
+  `/tmp` free under `SPIRA_TMPFS_SHED_FREE_MIB`; every filesystem holding root, the run directory, `SPIRA_DWARF_BUILD_BASE` or a path in `SPIRA_DISK_WATCH_PATHS` (default the Nix store; one reading per device) free under `SPIRA_DISK_FLOOR_PCT` or filling fast enough to empty within `SPIRA_DISK_FILL_HOURS` (rate from samples kept in `conditions/disk-fill.state`); io/memory
   PSI `full avg60` at `SPIRA_PSI_FULL_AVG60` for `SPIRA_PSI_SUSTAIN_SECS`; release trees over
   `SPIRA_RELEASES_KEEP` + `SPIRA_RELEASE_STORE_SLACK`.
 - Writes: `$SPIRA_RUN/conditions/{filed,pending}/<probe>/<key>`, `failed-runs.tally`.

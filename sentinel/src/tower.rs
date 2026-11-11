@@ -134,7 +134,7 @@ fn conditions_check(n: i64, run: &Path) -> Result<(), String> {
         tmp_floor_mib: getenv_i64("SPIRA_TMPFS_SHED_FREE_MIB", 6144),
         disk_floor_pct: reg_i64("SPIRA_DISK_FLOOR_PCT")?,
         disk_fill_hours: reg_i64("SPIRA_DISK_FILL_HOURS")?,
-        disk_watch_paths: reg("SPIRA_DISK_WATCH_PATHS")?.split_whitespace().map(String::from).collect(),
+        disk_watch_paths: probes::watch_paths(run, &reg("SPIRA_DISK_WATCH_PATHS")?, &reg("SPIRA_DWARF_BUILD_BASE")?),
         disk_state: run.join("conditions").join("disk-fill.state"),
         psi_dir: getenv("SPIRA_PSI_DIR").unwrap_or_else(|| "/proc/pressure".into()),
         psi_full_avg60: spira_config::process::cfg_parse::<f64>("SPIRA_PSI_FULL_AVG60")?,

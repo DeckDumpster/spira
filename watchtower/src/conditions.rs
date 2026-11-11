@@ -113,7 +113,8 @@ pub fn reconcile(now: i64, ctx: &Ctx, probe: &str, reading: Reading) {
                     log(&format!("watchtower: conditions: filed {} ({probe})", c.reference));
                 }
             }
-            _ => {}
+            Some(_) => {}
+            None => log(&format!("watchtower: conditions: {} stands but the store did not answer — not filed ({probe})", c.reference)),
         }
     }
 

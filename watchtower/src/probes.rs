@@ -335,6 +335,11 @@ fn path_key(path: &str) -> String {
     path.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect()
 }
 
+/// Root, the run directory and the build pool, then the operator's extra paths.
+pub fn watch_paths(run: &Path, extra: &str, build_base: &str) -> Vec<String> {
+    ["/", &run.to_string_lossy(), build_base].into_iter().chain(extra.split_whitespace()).map(String::from).collect()
+}
+
 pub fn disk_room(cfg: &Cfg, now: i64, read: &dyn Fn(&str) -> Option<FsReading>) -> Reading {
     let window = cfg.disk_fill_hours.max(1) * 3600;
     let mut history = load_samples(&cfg.disk_state);
@@ -949,6 +954,11 @@ mod tests {
             _ => fs(2, 10, 98),
         };
         assert_eq!(keys(disk_room(&c, 1_000, &read)), vec!["disk-free-_run-dir", "disk-free-_build-pool"]);
+    }
+
+    #[test]
+    fn watch_paths_always_name_root_run_and_build_pool_before_the_extras() {
+        assert_eq!(watch_paths(Path::new("/r"), "/nix/store /x", "/b"), ["/", "/r", "/b", "/nix/store", "/x"]);
     }
 
     #[test]
