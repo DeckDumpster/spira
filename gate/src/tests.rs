@@ -3599,6 +3599,28 @@ fn a_closure_that_cannot_be_read_builds_from_the_tree() {
     assert!(built(&f));
 }
 
+/// The closure a tool is built from follows normal and build dependencies transitively and
+/// leaves dev dependencies and unrelated members out; a path is touched when it is inside a
+/// closure directory or is a workspace-wide build input.
+#[test]
+fn the_tools_closure_follows_build_dependencies_and_not_dev_ones() {
+    use crate::toolkey::{closure, first_touched};
+    let m = |n: &str, build: &[&str], dev: &[&str]| crate::compose::Member {
+        name: n.into(),
+        dir: n.into(),
+        deps: build.iter().chain(dev).map(|d| d.to_string()).collect(),
+        build_deps: build.iter().map(|d| d.to_string()).collect(),
+    };
+    let ms = [m("lint", &["config"], &["testkit"]), m("config", &["leaf"], &[]), m("leaf", &[], &[]), m("testkit", &[], &[]), m("gate", &["config"], &[])];
+    let c = closure(&ms, &["lint".into()]).unwrap();
+    let dirs: Vec<String> = c.iter().map(|m| m.dir.clone()).collect();
+    assert_eq!(dirs, ["lint", "config", "leaf"]);
+    let touched = |p: &str| first_touched(&[p.to_string()], &dirs).is_some();
+    assert!(touched("leaf/src/lib.rs") && touched("Cargo.lock") && touched(".cargo/config.toml") && touched("rust-toolchain"));
+    assert!(!touched("testkit/src/lib.rs") && !touched("gate/src/main.rs") && !touched("leafy/src/lib.rs") && !touched("spira/a.sh"));
+    assert!(closure(&ms, &["nope".into()]).unwrap_err().contains("nope is not a workspace member"));
+}
+
 const BASE_F_S1: &str = "gate-step RED rc=1 :: fence-f\n  test-s1.sh RED rc=1 after 3s";
 
 #[test]
