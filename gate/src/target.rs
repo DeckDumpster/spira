@@ -146,7 +146,7 @@ pub fn prepare(
     let mut live: Vec<(PathBuf, String)> = Vec::new();
     for e in fs::read_dir(root).map_err(|e| format!("gate: cannot read {}: {e}", root.display()))?.flatten() {
         let n = e.file_name().to_string_lossy().into_owned();
-        if n == name {
+        if n == name || n == crate::warm::POOL {
             continue;
         }
         if !trees_dir.join(&n).is_dir() && !pinned(&e.path()) && !held(&n) {
@@ -164,13 +164,20 @@ pub fn prepare(
     //    same tmpfs, like testenv's warm slots, can eat the room this cap never counted).
     let mut sizes: Vec<(PathBuf, String, u64)> = live.into_iter().map(|(p, n)| { let s = size_of(&p); (p, n, s) }).collect();
     let own = size_of(&out.dir);
-    let mut total: u64 = sizes.iter().map(|s| s.2).sum::<u64>() + own;
+    let mut total: u64 = sizes.iter().map(|s| s.2).sum::<u64>() + own + crate::warm::size(root);
     let cap = lim.cap_mib * 1024 * 1024;
+    if total > cap {
+        total = total.saturating_sub(crate::warm::size(root));
+        crate::warm::shed(root);
+    }
     sizes.sort_by_key(|(p, _, _)| mtime(p));
     for (p, n, s) in sizes {
         let short_of_floor = free_mib(root).is_some_and(|f| f < lim.shed_free_mib);
         if total <= cap && !short_of_floor {
             break;
+        }
+        if short_of_floor {
+            crate::warm::shed(root);
         }
         if !lock_free(&trees_dir.join(format!("{n}.lock"))) || pinned(&p) || held(&n) {
             continue;
@@ -401,6 +408,19 @@ mod tests {
         assert!(root.join(".gate.harness.b/dwarf/deps/liby.rlib").is_file());
         // `target` itself stays a real directory: git ignores `target/` in every revision.
         assert!(fs::symlink_metadata(tree.join("target")).unwrap().is_dir());
+    }
+
+    #[test]
+    fn the_warm_pool_is_not_swept_as_an_orphan_and_is_shed_over_the_cap() {
+        let s = Scratch::new("pool");
+        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
+        let tree = trees.join(".gate.harness.p");
+        fs::create_dir_all(&tree).unwrap();
+        write_mib(&root.join(crate::warm::POOL).join("e1/dwarf/deps/libz.rlib"), 1);
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        assert!(root.join(crate::warm::POOL).join("e1").is_dir());
+        prepare(&root, &trees, &tree, &lim(0), &roomy, &mem, &|_| false).unwrap();
+        assert!(!root.join(crate::warm::POOL).exists());
     }
 
     #[test]

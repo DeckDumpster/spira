@@ -808,6 +808,9 @@ impl World for Real {
         let held = |name: &str| target::held_by_gate(Path::new(run), name);
         let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &target::mem_available_mib, &held)?;
         let mut line = format!("gate: build on tmpfs at {}", p.dir.display());
+        if let Some(warm) = crate::warm::warm_start(&root, &p.dir.join("dwarf"), tree) {
+            line.push_str(&format!("\n{warm}"));
+        }
         if p.disk_freed_mib > 0 {
             line.push_str(&format!(" ({} MiB of build output moved off the disk)", p.disk_freed_mib));
         }
@@ -820,6 +823,7 @@ impl World for Real {
         crate::target::intact(tree)
     }
     fn release_target(&self, tree: &Path, keep_release: bool) {
+        crate::warm::donate_tree(tree);
         crate::target::release_tree(tree, keep_release);
     }
     fn remove_worktree(&self, repo: &Path, tree: &Path) {
