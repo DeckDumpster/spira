@@ -196,3 +196,24 @@ async fn the_virtual_driver_takes_queued_submissions_and_stops_at_its_horizon() 
     assert_eq!(bodies(&*j, "ticked").len(), 3);
     assert_eq!(clock.now_ms(), 2 * DAY);
 }
+
+#[derive(Default)]
+struct Named(std::sync::Mutex<Vec<String>>);
+impl EffectRunner for Named {
+    fn run(&self, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        Ok(spec.input.clone())
+    }
+    fn run_for_task(&self, task: &str, key: &str, spec: &EffectSpec) -> Result<String, String> {
+        self.0.lock().unwrap().push(task.to_string());
+        self.run(key, spec)
+    }
+}
+
+#[test]
+fn settle_names_the_registered_task_to_the_runner() {
+    let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
+    let runner = Arc::new(Named::default());
+    let mut v = VirtualDriver::new(engine(j, &clock, 3), clock.clone(), runner.clone()).with_sources(scripted(&clock, vec![(10, sub("w", "work", "w"))])).unwrap();
+    v.run_until(100).unwrap();
+    assert_eq!(*runner.0.lock().unwrap(), ["loop"]);
+}

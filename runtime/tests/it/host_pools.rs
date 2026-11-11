@@ -160,3 +160,28 @@ async fn a_deferred_effect_is_offered_again_only_when_a_slot_frees_not_on_idle_t
     assert_eq!(deferred(&sink).len(), 1, "the freed slot takes it: no further deferral");
     assert_eq!(count(&*j, "built"), 2);
 }
+
+struct Named(Mutex<Vec<String>>);
+impl EffectRunner for Named {
+    fn run(&self, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        Ok(spec.input.clone())
+    }
+    fn run_for_task(&self, task: &str, key: &str, spec: &EffectSpec) -> Result<String, String> {
+        self.0.lock().unwrap().push(task.to_string());
+        self.run(key, spec)
+    }
+}
+
+#[tokio::test]
+async fn the_live_host_names_the_registered_task_to_the_runner() {
+    let j: Arc<dyn Journal> = MemJournal::new();
+    let mut e = engine(j.clone());
+    e.submit("b0", "s0", EventKind::new("build", "b0")).unwrap();
+    let runner = Arc::new(Named(Mutex::new(Vec::new())));
+    let sink = MemSink::new();
+    let (tx, rx) = mpsc::channel::<Submit>(4);
+    drop(tx);
+    let serving = tokio::spawn(serve_with(e, Arc::new(WallClock), runner.clone(), PoolCaps::default(), rx, opts(&sink)));
+    tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
+    assert_eq!(*runner.0.lock().unwrap(), ["builds"]);
+}

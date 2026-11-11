@@ -169,10 +169,32 @@ pub fn caller_of(argv: &[String]) -> BTreeMap<String, String> {
     }
 }
 
-/// A request's first line: the argv as a JSON array, or, with a body or caller variables, an
-/// `{"argv"[, "len"][, "caller"]}` object (`len` only when a body follows).
-pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<String, String>) -> Result<String, serde_json::Error> {
-    if body_len.is_none() && caller.is_empty() {
+thread_local! {
+    static TASK: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// Runs `f` with this thread's store calls named for `task`; the outer name returns afterwards,
+/// on unwind too. A thread `f` spawns sends none.
+pub fn as_task<T>(task: &str, f: impl FnOnce() -> T) -> T {
+    struct Restore(String);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TASK.with(|t| *t.borrow_mut() = std::mem::take(&mut self.0));
+        }
+    }
+    let _restore = Restore(TASK.with(|t| std::mem::replace(&mut *t.borrow_mut(), task.to_string())));
+    f()
+}
+
+/// The task this thread's calls are made for; an empty name is none.
+pub fn current_task() -> Option<String> {
+    TASK.with(|t| Some(t.borrow().clone()).filter(|t| !t.is_empty()))
+}
+
+/// A request's first line: the argv as a JSON array, or, with a body, caller variables or a
+/// task, an `{"argv"[, "len"][, "caller"][, "task"]}` object (`len` only when a body follows).
+pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<String, String>, task: Option<&str>) -> Result<String, serde_json::Error> {
+    if body_len.is_none() && caller.is_empty() && task.is_none() {
         return serde_json::to_string(argv);
     }
     let mut o = serde_json::Map::new();
@@ -182,6 +204,9 @@ pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<
     }
     if !caller.is_empty() {
         o.insert("caller".into(), serde_json::json!(caller));
+    }
+    if let Some(t) = task {
+        o.insert("task".into(), t.into());
     }
     serde_json::to_string(&o)
 }
@@ -195,7 +220,7 @@ pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<
 pub fn exchange_once(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Result<Reply, Fail> {
     let dropped = |why: &str| Fail::Dropped(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"));
     let lost = |why: &str| Fail::Final(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"));
-    let request = request_head(argv, stdin.map(str::len), &caller_of(argv)).map_err(|_| lost("unserialisable request"))?;
+    let request = request_head(argv, stdin.map(str::len), &caller_of(argv), current_task().as_deref()).map_err(|_| lost("unserialisable request"))?;
     let mut bytes = format!("{request}\n").into_bytes();
     bytes.extend_from_slice(stdin.unwrap_or_default().as_bytes());
     (&stream).write_all(&bytes).map_err(|_| dropped("write"))?;
@@ -638,14 +663,50 @@ mod tests {
         let vars = guard_vars(env.iter().map(|(k, v)| (k.to_string(), v.to_string())));
         assert_eq!(vars.keys().map(String::as_str).collect::<Vec<_>>(), ["SPIRA_CZAR_CLASS", "SPIRA_CZAR_STAGE_DEADLOCK", "SPIRA_CZAR_TRIGGER_BEAD", "SPIRA_RUNE"]);
         let argv: Vec<String> = ["content", "close", "sp-a"].iter().map(|s| s.to_string()).collect();
-        let head: serde_json::Value = serde_json::from_str(&request_head(&argv, None, &vars).unwrap()).unwrap();
+        let head: serde_json::Value = serde_json::from_str(&request_head(&argv, None, &vars, None).unwrap()).unwrap();
         assert_eq!(head["argv"], serde_json::json!(argv));
         assert_eq!(head["caller"]["SPIRA_CZAR_STAGE_DEADLOCK"], "act");
         assert!(head.get("len").is_none(), "no body, no len");
-        let head: serde_json::Value = serde_json::from_str(&request_head(&argv, Some(4), &vars).unwrap()).unwrap();
+        let head: serde_json::Value = serde_json::from_str(&request_head(&argv, Some(4), &vars, None).unwrap()).unwrap();
         assert_eq!(head["len"], 4);
-        assert_eq!(request_head(&argv, None, &BTreeMap::new()).unwrap(), r#"["content","close","sp-a"]"#, "no caller variables: the plain array");
+        assert_eq!(request_head(&argv, None, &BTreeMap::new(), None).unwrap(), r#"["content","close","sp-a"]"#, "no caller variables: the plain array");
         assert!(caller_of(&["list".to_string()]).is_empty(), "only a content call carries them");
+    }
+
+    #[test]
+    fn a_call_inside_a_task_carries_its_name_on_the_wire() {
+        let head_of = |task: Option<&str>| {
+            let (a, b) = UnixStream::pair().unwrap();
+            let argv = vec!["list".to_string()];
+            let t = std::thread::spawn(move || {
+                let mut line = String::new();
+                BufReader::new(&b).read_line(&mut line).unwrap();
+                (&b).write_all(b"{\"exit_code\":0,\"len\":0}\n").unwrap();
+                line
+            });
+            match task {
+                Some(n) => as_task(n, || exchange_once(a, &argv, None)).unwrap(),
+                None => exchange_once(a, &argv, None).unwrap(),
+            };
+            t.join().unwrap()
+        };
+        let tasked: serde_json::Value = serde_json::from_str(head_of(Some("asks")).trim()).unwrap();
+        assert_eq!((tasked["task"].as_str(), tasked["argv"][0].as_str()), (Some("asks"), Some("list")));
+        assert_eq!(head_of(None).trim(), r#"["list"]"#, "outside a task the wire is unchanged");
+    }
+
+    #[test]
+    fn as_task_restores_the_outer_name() {
+        assert_eq!(current_task(), None);
+        as_task("outer", || {
+            as_task("inner", || assert_eq!(current_task().as_deref(), Some("inner")));
+            assert_eq!(current_task().as_deref(), Some("outer"));
+            let r = std::panic::catch_unwind(|| as_task("doomed", || panic!("boom")));
+            assert!(r.is_err());
+            assert_eq!(current_task().as_deref(), Some("outer"), "restored after a panic");
+            as_task("", || assert_eq!(current_task(), None, "an empty name is none"));
+        });
+        assert_eq!(current_task(), None);
     }
 
     #[test]

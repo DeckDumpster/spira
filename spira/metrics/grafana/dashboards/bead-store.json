@@ -293,6 +293,70 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "store calls by task",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (caller, task) (sum_over_time(spira_lc_requests{verb=~\"$verb\"}[$__interval]))",
+          "legendFormat": "{{caller}} {{task}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "store time by task",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (caller, task) (sum_over_time(spira_lc_request_seconds{verb=~\"$verb\"}[$__interval]))",
+          "legendFormat": "{{caller}} {{task}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

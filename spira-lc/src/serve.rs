@@ -168,6 +168,15 @@ pub fn run(args: &[String]) -> i32 {
                 }
             });
         }
+        std::thread::spawn(|| {
+            let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
+            let metrics = spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", Duration::from_millis(250));
+            let mut pushed = Default::default();
+            loop {
+                std::thread::sleep(crate::slow::METRICS_EVERY);
+                crate::slow::push_counts(&metrics, &mut pushed);
+            }
+        });
         if let Some(store) = control {
             std::thread::spawn(move || loop {
                 std::thread::sleep(SWEEP_EVERY);
@@ -333,6 +342,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
     let verb = req.argv.first().cloned().unwrap_or_default();
     let map = std::fs::read_to_string(personas_path()).map(|t| crate::work::parse_persona_uids(&t)).unwrap_or_default();
     let argv_seen = req.argv.clone();
+    let task = req.task.clone();
     let ans = match crate::work::bind_peer(&req.argv, peer_uid(&stream), &map) {
         Ok(argv) => {
             let worker = Arc::clone(conn);
@@ -340,7 +350,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
             let began = Arc::clone(&started_work);
             let limit = request_deadline(&argv);
             let min_rev = req.min_rev;
-            let req = Request { argv, stdin: req.stdin, caller: req.caller, min_rev };
+            let req = Request { argv, stdin: req.stdin, caller: req.caller, min_rev, task: None };
             within(limit.saturating_sub(received.elapsed()), move || {
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
@@ -356,7 +366,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
     };
     let (ans, rev) = ans;
     let method = crate::slow::method_of(&argv_seen);
-    crate::slow::request_done(&verb, &method, &caller, received.elapsed());
+    crate::slow::request_done(&verb, &method, &caller, task.as_deref(), received.elapsed());
     crate::slow::sample(&method, received.elapsed());
     let _ = write_response_at(&stream, ans.code, &ans.stdout, &ans.stderr, rev);
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
@@ -377,6 +387,8 @@ pub(crate) struct Request {
     /// read its own write's revision off that write's reply. Its reads wait for the read model
     /// to reach it, briefly, and otherwise go to the database.
     pub min_rev: Option<u64>,
+    /// The scheduler task whose effect made the call (`{"task": ...}`); what the store counts it under.
+    pub task: Option<String>,
 }
 
 /// How long a request naming a `min_rev` waits for the read model before reading the database.
@@ -397,8 +409,8 @@ fn model_reached(rev: u64) -> bool {
 const MAX_BODY: u64 = 16 << 20;
 
 /// The request on `reader`: a JSON argv array on one line, or `{"argv": [...], "len": N}` on
-/// one line followed by exactly `N` bytes of stdin; the object may also carry `caller` and
-/// `min_rev`. `Ok(None)` when the client sent nothing;
+/// one line followed by exactly `N` bytes of stdin; the object may also carry `caller`,
+/// `min_rev` and `task`. `Ok(None)` when the client sent nothing;
 /// `Err((bytes read, refusal))` for a request that cannot be read.
 fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (usize, String)> {
     let mut line = String::new();
@@ -407,11 +419,11 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
     }
     let bad = |e: &dyn std::fmt::Display| (line.len(), format!("bad request: {e}"));
     let head: serde_json::Value = serde_json::from_str(line.trim()).map_err(|e| bad(&e))?;
-    let (argv, len, caller, min_rev) = match head {
-        serde_json::Value::Array(_) => (head, None, Default::default(), None),
+    let (argv, len, caller, min_rev, task) = match head {
+        serde_json::Value::Array(_) => (head, None, Default::default(), None, None),
         serde_json::Value::Object(mut o) => {
             let len = match o.get("len") {
-                None if o.contains_key("caller") || o.contains_key("min_rev") => None,
+                None if o.contains_key("caller") || o.contains_key("min_rev") || o.contains_key("task") => None,
                 l => Some(l.and_then(serde_json::Value::as_u64).ok_or_else(|| bad(&"a request object needs a numeric len"))?),
             };
             if let Some(len) = len.filter(|&l| l > MAX_BODY) {
@@ -425,7 +437,11 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
                 None => None,
                 Some(r) => Some(r.as_u64().ok_or_else(|| bad(&"min_rev is a revision number"))?),
             };
-            (o.remove("argv").unwrap_or_default(), len, caller, min_rev)
+            let task = match o.remove("task") {
+                None => None,
+                Some(t) => Some(t.as_str().ok_or_else(|| bad(&"task is a name"))?.to_string()),
+            };
+            (o.remove("argv").unwrap_or_default(), len, caller, min_rev, task)
         }
         _ => return Err(bad(&"a request is an argv array or an {argv, len} object")),
     };
@@ -439,7 +455,7 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
         }
     };
     let size = line.len() + stdin.as_ref().map_or(0, String::len);
-    Ok(Some((Request { argv, stdin, caller, min_rev }, size)))
+    Ok(Some((Request { argv, stdin, caller, min_rev, task }, size)))
 }
 
 /// The primitives, in this process against its own connection: a composed verb's reads and
@@ -912,7 +928,7 @@ mod tests {
         let caller: std::collections::BTreeMap<String, String> =
             [("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-t")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let argv: Vec<String> = ["content", "update", "sp-a", "--add-label", "x"].iter().map(|s| s.to_string()).collect();
-        let line = spira_config::lc_call::request_head(&argv, None, &caller).unwrap();
+        let line = spira_config::lc_call::request_head(&argv, None, &caller, None).unwrap();
         let mut wire = std::io::Cursor::new(format!("{line}\n").into_bytes());
         let (req, _) = super::read_request(&mut wire).unwrap().unwrap();
         assert_eq!(req.caller, caller, "the variables survive the wire");
@@ -924,16 +940,34 @@ mod tests {
 
         let mut acting = caller.clone();
         acting.insert("SPIRA_CZAR_STAGE_DEADLOCK".into(), "act".into());
-        let req = super::Request { argv: argv.clone(), stdin: None, caller: acting, min_rev: None };
+        let req = super::Request { argv: argv.clone(), stdin: None, caller: acting, min_rev: None, task: None };
         let ans = super::answer(req, &mut m, &mut b, &c, &|| Err("no run dir here".to_string()));
         assert_eq!(ans.code, 0, "{ans:?}");
         assert_eq!(*c.0.borrow(), ["update sp-a --add-label x"]);
 
-        let line = spira_config::lc_call::request_head(&argv, Some(2), &caller).unwrap();
+        let line = spira_config::lc_call::request_head(&argv, Some(2), &caller, None).unwrap();
         let mut wire = std::io::Cursor::new(format!("{line}\nhi").into_bytes());
         assert_eq!(super::read_request(&mut wire).unwrap().unwrap().0.stdin.as_deref(), Some("hi"), "a body still rides with its len");
         let mut wire = std::io::Cursor::new(b"{\"argv\":[\"list\"]}\n".to_vec());
         assert!(super::read_request(&mut wire).is_err(), "an object with neither len nor caller is still refused");
+    }
+
+    #[test]
+    fn a_tasked_request_is_counted_under_its_task() {
+        let w = World::new();
+        let c = Content::default();
+        for (head, task) in [(r#"{"argv":["tasked-probe","sp-a"],"task":"asks"}"#, "asks"), (r#"["tasked-probe","sp-a"]"#, "-")] {
+            let mut wire = std::io::Cursor::new(format!("{head}\n").into_bytes());
+            let (req, _) = super::read_request(&mut wire).unwrap().unwrap();
+            assert_eq!(req.stdin, None, "a task needs no len");
+            let task_seen = req.task.clone();
+            let (mut m, mut b) = (&w, &w);
+            let _ = super::answer(req, &mut m, &mut b, &c, &|| Err("no run dir here".to_string()));
+            crate::slow::request_done("tasked-probe", "tasked-probe", "probe", task_seen.as_deref(), std::time::Duration::from_millis(5));
+            let s: serde_json::Value = serde_json::from_str(&crate::slow::stats_json()).unwrap();
+            let row = s["callers"].as_array().unwrap().iter().find(|r| r["verb"] == "tasked-probe" && r["task"] == task).unwrap_or_else(|| panic!("no row for {task}: {s}"));
+            assert_eq!((row["count"].as_u64(), row["total_ms"].as_u64()), (Some(1), Some(5)));
+        }
     }
 
     #[test]
@@ -1025,6 +1059,7 @@ mod tests {
             stdin: None,
             caller: caller.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             min_rev: None,
+            task: None,
         };
         let (mut m, mut b) = (w, w);
         super::answer(req, &mut m, &mut b, c, &|| Err("no run dir here".to_string()))
@@ -1134,7 +1169,7 @@ mod tests {
         }
         let w = World::new();
         let (mut rec, mut bd) = (Rec(Vec::new()), &w);
-        let req = super::Request { argv: vec!["claim-verdicts".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()), caller: Default::default(), min_rev: None };
+        let req = super::Request { argv: vec!["claim-verdicts".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()), caller: Default::default(), min_rev: None, task: None };
         super::answer(req, &mut rec, &mut bd, &Content::default(), &|| Err(String::new()));
         assert_eq!(rec.0, vec![vec!["claim-verdicts".to_string(), "--json".into(), "[{\"bead_id\":\"sp-a\"}]".into()]]);
     }
