@@ -4,6 +4,13 @@
 /// The status a watched phase returns when it was ended for a stall.
 pub const RC: i32 = 122;
 
+/// What a stalled phase's output ends with: `RC` alone is an ordinary exit status.
+pub const MARK: &str = "gate: build-stall —";
+
+pub fn is_stall(rc: i32, out: &str) -> bool {
+    rc == RC && out.contains(MARK)
+}
+
 pub struct Watch {
     bound: u64,
     since: u64,
@@ -39,10 +46,9 @@ impl Watch {
         &self.last
     }
 
-    pub fn message(&self) -> String {
+    pub fn message(&self, secs: u64) -> String {
         format!(
-            "gate: build-stall — no compiler output and no CPU time in the phase's process group for {}s; last compiler output: {}",
-            self.bound,
+            "{MARK} no compiler output and no CPU time in the phase's process group for {secs}s; last compiler output: {}",
             if self.last.is_empty() { "(none)" } else { &self.last }
         )
     }

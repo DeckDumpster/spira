@@ -387,7 +387,7 @@ impl Fake {
             }
             if watch.stalled(now) {
                 self.clock.set(now);
-                return (crate::stall::RC, watch.message());
+                return (crate::stall::RC, watch.message(stall.unwrap_or(0)));
             }
         }
         self.clock.set(t0 + secs);
@@ -1440,6 +1440,8 @@ fn a_base_that_only_timed_out_proves_nothing() {
         .contains("base trial timed out on test-b.sh — no verdict for spira/sp-a."));
 }
 
+/// Fences are not charged to the deadline, so only the gate timeout can end the base trial:
+/// its rc 124 leaves the base untestable, it is no deadline.
 #[test]
 fn a_base_trial_that_did_not_run_leaves_it_untestable() {
     let f = Fake::new();
@@ -1631,7 +1633,7 @@ fn a_fresh_cached_pass_skips_admission_and_the_trial() {
             && f.stderr().contains("covered suites: test-a.sh")
     );
     assert!(f.ran.borrow().is_empty() && f.checkouts.borrow().is_empty());
-    assert!(f.appended.borrow()[0].ends_with("rc=0 cached\n"));
+    assert!(f.appended.borrow()[0].contains("rc=0 cached test_clock=0s\n"));
 }
 
 #[test]
@@ -1794,7 +1796,7 @@ fn a_held_tree_times_out_and_meters_the_wait() {
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=lock-timeout"));
     let row = f.appended.borrow()[0].clone();
-    assert!(row.contains("waited=3s ran=0s test_clock=0s rc=75 lock-timeout"), "{row}");
+    assert!(row.contains("waited=3s ran=0s rc=75 lock-timeout"), "{row}");
     assert_eq!(
         f.removed_trees.get(),
         0,
@@ -1984,7 +1986,7 @@ fn the_meter_row_and_yield_on_a_pass() {
     f.run();
     assert_eq!(
         f.appended.borrow()[0],
-        "2026-09-29T00:00:00Z spira spira/sp-a waited=0s ran=7s test_clock=7s rc=0 pass compose=suites(mode) phases=gate:7\n",
+        "2026-09-29T00:00:00Z spira spira/sp-a waited=0s ran=7s rc=0 pass compose=suites(mode) phases=gate:7 test_clock=7s\n",
         "the composition and its phase walls trail the reason (sp-2ghui)"
     );
     assert_eq!(
@@ -2199,7 +2201,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for 2 crates: queue spira-config (touched: spira-config)"
     ));
     assert!(
-        meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7\n"),
+        meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7 test_clock=7s\n"),
         "{}",
         meter(&f)
     );
@@ -2643,7 +2645,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert!(!meter(&f).contains("base-build") && !meter(&f).contains("base-test"));
     assert_eq!(f.checkouts.borrow()[1], BASE);
     assert!(meter(&f).contains(
-        "compose=unit phases=fences:7,build:7,test:7,base-fences:7\n"
+        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 test_clock=7s\n"
     ));
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
 }
@@ -2698,7 +2700,7 @@ fn a_crate_the_base_lacks_is_not_tested_on_the_base() {
     );
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds.len(), 4, "base runs its fences only: {cmds:?}");
-    assert!(meter(&f).contains("base-fences:7\n") || meter(&f).ends_with("base-fences:7\n"));
+    assert!(meter(&f).contains("base-fences:7 test_clock="));
 }
 
 #[test]

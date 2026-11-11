@@ -870,7 +870,7 @@ impl<'w, W: World> Trial<'w, W> {
             return v(NOVERDICT, "machine-fault", format!("gate: cannot record the gate's moves: {e} — refusing to judge what it cannot record"));
         }
         self.s.queue_secs = parse::queue_secs(&out);
-        if rc == stall::RC {
+        if stall::is_stall(rc, &out) {
             return stall_verdict(&self.s.phases, &out);
         }
         if w.signalled() {
@@ -1085,7 +1085,7 @@ impl<'w, W: World> Trial<'w, W> {
             );
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
-            if r == stall::RC {
+            if stall::is_stall(r, &o) {
                 return stall_verdict(&self.s.phases, &o);
             }
             if r == 124 && by_deadline && last_phase_charged(&self.s.phases) {
@@ -1748,20 +1748,20 @@ impl<'w, W: World> Trial<'w, W> {
             w.append(
                 &self.s.gate_log,
                 &format!(
-                    "{} {} {} waited={}s ran={}s test_clock={}s rc={} {}{}{}{}{}{}\n",
+                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{} test_clock={}s\n",
                     w.utc(),
                     self.s.repo_name,
                     self.a.branch,
                     self.s.waited,
                     ran,
-                    self.s.test_secs,
                     vd.status,
                     vd.reason,
                     meter_suffix(&self.s.compose, &self.s.phases, self.s.queue_secs),
                     self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.suffix()),
                     tools_field(&self.s.tools_from, &self.s.phases),
                     self.s.replay_note,
-                    if self.s.waited_ms > 0 { format!(" waited_ms={}", self.s.waited_ms) } else { String::new() }
+                    if self.s.waited_ms > 0 { format!(" waited_ms={}", self.s.waited_ms) } else { String::new() },
+                    self.s.test_secs
                 ),
             );
             let run = crate::telemetry::GateRun {
@@ -2243,7 +2243,7 @@ pub fn run_composed<W: World>(
         None => {
             let (rc, out, wall) = go(first, env, &cmd, test_secs);
             phases.push((format!("{prefix}{first}"), wall));
-            if w.signalled() || rc == 124 || rc == NOVERDICT || rc == stall::RC || (rc != 0 && !matches!(comp, Composition::Unit { .. })) {
+            if w.signalled() || rc == 124 || rc == NOVERDICT || stall::is_stall(rc, &out) || (rc != 0 && !matches!(comp, Composition::Unit { .. })) {
                 return (rc, out, phases);
             }
             fences_rc = rc;

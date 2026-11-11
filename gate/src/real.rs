@@ -162,9 +162,11 @@ impl Real {
         tree: &Path,
         env: &[(String, String)],
         timeout: &str,
-        stall: Option<u64>,
+        stall_ms: Option<u64>,
+        sample_ms: u64,
         cmd: &str,
     ) -> (i32, String) {
+        let stall = stall_ms;
         let mut fds = [0i32; 2];
         if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
             return (
@@ -246,16 +248,16 @@ impl Real {
             }
             if let Some(wt) = watch.as_mut().filter(|_| !stalled) {
                 let at = began.elapsed();
-                if at - last_sample >= Duration::from_secs(2) {
+                if at - last_sample >= Duration::from_millis(sample_ms) {
                     last_sample = at;
                     let (heard, line) = seen.lock().unwrap().clone();
                     if !line.is_empty() {
-                        wt.line(heard.saturating_duration_since(began).as_secs(), &line);
+                        wt.line(heard.saturating_duration_since(began).as_millis() as u64, &line);
                     }
-                    wt.cpu(at.as_secs(), group_cpu_ticks(child.id() as i32));
-                    if wt.stalled(at.as_secs()) {
+                    wt.cpu(at.as_millis() as u64, group_cpu_ticks(child.id() as i32));
+                    if wt.stalled(at.as_millis() as u64) {
                         stalled = true;
-                        stall_note = wt.message();
+                        stall_note = wt.message(stall_ms.unwrap_or(0) / 1000);
                         end_group(child.id() as i32);
                     }
                 }
@@ -962,7 +964,7 @@ impl World for Real {
         timeout: &str,
         cmd: &str,
     ) -> (i32, String) {
-        self.run_watched(tree, env, timeout, None, cmd)
+        self.run_watched(tree, env, timeout, None, SAMPLE_MS, cmd)
     }
 
     fn run_build(
@@ -973,7 +975,7 @@ impl World for Real {
         stall: u64,
         cmd: &str,
     ) -> (i32, String) {
-        self.run_watched(tree, env, timeout, Some(stall), cmd)
+        self.run_watched(tree, env, timeout, Some(stall * 1000), SAMPLE_MS, cmd)
     }
 
     fn now(&self) -> u64 {
@@ -1092,20 +1094,33 @@ pub fn utc_of(t: u64) -> String {
     )
 }
 
-/// Cumulative user+system CPU ticks of every process in group `pgid`, reaped children included.
-fn group_cpu_ticks(pgid: i32) -> u64 {
+const SAMPLE_MS: u64 = 2000;
+
+/// Cumulative user+system CPU ticks of every process in group `root` or descended from it
+/// (a nested `timeout` or `setsid` leaves the group), reaped children included.
+fn group_cpu_ticks(root: i32) -> u64 {
     let Ok(dir) = std::fs::read_dir("/proc") else { return 0 };
-    let mut total = 0;
+    let mut procs: Vec<(i32, i32, i32, u64)> = Vec::new();
     for e in dir.flatten() {
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<i32>().ok()) else { continue };
         let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else { continue };
         let Some((_, rest)) = stat.rsplit_once(')') else { continue };
         let f: Vec<&str> = rest.split_whitespace().collect();
-        if f.get(2).and_then(|g| g.parse::<i32>().ok()) != Some(pgid) {
-            continue;
-        }
-        total += (11..=14).filter_map(|i| f.get(i)?.parse::<u64>().ok()).sum::<u64>();
+        let num = |i: usize| f.get(i).and_then(|v| v.parse::<i64>().ok());
+        let (Some(ppid), Some(pgrp)) = (num(1), num(2)) else { continue };
+        let cpu = (11..=14).filter_map(|i| f.get(i)?.parse::<u64>().ok()).sum();
+        procs.push((pid, ppid as i32, pgrp as i32, cpu));
     }
-    total
+    let mut ours: std::collections::HashSet<i32> = procs.iter().filter(|p| p.2 == root || p.0 == root).map(|p| p.0).collect();
+    loop {
+        let before = ours.len();
+        let more: Vec<i32> = procs.iter().filter(|p| ours.contains(&p.1)).map(|p| p.0).collect();
+        ours.extend(more);
+        if ours.len() == before {
+            break;
+        }
+    }
+    procs.iter().filter(|p| ours.contains(&p.0)).map(|p| p.3).sum()
 }
 
 fn end_group(pgid: i32) {
@@ -1126,9 +1141,29 @@ fn end_group(pgid: i32) {
 
 #[cfg(test)]
 mod tests {
+    fn watched(stall_ms: u64, cmd: &str) -> (i32, String) {
+        let t = testkit::TempDir::new("gate-watch");
+        let tmp = t.path().to_path_buf();
+        super::Real::new(tmp.clone()).run_watched(&tmp, &[("PATH".into(), "/usr/bin:/bin".into())], "60", Some(stall_ms), 20, cmd)
+    }
+
     #[test]
-    fn a_process_group_that_has_run_has_cpu_ticks() {
-        assert!(super::group_cpu_ticks(unsafe { libc::getpgrp() }) > 0);
+    fn a_silent_build_is_ended_as_a_stall_naming_its_last_line() {
+        let (rc, out) = watched(400, "echo Compiling last-crate; exec sleep 30");
+        assert!(crate::stall::is_stall(rc, &out), "{rc} {out}");
+        assert!(out.contains("last compiler output: Compiling last-crate"), "{out}");
+    }
+
+    #[test]
+    fn a_build_printing_within_the_bound_is_not_ended() {
+        let (rc, out) = watched(400, "for i in 1 2 3 4 5 6; do echo Compiling c$i; sleep 0.1; done");
+        assert_eq!(rc, 0, "{out}");
+    }
+
+    #[test]
+    fn a_silent_build_that_burns_cpu_is_not_ended() {
+        let (rc, out) = watched(250, "timeout 0.7 sh -c 'while :; do :; done'; true");
+        assert_eq!(rc, 0, "{out}");
     }
 
     #[test]

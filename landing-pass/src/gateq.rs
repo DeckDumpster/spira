@@ -505,6 +505,21 @@ mod tests {
     }
 
     #[test]
+    fn a_deadline_or_phase_cap_no_verdict_is_filed_never_queued_again() {
+        let d = tmpdir("settle-deadline");
+        let q = GateQueue::new(&d);
+        for (i, reason) in ["deadline", "phase-cap"].iter().enumerate() {
+            let tip = format!("t{i}");
+            q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", &tip, false)).unwrap();
+            let job = q.claim(0).unwrap();
+            let out = format!("gate: VERDICT=NO_VERDICT reason={reason} branch=b repo=r suite=-\n");
+            let done = Done { job, run: GateRun::parse(75, out), started_ms: 1, finished_ms: 2, gate: String::new() };
+            assert_eq!(q.settle(0, &done).unwrap(), Settled::Filed, "{reason}");
+            assert_eq!(q.find("r", "spira/sp-a", &tip), Some(Where::Done));
+        }
+    }
+
+    #[test]
     fn a_second_cap_death_is_filed_naming_both_runs_and_a_pass_is_filed_as_it_is() {
         let d = tmpdir("settle-second");
         let q = GateQueue::new(&d);
