@@ -3577,6 +3577,25 @@ fn a_diff_inside_the_tools_closure_builds_the_tools_from_the_tree() {
     }
 }
 
+/// The base trial takes the release's tools even when the branch trial built from its tree:
+/// the base touches nothing, and only the branch's build is paid for.
+#[test]
+fn the_base_trial_uses_the_releases_tools_when_the_branch_built_its_own() {
+    let f = release_fake();
+    touch(&f, &["spira-lint/src/main.rs"]);
+    let meta = f.metadata.borrow()[MERGE_SHA].clone();
+    f.metadata.borrow_mut().insert(BASE.into(), meta);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "spira-lint: payload-argv-lint: violation at x:1".into()));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    let builds = f.cmds.borrow().iter().filter(|c| c.starts_with("cargo build")).count();
+    assert_eq!(builds, 1, "{:?}", f.cmds.borrow());
+    let n = f.ran.borrow().len();
+    assert!(n >= 2, "branch and base steps both ran");
+    assert_eq!(f.env_of(0, "SPIRA_LINT_BIN"), format!("{GATE_TREE}/target/tree-tools/{}/spira-lint", want()));
+    assert_eq!(f.env_of(n - 1, "SPIRA_LINT_BIN"), "/rel/bin/spira-lint");
+    assert!(gate_log(&f).contains(" tools=tree:"), "{}", gate_log(&f));
+}
+
 /// A release without a tool the steps name is a harness fault naming the tool, never a build.
 #[test]
 fn a_release_lacking_a_named_tool_is_a_fault_naming_it_not_a_silent_build() {
