@@ -654,10 +654,10 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         std::fs::write(&file, base_config(repo, &home)?).map_err(|e| e.to_string())?;
         let t = Instant::now();
         let bd = steps.bd()?;
-        let settings: Vec<(String, String)> = config_settings(dir, repos, &gh_bin).into_iter().chain(home_settings(dir, fixture, &bd)).chain(lc_settings(dir)).collect();
+        let port = std::fs::read_to_string(Path::new(fixture).join("server.port")).unwrap_or_default();
+        let settings: Vec<(String, String)> = config_settings(dir, repos, &gh_bin).into_iter().chain(home_settings(dir, fixture, &bd)).chain(lc_settings(dir)).chain(content_sql_settings(port.trim())).collect();
         steps.config_set_all(&release, &file, &settings)?;
         mark(dir, "up.config-set", t);
-        let port = std::fs::read_to_string(Path::new(fixture).join("server.port")).unwrap_or_default();
         std::fs::write(
             config.join("sim.env"),
             format!(
@@ -1062,6 +1062,15 @@ pub fn lc_settings(world: &Path) -> Vec<(String, String)> {
         ("spira.run".to_string(), world.join("run").display().to_string()),
         ("spira.lc_store_path".to_string(), control_store(world).display().to_string()),
         ("spira.lc_lifecycle_on_store".to_string(), "1".to_string()),
+    ]
+}
+
+/// The world's content reads go to its own Dolt fixture as root, not to the base's port.
+pub fn content_sql_settings(port: &str) -> Vec<(String, String)> {
+    vec![
+        ("spira.beads_sql_host".to_string(), "127.0.0.1".to_string()),
+        ("spira.beads_sql_port".to_string(), port.to_string()),
+        ("spira.beads_sql_user".to_string(), "root".to_string()),
     ]
 }
 
