@@ -16,7 +16,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -143,11 +143,11 @@ pub fn run(args: &[String]) -> i32 {
     if crate::control::served::configured().is_none() {
         eprintln!("spira-lc serve: SPIRA_LC_STORE_PATH is unset: every lifecycle verb answers cannot-tell");
     }
-    std::thread::scope(|scope| {
+    {
         match (spira_config::process::cfg_parse::<u64>("SPIRA_LC_SNAPSHOT_SECS"), spira_config::process::cfg("SPIRA_LC_SNAPSHOT")) {
             (Ok(secs), Ok(path)) if secs > 0 && !path.is_empty() => {
                 let refresher = Arc::clone(&conn);
-                scope.spawn(move || loop {
+                std::thread::spawn(move || loop {
                     if let Err(e) = crate::snapshot::write(&refresher, &path) {
                         eprintln!("spira-lc serve: snapshot {path}: {e}");
                     }
@@ -158,7 +158,7 @@ pub fn run(args: &[String]) -> i32 {
             (Err(e), _) | (_, Err(e)) => eprintln!("spira-lc serve: snapshot not written: {e}"),
         }
         if let Some(mut shipping) = shipping {
-            scope.spawn(move || {
+            std::thread::spawn(move || {
                 let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
                 let metrics = spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", Duration::from_millis(250));
                 let mut red = false;
@@ -169,13 +169,13 @@ pub fn run(args: &[String]) -> i32 {
             });
         }
         if let Some(store) = control {
-            scope.spawn(move || loop {
+            std::thread::spawn(move || loop {
                 std::thread::sleep(SWEEP_EVERY);
                 gc_tick(&store);
             });
         }
-        scope.spawn(crate::plan::run_mirror);
-        scope.spawn(move || loop {
+        std::thread::spawn(crate::plan::run_mirror);
+        std::thread::spawn(move || loop {
             std::thread::sleep(SWEEP_EVERY);
             alarm_tick();
             match crate::control::served::configured() {
@@ -188,19 +188,14 @@ pub fn run(args: &[String]) -> i32 {
                 None => {}
             }
         });
-        accept_until_stopped(&listener, scope, &STOPPING, &INFLIGHT, |stream| handle(stream, &conn, Instant::now()));
-    });
-    eprintln!("spira-lc serve: stopping, {} request(s) in flight", INFLIGHT.load(Ordering::SeqCst));
-    if !wait_idle(&INFLIGHT, DRAIN) {
-        eprintln!("spira-lc serve: {} request(s) still running after {DRAIN:?}, exiting anyway", INFLIGHT.load(Ordering::SeqCst));
     }
-    std::process::exit(0)
+    // The scope ends when the accept loop has stopped and every request it took is answered.
+    std::thread::scope(|scope| accept_until_stopped(&listener, scope, &STOPPING, |stream| handle(stream, &conn, Instant::now())));
+    eprintln!("spira-lc serve: stopped");
+    0
 }
 
 static STOPPING: AtomicBool = AtomicBool::new(false);
-static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
-/// Longer than a request's own bound (`request_deadline`), so a drained request is never cut.
-const DRAIN: Duration = Duration::from_secs(15);
 const SIGTERM: i32 = 15;
 const POLLIN: i16 = 1;
 
@@ -228,12 +223,11 @@ fn stop_on_sigterm() {
 
 /// Accept on `listener` until `stopping`, serving each connection on its own thread. A
 /// connection not yet accepted stays in the kernel queue, which the socket unit keeps for the
-/// next process; one accepted is counted in `inflight` before this returns.
+/// next process; one accepted is served to its answer before the scope that owns it ends.
 fn accept_until_stopped<'scope, 'env, F>(
     listener: &UnixListener,
     scope: &'scope std::thread::Scope<'scope, 'env>,
     stopping: &AtomicBool,
-    inflight: &'env AtomicUsize,
     serve: F,
 ) where
     F: Fn(UnixStream) + Send + Sync + Clone + 'scope,
@@ -248,27 +242,12 @@ fn accept_until_stopped<'scope, 'env, F>(
         }
         match listener.accept() {
             Ok((stream, _)) => {
-                inflight.fetch_add(1, Ordering::SeqCst);
                 let serve = serve.clone();
-                scope.spawn(move || {
-                    serve(stream);
-                    inflight.fetch_sub(1, Ordering::SeqCst);
-                });
+                scope.spawn(move || serve(stream));
             }
             Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
         }
     }
-}
-
-fn wait_idle(inflight: &AtomicUsize, limit: Duration) -> bool {
-    let began = Instant::now();
-    while inflight.load(Ordering::SeqCst) > 0 {
-        if began.elapsed() >= limit {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    true
 }
 
 /// One pass of the control store's GC controller: finalized keys, orphans and lapsed TTLs.
@@ -721,44 +700,40 @@ mod tests {
 
     #[test]
     fn a_stopping_server_finishes_the_request_it_took_and_leaves_the_next_in_the_queue() {
-        use super::{accept_until_stopped, wait_idle};
+        use super::accept_until_stopped;
         use std::io::BufReader;
         use std::os::unix::net::{UnixListener, UnixStream};
-        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-        use std::sync::Arc;
-        use std::time::Duration;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc;
         let dir = testkit::TempDir::new("lc-drain");
         let path = dir.join("sock");
         let listener = UnixListener::bind(&path).unwrap();
         let stopping = AtomicBool::new(false);
-        let inflight = Arc::new(AtomicUsize::new(0));
-        let started = Arc::new(AtomicBool::new(false));
-        let first = UnixStream::connect(&path).unwrap();
-        let reply = std::thread::spawn(move || {
-            let mut line = String::new();
-            let mut first = first;
-            std::io::Write::write_all(&mut first, b"x\n").unwrap();
-            std::io::BufRead::read_line(&mut BufReader::new(&first), &mut line).map(|_| line)
-        });
+        let mut first = UnixStream::connect(&path).unwrap();
+        std::io::Write::write_all(&mut first, b"x\n").unwrap();
+        let (began_tx, began) = mpsc::channel::<()>();
+        let (release, released) = mpsc::channel::<()>();
+        let released = std::sync::Mutex::new(released);
+        let began_tx = std::sync::Mutex::new(began_tx);
         std::thread::scope(|scope| {
-            let (flag, begun) = (&stopping, Arc::clone(&started));
+            let stopping = &stopping;
             scope.spawn(move || {
-                while !begun.load(Ordering::SeqCst) {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                flag.store(true, Ordering::SeqCst);
+                began.recv().unwrap();
+                stopping.store(true, Ordering::SeqCst);
+                release.send(()).unwrap();
             });
-            let begun = Arc::clone(&started);
-            accept_until_stopped(&listener, scope, &stopping, &inflight, move |stream: UnixStream| {
-                begun.store(true, Ordering::SeqCst);
-                std::thread::sleep(Duration::from_millis(300));
+            let (released, began_tx) = (&released, &began_tx);
+            accept_until_stopped(&listener, scope, stopping, move |stream: UnixStream| {
+                began_tx.lock().unwrap().send(()).unwrap();
+                released.lock().unwrap().recv().unwrap();
                 let mut line = String::new();
                 std::io::BufRead::read_line(&mut BufReader::new(&stream), &mut line).unwrap();
                 std::io::Write::write_all(&mut &stream, b"served\n").unwrap();
             });
         });
-        assert!(wait_idle(&inflight, Duration::from_secs(2)));
-        assert_eq!(reply.join().unwrap().unwrap(), "served\n", "the request taken before the stop is answered");
+        let mut line = String::new();
+        std::io::BufRead::read_line(&mut BufReader::new(&first), &mut line).unwrap();
+        assert_eq!(line, "served\n", "the request taken before the stop is answered");
         let _later = UnixStream::connect(&path).unwrap();
         listener.set_nonblocking(true).unwrap();
         assert!(listener.accept().is_ok(), "a connection arriving after the stop is still queued for the next process");
