@@ -11,6 +11,7 @@ use crate::checkpoint;
 use crate::brief::{self, FixtureInfo, Tokens};
 use crate::claim::{self, Selection, Selector};
 use crate::conf::{self, Conf, Rune, SystemPrompt};
+use crate::direct;
 use crate::decide::{self, WorldStop};
 use crate::ledger::{self, Ledger};
 use crate::ports::{s, Bd, Env, Exec, Git, Seam};
@@ -64,6 +65,8 @@ pub struct Deps<'a> {
 /// Everything learned along the way — dwarf.sh's globals, now fields.
 #[derive(Debug, Default)]
 pub struct State {
+    /// Why each directed claim attempt was turned away, for the refusal the launcher reports.
+    pub refused: Vec<String>,
     pub dwarf: String,
     /// The claim holder: `dwarf-<name>@<pid>.<starttime>`, one per process (spira_config::session).
     pub holder: String,
@@ -552,13 +555,16 @@ impl<'a> Run<'a> {
             _ => String::new(),
         };
         let mut stacks = std::collections::BTreeMap::new();
+        let mut stack_refusals = Vec::new();
         let (won, logs, unreachable) = claim::lc_claim_loop(ids, resumable, tier, who, |id| {
             let rc = self.d.exec.exec("spira-lc", &s(&["unclaim", id, &holder]), None, None).code;
             rc <= 1
         }, |id| {
             let p = self.stack_proposal(id, who);
             if let Some(reason) = p.reason.as_deref().filter(|r| !p.claimable && r.starts_with("Blocked")) {
-                self.log(&format!("{who}: {id} refused by spira-claim stack ({reason}), trying the next ranked candidate"));
+                let line = format!("{who}: {id} refused by spira-claim stack ({reason}), trying the next ranked candidate");
+                self.log(&line);
+                stack_refusals.push(line);
                 return claim::LC_REFUSED;
             }
             let rc = self.sdo(
@@ -568,8 +574,10 @@ impl<'a> Run<'a> {
             stacks.insert(id.to_string(), p.stack);
             claim::settle_claim(rc, self.d.exec, id, &holder, tries, delay, self.d.sleep)
         });
+        self.s.refused.extend(stack_refusals);
         for l in logs {
             self.log(&l);
+            self.s.refused.push(l);
         }
         let Some(id) = won else {
             if unreachable {
@@ -654,6 +662,14 @@ impl<'a> Run<'a> {
         }
     }
 
+    /// What turned the directed claim away: the row as read now, and each attempt's refusal.
+    fn direct_refusal(&self, bead: &str, by: &str) -> String {
+        let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
+        let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
+        let row = claim::ask_row(self.d.exec, bead, tries, delay, self.d.sleep);
+        direct::refusal_reason(bead, by, &row, &self.s.refused)
+    }
+
     fn claim(&mut self) -> Result<(), i32> {
         self.take_name();
         let who = format!("{}/{}", self.f(), self.s.dwarf);
@@ -663,7 +679,10 @@ impl<'a> Run<'a> {
             if let Mode::Directed(sm) = &self.mode {
                 let (bead, by) = (sm.bead.clone(), sm.by.clone());
                 self.log(&format!("{who}: {bead} was not claimable — another claim won it or it left READY/REWORK; nothing directed for {by}"));
-                self.ledger.awake(self.now(), self.f(), "direct-refused");
+                let reason = self.direct_refusal(&bead, &by);
+                self.d.sink.err(&util::log_line(self.now(), &format!("FATAL direct {bead}: {reason}")));
+                self.ledger.awake(self.now(), self.f(), &format!("direct-refused {reason}"));
+                direct::write_refusal(self.run_dir(), &self.own_unit, &reason);
                 return Err(1);
             }
             self.log(&format!("{}: nothing ready to claim", self.f()));

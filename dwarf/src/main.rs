@@ -236,7 +236,7 @@ fn main() {
         let path = env.child().get("PATH").cloned().unwrap_or_default();
         let dwarf_path = dwarf::escape::find_on_path(&path, "dwarf", dwarf::escape::is_executable);
         let call_bin = original.get("SPIRA_CALL").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemd-run".to_string());
-        let rc = dwarf::direct::run(&exec, &StdSink, req, &home, dwarf_path.as_deref(), &call_bin, &call_argv, util::now_epoch());
+        let rc = dwarf::direct::run(&exec, &StdSink, &|d| std::thread::sleep(d), &conf.run, req, &home, dwarf_path.as_deref(), &call_bin, &call_argv, util::now_epoch());
         { let code = rc; spira_otel::run::finish(code); std::process::exit(code) };
     }
     let bd = BdCli {
