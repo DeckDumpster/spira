@@ -165,10 +165,12 @@ mod tests {
 
     #[test]
     fn a_measurement_that_overruns_its_budget_exits_nonzero() {
-        let (code, out) = answer_within("r", Duration::from_millis(50), || {
-            std::thread::sleep(Duration::from_millis(500));
+        let (hold, wedged) = std::sync::mpsc::channel::<()>();
+        let (code, out) = answer_within("r", Duration::from_millis(50), move || {
+            let _ = wedged.recv();
             Ok(serde_json::json!({}))
         });
+        drop(hold);
         assert_eq!(code, 2);
         assert!(out.contains("not measured within"), "{out}");
     }
