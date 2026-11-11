@@ -313,15 +313,8 @@ want "queue.local: lifecycle was told the gate passed" " pass " "$(lc_calls sp-q
 is   "queue.local: bead stays closed"        "closed" "$(status_of sp-qlocal-cert)"
 nowant "queue.local: no reopen for the planted conflict" "Reopened by sentinel" "$out"
 
-# QUEUE.LOCAL IS ALSO DISPATCHED THE SAME AS QUEUE: before sp-xe12f, landing.sh's three
-# `queue.sh step` call sites matched only the literal string "queue", so a queue.local repo
-# was certified above but never had `queue.sh step` (verdict.sh's settle, the batcher's
-# local round, queue.sh publish) called for it at all — the certified pool filled and
-# nothing ever drained it. queue.sh itself is stubbed above to log its own invocation.
-case "$(cat "$QUEUE_LOG" 2>/dev/null)" in
-    *"step local-fixture"*) ok "queue.local: queue step was dispatched for it" ;;
-    *)                      bad "queue.local: queue step was dispatched for it" \
-                                 "got: [$(cat "$QUEUE_LOG" 2>/dev/null)]" ;;
-esac
+# The pass runs no queue step: the scheduler's queue.step task owns it for queue and
+# queue.local alike. The stub above logs any call the pass makes to the queue binary.
+is "queue.local: the pass never calls the queue binary" "" "$(cat "$QUEUE_LOG" 2>/dev/null)"
 
 tl_summary

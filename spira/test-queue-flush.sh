@@ -96,9 +96,8 @@ want "verdict settled the open batch (pending)" "verdict fixq: PR 1 pending" "$o
 nowant "step does not call the batcher" "batcher-called" "$out"
 is "the verdict ran and nothing after it" "verdict-called" "$(tr '\n' ' ' < "$ORDER" | sed 's/ $//')"
 
-# RETIRED with landing.sh: the landing pass's queue step is landing-pass's Tools::queue_step
-# (`queue step <repo>`), pinned by cargo test -p landing-pass
-# the_queue_step_runs_before_and_after_the_walk_and_a_missing_binary_is_said.
+# RETIRED with landing.sh: the landing pass runs no queue step; the scheduler's queue.step
+# task owns it.
 
 echo
 tl_summary
