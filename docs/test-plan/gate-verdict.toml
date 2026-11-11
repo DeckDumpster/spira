@@ -127,19 +127,19 @@ tier = "T3"
 statement = "Gates on different branches run concurrently in separate trees and never see each other's content. Gates on the same branch serialise, and the wait is metered `waited=Ns`. (sp-64v0)"
 
 [use_case.uncovered]
-reason = "test-gate-tree.sh deleted by the 2026-10-31 test review (per Ryan): flipped (law); loses UC-gate-verdict-16..18 same-branch gate serialisation; 7 s case waits out a barrier timeout"
-date = "2026-10-31"
-bead = "sp-51q2ks"
+reason = "suite test-gate-tree.sh deleted as flaky (sp-51q2ks); re-homed as injected-clock gate unit tests (sp-kt2heg): gate::tests::gates_on_different_branches_lock_different_trees_and_one_branch_locks_one, a_gate_that_waits_for_its_branchs_tree_meters_the_wait_and_then_judges_it, a_gate_that_never_waited_for_its_tree_meters_no_wait, and gate::real::tests::a_tree_lock_is_exclusive_per_lockfile_and_an_unopenable_one_is_refused on the real flock. Wall-clock concurrency of real gates is not asserted"
+date = "2026-11-10"
+bead = "sp-kt2heg"
 
 [[use_case]]
 id = "UC-gate-verdict-17"
 tier = "T2"
-statement = "A gate that cannot get its tree lock within `SPIRA_GATE_LOCK_WAIT` gives NO_VERDICT `lock-timeout` (\"not a fault\") and never removes the holder's tree. Missing `flock` or an unopenable lockfile gives NO_VERDICT (`no-flock`, `no-lockfile`). (sp-d8h0r)"
+statement = "A gate that cannot get its tree lock within `SPIRA_GATE_LOCK_WAIT` gives NO_VERDICT `lock-timeout` (\"not a fault\") and never removes the holder's tree. An unopenable lockfile gives NO_VERDICT `no-lockfile`. (sp-d8h0r)"
 
 [use_case.uncovered]
-reason = "test-gate-tree.sh deleted by the 2026-10-31 test review (per Ryan): flipped (law); loses UC-gate-verdict-16..18 same-branch gate serialisation; 7 s case waits out a barrier timeout"
-date = "2026-10-31"
-bead = "sp-51q2ks"
+reason = "suite test-gate-tree.sh deleted as flaky (sp-51q2ks); re-homed as injected-clock gate unit tests (sp-kt2heg): gate::tests::a_held_tree_times_out_and_meters_the_wait, a_timed_out_gate_says_it_is_a_queue_not_a_fault_and_leaves_the_holders_tree, a_lockfile_that_cannot_be_opened_is_no_verdict_no_lockfile., and gate::real::tests::a_tree_lock_is_exclusive_per_lockfile_and_an_unopenable_one_is_refused on the real flock. The gate calls flock(2) itself, so a missing flock binary is no longer a verdict"
+date = "2026-11-10"
+bead = "sp-kt2heg"
 
 [[use_case]]
 id = "UC-gate-verdict-18"
@@ -147,9 +147,9 @@ tier = "T2"
 statement = "Tree lifecycle. PASS keeps the detached worktree for reuse. Non-PASS removes it, but only when this process held the lock. A worktree that cannot be created gives NO_VERDICT `tree-unidentified`."
 
 [use_case.uncovered]
-reason = "test-gate-tree.sh deleted by the 2026-10-31 test review (per Ryan): flipped (law); loses UC-gate-verdict-16..18 same-branch gate serialisation; 7 s case waits out a barrier timeout"
-date = "2026-10-31"
-bead = "sp-51q2ks"
+reason = "suite test-gate-tree.sh deleted as flaky (sp-51q2ks); re-homed as injected-clock gate unit tests (sp-kt2heg): gate::tests::a_passing_gate_keeps_its_tree_and_a_red_one_removes_it, a_tree_that_cannot_be_checked_out_is_no_verdict_tree_unidentified_and_is_removed, a_tree_that_was_never_created_is_not_removed"
+date = "2026-11-10"
+bead = "sp-kt2heg"
 
 [[use_case]]
 id = "UC-gate-verdict-19"
