@@ -3,10 +3,14 @@
 //! [`LcClient`] and kept current by its `watch` long-poll from the last revision seen. Every read
 //! answers with the revision it reflects, and refuses once the store has not confirmed that
 //! revision within the configured staleness: an old picture is never passed off as the present.
+//!
+//! A process that keeps the watch running [`install`]s its projection; every reader in it then
+//! answers from [`shared`] memory and asks the store nothing (S7b). A process without one builds
+//! its own and reads the store afresh, as before.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -116,7 +120,23 @@ struct Batch {
 struct Bead {
     row: Row,
     verdict: Option<String>,
+    /// The row as `list` printed it, so a served row is the one the store sent.
+    raw: Value,
 }
+
+/// A filter over the held lifecycle rows, with `list`'s meaning: every field narrows.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RowQuery<'a> {
+    /// Empty: any state.
+    pub states: &'a [&'a str],
+    pub repo: Option<&'a str>,
+    /// `list --live`: not terminal, or terminal and updated within [`LIVE_WINDOW_SECS`].
+    pub live: bool,
+    pub ids: Option<&'a [String]>,
+}
+
+/// How long a terminal row stays in `list --live`.
+pub const LIVE_WINDOW_SECS: i64 = 24 * 3600;
 
 #[derive(Default)]
 struct State {
@@ -135,6 +155,21 @@ pub struct Projection {
     stale_after: Duration,
     clock: Clock,
     state: Mutex<State>,
+    watching: AtomicBool,
+    /// Why the last poll failed; cleared by one that applied.
+    lost: Mutex<Option<String>>,
+}
+
+static SHARED: OnceLock<Arc<Projection>> = OnceLock::new();
+
+/// Makes `p` this process's projection for [`shared`]. Once only; the first stands.
+pub fn install(p: Arc<Projection>) -> Arc<Projection> {
+    Arc::clone(SHARED.get_or_init(|| p))
+}
+
+/// The projection this process keeps current, when it installed one.
+pub fn shared() -> Option<Arc<Projection>> {
+    SHARED.get().cloned()
 }
 
 fn fault(e: impl std::fmt::Display) -> LcError {
@@ -227,12 +262,46 @@ fn beads_of(raw: &str) -> Result<Vec<(String, Bead)>, LcError> {
         Value::Array(a) => a.iter().filter_map(|r| Some((text(r, "bead_id")?, text(r, "claim_verdict")?))).collect(),
         _ => BTreeMap::new(),
     };
-    Ok(rows.into_iter().map(|row| (row.bead_id.clone(), Bead { verdict: verdicts.get(&row.bead_id).cloned(), row })).collect())
+    let raws: BTreeMap<String, Value> = match json_of(raw, "list")? {
+        Value::Array(a) => a.into_iter().filter_map(|r| Some((text(&r, "bead_id")?, r))).collect(),
+        _ => BTreeMap::new(),
+    };
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let (verdict, raw) = (verdicts.get(&row.bead_id).cloned(), raws.get(&row.bead_id).cloned().unwrap_or(Value::Null));
+            (row.bead_id.clone(), Bead { verdict, raw, row })
+        })
+        .collect())
 }
 
 impl Projection {
     pub fn new(client: LcClient, stale_after: Duration, clock: Clock) -> Self {
-        Projection { client, stale_after, clock, state: Mutex::new(State::default()) }
+        Projection { client, stale_after, clock, state: Mutex::new(State::default()), watching: AtomicBool::new(false), lost: Mutex::new(None) }
+    }
+
+    /// This process's installed projection, else a fresh one on `client`. Pair it with
+    /// [`batches_current`](Self::batches_current).
+    pub fn hot(client: LcClient) -> Result<Arc<Projection>, String> {
+        match shared() {
+            Some(p) => Ok(p),
+            None => Projection::configured(client).map(Arc::new),
+        }
+    }
+
+    /// Whether a watch is keeping this projection current.
+    pub fn watching(&self) -> bool {
+        self.watching.load(Ordering::Relaxed)
+    }
+
+    /// The batch views current: nothing to do when the watch keeps them so (a read then refuses
+    /// if the watch fell behind); otherwise the batch records are read afresh.
+    pub fn batches_current(&self) -> Result<(), LcError> {
+        if self.watching() {
+            Ok(())
+        } else {
+            self.refresh_batches()
+        }
     }
 
     /// The views on `client` with the configured staleness, on the wall clock. Refused when the
@@ -291,6 +360,12 @@ impl Projection {
     /// One step of keeping current: a load when nothing is held, else one watch from the held
     /// revision. Nothing moves unless the whole answer applied.
     pub fn poll(&self) -> Result<(), LcError> {
+        let polled = self.poll_once();
+        *self.lost.lock().unwrap_or_else(|e| e.into_inner()) = polled.as_ref().err().map(ToString::to_string);
+        polled
+    }
+
+    fn poll_once(&self) -> Result<(), LcError> {
         let held = {
             let s = self.lock();
             s.rev.filter(|_| s.beads.is_some())
@@ -352,6 +427,14 @@ impl Projection {
 
     /// Polls until `stop` is set, pausing after a poll the store did not answer.
     pub fn run(&self, stop: &AtomicBool) {
+        struct Clear<'a>(&'a AtomicBool);
+        impl Drop for Clear<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Relaxed);
+            }
+        }
+        self.watching.store(true, Ordering::Relaxed);
+        let _clear = Clear(&self.watching);
         while !stop.load(Ordering::Relaxed) {
             if self.poll().is_err() {
                 std::thread::sleep(RETRY);
@@ -366,8 +449,9 @@ impl Projection {
         };
         let age = (self.clock)().saturating_duration_since(at);
         if age > self.stale_after {
+            let lost = self.lost.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|why| format!("; the watch is lost: {why}")).unwrap_or_default();
             return Err(LcError::Refused(format!(
-                "stale past {}ms: the views hold revision {rev}, last confirmed {}ms ago",
+                "stale past {}ms: the views hold revision {rev}, last confirmed {}ms ago{lost}",
                 self.stale_after.as_millis(),
                 age.as_millis()
             )));
@@ -436,6 +520,39 @@ impl Projection {
                 }
             }
             Ok(c)
+        })
+    }
+
+    /// The held lifecycle rows `q` keeps, in id order, as `list` printed them.
+    pub fn rows(&self, q: &RowQuery) -> Result<Read<Vec<Value>>, LcError> {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        self.rows_at(q, now)
+    }
+
+    /// [`Self::rows`] with the epoch second `live` is measured from given, so the window is testable.
+    pub fn rows_at(&self, q: &RowQuery, now: i64) -> Result<Read<Vec<Value>>, LcError> {
+        self.read(|s| {
+            let beads = s.beads.as_ref().ok_or_else(|| LcError::Refused("the lifecycle rows are not loaded: the views hold the batch records only".into()))?;
+            let kept = |b: &&Bead| {
+                let updated = b.raw.get("updated_at").and_then(|u| u.as_i64().or_else(|| u.as_str().and_then(|t| t.parse().ok())));
+                (q.states.is_empty() || q.states.contains(&b.row.state.as_str()))
+                    && q.repo.is_none_or(|r| b.raw.get("repo").and_then(Value::as_str) == Some(r))
+                    && q.ids.is_none_or(|ids| ids.contains(&b.row.bead_id))
+                    && (!q.live || !b.row.terminal() || updated.is_some_and(|u| u >= now - LIVE_WINDOW_SECS))
+            };
+            Ok(beads.values().filter(kept).map(|b| b.raw.clone()).collect())
+        })
+    }
+
+    /// The ids of the rows in `state` for `repo` that hold nothing.
+    pub fn unheld(&self, state: &str, repo: &str) -> Result<Read<Vec<String>>, LcError> {
+        self.read(|s| {
+            let beads = s.beads.as_ref().ok_or_else(|| LcError::Refused("the lifecycle rows are not loaded: the views hold the batch records only".into()))?;
+            Ok(beads
+                .values()
+                .filter(|b| b.row.state == state && b.row.holds.is_empty() && b.raw.get("repo").and_then(Value::as_str) == Some(repo))
+                .map(|b| b.row.bead_id.clone())
+                .collect())
         })
     }
 }

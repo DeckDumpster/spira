@@ -252,6 +252,10 @@ fn lc_answer(
 /// pool and the sifted tips are filters of it. A row outside those states is read by id through
 /// `lc_rows_of`, never by listing the store.
 pub fn lc_rows(env: &Env) -> Result<Vec<serde_json::Value>, String> {
+    if let Some(views) = store_view::shared() {
+        let q = store_view::RowQuery { states: &["SUBMITTED", "CERTIFIED"], ..Default::default() };
+        return views.rows(&q).map(|r| r.value).map_err(|e| format!("could not say: {e}"));
+    }
     let mut held = env.lc_rows.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(rows) = held.as_ref() {
         return Ok(rows.clone());
@@ -268,6 +272,10 @@ pub fn lc_rows(env: &Env) -> Result<Vec<serde_json::Value>, String> {
 pub fn lc_rows_of(env: &Env, ids: &[String]) -> Result<Vec<serde_json::Value>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
+    }
+    if let Some(views) = store_view::shared() {
+        let q = store_view::RowQuery { ids: Some(ids), ..Default::default() };
+        return views.rows(&q).map(|r| r.value).map_err(|e| format!("could not say: {e}"));
     }
     serde_json::from_str(&lcq(env, &["list", "--ids", &ids.join(",")])?)
         .map_err(|e| format!("spira-lc list --ids: unparsed reply: {e}"))
@@ -758,9 +766,9 @@ fn parse_members(s: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The repo's open batch from the store's projection, its batch records read afresh each time
-/// (this pass writes batches through the queue between reads; no lifecycle row is reloaded for
-/// it); `None` when there is none. Err when the store could not say — a view it cannot vouch for
+/// The repo's open batch from the store's projection: kept current by the process's watch when it
+/// runs one, else its batch records read afresh each time (this pass writes batches through the
+/// queue between reads; no lifecycle row is reloaded for it); `None` when there is none. Err when the store could not say — a view it cannot vouch for
 /// is never read as no batch. Before the cutover (`SPIRA_LC_LIFECYCLE_ON_STORE=0`, the default)
 /// the store views refuse, and the record is the queue's: `queue batch show` reads it wherever
 /// the queue keeps it.
@@ -772,9 +780,9 @@ pub fn read_open_batch(env: &Env, repo: &str) -> Result<Option<OpenBatch>, Strin
         }
         return Ok(open_batch_from(&run.out));
     }
-    let views = store_view::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
+    let views = store_view::Projection::hot(spira_config::lc_call::LcClient::configured()?)?;
     views
-        .refresh_batches()
+        .batches_current()
         .map_err(|e| format!("could not say: {e}"))?;
     open_batch_of(views.batch_view(repo).map(|r| r.value))
 }
@@ -2947,11 +2955,32 @@ pub struct OpenRound {
 /// Every open round of the repo, as `queue round status` lists them: the first is unprefixed,
 /// the rest are `round<n>_`.
 pub fn open_rounds(env: &Env, repo: &Repo) -> Result<Vec<OpenRound>, String> {
+    if let Some(views) = store_view::shared() {
+        let now = spira_config::vtime::now_epoch();
+        return views
+            .round_view(&repo.name)
+            .map_err(|e| format!("could not say: {e}"))
+            .map(|v| v.value.rounds.iter().map(|r| open_round_of(r, now)).collect());
+    }
     let run = round_verb(env, &["status", &repo.name], "")?;
     if run.code != Some(0) {
         return Err(verb_failed("queue round status", &run));
     }
     Ok(open_rounds_of(&run.out))
+}
+
+/// A round of the store's view as `queue round status` lists it.
+fn open_round_of(r: &store_view::Round, now: u64) -> OpenRound {
+    let get = |k: &str| r.record.get(k).unwrap_or_default();
+    OpenRound {
+        id: r.record.id.clone(),
+        members: get("members").split_whitespace().map(|m| m.split(':').next().unwrap_or("").to_string()).collect(),
+        head: get("head").to_string(),
+        worktree: get("worktree").to_string(),
+        phase: r.phase.clone(),
+        red: !get("red").is_empty(),
+        age_secs: get("opened").parse().map_or(0, |t: u64| now.saturating_sub(t)),
+    }
 }
 
 fn open_rounds_of(out: &str) -> Vec<OpenRound> {
@@ -2984,11 +3013,10 @@ fn open_rounds_of(out: &str) -> Vec<OpenRound> {
 /// needs of it; otherwise why a certify would be refused. One batcher worktree serves every round
 /// of a repo, so a later round moves it off an earlier one.
 pub fn round_certifiable(env: &Env, repo: &Repo, batch: &str) -> Result<(), String> {
-    let run = round_verb(env, &["status", &repo.name], "")?;
-    if run.code != Some(0) {
-        return Err(verb_failed("queue round status", &run));
-    }
-    let (head, worktree) = round_head_and_worktree(&run.out, batch)
+    let (head, worktree) = open_rounds(env, repo)?
+        .into_iter()
+        .find(|r| r.id == batch)
+        .map(|r| (r.head, r.worktree))
         .ok_or_else(|| format!("queue round status names no open round {batch}"))?;
     let at = git_head(Path::new(&worktree))
         .ok_or_else(|| format!("the round worktree {worktree:?} has no readable head"))?;
@@ -3012,13 +3040,6 @@ fn git_head(dir: &Path) -> Option<String> {
         .success()
         .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|h| !h.is_empty())
-}
-
-fn round_head_and_worktree(out: &str, batch: &str) -> Option<(String, String)> {
-    open_rounds_of(out)
-        .into_iter()
-        .find(|r| r.id == batch)
-        .map(|r| (r.head, r.worktree))
 }
 
 /// Whether `batch` is open and still in phase `opened`: no certify has ever moved it on.
@@ -4433,17 +4454,17 @@ mod land_exit_tests {
     }
 
     #[test]
-    fn a_rounds_head_and_worktree_are_read_from_whichever_open_round_status_lists_it() {
-        let out = "round=open\nbatch_id=r1\nhead=aaa\nworktree=/w\nround2=open\nround2_batch_id=r2\nround2_head=bbb\nround2_worktree=/w2\n";
+    fn a_round_of_the_stores_view_is_listed_as_round_status_lists_it() {
+        let record = store_view::Record {
+            id: "r2".into(),
+            state: "CI_RUNNING".into(),
+            fields: [("head", "bbb"), ("members", "sp-c:tc sp-d:td"), ("worktree", "/w2"), ("opened", "1000"), ("red", "test-x.sh")].map(|(k, v)| (k.to_string(), v.to_string())).to_vec(),
+        };
+        let round = store_view::Round { phase: "certifying".into(), record };
         assert_eq!(
-            round_head_and_worktree(out, "r2"),
-            Some(("bbb".into(), "/w2".into()))
+            open_round_of(&round, 1090),
+            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], head: "bbb".into(), worktree: "/w2".into(), phase: "certifying".into(), red: true, age_secs: 90 }
         );
-        assert_eq!(
-            round_head_and_worktree(out, "r1"),
-            Some(("aaa".into(), "/w".into()))
-        );
-        assert_eq!(round_head_and_worktree(out, "r3"), None);
     }
 
     #[test]

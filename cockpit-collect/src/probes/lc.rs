@@ -107,7 +107,13 @@ pub fn shared_live(key: &str, fetch: impl FnOnce() -> Option<String>) -> Option<
 }
 
 fn list_live(states: &str) -> Option<String> {
-    let raw = verb(&["list", "--state", states, "--snapshot"])?;
+    let raw = match store_view::shared() {
+        Some(held) => {
+            let states: Vec<&str> = states.split(',').collect();
+            serde_json::Value::Array(held.rows(&store_view::RowQuery { states: &states, ..Default::default() }).ok()?.value).to_string()
+        }
+        None => verb(&["list", "--state", states, "--snapshot"])?,
+    };
     parse_rows(&raw).map(|_| raw)
 }
 

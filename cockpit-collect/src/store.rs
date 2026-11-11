@@ -3,7 +3,7 @@
 //! `queue batch show` and `queue round status`. `None` is CANNOT TELL, as every probe read is.
 
 use std::collections::HashSet;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use spira_config::lc_call::{LcClient, LcError};
@@ -21,23 +21,27 @@ pub fn answer_on(client: &LcClient, args: &[&str]) -> Option<String> {
     client.answer(args).ok()
 }
 
-static VIEWS: OnceLock<Option<Projection>> = OnceLock::new();
+static VIEWS: OnceLock<Option<Arc<Projection>>> = OnceLock::new();
 
-/// This process's views, loaded once on first use.
-fn views() -> Option<&'static Projection> {
-    VIEWS
-        .get_or_init(|| {
-            let p = Projection::configured(LcClient::configured().ok()?).ok()?;
-            p.load().ok()?;
-            Some(p)
-        })
-        .as_ref()
+/// The views the process's watch keeps current; a process without one loads its own once on first use.
+fn views() -> Option<Arc<Projection>> {
+    store_view::shared().or_else(|| {
+        VIEWS
+            .get_or_init(|| {
+                let p = Projection::configured(LcClient::configured().ok()?).ok()?;
+                p.load().ok()?;
+                Some(Arc::new(p))
+            })
+            .clone()
+    })
 }
 
-/// `read` on `p`; a read refused as stale polls once and reads again.
+/// `read` on `p`; a read refused as stale polls once and reads again, unless a watch owns `p`:
+/// then the refusal stands, since the watch is what fell behind.
 pub fn fresh<T>(p: &Projection, read: impl Fn(&Projection) -> Result<Read<T>, LcError>) -> Option<T> {
     match read(p) {
         Ok(r) => Some(r.value),
+        Err(LcError::Refused(_)) if p.watching() => None,
         Err(LcError::Refused(_)) => {
             p.poll().ok()?;
             read(p).ok().map(|r| r.value)
@@ -53,7 +57,7 @@ pub fn batch_show_in(p: &Projection, repo: &str) -> Option<String> {
 }
 
 pub fn batch_show(repo: &str) -> Option<String> {
-    batch_show_in(views()?, repo)
+    batch_show_in(&*views()?, repo)
 }
 
 /// The bead ids of every member of the repo's open rounds (`members=id:tip ...`).
@@ -69,7 +73,7 @@ pub fn round_members_in(p: &Projection, repo: &str) -> Option<HashSet<String>> {
 }
 
 pub fn round_members(repo: &str) -> Option<HashSet<String>> {
-    round_members_in(views()?, repo)
+    round_members_in(&*views()?, repo)
 }
 
 #[cfg(test)]

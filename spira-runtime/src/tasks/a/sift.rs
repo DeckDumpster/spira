@@ -529,7 +529,7 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let req: ObserveIn = serde_json::from_str(input).unwrap_or_default();
     let secs = req.pinned.get("SPIRA_LC_TIMEOUT").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(5);
     let lc = client(e, secs * 1000);
-    let views = store_view::Projection::configured(lc.clone())?;
+    let views = store_view::Projection::hot(lc.clone())?;
     let reg = registry(&req.pinned)?;
     let run = req.pinned.get("SPIRA_RUN").map(std::path::PathBuf::from).unwrap_or_else(|| e.world.run_dir.clone());
     let pin = |k: &str| req.pinned.get(k).cloned().unwrap_or_default();

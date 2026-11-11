@@ -708,8 +708,8 @@ pub mod edge {
     /// whether a round holds the hypervisor.
     pub fn observe(e: &Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
         let reg = registry()?;
-        let rounds = store_view::Projection::configured(super::super::queue_step::edge::lc(e))?;
-        rounds.refresh_batches().map_err(|e| e.to_string())?;
+        let rounds = store_view::Projection::hot(super::super::queue_step::edge::lc(e))?;
+        rounds.batches_current().map_err(|e| e.to_string())?;
         let mut snap = Snapshot { world_running: !e.world.run_dir.join("world.halted").exists(), ..Snapshot::default() };
         let local: Vec<String> = reg.names().into_iter().filter(|n| reg.land(n) == "queue.local").collect();
         let holds = local.iter().any(|n| rounds.round_view(n).is_ok_and(|v| !v.value.rounds.is_empty()));
