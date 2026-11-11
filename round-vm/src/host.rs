@@ -123,6 +123,14 @@ impl Remote for LocalRemote {
         }
     }
 
+    fn clear_results(&self, _addr: &str) -> Result<(), String> {
+        let dir = self.at(crate::run::REMOTE_RESULTS);
+        match fs::remove_dir_all(&dir) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("{}: {e}", dir.display())),
+            _ => Ok(()),
+        }
+    }
+
     fn round_started(&self, _addr: &str) -> bool {
         fs::metadata(self.home.join(crate::vm_fault::SCRIPT_LOG_FILE)).map(|m| m.len() > 0).unwrap_or(false)
     }
@@ -235,6 +243,23 @@ mod tests {
         assert_eq!(p.home, Path::new("/some/run/host-round"));
         let bad = |k: &str| (k == "SPIRA_ROUND_VM_HOST_CPU_SOME_AVG60").then(|| "lots".to_string());
         assert!(HostPlan::from_config(Path::new("/r"), &bad).err().is_some());
+    }
+
+    #[test]
+    fn a_local_remote_drops_the_earlier_rounds_results_before_the_next_pull() {
+        let d = dir("clear");
+        let r = LocalRemote { home: d.path().to_path_buf() };
+        let res = d.path().join(crate::run::REMOTE_RESULTS);
+        fs::create_dir_all(&res).unwrap();
+        fs::write(res.join("test-old.sh.result"), "ok 1 3 - p e 0\n").unwrap();
+        r.clear_results("").unwrap();
+        r.clear_results("").unwrap();
+        let got = d.path().join("got");
+        fs::create_dir_all(&res).unwrap();
+        fs::write(res.join("test-new.sh.result"), "ok 1 3 - p e 0\n").unwrap();
+        r.pull("", crate::run::REMOTE_RESULTS, &got).unwrap();
+        assert!(got.join("test-new.sh.result").exists());
+        assert!(!got.join("test-old.sh.result").exists());
     }
 
     #[test]

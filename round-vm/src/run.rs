@@ -177,6 +177,8 @@ pub trait Remote: Sync {
     fn await_exit(&self, addr: &str, within: Duration, ssh_log: &Path) -> Result<Option<i32>, String>;
     /// Runs one attribution rerun (DESIGN.md §2.2a); its testenv exit code (255: ssh).
     fn run_attr(&self, addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String>;
+    /// Drops results an earlier round left where this one's are pulled from; a fresh VM has none.
+    fn clear_results(&self, addr: &str) -> Result<(), String>;
 }
 
 /// The probe for the round script's log: [`REMOTE_SCRIPT`] writes it at `~/round-script.log`.
@@ -1290,6 +1292,9 @@ fn rsync_said(stderr: &[u8]) -> String {
 }
 
 impl Remote for SshRemote {
+    fn clear_results(&self, _addr: &str) -> Result<(), String> {
+        Ok(())
+    }
     fn reachable(&self, addr: &str) -> bool {
         command("ssh")
             .args(self.ssh_opts())
@@ -2555,6 +2560,9 @@ fn on_vm_run(
         if job.resume_url.is_some() && !crate::ec2::is_ec2_handle(&vm.handle) {
             push_resume_credentials(env.remote, &vm.addr, dir);
         }
+    }
+    if let Err(e) = env.remote.clear_results(&vm.addr) {
+        eprintln!("round-vm run: clearing the earlier round's results: {e}");
     }
     let t0 = Instant::now();
     let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{}", std::process::id()));
@@ -4241,6 +4249,10 @@ mod tests {
             }
             self.rc.clone()
         }
+        fn clear_results(&self, _: &str) -> Result<(), String> {
+            self.jobs.lock().unwrap().push("clear-results".into());
+            Ok(())
+        }
         fn round_started(&self, _: &str) -> bool {
             !self.never_starts
         }
@@ -4464,6 +4476,17 @@ mod tests {
         assert!(REMOTE_SCRIPT[..unit_wait].contains("test_phase_bound \"$unit_pid\" \"$cap\""), "the unit phase's wait has its own guard, outside the cap clock");
         assert!(REMOTE_SCRIPT[stop..bins].contains("test_phase_bound \"$integ_pid\" \"$post_guard\""), "the integration phase's wait after the suites has its own guard");
         assert_eq!(exit_for_remote(124), 124, "over-cap reaches the caller as itself");
+    }
+
+    #[test]
+    fn a_round_clears_the_earlier_rounds_results_before_its_batch_starts() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let a = RunArgs { tree_dir: fx.d.path().join("tree"), maxpar: Some(24), base: Some("main".into()), ..Default::default() };
+        go(&fx, &remote, &a);
+        let jobs = remote.jobs.lock().unwrap();
+        assert_eq!(jobs.first().map(String::as_str), Some("clear-results"), "{jobs:?}");
+        assert_eq!(jobs.len(), 2, "{jobs:?}");
     }
 
     #[test]
