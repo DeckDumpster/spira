@@ -361,7 +361,6 @@ _out="$(PATH="$STUB_BIN:$PATH" SPIRA_RELEASE="$(PATH="$STUB_BIN:$PATH" tl_releas
 exec 9>&-
 want "concurrent pass logs 'already running'" "already running" "$_out"
 
-export SPIRA_RECONCILER_GRACE_SECS=0
 tl_config SPIRA_RECONCILER_GRACE_SECS=0
 
 # ==========================================================================================
@@ -524,7 +523,6 @@ rpass
 printf '\n%s\n' "17. Queue: a lock held past the pre-flight wall -> gap, escalate"
 # ==========================================================================================
 reset_state
-export SPIRA_PREFLIGHT_WALL_SECS=0
 tl_config SPIRA_PREFLIGHT_WALL_SECS=0
 mkdir -p "$SPIRA_RUN/queue/testrepo"
 _lockfile="$SPIRA_RUN/queue/testrepo/lock"
@@ -542,7 +540,6 @@ want "a held, stale lock escalates" "invariant: queue-lock-age:testrepo" "$(mail
 wait "$_holder" 2>/dev/null || true
 
 reset_state
-export SPIRA_PREFLIGHT_WALL_SECS=240
 tl_config SPIRA_PREFLIGHT_WALL_SECS=240
 : > "$_lockfile"
 touch -d "@$(( $(date +%s) - 400 ))" "$_lockfile"
@@ -563,15 +560,12 @@ rpass
 want "a held lock whose beat went stale escalates" "invariant: queue-lock-age:testrepo" "$(mail_log)"
 wait "$_holder" 2>/dev/null || true
 rm -f "$_lockfile" "$SPIRA_RUN/queue/testrepo/lock.beat"
-unset SPIRA_PREFLIGHT_WALL_SECS
-# Restore to the complete fixture's own declared default (240) — "nothing has a default"
-# any more (per Ryan 2026-10-05), so unset alone no longer puts this back the way it was.
+# Restore the complete fixture's own declared default (240).
 tl_config SPIRA_PREFLIGHT_WALL_SECS=240
 
 # ==========================================================================================
 printf '\n%s\n' "18. Grace period: a fresh gap inside grace raises nothing"
 # ==========================================================================================
-export SPIRA_RECONCILER_GRACE_SECS=300
 tl_config SPIRA_RECONCILER_GRACE_SECS=300
 reset_state
 printf 'a.timer\n' > "$UNITS_LIST"
@@ -580,7 +574,6 @@ rpass
 lack "no remedy run inside the grace period" "enable --now" "$(cat "$SYSTEMCTL_CALLS")"
 [ -z "$(mail_log)" ] && ok "no incident filed inside the grace period" || bad "unexpected incident: $(mail_log)"
 want "the gap is still recorded in the time series" '"key":"units-timer:a.timer","status":"gap"' "$(status_jsonl)"
-export SPIRA_RECONCILER_GRACE_SECS=0
 tl_config SPIRA_RECONCILER_GRACE_SECS=0
 
 # ==========================================================================================

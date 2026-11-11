@@ -206,6 +206,26 @@ finding against the file.
 
 **Hint.** Register the key in `spira/conf.d` and read it through `cfg`; never add an allow line for new code.
 
+## Rule `dead-test-export`
+
+**Intent.** A test that assigns a `SPIRA_*` variable nothing reads runs on the default while
+reading as if it had set the value. spira-config never consults the environment, so exporting a
+config key only works for a shell script that reads `$KEY` itself.
+
+**Scope.** Assignments in `spira/test-*.sh` and `spira/testlib*`: a command's leading `NAME=value`
+words and the arguments of `export`/`declare`. A `tl_config NAME=…` argument is not an assignment.
+
+**Readers.** `$NAME` / `${NAME…}` on a non-comment line of any file under `spira/`, `systemd/`,
+`hooks/` (not `.md`/`.toml`, not `*.generated.*`, not `spira/conf.d/`, whose `:=` defaults are
+universal); a one-argument `*env*("NAME")` call in non-test Rust; and, for a name that is not a
+registered key, any string literal of it in non-test Rust. A read on the line that assigns the
+same name (`export X="${X:-0}"`) is not a reader.
+
+**Allow file.** `spira-lint/dead-test-export-allow`: `<NAME> <path>`, shrink-only; a line whose
+file no longer assigns an unread name is a finding.
+
+**Hint.** Set a config key with `tl_config`; read an environment-only variable in the code under test.
+
 ## Rule `config-literal-fallback`
 
 New (sp-ivfu3); no bash fence precedes it.

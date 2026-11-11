@@ -203,7 +203,6 @@ echo "--sweep: capacity-paused sweeps are rejected (capacity still applies):"
 # Simulate a capacity pause by writing the marker file.
 CAP_FILE="${SPIRA_RUN}/capacity-pause"
 printf '9999999999\n' > "$CAP_FILE"
-export SPIRA_CAPACITY_PAUSE_FILE="$CAP_FILE"
 # The stub agent exits 0, so a live probe would lift this pause. Mark the probe
 # interval as just-run so the interval guard blocks the probe for this case.
 printf '%s\n' "$(date +%s)" > "$SPIRA_RUN/capacity-probe-last"
@@ -214,7 +213,7 @@ dwarf testsweep --sweep --prompt "should not run"
 want "born is still written"       "born testsweep" "$(cat "$LEDGER" 2>/dev/null)"
 want "awake shows paused"          "awake testsweep paused" "$(cat "$LEDGER" 2>/dev/null)"
 nowant "done is NOT written"       "done testsweep" "$(cat "$LEDGER" 2>/dev/null)"
-rm -f "$CAP_FILE"; unset SPIRA_CAPACITY_PAUSE_FILE
+rm -f "$CAP_FILE"
 
 # ======================================================================================
 echo
