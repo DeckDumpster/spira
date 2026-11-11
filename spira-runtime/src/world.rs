@@ -793,6 +793,8 @@ impl World {
         let Ok(mut landings) = self.landed_on_refs(p.now, &prefix) else { return to_json(&blind) };
         let Ok(waiting) = self.lc_json(&["list", "--state", "SUBMITTED,IN_DELIVERY"]) else { return to_json(&blind) };
         let Ok(batches) = self.lc_json(&["list", "--batches", "--window", &day.to_string()]) else { return to_json(&blind) };
+        let Some(rows) = batches.as_array() else { return to_json(&blind) };
+        stamp_landings(&mut landings, rows);
         for l in &mut landings {
             l.waiting = waiting.as_array().map_or(0, |rows| rows.iter().filter(|r| r["repo"].as_str() == Some(l.repo.as_str())).count() as u64);
         }
@@ -964,6 +966,17 @@ pub fn round_counts(batches: &[Value], now: u64, recent_s: u64) -> Vec<RepoRound
         }
     }
     by.into_values().collect()
+}
+
+/// A round's merge commits carry its cut time, so the lifecycle's LANDED time is when the ref
+/// moved. A repo with no LANDED round in the window keeps the ref's commit time.
+pub fn stamp_landings(landings: &mut [RepoLanding], batches: &[Value]) {
+    for l in landings {
+        let landed = batches.iter().filter(|b| b["repo"].as_str() == Some(l.repo.as_str()) && b["state"] == "LANDED").filter_map(|b| b["last_at"].as_i64()).map(|t| t.max(0) as u64).max();
+        if let Some(t) = landed {
+            l.last_landing = t;
+        }
+    }
 }
 
 /// Rounds that passed CI and sit in a state short of landed, with the seconds since their last event.
