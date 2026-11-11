@@ -4284,7 +4284,11 @@ mod tests {
             if self.attr_live.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
                 self.attr_overlap.store(true, std::sync::atomic::Ordering::SeqCst);
             }
-            std::thread::sleep(Duration::from_millis(60));
+            let mut spins = 0;
+            while self.attr_live.load(std::sync::atomic::Ordering::SeqCst) < 2 && spins < 300_000 {
+                std::thread::yield_now();
+                spins += 1;
+            }
             self.attr_live.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             Ok(if job.job == "j2" { 1 } else { 0 })
         }
