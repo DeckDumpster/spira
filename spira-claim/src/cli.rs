@@ -800,7 +800,7 @@ fn cmd_urgent(a: &Args, env: &mut Env) -> Outcome {
 }
 
 fn urgent_over(a: &Args, env: &Env, st: &Store) -> Result<String, String> {
-    let rows = machine_claimable(a, env)?;
+    let rows = claimable_over(a, env, st)?.0;
     let rework = st.lifecycle_in_states(&["REWORK"])?;
     let express = st.express_ids()?;
     let parts = urgent_scope(a, env)?;
