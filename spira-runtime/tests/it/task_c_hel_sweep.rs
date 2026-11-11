@@ -96,3 +96,9 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(acting_on_a_started_leg, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
 }
+
+#[test]
+fn a_store_that_would_not_answer_the_branch_read_fails_the_pass_naming_the_repo_and_the_stores_text() {
+    let e = task::store_failure("spira", "reads every bead ever filed and is refused");
+    assert!(e.starts_with("hel.sweep: spira:") && e.contains("refused"), "{e}");
+}

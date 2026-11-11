@@ -1706,17 +1706,20 @@ fn junk_row_ids(rows: &[spira_config::lc_state::Row], store_ids: &HashSet<String
         .collect()
 }
 
-fn store_bead_ids(cfg: &Config) -> Result<HashSet<String>, String> {
-    let out = cfg.lc(&["content", "list", "--all", "--brief", "--json", "--limit", "0"])?;
-    let rows: Vec<serde_json::Value> = serde_json::from_str(out.trim()).map_err(|e| format!("content list: unparsable json: {e}"))?;
-    let ids: HashSet<String> = rows
-        .iter()
-        .filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(String::from))
-        .collect();
-    if ids.is_empty() {
-        return Err("the store lists no beads".into());
+const JUNK_IDS_PER_READ: usize = 100;
+
+/// Which of `ids` the store holds a bead for: one bounded `content list --id` read per chunk.
+fn store_bead_ids(cfg: &Config, ids: &[String]) -> Result<HashSet<String>, String> {
+    let mut known = HashSet::new();
+    for chunk in ids.chunks(JUNK_IDS_PER_READ) {
+        let out = cfg.lc(&["content", "list", "--all", "--brief", "--json", "--limit", "0", "--id", &chunk.join(",")])?;
+        let rows: Vec<serde_json::Value> = serde_json::from_str(out.trim()).map_err(|e| format!("content list: unparsable json: {e}"))?;
+        known.extend(rows.iter().filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(String::from)));
     }
-    Ok(ids)
+    if known.is_empty() && !ids.is_empty() {
+        return Err(format!("the store knows none of {} READY ids", ids.len()));
+    }
+    Ok(known)
 }
 
 fn observe_junk_rows(cfg: &Config) -> Vec<Check> {
@@ -1727,16 +1730,18 @@ fn observe_junk_rows(cfg: &Config) -> Vec<Check> {
             remedy: Remedy::Escalate,
         }]
     };
-    let store_ids = match store_bead_ids(cfg) {
-        Ok(ids) => ids,
-        Err(e) => return unobservable(e),
-    };
-    let rows = match cfg.lc(&["list"]).and_then(|out| spira_config::lc_state::parse_rows(&out)) {
+    let rows = match cfg.lc(&["list", "--state", "READY"]).and_then(|out| spira_config::lc_state::parse_rows(&out)) {
         Ok(rows) => rows,
         Err(e) => return unobservable(e),
     };
-    junk_row_ids(&rows, &store_ids)
-        .into_iter()
+    let ids: Vec<String> = rows.iter().map(|r| r.bead_id.clone()).collect();
+    let store_ids = match store_bead_ids(cfg, &ids) {
+        Ok(ids) => ids,
+        Err(e) => return unobservable(e),
+    };
+    let junk = junk_row_ids(&rows, &store_ids);
+    log_print(cfg, &format!("reconciler: invariant junk-row: {} READY row(s) read, {} without a bead", rows.len(), junk.len()));
+    junk.into_iter()
         .map(|id| Check {
             key: format!("{}{}", JUNK_ROW_PREFIX, id),
             raw: RawStatus::Gap {
@@ -2621,6 +2626,26 @@ mod tests {
     }
 
     #[test]
+    fn junk_rows_are_read_from_the_ready_rows_and_exactly_those_ids() {
+        let dir = scratch_dir("junk-rows");
+        let (cfg, _log) = tripwired(&dir, Some(quiet(None)));
+        let checks = observe_junk_rows(&cfg);
+        assert_eq!(checks.len(), 1, "{checks:?}");
+        assert_eq!(checks[0].key, "junk-row:prose key");
+        assert!(matches!(checks[0].raw, RawStatus::Gap { .. }));
+    }
+
+    #[test]
+    fn a_content_read_that_knows_none_of_the_ready_ids_is_unobservable_not_a_gap_per_row() {
+        let dir = scratch_dir("junk-rows-blank");
+        let host: Arc<dyn Host> = Arc::new(Quiet { asked: Default::default(), server: None, blank_content: true });
+        let (cfg, _log) = tripwired(&dir, Some(host));
+        let checks = observe_junk_rows(&cfg);
+        assert_eq!(checks.len(), 1, "{checks:?}");
+        assert!(matches!(&checks[0].raw, RawStatus::Unobservable { reason } if reason.contains("knows none of 2")), "{checks:?}");
+    }
+
+    #[test]
     fn reminder_due_reads_until_and_owner() {
         assert_eq!(reminder_due("sp-1", None, "2026-10-07", false), Due::NotDue);
         assert_eq!(reminder_due("sp-1", Some("2026-10-07"), "2026-10-07", false), Due::Until("2026-10-07".into()));
@@ -2690,6 +2715,8 @@ mod tests {
     struct Quiet {
         asked: std::sync::Mutex<Vec<String>>,
         server: Option<Option<String>>,
+        /// Whether a `content list --id` read answers `[]` for every id.
+        blank_content: bool,
     }
 
     impl Host for Quiet {
@@ -2704,7 +2731,13 @@ mod tests {
         }
         fn lc(&self, argv: &[&str]) -> Result<String, String> {
             self.asked.lock().unwrap().push(argv.join(" "));
+            if spira_config::lc_call::reads_whole_history(argv) {
+                return Err("refused: reads every bead ever filed".into());
+            }
             match argv {
+                ["list", "--state", "READY"] => Ok(r#"[{"bead_id":"sp-real","state":"READY"},{"bead_id":"prose key","state":"READY"}]"#.into()),
+                ["content", "list", .., "--id", _] if self.blank_content => Ok("[]".into()),
+                ["content", "list", .., "--id", _] => Ok(r#"[{"id":"sp-real"}]"#.into()),
                 ["plan", "items", ..] => Ok("notice\n{\"watermark\":1,\"items\":[{\"id\":\"sp-epic\"}]}".into()),
                 ["plan", "edges", ..] => Ok(r#"{"watermark":1,"edges":[{"issue_id":"sp-kid","depends_on_id":"sp-epic","type":"blocks"},{"issue_id":"sp-sub","depends_on_id":"sp-epic","type":"parent-child"}]}"#.into()),
                 _ => Err("unexpected".into()),
@@ -2776,7 +2809,7 @@ mod tests {
     }
 
     fn quiet(server: Option<Option<String>>) -> Arc<dyn Host> {
-        Arc::new(Quiet { asked: Default::default(), server })
+        Arc::new(Quiet { asked: Default::default(), server, blank_content: false })
     }
 
     #[test]
