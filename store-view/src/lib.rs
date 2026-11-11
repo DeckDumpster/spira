@@ -427,13 +427,19 @@ impl Projection {
 
     /// Polls until `stop` is set, pausing after a poll the store did not answer.
     pub fn run(&self, stop: &AtomicBool) {
+        struct Clear<'a>(&'a AtomicBool);
+        impl Drop for Clear<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Relaxed);
+            }
+        }
         self.watching.store(true, Ordering::Relaxed);
+        let _clear = Clear(&self.watching);
         while !stop.load(Ordering::Relaxed) {
             if self.poll().is_err() {
                 std::thread::sleep(RETRY);
             }
         }
-        self.watching.store(false, Ordering::Relaxed);
     }
 
     fn read<T>(&self, f: impl FnOnce(&State) -> Result<T, LcError>) -> Result<Read<T>, LcError> {
