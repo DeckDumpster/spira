@@ -3,6 +3,7 @@
 //! in `real`; the unit tests use recording fakes (`tests`).
 
 use crate::model::{BeadRow, Rebase, Recut};
+use std::collections::HashSet;
 use std::path::Path;
 
 /// The bead store, read only. Writes go through [`Lib`].
@@ -28,6 +29,8 @@ pub trait Beads {
 pub trait Git {
     /// `for-each-ref refs/heads/spira/*` → (short name, tip).
     fn spira_refs(&self, repo: &Path) -> Vec<(String, String)>;
+    /// Short names of the `refs/heads/spira/*` branches merged into `base`: one `for-each-ref --merged`.
+    fn merged_spira_refs(&self, repo: &Path, base: &str) -> HashSet<String>;
     /// `show-ref --verify refs/heads/<branch>`.
     fn branch_exists(&self, repo: &Path, branch: &str) -> bool;
     fn rev_parse(&self, repo: &Path, rev: &str) -> Option<String>;
@@ -135,8 +138,6 @@ pub trait Tools {
     fn gate_status(&self, branch: &str, repo: &str) -> Option<String>;
     /// confine.sh <id> <branch> <repo-path> <base> <labels> → (status, output).
     fn confine(&self, id: &str, branch: &str, repo: &Path, base: &str, labels: &str) -> (i32, String);
-    /// `queue step <repo>` → its output lines; Err when there is no queue binary to run.
-    fn queue_step(&self, repo: &str) -> Result<Vec<String>, String>;
     fn skew_refresh(&self, repo: &Path) -> String;
     /// An ensure program, by bare name (`unit-ensure`, `target-reap`), or a script path
     /// (systemd/ is not on PATH), when executable → its lines.

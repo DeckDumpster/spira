@@ -879,6 +879,11 @@ impl Git for RealGit {
             .filter(|(a, b)| !a.is_empty() && !b.is_empty())
             .collect()
     }
+    fn merged_spira_refs(&self, repo: &Path, base: &str) -> std::collections::HashSet<String> {
+        let mut c = git(repo);
+        c.args(["for-each-ref", "--merged", base, "--format=%(refname:short)", "refs/heads/spira/*"]);
+        git_out(c).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(String::from).collect()
+    }
     fn branch_exists(&self, repo: &Path, branch: &str) -> bool {
         let mut c = git(repo);
         c.args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")]);
@@ -1217,16 +1222,6 @@ impl Tools for RealTools {
         c.arg(id).arg(branch).arg(repo).arg(base).arg(labels);
         let (rc, s) = combined(c);
         (rc, s.trim_end_matches('\n').to_string())
-    }
-    fn queue_step(&self, repo: &str) -> Result<Vec<String>, String> {
-        let Some(bin) = self.queue_bin.as_ref() else {
-            return Err("no queue program — the queue step did not run".into());
-        };
-        let mut c = command(bin);
-        c.arg("step").arg(repo);
-        self.with_env(&mut c);
-        let (_, s) = combined(c);
-        Ok(s.lines().map(String::from).collect())
     }
     fn skew_refresh(&self, repo: &Path) -> String {
         // `skew` is a compiled binary now (sp-yyk47), same bare-name PATH resolution.

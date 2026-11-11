@@ -2386,7 +2386,7 @@ bead_is_decision_type() {
 # redirects stdout or stderr — that stays the caller's choice, exactly as before.
 #
 # SCAR (sp-hwjsq, round 160): the first cut execed `queue git-push`, the operator CLI
-# itself. test-certify.sh stubs `queue` by NAME on PATH to isolate "queue step" dispatch
+# itself. test-certify.sh stubs `queue` by NAME on PATH to prove the landing pass never calls it
 # (sp-gypjk's convention), so production's push-mode landing silently hit that stub —
 # exit 0, nothing pushed, "not ok 30 - push-mode remote actually moved" — while every
 # suite this bead ran was one that never stubs `queue`, so nothing caught it before it

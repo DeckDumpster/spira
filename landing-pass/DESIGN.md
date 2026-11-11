@@ -33,7 +33,7 @@ leaves a record of every transition so the next pass never re-derives what this 
 | `queue.local` | same certification as `queue`. The round lands via `queue land-local`, publishes via `queue publish`. |
 
 Around the walk the pass also: settles each queued repository's open round before and after
-certifying (`queue step`), prunes the landstate records nothing will read again, advances
+certifying (the scheduler's `queue.step` task, not this pass), prunes the landstate records nothing will read again, advances
 the checkout humans read (`skew refresh`) for push/queue, asks about closed beads whose
 GitHub issue has no landing (`_gh_unlanded_scan`), installs unit templates that landed
 (`unit-ensure`, sp-31dm0 — a bare-name binary now, replacing `systemd/unit-ensure.sh`), and reaps the build output of worktrees whose bead is closed (`target-reap`, sp-z61hj; it replaced `land-build-ensure.sh`, whose post-landing release rebuild was redundant — a landing publishes a release from tested binaries).
@@ -48,7 +48,7 @@ certified instead). NO_VERDICT is counted and escalated by `spira_land_noverdict
 ### What it is deliberately NOT
 
 - **Not the round.** Cutting, proving and landing a round is `batcher`/`queue`; this pass
-  calls `queue step` and nothing else of the queue.
+  calls nothing of the queue; the scheduler's `queue.step` task owns the round step.
 - **Not the gate.** `gate.sh` stays bash and is called as a subprocess with its argv/env
   contract (§2.5). The gate string (repository's own: fences, then the budgeted
   `gate-touched.sh` selector of sp-vq2za, then `testenv-batch.sh`/`testenv`) is the gate's
@@ -133,7 +133,7 @@ the behaviour is kept — operators and suites grep them. Lines printed by a sea
 |---|---|
 | `landing: starting a pass over [<repo> …]` / `landing: pass complete — N branch(es) seen, M movement(s)[, S survivor(s) rebased after a landing, C conflicted]` | operators, suites |
 | `CHECK6 <id>: …` per-branch lines | operators, suites, cockpit tails |
-| `queue early: <line>` / `queue late: <line>` | operators |
+| `landing: walk complete — N branch(es), S settled from memory` | operators; the idle-pass measure reads it |
 | `landing: budget cut at <br> — Ns left, K branch(es) deferred in <repo>` | operators, watchtower tail |
 | `landing: pruning landstate/<id> — closed bead with no branch (state was S)` | operators |
 
@@ -168,7 +168,6 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
 | `gate.sh <branch> <repo>` | env `SPIRA_GATE_LOCK_WAIT=<secs>`, `SPIRA_GATE_BEAD=<id>`; stdout+stderr captured together | push/hold/queue walk |
 | `gate-run.sh --status <branch> <repo>` | read-only | cert-gate-red note |
 | `confine.sh <id> <branch> <repo-path> <base> <labels>` | labels are the bead's own label words | push/hold |
-| `queue step <repo>` | stdout+stderr combined, relabelled | queued repos, before and after the walk |
 | `skew refresh <repo-path>` | | push, queue |
 | `unit-ensure` (sp-31dm0, bare name on the launcher PATH — was `$SPIRA_REPO/systemd/unit-ensure.sh`, since systemd/ is not on PATH), `target-reap` (sp-z61hj) | | once per pass |
 | `testenv container down --name <c> --volumes --force-foreign` | | `halt` |
@@ -275,12 +274,11 @@ enum BranchVerdict { Gone, NotClosed, WrongRepo, Superseded, CutoverRound, Eject
    Write `landing.run` (pid, started), truncate `landing.containers`, export
    `SPIRA_LANDING_CONTAINERS` to children.
 3. Log the start line. Delete `verdicts/*` older than `SPIRA_VERDICT_TTL` (one file at a time).
-4. **Queue step, before**: for each queued repo, `queue step <repo>`; each output line logged
-   as `queue early: <line>`.
+4. (No queue step: the scheduler's `queue.step` task is its one owner.)
 5. Rotate the repository list to start at `landing.cursor` if it names one.
 6. For each repository — the walk (§4.1 push/hold, §4.2 queue).
 7. **Prune** (§5).
-8. **Queue step, after**: `queue late: <line>`.
+8. Log `landing: walk complete — N branch(es), S settled from memory`.
 9. `skew refresh <path>` for push and queue(forge) repositories (queue.local's base is
    local; its refresh belongs to land-local, as before).
 10. `gh-intake unlanded-scan` (sp-j3fim, "wave 4.31" — `_gh_unlanded_scan` moved natively into gh-intake, no seam call left). `unit-ensure` (sp-31dm0), `target-reap` (lines logged; sp-z61hj replaced `land-build-ensure.sh`).
@@ -551,8 +549,8 @@ build or locate the binary — the testenv container already builds the workspac
 | `test-landing-cert-order-t1.sh`, `test-landing-prior-pass-t1.sh` | 14; 16 | **retire** (source landing-lib.sh; `order::tests`) |
 | `test-cert-gate-reopen-note.sh` | 48 | **retire** (greps landing.sh's text for `tail -N`; `a_red_gate_reopens_with_the_gates_own_words…` asserts the 20-line window) |
 | `test-landing-mode-map.sh` | 165, 171, 260, 279, 307 | **retire** (static greps over landing.sh's `land_repo` body and `# land-modes:`; the modes are `LandMode` and the walk's dispatch) |
-| `test-queue-flush.sh` | 80 | drop the landing.sh grep (the queue step call is `Tools::queue_step`, tested by `the_queue_step_runs_before_and_after…`) |
-| `test-landing-queue-early.sh` | 83, 112-115 | **repoint** the positive control to a `SPIRA_LANDING_PASS_BIN` stub that exits 255; the "early" assertion now expects one `queue early:` block, not two (§8 D5) |
+| `test-queue-flush.sh` | 80 | drop the landing.sh grep (the queue step is no longer this pass's) |
+| `test-landing-queue-early.sh` | 83, 112-115 | **repoint** the positive control to a `SPIRA_LANDING_PASS_BIN` stub that exits 255; the "early" assertion is dropped: the pass logs no `queue early:` line (§8 D5) |
 | `test-landing-halt.sh` | 40, 227, 283 | **repoint** to `"$SPIRA_LANDING_PASS_BIN" halt …`; the pass under test is `landing-pass land` (its pid is the binary's) |
 | `test-landing-race.sh`, `test-landing-rebase.sh`, `test-landing-red-recurring.sh`, `test-superseded.sh`, `test-spike.sh`, `test-certify.sh`, `test-landing-cutover-round.sh`, `test-closed-strand.sh`, `test-submitted-lands.sh`, `test-config-compat-master-base.sh`, `test-land-mode-local.sh`, `test-skew-refresh.sh` | 56/85; 95; 72; 43/61; 223/233; 100; 77; 42/89; 109; 239/258; 132/184; 276/292 | **repoint** the invocation (above). `test-landing-rebase.sh` expects survivor lines worded "after this pass's landings" and one sweep per pass (§8 D3) |
 | `test-landing-pr.sh` | 309 | repointed then **retired by sp-t4y60**: it drove `pr-pass-branch.sh` directly (not through `landing-pass --pass`), and its subject — rebase/confine/force-push/open-refresh-merged-closed per branch — is `pr_branch::tests` (13 cases) plus the pr-pass walk tests already here |
@@ -598,11 +596,9 @@ build or locate the binary — the testenv container already builds the workspac
 - **D4 — the prune (§5, sp-bauwt)**: never deletes a LANDED record whose tip is not on the
   forge; absorbs the `landstate-keep-unpublished` override, generalised from the home
   repository's `origin/main` to each repository's forge ref.
-- **D5 — the queue step runs twice, not three times.** landing.sh called `queue.sh step`
-  before certification twice in a row ("early", then the sp-len2q "verdict first" hotfix —
-  the same call), and once after. Now: once before (`queue early:`), once after
-  (`queue late:`). The step is `queue step <repo>`; a missing tool is logged
-  per repository, never a fallback to a deleted queue.sh.
+- **D5 — the queue step is not this pass's.** The scheduler's `queue.step` task
+  (verdict → cut → publish, both `queue` and `queue.local`) is its one owner; the pass
+  neither runs it nor logs `queue early:`/`queue late:`.
 - **D6 — base-fix certification once.** landing.sh's push/hold BASE_FAIL arm carried the
   certification block twice, the first copy certifying on the scan's (stale) status. One
   copy remains, after a re-read.
@@ -776,7 +772,7 @@ liveness, the clock, spira-lc and the halt ports (signals, podman, testenv teard
 | NO_VERDICT conflict → rebase-stale, never charged | `a_branch_that_no_longer_merges_goes_to_rebase_stale_not_red`, `a_conflict_rebase_stale_could_not_attempt_is_an_ordinary_no_verdict` |
 | budget cut, cursor, deferral escalation, rotation | `the_budget_cut_defers_the_rest_…`, `the_walk_starts_at_the_cursor`, `budget::tests` |
 | every early exit says why; EJECTED; gone mid-pass | `every_early_exit_says_why`, `an_ejected_record_on_a_closed_bead_is_reopened`, `a_branch_gone_mid_pass_…` |
-| queue step before/after, missing binary, skew only push/queue | `the_queue_step_runs_before_and_after_…` |
+| no queue step, skew only push/queue | `the_pass_runs_no_queue_step_and_the_skew_refresh_stays` |
 | order, express, pr repos left alone | `express_branches_are_announced_…`, `a_pr_repository_is_counted_…`, `order::tests` |
 | prune (§5) | `the_prune_never_deletes_a_landed_record_the_forge_does_not_have`, `an_unreadable_store_prunes_nothing`, `prune::tests` |
 | push: LANDED first, close, survivors once (sp-4hs0i) | `push_lands_records_first_and_closes_and_rebases_survivors_once_per_pass` |

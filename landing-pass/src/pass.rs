@@ -43,6 +43,8 @@ pub struct Pass<'a> {
     /// The sweep's own meter (law-take-the-simple-fix-with-a-meter).
     pub swept: Cell<u64>,
     pub swept_conflict: Cell<u64>,
+    /// Branches the walk answered from their settled marker, with no git call.
+    pub settled_from_memory: Cell<u64>,
 }
 
 /// Why the walk stopped at a branch.
@@ -79,6 +81,8 @@ pub(crate) struct Walk<'r> {
     pub land: PathBuf,
     pub beads: HashMap<String, BeadRow>,
     pub enum_tip: HashMap<String, String>,
+    /// `spira/*` branches already merged into the base, from one read after the fetch.
+    pub merged: HashSet<String>,
     /// Closed, rebased and still unlanded this pass (push/hold), in the order judged.
     pub judged: RefCell<Vec<String>>,
     pub basefail_filed: Cell<bool>,
@@ -189,14 +193,17 @@ impl<'a> Pass<'a> {
         self.log(&format!("landing: starting a pass over [{listing}]"));
         Files::prune_verdicts(&self.s.verdicts, self.s.verdict_ttl, self.clock.now());
 
-        self.queue_step("queue early: ");
-
+        let (seen_before, settled_before) = (self.out.branches(), self.settled_from_memory.get());
         for repo in self.rotated() {
             self.settle_landed_rows(repo);
             self.walk_repo(repo);
         }
 
-        self.queue_step("queue late: ");
+        self.log(&format!(
+            "landing: walk complete — {} branch(es), {} settled from memory",
+            self.out.branches() - seen_before,
+            self.settled_from_memory.get() - settled_before
+        ));
 
         for r in self.repos {
             if !matches!(r.mode, LandMode::Push | LandMode::Queue) || r.path.as_os_str().is_empty() {
@@ -243,20 +250,6 @@ impl<'a> Pass<'a> {
         ));
     }
 
-    /// `queue step` for every queued repository, its lines relabelled into this log.
-    fn queue_step(&self, prefix: &str) {
-        for r in self.repos.iter().filter(|r| r.mode.queued()) {
-            match self.tools.queue_step(&r.name) {
-                Ok(lines) => {
-                    for l in lines {
-                        self.log(&format!("{prefix}{l}"));
-                    }
-                }
-                Err(e) => self.log(&format!("{prefix}{}: {e}", r.name)),
-            }
-        }
-    }
-
     /// Start from the repository where the last pass cut its budget, so none is always last.
     pub fn rotated(&self) -> Vec<&'a RepoRow> {
         let all: Vec<&RepoRow> = self.repos.iter().collect();
@@ -281,8 +274,20 @@ impl<'a> Pass<'a> {
                 return;
             }
         };
+        let (refs, merged) = if rows.is_empty() {
+            Default::default()
+        } else {
+            if let Some(rem) = &repo.base_remote {
+                self.git.fetch(&repo.path, rem);
+            }
+            (self.git.spira_refs(&repo.path), self.git.merged_spira_refs(&repo.path, base_fq))
+        };
         for (id, tip) in rows {
-            if !self.git.is_ancestor(&repo.path, &tip, base_fq) {
+            let landed = match refs.iter().find(|(_, t)| *t == tip) {
+                Some((br, _)) => merged.contains(br),
+                None => self.git.is_ancestor(&repo.path, &tip, base_fq),
+            };
+            if !landed {
                 continue;
             }
             let at = self.git.rev_parse(&repo.path, base_fq).unwrap_or_default();
@@ -326,6 +331,7 @@ impl<'a> Pass<'a> {
         if let Some(rem) = &repo.base_remote {
             self.git.fetch(&repo.path, rem);
         }
+        let merged = self.git.merged_spira_refs(&repo.path, &base_fq);
         let basename = repo.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let land = self.s.run.join("worktree").join(format!(".landing.{basename}"));
         if repo.mode == LandMode::Push {
@@ -377,6 +383,7 @@ impl<'a> Pass<'a> {
             land,
             beads,
             enum_tip: refs.into_iter().collect(),
+            merged,
             judged: RefCell::new(Vec::new()),
             basefail_filed: Cell::new(false),
             landed_any: Cell::new(false),
@@ -451,6 +458,10 @@ impl<'a> Pass<'a> {
         let name = &repo.name;
         let id = br.trim_start_matches("spira/");
 
+        if w.beads.get(id).is_some_and(|b| b.handed_on()) && w.enum_tip.get(br).is_some_and(|tip| self.files.content_settled(br, tip)) {
+            self.settled_from_memory.set(self.settled_from_memory.get() + 1);
+            return Screen::Done(Flow::Next);
+        }
         if !self.git.branch_exists(&repo.path, br) {
             match w.enum_tip.get(br) {
                 Some(was) if self.git.is_ancestor(&repo.path, was, &w.base_fq) => self.log(&format!(
@@ -494,7 +505,13 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: {br} is labelled {} — leaving it for the cutover round", self.s.cutover_label));
             return Screen::Done(Flow::Next);
         }
-        if self.git.content_on_base(&repo.path, br, &w.base_fq) {
+        // A queued repository's terminal bead off the base is the batcher's: no content read.
+        // Push and other modes keep it, because `push_or_hold` relies on it there.
+        if !w.merged.contains(br) && repo.mode.queued() && spira_config::lc_state::is_terminal(&bead.state) {
+            self.log(&format!("CHECK6 {id}: {br} is {} — the batcher's now, not certified again", bead.state));
+            return Screen::Done(Flow::Next);
+        }
+        if w.merged.contains(br) || self.git.content_on_base(&repo.path, br, &w.base_fq) {
             self.settle_content_on_base(w, br, id, bead);
             return Screen::Done(Flow::Next);
         }
@@ -524,7 +541,7 @@ impl<'a> Pass<'a> {
     /// it (hel's evidence rule) — an empty diff alone proves nothing.
     fn settle_content_on_base(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow) {
         let repo = &w.repo.path;
-        let Some(tip) = self.git.rev_parse(repo, br) else {
+        let Some(tip) = w.enum_tip.get(br).cloned().or_else(|| self.git.rev_parse(repo, br)) else {
             self.log(&format!("{} already contains every change on {br} — nothing to land", w.base));
             return;
         };

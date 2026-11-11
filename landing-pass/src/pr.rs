@@ -137,10 +137,10 @@ impl<'a> PrPass<'a> {
                 self.log(&format!("landing-pass {name}: {id} is superseded — leaving it for the Hel to reap"));
                 continue;
             }
+            if self.files.content_settled(br, tip) {
+                continue;
+            }
             if self.git.content_on_base(&r.path, br, &base_fq) {
-                if self.files.content_settled(br, tip) {
-                    continue;
-                }
                 self.log(&format!("landing-pass {name}: {base} already contains every change on {br} — nothing to land"));
                 // The Delivered event is this mode's close: the branch's PR carries the evidence.
                 // Best-effort additive; a machine that cannot be asked or
