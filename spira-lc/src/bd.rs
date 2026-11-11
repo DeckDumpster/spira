@@ -534,3 +534,14 @@ mod store_read_tests {
         assert!(!is_external(&b(Some("  "))) && !is_external(&b(None)));
     }
 }
+
+#[cfg(test)]
+mod no_read_fork_tests {
+    #[test]
+    fn this_module_forks_bd_for_no_read_verb() {
+        let code = include_str!("bd.rs").split("#[cfg(test)]").next().unwrap();
+        for read in ["\"show\"", "\"list\"", "\"kv\"", "\"dep\", \"list\"", "fn run("] {
+            assert!(!code.contains(read), "bd.rs forks bd for {read}");
+        }
+    }
+}
