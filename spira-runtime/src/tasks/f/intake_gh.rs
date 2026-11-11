@@ -423,7 +423,7 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
     let cfg = &input.cfg;
     let now = now_secs();
     let halted = e.world.run_dir.join("world.halted").exists();
-    let empty = Snapshot { halted, targets: vec![], store: vec![], store_total: 0, now, pages: BTreeMap::new(), accept: vec![], contributor_hidden: vec![] };
+    let empty = Snapshot { halted, targets: vec![], store: vec![], now, pages: BTreeMap::new(), accept: vec![], contributor_hidden: vec![] };
     if halted {
         return serde_json::to_string(&empty).map_err(|e| e.to_string());
     }
