@@ -310,6 +310,14 @@ pub struct FileChange {
     pub deleted: u32,
 }
 
+/// Why a person, not a mender, put the mended tip on the branch; the same three facts a resubmit carries.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct HandFix {
+    pub reason: String,
+    pub evidence: String,
+    pub evidence_tip: String,
+}
+
 /// What a `mended` claims and the git facts around it, assembled by the caller from the
 /// members' branches; `assess` is the only judge of them.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -323,6 +331,29 @@ pub struct MendFacts {
     /// The checks the mender recorded green.
     pub checked: Vec<String>,
     pub ask: Option<String>,
+    /// Required when the failure no mender picked is settled by hand.
+    #[serde(default)]
+    pub hand: Option<HandFix>,
+}
+
+/// A hand mend of an unpicked failure must say why, what was run, and on which of the mended tips.
+pub fn hand_fix_refusal(facts: &MendFacts, mended_tips: &[&str]) -> Option<Refusal> {
+    let mut reasons = Vec::new();
+    match &facts.hand {
+        None => reasons.push("a mend of a failure no mender picked needs its provenance: reason, evidence, evidence tip".to_string()),
+        Some(h) => {
+            if h.reason.trim().is_empty() {
+                reasons.push("hand mend: reason is empty".to_string());
+            }
+            if h.evidence.trim().is_empty() {
+                reasons.push("hand mend: evidence is empty".to_string());
+            }
+            if !mended_tips.contains(&h.evidence_tip.as_str()) {
+                reasons.push("hand mend: evidence tip is not one of the mended tips".to_string());
+            }
+        }
+    }
+    if reasons.is_empty() { None } else { Some(Refusal::MendRefused { reasons }) }
 }
 
 fn is_fence(path: &str, fences: &[String]) -> bool {

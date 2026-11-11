@@ -257,6 +257,9 @@ pub fn run(w: &World, r: &Round) -> i32 {
             checked,
             ask,
             reason,
+            by,
+            evidence,
+            evidence_tip,
         } => super::mend::run(
             w,
             outcome,
@@ -267,6 +270,11 @@ pub fn run(w: &World, r: &Round) -> i32 {
             checked,
             ask.as_deref(),
             reason,
+            super::mend::HandArgs {
+                by: by.clone(),
+                evidence: evidence.clone(),
+                evidence_tip: evidence_tip.clone(),
+            },
         ),
         Round::PassVerdict {
             batch,
@@ -726,20 +734,38 @@ fn retire_marked(w: &World, c: &Ctx, ended: impl Fn(&str) -> bool, why: &str) {
         if id.is_empty() {
             continue;
         }
-        if w.lc.bead_row(id).is_some_and(|r| {
-            r.holds.iter().any(|h| h == "ask")
-                || r.tip.is_some()
-                || matches!(r.state.as_str(), "SUBMITTED" | "CERTIFIED" | "WORKING")
-        }) {
-            continue;
+        retire_filed_mender(w, id, batch, &format!("Batch {batch} closed ({why}); the failure this mender bead was filed for ended with it."), &done);
+    }
+}
+
+/// Retire one mender bead unless a session holds it or it carries work; `done` marks it retired.
+pub(super) fn retire_filed_mender(w: &World, id: &str, batch: &str, reason: &str, done: &Path) {
+    if w.lc.bead_row(id).is_some_and(|r| {
+        r.holds.iter().any(|h| h == "ask")
+            || r.tip.is_some()
+            || matches!(r.state.as_str(), "SUBMITTED" | "CERTIFIED" | "WORKING")
+    }) {
+        return;
+    }
+    match w.lib.bead_retire(id, reason) {
+        Ok(()) => {
+            let _ = write_atomic(done, "");
+            w.out(format!("queue.sh: mender bead {id} retired — {batch}"));
         }
-        match w.lib.bead_retire(id, &format!("Batch {batch} closed ({why}); the failure this mender bead was filed for ended with it.")) {
-            Ok(()) => {
-                let _ = write_atomic(&done, "");
-                w.out(format!("queue.sh: mender bead {id} retired — batch {batch} closed"));
-            }
-            Err(e) => w.err(format!("queue.sh: WARNING — mender bead {id} of closed batch {batch} could not be closed: {e}")),
-        }
+        Err(e) => w.err(format!("queue.sh: WARNING — mender bead {id} of {batch} could not be closed: {e}")),
+    }
+}
+
+/// A failure settled by hand ends its mender bead without waiting for the batch to close.
+pub(super) fn retire_failure_mender(w: &World, c: &Ctx, batch: &str, pass: u32, suite: &str, reason: &str) {
+    let marker = mender_marker(&rounds_dir(c), batch, pass, suite);
+    let done = marker.with_file_name(format!("{}.retired", marker.file_name().unwrap_or_default().to_string_lossy()));
+    let Ok(id) = fs::read_to_string(&marker) else {
+        return;
+    };
+    let id = id.trim();
+    if !id.is_empty() && !done.exists() {
+        retire_filed_mender(w, id, batch, reason, &done);
     }
 }
 

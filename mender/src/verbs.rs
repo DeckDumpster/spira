@@ -297,6 +297,7 @@ fn mend(w: &dyn World, spec: &Spec, checks: &str, ask: Option<&str>) -> Reply {
         required_checks: required,
         checked: checks.split(|c: char| c == ',' || c.is_whitespace()).filter(|c| c.starts_with("crate:") || c.starts_with("suite:")).map(String::from).collect(),
         ask: ask.map(String::from),
+        hand: None,
     };
     let (members, facts, fences) = (moves.join(","), serde_json::to_string(&facts).map_err(|e| e.to_string())?, serde_json::to_string(&fences).map_err(|e| e.to_string())?);
     let t = target(spec);

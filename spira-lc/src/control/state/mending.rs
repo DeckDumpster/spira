@@ -373,6 +373,12 @@ impl<B: Backend> Mender<'_, B> {
             };
             return Err(self.refuse_logged(&row, illegal, &actor));
         }
+        if row.state == MendingState::Waiting {
+            let tips: Vec<&str> = members.iter().map(|(_, _, to)| to.as_str()).collect();
+            if let Some(refusal) = mending::hand_fix_refusal(&facts, &tips) {
+                return Err(self.refuse_logged(&row, refusal, &actor));
+            }
+        }
         for (bead, from, _) in &members {
             let prior = self.store.mends_of(bead).map_err(cannot)?;
             if prior.len() >= MEND_CAP_PER_BEAD {
@@ -429,6 +435,7 @@ impl<B: Backend> Mender<'_, B> {
                 &members,
                 facts.ask.as_deref(),
                 &facts.checked,
+                facts.hand.as_ref().filter(|_| row.state == MendingState::Waiting),
                 &actor,
                 self.now,
                 &self.req,

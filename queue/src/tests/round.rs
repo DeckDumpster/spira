@@ -8353,3 +8353,90 @@ fn absolve_deletes_the_gate_workers_stored_verdict_for_the_tip() {
     assert!(!red.join("aaa").exists(), "the gate's own red record for the tip is gone");
     assert!(red.join("bbb").exists(), "another tip's record is kept");
 }
+
+const T_HAND: &str = "5555555555555555555555555555555555555555";
+
+fn failed_round_with_mender(t: &T, suite: &str, mender: &str) -> String {
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "failed", &batch, "--suite", suite]), 0, "{}", t.err());
+    fs::write(marker(t, &batch, &format!("mender-1-{suite}")), format!("{mender}\n")).unwrap();
+    let base = kv_of(t, "round")["base"].clone();
+    t.git.commits.borrow_mut().insert(T_HAND.into());
+    t.git.ancestor("ta", T_HAND);
+    t.git.stat("ta", T_HAND, &[("queue/src/x.rs", 1, 1)]);
+    t.git.stat(&base, "ta", &[("queue/src/x.rs", 1, 1)]);
+    t.git.files.borrow_mut().insert(format!("{base}:spira/mend-fences"), String::new());
+    t.git.files.borrow_mut().insert(format!("{T_HAND}:queue/Cargo.toml"), String::new());
+    batch
+}
+
+#[test]
+fn a_concierge_hand_mends_a_waiting_failure_with_provenance_and_the_mender_bead_is_retired() {
+    let t = round_world();
+    let batch = failed_round_with_mender(&t, "test-z.sh", "sp-m1");
+    let tip = format!("--tips=sp-a:{T_HAND}");
+    let ev_tip = format!("--evidence-tip={T_HAND}");
+    assert_eq!(
+        t.run(&[
+            "round", "mended", &batch, "test-z.sh", &tip, "--checked=crate:queue",
+            "--by=concierge", "--reason=hand-built fix", "--evidence=cargo test -p queue 9/0", &ev_tip,
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+    let calls = t.lc.calls.borrow();
+    let mend = calls.iter().find(|c| c.starts_with("mend ")).unwrap();
+    assert!(mend.ends_with("by=concierge"), "{mend}");
+    assert!(
+        mend.contains(r#""hand":{"reason":"hand-built fix","evidence":"cargo test -p queue 9/0","evidence_tip":"#),
+        "{mend}"
+    );
+    assert!(t.lib.has("bead_close sp-m1"), "{:?}", t.lib.calls.borrow());
+    assert!(marker(&t, &batch, "mender-1-test-z.sh.retired").exists());
+}
+
+#[test]
+fn a_by_that_is_not_the_concierge_or_operator_is_refused_before_anything_is_recorded() {
+    let t = round_world();
+    let batch = failed_round_with_mender(&t, "test-z.sh", "sp-m1");
+    let tip = format!("--tips=sp-a:{T_HAND}");
+    assert_eq!(
+        t.run(&["round", "mended", &batch, "test-z.sh", &tip, "--checked=crate:queue", "--by=dwarf-1"]),
+        2,
+        "{}",
+        t.err()
+    );
+    assert!(!t.lc.has("mend "));
+    assert!(!t.lib.has("bead_close"));
+}
+
+#[test]
+fn a_mender_that_mends_its_own_failure_keeps_its_bead() {
+    let t = round_world();
+    let batch = failed_round_with_mender(&t, "test-z.sh", "sp-m1");
+    let tip = format!("--tips=sp-a:{T_HAND}");
+    assert_eq!(t.run(&["round", "mended", &batch, "test-z.sh", &tip, "--checked=crate:queue"]), 0, "{}", t.err());
+    assert!(!t.lib.has("bead_close"), "{:?}", t.lib.calls.borrow());
+}
+
+#[test]
+fn a_hand_mend_without_its_reason_evidence_or_evidence_tip_is_refused_before_spira_lc_hears_of_it() {
+    let t = round_world();
+    let batch = failed_round_with_mender(&t, "test-z.sh", "sp-m1");
+    let tip = format!("--tips=sp-a:{T_HAND}");
+    let ev_tip = format!("--evidence-tip={T_HAND}");
+    for extra in [
+        vec!["--reason=r", "--evidence=e"],
+        vec!["--reason=r", &ev_tip],
+        vec!["--evidence=e", &ev_tip],
+    ] {
+        let mut argv = vec!["round", "mended", &batch, "test-z.sh", &tip, "--checked=crate:queue", "--by=operator"];
+        argv.extend(extra);
+        assert_eq!(t.run(&argv), 2, "{argv:?}: {}", t.err());
+    }
+    assert!(!t.lc.has("mend "));
+}
