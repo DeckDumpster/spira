@@ -71,6 +71,11 @@ fn summary(html: &str, label: &str) -> Option<u64> {
     html.split_once(&format!("<td>{label}:</td><td>"))?.1.split('<').next()?.trim().parse().ok()
 }
 
+/// A build that left no report (it died or hit the cap) still has its admit wait.
+pub fn wait_only(build_output: &str) -> Build {
+    Build { admit_wait_secs: admit_wait_secs(build_output), ..Build::default() }
+}
+
 /// The report's units and counts, with the admit wait of the build output alongside. None when
 /// the report is not a cargo timing report.
 pub fn parse(html: &str, build_output: &str) -> Option<Build> {
@@ -141,6 +146,12 @@ const x = 1;
     #[test]
     fn a_file_that_is_not_a_timing_report_yields_nothing() {
         assert_eq!(parse("<html>hi</html>", ""), None);
+    }
+
+    #[test]
+    fn a_build_with_no_report_still_reports_its_admit_wait() {
+        let out = "spira-admit: admitted to compile slot 1 after 40s\nspira-admit: admitted to compile slot 2 after 2s";
+        assert_eq!(wait_only(out).suffix(), " compiled=0 fresh=0 admit_wait=42 slowest=-");
     }
 
     #[test]

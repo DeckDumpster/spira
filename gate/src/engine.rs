@@ -1884,7 +1884,7 @@ impl<'w, W: World> Trial<'w, W> {
                 slowest: self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.slowest_field()),
             };
             let ts = w.utc();
-            if let Some((_, html)) = &self.s.build_timing {
+            if let Some((_, html)) = self.s.build_timing.as_ref().filter(|(_, h)| !h.is_empty()) {
                 crate::telemetry::keep_report(w, &self.s.run, &ts, html);
             }
             crate::telemetry::append(w, &self.s.run, &ts, &run);
@@ -2438,7 +2438,11 @@ pub fn run_composed<W: World>(
         let (r, o) = w.run_gate(tree, step_env, &left(name), &c);
         phases.push((format!("{prefix}{name}"), w.now().saturating_sub(t)));
         if timed {
-            *timing = w.read(&report).and_then(|h| Some((crate::buildtiming::parse(&h, &o)?, h)));
+            *timing = w
+                .read(&report)
+                .and_then(|h| Some((crate::buildtiming::parse(&h, &o)?, h)))
+                .or_else(|| Some((crate::buildtiming::wait_only(&o), String::new())))
+                .filter(|(b, h)| !h.is_empty() || b.admit_wait_secs > 0);
         }
         if !o.is_empty() {
             if !out.is_empty() {
