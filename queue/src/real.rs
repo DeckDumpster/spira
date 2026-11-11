@@ -1128,6 +1128,15 @@ impl Scripts for RealScripts {
         let cgroup = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
         runtime::units::stop_round_legs(&units, repo, batch, &|name| cgroup.contains(name))
     }
+    fn stop_tree_holders(&self, tree: &Path) -> Result<Vec<String>, String> {
+        runtime::holders::stop_holders(
+            Path::new("/proc"),
+            tree,
+            &[std::process::id()],
+            std::time::Duration::from_secs(5),
+        )
+        .map(|stopped| stopped.iter().map(|h| h.to_string()).collect())
+    }
     fn round_legs_live(&self, repo: &str, batch: &str) -> bool {
         runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock))
             .map_err(|e| e.0)

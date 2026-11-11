@@ -8,6 +8,7 @@ pub mod conformance;
 pub mod engine;
 pub mod event;
 pub mod heartbeat;
+pub mod holders;
 pub mod host;
 pub mod journal;
 pub mod marker;

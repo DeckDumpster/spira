@@ -1383,7 +1383,18 @@ fn remove_unheld_tree(w: &World, c: &Ctx, path: &Path, wt: &Path, ending: &str) 
             .collect::<Vec<_>>()
     });
     match held {
-        Ok(held) if !held.iter().any(|h| h == wt) => w.git.worktree_remove(path, wt),
+        Ok(held) if !held.iter().any(|h| h == wt) => match w.scripts.stop_tree_holders(wt) {
+            Ok(stopped) => {
+                if !stopped.is_empty() {
+                    w.out(format!("queue.sh: round {ending} ended; stopped {} still working in {}", stopped.join(", "), wt.display()));
+                }
+                w.git.worktree_remove(path, wt)
+            }
+            Err(e) => w.err(format!(
+                "queue.sh: round {ending} ended; its worktree {} is kept — {e}",
+                wt.display()
+            )),
+        },
         Ok(_) => w.out(format!(
             "queue.sh: round {ending} ended; its worktree {} is kept — an open round stands in it",
             wt.display()
