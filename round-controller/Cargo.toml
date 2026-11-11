@@ -18,8 +18,7 @@ path = "tests/scenarios.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["batcher/integration", "forge/integration", "incident?/integration", "lifecycle/integration", "migration-numbers/integration", "reconciler-engine/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-desired-state/integration", "spira-lc/integration", "spira-otel/integration", "spira-sim?/integration", "state-store/integration", "state-store-sqlite/integration", "store-view/integration", "testkit/integration"]
-sim = ["dep:toml", "dep:spira-lc", "dep:spira-sim", "dep:incident"]
+integration = ["batcher/integration", "forge/integration", "incident/integration", "lifecycle/integration", "migration-numbers/integration", "reconciler-engine/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-desired-state/integration", "spira-lc/integration", "spira-otel/integration", "spira-sim/integration", "state-store/integration", "state-store-sqlite/integration", "store-view/integration", "testkit/integration"]
 
 [dependencies]
 batcher = { path = "../batcher" }
@@ -28,22 +27,20 @@ migration-numbers = { path = "../migration-numbers" }
 runtime = { path = "../runtime" }
 sift = { path = "../sift" }
 spira-config = { path = "../spira-config" }
-incident = { path = "../incident", optional = true }
+incident = { path = "../incident" }
 spira-desired-state = { path = "../desired-state" }
-spira-lc = { path = "../spira-lc", optional = true }
+spira-lc = { path = "../spira-lc" }
 spira-otel = { path = "../spira-otel" }
-spira-sim = { package = "sim", path = "../sim", optional = true }
+spira-sim = { package = "sim", path = "../sim" }
 state-store = { path = "../state-store" }
 store-view = { path = "../store-view" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-toml = { version = "0.8", optional = true }
+toml = "0.8"
 
 [dev-dependencies]
 reconciler-engine = { path = "../reconciler-engine" }
-round-controller = { path = ".", features = ["sim"] }
-spira-lc = { path = "../spira-lc" }
 state-store-sqlite = { path = "../state-store-sqlite" }
 testkit = { path = "../testkit" }
 forge = { path = "../forge" }

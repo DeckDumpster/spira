@@ -34,4 +34,3 @@ runtime = { path = "../runtime" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
-round-controller = { path = "../round-controller", features = ["sim"] }

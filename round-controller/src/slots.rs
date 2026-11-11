@@ -432,13 +432,11 @@ impl SlotGrant {
     }
 
     /// The lock this grant holds, for a test that lets it go behind the grant's back.
-    #[cfg(feature = "sim")]
     pub fn fence(&self) -> &Fence {
         &self.fence
     }
 
     /// A grant over a lock the scenario harness or a test took itself, with no holder record.
-    #[cfg(feature = "sim")]
     pub fn of_fence(slot: Slot, fence: Fence) -> SlotGrant {
         SlotGrant {
             slot,

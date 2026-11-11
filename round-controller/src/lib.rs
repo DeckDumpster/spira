@@ -28,7 +28,6 @@ pub mod run;
 pub mod schedule;
 pub mod section;
 pub mod sifts;
-#[cfg(feature = "sim")]
 pub mod sim;
 pub mod slots;
 pub mod stack;
