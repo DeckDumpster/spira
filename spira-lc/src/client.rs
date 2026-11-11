@@ -102,6 +102,7 @@ pub(crate) fn forward_with(socket_path: &str, args: &[String], stdin: Option<&st
 
 /// One attempt on `stream`. Once the request is on the wire the service may apply it whatever
 /// happens to the reply, so a lost reply is "cannot tell" and never a fallback.
+#[cfg(test)]
 pub(crate) fn exchange(stream: UnixStream, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
     match spira_config::lc_call::exchange(stream, args, stdin) {
         Ok(r) => (r.code, r.out, r.err),
