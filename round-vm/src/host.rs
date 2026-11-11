@@ -248,10 +248,10 @@ fn group_live(pgid: i32) -> bool {
     })
 }
 
-/// Field 22 of `/proc/<pid>/stat`: when the process started, which tells a pid's reuse.
+/// When the process started, which tells a pid's reuse.
 fn proc_start(pid: i32) -> Option<String> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    stat.rsplit_once(')')?.1.split_whitespace().nth(19).map(str::to_string)
+    use spira_config::admission::{Procs, RealProcs};
+    RealProcs.start_of(u32::try_from(pid).ok()?).map(|t| t.to_string())
 }
 
 #[cfg(test)]

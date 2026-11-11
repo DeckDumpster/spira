@@ -3291,11 +3291,14 @@ fn certify_pass(
         }
         mark_running(c, batch);
         let pass = w.lc.batch_pass(batch).map(|(n, _)| n);
-        if let (Some(n), Some(tree)) = (pass, w.git.rev_parse(&wt, "HEAD^{tree}")) {
-            record_pass_tree(&mut kv, n, &tree);
-            if save(w, label, c, &kv).is_err() {
-                return FAIL;
+        match (pass, w.git.rev_parse(&wt, "HEAD^{tree}")) {
+            (Some(n), Some(tree)) => {
+                record_pass_tree(&mut kv, n, &tree);
+                if save(w, label, c, &kv).is_err() {
+                    return FAIL;
+                }
             }
+            _ => w.err(format!("queue.sh {label}: WARNING — the tree of this pass of {batch} could not be read; the round record does not name it")),
         }
         (head, wt, run_id, pass)
     };
