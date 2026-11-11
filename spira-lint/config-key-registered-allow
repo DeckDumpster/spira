@@ -552,7 +552,6 @@ SPIRA_LC_USER tsd-lifecycle-export/src/main.rs
 SPIRA_LIFECYCLE_ENFORCE spira-config/src/convert.rs
 SPIRA_LIFECYCLE_ENFORCE spira-config/src/lib.rs
 SPIRA_LINT_BIN gate/src/compose.rs
-SPIRA_LIST_SNAPSHOT strand/src/config.rs
 SPIRA_LOAD_FENCE_COMMS sentinel/src/tower.rs
 SPIRA_LOAD_FENCE_COMMS watchtower/src/main.rs
 SPIRA_LOAD_FENCE_OWNER_MARK sentinel/src/tower.rs

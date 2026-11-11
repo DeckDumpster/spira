@@ -57,7 +57,7 @@ state; see §4 R7).
 
 | input | source | notes |
 |---|---|---|
-| the bead store | `$SPIRA_LIST_SNAPSHOT` when readable (sentinel's `bd list --all --limit 0` of this pass), else **one** `bd -C $SPIRA_DB list --all --limit 0 --brief --json` | the WHOLE store, closed beads included. One read per run, not per partition. |
+| the bead store | two lifecycle-door reads: `content list --limit 0` (the open beads), then `content list --all --limit 0 --id <ids>` (every closed bead an open one names as a blocker or parent, 500 ids a request) | closed beads are read only by name, never the whole history; a bead in neither answer is unknown, not closed. A refused read is an `Err`. |
 | the claimable set | per partition `spira-claim ready-count <labels> <exclude> --json` (§9) | the machine's READY/REWORK rows; a refusal is an `Err`, never an empty set |
 | partitions | `SPIRA_LABELS` (+ `SPIRA_EXCLUDE_LABELS`) narrows to one; otherwise the **roster probe** (§2.5) | exclusions: `SPIRA_EXCLUDE_LABELS` overrides all, else the rune's own, else `spira-poison,<ask>,<ci>` |
 | dwarf liveness | `$SPIRA_RUN/hold-<id>.pid` (pid alive) and `$SPIRA_RUN/dwarf-*-<id>.pid` (pid alive AND `/proc/<pid>/cmdline` contains `dwarf.sh`) | never `pgrep -f` |
@@ -135,7 +135,6 @@ the `conf.sh` default. strand never parses `spira.toml` itself.
 | throttle release | `SPIRA_QUEUE_THROTTLE_RELEASE_AT` | `queue_throttle_release_at` | 8 |
 | instance | `SPIRA_INSTANCE` | `instance` | `prod` |
 | grace windows | `SPIRA_STRAND_GRACE` (900), `SPIRA_EVENT_COOLDOWN` (3600), `BD_TIMEOUT` (180) | — | as shown |
-| snapshots | `SPIRA_LIST_SNAPSHOT` | — | none |
 | test seams | `SPIRA_SYSTEMCTL`, `SPIRA_CALL`, `SPIRA_CAPACITY_PAUSE`, `SPIRA_THROTTLE_STAMP`, `SPIRA_NOW` | — | |
 
 ## 3. Schema

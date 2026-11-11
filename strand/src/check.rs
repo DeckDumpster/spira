@@ -130,7 +130,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
         return Ok(Classified { rows: Vec::new(), watching: Vec::new(), live: Vec::new() });
     }
 
-    let store = Store::new(probe::load_store(cfg)?);
+    let store = Store::new(probe::load_store(&spira_config::lc_call::LcClient::configured()?)?);
     let now = timefmt::now();
     let log_text = cfg.sentinel_log().and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
     let run_dir = cfg.run.clone().ok_or("SPIRA_RUN is unknown (not in the environment, no [spira].run)")?;
@@ -647,7 +647,7 @@ fn escalate(cfg: &Config, part: &str, kind: &str, id: &str, detail: &str, action
         escalate_to_inbox(&title, detail, action);
         return;
     }
-    let bead = if id.is_empty() || id == "-" { None } else { probe::show(cfg, id) };
+    let bead = if id.is_empty() || id == "-" { None } else { spira_config::lc_call::LcClient::configured().ok().and_then(|lc| probe::show(&lc, id)) };
     let ctx = format!(
         "{}\n\nWHY THIS IS ESCALATED\n{}\n\nSENTINEL STATE\n{}",
         bead_context(bead.as_ref(), id, timefmt::now()),

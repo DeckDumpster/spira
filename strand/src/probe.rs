@@ -1,4 +1,4 @@
-//! The world outside the classifier: the bead store (through bd), spira-lc, /proc,
+//! The world outside the classifier: the bead store (through the lifecycle door), spira-lc, /proc,
 //! systemctl, and the harness's own run files. Every payload a subprocess needs travels on
 //! its stdin (law-payloads-go-on-stdin); argv carries only verbs, flags, ids and labels.
 
@@ -12,6 +12,7 @@ use std::process::Stdio;
 use crate::classify::Throttle;
 use crate::config::Config;
 use crate::model::{parse_beads, Bead};
+use spira_config::lc_call::LcClient;
 
 /// A subprocess's outcome: exit success, stdout, stderr.
 pub struct Out {
@@ -81,17 +82,32 @@ pub fn bd(cfg: &Config, args: &[&str], stdin: Option<&[u8]>) -> Result<String, S
     Err(last)
 }
 
-/// The whole store, closed beads included (R1): the pass's snapshot when one is readable,
-/// else one `bd list --all`.
-pub fn load_store(cfg: &Config) -> Result<Vec<Bead>, String> {
-    if let Some(p) = cfg.list_snapshot.as_ref() {
-        if let Ok(raw) = fs::read_to_string(p) {
-            return parse_beads(&raw).map_err(|e| format!("{}: {e}", p.display()));
-        }
+/// The store view the classification needs, in two door reads: the open beads, then by id
+/// every closed bead an open one names as a blocker or parent (R1: a blocker's status is a
+/// lookup, never an inference from its absence). A refused or failed read is `Err`.
+pub fn load_store(lc: &LcClient) -> Result<Vec<Bead>, String> {
+    let read = |args: &[&str]| -> Result<Vec<Bead>, String> {
+        let argv: Vec<&str> = ["content", "list"].iter().chain(args).copied().chain(["--brief", "--json"]).collect();
+        let raw = lc.answer(&argv).map_err(|e| format!("content list: {e}"))?;
+        parse_beads(&raw).map_err(|e| format!("content list: {e}"))
+    };
+    let mut beads = read(&["--limit", "0"])?;
+    let have: HashSet<String> = beads.iter().map(|b| b.id.clone()).collect();
+    let mut named: Vec<String> = beads
+        .iter()
+        .flat_map(|b| b.blocks_targets().chain(b.parent.as_deref()))
+        .filter(|id| !id.is_empty() && !have.contains(*id))
+        .map(str::to_string)
+        .collect();
+    named.sort();
+    named.dedup();
+    for chunk in named.chunks(NAMED_CHUNK) {
+        beads.extend(read(&["--all", "--limit", "0", "--id", &chunk.join(",")])?);
     }
-    let raw = bd(cfg, &["list", "--all", "--limit", "0", "--brief", "--json"], None)?;
-    parse_beads(&raw).map_err(|e| format!("bd list: {e}"))
+    Ok(beads)
 }
+
+const NAMED_CHUNK: usize = 500;
 
 /// The claimable set under one partition's predicate: spira-claim's `ready-count --json`,
 /// the one ready set the caller counts and a dwarf claims from (the machine's READY/REWORK
@@ -106,8 +122,8 @@ pub fn ready(cfg: &Config, labels: &str, exclude: &[String]) -> Result<HashSet<S
     Ok(parse_beads(&o.stdout).map_err(|e| format!("spira-claim ready-count {labels}: {e}"))?.into_iter().map(|b| b.id).collect())
 }
 
-pub fn show(cfg: &Config, id: &str) -> Option<Bead> {
-    let raw = bd(cfg, &["show", id, "--json"], None).ok()?;
+pub fn show(lc: &LcClient, id: &str) -> Option<Bead> {
+    let raw = lc.answer(&["content", "show", id, "--json"]).ok()?;
     parse_beads(&raw).ok()?.into_iter().next()
 }
 
@@ -412,6 +428,56 @@ mod tests {
 
     fn now_secs() -> i64 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64
+    }
+
+    // ---- load_store: two door reads, never the whole history (sp-yf8lf0) -----------------
+
+    fn row(id: &str, status: &str, parent: Option<&str>, blocked_by: &[&str]) -> serde_json::Value {
+        let deps: Vec<_> = blocked_by.iter().map(|b| serde_json::json!({"issue_id": id, "depends_on_id": b, "type": "blocks"})).collect();
+        serde_json::json!({"id": id, "title": id, "status": status, "parent": parent, "dependencies": deps})
+    }
+
+    fn door(rows: Vec<serde_json::Value>) -> (std::sync::Arc<spira_config::lc_call::fake::Content>, LcClient) {
+        let fake = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows));
+        let lc = LcClient::over(fake.clone(), true);
+        (fake, lc)
+    }
+
+    #[test]
+    fn sp_yf8lf0_the_store_view_is_the_open_beads_and_the_closed_ones_they_name() {
+        let (fake, lc) = door(vec![
+            row("sp-a", "open", None, &["sp-c"]),
+            row("sp-c", "closed", None, &[]),
+            row("sp-k", "open", Some("sp-e"), &[]),
+            row("sp-e", "closed", None, &[]),
+            row("sp-z", "closed", None, &[]),
+        ]);
+        let mut ids: Vec<String> = load_store(&lc).unwrap().into_iter().map(|b| b.id).collect();
+        ids.sort();
+        assert_eq!(ids, ["sp-a", "sp-c", "sp-e", "sp-k"]);
+        let seen = fake.requests();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        let at = seen[1].iter().position(|x| x == "--id").expect("the second read is by id");
+        assert_eq!(seen[1][at + 1], "sp-c,sp-e");
+    }
+
+    #[test]
+    fn sp_yf8lf0_a_refused_read_is_an_error_not_an_empty_store() {
+        struct Refusing;
+        impl spira_config::lc_call::Transport for Refusing {
+            fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+                Ok(spira_config::lc_call::Reply { code: spira_config::lc_call::REFUSED, out: String::new(), err: "no\n".into() })
+            }
+        }
+        let lc = LcClient::over(std::sync::Arc::new(Refusing), true);
+        assert!(load_store(&lc).is_err());
+    }
+
+    #[test]
+    fn sp_yf8lf0_a_blocker_in_neither_read_stays_unknown() {
+        let (_fake, lc) = door(vec![row("sp-a", "open", None, &["sp-gone"])]);
+        let store = load_store(&lc).unwrap();
+        assert!(store.iter().all(|b| b.id != "sp-gone"));
     }
 
     // ---- holder_alive: delegates to hel::reap (wave 4.23, sp-0ffox) -------------------
