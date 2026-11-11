@@ -84,7 +84,6 @@ spira/test-gate-check-red-twice.sh
 spira/test-gate-discover-branch.sh
 spira/test-gate-metering.sh
 spira/test-gate-preflight.sh
-spira/test-gh-intake.sh
 spira/test-gh-run-gate.sh
 spira/test-guards.sh
 spira/test-hold-liveness.sh
@@ -117,7 +116,6 @@ spira/test-rebase-branch.sh
 spira/test-reconciler.sh
 spira/test-release.sh
 spira/test-repo-map.sh
-spira/test-hel.sh
 spira/test-sentinel-pass.sh
 spira/test-skew-foreign.sh
 spira/test-skew-refresh.sh

@@ -150,7 +150,6 @@ test-gate-retry-structural.sh	T1	2.0
 test-gate-retry.sh	T1	2.0
 test-gate-sweep.sh	T1	8.5
 test-gate-unit.sh	T1	4.5
-test-gh-intake.sh	T1	15.5
 test-gh-issue-closeout.sh	T1	33.0
 test-gh-run-gate.sh	T1	9.0
 test-governor-deleted.sh	T1	3.0
