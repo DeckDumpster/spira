@@ -69,7 +69,7 @@ pub trait Gate {
         None
     }
     fn pause(&self, ms: u64) {
-        std::thread::sleep(std::time::Duration::from_millis(ms));
+        std::thread::sleep(std::time::Duration::from_millis(ms)); // waits-on: the other warm-tools releasing its lock; cap WARM_POLLS
     }
 }
 
