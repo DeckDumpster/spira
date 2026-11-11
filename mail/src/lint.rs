@@ -171,6 +171,8 @@ mod tests {
         lint_check(&input, kinds_dir, "sp")
     }
 
+    // covers: UC-operator-channel-02
+
     #[test]
     fn missing_from_is_refused() {
         let d = kinds_tmp();
@@ -182,6 +184,8 @@ mod tests {
         assert!(e.contains("rule"), "{e}");
     }
 
+    // covers: UC-operator-channel-02
+
     #[test]
     fn present_from_is_accepted() {
         let d = kinds_tmp();
@@ -191,6 +195,8 @@ mod tests {
         )
         .is_ok());
     }
+
+    // covers: UC-operator-channel-02
 
     #[test]
     fn subject_that_is_a_bead_id_is_refused() {
@@ -202,6 +208,8 @@ mod tests {
         .is_err());
     }
 
+    // covers: UC-operator-channel-02
+
     #[test]
     fn subject_leading_with_bead_id_and_colon_is_refused() {
         let d = kinds_tmp();
@@ -211,6 +219,8 @@ mod tests {
         )
         .is_err());
     }
+
+    // covers: UC-operator-channel-02
 
     #[test]
     fn human_topic_subject_is_accepted() {
@@ -222,6 +232,8 @@ mod tests {
         .is_ok());
     }
 
+    // covers: UC-operator-channel-02
+
     #[test]
     fn sparse_bead_id_context_is_refused() {
         let d = kinds_tmp();
@@ -231,6 +243,8 @@ mod tests {
         )
         .is_err());
     }
+
+    // covers: UC-operator-channel-02
 
     #[test]
     fn sufficient_bead_id_context_is_accepted() {
@@ -250,6 +264,8 @@ mod tests {
         .is_ok());
     }
 
+    // covers: UC-operator-channel-02
+
     #[test]
     fn key_value_metadata_line_with_bead_id_is_accepted() {
         let d = kinds_tmp();
@@ -259,6 +275,8 @@ mod tests {
         )
         .is_ok());
     }
+
+    // covers: UC-operator-channel-02
 
     #[test]
     fn bare_display_name_is_refused_with_no_address() {
@@ -272,6 +290,8 @@ mod tests {
         assert!(e.contains("Archivist"), "{e}");
     }
 
+    // covers: UC-operator-channel-02
+
     #[test]
     fn group_syntax_is_refused_with_rfc_6854() {
         let d = kinds_tmp();
@@ -283,6 +303,8 @@ mod tests {
         assert!(e.contains("RFC 6854"), "{e}");
     }
 
+    // covers: UC-operator-channel-03
+
     #[test]
     fn unknown_kind_is_refused_naming_it() {
         let d = kinds_tmp();
@@ -293,6 +315,8 @@ mod tests {
         .unwrap_err();
         assert!(e.contains("nosuchkind"), "{e}");
     }
+
+    // covers: UC-operator-channel-03
 
     #[test]
     fn decision_without_default_is_refused() {
@@ -306,6 +330,8 @@ mod tests {
         assert!(e.contains("default"), "{e}");
     }
 
+    // covers: UC-operator-channel-03
+
     #[test]
     fn decision_with_default_is_accepted() {
         let d = kinds_tmp();
@@ -316,6 +342,8 @@ mod tests {
         )
         .is_ok());
     }
+
+    // covers: UC-operator-channel-03
 
     #[test]
     fn note_with_empty_section_is_refused_naming_section() {
@@ -328,6 +356,8 @@ mod tests {
         assert!(e.contains("Note"), "{e}");
     }
 
+    // covers: UC-operator-channel-03
+
     #[test]
     fn suit_with_empty_grounds_is_refused() {
         let d = kinds_tmp();
@@ -339,6 +369,8 @@ mod tests {
         .is_err());
     }
 
+    // covers: UC-operator-channel-03
+
     #[test]
     fn urgent_without_why_section_is_refused() {
         let d = kinds_tmp();
@@ -349,6 +381,8 @@ mod tests {
         .unwrap_err();
         assert!(e.contains("urgent") || e.contains("urgency"), "{e}");
     }
+
+    // covers: UC-operator-channel-03
 
     #[test]
     fn urgent_with_why_section_is_accepted() {
@@ -417,6 +451,8 @@ mod tests {
         .is_ok());
     }
 
+    // covers: UC-operator-channel-03
+
     #[test]
     fn ask_below_promise_with_no_section_is_refused() {
         let d = kinds_tmp();
@@ -445,6 +481,8 @@ mod tests {
         .is_err());
     }
 
+    // covers: UC-operator-channel-03
+
     #[test]
     fn ask_below_promise_with_a_question_section_is_accepted() {
         let d = kinds_tmp();
@@ -472,6 +510,8 @@ mod tests {
         )
         .is_ok());
     }
+
+    // covers: UC-operator-channel-03
 
     #[test]
     fn editing_a_kind_file_changes_acceptance_with_no_code_change() {

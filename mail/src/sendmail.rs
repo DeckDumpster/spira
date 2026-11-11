@@ -259,6 +259,8 @@ mod tests {
         assert_eq!(first_paragraph(raw), "Approve it.\nMore.");
     }
 
+    // covers: UC-operator-channel-17
+
     #[test]
     fn reply_routes_to_the_senders_mailbox_when_one_exists() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -269,6 +271,8 @@ mod tests {
         let out = sendmail(&home, d.path(), false, &reply_raw(Some(&msgid))).unwrap();
         assert_eq!(out.dest_mailbox, "gate");
     }
+
+    // covers: UC-operator-channel-17
 
     #[test]
     fn reply_to_a_runes_persona_routes_to_concierge_even_with_a_same_named_mailbox() {
@@ -282,6 +286,8 @@ mod tests {
         assert_eq!(out.dest_mailbox, "concierge");
     }
 
+    // covers: UC-operator-channel-17
+
     #[test]
     fn reply_with_no_sender_mailbox_and_no_persona_routes_to_concierge() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -292,6 +298,8 @@ mod tests {
         assert_eq!(out.dest_mailbox, "concierge");
     }
 
+    // covers: UC-operator-channel-17
+
     #[test]
     fn reply_with_no_in_reply_to_routes_to_concierge() {
         let d = testkit::TempDir::new("mail-sendmail");
@@ -300,6 +308,8 @@ mod tests {
         let out = sendmail(&home, d.path(), false, &reply_raw(None)).unwrap();
         assert_eq!(out.dest_mailbox, "concierge");
     }
+
+    // covers: UC-operator-channel-07
 
     #[test]
     fn a_reply_marks_the_original_seen_and_replied_in_cur_and_touches_no_bead() {
@@ -314,6 +324,8 @@ mod tests {
         assert!(names("new").iter().all(|n| !n.contains(":2,")), "the delivered reply stays unflagged in new/");
         assert_eq!(names("cur"), vec![format!("{msgid}:2,RS")]);
     }
+
+    // covers: UC-operator-channel-07
 
     #[test]
     fn a_reply_to_an_already_seen_original_keeps_it_in_cur_with_s_and_gains_r() {

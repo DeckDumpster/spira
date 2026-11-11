@@ -322,6 +322,8 @@ mod tests {
         assert_eq!(r.len(), 2);
     }
 
+    // covers: UC-operator-channel-10
+
     #[test]
     fn unread_mail_is_one_wake_with_the_scripts_line_and_nothing_unread_is_silence() {
         let look = Look { mailbox: "concierge".into(), attempt: 2, new_dir: "/m/concierge/new".into() };
@@ -332,11 +334,15 @@ mod tests {
         assert_eq!(decide(&cfg(), &Look { mailbox: "stranger".into(), ..look }, Unread { count: 1, oldest_age_s: 0 }), None);
     }
 
+    // covers: UC-operator-channel-10
+
     #[test]
     fn the_backoff_steps_then_repeats_its_last() {
         let c = cfg();
         assert_eq!((c.backoff(0), c.backoff(1), c.backoff(3), c.backoff(9)), (15_000, 60_000, 900_000, 900_000));
     }
+
+    // covers: UC-operator-channel-10
 
     #[test]
     fn an_arrival_settles_then_the_due_looks_then_the_look_wakes_then_the_outcome_rearms() {
@@ -378,6 +384,8 @@ mod tests {
         let cmds = c.handle(&ctx, &view, &failed);
         assert!(matches!(&cmds[..], [Command::Timer { at: 20_000, kind }] if serde_json::from_str::<Due>(&kind.body).unwrap() == Due { mailbox: "concierge".into(), attempt: 1 }), "a failed wake retries after the first step");
     }
+
+    // covers: UC-operator-channel-10
 
     #[test]
     fn the_sweep_looks_at_every_registered_mailbox_at_the_slowest_step_and_rearms() {

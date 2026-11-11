@@ -100,6 +100,8 @@ mod tests {
     const QUESTION: &str = "---\nrequires: X-Spira-Default\n---\n\n## Question\n\n## Default\n";
     const NOTE: &str = "---\n---\n\n## Note\n";
 
+    // covers: UC-operator-channel-03
+
     #[test]
     fn requires_is_read_only_from_the_frontmatter() {
         let k = parse(QUESTION);
