@@ -200,6 +200,22 @@ mod published {
     }
 
     #[test]
+    fn machine_claimable_is_a_reading_pass_and_machine_judged_publishes_only_when_told_to() {
+        let run = |publish: bool| {
+            let svc = Arc::new(Service(Mutex::new(Vec::new())));
+            let mut stdin = std::io::empty();
+            let none = |_: &str| None;
+            let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+            let env = Env { stdin: &mut stdin, config, lookup: &none };
+            machine_judged(&Args::parse(&[]).unwrap(), &env, &store_over(svc.clone()), publish).unwrap();
+            let seen = svc.0.lock().unwrap().clone();
+            seen
+        };
+        assert!(published(&run(false)).is_none());
+        assert!(published(&run(true)).is_some());
+    }
+
+    #[test]
     fn nothing_is_published_while_the_control_store_is_not_in_use() {
         let (seen, entries) = judged(false, true);
         assert!(published(&seen).is_none());
