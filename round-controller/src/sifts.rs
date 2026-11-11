@@ -217,7 +217,7 @@ fn stamp(epoch: u64) -> String {
     crate::outcome::utc_stamp(epoch * 1000).replace(['-', ':'], "")
 }
 
-fn run(cmd: &mut Command, what: &str) -> Result<String, String> {
+fn run(cmd: &mut impl spira_config::bounded::Runnable, what: &str) -> Result<String, String> {
     let o = cmd.output().map_err(|e| format!("{what}: {e}"))?;
     if !o.status.success() {
         let err = String::from_utf8_lossy(&o.stderr);

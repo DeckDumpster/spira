@@ -5,7 +5,6 @@ use spira_config::repos::{Column, Registry};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::process::Command;
 
 pub const RUST_URL: &str = "https://static.rust-lang.org/dist/channel-rust-stable.toml";
 pub const NODE_SCHEDULE_URL: &str = "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json";
@@ -22,7 +21,7 @@ pub struct Real {
     lc: LcClient,
 }
 
-fn run(mut c: Command) -> Result<String, String> {
+fn run(mut c: spira_config::bounded::Bounded) -> Result<String, String> {
     let out = c.output().map_err(|e| e.to_string())?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())

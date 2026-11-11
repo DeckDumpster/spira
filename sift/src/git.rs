@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use crate::{parse_stacked_id, Merge, Probe, INFRA_FAULT};
 
@@ -20,13 +20,13 @@ pub struct GitProbe {
     pub shown: Box<dyn Fn(&str) -> Result<String, String>>,
 }
 
-fn git(dir: &Path) -> Command {
+fn git(dir: &Path) -> spira_config::bounded::Bounded {
     let mut c = spira_config::bounded::bounded("git");
     c.arg("-C").arg(dir);
     c
 }
 
-fn out(c: &mut Command, what: &str) -> Result<String, String> {
+fn out(c: &mut spira_config::bounded::Bounded, what: &str) -> Result<String, String> {
     let o = c.output().map_err(|e| format!("{what}: {e}"))?;
     if !o.status.success() {
         return Err(format!("{what} exited {}: {}", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("").trim()));

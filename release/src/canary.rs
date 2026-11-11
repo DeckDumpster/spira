@@ -71,11 +71,11 @@ fn log(s: &str) {
     eprintln!("{} canary: {s}", crate::fsutil::now_rfc3339());
 }
 
-fn run(cmd: &mut Command, what: &str) -> Result<std::process::Output, String> {
+fn run(cmd: &mut impl spira_config::bounded::Runnable, what: &str) -> Result<std::process::Output, String> {
     cmd.output().map_err(|e| format!("cannot run {what}: {e}"))
 }
 
-fn run_ok(cmd: &mut Command, what: &str) -> Result<(), String> {
+fn run_ok(cmd: &mut impl spira_config::bounded::Runnable, what: &str) -> Result<(), String> {
     let out = run(cmd, what)?;
     if !out.status.success() {
         return Err(format!("{what} failed ({}): {}", out.status, String::from_utf8_lossy(&out.stderr).trim()));
@@ -368,7 +368,7 @@ pub fn canary_worker() -> Result<(), String> {
     }
 
     std::fs::write(Path::new(&repo).join("canary.txt"), format!("{id}\n")).map_err(|e| format!("cannot write canary.txt: {e}"))?;
-    let git_env = |c: &mut Command| {
+    let git_env = |c: &mut spira_config::bounded::Bounded| {
         c.env("GIT_AUTHOR_NAME", "canary").env("GIT_AUTHOR_EMAIL", "canary@example.invalid").env("GIT_COMMITTER_NAME", "canary").env("GIT_COMMITTER_EMAIL", "canary@example.invalid");
     };
     let mut add = spira_config::bounded::bounded("git");

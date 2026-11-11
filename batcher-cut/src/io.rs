@@ -114,7 +114,7 @@ fn now() -> u64 {
     spira_config::vtime::now_epoch()
 }
 
-fn run(cmd: &mut Command, what: &str) -> Result<String, String> {
+fn run(cmd: &mut impl spira_config::bounded::Runnable, what: &str) -> Result<String, String> {
     let o = cmd.output().map_err(|e| format!("{what}: {e}"))?;
     if !o.status.success() {
         let err = String::from_utf8_lossy(&o.stderr);
@@ -132,7 +132,7 @@ fn run(cmd: &mut Command, what: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&o.stdout).to_string())
 }
 
-fn run_status(cmd: &mut Command) -> bool {
+fn run_status(cmd: &mut impl spira_config::bounded::Runnable) -> bool {
     cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 

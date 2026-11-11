@@ -465,7 +465,7 @@ struct Real {
 }
 
 impl Real {
-    fn command(&self, program: &str, args: &[String], deadline_secs: u64) -> Result<std::process::Command, Out> {
+    fn command(&self, program: &str, args: &[String], deadline_secs: u64) -> Result<spira_config::bounded::Bounded, Out> {
         let Some(bin) = crate::vm_repro::which(program, &self.path) else {
             return Err(Out { code: None, text: format!("{program} is not on the launcher's PATH ({})\n", self.path) });
         };
