@@ -325,8 +325,8 @@ mod tests {
     /// timer a `spira-runtime serve` task replaces, the two retired timers (watch-refresh,
     /// concierge-guard) and the SMTP listener the `submission` source now owns. Activation runs
     /// the scheduler and not both, so none of them is in the manifest or on disk.
-    const RETIRED_BY_THE_SCHEDULER: [&str; 59] = [
-        "alarms", "archive", "archivist", "call", "cert-sweep-full", "cert-sweep-sample", "concierge-guard", "czar-pass", "escape-census", "event-continuity",
+    const RETIRED_BY_THE_SCHEDULER: [&str; 60] = [
+        "alarms", "archive", "archivist", "call", "cert-sweep-full", "cert-sweep-sample", "cockpit", "concierge-guard", "czar-pass", "escape-census", "event-continuity",
         "export-beads", "filings-collect", "gate-check", "gate-worker", "gh-intake", "groom", "heimdall", "idea-prompt", "incident-settle", "kit-bump",
         "landing-pass", "lifecycle-section", "mail-deliver", "mail-reconcile", "mail-tidy", "mend-watch", "mimir", "moot-sweep", "nix-gc", "notify", "ops",
         "perf-happy-path", "perf-watch", "publish", "reap-terminal", "reclaim", "reconcile-content", "reconciler-goodput", "refresh", "refusal-watch", "round-vm-ami-prune",
