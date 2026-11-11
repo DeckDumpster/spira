@@ -1,11 +1,7 @@
-//! Warm unit builds (sp-143lod). A finished gate hands its tmpfs `dwarf` build directory to a
-//! small pool under the target root; the next gate adopts one instead of compiling from nothing.
-//!
-//! Cargo's fingerprints for workspace members are relative to the workspace, so a directory
-//! built in one gate tree is valid in another. What defeats it is mtimes: every file of a new
-//! checkout is newer than the donor's outputs. [`normalize_mtimes`] ages every tracked file the
-//! two trees share, so only the files that differ look changed. Anything uncertain discards the
-//! directory: a cold build is slow, a wrongly warm one is a wrong verdict.
+//! Warm unit builds: a finished gate hands its tmpfs `dwarf` build directory to a small pool
+//! and the next gate adopts one. Cargo fingerprints are workspace-relative, so mtimes are the
+//! only obstacle; [`normalize_mtimes`] ages unchanged tracked files. Anything uncertain
+//! discards the directory: a cold build is slow, a wrongly warm one is a wrong verdict.
 
 use std::fs;
 use std::path::{Path, PathBuf};

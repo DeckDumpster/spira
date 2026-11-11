@@ -1,5 +1,5 @@
 //! A build directory donated by one gate tree and adopted by another at a different path
-//! rebuilds only the crate whose source changed (sp-143lod), with real cargo.
+//! rebuilds only the crate whose source changed, with real cargo.
 
 use std::path::Path;
 use std::process::Command;

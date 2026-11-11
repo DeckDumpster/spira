@@ -937,9 +937,8 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   from (newest two kept; shed first when the root is over its cap or short of room); the
   next gate whose `dwarf` is empty adopts the newest, then ages the mtime of every tracked
   file that did not change between that commit and its own HEAD, so cargo finds those
-  crates fresh and rebuilds only what the branch (and its dependents) changed. Workspace
-  fingerprints are path-independent; mtimes were the only obstacle the retired slots hit.
-  An unreadable commit discards the directory and builds cold.
+  crates fresh and rebuilds only what the branch (and its dependents) changed. An unreadable
+  commit discards the directory and builds cold.
 * **No on-disk warm target (concierge/gate-overcap, 2026-10-14; retires sp-nv7btk's slots).**
   sp-nv7btk linked `target/dwarf` to a per-admission-slot directory on the disk,
   `<run>/gate-warm/slot.N/dwarf`, so a unit build would "recompile only what the branch
