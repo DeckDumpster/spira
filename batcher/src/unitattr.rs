@@ -29,7 +29,12 @@ impl PackageGraph {
     }
 
     fn owns(&self, package: &str, path: &str) -> bool {
-        self.dirs.get(package).is_some_and(|d| d.is_empty() || path.strip_prefix(d.as_str()).is_some_and(|r| r.starts_with('/')))
+        let under = |d: &str, path: &str| path.strip_prefix(d).is_some_and(|r| r.starts_with('/'));
+        match self.dirs.get(package) {
+            Some(d) if d.is_empty() => !self.dirs.values().any(|o| !o.is_empty() && under(o, path)),
+            Some(d) => under(d, path),
+            None => false,
+        }
     }
 }
 
@@ -118,5 +123,15 @@ mod tests {
         let d = [diff("a", "gate/src/x.rs"), diff("b", "loom/src/y.rs")];
         assert!(reaching(&graph(), &["ghost".to_string()], &d).is_empty());
         assert!(reaching(&graph(), &["loom".to_string(), "ghost".to_string()], &d).is_empty());
+    }
+
+    #[test]
+    fn a_root_package_owns_only_the_paths_no_other_package_directory_holds() {
+        let g = PackageGraph {
+            dirs: BTreeMap::from([("root".to_string(), String::new()), ("gate".to_string(), "gate".to_string())]),
+            deps: BTreeMap::new(),
+        };
+        let d = [diff("a", "gate/src/x.rs"), diff("b", "Cargo.toml")];
+        assert_eq!(reaching(&g, &["root".to_string()], &d).iter().map(|(i, _)| i.to_string()).collect::<Vec<_>>(), ["b"]);
     }
 }

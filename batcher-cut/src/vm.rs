@@ -215,11 +215,11 @@ pub fn survival_probe_result(rc: i32) -> Option<bool> {
 }
 
 /// The `suites=` of a probe request: the build's own word, or for a unit probe the packages whose
-/// tests it judges (package names are `[A-Za-z0-9_-]`; anything else is dropped).
+/// tests it judges (package names are `[A-Za-z0-9_-]`; anything else sends the probe to the whole workspace, never to a narrower set than failed).
 fn subset_scope(build: &str, packages: &[String]) -> String {
     let ok = |p: &&String| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
     let named: Vec<&str> = packages.iter().filter(ok).map(String::as_str).collect();
-    if build == "unit" && !named.is_empty() {
+    if build == "unit" && !named.is_empty() && named.len() == packages.len() {
         named.join(",")
     } else {
         build.to_string()
@@ -1501,7 +1501,7 @@ mod abandon_tests {
         fs::write(d.path().join("unit-tests.out"), "FAIL loom factory::tests::a\nerror: x\nFAIL loom factory::tests::a\n").unwrap();
         let red = filter_red_in(d.path(), &[], &BTreeMap::new()).unwrap();
         assert_eq!(red.failed, ["FAIL loom factory::tests::a"]);
-        assert_eq!(subset_scope("unit", &["loom".into(), "bad name;".into()]), "loom");
+        assert_eq!(subset_scope("unit", &["loom".into(), "bad name;".into()]), "unit");
         assert_eq!(subset_scope("unit", &[]), "unit");
         assert_eq!(subset_scope("workspace", &["loom".into()]), "workspace");
     }
