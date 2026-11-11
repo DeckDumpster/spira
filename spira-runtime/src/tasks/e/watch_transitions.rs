@@ -14,7 +14,7 @@
 //!
 //! - WORKING→SUBMITTED: WORKING ≥ `SPIRA_TRANSITIONS_WORKING_MIN` and no Submit inside
 //!   `SPIRA_TRANSITIONS_SUBMIT_BOUND` seconds.
-//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead has itself waited `SPIRA_TRANSITIONS_CUT_BOUND`, no round is open on the repo, and no Delivered inside the bound. A bead waiting behind an open round is queued, not stalled, and the round that just closed has not been closed that long.
+//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead has itself waited `SPIRA_TRANSITIONS_CUT_BOUND`, fewer rounds are open on the repo than `SPIRA_ROUND_MAX_OPEN`, and no Delivered inside the bound. A bead waiting behind a full set of open rounds is queued, not stalled, and the round that just closed has not been closed that long. A held bead, and one whose tip is already on the landing ref, is not waiting and is left out of the SUBMITTED and CERTIFIED rows.
 //! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
 //!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
 //! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed a commit the
