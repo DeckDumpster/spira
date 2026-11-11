@@ -222,14 +222,15 @@ fn series_since(c: &Counters, pushed: &BTreeMap<Key, (u64, u64)>, at: std::time:
     out
 }
 
-/// Pushes what moved since `pushed`; `pushed` advances only when the push succeeds.
-pub fn push_counts(sink: &spira_otel::metrics::MetricsSink, pushed: &mut BTreeMap<(String, String, String), (u64, u64)>) {
+/// Pushes what moved since `pushed`; `pushed` advances only when the push succeeds. The
+/// counters are not locked during the post.
+pub fn push_counts(sink: &spira_otel::metrics::MetricsSink, pushed: &mut BTreeMap<Key, (u64, u64)>) {
     let Ok(c) = COUNTERS.lock() else { return };
-    let series = series_since(&c, pushed, std::time::SystemTime::now());
-    if series.is_empty() || sink.try_push_series(&series).is_err() {
-        return;
+    let (series, now) = (series_since(&c, pushed, std::time::SystemTime::now()), c.tasks.clone());
+    drop(c);
+    if !series.is_empty() && sink.try_push_series(&series).is_ok() {
+        *pushed = now;
     }
-    pushed.clone_from(&c.tasks);
 }
 
 pub fn set_verb(verb: &str) {
@@ -465,6 +466,17 @@ mod tests {
         let got = series_since(&c, &pushed, at);
         let flat: Vec<f64> = got.iter().map(|s| s.value).collect();
         assert_eq!(flat, [1.0, 0.2]);
+    }
+
+    #[test]
+    fn a_failed_push_keeps_the_delta_for_the_next_period() {
+        request_done("push-probe", "push-probe", "who", Some("t"), Duration::from_millis(3));
+        let unreachable = spira_otel::metrics::MetricsSink::new(None, "spira-lc", Duration::from_millis(1));
+        let mut pushed = BTreeMap::new();
+        push_counts(&unreachable, &mut pushed);
+        assert!(!pushed.keys().any(|k| k.0 == "push-probe"), "a failed push advances nothing");
+        let c = COUNTERS.lock().unwrap();
+        assert!(series_since(&c, &pushed, std::time::SystemTime::now()).iter().any(|s| s.labels.contains(&("verb".into(), "push-probe".into()))));
     }
 
     #[test]
