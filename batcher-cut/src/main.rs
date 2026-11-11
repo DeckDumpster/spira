@@ -466,6 +466,7 @@ impl drive::RoundOps for LiveOps<'_> {
     }
 
     fn package_graph(&self) -> Option<batcher::unitattr::PackageGraph> {
+        // EXTERNAL: cargo — the workspace's package graph
         let out = spira_config::bounded::bounded("cargo")
             .current_dir(self.wt)
             .args(["metadata", "--format-version", "1", "--no-deps", "--offline"])
