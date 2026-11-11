@@ -559,7 +559,7 @@ const NEEDS_BUILT: [(&str, &str); 1] = [("spira-sim", "spira-config")];
 
 /// The unit phases' commands, in order: build (the `dwarf` profile), then the tests.
 ///
-/// The build is `cargo test --no-run`: it compiles the test harnesses only, with the flags the
+/// The build is `cargo test --no-run --timings`: it compiles the test harnesses only, with the flags the
 /// test phase uses, so the test phase recompiles nothing. The non-test build of each lib and
 /// bin (code behind `cfg(not(test))`) is the round's job, which builds the whole workspace in
 /// release before anything lands (operator ruling 2026-11-10: build targets once).
@@ -579,7 +579,7 @@ pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2
         (
             "build",
             format!(
-                "cargo test --no-run --profile dwarf {cfg} -j {jobs} --features integration{p}{built}"
+                "cargo test --no-run --timings --profile dwarf {cfg} -j {jobs} --features integration{p}{built}"
             ),
         ),
         (
@@ -1113,11 +1113,11 @@ mod tests {
         let [b, t] = unit_commands(&["gate".into(), "queue".into()], 4);
         assert!(!b.1.contains("--all-targets"), "{}", b.1);
         let (test_flags, _) = t.1.split_once(" -- ").unwrap();
-        assert_eq!(b.1, test_flags.replacen("cargo test ", "cargo test --no-run ", 1));
+        assert_eq!(b.1, test_flags.replacen("cargo test ", "cargo test --no-run --timings ", 1));
 
         let [b, t] = unit_commands(&["spira-sim".into()], 4);
         let (test_flags, _) = t.1.split_once(" -- ").unwrap();
-        let expected = test_flags.replacen("cargo test ", "cargo test --no-run ", 1) + " -p spira-config";
+        let expected = test_flags.replacen("cargo test ", "cargo test --no-run --timings ", 1) + " -p spira-config";
         assert_eq!(b.1, expected, "only the extra built package differs");
     }
 
@@ -1136,7 +1136,7 @@ mod tests {
         assert_eq!(b.0, "build");
         assert_eq!(
             b.1,
-            "cargo test --no-run --profile dwarf --config profile.dwarf.incremental=false -j 4 --features integration -p gate -p queue"
+            "cargo test --no-run --timings --profile dwarf --config profile.dwarf.incremental=false -j 4 --features integration -p gate -p queue"
         );
         assert_eq!(t.0, "test");
         assert_eq!(
@@ -1298,7 +1298,7 @@ cargo: test tests::x ... ok";
         // …and its build phase compiles the test harnesses the test phase then reuses.
         let [b, _] = unit_commands(&["tsd".into()], 4);
         assert!(
-            b.1.starts_with("cargo test --no-run "),
+            b.1.starts_with("cargo test --no-run --timings "),
             "{}",
             b.1
         );

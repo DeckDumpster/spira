@@ -99,6 +99,8 @@ struct State {
     compose: String,
     /// (phase, wall seconds), in the order they ran; the base trial's carry a `base-` prefix.
     phases: Vec<(String, u64)>,
+    /// The build phase's breakdown and cargo's report, once a unit build read one.
+    build_timing: Option<(crate::buildtiming::Build, String)>,
     /// Seconds the trial spent waiting for a slot (testenv's `queue-wait=` lines), inside
     /// the `gate` phase's wall.
     queue_secs: u64,
@@ -843,6 +845,7 @@ impl<'w, W: World> Trial<'w, W> {
                 "",
                 fkey.as_ref(),
                 &mut mark,
+                &mut self.s.build_timing,
             )
         };
         self.s.phases.extend(ph);
@@ -1055,6 +1058,7 @@ impl<'w, W: World> Trial<'w, W> {
                 "base-",
                 self.fences_key(&base_tree).as_ref(),
                 &mut |_, _| {},
+                &mut None,
             );
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
@@ -1842,7 +1846,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.append(
                 &self.s.gate_log,
                 &format!(
-                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}\n",
+                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}\n",
                     w.utc(),
                     self.s.repo_name,
                     self.a.branch,
@@ -1851,6 +1855,7 @@ impl<'w, W: World> Trial<'w, W> {
                     vd.status,
                     vd.reason,
                     meter_suffix(&self.s.compose, &self.s.phases, self.s.queue_secs),
+                    self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.suffix()),
                     self.s.replay_note,
                     if self.s.waited_ms > 0 { format!(" waited_ms={}", self.s.waited_ms) } else { String::new() }
                 ),
@@ -1873,8 +1878,16 @@ impl<'w, W: World> Trial<'w, W> {
                     .split_once(" phases=")
                     .map(|(_, p)| p.to_string())
                     .unwrap_or_default(),
+                compiled: self.s.build_timing.as_ref().map_or(0, |(b, _)| b.compiled),
+                fresh: self.s.build_timing.as_ref().map_or(0, |(b, _)| b.fresh),
+                admit_wait_secs: self.s.build_timing.as_ref().map_or(0, |(b, _)| b.admit_wait_secs),
+                slowest: self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.slowest_field()),
             };
-            crate::telemetry::append(w, &self.s.run, &w.utc(), &run);
+            let ts = w.utc();
+            if let Some((_, html)) = self.s.build_timing.as_ref().filter(|(_, h)| !h.is_empty()) {
+                crate::telemetry::keep_report(w, &self.s.run, &ts, html);
+            }
+            crate::telemetry::append(w, &self.s.run, &ts, &run);
             w.push_metrics(&run);
             if let Some(y) = w.which("yield.sh") {
                 if vd.status == PASS {
@@ -2298,6 +2311,7 @@ pub fn run_composed<W: World>(
     prefix: &str,
     fences: Option<&crate::fencecache::Key>,
     mark: &mut dyn FnMut(GateState, &str),
+    timing: &mut Option<(crate::buildtiming::Build, String)>,
 ) -> (i32, String, Vec<(String, u64)>) {
     let first_state = if comp.suites_off() { GateState::Fences } else { GateState::Trial };
     let budget = key::digits(timeout);
@@ -2417,8 +2431,20 @@ pub fn run_composed<W: World>(
         } else {
             env
         };
+        let report = tree.join(crate::buildtiming::REPORT);
+        let timed = name == "build" && prefix.is_empty();
+        if timed {
+            w.remove(&report);
+        }
         let (r, o) = w.run_gate(tree, step_env, &left(name), &c);
         phases.push((format!("{prefix}{name}"), w.now().saturating_sub(t)));
+        if timed {
+            *timing = w
+                .read(&report)
+                .and_then(|h| Some((crate::buildtiming::parse(&h, &o)?, h)))
+                .or_else(|| Some((crate::buildtiming::wait_only(&o), String::new())))
+                .filter(|(b, h)| !h.is_empty() || b.admit_wait_secs > 0);
+        }
         if !o.is_empty() {
             if !out.is_empty() {
                 out.push('\n');
