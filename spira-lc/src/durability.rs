@@ -34,10 +34,11 @@ pub struct Shipping {
 
 /// `SPIRA_LC_SHIP_DIR`, or `SPIRA_RUN/lc-ship` while it is unset.
 fn ship_dir(run: &Path) -> PathBuf {
-    spira_config::process::cfg("SPIRA_LC_SHIP_DIR")
-        .ok()
-        .filter(|d| !d.is_empty())
-        .map_or_else(|| run.join("lc-ship"), PathBuf::from)
+    ship_dir_at(spira_config::process::cfg("SPIRA_LC_SHIP_DIR").ok(), run)
+}
+
+fn ship_dir_at(configured: Option<String>, run: &Path) -> PathBuf {
+    configured.filter(|d| !d.is_empty()).map_or_else(|| run.join("lc-ship"), PathBuf::from)
 }
 
 fn cfg_u64(key: &str) -> Result<u64, String> {
@@ -303,6 +304,14 @@ mod tests {
     }
 
     #[test]
+    fn the_shipper_stages_in_the_configured_directory_and_falls_back_to_the_run_dir() {
+        let run = Path::new("/run-here");
+        assert_eq!(ship_dir_at(Some("/ssd/ship".into()), run), Path::new("/ssd/ship"));
+        assert_eq!(ship_dir_at(Some(String::new()), run), Path::new("/run-here/lc-ship"));
+        assert_eq!(ship_dir_at(None, run), Path::new("/run-here/lc-ship"));
+    }
+
+    #[test]
     fn admin_drill_passes_on_the_shipped_objects_and_prints_the_skew_procedure() {
         let dir = TempDir::new("lc-admin-drill");
         let clock = VirtualClock::new(1_000);
@@ -312,7 +321,7 @@ mod tests {
         let (rc, out) = admin_drill(&s(&["--scratch", &scratch]), || Ok(run));
         assert_eq!(rc, 0, "{out}");
         assert!(out.starts_with("drill ok: snapshot at 0, restored through 6, 6 keys compared"), "{out}");
-        assert!(out.contains("skew guard: after a restore: (0) move SPIRA_RUN/lc-ship aside"), "{out}");
+        assert!(out.contains("skew guard: after a restore: (0) move the shipper directory (SPIRA_LC_SHIP_DIR, else SPIRA_RUN/lc-ship) aside"), "{out}");
         drop(sh);
         let (rc, out) = admin_drill(&s(&["--scratch", &scratch]), || Err("no run dir".into()));
         assert_eq!(rc, CANNOT_TELL, "{out}");
