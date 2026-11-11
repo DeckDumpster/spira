@@ -97,8 +97,10 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
     out.extend(funnel_keys(funnel, now));
 
     // spira-claim's count, the one ready set (sp-7g5q6) — not a bd ready query of our own.
-    let enr = io::run_tool("spira-claim", &["ready-count", "", "--express"], None)
-        .and_then(|s| s.trim().parse::<usize>().ok())
+    let argv: Vec<String> = ["ready-count", "", "--express"].iter().map(|s| s.to_string()).collect();
+    let enr = Some(spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok()))
+        .filter(|o| o.code == 0)
+        .and_then(|o| o.out.trim().parse::<usize>().ok())
         .unwrap_or(0);
     push(&mut out, "SP_EXPRESS_N", enr.to_string());
 
