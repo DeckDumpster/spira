@@ -1690,7 +1690,17 @@ fn split_piece_args(a: &[String]) -> Result<(), (i32, String)> {
 /// `work list`: lifecycle state decides which beads, bd supplies what they say. A state filter
 /// is the machine's; `--label`/`--title-contains` narrow by content through bd, and the two are
 /// intersected here so neither side's idea of "open" is consulted.
-fn list_with_content(conn: &Conn, reader: &ReadFn, states: &[String], all: bool, filters: &[String], json: bool, full: bool, limit: Option<usize>) -> (i32, String) {
+struct ListAsk<'a> {
+    states: &'a [String],
+    all: bool,
+    filters: &'a [String],
+    json: bool,
+    full: bool,
+    limit: Option<usize>,
+}
+
+fn list_with_content(conn: &Conn, reader: &ReadFn, ask: ListAsk) -> (i32, String) {
+    let ListAsk { states, all, filters, json, full, limit } = ask;
     let narrowing = if !states.is_empty() {
         vec![s("--state"), states.join(","), s("--cached")]
     } else if all {
@@ -1790,7 +1800,7 @@ fn run_read(step: Step, reader: &ReadFn, conn: &Conn) -> (i32, String) {
                 found.iter().map(|b| format!("{} P{} {}", b["id"].as_str().unwrap_or("?"), b["priority"], b["title"].as_str().unwrap_or(""))).collect();
             (0, lines.join("\n"))
         }
-        Step::LcList { states, all, filters, json, full, limit } => list_with_content(conn, reader, &states, all, &filters, json, full, limit),
+        Step::LcList { states, all, filters, json, full, limit } => list_with_content(conn, reader, ListAsk { states: &states, all, filters: &filters, json, full, limit }),
         other => (CANNOT_TELL, format!("work: {other:?} is not a read")),
     }
 }
