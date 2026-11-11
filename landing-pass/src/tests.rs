@@ -1147,6 +1147,9 @@ fn a_branch_gone_mid_pass_is_never_evidence_of_unlanded_work() {
         fn spira_refs(&self, r: &Path) -> Vec<(String, String)> {
             self.0.spira_refs(r)
         }
+        fn merged_spira_refs(&self, r: &Path, b: &str) -> HashSet<String> {
+            self.0.merged_spira_refs(r, b)
+        }
         fn branch_exists(&self, _: &Path, _: &str) -> bool {
             false
         }
