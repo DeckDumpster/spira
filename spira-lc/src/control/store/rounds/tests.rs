@@ -547,6 +547,31 @@ fn an_abandon_whose_member_moved_after_the_plan_writes_nothing() {
     }
 }
 
+#[test]
+fn an_abandon_notes_its_reason_on_each_released_member() {
+    let r = Rig::new();
+    green_round(&r);
+    let ev = batch_ev(
+        BatchState::Green,
+        4,
+        BatchEventKind::Abandon {
+            reason: "attribution leg died".into(),
+        },
+    );
+    let req = r.req();
+    let p = r.s.plan_abandon("b-1", &ev, AT, &req).unwrap();
+    r.s.run_planned(p, &req, "abandon").unwrap();
+    for id in ["sp-a", "sp-b"] {
+        let noted = r
+            .s
+            .history(id, Some("bead"))
+            .unwrap()
+            .into_iter()
+            .any(|c| c.audit.evidence.get("note").and_then(|n| n.as_str()) == Some("attribution leg died"));
+        assert!(noted, "{id} carries the abandon's reason");
+    }
+}
+
 fn open_round(r: &Rig) {
     r.certified("sp-a", T1);
     let one = vec![("sp-a".to_string(), T1.to_string())];
@@ -679,6 +704,10 @@ fn a_round_that_opened_and_never_began_is_abandoned_and_its_members_requeued() {
     );
     assert_eq!(round_state(&r), BatchState::Abandoned);
     assert_eq!(r.state("sp-a"), BeadState::Certified);
+    let noted = r.s.history("sp-a", Some("bead")).unwrap().into_iter().any(|c| {
+        c.audit.evidence.get("note").and_then(|n| n.as_str()).is_some_and(|n| n.contains("never began"))
+    });
+    assert!(noted, "the sweep's reason rides on the released member");
 }
 
 #[test]

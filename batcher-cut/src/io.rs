@@ -3162,12 +3162,15 @@ pub fn read_local_verdict(env: &Env, repo: &str) -> Option<(String, u64)> {
 
 /// `cause` is the one word the round's `.result` line carries as `abandoned:<cause>`.
 /// A host pass records its start on the batch before its first long step, as the EC2 place does,
-/// so the store sees a round that has begun. Best effort: a refusal is logged and the pass runs.
+/// so the store sees a round that has begun, its suites phase included. Best effort: a refusal is logged and the pass runs.
 pub fn round_pass_start(env: &Env, repo: &Repo, batch: &str) {
-    match round_verb(env, &["pass-start", "--resume", batch, &repo.name], "") {
-        Ok(r) if r.code == Some(0) => {}
-        Ok(r) => eprintln!("batcher {}: {}", repo.name, verb_failed("queue round pass-start", &r)),
-        Err(e) => eprintln!("batcher {}: {e}", repo.name),
+    let verbs: [(&str, Vec<&str>); 2] = [("pass-start", vec!["pass-start", "--resume", batch, &repo.name]), ("suites-started", vec!["suites-started", batch, &repo.name])];
+    for (name, args) in &verbs {
+        match round_verb(env, args, "") {
+            Ok(r) if r.code == Some(0) => {}
+            Ok(r) => return eprintln!("batcher {}: {}", repo.name, verb_failed(&format!("queue round {name}"), &r)),
+            Err(e) => return eprintln!("batcher {}: {e}", repo.name),
+        }
     }
 }
 

@@ -218,8 +218,10 @@ fn t3_the_attribution_line_decides_certify_mending_or_blocked() {
     let n = r.requested().len();
     r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(1), "batcher: spira-lc unreachable")).unwrap();
     let after = asked_after(&r, n);
-    let abandon = after.iter().find(|(e, _)| e == ABANDON).unwrap_or_else(|| panic!("an attribution with no outcome blocks the round: {after:?}"));
-    assert!(abandon.1.why.contains("batcher: spira-lc unreachable"), "the leg's own failure text is the round's reason: {}", abandon.1.why);
+    let names: Vec<&str> = after.iter().map(|(e, _)| e.as_str()).collect();
+    assert!(!names.contains(&ABANDON) && !names.contains(&EJECT) && !names.contains(&WITHDRAW), "an attribution with no outcome judged nothing, so the round stays open: {names:?}");
+    let pause = after.iter().find(|(e, _)| e == PAUSE).unwrap_or_else(|| panic!("no pause: {after:?}"));
+    assert!(pause.1.why.contains("batcher: spira-lc unreachable"), "the leg's own failure text is the pause's reason: {}", pause.1.why);
 }
 
 /// A round whose VM could not be acquired never ran: the attribution leg says so as a fault, and
