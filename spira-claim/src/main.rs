@@ -11,7 +11,7 @@ fn main() {
         eprintln!("{}", o.err.trim_end());
     }
     let code = o.code;
-    if code == 0 && spira_claim::cli::is_hot_read(&args) {
+    if spira_claim::cli::discards_run_metric(&args, code) {
         spira_otel::run::discard();
     }
     spira_otel::run::finish(code);

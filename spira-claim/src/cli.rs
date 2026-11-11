@@ -196,8 +196,13 @@ fn thresholds(a: &Args) -> Result<Thresholds, String> {
 
 /// The verbs a dwarf or the sentinel asks on the critical path, many times a minute: a success
 /// pushes no run metric, so the answer is not held for a network call.
-pub fn is_hot_read(raw: &[String]) -> bool {
+fn is_hot_read(raw: &[String]) -> bool {
     matches!(raw.first().map(String::as_str), Some("rune-ready" | "ready-count" | "urgent"))
+}
+
+/// Whether the process discards its run metric instead of pushing it: a successful hot read.
+pub fn discards_run_metric(raw: &[String], code: i32) -> bool {
+    code == 0 && is_hot_read(raw)
 }
 
 const THRESH: &[&str] = &["--poison-at", "--requeue-at", "--reclaim-at"];

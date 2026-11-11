@@ -559,7 +559,8 @@ mod published_read {
 
 #[test]
 fn the_verbs_a_caller_waits_on_push_no_run_metric_when_they_succeed() {
-    let hot = |v: &str| is_hot_read(&[v.to_string(), "builder".into()]);
-    assert!(hot("rune-ready") && hot("ready-count") && hot("urgent"));
-    assert!(!hot("bulk-ready-by-rune") && !hot("unpoison") && !is_hot_read(&[]));
+    let hot = |v: &str, code| discards_run_metric(&[v.to_string(), "builder".into()], code);
+    assert!(hot("rune-ready", 0) && hot("ready-count", 0) && hot("urgent", 0));
+    assert!(!hot("rune-ready", 1), "a failing read still reports its failure");
+    assert!(!hot("bulk-ready-by-rune", 0) && !hot("unpoison", 0) && !discards_run_metric(&[], 0));
 }
