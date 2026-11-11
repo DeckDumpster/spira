@@ -34,6 +34,7 @@ pub(crate) fn complete_vars() -> BTreeMap<String, String> {
 /// dirty tree reaches `bead_reopen`/`requeue`. No process, no repository.
 pub(crate) mod verdict_run {
     use crate::conf::{Conf, Rune};
+    use std::collections::BTreeMap;
     use crate::ledger::Ledger;
     use crate::ports::{Bd, Env, Exec, Git, Seam};
     use crate::run::{Deps, Mode, Run, State};
@@ -106,13 +107,17 @@ pub(crate) mod verdict_run {
         let mut vars = super::complete_vars();
         vars.insert("SPIRA_REPO".into(), "/shared".into());
         vars.insert("SPIRA_ALLOW_PROD_DIRTY".into(), String::new());
+        with_run_over(vars, bd, git, &Lc, &|| 0, seam, claimed_raw, f)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn with_run_over<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &Seams, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
         let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("/home/spira"));
         let rune = Rune::from_vars("builder", &Default::default());
         let env = Env::new(Default::default(), Default::default());
         let stop = Arc::new(Stop::default());
-        let clock = || 0i64;
         let mut r = Run {
-            d: Deps { bd, seam, git: &git, exec: &Lc, launcher: &NoLaunch, sink: &Mute, env: &env, clock: &clock, sleep: &|_| {} },
+            d: Deps { bd, seam, git: &git, exec, launcher: &NoLaunch, sink: &Mute, env: &env, clock, sleep: &|_| {} },
             ledger: Ledger { path: PathBuf::from("/nonexistent/ledger"), dry: true },
             conf,
             rune,
@@ -129,6 +134,64 @@ pub(crate) mod verdict_run {
             s: State { bead: "sp-x".into(), branch: "b".into(), repo: PathBuf::from("/repo"), work: Some(PathBuf::from("/w/own")), lc_model_restricted: true, claimed_raw: claimed_raw.into(), ..Default::default() },
         };
         f(&mut r)
+    }
+
+    struct Appends(Mutex<Vec<String>>);
+    impl Exec for Appends {
+        fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            if prog == "inbox-triage" {
+                self.0.lock().unwrap().push(args[1..].join(" "));
+            }
+            Out::ok("")
+        }
+    }
+
+    /// The inbox lines `report_refused_submit` appends for `bead` at `now`, over an inbox file
+    /// already holding `inbox`.
+    fn refused_submit(bead: &str, now: i64, inbox: &str, reason: &str) -> Vec<String> {
+        let dir = testkit::TempDir::new("dwarf-inbox");
+        let log = dir.path().join("inbox.log");
+        std::fs::write(&log, inbox).unwrap();
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_CONCIERGE_INBOX".into(), log.display().to_string());
+        let exec = Appends(Default::default());
+        with_run_over(vars, &NoBd, Dirty(vec![]), &exec, &move || now, &Seams(Default::default()), "", |r| r.report_refused_submit(bead, reason));
+        let got = exec.0.lock().unwrap().clone();
+        got
+    }
+
+    const REFUSED: &str = "The work is finished and checked, but work submit refuses: spira-lc content: cannot tell\nmore";
+    const T0: i64 = 1_700_000_000;
+
+    #[test]
+    fn a_no_progress_end_on_a_refused_submit_says_so_in_the_inbox() {
+        let lines = refused_submit("sp-a", T0, "", REFUSED);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("SUBMIT REFUSED sp-a: The work is finished and checked, but work submit refuses: spira-lc content: cannot tell"), "{lines:?}");
+        assert!(!lines[0].contains("more"), "the first line only: {lines:?}");
+    }
+
+    #[test]
+    fn a_no_progress_end_for_any_other_reason_says_nothing() {
+        assert!(refused_submit("sp-a", T0, "", "I could not decide how to split this").is_empty());
+    }
+
+    #[test]
+    fn two_beads_refused_inside_ten_minutes_are_one_p0_page() {
+        let first = format!("{} [dwarf] SUBMIT REFUSED sp-b: work submit refuses\n", crate::util::iso_utc(T0 - 300));
+        let lines = refused_submit("sp-a", T0, &first, REFUSED);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[1].contains("P0 SUBMIT BLOCKED") && lines[1].contains("sp-a") && lines[1].contains("sp-b"), "{lines:?}");
+        let paged = format!("{first}{} [dwarf] P0 SUBMIT BLOCKED: x\n", crate::util::iso_utc(T0 - 100));
+        assert_eq!(refused_submit("sp-c", T0, &paged, REFUSED).len(), 1, "one page for the stall");
+    }
+
+    #[test]
+    fn the_same_bead_or_an_old_line_is_not_a_second_bead() {
+        let same = format!("{} [dwarf] SUBMIT REFUSED sp-a: work submit refuses\n", crate::util::iso_utc(T0 - 300));
+        assert_eq!(refused_submit("sp-a", T0, &same, REFUSED).len(), 1);
+        let old = format!("{} [dwarf] SUBMIT REFUSED sp-b: work submit refuses\n", crate::util::iso_utc(T0 - 700));
+        assert_eq!(refused_submit("sp-a", T0, &old, REFUSED).len(), 1);
     }
 
     struct CountingBd(Mutex<Vec<String>>);
