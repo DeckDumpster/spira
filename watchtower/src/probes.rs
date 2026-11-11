@@ -309,11 +309,11 @@ pub fn read_fs(path: &str) -> Option<FsReading> {
     Some(FsReading { dev, avail_mib: u.avail_mib, size_mib: u.size_mib, used_pct: u.used_pct })
 }
 
-/// Seconds until `avail_mib` is gone at the rate the oldest sample implies; `None` when the
+/// Seconds until `avail_mib` is gone at the rate since the window's freest sample (so a refill after a cleanup is measured from the cleanup); `None` when the
 /// disk is not filling or the samples span too little time to trust a rate.
 pub fn secs_to_empty(samples: &[(i64, i64)], now: i64, avail_mib: i64) -> Option<i64> {
     const MIN_SPAN_SECS: i64 = 600;
-    let &(t, a) = samples.iter().filter(|(t, _)| now - t >= MIN_SPAN_SECS).min_by_key(|(t, _)| *t)?;
+    let &(t, a) = samples.iter().filter(|(t, _)| now - t >= MIN_SPAN_SECS).max_by_key(|(t, a)| (*a, *t))?;
     let used = a - avail_mib;
     (used > 0).then(|| (avail_mib as i128 * (now - t) as i128 / used as i128) as i64)
 }
@@ -934,6 +934,14 @@ mod tests {
         let s = standing(disk_room(&c, five_hours, &|_| fs(1, 29, 95 - 10)));
         assert_eq!(s.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(), vec!["disk-fill-_run-dir"]);
         assert!(s[0].title.contains("FILLING"), "{}", s[0].title);
+    }
+
+    #[test]
+    fn a_refill_after_a_cleanup_is_measured_from_the_cleanup() {
+        let h = 3600;
+        let samples = [(0, 20 * 1024), (h, 200 * 1024)];
+        assert_eq!(secs_to_empty(&samples, 2 * h, 100 * 1024), Some(h), "100 GiB lost in 1h leaves 1h");
+        assert_eq!(secs_to_empty(&[(0, 50), (h, 90)], 2 * h, 100), None, "a disk gaining space is not filling");
     }
 
     #[test]
