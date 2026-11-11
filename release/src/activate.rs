@@ -623,10 +623,10 @@ fn restart_reason(unit: &str, old: &str, new: &str, roots: &Roots) -> Option<Str
 
 fn backend_binary_changed(roots: &Roots) -> Option<String> {
     let Some(old) = roots.old else { return Some("cannot tell which release its backend ran before; restarted".into()) };
-    let bin = |root: &Path| std::fs::read(root.join("bin/sccache-dav"));
-    match (bin(old), bin(roots.new)) {
-        (Ok(a), Ok(b)) if a == b => None,
-        (Ok(_), Ok(_)) => Some("its backend binary changed".into()),
+    let files = |root: &Path| (std::fs::read(root.join("bin/sccache-dav")), std::fs::read(root.join("spira/sccache-dav.sh")));
+    match (files(old), files(roots.new)) {
+        ((Ok(ob), Ok(ol)), (Ok(nb), Ok(nl))) if ob == nb && ol == nl => None,
+        ((Ok(_), Ok(_)), (Ok(_), Ok(_))) => Some("its backend binary or launcher changed".into()),
         _ => Some("cannot compare its backend binaries; restarted".into()),
     }
 }

@@ -983,7 +983,7 @@ fn world_activating_over_a_running_cache(binary_changes: bool) -> World {
         let rel = w.cfg.releases.join(name);
         file(&rel.join("systemd/sccache-dav.service"), CACHE_UNIT);
         file(&rel.join("bin/sccache-dav"), bin);
-        file(&rel.join("spira/sccache-dav.sh"), &format!("#!/bin/sh\n# {name}\nexec sccache-dav\n"));
+        file(&rel.join("spira/sccache-dav.sh"), "#!/bin/sh\nexec sccache-dav\n");
     }
     let rel = w.cfg.releases.join(A);
     let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
@@ -1009,6 +1009,21 @@ fn an_activation_that_changes_neither_the_cache_backends_unit_nor_its_binary_lea
 #[test]
 fn an_activation_that_changes_the_cache_backends_binary_restarts_it_and_stops_the_sccache_server() {
     let w = world_activating_over_a_running_cache(true);
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.states.borrow_mut().insert("sccache-dav.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
+    activate_with(&w, &sc).unwrap();
+    assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
+    assert_eq!(*sc.cache_server_stops.borrow(), 1);
+}
+
+#[test]
+fn an_activation_that_changes_the_cache_backends_unit_restarts_it_and_stops_the_sccache_server() {
+    let w = world_activating_over_a_running_cache(false);
+    let changed = format!("{CACHE_UNIT}Environment=SCCACHE_DAV_EXTRA=1\n");
+    file(&w.cfg.releases.join(A).join("systemd/sccache-dav.service"), &changed);
+    let rel = w.cfg.releases.join(A);
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
     let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
     sc.states.borrow_mut().insert("sccache-dav.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
     activate_with(&w, &sc).unwrap();
