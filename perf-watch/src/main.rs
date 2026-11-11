@@ -216,16 +216,6 @@ impl Sim for RealSim {
         let errfile = std::path::Path::new(&self.scratch).join("sim.stderr");
         let errors = std::fs::File::create(&errfile).map_err(|e| format!("{}: {e}", errfile.display()))?;
         let mut child = self.sim(&cwd, &["run", &self.scenario, "--seed", &seed, "--keep"]).stderr(errors).spawn().map_err(|e| format!("{}: {e}", self.sim))?;
-        let drain = |pipe: Option<Box<dyn std::io::Read + Send>>| {
-            std::thread::spawn(move || {
-                let mut buf = String::new();
-                if let Some(mut p) = pipe {
-                    let _ = p.read_to_string(&mut buf);
-                }
-                buf
-            })
-        };
-        let (so, se) = (drain(child.stdout.take().map(|p| Box::new(p) as _)), drain(child.stderr.take().map(|p| Box::new(p) as _)));
         let start = Instant::now();
         let status = loop {
             match child.try_wait() {
