@@ -465,6 +465,17 @@ impl drive::RoundOps for LiveOps<'_> {
         );
     }
 
+    fn package_graph(&self) -> Option<batcher::unitattr::PackageGraph> {
+        // FORK-EDGE: cargo metadata over the round tree, offline, for the package graph
+        let out = Command::new("cargo")
+            .current_dir(self.wt)
+            .args(["metadata", "--format-version", "1", "--no-deps", "--offline"])
+            .stdin(Stdio::null())
+            .output()
+            .ok()?;
+        out.status.success().then(|| io::package_graph(&String::from_utf8_lossy(&out.stdout))).flatten()
+    }
+
     fn diffs(&self, members: &[String]) -> Vec<batcher::buildattr::MemberDiff> {
         let tips: BTreeMap<&str, &str> = self
             .tips

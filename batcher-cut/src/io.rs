@@ -1961,6 +1961,24 @@ pub fn record_escape(
     }
 }
 
+/// The workspace packages and the workspace packages each depends on (any kind, as unit tests
+/// build dev-dependencies too), from `cargo metadata --no-deps` output.
+pub fn package_graph(metadata_json: &str) -> Option<batcher::unitattr::PackageGraph> {
+    let v: serde_json::Value = serde_json::from_str(metadata_json).ok()?;
+    let root = v["workspace_root"].as_str()?.trim_end_matches('/');
+    let mut g = batcher::unitattr::PackageGraph::default();
+    let packages = v["packages"].as_array()?;
+    for p in packages {
+        let dir = Path::new(p["manifest_path"].as_str()?).parent()?.to_str()?;
+        g.dirs.insert(p["name"].as_str()?.to_string(), dir.strip_prefix(root)?.trim_start_matches('/').to_string());
+    }
+    for p in packages {
+        let deps = p["dependencies"].as_array()?.iter().filter_map(|d| d["name"].as_str()).filter(|n| g.dirs.contains_key(*n)).map(str::to_string).collect();
+        g.deps.insert(p["name"].as_str()?.to_string(), deps);
+    }
+    Some(g)
+}
+
 #[cfg(test)]
 mod local_red_ref_tests {
     use super::local_red_ref;
@@ -4926,4 +4944,15 @@ mod abandon_hold_tests {
         fs::remove_file(d.path().join("live")).unwrap();
         assert_eq!(abandon_hold(&e, &r), None);
     }
+    #[test]
+    fn the_package_graph_holds_each_dir_relative_to_the_root_and_only_workspace_dependencies() {
+        let meta = r#"{"workspace_root":"/w","packages":[
+            {"name":"loom","manifest_path":"/w/loom/Cargo.toml","dependencies":[{"name":"runtime"},{"name":"serde"}]},
+            {"name":"runtime","manifest_path":"/w/spira-runtime/Cargo.toml","dependencies":[]}]}"#;
+        let g = package_graph(meta).unwrap();
+        assert_eq!(g.dirs["runtime"], "spira-runtime");
+        assert_eq!(g.deps["loom"], ["runtime"]);
+        assert!(package_graph("not json").is_none());
+    }
+
 }

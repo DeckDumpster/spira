@@ -214,6 +214,18 @@ pub fn survival_probe_result(rc: i32) -> Option<bool> {
     }
 }
 
+/// The `suites=` of a probe request: the build's own word, or for a unit probe the packages whose
+/// tests it judges (package names are `[A-Za-z0-9_-]`; anything else is dropped).
+fn subset_scope(build: &str, packages: &[String]) -> String {
+    let ok = |p: &&String| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    let named: Vec<&str> = packages.iter().filter(ok).map(String::as_str).collect();
+    if build == "unit" && !named.is_empty() {
+        named.join(",")
+    } else {
+        build.to_string()
+    }
+}
+
 pub struct VmRunner<'a> {
     env: &'a Env,
     repo: &'a Repo,
@@ -300,7 +312,12 @@ fn filter_red_in(
             }
         }
     }
-    Some(FilterRed { name, named })
+    let failed = if phases.contains(&UNIT_TESTS) {
+        batcher::unitattr::failing_lines(&fs::read_to_string(results.join("unit-tests.out")).unwrap_or_default())
+    } else {
+        vec![]
+    };
+    Some(FilterRed { name, named, failed })
 }
 
 const UNIT_TESTS: &str = "unit-tests";
@@ -384,6 +401,7 @@ impl<'a> VmRunner<'a> {
         &mut self,
         subset: &[Member],
         build: &str,
+        packages: &[String],
         verdict: fn(i32) -> Option<bool>,
     ) -> Option<bool> {
         self.build_n += 1;
@@ -403,7 +421,7 @@ impl<'a> VmRunner<'a> {
             .tree_without(self.branch(&job), &job, &removal)
             .inspect_err(|e| eprintln!("batcher: {build} probe tree not built: {e}"))
             .ok()?;
-        self.request(&job, &branch, &[build.to_string()], build)
+        self.request(&job, &branch, &[subset_scope(build, packages)], build)
             .inspect_err(|e| eprintln!("batcher: {e}"))
             .ok()?;
         let done = self.spool.join("res").join(format!("{job}.done"));
@@ -781,19 +799,27 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn builds(&mut self, subset: &[Member]) -> Option<bool> {
-        self.probe_subset(subset, "workspace", build_probe_result)
+        self.probe_subset(subset, "workspace", &[], build_probe_result)
     }
 
     fn filter_green(&mut self, name: &str, subset: &[Member]) -> Option<bool> {
         if name == UNIT_TESTS {
-            self.probe_subset(subset, "unit", unit_probe_result)
+            self.probe_subset(subset, "unit", &[], unit_probe_result)
+        } else {
+            None
+        }
+    }
+
+    fn filter_green_in(&mut self, name: &str, packages: &[String], subset: &[Member]) -> Option<bool> {
+        if name == UNIT_TESTS {
+            self.probe_subset(subset, "unit", packages, unit_probe_result)
         } else {
             None
         }
     }
 
     fn runner_survives(&mut self, subset: &[Member]) -> Option<bool> {
-        self.probe_subset(subset, "unit", survival_probe_result)
+        self.probe_subset(subset, "unit", &[], survival_probe_result)
     }
 
     fn stop_main(&mut self) -> Result<(), String> {
@@ -1109,6 +1135,7 @@ mod tests {
         .unwrap();
         let red = filter_red_in(d.path(), &ms, &changed).expect("a red unit phase ends the pass");
         assert_eq!(red.name, "unit-tests");
+        assert!(red.failed.is_empty(), "no failing-test line in this output");
         assert_eq!(
             red.named
                 .iter()
@@ -1467,4 +1494,16 @@ mod abandon_tests {
         crate::io::round_abandon(&env, &repo, "b1", "x", "error");
         assert!(!calls.exists(), "an ended round is never abandoned again");
     }
+    #[test]
+    fn a_red_unit_phase_carries_its_failing_test_lines_and_a_probe_names_the_packages_it_judges() {
+        let d = testkit::TempDir::new("vm-unit-failed");
+        fs::write(d.path().join("unit.json"), "{\"verdict\":\"red\"}").unwrap();
+        fs::write(d.path().join("unit-tests.out"), "FAIL loom factory::tests::a\nerror: x\nFAIL loom factory::tests::a\n").unwrap();
+        let red = filter_red_in(d.path(), &[], &BTreeMap::new()).unwrap();
+        assert_eq!(red.failed, ["FAIL loom factory::tests::a"]);
+        assert_eq!(subset_scope("unit", &["loom".into(), "bad name;".into()]), "loom");
+        assert_eq!(subset_scope("unit", &[]), "unit");
+        assert_eq!(subset_scope("workspace", &["loom".into()]), "workspace");
+    }
+
 }
