@@ -1106,6 +1106,10 @@ fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
         if !has_tree && !running_marker(c, &b.id).exists() {
             continue;
         }
+        if let Err(e) = w.scripts.stop_round_legs(&c.r.name, &b.id) {
+            w.err(format!("queue.sh sweep: round {} ended but a leg still runs ({e}) — its tree is kept", b.id));
+            continue;
+        }
         if let (Some(repo), true) = (&c.r.path, has_tree && !held.contains(&wt)) {
             w.git.worktree_remove(repo, &wt);
         }

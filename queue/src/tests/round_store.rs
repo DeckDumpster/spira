@@ -695,3 +695,37 @@ fn the_sweep_reclaims_an_open_round_whose_worktree_is_missing() {
     let (state, _) = t.lc.batch_state("spira-lost").unwrap();
     assert_eq!(state, "ABANDONED", "{}", t.err());
 }
+
+#[test]
+fn the_sweep_stops_the_legs_of_a_round_the_lifecycle_ended_before_it_frees_the_tree() {
+    let t = store_world();
+    let d = t.lc.store.get().unwrap();
+    let mut kv = batches::batch(d, "spira", "spira-orphaned").unwrap().unwrap().kv;
+    let wt = t.dir.path().join("orphan-tree");
+    fs::create_dir_all(&wt).unwrap();
+    kv.push("worktree", &wt.display().to_string());
+    batches::save(d, "spira", &kv).unwrap();
+    t.scripts.round_legs.borrow_mut().push(("spira".into(), "spira-orphaned".into(), "leg.service".into()));
+    t.run(&["round", "open", "--members", "sp-b:tb"]);
+    assert!(
+        !t.scripts.round_legs_live("spira", "spira-orphaned"),
+        "a leg of an ended round still holds its tree: {}",
+        t.err()
+    );
+}
+
+#[test]
+fn the_sweep_keeps_the_tree_and_the_record_of_an_ended_round_whose_leg_will_not_stop() {
+    let t = store_world();
+    let d = t.lc.store.get().unwrap();
+    let mut kv = batches::batch(d, "spira", "spira-orphaned").unwrap().unwrap().kv;
+    let wt = t.dir.path().join("orphan-tree");
+    fs::create_dir_all(&wt).unwrap();
+    kv.push("worktree", &wt.display().to_string());
+    batches::save(d, "spira", &kv).unwrap();
+    t.scripts.round_legs_stubborn.set(true);
+    t.run(&["round", "open", "--members", "sp-b:tb"]);
+    let removed = t.git.calls.borrow().iter().any(|c| c == &format!("worktree-remove {}", wt.display()));
+    assert!(!removed, "a tree under a running leg was removed");
+    assert!(t.err().contains("its tree is kept"), "{}", t.err());
+}
