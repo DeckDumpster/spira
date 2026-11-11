@@ -980,6 +980,32 @@ fn a_round_is_cut_within_a_minute_of_a_restart_that_interrupted_the_assemble() {
     assert_eq!((asked(&r, ASSEMBLE), asked(&r, ROUND_OPEN)), (2, 1), "{:?}", r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>());
 }
 
+/// The engine's own lost-at-restart outcome for an open round open is asked for again, and the batch adopted.
+#[test]
+fn a_round_open_interrupted_by_a_restart_is_asked_again_and_adopted() {
+    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .hanging(ROUND_OPEN)
+        .double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()))
+        .double(ASSEMBLE, move |_| Ok(serde_json::to_string(&assembled).unwrap()))
+        .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, ROUND_OPEN].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 3).unwrap();
+    let opens = |r: &TaskRig| r.requested().iter().filter(|q| q.name == ROUND_OPEN).map(|q| (q.key.clone(), q.input.clone())).collect::<Vec<_>>();
+    assert_eq!(opens(&r).len(), 1, "an open round open is waited for, not asked again");
+    r.reopen(registration()).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(60_000).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let asked = opens(&r);
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    assert!(asked[1].1.contains("spira"), "the repeat names the repo: {asked:?}");
+}
+
 /// A round open that ends lost is neither a failed open nor a reason to wait out the outcome timer.
 #[test]
 fn a_round_open_lost_at_restart_is_asked_again() {
