@@ -138,6 +138,18 @@ pub enum Cmd {
         members: Text,
         worktree: Option<PathBuf>,
     },
+    HandLand {
+        id: String,
+        repo: Option<String>,
+        tip: String,
+        by: String,
+        reason: Text,
+        evidence: Text,
+        evidence_tip: String,
+        round: Option<String>,
+        dry_run: bool,
+        worktree: Option<PathBuf>,
+    },
     Publish {
         repo: Option<String>,
     },
@@ -280,7 +292,7 @@ pub enum Round {
     },
 }
 
-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh churn [--since <dur|date>] [--until <dur|date>] [<repo>] | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh batch open [--repo <repo>] [--members <id[@tip]>,...] [--head <sha> --body-file <path|->] [--name <id> [--lease-token <t>]] [--owner <who>] [--skip-pregate] [--dry-run] [--replace --reason <why>] (alias: open-batch [<repo>]) | queue.sh batch sweep --repo <repo> | queue.sh batch show --repo <repo> [--ended <n>] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh resubmit <id> [<repo>] --tip <40-hex> --by concierge --reason <why> | queue.sh rework <id> [<repo>] --by <concierge|operator> --reason <evidence> | queue.sh absolve <id> [<repo>] --by <concierge|operator> --reason <why> --evidence <checks> --evidence-tip <tip> | queue.sh settle-landed <id> [<repo>] --by <actor> --evidence-tip <sha> | queue.sh forced-suites <id> [<repo>] [--clear --by <concierge|operator> --reason <why>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh mode-switch <repo> <queue.forge|queue.local> | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head> --ran <n>] [--rehead <head>] [--lease-token <t>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] [--with <id>[,<id>...]] [--lease-token <t>] | queue.sh round land <batch> [<repo>] [--lease-token <t>] | queue.sh round abandon <batch> [<repo>] --reason <text> [--cause <word>] [--lease-token <t>] | queue.sh round sweep-locks [--repo <repo> | --all] | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] [--resume] | queue.sh round suites-started <batch> [<repo>] | queue.sh round failed <batch> [<repo>] --suite <name> | queue.sh round mended <batch> <failure> [<repo>] --tips <id:tip,...> --checked <crate:x|suite:y,...> [--ask <id>] [--reason <text>] [--by <concierge|operator> --evidence <checks> --evidence-tip <tip>] | queue.sh round return|environment|flaky|unsure <batch> <failure> [<repo>] --reason <text> | queue.sh round triage-ended <batch> <failure> [<repo>] | queue.sh round await-ask <batch> <failure> [<repo>] --ask <id> | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
+pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh churn [--since <dur|date>] [--until <dur|date>] [<repo>] | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh batch open [--repo <repo>] [--members <id[@tip]>,...] [--head <sha> --body-file <path|->] [--name <id> [--lease-token <t>]] [--owner <who>] [--skip-pregate] [--dry-run] [--replace --reason <why>] (alias: open-batch [<repo>]) | queue.sh batch sweep --repo <repo> | queue.sh batch show --repo <repo> [--ended <n>] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh resubmit <id> [<repo>] --tip <40-hex> --by concierge --reason <why> | queue.sh rework <id> [<repo>] --by <concierge|operator> --reason <evidence> | queue.sh absolve <id> [<repo>] --by <concierge|operator> --reason <why> --evidence <checks> --evidence-tip <tip> | queue.sh settle-landed <id> [<repo>] --by <actor> --evidence-tip <sha> | queue.sh forced-suites <id> [<repo>] [--clear --by <concierge|operator> --reason <why>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh hand-land <id> [<repo>] --tip <40-hex> --by <actor> --reason <why> --evidence <checks> --evidence-tip <tip> --round <wait|subvert> [--worktree <dir>] [--dry-run] | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh mode-switch <repo> <queue.forge|queue.local> | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head> --ran <n>] [--rehead <head>] [--lease-token <t>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] [--with <id>[,<id>...]] [--lease-token <t>] | queue.sh round land <batch> [<repo>] [--lease-token <t>] | queue.sh round abandon <batch> [<repo>] --reason <text> [--cause <word>] [--lease-token <t>] | queue.sh round sweep-locks [--repo <repo> | --all] | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] [--resume] | queue.sh round suites-started <batch> [<repo>] | queue.sh round failed <batch> [<repo>] --suite <name> | queue.sh round mended <batch> <failure> [<repo>] --tips <id:tip,...> --checked <crate:x|suite:y,...> [--ask <id>] [--reason <text>] [--by <concierge|operator> --evidence <checks> --evidence-tip <tip>] | queue.sh round return|environment|flaky|unsure <batch> <failure> [<repo>] --reason <text> | queue.sh round triage-ended <batch> <failure> [<repo>] | queue.sh round await-ask <batch> <failure> [<repo>] --ask <id> | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
 
 /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
 #[derive(Debug, PartialEq, Eq)]
@@ -997,6 +1009,55 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
                 repo,
                 head,
                 members,
+                worktree,
+            })
+        }
+        "hand-land" => {
+            let id = pos(0).ok_or_else(|| Usage("queue.sh hand-land: bead id required".into()))?;
+            let mut w = Walk {
+                cmd: "hand-land",
+                args: &args[1..],
+                i: 0,
+            };
+            let (mut repo, mut tip, mut by, mut reason) =
+                (None, String::new(), String::new(), Text::None);
+            let (mut evidence, mut evidence_tip) = (Text::None, String::new());
+            let (mut round, mut dry_run, mut worktree) = (None, false, None);
+            while let Some(t) = w.next() {
+                match t {
+                    Tok::Opt(k, v) if reason_opt(&mut w, k, v.clone(), &mut reason) => {}
+                    Tok::Opt("evidence", v) => evidence = Text::Arg(w.value(v)),
+                    Tok::Opt("evidence-file", v) => evidence = text_file(w.value(v)),
+                    Tok::Opt("evidence-tip", v) => evidence_tip = w.value(v),
+                    Tok::Opt("tip", v) => tip = w.value(v),
+                    Tok::Opt("by", v) => by = w.value(v),
+                    Tok::Opt("round", v) => round = Some(w.value(v)),
+                    Tok::Opt("worktree", v) => worktree = Some(PathBuf::from(w.value(v))),
+                    Tok::Opt("dry-run", _) => dry_run = true,
+                    Tok::Opt(k, _) => return Err(w.unknown(k)),
+                    Tok::Pos(p) => repo = Some(p.to_string()),
+                }
+            }
+            for (word, v) in [("--tip", &tip), ("--by", &by)] {
+                if v.is_empty() {
+                    return Err(Usage(format!("queue.sh hand-land: {word} is required")));
+                }
+            }
+            if let Some(r) = &round {
+                if crate::ops::hand_land::Policy::parse(r).is_none() {
+                    return Err(Usage(format!("queue.sh hand-land: --round {r:?}: want wait or subvert")));
+                }
+            }
+            Ok(Cmd::HandLand {
+                id,
+                repo,
+                tip,
+                by,
+                reason,
+                evidence,
+                evidence_tip,
+                round,
+                dry_run,
                 worktree,
             })
         }

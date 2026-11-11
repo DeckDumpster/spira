@@ -2,6 +2,7 @@
 //! writes only through the ports in `World` (DESIGN.md §2.2).
 
 pub mod batch;
+pub mod hand_land;
 pub mod deploy;
 pub mod forge_batch;
 pub mod helpers;
@@ -30,6 +31,8 @@ pub const FAIL: i32 = 1;
 pub const USAGE: i32 = 2;
 /// land-local's exit when the landing is recorded but its release was not activated.
 pub const DEPLOY_FAULT: i32 = 3;
+/// `land-local`'s exit when it refuses to land under an open round: nothing changed.
+pub const ROUND_OPEN: i32 = 3;
 /// Any verb's exit when another queue operation holds the repo's lock past the wait: try again.
 pub const LOCK_BUSY: i32 = 6;
 /// `round land`'s exit when the round is stacked on a round that has not landed: it waits.
