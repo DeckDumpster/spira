@@ -387,7 +387,13 @@ fn events_is_one_typed_query_over_the_ids_and_chunks_by_id_chunk() {
     assert!(ids.len() > ID_CHUNK);
     let f = Fake::default();
     answer(&f, DB, &v(&["events", "--id", &ids.join(",")])).unwrap();
-    assert_eq!(f.seen.lock().unwrap().len(), ids.len().div_ceil(ID_CHUNK));
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen.len(), ids.len().div_ceil(ID_CHUNK));
+    for (chunk, q) in ids.chunks(ID_CHUNK).zip(seen.iter()) {
+        assert!(q.contains(&format!("issue_id IN ({})", quoted(chunk))), "{q}");
+    }
+    drop(seen);
+    answer(&f, DB, &v(&["events", "--json", "--id", "sp-a"])).unwrap();
 }
 
 #[test]
