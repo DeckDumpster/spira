@@ -188,6 +188,11 @@ const LISTED: &[&str] = &[
     "blocked_by",
 ];
 
+/// A record as `list` prints it.
+pub(crate) fn listed(rec: &LifecycleRecord, r: Option<&Readiness>) -> Value {
+    row(rec, r, LISTED)
+}
+
 fn row(rec: &LifecycleRecord, r: Option<&Readiness>, cols: &[&str]) -> Value {
     Value::Object(
         cols.iter()

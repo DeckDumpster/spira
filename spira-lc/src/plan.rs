@@ -235,7 +235,7 @@ pub fn with_planning_fields(answer: (i32, String), conn: &Conn) -> (i32, String)
 }
 
 /// The planning watermark as the control store's read model holds it, or `None` without one.
-fn current_watermark() -> Option<u64> {
+pub(crate) fn current_watermark() -> Option<u64> {
     let store = crate::control::served::configured()?.ok()?;
     let item = store.contract().get(crate::control::keys::PLANNING_WATERMARK).ok()??;
     item.value.data.get("seq").and_then(Value::as_u64)
