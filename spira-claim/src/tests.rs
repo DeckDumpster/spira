@@ -109,11 +109,13 @@ mod published {
             seen.extend(stdin.map(|b| format!("stdin={b}")));
             self.0.lock().unwrap().push(seen);
             let out = match argv.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-                ["list", "--state", "READY,REWORK", ..] => r#"[{"bead_id":"sp-r","state":"READY","holds":[]},{"bead_id":"sp-n","state":"READY","holds":[]},{"bead_id":"sp-w","state":"READY","holds":[]}]"#.to_string(),
+                ["list", "--state", "READY,REWORK", ..] => r#"[{"bead_id":"sp-r","state":"READY","holds":[]}]"#.to_string(),
                 ["list", "--state", live, ..] if *live == LIVE => [
                     r#"{"bead_id":"sp-r","state":"READY","holds":[]}"#,
                     r#"{"bead_id":"sp-c","state":"CERTIFIED","holds":[],"tip":"abc"}"#,
                     r#"{"bead_id":"sp-s","state":"SUBMITTED","holds":[]}"#,
+                    r#"{"bead_id":"sp-n","state":"READY","holds":[]}"#,
+                    r#"{"bead_id":"sp-w","state":"WORKING","holds":[]}"#,
                 ]
                 .join(",")
                 .pipe(|rows| format!("[{rows}]")),
@@ -125,9 +127,7 @@ mod published {
                     {"issue_id":"sp-s","depends_on_id":"sp-w","type":"parent-child"},
                     {"issue_id":"sp-x","depends_on_id":"sp-w","type":"related"}]}"#
                     .to_string(),
-                ["plan", "items", "--ids", "sp-n"] => r#"{"watermark":7,"items":[{"id":"sp-n"}]}"#.to_string(),
                 ["plan", "items", "--ids", ids] if ids.contains("sp-r") => [
-                    r#"{"id":"sp-w"}"#,
                     r#"{"id":"sp-r","dependencies":[{"issue_id":"sp-r","depends_on_id":"sp-w","type":"blocks"}]}"#,
                     r#"{"id":"sp-c"}"#,
                     r#"{"id":"sp-s","dependencies":[{"issue_id":"sp-s","depends_on_id":"sp-w","type":"blocks"}]}"#,
