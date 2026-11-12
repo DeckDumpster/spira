@@ -505,3 +505,17 @@ fn an_index_short_of_the_window_is_unobservable_not_zero() {
     assert_eq!(r.publish()["published"], true);
     assert_eq!(value(&r.status()["landed_24h"]), 2.0);
 }
+
+#[test]
+fn a_bead_named_only_by_a_red_takes_its_repo_from_a_read_by_id() {
+    let r = rig_on(Counting::default());
+    let now = r.now();
+    r.land("old", "site", now - 3 * DAY, now - 3 * DAY + MIN);
+    r.land("b-1", "harness", now - 2 * H - 20 * MIN, now - 2 * H);
+    r.outside.rounds.borrow_mut().push(LoopEvent::RedAttributed { bead: "old".into(), batch: "r-1".into(), innocent: vec!["b-1".into()], at: now - H, wall_secs: 600 });
+    r.store.contract().backend().take();
+    r.publish();
+    assert_eq!(r.status()["harmful"][0]["repo"], "site", "{}", r.status());
+    let reads = r.store.contract().backend().take();
+    assert!(!reads.iter().any(|(k, key, _)| *k == "range" && key.starts_with(crate::control::keys::LIFECYCLE)), "{reads:?}");
+}
