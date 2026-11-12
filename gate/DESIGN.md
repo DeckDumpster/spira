@@ -921,9 +921,9 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   column-gated repository, the suites' fixture repositories) does not need it. The tmpfs
   preparation below applies to the same trials. `SPIRA_BUILD_CACHE=off` is
   honoured and printed.
-* **The tools phase and the unit phases are one-shot**: `--config
-  profile.<p>.incremental=false` (never `CARGO_INCREMENTAL`, which sccache hashes into every
-  key and so would split the cache from a dwarf's interactive builds).
+* **The tools phase and the unit phases build under `dev` with no profile or incremental
+  override**, so their bytes match the builder's (never `CARGO_INCREMENTAL`, which sccache
+  hashes into every key and so would split the cache from a dwarf's interactive builds).
 * **The gate tree builds on tmpfs** (`src/target.rs`, `World::target_on_tmpfs`): after the
   checkout, `target/{dwarf,release,debug,tree-tools}` are links into
   `$SPIRA_GATE_TARGET_ROOT` (default `/tmp/spira-gate-target-<run hash>`); orphaned
