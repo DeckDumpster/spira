@@ -62,6 +62,33 @@ fn serves_reads(reads: &dyn Reads, rel: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The reads watchers make first after a store server restart, each of which must answer inside
+/// `Ctx::steady` before activation is done: the server's first reads pay for its cold build.
+const WARM_READS: [&[&str]; 2] = [&["dwell"], &["list", "--state", "READY"]];
+
+/// Asks each of `WARM_READS` until it answers inside `steady`, up to `wait` in all. A server that
+/// stays slow is reported, not rolled back: the release served its reads, and another restart
+/// would only make it cold again.
+fn warmed(ctx: &Ctx, rel: &Path) -> Result<(), String> {
+    let give_up = std::time::Instant::now() + ctx.warm_wait;
+    for args in WARM_READS {
+        loop {
+            let began = std::time::Instant::now();
+            let said = ctx.reads.lc(rel, args);
+            let took = began.elapsed();
+            if said.is_ok() && took <= ctx.steady {
+                eprintln!("release: warm read through {}: spira-lc {} in {} ms", rel.display(), args.join(" "), took.as_millis());
+                break;
+            }
+            if std::time::Instant::now() >= give_up {
+                return Err(format!("spira-lc {} still not answering inside {} ms after {} s ({})", args.join(" "), ctx.steady.as_millis(), ctx.warm_wait.as_secs(), said.err().unwrap_or_else(|| format!("took {} ms", took.as_millis()))));
+            }
+            std::thread::sleep(ctx.warm_pause);
+        }
+    }
+    Ok(())
+}
+
 pub struct Ctx<'a> {
     pub cfg: &'a Config,
     pub reads: &'a dyn Reads,
@@ -76,6 +103,12 @@ pub struct Ctx<'a> {
     /// How long a running oneshot whose unit changed gets to finish its in-flight work and
     /// exit before activation stops waiting for it.
     pub drain: Duration,
+    /// The steady read limit a warm-up read must answer inside.
+    pub steady: Duration,
+    /// The cap on waiting for the store server's reads to answer inside `steady`.
+    pub warm_wait: Duration,
+    /// The pause between warm-up attempts.
+    pub warm_pause: Duration,
 }
 
 /// A standing hotfix: the running system is on a commit that has not landed.
@@ -426,8 +459,13 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn() -> Result
     }
     // A rollback returns to a release that served before; refusing it would strand the box.
     if failed.is_empty() && install_new {
-        if let Err(e) = serves_reads(ctx.reads, &rel) {
-            failed.push(e);
+        match serves_reads(ctx.reads, &rel) {
+            Err(e) => failed.push(e),
+            Ok(()) => {
+                if let Err(e) = warmed(ctx, &rel) {
+                    eprintln!("release: WARN: the store server is still cold: {e}");
+                }
+            }
         }
     }
     if !failed.is_empty() {

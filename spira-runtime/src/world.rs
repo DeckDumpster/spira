@@ -793,7 +793,8 @@ impl World {
         let p: ThroughputParams = serde_json::from_str(input).map_err(|e| format!("throughput params unparsed: {e}"))?;
         let day = 24 * 3600;
         let halt = read_halt(&self.run_dir);
-        let blind = ThroughputSnapshot { readable: false, halt: halt.clone(), ..Default::default() };
+        let activated_at = crate::watchers::last_activation(&self.run_dir);
+        let blind = ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, ..Default::default() };
         let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&blind) };
         let Ok(mut landings) = self.landed_on_refs(p.now, &prefix) else { return to_json(&blind) };
         let Ok(waiting) = self.waiting_rows() else { return to_json(&blind) };
@@ -808,7 +809,7 @@ impl World {
         let unlanded = unlanded_rounds(batches, p.now);
         let parts = self.round_record_partition();
         let records = Records { clear: parts.clear.iter().map(|f| f.display().to_string()).collect(), held: parts.held };
-        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt })
+        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at })
     }
 
     /// The beads landed over the 24 h ending `now`, per registered repo, read from its landing ref

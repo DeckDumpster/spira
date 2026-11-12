@@ -13,7 +13,7 @@ use crate::manifest::{Entry, Manifest};
 use crate::systemctl::{Systemctl, UnitState};
 use crate::units;
 use crate::verify::{self};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -940,11 +940,13 @@ fn world_activating_a_changed_unit() -> World {
 struct FakeReads {
     refuses: Option<&'static str>,
     asked: RefCell<Vec<String>>,
+    /// How many `dwell` reads answer "deadline" before the server is warm.
+    cold_dwells: Cell<u32>,
 }
 
 impl FakeReads {
     fn serving() -> FakeReads {
-        FakeReads { refuses: None, asked: RefCell::new(vec![]) }
+        FakeReads { refuses: None, asked: RefCell::new(vec![]), cold_dwells: Cell::new(0) }
     }
 }
 
@@ -952,6 +954,10 @@ impl activate::Reads for FakeReads {
     fn lc(&self, _rel: &Path, args: &[&str]) -> Result<String, String> {
         let call = args.join(" ");
         self.asked.borrow_mut().push(call.clone());
+        if call.starts_with("dwell") && self.cold_dwells.get() > 0 {
+            self.cold_dwells.set(self.cold_dwells.get() - 1);
+            return Err("dwell (exit status: 2): spira-lc: cannot tell: deadline".into());
+        }
         if self.refuses.is_some_and(|r| call.starts_with(r)) {
             return Err(format!("{call} (exit status: 2): spira-lc content: cannot tell: the beads database spira does not have the layout the content reads query (missing events.issue_id, ...)"));
         }
@@ -964,7 +970,7 @@ fn activate_with(w: &World, sc: &FakeSystemctl) -> Result<activate::Switched, St
 }
 
 fn activate_reading(w: &World, sc: &FakeSystemctl, reads: &FakeReads) -> Result<activate::Switched, String> {
-    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10) };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_millis(500), warm_wait: Duration::from_millis(200), warm_pause: Duration::from_millis(1) };
     activate::activate(&ctx, A, None)
 }
 
@@ -1066,14 +1072,35 @@ fn an_activation_reads_the_lifecycle_and_the_first_beads_content_through_the_new
     let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
     let reads = FakeReads::serving();
     activate_reading(&w, &sc, &reads).unwrap();
-    assert_eq!(*reads.asked.borrow(), vec!["list --state READY".to_string(), "content show sp-first".to_string()]);
+    assert_eq!(*reads.asked.borrow(), vec!["list --state READY".to_string(), "content show sp-first".to_string(), "dwell".to_string(), "list --state READY".to_string()]);
+}
+
+#[test]
+fn an_activation_waits_for_a_cold_store_server_to_answer_a_dwell_and_a_list_before_it_is_done() {
+    let w = world_activating_a_changed_unit();
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    let reads = FakeReads::serving();
+    reads.cold_dwells.set(3);
+    activate_reading(&w, &sc, &reads).unwrap();
+    let asked = reads.asked.borrow();
+    assert_eq!(asked.iter().filter(|a| a.starts_with("dwell")).count(), 4, "{asked:?}");
+    assert_eq!(asked.last().map(String::as_str), Some("list --state READY"), "the list read follows the warm dwell: {asked:?}");
+}
+
+#[test]
+fn an_activation_whose_store_server_stays_cold_is_done_and_not_rolled_back() {
+    let w = world_activating_a_changed_unit();
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    let reads = FakeReads::serving();
+    reads.cold_dwells.set(u32::MAX);
+    activate_reading(&w, &sc, &reads).unwrap();
 }
 
 #[test]
 fn a_release_whose_content_read_is_refused_is_rolled_back_and_the_error_names_the_read() {
     let w = world_activating_a_changed_unit();
     let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
-    let reads = FakeReads { refuses: Some("content show"), asked: RefCell::new(vec![]) };
+    let reads = FakeReads { refuses: Some("content show"), ..FakeReads::serving() };
     let e = activate_reading(&w, &sc, &reads).unwrap_err();
     assert!(e.contains("content read refused") && e.contains("missing events.issue_id") && e.contains("rolled back"), "{e}");
     let state = w.cfg.state_dir().unwrap();
@@ -1137,7 +1164,7 @@ fn a_release_whose_restarted_scheduler_comes_up_then_exits_is_rolled_back_onto_t
 fn a_release_whose_lifecycle_read_is_refused_is_rolled_back() {
     let w = world_activating_a_changed_unit();
     let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
-    let reads = FakeReads { refuses: Some("list"), asked: RefCell::new(vec![]) };
+    let reads = FakeReads { refuses: Some("list"), ..FakeReads::serving() };
     let e = activate_reading(&w, &sc, &reads).unwrap_err();
     assert!(e.contains("lifecycle read refused") && e.contains("rolled back"), "{e}");
 }
