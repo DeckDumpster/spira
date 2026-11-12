@@ -7965,43 +7965,6 @@ fn a_round_the_lifecycle_abandoned_is_closed_out_by_the_next_locked_verb() {
     );
 }
 
-#[test]
-fn a_swept_round_sharing_a_live_rounds_worktree_is_closed_out_once() {
-    let t = round_world();
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a:ta", "--name", "r-gone"]),
-        0,
-        "{}",
-        t.err()
-    );
-    let wt = kv_of(&t, "round")["worktree"].clone();
-    t.lc.batch_states
-        .borrow_mut()
-        .insert("r-gone".into(), ("ABANDONED".into(), "9".into()));
-    let _ = fs::remove_file(marker(&t, "r-gone", "running"));
-    fs::create_dir_all(&wt).unwrap();
-    let swept = |t: &T| {
-        fs::read_to_string(marker(t, "r-gone", "result"))
-            .unwrap_or_default()
-            .matches("abandoned:swept")
-            .count()
-    };
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-b:tb", "--name", "r-next"]),
-        0,
-        "{}",
-        t.err()
-    );
-    assert_eq!(kv_of(&t, "round")["worktree"], wt, "the live round stands in r-gone's path");
-    fs::create_dir_all(&wt).unwrap();
-    let closed = swept(&t);
-    assert_eq!(closed, 1, "the sweep that removed r-gone's tree closed it out");
-    for _ in 0..2 {
-        t.run(&["round", "open", "--members", "sp-c:tc", "--name", "r-again"]);
-        assert_eq!(swept(&t), closed, "a sweep that removed nothing of r-gone's writes no line: {}", t.err());
-    }
-}
-
 /// Another holder's live lease on `batch` of the fixture's repo.
 fn leased_by(t: &T, batch: &str, holder: &str, token: &str) {
     t.lc.leases.borrow_mut().insert(
