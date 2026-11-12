@@ -132,3 +132,13 @@ fn reconcile_content_observe_names_an_unknown_input() {
     let err = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "weekly").unwrap_err();
     assert!(err.contains("weekly"), "{err}");
 }
+
+#[test]
+fn reconcile_content_observe_reports_a_halted_world_without_asking_the_store() {
+    let (dir, path, sent) = serve(|_| None);
+    std::fs::write(dir.path().join("world.halted"), "").unwrap();
+    let lc = spira_config::lc_call::LcClient::socket(path);
+    let out = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "").unwrap();
+    assert!(out.contains("\"world_halted\":true"), "{out}");
+    assert!(sent.lock().unwrap().is_empty());
+}
