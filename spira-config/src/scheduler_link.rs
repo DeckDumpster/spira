@@ -31,7 +31,23 @@ pub fn call(sock: &Path, argv: &[&str]) -> Result<String, String> {
 /// The registry key a dotted `spira.<field>` path names; `None` for a path outside `[spira]`.
 pub fn key_of_path(path: &str) -> Option<String> {
     let field = path.strip_prefix("spira.")?;
-    (!field.is_empty() && !field.contains('.')).then(|| format!("SPIRA_{}", field.to_ascii_uppercase()))
+    if field.is_empty() || field.contains('.') {
+        return None;
+    }
+    let upper = field.to_ascii_uppercase();
+    Some(if field.starts_with("cockpit_") { upper } else { format!("SPIRA_{upper}") })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::key_of_path;
+
+    #[test]
+    fn a_spira_path_names_the_registry_key_the_scheduler_pins() {
+        assert_eq!(key_of_path("spira.max_dwarves").as_deref(), Some("SPIRA_MAX_DWARVES"));
+        assert_eq!(key_of_path("spira.cockpit_sessions").as_deref(), Some("COCKPIT_SESSIONS"));
+        assert_eq!((key_of_path("personas.builder.model"), key_of_path("spira."), key_of_path("spira.a.b")), (None, None, None));
+    }
 }
 
 /// The line `set` or `unset` prints for `key` after its write: whether the scheduler took the

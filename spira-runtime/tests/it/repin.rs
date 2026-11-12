@@ -26,6 +26,7 @@ struct World {
     file: File,
     queue: Queue,
     repin: Arc<Repin>,
+    journal: Arc<MemJournal>,
     live: u32,
     sock: std::path::PathBuf,
     _dir: testkit::TempDir,
@@ -54,7 +55,8 @@ fn world(pool: &str) -> World {
     let file: File = Arc::new(Mutex::new(boot.clone()));
     let (clock, board) = (VirtualClock::new(0), Arc::new(StatusBoard::default()));
     let task = spira_runtime::tasks::all().find(|t| t.name == NAME).unwrap();
-    let engine = Engine::open(MemJournal::new(), Arc::new(clock.clone()), vec![(task.build)(&settings), runtime::Registration::new(spira_runtime::tasks::a::batcher_local::NAME, Batcher)], 1).unwrap().with_status_board(board.clone());
+    let journal = MemJournal::new();
+    let engine = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![(task.build)(&settings), runtime::Registration::new(spira_runtime::tasks::a::batcher_local::NAME, Batcher)], 1).unwrap().with_status_board(board.clone());
     let f = file.clone();
     let fresh = Arc::new(move |keys: &[String]| Ok(keys.iter().map(|k| (k.clone(), f.lock().unwrap().get(k).cloned().unwrap_or_default())).collect()));
     let repin = Arc::new(Repin::new(settings, fresh, Arc::new(lookup_with(&boot))));
@@ -69,7 +71,7 @@ fn world(pool: &str) -> World {
     let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
     let control = Control::new(board, submit, Arc::new(clock.clone())).with_repin(repin.clone());
     std::thread::spawn(move || answer(&listener, &|argv| control.respond(argv)));
-    World { engine, clock, file, queue, repin, live: 0, sock, _dir: dir }
+    World { engine, clock, file, queue, repin, journal, live: 0, sock, _dir: dir }
 }
 
 impl World {
@@ -148,6 +150,8 @@ fn a_pool_size_set_from_0_to_4_with_no_landing_calls_four_builders_within_one_ti
     w.clock.advance_to(61_000);
     w.turn();
     assert_eq!(w.ask(&["scheduler", "running", KEY]).unwrap(), "4");
+    let facts: Vec<String> = w.journal.log().into_iter().filter(|e| e.kind.tag == spira_runtime::repin::REPINNED).map(|e| e.kind.body).collect();
+    assert_eq!(facts, vec![format!("re-pinned {KEY} 0 -> 4")], "one journal fact says what was re-pinned");
     assert_eq!(w.calls(6), 1, "the first tick after the re-pin calls a builder");
 
     let mut full = world("0");
@@ -211,4 +215,72 @@ fn a_key_the_scheduler_pins_only_at_start_is_told_to_restart_and_an_unchanged_on
     let same: serde_json::Value = serde_json::from_str(&w.ask(&["scheduler", "repin", KEY]).unwrap()).unwrap();
     assert_eq!(same["state"], "unchanged");
     assert!(w.ask(&["scheduler", "running", "SPIRA_RUNTIME_STALL_LIMIT"]).unwrap_err().is_refused());
+}
+
+/// Answers every observe with an empty world and keeps the pool size each probe was handed.
+struct Probes(Mutex<Vec<String>>);
+impl runtime::host::EffectRunner for Probes {
+    fn run(&self, _: &str, spec: &runtime::EffectSpec) -> Result<String, String> {
+        if spec.name == OBSERVE {
+            let pinned = serde_json::from_str::<ObserveIn>(&spec.input).unwrap().pinned;
+            self.0.lock().unwrap().push(pinned[KEY].clone());
+        }
+        Ok(serde_json::to_string(&Snapshot::default()).unwrap())
+    }
+}
+
+#[tokio::test]
+async fn the_served_scheduler_takes_a_change_at_the_start_of_its_next_turn_with_no_restart() {
+    use std::time::Duration;
+    let boot: BTreeMap<String, String> = [(KEY.to_string(), "0".to_string())].into();
+    let settings = spira_runtime::Settings::from_lookup(&lookup_with(&boot)).unwrap();
+    let file: File = Arc::new(Mutex::new(boot.clone()));
+    let f = file.clone();
+    let fresh = Arc::new(move |keys: &[String]| Ok(keys.iter().map(|k| (k.clone(), f.lock().unwrap().get(k).cloned().unwrap_or_default())).collect()));
+    let repin = Arc::new(Repin::new(settings.clone(), fresh, Arc::new(lookup_with(&boot))));
+    let task = spira_runtime::tasks::all().find(|t| t.name == NAME).unwrap();
+    let board = Arc::new(StatusBoard::default());
+    let engine = Engine::open(MemJournal::new(), Arc::new(runtime::ports::WallClock), vec![(task.build)(&settings)], 1).unwrap().with_status_board(board.clone());
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    let dir = testkit::TempDir::new("repin-served");
+    let sock = dir.path().join("control.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+    let control = Control::new(board, spira_runtime::control_submit(tx.clone()), Arc::new(runtime::ports::WallClock)).with_repin(repin.clone());
+    std::thread::spawn(move || answer(&listener, &|argv| control.respond(argv)));
+    let probes = Arc::new(Probes(Mutex::default()));
+    let hook = repin.clone();
+    let opts = runtime::host::ServeOpts { before_turn: Some(Arc::new(move |e| hook.apply(e))), ..Default::default() };
+    let serving = tokio::spawn(runtime::host::serve_with(engine, Arc::new(runtime::ports::WallClock), probes.clone(), runtime::pools::PoolCaps::default(), rx, opts));
+
+    let tick = |id: &'static str| runtime::host::Submit::new(id, STREAM, EventKind::new(TICK, ""));
+    tx.send(tick("tick-1")).await.unwrap();
+    let wait = |n: usize| {
+        let p = probes.clone();
+        async move {
+            for _ in 0..500 {
+                if p.0.lock().unwrap().len() >= n {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: polling a real host
+            }
+            panic!("no probe number {n}");
+        }
+    };
+    wait(1).await;
+    file.lock().unwrap().insert(KEY.into(), "4".into());
+    let s = sock.clone();
+    tokio::task::spawn_blocking(move || lc_call(&s, &["scheduler", "repin", KEY]).unwrap()).await.unwrap();
+    for _ in 0..500 {
+        let s = sock.clone();
+        if tokio::task::spawn_blocking(move || lc_call(&s, &["scheduler", "running", KEY]).unwrap()).await.unwrap() == "4" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: polling a real host
+    }
+    tx.send(tick("tick-2")).await.unwrap();
+    wait(2).await;
+    drop(tx);
+    let seen = probes.0.lock().unwrap().clone();
+    serving.abort();
+    assert_eq!(seen[..2], ["0".to_string(), "4".to_string()], "the probe after the change carries the new pool");
 }

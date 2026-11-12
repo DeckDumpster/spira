@@ -105,3 +105,27 @@ fn a_set_with_no_scheduler_listening_still_writes_and_says_so() {
     assert!(out(&o).contains("written; the scheduler is not answering"), "{}", out(&o));
     assert!(std::fs::read_to_string(&b.toml).unwrap().contains("max_dwarves = 4") || std::fs::read_to_string(&b.toml).unwrap().contains("max_dwarves = \"4\""));
 }
+
+#[test]
+fn a_write_typed_against_a_staged_release_says_nothing_about_the_scheduler() {
+    let d = testkit::TempDir::new("set-sched-release");
+    let sock = d.path().join("c.sock");
+    let seen = scheduler(&sock, "0", "4", true);
+    let b = setup("set-sched-release-box", &sock);
+    let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let o = run(&b, &["set", "--release", home.to_str().unwrap(), "spira.max_dwarves", "4", b.toml.to_str().unwrap()]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(!out(&o).contains("scheduler") && seen.lock().unwrap().is_empty(), "{}", out(&o));
+}
+
+#[test]
+fn an_unset_reports_the_scheduler_the_same_way() {
+    let d = testkit::TempDir::new("unset-sched");
+    let sock = d.path().join("c.sock");
+    scheduler(&sock, "4", "0", true);
+    let b = setup("unset-sched-box", &sock);
+    assert!(run(&b, &["set", "spira.max_dwarves", "4", b.toml.to_str().unwrap()]).status.success());
+    let o = run(&b, &["unset", "spira.max_dwarves", b.toml.to_str().unwrap()]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(out(&o).lines().any(|l| l == format!("scheduler re-pinned {KEY}")), "{}", out(&o));
+}

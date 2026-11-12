@@ -138,7 +138,9 @@ impl Repin {
         for line in lines {
             eprintln!("spira-runtime: {line}");
             let id = format!("{REPINNED}/{}/{}", engine.now_ms(), line.replace(' ', "_"));
-            let _ = engine.submit(&id, STREAM, EventKind::new(REPINNED, &line));
+            if let Err(e) = engine.submit(&id, STREAM, EventKind::new(REPINNED, &line)) {
+                eprintln!("spira-runtime: the re-pin was not journaled: {e}");
+            }
         }
     }
 }
