@@ -1068,6 +1068,9 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     let mut base_retried = false;
     let t0 = runner.now();
     runner.set_members(&members);
+    if runner.abandoned() {
+        return Ok(RoundEnd::Abandoned);
+    }
     if let Some(f) = runner.prior_red() {
         println!(
             "batcher: {} red in the corpus pass — attributing it by its failing tests, without running the corpus again",
@@ -1539,6 +1542,8 @@ pub(crate) mod tests {
         pub scoped: Vec<Vec<String>>,
         /// The filter red of the corpus pass this attribution follows.
         pub prior: Option<FilterRed>,
+        /// A probe scoped to named tests finds nothing red: the red needs its whole package.
+        pub narrow_clears: bool,
         /// A runner that cannot build a tree with members taken out: every such job fails to launch.
         pub refuses_removals: bool,
         /// Suite → the members whose diff adds it: a run naming it on a tree holding none of them dies as round-vm does.
@@ -1586,6 +1591,7 @@ pub(crate) mod tests {
                 alone: vec![],
                 scoped: vec![],
                 prior: None,
+                narrow_clears: false,
                 refuses_removals: false,
                 added_by: BTreeMap::new(),
                 abandoned_after_starts: None,
@@ -1716,6 +1722,10 @@ pub(crate) mod tests {
             members: &[Member],
         ) -> Option<bool> {
             self.scoped.push(packages.to_vec());
+            if self.narrow_clears && packages.iter().any(|p| p.contains('=')) {
+                self.probes.push(vec![]);
+                return Some(true);
+            }
             self.filter_green(name, members)
         }
         fn runner_survives(&mut self, members: &[Member]) -> Option<bool> {
@@ -4280,6 +4290,50 @@ pub(crate) mod tests {
         );
         assert!(f.main_kind.is_empty(), "no corpus or verify run: {:?}", f.main_kind);
         assert_eq!(land_ids(end), vec!["m1"]);
+    }
+
+    #[test]
+    fn a_red_its_named_tests_do_not_reproduce_alone_is_attributed_on_the_whole_package() {
+        let red = FilterRed {
+            name: "integration-tests".into(),
+            named: vec![],
+            failed: vec!["FAIL dir:testenv lint_x".into()],
+        };
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.runs_alone = true;
+        f.narrow_clears = true;
+        f.filter = Some(Box::new({
+            let red = red.clone();
+            move |tree| tree.contains("m2").then(|| red.clone())
+        }));
+        f.prior = Some(red);
+        let mut ops = Ops {
+            graph: Some(PackageGraph {
+                dirs: [("testenv".to_string(), "testenv".to_string())].into(),
+                deps: Default::default(),
+            }),
+            ..Ops::default()
+        };
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["integration-tests".to_string()])]);
+        assert!(f.scoped.iter().any(|s| s == &["testenv=lint_x"]) && f.scoped.iter().any(|s| s == &["testenv"]), "{:?}", f.scoped);
+        assert_eq!(land_ids(end), vec!["m1"]);
+    }
+
+    #[test]
+    fn a_named_test_red_no_probe_can_attribute_blocks_the_round_without_running_the_corpus() {
+        let red = FilterRed {
+            name: "integration-tests".into(),
+            named: vec![],
+            failed: vec!["FAIL dir:testenv lint_x".into()],
+        };
+        let mut f = Fake::new(|_, _| false);
+        f.prior = Some(red);
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(f.main_kind.is_empty());
     }
 
     #[test]

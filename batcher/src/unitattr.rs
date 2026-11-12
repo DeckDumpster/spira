@@ -72,11 +72,24 @@ pub fn failing_packages(lines: &[String]) -> Vec<String> {
     out
 }
 
+fn token_of(package: &str, test: &str) -> String {
+    format!("{package}={test}")
+}
+
+/// Whether a scope token (`package` or `package=test`) is made only of what a package or test
+/// filter can carry, so the VM script never takes a name it would have to quote.
+pub fn scope_token_ok(token: &str) -> bool {
+    let word = |w: &str, extra: &[u8]| !w.is_empty() && w.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || extra.contains(&b));
+    match token.split_once('=') {
+        Some((p, test)) => word(p, b"") && word(test, b":"),
+        None => word(token, b""),
+    }
+}
+
 /// What a rerun of a red test phase judges: `package=test` for each failing test, the bare
 /// `package` for a failure whose test name cannot be handed to a test filter. A run of exactly
 /// the failed tests is never narrower than the red.
 pub fn rerun_scope(failed: &[String], graph: Option<&PackageGraph>) -> Vec<String> {
-    let name_ok = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b':');
     let mut out: Vec<String> = vec![];
     for l in failed {
         let mut w = l.split_whitespace();
@@ -88,7 +101,8 @@ pub fn rerun_scope(failed: &[String], graph: Option<&PackageGraph>) -> Vec<Strin
             Some(g) => g.resolve(&[package]).remove(0),
             None => package,
         };
-        let token = if name_ok(test) { format!("{package}={test}") } else { package.clone() };
+        let token = token_of(&package, test);
+        let token = if scope_token_ok(&token) { token } else { package.clone() };
         if !out.contains(&token) {
             out.push(token);
         }

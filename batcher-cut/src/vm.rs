@@ -241,12 +241,7 @@ pub fn survival_probe_result(rc: i32) -> Option<bool> {
 /// `[A-Za-z0-9_-]` and `::` in a test; anything else sends the probe to the whole workspace, never
 /// to a narrower set than failed.
 fn subset_scope(build: &str, scope: &[String]) -> String {
-    let word = |w: &str, extra: &[u8]| !w.is_empty() && w.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || extra.contains(&b));
-    let ok = |t: &String| match t.split_once('=') {
-        Some((p, test)) => word(p, b"") && word(test, b":"),
-        None => word(t, b""),
-    };
-    if matches!(build, "unit" | INTEGRATION_BUILD) && !scope.is_empty() && scope.iter().all(ok) {
+    if matches!(build, "unit" | INTEGRATION_BUILD) && !scope.is_empty() && scope.iter().all(|t| batcher::unitattr::scope_token_ok(t)) {
         scope.join(",")
     } else {
         build.to_string()
