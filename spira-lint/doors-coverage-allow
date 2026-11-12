@@ -1,0 +1,9 @@
+# doors-coverage's shrink-only allow list — exact repo-relative paths whose header says they are
+# the only path for something, and which have no row in spira/doors.toml. These four guard
+# declarations or a daemon rather than a resource a session reaches by hand. Remove a line in the
+# same change that adds the tool's row or deletes the tool; a line naming a file that is gone is
+# refused.
+spira/conf.sh
+spira/inbox-keeper.sh
+spira/schema.sh
+spira/target-clean.sh

@@ -23,6 +23,7 @@ const EXEMPT_TOML_FROM_STR: &[&str] = &[
     "spira-lint/src/rules/lockfile_lint.rs",
     "spira-lint/src/rules/integration_opt_in.rs",
     "sim/src/actors.rs",
+    "statute-check/src/doors.rs",
     "sim/src/fit.rs",
     "spira/sim/src/drive.rs",
     "round-controller/src/sim/scenario.rs",

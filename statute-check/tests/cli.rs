@@ -19,7 +19,10 @@ fn hook(state: &std::path::Path, env: &[(&str, &str)], command: &str) -> String 
     let payload = serde_json::json!({"tool_name": "Bash", "session_id": "s1", "tool_input": {"command": command}}).to_string();
     let log = state.join("overrides.log");
     let mut c = Command::new(BIN);
+    let doors = format!("{}/../spira/doors.toml", env!("CARGO_MANIFEST_DIR"));
+    let doors_log = state.join("doors.log");
     c.env_clear().args(["hook", "--dir", &shelf(), "--vocab", &vocab(), "--state", state.to_str().unwrap(), "--log", log.to_str().unwrap()]);
+    c.args(["--doors", &doors, "--doors-log", doors_log.to_str().unwrap()]);
     for (k, v) in env {
         c.env(k, v);
     }
@@ -96,4 +99,21 @@ fn touching_a_rounds_pace_pause_file_is_refused_with_law_on_first_call() {
     let first = hook(&d, &[], "touch /run/x/rounds-pace/repo/pause");
     assert!(first.contains("\"block\"") && first.contains("law-"), "{first}");
     assert_eq!(hook(&d, &[], "cat /run/x/rounds-pace/repo/pause"), "");
+}
+
+#[test]
+fn a_hand_move_of_the_landing_ref_is_stopped_once_and_shown_the_tool_and_logged_without_arguments() {
+    let d = testkit::TempDir::new("statute-check-door");
+    let env = [("SPIRA_RUNE", "concierge")];
+    let cmd = "git update-ref refs/heads/local/main 0123456789abcdef";
+    let first: serde_json::Value = serde_json::from_str(&hook(&d, &env, cmd)).unwrap();
+    assert_eq!(first["decision"], "block");
+    let reason = first["reason"].as_str().unwrap();
+    assert!(reason.contains("This touches landing-ref. Its tool is queue hand-land: queue.sh hand-land <id>"), "{reason}");
+    assert!(!hook(&d, &env, cmd).contains("\"block\""));
+    let log = std::fs::read_to_string(d.join("doors.log")).unwrap();
+    let events: Vec<Vec<&str>> = log.lines().map(|l| l.split('\t').collect()).collect();
+    assert_eq!(events.len(), 2, "{log}");
+    assert_eq!((events[0][1], events[0][2], events[0][3], events[0][4]), ("concierge", "landing-ref", "git", "blocked"));
+    assert!(!log.contains("0123456789abcdef"), "{log}");
 }
