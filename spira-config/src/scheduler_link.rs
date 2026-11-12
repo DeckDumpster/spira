@@ -38,18 +38,6 @@ pub fn key_of_path(path: &str) -> Option<String> {
     Some(if field.starts_with("cockpit_") { upper } else { format!("SPIRA_{upper}") })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::key_of_path;
-
-    #[test]
-    fn a_spira_path_names_the_registry_key_the_scheduler_pins() {
-        assert_eq!(key_of_path("spira.max_dwarves").as_deref(), Some("SPIRA_MAX_DWARVES"));
-        assert_eq!(key_of_path("spira.cockpit_sessions").as_deref(), Some("COCKPIT_SESSIONS"));
-        assert_eq!((key_of_path("personas.builder.model"), key_of_path("spira."), key_of_path("spira.a.b")), (None, None, None));
-    }
-}
-
 /// The line `set` or `unset` prints for `key` after its write: whether the scheduler took the
 /// new value or still holds the old one, and what it waits for. `sock` is the control socket,
 /// or why it could not be found.
@@ -87,4 +75,16 @@ pub fn told(sock: Result<String, String>, key: &str) -> String {
 /// `get --running <key>`: the value the scheduler holds for `key`.
 pub fn running(sock: &str, key: &str) -> Result<String, String> {
     call(Path::new(sock), &["scheduler", "running", key])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::key_of_path;
+
+    #[test]
+    fn a_spira_path_names_the_registry_key_the_scheduler_pins() {
+        assert_eq!(key_of_path("spira.max_dwarves").as_deref(), Some("SPIRA_MAX_DWARVES"));
+        assert_eq!(key_of_path("spira.cockpit_sessions").as_deref(), Some("COCKPIT_SESSIONS"));
+        assert_eq!((key_of_path("personas.builder.model"), key_of_path("spira."), key_of_path("spira.a.b")), (None, None, None));
+    }
 }
