@@ -17,7 +17,6 @@ use crate::watchers::publish_backlog::PublishBacklog;
 use crate::watchers::overrides::Overrides;
 use crate::watchers::readiness_dependents::ReadinessDependents;
 use crate::watchers::reconciler_flow::ReconcilerFlow;
-use crate::watchers::repo_events::RepoEvents;
 use crate::watchers::reconciler::Reconciler;
 use crate::watchers::round_duty::RoundDuty;
 use crate::watchers::view::View;
@@ -43,7 +42,6 @@ pub struct Settings {
     pub supersede_duty: SupersedeDuty,
     pub bead_sweep: BeadSweep,
     pub publish_backlog: PublishBacklog,
-    pub repo_events: RepoEvents,
     pub overrides: Overrides,
     pub readiness_dependents: ReadinessDependents,
     pub reconciler_flow: ReconcilerFlow,
@@ -231,7 +229,6 @@ impl Settings {
             max_count: get("SPIRA_LOCAL_BACKLOG_COUNT")?.trim().parse().map_err(|_| "SPIRA_LOCAL_BACKLOG_COUNT must be a non-negative integer".to_string())?,
             max_age_secs: get("SPIRA_LOCAL_BACKLOG_AGE")?.trim().parse().map_err(|_| "SPIRA_LOCAL_BACKLOG_AGE must be a non-negative integer".to_string())?,
         };
-        let repo_events = RepoEvents { interval_ms: secs("SPIRA_RUNTIME_REPO_EVENTS_SECS")? * 1000 };
         let hours = |key: &str| -> Result<f64, String> { get(key)?.trim().parse::<f64>().ok().filter(|h| h.is_finite() && *h > 0.0).ok_or_else(|| format!("{key} must be a positive number of hours")) };
         let reconciler_flow = ReconcilerFlow {
             interval_ms: secs("SPIRA_RUNTIME_RECONCILER_FLOW_SECS")? * 1000,
@@ -299,7 +296,6 @@ impl Settings {
             supersede_duty,
             bead_sweep,
             publish_backlog,
-            repo_events,
             overrides,
             readiness_dependents,
             reconciler_flow,
@@ -333,7 +329,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.repo_events, self.overrides, self.readiness_dependents, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps);
+        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.overrides, self.readiness_dependents, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }

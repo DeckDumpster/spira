@@ -989,9 +989,9 @@ mod tests {
 
     /// The `spira-*-<instance>.timer` and `spira-watch-*` units `rendered` holds outside the
     /// scheduler's keep list (design W2): its watchdog, the store's boot check, the VmPool
-    /// section's publisher, and the operator's repo-events overlay row.
+    /// section's publisher.
     fn outside_the_keep_list(rendered: &[(String, String, String)]) -> Vec<String> {
-        const KEEP: [&str; 4] = ["spira-watchdog-prod.timer", "spira-dolt-boot-check-prod.timer", "spira-vm-pool-section-prod.timer", "spira-watch-repo-events-prod.service"];
+        const KEEP: [&str; 3] = ["spira-watchdog-prod.timer", "spira-dolt-boot-check-prod.timer", "spira-vm-pool-section-prod.timer"];
         rendered.iter().map(|(u, _, _)| u.as_str()).filter(|u| (u.starts_with("spira-") && u.ends_with("-prod.timer")) || u.starts_with("spira-watch-")).filter(|u| !KEEP.contains(u)).map(str::to_string).collect()
     }
 
@@ -1003,7 +1003,7 @@ mod tests {
         let tmpl_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
         let td = tempdir();
         let unit_dir = td.join("units");
-        let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, sccache_dav_addr_set: true, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(shipped_daemon_rows(&["repo-events"])) }).unwrap();
+        let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, sccache_dav_addr_set: true, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(shipped_daemon_rows(&[])) }).unwrap();
         let h = host();
         let sc = FakeSystemctl::default();
         let no_suspend = |_: &str| false;

@@ -4,7 +4,6 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::journal::{StateRow, Turn};
 use runtime::taskrig::TaskRig;
 
 fn rows_of(r: &TaskRig, task: &str) -> Vec<String> {
@@ -13,107 +12,6 @@ fn rows_of(r: &TaskRig, task: &str) -> Vec<String> {
 
 fn asked(r: &TaskRig, effect: &str) -> usize {
     r.requested().iter().filter(|q| q.name == effect).count()
-}
-
-/// The journal as a store of the previous release left it: a task's whole carry under `carry`.
-fn legacy(r: &TaskRig, task: &str, stream: &str, tag: &str, body: &str, at: u64) {
-    let ev = runtime::event::Event {
-        id: runtime::event::EventId("legacy".into()),
-        stream: runtime::event::StreamKey(stream.into()),
-        kind: runtime::event::EventKind::new(Box::leak(tag.to_string().into_boxed_str()), body),
-        at,
-        cause: None,
-        correlation: runtime::event::CorrelationId("legacy".into()),
-    };
-    let value = serde_json::to_string(&vec![ev]).unwrap();
-    use runtime::journal::Journal;
-    r.journal.commit(&Turn { state: vec![StateRow { task: task.into(), skey: "carry".into(), value, at }], ..Turn::default() }).unwrap();
-}
-
-mod repo_events {
-    use super::*;
-    use spira_runtime::watchers::repo_events::*;
-    use spira_runtime::watchers::INBOX_APPEND;
-
-    fn run(id: u64) -> Run {
-        Run { id, workflow: "Deploy".into(), conclusion: "failure".into(), branch: "main".into(), event: "push".into(), title: format!("t{id}") }
-    }
-
-    fn registration() -> runtime::Registration {
-        RepoEvents { interval_ms: 45_000 }.registration()
-    }
-
-    fn rig(forge: Arc<Mutex<Vec<Run>>>) -> TaskRig {
-        TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&Snapshot { seed: vec![], repos: vec![("o/r".into(), Ok(forge.lock().unwrap().clone()))] }).unwrap())).double(INBOX_APPEND, |_| Ok(String::new()))
-    }
-
-    fn start(r: &mut TaskRig) {
-        let (_, stream, kind) = RepoEvents::boot();
-        r.tick(stream, kind).unwrap();
-        r.advance(45_000).unwrap();
-    }
-
-    fn restart(r: &mut TaskRig) {
-        r.reopen(registration()).unwrap();
-        start(r);
-    }
-
-    #[test]
-    fn the_carry_is_a_cursor_per_repository_and_not_one_whole_row() {
-        let forge = Arc::new(Mutex::new(vec![run(7), run(5)]));
-        let mut r = rig(forge);
-        start(&mut r);
-        assert_eq!(rows_of(&r, NAME), ["cursors/o/r", "seeded"]);
-    }
-
-    #[test]
-    fn a_boot_rebuild_announces_nothing_seen_and_everything_new_since_the_cursor() {
-        let forge = Arc::new(Mutex::new(vec![run(1)]));
-        let mut r = rig(forge.clone());
-        start(&mut r);
-        *forge.lock().unwrap() = vec![run(3), run(2), run(1)];
-        r.advance(45_000).unwrap();
-        assert_eq!(asked(&r, INBOX_APPEND), 2);
-        *forge.lock().unwrap() = vec![run(5), run(4), run(3), run(2), run(1)];
-        restart(&mut r);
-        r.advance(45_000 * 2).unwrap();
-        assert_eq!(asked(&r, INBOX_APPEND), 4, "after the restart, runs 4 and 5 are said once each and 1 to 3 not again");
-    }
-
-    #[test]
-    fn a_run_whose_conclusion_changes_below_the_cursor_is_not_announced_again() {
-        let forge = Arc::new(Mutex::new(vec![run(3)]));
-        let mut r = rig(forge.clone());
-        start(&mut r);
-        let mut rerun = run(3);
-        rerun.conclusion = "success".into();
-        *forge.lock().unwrap() = vec![rerun];
-        r.advance(45_000).unwrap();
-        assert_eq!(asked(&r, INBOX_APPEND), 0);
-    }
-
-    #[test]
-    fn a_failure_already_said_is_not_said_again_after_a_boot() {
-        let down = Arc::new(Mutex::new(true));
-        let d = down.clone();
-        let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&Snapshot { seed: vec![], repos: vec![("o/r".into(), if *d.lock().unwrap() { Err("503".into()) } else { Ok(vec![]) })] }).unwrap())).double(INBOX_APPEND, |_| Ok(String::new()));
-        start(&mut r);
-        assert_eq!(asked(&r, INBOX_APPEND), 1);
-        restart(&mut r);
-        assert_eq!(asked(&r, INBOX_APPEND), 1, "the standing failure was said again");
-    }
-
-    #[test]
-    fn a_store_holding_the_whole_carry_is_read_once_and_then_kept_as_rows() {
-        let forge = Arc::new(Mutex::new(vec![run(3), run(2), run(1)]));
-        let mut r = rig(forge);
-        legacy(&r, NAME, STREAM, STATE, r#"{"seeded":true,"runs":["run|o/r|1|failure","run|o/r|2|failure","run|o/r|3|failure"],"adopted":["o/r"],"failed":[]}"#, 0);
-        restart(&mut r);
-        assert_eq!(asked(&r, INBOX_APPEND), 0, "the old carry's runs were announced again");
-        r.advance(45_000).unwrap();
-        assert_eq!(rows_of(&r, NAME), ["carry", "cursors/o/r", "seeded"]);
-        assert_eq!(r.journal.state()[&(NAME.to_string(), "carry".to_string())], "[]");
-    }
 }
 
 mod bead_sweep {
