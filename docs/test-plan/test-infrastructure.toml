@@ -286,6 +286,11 @@ id = "UC-test-infrastructure-35"
 tier = "T1"
 statement = "CI serial retry. Only red and timed-out suites are re-run once, serially, at the same sha, with timeouts given `GATE_RETRY_RERUN_TIMEOUT`. Red then green is a pass with a `flaky suite` warning. Red twice fails with a `red-twice suite` error. Structural failure (more than max, or more than half hard-red, timeouts excluded) fails without retry. A harness fault passes through."
 
+[use_case.uncovered]
+reason = "its shell suites pinned calls or wording and were deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-test-infrastructure-36"
 tier = "T1"
