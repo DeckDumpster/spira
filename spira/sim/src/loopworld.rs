@@ -319,12 +319,12 @@ pub struct World {
     pub lc: Mutex<Lc>,
     pub script: Script,
     pub proc: Arc<CountingProc>,
-    /// Round pass scopes a test keeps alive: (scope name, virtual ms it ends).
+    /// Round pass scopes a test keeps alive: (batch, virtual ms it ends).
     pub pass_scopes: Mutex<Vec<(String, u64)>>,
 }
 
 impl World {
-    /// The names of the pass scopes still alive now.
+    /// The batches whose pass scope is still alive now.
     pub fn live_pass_scopes(&self) -> Vec<String> {
         let now = self.now();
         self.pass_scopes.lock().unwrap_or_else(|e| e.into_inner()).iter().filter(|(_, until)| *until > now).map(|(n, _)| n.clone()).collect()
@@ -457,7 +457,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
         .collect();
     let open_round = lc.round.as_ref().map(|(id, m)| bl::Round { id: id.clone(), members: m.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: format!("/sim/wt/{id}"), driven: held.as_ref() == Some(id), ..bl::Round::default() });
     let live_legs = units::Units::list(&*w.units, &units::task_glob(bl::NAME)).ok().map(|all| bl::running_legs(&all));
-    let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), stopped: w.now() < w.script.stopped_until, live_legs, live_scopes: Some(w.live_pass_scopes()), ..bl::Repo::default() };
+    let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), stopped: w.now() < w.script.stopped_until, live_legs, scoped_batches: Some(w.live_pass_scopes()), ..bl::Repo::default() };
     json(&bl::Snapshot { repos: [(REPO.to_string(), repo)].into(), now_ms: w.now() })
 }
 

@@ -424,7 +424,6 @@ fn sp_byw57t_a_certify_that_judged_nothing_keeps_its_output_and_names_it_in_the_
 /// for the scope to end, then certify starts.
 #[test]
 fn sp_byw57t_certify_waits_for_the_attribution_passs_scope_to_end() {
-    let scope = runtime::units::round_scope_unit("spira", "r9", "3-1");
     let mut c = driving(State::Certifying, "");
     {
         let rc = c.repos.get_mut("spira").unwrap();
@@ -433,10 +432,10 @@ fn sp_byw57t_certify_waits_for_the_attribution_passs_scope_to_end() {
         rc.leg_at_ms = NOW;
     }
     let mut snap = idle();
-    snap.repos.get_mut("spira").unwrap().live_scopes = Some(vec![scope]);
+    snap.repos.get_mut("spira").unwrap().scoped_batches = Some(vec!["r9".into()]);
     let (held, acts) = decide(&c, &snap);
     assert!(acts.iter().all(|a| a.effect != CERTIFY), "a live pass scope holds certify: {acts:?}");
-    snap.repos.get_mut("spira").unwrap().live_scopes = Some(vec![]);
+    snap.repos.get_mut("spira").unwrap().scoped_batches = Some(vec![]);
     let (_, acts) = decide(&held, &snap);
     assert!(acts.iter().any(|a| a.effect == CERTIFY), "certify starts once the scope has ended: {acts:?}");
 }

@@ -254,9 +254,8 @@ fn an_attribution_leg_that_ends_while_its_pass_scope_is_finishing_still_lands_th
             if l.why == bl::ATTRIBUTE {
                 wa.units.script(bl::NAME, MIN, Exit::Code(0));
                 wa.units.script_output(bl::NAME, attribution_land(&l.members).as_bytes(), b"");
-                let scope = units::round_scope_unit(REPO, &l.batch, "3-1");
                 let ends = wa.now() + MIN + 90_000;
-                wa.pass_scopes.lock().unwrap_or_else(|e| e.into_inner()).push((scope, ends));
+                wa.pass_scopes.lock().unwrap_or_else(|e| e.into_inner()).push((l.batch.clone(), ends));
                 let scope = ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None };
                 return units::effect(&*wa.units, UNIT_RUN_SCOPE, &serde_json::to_string(&scope).map_err(|e| e.to_string())?);
             }

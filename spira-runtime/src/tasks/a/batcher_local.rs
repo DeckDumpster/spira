@@ -274,9 +274,9 @@ pub struct Repo {
     /// The keys of the leg units the unit manager lists as running; `None` when it could not say.
     #[serde(default)]
     pub live_legs: Option<Vec<String>>,
-    /// The round pass scopes (`systemd-run --scope`) the unit manager lists as running, any round; `None` when it could not say.
+    /// The carried batches that have a pass scope (`systemd-run --scope`) running; `None` when the unit manager could not say.
     #[serde(default)]
-    pub live_scopes: Option<Vec<String>>,
+    pub scoped_batches: Option<Vec<String>>,
     /// The effects of this task asked for this repo and not yet answered, as the scheduler holds
     /// them; `None` when the handler could not say.
     #[serde(default)]
@@ -805,16 +805,6 @@ pub fn running_legs(listed: &[runtime::units::UnitDetail]) -> Vec<String> {
         .collect()
 }
 
-/// The names (without `.scope`) of the round pass scopes among `listed` that are running.
-pub fn running_scopes(listed: &[runtime::units::UnitDetail]) -> Vec<String> {
-    use runtime::units::UnitState;
-    listed
-        .iter()
-        .filter(|d| matches!(d.state, UnitState::Active | UnitState::Activating | UnitState::Deactivating))
-        .map(|d| d.name.trim_end_matches(".scope").to_string())
-        .collect()
-}
-
 /// How long past its wall a leg with no `unit.ran` is given before it is judged lost.
 pub const LEG_GRACE_MS: u64 = 120_000;
 /// How long past its start a leg with no `unit.ran` is judged lost: a wall and grace, and for
@@ -1041,8 +1031,7 @@ impl Machine<'_> {
     }
 
     fn release_certify(&mut self, policy: &Policy, repo: &Repo) {
-        let prefix = runtime::units::round_scope_unit(self.repo, self.rc.batch.as_deref().unwrap_or_default(), "");
-        let alive = repo.live_scopes.as_ref().is_some_and(|s| s.iter().any(|n| n.starts_with(&prefix)));
+        let alive = self.rc.batch.as_ref().is_some_and(|b| repo.scoped_batches.as_ref().is_some_and(|s| s.contains(b)));
         if alive && self.now_ms.saturating_sub(self.rc.leg_at_ms) <= policy.wall_ms {
             return;
         }
@@ -2169,7 +2158,7 @@ pub mod edge {
             let repo = batcher_cut::find_repo(&env, &name)?;
             let mut seen = observe_repo(&env, &repo)?;
             seen.live_legs = live_legs(e);
-            seen.live_scopes = live_scopes(e);
+            seen.scoped_batches = scoped_batches(e, &name, &carried);
             seen.settled = carried.repos.get(&name).map(|rc| settled_batches(&env, rc, &seen)).unwrap_or_default();
             snap.repos.insert(name.clone(), seen);
         }
@@ -2199,12 +2188,16 @@ pub mod edge {
         Some(super::running_legs(&all))
     }
 
-    /// The round pass scopes the manager lists as running; `None` when it cannot say.
-    fn live_scopes(e: &Effects) -> Option<Vec<String>> {
+    /// Of the carried batches, those with a pass scope running; `None` when the manager cannot say.
+    fn scoped_batches(e: &Effects, repo: &str, carried: &super::Carry) -> Option<Vec<String>> {
         let units = e.units.as_deref()?;
-        let listed = runtime::units::effect(units, runtime::units::UNIT_LIST, &json(&runtime::units::ROUND_SCOPE_ALL).ok()?).ok()?;
-        let all: Vec<runtime::units::UnitDetail> = serde_json::from_str(&listed).ok()?;
-        Some(super::running_scopes(&all))
+        let mut live = vec![];
+        for batch in carried.repos.get(repo)?.rounds().into_iter().filter_map(|r| r.batch) {
+            if runtime::units::round_scope_live(units, repo, &batch).ok()? {
+                live.push(batch);
+            }
+        }
+        Some(live)
     }
 
     fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo) -> Result<Repo, String> {
