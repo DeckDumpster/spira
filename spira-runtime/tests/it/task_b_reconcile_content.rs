@@ -97,6 +97,7 @@ fn tick() -> runtime::event::EventKind {
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&closed(), task::NAME);
     assert!(rows.iter().any(|k| k == "beads/sp-a") && rows.iter().any(|k| k == "through_seq"), "{rows:?}");
+    assert!(rows.iter().any(|k| k == "full_at"), "the full-pass clock must survive a restart: {rows:?}");
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&skew_red(), task::NAME);
     assert!(rows.iter().any(|k| k == "skew_red_at"), "{rows:?}");
 }
