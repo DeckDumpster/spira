@@ -41,7 +41,7 @@ pub fn spec() -> Result<String, String> {
 }
 
 /// Keys whose resolved value is not simply what the file declares.
-const COMPUTED_KEYS: &[&str] = &["SPIRA_GATE_NOVERDICT", "SPIRA_GATE_BASEFAIL", "SPIRA_RELEASE_REPO", "SPIRA_AGENT", "SPIRA_RUNES_DIR"];
+const COMPUTED_KEYS: &[&str] = &["SPIRA_RELEASE_REPO", "SPIRA_AGENT", "SPIRA_RUNES_DIR"];
 
 /// `key` as the merged `[spira]` table declares it, when that is the whole answer: a declared,
 /// plainly-valued key of a `prod` instance. Anything else is `None` and takes the full resolve,
@@ -235,7 +235,6 @@ mod declared_value_tests {
         }
         assert_eq!(declared_value(&merged, "SPIRA_ASK_LABEL").as_deref(), Some("pinned-ask"));
         assert_eq!(declared_value(&merged, "SPIRA_AGENT"), None, "a computed key takes the full resolve");
-        assert_eq!(declared_value(&merged, "SPIRA_GATE_NOVERDICT"), None);
         assert_eq!(declared_value(&merged, "NOT_A_SPIRA_KEY"), None);
         assert_eq!(declared_value(&merged, "SPIRA_NO_SUCH_KEY_ANYWHERE"), None, "an undeclared key is the full resolve's refusal");
     }
