@@ -6,6 +6,7 @@ heimdall_restart_window = "3600"
 gate_deadline = 300
 gate_build_stall = 300
 git_lock_stale_secs = 600
+hel_pace_ms = 250
 stack_shared_files = "Cargo.lock Cargo.toml spira/config-delta.toml spira/conf.d/ spira-lint/"
 scratch_max_age_hours = 24
 sccache_dav_max_gb = 40

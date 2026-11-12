@@ -401,7 +401,7 @@ impl<'a> Sweep<'a> {
     /// The whole invocation: every repository in scope, then the tally line. Returns the
     /// exit status (0 when nothing failed).
     pub fn run(&mut self, repos: &[Repo]) -> i32 {
-        self.deadline = self.opts.budget.map(|b| Instant::now() + b);
+        self.deadline = self.opts.budget.map(|b| self.w.now() + b);
         for r in repos {
             if self.out_of_time() {
                 break;
@@ -420,7 +420,7 @@ impl<'a> Sweep<'a> {
     }
 
     fn out_of_time(&mut self) -> bool {
-        if self.deadline.is_some_and(|d| Instant::now() >= d) {
+        if self.deadline.is_some_and(|d| self.w.now() >= d) {
             if !self.truncated {
                 self.truncated = true;
                 self.w.log("hel: time budget spent — remaining branches and worktrees wait for the next pass");
@@ -497,7 +497,7 @@ impl<'a> Sweep<'a> {
             let worked = self.tally.sent + self.tally.failed;
             self.act(&c, id, br, d);
             if !self.opts.dry && self.tally.sent + self.tally.failed != worked {
-                std::thread::sleep(self.opts.pace);
+                self.w.rest(self.opts.pace);
             }
         }
 

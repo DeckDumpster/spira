@@ -89,6 +89,14 @@ pub trait World {
     fn set_resume_after(&self, repo: &str, br: Option<&str>) {
         let _ = (repo, br);
     }
+    /// The clock the budget is read against.
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+    /// Rest between branches (the pace).
+    fn rest(&self, d: std::time::Duration) {
+        std::thread::sleep(d);
+    }
     /// $SPIRA_RUN/worktree — the only directory whose orphans PASS 2 judges.
     fn worktrees(&self) -> PathBuf;
 }

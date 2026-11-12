@@ -54,8 +54,10 @@ struct Fake {
     calls: RefCell<Vec<String>>,
     prefetched: RefCell<Vec<String>>,
     resume: RefCell<Option<String>>,
-    /// Each send takes this long, so a short budget cuts the sweep between branches.
+    /// Each send takes this long on the fake clock, so a short budget cuts the sweep between branches.
     send_takes: std::time::Duration,
+    started: std::cell::OnceCell<std::time::Instant>,
+    elapsed: std::cell::Cell<std::time::Duration>,
 }
 
 impl Fake {
@@ -87,7 +89,7 @@ impl World for Fake {
     /// afterwards is what lib.sh would have left.
     fn send(&self, id: &str, br: &str, repo: &Path, why: &str, caller: &str) -> Sent {
         self.call(format!("send {id} {br} {why} {caller}"));
-        std::thread::sleep(self.send_takes);
+        self.elapsed.set(self.elapsed.get() + self.send_takes);
         if self.held_mid.contains(id) || self.held.contains(id) {
             return Sent::Held("in_progress — the lease has not been released".into());
         }
@@ -113,6 +115,12 @@ impl World for Fake {
         }
         let _ = Command::new("git").arg("-C").arg(repo).args(["worktree", "remove", "--force"]).arg(w).output();
         true
+    }
+    fn now(&self) -> std::time::Instant {
+        *self.started.get_or_init(std::time::Instant::now) + self.elapsed.get()
+    }
+    fn rest(&self, d: std::time::Duration) {
+        self.elapsed.set(self.elapsed.get() + d);
     }
     fn resume_after(&self, _repo: &str) -> Option<String> {
         self.resume.borrow().clone()
@@ -347,7 +355,7 @@ mod resume {
         let repo = crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false };
         let pass = |budget_ms: u64| {
             let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
-            let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: Some(std::time::Instant::now() + std::time::Duration::from_millis(budget_ms)), truncated: false };
+            let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: Some(f.now() + std::time::Duration::from_millis(budget_ms)), truncated: false };
             s.repo(&repo);
         };
         pass(200);
@@ -376,9 +384,9 @@ mod resume {
         let f = Fake { base: Some(base), beads, wts: t.path().join("wt"), ..Default::default() };
         let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: std::time::Duration::from_millis(80) };
         let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
-        let began = std::time::Instant::now();
+        let began = f.now();
         s.repo(&crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false });
         assert_eq!(s.tally.sent, 3);
-        assert!(began.elapsed() >= std::time::Duration::from_millis(240), "{:?}", began.elapsed());
+        assert_eq!(f.now() - began, std::time::Duration::from_millis(240));
     }
 }
