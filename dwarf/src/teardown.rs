@@ -3,7 +3,7 @@
 //! this module gathers its inputs lazily (a marker a higher row would match is never
 //! consumed early) and performs the side effects the verdict names.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -40,6 +40,43 @@ fn others_refused(inbox: &str, since: &str, bead: &str) -> Vec<String> {
     out
 }
 
+fn remove_path(p: &Path) -> bool {
+    match p.symlink_metadata() {
+        Ok(m) if m.is_dir() => std::fs::remove_dir_all(p).is_ok(),
+        Ok(_) => std::fs::remove_file(p).is_ok(),
+        Err(_) => true,
+    }
+}
+
+/// Removes `p`; a staged release is read-only on purpose, so a first failure makes the
+/// directories inside writable and tries once more.
+fn remove_tree(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    fn open_up(p: &Path) {
+        let Ok(m) = p.symlink_metadata() else { return };
+        if m.is_dir() {
+            let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(m.permissions().mode() | 0o700));
+            if let Ok(rd) = std::fs::read_dir(p) {
+                rd.flatten().for_each(|e| open_up(&e.path()));
+            }
+        }
+    }
+    remove_path(p) || {
+        open_up(p);
+        remove_path(p)
+    }
+}
+
+/// Removes `dir` and nothing beside it; returns the bytes it held.
+pub fn remove_session_tmpdir(dir: &Path) -> u64 {
+    let bytes = runtime::usage::dir_bytes(dir);
+    if remove_tree(dir) {
+        bytes
+    } else {
+        0
+    }
+}
+
 impl Run<'_> {
     /// A refused `work submit` ends a session with nothing the dwarf can do: say so in the inbox
     /// (one line for the bead), and page once when a second bead says it inside the window.
@@ -61,6 +98,33 @@ impl Run<'_> {
         if !others.is_empty() && !paged {
             append(format!("P0 {SUBMIT_BLOCKED}: work submit refused for {bead} and {} within {} minutes: {refusal}", others.join(", "), SUBMIT_BLOCKED_WINDOW_S / 60));
         }
+    }
+
+    /// The session's `TMPDIR`: inside its worktree, where the worktree reap already cleans.
+    pub(crate) fn session_tmpdir(work: &Path) -> PathBuf {
+        work.join(".runtime").join(format!("session-tmp-{}", std::process::id()))
+    }
+
+    pub(crate) fn make_session_tmpdir(work: &Path) -> Result<PathBuf, (PathBuf, std::io::Error)> {
+        let dir = Self::session_tmpdir(work);
+        std::fs::create_dir_all(&dir).map(|()| dir.clone()).map_err(|e| (dir, e))
+    }
+
+    pub(crate) fn export_session_tmpdir(&self, work: &Path) {
+        match Self::make_session_tmpdir(work) {
+            Ok(tmp) => self.d.env.set("TMPDIR", &tmp.display().to_string()),
+            Err((tmp, e)) => self.log(&format!("{}: session TMPDIR {} not created ({e}); scratch falls to the inherited temp root", self.s.bead, tmp.display())),
+        }
+    }
+
+    pub(crate) fn remove_tmpdir(&self) {
+        let Some(work) = self.s.work.as_deref() else { return };
+        let dir = Self::session_tmpdir(work);
+        if !dir.is_dir() {
+            return;
+        }
+        let bytes = remove_session_tmpdir(&dir);
+        self.log(&format!("{}: removed session TMPDIR {} ({} MiB)", self.f(), dir.display(), bytes >> 20));
     }
 
     fn stop_heartbeat(&self) {
@@ -207,6 +271,7 @@ impl Run<'_> {
             self.phase("teardown");
         }
         self.fixture_drop();
+        self.remove_tmpdir();
         let _ = std::fs::remove_file(self.run_dir().join("dwarf").join(format!("{id}.lease")));
         self.restore_world();
         let _ = std::env::set_current_dir(&self.s.repo);
@@ -546,5 +611,67 @@ impl Run<'_> {
         self.remove_identity();
         self.ledger_done(rc, status);
         rc
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn removing_the_session_tmpdir_leaves_a_newer_sibling_of_the_same_user_alone() {
+        let dir = testkit::TempDir::new("sweep");
+        let own = dir.path().join("sp-x-123");
+        let sibling = dir.path().join("tl-run.7m7bqt");
+        std::fs::create_dir_all(own.join("a")).unwrap();
+        std::fs::write(own.join("a/f"), vec![0u8; 4096]).unwrap();
+        std::fs::create_dir_all(&sibling).unwrap();
+        std::fs::write(sibling.join("conf"), "x").unwrap();
+        let bytes = remove_session_tmpdir(&own);
+        assert!(bytes >= 4096);
+        assert!(!own.exists());
+        assert!(sibling.join("conf").is_file());
+    }
+
+    #[test]
+    fn a_read_only_staged_tree_in_the_session_tmpdir_is_removed() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = testkit::TempDir::new("ro");
+        let staged = dir.path().join("t/db11/bin");
+        std::fs::create_dir_all(&staged).unwrap();
+        std::fs::write(staged.join("f"), "x").unwrap();
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o555)).unwrap();
+        remove_session_tmpdir(&dir.path().join("t"));
+        assert!(!dir.path().join("t").exists());
+    }
+
+    #[test]
+    fn a_symlink_in_the_session_tmpdir_is_unlinked_not_followed() {
+        let dir = testkit::TempDir::new("link");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("keep"), "x").unwrap();
+        let own = dir.path().join("own");
+        std::fs::create_dir_all(&own).unwrap();
+        std::os::unix::fs::symlink(&outside, own.join("l")).unwrap();
+        remove_session_tmpdir(&own);
+        assert!(!own.exists());
+        assert!(outside.join("keep").is_file());
+    }
+
+    #[test]
+    fn the_session_tmpdir_lies_inside_the_worktree() {
+        let w = Path::new("/w/wt");
+        assert!(Run::session_tmpdir(w).starts_with(w));
+    }
+
+    #[test]
+    fn a_session_tmpdir_that_cannot_be_created_is_reported_with_its_path() {
+        let dir = testkit::TempDir::new("blocked");
+        std::fs::write(dir.path().join(".runtime"), "a file, not a directory").unwrap();
+        let (path, _) = Run::make_session_tmpdir(dir.path()).unwrap_err();
+        assert!(path.starts_with(dir.path()));
+        let ok = testkit::TempDir::new("ok");
+        assert!(Run::make_session_tmpdir(ok.path()).unwrap().is_dir());
     }
 }

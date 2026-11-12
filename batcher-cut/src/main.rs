@@ -611,6 +611,7 @@ impl drive::RoundOps for LiveOps<'_> {
         let what = match kind {
             "base" => "base itself red",
             "unattributed" => "local red could not be attributed to anyone",
+            spira_config::host_disk::CAUSE => "the host filesystem is full; no member is implicated",
             "integration" => "red only in the merged tree, not fixed in the round",
             "mender-page" => "the menders' passes ended in a box fault the loop cannot fix",
             _ => "workspace failed to build",
@@ -2191,7 +2192,10 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
     let end = drive::attribute_round(&mut runner, &mut ops, &suites, members.clone(), budget);
-    if end.is_err() && runner.install_failed() {
+    if end.is_err() && runner.host_disk() {
+        println!("batcher {}: install fault → {}", repo.name, spira_config::host_disk::CAUSE);
+        drive::RoundOps::incident(&mut ops, spira_config::host_disk::CAUSE, &["install".to_string()]);
+    } else if end.is_err() && runner.install_failed() {
         let fault = attribute_install(&mut runner, &members, &suites);
         install_fault_outcome(&repo, &mut ops, &members, &fault);
     }

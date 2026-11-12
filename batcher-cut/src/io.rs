@@ -2278,12 +2278,20 @@ pub fn file_local_red_incident(
                 "SPIRA_INCIDENT_REF",
                 local_red_ref(&repo.name, suites, reason),
             )
-            .env("SPIRA_INCIDENT_CAUSE", "local-round-red"),
+            .env("SPIRA_INCIDENT_CAUSE", local_red_cause(reason)),
         "incident.sh file",
     );
     let _ = fs::remove_file(&tmp);
     let out = out?;
     filed_id(&out)
+}
+
+fn local_red_cause(reason: &str) -> &'static str {
+    if reason == spira_config::host_disk::CAUSE {
+        spira_config::host_disk::CAUSE
+    } else {
+        "local-round-red"
+    }
 }
 
 /// File an Ops incident for a landing whose release was not activated. The members landed, so
@@ -4122,6 +4130,12 @@ pub fn wait_lock(env: &Env, repo: &str, wait_secs: u64) -> Result<Option<Lock>, 
 #[cfg(test)]
 mod land_tests {
     use super::*;
+
+    #[test]
+    fn a_full_host_filesystem_files_its_incident_under_the_host_disk_cause() {
+        assert_eq!(local_red_cause("host-disk"), "host-disk");
+        assert_eq!(local_red_cause("unattributed"), "local-round-red");
+    }
 
     #[test]
     fn foreign_in_names_only_non_members() {

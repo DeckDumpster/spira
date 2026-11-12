@@ -1791,6 +1791,56 @@ pub fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+const LARGEST_ENTRIES: usize = 5;
+
+fn tree_bytes(p: &Path, dev: u64) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(m) = p.symlink_metadata() else { return 0 };
+    if m.dev() != dev {
+        return 0;
+    }
+    if !m.is_dir() {
+        return m.len();
+    }
+    fs::read_dir(p).map(|rd| rd.flatten().map(|e| tree_bytes(&e.path(), dev)).sum()).unwrap_or(0)
+}
+
+/// The `n` largest entries directly under `dir`, on `dir`'s own filesystem, biggest first.
+pub(crate) fn largest_entries(dir: &Path, n: usize) -> Vec<(PathBuf, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let Some(dev) = dir.metadata().ok().map(|m| m.dev()) else { return Vec::new() };
+    let Ok(rd) = fs::read_dir(dir) else { return Vec::new() };
+    let mut all: Vec<(PathBuf, u64)> = rd.flatten().map(|e| (e.path(), tree_bytes(&e.path(), dev))).collect();
+    all.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    all.truncate(n);
+    all
+}
+
+/// When `failure` says a filesystem is full, the report naming the one holding `at` and its
+/// largest entries, in the line shape the batcher reads ([`spira_config::host_disk::REPORT_MARK`]).
+pub(crate) fn host_disk_report(failure: &str, at: &Path) -> Option<String> {
+    if !spira_config::host_disk::is_full(failure) {
+        return None;
+    }
+    let mounts = fs::read_to_string("/proc/mounts").unwrap_or_default();
+    let mount = spira_config::host_disk::mount_of(&mounts, at).unwrap_or_else(|| at.display().to_string());
+    let largest = largest_entries(Path::new(&mount), LARGEST_ENTRIES)
+        .iter()
+        .map(|(p, b)| format!("{} {} MiB", p.display(), b >> 20))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!("{}{mount} is full ({}); largest: {largest}", spira_config::host_disk::REPORT_MARK, failure.trim()))
+}
+
+/// A failed write during the install, carrying the full-filesystem report when that is why.
+fn install_write_error(what: &Path, e: &std::io::Error) -> String {
+    let base = format!("{}: {e}", what.display());
+    match host_disk_report(&base, what) {
+        Some(report) => format!("{base}\nround-vm run: {report}"),
+        None => base,
+    }
+}
+
 /// Installs the pulled executables into `<target>` — the round worktree's own
 /// `target/release`, where `queue land-local --worktree` reads them (G8). The VM's testenv
 /// must report (batch.meta `tree=`) exactly the tree the host sent; any other tree is a
@@ -1812,11 +1862,11 @@ pub fn install_bins(pulled: &Path, expected: &str, reported: Option<&str>, batch
         }
         Some(_) => {}
     }
-    fs::create_dir_all(target).map_err(|e| format!("{}: {e}", target.display()))?;
+    fs::create_dir_all(target).map_err(|e| install_write_error(target, &e))?;
     for exe in exes {
         let to = target.join(exe.file_name().unwrap());
         let _ = fs::remove_file(&to);
-        fs::copy(&exe, &to).map_err(|e| format!("{}: {e}", to.display()))?;
+        fs::copy(&exe, &to).map_err(|e| install_write_error(&to, &e))?;
     }
     Ok(())
 }
@@ -2835,7 +2885,12 @@ fn pull_retry(remote: &dyn Remote, cfg: &Config, addr: &str, remote_path: &str, 
         }
         match remote.pull(addr, remote_path, local) {
             Ok(()) => return true,
-            Err(e) => eprintln!("round-vm run: pull {remote_path} try {} of {tries}: {e}", i + 1),
+            Err(e) => {
+                eprintln!("round-vm run: pull {remote_path} try {} of {tries}: {e}", i + 1);
+                if let Some(report) = host_disk_report(&e, local) {
+                    eprintln!("round-vm run: {report}");
+                }
+            }
         }
     }
     false
@@ -4117,6 +4172,19 @@ mod tests {
         use std::os::unix::fs::OpenOptionsExt as _;
         let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o755).open(p).unwrap();
         f.write_all(body.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn a_full_filesystem_failure_is_reported_with_its_five_largest_entries() {
+        let d = testkit::TempDir::new("hostdisk");
+        for (name, n) in [("a", 1usize), ("b", 7), ("c", 3), ("d", 9), ("e", 5), ("f", 2), ("g", 8)] {
+            fs::write(d.path().join(name), vec![0u8; n * 1024]).unwrap();
+        }
+        let largest: Vec<String> = largest_entries(d.path(), 5).iter().map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(largest, ["d", "g", "b", "e", "c"]);
+        let report = host_disk_report("tar: spira-install: Cannot write: Disk quota exceeded", d.path()).expect("a quota failure is reported");
+        assert!(report.contains(spira_config::host_disk::REPORT_MARK) && report.contains("is full") && report.contains("largest:"), "{report}");
+        assert_eq!(host_disk_report("Permission denied", d.path()), None);
     }
 
     #[test]

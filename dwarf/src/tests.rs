@@ -160,6 +160,35 @@ pub(crate) mod verdict_run {
         got
     }
 
+    #[test]
+    fn the_end_of_a_session_removes_its_tmpdir_and_nothing_beside_it() {
+        let work = testkit::TempDir::new("dwarf-tmpdir");
+        let dir = Run::make_session_tmpdir(work.path()).unwrap();
+        std::fs::write(dir.join("scratch"), "x").unwrap();
+        let sibling = work.path().join(".runtime").join("keep");
+        std::fs::write(&sibling, "y").unwrap();
+        let w = work.path().to_path_buf();
+        with_run(&NoBd, &Seams(Default::default()), Dirty(vec![]), "", |r| {
+            r.s.work = Some(w);
+            r.remove_tmpdir();
+        });
+        assert!(!dir.exists());
+        assert!(sibling.is_file());
+    }
+
+    #[test]
+    fn a_session_exports_its_worktree_tmpdir_to_what_it_starts() {
+        let work = testkit::TempDir::new("dwarf-tmpdir-export");
+        let w = work.path().to_path_buf();
+        let got = with_run(&NoBd, &Seams(Default::default()), Dirty(vec![]), "", |r| {
+            r.export_session_tmpdir(&w);
+            r.d.env.child().get("TMPDIR").cloned()
+        });
+        let want = Run::session_tmpdir(work.path());
+        assert_eq!(got.as_deref(), Some(want.display().to_string().as_str()));
+        assert!(want.is_dir() && want.starts_with(work.path()));
+    }
+
     const REFUSED: &str = "The work is finished and checked, but work submit refuses: spira-lc content: cannot tell\nmore";
     const T0: i64 = 1_700_000_000;
 
