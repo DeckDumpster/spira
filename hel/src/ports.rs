@@ -80,6 +80,15 @@ pub trait World {
     fn log(&self, msg: &str);
     /// The reap log, for FAILED lines that name it.
     fn reaplog(&self) -> String;
+    /// The last branch of `repo` a budget-cut sweep handled; the next sweep starts after it.
+    fn resume_after(&self, repo: &str) -> Option<String> {
+        let _ = repo;
+        None
+    }
+    /// Record (or with `None` clear) where a budget-cut sweep of `repo` stopped.
+    fn set_resume_after(&self, repo: &str, br: Option<&str>) {
+        let _ = (repo, br);
+    }
     /// $SPIRA_RUN/worktree — the only directory whose orphans PASS 2 judges.
     fn worktrees(&self) -> PathBuf;
 }

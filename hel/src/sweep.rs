@@ -465,11 +465,18 @@ impl<'a> Sweep<'a> {
             }
         }
 
-        // PASS 1 — every spira/* branch, exactly one disposition.
-        for br in &brs {
+        // PASS 1 — every spira/* branch, exactly one disposition, from where a budget-cut
+        // sweep stopped. A cursor naming no branch starts over.
+        let resume = if self.opts.only.is_some() { None } else { self.w.resume_after(&r.name) };
+        let skip = resume.as_ref().and_then(|c| brs.iter().position(|b| b == c)).map_or(0, |i| i + 1);
+        let mut cut_after: Option<&String> = None;
+        let mut cut = false;
+        for br in &brs[skip..] {
             if self.out_of_time() {
+                cut = true;
                 break;
             }
+            cut_after = Some(br);
             let id = br.strip_prefix("spira/").unwrap_or(br);
             if let Some(only) = self.opts.only.as_deref() {
                 if only != id && only != br {
@@ -486,6 +493,11 @@ impl<'a> Sweep<'a> {
             }
             let d = disposition(&c, id, br);
             self.act(&c, id, br, d);
+        }
+
+        if self.opts.only.is_none() && !self.opts.dry {
+            let last_handled = if cut { cut_after.map(String::as_str).or(resume.as_deref().filter(|_| skip > 0)) } else { None };
+            self.w.set_resume_after(&r.name, last_handled);
         }
 
         // PASS 2 — orphaned worktrees: registered under $SPIRA_RUN/worktree, branch gone.
