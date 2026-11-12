@@ -131,10 +131,16 @@ mod tests {
     #[test]
     fn a_tip_that_deleted_a_key_keeps_its_fixture_line_while_the_landing_ref_requires_it() {
         let t = copy_tree();
+        let planted = t.path().join("spira/conf.d/SPIRA_PLANTED_ONLY_HERE");
+        std::fs::write(&planted, "TYPE=string\nGROUP=archivist\nDOC=planted\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_PLANTED_ONLY_HERE:=x}\"\nSPIRA_CONF_DEFAULT_EOF\n").unwrap();
+        let f = t.path().join(FIXTURE);
+        let text = std::fs::read_to_string(&f).unwrap();
+        let with_key = text.replacen("archivist_every = ", "planted_only_here = \"x\"\narchivist_every = ", 1);
+        std::fs::write(&f, &with_key).unwrap();
         testkit::git(t.path(), &["init", "-q", "-b", "main"]);
         testkit::git(t.path(), &["add", "-A"]);
         testkit::git(t.path(), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "landing ref"]);
-        std::fs::remove_file(t.path().join("spira/conf.d/SPIRA_ARCHIVIST_EVERY")).unwrap();
+        std::fs::remove_file(&planted).unwrap();
         check(t.path(), Some("main")).expect("the fixture still declares the key the landing ref requires");
     }
 }
