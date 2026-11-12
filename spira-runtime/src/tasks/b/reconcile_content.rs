@@ -19,7 +19,8 @@
 //!
 //! ```text
 //! Snapshot { world_halted: bool,
-//!            through_seq: Option<u64>,                 // from event-seq
+//!            pass: Pass,                               // Head | Since | Full
+//!            through_seq: Option<u64>,                 // from event-seq / the verb
 //!            work: Vec<Close>, asks: Result<Vec<Close>>, epics: Result<Vec<Close>> }
 //! Close { id, why, reason }
 //! ```
