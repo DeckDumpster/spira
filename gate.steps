@@ -47,7 +47,7 @@ step bash spira/build-fence.sh
 # The merged tree's complete test fixture config must resolve every key the tree reads: a tip
 # that retires a key the landing ref still reads cannot compute a round's image.
 bin SPIRA_FIXTURE_BIN gate
-step "$SPIRA_FIXTURE_BIN" fixture-config --tree .
+step "$SPIRA_FIXTURE_BIN" fixture-config --tree . --base "$SPIRA_GATE_BASE"
 # A branch touching a round-image recipe input runs the image setup in a base-OS container; any other branch skips it.
 step bash spira/round-image-preflight.sh
 # Every provisioned CI workflow spills to EC2 only; prints `fence: ci-spill-guard checked <n> provision steps`.
