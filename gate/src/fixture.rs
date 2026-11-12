@@ -27,12 +27,12 @@ pub fn check(tree: &Path, base: Option<&str>) -> Result<usize, String> {
         let scratch = std::env::temp_dir().join(format!("gate-fixture-config-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&scratch);
         std::fs::create_dir_all(&scratch).map_err(|e| format!("scratch for the landing ref's keys: {e}"))?;
-        let archive = Command::new("git").arg("-C").arg(tree).args(["archive", base, "spira/conf.d"]).output()
+        let archive = Command::new("timeout").args(["5", "git", "-C"]).arg(tree).args(["archive", base, "spira/conf.d"]).output()
             .map_err(|e| format!("git archive {base}: {e}"))?;
         if !archive.status.success() {
             return Err(format!("git archive {base} spira/conf.d: {}", String::from_utf8_lossy(&archive.stderr).trim()));
         }
-        let mut tar = Command::new("tar").arg("-x").arg("-C").arg(&scratch).stdin(std::process::Stdio::piped()).spawn()
+        let mut tar = Command::new("timeout").args(["5", "tar", "-x"]).arg("-C").arg(&scratch).stdin(std::process::Stdio::piped()).spawn()
             .map_err(|e| format!("tar: {e}"))?;
         std::io::Write::write_all(&mut tar.stdin.take().unwrap(), &archive.stdout).map_err(|e| format!("tar: {e}"))?;
         let unpacked = tar.wait().map_err(|e| format!("tar: {e}"))?.success();
