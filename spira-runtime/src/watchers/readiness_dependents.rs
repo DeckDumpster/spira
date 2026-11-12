@@ -163,6 +163,16 @@ mod tests {
         run(&mut e, Outcome::Failed("store down".into()));
         tick(&mut e, &clock);
         assert_eq!(looks(&e).last(), Some(&Pass { through: Some(41), ..Pass::default() }));
+        look(&mut e, r#"{"through":42,"keys":["sp-a"]}"#);
+        assert!(e.pending_effects().iter().any(|p| p.spec.name == RUN), "the failed run is asked for again");
+    }
+
+    #[test]
+    fn a_moved_revision_with_no_keys_is_carried_without_a_run() {
+        let (mut e, _clock) = engine();
+        look(&mut e, r#"{"through":41,"keys":[]}"#);
+        assert!(!e.pending_effects().iter().any(|p| p.spec.name == RUN));
+        assert_eq!(carried::<Carry>(e.projection(), &StreamKey(STREAM.into()), STATE), Carry { through: Some(41) });
     }
 
     #[test]
