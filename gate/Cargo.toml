@@ -32,8 +32,3 @@ strip = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
-
-[[test]]
-name = "warm_build"
-path = "tests/warm_build.rs"
-required-features = ["integration"]

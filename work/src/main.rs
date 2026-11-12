@@ -161,7 +161,7 @@ fn main() {
 
 /// The build directory this session owns: `CARGO_TARGET_DIR` when it is one under the configured base.
 fn owned_build_dir() -> Option<String> {
-    let base = std::env::var_os(spira_config::build_dir::BASE_ENV).filter(|b| !b.is_empty()).map(std::path::PathBuf::from);
+    let base = spira_config::process::cfg(spira_config::build_dir::BASE_ENV).ok().filter(|b| !b.is_empty()).map(std::path::PathBuf::from);
     spira_config::build_dir::owned(std::env::var_os("CARGO_TARGET_DIR"), base.as_deref()).map(|p| p.to_string_lossy().into_owned())
 }
 
