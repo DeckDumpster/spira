@@ -739,7 +739,7 @@ impl Reader {
     /// `Ok` when the columns of `tables` are all present; the refusal naming the missing ones otherwise.
     fn layout_of(&self, tables: &[&str]) -> Res<()> {
         let mut held = self.verdict.lock().unwrap_or_else(|p| p.into_inner());
-        let stale = held.as_ref().is_some_and(|(at, gaps)| !gaps.is_empty() && at.elapsed() >= self.recheck);
+        let stale = held.as_ref().is_some_and(|(at, gaps)| !gaps_in(gaps, tables).is_empty() && at.elapsed() >= self.recheck);
         if held.is_none() || stale {
             *held = Some((std::time::Instant::now(), layout_gaps(self.sql.as_ref(), &self.db)?));
         }

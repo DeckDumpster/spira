@@ -256,6 +256,24 @@ fn a_store_without_the_events_columns_refuses_events_alone_naming_them() {
 }
 
 #[test]
+fn events_is_served_by_a_layout_that_has_its_columns_and_a_gap_elsewhere_costs_it_no_reprobe() {
+    let mut columns = full_layout();
+    columns.retain(|(t, c)| !(t == "comments" && c == "text"));
+    let f = Arc::new(Fake { columns: Mutex::new(columns), ..Fake::default() });
+    let reader = Reader::new(Box::new(f.clone()), DB.into()).rechecking_at(std::time::Duration::ZERO);
+    reader.read(&v(&["events", "--id", "sp-a"])).unwrap();
+    reader.read(&v(&["events", "--id", "sp-a"])).unwrap();
+    assert_eq!(f.seen.lock().unwrap().iter().filter(|q| q.contains("information_schema")).count(), 1);
+}
+
+#[test]
+fn the_events_columns_are_the_ones_the_production_probe_reported() {
+    let production = ["issue_id", "event_type", "actor", "old_value", "new_value", "comment", "created_at", "id"];
+    let named = crate::plan::READER_COLUMNS.iter().find(|(t, _)| *t == "events").unwrap().1;
+    assert!(named.iter().all(|c| production.contains(c)), "{named:?}");
+}
+
+#[test]
 fn a_gap_outside_a_reads_tables_does_not_refuse_it() {
     let mut columns = full_layout();
     columns.retain(|(t, c)| !(t == "comments" && c == "text"));
