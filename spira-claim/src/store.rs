@@ -476,6 +476,14 @@ mod tests {
     }
 
     #[test]
+    fn a_store_with_no_view_asks_the_socket_for_state_and_express_reads() {
+        let (st, t) = store_over(|_| Reply { code: 0, out: "[]".into(), err: String::new() });
+        st.lifecycle_in_states(&["READY", "REWORK"]).unwrap();
+        st.express_ids().unwrap();
+        assert_eq!(*t.seen.lock().unwrap(), [vec!["list", "--state", "READY,REWORK"], vec!["list", "--express", "--live"]]);
+    }
+
+    #[test]
     fn claim_verdicts_rides_the_service_with_its_payload_as_the_body() {
         let (st, t) = store_over(|_| Reply { code: 0, out: String::new(), err: String::new() });
         let file = spira_claim::verdicts::VerdictFile { computed_at: "2026-11-03T00:00:00Z".into(), entries: Vec::new() };

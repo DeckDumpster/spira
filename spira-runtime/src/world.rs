@@ -484,10 +484,7 @@ impl World {
     /// Every bead under a manual hold, read unless `input` says its version was already read as no request.
     pub fn supersede_snapshot(&self, input: &str) -> Result<String, String> {
         let known: BTreeMap<String, String> = serde_json::from_str(input).unwrap_or_default();
-        let listed = match store_view::held_list(&["list", "--live", "--hold", "manual"]) {
-            Some(held) => held.map_err(|e| e.to_string())?,
-            None => lc_call(&self.lc_socket, &["list", "--live", "--hold", "manual"]).map_err(|e| e.to_string())?,
-        };
+        let listed = crate::reconcile_host::lc_read(&self.lc_socket, &["list", "--live", "--hold", "manual"])?;
         let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("held list unparsed: {e}"))?;
         let text = |v: &Value| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
         let held = rows
@@ -777,13 +774,13 @@ impl World {
         Ok("forgot".into())
     }
 
-    /// The day's landings and rounds for `watch.throughput`: per repo, the beads landed on its
-    /// landing ref by hour and the beads waiting to land, and every repo's rounds from the batch rows.
     /// The rows waiting to land: SUBMITTED and IN_DELIVERY.
     pub fn waiting_rows(&self) -> Result<Value, String> {
         serde_json::from_str(&self.lc_listed(&["list", "--state", "SUBMITTED,IN_DELIVERY"])?).map_err(|e| e.to_string())
     }
 
+    /// The day's landings and rounds for `watch.throughput`: per repo, the beads landed on its
+    /// landing ref by hour and the beads waiting to land, and every repo's rounds from the batch rows.
     pub fn throughput_snapshot(&self, input: &str) -> Result<String, String> {
         let p: ThroughputParams = serde_json::from_str(input).map_err(|e| format!("throughput params unparsed: {e}"))?;
         let day = 24 * 3600;

@@ -159,6 +159,7 @@ fn a_quiet_tick_of_each_task_that_read_the_store_every_tick_never_reaches_its_so
         assert_eq!(world.held_asks().unwrap(), Vec::<String>::new(), "the asks task lists the ask holds");
         assert_eq!(world.waiting_rows().unwrap().as_array().map(Vec::len), Some(0), "watch.throughput counts the waiting rows");
         assert!(spira_runtime::reconcile_host::lc_read(&sock, &["list", "--state", "CERTIFIED"]).unwrap().contains("sp-a"), "the reconciler lists CERTIFIED");
+        assert!(cockpit_collect::probes::lc::state_index_of(&["sp-a".to_string()]).unwrap().contains_key("sp-a"), "the cockpit reads its ids");
         assert!(cockpit_collect::probes::lc::held_rows("manual").unwrap().is_empty(), "the cockpit lists the manual holds");
         assert_eq!(cockpit_collect::probes::round::list_batches_live().as_deref(), Some("[]"), "the cockpit reads the round history");
     };
