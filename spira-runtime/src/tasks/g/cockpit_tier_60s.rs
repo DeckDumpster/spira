@@ -1,7 +1,7 @@
 //! `cockpit-tier-60s`: the pane's minute tier, probes `slots`, `reachable`, `tsd`,
 //! `admission`, `well`, `repo_labels`, `strands`, `ratelim`, `core`, `queue` and `mail`. Pattern P1.
 //! Contract: `wiki/projects/spira/designs/tasks/cockpit-tier-60s.md`; siblings
-//! [`super::cockpit_tier_5s`] (which lists the rows that become projections) and
+//! [`super::cockpit_tier_5s`] and
 //! [`super::cockpit_tier_600s`]. The decision, the merge and the runners are shared in
 //! [`super::cockpit`]; the probes run in-process (`cockpit_collect::tiers`).
 //!
