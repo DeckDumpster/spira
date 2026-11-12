@@ -70,7 +70,8 @@ fn declared_fast(key: &str) -> Option<String> {
 }
 
 /// One key's declared value. `Err` when the config cannot be resolved or the key is not a
-/// registered config key — never a default.
+/// registered config key — never a default. A key a `prod` instance declares plainly is answered
+/// from the file without the registry check (see [`declared_value`]).
 pub fn cfg(key: &str) -> Result<String, String> {
     if let Some(v) = declared_fast(key) {
         return Ok(v);
