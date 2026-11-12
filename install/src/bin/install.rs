@@ -1251,6 +1251,10 @@ fn run_main() -> ExitCode {
                 // ---- phase 4.6: lifecycle population (sp-k62xz8) --------------------------
                 // The store now exists and its user can write: every bead already in the
                 // beads database gets its row, once — before lc-serve starts answering for it.
+                if let Err(e) = control_store_phase() {
+                    eprintln!("install: phase lifecycle store failed — {e}");
+                    return ExitCode::from(2);
+                }
                 phase("phase 4.6: lifecycle population");
                 if let Err(e) = populate_phase(false) {
                     eprintln!("install: phase lifecycle population failed — {e}");
@@ -1984,6 +1988,29 @@ fn round_records_phase(dry: bool) -> Result<(), String> {
 /// admin: `SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD` when set, else root with the
 /// password this phase provisions on first run (a fresh Dolt's root has none, and is never
 /// left that way), against the SQL this release ships beside its unit templates.
+/// The control store at `SPIRA_LC_STORE_PATH`, made once: no verb creates it on open.
+fn control_store_phase() -> Result<(), String> {
+    let Some(path) = bootstrap::declared("SPIRA_LC_STORE_PATH") else {
+        skip("SPIRA_LC_STORE_PATH is empty — no control store to create");
+        return Ok(());
+    };
+    if Path::new(&path).exists() {
+        skip(&format!("control store exists at {path}"));
+        return Ok(());
+    }
+    if let Some(dir) = Path::new(&path).parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
+    let lc = spira_store::lifecycle_row::lc_bin()?;
+    // batch-job: one-time creation of the control store; bounded at 60 s by timeout(1).
+    let o = Command::new("timeout").arg("60").arg(&lc).arg("admin-create-store").stdin(Stdio::null()).output().map_err(|e| format!("cannot run spira-lc: {e}"))?;
+    if !o.status.success() {
+        return Err(format!("spira-lc admin-create-store exited {:?}: {}{}", o.status.code(), String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)));
+    }
+    info(&format!("created the control store at {path}"));
+    Ok(())
+}
+
 fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
     use install::lifecycle_store::{self, Admin};
     let host = nonempty_env("SPIRA_LC_HOST");
