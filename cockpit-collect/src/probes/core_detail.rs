@@ -27,7 +27,7 @@ pub fn core_detail_keys(cfg: &Cfg) -> Kv {
         }
     }
 
-    next_section(&mut out, &part_map, cfg);
+    next_section(&mut out, &part_map, cfg, &ready_rows);
     recent_section(&mut out, &run);
     inflow_section(&mut out, &run);
     awaiting_ci_section(&mut out, cfg);
@@ -48,7 +48,17 @@ fn repo_tag(labels: Option<&Vec<Value>>) -> String {
 // NEXT
 // ---------------------------------------------------------------------------------------
 
-fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg) {
+/// The machine's claimable rows that carry none of `excl`, from spira-claim in this process.
+fn ready_rows(excl: &str) -> Option<Vec<Value>> {
+    let argv: Vec<String> = ["ready-count", "", excl, "--json"].iter().map(|s| s.to_string()).collect();
+    let o = spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok());
+    if o.code != 0 {
+        return None;
+    }
+    io::json_rows(Some(o.out))
+}
+
+fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg, read: &dyn Fn(&str) -> Option<Vec<Value>>) {
     let ci_label = &cfg.ci_label;
     let queue_wait = &cfg.queue_wait_label;
 
@@ -58,40 +68,31 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg) {
         return;
     }
 
-    let mut rows: Vec<Value> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut refused = false;
-    for (labels, name) in part_map {
-        // Poison and ask are lifecycle holds, already left out of the machine's claimable set;
-        // only the labels that are not holds remain (sp-psztcc).
-        let mut excl = ci_label.to_string();
-        if !queue_wait.is_empty() {
-            excl = format!("{excl},{queue_wait}");
-        }
-        // The one ready set (sp-7g5q6): spira-claim's, which is the
-        // machine's READY/REWORK rows — never bd's own `ready`, whose status and assignee
-        // nobody claims by any more.
-        let raw = io::run_tool("spira-claim", &["ready-count", labels, &excl, "--json"], None);
-        match io::json_rows(raw) {
-            None => refused = true,
-            Some(part_rows) => {
-                for mut r in part_rows {
-                    if let Some(id) = r.get("id").and_then(Value::as_str).map(String::from) {
-                        if seen.insert(id) {
-                            if let Value::Object(ref mut m) = r {
-                                m.insert("_partition".to_string(), Value::String(name.clone()));
-                            }
-                            rows.push(r);
-                        }
-                    }
-                }
-            }
-        }
+    // Poison and ask are lifecycle holds, already left out of the machine's claimable set;
+    // only the labels that are not holds remain (sp-psztcc).
+    let mut excl = ci_label.to_string();
+    if !queue_wait.is_empty() {
+        excl = format!("{excl},{queue_wait}");
     }
-    if refused {
+    let Some(all) = read(&excl) else {
         push(out, "SP_NEXT_N", "?");
         push(out, "SP_READY", "?");
         return;
+    };
+    let mut parts: Vec<(&String, &String)> = part_map.iter().collect();
+    parts.sort();
+    let mut rows: Vec<Value> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for mut r in all {
+        let Some(id) = r.get("id").and_then(Value::as_str).map(String::from) else { continue };
+        let labels: HashSet<&str> = r.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+        let Some(name) = parts.iter().find(|(lset, _)| lset.split(',').filter(|l| !l.is_empty()).all(|l| labels.contains(l))).map(|(_, n)| (*n).clone()) else { continue };
+        if seen.insert(id) {
+            if let Value::Object(ref mut m) = r {
+                m.insert("_partition".to_string(), Value::String(name));
+            }
+            rows.push(r);
+        }
     }
     rows.sort_by_key(|r| r.get("priority").and_then(Value::as_i64).unwrap_or(9));
 
@@ -486,6 +487,52 @@ fn tokens_section(out: &mut Kv) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn kv<'a>(out: &'a Kv, key: &str) -> Option<&'a str> {
+        out.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn next_section_reads_the_ready_set_once_for_all_its_partitions() {
+        let cfg = Cfg::default();
+        let part_map: HashMap<String, String> = [("repo:a", "alpha"), ("repo:b", "beta"), ("repo:c", "gamma")].iter().map(|(l, n)| (l.to_string(), n.to_string())).collect();
+        let calls = std::cell::Cell::new(0);
+        let rows: Vec<Value> = serde_json::from_str(r#"[
+            {"id":"sp-1","priority":2,"title":"one","labels":["repo:a"]},
+            {"id":"sp-2","priority":1,"title":"two","labels":["repo:b"]},
+            {"id":"sp-3","priority":3,"title":"three","labels":["repo:c"]},
+            {"id":"sp-4","priority":0,"title":"none","labels":["repo:z"]}]"#).unwrap();
+        let read = |_: &str| {
+            calls.set(calls.get() + 1);
+            Some(rows.clone())
+        };
+        let mut out = Kv::new();
+        next_section(&mut out, &part_map, &cfg, &read);
+        assert_eq!(calls.get(), 1);
+        assert_eq!(kv(&out, "SP_READY"), Some("3"));
+        assert_eq!(kv(&out, "SP_NEXT_N"), Some("3"));
+        assert_eq!(kv(&out, "SP_NEXT0"), Some("P1 beta sp-2 two"));
+        assert_eq!(kv(&out, "SP_NEXT1"), Some("P2 alpha sp-1 one"));
+        assert_eq!(kv(&out, "SP_NEXT2"), Some("P3 gamma sp-3 three"));
+    }
+
+    #[test]
+    fn a_partition_with_no_labels_takes_every_row_no_other_partition_claimed() {
+        let part_map: HashMap<String, String> = [("repo:a", "alpha"), ("", "rest")].iter().map(|(l, n)| (l.to_string(), n.to_string())).collect();
+        let rows: Vec<Value> = serde_json::from_str(r#"[{"id":"sp-1","priority":2,"title":"one","labels":["repo:a"]}]"#).unwrap();
+        let mut out = Kv::new();
+        next_section(&mut out, &part_map, &Cfg::default(), &|_| Some(rows.clone()));
+        assert_eq!(kv(&out, "SP_READY"), Some("1"));
+        assert_eq!(kv(&out, "SP_NEXT0"), Some("P2 rest sp-1 one"));
+    }
+
+    #[test]
+    fn next_section_says_unknown_when_the_ready_set_is_refused() {
+        let part_map: HashMap<String, String> = [("repo:a".to_string(), "alpha".to_string())].into();
+        let mut out = Kv::new();
+        next_section(&mut out, &part_map, &Cfg::default(), &|_| None);
+        assert_eq!((kv(&out, "SP_READY"), kv(&out, "SP_NEXT_N")), (Some("?"), Some("?")));
+    }
 
     #[test]
     fn the_server_inflow_reply_parses_to_the_same_shape_as_the_row_aggregate() {

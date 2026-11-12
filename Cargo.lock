@@ -231,6 +231,7 @@ dependencies = [
  "libc",
  "runtime",
  "serde_json",
+ "spira-claim",
  "spira-config",
  "spira-otel",
  "store-view",

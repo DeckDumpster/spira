@@ -86,6 +86,10 @@ fn funnel_keys(funnel: Option<(Vec<LcRow>, Vec<LcRow>, Vec<LcRow>)>, now: i64) -
     out
 }
 
+fn express_count(code: i32, out: &str) -> usize {
+    if code == 0 { out.trim().parse().unwrap_or(0) } else { 0 }
+}
+
 pub fn queue_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let now = io::now();
@@ -97,9 +101,9 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
     out.extend(funnel_keys(funnel, now));
 
     // spira-claim's count, the one ready set (sp-7g5q6) — not a bd ready query of our own.
-    let enr = io::run_tool("spira-claim", &["ready-count", "", "--express"], None)
-        .and_then(|s| s.trim().parse::<usize>().ok())
-        .unwrap_or(0);
+    let argv: Vec<String> = ["ready-count", "", "--express"].iter().map(|s| s.to_string()).collect();
+    let o = spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok());
+    let enr = express_count(o.code, &o.out);
     push(&mut out, "SP_EXPRESS_N", enr.to_string());
 
     // --- Active batch ---
@@ -264,6 +268,12 @@ fn row_pri_title(row: &Value) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_express_count_is_zero_on_a_refusal_or_a_non_number() {
+        assert_eq!(express_count(0, "4\n"), 4);
+        assert_eq!((express_count(1, "4"), express_count(0, "x")), (0, 0));
+    }
 
     fn row(state: &str, reason: &str, updated_at: i64) -> LcRow {
         LcRow { id: "sp-x".into(), state: state.into(), reason: reason.into(), updated_at: Some(updated_at) }
