@@ -481,7 +481,7 @@ pub fn carry_forward(new: &mut Snapshot, last: &Snapshot) {
     let from = if last.good_at > 0 { last.good_at } else { last.now };
     new.good_at = from;
     if new.now - from <= STALE_WARN_S {
-        new.errors.clear();
+        new.errors.retain(|e| !e.starts_with("spira-lc"));
     } else {
         new.errors.push(format!("showing the last good read from {} ago", age(new.now - from)));
     }
@@ -1355,7 +1355,7 @@ pub fn view(s: &Snapshot) -> View {
         working: count("WORKING"),
         ceiling: s.ceiling,
         errors: s.errors.clone(),
-        read_age: (s.good_at > 0 && s.errors.is_empty()).then(|| age(s.now - s.good_at)),
+        read_age: (s.good_at > 0 && s.now - s.good_at <= STALE_WARN_S).then(|| age(s.now - s.good_at)),
         gather_ms: s.gather_ms,
         failures: s.failures,
         ready: ready.len(),
@@ -2144,6 +2144,18 @@ mod tests {
         let late = failed_after(&twice, STALE_WARN_S);
         let page = plain(&render(&view(&late), 100));
         assert!(page.contains("source failed"), "{page}");
+    }
+
+    #[test]
+    fn a_fresh_read_covers_only_the_store_failure_and_a_failure_with_nothing_to_carry_stays_named() {
+        let mut last = snap(vec![]);
+        last.rows.push(Row { id: "sp-a".into(), state: "WORKING".into(), ..Default::default() });
+        let mut new = Snapshot { now: last.now + STALE_WARN_S, errors: vec!["spira-lc list: exit 1".into(), "victorialogs: refused".into()], ..Default::default() };
+        carry_forward(&mut new, &last);
+        let page = plain(&render(&view(&new), 100));
+        assert!(page.contains("source failed: victorialogs: refused"), "{page}");
+        assert!(!page.contains("spira-lc list"), "{page}");
+        assert!(page.contains("read from 5m ago"), "{page}");
     }
 
     #[test]
