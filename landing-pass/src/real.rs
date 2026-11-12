@@ -189,7 +189,7 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         // Every harness tool from the declared release.
         queue_bin: Some(PathBuf::from(spira_config::release_env::tool("queue")?)),
         queue_dir: path_opt("queue_dir").unwrap_or_else(|| PathBuf::from(&run).join("queue")),
-        lc_bin: Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)),
+        lc_bin: Some(PathBuf::from(spira_store::lifecycle_row::lc_bin()?)),
         halt_grace: num("halt_grace", 30).max(0) as u64,
         path: kv.get("path").filter(|v| !v.is_empty()).cloned(),
         bdjson_fixture: path_opt("bdjson_fixture"),
@@ -236,7 +236,7 @@ fn p(p: &Path) -> String {
 
 impl<'a> RealLib<'a> {
     /// The store, in-process: the beads reader's client.
-    fn lc(&self) -> Result<spira_config::lc_call::LcClient, String> {
+    fn lc(&self) -> Result<spira_store::lc_call::LcClient, String> {
         self.beads.lc()
     }
 
@@ -251,7 +251,7 @@ impl<'a> RealLib<'a> {
             }
             Err(e) => {
                 self.seam.out.log(&format!("landing-pass: {id}: the lifecycle store: {e}"));
-                spira_config::lc_call::CANNOT_TELL
+                spira_store::lc_call::CANNOT_TELL
             }
         };
         if rc != 0 {
@@ -267,7 +267,7 @@ impl<'a> RealLib<'a> {
                 let (rc, _, err) = crate::lifecycle::run(&c, &["content-on-base", id, proof, "landing-pass"]);
                 (rc, err)
             }
-            Err(e) => (spira_config::lc_call::CANNOT_TELL, e),
+            Err(e) => (spira_store::lc_call::CANNOT_TELL, e),
         };
         if rc != 0 {
             let line = format!(
@@ -637,7 +637,7 @@ pub struct RealBeads {
     /// content-only reader (a title): every row's state is then `-`, never handed on.
     pub lc_bin: Option<PathBuf>,
     /// A pinned store client (tests); `None` resolves one from `lc_bin`.
-    pub client: Option<spira_config::lc_call::LcClient>,
+    pub client: Option<spira_store::lc_call::LcClient>,
 }
 
 /// `json_only`: bd can print warnings on stdout before the payload.
@@ -655,11 +655,11 @@ pub fn json_only(s: &str) -> &str {
 impl RealBeads {
     /// The store, in-process over the lifecycle socket. Bead content is its `content` verb
     /// whether or not this reader joins lifecycle states (`lc_bin`).
-    fn lc(&self) -> Result<spira_config::lc_call::LcClient, String> {
+    fn lc(&self) -> Result<spira_store::lc_call::LcClient, String> {
         if self.client.is_some() || self.lc_bin.is_some() {
             return crate::lifecycle::client(self.client.as_ref(), self.lc_bin.as_deref());
         }
-        spira_config::lc_call::LcClient::configured()
+        spira_store::lc_call::LcClient::configured()
     }
 
     /// Each row's state, from the lifecycle machine (sp-mve9i): one `spira-lc show` for a
@@ -671,12 +671,12 @@ impl RealBeads {
         }
         let c = self.lc()?;
         let lc = if rows.len() == 1 {
-            spira_config::lc_state::row_on(&c, &rows[0].id)?.into_iter().collect()
+            spira_store::lc_state::row_on(&c, &rows[0].id)?.into_iter().collect()
         } else {
             let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
-            spira_config::lc_state::list_ids_on(&c, &ids)?
+            spira_store::lc_state::list_ids_on(&c, &ids)?
         };
-        let lc = spira_config::lc_state::index(lc);
+        let lc = spira_store::lc_state::index(lc);
         for r in rows.iter_mut() {
             r.state = lc.get(&r.id).map(|x| x.state.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into());
             r.express = lc.get(&r.id).is_some_and(|x| x.express);
@@ -698,7 +698,7 @@ impl RealBeads {
             return if rc == 0 { Ok(String::from_utf8_lossy(&so).into_owned()) } else { Err(fail(rc, format!("bdsim exited {rc}"))) };
         }
         // The store's `content show`, in-process over the lifecycle socket (no `bdq` child).
-        let lc = self.lc().map_err(|e| fail(spira_config::lc_call::CANNOT_TELL, e))?.within(std::time::Duration::from_secs(self.timeout));
+        let lc = self.lc().map_err(|e| fail(spira_store::lc_call::CANNOT_TELL, e))?.within(std::time::Duration::from_secs(self.timeout));
         let mut argv: Vec<&str> = vec!["content", "show"];
         argv.extend(ids.iter().map(String::as_str));
         argv.push("--json");
@@ -763,7 +763,7 @@ impl RealBeads {
     /// times out is an error.
     fn show_into(&self, ids: &[String], out: &mut Vec<BeadRow>, halvings: u32) -> Result<(), String> {
         let raw = match self.show_call(ids) {
-            Err((rc, _)) if ids.len() > 1 && halvings > 0 && spira_config::lc_call::cannot_tell(rc) => {
+            Err((rc, _)) if ids.len() > 1 && halvings > 0 && spira_store::lc_call::cannot_tell(rc) => {
                 let (a, b) = ids.split_at(ids.len() / 2);
                 self.show_into(a, out, halvings - 1)?;
                 return self.show_into(b, out, halvings - 1);
@@ -795,7 +795,7 @@ impl Beads for RealBeads {
             return "-".into();
         }
         let Ok(c) = self.lc() else { return "-".into() };
-        match spira_config::lc_state::row_on(&c, id) {
+        match spira_store::lc_state::row_on(&c, id) {
             Ok(Some(r)) if !r.state.is_empty() => r.state,
             _ => "-".into(),
         }
@@ -806,7 +806,7 @@ impl Beads for RealBeads {
         }
         let Ok(c) = self.lc() else { return false };
         let (rc, so, _) = crate::lifecycle::run(&c, &["show", id]);
-        rc == 0 && crate::pr::delivery_of(so.trim().as_bytes()).is_some_and(|(state, _)| spira_config::lc_state::DeliveryState::from_str(&state) == Some(spira_config::lc_state::DeliveryState::Batched))
+        rc == 0 && crate::pr::delivery_of(so.trim().as_bytes()).is_some_and(|(state, _)| spira_store::lc_state::DeliveryState::from_str(&state) == Some(spira_store::lc_state::DeliveryState::Batched))
     }
     fn ask_open(&self, label: &str, subject: &str) -> bool {
         if subject.is_empty() {
@@ -1410,7 +1410,7 @@ mod store_tests {
     use super::*;
     use crate::lifecycle::{Lc, RealLc};
     use crate::ports::{Beads, Lib};
-    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
 
     /// The store as a scripted socket: every argv recorded, each answered by `reply`.

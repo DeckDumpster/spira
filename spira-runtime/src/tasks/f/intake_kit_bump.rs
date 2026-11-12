@@ -205,7 +205,7 @@ pub struct ObserveInput {
 const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
 
 fn real(e: &crate::Effects, persona: &str) -> kit_bump::real::Real {
-    let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket);
+    let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
     kit_bump::real::Real::new(String::new(), String::new(), e.world.run_dir.join("kit-bump.state"), persona.into(), lc)
 }
 
@@ -231,7 +231,7 @@ pub fn run_observe(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<Str
             (name, site)
         })
         .collect();
-    let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket);
+    let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
     let open = input
         .bumps
         .iter()

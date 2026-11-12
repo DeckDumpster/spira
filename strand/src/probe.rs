@@ -12,7 +12,7 @@ use std::process::Stdio;
 use crate::classify::Throttle;
 use crate::config::Config;
 use crate::model::{parse_beads, Bead};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 /// A subprocess's outcome: exit success, stdout, stderr.
 pub struct Out {
@@ -443,8 +443,8 @@ mod tests {
         serde_json::json!({"id": id, "title": id, "status": status, "parent": parent, "dependencies": deps})
     }
 
-    fn door(rows: Vec<serde_json::Value>) -> (std::sync::Arc<spira_config::lc_call::fake::Content>, LcClient) {
-        let fake = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows));
+    fn door(rows: Vec<serde_json::Value>) -> (std::sync::Arc<spira_store::lc_call::fake::Content>, LcClient) {
+        let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows));
         let lc = LcClient::over(fake.clone(), true);
         (fake, lc)
     }
@@ -482,9 +482,9 @@ mod tests {
     #[test]
     fn sp_yf8lf0_a_refused_read_is_an_error_not_an_empty_store() {
         struct Refusing;
-        impl spira_config::lc_call::Transport for Refusing {
-            fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
-                Ok(spira_config::lc_call::Reply { code: spira_config::lc_call::REFUSED, out: String::new(), err: "no\n".into() })
+        impl spira_store::lc_call::Transport for Refusing {
+            fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+                Ok(spira_store::lc_call::Reply { code: spira_store::lc_call::REFUSED, out: String::new(), err: "no\n".into() })
             }
         }
         let lc = LcClient::over(std::sync::Arc::new(Refusing), true);
@@ -516,15 +516,15 @@ mod tests {
     #[test]
     fn sp_yf8lf0_show_reads_one_bead_through_the_door_and_is_none_when_refused() {
         struct Show(i32);
-        impl spira_config::lc_call::Transport for Show {
-            fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+        impl spira_store::lc_call::Transport for Show {
+            fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
                 assert_eq!(argv, ["content", "show", "sp-x", "--json"]);
-                Ok(spira_config::lc_call::Reply { code: self.0, out: r#"[{"id":"sp-x","title":"t","status":"open"}]"#.into(), err: String::new() })
+                Ok(spira_store::lc_call::Reply { code: self.0, out: r#"[{"id":"sp-x","title":"t","status":"open"}]"#.into(), err: String::new() })
             }
         }
         let ok = LcClient::over(std::sync::Arc::new(Show(0)), true);
         assert_eq!(show(&ok, "sp-x").unwrap().id, "sp-x");
-        let refused = LcClient::over(std::sync::Arc::new(Show(spira_config::lc_call::REFUSED)), true);
+        let refused = LcClient::over(std::sync::Arc::new(Show(spira_store::lc_call::REFUSED)), true);
         assert!(show(&refused, "sp-x").is_none());
     }
 

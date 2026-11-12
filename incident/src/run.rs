@@ -335,7 +335,7 @@ fn file_new(
     }
 
     if cfg.express {
-        if let Err(e) = spira_config::lifecycle_row::set_express(&id, true) {
+        if let Err(e) = spira_store::lifecycle_row::set_express(&id, true) {
             log.push(format!("warning: {id} filed but not marked express: {e}"));
         }
     }

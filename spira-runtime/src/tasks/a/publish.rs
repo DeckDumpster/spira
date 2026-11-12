@@ -972,5 +972,5 @@ pub mod edge {
 /// row in any terminal state (LANDED, SUPERSEDED, DROPPED, DONE) is not, so the red is filed
 /// again; an unreadable answer or no row is not live either.
 pub fn fix_forward_live(show_json: &str) -> bool {
-    spira_config::lc_state::parse_show(show_json).ok().flatten().is_some_and(|r| !r.terminal())
+    spira_store::lc_state::parse_show(show_json).ok().flatten().is_some_and(|r| !r.terminal())
 }

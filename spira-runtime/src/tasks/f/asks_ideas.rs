@@ -227,7 +227,7 @@ pub fn run_observe(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<Str
     use idea_prompt::Ports;
     let input: ObserveInput = serde_json::from_str(&s.input).map_err(|e| format!("observe input: {e}"))?;
     let tz = input.config.get("SPIRA_IDEAS_TZ").cloned().ok_or("SPIRA_IDEAS_TZ is not pinned")?;
-    let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket);
+    let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
     let real = idea_prompt::real::Real::with(tz, Ok(lc), Box::new(|_, _| Err("the observe sends nothing".into())));
     let now = spira_config::vtime::now_epoch();
     let (local_hour, ideas) = if input.may_prompt {

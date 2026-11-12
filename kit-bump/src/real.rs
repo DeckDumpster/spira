@@ -12,7 +12,7 @@ pub struct Real {
     pub state: PathBuf,
     pub persona: String,
     bumps: RefCell<BTreeMap<String, (String, String)>>,
-    lc: spira_config::lc_call::LcClient,
+    lc: spira_store::lc_call::LcClient,
 }
 
 fn run(mut c: spira_config::bounded::Bounded) -> Result<String, String> {
@@ -85,7 +85,7 @@ fn git(path: &str, args: &[&str]) -> Result<String, String> {
 }
 
 impl Real {
-    pub fn new(registry: String, crate_name: String, state: PathBuf, persona: String, lc: spira_config::lc_call::LcClient) -> Real {
+    pub fn new(registry: String, crate_name: String, state: PathBuf, persona: String, lc: spira_store::lc_call::LcClient) -> Real {
         let bumps = std::fs::read_to_string(&state)
             .unwrap_or_default()
             .lines()
@@ -180,7 +180,7 @@ impl World for Real {
 #[cfg(test)]
 mod store_client_tests {
     use super::*;
-    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
 
     /// `show` answered as the store answers it: a row with its state, or exit 1 for none.

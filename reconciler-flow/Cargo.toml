@@ -31,6 +31,7 @@ toml = "0.8"
 reconciler-engine = { path = "../reconciler-engine" }
 tsd = { path = "../tsd" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 
 [profile.release]
 opt-level = "z"

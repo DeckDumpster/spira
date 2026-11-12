@@ -42,7 +42,7 @@
 //!      cherry, landed_by_subject, worktrees). The `fetch` of the base's remote
 //!      (`sweep.rs:221-225`, `git.rs:156`) runs inside this probe, and only when the repo has branches.
 //!    - `rows`: **S7 `LcClient` `list`**, which replaces `spira-lc list` (`real.rs:205`,
-//!      `spira-config/src/lc_state.rs:195`), plus `state` for LANDED (today `timeout 5 spira-lc
+//!      `spira-store/src/lc_state.rs:195`), plus `state` for LANDED (today `timeout 5 spira-lc
 //!      state`, `real.rs:270-279`).
 //!    - `beads`: the store's `content` verb. Today this is `bdjson list --all --limit 0` through the
 //!      lib.sh seam (`real.rs:199`, `hel/src/seam.rs:74`), and the seam fork itself is `real.rs:153`.
@@ -344,10 +344,10 @@ impl hel::sweep::Facts for Snap<'_> {
         self.b.merges_clean
     }
     fn terminal(&self) -> bool {
-        self.s.rows.get(&self.b.id).is_some_and(|r| spira_config::lc_state::is_terminal(r))
+        self.s.rows.get(&self.b.id).is_some_and(|r| spira_store::lc_state::is_terminal(r))
     }
     fn submitted(&self) -> bool {
-        self.s.beads.get(&self.b.id).is_some_and(|b| b.labels.iter().any(|l| l == self.submitted_label)) || self.s.rows.get(&self.b.id).is_some_and(|r| spira_config::lc_state::past_builder(r))
+        self.s.beads.get(&self.b.id).is_some_and(|b| b.labels.iter().any(|l| l == self.submitted_label)) || self.s.rows.get(&self.b.id).is_some_and(|r| spira_store::lc_state::past_builder(r))
     }
     fn tip(&self) -> Option<String> {
         Some(self.b.tip.clone()).filter(|t| !t.is_empty())
@@ -396,7 +396,7 @@ pub fn plan(cfg: &Cfg, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) -> Result
             continue;
         }
         let target = Target { repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), path: b.worktree.clone().unwrap_or_default() };
-        let terminal = s.rows.get(&b.id).is_some_and(|r| spira_config::lc_state::is_terminal(r));
+        let terminal = s.rows.get(&b.id).is_some_and(|r| spira_store::lc_state::is_terminal(r));
         match hel::sweep::judge(&Snap { s, b, submitted_label: &label }) {
             Disp::KeepUnlanded => {}
             Disp::KeepSupersededUnsafe => {
@@ -592,14 +592,14 @@ fn root_of(real: &hel::real::Real, repo: &str) -> Result<std::path::PathBuf, Str
 
 /// The hel world `hel.sweep` reads and acts through: [`super::hel_reap_stale::world`] with the
 /// pinned forge program and timeout.
-pub fn world(run: &std::path::Path, release: &str, lc: &spira_config::lc_call::LcClient, p: &Pinned) -> Result<hel::real::Real, String> {
+pub fn world(run: &std::path::Path, release: &str, lc: &spira_store::lc_call::LcClient, p: &Pinned) -> Result<hel::real::Real, String> {
     Ok(super::hel_reap_stale::world(run, release, lc)?.with_gh(&p.gh, &p.gh_timeout))
 }
 
 /// The runner of [`OBSERVE`]: one repository's reads (`hel::sweep::scan_repo`, git and the
 /// fetch in-process through hel; the store over the socket), the first registered one when
 /// `repo` is empty, and the names of the repositories after it.
-pub fn observe(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient, p: &Pinned, repo: &str) -> Result<String, String> {
+pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &Pinned, repo: &str) -> Result<String, String> {
     let mut snap = Snapshot::default();
     if real.run().join("world.halted").exists() {
         snap.halted = true;
@@ -619,7 +619,7 @@ pub fn observe(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient, p: 
     };
     snap.base = Base { landref: base.landref, landrefs: base.landrefs, remote: base.remote.unwrap_or_default() };
     let ids: Vec<String> = branches.iter().map(|b| b.id.clone()).chain(orphans.iter().map(|o| o.id.clone())).collect();
-    snap.rows = spira_config::lc_state::list_ids_on(lc, &ids).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();
+    snap.rows = spira_store::lc_state::list_ids_on(lc, &ids).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();
     for b in branches {
         if let Some(why) = &b.held {
             snap.holders.insert(b.id.clone(), why.clone());
@@ -663,7 +663,7 @@ pub fn pr_tip(real: &hel::real::Real, input: &str) -> Result<String, String> {
 /// The runner of [`SEND`]: the witness re-checked, the content-on-base evidence recorded
 /// first when asked, then the leg (`hel reap-landed-branch`, the verified deletion) started
 /// as a transient unit named for `repo:br:tip`; it ends on that unit's `unit.ran`.
-pub fn send(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient, units: Option<&dyn runtime::units::Units>, input: &str) -> Result<String, String> {
+pub fn send(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, units: Option<&dyn runtime::units::Units>, input: &str) -> Result<String, String> {
     use hel::ports::World;
     let units = units.ok_or("no unit manager configured")?;
     let s: Send = serde_json::from_str(input).map_err(|e| e.to_string())?;
@@ -685,7 +685,7 @@ pub fn send(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient, units:
 }
 
 /// The runner of [`CONTENT_ON_BASE`]: the evidence verb on its own, for one branch.
-pub fn content_on_base(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn content_on_base(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     use hel::ports::World;
     let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let root = root_of(real, &t.repo)?;
@@ -695,7 +695,7 @@ pub fn content_on_base(real: &hel::real::Real, lc: &spira_config::lc_call::LcCli
 }
 
 /// The runner of [`CLOSE_ON_LAND`]: close a submitted bead at the land ref's sha.
-pub fn close_on_land(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn close_on_land(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     use hel::ports::World;
     let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let root = root_of(real, &t.repo)?;

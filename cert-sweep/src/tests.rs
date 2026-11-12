@@ -178,7 +178,7 @@ fn members_name_their_bead_only_when_the_subject_is_a_merge() {
 /// is not consulted, and a bead with no row is not open.
 #[test]
 fn a_bug_is_open_while_its_lifecycle_row_is_not_terminal() {
-    use spira_config::lc_state::Row;
+    use spira_store::lc_state::Row;
     let row = |id: &str, st: &str| (id.to_string(), Row { bead_id: id.into(), state: st.into(), ..Default::default() });
     let lc: std::collections::HashMap<String, Row> = [row("sp-w", "WORKING"), row("sp-s", "SUBMITTED"), row("sp-l", "LANDED"), row("sp-d", "DROPPED")].into_iter().collect();
     let all: Vec<(String, String)> = ["sp-w", "sp-s", "sp-l", "sp-d", "sp-none"].iter().map(|i| (i.to_string(), format!("t {i}"))).collect();

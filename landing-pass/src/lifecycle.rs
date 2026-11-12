@@ -2,7 +2,7 @@
 //! be reached is a loud refusal of the step that needed it. Every call is in-process over
 //! [`LcClient`] (the lifecycle socket), never a `spira-lc` child.
 
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 /// The lifecycle machine, as far as this pass needs it: is it there?
 pub trait Lc {
@@ -33,7 +33,7 @@ pub fn run(c: &LcClient, argv: &[&str]) -> (i32, String, String) {
     match c.call(argv) {
         Ok(r) if r.code != 0 && r.err.trim().is_empty() => (r.code, r.out.clone(), r.out),
         Ok(r) => (r.code, r.out, r.err),
-        Err(e) => (spira_config::lc_call::CANNOT_TELL, String::new(), e.to_string()),
+        Err(e) => (spira_store::lc_call::CANNOT_TELL, String::new(), e.to_string()),
     }
 }
 

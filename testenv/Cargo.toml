@@ -51,6 +51,7 @@ regex = "1"
 sha2 = "0.10"
 libc = "0.2"
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 gate = { path = "../gate" }
 tsd = { path = "../tsd" }
 suite-select = { path = "../suite-select" }

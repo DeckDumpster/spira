@@ -17,6 +17,7 @@ integration = ["bead/integration", "incident/integration", "lifecycle/integratio
 bead = { path = "../bead" }
 lifecycle = { path = "../lifecycle" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 spira-otel = { path = "../spira-otel" }

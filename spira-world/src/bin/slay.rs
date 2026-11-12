@@ -193,7 +193,7 @@ fn main() {
     }
 
     let mut fail = false;
-    let lc = spira_config::lc_call::LcClient::configured();
+    let lc = spira_store::lc_call::LcClient::configured();
 
     // ---- 1. the disposition: the row says why the session ends -------------------------
     if let Ok(c) = &lc {

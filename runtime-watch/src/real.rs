@@ -1,6 +1,6 @@
 use crate::{civil_date, names_bump, parse_node, parse_python, parse_rust_stable, EolSupport, Repo, Runtime, RustSupport, World, LABEL};
 use spira_config::bounded::{bounded, bounded_for};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 use spira_config::repos::{Column, Registry};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -164,7 +164,7 @@ impl World for Real {
 #[cfg(test)]
 mod lc_tests {
     use super::*;
-    use spira_config::lc_call::{Reply, Transport};
+    use spira_store::lc_call::{Reply, Transport};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 

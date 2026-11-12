@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use crate::host::{Io, Spec};
 use crate::model::{parse_beads, LcRow};
 use crate::pass::Sentinel;
-use spira_config::lc_state;
+use spira_store::lc_state;
 
 // ---------------------------------------------------------------------------------------
 // CHECK 7c — unclaimable ready beads.

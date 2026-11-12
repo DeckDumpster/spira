@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 use crate::ports::Lc;
 
@@ -33,7 +33,7 @@ impl Lc for SpiraLc {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use spira_config::lc_call::{Reply, Transport};
+    use spira_store::lc_call::{Reply, Transport};
 
     use super::*;
 

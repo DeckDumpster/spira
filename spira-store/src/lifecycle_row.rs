@@ -10,7 +10,7 @@ pub const LC_BIN_ENV: &str = "SPIRA_LC_BIN";
 pub fn lc_bin() -> Result<String, String> {
     match std::env::var(LC_BIN_ENV).ok().filter(|v| !v.is_empty()) {
         Some(v) => Ok(v),
-        None => crate::release_env::tool("spira-lc"),
+        None => spira_config::release_env::tool("spira-lc"),
     }
 }
 

@@ -12,6 +12,7 @@ members = [
     "czar-pass",
     "supervise",
     "spira-config",
+    "spira-store",
     "perf-watch",
     "exec-census",
     "spira-runtime",
@@ -183,6 +184,8 @@ debug = false
 # a sim world starts a few hundred of them; the sim is the stand-in for the forge and the probes
 # those worlds call on every step.
 [profile.dwarf.package.spira-config]
+opt-level = 2
+[profile.dwarf.package.spira-store]
 opt-level = 2
 [profile.dwarf.package.spira-sim]
 opt-level = 2

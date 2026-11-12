@@ -11,16 +11,16 @@ const PERSONA: &str = "builder";
 pub struct Real {
     pub ssh: String,
     pub bead: String,
-    client: spira_config::lc_call::LcClient,
+    client: spira_store::lc_call::LcClient,
 }
 
 impl Real {
     pub fn new() -> Result<Real, String> {
-        Ok(Self::over(spira_config::lc_call::LcClient::configured()?))
+        Ok(Self::over(spira_store::lc_call::LcClient::configured()?))
     }
 
     /// Store reads through `client`.
-    pub fn over(client: spira_config::lc_call::LcClient) -> Real {
+    pub fn over(client: spira_store::lc_call::LcClient) -> Real {
         Real { ssh: "ssh".into(), bead: "bead.sh".into(), client }
     }
 }
@@ -104,7 +104,7 @@ impl World for Real {
 #[cfg(test)]
 mod store_client_tests {
     use super::*;
-    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
 
     /// `show` answered as the store answers it: a row with its state, or exit 1 for none.

@@ -385,7 +385,7 @@ pub fn cmd_health_ids(ctx: &Context, file: &str) -> i32 {
     let mut prefix = String::new();
     if !ctx.bdq.is_empty() {
         // The planning store's own prefix, through the store's content door.
-        let asked = spira_config::lc_call::LcClient::configured().and_then(|c| c.call(&["content", "config", "get", "issue_prefix"]).map_err(String::from));
+        let asked = spira_store::lc_call::LcClient::configured().and_then(|c| c.call(&["content", "config", "get", "issue_prefix"]).map_err(String::from));
         if let Ok(r) = asked.as_ref() {
             if r.code == 0 {
                 prefix = r.out.trim().to_string();

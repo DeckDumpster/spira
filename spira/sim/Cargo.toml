@@ -38,6 +38,7 @@ spira-runtime = { path = "../../spira-runtime" }
 runtime = { path = "../../runtime" }
 lifecycle = { path = "../../lifecycle" }
 spira-config = { path = "../../spira-config" }
+spira-store = { path = "../../spira-store" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }

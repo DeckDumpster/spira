@@ -171,7 +171,7 @@ pub fn observe(e: &crate::Effects, _key: &str, _spec: &EffectSpec) -> Result<Str
     let shelf = if halted {
         None
     } else {
-        spira_config::lc_call::LcClient::socket(&e.world.lc_socket).answer(&["content", "memories", "--json"]).ok().and_then(|raw| sop::shelf::parse(&raw))
+        spira_store::lc_call::LcClient::socket(&e.world.lc_socket).answer(&["content", "memories", "--json"]).ok().and_then(|raw| sop::shelf::parse(&raw))
     };
     serde_json::to_string(&Snapshot { halted, shelf, word_cap: WORD_CAP }).map_err(|e| e.to_string())
 }

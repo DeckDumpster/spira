@@ -215,7 +215,7 @@ fn no_state() -> String {
 /// Whether a lifecycle state means the builder has handed the bead on — SUBMITTED onward —
 /// which is what bd `closed` (or the submitted label) meant to every landing decision.
 pub fn handed_on(state: &str) -> bool {
-    state != "-" && spira_config::lc_state::past_builder(state)
+    state != "-" && spira_store::lc_state::past_builder(state)
 }
 
 /// `bd show`'s `notes` field, normalized to one string per note: a plain string splits on

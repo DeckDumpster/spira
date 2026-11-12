@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::events::{self, EventRow};
 use lifecycle::bead::BeadState;
-use spira_config::lc_call::{LcClient, LcError};
+use spira_store::lc_call::{LcClient, LcError};
 
 use crate::rank::{self, LifecycleRow, ReadyRow};
 
@@ -104,7 +104,7 @@ pub fn load_config() -> Result<Config, String> {
 
 impl Store {
     pub fn new(timeout_s: u64) -> Result<Store, String> {
-        let lc_bin = spira_config::lifecycle_row::lc_bin()?;
+        let lc_bin = spira_store::lifecycle_row::lc_bin()?;
         let timeout = Duration::from_secs(timeout_s.max(1));
         Ok(Store { bdq: spira_config::release_env::tool("bdq")?, lc: LcClient::for_bin(&lc_bin)?.within(timeout), lc_bin, timeout, views: store_view::shared() })
     }
@@ -293,7 +293,7 @@ impl Store {
 
     /// The machine's return-to-rework, through the one client of `spira-lc reopen`.
     pub fn lc_reopen(&self, id: &str, cause: &str, actor: &str) -> Result<(), String> {
-        spira_config::lifecycle_row::reopen_with(&self.lc_bin, id, cause, actor)
+        spira_store::lifecycle_row::reopen_with(&self.lc_bin, id, cause, actor)
     }
 
     /// `spira-lc release <id> <actor>`: hand back a claim this caller holds. Only a WORKING
@@ -409,7 +409,7 @@ pub fn run_full(mut cmd: Command, timeout: Duration, input: Option<&[u8]>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spira_config::lc_call::{Reply, Transport};
+    use spira_store::lc_call::{Reply, Transport};
     use std::sync::{Arc, Mutex};
 
     /// The lifecycle service as a test double: every request recorded, each answered by `reply`.

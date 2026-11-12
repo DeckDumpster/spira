@@ -39,7 +39,7 @@
 //! It is already pure, and is reused as is. The rules, in order:
 //! 1. a dot-name is the harness tree;
 //! 2. held means keep;
-//! 3. a terminal state (LANDED, SUPERSEDED, DROPPED, DONE; `spira-config/src/lc_state.rs:85-87`)
+//! 3. a terminal state (LANDED, SUPERSEDED, DROPPED, DONE; `spira-store/src/lc_state.rs:85-87`)
 //!    means remove as `Terminal`;
 //! 4. a live row means keep;
 //! 5. no row and younger than `max_age` means keep;
@@ -261,14 +261,14 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
 
 /// The runner of [`OBSERVE`]: one lifecycle `list` over the socket (an empty or failed list
 /// refuses the pass), `hel::terminal::entries` in-process, and the world's halt stamp.
-pub fn observe(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient) -> Result<String, String> {
+pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient) -> Result<String, String> {
     if real.run().join("world.halted").exists() {
         return serde_json::to_string(&Snapshot { halted: true, ..Snapshot::default() }).map_err(|e| e.to_string());
     }
     let listed = hel::terminal::entries(real)?;
     let names: Vec<String> = listed.iter().map(|e| e.name.clone()).collect();
-    let alive = spira_config::lc_state::list_live_on(lc).is_ok_and(|r| !r.is_empty());
-    let Some(read) = alive.then(|| spira_config::lc_state::list_ids_on(lc, &names).ok()).flatten() else {
+    let alive = spira_store::lc_state::list_live_on(lc).is_ok_and(|r| !r.is_empty());
+    let Some(read) = alive.then(|| spira_store::lc_state::list_ids_on(lc, &names).ok()).flatten() else {
         return serde_json::to_string(&Snapshot { rows_ok: false, ..Snapshot::default() }).map_err(|e| e.to_string());
     };
     let rows: BTreeMap<String, String> = read.into_iter().map(|r| (r.bead_id, r.state)).collect();

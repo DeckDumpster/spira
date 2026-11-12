@@ -275,7 +275,7 @@ fn cutover(p: &Ports, mode: &cutover_check::Mode) -> Result<i32, String> {
                 spira_config::repos::landref(&located, repo)?,
             ))
         }),
-        views: spira_config::lc_call::LcClient::for_bin(&spira_config::lifecycle_row::lc_bin()?)
+        views: spira_store::lc_call::LcClient::for_bin(&spira_store::lifecycle_row::lc_bin()?)
             .and_then(store_view::Projection::configured),
         queue: match spira_config::process::cfg_parse::<u8>("SPIRA_LC_LIFECYCLE_ON_STORE")? {
             0 => Some(spira_config::release_env::tool("queue")?),
@@ -497,7 +497,7 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
             Some((reg.root(repo)?, spira_config::repos::landref(reg, repo)?))
         }),
     );
-    let door = spira_config::lc_call::LcClient::for_bin(&spira_config::lifecycle_row::lc_bin()?)?;
+    let door = spira_store::lc_call::LcClient::for_bin(&spira_store::lifecycle_row::lc_bin()?)?;
     let lc = SpiraLc { client: door.clone() };
     let store = LcStore { client: door };
     let ledger = StoreLedger {

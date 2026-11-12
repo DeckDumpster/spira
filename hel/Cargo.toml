@@ -10,6 +10,7 @@ integration = ["runtime/integration", "spira-config/integration", "spira-otel/in
 [dependencies]
 serde_json = "1"
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 runtime = { path = "../runtime" }
 

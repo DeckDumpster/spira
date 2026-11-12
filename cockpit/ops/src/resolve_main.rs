@@ -15,7 +15,7 @@ impl Closer for RealBd {
     // closed — a raw `bd close` here left resolved beads READY on their rows. `db` is the
     // store spira-lc itself resolves from config.
     fn close(&self, _db: &Path, id: &str, reason: &str) -> BdResult {
-        match spira_config::lifecycle_row::close(id, reason, "claude", None) {
+        match spira_store::lifecycle_row::close(id, reason, "claude", None) {
             Ok(()) => BdResult { success: true, combined: String::new() },
             Err(e) => BdResult { success: false, combined: e },
         }
@@ -31,30 +31,30 @@ impl Closer for RealBd {
     }
 
     fn is_ask(&self, id: &str) -> Result<bool, String> {
-        spira_config::lifecycle_row::is_ask(id)
+        spira_store::lifecycle_row::is_ask(id)
     }
 
     fn withdraw_ask_row(&self, id: &str, reason: &str) -> (i32, String) {
         // FORK-EDGE: unserved verb close-ask — LcClient runs its CLI for it (CLI_VERBS).
         match cockpit_ops::lcio::client() {
-            Ok(c) => cockpit_ops::lcio::code_and_text(&c.within(spira_config::lc_call::LC_TIMEOUT), &["close-ask", id, "--exit", "withdrawn", "--quote", reason, "--actor", "claude"]),
+            Ok(c) => cockpit_ops::lcio::code_and_text(&c.within(spira_store::lc_call::LC_TIMEOUT), &["close-ask", id, "--exit", "withdrawn", "--quote", reason, "--actor", "claude"]),
             Err(e) => (2, e),
         }
     }
 
     fn withdraw_ask(&self, work_bead: &str) -> (i32, String) {
-        if let Ok(Some(row)) = spira_config::lc_state::row(work_bead) {
+        if let Ok(Some(row)) = spira_store::lc_state::row(work_bead) {
             if row.terminal() {
                 return (3, String::new());
             }
         }
         // FORK-EDGE: unserved verb withdraw-ask (a callers.rs verb the socket does not serve).
-        let mut c = match spira_config::lc_call::lc_bin() {
+        let mut c = match spira_store::lc_call::lc_bin() {
             Ok(b) => Command::new(b),
             Err(e) => return (2, e),
         };
         c.args(["withdraw-ask", work_bead, "claude"]);
-        spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT)
+        spira_store::lc_call::run_bounded(c, spira_store::lc_call::LC_TIMEOUT)
     }
 }
 

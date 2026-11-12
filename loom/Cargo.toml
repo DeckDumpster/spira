@@ -20,6 +20,7 @@ integration = ["cockpit-ops/integration", "lifecycle/integration", "release/inte
 
 [dependencies]
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 store-view = { path = "../store-view" }
 runtime = { path = "../runtime" }
 spira-otel = { path = "../spira-otel" }

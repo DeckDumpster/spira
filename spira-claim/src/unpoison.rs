@@ -539,7 +539,7 @@ impl World for Live {
 
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
         // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
-        spira_config::lifecycle_row::close_with(&self.store.lc_bin, id, reason, "spira-claim", None)
+        spira_store::lifecycle_row::close_with(&self.store.lc_bin, id, reason, "spira-claim", None)
     }
 
     fn mark_poison_lifted(&mut self, id: &str, attempts: u32) -> Result<(), String> {

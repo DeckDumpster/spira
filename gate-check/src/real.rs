@@ -130,7 +130,7 @@ impl World for Real {
     }
 
     fn lc_rows(&self) -> Result<crate::engine::Lc, String> {
-        spira_config::lc_state::list().map(spira_config::lc_state::index)
+        spira_store::lc_state::list().map(spira_store::lc_state::index)
     }
 
     fn bd_priority(&self, id: &str, p: i64) {

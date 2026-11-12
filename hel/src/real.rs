@@ -11,7 +11,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use serde_json::Value;
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 use crate::ports::{Base, Repo, Sent, World};
 use crate::reap;
@@ -46,7 +46,7 @@ pub struct Real {
     beads: RefCell<Option<BTreeMap<String, Value>>>,
     /// The sweep's one `spira-lc list`, keyed by bead id: the claim witness for every bead
     /// the pass judges (sp-mve9i).
-    claims: RefCell<Option<std::collections::HashMap<String, spira_config::lc_state::Row>>>,
+    claims: RefCell<Option<std::collections::HashMap<String, spira_store::lc_state::Row>>>,
     /// The store client; `None` resolves the configured one per call.
     lc: Option<LcClient>,
 }
@@ -218,10 +218,10 @@ impl World for Real {
         }
         let mut rows = Vec::new();
         for chunk in ids.chunks(PREFETCH_IDS) {
-            rows.extend(spira_config::lc_state::parse_rows(&c.answer(&["list", "--ids", &chunk.join(",")])?)?);
+            rows.extend(spira_store::lc_state::parse_rows(&c.answer(&["list", "--ids", &chunk.join(",")])?)?);
         }
         *self.beads.borrow_mut() = Some(map);
-        *self.claims.borrow_mut() = Some(spira_config::lc_state::index(rows));
+        *self.claims.borrow_mut() = Some(spira_store::lc_state::index(rows));
         Ok(())
     }
     fn witness(&self, id: &str) -> Option<String> {
@@ -275,14 +275,14 @@ impl World for Real {
     fn lc_past_builder(&self, id: &str) -> bool {
         let row = match self.claims.borrow().as_ref() {
             Some(m) => m.get(id).cloned(),
-            None => self.lc().and_then(|c| spira_config::lc_state::row_on(&c, id)).ok().flatten(),
+            None => self.lc().and_then(|c| spira_store::lc_state::row_on(&c, id)).ok().flatten(),
         };
         row.is_some_and(|r| r.past_builder())
     }
     fn lc_terminal(&self, id: &str) -> bool {
         let row = match self.claims.borrow().as_ref() {
             Some(m) => m.get(id).cloned(),
-            None => self.lc().and_then(|c| spira_config::lc_state::row_on(&c, id)).ok().flatten(),
+            None => self.lc().and_then(|c| spira_store::lc_state::row_on(&c, id)).ok().flatten(),
         };
         row.is_some_and(|r| r.terminal())
     }
@@ -324,10 +324,10 @@ impl World for Real {
 
 /// A row from the prefetched `spira-lc list`: the listing answered, so a bead missing from it
 /// has no row.
-struct Cached(Option<spira_config::lc_state::Row>);
+struct Cached(Option<spira_store::lc_state::Row>);
 
 impl reap::ClaimProbe for Cached {
-    fn probe(&self, _id: &str) -> Result<Option<spira_config::lc_state::Row>, String> {
+    fn probe(&self, _id: &str) -> Result<Option<spira_store::lc_state::Row>, String> {
         Ok(self.0.clone())
     }
 }
@@ -335,8 +335,8 @@ impl reap::ClaimProbe for Cached {
 impl reap::ClaimProbe for Real {
     /// `spira-lc show <id>`: the bead's lifecycle row, the one claim question
     /// `reap::holder_witnesses` cannot answer itself.
-    fn probe(&self, id: &str) -> Result<Option<spira_config::lc_state::Row>, String> {
-        spira_config::lc_state::row_on(&self.lc()?, id)
+    fn probe(&self, id: &str) -> Result<Option<spira_store::lc_state::Row>, String> {
+        spira_store::lc_state::row_on(&self.lc()?, id)
     }
 }
 
@@ -374,11 +374,11 @@ mod tests {
         reply: fn(&[String]) -> (i32, String),
     }
 
-    impl spira_config::lc_call::Transport for Store {
-        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<spira_config::lc_call::Reply, String> {
+    impl spira_store::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.seen.lock().unwrap().push(argv.join(" "));
             let (code, out) = (self.reply)(argv);
-            Ok(spira_config::lc_call::Reply { code, out, err: String::new() })
+            Ok(spira_store::lc_call::Reply { code, out, err: String::new() })
         }
     }
 
@@ -423,7 +423,7 @@ mod tests {
     }
 
     fn bounded_store(a: &[String]) -> (i32, String) {
-        if spira_config::lc_call::reads_whole_history(a) {
+        if spira_store::lc_call::reads_whole_history(a) {
             return (3, "reads every bead ever filed and is refused".into());
         }
         match a[0].as_str() {

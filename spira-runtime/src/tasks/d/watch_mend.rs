@@ -72,7 +72,7 @@ use std::collections::BTreeSet;
 
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 use spira_config::process::cfg;
 use spira_config::scoped_stop;
 

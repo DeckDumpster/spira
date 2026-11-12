@@ -404,7 +404,7 @@ pub fn filing_kind(e: &Event) -> Option<FilingKind> {
 /// terminal (sp-mve9i: a work bead's state is spira-lc's, never bd's `status`). A bead with no
 /// row is not open: it can never be worked, and counting it would let one stale title
 /// suppress every later filing for its suite.
-pub fn still_open(all: Vec<(String, String)>, lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> Vec<(String, String)> {
+pub fn still_open(all: Vec<(String, String)>, lc: &std::collections::HashMap<String, spira_store::lc_state::Row>) -> Vec<(String, String)> {
     all.into_iter().filter(|(id, _)| lc.get(id).is_some_and(|r| !r.terminal())).collect()
 }
 

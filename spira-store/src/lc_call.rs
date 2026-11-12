@@ -329,7 +329,7 @@ impl LcClient {
     /// The route the configuration declares for a caller holding `bin`.
     pub fn for_bin(bin: &str) -> Result<Self, String> {
         let stand_in = std::env::var(crate::lifecycle_row::LC_BIN_ENV).ok();
-        let route = route_of(stand_in.as_deref(), crate::process::cfg("SPIRA_LC_SOCKET"), bin)?;
+        let route = route_of(stand_in.as_deref(), spira_config::process::cfg("SPIRA_LC_SOCKET"), bin)?;
         Ok(match route {
             Route::Socket(path) => LcClient::socket(path),
             Route::Program(bin) => LcClient { transport: Arc::new(Program { bin }), socket: false, deadline: DEADLINE },

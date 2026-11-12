@@ -1672,7 +1672,7 @@ items land.
 ## Rule `state-from-text`
 
 **Intent.** A decision about an object's state or status (bead, round, batch, ask, unit, release,
-mail) reads a typed value — an in-process typed API (`spira_config::lc_state`, `LcClient`), a
+mail) reads a typed value — an in-process typed API (`spira_store::lc_state`, `LcClient`), a
 command's `--json` answer deserialised into a struct, or an exit code mapped to an enum — never
 text (law-lifecycle-state-is-not-text, promoted to mechanism by sp-e5bdn6 after the statute was
 re-violated: `spira-lc holds` stdout read line by line made usage text and then "cannot tell:
@@ -1708,7 +1708,7 @@ code as `tmp-leak` defines it is skipped. Matching reads code bytes only
   (`ends_with(".service")`) or the family (`starts_with("spira-")`) classifies a unit file and passes.
   `spira_config::unit` builds names; nothing parses them for an identity.
 
-**Exits** (each refusal names its own, law-a-refusal-names-its-exit): `spira_config::lc_state` /
+**Exits** (each refusal names its own, law-a-refusal-names-its-exit): `spira_store::lc_state` /
 `LcClient`; the command's `--json` deserialised into a struct; the exit code mapped to an enum
 (`LC_UNKNOWN`, `Holds::Unknown`, an `Err`); for a unit, the identity from a typed record.
 

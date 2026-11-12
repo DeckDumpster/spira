@@ -40,7 +40,7 @@ fn main() -> ExitCode {
         },
     };
     // Landed-ness is the lifecycle record's: `spira-lc state <id>` = LANDED.
-    let (lc_bin, path_env) = match spira_config::lifecycle_row::lc_bin().and_then(|b| Ok((b, spira_config::release_env::child_path_env_for_process()?))) {
+    let (lc_bin, path_env) = match spira_store::lifecycle_row::lc_bin().and_then(|b| Ok((b, spira_config::release_env::child_path_env_for_process()?))) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("target-reap: {e}");

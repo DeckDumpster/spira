@@ -68,7 +68,7 @@
 //! | `sift.note` | store | 10 s | `<id>:<tip>:note` | nothing new; today `bash bead.sh amend --note` (`rs:664-671`), after the move LcClient `content` amend. Precedes `sift.send_back`; if it fails the bead is held, not sent back (`sl:242-246`) |
 //! | `sift.send_back` | store | 10 s | `<id>:<tip>:GateRed` | a bead no longer SUBMITTED/CERTIFIED or whose tip moved (`rs:626-639`); a stale `--version` (store CAS) |
 //! | `sift.record_pass` | store | 10 s | `<id>:<tip>:Sifted` | skipped when `sifted_tip == tip` (`rs:189-193`); a bead out of the pool states records none (`rs:643-652`); a moved tip (store) |
-//! | `sift.supersede` | store | 10 s | `<id>:superseded-by:<keeper>` | the store's close refusals; today `spira-lc close --superseded-by` via `spira-config/src/lifecycle_row.rs:293-318` |
+//! | `sift.supersede` | store | 10 s | `<id>:superseded-by:<keeper>` | the store's close refusals; today `spira-lc close --superseded-by` via `spira-store/src/lifecycle_row.rs:293-318` |
 //! | `sift.record` | — (carry) | — | `<id>:<event>:<tip>` | a move the `Sifted` machine refuses (`sift/src/machine.rs:89-100`) — an `Emit`, not an effect |
 //! | `inbox.append` | host | 10 s | line text | — the `SIFT superseded / sent / REPEAT` lines, today appended straight to the inbox file (`rs:195-212`) |
 //!
@@ -113,7 +113,7 @@ use std::collections::BTreeMap;
 use round_controller::sifts;
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 use super::kit::{self, Act, Cadence, Shape};
 use crate::Effects;

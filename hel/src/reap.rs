@@ -149,7 +149,7 @@ pub fn holder_alive(run: &Path, id: &str) -> bool {
 /// `in_progress` witness this probe used to carry). `Ok(None)`: the machine answered and has
 /// no row; `Err`: it did not answer.
 pub trait ClaimProbe {
-    fn probe(&self, id: &str) -> Result<Option<spira_config::lc_state::Row>, String>;
+    fn probe(&self, id: &str) -> Result<Option<spira_store::lc_state::Row>, String>;
 }
 
 fn is_queued_state(state: &str) -> bool {
@@ -161,11 +161,11 @@ fn is_queued_state(state: &str) -> bool {
 /// those must be able to make this call LESS restrictive, never more, so a failure here
 /// falls through to bd's own signal, exactly as lib.sh's `|| true` chain does).
 pub fn lc_state(id: &str) -> Option<String> {
-    lc_state_on(&spira_config::lc_call::LcClient::configured().ok()?, id)
+    lc_state_on(&spira_store::lc_call::LcClient::configured().ok()?, id)
 }
 
 /// [`lc_state`] through `c`.
-pub fn lc_state_on(c: &spira_config::lc_call::LcClient, id: &str) -> Option<String> {
+pub fn lc_state_on(c: &spira_store::lc_call::LcClient, id: &str) -> Option<String> {
     let s = c.within(std::time::Duration::from_secs(5)).answer(&["state", id]).ok()?.trim().to_string();
     (!s.is_empty()).then_some(s)
 }
@@ -594,11 +594,11 @@ mod tests {
         state: Option<String>,
     }
     impl ClaimProbe for FakeBd {
-        fn probe(&self, id: &str) -> Result<Option<spira_config::lc_state::Row>, String> {
+        fn probe(&self, id: &str) -> Result<Option<spira_store::lc_state::Row>, String> {
             match &self.state {
                 None => Err("cannot tell".into()),
                 Some(s) if s.is_empty() => Ok(None),
-                Some(s) => Ok(Some(spira_config::lc_state::Row { bead_id: id.into(), state: s.clone(), ..Default::default() })),
+                Some(s) => Ok(Some(spira_store::lc_state::Row { bead_id: id.into(), state: s.clone(), ..Default::default() })),
             }
         }
     }
@@ -698,8 +698,8 @@ mod tests {
     fn a_manual_hold_is_somebody_home_though_the_bead_is_unclaimed() {
         struct Held(Vec<String>);
         impl ClaimProbe for Held {
-            fn probe(&self, id: &str) -> Result<Option<spira_config::lc_state::Row>, String> {
-                Ok(Some(spira_config::lc_state::Row { bead_id: id.into(), state: "READY".into(), holds: self.0.clone(), ..Default::default() }))
+            fn probe(&self, id: &str) -> Result<Option<spira_store::lc_state::Row>, String> {
+                Ok(Some(spira_store::lc_state::Row { bead_id: id.into(), state: "READY".into(), holds: self.0.clone(), ..Default::default() }))
             }
         }
         let run = tempdir().path().to_path_buf();
@@ -711,9 +711,9 @@ mod tests {
     fn destroy_worktree_refuses_a_manually_held_bead_and_leaves_the_directory() {
         struct Held(bool);
         impl ClaimProbe for Held {
-            fn probe(&self, id: &str) -> Result<Option<spira_config::lc_state::Row>, String> {
+            fn probe(&self, id: &str) -> Result<Option<spira_store::lc_state::Row>, String> {
                 let holds = if self.0 { vec!["manual".to_string()] } else { vec![] };
-                Ok(Some(spira_config::lc_state::Row { bead_id: id.into(), state: "READY".into(), holds, ..Default::default() }))
+                Ok(Some(spira_store::lc_state::Row { bead_id: id.into(), state: "READY".into(), holds, ..Default::default() }))
             }
         }
         let t = tempdir();

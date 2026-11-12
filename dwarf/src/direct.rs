@@ -103,7 +103,7 @@ fn row_of(exec: &dyn Exec, bead: &str) -> Result<Option<(String, Option<String>)
     let o = exec.exec("spira-lc", &s(&["show", bead]), None, None);
     match o.code {
         1 => Ok(None),
-        0 => spira_config::lc_state::parse_show(&o.stdout).map(|r| r.map(|r| (r.state, r.holder))),
+        0 => spira_store::lc_state::parse_show(&o.stdout).map(|r| r.map(|r| (r.state, r.holder))),
         rc => Err(format!("spira-lc show {bead} failed (rc={rc}): {}", o.first_err_line())),
     }
 }
@@ -129,7 +129,7 @@ pub fn write_refusal(run: &Path, bead: &str, reason: &str) {
 }
 
 /// The refusal in words: the row the dwarf saw, and what each claim attempt said.
-pub fn refusal_reason(bead: &str, by: &str, row: &Result<Option<spira_config::lc_state::Row>, String>, attempts: &[String]) -> String {
+pub fn refusal_reason(bead: &str, by: &str, row: &Result<Option<spira_store::lc_state::Row>, String>, attempts: &[String]) -> String {
     let seen = match row {
         Ok(Some(r)) => format!("it reads state={} holder={} holds=[{}]", r.state, r.holder.as_deref().unwrap_or("none"), r.holds.join(",")),
         Ok(None) => "it has no lifecycle row".to_string(),
@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn the_refusal_names_the_row_it_saw_and_what_the_claim_said() {
-        let r = spira_config::lc_state::parse_show(&row("READY", None).stdout);
+        let r = spira_store::lc_state::parse_show(&row("READY", None).stdout);
         let why = refusal_reason("sp-x", "concierge", &r, &["lost to another claim".into()]);
         assert!(why.contains("sp-x") && why.contains("concierge") && why.contains("state=READY holder=none") && why.contains("lost to another claim"), "{why}");
         assert!(refusal_reason("sp-x", "c", &Ok(None), &[]).contains("no lifecycle row"));

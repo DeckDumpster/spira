@@ -102,7 +102,7 @@ impl Scope {
 /// a terminal row (LANDED/DONE/SUPERSEDED/DROPPED — no move out, for any actor) terminal, and
 /// anything else past the builder closed. No row is `Other` — a bead the machine has no row for is
 /// not live work (it can never be claimed), and neither dedup pass matches it.
-pub fn status_of_lc(row: Option<&spira_config::lc_state::Row>) -> BeadStatus {
+pub fn status_of_lc(row: Option<&spira_store::lc_state::Row>) -> BeadStatus {
     match row {
         Some(r) if r.working() => BeadStatus::InProgress,
         Some(r) if r.claimable() => BeadStatus::Open,
@@ -365,7 +365,7 @@ mod tests {
     /// sp-jgjvh: an incident's open/closed is its lifecycle row's state.
     #[test]
     fn status_reads_the_lifecycle_row() {
-        use spira_config::lc_state::Row;
+        use spira_store::lc_state::Row;
         let r = |st: &str| Row { bead_id: "a".into(), state: st.into(), ..Default::default() };
         assert_eq!(status_of_lc(Some(&r("READY"))), BeadStatus::Open);
         assert_eq!(status_of_lc(Some(&r("REWORK"))), BeadStatus::Open);

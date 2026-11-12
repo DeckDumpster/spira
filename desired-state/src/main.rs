@@ -107,8 +107,8 @@ fn run_compose(paths: &[String]) -> ExitCode {
 fn apply_spec(body: &serde_json::Value) -> Result<(), String> {
     use std::io::Write;
     use std::process::{Command, Stdio};
-    let deadline = spira_config::lc_call::LC_TIMEOUT;
-    let mut cmd = Command::new(spira_config::lc_call::lc_bin()?);
+    let deadline = spira_store::lc_call::LC_TIMEOUT;
+    let mut cmd = Command::new(spira_store::lc_call::lc_bin()?);
     cmd.args(["section", "apply-spec", "--actor", "compose"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

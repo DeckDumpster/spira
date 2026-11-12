@@ -129,7 +129,7 @@ pub fn decide(now: u64, hold: &Hold, ask: Option<&AskMail>, last_acted: Option<u
     let age = hold.since.map(|s| now.saturating_sub(s));
     match hold.kind {
         Kind::Wait => {
-            let until = spira_config::lc_state::snooze_until(hold.detail.as_deref()?)?;
+            let until = spira_store::lc_state::snooze_until(hold.detail.as_deref()?)?;
             let until = u64::try_from(until).ok()?;
             (now > until).then_some(Action::LiftWait { until })
         }

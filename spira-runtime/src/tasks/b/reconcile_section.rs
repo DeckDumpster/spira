@@ -148,7 +148,7 @@ fn phase_name(p: Phase) -> &'static str {
 
 /// The runner of [`PUBLISH`]: the store verb `publish-section lifecycle` over the socket; its
 /// answer is the snapshot.
-pub fn publish(lc: &spira_config::lc_call::LcClient) -> Result<String, String> {
+pub fn publish(lc: &spira_store::lc_call::LcClient) -> Result<String, String> {
     lc.answer(&["publish-section", "lifecycle"]).map_err(String::from)
 }
 

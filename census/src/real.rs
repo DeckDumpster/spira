@@ -25,7 +25,7 @@ impl Real {
         Ok(Real {
             home,
             bdq: spira_config::release_env::tool("bdq")?,
-            lc: spira_config::lifecycle_row::lc_bin()?,
+            lc: spira_store::lifecycle_row::lc_bin()?,
             child_env: spira_config::release_env::child_path_env_for_process()?,
         })
     }
@@ -270,7 +270,7 @@ impl World for Real {
             .unwrap_or_default()
     }
 
-    fn lc_rows(&self) -> Result<Vec<spira_config::lc_state::Row>, String> {
+    fn lc_rows(&self) -> Result<Vec<spira_store::lc_state::Row>, String> {
         let bin = &self.lc;
         // call-deadline: 5 s, like every other caller of the machine.
         let o = Command::new("timeout")
@@ -284,7 +284,7 @@ impl World for Real {
             let why = why.lines().find(|l| !l.trim().is_empty()).unwrap_or("no message").to_string();
             return Err(format!("{bin} list exited {}: {why}", o.status.code().unwrap_or(-1)));
         }
-        spira_config::lc_state::parse_rows(&String::from_utf8_lossy(&o.stdout))
+        spira_store::lc_state::parse_rows(&String::from_utf8_lossy(&o.stdout))
     }
 
     fn git_branch_exists_matching(&self, repo: &str, pattern: &str) -> bool {

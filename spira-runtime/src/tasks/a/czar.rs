@@ -722,7 +722,7 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         },
         Err(_) => Read::Observed(None),
     };
-    let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_secs(5));
+    let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_secs(5));
     let views = store_view::Projection::hot(lc.clone());
     let refreshed = views.as_ref().map_err(Clone::clone).and_then(|v| v.batches_current().map_err(String::from));
     let home = spira_config::resolve::locate_home_for_process()?;
@@ -779,7 +779,7 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
 
 /// The repo's unheld CERTIFIED beads: held rows when the process keeps the store's watch (a
 /// refusal could not say), else the store's own list.
-pub fn certified_pool(lc: &spira_config::lc_call::LcClient, repo: &str) -> Read<Vec<String>> {
+pub fn certified_pool(lc: &spira_store::lc_call::LcClient, repo: &str) -> Read<Vec<String>> {
     if let Some(held) = store_view::shared() {
         return match held.unheld("CERTIFIED", repo) {
             Ok(r) => Read::Observed(r.value),
@@ -837,8 +837,8 @@ pub fn status(e: &Effects, input: &str) -> Result<String, String> {
 }
 
 /// The ids of the rows in a `spira-lc list` answer that carry no hold, read through the typed
-/// [`spira_config::lc_state::Row`], which takes `holds` as an array or as the JSON-encoded string
+/// [`spira_store::lc_state::Row`], which takes `holds` as an array or as the JSON-encoded string
 /// spira-lc may write. A held row is not pool: reading the string form as unheld miscounted it.
 pub fn unheld_ids(list_json: &str) -> Result<Vec<String>, String> {
-    Ok(spira_config::lc_state::parse_rows(list_json)?.into_iter().filter(|r| r.holds.is_empty()).map(|r| r.bead_id).collect())
+    Ok(spira_store::lc_state::parse_rows(list_json)?.into_iter().filter(|r| r.holds.is_empty()).map(|r| r.bead_id).collect())
 }

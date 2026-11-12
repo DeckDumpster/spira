@@ -69,6 +69,6 @@ fn a_planted_site_is_caught_and_a_marked_one_is_not() {
     let marked = concat!("// FORK-EDGE: unserved verb hold\nlet o = Command::new(", "\"spira-lc\");\n");
     assert!(unmarked(marked).is_empty());
     assert!(unmarked(concat!("Command::new(", "\"git\")")).is_empty());
-    assert_eq!(unmarked(concat!("let c = bounded(spira_config::lifecycle_row::", "lc_bin()?);")), vec![(1, "spira-lc")]);
+    assert_eq!(unmarked(concat!("let c = bounded(spira_store::lifecycle_row::", "lc_bin()?);")), vec![(1, "spira-lc")]);
     assert_eq!(unmarked(concat!("mail: ", "tool(\"mail\")?,")), vec![(1, "mail")]);
 }

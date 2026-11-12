@@ -43,12 +43,12 @@ pub fn verdict_committed(git: &dyn Git, land_refs: &str, repo: &Path, branch: &s
 impl Run<'_> {
     /// This bead's lifecycle row (`spira-lc show`), through the exec port every other
     /// spira-lc read here uses; `None` when the machine has no row or cannot answer.
-    pub(crate) fn lc_bead(&self, id: &str) -> Option<spira_config::lc_state::Row> {
+    pub(crate) fn lc_bead(&self, id: &str) -> Option<spira_store::lc_state::Row> {
         let o = self.d.exec.exec("spira-lc", &s(&["show", id]), None, None);
         if !o.success() {
             return None;
         }
-        spira_config::lc_state::parse_show(&o.stdout).ok().flatten()
+        spira_store::lc_state::parse_show(&o.stdout).ok().flatten()
     }
 
     /// `spira-lc hold` unless the row is already terminal: the machine refuses a Hold from a

@@ -70,7 +70,7 @@ pub fn parse_update_args(args: &[String]) -> UpdateArgs {
 /// provably lapsed (sp-mve9i: the claim is the machine's row, never bd's `in_progress` and
 /// `assignee`). A row with no lease counts as live: refusing wrongly costs a flag, missing an
 /// edit costs a wasted session.
-pub fn live_claim(row: Option<&spira_config::lc_state::Row>, now_epoch: i64) -> Option<LiveClaim> {
+pub fn live_claim(row: Option<&spira_store::lc_state::Row>, now_epoch: i64) -> Option<LiveClaim> {
     let row = row.filter(|r| r.working())?;
     let holder = row.holder.as_deref().map(str::trim).filter(|h| !h.is_empty())?.to_string();
     if row.lease_until.is_some_and(|e| e <= now_epoch) {
@@ -380,7 +380,7 @@ mod tests {
     /// status and assignee play no part.
     #[test]
     fn live_claim_is_the_lifecycle_rows_working_holder_and_lease() {
-        use spira_config::lc_state::Row;
+        use spira_store::lc_state::Row;
         let now = parse_iso("2026-10-02T12:00:00Z").unwrap();
         let row = |st: &str, holder: &str, lease: Option<i64>| Row {
             bead_id: "x".into(),

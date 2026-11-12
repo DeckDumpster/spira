@@ -42,7 +42,8 @@ impl Epic {
 /// whose bd status is its state (`nonwork::Kind::Epic`); a rowless work bead holds its epic
 /// open, and the rowless control reports it. The epic itself is a non-work bead too.
 pub fn epics(beads: &[Bead], labels: &[String], state: &dyn Fn(&str) -> Option<String>) -> Vec<Epic> {
-    use spira_config::{lc_state, nonwork};
+    use spira_config::nonwork;
+    use spira_store::lc_state;
     let mut kids: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for b in beads {
         let mut parents: BTreeSet<&str> = b.parent.as_deref().filter(|p| !p.is_empty()).into_iter().collect();

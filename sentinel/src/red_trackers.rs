@@ -5,7 +5,7 @@
 
 use crate::pass::Sentinel;
 use crate::store;
-use spira_config::{lc_state, lifecycle_row};
+use spira_store::{lc_state, lifecycle_row};
 
 /// Trackers whose every `blocks` dependency is LANDED, with those dependencies.
 pub fn decide(snap: &store::Snapshot, label: &str) -> Vec<(String, Vec<String>)> {
@@ -43,7 +43,7 @@ impl<'a> Sentinel<'a> {
                 self.h.print(&format!("would close {id}: {reason}"));
                 continue;
             }
-            // FORK-EDGE: unserved verb close (spira_config::lifecycle_row::close_with runs the CLI).
+            // FORK-EDGE: unserved verb close (spira_store::lifecycle_row::close_with runs the CLI).
             match lifecycle_row::close_with(&self.cfg.lc_bin, id, &reason, "sentinel", None) {
                 Ok(()) => self.log(&format!("close_landed_red_trackers: {id} — closed ({})", fixes.join(", "))),
                 Err(e) => self.log(&format!("close_landed_red_trackers: {id} — close failed: {e}")),

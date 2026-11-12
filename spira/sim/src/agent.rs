@@ -125,7 +125,7 @@ fn exec(worktree: &Path, bead: &str, step: &Step, ordinal: usize) -> Result<(), 
             git(worktree, &["commit", "-q", "-m", &format!("{bead}: sim drop {file}")]).map(|_| ())
         }
         Step::NoProgress => Ok(()),
-        Step::Slain => run(Command::new(spira_config::lifecycle_row::lc_bin()?).args(["disposition", bead, "slain", "slain by operator", "slay"]).current_dir(worktree), CALL_DEADLINE).map(|_| ()),
+        Step::Slain => run(Command::new(spira_store::lifecycle_row::lc_bin()?).args(["disposition", bead, "slain", "slain by operator", "slay"]).current_dir(worktree), CALL_DEADLINE).map(|_| ()),
         Step::Ask { question, default } => work(worktree, &["blocked", question, "--default", default]).map(|_| ()),
     }
 }

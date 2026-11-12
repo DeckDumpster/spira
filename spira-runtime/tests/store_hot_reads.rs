@@ -9,7 +9,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use spira_config::lc_call::{LcClient, Reply, Transport};
+use spira_store::lc_call::{LcClient, Reply, Transport};
 use spira_runtime::tasks::a::czar::{certified_pool, Read};
 use spira_runtime::watchers::round_duty::{RoundState, Snapshot};
 use spira_runtime::world::World;

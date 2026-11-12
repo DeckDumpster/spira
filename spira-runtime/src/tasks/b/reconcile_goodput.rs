@@ -362,13 +362,13 @@ use reconciler_engine::goodput_pass::Socket;
 
 /// The runner of [`OBSERVE`]: the halt stamp and the store's `section snapshot`. It never
 /// takes the lock.
-pub fn observe(lc: &spira_config::lc_call::LcClient, run_dir: &std::path::Path) -> Result<String, String> {
+pub fn observe(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path) -> Result<String, String> {
     let section_snapshot: serde_json::Value = serde_json::from_str(lc.answer(&["section", "snapshot"]).map_err(String::from)?.trim()).map_err(|e| format!("section snapshot answered non-JSON: {e}"))?;
     serde_json::to_string(&Snapshot { halted: run_dir.join("world.halted").exists(), section_snapshot, lock: LockAnswer::default() }).map_err(|e| e.to_string())
 }
 
 /// The runner of [`LOCK`]: the grant's `{"token"}`, or a failure reading `locked`.
-pub fn lock(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn lock(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     use reconciler_engine::goodput_pass::legs::{acquire, Lock};
     let i: LockIn = serde_json::from_str(input).map_err(|e| e.to_string())?;
     match acquire(&Socket(lc.clone()), &i.holder, i.ttl_secs)? {
@@ -378,20 +378,20 @@ pub fn lock(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String,
 }
 
 /// The runner of [`STANDBY`].
-pub fn standby(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn standby(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     let i: LockIn = serde_json::from_str(input).map_err(|e| e.to_string())?;
     reconciler_engine::goodput_pass::legs::standby(&Socket(lc.clone()), &i.holder).map(|v| v.to_string())
 }
 
 /// The runner of [`JUDGE`]: the snapshot under the lock, the plan and the judgements.
-pub fn judge(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn judge(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     let l: reconciler_engine::goodput_pass::legs::LegConfig = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let judged = reconciler_engine::goodput_pass::legs::judge(&Socket(lc.clone()), &runtime::ports::WallClock, &l)?;
     serde_json::to_string(&judged).map_err(|e| e.to_string())
 }
 
 /// The runner of [`PUT`]: every planned step written and read back; the record with them.
-pub fn put(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn put(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     let i: StepIn = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let (record, _) = reconciler_engine::goodput_pass::legs::step(&Socket(lc.clone()), &runtime::ports::WallClock, &i.leg, i.judged);
     serde_json::to_string(&record).map_err(|e| e.to_string())
@@ -399,14 +399,14 @@ pub fn put(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, 
 
 /// The runner of [`RECORD`]: `pass record`; the answer echoes the record so the carry keeps
 /// its digest.
-pub fn record(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn record(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     let i: RecordIn = serde_json::from_str(input).map_err(|e| e.to_string())?;
     reconciler_engine::goodput_pass::legs::record(&Socket(lc.clone()), &i.token, &i.record)?;
     Ok(input.to_string())
 }
 
 /// The runner of [`RELEASE`].
-pub fn release(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn release(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     let i: ReleaseIn = serde_json::from_str(input).map_err(|e| e.to_string())?;
     reconciler_engine::goodput_pass::legs::release(&Socket(lc.clone()), &i.token, &i.holder).map(|()| "released".into())
 }

@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use spira_config::lc_call::{is_refusal, LcClient, Reply};
+use spira_store::lc_call::{is_refusal, LcClient, Reply};
 
 use crate::store::Cfg;
 
@@ -70,7 +70,7 @@ pub fn deliver(home: &Path, mail_root: &Path, run_dir: &Path, mute: bool, raw: &
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use spira_config::lc_call::Transport;
+    use spira_store::lc_call::Transport;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 

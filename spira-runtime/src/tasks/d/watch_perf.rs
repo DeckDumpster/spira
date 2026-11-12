@@ -202,7 +202,7 @@ fn phases_of(stderr: &[u8]) -> Option<String> {
 
 /// One probe timed end to end: a `spira-lc` read goes over the in-process client (the path
 /// S7 left), any other probe is its program run through the `Proc` port.
-fn time_one(lc: &Result<spira_config::lc_call::LcClient, String>, argv: &[String]) -> Timing {
+fn time_one(lc: &Result<spira_store::lc_call::LcClient, String>, argv: &[String]) -> Timing {
     let t0 = std::time::Instant::now();
     let mut phases = None;
     let r: Result<(), String> = match (argv[0].as_str(), lc) {
@@ -222,7 +222,7 @@ fn time_one(lc: &Result<spira_config::lc_call::LcClient, String>, argv: &[String
 
 /// `watch.perf.observe`: every probe timed, then the store's caller counts.
 pub fn observe(_: &crate::Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
-    let lc = spira_config::lc_call::LcClient::configured();
+    let lc = spira_store::lc_call::LcClient::configured();
     let timings = probes()?.iter().map(|p| Timing { name: p.name.clone(), ..time_one(&lc, &p.argv) }).collect();
     let callers = lc.as_ref().ok().and_then(|c| c.call(&["stats"]).ok()).map(|r| perf_watch::caller_counts(&r.out)).unwrap_or_default();
     serde_json::to_string(&Snapshot { timings, callers }).map_err(|e| e.to_string())

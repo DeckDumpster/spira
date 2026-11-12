@@ -261,15 +261,15 @@ pub fn parse_dry_run(out: &str) -> Vec<Close> {
 /// The runner of [`OBSERVE`]: the halt stamp, then the store's `reconcile-content --dry-run`
 /// and `event-seq`, over the socket. A cannot-tell on the ask or epic half still lists the
 /// work closes, as the store's own pass does.
-pub fn observe(lc: &spira_config::lc_call::LcClient, run_dir: &std::path::Path) -> Result<String, String> {
+pub fn observe(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path) -> Result<String, String> {
     if run_dir.join("world.halted").exists() {
         return serde_json::to_string(&Snapshot { world_halted: true, ..Snapshot::default() }).map_err(|e| e.to_string());
     }
-    let sweep = lc.within(spira_config::lc_call::SWEEP_DEADLINE);
+    let sweep = lc.within(spira_store::lc_call::SWEEP_DEADLINE);
     let r = sweep.call(&["reconcile-content", "--dry-run"]).map_err(String::from)?;
     let cannot_tell = match r.code {
         0 => None,
-        spira_config::lc_call::CANNOT_TELL if r.out.contains("would close") || r.out.contains("reconcile-content: ") => Some(r.why()),
+        spira_store::lc_call::CANNOT_TELL if r.out.contains("would close") || r.out.contains("reconcile-content: ") => Some(r.why()),
         _ => return Err(format!("reconcile-content --dry-run: exit {}: {}", r.code, r.why())),
     };
     let seq = lc.answer(&["event-seq", "--head"]).map_err(String::from)?;
@@ -278,19 +278,19 @@ pub fn observe(lc: &spira_config::lc_call::LcClient, run_dir: &std::path::Path) 
 }
 
 /// The runner of [`SKEW_CHECK`]: the store's `skew-check`; exit 3 (the planes disagree) fails it.
-pub fn skew_check(lc: &spira_config::lc_call::LcClient) -> Result<String, String> {
+pub fn skew_check(lc: &spira_store::lc_call::LcClient) -> Result<String, String> {
     lc.answer(&["skew-check"]).map_err(String::from)
 }
 
 /// The runner of [`CLOSE`]: the store's `reconcile-content --apply <id>`, which re-derives the
 /// close for that one id behind its own skew guard and writes it with its own reason. An id the
 /// store no longer lists is already closed, which is success (the idempotency rule).
-pub fn close(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn close(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     let c: Close = serde_json::from_str(input).map_err(|e| format!("close input: {e}"))?;
     if c.id.is_empty() || c.id.starts_with('-') {
         return Err(format!("{}: not a bead id", c.id));
     }
-    let r = lc.within(spira_config::lc_call::SWEEP_DEADLINE).call(&["reconcile-content", "--apply", c.id.as_str()]).map_err(|e| format!("{}: {e}", c.id))?;
+    let r = lc.within(spira_store::lc_call::SWEEP_DEADLINE).call(&["reconcile-content", "--apply", c.id.as_str()]).map_err(|e| format!("{}: {e}", c.id))?;
     match r.code {
         0 => Ok(c.id),
         _ => Err(format!("{}: exit {}: {}", c.id, r.code, r.why())),

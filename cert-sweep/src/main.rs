@@ -380,8 +380,8 @@ impl Rt<'_> {
             .filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r.get("title")?.as_str()?.to_string())))
             .collect();
         // Which of them are still open is the lifecycle machine's answer (sp-mve9i).
-        let lc = spira_config::lc_state::list().map_err(|e| format!("lifecycle state unreadable: {e}"))?;
-        Ok(still_open(all, &spira_config::lc_state::index(lc)))
+        let lc = spira_store::lc_state::list().map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+        Ok(still_open(all, &spira_store::lc_state::index(lc)))
     }
 
     /// A red is rerun on its own commit: a green among the reruns is a flip. A red that

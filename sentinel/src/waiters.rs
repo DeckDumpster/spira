@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use crate::model::{parse_beads, Bead};
 use crate::pass::Sentinel;
 use crate::store;
-use spira_config::lc_state;
+use spira_store::lc_state;
 
 pub use sentinel::checks::{active_blockers_lc, decide, labeled_claimable};
 

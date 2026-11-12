@@ -97,8 +97,8 @@ mod tests {
     fn a_planted_unfiltered_list_is_caught_in_every_form_a_core_process_can_ask_for_one() {
         let t = TempDir::new("cfl-planted");
         t.write("sentinel/src/a.rs", "let o = h.lc(bin, &[\"list\".into()]);\n");
-        t.write("strand/src/b.rs", "let rows = spira_config::lc_state::list();\n");
-        t.write("hel/src/c.rs", "let rows = spira_config::lc_state::list_on(&c);\n");
+        t.write("strand/src/b.rs", "let rows = spira_store::lc_state::list();\n");
+        t.write("hel/src/c.rs", "let rows = spira_store::lc_state::list_on(&c);\n");
         t.write("watchtower/src/d.rs", "let r = c.call(&[\"list\"]);\n");
         t.write("dwarf/x.sh", "spira-lc list | jq .\n");
         t.write("spira-runtime/src/tasks/e.rs", "let b = beads_on(&c, None);\n");

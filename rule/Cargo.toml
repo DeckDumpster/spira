@@ -27,6 +27,7 @@ spira-otel = { path = "../spira-otel" }
 serde_json = "1"
 toml = "0.8"
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 spira-lint = { path = "../spira-lint" }
 
 [dev-dependencies]

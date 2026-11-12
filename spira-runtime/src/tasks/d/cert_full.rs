@@ -32,7 +32,7 @@
 //! - **History:** the tsd family file `cert-history` (`main.rs:146-148`, `tsd::family_path`; `FAMILY` at `lib.rs:6`). That file is the record of truth and stays.
 //! - **Round-VM leases:** `round-vm status --json`, parsed by `live_leases` (`main.rs:480-494`, `lib.rs:280`). The target is a library call into `round-vm` (unverified that one exists) or a lease projection.
 //! - **Open beads** (read only on the filing step):
-//!   - Today: `bdq list --all --limit 0 --brief --json`, filtered by lifecycle `spira_config::lc_state::list()` (`main.rs:399-418`; `still_open`, `lib.rs:406`).
+//!   - Today: `bdq list --all --limit 0 --brief --json`, filtered by lifecycle `spira_store::lc_state::list()` (`main.rs:399-418`; `still_open`, `lib.rs:406`).
 //!   - Target: `content list` plus `lc list` through `LcClient` (S7a).
 //!
 //! ## Decide

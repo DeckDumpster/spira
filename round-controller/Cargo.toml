@@ -27,6 +27,7 @@ migration-numbers = { path = "../migration-numbers" }
 runtime = { path = "../runtime" }
 sift = { path = "../sift" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 incident = { path = "../incident" }
 spira-desired-state = { path = "../desired-state" }
 spira-lc = { path = "../spira-lc" }

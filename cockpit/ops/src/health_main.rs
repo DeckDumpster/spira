@@ -105,7 +105,7 @@ fn gather_drain(run: &str) -> DrainState {
 /// The WORKING rows of the lifecycle store with their phase: a dwarf's presence and place in
 /// its run are the machine's read, never a pidfile or a `/proc` entry.
 fn working_rows() -> Option<Vec<(String, String)>> {
-    let rows = spira_config::lc_state::list_state_with(&cockpit_ops::db::lc_bin().ok()?, "WORKING").ok()?;
+    let rows = spira_store::lc_state::list_state_with(&cockpit_ops::db::lc_bin().ok()?, "WORKING").ok()?;
     Some(rows.into_iter().map(|r| (r.bead_id, r.phase.unwrap_or_else(|| "?".to_string()))).collect())
 }
 

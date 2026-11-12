@@ -157,7 +157,7 @@ fn gate_verdict(scanned: usize, findings: &[Finding]) -> u8 {
          The lifecycle machine is the only route to a bead's state (design \
          bead-lifecycle-state-machine §3.6(3)), and this gate has no allow-list. Exits: (1) read \
          or change the state through spira-lc (show / list / state / the lifecycle verbs; from Rust, \
-         spira_config::lc_state) instead, or for a bead that is not a work bead (an ask, alert, \
+         spira_store::lc_state) instead, or for a bead that is not a work bead (an ask, alert, \
          insight, epic) read its bd status through spira_config::nonwork, naming its kind; \
          (2) if the analyser is wrong, correct its rule in lifecycle-guard/ on this branch — the \
          tree owns its gate, so the branch is judged by the rule it carries; (3) to land without \

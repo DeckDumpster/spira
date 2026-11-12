@@ -140,7 +140,7 @@ fn dispatch() -> ExitCode {
         lock_wait: Duration::from_secs(60),
         run: run.clone(),
     };
-    let (lc, queue) = match spira_config::lifecycle_row::lc_bin().and_then(|lc| Ok((lc, spira_config::release_env::tool("queue")?))) {
+    let (lc, queue) = match spira_store::lifecycle_row::lc_bin().and_then(|lc| Ok((lc, spira_config::release_env::tool("queue")?))) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("rebase-stale: {e}");

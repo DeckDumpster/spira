@@ -111,16 +111,16 @@ impl Seen for FileSeen {
 }
 
 pub struct RealLifecycle {
-    lc: spira_config::lc_call::LcClient,
+    lc: spira_store::lc_call::LcClient,
 }
 
 impl RealLifecycle {
     pub fn new() -> Result<Self, String> {
-        Ok(RealLifecycle { lc: spira_config::lc_call::LcClient::configured()? })
+        Ok(RealLifecycle { lc: spira_store::lc_call::LcClient::configured()? })
     }
 
     /// Every read through `lc`.
-    pub fn over(lc: spira_config::lc_call::LcClient) -> Self {
+    pub fn over(lc: spira_store::lc_call::LcClient) -> Self {
         RealLifecycle { lc }
     }
 }
@@ -181,7 +181,7 @@ pub struct RealBd {
 }
 
 /// Every bead, through the store's `content` door; `None` when it does not answer.
-pub fn list_all_on(lc: &spira_config::lc_call::LcClient) -> Option<serde_json::Value> {
+pub fn list_all_on(lc: &spira_store::lc_call::LcClient) -> Option<serde_json::Value> {
     let r = lc.call(&["content", "list", "--all", "--limit", "0", "--json"]).ok()?;
     if r.code != 0 {
         return None;
@@ -191,7 +191,7 @@ pub fn list_all_on(lc: &spira_config::lc_call::LcClient) -> Option<serde_json::V
 
 /// The beads whose external reference contains `needle`, as the rows `store::ingested` reads.
 /// Err carries the store's own text: a refusal, a deadline or a reply that is no item list.
-pub fn github_refs_on(lc: &spira_config::lc_call::LcClient, needle: &str) -> Result<serde_json::Value, String> {
+pub fn github_refs_on(lc: &spira_store::lc_call::LcClient, needle: &str) -> Result<serde_json::Value, String> {
     let out = lc.answer(&["plan", "items", "--external-contains", needle, "--full"])?;
     let mut v: serde_json::Value = serde_json::from_str(&out).map_err(|e| format!("plan items: unparsed reply: {e}"))?;
     match v.get_mut("items").map(serde_json::Value::take) {
@@ -210,7 +210,7 @@ impl RealBd {
 /// One call through the store's content door, which applies every protection bdq applies and
 /// writes a create's lifecycle row itself: its stdout when it applied, `None` otherwise.
 fn content<S: AsRef<str>>(argv: &[S], body: Option<&str>) -> Option<String> {
-    let lc = spira_config::lc_call::LcClient::configured().ok()?;
+    let lc = spira_store::lc_call::LcClient::configured().ok()?;
     let r = match body {
         Some(b) => lc.call_stdin(argv, b),
         None => lc.call(argv),
@@ -221,7 +221,7 @@ fn content<S: AsRef<str>>(argv: &[S], body: Option<&str>) -> Option<String> {
 
 impl Bd for RealBd {
     fn list_all_json(&self) -> Option<serde_json::Value> {
-        let lc = spira_config::lc_call::LcClient::configured().ok()?;
+        let lc = spira_store::lc_call::LcClient::configured().ok()?;
         list_all_on(&lc)
     }
 
@@ -236,7 +236,7 @@ impl Bd for RealBd {
 
     // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
     fn close(&self, id: &str, reason: &str) -> bool {
-        spira_config::lifecycle_row::close(id, reason, "gh-intake", None).is_ok()
+        spira_store::lifecycle_row::close(id, reason, "gh-intake", None).is_ok()
     }
 
     fn show_json(&self, id: &str) -> Option<serde_json::Value> {
@@ -559,7 +559,7 @@ mod lifecycle_tests {
 #[cfg(test)]
 mod transport_tests {
     use super::*;
-    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
 
     struct Scripted(Mutex<Vec<Vec<String>>>);
@@ -610,7 +610,7 @@ mod transport_tests {
     impl Transport for Bounded {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            if spira_config::lc_call::reads_whole_history(argv) || self.1 != 0 {
+            if spira_store::lc_call::reads_whole_history(argv) || self.1 != 0 {
                 return Ok(Reply { code: if self.1 != 0 { self.1 } else { 3 }, out: "refused: reads every bead ever filed".into(), err: String::new() });
             }
             let out = r#"{"watermark":1,"items":[{"id":"sp-1","external_ref":"github:o/r#1","labels":["x"]}]}"#;
@@ -622,7 +622,7 @@ mod transport_tests {
     fn the_github_refs_are_a_bounded_plan_read_the_store_serves_to_a_scheduler_task() {
         let t = Arc::new(Bounded(Mutex::default(), 0));
         let got = github_refs_on(&LcClient::over(t.clone(), true), "o/r#").unwrap();
-        assert!(t.0.lock().unwrap().iter().all(|a| !spira_config::lc_call::reads_whole_history(a)));
+        assert!(t.0.lock().unwrap().iter().all(|a| !spira_store::lc_call::reads_whole_history(a)));
         assert_eq!(crate::store::ingested(&got)[0].id, "sp-1");
         let refused = github_refs_on(&LcClient::over(Arc::new(Bounded(Mutex::default(), 3)), true), "o/r#").unwrap_err();
         assert!(refused.contains("reads every bead"), "{refused}");

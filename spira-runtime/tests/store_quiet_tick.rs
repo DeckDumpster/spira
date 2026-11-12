@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use batcher_cut::io::{self, Env, Hypervisor, Land, Repo};
 use serde_json::{json, Value};
-use spira_config::lc_call::{LcClient, Reply, Transport};
+use spira_store::lc_call::{LcClient, Reply, Transport};
 use spira_runtime::tasks::a::sentinel_pass::beads_on;
 use spira_runtime::world::World;
 use store_view::Projection;

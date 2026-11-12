@@ -16,6 +16,7 @@ integration = ["mail/integration", "reconciler-engine/integration", "runtime/int
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 libc = "0.2"
 spira-ctrl = { path = "../spira-ctrl" }
 reconciler-engine = { path = "../reconciler-engine" }

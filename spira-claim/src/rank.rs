@@ -310,7 +310,7 @@ pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, Stri
         };
         let snoozed_until = match r.get("reason") {
             Some(Value::String(reason)) if holds.contains(&HoldKind::Wait) => {
-                spira_config::lc_state::snooze_until(reason).filter(|t| *t > crate::ready::now_epoch())
+                spira_store::lc_state::snooze_until(reason).filter(|t| *t > crate::ready::now_epoch())
             }
             _ => None,
         };
@@ -954,7 +954,7 @@ mod tests {
     }
 
     fn snooze_snapshot(until: i64, hold: &str) -> HashMap<String, LifecycleRow> {
-        let reason = spira_config::lc_state::snooze_reason(until);
+        let reason = spira_store::lc_state::snooze_reason(until);
         parse_lifecycle(&format!(r#"[{{"bead_id":"B","state":"READY","holds":["{hold}"],"reason":"{reason}"}}]"#)).unwrap()
     }
 

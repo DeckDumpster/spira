@@ -24,6 +24,7 @@ integration = ["mail/integration", "spira-config/integration", "spira-otel/integ
 
 [dependencies]
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 mail = { path = "../mail" }
 tsd = { path = "../tsd" }

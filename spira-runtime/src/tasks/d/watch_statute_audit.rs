@@ -177,7 +177,7 @@ pub fn file_work(lc_socket: &std::path::Path, f: &Filing, priority: Option<&str>
     let stream = std::os::unix::net::UnixStream::connect(lc_socket).map_err(|e| format!("cannot tell: the lifecycle service is not answering on {}: {e}", lc_socket.display()))?;
     let wait = Some(std::time::Duration::from_millis(deadline_ms.max(1)));
     stream.set_read_timeout(wait).and_then(|_| stream.set_write_timeout(wait)).map_err(|e| e.to_string())?;
-    let reply = spira_config::lc_call::exchange(stream, &argv, None)?;
+    let reply = spira_store::lc_call::exchange(stream, &argv, None)?;
     match reply.code {
         0 => Ok(reply.out),
         _ => Err(format!("work file {:?}: {}", f.title, reply.why())),
@@ -188,7 +188,7 @@ pub fn file_work(lc_socket: &std::path::Path, f: &Filing, priority: Option<&str>
 /// empty book), each tool it names read from the activated release, the open titles over
 /// `content list`, and the repo from `SPIRA_HOME_REPO`'s basename.
 pub fn observe(e: &crate::Effects, _key: &str, _spec: &EffectSpec) -> Result<String, String> {
-    let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket);
+    let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
     let raw = lc.answer(&["content", "memories", "--json"]).map_err(|e| format!("the statute book could not be read: {e}"))?;
     let book: BTreeMap<String, serde_json::Value> = serde_json::from_str(&raw).map_err(|e| format!("the statute book did not parse: {e}"))?;
     let home = spira_config::resolve::locate_home_for_process()?;

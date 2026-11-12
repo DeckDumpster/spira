@@ -177,10 +177,10 @@ pub enum Holds {
 /// exit, or stdout that is not the `{"bead": …}` object, is no answer (an error is never data,
 /// whatever stream it arrived on, and no word in it is matched). `Ok(None)`: the machine
 /// answered and has no row for `id`.
-fn show_row(o: &Out) -> Result<Option<spira_config::lc_state::Row>, String> {
+fn show_row(o: &Out) -> Result<Option<spira_store::lc_state::Row>, String> {
     let said = || o.stderr.lines().chain(o.stdout.lines()).map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
     match o.code {
-        0 => spira_config::lc_state::parse_show(&o.stdout).map_err(|e| format!("{e} ({})", said())),
+        0 => spira_store::lc_state::parse_show(&o.stdout).map_err(|e| format!("{e} ({})", said())),
         1 => Ok(None),
         rc => Err(format!("rc={rc}: {}", said())),
     }
@@ -193,7 +193,7 @@ pub(crate) fn ask_row(
     tries: u32,
     delay: Duration,
     sleep: &(dyn Fn(Duration) + Sync),
-) -> Result<Option<spira_config::lc_state::Row>, String> {
+) -> Result<Option<spira_store::lc_state::Row>, String> {
     let mut wait = delay;
     let mut why = String::new();
     for i in 1..=tries.max(1) {
@@ -253,7 +253,7 @@ pub fn double_hold(exec: &dyn Exec, mine: &str, live: &dyn Fn(&str) -> bool) -> 
     if o.code != 0 {
         return Err(format!("spira-lc list --state WORKING exited {}: {}", o.code, o.first_err_line()));
     }
-    let rows = spira_config::lc_state::parse_rows(&o.stdout)?;
+    let rows = spira_store::lc_state::parse_rows(&o.stdout)?;
     Ok(rows.into_iter().find_map(|r| {
         let holder = r.holder.as_deref().filter(|_| r.working())?;
         (live(holder) && spira_config::session::same_name_other_session(holder, mine)).then_some(r.bead_id)

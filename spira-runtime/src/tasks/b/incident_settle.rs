@@ -31,7 +31,7 @@
 //!   verb + lifecycle projection.
 //! - Fixes: the incident's `blocks` edges (`settle_real.rs:27`, read via `bdq list --id`, `:19`) →
 //!   `content` verb.
-//! - Fix state: `lc_state::row(fix)` (`settle_real.rs:70`; `spira-config/src/lc_state.rs:241`) →
+//! - Fix state: `lc_state::row(fix)` (`settle_real.rs:70`; `spira-store/src/lc_state.rs:241`) →
 //!   `LcClient` show. `LANDED`/`DONE` is landed, `DROPPED` is non-blocking (`settle.rs:8,81`).
 //! - Landing in force: `git log <base> --grep <id>` then `merge-base --is-ancestor <sha> <release>`
 //!   (`settle_real.rs:87,95`); repo from the fix's `repo:` label and the registry. Git stays a child
@@ -60,7 +60,7 @@
 //!
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
 //! |---|---|---|---|---|
-//! | `incident.settle.close` (`spira_config::lifecycle_row::close(id, evidence, "incident")`, `settle_real.rs:116`) | store | 5 s | incident id | row already terminal (store answers 3); unreachable store |
+//! | `incident.settle.close` (`spira_store::lifecycle_row::close(id, evidence, "incident")`, `settle_real.rs:116`) | store | 5 s | incident id | row already terminal (store answers 3); unreachable store |
 //! | `incident.settle.note` (`bdq note <id> --stdin`, `settle_real.rs:120`) | store | 10 s | incident id + fired label | missing bead |
 //! | `incident.settle.label` (`bdq label add <id> settle-fired:<h>`, `settle_real.rs:123`) | store | 10 s | incident id + label (set-add) | missing bead |
 //! | `incident.settle.log` (append `settle: <outcome>` to `incident.log`, `main.rs:629`) | host | 2 s | event id | none |

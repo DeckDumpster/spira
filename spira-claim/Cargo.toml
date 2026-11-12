@@ -26,6 +26,7 @@ integration = ["bead/integration", "hel/integration", "lifecycle/integration", "
 bead = { path = "../bead" }
 lifecycle = { path = "../lifecycle" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 hel = { path = "../hel" }
 runtime = { path = "../runtime" }

@@ -115,8 +115,8 @@ fn find_blocking_id(desc: &str) -> Option<String> {
     Some(rest[..j].to_string())
 }
 
-/// The lifecycle rows by bead id (`spira_config::lc_state`).
-pub type Lc = std::collections::HashMap<String, spira_config::lc_state::Row>;
+/// The lifecycle rows by bead id (`spira_store::lc_state`).
+pub type Lc = std::collections::HashMap<String, spira_store::lc_state::Row>;
 
 /// A filed bead is still open while its lifecycle row is not terminal (sp-mve9i: a work
 /// bead's state is spira-lc's, never bd's `status`). A bead with no row can never be worked,

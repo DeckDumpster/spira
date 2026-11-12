@@ -41,6 +41,7 @@ integration = ["hel/integration", "mail/integration", "runtime/integration", "sp
 spira-otel = { path = "../spira-otel" }
 spira-ctrl = { path = "../spira-ctrl" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 libc = "0.2"
 mail = { path = "../mail" }
 tsd = { path = "../tsd" }

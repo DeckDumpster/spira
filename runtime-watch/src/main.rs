@@ -4,7 +4,7 @@
 //! be read — never treated as in support.
 
 use runtime_watch::{pass, real::Real};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 use spira_config::repos::Registry;
 use spira_otel::metrics::{MetricsSink, Point};
 use std::path::PathBuf;

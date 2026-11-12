@@ -85,7 +85,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use runtime::ports::{Proc, ProcSpec};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 use crate::tasks::b::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 

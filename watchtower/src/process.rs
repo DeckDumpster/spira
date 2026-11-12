@@ -139,8 +139,8 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
             Some(r) => r,
             None => spira_config::release_env::tool("resolve")?,
         },
-        lc: spira_config::lc_call::LcClient::configured()?,
+        lc: spira_store::lc_call::LcClient::configured()?,
         branch_guard_sh: getenv("SPIRA_BRANCH_GUARD_SH"),
-        lc_bin: spira_config::lifecycle_row::lc_bin()?,
+        lc_bin: spira_store::lifecycle_row::lc_bin()?,
     })
 }

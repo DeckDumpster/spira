@@ -73,7 +73,7 @@ impl Config {
         let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
         let home = spira_config::resolve::locate_home_for_process().map_err(|e| format!("loom: {e}"))?;
         Ok(Config {
-            lc: spira_config::lifecycle_row::lc_bin()?,
+            lc: spira_store::lifecycle_row::lc_bin()?,
             path: spira_config::release_env::launcher_path(env.get(spira_config::RELEASE_ENV).map(String::as_str), env.get("HOME").map(String::as_str), &cfg("SPIRA_PATH").map_err(|e| format!("loom: {e}"))?).map_err(|e| format!("loom: {e}"))?,
             budget: Duration::from_millis(cfg_parse::<u64>("SPIRA_LOOM_BUDGET_MS").map_err(|e| format!("loom: {e}"))?),
             cache: Duration::from_secs(cfg_parse::<u64>("SPIRA_LOOM_CACHE_S").map_err(|e| format!("loom: {e}"))?),
@@ -211,10 +211,10 @@ impl Loom {
 
     /// The factory floor: the held build, or a fresh one. A failed build is not held.
     pub async fn factory(&self) -> Result<Value, String> {
-        self.factory_via(|| spira_config::lc_call::LcClient::for_bin(&self.cfg.lc)).await
+        self.factory_via(|| spira_store::lc_call::LcClient::for_bin(&self.cfg.lc)).await
     }
 
-    async fn factory_via(&self, client: impl FnOnce() -> Result<spira_config::lc_call::LcClient, String>) -> Result<Value, String> {
+    async fn factory_via(&self, client: impl FnOnce() -> Result<spira_store::lc_call::LcClient, String>) -> Result<Value, String> {
         let mut held = self.factory_cell.lock().await;
         if let Some((_, v)) = held.as_ref().filter(|(at, _)| at.elapsed() < self.cfg.cache) {
             return Ok(v.clone());
@@ -346,12 +346,12 @@ async fn lc_json(loom: &Loom, args: &[&str]) -> Result<Value, String> {
         return lc_cli_json(loom, args).await;
     }
     let cfg = loom.config();
-    let client = spira_config::lc_call::LcClient::for_bin(&cfg.lc)?;
+    let client = spira_store::lc_call::LcClient::for_bin(&cfg.lc)?;
     lc_answer_json(client, args, cfg.budget).await
 }
 
 /// `args` on `client`, bounded at `budget`, parsed as JSON.
-async fn lc_answer_json(client: spira_config::lc_call::LcClient, args: &[&str], budget: Duration) -> Result<Value, String> {
+async fn lc_answer_json(client: spira_store::lc_call::LcClient, args: &[&str], budget: Duration) -> Result<Value, String> {
     let argv: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     let shown = args.join(" ");
     let call = tokio::task::spawn_blocking(move || client.within(budget).call(&argv));
@@ -411,7 +411,7 @@ fn store_views(loom: &Loom) -> Result<&'static store_view::Projection, String> {
     let lc = loom.config().lc.clone();
     VIEWS
         .get_or_init(|| {
-            let p = Arc::new(store_view::Projection::configured(spira_config::lc_call::LcClient::for_bin(&lc)?)?);
+            let p = Arc::new(store_view::Projection::configured(spira_store::lc_call::LcClient::for_bin(&lc)?)?);
             let watcher = Arc::clone(&p);
             std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false)));
             Ok(p)
@@ -577,7 +577,7 @@ async fn states_api_route(State(loom): State<Arc<Loom>>) -> Response {
 
 /// The `(bead, phase)` WORKING rows the pane reads, or why they could not be read.
 async fn working_rows(loom: &Loom) -> (Vec<(String, String)>, Option<String>) {
-    match lc_json(loom, &["list", "--state", "WORKING"]).await.and_then(|v| spira_config::lc_state::parse_rows(&v.to_string())) {
+    match lc_json(loom, &["list", "--state", "WORKING"]).await.and_then(|v| spira_store::lc_state::parse_rows(&v.to_string())) {
         Ok(rows) => (rows.into_iter().map(|r| (r.bead_id, r.phase.unwrap_or_else(|| "?".into()))).collect(), None),
         Err(e) => (Vec::new(), Some(format!("phases unknown: {e}"))),
     }
@@ -928,7 +928,7 @@ mod in_process_tests {
     use super::*;
     use crate::ops::check_sentinel;
     use runtime::units::{ScriptedUnits, UnitFacts, UnitState};
-    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
 
     struct Scripted(Vec<(&'static str, i32, String)>);
 

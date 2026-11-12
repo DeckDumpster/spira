@@ -154,7 +154,7 @@ fn now() -> i64 {
 
 /// The prompt's blocked list: every live lifecycle row carrying a hold, one line each
 /// (`<id> <STATE> held: <holds>`), at most 40.
-pub fn blocked_rows(rows: &[spira_config::lc_state::Row]) -> String {
+pub fn blocked_rows(rows: &[spira_store::lc_state::Row]) -> String {
     rows.iter().filter(|r| !r.terminal() && !r.holds.is_empty()).take(40).map(|r| format!("{} {} held: {}", r.bead_id, r.state, r.holds.join(","))).collect::<Vec<_>>().join("\n")
 }
 
@@ -166,12 +166,12 @@ pub fn run(ids: &[String]) -> Result<String, String> {
         return Ok("reflect: nothing to reflect on".into());
     }
     let cfg = Cfg::resolve()?;
-    let lc = spira_config::lc_call::LcClient::configured()?;
+    let lc = spira_store::lc_call::LcClient::configured()?;
     let show = |args: &[&str]| lc.call(args).ok().filter(|r| r.code == 0).map(|r| r.out).unwrap_or_default();
     let state: String = ids.iter().map(|id| format!("{}\n", clean_show(&show(&["content", "show", id])))).collect();
     // What holds work back is the lifecycle machine's account (its held rows), not bd's
     // status field, which is inert for a work bead (design §3.4).
-    let blocked = blocked_rows(&spira_config::lc_state::list_live_on(&lc).unwrap_or_default());
+    let blocked = blocked_rows(&spira_store::lc_state::list_live_on(&lc).unwrap_or_default());
     let text = prompt(&state, &blocked, &cfg.design, &cfg.operator);
     let args = ["-p", "--model", &cfg.model, "--settings", DENY, "--dangerously-skip-permissions"].iter().map(|s| s.to_string()).collect();
     let o = SysProc.run(&ProcSpec { prog: cfg.agent.clone(), args, stdin: text.into_bytes(), deadline: std::time::Duration::from_secs(AGENT_TIMEOUT_SECS) })?;
@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn the_blocked_list_is_the_machines_held_rows() {
-        use spira_config::lc_state::Row as Lc;
+        use spira_store::lc_state::Row as Lc;
         let row = |id: &str, state: &str, holds: &[&str]| Lc { bead_id: id.into(), state: state.into(), holds: holds.iter().map(|h| h.to_string()).collect(), ..Lc::default() };
         let rows = [row("sp-a", "READY", &["ask", "blocker"]), row("sp-b", "READY", &[]), row("sp-c", "LANDED", &["ask"])];
         assert_eq!(blocked_rows(&rows), "sp-a READY held: ask,blocker");

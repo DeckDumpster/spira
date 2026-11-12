@@ -3,7 +3,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use spira_config::lc_call::{LcClient, LcError, Reply, Transport};
+use spira_store::lc_call::{LcClient, LcError, Reply, Transport};
 use store_view::{Projection, RowQuery};
 
 /// A scripted store: `rc list` and `list` answer from what it holds, each `watch` takes the next

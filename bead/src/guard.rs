@@ -28,7 +28,7 @@
 
 use crate::bdq;
 use crate::claimdesc::{self, LiveClaim};
-use spira_config::lc_state::Row;
+use spira_store::lc_state::Row;
 use spira_config::repos::Registry;
 
 /// The exit code both guards refuse with: bdq's `return 1`.
@@ -204,7 +204,7 @@ pub fn after(args: &[String]) -> After {
     if bdq::creates_beads(args) && !(bdq::is_create(args) && (bdq::creates_closed(args) || bdq::creates_rowless_type(args))) {
         return After::Rows;
     }
-    match spira_config::lifecycle_row::closed_id(args) {
+    match spira_store::lifecycle_row::closed_id(args) {
         Some(id) => After::Terminal(id.to_string()),
         None => After::Nothing,
     }

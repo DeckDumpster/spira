@@ -158,7 +158,7 @@ fn build(dir: &Path, lifecycle_dir: &Path, path_env: &str, port: u16) -> Result<
     write_secret(&dir.join(format!("{CREDENTIAL}-ro")), &ro)?;
     // A fresh sql-server's root has no password: the admin a fresh dolt-beads.service has.
     let admin = Admin { user: "root".into(), password: String::new(), host: Some("127.0.0.1".into()), port };
-    let lc = spira_config::lifecycle_row::lc_bin()?;
+    let lc = spira_store::lifecycle_row::lc_bin()?;
     lifecycle_store::apply(lifecycle_dir, dir, &admin, &rw, &ro, |args, env| {
         // batch-job: the stage's one-time lifecycle DDL against its own private server, bounded at 120 s by timeout(1).
         let mut c = Command::new("timeout");

@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::util;
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 /// The condition type every alert carries; the pane lists this type.
 pub const ALERT: &str = "Alert";
@@ -130,16 +130,16 @@ mod tests {
 
     struct Store(std::sync::Mutex<Vec<Vec<String>>>, Result<(i32, &'static str), &'static str>);
 
-    impl spira_config::lc_call::Transport for Store {
-        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+    impl spira_store::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            self.1.map(|(code, out)| spira_config::lc_call::Reply { code, out: out.into(), err: String::new() }).map_err(String::from)
+            self.1.map(|(code, out)| spira_store::lc_call::Reply { code, out: out.into(), err: String::new() }).map_err(String::from)
         }
     }
 
     fn ops(answer: Result<(i32, &'static str), &'static str>) -> (LcConditions, std::sync::Arc<Store>) {
         let s = std::sync::Arc::new(Store(Default::default(), answer));
-        (LcConditions { client: LcClient::over(s.clone() as std::sync::Arc<dyn spira_config::lc_call::Transport>, true) }, s)
+        (LcConditions { client: LcClient::over(s.clone() as std::sync::Arc<dyn spira_store::lc_call::Transport>, true) }, s)
     }
 
     #[test]

@@ -142,7 +142,7 @@ use std::collections::{BTreeMap, HashSet};
 use runtime::event::*;
 use runtime::units::{self, UnitRan, UNIT_RAN};
 use serde::{Deserialize, Serialize};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 use super::kit::{self, Act, Cadence, Shape};
 use crate::Effects;
@@ -562,7 +562,7 @@ fn check3c(v: &sentinel::pass_checks::View, snap: &Snapshot, acts: &mut Vec<Act>
     let scope = &snap.labels.scope;
     let in_scope = |id: &str| scope.is_empty() || v.get(id).is_some_and(|b| b.has(scope));
     let mut ready: Vec<String> = snap.ready_raw.iter().filter(|id| in_scope(id)).cloned().collect();
-    ready.extend(v.rows.iter().filter(|r| spira_config::lc_state::is_claimable(&r.state) && in_scope(&r.bead_id) && !snap.ready_raw.contains(&r.bead_id)).map(|r| r.bead_id.clone()));
+    ready.extend(v.rows.iter().filter(|r| spira_store::lc_state::is_claimable(&r.state) && in_scope(&r.bead_id) && !snap.ready_raw.contains(&r.bead_id)).map(|r| r.bead_id.clone()));
     let label = &snap.labels.open_children;
     for c in pc::open_children(v, &ready, label) {
         let (id, op) = match c {
@@ -1060,7 +1060,7 @@ pub fn phase_metric(e: &Effects, input: &str) -> Result<String, String> {
 #[cfg(test)]
 mod beads_on_tests {
     use super::beads_on;
-    use spira_config::lc_call::{fake, LcClient};
+    use spira_store::lc_call::{fake, LcClient};
     use std::sync::Arc;
 
     fn bead(id: &str, status: &str, kind: &str, parent: Option<&str>) -> serde_json::Value {
@@ -1083,7 +1083,7 @@ mod beads_on_tests {
         assert!(!beads.iter().any(|b| b.id.starts_with("sp-h")), "unrelated closed history stays out");
         let everything: Vec<sentinel::model::Bead> = store.rows.iter().filter_map(|r| serde_json::from_value(r.clone()).ok()).collect();
         assert_eq!(sentinel::pilgrimage::open_epic_children(&beads, &labels), sentinel::pilgrimage::open_epic_children(&everything, &labels), "the epic children are what the whole history yields");
-        assert!(store.requests().iter().all(|r| !spira_config::lc_call::reads_whole_history(r)), "{:?}", store.requests());
+        assert!(store.requests().iter().all(|r| !spira_store::lc_call::reads_whole_history(r)), "{:?}", store.requests());
     }
 
     #[test]

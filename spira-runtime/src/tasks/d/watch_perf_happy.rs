@@ -305,7 +305,7 @@ pub fn decide(carry: &Carry, input: &Input, now_ms: u64, cfg: &Config) -> Result
 /// `watch.perf_happy.observe`: whether the home repo has a round open, from the store's round
 /// view in-process (`queue round status`'s answer, from the component that decides it).
 pub fn observe(e: &crate::Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
-    let open = spira_config::lc_call::LcClient::configured().and_then(store_view::Projection::configured).and_then(|views| {
+    let open = spira_store::lc_call::LcClient::configured().and_then(store_view::Projection::configured).and_then(|views| {
         views.load().map_err(|e| format!("the store views: {e}"))?;
         happy::round_open_in(&views, &e.world.home_repo)
     });

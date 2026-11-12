@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::model::{parse_lc_rows, LcRow};
 use crate::pass::Sentinel;
-use spira_config::lc_state;
+use spira_store::lc_state;
 use spira_config::nonwork::{self, Kind};
 
 /// The hold kind's serde tag and implied cause (spira-lc callers.rs `hold_cause`; lc.sh's

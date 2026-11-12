@@ -535,7 +535,7 @@ fn landed_sha(b: &LcBead) -> bool {
 }
 
 fn handed_on(d: &Deps, id: &str) -> Result<Option<LcBead>, String> {
-    Ok(d.lc.bead(id)?.filter(|b| spira_config::lc_state::past_builder(&b.state)))
+    Ok(d.lc.bead(id)?.filter(|b| spira_store::lc_state::past_builder(&b.state)))
 }
 
 /// lib.sh `_gh_unlanded_scan`.

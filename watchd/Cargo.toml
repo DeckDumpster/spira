@@ -21,6 +21,7 @@ regex = "1"
 runtime = { path = "../runtime" }
 sop = { path = "../sop" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 spira-world = { path = "../spira-world" }
 tsd = { path = "../tsd" }
 

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 use state_store::wire::{self, Verb};
 use state_store::{Error, Fence, Item, Request, Selector, Txn, TxnResult};
 
@@ -87,7 +87,7 @@ impl Store for LcStore {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use spira_config::lc_call::{Reply, Transport};
+    use spira_store::lc_call::{Reply, Transport};
     use state_store::{Contract, MemBackend, Object, Rev};
 
     use super::*;

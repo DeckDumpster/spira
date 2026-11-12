@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use spira_config::lc_call::{LcClient, LcError, Reply};
-use spira_config::lc_state::{self, BatchState, Row};
+use spira_store::lc_call::{LcClient, LcError, Reply};
+use spira_store::lc_state::{self, BatchState, Row};
 
 /// How old a view's last confirmed revision may be before its reads refuse.
 pub const STALE_KEY: &str = "SPIRA_STORE_VIEW_STALE_MS";

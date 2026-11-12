@@ -269,18 +269,18 @@ mod tests {
         assert!(f.names_at_landing("ghost", "spira").unwrap_err().contains("no checkout"));
     }
 
-    struct Store(Mutex<Vec<Result<spira_config::lc_call::Reply, String>>>);
+    struct Store(Mutex<Vec<Result<spira_store::lc_call::Reply, String>>>);
 
-    impl spira_config::lc_call::Transport for Store {
-        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<spira_config::lc_call::Reply, String> {
+    impl spira_store::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<spira_store::lc_call::Reply, String> {
             assert_eq!(argv[..2], ["rc", "list"], "only the batch records are read");
             crate::lock(&self.0).remove(0)
         }
     }
 
-    fn listed(items: serde_json::Value) -> Result<spira_config::lc_call::Reply, String> {
+    fn listed(items: serde_json::Value) -> Result<spira_store::lc_call::Reply, String> {
         let out = serde_json::json!({"ok": {"list_rev": 4, "items": items}}).to_string();
-        Ok(spira_config::lc_call::Reply { code: 0, out, err: String::new() })
+        Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new() })
     }
 
     #[test]
@@ -288,7 +288,7 @@ mod tests {
         let batch = serde_json::json!([{"key": "batches/alpha/deck-1", "create_rev": {"main": 2}, "value": {"data": {
             "batch_id": "deck-1", "state": "OPEN", "repo": "alpha", "round": {"forge.phase": "armed", "pr": "12"}}}}]);
         let answers = vec![listed(serde_json::json!([])), listed(batch), Err("the lifecycle service is not answering".into())];
-        let client = spira_config::lc_call::LcClient::over(Arc::new(Store(Mutex::new(answers))), true);
+        let client = spira_store::lc_call::LcClient::over(Arc::new(Store(Mutex::new(answers))), true);
         let mut f = facts(&[]);
         f.facts.views = Ok(store_view::Projection::new(client, Duration::from_secs(60), Arc::new(std::time::Instant::now)));
         assert_eq!(f.open_batch("alpha"), Ok(None));

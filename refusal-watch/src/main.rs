@@ -51,7 +51,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let read = spira_config::lc_call::LcClient::configured().and_then(|c| read_refusals(&c, cfg.window_secs)).and_then(|j| parse(&j));
+    let read = spira_store::lc_call::LcClient::configured().and_then(|c| read_refusals(&c, cfg.window_secs)).and_then(|j| parse(&j));
     let (now, classes) = match read {
         Ok(v) => v,
         Err(e) => {

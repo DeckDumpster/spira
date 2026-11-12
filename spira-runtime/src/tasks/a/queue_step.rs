@@ -737,7 +737,7 @@ pub mod edge {
 
     use queue::ports::Lc as _;
     use runtime::ports::{Proc, ProcSpec, SysProc};
-    use spira_config::lc_call::LcClient;
+    use spira_store::lc_call::LcClient;
     use spira_config::process::cfg;
     use spira_config::repos::Registry;
 

@@ -2,7 +2,7 @@
 //! verb on [`LcClient`] — in-process, no `bdq` child. It reads only: a close, an ask or any
 //! write is refused, because the content door serves none of them.
 
-use spira_config::lc_call::{LcClient, LcError};
+use spira_store::lc_call::{LcClient, LcError};
 
 use crate::bead::{Bd, BdOut};
 
@@ -18,7 +18,7 @@ impl Bd for ContentBd<'_> {
         let argv: Vec<&str> = std::iter::once("content").chain(args.iter().map(String::as_str)).collect();
         match self.lc.call(&argv) {
             Ok(r) => BdOut { code: r.code, stdout: r.out, stderr: r.err },
-            Err(e) => BdOut::fail(spira_config::lc_call::CANNOT_TELL, e.to_string()),
+            Err(e) => BdOut::fail(spira_store::lc_call::CANNOT_TELL, e.to_string()),
         }
     }
 

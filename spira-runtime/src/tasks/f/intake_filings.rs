@@ -278,7 +278,7 @@ pub struct ObserveInput {
 }
 
 fn real(e: &crate::Effects) -> filings_collect::real::Real {
-    filings_collect::real::Real::over(spira_config::lc_call::LcClient::socket(&e.world.lc_socket))
+    filings_collect::real::Real::over(spira_store::lc_call::LcClient::socket(&e.world.lc_socket))
 }
 
 /// `intake.filings.observe`: each host's outbox over ssh, the unapplied filings parsed, and

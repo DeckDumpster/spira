@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 use spira_runtime::tasks::e::watch_transitions as wt;
 
@@ -998,7 +998,7 @@ fn sensors(reads: &Reads, now: i64, open_rounds: Option<BTreeMap<String, u64>>, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spira_config::lc_call::{Reply, Transport};
+    use spira_store::lc_call::{Reply, Transport};
     use std::sync::Arc;
 
     const NOW: i64 = 1_800_000_000;

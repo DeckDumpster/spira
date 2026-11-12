@@ -313,7 +313,7 @@ fn section_pass() -> i32 {
     }
 }
 
-struct SpiraLc(spira_config::lc_call::LcClient);
+struct SpiraLc(spira_store::lc_call::LcClient);
 
 impl reconciler_engine::goodput_pass::Lc for SpiraLc {
     fn call(&self, args: &[String]) -> (i32, serde_json::Value) {
@@ -330,7 +330,7 @@ fn publish_section() -> Result<crate::section::Reading, String> {
     let rows = crate::section::pass_rows(tsd::query::Source { reader: None, root: &cfg.run_dir }.rows(tsd::pass::FAMILY, now.saturating_sub(crate::section::HOUR)))?;
     let pool = pool_for(&cfg);
     let state = crate::pool::read_state(&pool.state_file())?;
-    let lc = SpiraLc(spira_config::lc_call::LcClient::configured()?);
+    let lc = SpiraLc(spira_store::lc_call::LcClient::configured()?);
     crate::section::run(&lc, now, &rows, crate::section::slots_by_pool(&state.leases))
 }
 

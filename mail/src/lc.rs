@@ -26,7 +26,7 @@ pub struct LcCli;
 
 impl Lc for LcCli {
     fn call(&self, args: &[String]) -> (i32, String) {
-        let client = spira_config::lc_call::LcClient::configured().map(|c| c.within(spira_config::lc_call::LC_TIMEOUT));
+        let client = spira_store::lc_call::LcClient::configured().map(|c| c.within(spira_store::lc_call::LC_TIMEOUT));
         Routed { client: client.as_ref().map_err(String::as_str), unserved: &LcProgram }.call(args)
     }
 }
@@ -34,7 +34,7 @@ impl Lc for LcCli {
 /// [`Lc`] split by verb: [`UNSERVED`] to `unserved`, the rest through `client` (a client that
 /// could not be built answers "cannot tell" with why).
 pub struct Routed<'a> {
-    pub client: Result<&'a spira_config::lc_call::LcClient, &'a str>,
+    pub client: Result<&'a spira_store::lc_call::LcClient, &'a str>,
     pub unserved: &'a dyn Lc,
 }
 
@@ -46,9 +46,9 @@ impl Lc for Routed<'_> {
         match self.client {
             Ok(c) => match c.call(args) {
                 Ok(r) => (r.code, r.text()),
-                Err(e) => (spira_config::lc_call::CANNOT_TELL, e.to_string()),
+                Err(e) => (spira_store::lc_call::CANNOT_TELL, e.to_string()),
             },
-            Err(e) => (spira_config::lc_call::CANNOT_TELL, e.to_string()),
+            Err(e) => (spira_store::lc_call::CANNOT_TELL, e.to_string()),
         }
     }
 }
@@ -59,13 +59,13 @@ pub struct LcProgram;
 
 impl Lc for LcProgram {
     fn call(&self, args: &[String]) -> (i32, String) {
-        let mut c = match spira_config::lc_call::lc_bin() {
+        let mut c = match spira_store::lc_call::lc_bin() {
             // FORK-EDGE: unserved verb state/reply/withdraw-ask (the socket does not serve callers.rs verbs)
             Ok(b) => std::process::Command::new(b),
             Err(e) => return (2, e),
         };
         c.args(args);
-        spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT)
+        spira_store::lc_call::run_bounded(c, spira_store::lc_call::LC_TIMEOUT)
     }
 }
 
@@ -82,7 +82,7 @@ pub fn lift_ask(lc: &dyn Lc, work_bead: &str, how: Lift, actor: &str) -> Option<
         return None;
     }
     if let (0, state) = lc.call(&["state".into(), work_bead.into()]) {
-        if spira_config::lc_state::is_terminal(state.trim()) {
+        if spira_store::lc_state::is_terminal(state.trim()) {
             return None;
         }
     }
@@ -201,26 +201,26 @@ mod tests {
 
     struct Scripted {
         seen: std::sync::Mutex<Vec<Vec<String>>>,
-        reply: Result<spira_config::lc_call::Reply, String>,
+        reply: Result<spira_store::lc_call::Reply, String>,
     }
 
-    impl spira_config::lc_call::Transport for Scripted {
-        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+    impl spira_store::lc_call::Transport for Scripted {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.seen.lock().unwrap().push(argv.to_vec());
             self.reply.clone()
         }
     }
 
-    fn client(reply: Result<spira_config::lc_call::Reply, String>) -> (std::sync::Arc<Scripted>, spira_config::lc_call::LcClient) {
+    fn client(reply: Result<spira_store::lc_call::Reply, String>) -> (std::sync::Arc<Scripted>, spira_store::lc_call::LcClient) {
         let t = std::sync::Arc::new(Scripted { seen: Default::default(), reply });
-        (t.clone(), spira_config::lc_call::LcClient::over(t, false))
+        (t.clone(), spira_store::lc_call::LcClient::over(t, false))
     }
 
     /// sp-ipwlic: an answer's close-ask goes through the store client, never a program of its
     /// own; only the verbs the socket does not serve reach the program.
     #[test]
     fn close_ask_goes_through_the_client_and_unserved_verbs_through_the_program() {
-        let (t, c) = client(Ok(spira_config::lc_call::Reply { code: 0, ..Default::default() }));
+        let (t, c) = client(Ok(spira_store::lc_call::Reply { code: 0, ..Default::default() }));
         let program = FakeLc::new(0);
         let lc = Routed { client: Ok(&c), unserved: &program };
         assert_eq!(answer_ask(&lc, "sp-a", "yes", "operator", "mail", "m-1"), None);
@@ -235,7 +235,7 @@ mod tests {
         let program = FakeLc::new(0);
         let lc = Routed { client: Ok(&down), unserved: &program };
         assert!(answer_ask(&lc, "sp-a", "y", "o", "mail", "m").unwrap().contains("exit 2"));
-        let (_, refused) = client(Ok(spira_config::lc_call::Reply { code: 3, out: "already closed".into(), err: String::new() }));
+        let (_, refused) = client(Ok(spira_store::lc_call::Reply { code: 3, out: "already closed".into(), err: String::new() }));
         assert_eq!(answer_ask(&Routed { client: Ok(&refused), unserved: &program }, "sp-a", "y", "o", "mail", "m"), None);
         let unbuilt = Routed { client: Err("SPIRA_LC_SOCKET does not resolve"), unserved: &program };
         assert!(answer_ask(&unbuilt, "sp-a", "y", "o", "mail", "m").unwrap().contains("SPIRA_LC_SOCKET"));

@@ -9,7 +9,7 @@
 //! event (DROPPED, or SUPERSEDED when the reason names a successor) and then closes the store
 //! — `spira-lc/src/bd.rs` is that door, and `spira-lc/src/content.rs` the cockpit's allowlisted
 //! pass-through to it (a `close` only with `--reason --force`); the only files in scope that
-//! may name a bd `close`. `spira-config/src/lifecycle_row.rs` (`close`) is the one client that
+//! may name a bd `close`. `spira-store/src/lifecycle_row.rs` (`close`) is the one client that
 //! hands spira-lc one.
 //!
 //! Line-oriented over the masked source (`landstate::mask_rust`) with short literals restored,
@@ -70,7 +70,7 @@ pub(crate) fn in_scope(rel: &str) -> bool {
         || rel.starts_with("lifecycle-guard/")
         || rel == "spira-lc/src/bd.rs"
         || rel == "spira-lc/src/content.rs"
-        || rel == "spira-config/src/lifecycle_row.rs"
+        || rel == "spira-store/src/lifecycle_row.rs"
         // Acceptance seeds a PREDECESSOR install as it was before an upgrade — an aged store
         // whose closed bead is closed the way that release closed it. It is a fixture for a
         // scratch install, never this box's store.

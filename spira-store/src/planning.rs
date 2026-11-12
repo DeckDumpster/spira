@@ -40,7 +40,7 @@ pub fn claim_input_change<S: AsRef<str>>(args: &[S]) -> Option<(String, Vec<Stri
     match words.first().copied()? {
         "dep" if matches!(words.get(1).copied(), Some("add")) => Some((bead(2)?, vec![bead(3)?])),
         "dep" if matches!(words.get(1).copied(), Some("remove" | "rm")) => Some((bead(2)?, vec![])),
-        "label" if matches!(words.get(1).copied(), Some("add" | "remove" | "rm")) && words.get(3).copied() == Some(crate::nonwork::SPLIT_LABEL) => Some((bead(2)?, vec![])),
+        "label" if matches!(words.get(1).copied(), Some("add" | "remove" | "rm")) && words.get(3).copied() == Some(spira_config::nonwork::SPLIT_LABEL) => Some((bead(2)?, vec![])),
         "update" if all.iter().any(|a| matches!(*a, "--priority" | "-p" | "--parent" | "--status" | "-s" | "--defer") || a.starts_with("--priority=") || a.starts_with("--parent=") || a.starts_with("--status=") || a.starts_with("--defer=")) => Some((bead(1)?, vec![])),
         _ => None,
     }
@@ -67,7 +67,7 @@ mod tests {
         assert_eq!(got(&["dep", "add", "sp-a", "sp-b"]), Some(("sp-a".into(), vec!["sp-b".into()])));
         assert_eq!(got(&["dep", "remove", "sp-a", "sp-b"]), Some(("sp-a".into(), vec![])));
         assert_eq!(got(&["update", "sp-a", "--priority", "0"]), Some(("sp-a".into(), vec![])));
-        assert_eq!(got(&["label", "add", "sp-a", crate::nonwork::SPLIT_LABEL]), Some(("sp-a".into(), vec![])));
+        assert_eq!(got(&["label", "add", "sp-a", spira_config::nonwork::SPLIT_LABEL]), Some(("sp-a".into(), vec![])));
         for none in [&["label", "add", "sp-a", "plan"][..], &["note", "sp-a", "x"], &["update", "sp-a", "--assignee", "x"], &["dep", "relate", "a", "b"], &["create", "t"]] {
             assert_eq!(got(none), None, "{none:?}");
         }

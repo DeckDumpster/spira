@@ -137,7 +137,7 @@ fn bdq_capture_with(home: &str, args: &[String], stderr: Stdio) -> (i32, String)
 
 /// A read through the content door; never forks `bdq`.
 fn door(args: &[String]) -> (i32, String) {
-    match spira_config::lc_call::LcClient::configured() {
+    match spira_store::lc_call::LcClient::configured() {
         Ok(c) => bead::door::read(&c, args),
         Err(e) => {
             eprintln!("bead: {e}");
@@ -216,7 +216,7 @@ fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, 
         }
     }
     if express {
-        if let Err(e) = spira_config::lifecycle_row::set_express(&new_id, true) {
+        if let Err(e) = spira_store::lifecycle_row::set_express(&new_id, true) {
             eprintln!("bead: file: {new_id} filed but not marked express: {e}; mark it: bead.sh amend {new_id} --express");
             rc = 1;
         }
@@ -238,7 +238,7 @@ fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, 
         rc |= r;
     }
     if title.is_some() && submitted_tip.is_none() {
-        if let Err(e) = spira_config::lifecycle_row::promote(&new_id) {
+        if let Err(e) = spira_store::lifecycle_row::promote(&new_id) {
             eprintln!("bead: file: {new_id} filed but its row was not promoted from OPEN: {e}; the OPEN sweep promotes it, or: spira-lc promote-filed {new_id}");
         }
     }
@@ -246,8 +246,8 @@ fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, 
 }
 
 /// The lifecycle store's client: its socket in production, the declared stand-in in a fixture.
-fn lc() -> Result<spira_config::lc_call::LcClient, String> {
-    spira_config::lc_call::LcClient::configured()
+fn lc() -> Result<spira_store::lc_call::LcClient, String> {
+    spira_store::lc_call::LcClient::configured()
 }
 
 const ROW_ATTEMPTS: u32 = 3;
@@ -1190,7 +1190,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         }
     }
     if express {
-        match spira_config::lifecycle_row::set_express(&id, true) {
+        match spira_store::lifecycle_row::set_express(&id, true) {
             Ok(()) => changed.push_str("Marked express."),
             Err(e) => {
                 eprintln!("bead: amend: {id} not marked express: {e}");
@@ -1452,7 +1452,7 @@ fn cmd_ideas(home: &str, args: &[String]) -> i32 {
         eprintln!("bead: ideas: the schema names no idea label");
         return 1;
     }
-    let client = match spira_config::lc_call::LcClient::configured() {
+    let client = match spira_store::lc_call::LcClient::configured() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("bead: {e}");
@@ -1581,7 +1581,7 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
 }
 
 fn lifecycle_rows() -> bead::door::LifecycleRows {
-    spira_config::lc_state::list().map(spira_config::lc_state::index)
+    spira_store::lc_state::list().map(spira_store::lc_state::index)
 }
 
 fn cmd_lint(home: &str, args: &[String]) -> i32 {
@@ -1613,7 +1613,7 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
         incident_label: cfg_label("SPIRA_INCIDENT_LABEL"),
     };
 
-    let client = match spira_config::lc_call::LcClient::configured() {
+    let client = match spira_store::lc_call::LcClient::configured() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("bead: {e}");
@@ -1927,7 +1927,7 @@ fn cmd_drop(home: &str, args: &[String]) -> i32 {
     // batch-job: ejects from batches and closes the store, bounded by timeout(1)
     // FORK-EDGE: unserved verb drop-bead (the spira-lc CLI composes it; the socket does not serve it)
     let status = Command::new("timeout")
-        .args(["120", match spira_config::lifecycle_row::lc_bin() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } }.as_str(), "drop-bead", &id, "--reason", &reason, "--actor", "bead"])
+        .args(["120", match spira_store::lifecycle_row::lc_bin() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } }.as_str(), "drop-bead", &id, "--reason", &reason, "--actor", "bead"])
         .envs(match spira_config::release_env::child_path_env_for_process() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } })
         .status()
         .map(|s| s.code().unwrap_or(1))

@@ -101,7 +101,7 @@ fn git_rev_list_count(repo: &Path, range: &str) -> Option<u64> {
 /// (sp-mve9i); with the machine unreadable there is no answer, so no members.
 pub fn all_partition_members(cfg: &Config) -> String {
     let specs = probe::roster(cfg, None).unwrap_or_default();
-    let Ok(lc) = spira_config::lc_state::list_live().map(spira_config::lc_state::index) else {
+    let Ok(lc) = spira_store::lc_state::list_live().map(spira_store::lc_state::index) else {
         return String::new();
     };
     let per_spec = specs
@@ -114,7 +114,7 @@ pub fn all_partition_members(cfg: &Config) -> String {
 
 /// The ids, first-seen and deduplicated across `per_spec`, whose lifecycle row is still
 /// before its builder's hand-off. A bead with no row can never be worked: not a member.
-pub fn unfinished_members(per_spec: Vec<Vec<String>>, lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> Vec<String> {
+pub fn unfinished_members(per_spec: Vec<Vec<String>>, lc: &std::collections::HashMap<String, spira_store::lc_state::Row>) -> Vec<String> {
     let mut seen = HashSet::new();
     per_spec
         .into_iter()
@@ -147,7 +147,7 @@ pub fn detect_incident_needs_builder(cfg: &Config) -> Result<String, String> {
     if cfg.incident_label.is_empty() {
         return Err("SPIRA_INCIDENT_LABEL is unset — source conf.sh".into());
     }
-    let lc = spira_config::lc_state::list_live().map(spira_config::lc_state::index).map_err(|e| format!("cannot tell: {e}"))?;
+    let lc = spira_store::lc_state::list_live().map(spira_store::lc_state::index).map_err(|e| format!("cannot tell: {e}"))?;
     let reg = registry(cfg);
     let home = reg.home_repo().to_string();
     let mut out = Vec::new();
@@ -177,7 +177,7 @@ pub fn detect_incident_needs_builder(cfg: &Config) -> Result<String, String> {
 
 /// The incident beads whose lifecycle row still owes builder work; a bead with no row is not
 /// live work (it can never be claimed; CHECK-ROWLESS reports it).
-pub fn unfinished_incidents(beads: Vec<Bead>, lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> Vec<Bead> {
+pub fn unfinished_incidents(beads: Vec<Bead>, lc: &std::collections::HashMap<String, spira_store::lc_state::Row>) -> Vec<Bead> {
     beads.into_iter().filter(|b| lc.get(&b.id).is_some_and(|r| !r.past_builder())).collect()
 }
 
@@ -250,7 +250,7 @@ pub fn detect_livelocked(cfg: &Config) -> String {
         if reg.map_present() {
             let valid: HashSet<String> = reg.names().into_iter().collect();
             // Held is the lifecycle row's ask/poison hold, never a label (sp-psztcc).
-            let held: HashSet<String> = spira_config::lc_state::list_live()
+            let held: HashSet<String> = spira_store::lc_state::list_live()
                 .map(|rows| rows.into_iter().filter(|r| r.held("ask") || r.held("poison")).map(|r| r.bead_id).collect())
                 .unwrap_or_default();
             for b in list_beads(cfg, &[]) {
@@ -398,7 +398,7 @@ mod tests {
     /// READY, WORKING, REWORK — deduplicated in first-seen order; no row, no member.
     #[test]
     fn partition_members_are_the_unfinished_lifecycle_rows() {
-        use spira_config::lc_state::Row;
+        use spira_store::lc_state::Row;
         let lc = [("a", "READY"), ("b", "WORKING"), ("c", "SUBMITTED"), ("d", "REWORK"), ("e", "LANDED")]
             .iter()
             .map(|(i, st)| (i.to_string(), Row { bead_id: i.to_string(), state: st.to_string(), ..Default::default() }))
@@ -411,7 +411,7 @@ mod tests {
     /// a rowless bead is not live work.
     #[test]
     fn incidents_needing_a_builder_are_the_unfinished_lifecycle_rows() {
-        use spira_config::lc_state::Row;
+        use spira_store::lc_state::Row;
         let beads = model::parse_beads(
             r#"[{"id":"a","status":"closed"},{"id":"b","status":"open"},{"id":"c","status":"in_progress"},{"id":"d","status":"open"}]"#,
         )

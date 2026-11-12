@@ -26,6 +26,9 @@ strip = true
 [dependencies.spira-config]
 path = "../../spira-config"
 
+[dependencies.spira-store]
+path = "../../spira-store"
+
 [dependencies.spira-otel]
 path = "../../spira-otel"
 

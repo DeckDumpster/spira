@@ -57,7 +57,7 @@ use std::collections::BTreeMap;
 use mimir_trigger::observe as obs;
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 use super::{Bead, Cycle, Decision, Transition};
 
@@ -211,7 +211,7 @@ pub fn run_observe(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<Str
     let live_owing = lc
         .call(&["list", "--live"])
         .map_err(String::from)
-        .and_then(|r| if r.code == 0 { spira_config::lc_state::parse_rows(&r.out) } else { Err(r.why()) })
+        .and_then(|r| if r.code == 0 { spira_store::lc_state::parse_rows(&r.out) } else { Err(r.why()) })
         .map(|rows| rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "WORKING" | "REWORK")).count() as u64);
     let home_repo = reg.home_repo().to_string();
     let snap = Snapshot {

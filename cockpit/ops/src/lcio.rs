@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use spira_config::lc_call::{LcClient, Reply};
+use spira_store::lc_call::{LcClient, Reply};
 
 /// The configured store client: the declared socket, with the release's `spira-lc` behind it
 /// only for the verbs the CLI answers.
@@ -75,7 +75,7 @@ pub fn deliver(home: &Path, mail_root: &Path, run_dir: &Path, mute: bool, raw: &
 #[cfg(test)]
 pub mod scripted {
     use super::*;
-    use spira_config::lc_call::Transport;
+    use spira_store::lc_call::Transport;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 

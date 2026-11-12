@@ -4,7 +4,7 @@
 use crate::io;
 use crate::quoting::parse_iso8601;
 use serde_json::Value;
-pub use spira_config::lc_state::{self, Row};
+pub use spira_store::lc_state::{self, Row};
 use std::collections::HashMap;
 
 pub struct LcRow {

@@ -13,6 +13,7 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 test-plan = { path = "../test-plan" }
 suite-select = { path = "../suite-select" }
 

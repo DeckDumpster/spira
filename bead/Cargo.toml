@@ -38,6 +38,7 @@ regex = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 strand = { path = "../strand" }
 
 [dev-dependencies]

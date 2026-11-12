@@ -52,7 +52,7 @@ pub fn cockpit_db() -> Result<PathBuf, String> {
 /// `$SPIRA_LC_BIN` if set and non-empty, else `spira-lc` in `$SPIRA_RELEASE` — the one door to
 /// bead content.
 pub fn lc_bin() -> Result<String, String> {
-    spira_config::lifecycle_row::lc_bin()
+    spira_store::lifecycle_row::lc_bin()
 }
 
 #[cfg(test)]

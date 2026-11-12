@@ -348,7 +348,7 @@ pub mod legs {
 
 /// [`Lc`] over the store's socket client: every verb the pass speaks (`intent`, `lock`, `pass`,
 /// `section`) is served there. A non-JSON answer is a cannot-tell value, never a guess.
-pub struct Socket(pub spira_config::lc_call::LcClient);
+pub struct Socket(pub spira_store::lc_call::LcClient);
 
 impl Lc for Socket {
     fn call(&self, args: &[String]) -> (i32, Value) {

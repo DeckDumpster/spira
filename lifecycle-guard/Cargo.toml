@@ -10,6 +10,7 @@ integration = ["spira-config/integration", "spira-otel/integration", "testkit/in
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 tree-sitter = "=0.22.6"
 tree-sitter-bash = "=0.21.0"
 serde = { version = "1", features = ["derive"] }

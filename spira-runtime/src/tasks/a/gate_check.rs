@@ -94,8 +94,8 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
 // verb for yet run as transient units through the Units port, never as this process's children.
 
 /// The store's 5 s door (S7a).
-pub fn store(e: &crate::Effects) -> spira_config::lc_call::LcClient {
-    spira_config::lc_call::LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_secs(5))
+pub fn store(e: &crate::Effects) -> spira_store::lc_call::LcClient {
+    spira_store::lc_call::LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_secs(5))
 }
 
 /// One `git -C <repo>` call through the process port: stdout when it exited 0.

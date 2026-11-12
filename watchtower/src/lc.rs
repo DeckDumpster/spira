@@ -2,7 +2,7 @@
 //! `None`, never an empty list: "cannot tell" must not read as "nothing queued".
 
 use serde_json::Value;
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 const HARNESS_ACTOR: &str = "harness";
 
@@ -113,7 +113,7 @@ pub fn requeue_pr_open(id: &str, version: &str) -> bool {
 /// A scripted store for tests: records every argv, answers each with one fixed reply.
 #[cfg(test)]
 pub(crate) mod scripted {
-    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
 
     pub struct Scripted {

@@ -72,7 +72,7 @@ fn gate_queued(run_dir: &Path) -> Option<std::collections::HashSet<String>> {
 
 /// SUBMITTED beads nothing will gate: no job queued, and no record that the host gate was
 /// exhausted on them and the round is their trial.
-fn ungated_submitted(run_dir: &Path, rows: &[spira_config::lc_state::Row]) -> std::collections::HashSet<String> {
+fn ungated_submitted(run_dir: &Path, rows: &[spira_store::lc_state::Row]) -> std::collections::HashSet<String> {
     let Some(queued) = gate_queued(run_dir) else { return Default::default() };
     rows.iter()
         .filter(|r| r.state == "SUBMITTED" && !queued.contains(&r.bead_id))
@@ -130,7 +130,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
         return Ok(Classified { rows: Vec::new(), watching: Vec::new(), live: Vec::new() });
     }
 
-    let store = Store::new(probe::load_store(&spira_config::lc_call::LcClient::configured()?)?);
+    let store = Store::new(probe::load_store(&spira_store::lc_call::LcClient::configured()?)?);
     let now = timefmt::now();
     let log_text = cfg.sentinel_log().and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
     let run_dir = cfg.run.clone().ok_or("SPIRA_RUN is unknown (not in the environment, no [spira].run)")?;
@@ -139,14 +139,14 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let capacity = probe::capacity(cfg, now);
     let throttle = probe::throttle(cfg);
 
-    let lc_rows = match spira_config::lc_state::list_live() {
+    let lc_rows = match spira_store::lc_state::list_live() {
         Ok(rows) => rows,
         Err(e) => {
             warn(&format!("WARN the lifecycle rows could not be read ({e}) — no bead is counted as moving by WORKING, parked or poisoned"));
             Vec::new()
         }
     };
-    let ids = |f: &dyn Fn(&spira_config::lc_state::Row) -> bool| -> std::collections::HashSet<String> {
+    let ids = |f: &dyn Fn(&spira_store::lc_state::Row) -> bool| -> std::collections::HashSet<String> {
         lc_rows.iter().filter(|r| f(r)).map(|r| r.bead_id.clone()).collect()
     };
     let working = ids(&|r| r.working());
@@ -647,7 +647,7 @@ fn escalate(cfg: &Config, part: &str, kind: &str, id: &str, detail: &str, action
         escalate_to_inbox(&title, detail, action);
         return;
     }
-    let bead = if id.is_empty() || id == "-" { None } else { match spira_config::lc_call::LcClient::configured() {
+    let bead = if id.is_empty() || id == "-" { None } else { match spira_store::lc_call::LcClient::configured() {
             Ok(lc) => probe::show(&lc, id),
             Err(e) => {
                 warn(&format!("WARN the escalation for {id} carries no bead context: {e}"));
@@ -770,7 +770,7 @@ mod ungated_submitted_tests {
         let run = testkit::TempDir::new("strand-ungated");
         fs::create_dir_all(run.join("gate-worker/inbox")).unwrap();
         fs::create_dir_all(run.join("gate-deferred")).unwrap();
-        let row = |id: &str| spira_config::lc_state::Row { bead_id: id.into(), state: "SUBMITTED".into(), ..Default::default() };
+        let row = |id: &str| spira_store::lc_state::Row { bead_id: id.into(), state: "SUBMITTED".into(), ..Default::default() };
         let rows = [row("sp-a"), row("sp-b")];
         assert_eq!(ungated_submitted(&run, &rows).len(), 2, "the matcher must be able to find an ungated bead");
         fs::write(run.join("gate-deferred/spira-sp-b"), "tip\n").unwrap();

@@ -16,6 +16,7 @@ integration = ["bead/integration", "mail/integration", "reconciler-engine/integr
 [dependencies]
 bead = { path = "../bead" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 regex = "1"

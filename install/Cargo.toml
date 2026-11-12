@@ -42,6 +42,7 @@ integration = ["lifecycle/integration", "release/integration", "runtime/integrat
 release = { path = "../release" }
 lifecycle = { path = "../lifecycle" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 serde_json = "1"
 watchdog = { path = "../watchdog" }

@@ -12,7 +12,7 @@ use std::process::{Command, Stdio};
 pub struct MootCfg {
     /// `COCKPIT_DB`: the beads database, verified to hold `.beads` before anything is read.
     pub db: Option<String>,
-    pub lc: spira_config::lc_call::LcClient,
+    pub lc: spira_store::lc_call::LcClient,
     pub ask_label: String,
     /// `SPIRA_MOOT_TIMEOUT`: each predicate's bound, seconds.
     pub timeout_s: u64,

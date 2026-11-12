@@ -96,6 +96,7 @@ sift = { path = "../sift" }
 runtime = { path = "../runtime" }
 unit-run = { path = "../unit-run" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 store-view = { path = "../store-view" }
 skew = { path = "../skew" }
 perf-watch = { path = "../perf-watch" }

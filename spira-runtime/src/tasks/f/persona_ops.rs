@@ -570,7 +570,7 @@ pub fn run_brief(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Stri
         harness_repo: e.world.home_path().map(|p| p.display().to_string()).unwrap_or_default(),
         toml: spira_config::process::cfg("SPIRA_TOML").unwrap_or_default(),
     };
-    let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket);
+    let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
     let memories = || lc.answer(&["content", "memories", "--json"]).map_err(String::from);
     let prompt = if p.act.prompt.is_empty() { std::fs::read_to_string(run.join("ops-sweep-prompt.txt")).unwrap_or_default() } else { p.act.prompt.clone() };
     let b = dwarf::ops_sweep::brief(&home, &run, &rune, prompt.trim_end_matches('\n'), &p.act.run_id, &bc, now_secs(), &memories)?;

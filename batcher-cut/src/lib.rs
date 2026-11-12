@@ -109,7 +109,7 @@ pub fn env_from_cfg(home: PathBuf, run: PathBuf, round_vm: Option<PathBuf>) -> R
         wall_secs: cfg_parse::<u64>("SPIRA_BATCHER_WALL_SECS")?,
         git_name: cfg("SPIRA_GIT_NAME")?,
         git_email: cfg("SPIRA_GIT_EMAIL")?,
-        lc_bin: Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)),
+        lc_bin: Some(PathBuf::from(spira_store::lifecycle_row::lc_bin()?)),
         lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
         verdicts: gate::cert::verdicts_dir(var("SPIRA_VERDICTS").as_deref(), &run),
         land_lock_attempts: var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS")

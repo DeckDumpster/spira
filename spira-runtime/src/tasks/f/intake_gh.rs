@@ -445,7 +445,7 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
     if targets.is_empty() {
         return serde_json::to_string(&empty).map_err(|e| e.to_string());
     }
-    let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket);
+    let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
     let mut listed = vec![];
     for t in &targets {
         if let serde_json::Value::Array(rows) = gh_intake::real::github_refs_on(&lc, &format!("{}#", t.slug))? {
@@ -500,7 +500,7 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
 fn file(e: &Effects, s: &EffectSpec, labels: impl Fn(&BTreeMap<String, String>, &Filing) -> (String, String)) -> Result<String, String> {
     use gh_intake::ports::Bd;
     let p: Pinned<Filing> = parse(&s.input)?;
-    let known = gh_intake::store::ingested(&gh_intake::real::github_refs_on(&spira_config::lc_call::LcClient::socket(&e.world.lc_socket), &p.act.ext_ref)?);
+    let known = gh_intake::store::ingested(&gh_intake::real::github_refs_on(&spira_store::lc_call::LcClient::socket(&e.world.lc_socket), &p.act.ext_ref)?);
     if gh_intake::store::find_ref(&known, &p.act.ext_ref).is_some() {
         return Err(format!("{} is already in the store — refusing a second bead", p.act.ext_ref));
     }
