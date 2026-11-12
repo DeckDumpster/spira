@@ -1625,9 +1625,13 @@ fn fixture_keys(text: &str) -> std::collections::BTreeSet<String> {
 /// it creates or deletes, and the keys its test fixture config gains or loses.
 pub fn config_key_changes(repo: &Repo, base_sha: &str, tip: &str) -> (Vec<String>, Vec<String>) {
     let git = |args: &[&str]| run(Command::new("git").arg("-C").arg(&repo.path).args(args), "git config keys");
+    let say = |r: Result<String, String>| r.unwrap_or_else(|e| {
+        eprintln!("batcher: config key changes of {tip} unreadable: {e}");
+        String::new()
+    });
     let (mut added, mut retired) = (Vec::new(), Vec::new());
     let range = format!("{base_sha}...{tip}");
-    let status = git(&["diff", "--name-status", "--no-renames", &range, "--", CONF_REGISTRY]).unwrap_or_default();
+    let status = say(git(&["diff", "--name-status", "--no-renames", &range, "--", CONF_REGISTRY]));
     for l in status.lines() {
         match l.split_once('\t') {
             Some(("A", f)) => added.push(f.trim_start_matches(CONF_REGISTRY).to_string()),
@@ -1636,7 +1640,7 @@ pub fn config_key_changes(repo: &Repo, base_sha: &str, tip: &str) -> (Vec<String
         }
     }
     let fork = git(&["merge-base", base_sha, tip]).map(|m| m.trim().to_string()).unwrap_or_else(|_| base_sha.to_string());
-    let show = |rev: &str| fixture_keys(&git(&["show", &format!("{rev}:{FIXTURE_CONFIG}")]).unwrap_or_default());
+    let show = |rev: &str| fixture_keys(&say(git(&["show", &format!("{rev}:{FIXTURE_CONFIG}")])));
     let (before, after) = (show(&fork), show(tip));
     added.extend(after.difference(&before).cloned());
     retired.extend(before.difference(&after).cloned());
