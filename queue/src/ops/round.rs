@@ -1125,14 +1125,15 @@ fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
     {
         let wt = worktree_of(&b.kv);
         let has_tree = !wt.as_os_str().is_empty() && wt.exists();
-        if !has_tree && !running_marker(c, &b.id).exists() {
+        let own_tree = has_tree && !held.contains(&wt);
+        if !own_tree && !running_marker(c, &b.id).exists() {
             continue;
         }
         if let Err(e) = w.scripts.stop_round_legs(&c.r.name, &b.id) {
             w.err(format!("queue.sh sweep: round {} ended but a leg still runs ({e}) — its tree is kept", b.id));
             continue;
         }
-        if let (Some(repo), true) = (&c.r.path, has_tree && !held.contains(&wt)) {
+        if let (Some(repo), true) = (&c.r.path, own_tree) {
             w.git.worktree_remove(repo, &wt);
         }
         finish(
