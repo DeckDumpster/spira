@@ -142,6 +142,11 @@ pub trait RoundOps {
     fn diffs(&self, _members: &[Id]) -> Vec<MemberDiff> {
         vec![]
     }
+    /// Per member whose diff against the round base adds or retires a config key, what it
+    /// changes (`adds a, b; retires c`).
+    fn config_key_changes(&self, _members: &[Id]) -> Vec<(Id, String)> {
+        vec![]
+    }
     /// Holds `member` behind `behind` — it leaves this round and is admitted again only once
     /// they have landed — carrying the compiler error as the reason.
     fn sequence(&mut self, member: &Member, behind: &[Id], line: &str) {
@@ -186,6 +191,7 @@ pub const WORKSPACE_BUILD: &str = "workspace-build";
 /// attribution as a harness fault.
 pub const BASE_MOVED: &str = "round-vm: base moved from ";
 pub const RUNNER_ABORT: &str = "runner-abort";
+pub const CONFIG_FAULT: &str = "config-fault";
 
 /// Ids of the settled-owner reruns start here, clear of the attributor's own.
 const RERUN_ID_BASE: u64 = 1 << 40;
@@ -933,6 +939,9 @@ fn eject_runner_abort<R: RoundRunner, O: RoundOps>(
     members: &[Member],
     err: &str,
 ) -> Result<Option<Vec<Member>>, String> {
+    if let Some(next) = eject_config_fault(ops, members, err)? {
+        return Ok(Some(next));
+    }
     if !buildattr::is_signal_death(err) {
         return Ok(None);
     }
@@ -955,6 +964,31 @@ fn eject_runner_abort<R: RoundRunner, O: RoundOps>(
     Ok(Some(
         apply_build_actions(ops, members, &[action], RUNNER_ABORT)?.unwrap_or_default(),
     ))
+}
+
+/// An image or config-resolution fault names the members whose diff adds or retires a config
+/// key and ejects them with the fault's own lines; with no such member it stays a harness fault.
+fn eject_config_fault<O: RoundOps>(
+    ops: &mut O,
+    members: &[Member],
+    err: &str,
+) -> Result<Option<Vec<Member>>, String> {
+    if !buildattr::is_config_fault(err) {
+        return Ok(None);
+    }
+    let tail = buildattr::error_tail(err);
+    let actions: Vec<Action> = ops
+        .config_key_changes(&members.iter().map(|m| m.id.clone()).collect::<Vec<_>>())
+        .into_iter()
+        .map(|(id, change)| Action::Eject {
+            id,
+            line: format!("this member's diff changes config keys ({change}) and the merged tree cannot resolve its config: {tail}"),
+        })
+        .collect();
+    if actions.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(apply_build_actions(ops, members, &actions, CONFIG_FAULT)?.unwrap_or_default()))
 }
 
 /// A red the reruns could not attribute belongs to the member when exactly one member's diff
@@ -1711,6 +1745,7 @@ pub(crate) mod tests {
         /// The next pass the menders decide, once per red pass; empty means no mender owns it.
         pub menders: Vec<crate::mender::Next>,
         pub diffs: Vec<MemberDiff>,
+        pub config_changes: Vec<(Id, String)>,
         pub sequenced: Vec<(String, Vec<String>)>,
         pub graph: Option<PackageGraph>,
     }
@@ -1733,6 +1768,9 @@ pub(crate) mod tests {
         }
         fn diffs(&self, _: &[Id]) -> Vec<MemberDiff> {
             self.diffs.clone()
+        }
+        fn config_key_changes(&self, _: &[Id]) -> Vec<(Id, String)> {
+            self.config_changes.clone()
         }
         fn package_graph(&self) -> Option<PackageGraph> {
             self.graph.clone()
@@ -3346,6 +3384,28 @@ pub(crate) mod tests {
         let mut twice = Twice(f, moved);
         let err = attribute_round(&mut twice, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap_err();
         assert!(err.starts_with(BASE_MOVED), "{err}");
+    }
+
+    const UNDECLARED: &str = "round-vm: harness fault — install failed\ntestenv container: SPIRA_X_SECS is not declared: the config has no x_secs — every key is required; refusing";
+
+    #[test]
+    fn an_undeclared_key_fault_ejects_the_member_whose_diff_retires_a_config_key_with_the_fault_lines() {
+        let mut f = Fake::new(|_, _| false);
+        f.aborts_with = Some(("m2".into(), UNDECLARED.into()));
+        let mut ops = Ops { config_changes: vec![("m2".into(), "retires x_secs".into())], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![CONFIG_FAULT.to_string()])]);
+        assert!(ops.eject_evidence[0].1.contains("retires x_secs") && ops.eject_evidence[0].1.contains("SPIRA_X_SECS is not declared"), "{:?}", ops.eject_evidence);
+    }
+
+    #[test]
+    fn an_undeclared_key_fault_with_no_member_changing_a_key_stays_a_harness_fault() {
+        let mut f = Fake::new(|_, _| false);
+        f.aborts_with = Some(("m2".into(), UNDECLARED.into()));
+        let mut ops = Ops::default();
+        let err = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap_err();
+        assert!(err.contains("harness fault") && ops.ejected.is_empty(), "{err}");
     }
 
     #[test]

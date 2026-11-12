@@ -1610,6 +1610,39 @@ pub fn deleted_suites(repo: &Repo, member_tip: &str, base_sha: &str) -> Vec<Stri
         .collect()
 }
 
+const CONF_REGISTRY: &str = "spira/conf.d/";
+const FIXTURE_CONFIG: &str = "spira/testlib/complete.toml";
+
+fn fixture_keys(text: &str) -> std::collections::BTreeSet<String> {
+    text.lines()
+        .filter_map(|l| l.split_once('=').map(|(k, _)| k.trim()))
+        .filter(|k| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The config keys `tip` adds and retires since it forked from `base_sha`: the registry files
+/// it creates or deletes, and the keys its test fixture config gains or loses.
+pub fn config_key_changes(repo: &Repo, base_sha: &str, tip: &str) -> (Vec<String>, Vec<String>) {
+    let git = |args: &[&str]| run(Command::new("git").arg("-C").arg(&repo.path).args(args), "git config keys");
+    let (mut added, mut retired) = (Vec::new(), Vec::new());
+    let range = format!("{base_sha}...{tip}");
+    let status = git(&["diff", "--name-status", "--no-renames", &range, "--", CONF_REGISTRY]).unwrap_or_default();
+    for l in status.lines() {
+        match l.split_once('\t') {
+            Some(("A", f)) => added.push(f.trim_start_matches(CONF_REGISTRY).to_string()),
+            Some(("D", f)) => retired.push(f.trim_start_matches(CONF_REGISTRY).to_string()),
+            _ => {}
+        }
+    }
+    let fork = git(&["merge-base", base_sha, tip]).map(|m| m.trim().to_string()).unwrap_or_else(|_| base_sha.to_string());
+    let show = |rev: &str| fixture_keys(&git(&["show", &format!("{rev}:{FIXTURE_CONFIG}")]).unwrap_or_default());
+    let (before, after) = (show(&fork), show(tip));
+    added.extend(after.difference(&before).cloned());
+    retired.extend(before.difference(&after).cloned());
+    (added, retired)
+}
+
 /// The paths `tip` changed since it forked from `base_sha` (`git diff base...tip`) — what
 /// attribution orders suspects by and decides a rerun's build by.
 pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
@@ -5126,5 +5159,40 @@ mod leftover_path_tests {
         let err = out.unwrap_err();
         assert!(err.contains("sleep") && err.contains(&holder.id().to_string()), "{err}");
         assert!(wt.join("target/release/spira-supervise").exists(), "nothing was removed");
+    }
+}
+
+#[cfg(test)]
+mod config_key_tests {
+    use super::*;
+
+    fn commit(d: &Path, msg: &str) -> String {
+        testkit::git(d, &["add", "-A"]);
+        testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg]);
+        testkit::git(d, &["rev-parse", "HEAD"]).trim().to_string()
+    }
+
+    #[test]
+    fn a_tip_that_retires_a_fixture_key_and_adds_a_registry_key_reports_both_and_a_bystander_none() {
+        let root = testkit::TempDir::new("config-keys");
+        let d = root.path();
+        testkit::git(d, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir_all(d.join("spira/conf.d")).unwrap();
+        std::fs::create_dir_all(d.join("spira/testlib")).unwrap();
+        std::fs::write(d.join("spira/testlib/complete.toml"), "[spira]\nkeep = 1\nretired_secs = 5\n").unwrap();
+        std::fs::write(d.join("spira/conf.d/KEEP"), "x\n").unwrap();
+        let base = commit(d, "base");
+        testkit::git(d, &["checkout", "-q", "-b", "tip"]);
+        std::fs::write(d.join("spira/testlib/complete.toml"), "[spira]\nkeep = 1\nnew_secs = 2\n").unwrap();
+        std::fs::write(d.join("spira/conf.d/NEW_SECS"), "x\n").unwrap();
+        let tip = commit(d, "tip");
+        testkit::git(d, &["checkout", "-q", "main"]);
+        testkit::git(d, &["checkout", "-q", "-b", "bystander"]);
+        std::fs::write(d.join("other"), "x\n").unwrap();
+        let by = commit(d, "other");
+        let repo = Repo { name: "alpha".into(), path: d.to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+        let (added, retired) = config_key_changes(&repo, &base, &tip);
+        assert_eq!((added, retired), (vec!["NEW_SECS".to_string(), "new_secs".to_string()], vec!["retired_secs".to_string()]));
+        assert_eq!(config_key_changes(&repo, &base, &by), (vec![], vec![]));
     }
 }

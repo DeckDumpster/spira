@@ -236,6 +236,12 @@ pub fn runner_touchers(members: &[MemberDiff]) -> Vec<&MemberDiff> {
         .collect()
 }
 
+/// Whether the failure text is the round's image or config resolution refusing the merged tree:
+/// a key its config does not declare, or an image tag testenv could not compute for it.
+pub fn is_config_fault(err: &str) -> bool {
+    err.contains("is not declared") || err.contains("could not compute the image tag")
+}
+
 /// Whether the runner's failure text shows testenv killed by a signal (exit 128+n), which is
 /// outside its contract and so never a verdict.
 pub fn is_signal_death(err: &str) -> bool {

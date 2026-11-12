@@ -504,6 +504,19 @@ impl drive::RoundOps for LiveOps<'_> {
             .collect()
     }
 
+    fn config_key_changes(&self, members: &[String]) -> Vec<(String, String)> {
+        members
+            .iter()
+            .filter_map(|id| {
+                let (added, retired) = io::config_key_changes(self.repo, &self.start_sha, self.tips.get(id)?);
+                if added.is_empty() && retired.is_empty() {
+                    return None;
+                }
+                Some((id.clone(), format!("adds: {}; retires: {}", added.join(","), retired.join(","))))
+            })
+            .collect()
+    }
+
     fn sequence(&mut self, member: &Member, behind: &[String], line: &str) {
         let outcome = match self.batch {
             Some(batch) => io::round_sequence(self.env, self.repo, batch, &member.id, behind, line),
