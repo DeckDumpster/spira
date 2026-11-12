@@ -216,7 +216,7 @@ struct Inner {
     readers: Vec<Reader>,
     next_reader: AtomicUsize,
     head: AtomicU64,
-    max_read_ms: u64,
+    max_read_ms: AtomicU64,
     clock: Arc<dyn Clock>,
     probe: Option<Arc<dyn Fn() + Send + Sync>>,
     /// The VM steps every range statement has taken since [`SqliteBackend::take_read_steps`].
@@ -541,7 +541,7 @@ impl SqliteBackend {
             readers,
             next_reader: AtomicUsize::new(0),
             head: AtomicU64::new(head),
-            max_read_ms: opts.max_read_ms,
+            max_read_ms: AtomicU64::new(opts.max_read_ms),
             clock: opts.clock,
             probe: opts.read_probe,
             read_steps: AtomicU64::new(0),
@@ -647,11 +647,10 @@ impl SqliteBackend {
                 let r = &inner.readers[start % n];
                 (r, lock(&r.conn))
             });
-        let deadline = inner.clock.now_ms().saturating_add(inner.max_read_ms);
+        let max_read_ms = inner.max_read_ms.load(Ordering::SeqCst);
+        let deadline = inner.clock.now_ms().saturating_add(max_read_ms);
         reader.deadline.store(deadline, Ordering::SeqCst);
-        let ended = || {
-            Error::Backend(format!("{READ_ENDED} ({} ms)", inner.max_read_ms))
-        };
+        let ended = || Error::Backend(format!("{READ_ENDED} ({max_read_ms} ms)"));
         let check = || {
             if inner.clock.now_ms() > deadline {
                 Err(ended())
@@ -755,7 +754,7 @@ impl SqliteBackend {
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .map_err(db)?;
-        src.busy_timeout(Duration::from_millis(self.0.max_read_ms))
+        src.busy_timeout(Duration::from_millis(self.0.max_read_ms.load(Ordering::SeqCst)))
             .map_err(db)?;
         // The compacted copy is written once, straight to `dest`: no full-size copy to vacuum
         // and no WAL of that size beside it.
@@ -771,6 +770,11 @@ impl SqliteBackend {
     /// Compaction never drops a revision above `rev`; it persists across opens.
     pub fn set_compaction_floor(&self, rev: u64) -> Result<()> {
         set_meta(&lock(&self.0.writer).conn, "floor", rev)
+    }
+
+    /// Sets the longest a read may run from here on; reads already running keep their deadline.
+    pub fn set_max_read_ms(&self, ms: u64) {
+        self.0.max_read_ms.store(ms, Ordering::SeqCst);
     }
 
     /// Lifts the floor: compaction may drop any revision again.
