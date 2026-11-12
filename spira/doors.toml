@@ -1,0 +1,126 @@
+# doors.toml — resources that have a sanctioned tool, and how a command is recognised as
+# touching one. The PreToolUse hook (statute-check hook) stops a command that touches a resource
+# once and shows the tool; the retry passes. A pointer, not a lock.
+#
+# Per [[resource]]:
+#   name, what      the resource and one sentence on it
+#   writes_only     true: reading it is free; false: even looking is the hazard
+#   door            the sanctioned tool; usage is its usage text, and usage_in the repo file
+#                   that must contain it verbatim (a test fails when they drift)
+#   door_commands   command-word prefixes that ARE the door (default: door); they pass silently
+#   why             the scar, one sentence
+#   touched_by      verbs   command-word prefixes that touch it by themselves
+#                   paths   globs over any argument (`*` stays inside a path part, `**` crosses)
+#                   refs    git refs, touched by a git command that moves or deletes them
+#                   units   systemd unit globs, touched by a state-changing systemctl verb
+#                   binaries  raw clients: `tool`, or `tool:glob` when an argument must match
+#                   tracers / traced  tools that attach to a process, and the programs they target
+
+[[resource]]
+name = "landing-ref"
+what = "The branch every landed change is merged onto; a round certifies a tree against it."
+writes_only = true
+door = "queue hand-land"
+usage = "queue.sh hand-land <id> [<repo>] --tip <40-hex> --by <actor> --reason <why> --evidence <checks> --evidence-tip <tip> --round <wait|subvert> [--worktree <dir>] [--dry-run]"
+usage_in = "queue/src/cli.rs"
+why = "Moving it while a round is open voids the round."
+[resource.touched_by]
+verbs = ["queue land-local"]
+refs = ["local/main", "refs/heads/local/main"]
+
+[[resource]]
+name = "active-release"
+what = "The link naming the release the loop runs."
+writes_only = true
+door = "queue hand-land"
+usage = "queue.sh hand-land <id> [<repo>] --tip <40-hex> --by <actor> --reason <why> --evidence <checks> --evidence-tip <tip> --round <wait|subvert> [--worktree <dir>] [--dry-run]"
+usage_in = "queue/src/cli.rs"
+why = "Activating a release by hand skips the step that lands and activates together."
+[resource.touched_by]
+verbs = ["release activate"]
+paths = ["*/spira-releases/current"]
+
+[[resource]]
+name = "round-state"
+what = "A repository's round, and the pause file that holds the next one."
+writes_only = true
+door = "queue round"
+usage = "queue.sh round stop [<repo>] --by <owner> --reason <text> --until <condition> | queue.sh round start [<repo>] --by <owner> --reason <text>"
+usage_in = "queue/src/cli.rs"
+why = "A pause lifted by hand leaves no owner and no reason on record."
+[resource.touched_by]
+paths = ["*/rounds-pace/**"]
+
+[[resource]]
+name = "builder"
+what = "A running builder, its unit and its work."
+writes_only = true
+door = "slay.sh"
+door_commands = ["slay.sh", "slay", "dwarf direct"]
+usage = "slay.sh --bead <id> [--why \"<text>\"] [--keep-work] [--close \"<reason>\" | --reopen]"
+usage_in = "spira-world/src/bin/slay.rs"
+why = "Stopping a builder without --keep-work parks its branch where no builder reads it."
+[resource.touched_by]
+units = ["dwarf-*", "spira-run-*"]
+
+[[resource]]
+name = "bead-branch"
+what = "A bead's branch and its worktree."
+writes_only = true
+door = "slay.sh"
+door_commands = ["slay.sh", "slay", "work"]
+usage = "slay.sh --bead <id> [--why \"<text>\"] [--keep-work] [--close \"<reason>\" | --reopen]"
+usage_in = "spira-world/src/bin/slay.rs"
+why = "A bead branch removed outside the chokepoint takes its unlanded commits with it."
+[resource.touched_by]
+refs = ["refs/heads/spira/*", "spira/*"]
+paths = ["*/worktree/sp-*"]
+verbs = ["git worktree remove", "git worktree prune"]
+
+[[resource]]
+name = "store"
+what = "The bead, lifecycle and mail stores."
+writes_only = false
+door = "spira-lc"
+door_commands = ["spira-lc", "work", "bead", "bead.sh", "mail"]
+usage = "spira-lc show <bead-id> | show-batch <batch-id>"
+usage_in = "spira-lc/src/main.rs"
+why = "A raw client skips the credentials, deadlines and lifecycle rules one program owns."
+[resource.touched_by]
+binaries = ["bd", "bdq", "dolt", "sqlite3:*.db", "sqlite3:*.sqlite*"]
+units = ["lc-serve.service", "lc-serve"]
+
+[[resource]]
+name = "store-trace"
+what = "A running store process: its syscalls, command line and environment."
+writes_only = false
+door = "store-trace.sh"
+door_commands = ["store-trace.sh", "store-trace"]
+usage = "store-trace.sh"
+why = "Hand-rolled tracing of a store process stalls it or leaks its credentials into a transcript."
+[resource.touched_by]
+tracers = ["strace", "ltrace", "gdb"]
+traced = ["spira-lc", "dolt", "bd", "bdq"]
+paths = ["/proc/*/cmdline", "/proc/*/environ"]
+
+[[resource]]
+name = "build-dir"
+what = "A leased build directory."
+writes_only = true
+door = "spira-build-dir"
+usage = "usage: spira-build-dir lease --who <label> --pid <pid> [--root <tree>]"
+usage_in = "spira-config/src/build_dir_main.rs"
+why = "A build directory removed while leased pulls the tree from under a running build."
+[resource.touched_by]
+paths = ["*/dwarf-build/*"]
+
+[[resource]]
+name = "config"
+what = "The installed configuration file."
+writes_only = true
+door = "spira-config set"
+usage = "spira-config set <path> <v> <file>"
+usage_in = "spira-config/src/main.rs"
+why = "A hand edit skips the validation that keeps the file loadable."
+[resource.touched_by]
+paths = ["*/spira.toml"]

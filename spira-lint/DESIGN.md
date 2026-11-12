@@ -357,6 +357,18 @@ pub struct PayloadAllow(Vec<regex::Regex>);   // any match exempts the finding
 
 Each of these is a unit test; the behaviour the bash suite asserted is kept.
 
+## Rule `doors-coverage`
+
+**Intent.** A tool that says it is the only path for something has a row in `spira/doors.toml`,
+so the PreToolUse hook can point a session at it when a command reaches the resource another way.
+
+**Scope.** Files directly in `bin/`, and `spira/*.sh` other than `test-*`. Only the leading comment
+block (the usage block) is read, for `the ONE`, `only path` or `chokepoint`.
+
+**Violations.** A claiming tool whose name is neither the `door` or a `door_commands` word of any row
+nor a row's `usage_in`, and not on `spira-lint/doors-coverage-allow`; an allow entry naming a file
+that is gone (the list only shrinks).
+
 ## Rule `fence-scripts`
 
 New (sp-tvor6).

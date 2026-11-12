@@ -739,6 +739,7 @@ SPIRA_RUNE dwarf/src/run.rs
 SPIRA_RUNE queue/src/ops/mod.rs
 SPIRA_RUNE spira-store/src/lc_call.rs
 SPIRA_RUNE spira-lc/src/bd.rs
+SPIRA_RUNE statute-check/src/main.rs
 SPIRA_RUNE work/src/main.rs
 SPIRA_SCCACHE_BIN sentinel/src/tower.rs
 SPIRA_SCCACHE_BIN watchtower/src/main.rs
