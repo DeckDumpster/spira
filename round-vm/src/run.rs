@@ -201,7 +201,6 @@ pub fn shell_quote(s: &str) -> String {
 /// tree and run the repository's own CI entry point (`${15}`). Its exit status is the one verdict,
 /// written as `ci.result`, so the round covers what CI covers by construction.
 pub const FOREIGN_SCRIPT: &str = r#"set -euo pipefail
-unset SPIRA_HOME
 host_addr="$1" port="$2" toolchain="$5" round_ref="${13}" round_sha="${14}" entry="${15}"
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 rm -rf ~/round-bins ~/round-work ~/round-setup.log ~/round-shims
@@ -252,6 +251,7 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 /// build is incremental on the one just made) and stages `target/release`'s executables
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = concat!(r#"set -euo pipefail
+unset SPIRA_HOME
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}" round_ref="${13}" round_sha="${14}"
 testenv_limits="${16:-}" resume_url="${17:-}" fences="${18:-}" want_tag="${19:-}"
 rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log ~/round-script.log
