@@ -71,9 +71,11 @@ fn summary(html: &str, label: &str) -> Option<u64> {
     html.split_once(&format!("<td>{label}:</td><td>"))?.1.split('<').next()?.trim().parse().ok()
 }
 
-/// A build that left no report (it died or hit the cap) still has its admit wait.
+/// A build that left no report (it died or hit the cap) still has its admit wait and the
+/// `Compiling` and `Fresh` lines it printed.
 pub fn wait_only(build_output: &str) -> Build {
-    Build { admit_wait_secs: admit_wait_secs(build_output), ..Build::default() }
+    let starts = |word: &str| build_output.lines().filter(|l| l.split_whitespace().next() == Some(word)).count() as u64;
+    Build { compiled: starts("Compiling"), fresh: starts("Fresh"), admit_wait_secs: admit_wait_secs(build_output), ..Build::default() }
 }
 
 /// The report's units and counts, with the admit wait of the build output alongside. None when
@@ -158,5 +160,12 @@ const x = 1;
     fn the_gate_log_suffix_has_every_field() {
         let b = parse(REPORT_HTML, "admitted to compile slot 1 after 5s").unwrap();
         assert!(b.suffix().starts_with(" compiled=7 fresh=3 admit_wait=5 slowest=runtime/lib:88.4@4.2,"));
+    }
+
+    #[test]
+    fn a_build_with_no_report_counts_the_compiling_and_fresh_lines_it_printed() {
+        let out = "   Compiling a v0.1\n   Compiling b v0.1\n       Fresh c v0.1\nnote: Compiling is a word\n";
+        let b = wait_only(out);
+        assert_eq!((b.compiled, b.fresh), (2, 1));
     }
 }

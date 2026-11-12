@@ -11,7 +11,7 @@ const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
 
 /// Closed: a kind outside this list is refused, so a typo cannot start a new history.
-pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "eject-failure", "blind-rework", "rejection", "escalated", "no-progress", "gate-start", "__doctor_probe__"];
+pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "eject-failure", "blind-rework", "rejection", "escalated", "no-progress", "gate-start", "build-dir", "__doctor_probe__"];
 
 pub const MACHINE: &str = "fact";
 pub const CAUSE_MAX: usize = 200;
@@ -26,6 +26,10 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 
 fn bounded(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).take(CAUSE_MAX).collect()
+}
+
+fn bounded_tabbed(s: &str) -> String {
+    s.chars().filter(|c| *c == '\t' || !c.is_control()).take(CAUSE_MAX).collect()
 }
 
 fn bounded_long(s: &str) -> String {
@@ -59,11 +63,20 @@ pub fn cmd_fact(args: &[String], conn: &Conn) -> (i32, String) {
         return (CANNOT_TELL, "fact: empty <bead-id> or --actor".into());
     }
     let raw = flag(args, "--cause").unwrap_or_default();
-    let cause = if LONG_KINDS.contains(&kind.as_str()) { bounded_long(&raw) } else { bounded(&raw) };
+    let cause = match kind.as_str() {
+        k if LONG_KINDS.contains(&k) => bounded_long(&raw),
+        "build-dir" => bounded_tabbed(&raw),
+        _ => bounded(&raw),
+    };
     match conn.append_event(&insert_sql(key, &kind, &cause, &bounded(&actor), db::now_epoch())) {
         Ok(()) => (0, String::new()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
     }
+}
+
+/// The insert for a submit's `build-dir` fact: the tip submitted and the directory it was built in.
+pub fn build_dir_sql(bead: &str, tip: &str, dir: &str, actor: &str, at: i64) -> String {
+    insert_sql(bead, "build-dir", &format!("{tip}\t{dir}"), &bounded(actor), at)
 }
 
 pub fn select_sql(ids: &[String], kinds: &[String], since: Option<i64>) -> String {
@@ -291,6 +304,20 @@ mod tests {
     fn the_gate_start_kind_the_gate_sends_is_one_the_fact_verb_accepts() {
         assert!(KINDS.contains(&"gate-start"));
         assert!(insert_sql("sp-a", "gate-start", "", "gate", 5).contains("'fact', 'sp-a', 'gate-start'"));
+    }
+
+    #[test]
+    fn a_build_dir_fact_keeps_the_tab_between_the_tip_and_the_directory() {
+        assert!(KINDS.contains(&"build-dir"));
+        assert_eq!(bounded_tabbed("abc\t/b/dir.1\n"), "abc\t/b/dir.1");
+        assert_eq!(bounded("abc\tdef"), "abcdef", "no other kind keeps a tab");
+    }
+
+    #[test]
+    fn a_submits_build_dir_fact_is_an_applied_row_whose_cause_is_the_tip_tab_directory() {
+        let q = build_dir_sql("sp-a", "abc", "/b/dir.3", "builder", 7);
+        assert!(q.contains("'fact', 'sp-a', 'build-dir'"), "{q}");
+        assert!(q.contains(r#"{"cause":"abc\\t/b/dir.3"}"#), "the tab survives the SQL literal as a JSON escape: {q}");
     }
 
     #[test]

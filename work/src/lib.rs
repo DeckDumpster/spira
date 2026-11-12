@@ -380,6 +380,12 @@ pub fn build_request(bound: &str, verb: &str, verb_args: &[String], tip: Option<
 /// [`build_request`], with the body [`collect_body`] gathered carried as `--stdin <text>`
 /// just before the client's own `--actor`.
 pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], tip: Option<&str>, actor: &str, body: Option<&str>) -> Result<Vec<String>, String> {
+    build_request_in(bound, verb, verb_args, tip, actor, body, None)
+}
+
+/// [`build_request_with_body`], with the build directory the client owns: `submit` carries it
+/// as `--build-dir`, so the gate builds where the builder built.
+pub fn build_request_in(bound: &str, verb: &str, verb_args: &[String], tip: Option<&str>, actor: &str, body: Option<&str>, build_dir: Option<&str>) -> Result<Vec<String>, String> {
     if !VERBS.contains(&verb) {
         return Err(refusal(R::UnknownVerb, "", &[("verb", verb), ("want", &VERBS.join(", "))]));
     }
@@ -416,11 +422,15 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
         }
         "submit" => {
             let Some(tip) = tip else { return Err(refusal(R::SubmitNoTip, "submit", &[])) };
-            if let Some(t) = verb_args.iter().find(|a| matches!(a.as_str(), "--tip")) {
+            if let Some(t) = verb_args.iter().find(|a| matches!(a.as_str(), "--tip" | "--build-dir")) {
                 return Err(refusal(R::SubmitTipArg, "submit", &[("flag", t)]));
             }
             req.extend(verb_args.iter().cloned());
-            req.extend(["--tip".to_string(), tip.to_string(), "--actor".to_string(), actor.to_string()]);
+            req.extend(["--tip".to_string(), tip.to_string()]);
+            if let Some(d) = build_dir {
+                req.extend(["--build-dir".to_string(), d.to_string()]);
+            }
+            req.extend(["--actor".to_string(), actor.to_string()]);
         }
         "file-followup" | "split" => {
             // The dwarf supplies only the title (design §3.5's surface has no --for): the
@@ -558,6 +568,15 @@ mod tests {
             build_request("sp-3m1p9", "submit", &[], Some("deadbeef"), "a").unwrap(),
             vec!["work", "sp-3m1p9", "submit", "--tip", "deadbeef", "--actor", "a"]
         );
+    }
+
+    #[test]
+    fn submit_carries_the_clients_build_dir_and_refuses_a_typed_one() {
+        let req = build_request_in("sp-3m1p9", "submit", &[], Some("deadbeef"), "a", None, Some("/b/dir.2")).unwrap();
+        assert_eq!(req, vec!["work", "sp-3m1p9", "submit", "--tip", "deadbeef", "--build-dir", "/b/dir.2", "--actor", "a"]);
+        let typed = vec!["--build-dir".to_string(), "/elsewhere".to_string()];
+        assert!(build_request_in("sp-3m1p9", "submit", &typed, Some("deadbeef"), "a", None, Some("/b/dir.2")).is_err());
+        assert!(build_request_in("sp-3m1p9", "submit", &[], Some("deadbeef"), "a", None, None).unwrap().iter().all(|a| a != "--build-dir"));
     }
 
     #[test]

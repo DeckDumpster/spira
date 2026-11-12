@@ -126,7 +126,8 @@ fn main() {
         }
     };
 
-    let req = match work::build_request_with_body(&bound, &verb, &verb_args, tip.as_deref(), &actor, body.as_deref()) {
+    let build_dir = if verb == "submit" { owned_build_dir() } else { None };
+    let req = match work::build_request_in(&bound, &verb, &verb_args, tip.as_deref(), &actor, body.as_deref(), build_dir.as_deref()) {
         Ok(mut r) => {
             if base_red {
                 r.extend([work::UNIT_RED_TESTS.to_string(), red_tests.join(",")]);
@@ -156,6 +157,12 @@ fn main() {
             { let code = CANNOT_TELL; spira_otel::run::finish(code); std::process::exit(code) };
         }
     }
+}
+
+/// The build directory this session owns: `CARGO_TARGET_DIR` when it is one under the configured base.
+fn owned_build_dir() -> Option<String> {
+    let base = spira_config::process::cfg(spira_config::build_dir::BASE_ENV).ok().filter(|b| !b.is_empty()).map(std::path::PathBuf::from);
+    spira_config::build_dir::owned(std::env::var_os("CARGO_TARGET_DIR"), base.as_deref()).map(|p| p.to_string_lossy().into_owned())
 }
 
 /// `submit` never takes a tip argument (design §3.5): it is read here, the only place this

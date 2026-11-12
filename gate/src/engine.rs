@@ -123,6 +123,8 @@ struct State {
     path: String,
     /// The compiler wrapper's environment for every build the trial runs (sp-z61hj).
     build_env: Vec<(String, String)>,
+    /// The leased build directory the unit build and test phases run in; released in `finish`.
+    build_dir: Option<String>,
     /// Why the build cache cannot be used; refused only by a trial that builds (sp-z61hj).
     cache_refusal: Option<String>,
     /// What `--release-bins` builds with: HOME, SPIRA_RELEASE and the trial's timeout.
@@ -802,6 +804,13 @@ impl<'w, W: World> Trial<'w, W> {
             if let Some(e) = self.prepare_build_tree(&ctx, &tree) {
                 return e;
             }
+            if matches!(comp, Composition::Unit { .. }) {
+                let (dir, refusal) = lease_builders_dir(w, &ctx, &tree, &self.s.bead, &self.s.path);
+                self.s.build_dir = dir;
+                if let Some(e) = refusal {
+                    return e;
+                }
+            }
         }
         // THE TOOLS ARE THE TREE'S, PROVABLY (sp-g9f3t): keyed by the tree id the gate tree
         // holds, which must be the merge's.
@@ -828,6 +837,7 @@ impl<'w, W: World> Trial<'w, W> {
         };
         let fkey = self.fences_key(&want_tree);
         let mut mark_err: Option<String> = None;
+        let phase_env: Vec<(String, String)> = self.s.build_dir.iter().map(|d| ("CARGO_TARGET_DIR".to_string(), d.clone())).collect();
         let (rc, out, ph) = {
             let (run_dir, machine) = (Path::new(&self.s.run), &mut self.s.machine);
             let mut mark = |to: GateState, why: &str| {
@@ -857,6 +867,7 @@ impl<'w, W: World> Trial<'w, W> {
                 fkey.as_ref(),
                 &mut mark,
                 &mut self.s.build_timing,
+                &phase_env,
             )
         };
         self.s.tools_from = match tools.as_ref() {
@@ -1082,6 +1093,7 @@ impl<'w, W: World> Trial<'w, W> {
                 base_fkey.as_ref(),
                 &mut |_, _| {},
                 &mut None,
+                &phase_env,
             );
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
@@ -1631,7 +1643,8 @@ impl<'w, W: World> Trial<'w, W> {
         w.write_atomic(&dir, &self.s.merged_tree, &cert::render(&c));
     }
 
-    /// The refusals a tree build meets before it starts: no build cache, no room on tmpfs.
+    /// The refusals a tree build meets before it starts: no build cache, no room on tmpfs. A
+    /// unit trial then leases the directory its builder built in and builds there.
     fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path) -> Option<Verdict> {
         let w = self.w;
         if let Some(e) = &self.s.cache_refusal {
@@ -1645,12 +1658,10 @@ impl<'w, W: World> Trial<'w, W> {
         );
         let short = |e: String| Some(v(NOVERDICT, "scratch-short", format!("{e}\ngate: this is the host's room, not a fault in the branch.")));
         match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
-            Ok(line) => {
-                w.eprint(&line);
-                None
-            }
-            Err(e) => short(e),
+            Ok(line) => w.eprint(&line),
+            Err(e) => return short(e),
         }
+        None
     }
 
     /// The one way out: meters, records, certifies and cleans up.
@@ -1699,6 +1710,9 @@ impl<'w, W: World> Trial<'w, W> {
     fn finish(&mut self, vd: Verdict) -> i32 {
         let mut vd = vd;
         let w = self.w;
+        if let (Some(t), Some(dir)) = (self.s.tree.clone(), self.s.build_dir.take()) {
+            w.eprint(&w.release_build_dir(&t, &dir, &self.s.path));
+        }
         if vd.reason == "died" {
             if let Some(r) = &self.s.machine {
                 if w.machine_cancelled(Path::new(&self.s.run), &r.id) {
@@ -1737,7 +1751,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.remove(&f);
         }
         if let Some(t) = &self.s.tree {
-            w.release_target(t, vd.status == PASS && self.a.release_bins, vd.status != NOVERDICT);
+            w.release_target(t, vd.status == PASS && self.a.release_bins);
             w.remove(&PathBuf::from(format!("{}.lock.holder", t.display())));
             if self.s.held_lock && vd.status != PASS && w.exists(&t.join(".git")) {
                 w.remove_worktree(&self.s.repo, t);
@@ -2080,6 +2094,49 @@ pub struct Tools {
     pub release: bool,
 }
 
+/// Lease the build directory the bead's builder recorded (or any idle one), make it
+/// consistent with `tree`, and link the tree's `dwarf` and `debug` into it. The directory comes
+/// back whenever it was leased, so the caller releases it even when a refusal follows.
+fn lease_builders_dir<W: World>(w: &W, ctx: &Ctx, tree: &Path, bead: &str, path: &str) -> (Option<String>, Option<Verdict>) {
+    let base = ctx.var(spira_config::build_dir::BASE_ENV);
+    if base.is_empty() {
+        return (None, Some(v(NOVERDICT, "config", format!("gate: {} is not set — refusing to build where no builder built", spira_config::build_dir::BASE_ENV))));
+    }
+    let recorded = if bead.is_empty() {
+        None
+    } else {
+        match w.build_dir_fact(bead) {
+            Ok(r) => r,
+            Err(e) => return (None, Some(v(NOVERDICT, "build-dir-unreadable", format!("gate: cannot tell where {bead}'s builder built: {e}\ngate: refusing to guess; this is the host's store, not a fault in the branch.")))),
+        }
+    };
+    let (dir, why) = match w.lease_build_dir(base, recorded.as_ref().map(|(_, d)| d.as_str()), &format!("gate {bead}")) {
+        Ok(l) => l,
+        Err(e) => return (None, Some(v(NOVERDICT, "scratch-short", format!("gate: {e}\ngate: this is the host's room, not a fault in the branch.")))),
+    };
+    let mut cold = (why != "recorded").then(|| why.to_string());
+    match w.clean_build_dir(tree, &dir, path, false) {
+        Ok(out) => out.lines().filter(|l| !l.trim().is_empty()).for_each(|l| w.eprint(&format!("gate: {l}"))),
+        Err(e) => {
+            w.empty_build_dir(&dir);
+            cold = Some(format!("selective clean failed, directory emptied: {e}"));
+        }
+    }
+    if let (None, Some((tip, _))) = (&cold, &recorded) {
+        if let Err(e) = w.normalize_mtimes(tree, tip) {
+            cold = Some(format!("mtimes not aged: {e}"));
+        }
+    }
+    if let Err(e) = w.link_build_dir(tree, &dir) {
+        return (Some(dir), Some(v(NOVERDICT, "scratch-short", format!("gate: {e}\ngate: this is the host's room, not a fault in the branch."))));
+    }
+    w.eprint(&match cold {
+        None => format!("gate: build in {dir} (leased from {bead}'s builder)"),
+        Some(why) => format!("gate: build in {dir} (cold: {why})"),
+    });
+    (Some(dir), None)
+}
+
 /// The tools of the trial about to run in `tree`. With `release` (the active release's `bin`)
 /// they are its binaries and nothing is built; Err names a tool it lacks, a harness fault. Else
 /// they are the tree's, which must hold `want` (a git tree id). Ok(None) when the definition
@@ -2188,6 +2245,7 @@ pub fn run_composed<W: World>(
     fences: Option<&crate::fencecache::Key>,
     mark: &mut dyn FnMut(GateState, &str),
     timing: &mut Option<(crate::buildtiming::Build, String)>,
+    phase_env: &[(String, String)],
 ) -> (i32, String, Vec<(String, u64)>) {
     let first_state = if comp.suites_off() { GateState::Fences } else { GateState::Trial };
     let budget = key::digits(timeout);
@@ -2307,6 +2365,13 @@ pub fn run_composed<W: World>(
         } else {
             env
         };
+        let in_leased;
+        let step_env = if matches!(name, "build" | "test") && !phase_env.is_empty() {
+            in_leased = step_env.iter().chain(phase_env).cloned().collect::<Vec<_>>();
+            &in_leased[..]
+        } else {
+            step_env
+        };
         let report = tree.join(crate::buildtiming::REPORT);
         let timed = name == "build" && prefix.is_empty();
         if timed {
@@ -2325,7 +2390,7 @@ pub fn run_composed<W: World>(
                 .read(&report)
                 .and_then(|h| Some((crate::buildtiming::parse(&h, &o)?, h)))
                 .or_else(|| Some((crate::buildtiming::wait_only(&o), String::new())))
-                .filter(|(b, h)| !h.is_empty() || b.admit_wait_secs > 0);
+                .filter(|(b, h)| !h.is_empty() || b.admit_wait_secs > 0 || b.compiled + b.fresh > 0);
         }
         if !o.is_empty() {
             if !out.is_empty() {

@@ -153,12 +153,29 @@ pub trait World {
     /// Put the gate tree's build directories on tmpfs (sp-z61hj, target.rs): Ok(a line for the
     /// trial's stderr), Err(the refusal — short of room; never a fall back to the disk).
     fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits) -> Result<String, String>;
+    /// The latest `build-dir` fact of `bead`: the builder's (tip, build directory). Ok(None)
+    /// when it recorded none; Err when the facts could not be read (cannot tell).
+    fn build_dir_fact(&self, bead: &str) -> Result<Option<(String, String)>, String>;
+    /// Lease a build directory under `base`, the `recorded` one when it is idle: (the directory,
+    /// why that one — `recorded`, `gone`, `held`, `outside-base` or `unrecorded`). The lease
+    /// is held until `release_build_dir`.
+    fn lease_build_dir(&self, base: &str, recorded: Option<&str>, who: &str) -> Result<(String, &'static str), String>;
+    /// The selective clean of `dir` against `tree`; `record_only` records without cleaning.
+    fn clean_build_dir(&self, tree: &Path, dir: &str, path: &str, record_only: bool) -> Result<String, String>;
+    /// Empty a leased `dir` (its clean failed, so it is not trusted).
+    fn empty_build_dir(&self, dir: &str);
+    /// Age the files of `tree` that did not change since `tip` (warm::normalize_mtimes).
+    fn normalize_mtimes(&self, tree: &Path, tip: &str) -> Result<usize, String>;
+    /// Link `tree/target`'s `dwarf` and `debug` to the leased `dir`.
+    fn link_build_dir(&self, tree: &Path, dir: &str) -> Result<(), String>;
+    /// Record what `dir` holds, release the lease and unlink it from `tree`: Ok(a line for the log).
+    fn release_build_dir(&self, tree: &Path, dir: &str, path: &str) -> String;
     /// False when a build directory `target_on_tmpfs` linked no longer resolves: something
     /// else removed the output this trial built.
     fn target_intact(&self, tree: &Path) -> bool;
     /// Drop the tmpfs build output of a finished trial (target::release_tree); `keep_release`
     /// spares `release` for a caller that still has to stage it.
-    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool);
+    fn release_target(&self, tree: &Path, keep_release: bool);
 
     /// `timeout <secs> bash -c <cmd>` in `tree` under exactly `env` → (status, combined output
     /// with trailing newlines stripped).
