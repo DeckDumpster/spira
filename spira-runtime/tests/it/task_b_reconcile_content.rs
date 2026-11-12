@@ -179,3 +179,11 @@ fn a_changed_head_runs_an_incremental_scan_through_the_handler_and_closes_what_i
     assert_eq!(*inputs.lock().unwrap(), ["", "since:40"]);
     assert!(rig.requested().iter().any(|q| q.name == task::CLOSE && q.input.contains("sp-a")), "{:?}", rig.requested());
 }
+
+#[test]
+fn a_scan_that_could_not_tell_holds_the_cursor() {
+    let h = t::handler::<H>(SET);
+    let snap = Snapshot { pass: Pass::Since, through_seq: Some(52), cannot_tell: Some("epics unreadable".into()), ..Snapshot::default() };
+    let (later, _) = task::decide(&h.cfg, &Carry { through_seq: Some(40), ..Carry::default() }, &Input::Observed(snap), TICK).unwrap();
+    assert_eq!(later.through_seq, Some(40));
+}

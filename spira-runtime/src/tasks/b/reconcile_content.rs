@@ -214,7 +214,9 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 return Ok((carry.clone(), vec![Act { name: OBSERVE.into(), key: format!("{NAME}:scan"), input, deadline_ms: SPEC.probe_deadline_ms, probe: true }]));
             }
             let mut next = carry.clone();
-            next.through_seq = carry.through_seq.max(snap.through_seq);
+            if snap.cannot_tell.is_none() {
+                next.through_seq = carry.through_seq.max(snap.through_seq);
+            }
             if snap.pass == Pass::Full {
                 next.full_at = now_ms;
             }

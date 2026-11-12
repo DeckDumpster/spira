@@ -272,14 +272,14 @@ fn complete_epics(m: &mut dyn Machine, recs: &BTreeMap<String, (String, String)>
     for chunk in epics.chunks(CHUNK) {
         children.extend(plan(m, &["children", "--ids", &chunk.join(",")])?);
     }
-    let mut known = recs.clone();
+    let mut fetched = BTreeMap::new();
     if scoped {
-        let missing: Vec<String> = children.iter().map(|c| s(c, "id")).filter(|id| !known.contains_key(id)).collect();
-        known.extend(records_of(m, &missing)?);
+        let missing: Vec<String> = children.iter().map(|c| s(c, "id")).filter(|id| !recs.contains_key(id)).collect();
+        fetched = records_of(m, &missing)?;
     }
     for child in children {
         let Some((counts, pending)) = tally.get_mut(&s(&child, "parent")) else { continue };
-        let state = match known.get(&s(&child, "id")) {
+        let state = match recs.get(&s(&child, "id")).or_else(|| fetched.get(&s(&child, "id"))) {
             Some((st, _)) => st.clone(),
             None if rowless_closed(&child) => "CLOSED".into(),
             None => String::new(),
