@@ -1,7 +1,7 @@
 TYPE=u32
 GROUP=round
-DOC=SPIRA_ROUND_VM_EC2_PROBE_DEADLINE — seconds `round-vm ec2-probe --dry-run` gets before a timeout is reported.
-SCHEMA=Seconds to wait for the EC2 dry-run probe before reporting a timeout (default 60).
+DOC=SPIRA_ROUND_VM_EC2_PROBE_DEADLINE — unread; kept until the next release retires it.
+SCHEMA=Unread: its watcher was deleted. Kept so the active release still validates; to be retired (default 60).
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_ROUND_VM_EC2_PROBE_DEADLINE:=60}"
 SPIRA_CONF_DEFAULT_EOF
