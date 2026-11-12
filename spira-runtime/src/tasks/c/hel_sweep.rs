@@ -241,6 +241,8 @@ pub struct Pass {
     pub started: u64,
     pub repos_left: Vec<String>,
     pub cursor: usize,
+    /// The repository whose observe is in flight: a restart loses the probe, and the boot asks it again.
+    pub observing: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -442,6 +444,7 @@ fn settle(mut next: Carry, repo: &str, mut acts: Vec<Act>) -> Result<(Carry, Vec
         Some(p) => {
             let r = p.repos_left.remove(0);
             p.cursor += 1;
+            p.observing = r.clone();
             next.phase = Phase::Observing;
             acts.push(observe_next(&r));
         }
@@ -499,7 +502,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 });
             }
             if !continuing {
-                next.pass = Some(Pass { started: now_ms, repos_left: s.repos.clone(), cursor: 0 });
+                next.pass = Some(Pass { started: now_ms, repos_left: s.repos.clone(), cursor: 0, observing: s.repo.clone() });
                 next.last_fired = Some(now_ms);
             }
             next.phase = Phase::Acting;
@@ -565,6 +568,15 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         Input::Outcome { effect: e, .. } if e == CLOSE_ON_LAND || e == PRUNE || e == CONTENT_ON_BASE || e == PR_TIP => Ok((carry.clone(), vec![])),
         Input::Outcome { effect: e, .. } => Err(format!("{NAME}: in state {} an outcome of {e} is not expected", phase_name(carry.phase))),
     }
+}
+
+/// A restart loses the timer holding the slot and the probe of a pass between repositories: the
+/// boot observes at once when the slot after the last pass has gone by, or a repository's observe was in flight.
+pub fn catch_up(carry: &Carry, now_ms: u64, cadence: &Cadence) -> Option<String> {
+    if let (Phase::Observing, Some(p)) = (carry.phase, &carry.pass) {
+        return Some(p.observing.clone());
+    }
+    carry.last_fired.filter(|last| cadence.next(*last) <= now_ms).map(|_| String::new())
 }
 
 /// The failure of a pass whose repository's bead read the store did not answer.
@@ -739,4 +751,4 @@ pub fn prune(real: &hel::real::Real, input: &str) -> Result<String, String> {
 
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Field("pass"), runtime::rows::Part::Field("tally"), runtime::rows::Part::Map { name: "jobs", drop: &[] }];
 
-crate::tasks::b::hosted!(HelSweep);
+crate::tasks::b::hosted!(HelSweep, catch_up = catch_up);
