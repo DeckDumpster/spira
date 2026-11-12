@@ -39,10 +39,14 @@ pub fn check_collisions(instance: &str, host: &HostValues) -> Result<(), Vec<Str
 /// detached-HEAD tag checkout.
 pub fn check_landref(host: &HostValues) -> Result<(), String> {
     let exe = crate::bootstrap::argv0_path();
-    landref_currency(&host.repo, exe.as_deref(), || landref_of(host))
+    landref_currency(&host.repo, exe.as_deref(), no_spira_units_installed(&crate::bootstrap::unit_dir()), || landref_of(host))
 }
 
-fn landref_currency(repo: &str, exe: Option<&Path>, landref: impl Fn() -> Option<String>) -> Result<(), String> {
+fn no_spira_units_installed(unit_dir: &Path) -> bool {
+    std::fs::read_dir(unit_dir).map_or(true, |rd| !rd.flatten().any(|e| e.file_name().to_string_lossy().starts_with("spira-")))
+}
+
+fn landref_currency(repo: &str, exe: Option<&Path>, fresh_install: bool, landref: impl Fn() -> Option<String>) -> Result<(), String> {
     if !Path::new(repo).join(".git").exists() {
         return Ok(());
     }
@@ -55,7 +59,7 @@ fn landref_currency(repo: &str, exe: Option<&Path>, landref: impl Fn() -> Option
     };
     if let Some(commit) = exe.and_then(|e| release_commit(e.parent()?.parent()?)) {
         let Some(base) = landref() else { return Err(format!("cannot resolve landref for {repo}")) };
-        return release_currency(&git, &commit, &base);
+        return release_currency(&git, &commit, &base, fresh_install);
     }
     let (_, cur) = git(&["rev-parse", "--abbrev-ref", "HEAD"]);
     if cur == "HEAD" {
@@ -92,9 +96,18 @@ fn release_commit(release: &Path) -> Option<String> {
 }
 
 /// A release is as current as its own commit, never the lagging checkout's HEAD.
-fn release_currency(git: &dyn Fn(&[&str]) -> (bool, String), commit: &str, base: &str) -> Result<(), String> {
+fn release_currency(git: &dyn Fn(&[&str]) -> (bool, String), commit: &str, base: &str, fresh_install: bool) -> Result<(), String> {
     let (ok, behind) = git(&["rev-list", "--count", &format!("{commit}..{base}")]);
-    let Some(behind) = behind.parse::<u64>().ok().filter(|_| ok) else {
+    release_verdict(behind.parse::<u64>().ok().filter(|_| ok), commit, base, fresh_install)
+}
+
+/// An unmeasurable release is admitted only on a fresh install: with no installed units there is
+/// nothing it could regress, and a release built from a checkout the repository never held cannot be measured.
+fn release_verdict(behind: Option<u64>, commit: &str, base: &str, fresh_install: bool) -> Result<(), String> {
+    let Some(behind) = behind else {
+        if fresh_install {
+            return Ok(());
+        }
         return Err(format!("refusing — release commit {commit} is not known to the repository, so its distance from {base} cannot be measured. set SPIRA_INSTALL_FORCE=1 to override."));
     };
     if behind > 0 {
@@ -178,8 +191,8 @@ mod tests {
         let rel = release_dir_at(&shas[3]);
         let exe = rel.path().join("bin/units-install");
         let repo = d.path().to_str().unwrap();
-        assert_eq!(landref_currency(repo, Some(&exe), || Some("main".into())), Ok(()));
-        assert!(landref_currency(repo, None, || Some("main".into())).is_err(), "the same checkout, run as a checkout, is behind");
+        assert_eq!(landref_currency(repo, Some(&exe), false, || Some("main".into())), Ok(()));
+        assert!(landref_currency(repo, None, false, || Some("main".into())).is_err(), "the same checkout, run as a checkout, is behind");
     }
 
     #[test]
@@ -187,7 +200,7 @@ mod tests {
         let (d, shas) = repo_with_commits(4);
         let rel = release_dir_at(&shas[1]);
         let exe = rel.path().join("bin/units-install");
-        let err = landref_currency(d.path().to_str().unwrap(), Some(&exe), || Some("main".into())).unwrap_err();
+        let err = landref_currency(d.path().to_str().unwrap(), Some(&exe), false, || Some("main".into())).unwrap_err();
         assert!(err.contains("2 commit(s) behind main"), "{err}");
     }
 
@@ -196,7 +209,7 @@ mod tests {
         let (d, shas) = repo_with_commits(1);
         let rel = release_dir_at(&shas[0]);
         let exe = rel.path().join("bin/units-install");
-        assert!(landref_currency(d.path().to_str().unwrap(), Some(&exe), || None).is_err());
+        assert!(landref_currency(d.path().to_str().unwrap(), Some(&exe), false, || None).is_err());
     }
 
     #[test]
@@ -206,20 +219,43 @@ mod tests {
         let rel = testkit::TempDir::new("rel");
         std::fs::write(rel.path().join("MANIFEST"), format!("commit {}\nbuilt x\n", shas[3])).unwrap();
         let commit = release_commit(rel.path()).expect("manifest records a commit");
-        assert_eq!(release_currency(&git_in(d.path()), &commit, "main"), Ok(()));
+        assert_eq!(release_currency(&git_in(d.path()), &commit, "main", false), Ok(()));
     }
 
     #[test]
     fn sp_io4b8m_a_release_older_than_the_landref_is_refused() {
         let (d, shas) = repo_with_commits(4);
-        let err = release_currency(&git_in(d.path()), &shas[1], "main").unwrap_err();
+        let err = release_currency(&git_in(d.path()), &shas[1], "main", false).unwrap_err();
         assert!(err.contains("2 commit(s) behind main"), "{err}");
     }
 
     #[test]
     fn sp_io4b8m_a_release_commit_the_repository_does_not_know_is_refused() {
         let (d, _) = repo_with_commits(1);
-        assert!(release_currency(&git_in(d.path()), &"0".repeat(40), "main").is_err());
+        assert!(release_currency(&git_in(d.path()), &"0".repeat(40), "main", false).is_err());
+    }
+
+    #[test]
+    fn sp_0g8vmz_an_unmeasurable_release_is_admitted_on_a_fresh_install_only() {
+        assert_eq!(release_verdict(None, "abc", "main", true), Ok(()));
+        assert!(release_verdict(None, "abc", "main", false).is_err());
+    }
+
+    #[test]
+    fn sp_0g8vmz_a_release_behind_the_limit_is_refused_even_on_a_fresh_install() {
+        assert!(release_verdict(Some(3), "abc", "main", true).is_err());
+        assert_eq!(release_verdict(Some(0), "abc", "main", true), Ok(()));
+    }
+
+    #[test]
+    fn sp_0g8vmz_a_unit_dir_holding_no_spira_unit_is_a_fresh_install() {
+        let t = testkit::TempDir::new("units");
+        assert!(no_spira_units_installed(t.path()));
+        assert!(no_spira_units_installed(&t.path().join("absent")));
+        std::fs::write(t.path().join("other.service"), "").unwrap();
+        assert!(no_spira_units_installed(t.path()));
+        std::fs::write(t.path().join("spira-watchdog-x.timer"), "").unwrap();
+        assert!(!no_spira_units_installed(t.path()));
     }
 
     #[test]
