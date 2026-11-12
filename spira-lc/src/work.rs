@@ -810,8 +810,12 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
     let Some(title) = args.first() else {
         return (CANNOT_TELL, format!("work {verb}: missing <title>"));
     };
-    let Some(persona) = flag(args, "--for") else {
+    let Some(filer) = flag(args, "--for") else {
         return (CANNOT_TELL, format!("work {verb}: --for <persona> is required"));
+    };
+    let persona = match filed_as(verb, &filer) {
+        Ok(p) => p,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
     let repo = match child_repo(args) {
         Ok(r) => r,
@@ -840,6 +844,20 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
         },
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
     }
+}
+
+/// The persona a filing takes its partition from: a `file-followup` goes to the lane its filer's
+/// rune names, so a defect lands where it can be built; a `split` stays in its own lane.
+fn filed_as(verb: &str, filer: &str) -> Result<String, String> {
+    let home = spira_config::resolve::locate_home_for_process()?;
+    Ok(filed_as_in(&spira_config::runes::runes_dir(&home), verb, filer))
+}
+
+fn filed_as_in(runes: &std::path::Path, verb: &str, filer: &str) -> String {
+    if verb != "file-followup" {
+        return filer.to_string();
+    }
+    spira_config::runes::followup_persona_in(runes, filer)
 }
 
 fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
@@ -1714,6 +1732,16 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_pilgrims_follow_up_is_filed_into_the_builder_partition_but_a_split_stays_put() {
+        let runes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        assert_eq!(super::filed_as_in(&runes, "file-followup", "pilgrim"), "builder");
+        assert_eq!(super::filed_as_in(&runes, "split", "pilgrim"), "pilgrim");
+        assert_eq!(super::filed_as_in(&runes, "file-followup", "builder"), "builder");
+        let builder = std::fs::read_to_string(runes.join("builder.rune")).unwrap();
+        assert!(builder.contains("SPIRA_PLAN_LABEL") && !builder.contains("SPIRA_PILGRIM_LABEL"));
+    }
+
     #[test]
     fn a_unit_red_on_base_must_name_a_bead_that_exists_and_leaves_a_note_line() {
         let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
