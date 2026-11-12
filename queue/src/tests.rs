@@ -478,6 +478,8 @@ struct FScripts {
     /// Live round legs as (repo, batch, unit); `stop_round_legs` ends the ones it is asked for.
     round_legs: RefCell<Vec<(String, String, String)>>,
     round_legs_stubborn: std::cell::Cell<bool>,
+    /// `stop_round_legs` fails while `stop_pass_scopes` still works.
+    step_stubborn: std::cell::Cell<bool>,
     /// Working directories of processes that outlive their legs; `stop_tree_holders` ends those under the tree.
     tree_holders: RefCell<Vec<PathBuf>>,
     /// The holders ended, each with whether the tree they held still stood when they were.
@@ -752,7 +754,7 @@ impl Scripts for FScripts {
         out
     }
     fn stop_round_legs(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
-        if self.round_legs_stubborn.get() {
+        if self.round_legs_stubborn.get() || self.step_stubborn.get() {
             return Err("1 still running after its stop".into());
         }
         let (mine, rest): (Vec<_>, Vec<_>) = self

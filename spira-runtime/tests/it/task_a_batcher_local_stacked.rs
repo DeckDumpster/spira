@@ -32,7 +32,7 @@ fn snap(open: Vec<Round>, now_ms: u64) -> Snapshot {
 }
 
 fn round(id: &str, members: &[&str], head: &str, age_secs: u64) -> Round {
-    Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), head: head.into(), worktree: format!("/w/{id}"), driven: true, red: false, age_secs, unfit: None }
+    Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), head: head.into(), worktree: format!("/w/{id}"), driven: true, red: false, age_secs, unfit: None, phase: String::new() }
 }
 
 fn names(acts: &[Act]) -> Vec<&str> {
@@ -112,7 +112,10 @@ fn with_one_round_open_allowed_a_running_round_cuts_nothing_more() {
     let (carry, _) = cut_and_open(&p, &Carry::default(), &snap(vec![], NOW), "r1");
     let (next, acts) = decide_with(&p, &carry, &snap(vec![round("r1", &["sp-a", "sp-b"], "h1", 60)], NOW + 60_000));
     assert!(acts.is_empty(), "{acts:?}");
-    assert_eq!(next, carry);
+    let mut seen = carry.clone();
+    let rc = seen.repos.get_mut("spira").unwrap();
+    (rc.head, rc.leg_head) = ("h1".into(), "h1".into());
+    assert_eq!(next, seen, "only the head the round was first seen at is learned");
     let (_, acts) = decide_with(&Policy { max_members: 2, ..Policy::default() }, &carry, &snap(vec![round("r1", &["sp-a", "sp-b"], "h1", 60)], NOW + 60_000));
     assert!(acts.is_empty(), "the default is one round: {acts:?}");
 }

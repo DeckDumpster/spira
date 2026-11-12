@@ -3559,6 +3559,31 @@ fn preempting_a_host_placed_pass_stops_its_scope_ejects_and_restarts() {
 }
 
 #[test]
+fn preempt_stops_the_step_that_started_the_pass_before_the_next_pass_starts() {
+    let (t, batch, _) = host_pass_world();
+    seed_suite(&t, "test-b.sh");
+    let step = "spira-batcher-local-spira-attribute2.service".to_string();
+    t.scripts.round_legs.borrow_mut().push(("spira".into(), batch.clone(), step.clone()));
+    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red on test-b.sh", "--suites", "test-b.sh"]);
+    assert_eq!(rc, 0, "{}", t.err());
+    assert!(!t.scripts.round_legs.borrow().iter().any(|(_, b, _)| b == &batch), "no unit of the replaced head is left running");
+    let calls = t.scripts.calls.borrow();
+    assert!(calls.iter().any(|c| c == &format!("restart {batch} spira")), "{calls:?}");
+}
+
+#[test]
+fn a_step_that_will_not_stop_leaves_the_next_pass_unstarted() {
+    let (t, batch, _) = host_pass_world();
+    seed_suite(&t, "test-b.sh");
+    t.scripts.round_legs.borrow_mut().push(("spira".into(), batch.clone(), "step.service".into()));
+    t.scripts.step_stubborn.set(true);
+    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red", "--suites", "test-b.sh"]);
+    assert_eq!(rc, 1);
+    assert!(t.err().contains("step") && t.err().contains("next pass was not started"), "{}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("restart")));
+}
+
+#[test]
 fn a_rebuild_that_cannot_cut_the_base_restores_the_head_and_says_nothing_changed() {
     let (t, batch) = preempt_world();
     let rec = kv_of(&t, "round");

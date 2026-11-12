@@ -243,6 +243,9 @@ pub struct Round {
     /// Why `round certify` would refuse this round at once (`round_certifiable`), if it would.
     #[serde(default)]
     pub unfit: Option<String>,
+    /// The round's phase as `queue round status` names it; `green` once a pass on its head passed.
+    #[serde(default)]
+    pub phase: String,
 }
 
 /// One admitted `queue.local` repository.
@@ -378,6 +381,11 @@ pub enum Trigger {
     CertifyLost,
     /// The VM was lost under more passes than [`LOST_VM_RECERTIFIES`] allows.
     CertifyLostSpent,
+    /// A pass on the round's current head passed while the carried leg was started for an earlier
+    /// head: the round lands on that pass.
+    HeadGreen,
+    /// [`Self::HeadGreen`] with a round still open below.
+    HeadGreenHeld,
     /// A leg never started or is gone with no `unit.ran`: started once more (not in the contract's table).
     LegRestarted,
     /// The restarted leg is lost too: the round is abandoned (not in the contract's table).
@@ -435,6 +443,12 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Certifying, Trigger::LegLost, State::Done),
     (State::Certifying, Trigger::CertifyHeld, State::Certified),
     (State::Certified, Trigger::LowerEnded, State::Landing),
+    (State::Corpus, Trigger::HeadGreen, State::Landing),
+    (State::Attributing, Trigger::HeadGreen, State::Landing),
+    (State::Certifying, Trigger::HeadGreen, State::Landing),
+    (State::Corpus, Trigger::HeadGreenHeld, State::Certified),
+    (State::Attributing, Trigger::HeadGreenHeld, State::Certified),
+    (State::Certifying, Trigger::HeadGreenHeld, State::Certified),
 ];
 
 /// The pace state of `batcher-cut/src/pace.rs`, carried rather than kept in `run/rounds-pace`.
@@ -528,6 +542,11 @@ pub struct RepoCarry {
     pub leg: Option<String>,
     #[serde(default)]
     pub leg_at_ms: u64,
+    /// The head the round was last seen at, and the head the live leg was started for.
+    #[serde(default)]
+    pub head: String,
+    #[serde(default)]
+    pub leg_head: String,
     #[serde(default)]
     pub run: u32,
     /// Times the carried leg has been started again because it never ran or vanished.
@@ -599,6 +618,8 @@ impl RepoCarry {
             certify_held: self.certify_held,
             leg: self.leg.clone(),
             leg_at_ms: self.leg_at_ms,
+            head: self.head.clone(),
+            leg_head: self.leg_head.clone(),
             run: self.run,
             leg_restarts: self.leg_restarts,
             leg_missing: self.leg_missing,
@@ -630,6 +651,8 @@ impl RepoCarry {
             certify_held: round.certify_held,
             leg: round.leg.clone(),
             leg_at_ms: round.leg_at_ms,
+            head: round.head.clone(),
+            leg_head: round.leg_head.clone(),
             run: round.run,
             leg_restarts: round.leg_restarts,
             leg_missing: round.leg_missing,
@@ -1003,6 +1026,7 @@ impl Machine<'_> {
         let unit = unit_key(self.repo, &round, what, self.rc.run.max(1));
         self.rc.leg = Some(unit.clone());
         self.rc.leg_at_ms = self.now_ms;
+        self.rc.leg_head = self.rc.head.clone();
         let leg = Leg { key: unit.clone(), unit, ..self.leg() };
         self.acts.push(leg.act(effect));
     }
@@ -1124,6 +1148,9 @@ impl Machine<'_> {
             return;
         }
         self.note_waiting();
+        if self.superseded_by_green_head(repo) {
+            return;
+        }
         match self.rc.state {
             State::Certifying if self.rc.certify_held => self.release_certify(policy, repo),
             State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > leg_deadline_ms(policy, self.rc.state == State::Attributing, self.rc.members.len()) => self.leg_ended(Exit::Unknown),
@@ -1142,6 +1169,33 @@ impl Machine<'_> {
             }
             _ => {}
         }
+    }
+
+    /// Follows the round's head. A leg started for an earlier head is orphaned: its result is
+    /// never applied (`on_ran_with`), and the pass that replaced it decides the round. A green pass
+    /// on the current head lands the round. True when the round was moved to land.
+    fn superseded_by_green_head(&mut self, repo: &Repo) -> bool {
+        let Some(open) = self.rc.batch.as_deref().and_then(|b| repo.open_rounds().find(|r| r.id == b)) else { return false };
+        if open.head.is_empty() || !matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying) {
+            return false;
+        }
+        self.rc.head = open.head.clone();
+        if self.rc.leg_head.is_empty() {
+            self.rc.leg_head = open.head.clone();
+        }
+        if self.rc.leg_head == open.head {
+            return false;
+        }
+        eprintln!("{NAME} {}: round head moved {} -> {}: the step started for the old head is discarded", self.repo, self.rc.leg_head, open.head);
+        self.rc.leg = None;
+        if open.phase != "green" {
+            return false;
+        }
+        self.go(if self.below { Trigger::HeadGreenHeld } else { Trigger::HeadGreen });
+        if !self.below {
+            self.land_now();
+        }
+        true
     }
 
     /// The state waits on `effect`'s outcome and the scheduler holds none in flight for the repo:
@@ -1844,6 +1898,11 @@ pub fn on_ran_with(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64) -
         let at = rc.rounds().iter().position(|r| r.leg.as_deref() == Some(key.as_str()) && matches!(r.state, State::Corpus | State::Attributing | State::Certifying))?;
         Some((repo, rc, at))
     })?;
+    let held = &rc.rounds()[at];
+    if !held.head.is_empty() && !held.leg_head.is_empty() && held.head != held.leg_head {
+        eprintln!("{NAME} {repo}: step {key} was started for head {} and the round is at {}: its result is discarded", held.leg_head, held.head);
+        return None;
+    }
     let mut next = carry.clone();
     let mut m = Machine { repo, rc: rc.holding(&rc.rounds()[at]), acts: vec![], now_ms, below: at > 0 };
     let said = [out.stdout_tail.as_deref(), out.stderr_tail.as_deref()].into_iter().flatten().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n");
@@ -2235,7 +2294,7 @@ pub mod edge {
         let mut open = io::open_rounds(env, repo)?.into_iter().map(|r| {
             let driven = io::certify_driven(env, &repo.name, &r.id);
             let unfit = io::round_certifiable(env, repo, &r.id).err();
-            Round { id: r.id, members: r.members, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit }
+            Round { id: r.id, members: r.members, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit, phase: r.phase }
         });
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();

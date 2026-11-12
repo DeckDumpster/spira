@@ -4635,6 +4635,10 @@ fn preempt(
     w.out(format!(
         "queue.sh {label}: verified no ejected tip remains in head {new_head}"
     ));
+    if let Err(e) = w.scripts.stop_round_legs(&c.r.name, batch) {
+        w.err(format!("queue.sh {label}: the step of round {batch} that started the stopped pass did not stop ({e}) — the next pass was not started"));
+        return FAIL;
+    }
     if !w.scripts.pass_restart(batch, &c.r.name) {
         w.err(format!("queue.sh {label}: cannot start the next pass of round {batch} — run `queue round certify {batch}`"));
         return FAIL;
