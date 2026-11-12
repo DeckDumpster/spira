@@ -49,6 +49,17 @@ const PAGE: usize = 1_000;
 /// The most audit keys one answer reads, whatever the window: the read stays bounded.
 pub const MAX_SCANNED: usize = 60_000;
 
+#[cfg(test)]
+thread_local!(pub(super) static SCAN_CAP: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) });
+
+fn scan_cap() -> usize {
+    #[cfg(test)]
+    if let Some(cap) = SCAN_CAP.with(|c| c.get()) {
+        return cap;
+    }
+    MAX_SCANNED
+}
+
 /// How far back the index keeps Delivered times, whatever window was asked.
 const DELIVERED_KEPT_S: i64 = 7 * 86_400;
 
@@ -90,6 +101,29 @@ pub struct Landing {
     pub commit: String,
 }
 
+/// `(at, from_state, to_state)`.
+type Move = (i64, String, String);
+
+/// One bead's newest arrival in LANDED.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Arrival {
+    pub bead: String,
+    pub repo: String,
+    pub at: u64,
+}
+
+/// What [`Store::loop_transitions`] answers; `horizon` and `complete` mean what they do in [`Dwell`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Transitions {
+    pub rev: u64,
+    pub horizon: i64,
+    pub complete: bool,
+    pub scanned: usize,
+    pub arrivals: Vec<Arrival>,
+    /// Each CERTIFIED stay that ended in the window, as `(left_at, secs)`.
+    pub stays: Vec<(u64, u64)>,
+}
+
 fn repo_of(r: &LifecycleRecord) -> String {
     r.repo.clone().unwrap_or_else(|| "-".into())
 }
@@ -114,6 +148,12 @@ fn bead_audit(a: &Value) -> (Option<(&str, &str)>, Option<i64>) {
     (named, at)
 }
 
+/// The `(from_state, to_state)` of an applied bead-machine audit.
+fn bead_states(a: &Value) -> Option<(&str, &str)> {
+    let applied = a["applied"].as_bool() == Some(true) && a["machine"].as_str() == Some("bead");
+    a["from_state"].as_str().zip(a["to_state"].as_str()).filter(|_| applied)
+}
+
 /// The audits of the branch an `events/<rev>` key says ran, as stored.
 fn branch(events: &Item) -> &[Value] {
     let data = &events.value.data;
@@ -133,11 +173,14 @@ pub struct LastIndex {
     horizon: i64,
     pub(super) last: BTreeMap<String, BTreeMap<String, i64>>,
     delivered: BTreeMap<String, BTreeSet<(i64, String)>>,
+    /// Per bead, its repo and every applied transition into or out of LANDED or CERTIFIED, as
+    /// `(at, from_state, to_state)`.
+    transitions: BTreeMap<String, (String, BTreeSet<Move>)>,
 }
 
 impl Default for LastIndex {
     fn default() -> Self {
-        LastIndex { low_rev: 0, high_rev: 0, started: false, horizon: i64::MAX, last: BTreeMap::new(), delivered: BTreeMap::new() }
+        LastIndex { low_rev: 0, high_rev: 0, started: false, horizon: i64::MAX, last: BTreeMap::new(), delivered: BTreeMap::new(), transitions: BTreeMap::new() }
     }
 }
 
@@ -165,6 +208,30 @@ impl LastIndex {
                 .insert((at, commit.to_string()));
         }
         Ok(())
+    }
+
+    /// Folds one applied bead audit's states. LANDED is reached by more than `Delivered`, so
+    /// this keys on the states, never on the event's name.
+    pub(super) fn fold_states(
+        &mut self,
+        id: &str,
+        at: i64,
+        (from, to): (&str, &str),
+        repo: &mut impl FnMut(&str) -> Result<Option<String>>,
+    ) -> Result<()> {
+        let (landed, certified) = (BeadState::Landed.as_str(), BeadState::Certified.as_str());
+        if from == to || ![from, to].iter().any(|s| *s == landed || *s == certified) {
+            return Ok(());
+        }
+        let Some(repo) = repo(id)? else { return Ok(()) };
+        self.transitions.entry(id.to_string()).or_insert_with(|| (repo, BTreeSet::new())).1.insert((at, from.to_string(), to.to_string()));
+        Ok(())
+    }
+
+    fn prune(&mut self, floor: i64) {
+        self.delivered.values_mut().for_each(|ats| ats.retain(|(at, _)| *at >= floor));
+        self.transitions.values_mut().for_each(|(_, t)| t.retain(|(at, _, _)| *at >= floor));
+        self.transitions.retain(|_, (_, t)| !t.is_empty());
     }
 
     /// Per repo, the Delivered newer than `t` and at or after `floor`, oldest first.
@@ -221,47 +288,8 @@ impl<B: Backend> Store<B> {
         }
         let floor = now.saturating_sub(window_s as i64);
         let mut d = Dwell { rev: head, now, window_s, horizon: now, beads, ..Default::default() };
-        let mut repo = |id: &str| -> Result<Option<String>> {
-            if let Some(r) = repos.get(id) {
-                return Ok(r.clone());
-            }
-            let key = keys::lifecycle(id);
-            let found = match self.contract().get_at(&key, head)? {
-                Some(i) => Some(repo_of(&decode::<LifecycleRecord>(&key, &i.value)?)),
-                None => None,
-            };
-            repos.insert(id.to_string(), found.clone());
-            Ok(found)
-        };
         let mut idx = self.dwell_index.lock().unwrap_or_else(|e| e.into_inner());
-        if !idx.started {
-            (idx.low_rev, idx.high_rev, idx.started) = (head, head, true);
-        }
-        if idx.high_rev < head {
-            let after = events_key(idx.high_rev);
-            let oldest = self.scan(&mut idx, Some(after), events_key(head), head, &mut d.scanned, &mut repo)?;
-            idx.high_rev = head;
-            idx.reached(oldest);
-        }
-        let mut span = CHUNK_REVS;
-        while idx.horizon > floor && idx.low_rev > 0 && d.scanned < MAX_SCANNED {
-            let hi = idx.low_rev;
-            let lo = hi.saturating_sub(span);
-            let oldest = self.scan(&mut idx, Some(events_key(lo)), events_key(hi), head, &mut d.scanned, &mut repo)?;
-            idx.low_rev = lo;
-            idx.reached(oldest);
-            // Revisions with no audit (lock renewals, a reopen's jump, the import's baseline)
-            // are crossed in doubling strides, so a gap costs a few reads, not one per chunk.
-            span = if oldest.is_some() { CHUNK_REVS } else { (span * 2).min(CHUNK_REVS * 64) };
-        }
-        d.complete = idx.horizon <= floor || idx.low_rev == 0;
-        d.horizon = now.min(idx.horizon);
-        if d.complete {
-            d.horizon = d.horizon.min(floor);
-        }
-        idx.delivered
-            .values_mut()
-            .for_each(|ats| ats.retain(|(at, _)| *at >= now - DELIVERED_KEPT_S));
+        (d.complete, d.horizon) = self.advance(&mut idx, head, now, window_s, &mut repos, &mut d.scanned)?;
         d.last = idx.last_since(floor);
         for (_, round) in self.batches()? {
             let (cut, repo) = (round.value.opened_at, round.value.row.repo.clone());
@@ -275,6 +303,83 @@ impl<B: Backend> Store<B> {
             d.landed_after = idx.landed_after(t, floor);
         }
         Ok(d)
+    }
+
+    /// The one advance of the audit index to `head`, and back until it reaches `now - window_s`
+    /// or [`MAX_SCANNED`] is spent; whether it reached that far, and the horizon it holds.
+    fn advance(&self, idx: &mut LastIndex, head: u64, now: i64, window_s: u64, known: &mut BTreeMap<String, Option<String>>, scanned: &mut usize) -> Result<(bool, i64)> {
+        let floor = now.saturating_sub(window_s as i64);
+        let mut repo = |id: &str| -> Result<Option<String>> {
+            if let Some(r) = known.get(id) {
+                return Ok(r.clone());
+            }
+            let key = keys::lifecycle(id);
+            let found = match self.contract().get_at(&key, head)? {
+                Some(i) => Some(repo_of(&decode::<LifecycleRecord>(&key, &i.value)?)),
+                None => None,
+            };
+            known.insert(id.to_string(), found.clone());
+            Ok(found)
+        };
+        if !idx.started {
+            (idx.low_rev, idx.high_rev, idx.started) = (head, head, true);
+        }
+        if idx.high_rev < head {
+            let after = events_key(idx.high_rev);
+            let oldest = self.scan(idx, Some(after), events_key(head), head, scanned, &mut repo)?;
+            idx.high_rev = head;
+            idx.reached(oldest);
+        }
+        let mut span = CHUNK_REVS;
+        while idx.horizon > floor && idx.low_rev > 0 && *scanned < scan_cap() {
+            let hi = idx.low_rev;
+            let lo = hi.saturating_sub(span);
+            let oldest = self.scan(idx, Some(events_key(lo)), events_key(hi), head, scanned, &mut repo)?;
+            idx.low_rev = lo;
+            idx.reached(oldest);
+            // Revisions with no audit (lock renewals, a reopen's jump, the import's baseline)
+            // are crossed in doubling strides, so a gap costs a few reads, not one per chunk.
+            span = if oldest.is_some() { CHUNK_REVS } else { (span * 2).min(CHUNK_REVS * 64) };
+        }
+        let complete = idx.horizon <= floor || idx.low_rev == 0;
+        let mut horizon = now.min(idx.horizon);
+        if complete {
+            horizon = horizon.min(floor);
+        }
+        idx.prune(now - DELIVERED_KEPT_S);
+        Ok((complete, horizon))
+    }
+
+    /// The loop's LANDED arrivals and ended CERTIFIED stays at or after `now - window_s`, from
+    /// the same index and the same advance [`Store::dwell`] uses.
+    pub fn loop_transitions(&self, now: i64, window_s: u64) -> Result<Transitions> {
+        let head = self.contract().head()?;
+        let mut scanned = 0;
+        let mut idx = self.dwell_index.lock().unwrap_or_else(|e| e.into_inner());
+        let (complete, horizon) = self.advance(&mut idx, head, now, window_s, &mut BTreeMap::new(), &mut scanned)?;
+        let since = now.saturating_sub(window_s as i64);
+        let (landed, certified) = (BeadState::Landed.as_str(), BeadState::Certified.as_str());
+        let mut out = Transitions { rev: head, horizon, complete, scanned, arrivals: Vec::new(), stays: Vec::new() };
+        for (bead, (repo, seen)) in &idx.transitions {
+            let mut entered = None;
+            let mut arrived = None;
+            for (at, from, to) in seen {
+                if to == landed && from != landed {
+                    arrived = Some(*at);
+                }
+                if to == certified && from != certified {
+                    entered = Some(*at);
+                } else if from == certified && to != certified {
+                    if let Some(t) = entered.take().filter(|_| *at >= since) {
+                        out.stays.push(((*at).max(0) as u64, (*at - t).max(0) as u64));
+                    }
+                }
+            }
+            if let Some(at) = arrived.filter(|at| *at >= since) {
+                out.arrivals.push(Arrival { bead: bead.clone(), repo: repo.clone(), at: at.max(0) as u64 });
+            }
+        }
+        Ok(out)
     }
 
     /// Folds the audits of the `events/` keys after `after` up to and including `end`, as of
@@ -303,6 +408,9 @@ impl<B: Backend> Store<B> {
                                 .unwrap_or(""),
                             repo,
                         )?;
+                        if let Some(states) = bead_states(a) {
+                            idx.fold_states(id, at, states, repo)?;
+                        }
                     }
                 }
             }
