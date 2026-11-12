@@ -47,7 +47,7 @@
 //! | Certifying | `unit.ran` red naming suites in a round of several members, first time | Attributing (only the named suites run, alone on each member) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
-//! | Attributing | `unit.ran` land | Certifying, certify held until no pass scope of the round is alive |
+//! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
@@ -1058,7 +1058,7 @@ impl Machine<'_> {
         self.start(CERTIFY, "certify");
     }
 
-    /// Certify refuses a round whose last pass scope is still finishing: it starts once none is alive.
+    /// Certify refuses a round whose last pass is still finishing: it starts once none is running.
     fn hold_certify(&mut self) {
         self.rc.certify_held = true;
         self.rc.leg = None;
@@ -2273,11 +2273,20 @@ pub mod edge {
         Some(super::running_legs(&all))
     }
 
-    /// Of the carried batches, those with a pass scope running; `None` when the manager cannot say.
+    /// Of the carried batches, those with a pass running; `None` when the manager cannot say.
+    /// A scope whose pass has exited is stopped here, said on stderr, so a daemon left in it
+    /// cannot hold the round's certify.
     fn scoped_batches(e: &Effects, repo: &str, carried: &super::Carry) -> Option<Vec<String>> {
-        let units = e.units.as_deref()?;
+        scoped_batches_in(e.units.as_deref()?, repo, carried)
+    }
+
+    pub fn scoped_batches_in(units: &dyn runtime::units::Units, repo: &str, carried: &super::Carry) -> Option<Vec<String>> {
         let mut live = vec![];
         for batch in carried.repos.get(repo)?.rounds().into_iter().filter_map(|r| r.batch) {
+            match runtime::units::stop_ended_pass_scopes(units, repo, &batch) {
+                Ok(lines) => lines.iter().for_each(|l| eprintln!("batcher.local: {repo} {batch}: {l}")),
+                Err(why) => eprintln!("batcher.local: {repo} {batch}: cannot stop an ended pass scope: {why}"),
+            }
             if runtime::units::round_scope_live(units, repo, &batch).ok()? {
                 live.push(batch);
             }

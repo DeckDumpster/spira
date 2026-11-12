@@ -416,6 +416,18 @@ pub trait Units: Send + Sync {
     fn run_scope(&self, spec: &ScopeSpec) -> Result<ScopeHandle> {
         Err(unsupported("this backend", &format!("run a scope for task {}", spec.unit.task)))
     }
+
+    /// The processes now in the unit's cgroup.
+    fn processes(&self, h: &UnitHandle) -> Result<Vec<UnitProcess>> {
+        Err(unsupported("this backend", &format!("list the processes of {}", h.name)))
+    }
+}
+
+/// One process in a unit's cgroup: its pid and `comm`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnitProcess {
+    pub pid: u32,
+    pub comm: String,
 }
 
 /// The completion source: every run that ended since the last call, once each.
@@ -604,11 +616,45 @@ pub fn round_scope_glob(repo: &str, round: &str) -> String {
     format!("{ROUND_SCOPE_PREFIX}{}-*.scope", escape(&round_stem(repo, round)))
 }
 
-/// Whether a pass scope of `round` in `repo` is alive.
+/// The commands a pass runs as: `round-vm run` under its `timeout`. A pass has ended when
+/// neither is left in its scope, whatever else still is.
+const PASS_MAIN_COMMS: [&str; 2] = ["timeout", "round-vm"];
+
+/// What a pass scope holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PassScope {
+    /// The pass's main process is still running.
+    Running(String),
+    /// The pass's main process has exited and the scope is still held open by `left`.
+    Ended { unit: String, left: Vec<UnitProcess> },
+}
+
+/// The live pass scopes of `round` in `repo`, each as running or as ended with what was left in it.
+pub fn round_pass_scopes(units: &dyn Units, repo: &str, round: &str) -> std::result::Result<Vec<PassScope>, String> {
+    let mut out = vec![];
+    for unit in live_pass_scopes(units, repo, round)? {
+        let procs = units.processes(&UnitHandle::named(&unit)).map_err(|e| format!("cannot list the processes of {unit}: {}", e.0))?;
+        out.push(if procs.iter().any(|p| PASS_MAIN_COMMS.contains(&p.comm.as_str())) { PassScope::Running(unit) } else { PassScope::Ended { unit, left: procs } });
+    }
+    Ok(out)
+}
+
+/// Whether a pass of `round` in `repo` is running: a scope alive whose main process has not exited.
 pub fn round_scope_live(units: &dyn Units, repo: &str, round: &str) -> std::result::Result<bool, String> {
-    let glob = round_scope_glob(repo, round);
-    let listed = units.list(&glob).map_err(|e| format!("cannot list {glob}: {}", e.0))?;
-    Ok(listed.iter().any(|d| is_live(d.state)))
+    Ok(round_pass_scopes(units, repo, round)?.iter().any(|s| matches!(s, PassScope::Running(_))))
+}
+
+/// Stops each scope of `round`'s ended passes and waits for it; one line per scope naming what was left in it.
+pub fn stop_ended_pass_scopes(units: &dyn Units, repo: &str, round: &str) -> std::result::Result<Vec<String>, String> {
+    let mut lines = vec![];
+    for scope in round_pass_scopes(units, repo, round)? {
+        if let PassScope::Ended { unit, left } = scope {
+            let names: Vec<String> = left.iter().map(|p| format!("{}[{}]", p.comm, p.pid)).collect();
+            stop_and_wait(units, vec![unit.clone()])?;
+            lines.push(format!("stopped {unit}: its pass had exited; left in it: {}", if names.is_empty() { "nothing".into() } else { names.join(" ") }));
+        }
+    }
+    Ok(lines)
 }
 
 const STOP_POLL_MS: u64 = 100;
@@ -1136,6 +1182,8 @@ struct Script {
     installed: BTreeMap<String, UnitDetail>,
     timers: BTreeMap<String, TimerFacts>,
     scopes: Vec<ScopeSpec>,
+    /// The processes each unit holds, by unit name.
+    processes: BTreeMap<String, Vec<UnitProcess>>,
     /// The properties each unit was last started under, by unit name.
     props: BTreeMap<String, UnitProps>,
     /// A run's exit, its start and its end.
@@ -1170,6 +1218,11 @@ impl ScriptedUnits {
     /// An installed unit with every fact the manager would state.
     pub fn install_detail(&self, d: UnitDetail) {
         lock(&self.s).installed.insert(d.name.clone(), d);
+    }
+
+    /// The processes `name`'s cgroup holds until it is stopped.
+    pub fn hold_processes(&self, name: &str, procs: Vec<UnitProcess>) {
+        lock(&self.s).processes.insert(name.into(), procs);
     }
 
     /// A loaded timer.
@@ -1254,6 +1307,10 @@ fn set_state(d: &mut UnitDetail, state: UnitState, now: u64) {
 }
 
 impl Units for ScriptedUnits {
+    fn processes(&self, h: &UnitHandle) -> Result<Vec<UnitProcess>> {
+        Ok(lock(&self.s).processes.get(&h.name).cloned().unwrap_or_default())
+    }
+
     fn start(&self, spec: &UnitSpec) -> Result<UnitHandle> {
         self.start_with(spec, &UnitProps::default())
     }
@@ -1272,6 +1329,7 @@ impl Units for ScriptedUnits {
         let mut s = lock(&self.s);
         self.settle(&mut s);
         s.calls.push(format!("stop {}", h.name));
+        s.processes.remove(&h.name);
         if let Some(d) = s.installed.get_mut(&h.name) {
             set_state(d, UnitState::Inactive, now);
             d.main_pid = None;
@@ -1934,6 +1992,30 @@ mod systemd {
             self.manager("ResetFailedUnit", &[s(&h.name)]).map(|_| ())
         }
 
+        fn processes(&self, h: &UnitHandle) -> Result<Vec<UnitProcess>> {
+            let group = {
+                let mut bus = lock(&self.bus);
+                let path = Self::unit_path(&mut bus, &h.name)?;
+                let props = get_all(&mut *bus, &path, &type_iface(&h.name));
+                find(&props, "ControlGroup").and_then(Val::as_str).filter(|g| !g.is_empty()).map(String::from)
+            };
+            let Some(group) = group else { return Ok(vec![]) };
+            let dir = std::path::Path::new("/sys/fs/cgroup").join(group.trim_start_matches('/'));
+            let text = match std::fs::read_to_string(dir.join("cgroup.procs")) {
+                Ok(t) => t,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+                Err(e) => return Err(RuntimeError::new(format!("{}: {e}", dir.display()))),
+            };
+            Ok(text
+                .lines()
+                .filter_map(|l| l.trim().parse::<u32>().ok())
+                .filter_map(|pid| {
+                    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+                    Some(UnitProcess { pid, comm: comm.trim().to_string() })
+                })
+                .collect())
+        }
+
         /// A transient service whose stdout and stderr go to two fresh files in the capture
         /// directory; its `unit.ran` carries their tails and removes them.
         fn run_scope(&self, spec: &ScopeSpec) -> Result<ScopeHandle> {
@@ -2346,9 +2428,36 @@ mod tests {
     fn a_round_scope_is_live_for_its_own_round_only() {
         let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
         let live = UnitFacts { state: UnitState::Active, main_pid: Some(7), exit: None, since_ms: Some(0) };
-        u.install(&format!("{}.scope", round_scope_unit("spira", "spira-A", "7-1")), live);
+        let scope = format!("{}.scope", round_scope_unit("spira", "spira-A", "7-1"));
+        u.install(&scope, live);
+        u.hold_processes(&scope, vec![proc(7, "timeout")]);
         assert!(round_scope_live(&u, "spira", "spira-A").unwrap());
         assert!(!round_scope_live(&u, "spira", "spira-B").unwrap());
+    }
+
+    fn proc(pid: u32, comm: &str) -> UnitProcess {
+        UnitProcess { pid, comm: comm.into() }
+    }
+
+    #[test]
+    fn a_scope_whose_pass_exited_is_ended_and_lists_what_it_still_holds() {
+        let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
+        let live = UnitFacts { state: UnitState::Active, main_pid: None, exit: None, since_ms: Some(0) };
+        let running = format!("{}.scope", round_scope_unit("spira", "spira-A", "7-1"));
+        let ended = format!("{}.scope", round_scope_unit("spira", "spira-B", "7-1"));
+        u.install(&running, live.clone());
+        u.install(&ended, live);
+        u.hold_processes(&running, vec![proc(10, "timeout"), proc(11, "round-vm"), proc(12, "sccache")]);
+        u.hold_processes(&ended, vec![proc(20, "sccache"), proc(21, "rustc")]);
+        assert!(round_scope_live(&u, "spira", "spira-A").unwrap());
+        assert_eq!(round_pass_scopes(&u, "spira", "spira-A").unwrap(), vec![PassScope::Running(running)]);
+        assert!(!round_scope_live(&u, "spira", "spira-B").unwrap(), "an exited pass is not running because a daemon is left in its scope");
+        assert_eq!(round_pass_scopes(&u, "spira", "spira-B").unwrap(), vec![PassScope::Ended { unit: ended.clone(), left: vec![proc(20, "sccache"), proc(21, "rustc")] }]);
+        let lines = stop_ended_pass_scopes(&u, "spira", "spira-B").unwrap();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("sccache[20]") && lines[0].contains("rustc[21]") && lines[0].contains(&ended), "{lines:?}");
+        assert!(round_pass_scopes(&u, "spira", "spira-B").unwrap().is_empty());
+        assert!(stop_ended_pass_scopes(&u, "spira", "spira-A").unwrap().is_empty(), "a running pass is left alone");
     }
 
     #[test]
