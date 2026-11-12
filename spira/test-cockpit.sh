@@ -62,12 +62,12 @@ fi
 
 # ======================================================================================
 # A positive control for the absence check above: a run that claims to be a systemd
-# invocation, and one that sets the retired override, must still print and not write.
+# invocation must still print and not write.
 echo
 echo "once never writes, whatever the environment claims:"
 
 rm -f "$RUN/cockpit.env"
-claim_out="$(run_cockpit env INVOCATION_ID=inv-42 SPIRA_COCKPIT_FORCE=1)"
+claim_out="$(run_cockpit env INVOCATION_ID=inv-42)"
 want "the claiming run printed its keys" "SP_AT=" "$claim_out"
 if [ ! -f "$RUN/cockpit.env" ]; then
     ok "INVOCATION_ID does not make once write"
