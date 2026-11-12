@@ -32,7 +32,7 @@
 //! or `bytes`/`mtime` differ, or the body is missing. Missing default projects dir → nothing
 //! (`:327-329`); a configured one that is missing → refuse (`:330`). Rows whose source vanished are
 //! **kept** (`:372-374`). No carry.
-//! **Fixtures:** `spira/test-archive-no-sessions.sh` and the archive test scripts' trees, ported.
+//! **Fixtures:** `the archive-no-sessions suite` and the archive test scripts' trees, ported.
 //!
 //! ## Act
 //!

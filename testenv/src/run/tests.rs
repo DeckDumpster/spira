@@ -152,9 +152,9 @@ fn a_run_with_no_warm_slot_and_no_deadline_never_sweeps_inline() {
 fn a_diff_selected_run_with_tiers_excluding_t1_runs_a_t1_suite_whose_covers_names_the_changed_file() {
     use suite_select::{corpus::{Corpus, Suite}, select::{select, Buckets, Change}};
     let corpus = Corpus::new(vec![
-        Suite::parse("test-testdb-testenv-path.sh", "# tier: T1\n# covers: spira/testdb.sh\n").unwrap(),
+        Suite::parse("test-testdb-pin.sh", "# tier: T1\n# covers: spira/testdb.sh\n").unwrap(),
     ]);
     let opts = diff_select_options("T3", None);
     let got = select(&corpus, &[Change::modified("spira/testdb.sh")], &mut |_| vec![], &Buckets::default(), &opts).unwrap();
-    assert_eq!(got.suites, ["test-testdb-testenv-path.sh"]);
+    assert_eq!(got.suites, ["test-testdb-pin.sh"]);
 }

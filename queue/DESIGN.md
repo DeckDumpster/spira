@@ -148,11 +148,11 @@ most read the exit status only.
 Tests (retired or repointed in §7): `test-queue-submit`, `test-withdrawn-suites-recert`,
 `test-queue-protect`, `test-queue-flush`, `test-queue-ops`, `test-queue-owner-refuse`,
 `test-queue-owner-mail`, `test-queue-step-eject-race`, `test-czar-shadow`,
-`test-queue-open-batch`, `test-queue-land-local`, `test-queue-publish`,
+`test-queue-open-batch`, the queue-land-local suite, `test-queue-publish`,
 `test-queue-transition`, `test-land-local-release`, `test-skew-refresh`, `test-batcher-cut`
 (case L), `test-lifecycle-cutover` (retired; its cases are unit tests over `plan_*` in `spira-lc/src/cutover.rs`), and the stubs in
 `test-certify`, `test-dwarf-gate-close-silent`, `test-landing-order`,
-`test-landing-starvation`, `test-landing-cutover-round`, `test-reconciler`; static checks
+`test-landing-starvation`, `test-landing-cutover-round`, the reconciler suite; static checks
 `test-timer-templates:321`, `test-guards:159,162`, `test-ops-allowlist:150`,
 `test-git-push-app:177`, `test-queue-flush:77`.
 
@@ -396,10 +396,10 @@ store, and the real forge seam.
 
 | suite | action |
 |---|---|
-| `test-queue-ops.sh`, `test-queue-owner-refuse.sh`, `test-queue-owner-mail.sh`, `test-queue-open-batch.sh`, `test-queue-publish.sh`, `test-queue-transition.sh`, `test-queue-land-local.sh`, `test-land-local-release.sh`, `test-queue-protect.sh`, `test-queue-flush.sh` | **repoint** to `$SPIRA_QUEUE_BIN` and cut to one case per subcommand that proves the seam (a real landstate write, a real mail, a real forge stub call); the decision cases are covered by the unit tests named in §9. `test-queue-publish.sh` gains sp-bauwt's red: land two rounds while a publish PR is open, delete their landstate, settle, publish — the second PR carries the second round's members. `test-queue-transition.sh` gains the in-delivery refusal. `test-queue-land-local.sh`/`test-land-local-release.sh` pass `--worktree` and drop `SPIRA_BATCH_BINS_TARGET_DIR`. |
+| `test-queue-ops.sh`, `test-queue-owner-refuse.sh`, `test-queue-owner-mail.sh`, `test-queue-open-batch.sh`, `test-queue-publish.sh`, `test-queue-transition.sh`, the queue-land-local suite, `test-land-local-release.sh`, `test-queue-protect.sh`, `test-queue-flush.sh` | **repoint** to `$SPIRA_QUEUE_BIN` and cut to one case per subcommand that proves the seam (a real landstate write, a real mail, a real forge stub call); the decision cases are covered by the unit tests named in §9. `test-queue-publish.sh` gains sp-bauwt's red: land two rounds while a publish PR is open, delete their landstate, settle, publish — the second PR carries the second round's members. `test-queue-transition.sh` gains the in-delivery refusal. the queue-land-local suite/`test-land-local-release.sh` pass `--worktree` and drop `SPIRA_BATCH_BINS_TARGET_DIR`. |
 | `test-queue-submit.sh`, `test-withdrawn-suites-recert.sh`, `test-queue-step-eject-race.sh`, `test-czar-shadow.sh`, `test-skew-refresh.sh`, `test-batcher-cut.sh` case L | **repoint** the invocation only (`bash "$REPO/spira/queue.sh"` → `"$SPIRA_QUEUE_BIN"`); `test-czar-shadow` expects the cause `eject` on its unflagged ejects |
 | `test-lifecycle-cutover.sh`'s (since deleted) cut/eject-member/abandon cases (issued the `_lc_cut_batch`/`_lc_eject_member`/`_lc_abandon_batch` calls) | **retired** into `plan_cut`/`plan_eject_member`/`plan_abandon` unit tests in `spira-lc/src/cutover.rs`: the CAS shape is `ops::batch::lc_cas`, unit-tested (`eject_with_a_batch_id_ejects_on_spira_lc_too`, switch ON) |
-| stubs: `test-certify.sh:52,352`, `test-dwarf-gate-close-silent.sh:112-136`, `test-landing-order.sh:62`, `test-landing-starvation.sh:73`, `test-landing-cutover-round.sh:54`, `test-reconciler.sh:253-256,450` | stub `SPIRA_QUEUE_BIN` instead of writing a fake `queue.sh` (`SPIRA_QUEUE_SH` → `SPIRA_QUEUE_BIN` for the reconciler) |
+| stubs: `test-certify.sh:52,352`, `test-dwarf-gate-close-silent.sh:112-136`, `test-landing-order.sh:62`, `test-landing-starvation.sh:73`, `test-landing-cutover-round.sh:54`, `the reconciler suite:253-256,450` | stub `SPIRA_QUEUE_BIN` instead of writing a fake `queue.sh` (`SPIRA_QUEUE_SH` → `SPIRA_QUEUE_BIN` for the reconciler) |
 | static: `test-timer-templates.sh:321`, `test-queue-flush.sh:77`, `test-guards.sh:159,162`, `test-ops-allowlist.sh:150`, `test-git-push-app.sh:177` | grep for the new call shapes (`"$SPIRA_QUEUE_BIN" step`, `queue eject`); `test-git-push-app` checks `spira_git_push` is used — it now is, through seam R12, not in queue.sh |
 
 ### 7.5 Interfaces to widen later (findings, not blockers)

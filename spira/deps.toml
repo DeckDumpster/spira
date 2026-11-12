@@ -224,10 +224,10 @@ absent = "cargo test runs nothing: the runner refuses every test binary rather t
 [[dep]]
 name = "rustc"
 tier = "dev"
-purpose = "compiling test-test-sandbox.sh's probe, a real libtest binary started through cargo's runner"
+purpose = "compiling the test-sandbox suite's probe, a real libtest binary started through cargo's runner"
 version_min = ""
 version_probe = "rustc --version"
-absent = "test-test-sandbox.sh bails: it cannot build its probe, so nothing proves the test sandbox holds."
+absent = "the test-sandbox suite bails: it cannot build its probe, so nothing proves the test sandbox holds."
 
 [[dep]]
 name = "inotifywait"
@@ -888,6 +888,6 @@ version_probe = "readlink -f \"$(command -v pilgrim-login)\""
 [[dep]]
 name = "sim-replay"
 tier = "release"
-purpose = "Spira's sim-replay binary, from the release's bin/ — replays the captured fixture days on the simulator and runs the replay checks test-sim-replay.sh reports"
+purpose = "Spira's sim-replay binary, from the release's bin/ — replays the captured fixture days on the simulator and runs the replay checks"
 version_min = ""
 version_probe = "readlink -f \"$(command -v sim-replay)\""

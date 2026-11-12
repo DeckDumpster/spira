@@ -302,7 +302,7 @@ fn cmd_link_model_bin(release: &str) -> ExitCode {
 /// SPIRA_HOME's own derivation"). `home.join("conf.d")` alone would look for a registry
 /// inside the fixture, find nothing, and `resolve` would silently compute only its ~30
 /// hand-ported keys — every one of the ~270 registry-backed keys gone without an error
-/// (sp-ubcgo: caught by test-conf-toml.sh's T1 before this override existed). `None` keeps
+/// (sp-ubcgo: caught by the conf-toml suite's T1 before this override existed). `None` keeps
 /// the plain `home.join("conf.d")` default, for callers whose `SPIRA_HOME` is not a symlink
 /// target at all (every Rust crate that calls `resolve()` as a library already passes its
 /// own `conf_d`, so this override is a CLI-only concern).

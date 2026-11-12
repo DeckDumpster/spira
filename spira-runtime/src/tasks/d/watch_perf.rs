@@ -20,7 +20,7 @@
 //! ## Decide
 //!
 //! - `decide(carry, snap, now, cfg) -> (Carry, Out)`: today's `run_pass` (`lib.rs:262-301`) with the probing lifted out. That is `pass` (`lib.rs:145-161`), `alarms` (`lib.rs:111-121`), `top_callers` (`lib.rs:67`), remind dedup by `alarm_key` (`lib.rs:222,288-296`) and `slow_samples` (`lib.rs:130-142`).
-//! - Carry is today's `--health` file, `Health { last_pass, alarms: key→printed_at, sample_at, sample }` (`lib.rs:170-219`), emitted as `watch.perf.state`. `--record` (`perf-watch.last`, `main.rs:153-156`) has no reader in the release outside its unit test (`spira/test-perf-watch-units.sh`). It becomes a field of the carry, not a file.
+//! - Carry is today's `--health` file, `Health { last_pass, alarms: key→printed_at, sample_at, sample }` (`lib.rs:170-219`), emitted as `watch.perf.state`. `--record` (`perf-watch.last`, `main.rs:153-156`) has no reader in the release outside its unit test (`the perf-watch-units suite`). It becomes a field of the carry, not a file.
 //! - Config: `budget_ms` = `SPIRA_READ_WATCH_BUDGET_MS`, `interval_secs` = `SPIRA_READ_WATCH_INTERVAL`, `remind_secs` = `SPIRA_READ_WATCH_REMIND` (`main.rs:130-134`).
 //! - Fixtures: the unit tests in `perf-watch/src/lib.rs:341-541` port as-is: standing alarm reminds, a cleared alarm forgets, exactly-the-limit is not slow, an unrunnable probe is an alarm, a restarted counter, health round-trips.
 //!

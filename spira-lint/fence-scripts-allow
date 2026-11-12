@@ -13,7 +13,5 @@ spira/build-fence.sh
 spira/czar-fence.sh
 spira/plan-lint.sh
 spira/suite-state-fence.sh
-spira/test-broker-allowlist-lint.sh
-spira/test-build-fence.sh
 spira/test-czar-lint.sh
 spira/test-suite-state-fence.sh

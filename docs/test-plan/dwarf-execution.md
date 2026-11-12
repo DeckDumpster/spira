@@ -6,7 +6,7 @@
 > the bead is open again` (the NON-WORK-type positive-control row: a spike bead closed with
 > nothing committed, run through a real `dwarf.sh` session), rc=1 after 428s. Green on the
 > immediate serial rerun of the identical tree, rc=0 after 172s — CI's own diagnostics
-> classified it `red-green (flake)`, distinct from `test-governor-deleted.sh`'s `red-red` on
+> classified it `red-green (flake)`, distinct from the governor-deleted suite's `red-red` on
 > the same run (a real defect, not a flake). Root cause not yet isolated.
 >
 > **Coverage re-added — UC-dwarf-execution-18** (sp-v62vn). The submitted exit ledgered the
@@ -27,7 +27,7 @@
 
 Part of [[test-plan-2026-09-23]], section 5. Area id `dwarf-execution`; use-case ids are `UC-dwarf-execution-NN`.
 
-Scope: one bead inside one `dwarf.sh` run (claim → worktree → briefs → agent → heartbeat/lease/thrash → teardown disposition), the attempt accounting that disposition feeds (`session_outcome`, `outcome_charges`, `attempts_of`/`requeues_of`/`reopens_of`), and the terminal valve: sentinel CHECK 4 (poison, requeue cap, reclaim cap). `slay.sh` is included because its `.slain` marker is one of the teardown inputs. 37 primary files; 35 ran on main push 35947142904; `test-dwarf-heartbeat.sh` and `test-dwarf-launch-grammar.sh` did not run (NA).
+Scope: one bead inside one `dwarf.sh` run (claim → worktree → briefs → agent → heartbeat/lease/thrash → teardown disposition), the attempt accounting that disposition feeds (`session_outcome`, `outcome_charges`, `attempts_of`/`requeues_of`/`reopens_of`), and the terminal valve: sentinel CHECK 4 (poison, requeue cap, reclaim cap). `slay.sh` is included because its `.slain` marker is one of the teardown inputs. 37 primary files; 35 ran on main push 35947142904; `test-dwarf-heartbeat.sh` and the dwarf-launch-grammar suite did not run (NA).
 
 Sources: mapper records `map/*.jsonl` (37 files), reducers r1 (`dwarf-session-lifecycle`, `failure-accounting`), r2 (`dwarf-outcome-and-intervention`), r3 (`session-outcome-and-poison`), `signals.tsv`, and read-only greps of `spira/dwarf.sh` (2347 lines), `spira/lib.sh`, `spira/sentinel.sh`. Line numbers below are from the harness checkout on 2026-09-23.
 
@@ -84,7 +84,7 @@ Cost is the CI seconds of the whole file (main push). "e2e" means the proposed s
 
 | UC | Existing tests (file::case) | Level now / cost | Verdict |
 |---|---|---|---|
-| 01 | test-cross-repo.sh::{commit in second repo, second owns branch, no commit in home, log says repo:second}; test-dwarf-resume.sh::{stale base setup, branch from fresh origin} | T3 / 7 + (part of) 33 | MERGE-INTO e2e (one cross-repo run asserting base = fresh origin). `worktree_evict_foreign` has no test (gap G10). |
+| 01 | the cross-repo suite::{commit in second repo, second owns branch, no commit in home, log says repo:second}; test-dwarf-resume.sh::{stale base setup, branch from fresh origin} | T3 / 7 + (part of) 33 | MERGE-INTO e2e (one cross-repo run asserting base = fresh origin). `worktree_evict_foreign` has no test (gap G10). |
 | 02 | test-dwarf-presession-death.sh::{FATAL names git error, ledger pre-session, second death, positive control turns=1} | T3 / 15 | MERGE-INTO e2e (keep the ambiguous-ref run; the success control is already covered by every other e2e row) |
 | 03 | test-timeout.sh::poison-after-claim guard precedes workspace setup (line-order grep) | grep / (in 156) | SOURCE-GREP → T1 row in the disposition table (G7) |
 | 04 | test-dwarf-world-stop.sh (19 asserts, 4 runs) | T3 / 20 | DEMOTE-TO-T1 (`world_stop_decide`: label, pidfiles, override) + 1 e2e row (stop precedes start) |
@@ -112,7 +112,7 @@ Cost is the CI seconds of the whole file (main push). "e2e" means the proposed s
 | 24 | test-requeue.sh::{deadlock sweep dry run, --apply} | T3 / (in 294) | Move to T2 `test-deadlock-sweep.sh` (stub the landability check or use a 1-commit temp repo; no dwarf runs) |
 | 25 | test-timeout.sh::{at-limit call produces an ask, ask says timed out} | T2 / (in 156) | DEMOTE-TO-T1 (stub mail; no bd needed). DELETE the `ops_age_of`/`age_of` cases: they test copies of cockpit.sh inlined in the test. Re-home them to the cockpit area against the real function. Also DELETE the `timeouts_of`/`bump_timeout` dead-stub asserts. |
 | 26 | test-slay.sh (16 groups, ~60 asserts) | T2 / 60 | KEEP (T2). Arg refusals and `-h` → T1 (~-10 s). SOURCE-GREP: the marker-first grep on a section comment becomes a behaviour check (a stub `kill` records whether `.slain` exists). |
-| 27 | test-dwarf-launch-grammar.sh (NA: needs the real claude binary) | T4-ish / NA | DELETE from the suite list; move the 2 checks into `doctor.sh` |
+| 27 | the dwarf-launch-grammar suite (NA: needs the real claude binary) | T4-ish / NA | DELETE from the suite list; move the 2 checks into `doctor.sh` |
 
 ## 4. Duplicate clusters
 
@@ -132,7 +132,7 @@ Cost is the CI seconds of the whole file (main push). "e2e" means the proposed s
 | D12 | Ledger `status=` field | test-dwarf-ledger.sh, test-dwarf-presession-death.sh, test-dwarf-yield-headless.sh, test-dwarf-exit.sh::ledger records closed | Disposition table (the status column) |
 | D13 | Rendered prompt text | test-dwarf-resume.sh, test-dwarf-verdict.sh (DEADLINE/ALREADY_DONE), test-dwarf-prompt-layers.sh | One T1 brief-render suite |
 | D14 | Rune knob declarations grep | test-dwarf-prompt-layers.sh (RUNE_SYSTEM_PROMPT ×6), test-rune-project-instructions.sh (×6), test-ops-closing.sh (RUNE_SOP_REQUIRED), test-groom-escalation-check.sh (conf keys) | One T0 rune-schema lint |
-| D15 | Full-dwarf fixture pattern | 20 suites each build a fresh bd store, a bare origin, a clone and a claude shim per case (r1 note: "17 of the dwarf suites"). test-dwarf-verdict.sh, test-dwarf-eviction-race.sh and test-cross-repo.sh each copy every non-test `*.sh` into SPIRA_HOME. | One shared fixture library + one e2e suite |
+| D15 | Full-dwarf fixture pattern | 20 suites each build a fresh bd store, a bare origin, a clone and a claude shim per case (r1 note: "17 of the dwarf suites"). test-dwarf-verdict.sh, test-dwarf-eviction-race.sh and the cross-repo suite each copy every non-test `*.sh` into SPIRA_HOME. | One shared fixture library + one e2e suite |
 
 ## 5. Unit-extractable logic
 
@@ -234,12 +234,12 @@ Landed in this slice, none of which needs the above:
   `spira/plan-lint.sh`-readable `UC-dwarf-execution-NN` declarations in §2 added.
 
 **UC-dwarf-execution-27 verdict not applied — reopened on rebase.** A prior slice of this bead
-deleted `spira/test-dwarf-launch-grammar.sh` and added its missing positive control to
+deleted the dwarf-launch-grammar suite and added its missing positive control to
 `spira/doctor.sh`'s AGENT LAUNCH GRAMMAR section, on the premise that the "on is accepted"
 half already lived there. Rebasing onto `origin/main` picked up `sp-utt1i`'s "doctor.sh
 becomes runtime health only", which deleted that section along with every other host-preflight
 check in the same pass (preflight is `pre-activate.sh`'s job now); neither `doctor.sh` nor
-`pre-activate.sh` on `origin/main` runs this check at all. `test-dwarf-launch-grammar.sh`
+`pre-activate.sh` on `origin/main` runs this check at all. the dwarf-launch-grammar suite
 already carried both checks itself (positive control included, pre-dating this bead), so it
 was restored rather than deleted — deleting it now would have left the contract untested.
 UC-27 is deferred to `sp-eq8a4.2`, which needs a decision on whether the check's new home is
@@ -509,7 +509,7 @@ Suites that only exercised these functions directly are deleted with them:
 `test-session-result-fields.sh`, `test-brief-notes.sh`, `test-dwarf-worktree-evict-foreign.sh`,
 `test-dwarf-settings-guard-allowlist.sh`. Suites that mixed a dead row with a still-live one
 (`test-dwarf-disposition.sh`, `test-dwarf-world-stop.sh`, `test-dwarf-resume.sh`,
-`test-dwarf-lease.sh`, `test-holds.sh`, `test-dwarf-eviction-race.sh`,
+`test-dwarf-lease.sh`, the holds suite, `test-dwarf-eviction-race.sh`,
 `test-dwarf-prompt-layers.sh`, `test-rune-project-instructions.sh`, `test-persona-model.sh`)
 keep their e2e/live rows and lose only the dead-function row. UC-dwarf-execution-03 and
 UC-dwarf-execution-08 lose their last covering suite and are marked `[use_case.uncovered]` in
@@ -523,9 +523,9 @@ end to end through the real `dwarf` binary.
 `sp-wkgyc` asked where `dwarf_disposition`'s declared set now lives: `dwarf/src/decide.rs`
 (`NoteKey`, `Disposition`, `pub fn disposition`), not lib.sh.
 
-## 14. test-holds.sh deleted as a flip (sp-aufxu, 2026-10-01)
+## 14. the holds suite deleted as a flip (sp-aufxu, 2026-10-01)
 
-`test-holds.sh` (`spira/holds.sh`, `lib.sh`'s `bead_named_paths`/`render_holds_brief`, no
+the holds suite (`spira/holds.sh`, `lib.sh`'s `bead_named_paths`/`render_holds_brief`, no
 catalogued `UC-` of its own — it predates this area's numbered use cases and was never
 folded in) went red in `concierge/sp-aufxu`'s landing gate under the full parallel
 corpus, in its T5 case only: a claiming dwarf's own rendered prompt should name the
@@ -541,7 +541,7 @@ sp-caetu — T5 claims a real bead through a real dwarf inside the container, an
 leading theory is that its prompt-capture step is what goes silently empty under cgroup
 memory/CPU contention (the pass that caught this peaked at ~5.5GiB across 79 suites),
 rather than the suite being wrong about what it expects. No `[use_case.uncovered]`
-marker: `test-holds.sh` never covered a numbered `UC-dwarf-execution-NN`, so no catalogue
+marker: the holds suite never covered a numbered `UC-dwarf-execution-NN`, so no catalogue
 entry is orphaned by its removal — this section is the only record of what it checked.
 
 **Re-added (sp-caetu).** Root cause found: since dwarf refuses a `--home` with no `conf.d`

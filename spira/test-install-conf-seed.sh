@@ -46,7 +46,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 # spira-config is the tree under test's own build, by name on the suite's PATH (sp-gypjk).
 command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 
-# A minimal harness tree, same shape test-conf-writeback.sh and test-conf-toml.sh already
+# A minimal harness tree, same shape the conf-writeback and conf-toml suites already
 # build: no .git, so SPIRA_REPO derives to the fixture itself rather than any real checkout.
 HARNESS="$TMP/harness"
 mkdir -p "$HARNESS/spira"

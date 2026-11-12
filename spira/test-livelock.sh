@@ -25,7 +25,7 @@
 #
 #   INVALID-CLOSED / UNFILED-FOLLOW   close_reason classification, covered exhaustively
 #                        (every phrase, every tracking-reference exemption) by
-#                        test-close-reason-flags.sh against `strand close-reason` directly,
+#                        the close-reason-flags suite against `strand close-reason` directly,
 #                        no database. This suite keeps ONE row of each proving
 #                        detect_invalid_closed's output actually reaches cockpit-collect
 #                        livelock's report — the integration, not the classification.

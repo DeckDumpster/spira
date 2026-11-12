@@ -22,7 +22,7 @@
 //! unreadable count files nothing and says so; an open trigger skips; an unadmitted lane skips;
 //! `live_owing + landings < SPIRA_GROOM_THRESHOLD` skips (an unreadable `live_owing` counts as 0);
 //! otherwise file. Fixtures port `spira/test-groom-trigger.sh` and
-//! `spira/test-groomer-litter-predicate.sh`.
+//! `the groomer-litter-predicate suite`.
 //!
 //! # Act
 //!

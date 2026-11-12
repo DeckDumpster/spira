@@ -27,7 +27,6 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 # value (same shape as the SPIRA_DB pattern elsewhere, round 5 — this suite's own core
 # detect-and-alert path was silently looking at the wrong maildir the whole time).
 export SPIRA_MAIL="$TMP/mail"
-export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
 export SPIRA_HOME="$HERE"
 export HOME="$TMP/home"; mkdir -p "$HOME"
 export SPIRA_CONF="$TMP/no-such-spira.conf"
@@ -36,7 +35,7 @@ export SPIRA_CONF="$TMP/no-such-spira.conf"
 # the complete fixture now declares mail_mute=true, which would silently mute every
 # delivery this suite counts on. Declared false here so conf.sh exports the override.
 tl_config SPIRA_RUN="$TMP/run" SPIRA_ID_PREFIX="sp" SPIRA_MAIL_UNREAD_AGE=60 SPIRA_MAIL_MUTE=false \
-    SPIRA_MAIL="$TMP/mail"
+    SPIRA_MAIL="$TMP/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds"
 
 HEALTH=mail-health.sh   # invoked by name on the suite's PATH (sp-gypjk)
 MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)

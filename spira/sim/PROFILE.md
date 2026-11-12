@@ -1,6 +1,6 @@
 # Where one sim world's time goes
 
-`sim run` prints `sim: profile …` on success (also for `--keep`); `test-sim-happy-path.sh` (a loop
+`sim run` prints `sim: profile …` on success (also for `--keep`); the happy-path sim suite (a loop
 world: `loop wall=… effects=…`) echoes it per world. `cpu=` is the CPU of every process the world ran and
 reaped: it does not stretch when the box is busy the way wall does, so compare worlds by it.
 

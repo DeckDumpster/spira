@@ -23,7 +23,7 @@
 # the fix, confirming this test detects the leak rather than passing for an unrelated reason.
 #
 # tier: T3
-# covers: spira/testdb.sh spira/test-cockpit-bd-contract.sh UC-test-infrastructure-22
+# covers: spira/testdb.sh spira/test-bd-contract.sh UC-test-infrastructure-22
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -127,7 +127,7 @@ suite_env=(
 # section tested timeouts_of/bump_timeout/spira_ask_timeout_loop, all retired outright
 # (zero live callers); what remains (SP_OPS_AGE, a pure /proc read) sources lib.sh
 # directly and never calls testdb_up, so it has nothing left to protect here either.
-for suite in test-cockpit-bd-contract; do
+for suite in test-bd-contract; do
     [ -f "$HERE/$suite.sh" ] || { bad "$suite is listed but does not exist" "missing $HERE/$suite.sh"; continue; }
     out="$("${suite_env[@]}" bash "$HERE/$suite.sh" 2>&1)"; rc=$?
     if [ $rc -ne 0 ]; then

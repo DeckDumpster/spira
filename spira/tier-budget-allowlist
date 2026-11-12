@@ -32,7 +32,6 @@ test-dwarf-decision-blocked.sh	T1	33.0
 test-dwarf-dirty-commit.sh	T1	4.0
 test-dwarf-exit.sh	T1	94.0
 test-dwarf-heartbeat.sh	T1	20.5
-test-dwarf-launch-grammar.sh	T1	2.0
 test-dwarf-ledger.sh	T1	49.0
 test-dwarf-operator-wait.sh	T1	53.0
 test-dwarf-presession-death.sh	T1	44.0
@@ -58,9 +57,7 @@ test-bd-schema-stamp.sh	T1	2.5
 test-bead-file.sh	T1	27.0
 test-beads-sparklines.sh	T1	3.0
 test-bin-manifest.sh	T1	3.0
-test-boundary.sh	T1	3.5
 test-branch-guard.sh	T1	3.0
-test-broker-allowlist-lint.sh	T0	5.0
 test-broker.sh	T1	15.0
 test-build-bd-release.sh	T1	2.0
 test-builder-qa-proposed.sh	T1	4.0
@@ -89,7 +86,6 @@ test-check5-unmapped-repo.sh	T1	50.5
 test-check8-progressed.sh	T1	26.0
 test-ci-park.sh	T1	39.5
 test-citations.sh	T1	6.0
-test-cockpit-bd-contract.sh	T2	18.5
 test-cockpit-collect-concurrency.sh	T1	3.0
 test-cockpit-collect-probes.sh	T1	1.5
 test-cockpit-collector-quota.sh	T1	2.0
@@ -123,7 +119,6 @@ test-conf.sh	T1	3.0
 test-configure.sh	T1	2.0
 test-containment.sh	T1	21.5
 test-content-landed-no-reopen.sh	T1	29.5
-test-cross-repo.sh	T1	35.5
 test-ctrl.sh	T1	55.5
 test-ctx-pointer.sh	T1	5.0
 test-czar-partition.sh	T1	17.0
@@ -152,7 +147,6 @@ test-gate-sweep.sh	T1	8.5
 test-gate-unit.sh	T1	4.5
 test-gh-issue-closeout.sh	T1	33.0
 test-gh-run-gate.sh	T1	9.0
-test-governor-deleted.sh	T1	3.0
 test-groom-trigger.sh	T1	4.0
 test-groomer.sh	T1	3.0
 test-guards.sh	T1	10.0
@@ -239,7 +233,6 @@ test-strand-deferred.sh	T1	2.0
 test-strand-lock.sh	T1	3.0
 test-strand-partition.sh	T1	2.0
 test-strand-pool-paused.sh	T1	2.0
-test-strand-throttle.sh	T1	2.0
 test-strand-truncated.sh	T1	4.0
 test-suite-state-fence.sh	T1	6.0
 test-suite-times.sh	T1	2.0
@@ -270,7 +263,6 @@ test-watchtower-throttle.sh	T1	11.0
 test-watchtower.sh	T1	143.0
 test-wiki-add-fence.sh	T1	1.5
 test-work-services-exclusion.sh	T1	2.5
-test-worktree-absent.sh	T1	2.0
 test-world-drain-deadline.sh	T1	3.0
 test-world-drain.sh	T1	3.0
 test-world-start-honours-ctrl.sh	T1	5.0

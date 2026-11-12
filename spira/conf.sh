@@ -69,7 +69,7 @@ SPIRA_CONF_LOADED=1
 # not beside wherever a test symlinked it, so this one path is read with the link followed;
 # `dirname "${BASH_SOURCE[0]}"` alone resolved to the fixture's empty spira/ directory and
 # refused every such suite with "conf-gen.sh failed to regenerate" (caught by test-conf.sh,
-# test-conf-toml.sh and test-conf-writeback.sh — 76 assertions, first attempt at this fix).
+# the conf-toml and conf-writeback suites — 76 assertions, first attempt at this fix).
 _spira_conf_gen_ensure() {   # _spira_conf_gen_ensure <keys|defaults> -> sources the named
                              # generated fragment, regenerating first if it is stale
     local _dir _which="${1:?_spira_conf_gen_ensure needs keys or defaults}" _gen _src _stale="" _real

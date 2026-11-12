@@ -24,7 +24,7 @@
 #
 # SPIRA_BDJSON_FIXTURE, NOT A REAL STORE. unsent_keys' only bd reads are `show <id>` per
 # branch and the closed-beads `list` folded into the same function; the query shape itself is
-# covered once in test-cockpit-bd-contract.sh, against real bd. Git stays real — it is cheap,
+# covered once in the real-bd cockpit contract suite. Git stays real — it is cheap,
 # and the branch-walking half of this probe is exactly what a mocked bd cannot exercise.
 #
 # defect: sp-884p sp-ctag9

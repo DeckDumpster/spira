@@ -13,7 +13,7 @@
 # A REAL bd ON A THROWAWAY DATABASE, because every claim is about what bd does
 # with a status, a claim and an assignee (law-prefer-the-real-dependency). The
 # pure pidfile-liveness logic (hold_alive/holder_alive/spira_holder_witnesses,
-# no bd needed) is test-hold-liveness.sh (T1).
+# no bd needed) is covered separately (T1).
 #
 # defect: sp-oz0b
 # tier: T2
