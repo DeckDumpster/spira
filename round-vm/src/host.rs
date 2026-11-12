@@ -87,7 +87,7 @@ impl LocalRemote {
 
     fn shell(&self, script: &str) -> std::process::Command {
         let mut c = command("bash");
-        c.arg("-c").arg(script).current_dir(&self.home).env("HOME", &self.home);
+        c.arg("-c").arg(script).current_dir(&self.home).env("HOME", &self.home).env_remove("SPIRA_HOME");
         for (k, v) in operator_dirs(&|k| std::env::var(k).ok()) {
             c.env(k, v);
         }
@@ -363,6 +363,15 @@ mod tests {
         let out = c.output().unwrap();
         let said = String::from_utf8_lossy(&out.stdout).to_string();
         assert_eq!(said.lines().collect::<Vec<_>>(), vec![d.path().to_str().unwrap(); 2]);
+    }
+
+    #[test]
+    fn a_host_round_does_not_inherit_the_schedulers_registry_home() {
+        let d = dir("home-unset");
+        let r = LocalRemote { home: d.path().to_path_buf() };
+        let c = r.shell("true");
+        let cleared = c.get_envs().any(|(k, v)| k == "SPIRA_HOME" && v.is_none());
+        assert!(cleared, "the host shell removes SPIRA_HOME from the child's inherited environment");
     }
 
     fn alive(pid: i32) -> bool {

@@ -731,6 +731,7 @@ rel_sha="$(SPIRA_HOME="$HOME/round-work/spira" target/release/release build "$(g
 SPIRA_HOME="$HOME/round-work/spira" target/release/release verify "$rel_sha" --no-pre-activate --releases "$HOME/round-releases" > /dev/null 2> ~/round-release.err || release_red "verify"
 prune_release_intermediates
 export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
+export SPIRA_HOME="$SPIRA_RELEASE/spira"
 export SPIRA_REPO="$HOME/round-work"
 export PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 got="$(command -v spira-config || true)"
@@ -740,7 +741,7 @@ if [ "$got" != "$SPIRA_RELEASE/bin/spira-config" ]; then
 fi
 # The attribution reruns (spool.rs REMOTE_ATTR_SCRIPT) source this and run the batch, which
 # refuses without the round's config: SPIRA_TOML rides with the release (sp-anhnd6).
-printf 'export SPIRA_RELEASE=%q\nexport SPIRA_REPO=%q\nexport SPIRA_TOML=%q\nexport PATH=%q\n' "$SPIRA_RELEASE" "$SPIRA_REPO" "$SPIRA_TOML" "$PATH" > ~/round-launcher.env
+printf 'export SPIRA_RELEASE=%q\nexport SPIRA_HOME=%q\nexport SPIRA_REPO=%q\nexport SPIRA_TOML=%q\nexport PATH=%q\n' "$SPIRA_RELEASE" "$SPIRA_HOME" "$SPIRA_REPO" "$SPIRA_TOML" "$PATH" > ~/round-launcher.env
 echo "round-vm: launcher: SPIRA_RELEASE=$SPIRA_RELEASE" >&2
 phase image
 tag="$(testenv container tag)" || tag=""
@@ -3595,6 +3596,14 @@ mod tests {
         }
         assert!(REMOTE_SCRIPT.contains("RELEASE-VERIFY: RED at $1"));
         assert!(REMOTE_SCRIPT.contains("grep -v '^ *$' ~/round-release.err | head -20 >&2\n    exit 4"));
+    }
+
+    #[test]
+    fn the_staged_release_is_the_registry_home_before_the_first_command_that_reads_config() {
+        let home = REMOTE_SCRIPT.find("export SPIRA_HOME=\"$SPIRA_RELEASE/spira\"").expect("the launcher exports the staged release's registry home");
+        let declared = REMOTE_SCRIPT.find("export SPIRA_RELEASE=\"$HOME/round-releases/$rel_sha\"").unwrap();
+        assert!(declared < home && home < REMOTE_SCRIPT.find("testenv container tag").unwrap());
+        assert!(REMOTE_SCRIPT.contains("export SPIRA_HOME=%q"), "the attribution reruns source it from the launcher env");
     }
 
     #[test]
