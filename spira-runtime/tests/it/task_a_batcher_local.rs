@@ -456,6 +456,30 @@ fn sp_byw57t_certify_waits_for_the_attribution_passs_scope_to_end() {
     assert!(acts.iter().any(|a| a.effect == CERTIFY), "certify starts once the scope has ended: {acts:?}");
 }
 
+/// The pass exits green while the shared build-cache server is left in its scope: observe
+/// stops the scope and certify starts on the next decide, not when the daemon dies.
+#[test]
+fn sp_b2azes_a_daemon_left_in_the_pass_scope_does_not_hold_certify() {
+    use runtime::units::{ScriptedUnits, UnitFacts, UnitProcess, UnitState, Units};
+    let units = ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)));
+    let scope = format!("{}.scope", runtime::units::round_scope_unit("spira", "r9", "7-1"));
+    units.install(&scope, UnitFacts { state: UnitState::Active, main_pid: None, exit: None, since_ms: Some(0) });
+    units.hold_processes(&scope, vec![UnitProcess { pid: 880229, comm: "sccache".into() }]);
+    let mut c = driving(State::Certifying, "");
+    {
+        let rc = c.repos.get_mut("spira").unwrap();
+        rc.leg = None;
+        rc.certify_held = true;
+        rc.leg_at_ms = NOW;
+    }
+    let mut snap = idle();
+    snap.repos.get_mut("spira").unwrap().scoped_batches = spira_runtime::tasks::a::batcher_local::edge::scoped_batches_in(&units, "spira", &c);
+    assert_eq!(snap.repos["spira"].scoped_batches, Some(vec![]));
+    assert!(!units.list("*").unwrap().iter().any(|d| d.name == scope && matches!(d.state, UnitState::Active)), "the scope was stopped");
+    let (_, acts) = decide(&c, &snap);
+    assert!(acts.iter().any(|a| a.effect == CERTIFY), "certify starts within one tick: {acts:?}");
+}
+
 /// A certify red naming a suite in a round of several members is attributed on that suite,
 /// and the survivors are certified again and land (sp-b0lhx6).
 #[test]
