@@ -120,7 +120,7 @@ pub fn request_done(verb: &str, method: &str, caller: &str, task: Option<&str>, 
         t.0 += 1;
         t.1 += took.as_millis() as u64;
     }
-    if !is_batch_method(method) {
+    if !is_batch_method(method) && !is_long_poll(method) {
         append(took, &verb, &caller, "REQUEST");
     }
 }
@@ -155,6 +155,10 @@ fn is_batch_method(method: &str) -> bool {
     method == "facts-query" || method.strip_prefix("work:").is_some_and(crate::work::brokers_tool)
 }
 
+fn is_long_poll(method: &str) -> bool {
+    method == "watch"
+}
+
 pub fn sample(method: &str, took: Duration) {
     if let Ok(mut l) = LATENCY.lock() {
         l.record(method, std::time::Instant::now(), took.as_millis() as u64);
@@ -169,7 +173,7 @@ pub fn latency_breaches(now: std::time::Instant) -> Vec<String> {
 
 impl Latency {
     fn record(&mut self, method: &str, now: std::time::Instant, ms: u64) {
-        if !is_batch_method(method) {
+        if !is_batch_method(method) && !is_long_poll(method) {
             self.samples.entry(clean(method)).or_default().push_back((now, ms));
         }
     }
@@ -358,6 +362,24 @@ mod tests {
         assert!(l.breaches(t0, 1).is_empty());
         let (mut l, t0) = fed("work:note", &[4000; 20]);
         assert_eq!(l.breaches(t0, 1).len(), 1, "a store-only lane verb is held to the ceiling");
+    }
+
+    #[test]
+    fn a_long_poll_does_not_alarm() {
+        let (mut l, t0) = fed("watch", &[2000; 20]);
+        assert!(l.breaches(t0, 1).is_empty());
+    }
+
+    #[test]
+    fn a_long_poll_writes_no_request_line() {
+        let d = testkit::TempDir::new("slow-poll");
+        let log = d.join("s.log");
+        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap())), ("SPIRA_SLOW_QUERY_MS", Some("0"))]);
+        request_done("watch", "watch", "spira-runtime", None, Duration::from_secs(2));
+        assert!(std::fs::read_to_string(&log).unwrap_or_default().is_empty());
+        request_done("list", "list", "spira-runtime", None, Duration::from_secs(2));
+        let got = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(got.lines().filter(|l| l.ends_with("REQUEST")).count(), 1, "{got}");
     }
 
     #[test]
