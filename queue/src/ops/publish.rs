@@ -245,6 +245,34 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         return OK;
     }
 
+    if let Some((pr, branch)) = open_publish_at(w, &c, &path, &remote, &head_sha) {
+        let rec = publish_record(
+            &pr,
+            &head_sha,
+            &forge_sha,
+            &members,
+            w.clock.now(),
+            &branch,
+            &remote,
+            &forge_branch,
+        );
+        if let Err(e) = write_atomic(&pfile, &rec.render()) {
+            w.err(format!("queue.sh publish: {e}"));
+            return FAIL;
+        }
+        landing_log(
+            &c.s.run,
+            &format!(
+                "QUEUE PUBLISH_ADOPTED {} repo={name} pr={pr} branch={branch} closed=0",
+                w.clock.now()
+            ),
+        );
+        w.out(format!(
+            "queue.sh publish: PR {pr} ({branch}) is already open at {head_sha} — adopted, no second PR opened"
+        ));
+        return OK;
+    }
+
     let stamp = w.clock.stamp();
     let branch = format!("spira/publish/{stamp}");
     if !w
@@ -290,19 +318,16 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         return FAIL;
     }
     let opened = w.clock.now();
-    let mut rec = Kv::default();
-    for (k, v) in [
-        ("pr", pr.clone()),
-        ("head", head_sha.clone()),
-        ("base", forge_sha.clone()),
-        ("members", crate::model::render_members(&members)),
-        ("opened", opened.to_string()),
-        ("branch", branch.clone()),
-        ("remote", remote.clone()),
-        ("forge_branch", forge_branch.clone()),
-    ] {
-        rec.push(k, &v);
-    }
+    let rec = publish_record(
+        &pr,
+        &head_sha,
+        &forge_sha,
+        &members,
+        opened,
+        &branch,
+        &remote,
+        &forge_branch,
+    );
     if let Err(e) = write_atomic(&pfile, &rec.render()) {
         w.err(format!("queue.sh publish: {e}"));
         return FAIL;
@@ -319,6 +344,55 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         ids.len()
     ));
     OK
+}
+
+#[allow(clippy::too_many_arguments)]
+fn publish_record(
+    pr: &str,
+    head: &str,
+    base: &str,
+    members: &[Member],
+    opened: u64,
+    branch: &str,
+    remote: &str,
+    forge_branch: &str,
+) -> Kv {
+    let mut rec = Kv::default();
+    for (k, v) in [
+        ("pr", pr.to_string()),
+        ("head", head.to_string()),
+        ("base", base.to_string()),
+        ("members", crate::model::render_members(members)),
+        ("opened", opened.to_string()),
+        ("branch", branch.to_string()),
+        ("remote", remote.to_string()),
+        ("forge_branch", forge_branch.to_string()),
+    ] {
+        rec.push(k, &v);
+    }
+    rec
+}
+
+/// An open publish PR whose branch is already at `head`: a second publisher got there first,
+/// and opening another would start a run that cancels this one's.
+fn open_publish_at(
+    w: &World,
+    c: &Ctx,
+    path: &std::path::Path,
+    remote: &str,
+    head: &str,
+) -> Option<(String, String)> {
+    w.forge
+        .publish_prs(&c.s.forge, path)?
+        .into_iter()
+        .find(|(_, branch)| {
+            idents(w, "publish", &[("branch", branch)]).is_ok()
+                && w.git.fetch(path, remote, branch)
+                && w.git
+                    .rev_parse(path, &format!("refs/remotes/{remote}/{branch}"))
+                    .as_deref()
+                    == Some(head)
+        })
 }
 
 /// The members of forge..head: from the land commits, the lifecycle rows for tips only.
@@ -612,19 +686,16 @@ fn adopt_forge_publish(
         return fail(format!("cannot resolve {remote}/{branch}"));
     };
     let members = range_members(w, path, &base, &head).unwrap_or_default();
-    let mut rec = Kv::default();
-    for (k, v) in [
-        ("pr", pr.clone()),
-        ("head", head),
-        ("base", base),
-        ("members", crate::model::render_members(&members)),
-        ("opened", w.clock.now().to_string()),
-        ("branch", branch.clone()),
-        ("remote", remote),
-        ("forge_branch", forge_branch),
-    ] {
-        rec.push(k, &v);
-    }
+    let rec = publish_record(
+        &pr,
+        &head,
+        &base,
+        &members,
+        w.clock.now(),
+        &branch,
+        &remote,
+        &forge_branch,
+    );
     if let Err(e) = write_atomic(pfile, &rec.render()) {
         w.err(format!("queue.sh publish-settle: {e}"));
         return Err(());

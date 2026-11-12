@@ -369,6 +369,7 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
             let _ = std::fs::remove_file(&pfile);
             let _ = std::fs::remove_file(c.queue_file("publish-red-streak"));
             let _ = std::fs::remove_file(c.queue_file("publish-fault-retries"));
+            let _ = std::fs::remove_file(c.queue_file("publish-redrive"));
             landing_log(
                 &c.s.run,
                 &format!(
@@ -401,11 +402,73 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
                 w.out(format!("verdict {name}: publish PR {pr}: workflow {missing} has no run — configuration fault, waiting"));
                 return (OK, out);
             }
+            if s == "pending" {
+                let marker = c.queue_file("publish-redrive");
+                let redriven =
+                    std::fs::read_to_string(&marker).ok().as_deref() == Some(head.as_str());
+                match checks_drive(
+                    w.forge.pr_checks(&c.s.forge, path, &pr).as_deref(),
+                    redriven,
+                ) {
+                    Drive::Wait => {}
+                    Drive::Redrive => {
+                        match rerun_gate(w, c, path, &field("branch")) {
+                            Ok(()) => {
+                                let _ = std::fs::write(&marker, &head);
+                                w.out(format!("verdict {name}: publish PR {pr}: every check completed with one cancelled and none running — re-driven once"));
+                            }
+                            Err(why) => rerun_could_not_start(
+                                w,
+                                c,
+                                "publish-rerun-refused",
+                                &head,
+                                &format!("PR {pr}"),
+                                &why,
+                            ),
+                        }
+                        return (OK, out);
+                    }
+                    Drive::Red => {
+                        let _ = std::fs::remove_file(&marker);
+                        let out = "red\nfailed-step: checks / cancelled again after a re-drive\n"
+                            .to_string();
+                        return (RED, out);
+                    }
+                }
+            }
             w.out(format!("verdict {name}: publish PR {pr}: {s} — waiting"));
             OK
         }
     };
     (rc, out)
+}
+
+/// What a pending publish PR's checks say to do.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Drive {
+    Wait,
+    Redrive,
+    Red,
+}
+
+/// A PR whose checks have all completed with at least one cancelled has nothing running to
+/// wait for: re-drive it once, and call a second cancelled result red.
+pub fn checks_drive(checks: Option<&[(String, String)]>, redriven: bool) -> Drive {
+    let Some(checks) = checks else {
+        return Drive::Wait;
+    };
+    let settled = !checks.is_empty() && checks.iter().all(|(status, _)| status == "COMPLETED");
+    if !settled
+        || !checks
+            .iter()
+            .any(|(_, conclusion)| conclusion == "CANCELLED")
+    {
+        Drive::Wait
+    } else if redriven {
+        Drive::Red
+    } else {
+        Drive::Redrive
+    }
 }
 
 /// Why a re-run did not start.

@@ -854,6 +854,28 @@ fn pr_state_maps_every_github_state_and_falls_closed_to_unknown() {
 }
 
 #[test]
+fn pr_checks_lists_status_and_conclusion_for_runs_and_commit_statuses() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["pr", "view", "5", "--json", "statusCheckRollup"],
+        0,
+        r#"{"statusCheckRollup":[
+            {"name":"suites","status":"COMPLETED","conclusion":"CANCELLED"},
+            {"name":"gate","status":"IN_PROGRESS","conclusion":""},
+            {"context":"legacy ci","state":"PENDING"}]}"#,
+    );
+    assert_eq!(
+        pr_checks(&gh, repo(), "5").lines,
+        vec![
+            "COMPLETED CANCELLED suites",
+            "IN_PROGRESS - gate",
+            "IN_PROGRESS PENDING legacy ci"
+        ]
+    );
+    assert!(pr_checks(&FakeGh::default(), repo(), "6").lines.is_empty());
+}
+
+#[test]
 fn pr_red_names_the_failing_job_and_its_fail_lines_and_is_silent_otherwise() {
     let gh = FakeGh::default();
     gh.on(

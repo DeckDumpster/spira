@@ -232,6 +232,49 @@ pub fn pr_state(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
     ok(vec![word.to_string()])
 }
 
+// ── pr-checks ────────────────────────────────────────────────────────────────────────────
+
+/// Every check on a PR as `<STATUS> <CONCLUSION> <name>`. A commit status has no run status:
+/// it reads COMPLETED unless it is still pending. Silent when the PR cannot be read.
+pub fn pr_checks(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
+    let r = gh.call(
+        Some(repo),
+        &["pr", "view", selector, "--json", "statusCheckRollup"],
+    );
+    let Some(checks) = parse(&r.stdout)
+        .and_then(|v| v.get("statusCheckRollup").cloned())
+        .and_then(|c| c.as_array().cloned())
+    else {
+        return ok(vec![]);
+    };
+    let lines = checks
+        .iter()
+        .map(|c| {
+            let state = jstr(c, "state").unwrap_or_default();
+            let status = jstr(c, "status").unwrap_or_else(|| {
+                if matches!(state.as_str(), "PENDING" | "EXPECTED") {
+                    "IN_PROGRESS".into()
+                } else {
+                    "COMPLETED".into()
+                }
+            });
+            let conclusion = jstr(c, "conclusion").unwrap_or(state);
+            let name = jstr(c, "name")
+                .or_else(|| jstr(c, "context"))
+                .unwrap_or_default();
+            format!(
+                "{status} {} {name}",
+                if conclusion.is_empty() {
+                    "-"
+                } else {
+                    &conclusion
+                }
+            )
+        })
+        .collect();
+    ok(lines)
+}
+
 // ── pr-merge-commit ──────────────────────────────────────────────────────────────────────
 
 pub fn pr_merge_commit(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {

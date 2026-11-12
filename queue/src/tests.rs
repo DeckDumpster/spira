@@ -878,6 +878,8 @@ struct FForge {
     queue_prs: RefCell<Vec<(String, String)>>,
     /// Open `spira/publish/*` PRs as `(number, branch)`.
     publish_prs: RefCell<Vec<(String, String)>>,
+    /// What `pr-checks` answers; `None` is a forge that cannot say.
+    checks: RefCell<Option<Vec<(String, String)>>>,
     calls: RefCell<Vec<String>>,
     /// check-status answers in order; when none is left the answer is `pending`. A `None`
     /// entry is a failed call.
@@ -983,6 +985,10 @@ impl Forge for FForge {
         } else {
             q.remove(0)
         }
+    }
+    fn pr_checks(&self, _: &Path, _: &Path, pr: &str) -> Option<Vec<(String, String)>> {
+        self.calls.borrow_mut().push(format!("pr-checks {pr}"));
+        self.checks.borrow().clone()
     }
     fn run_id(&self, _: &Path, _: &Path, branch: &str) -> Option<String> {
         self.calls.borrow_mut().push(format!("run-id {branch}"));
@@ -4806,6 +4812,40 @@ fn settle_adopts_a_green_forge_publish_the_record_does_not_know_then_opens_the_n
         "{}",
         t.out()
     );
+}
+
+#[test]
+fn publish_adopts_an_open_pr_at_the_same_head_instead_of_opening_a_second() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    t.git
+        .set("refs/remotes/origin/spira/publish/1794422613", "m3");
+    *t.forge.publish_prs.borrow_mut() = vec![("1086".into(), "spira/publish/1794422613".into())];
+    *t.forge.pr.borrow_mut() = Some("1087".into());
+    assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
+    let calls = t.forge.calls.borrow().clone();
+    assert!(
+        !calls.iter().any(|c| c.starts_with("pr-create")),
+        "{calls:?}"
+    );
+    assert!(!t.lib.has("push"), "{:?}", t.lib.calls.borrow());
+    let rec = fs::read_to_string(t.qfile("publish")).unwrap();
+    assert!(
+        rec.starts_with("pr=1086\nhead=m3\n") && rec.contains("branch=spira/publish/1794422613"),
+        "{rec}"
+    );
+}
+
+#[test]
+fn publish_does_not_adopt_an_open_pr_at_another_head() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    t.git.set("refs/remotes/origin/spira/publish/OLD", "m2");
+    *t.forge.publish_prs.borrow_mut() = vec![("587".into(), "spira/publish/OLD".into())];
+    *t.forge.pr.borrow_mut() = Some("588".into());
+    assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
+    assert!(t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")));
+    assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=588\n"));
 }
 
 // ------------------------------------------------------------------------------ auto-stack
