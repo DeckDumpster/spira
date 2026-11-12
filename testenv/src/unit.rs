@@ -338,7 +338,7 @@ fn duration_secs(text: &str) -> Option<f64> {
 pub fn read_back(output: &str, rec: &mut gate::unitrecord::UnitRecord) {
     let count = |p: &str| output.lines().filter(|l| l.trim_start().starts_with(p)).count() as u64;
     rec.compiled = Some(count("Compiling "));
-    rec.fresh = Some(count("Fresh "));
+    rec.fresh = Some(count("Fresh ")).filter(|n| *n > 0);
     rec.build_s = build_seconds(output);
     rec.skipped = output
         .lines()
@@ -493,7 +493,7 @@ mod tests {
         let out = "   Compiling a v1\n   Compiling b v1\n    Finished x in 2.0s\nunit-tests: skipped (needs a running system): t1 t2\ntest m::bad ... FAILED\n";
         let mut r = gate::unitrecord::UnitRecord::default();
         read_back(out, &mut r);
-        assert_eq!((r.compiled, r.fresh, r.build_s, r.skipped), (Some(2), Some(0), Some(2.0), Some(2)));
+        assert_eq!((r.compiled, r.fresh, r.build_s, r.skipped), (Some(2), None, Some(2.0), Some(2)));
         assert_eq!(r.failing, vec!["m::bad".to_string()]);
     }
 }

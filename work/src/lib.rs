@@ -125,15 +125,13 @@ pub fn unit_red_on_base(args: &[String]) -> Option<&str> {
 pub const UNIT_RED_ON_BASE: &str = "--unit-red-on-base";
 /// The failing test names the client appends beside [`UNIT_RED_ON_BASE`]; a caller never types it.
 pub const UNIT_RED_TESTS: &str = "--unit-red-tests";
-/// How a row ended. A row that declares a stage (writes a `{record}`) exits 124 when its budget
-/// cut it; any other row's 124 is a plain red.
+/// The `checks.log` word for a row's exit: [`row_outcome`] with a fault (exit 2, or no exit) apart from a red.
 pub fn check_outcome(rc: Option<i32>, staged: bool) -> &'static str {
-    match rc {
-        Some(0) => "pass",
-        Some(124) if staged => "deferred",
-        Some(1) => "red",
-        Some(2) | None => "fault",
-        Some(_) => "red",
+    match (row_outcome(rc.unwrap_or(-1), staged.then_some("stage")), rc) {
+        (Outcome::Ok, _) => "pass",
+        (Outcome::Deferred, _) => "deferred",
+        (Outcome::Fail, Some(2) | None) => "fault",
+        (Outcome::Fail, _) => "red",
     }
 }
 
