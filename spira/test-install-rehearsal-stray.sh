@@ -3,18 +3,18 @@
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control):
 #   Plants a unit not in the owned manifest, runs uninstall, and requires "STRAY" and the
-#   planted name in its output. Only then does a clean uninstall in test-install-rehearsal.sh
-#   count as evidence that the sweep finds nothing.
+#   planted name in its output. Only then does a clean uninstall count as evidence that
+#   the sweep finds nothing.
 #
 # The sweep reads the unit directory against the manifest, so no install precedes it; the
-# container, stubs and configure are the ones test-install-rehearsal.sh uses.
+# container, stubs and configure are lib-rehearsal-container.sh's.
 #
 # SKIP CONDITION: no podman on PATH, or user systemd not available in the container.
 #
 # runtime: ~1m
 # tier: T2
 # bare-host: builds its own podman containers; the corpus container has no podman
-# covers: spira/lib-test-install-rehearsal.sh spira/podman-exec-diag.sh install/src/bin/install.rs spira/uninstall.sh spira/configure.sh testenv/src/container.rs spira/testenv/Containerfile UC-instance-lifecycle-40
+# covers: spira/lib-rehearsal-container.sh spira/podman-exec-diag.sh install/src/bin/install.rs spira/uninstall.sh spira/configure.sh testenv/src/container.rs spira/testenv/Containerfile UC-instance-lifecycle-40
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -25,7 +25,7 @@ iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 
 echo "test-install-rehearsal-stray.sh"
 
-. "$HERE/lib-test-install-rehearsal.sh"
+. "$HERE/lib-rehearsal-container.sh"
 
 echo
 echo "stray sweep positive control — plant a unit, confirm STRAY is reported:"

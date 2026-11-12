@@ -180,11 +180,8 @@ nowant "CTX label absent"  " CTX " "$pane_out"
 nowant "SELF label absent" " SELF " "$pane_out"
 nowant "GOV label absent"  " GOV " "$pane_out"
 
-# "Failed probe renders ? not 0" (an absent SP_MAIL_UNREAD) is test-cockpit-probe-fault.sh's
-# job (cluster 8, docs/test-plan/cockpit-observability.md): its table asserts against the
-# MAIL row specifically, while the case that used to live here only checked that a '?'
-# character appeared somewhere in the whole frame — true of nearly any frame regardless of
-# whether the MAIL row itself was the one that failed.
+# "Failed probe renders ? not 0" is not asserted here: a '?' anywhere in the whole frame
+# is true of nearly any frame, so it cannot say the MAIL row itself was the one that failed.
 
 # ==========================================================================
 echo

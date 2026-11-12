@@ -66,6 +66,11 @@ id = "UC-config-store-preflight-11"
 tier = "T1"
 statement = "the schema-version check is stamped and cached so repeated sources do not re-probe bd"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-config-store-preflight-12"
 tier = "T1"
@@ -165,6 +170,11 @@ statement = "install phase 4 waits for the store port with a bounded timeout and
 id = "UC-config-store-preflight-25"
 tier = "T2"
 statement = "the bd and Dolt contract the harness relies on holds against a real bd init"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-sr11sm"
 
 [[use_case]]
 id = "UC-config-store-preflight-26"

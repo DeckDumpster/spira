@@ -3,8 +3,7 @@
 # test-concierge.sh — the Concierge persona: brief composition, resume/HEADLESS handling,
 #   and the ways the operator's way in has broken before. No systemd, no tmux, no live
 #   statute book — see test-concierge-acceptance.sh for the host-only remainder (cgroup
-#   survival, the launcher under a real systemd oneshot, the cockpit layout pane) and
-#   test-concierge-roster.sh for the roster, resume-id and session-hook seams.
+#   survival, the launcher under a real systemd oneshot, the cockpit layout pane).
 #
 # UC-operator-channel-41 — DEMOTED TO T1 (coverage map row 41): the brief-composition
 # section used to skip outright when the live statute book was empty, so a container run

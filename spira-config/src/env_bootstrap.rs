@@ -11,8 +11,8 @@
 //! of this logic itself. Every refusal wording, the cache's own key (the `bd` binary's
 //! mtime+size, not its version string: `bd`'s version does not order against its migration
 //! count, the sp-s2zvn scar `check_bd_schema`'s own doc below explains), and the
-//! `SPIRA_DOCTOR` self-exemption are preserved exactly, byte for byte, because at least one
-//! suite (`test-bd-schema-stamp.sh`) asserts on the exact message text and on the stamp
+//! `SPIRA_DOCTOR` self-exemption are preserved exactly, byte for byte, because a
+//! suite asserts on the exact message text and on the stamp
 //! file's own presence.
 
 use std::fs;

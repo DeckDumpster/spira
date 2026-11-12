@@ -129,7 +129,7 @@ template this box ever actually renders, not a synthetic fixture.
   — never `spira-watch-queue-watch-*`. Those three are daemons that reach outside the box
   (GitHub for PRs, mail for the inbox, the forge for the publish backlog); `queue-watch`
   watches only the local bead queue. A reproduction confirmed a plain `testenv --suites
-  test-certify.sh` on an ordinary worktree (no `--deadline`, "in place," matching the gate's
+  the retired certify suite on an ordinary worktree (no `--deadline`, "in place," matching the gate's
   own base re-run) does not reliably reproduce this on its own — the failure needs the same
   host contention that makes the end-state wait above marginal in the first place, so a
   watcher that cannot finish its own startup handshake before the 45s bound crash-loops

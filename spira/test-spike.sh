@@ -35,7 +35,7 @@
 # consults it, which is why a change to `landing.sh` has to select this suite too.
 #
 # RUNES-INTEGRITY LINTS (placeholders, commands, brief clauses, rune syntax, the
-# `bd reopen` call-site rule) moved to test-lint-runes.sh (UC-safety-fences-33): pure
+# `bd reopen` call-site rule) moved out (UC-safety-fences-33): pure
 # text reads that paid for this suite's Dolt fixture and bare git remote without needing
 # either.
 #
@@ -83,8 +83,7 @@ mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/runes"
 tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 # `call_rune` is a `sentinel --call` shim now (wave 4.27, family G, sp-gzmd2): a real
 # subprocess with SPIRA_HOME=$SPIRA_HOME, which needs a working lib.sh at its own context
-# probe — the same one-line symlink trick test-call-rune.sh's own `dwarf --escape`
-# fixture uses.
+# probe — a one-line symlink.
 printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 ln -s "$HERE/conf.toml.d" "$SPIRA_HOME/conf.toml.d"

@@ -81,6 +81,11 @@ id = "UC-gate-verdict-11"
 tier = "T1"
 statement = "`host_cores` returns `getconf _NPROCESSORS_ONLN` even when `nproc` is cgroup-limited. `governor.sh` writes `SP_CORES` from it."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-gate-verdict-12"
 tier = "T1"

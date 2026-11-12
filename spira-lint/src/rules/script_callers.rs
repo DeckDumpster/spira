@@ -509,7 +509,7 @@ mod tests {
 
     #[test]
     fn a_suite_that_writes_the_script_itself_is_exempt() {
-        // test-world-drain-deadline.sh's real shape: SH repointed at a sandbox, the suite
+        // a real suite's shape: SH repointed at a sandbox, the suite
         // prints the fake dwarf.sh into it itself, then runs it.
         let t = TempDir::new("sc-creates");
         t.write(

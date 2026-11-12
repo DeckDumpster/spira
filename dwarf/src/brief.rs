@@ -855,7 +855,6 @@ mod tests {
         }
     }
 
-    // test-dwarf-resume.sh's render rows.
     #[test]
     fn resume_slain_deadline_renderers() {
         assert_eq!(resume_brief("b", "/w", "0", "x"), "");

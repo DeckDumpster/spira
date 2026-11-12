@@ -832,7 +832,7 @@ lib.sh seam is one `bash -c '. lib.sh; …'` at start (NUL-separated `key=value`
   branch for a base red: an ejection of every branch whose selection includes the suite,
   as FAIL, is what throttled certification.
 * **`gate-lib.sh` is retired.** Its functions are ported (`src/parse.rs`, `src/key.rs`) with
-  unit tests; `test-gate-unit.sh`, which only exercised them, is retired with it.
+  unit tests; the retired gate-unit suite, which only exercised them, is retired with it.
 * **Suite selection is the `suite-select` crate** (sp-wx2tw, `suite-select/DESIGN.md`). The
   gate string calls the installed binary (`"$SPIRA_SELECT_BIN" gate …`), which the gate passes
   into the gate command's environment; its exit 1 (an unclaimed source file) is FAIL and any
@@ -873,7 +873,7 @@ Rust gate already does:
   (itself) and no live analog before this change either (already so decided: sp-z3i42.2, left
   open P3). Every test that asserted wiring by grepping `gate-spira.sh`'s source is either
   deleted with its now-ported subject (nine of them, by the concurrent sp-ekkak work) or
-  repointed to grep `.github/workflows/gate.yml` instead (`test-orphan-test.sh`,
+  repointed to grep `.github/workflows/gate.yml` instead (the retired orphan-test suite,
   `test-sop-gate-wired.sh`'s prose); `test-gate-fences.sh`, whose only subject was
   `gate_fence_list`, is deleted with it. Supersedes the never-landed `spira/sp-m893q` branch
   (cut before the Rust gate cutover; stale against current `gate.sh`), redone here against
@@ -900,7 +900,7 @@ Rust gate already does:
   a beads database fails closed today and is not the rewrite to attempt under a P0 clock.
 
 Parity: every suite this bead's own changes touch still passes under `testenv` (from the
-worktree, never the host): `test-exclude.sh`, the build-fence suite, `test-orphan-test.sh`,
+worktree, never the host): `test-exclude.sh`, the build-fence suite, the retired orphan-test suite,
 `test-sop-gate-wired.sh` at each stage of this branch's history, and the full `spira-lint`
 run (18 rules, including `config-fence`) is clean against the merged tree. `cargo test -p
 gate` is green (149 tests, including `a_unit_gate_builds_once_and_every_other_composition_

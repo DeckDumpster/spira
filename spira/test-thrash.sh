@@ -14,8 +14,8 @@
 #
 # The trip decision itself (both the fuse AND the session's own age must clear the wall)
 # is hb_tick's table, tested in test-dwarf-lease.sh. The teardown behaviour once tripped
-# (requeue, no attempt / attempt-charged streak) is test-thrash-teardown.sh (G2). This
-# suite is left with what those two do not cover: cockpit-collect metrics's own thrash counter
+# (requeue, no attempt / attempt-charged streak) is no longer shell-tested. This
+# suite is left with what hb_tick's table does not cover: cockpit-collect metrics's own thrash counter
 # and the SPIRA_THRASH_MINUTES conf.d default.
 #
 # tier: T1

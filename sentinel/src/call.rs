@@ -979,9 +979,7 @@ mod tests {
     }
 
     // ---- check7_pool_decision, lane_rotate, ck7_pool, ck7_throttled, ck7_fill_cap -------
-    // (lib.sh G1-G3; retired outright with `_ck7_call_body` — these were each their own
-    // `libcall`-direct row in test-watchtower-throttle.sh/test-express-lane.sh/
-    // test-call-rune.sh; every case below is that same row, ported.)
+    // (lib.sh G1-G3; retired outright with `_ck7_call_body`.)
 
     #[test]
     fn check7_pool_decision_matches_the_throttle_leak_fix() {

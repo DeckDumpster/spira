@@ -712,12 +712,12 @@ named unit tests.
 
 | # | test | action |
 |---|---|---|
-| 21 | `test-sentinel-pass.sh` | repoint. The rest are `tests::*` (whole passes against the fake runner) |
+| 21 | the retired sentinel-pass suite | repoint. The rest are `tests::*` (whole passes against the fake runner) |
 | 22 | `test-call-fast-path.sh:342` | `*"--property=ExecStopPost=$T/bin/mock-call-noop --user --collect --quiet $T/sentinel.sh --call-only"*)` → `… --quiet $SPIRA_SENTINEL_BIN --call-only"*)` |
 | 23 | `test-poison.sh` | reduce to the "stays end-to-end" rows of spira-claim/DESIGN.md §4, run against the binary |
 | 26 | `test-closed-strand.sh` | repoint |
 | 27 | `test-loop-readonly.sh` | repoint: run `$CURRENT/bin/sentinel` |
-| 28 | `test-strand-truncated.sh` | repoint |
+| 28 | the retired strand-truncated suite | repoint |
 | 29 | `test-canary.sh` | follows canary.sh |
 | 30 | `test-tsd-producers.sh` | repoint; the phase names are unchanged |
 | 31 | `test-sentinel-store-reads.sh` case 8 | repoint. The bd-call counter should now see exactly 1 `list` + 1 `ready` from the sentinel itself |
@@ -734,7 +734,7 @@ named unit tests.
 **Source greps that break when the file goes.** Each greps sentinel.sh's text; point it at
 `sentinel/src/*.rs`, or at lib.sh where the text now lives:
 
-- `test-lanes.sh:39`
+- the retired lanes suite
 - `test-czar-pass.sh:287`
 - `test-wire-token.sh:35`
 - `test-rune.sh`

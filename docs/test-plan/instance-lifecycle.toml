@@ -6,10 +6,20 @@ id = "UC-instance-lifecycle-01"
 tier = "T1"
 statement = "`build.sh` runs `make build` and exits 1 when it fails; `--skip-build` never invokes make and lists the prebuilt binaries expected on PATH; an unknown argument exits 2"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-instance-lifecycle-02"
 tier = "T2"
 statement = "`build-tarball.sh` produces a same-named `spira-YYYYMMDDTHHMMSSZ.tar.gz`/dir pair from a clean checkout; MANIFEST records the source SHA and `--name` pins stem and timestamp"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
 
 [[use_case]]
 id = "UC-instance-lifecycle-03"
@@ -21,15 +31,30 @@ id = "UC-instance-lifecycle-04"
 tier = "T2"
 statement = "`build-tarball.sh verify` accepts a MANIFEST whose commit exists in the source repo and refuses one that does not"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-instance-lifecycle-05"
 tier = "T2"
 statement = "`build-bd.sh --from-flake` takes bd from the flake environment and refuses an environment with no bd"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-instance-lifecycle-06"
 tier = "T2"
 statement = "`release.sh cut` creates an annotated tag listing bead ids landed since the previous tag on the repo-map base ref, not hardcoded `main`; a no-op cut creates no tag and `show` reads it back"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
 
 [[use_case]]
 id = "UC-instance-lifecycle-07"
@@ -222,7 +247,7 @@ tier = "T2"
 statement = "`owned.sh list` emits every artefact kind in 5-field rows, with unit rows equal to `install.sh --render` for that instance; `check` reports absent, present or drifted per artefact"
 
 [use_case.uncovered]
-reason = "owned.sh check derives unit status from systemd/install.sh --diff, which no longer exists, so every unit reads absent; list is exercised only incidentally by the drift suite and test-uninstall.sh, and no suite asserts the 5-field rows or the check statuses"
+reason = "owned.sh check derives unit status from systemd/install.sh --diff, which no longer exists, so every unit reads absent; list is exercised only incidentally by the drift suite and the retired uninstall suite, and no suite asserts the 5-field rows or the check statuses"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -251,10 +276,20 @@ id = "UC-instance-lifecycle-38"
 tier = "T2"
 statement = "`uninstall.sh` stops/disables/removes owned units, disables linger, removes harness symlinks and session hooks; it is idempotent, refuses ambiguity across instances, reports strays without deleting them, honours `--purge`/`--dry-run`, and a partial install uninstalls with exit 0"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-sr11sm"
+
 [[use_case]]
 id = "UC-instance-lifecycle-39"
 tier = "T2"
 statement = "`uninstall.sh --purge-database` removes the DB only when the operator types back the bead count, and refuses on mismatch"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-sr11sm"
 
 [[use_case]]
 id = "UC-instance-lifecycle-40"
@@ -286,6 +321,11 @@ id = "UC-instance-lifecycle-43"
 tier = "T0"
 statement = "`world.sh drain` touches no unit and writes a stamp with a resume hint; `--timeout` exits 1 NOT DRAINED/REMAIN GATED, `--deadline` slays with `--keep-work --reopen`, `resume` clears the stamp, and every dwarf door carries both drain and halt gates"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-pvelyu"
+
 [[use_case]]
 id = "UC-instance-lifecycle-44"
 tier = "T1"
@@ -306,7 +346,18 @@ id = "UC-instance-lifecycle-46"
 tier = "T2"
 statement = "`acceptance-ci.sh` builds a scratch repo on `main` with a git identity and a repo-map, puts `~/.local/bin` on PATH, passes `XDG_RUNTIME_DIR`, and propagates `release acceptance`'s exit code"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-instance-lifecycle-47"
 tier = "T1"
 statement = "`release acceptance` (was `acceptance-run.sh`) runs install with `SPIRA_OPERATED=0`, runs the clone's own `ready.sh` unmasked, extracts bead ids robustly, proves landing by ancestry, records a git note, and emits a single PASS/FAIL line"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+

@@ -6,15 +6,30 @@ id = "UC-dispatch-01"
 tier = "T1"
 statement = "`bead.sh file --for/--repo` files exactly the persona's labels plus `repo:`, or refuses"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-6yu1y8"
+
 [[use_case]]
 id = "UC-dispatch-02"
 tier = "T1"
 statement = "non-work kinds map to their `bd --type`, scope label, no partition label"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-6yu1y8"
+
 [[use_case]]
 id = "UC-dispatch-03"
 tier = "T1"
 statement = "a persona files only against a repo whose lanes admit its partition"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-6yu1y8"
 
 [[use_case]]
 id = "UC-dispatch-04"
@@ -61,15 +76,30 @@ id = "UC-dispatch-10"
 tier = "T1"
 statement = "the `call_rune` refusal ladder runs in order and logs its real reason"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-q48ih9"
+
 [[use_case]]
 id = "UC-dispatch-11"
 tier = "T1"
 statement = "`rune_free` arithmetic: elastic pool remainder, non-elastic cap-minus-running"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-q48ih9"
+
 [[use_case]]
 id = "UC-dispatch-12"
 tier = "T1"
 statement = "a live drain gates every call; an expired drain is lifted and logged"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-q48ih9"
 
 [[use_case]]
 id = "UC-dispatch-13"
@@ -86,10 +116,20 @@ id = "UC-dispatch-14"
 tier = "T1"
 statement = "CHECK 7 draws lanes round-robin then fills the task pool in roster order, capped"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-q48ih9"
+
 [[use_case]]
 id = "UC-dispatch-15"
 tier = "T1"
 statement = "`escape.sh` calls directly on ready work, bypassing pool and lane caps"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-q48ih9"
 
 [[use_case]]
 id = "UC-dispatch-16"
@@ -121,6 +161,11 @@ id = "UC-dispatch-19"
 tier = "T1"
 statement = "a pass that cannot read the database exits 1 and reports no state"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-q48ih9"
+
 [[use_case]]
 id = "UC-dispatch-20"
 tier = "T1"
@@ -146,10 +191,20 @@ id = "UC-dispatch-22"
 tier = "T1"
 statement = "an unmapped-repo bead is parked with ask+overseer before its claim is released"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-zxj2fq"
+
 [[use_case]]
 id = "UC-dispatch-23"
 tier = "T1"
 statement = "calling passes no `CPUQuota`/`Nice` (sp-b4oct), and passes `RUNE_TIMEOUT_SECONDS` and `--setting-sources` correctly"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-q48ih9"
 
 [[use_case]]
 id = "UC-dispatch-24"

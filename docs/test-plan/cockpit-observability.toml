@@ -96,6 +96,11 @@ id = "UC-cockpit-observability-21"
 tier = "T1"
 statement = "every count the pane renders shows `?` when its key is absent or `?`, never `0`; a key missing from collector skew renders `coll <rev>`"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-t3efz3"
+
 [[use_case]]
 id = "UC-cockpit-observability-22"
 tier = "T1"
@@ -211,15 +216,30 @@ id = "UC-cockpit-observability-35"
 tier = "T1"
 statement = "`ready.sh` reports FAIL/`?`/WARN/pass/skip for each check (sentinel timer, halt stamp, DB, dolt starting-port, statutes, ready work, loom latency, agent, snapshot freshness, panes) and exits 1 on any FAIL or `?`"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-cockpit-observability-36"
 tier = "T1"
 statement = "`ctx-meter.sh` session pointer: the operator's status-line tick owns the pointer; an idle second session cannot steal it until the holder is stale; a stale, deleted or corrupt pointer means 'no session'"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-cockpit-observability-37"
 tier = "T1"
 statement = "`ctx-meter.sh` limits: burn rate is measured over the span not pairwise; a projection appears only if the window fills before it resets; flat/single-sample/short/1-point histories project nothing; a reset is a boundary; an absent or malformed window renders nothing (never 0%); the sample file is pruned to 6h and deduplicated; env mode prints `-`/`?`; the line is ≤110 columns"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
 
 [[use_case]]
 id = "UC-cockpit-observability-38"
@@ -235,6 +255,11 @@ bead = "sp-nd9nj"
 id = "UC-cockpit-observability-39"
 tier = "T1"
 statement = "`tokens.sh` attributes turns to dwarf/archivist/session deduplicated by message id; `model-switch-report.sh` gives $/bead as `$?` (never `$0`) with no cost data; `released-defects.sh` counts only introductions that reached base before the fix and gives `?` for an unresolvable repo"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
 
 [[use_case]]
 id = "UC-cockpit-observability-40"
@@ -301,10 +326,20 @@ id = "UC-cockpit-observability-47"
 tier = "T2"
 statement = "`tmux-env.sh` scrubs the Claude session identity from the server's global env; panes opened afterwards do not inherit it, and a second run is idempotent"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-cockpit-observability-48"
 tier = "T2"
 statement = "`cockpit-remote`: the dialer refuses an empty `COCKPIT_HOST`; a watcher that loses the lock exits non-zero promptly naming the holder; `start` delegates to systemd when the unit is enabled and forks with setsid otherwise; the orphan-lock probe names the holder's pid and path"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
 
 [[use_case]]
 id = "UC-cockpit-observability-50"

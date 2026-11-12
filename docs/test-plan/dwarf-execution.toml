@@ -42,10 +42,20 @@ id = "UC-dwarf-execution-05"
 tier = "T1"
 statement = "sweep mode claims nothing, sets no `branch:` label, and refuses when capacity is paused or the world is draining"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-zxj2fq"
+
 [[use_case]]
 id = "UC-dwarf-execution-06"
 tier = "T1"
 statement = "launch argv is a pure function of the rune's system-prompt, project-instructions and settings knobs"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-zxj2fq"
 
 [[use_case]]
 id = "UC-dwarf-execution-07"
@@ -81,6 +91,11 @@ bead = "sp-94lbj.2"
 id = "UC-dwarf-execution-11"
 tier = "T1"
 statement = "open-bead teardown disposition runs its 13 branches in precedence order and charges only `unlanded`-family outcomes"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-zxj2fq"
 
 [[use_case]]
 id = "UC-dwarf-execution-12"
@@ -182,10 +197,20 @@ id = "UC-dwarf-execution-24"
 tier = "T2"
 statement = "`attempts.sh deadlocked` lists mergeable poisoned beads and `--apply` lifts poison without losing the attempt record"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-8566or"
+
 [[use_case]]
 id = "UC-dwarf-execution-25"
 tier = "T1"
 statement = "a repeated lane-cap timeout asks about the lane, not the approach"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
 
 [[use_case]]
 id = "UC-dwarf-execution-26"

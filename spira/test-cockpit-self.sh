@@ -185,11 +185,7 @@ is "stillborn out-of-window: SP_SELF_STILLBORN_W is 0" "SP_SELF_STILLBORN_W=0" \
    "$(grep '^SP_SELF_STILLBORN_W=' <<< "$out_out")"
 
 # health.sh rendering the SELF section (REPEATING/BIRTH/STALL never appearing, whatever
-# the flags say, because that section was removed) is one row in test-cockpit-probe-fault.sh's
-# renderer table now (cluster 8, UC-16/21, docs/test-plan/cockpit-observability.md): the four
-# fixtures here (none tripped, repeating only, stillborn only, starved only) all asserted the
-# identical "still absent" property, so one fixture with every flag tripped at once proves it
-# in a single row instead of four.
+# the flags say, because that section was removed) is not asserted here.
 
 # ======================================================================================
 echo

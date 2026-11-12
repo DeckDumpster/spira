@@ -121,6 +121,11 @@ id = "UC-test-infrastructure-17"
 tier = "T1"
 statement = "`# requires:` unmet means the suite is recorded `skip-req` with the missing token in the fingerprint and not run. It stays distinct from a plain `skip` (77). Neither makes the batch red."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-4ylb2g"
+
 [[use_case]]
 id = "UC-test-infrastructure-18"
 tier = "T2"
@@ -156,10 +161,20 @@ id = "UC-test-infrastructure-21"
 tier = "T2"
 statement = "The batch builds one shared bd baseline and hands suites `TESTDB_SHARED/BASELINE/BD`. `testdb_up` gives each borrower a private copy distinct from the baseline and from other concurrent borrowers. `testdb_drop` removes it."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-test-infrastructure-22"
 tier = "T1"
 statement = "A vanished baseline makes `testdb_up` exit 75 (fixture-fault). On any `testdb_up` failure, SPIRA_DB is unset, so no suite can write to production. A fixture that cannot be built causes a skip (77), never a pass."
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
 
 [[use_case]]
 id = "UC-test-infrastructure-23"
@@ -286,15 +301,30 @@ id = "UC-test-infrastructure-38"
 tier = "T0"
 statement = "Workflow shape. The real gate runs (inventory, literal-lint, scratch-fence, testenv-batch). PRs run the diff selection, a main push runs the corpus, empty selection skips provisioning and exits 0, and a provision failure fails the job with 75. There is a per-run VM that is always torn down, with every required action input passed. Release is gated on main via `workflow_call` with a pinned toolchain, no `continue-on-error`, all `--*-bin` flags and tag retraction on publish failure. Acceptance is dispatched with an App token. The suites job has `packages: write` and does not pin maxpar."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-test-infrastructure-39"
 tier = "T1"
 statement = "The CI runner host check (`runner-deps.sh --check`) refuses a broken container runtime with a non-75 exit, a MISSING line and \"branch not at fault\". A working host passes. Mutating steps are gated behind check-only."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-test-infrastructure-40"
 tier = "T1"
 statement = "The citation report classifies each suite's `# defect:` as resolved (with status), unresolved or uncited."
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
 
 [[use_case]]
 id = "UC-test-infrastructure-41"

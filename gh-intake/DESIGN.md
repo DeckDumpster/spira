@@ -229,7 +229,7 @@ anywhere in the tree.
   `seam.rs`.
 - `spira/gh-issue-backfill.sh` is deleted; `gh-intake backfill` replaces it.
   `spira/test-land-commit-contract.sh`'s "other reader" section calls the new verb.
-- `spira/test-gh-issue-closeout.sh` is rewritten as a thin T1 wiring smoke test of the
+- the retired gh-issue-closeout suite is rewritten as a thin T1 wiring smoke test of the
   real binary (closeout, backfill, unlanded-scan — both directions of the ask dedupe),
   the same role `spira/test-gh-intake.sh` plays for the ingest half; the exhaustive logic
   moved to `cargo test -p gh-intake`'s own `closeout` module. Its `config-fence-allow`
@@ -249,4 +249,4 @@ closed on the forge; `gh_unlanded_scan` distinguishes a landed-by-commit bead fr
 truly unlanded one in the same pass, waits silently (and throttles) on an in-flight
 landstate, and respects the grace period; `backfill`'s dry-run/real pass pair, via its
 own looser ancestry search. All against fakes — no network, no real `bd`/`ghq`/`mail`/
-git. `spira/test-gh-issue-closeout.sh` (§7.6) is the real-binary complement.
+git. the retired gh-issue-closeout suite (§7.6) is the real-binary complement.

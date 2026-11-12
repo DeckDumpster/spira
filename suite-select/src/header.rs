@@ -222,7 +222,7 @@ mod tests {
         assert!(!is_uc_token("UCX-01-02"));
     }
 
-    // Mirrors spira/test-testenv-guard.sh Part A: testenv_unmet is the AND/NOT composition
+    // testenv_unmet is the AND/NOT composition
     // of "declares requires: testenv" with the caller's own (in_testenv, in_container) pair.
     #[test]
     fn testenv_unmet_is_the_and_not_of_requires_and_evidence() {

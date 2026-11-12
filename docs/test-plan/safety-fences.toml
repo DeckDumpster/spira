@@ -106,10 +106,20 @@ id = "UC-safety-fences-26"
 tier = "T2"
 statement = "`orphan-test.sh` refuses a diff that removes a token an unmodified suite still asserts on; it passes when the suite changes in the same diff, on an `orphan-test-ok` annotation, and on a token present on both `-` and `+` lines, exiting 77 without `SPIRA_GATE_BASE`"
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-safety-fences-27"
 tier = "T1"
 statement = "`host-check.sh` refuses a host suite with neither a non-empty `# host-reason` nor testenv use in code; its counts render a number or `?`, never 0 on an empty tree"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
 
 [[use_case]]
 id = "UC-safety-fences-28"
@@ -120,6 +130,11 @@ statement = "`suite-state-fence.sh` refuses a quarantine entry with no bead, a C
 id = "UC-safety-fences-29"
 tier = "T0"
 statement = "no harness script writes a dimension label (repo/severity/branch/rune/lane/gate) with `bd label add` or embeds one in `SPIRA_INCIDENT_LABELS`; `bd set-state` is the only writer"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
 
 [[use_case]]
 id = "UC-safety-fences-30"
@@ -140,6 +155,11 @@ statement = "spike confinement: `confine.sh` refuses a spike branch touching fil
 id = "UC-safety-fences-33"
 tier = "T0"
 statement = "runes integrity: every `{{PLACEHOLDER}}` is rendered by its program, every command a brief names exists, every rune parses, spike/ops brief clauses are present, and `bd reopen` is called only through `bead_reopen`"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-zxj2fq"
 
 [[use_case]]
 id = "UC-safety-fences-34"

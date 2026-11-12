@@ -833,8 +833,8 @@ impl Lib for RealLib {
         // In-process (sp-hwjsq, "wave 4.32"): queue_sort_rows and its internal
         // queue_is_suite_transition, both ported here. queue_is_suite_transition has no
         // caller left at all once this goes in-process, so lib.sh's copy is retired
-        // outright; queue_sort_rows itself keeps a shim (test-queue-sort-large.sh,
-        // cockpit-collect still call it by name).
+        // outright; queue_sort_rows itself keeps a shim (cockpit-collect
+        // still calls it by name).
         let with_trans: Vec<(String, String, i64, bool)> = crate::ops::helpers::parse_rows(rows)
             .into_iter()
             .map(|(id, tip, epoch)| {

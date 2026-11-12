@@ -69,7 +69,7 @@ NONE="$T/none.conf"
 # ---------------------------------------------------------------------------
 # STUB BD. Records argv to BD_LOG_PATH; returns BD_LIST_OUTPUT for `list`
 # subcommands; exits 0 for all others. Strips the `-C <db>` bdq prepends so the
-# subcommand is always $1 at dispatch time (same pattern as test-groom-trigger.sh).
+# subcommand is always $1 at dispatch time.
 # ---------------------------------------------------------------------------
 STUB_BD="$T/stub-bd"
 BD_LOG="$T/bd.log"

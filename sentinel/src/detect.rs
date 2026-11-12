@@ -78,8 +78,7 @@ impl<'a> Sentinel<'a> {
     /// correctly-resolved context across calls. This binary resolves its `Context` once at
     /// startup, from `SPIRA_HOME`/the binary's own location, the same way for every check in
     /// the pass (law-a-binary-resolves-the-config-it-reads); there is no second checkout to
-    /// fall back to, so that re-exec is retired rather than ported — see
-    /// test-unclaimable-worktree.sh for the suite kept to prove this directly.
+    /// fall back to, so that re-exec is retired rather than ported.
     pub fn detect_unclaimable_ready(&self, snap_ready_raw: Option<&str>) -> String {
         let parts = self.active_parts_str();
         if parts.is_empty() {

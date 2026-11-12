@@ -386,7 +386,7 @@ mod tests {
         assert_eq!(b2.dispositions.lock().unwrap()[0].0, "lapsed");
     }
 
-    // test-thrash-teardown.sh: turns advance, the deliverable does not → thrash.
+    // turns advance, the deliverable does not → thrash.
     #[test]
     fn growing_trace_with_a_stale_fuse_thrashes() {
         let d = tmp("thrash");

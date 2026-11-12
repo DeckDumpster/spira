@@ -677,7 +677,7 @@ const SATISFIED: &[&str] = &["ok", "DISABLED", "QUARANTINED-RED"];
 /// Split re-entry's `required` into the suites this gate can prove and the ones the tree's own
 /// `spira/skip-allowlist.tsv` declares un-runnable under testenv (first column of each
 /// non-comment line). A declared skip can never report `ok` here, so requiring it made every
-/// branch that touched one NO_VERDICT forever (sp-xfqnr: test-install-rehearsal.sh, which
+/// branch that touched one NO_VERDICT forever (a suite that
 /// needs nested podman). The dropped ones are named by the caller; the full-suite VM round
 /// (law-landing-rounds-run-the-full-suite-on-a-vm) is where they run.
 pub fn drop_declared_skips(required: &[String], allowlist: &str) -> (Vec<String>, Vec<String>) {
