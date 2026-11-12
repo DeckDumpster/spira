@@ -132,7 +132,7 @@ pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_HEL_SWEEP_CALENDAR";
 pub const JITTER_KEY: &str = "SPIRA_RUNTIME_HEL_SWEEP_JITTER_SECS";
 /// The pass deadline in carried state (900 s); a new key.
 pub const BUDGET_KEY: &str = "SPIRA_RUNTIME_HEL_SWEEP_BUDGET_SECS";
-/// Milliseconds of rest after each branch a send or free-worktree act handles.
+/// Milliseconds of rest after each send leg starts.
 pub const PACE_KEY: &str = "SPIRA_HEL_PACE_MS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, JITTER_KEY, BUDGET_KEY, "SPIRA_RUN", "SPIRA_REAPLOG", "SPIRA_SUBMITTED_LABEL", "SPIRA_GH", "SPIRA_GH_TIMEOUT", "SPIRA_RELEASE", PACE_KEY];
 
@@ -637,7 +637,7 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
         Err(hel::sweep::ScanError::Store(e)) => return Err(store_failure(&r.name, &e)),
     };
     let cursor = real.resume_after(&r.name);
-    let branches: Vec<_> = branches.into_iter().filter(|b| cursor.as_ref().is_none_or(|c| b.br > *c)).collect();
+    let branches: Vec<_> = branches.into_iter().filter(|b| past_cursor(&b.br, cursor.as_deref())).collect();
     snap.base = Base { landref: base.landref, landrefs: base.landrefs, remote: base.remote.unwrap_or_default() };
     let ids: Vec<String> = branches.iter().map(|b| b.id.clone()).chain(orphans.iter().map(|o| o.id.clone())).collect();
     snap.rows = spira_store::lc_state::list_ids_on(lc, &ids).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();
@@ -670,10 +670,24 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
         }
         snap.orphans.push(Orphan { id: o.id, path: o.path.display().to_string(), br: o.br });
     }
-    if cursor.is_some() && plan_labelled(&p.submitted_label, &snap, &mut BTreeMap::new())?.is_empty() {
-        real.set_resume_after(&r.name, None);
+    if cursor.is_some() {
+        clear_cursor_when_idle(real, &p.submitted_label, &snap)?;
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+/// Branches sort by refname, so a cursor is a position: a branch sent since is gone, the cursor still holds.
+pub fn past_cursor(br: &str, cursor: Option<&str>) -> bool {
+    cursor.is_none_or(|c| br > c)
+}
+
+/// A resumed repository with nothing left to act on will issue no prune, so the cursor is cleared here.
+pub fn clear_cursor_when_idle(real: &hel::real::Real, label: &str, snap: &Snapshot) -> Result<(), String> {
+    use hel::ports::World;
+    if plan_labelled(label, snap, &mut BTreeMap::new())?.is_empty() {
+        real.set_resume_after(&snap.repo, None);
+    }
+    Ok(())
 }
 
 /// Record that the pass handled `br`; the cursor only moves forward, so an act that answers late cannot pull it back.

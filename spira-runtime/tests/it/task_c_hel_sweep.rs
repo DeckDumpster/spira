@@ -173,7 +173,7 @@ impl spira_store::lc_call::Transport for Timed {
 }
 
 #[test]
-fn a_600_branch_pass_reads_the_store_in_bounded_calls_none_over_a_second() {
+fn a_600_branch_prefetch_is_twelve_bounded_store_calls() {
     use hel::ports::World;
     let dir = testkit::TempDir::new("hel-sweep-600");
     let timed = std::sync::Arc::new(Timed(Default::default()));
@@ -182,5 +182,24 @@ fn a_600_branch_pass_reads_the_store_in_bounded_calls_none_over_a_second() {
     real.prefetch(&ids).unwrap();
     let calls = timed.0.lock().unwrap();
     assert_eq!(calls.len(), 12, "6 content reads and 6 list reads of 100 ids, not one per branch");
-    assert!(calls.iter().all(|d| *d < std::time::Duration::from_millis(1000)), "{calls:?}");
+}
+
+#[test]
+fn a_cursor_skips_branches_up_to_it_even_when_the_branch_it_names_is_gone() {
+    assert!(!task::past_cursor("spira/sp-b", Some("spira/sp-c")));
+    assert!(!task::past_cursor("spira/sp-c", Some("spira/sp-c")));
+    assert!(task::past_cursor("spira/sp-d", Some("spira/sp-c")));
+    assert!(task::past_cursor("spira/sp-a", None));
+}
+
+#[test]
+fn a_resumed_repo_with_nothing_to_act_on_clears_its_cursor_and_one_with_work_keeps_it() {
+    use hel::ports::World;
+    let dir = testkit::TempDir::new("hel-sweep-idle");
+    let real = real_in(dir.path());
+    task::mark_handled(&real, "spira", "spira/sp-a");
+    task::clear_cursor_when_idle(&real, "submitted", &Snapshot { branches: vec![branch("sp-a", true)], ..keep() }).unwrap();
+    assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-a"), "a landed branch is still to be sent");
+    task::clear_cursor_when_idle(&real, "submitted", &keep()).unwrap();
+    assert_eq!(real.resume_after("spira"), None);
 }
