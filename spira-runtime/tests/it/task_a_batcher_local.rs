@@ -473,6 +473,7 @@ fn sp_b0lhx6_a_named_suite_red_attributes_that_suite_and_the_survivors_land() {
     let land = batcher_cut::attribute::Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: false }.line();
     let n = r.requested().len();
     r.tick(STREAM, ended(&unit, runtime::units::Exit::Code(0), &format!("{land}\n"))).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     let after = asked_after(&r, n);
     assert_eq!(after.iter().map(|(e, _)| e.as_str()).collect::<Vec<_>>(), [CERTIFY], "{after:?}");
     let certify_unit = after[0].1.unit.clone();
