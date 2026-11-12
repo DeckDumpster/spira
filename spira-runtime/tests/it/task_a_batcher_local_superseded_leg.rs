@@ -86,3 +86,16 @@ fn a_green_round_whose_head_never_moved_is_left_to_its_own_step() {
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!(next.repos["spira"].state, State::Attributing);
 }
+
+/// The incident's order: the step runs for head A, a preempt moves the round to head B, the next
+/// pass goes green, and only then the step returns its fault.
+#[test]
+fn a_round_that_went_green_on_the_new_head_lands_at_it_when_the_old_step_faults() {
+    let (carry, _) = decide(&carried("", ""), &snapshot("A", "certifying"));
+    let (carry, acts) = decide(&carry, &snapshot("B", "certifying"));
+    assert!(acts.is_empty(), "{acts:?}");
+    let (carry, acts) = decide(&carry, &snapshot("B", "green"));
+    assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "{acts:?}");
+    assert!(on_ran_with(&carry, &ran(), &fault(), NOW).is_none(), "the late fault changes nothing");
+    assert_eq!(carry.repos["spira"].state, State::Landing);
+}
