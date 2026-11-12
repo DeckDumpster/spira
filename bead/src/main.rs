@@ -1620,7 +1620,13 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
             return BRIDGE_FAILED;
         }
     };
-    let src = bead::door::DoorSource::load(&client, set, lifecycle_rows);
+    let src = match bead::door::DoorSource::load(&client, set, lifecycle_rows) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("bead: lint: {e}");
+            return BRIDGE_FAILED;
+        }
+    };
     let n = bead::LintSource::ids(&src).len();
     let (rc, lines) = bead::lint(&src, &cfg);
     for l in &lines {

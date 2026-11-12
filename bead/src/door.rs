@@ -46,16 +46,24 @@ pub struct DoorSource<'a> {
     lifecycle: Box<dyn Fn() -> LifecycleRows + 'a>,
 }
 
-fn list_by_id(client: &LcClient, ids: &[String]) -> Vec<Value> {
-    ids.chunks(CHUNK)
-        .flat_map(|chunk| {
-            let args = ["list", "--all", "--limit", "0", "--json", "--id", &chunk.join(",")].map(String::from);
-            match serde_json::from_str::<Value>(&read(client, &args).1) {
-                Ok(Value::Array(rows)) => rows,
-                _ => Vec::new(),
-            }
-        })
-        .collect()
+fn rows_of(client: &LcClient, args: &[String]) -> Result<Vec<Value>, String> {
+    let (code, out) = read(client, args);
+    if code != 0 {
+        return Err(format!("content {} failed (exit {code})", args.first().map(String::as_str).unwrap_or("")));
+    }
+    match serde_json::from_str::<Value>(&out) {
+        Ok(Value::Array(rows)) => Ok(rows),
+        _ => Err("content list answered no rows array".to_string()),
+    }
+}
+
+fn list_by_id(client: &LcClient, ids: &[String]) -> Result<Vec<Value>, String> {
+    let mut all = Vec::new();
+    for chunk in ids.chunks(CHUNK) {
+        let args = ["list", "--all", "--limit", "0", "--json", "--id", &chunk.join(",")].map(String::from);
+        all.extend(rows_of(client, &args)?);
+    }
+    Ok(all)
 }
 
 fn targets<'v>(row: &'v Value, kinds: &'v [&str]) -> impl Iterator<Item = &'v str> {
@@ -69,14 +77,13 @@ fn targets<'v>(row: &'v Value, kinds: &'v [&str]) -> impl Iterator<Item = &'v st
 }
 
 impl<'a> DoorSource<'a> {
-    pub fn load(client: &LcClient, set: Set, lifecycle: impl Fn() -> LifecycleRows + 'a) -> Self {
+    pub fn load(client: &LcClient, set: Set, lifecycle: impl Fn() -> LifecycleRows + 'a) -> Result<Self, String> {
         let (mut ids, listed) = match set {
             Set::All => {
-                let (_, out) = read(client, &["list", "--limit", "0", "--json"].map(String::from));
-                let rows = serde_json::from_str::<Value>(&out).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
-                (parse_list_ids(&out), rows)
+                let rows = rows_of(client, &["list", "--limit", "0", "--json"].map(String::from))?;
+                (parse_list_ids(&Value::Array(rows.clone()).to_string()), rows)
             }
-            Set::Ids(ids) => (ids.clone(), list_by_id(client, &ids)),
+            Set::Ids(ids) => (ids.clone(), list_by_id(client, &ids)?),
         };
         ids.retain(|i| !i.is_empty());
         let mut rows: HashMap<String, Value> = listed.into_iter().filter_map(|r| Some((r["id"].as_str()?.to_string(), r))).collect();
@@ -92,12 +99,12 @@ impl<'a> DoorSource<'a> {
                 }
             }
         }
-        for r in list_by_id(client, &wanted) {
+        for r in list_by_id(client, &wanted)? {
             if let Some(id) = r["id"].as_str().map(String::from) {
                 rows.insert(id, r);
             }
         }
-        DoorSource { ids, rows, lifecycle: Box::new(lifecycle) }
+        Ok(DoorSource { ids, rows, lifecycle: Box::new(lifecycle) })
     }
 
     /// A source that only answers `lifecycle`.
@@ -159,7 +166,7 @@ mod tests {
         let fake = fixture();
         let client = LcClient::over(fake.clone(), true);
         let ids = ["sp-a", "sp-b", "sp-c"].map(String::from).to_vec();
-        let src = DoorSource::load(&client, Set::Ids(ids), || Ok(HashMap::new()));
+        let src = DoorSource::load(&client, Set::Ids(ids), || Ok(HashMap::new())).unwrap();
         let (code, lines) = lint(&src, &cfg());
         assert_eq!(code, 1);
         assert_eq!(lines, vec!["bead: sp-a: blocks edge to ask-labelled sp-d (asks must not block each other; use bd dep relate)".to_string()]);
@@ -171,7 +178,7 @@ mod tests {
     #[test]
     fn a_bead_the_store_did_not_return_is_unreadable() {
         let client = LcClient::over(fixture(), true);
-        let src = DoorSource::load(&client, Set::Ids(vec!["sp-gone".into()]), || Ok(HashMap::new()));
+        let src = DoorSource::load(&client, Set::Ids(vec!["sp-gone".into()]), || Ok(HashMap::new())).unwrap();
         let (code, lines) = lint(&src, &cfg());
         assert_eq!(code, 1);
         assert_eq!(lines, vec!["bead: sp-gone: unreadable (bd show failed)".to_string()]);
@@ -184,12 +191,26 @@ mod tests {
             json!({"id": "sp-d", "status": "closed", "issue_type": "task", "labels": ["needs-op-test", "repo:r"], "dependencies": []}),
         ]));
         let client = LcClient::over(fake.clone(), true);
-        let src = DoorSource::load(&client, Set::All, || Ok(HashMap::new()));
+        let src = DoorSource::load(&client, Set::All, || Ok(HashMap::new())).unwrap();
         let (_, lines) = lint(&src, &cfg());
         assert_eq!(lines.len(), 1, "{lines:?}");
         let seen = fake.requests();
         assert_eq!(seen.len(), 2, "{seen:?}");
         assert!(!seen[0].contains(&"--id".to_string()) && seen[1].contains(&"--id".to_string()), "{seen:?}");
+    }
+
+    struct Down;
+    impl spira_config::lc_call::Transport for Down {
+        fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+            Err("socket down".into())
+        }
+    }
+
+    #[test]
+    fn a_door_that_cannot_be_reached_fails_the_load_rather_than_linting_nothing() {
+        let client = LcClient::over(Arc::new(Down), true);
+        assert!(DoorSource::load(&client, Set::All, || Ok(HashMap::new())).is_err());
+        assert!(DoorSource::load(&client, Set::Ids(vec!["sp-a".into()]), || Ok(HashMap::new())).is_err());
     }
 
     #[test]
