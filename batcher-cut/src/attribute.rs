@@ -107,6 +107,13 @@ pub fn is_round_vm_fault(err: &str) -> bool {
     err.starts_with("round-vm:") && !err.contains("not a harness fault")
 }
 
+/// Why a step that did not finish judged nothing, when the round's head is no longer the one it
+/// started for: a preempt replaced the pass and stopped the step, so this is no fault of the round.
+pub fn replaced_by_preempt(started: &str, now: &str) -> Option<String> {
+    (!started.is_empty() && !now.is_empty() && started != now)
+        .then(|| format!("the attribution step was replaced by a preempt: the round head moved {started} -> {now}; it judged nothing"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +152,14 @@ mod tests {
             Some(blocked),
             "the last line wins"
         );
+    }
+
+    #[test]
+    fn a_step_stopped_by_a_preempt_says_it_was_replaced_not_that_the_vm_was_lost() {
+        let why = replaced_by_preempt("A", "B").expect("the head moved");
+        assert!(why.contains("replaced by a preempt") && !is_round_vm_fault(&why), "{why}");
+        assert_eq!(replaced_by_preempt("A", "A"), None);
+        assert_eq!(replaced_by_preempt("", "B"), None);
     }
 
     #[test]

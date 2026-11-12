@@ -2149,6 +2149,11 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
             }
         })
         .collect();
+    let head_now = || {
+        let batch = o.batch.as_deref()?;
+        io::open_rounds(&env_, &repo).ok()?.into_iter().find(|r| r.id == batch).map(|r| r.head)
+    };
+    let started_at = head_now().unwrap_or_default();
     let round = now().to_string();
     let round_branch = format!("spira/batcher-attr/{}-{round}", repo.name);
     io::set_branch(&repo, &round_branch, &io::head_of(&wt)?);
@@ -2207,6 +2212,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         io::keep_round_results(&env_.run, b, &runner.results);
     }
     let mended = ops.prior != batcher::mender::Prior::default();
+    let replaced = if end.is_err() { batcher_cut::attribute::replaced_by_preempt(&started_at, &head_now().unwrap_or_default()) } else { None };
     let outcome = match end {
         Ok(drive::RoundEnd::Land {
             members,
@@ -2220,6 +2226,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         Ok(drive::RoundEnd::Emptied(why)) => Attribution::Emptied(why),
         Ok(drive::RoundEnd::Faulted(why)) => Attribution::Faulted(why),
         Ok(drive::RoundEnd::Abandoned) => Attribution::Blocked("the round was abandoned".into()),
+        Err(e) if replaced.is_some() => return Err(format!("{}: {e}", replaced.unwrap_or_default())),
         Err(e) if batcher_cut::attribute::is_round_vm_fault(&e) => {
             Attribution::Fault(format!("the attribution did not finish: {e}"))
         }

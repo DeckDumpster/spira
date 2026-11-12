@@ -1893,14 +1893,21 @@ pub fn on_ran(carry: &Carry, ran: &UnitRan, now_ms: u64) -> Option<(Carry, Vec<A
 /// [`on_ran`] with what the leg wrote (its `unit.ran`'s captured stdout tail): the attribution
 /// and certify legs are judged by their own lines.
 pub fn on_ran_with(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64) -> Option<(Carry, Vec<Act>)> {
+    on_ran_seeing(carry, ran, out, now_ms, &|_, _| None)
+}
+
+/// [`on_ran_with`] that first reads the round's head as of now (`head_of(repo, batch)`): a step
+/// started for another head is replaced whatever the carried head last said.
+pub fn on_ran_seeing(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64, head_of: &dyn Fn(&str, &str) -> Option<String>) -> Option<(Carry, Vec<Act>)> {
     let key = ran.key_for(NAME)?;
     let (repo, rc, at) = carry.repos.iter().find_map(|(repo, rc)| {
         let at = rc.rounds().iter().position(|r| r.leg.as_deref() == Some(key.as_str()) && matches!(r.state, State::Corpus | State::Attributing | State::Certifying))?;
         Some((repo, rc, at))
     })?;
     let held = &rc.rounds()[at];
-    if !held.head.is_empty() && !held.leg_head.is_empty() && held.head != held.leg_head {
-        eprintln!("{NAME} {repo}: step {key} was started for head {} and the round is at {}: its result is discarded", held.leg_head, held.head);
+    let current = held.batch.as_deref().and_then(|b| head_of(repo, b)).filter(|h| !h.is_empty()).unwrap_or_else(|| held.head.clone());
+    if !current.is_empty() && !held.leg_head.is_empty() && current != held.leg_head {
+        eprintln!("{NAME} {repo}: step {key} was started for head {} and the round is at {current}: its result is discarded", held.leg_head);
         return None;
     }
     let mut next = carry.clone();
@@ -2066,10 +2073,18 @@ impl Handler for BatcherLocal {
             Err(_) => (Carry { repos: carry.repos.clone() }, vec![]),
         };
         let out = RanOutput::from_event_kind(&ev.kind).unwrap_or_default();
-        let ran = |carry: &Carry, r: &UnitRan| on_ran_with(carry, r, &out, ev.at);
+        let ran = |carry: &Carry, r: &UnitRan| on_ran_seeing(carry, r, &out, ev.at, &round_head_now);
         let legs = |carry: &Carry| carry.repos.values().flat_map(|rc| rc.rounds()).filter(|r| matches!(r.state, State::Corpus | State::Attributing | State::Certifying)).filter_map(|r| r.leg).collect();
         handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran, legs })
     }
+}
+
+/// The head the store's projection holds for `batch` right now; `None` when this process keeps
+/// no projection or the round is not open.
+fn round_head_now(repo: &str, batch: &str) -> Option<String> {
+    let views = store_view::shared()?;
+    let view = views.round_view(repo).ok()?;
+    view.value.rounds.iter().find(|r| r.record.id == batch).and_then(|r| r.record.get("head")).map(str::to_string)
 }
 
 /// Each repo of `snap` given the effects of this task the stream has asked for and not had answered.

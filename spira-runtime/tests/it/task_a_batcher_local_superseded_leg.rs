@@ -99,3 +99,17 @@ fn a_round_that_went_green_on_the_new_head_lands_at_it_when_the_old_step_faults(
     assert!(on_ran_with(&carry, &ran(), &fault(), NOW).is_none(), "the late fault changes nothing");
     assert_eq!(carry.repos["spira"].state, State::Landing);
 }
+
+#[test]
+fn a_step_result_whose_head_differs_from_the_head_read_at_apply_time_changes_no_state() {
+    let carry = carried("A", "A");
+    let moved = |_: &str, _: &str| Some("B".to_string());
+    assert!(on_ran_seeing(&carry, &ran(), &fault(), NOW, &moved).is_none(), "the carry still says A: only the read at apply time knows");
+}
+
+#[test]
+fn a_step_result_whose_head_equals_the_head_read_at_apply_time_is_applied() {
+    let same = |_: &str, _: &str| Some("A".to_string());
+    let (_, acts) = on_ran_seeing(&carried("A", "A"), &ran(), &fault(), NOW, &same).expect("its own step");
+    assert!(effects(&acts).contains(&ABANDON), "{acts:?}");
+}
