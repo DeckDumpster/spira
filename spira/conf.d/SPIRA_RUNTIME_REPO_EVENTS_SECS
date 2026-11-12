@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime repo-events polls of every registered repository's finished workflow runs.
+SCHEMA=Seconds between spira-runtime repo-events forge polls (unit: seconds; integer; default 45). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_REPO_EVENTS_SECS:=45}"
+SPIRA_CONF_DEFAULT_EOF
