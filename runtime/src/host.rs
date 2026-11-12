@@ -164,8 +164,8 @@ fn run_turn(mut t: Turn) -> TurnOut {
         if let Some(before) = &t.before {
             before(&mut t.engine);
         }
-        t.engine.run_until_idle()
-    }); // loop-safe: runs on the offload pool
+        t.engine.run_until_idle() // loop-safe: runs on the offload pool
+    });
     let launch: Vec<PendingEffect> = t.engine.pending_effects().into_iter().filter(|p| !t.in_flight.contains(&p.key)).collect();
     // The host now owns each of these until it starts: its deadline waits for the runner.
     for p in &launch {
