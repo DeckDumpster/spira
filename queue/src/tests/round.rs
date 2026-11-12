@@ -8639,3 +8639,66 @@ fn start_with_no_stop_in_force_says_so_and_changes_nothing() {
     assert_eq!(t.run(&args), 0, "{}", t.err());
     assert!(t.out().contains("no stop of its rounds in force"), "{}", t.out());
 }
+
+fn open_two_and_eject_without_rebuild(t: &T) -> String {
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(t);
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "lint red", "--red", "--suites", "lint", "--no-rebuild"]),
+        0,
+        "{}",
+        t.err()
+    );
+    batch
+}
+
+#[test]
+fn an_eject_that_rebuilds_records_the_rebuilt_tree_as_the_rounds_head() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "lint"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let wt = PathBuf::from(&kv_of(&t, "round")["worktree"]);
+    assert_eq!(
+        Some(kv_of(&t, "round")["head"].clone()),
+        t.git.rev_parse(&wt, "HEAD")
+    );
+    assert_eq!(kv_of(&t, "round")["head"], "merged-ta");
+}
+
+#[test]
+fn a_worktree_rebuilt_from_the_surviving_members_after_an_eject_is_adopted_by_certify() {
+    let t = round_world();
+    let batch = open_two_and_eject_without_rebuild(&t);
+    declare_own_testenv(&t);
+    t.git.set("HEAD", "merged-ta");
+    t.git.ancestor("ta", "merged-ta");
+    assert_ne!(kv_of(&t, "round")["head"], "merged-ta");
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(t.out().contains("adopted"), "{}{}", t.out(), t.err());
+    assert_eq!(kv_of(&t, "round")["head"], "merged-ta");
+    assert_eq!(round_phase(&t), "GREEN");
+}
+
+#[test]
+fn a_worktree_carrying_a_commit_no_member_owns_is_not_adopted_by_certify() {
+    let t = round_world();
+    let batch = open_two_and_eject_without_rebuild(&t);
+    t.git.set("HEAD", "merged-ta");
+    t.git.ancestor("ta", "merged-ta");
+    *t.git.log.borrow_mut() = vec![RangeCommit {
+        sha: "stray".into(),
+        parents: vec!["b0".into()],
+        subject: "not a member's".into(),
+    }];
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 1);
+    assert!(t.err().contains("is not at the round's head"), "{}", t.err());
+    assert_ne!(kv_of(&t, "round")["head"], "merged-ta");
+}

@@ -3315,6 +3315,32 @@ pub(super) fn certify(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Whether `head` is the recorded base with the recorded members merged in and nothing else:
+/// every member tip is under it, and each commit it adds over the base that is not a merge belongs
+/// to a member.
+fn members_merged_on_base(w: &World, path: &Path, kv: &Kv, head: &str) -> bool {
+    let base = kv.get("base").unwrap_or("");
+    let members = kv.members();
+    if base.is_empty()
+        || members.is_empty()
+        || !w.git.is_ancestor(path, base, head)
+        || !members
+            .iter()
+            .all(|m| w.git.is_ancestor(path, &m.tip, head))
+    {
+        return false;
+    }
+    let Ok(added) = w.git.log_range(path, &format!("{base}..{head}")) else {
+        return false;
+    };
+    added.iter().all(|c| {
+        c.parents.len() > 1
+            || members
+                .iter()
+                .any(|m| w.git.is_ancestor(path, &c.sha, &m.tip))
+    })
+}
+
 fn certify_pass(
     w: &World,
     label: &str,
@@ -3367,9 +3393,19 @@ fn certify_pass(
                 Ok(None) => {}
                 Err(()) => return FAIL,
             }
-            if w.git.rev_parse(&wt, "HEAD").as_deref() != Some(head.as_str()) {
-                w.err(format!("queue.sh {label}: the round worktree {} is not at the round's head {head} — refused", wt.display()));
-                return FAIL;
+            let at_wt = w.git.rev_parse(&wt, "HEAD");
+            if at_wt.as_deref() != Some(head.as_str()) {
+                match at_wt {
+                    Some(at) if members_merged_on_base(w, path, &kv, &at) => {
+                        w.out(format!("queue.sh {label}: the round worktree is at {at}, the recorded members merged on the recorded base; adopted as the round's head (was {head})"));
+                        head = at;
+                        set(&mut kv, "head", &head);
+                    }
+                    _ => {
+                        w.err(format!("queue.sh {label}: the round worktree {} is not at the round's head {head} — refused", wt.display()));
+                        return FAIL;
+                    }
+                }
             }
         }
         // A round the lifecycle already holds GREEN was certified; what is missing (the
