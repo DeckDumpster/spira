@@ -103,7 +103,7 @@
 > there when the variable is set, which is the one chokepoint every `*_keys` function's bd
 > read already funnels through. Converted off `testdb_up` onto that seam: dup-refs,
 > repo-labels, well, and sop (which absorbed sweep's cases; `test-cockpit-sweep.sh` is
-> deleted — coverage row 14, cluster 5). the cockpit-bd-contract suite is new: one real-bd row
+> deleted — coverage row 14, cluster 5). a cockpit bd-contract suite was proposed: one real-bd row
 > per query shape (label AND + lookback, default exclude-closed, `--all`, bare `memories`,
 > `SP_READY`), including `test-cockpit-ready-seeded.sh`'s two cases per coverage row 08 (that
 > file is deleted). Rows 09 (unsent/unadopted), 10/11 (landed/unlanded/queue/queue-section)
