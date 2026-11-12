@@ -72,6 +72,10 @@ pub trait RoundRunner {
     fn prior_red(&mut self) -> Option<FilterRed> {
         None
     }
+    /// The suites the pass this attribution follows ran red, when its results are at hand.
+    fn prior_red_suites(&mut self) -> Vec<String> {
+        vec![]
+    }
     /// The compiler's output of the main run that ended `WorkspaceBuild`.
     fn build_output(&mut self) -> String {
         String::new()
@@ -1088,6 +1092,19 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             )),
         });
     }
+    let prior_reds: Vec<String> = runner
+        .prior_red_suites()
+        .into_iter()
+        .filter(|s| corpus.contains(s))
+        .collect();
+    if !prior_reds.is_empty() {
+        println!(
+            "batcher: {} suite(s) red in the corpus pass — attributing them alone, without the corpus again",
+            prior_reds.len()
+        );
+        suites = prior_reds;
+        kind = MainKind::Verify;
+    }
     for iteration in 0..bound {
         if runner.abandoned() {
             return Ok(RoundEnd::Abandoned);
@@ -1542,6 +1559,8 @@ pub(crate) mod tests {
         pub scoped: Vec<Vec<String>>,
         /// The filter red of the corpus pass this attribution follows.
         pub prior: Option<FilterRed>,
+        /// The suites the corpus pass this attribution follows ran red.
+        pub prior_suites: Vec<String>,
         /// A probe scoped to named tests finds nothing red: the red needs its whole package.
         pub narrow_clears: bool,
         /// A runner that cannot build a tree with members taken out: every such job fails to launch.
@@ -1591,6 +1610,7 @@ pub(crate) mod tests {
                 alone: vec![],
                 scoped: vec![],
                 prior: None,
+                prior_suites: vec![],
                 narrow_clears: false,
                 refuses_removals: false,
                 added_by: BTreeMap::new(),
@@ -1693,6 +1713,9 @@ pub(crate) mod tests {
         }
         fn prior_red(&mut self) -> Option<FilterRed> {
             self.prior.take()
+        }
+        fn prior_red_suites(&mut self) -> Vec<String> {
+            std::mem::take(&mut self.prior_suites)
         }
         fn build_output(&mut self) -> String {
             self.build_failed.clone().unwrap_or_default()
@@ -2540,6 +2563,19 @@ pub(crate) mod tests {
             f.main_kind[1],
             (MainKind::Verify, vec!["test-03.sh".into()])
         );
+        assert!(matches!(end, RoundEnd::Land { .. }));
+    }
+
+    #[test]
+    fn a_pass_red_only_on_suites_is_attributed_by_verifying_those_suites_alone() {
+        let mut f = Fake::new(breaks("m2", "test-03.sh"));
+        f.maxpar = 4;
+        f.prior_suites = vec!["test-03.sh".into(), "not-in-the-corpus.sh".into()];
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(f.main_kind[0], (MainKind::Verify, vec!["test-03.sh".into()]));
+        assert!(!f.main_kind.iter().any(|(k, _)| *k == MainKind::Corpus), "{:?}", f.main_kind);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-03.sh".to_string()])]);
         assert!(matches!(end, RoundEnd::Land { .. }));
     }
 
