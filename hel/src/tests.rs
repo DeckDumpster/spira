@@ -387,7 +387,7 @@ mod resume {
         let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
         let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
         s.repo(&repo);
-        assert_eq!(sent(&f), vec!["spira/sp-d".to_string(), "spira/sp-e".to_string()].iter().map(|b| b.strip_prefix("spira/").unwrap().to_string()).collect::<Vec<_>>());
+        assert_eq!(sent(&f), ["sp-d", "sp-e"].map(String::from).to_vec());
     }
 
     #[test]
