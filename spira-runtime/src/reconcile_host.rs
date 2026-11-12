@@ -327,7 +327,9 @@ impl Host for RuntimeHost {
 
     fn stranded_runners(&self, repo: &Path) -> String {
         let Some(slug) = slug(repo) else { return String::new() };
-        self.forge.stranded_runners(&slug, self.now, self.stranded_min_age).into_iter().map(|l| format!("{l}\n")).collect()
+        let lines = self.forge.stranded_runners(&slug, self.now, self.stranded_min_age);
+        self.forge.report_spend();
+        lines.into_iter().map(|l| format!("{l}\n")).collect()
     }
 
     fn send_mail(&self, mail: &Mail) -> Result<(), String> {

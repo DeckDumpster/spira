@@ -280,6 +280,7 @@ impl World {
             }
             repos.push((r.name.clone(), obs));
         }
+        forge.report_spend();
         serde_json::to_string(&pr_notify::Snapshot { repos }).map_err(|e| e.to_string())
     }
 

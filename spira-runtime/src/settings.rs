@@ -208,7 +208,7 @@ impl Settings {
             backoff_secs: secs("SPIRA_CONCIERGE_INBOX_BACKOFF")?,
         };
         let pr_notify = PrNotify { interval_ms: secs("SPIRA_RUNTIME_PR_NOTIFY_SECS")? * 1000, deploy_giveup_secs: secs("SPIRA_PR_DEPLOY_GIVEUP")? };
-        let forge = Forge { api: get("SPIRA_GH_API")?, token: get("SPIRA_BROKER_GH_TOKEN")?, gh_config_dir: get("SPIRA_BROKER_GH_CONFIG_DIR")?, gh: get("SPIRA_GH")? };
+        let forge = Forge { api: get("SPIRA_GH_API")?, token: get("SPIRA_BROKER_GH_TOKEN")?, gh_config_dir: get("SPIRA_BROKER_GH_CONFIG_DIR")?, gh: get("SPIRA_GH")?, metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()) };
         let asks = Asks { interval_ms: secs("SPIRA_RUNTIME_ASKS_SECS")? * 1000 };
         let design_asks = DesignAsks { interval_ms: secs("SPIRA_RUNTIME_DESIGN_ASKS_SECS")? * 1000, repeat_secs: secs("SPIRA_DESIGN_ASKS_REPEAT")? };
         let brain_dirty = BrainDirty { interval_ms: secs("SPIRA_RUNTIME_BRAIN_DIRTY_SECS")? * 1000, age_secs: secs("SPIRA_BRAIN_DIRTY_AGE")? };

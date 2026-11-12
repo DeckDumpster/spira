@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use crate::api_budget;
 use crate::watchers::pr_notify::{classify, Final, OpenPr, Run};
 use crate::wiki_git::gh_auth_token;
 
@@ -24,6 +25,7 @@ pub struct Forge {
     pub token: String,
     pub gh_config_dir: String,
     pub gh: String,
+    pub metrics_endpoint: Option<String>,
 }
 
 pub const NO_CREDENTIAL: &str = "no forge credential";
@@ -145,31 +147,82 @@ impl Forge {
         }
     }
 
-    fn get(&self, path: &str) -> Option<Value> {
-        self.try_get(path).ok()
+    fn get(&self, caller: &str, path: &str) -> Option<Value> {
+        self.try_get(caller, path).ok()
     }
 
-    fn try_get(&self, path: &str) -> Result<Value, String> {
+    /// One GET, conditional on the ETag of the last answer for the same URL: a 304 returns that
+    /// answer and is not charged against the budget. A spent budget is reported once per reset
+    /// and no request is made until it passes.
+    fn try_get(&self, caller: &str, path: &str) -> Result<Value, String> {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        if let Some(reset) = api_budget::exhausted_until(&self.api, now) {
+            api_budget::count(caller, api_budget::REFUSED);
+            let why = format!("the GitHub API budget is spent until {} (epoch {reset}); {caller} made no request", api_budget::clock_of(reset));
+            if api_budget::first_report_of(&self.api, reset) {
+                eprintln!("spira-runtime: {why}");
+            }
+            return Err(why);
+        }
         let token = self.credential()?;
-        let req = ureq::AgentBuilder::new().timeout(CALL_TIMEOUT).build().get(&format!("{}{path}", self.api.trim_end_matches('/'))).set("Accept", "application/vnd.github+json").set("User-Agent", "spira-runtime").set("Authorization", &format!("Bearer {token}"));
+        let url = format!("{}{path}", self.api.trim_end_matches('/'));
+        let mut req = ureq::AgentBuilder::new().timeout(CALL_TIMEOUT).build().get(&url).set("Accept", "application/vnd.github+json").set("User-Agent", "spira-runtime").set("Authorization", &format!("Bearer {token}"));
+        if let (Some(tag), Some(_)) = (api_budget::etag(&url), api_budget::body_for(&url)) {
+            req = req.set("If-None-Match", &tag);
+        }
+        let resp = match req.call() {
+            Ok(r) => r,
+            Err(e) => {
+                api_budget::count(caller, api_budget::FAILED);
+                if let ureq::Error::Status(_, r) = &e {
+                    self.note_rate(r);
+                }
+                return Err(e.to_string());
+            }
+        };
+        self.note_rate(&resp);
+        if resp.status() == 304 {
+            if let Some(v) = api_budget::body_for(&url) {
+                api_budget::count(caller, api_budget::CACHED);
+                return Ok(v);
+            }
+        }
+        let tag = resp.header("ETag").map(str::to_string);
         let mut body = String::new();
-        req.call().map_err(|e| e.to_string())?.into_reader().take(16 << 20).read_to_string(&mut body).map_err(|e| e.to_string())?;
-        serde_json::from_str(&body).map_err(|e| format!("{path}: {e}"))
+        resp.into_reader().take(16 << 20).read_to_string(&mut body).map_err(|e| e.to_string())?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| format!("{path}: {e}"))?;
+        api_budget::count(caller, api_budget::FRESH);
+        if let Some(tag) = tag {
+            api_budget::keep(&url, tag, value.clone());
+        }
+        Ok(value)
+    }
+
+    fn note_rate(&self, r: &ureq::Response) {
+        let num = |h: &str| r.header(h).and_then(|v| v.trim().parse::<u64>().ok());
+        if let (Some(limit), Some(remaining), Some(reset)) = (num("x-ratelimit-limit"), num("x-ratelimit-remaining"), num("x-ratelimit-reset")) {
+            api_budget::note_rate(&self.api, api_budget::Rate { limit, remaining, reset });
+        }
+    }
+
+    /// Pushes what this process has spent since the last flush.
+    pub fn report_spend(&self) {
+        api_budget::flush(self.metrics_endpoint.as_deref());
     }
 
     /// A list the forge may have cut short at one page reads as not answered, never as the whole.
-    fn listed(&self, path: &str) -> Option<Vec<Value>> {
-        self.get(path)?.as_array().filter(|a| a.len() < PAGE_SIZE).cloned()
+    fn listed(&self, caller: &str, path: &str) -> Option<Vec<Value>> {
+        self.get(caller, path)?.as_array().filter(|a| a.len() < PAGE_SIZE).cloned()
     }
 
     /// Every open PR with its checks classified; `None` when any call failed.
     pub fn open_prs(&self, slug: &str) -> Option<Vec<(OpenPr, String)>> {
-        let prs = self.listed(&format!("/repos/{slug}/pulls?state=open&{PAGE}"))?;
+        let prs = self.listed("open_prs", &format!("/repos/{slug}/pulls?state=open&{PAGE}"))?;
         prs.iter()
             .map(|p| {
                 let sha = p["head"]["sha"].as_str()?;
-                let checks = self.get(&format!("/repos/{slug}/commits/{sha}/check-runs?{PAGE}"))?;
-                let runs = self.get(&format!("/repos/{slug}/actions/runs?head_sha={sha}&{PAGE}"))?;
+                let checks = self.get("open_prs", &format!("/repos/{slug}/commits/{sha}/check-runs?{PAGE}"))?;
+                let runs = self.get("open_prs", &format!("/repos/{slug}/actions/runs?head_sha={sha}&{PAGE}"))?;
                 let runs = runs["workflow_runs"].as_array().filter(|a| a.len() < PAGE_SIZE)?;
                 let checks = current_checks(checks["check_runs"].as_array()?, runs, &text(&p["head"], "ref"));
                 let (status, fail) = classify(&checks);
@@ -181,7 +234,7 @@ impl Forge {
 
     /// How a PR that left the open list ended; `None` when the forge could not say.
     pub fn final_state(&self, slug: &str, n: u64) -> Option<Final> {
-        let p = self.get(&format!("/repos/{slug}/pulls/{n}"))?;
+        let p = self.get("final_state", &format!("/repos/{slug}/pulls/{n}"))?;
         let state = match (p["state"].as_str()?, p["merged"].as_bool().unwrap_or(false)) {
             (_, true) => "MERGED",
             ("closed", false) => "CLOSED",
@@ -193,7 +246,7 @@ impl Forge {
 
     /// The first completed deploy run for a merge commit; `None` while there is none.
     pub fn deploy_run(&self, slug: &str, sha: &str) -> Option<Run> {
-        let runs = self.get(&format!("/repos/{slug}/actions/workflows/deploy.yml/runs?head_sha={sha}&{PAGE}"))?;
+        let runs = self.get("deploy_run", &format!("/repos/{slug}/actions/workflows/deploy.yml/runs?head_sha={sha}&{PAGE}"))?;
         let r = runs["workflow_runs"].as_array()?.iter().find(|r| r["status"] == "completed")?;
         let secs = epoch(r["updated_at"].as_str()?).zip(epoch(r["created_at"].as_str()?)).map_or(0, |(u, c)| u.saturating_sub(c));
         Some(Run { conclusion: r["conclusion"].as_str().unwrap_or("unknown").to_string(), secs, url: text(r, "html_url") })
@@ -204,15 +257,15 @@ impl Forge {
     /// `forge stranded-runners` prints. A call that fails reads as nothing stranded, as it does there.
     pub fn stranded_runners(&self, slug: &str, now: u64, min_age: u64) -> Vec<String> {
         const GENERIC: [&str; 9] = ["self-hosted", "linux", "macos", "windows", "x64", "arm64", "x86_64", "arm", "ubuntu-latest"];
-        let Some(runs) = self.get(&format!("/repos/{slug}/actions/runs?per_page=50")) else { return vec![] };
+        let Some(runs) = self.get("stranded_runners", &format!("/repos/{slug}/actions/runs?per_page=50")) else { return vec![] };
         let ids: Vec<String> = runs["workflow_runs"].as_array().map(|a| a.iter().filter(|r| r["status"] != "completed").filter_map(|r| r.get("id").map(|i| i.to_string())).collect()).unwrap_or_default();
         if ids.is_empty() {
             return vec![];
         }
-        let runners: Vec<Value> = self.get(&format!("/repos/{slug}/actions/runners?per_page=100")).and_then(|v| v["runners"].as_array().cloned()).unwrap_or_default();
+        let runners: Vec<Value> = self.get("stranded_runners", &format!("/repos/{slug}/actions/runners?per_page=100")).and_then(|v| v["runners"].as_array().cloned()).unwrap_or_default();
         let mut lines = vec![];
         for id in ids {
-            let Some(jobs) = self.get(&format!("/repos/{slug}/actions/runs/{id}/jobs")) else { continue };
+            let Some(jobs) = self.get("stranded_runners", &format!("/repos/{slug}/actions/runs/{id}/jobs")) else { continue };
             for j in jobs["jobs"].as_array().cloned().unwrap_or_default() {
                 if j["status"] != "queued" {
                     continue;
@@ -243,10 +296,10 @@ impl Forge {
 
     /// `spira/*` branches ahead of `base` that none of `open_heads` is the head of.
     pub fn stray_branches(&self, slug: &str, base: &str, open_heads: &[String]) -> Option<Vec<String>> {
-        let branches = self.listed(&format!("/repos/{slug}/branches?{PAGE}"))?;
+        let branches = self.listed("stray_branches", &format!("/repos/{slug}/branches?{PAGE}"))?;
         let mut out = vec![];
         for b in branches.iter().filter_map(|b| b["name"].as_str()).filter(|b| b.starts_with("spira/")) {
-            let ahead = self.get(&format!("/repos/{slug}/compare/{base}...{b}"))?["ahead_by"].as_u64()?;
+            let ahead = self.get("stray_branches", &format!("/repos/{slug}/compare/{base}...{b}"))?["ahead_by"].as_u64()?;
             if ahead > 0 && !open_heads.iter().any(|h| h == b) {
                 out.push(b.to_string());
             }
@@ -332,6 +385,65 @@ mod tests {
         assert_eq!(names, ["provision", "gate", "tag", "lint-app"]);
         // On PR 988's own branch the same commit is red.
         assert_eq!(classify(&current_checks(&checks, &runs, "spira/publish/20261107T001222Z")).0, "red");
+    }
+
+    /// Serves `answers` in order, one connection each; returns the api base and the requests seen.
+    fn stub(answers: Vec<String>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let api = format!("http://{}", l.local_addr().unwrap());
+        let h = std::thread::spawn(move || {
+            let mut seen = vec![];
+            for a in answers {
+                let (mut c, _) = l.accept().unwrap();
+                let mut buf = [0u8; 4096];
+                let n = std::io::Read::read(&mut c, &mut buf).unwrap();
+                seen.push(String::from_utf8_lossy(&buf[..n]).to_lowercase());
+                std::io::Write::write_all(&mut c, a.as_bytes()).unwrap();
+            }
+            seen
+        });
+        (api, h)
+    }
+
+    fn answer(status: &str, headers: &str, body: &str) -> String {
+        format!("HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+    }
+
+    fn forge_at(api: String) -> Forge {
+        Forge { api, token: "t".into(), ..Forge::default() }
+    }
+
+    #[test]
+    fn an_unchanged_poll_is_revalidated_by_etag_and_answered_from_the_kept_body() {
+        let (api, seen) = stub(vec![answer("200 OK", "ETag: \"v1\"\r\n", "[]"), answer("304 Not Modified", "", "")]);
+        let forge = forge_at(api);
+        assert_eq!(forge.listed("etag-caller", "/repos/a/b/pulls"), Some(vec![]));
+        assert_eq!(forge.listed("etag-caller", "/repos/a/b/pulls"), Some(vec![]));
+        let seen = seen.join().unwrap();
+        assert!(!seen[0].contains("if-none-match"));
+        assert!(seen[1].contains("if-none-match: \"v1\""), "{}", seen[1]);
+        assert_eq!((api_budget::calls("etag-caller", api_budget::FRESH), api_budget::calls("etag-caller", api_budget::CACHED)), (1, 1));
+    }
+
+    #[test]
+    fn the_budget_the_forge_reports_is_kept_and_a_spent_one_stops_requests_until_its_reset() {
+        let reset = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 600;
+        let spent = format!("X-RateLimit-Limit: 5000\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: {reset}\r\n");
+        let (api, seen) = stub(vec![answer("200 OK", &spent, "[]")]);
+        let forge = forge_at(api.clone());
+        assert!(forge.try_get("spend-caller", "/repos/a/b/pulls").is_ok());
+        assert_eq!(api_budget::rate(&api), Some(api_budget::Rate { limit: 5000, remaining: 0, reset }));
+        let why = forge.try_get("spend-caller", "/repos/a/b/pulls").unwrap_err();
+        assert!(why.contains(&api_budget::clock_of(reset)) && why.contains("spend-caller"), "{why}");
+        assert_eq!(seen.join().unwrap().len(), 1, "no second request while the budget is spent");
+        assert_eq!(api_budget::calls("spend-caller", api_budget::REFUSED), 1);
+    }
+
+    #[test]
+    fn a_spent_budget_is_reported_once_per_reset() {
+        assert!(api_budget::first_report_of("once-api", 100));
+        assert!(!api_budget::first_report_of("once-api", 100));
+        assert!(api_budget::first_report_of("once-api", 200));
     }
 
     #[test]
