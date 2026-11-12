@@ -196,6 +196,9 @@ elif [ -n "$repo" ]; then
                     fail=1
                 fi
             fi
+        elif [ "$MODE" = reopen ]; then
+            BRANCH_KEPT=1
+            say "work: no base to compare $br against — kept in refs/heads"
         fi
     fi
     if [ -n "$tip" ] && [ "$fail" = 0 ] && [ "$WIP_COMMITTED" = 0 ] && [ "$BRANCH_KEPT" = 0 ]; then
