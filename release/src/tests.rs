@@ -778,6 +778,15 @@ fn a_delta_naming_a_placeholder_path_is_refused_and_the_shipped_one_is_clean() {
     let d = config_delta::Delta::parse(&shipped).unwrap();
     assert!(!d.added.contains_key("spira.batch_ledger"), "the ledger path derives from the install's run dir");
 }
+#[test]
+fn the_shipped_delta_declares_the_deleted_watch_tasks_removed() {
+    let shipped = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../", "spira/config-delta.toml")).unwrap();
+    let d = config_delta::Delta::parse(&shipped).unwrap();
+    for t in ["watch.perf_happy", "watch.spill_key", "watch.statute_audit"] {
+        assert!(d.removed_tasks.iter().any(|r| r == t), "{t} missing from removed_tasks");
+    }
+}
+
 const TC: &str = "1.99.0 abc";
 
 #[test]
