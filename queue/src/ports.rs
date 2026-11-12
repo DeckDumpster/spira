@@ -338,6 +338,9 @@ pub trait Scripts {
     /// The declared release's own `release` binary (`$SPIRA_RELEASE/bin/release`), for a step with
     /// no round bin-dir; a refusal naming `SPIRA_RELEASE` when it is not declared.
     fn release_tool(&self) -> Result<PathBuf, String>;
+    /// Builds the release artifacts a landing ships into `<wt>/target/release`, in a leased build
+    /// directory held until the returned guard is dropped. `who` names the lease's holder.
+    fn build_release(&self, wt: &Path, who: &str) -> Result<Box<dyn std::any::Any>, String>;
     /// Stops every live unit and scope the legs of `batch` in `repo` run in and waits for each to
     /// exit: the names it stopped. `Err` when one outlived the wait or the units cannot be read.
     fn stop_round_legs(&self, repo: &str, batch: &str) -> Result<Vec<String>, String>;
