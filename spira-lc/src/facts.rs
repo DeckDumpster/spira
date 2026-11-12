@@ -25,6 +25,10 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 }
 
 fn bounded(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).take(CAUSE_MAX).collect()
+}
+
+fn bounded_tabbed(s: &str) -> String {
     s.chars().filter(|c| *c == '\t' || !c.is_control()).take(CAUSE_MAX).collect()
 }
 
@@ -59,7 +63,11 @@ pub fn cmd_fact(args: &[String], conn: &Conn) -> (i32, String) {
         return (CANNOT_TELL, "fact: empty <bead-id> or --actor".into());
     }
     let raw = flag(args, "--cause").unwrap_or_default();
-    let cause = if LONG_KINDS.contains(&kind.as_str()) { bounded_long(&raw) } else { bounded(&raw) };
+    let cause = match kind.as_str() {
+        k if LONG_KINDS.contains(&k) => bounded_long(&raw),
+        "build-dir" => bounded_tabbed(&raw),
+        _ => bounded(&raw),
+    };
     match conn.append_event(&insert_sql(key, &kind, &cause, &bounded(&actor), db::now_epoch())) {
         Ok(()) => (0, String::new()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
@@ -301,7 +309,8 @@ mod tests {
     #[test]
     fn a_build_dir_fact_keeps_the_tab_between_the_tip_and_the_directory() {
         assert!(KINDS.contains(&"build-dir"));
-        assert_eq!(bounded("abc\t/b/dir.1\n"), "abc\t/b/dir.1");
+        assert_eq!(bounded_tabbed("abc\t/b/dir.1\n"), "abc\t/b/dir.1");
+        assert_eq!(bounded("abc\tdef"), "abcdef", "no other kind keeps a tab");
     }
 
     #[test]
