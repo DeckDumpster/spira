@@ -1404,7 +1404,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         };
         {
             let mut r = rec.borrow_mut();
-            r.selection = Some(if args.tests.is_some() { "tests" } else { "transitive" }.into());
+            r.selection = Some(if args.tests.is_some() { "tests" } else if args.direct { "direct" } else { "transitive" }.into());
             r.crates = crates.clone();
             r.runner = Some("container".into());
             r.target = Some("branch".into());

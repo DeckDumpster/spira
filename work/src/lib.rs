@@ -695,7 +695,7 @@ mod tests {
         let scope = Affected::Crates(vec![]);
         assert_eq!(
             check_argv("testenv --suites unit-tests --direct {branch}", &scope, "spira/sp-x", rec_path()).unwrap(),
-            v(&["testenv", "--suites", "unit-tests", "--direct", "spira/sp-x", rec_path()])
+            v(&["testenv", "--suites", "unit-tests", "--direct", "spira/sp-x"])
         );
         assert_eq!(check_argv("spira-lint --diff x", &scope, "spira/sp-x", rec_path()).unwrap(), v(&["spira-lint", "--diff", "x"]));
     }
