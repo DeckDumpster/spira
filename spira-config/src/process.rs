@@ -249,4 +249,13 @@ mod declared_value_tests {
         let merged = crate::merge_layers(toml.to_str().unwrap()).unwrap();
         assert_eq!(declared_value(&merged, "SPIRA_ASK_LABEL"), None);
     }
+
+    #[test]
+    fn an_unregistered_declared_key_is_answered_by_the_fast_path_which_skips_the_registry() {
+        let dir = testkit::TempDir::new("spira-config-declared-unregistered");
+        let declare: BTreeMap<String, String> = [("SPIRA_INSTANCE", "prod"), ("SPIRA_NOT_A_REGISTERED_KEY", "typo")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let toml = crate::fixture_toml_file(dir.path(), &declare);
+        let merged = crate::merge_layers(toml.to_str().unwrap()).unwrap();
+        assert_eq!(declared_value(&merged, "SPIRA_NOT_A_REGISTERED_KEY").as_deref(), Some("typo"));
+    }
 }
