@@ -694,10 +694,12 @@ mod tests {
         let builder = lease(&base, "sp-x").unwrap();
         let want = builder.dir().to_path_buf();
         reserve(&base, &want, &gate_label("sp-x")).unwrap();
+        let (go, wait) = std::sync::mpsc::channel::<()>();
         let t = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            wait.recv().unwrap();
             builder.release();
         });
+        go.send(()).unwrap();
         let (g, why) = lease_recorded_waiting(&base, Some(&want), &gate_label("sp-x"), std::time::Duration::from_secs(10)).unwrap();
         t.join().unwrap();
         assert_eq!((g.dir(), why), (want.as_path(), Why::Recorded));
