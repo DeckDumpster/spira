@@ -1082,6 +1082,57 @@ fn a_release_whose_content_read_is_refused_is_rolled_back_and_the_error_names_th
     assert!(!w.cfg.releases.join("current").exists(), "current is put back");
 }
 
+/// Release `A` registering only `heartbeat`, over a host whose `spira.task_modes` also names
+/// `repo-events`; `delta` is the release's config delta.
+fn world_dropping_a_task(delta: &str) -> World {
+    let w = world_activating_a_changed_unit();
+    let rel = w.cfg.releases.join(A);
+    file(
+        &rel.join("spira/conf.d/SPIRA_TASK_MODES"),
+        "TYPE=string\nDOC=modes\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_TASK_MODES:=heartbeat=act}\"\nSPIRA_CONF_DEFAULT_EOF\n",
+    );
+    exe(&rel.join("bin/spira-config"), "#!/bin/sh\nexit 0\n");
+    file(&rel.join("spira/config-delta.toml"), delta);
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\ntask_modes = \"heartbeat=act repo-events=act\"\n");
+    w
+}
+
+#[test]
+fn a_release_that_drops_a_task_the_host_task_modes_names_activates_with_the_entry_gone() {
+    let w = world_dropping_a_task("removed_tasks = [\"repo-events\"]\n");
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    activate_with(&w, &sc).unwrap();
+    let cfg = fs::read_to_string(w.cfg.toml_spec().unwrap()).unwrap();
+    assert!(cfg.contains("task_modes = \"heartbeat=act\"") && !cfg.contains("repo-events"), "{cfg}");
+    assert_eq!(sc.state("spira-tool-prod.service").unwrap().active, "active");
+}
+
+#[test]
+fn a_release_that_drops_a_task_without_declaring_it_removed_is_refused_naming_the_entry() {
+    let w = world_dropping_a_task("");
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    let e = activate_with(&w, &sc).unwrap_err();
+    assert!(e.contains("repo-events") && e.contains("removed_tasks"), "{e}");
+    assert!(fs::read_to_string(w.cfg.toml_spec().unwrap()).unwrap().contains("repo-events=act"), "the host value is untouched");
+    assert!(!w.cfg.releases.join("current").exists(), "current did not move");
+}
+
+#[test]
+fn a_release_whose_restarted_scheduler_comes_up_then_exits_is_rolled_back_onto_the_previous_one() {
+    let w = world_activating_a_changed_unit();
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.exits_after.borrow_mut().insert("spira-tool-prod.service".into(), 2);
+    let e = activate_with(&w, &sc).unwrap_err();
+    assert!(e.contains("spira-tool-prod.service") && e.contains("did not stay up") && e.contains("rolled back"), "{e}");
+    assert_eq!(*sc.restarts.borrow(), vec!["spira-tool-prod.service".to_string(); 2], "restarted again on the previous release");
+    assert_eq!(fs::read_to_string(w.cfg.unit_dir.join("spira-tool-prod.service")).unwrap(), OLD_UNIT);
+    assert!(!w.cfg.releases.join("current").exists(), "current is put back");
+    sc.exits_after.borrow_mut().clear();
+    assert_eq!(sc.state("spira-tool-prod.service").unwrap().active, "active", "the previous release's unit is running");
+}
+
 #[test]
 fn a_release_whose_lifecycle_read_is_refused_is_rolled_back() {
     let w = world_activating_a_changed_unit();

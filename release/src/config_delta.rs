@@ -27,6 +27,9 @@ type Table = Map<String, Value>;
 pub struct Delta {
     pub added: BTreeMap<String, Value>,
     pub removed: Vec<String>,
+    /// Scheduler tasks the release no longer registers: the host's `SPIRA_TASK_MODES` entry for
+    /// each is dropped at activation. A stale entry not named here refuses the activation.
+    pub removed_tasks: Vec<String>,
     /// `persona.<old>` → `persona.<new>`: the persona's table, roster entry and lane entry move.
     /// `spira.<old>` → `spira.<new>`: the operator's value is carried to the new key and the old one dropped.
     pub renamed: BTreeMap<String, String>,
@@ -55,9 +58,44 @@ fn merge_list(live: &str, default: &str) -> Option<String> {
     Some(entries(live).into_iter().chain(missing).collect::<Vec<_>>().join(" "))
 }
 
+fn entry_name(e: &str) -> &str {
+    e.split_once('=').map_or(e, |x| x.0)
+}
+
+fn original_live(layers: &[Table], path: &str) -> String {
+    layers.iter().rev().find_map(|t| get(t, path)).and_then(Value::as_str).unwrap_or_default().to_string()
+}
+
+/// `live` without the entries for tasks the release's `default` no longer names, when the
+/// release declares them removed; any other entry the default lacks refuses, since the new
+/// scheduler would not start with it.
+fn drop_removed_tasks(live: &str, default: &str, removed: &[String]) -> Result<String, String> {
+    let split = |v: &str| v.split(|c: char| c == ',' || c.is_whitespace()).filter(|e| !e.is_empty()).map(str::to_string).collect::<Vec<_>>();
+    let registered: std::collections::BTreeSet<String> = split(default).iter().map(|e| entry_name(e).to_string()).collect();
+    let mut kept = Vec::new();
+    let mut stray = Vec::new();
+    for e in split(live) {
+        let name = entry_name(&e);
+        if registered.contains(name) {
+            kept.push(e);
+        } else if removed.iter().any(|r| r == name) {
+            eprintln!("release: dropping {e} from spira.task_modes: this release no longer registers task {name}");
+        } else {
+            stray.push(e);
+        }
+    }
+    if !stray.is_empty() {
+        return Err(format!(
+            "spira.task_modes names {}, which this release does not register, and its config delta does not declare the task removed (removed_tasks); nothing changed",
+            stray.join(", ")
+        ));
+    }
+    Ok(if kept.len() == split(live).len() { live.to_string() } else { kept.join(" ") })
+}
+
 impl Delta {
     pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.removed.is_empty() && self.renamed.is_empty() && self.replaced.is_empty()
+        self.added.is_empty() && self.removed.is_empty() && self.removed_tasks.is_empty() && self.renamed.is_empty() && self.replaced.is_empty()
     }
 
     pub fn parse(text: &str) -> Result<Delta, String> {
@@ -79,6 +117,12 @@ impl Delta {
                     for item in a {
                         let Value::String(s) = item else { return Err("removed must list key paths as strings".into()) };
                         d.removed.push(s);
+                    }
+                }
+                ("removed_tasks", Value::Array(a)) => {
+                    for item in a {
+                        let Value::String(s) = item else { return Err("removed_tasks must list task names as strings".into()) };
+                        d.removed_tasks.push(s);
                     }
                 }
                 ("renamed", Value::Table(t)) => {
@@ -131,6 +175,9 @@ impl Delta {
         let mut top = Table::new();
         if !self.removed.is_empty() {
             top.insert("removed".into(), Value::Array(self.removed.iter().cloned().map(Value::String).collect()));
+        }
+        if !self.removed_tasks.is_empty() {
+            top.insert("removed_tasks".into(), Value::Array(self.removed_tasks.iter().cloned().map(Value::String).collect()));
         }
         if !self.renamed.is_empty() {
             top.insert("renamed".into(), Value::Table(self.renamed.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect()));
@@ -466,8 +513,11 @@ pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Op
         if MERGED_LIST_KEYS.contains(&k.name.as_str()) && !d.replaced.contains_key(&path) {
             let live = original.iter().rev().find_map(|t| get(t, &path)).and_then(Value::as_str);
             if let (Some(live), Ok(Value::String(default))) = (live, literal_default(&k)) {
-                if let Some(merged) = merge_list(live, &default) {
+                let live = drop_removed_tasks(live, &default, &d.removed_tasks)?;
+                if let Some(merged) = merge_list(&live, &default) {
                     d.replaced.insert(path.clone(), Value::String(merged));
+                } else if live != original_live(original, &path) {
+                    d.replaced.insert(path.clone(), Value::String(live));
                 }
             }
         }
