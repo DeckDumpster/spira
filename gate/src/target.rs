@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 
 /// The build directories of a gate tree that live on the tmpfs: the unit/tools profile (`dev`,
 /// cargo's `debug` directory), the build fence's `make build` (release), and the tree-keyed tools.
-pub const LINKED: [&str; 3] = ["release", "debug", "tree-tools"];
+/// `dwarf` stays linked until the gate in force no longer builds under it.
+pub const LINKED: [&str; 4] = ["release", "debug", "dwarf", "tree-tools"];
 
 /// The warm pool of the retired `dwarf` profile; the sweep removes it.
 const RETIRED_POOL: &str = "warm-dwarf";
