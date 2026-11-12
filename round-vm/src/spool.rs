@@ -474,6 +474,7 @@ mod tests {
             .args(["-c", &format!("set -euo pipefail\n{write}")])
             .env("HOME", d.path())
             .env("SPIRA_RELEASE", "/r/rel")
+            .env("SPIRA_HOME", "/r/rel/spira")
             .env("SPIRA_REPO", "/r/work")
             .env("SPIRA_TOML", toml)
             .status()
@@ -481,6 +482,7 @@ mod tests {
         assert!(wrote.success(), "the corpus's launcher line runs");
         let env = std::fs::read_to_string(d.path().join(crate::run::LAUNCHER_ENV)).unwrap();
         assert!(env.contains("export SPIRA_TOML="), "the launcher env carries SPIRA_TOML:\n{env}");
+        assert!(env.contains("export SPIRA_HOME=/r/rel/spira\n"), "the launcher env carries the staged release's registry home:\n{env}");
         let out = std::process::Command::new("bash")
             .args(["-c", &format!("set -euo pipefail\n{source}\nprintf %s \"${{SPIRA_TOML:?batch: SPIRA_TOML is not set}}\"")])
             .env_clear()
