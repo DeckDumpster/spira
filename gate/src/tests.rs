@@ -3498,6 +3498,13 @@ fn a_gate_whose_built_binaries_vanished_is_no_verdict_never_branch_red() {
     assert_eq!(f.run(), FAIL, "a NotFound with the target intact is the branch's own: {}", f.stderr());
 }
 
+#[test]
+fn the_tools_build_names_no_incremental_override() {
+    let d = crate::def::parse("bin SPIRA_LINT_BIN spira-lint\nstep \"$SPIRA_LINT_BIN\"\n").unwrap();
+    let c = d.tools_command(4).unwrap();
+    assert!(!c.contains("incremental") && !c.contains("--profile"), "{c}");
+}
+
 /// A tree-built testenv is told its harness is the gate tree: its own executable now
 /// resolves into the tmpfs build root, above which no harness marker lies (sp-z61hj). A
 /// definition that builds no testenv sets nothing (the release's testenv finds its own).

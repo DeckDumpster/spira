@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 /// cargo's `debug` directory), the build fence's `make build` (release), and the tree-keyed tools.
 pub const LINKED: [&str; 3] = ["release", "debug", "tree-tools"];
 
+/// The warm pool of the retired `dwarf` profile; the sweep removes it.
+const RETIRED_POOL: &str = "warm-dwarf";
+
 /// Directory under the run dir that held sp-nv7btk's warm per-slot `dwarf`-profile targets, **retired**
 /// (DESIGN.md "The gate tree's target is on tmpfs", sp-z61hj). A slot sat at a fixed path on the
 /// disk while the gate tree it was linked from changed path with every branch, and every file of
@@ -22,9 +25,6 @@ pub const LINKED: [&str; 3] = ["release", "debug", "tree-tools"];
 /// of them, measured 2026-10-14), only now onto the one SATA disk instead of the tmpfs, under
 /// the gate's `ionice -c3` — the 300 s cap. Nothing links into it any more; the name is kept so
 /// a tree a gate of the previous release left linked there is never cleared through the link.
-/// The warm pool of the retired `dwarf` profile; the sweep removes it.
-const RETIRED_POOL: &str = "warm-dwarf";
-
 pub const WARM_DIR: &str = "gate-warm";
 
 /// True when `dest` is `<base>/WARM_DIR/slot.<n>/<dir>`: never removed with a trial.
@@ -416,6 +416,18 @@ mod tests {
         assert!(root.join(".gate.harness.b/debug/deps/liby.rlib").is_file());
         // `target` itself stays a real directory: git ignores `target/` in every revision.
         assert!(fs::symlink_metadata(tree.join("target")).unwrap().is_dir());
+    }
+
+    #[test]
+    fn the_retired_dwarf_profile_pool_is_removed_by_prepare() {
+        let s = Scratch::new("retired-pool");
+        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
+        let tree = trees.join(".gate.harness.r");
+        fs::create_dir_all(&tree).unwrap();
+        write_mib(&root.join("warm-dwarf").join("e1/dwarf/deps/libz.rlib"), 1);
+        let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        assert!(!root.join("warm-dwarf").exists());
+        assert!(p.orphans.is_empty(), "removed as the retired pool, not reported as an orphan: {:?}", p.orphans);
     }
 
     #[test]
