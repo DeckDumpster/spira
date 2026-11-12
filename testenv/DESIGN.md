@@ -500,7 +500,7 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
 * **Install** (unless `SPIRA_BATCH_SKIP_INSTALL`): `configure.sh` with
   `CONFIGURE_PROD=/workspace/spira CONFIGURE_MAX_DWARVES=1 CONFIGURE_MAX_LIVE_DWARVES=1
   CONFIGURE_LOOM_ADDR=127.0.0.1:7300 CONFIGURE_DOLT_DATA=`; `ctrl.sh suspend
-  spira-loom|spira-cockpit|spira-watch-queue-watch --reason ... --owner sp-fud1` (the
+  spira-loom|spira-watch-queue-watch --reason ... --owner sp-fud1` (the
   queue-watch watcher execs `/workspace/bin/queue-watch`, which the container never has; a
   CPUQuota on its unit hid the crash loop from install's is-active check until quotas were
   retired, sp-b4oct); `systemd/install.sh <instance>`

@@ -7,9 +7,8 @@
 //! # Tick
 //!
 //! Every 600 s (`SPIRA_RUNTIME_COCKPIT_TIER_600S_SECS`). Both probes ride one observe
-//! ([`OBSERVE`], input naming [`PROBES`]), timeout 300 s each. Today's
-//! `SPIRA_COCKPIT_SLOW_CONCURRENT` cap becomes the effector class cap (S3): never more than one
-//! slow probe at a time.
+//! ([`OBSERVE`], input naming [`PROBES`]), timeout 300 s each. The effector class cap (S3)
+//! keeps it to one slow probe at a time.
 //!
 //! # Observe
 //!
@@ -47,7 +46,7 @@
 //!
 //! # Reverse
 //!
-//! Release rollback restores the collector; Observe mode shadows `publish`.
+//! Observe mode shadows `publish`.
 
 use std::collections::BTreeMap;
 

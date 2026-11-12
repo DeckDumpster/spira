@@ -5,5 +5,4 @@
 # nothing is raised for a NEW iteration.
 1 cockpit-collect/src/probes/reachable.rs
 1 cockpit-collect/src/probes/unsent.rs
-1 cockpit-collect/src/supervisor.rs
 1 lifecycle-guard/src/shell.rs

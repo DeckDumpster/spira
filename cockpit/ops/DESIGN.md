@@ -173,10 +173,6 @@ writer's own dedupe.
   inventory (group 4); porting even one of its helpers from inside this bead is exactly the
   scope creep "retire rather than port" exists to catch. If the instance-qualification rule
   changes, this one call site needs updating independent of `conf.sh`.
-- **`layout::restart_spira_collector_if_stale` is intentionally empty.** The bash original
-  checked this only because `health.sh` happened to source the same `conf.sh` as the
-  collector; the collector's own liveness belongs to `spira/cockpit.sh`/`collect.sh`
-  (sp-kt4l3, concurrent with this bead) and is not reimplemented here.
 - **`tokens_section`'s sparkline is passed in as an already-rendered string**
   (`TokensExtra::tok_win_spark`), not drawn from raw history here. The bash original shells
   to `python3` per repaint to draw it from `$SPIRA_RUN/cockpit-history.csv`; carrying that

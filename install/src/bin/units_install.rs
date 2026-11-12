@@ -397,7 +397,7 @@ fn run_main() -> ExitCode {
     // End-state check: every ENABLE-set unit not masked/disabled/suspended must be active,
     // unless the world is deliberately halted.
     //
-    // BOUNDED WAIT, NOT ONE IMMEDIATE POLL: a `Type=notify` unit (spira-cockpit.service)
+    // BOUNDED WAIT, NOT ONE IMMEDIATE POLL: a `Type=notify` unit
     // only reports active once its own first pass signals READY=1, which can take a few
     // real seconds (a cold collect.sh run) — comfortably inside systemd's own
     // `TimeoutStartSec`, but not necessarily inside the handful of milliseconds this

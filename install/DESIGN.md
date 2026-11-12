@@ -104,7 +104,7 @@ template this box ever actually renders, not a synthetic fixture.
   0 in the test fixture, so a suite whose stub never reports active gets its verdict after one
   poll per unit).
   A real `testenv` batch-container gate run reproduced, twice, identically:
-  `spira-cockpit.service` (`Type=notify`) enabled but reported not-active right after
+  a `Type=notify` unit enabled but reported not-active right after
   `enable --now`. The original bash's own check was also a single immediate poll with no
   wait — this port reached the same check after the same sequence of steps, just faster (one
   process making library calls, not dozens of bash subprocess spawns), which is the most
@@ -119,7 +119,7 @@ template this box ever actually renders, not a synthetic fixture.
   is contending for host CPU, not a different cause. Raised to 45s on that evidence; still
   bounded and fail-closed (the loop still reports the exact units and exits 1 if the deadline
   passes), just more patient. Worth revisiting if it recurs even at 45s — the fix should then
-  move from "wait longer" to "look at journalctl for what `spira-cockpit.service` is actually
+  move from "wait longer" to "look at journalctl for what the unit is actually
   doing."
 - **The end-state check names a watcher that never reaches active inside a test fixture
   but does not fault the run for it alone (`install::install_units::split_not_active`,

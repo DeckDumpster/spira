@@ -798,7 +798,7 @@ pub fn check_dovecot_dropin(w: &dyn World) -> Vec<Line> {
 pub fn check_snapshot_fresh(w: &dyn World) -> Vec<Line> {
     let run = w.env("SPIRA_RUN").unwrap_or_default();
     let snap = Path::new(&run).join("cockpit.env");
-    let hint = w.spira_unit("cockpit", "service");
+    let hint = w.spira_unit("runtime", "service");
     let Some(age) = w.file_age_secs(&snap) else {
         return vec![warn(format!("no cockpit snapshot at {} — collector may not have run yet", snap.display()), format!("Check: systemctl --user status {hint}"))];
     };

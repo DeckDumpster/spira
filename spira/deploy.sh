@@ -590,7 +590,7 @@ log "deploy: spira.toml updated — SPIRA_PROD = $_new_prod"
 # AGAIN seconds later once its Exec lines actually changed — twice in the same handful of
 # seconds, racing whatever the first instance was still releasing (a socket, a run-dir
 # lock) and failing the second with "the control process exited with error code" for
-# spira-cockpit-prod.service, deterministically enough under host load to roll back a
+# a freshly restarted unit, deterministically enough under host load to roll back a
 # release that added nothing wrong (acceptance phase B). The render's restart is the one
 # that matters; this step only needs to land the bits and swap the symlink.
 log "deploy: activating"

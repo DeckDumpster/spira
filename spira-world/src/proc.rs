@@ -39,19 +39,14 @@ pub fn live_workers(proc_root: &Path, worker_paths: &[&str]) -> Vec<String> {
     out
 }
 
-/// Is `unit` one of the work services `world.sh stop` excludes deliberately: the operator's
-/// own dashboard (`spira-cockpit[-<instance>]`), the query engine it depends on
-/// (`spira-loom[-<instance>]`), and the watcher units handled separately by `--hard`
-/// (`spira-watch@*`). Pure string matching, ported 1:1 from `work_services`'s `grep -Ev`.
+/// Is `unit` one of the work services `world.sh stop` excludes deliberately: the query
+/// engine behind the operator's dashboard (`spira-loom[-<instance>]`) and the watcher units
+/// handled separately by `--hard` (`spira-watch@*`). Pure string matching, ported 1:1 from `work_services`'s `grep -Ev`.
 pub fn is_excluded_work_service(unit: &str, instance_suffix: &str) -> bool {
     if unit.starts_with("spira-watch@") {
         return true;
     }
-    matches!(
-        unit,
-        "spira-cockpit.service" | "spira-loom.service"
-    ) || unit == format!("spira-cockpit{instance_suffix}.service")
-        || unit == format!("spira-loom{instance_suffix}.service")
+    unit == "spira-loom.service" || unit == format!("spira-loom{instance_suffix}.service")
 }
 
 #[cfg(test)]
@@ -95,13 +90,11 @@ mod tests {
     }
 
     #[test]
-    fn excluded_work_services_cover_cockpit_loom_and_watchers() {
-        assert!(is_excluded_work_service("spira-cockpit.service", ""));
-        assert!(is_excluded_work_service("spira-cockpit-prod.service", "-prod"));
+    fn excluded_work_services_cover_loom_and_watchers() {
         assert!(is_excluded_work_service("spira-loom-prod.service", "-prod"));
         assert!(is_excluded_work_service("spira-watch@pr-notify.service", ""));
         assert!(!is_excluded_work_service("spira-landing.service", "-prod"));
-        assert!(!is_excluded_work_service("spira-cockpit-prod.service", ""), "wrong instance suffix must not match");
+        assert!(!is_excluded_work_service("spira-loom-prod.service", ""), "wrong instance suffix must not match");
     }
 }
 

@@ -43,7 +43,7 @@ is "naming: all rendered spira-* units have -test suffix" "" "$bad_rendered"
 # (scheduler-consolidation-2026-11-03 §1) left the scheduler, its watchdog and the clients,
 # so the units are named instead (install/src/manifest.rs build()).
 for u in spira-runtime-test.service spira-watchdog-test.service spira-watchdog-test.timer \
-         spira-cockpit-test.service spira-exec-census-test.service; do
+         spira-exec-census-test.service; do
     want "naming: $u rendered" "===== $u =====" "$rendered"
 done
 

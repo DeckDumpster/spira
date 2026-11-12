@@ -18,7 +18,7 @@
 #   Warn path     — tmux (absent in container; layout.sh pane check WARNs, not FAILs)
 #   NOT PROVEN    — filed bead reaches ready + sentinel.sh --report names it
 #                   (operational bd+database required for bead filing; skipped here)
-#   NOT PROVEN    — cockpit collector writes a snapshot (spira-cockpit-prod.service is
+#   NOT PROVEN    — cockpit collector writes a snapshot (the scheduler is
 #                   enabled, like most units here, but never started; ready.sh's cockpit
 #                   check FAILs on that alone, so it is asserted around rather than as
 #                   part of the overall exit code)
@@ -113,7 +113,7 @@ nowant "doctor: no FAIL at all" "FAIL" "$doc_out"
 #    sentinel.sh --report renders WARN (no open beads) and seed.sh --list renders
 #    WARN (no statutes in the stub db) — both are WARNs, not FAILs. The cockpit
 #    collector check is a known FAIL (see NOT PROVEN, header) since nothing here
-#    starts spira-cockpit-prod.service, so specific lines are asserted instead of
+#    starts the scheduler, so specific lines are asserted instead of
 #    the overall exit code.
 ready_out="$("${INSTALL_EXEC[@]}" \
     -e "SPIRA_LOOM_PROBE=${STUBS_CTR}/loom-probe" \

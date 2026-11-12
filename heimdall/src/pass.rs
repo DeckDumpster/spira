@@ -178,7 +178,7 @@ mod tests {
     use crate::testing::{Fake, Mode};
 
     const STALLED: &str = "sentinel-stalled";
-    const COCKPIT: &str = "restart-loop:spira-cockpit-prod.service";
+    const LOOPING: &str = "restart-loop:spira-runtime-prod.service";
 
     fn sentinel_log(now: i64, wedged: bool) -> String {
         let at = |t: i64| util::iso_utc(t);
@@ -212,7 +212,7 @@ mod tests {
         fn pass(&mut self) -> PassReport {
             self.now += 120;
             let now = self.now;
-            let restart_alerts = self.restart_delta.map(|delta| RestartAlert { unit: "spira-cockpit-prod.service".into(), current: delta, baseline: 0, delta, window: 3600 }).into_iter().collect();
+            let restart_alerts = self.restart_delta.map(|delta| RestartAlert { unit: "spira-runtime-prod.service".into(), current: delta, baseline: 0, delta, window: 3600 }).into_iter().collect();
             let obs = Observation {
                 sentinel_log: sentinel_log(now, self.wedged),
                 sentinel_log_readable: true,
@@ -405,20 +405,20 @@ mod tests {
         let mut r = Rig::new();
         r.restart_delta = Some(3);
         r.passes(2);
-        assert_eq!(r.ops.row(COCKPIT), None, "a delta at the threshold fires nothing");
+        assert_eq!(r.ops.row(LOOPING), None, "a delta at the threshold fires nothing");
         r.restart_delta = Some(10);
         r.pass();
-        assert_eq!(r.ops.row(COCKPIT), None, "one sighting does not fire");
+        assert_eq!(r.ops.row(LOOPING), None, "one sighting does not fire");
         r.pass();
-        assert_eq!(r.status_and_flaps(COCKPIT), Some(("True".into(), 1)));
+        assert_eq!(r.status_and_flaps(LOOPING), Some(("True".into(), 1)));
         r.pass();
-        assert_eq!(r.status_and_flaps(COCKPIT), Some(("True".into(), 1)), "a second pass on a standing loop is no new firing");
+        assert_eq!(r.status_and_flaps(LOOPING), Some(("True".into(), 1)), "a second pass on a standing loop is no new firing");
         r.restart_delta = None;
         r.passes(2);
-        assert_eq!(r.status_and_flaps(COCKPIT), Some(("False".into(), 1)));
+        assert_eq!(r.status_and_flaps(LOOPING), Some(("False".into(), 1)));
         r.restart_delta = Some(8);
         r.passes(2);
-        assert_eq!(r.status_and_flaps(COCKPIT), Some(("True".into(), 2)));
+        assert_eq!(r.status_and_flaps(LOOPING), Some(("True".into(), 2)));
     }
 
     #[test]

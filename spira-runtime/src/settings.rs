@@ -148,10 +148,10 @@ impl Settings {
 
     /// Keys a pending row may declare that the one config door cannot carry, so none is
     /// registered: the config file spells a field `SPIRA_<FIELD>`, or `COCKPIT_<FIELD>` when the
-    /// field starts `cockpit_`, so a key such as `BD_TIMEOUT` or `SPIRA_COCKPIT_TICK` has no
+    /// field starts `cockpit_`, so a key such as `BD_TIMEOUT` has no
     /// field that reads back as it. A row's port renames or drops each before the row moves to
     /// `TASKS`, where `from_lookup` would refuse it. Empty since every row that declared one
-    /// (`BD_TIMEOUT`, the `SPIRA_COCKPIT_*` keys, the retired `SPIRA_LC_BIN`) dropped it.
+    /// (`BD_TIMEOUT`, the retired `SPIRA_LC_BIN`) dropped it.
     pub const UNDECLARABLE: &'static [&'static str] = &[];
 
     pub fn load() -> Result<Settings, String> {

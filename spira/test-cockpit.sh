@@ -1,18 +1,12 @@
 #!/usr/bin/env bash
 #
-# test-cockpit.sh — the snapshot has exactly one writer.
+# test-cockpit.sh — `cockpit-collect once` prints and never writes the snapshot.
 #
 #   ./test-cockpit.sh
 #
-# THE FAILURE THIS SUITE EXISTS FOR. cockpit.sh writes the snapshot the health
-# pane reads, and nothing else may: a dwarf running the collector from its
-# worktree, a retired brain collector calling a vendored copy, or a manual
-# `cockpit-collect once` each overwrites the live snapshot with whatever keys its
-# branch carries, and the pane reads `?` for every key the interloper lacked.
-#
-# The fence is INVOCATION_ID: systemd sets it for exactly one process tree per
-# invocation, so the collector refuses to write unless its INVOCATION_ID matches
-# spira-cockpit.service's — or SPIRA_COCKPIT_FORCE=1 names the override.
+# The scheduler's cockpit tier tasks are the snapshot's only writer; an operator or a dwarf
+# running `once` from anywhere must not overwrite what the pane reads, whatever its
+# environment claims.
 #
 # defect: sp-20d
 # tier: T1
@@ -43,7 +37,7 @@ run_cockpit() {
 }
 
 # ======================================================================================
-echo "without INVOCATION_ID (unsupervised):"
+echo "once with no claim:"
 
 out="$(run_cockpit)"
 if [ ! -f "$RUN/cockpit.env" ]; then
@@ -67,96 +61,20 @@ else
 fi
 
 # ======================================================================================
-# POSITIVE SUPERVISED PATH (gap #8, docs/test-plan/cockpit-observability.md): every case
-# above is a refusal. A fence that refused every INVOCATION_ID, including one that legitimately
-# matches the service, would pass all of them — this is the only case that would catch that.
+# A positive control for the absence check above: a run that claims to be a systemd
+# invocation must still print and not write.
 echo
-echo "with INVOCATION_ID matching the service (supervised):"
-
-BIN="$TMP/bin"; mkdir -p "$BIN"
-cat > "$BIN/systemctl" <<'SH'
-#!/usr/bin/env bash
-# `systemctl --user show <unit> -p InvocationID --value`
-case " $* " in
-    *" show spira-cockpit.service "*"--value"*)
-        echo "$MOCK_INVOCATION_ID"; exit 0 ;;
-esac
-exit 1
-SH
-chmod +x "$BIN/systemctl"
+echo "once never writes, whatever the environment claims:"
 
 rm -f "$RUN/cockpit.env"
-env -i SPIRA_RELEASE="$(tl_release)" PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_TOML="$SPIRA_TOML" \
-    INVOCATION_ID="inv-42" MOCK_INVOCATION_ID="inv-42" \
-    cockpit-collect once >/dev/null 2>&1
-if [ -f "$RUN/cockpit.env" ]; then
-    ok "matching INVOCATION_ID: snapshot IS written"
+claim_out="$(run_cockpit env INVOCATION_ID=inv-42)"
+want "the claiming run printed its keys" "SP_AT=" "$claim_out"
+if [ ! -f "$RUN/cockpit.env" ]; then
+    ok "INVOCATION_ID does not make once write"
 else
-    bad "matching INVOCATION_ID: snapshot IS written" "file does not exist"
+    bad "INVOCATION_ID does not make once write" "file exists at $RUN/cockpit.env"
 fi
-snap="$(cat "$RUN/cockpit.env" 2>/dev/null)"
-want "SP_WRITER is set"                    "SP_WRITER="                "$snap"
-want "SP_WRITER names the real unit"       "spira-cockpit.service"     "$snap"
-nowant "SP_WRITER does not say force"      "force"                     "$snap"
-
-# ======================================================================================
-echo
-echo "with SPIRA_COCKPIT_FORCE=1:"
-
-rm -f "$RUN/cockpit.env"
-run_cockpit env SPIRA_COCKPIT_FORCE=1 >/dev/null
-if [ -f "$RUN/cockpit.env" ]; then
-    ok "snapshot IS written"
-else
-    bad "snapshot IS written" "file does not exist"
-fi
-snap="$(cat "$RUN/cockpit.env" 2>/dev/null)"
-want "SP_WRITER is set" "SP_WRITER=" "$snap"
-want "SP_WRITER names 'force'" "force" "$snap"
-
-# ======================================================================================
-# UC-01 (docs/test-plan/cockpit-observability.md, row 01): the may-write fence and the
-# collect-loop guard, driven directly rather than through a full `once`/`collect` process.
-#
-# sp-kt4l3: cockpit.sh's dispatch-skip-when-sourced trick (`BASH_SOURCE[0] != $0`) has no
-# Rust equivalent — a compiled binary cannot be "sourced" to expose an internal function.
-# `cockpit-collect --test-may-write`/`--test-loop-guard` are the CLI-level replacement:
-# real subcommands over the same `supervisor::may_write` the `once`/`collect` paths use,
-# so this suite still drives the exact code that runs, not a copy of it.
-echo
-echo "the may-write fence and the collect-loop guard, driven directly:"
-
-# may_write [env <ASSIGN...>] -> prints 1 if the fence allows the write, else 0.
-may_write() {
-    env -i SPIRA_RELEASE="$(tl_release)" PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_TOML="$SPIRA_TOML" \
-        "$@" \
-        cockpit-collect --test-may-write 2>/dev/null
-}
-
-# run_loop_guard [env <ASSIGN...>] -> exits with the guard's own status, relaying stderr.
-run_loop_guard() {
-    env -i SPIRA_RELEASE="$(tl_release)" PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_TOML="$SPIRA_TOML" \
-        "$@" \
-        cockpit-collect --test-loop-guard
-}
-
-is "direct: no INVOCATION_ID refuses"          0 "$(may_write)"
-is "direct: matching INVOCATION_ID allows"     1 "$(may_write env INVOCATION_ID=inv-42 MOCK_INVOCATION_ID=inv-42)"
-is "direct: mismatched INVOCATION_ID refuses"  0 "$(may_write env INVOCATION_ID=inv-imposter MOCK_INVOCATION_ID=inv-42)"
-is "direct: SPIRA_COCKPIT_FORCE=1 allows"      1 "$(may_write env SPIRA_COCKPIT_FORCE=1)"
-
-loop_out="$(run_loop_guard 2>&1)"; loop_rc=$?
-is   "direct: loop guard exits 1 without supervision" 1 "$loop_rc"
-want "direct: loop guard names the refusal"            "not the supervised process" "$loop_out"
-
-run_loop_guard env SPIRA_COCKPIT_FORCE=1 >/dev/null 2>&1
-is "direct: loop guard allows with SPIRA_COCKPIT_FORCE=1" 0 "$?"
+nowant "once does not stamp a writer" "SP_WRITER=" "$claim_out"
 
 # ======================================================================================
 # RATE LIMIT WINDOWS — the ratelim seam.

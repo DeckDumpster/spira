@@ -125,13 +125,9 @@ SPIRA_CLOSE_REASON_OVERRIDE dwarf/src/seam.rs
 SPIRA_CLOSE_REASON_OVERRIDE dwarf/src/verdict.rs
 SPIRA_CLOSE_UNACKED_CONSIDERED spira/bd-close-unacked-guard.sh
 SPIRA_COCKPIT_FIRST_WRITE_WAIT_S spira/ready.sh
-SPIRA_COCKPIT_FORCE cockpit-collect/src/supervisor.rs
 SPIRA_COCKPIT_HISTORY_MAX cockpit-collect/src/tiers.rs
 SPIRA_COCKPIT_LAYOUT_SH spira/deploy.sh
-SPIRA_COCKPIT_MERGE_FAIL_MAX cockpit-collect/src/supervisor.rs
-SPIRA_COCKPIT_SLOW_CONCURRENT cockpit-collect/src/supervisor.rs
 SPIRA_COCKPIT_STALE_S spira/ready.sh
-SPIRA_COCKPIT_TICK cockpit-collect/src/supervisor.rs
 SPIRA_COCKPIT_WINDOW_HOURS cockpit-collect/src/probes/mod.rs
 SPIRA_CONCIERGE spira/hooks/concierge-raw-pr-fence.sh
 SPIRA_CONCIERGE spira/hooks/concierge-waiter-stop.sh

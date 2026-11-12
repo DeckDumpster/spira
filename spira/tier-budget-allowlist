@@ -87,8 +87,6 @@ test-check8-progressed.sh	T1	26.0
 test-ci-park.sh	T1	39.5
 test-citations.sh	T1	6.0
 test-cockpit-collect-concurrency.sh	T1	3.0
-test-cockpit-collect-probes.sh	T1	1.5
-test-cockpit-collector-quota.sh	T1	2.0
 test-cockpit-collector-watchdog.sh	T1	2.0
 test-cockpit-gate.sh	T1	17.5
 test-cockpit-history-leak.sh	T1	1.5

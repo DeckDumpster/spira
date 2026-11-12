@@ -84,7 +84,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // What remains is the scheduler, its outside watchdog, the store and its door, the sources
     // the scheduler does not yet host, the clients (loom, the pane, the metrics stack,
     // exec-census) and the Concierge's own timers.
-    m.units.push(t("spira-cockpit.service", true));
     // spira-watch@.service is the template, not an installed unit — never enabled directly.
     m.units.push(t("spira-watch@.service", false));
     m.units.push(t("cockpit-ensure.service", false));
@@ -325,8 +324,8 @@ mod tests {
     /// timer a `spira-runtime serve` task replaces, the two retired timers (watch-refresh,
     /// concierge-guard) and the SMTP listener the `submission` source now owns. Activation runs
     /// the scheduler and not both, so none of them is in the manifest or on disk.
-    const RETIRED_BY_THE_SCHEDULER: [&str; 59] = [
-        "alarms", "archive", "archivist", "call", "cert-sweep-full", "cert-sweep-sample", "concierge-guard", "czar-pass", "escape-census", "event-continuity",
+    const RETIRED_BY_THE_SCHEDULER: [&str; 60] = [
+        "alarms", "archive", "archivist", "call", "cert-sweep-full", "cert-sweep-sample", "cockpit", "concierge-guard", "czar-pass", "escape-census", "event-continuity",
         "export-beads", "filings-collect", "gate-check", "gate-worker", "gh-intake", "groom", "heimdall", "idea-prompt", "incident-settle", "kit-bump",
         "landing-pass", "lifecycle-section", "mail-deliver", "mail-reconcile", "mail-tidy", "mend-watch", "mimir", "moot-sweep", "nix-gc", "notify", "ops",
         "perf-happy-path", "perf-watch", "publish", "reap-terminal", "reclaim", "reconcile-content", "reconciler-goodput", "refresh", "refusal-watch", "round-vm-ami-prune",
@@ -344,7 +343,7 @@ mod tests {
             assert!(!union.contains(n), "{n} is still in the manifest");
             assert!(!dir.join(n).exists(), "{n} is still a template");
         }
-        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-dolt-boot-check.timer", "spira-unit-run-dbus.service", "spira-loom.service", "spira-cockpit.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.timer"] {
+        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-dolt-boot-check.timer", "spira-unit-run-dbus.service", "spira-loom.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.timer"] {
             assert!(union.iter().any(|n| n == keep), "positive control: {keep} is still shipped");
         }
     }
@@ -467,9 +466,9 @@ mod tests {
     #[test]
     fn unlisted_finds_a_forgotten_unit_file_but_not_a_declined_one() {
         let m = build(&inputs()).unwrap();
-        let on_disk = ["spira-runtime.service", "spira-cockpit-new.service", "spira-lc.service"];
+        let on_disk = ["spira-runtime.service", "spira-forgotten-new.service", "spira-lc.service"];
         let u = m.unlisted(on_disk);
-        assert_eq!(u, vec!["spira-cockpit-new.service".to_string()]);
+        assert_eq!(u, vec!["spira-forgotten-new.service".to_string()]);
     }
 
     #[test]

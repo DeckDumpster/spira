@@ -168,14 +168,6 @@ pub fn full_pass(cfg: &Cfg) -> Kv {
     out
 }
 
-/// First-wins de-dup over a [`Kv`], matching `write_snapshot`'s own merge: a key emitted
-/// twice (a probe's rows followed by its own fallback firing too) keeps the first value —
-/// the one that actually measured something.
-pub fn dedup_first_wins(kv: Kv) -> Kv {
-    let mut seen = std::collections::HashSet::new();
-    kv.into_iter().filter(|(k, _)| seen.insert(k.clone())).collect()
-}
-
 /// Dispatch by the same subcommand names `spira/cockpit.sh`'s case statement used.
 pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
     match subcommand {

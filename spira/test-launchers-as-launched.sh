@@ -105,15 +105,17 @@ want "and prints the watcher summary" "probe" "$out"
 out="$(printf '%s' "$hook_in" | client_env "$TMP/home" "$(unconfigured "$HOOK")" 2>&1)"
 nowant "SEEN RED: the same command without SPIRA_TOML prints no summary" "probe" "$out"
 
-# --- UC-cockpit-observability-51: the ops pane's start command -------------------------------
+# --- UC-cockpit-observability-51: the ops pane's start command
+# The snapshot below is a fixture shaped like the tiers' writer output (single-quoted values),
+# built from `once` stdout: nothing here runs the scheduler. -------------------------------
 printf '#!/bin/sh\ncase "$*" in *is-enabled*) exit 0 ;; *is-active*) echo active ;; esac\nexit 0\n' > "$TMP/stubs/systemctl"
 chmod +x "$TMP/stubs/systemctl"
 mkdir -p "$TMP/cockpit"
 SNAP="$TMP/snapshot.env"
-env -i PATH="$R/bin:/usr/bin:/bin" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_RELEASE="$R" SPIRA_COCKPIT_FORCE=1 \
-    cockpit-collect once >/dev/null 2>&1
+env -i PATH="$R/bin:/usr/bin:/bin" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_RELEASE="$R" \
+    cockpit-collect once 2>/dev/null | sed -E "s/^([^=]+)=(.*)$/\1='\2'/" > "$TMP/run/cockpit.env"
 note "snapshot: $(wc -l < "$TMP/run/cockpit.env" 2>&1) lines: $(head -c 600 "$TMP/run/cockpit.env" 2>&1 | tr '\n' ' ')"
-[ -s "$TMP/run/cockpit.env" ] && ok "the collector wrote a snapshot for the pane to read" || bad "the collector wrote a snapshot for the pane to read" "no $TMP/run/cockpit.env"
+[ -s "$TMP/run/cockpit.env" ] && ok "the collector printed a pass for the pane to read" || bad "the collector printed a pass for the pane to read" "no $TMP/run/cockpit.env"
 
 pane() {  # pane <name> <toml-for-the-server-or-empty> — `layout up` in a fresh server, print the health pane
     local sock="$TMP/tmux-$1" toml="$2"

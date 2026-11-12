@@ -190,8 +190,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | closed-strand | partly | new:stuck-pipeline | 22 | stranded-bead detection and recovery needs a world that strands one |
 | cockpit-accept | no | - | 5 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-bd-contract | no | - | 20 | cockpit/pane rendering and its probes: no loop actor changes state |
-| cockpit-collect-probes | no | - | 4 | cockpit/pane rendering and its probes: no loop actor changes state |
-| cockpit-collector-quota | no | - | 3 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-czar-triggers | no | - | 3 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-dup-refs | no | - | 8 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-funnel | no | - | 28 | cockpit/pane rendering and its probes: no loop actor changes state |
