@@ -201,6 +201,7 @@ pub fn shell_quote(s: &str) -> String {
 /// tree and run the repository's own CI entry point (`${15}`). Its exit status is the one verdict,
 /// written as `ci.result`, so the round covers what CI covers by construction.
 pub const FOREIGN_SCRIPT: &str = r#"set -euo pipefail
+unset SPIRA_HOME
 host_addr="$1" port="$2" toolchain="$5" round_ref="${13}" round_sha="${14}" entry="${15}"
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 rm -rf ~/round-bins ~/round-work ~/round-setup.log ~/round-shims
@@ -3604,6 +3605,20 @@ mod tests {
         let declared = REMOTE_SCRIPT.find("export SPIRA_RELEASE=\"$HOME/round-releases/$rel_sha\"").unwrap();
         assert!(declared < home && home < REMOTE_SCRIPT.find("testenv container tag").unwrap());
         assert!(REMOTE_SCRIPT.contains("export SPIRA_HOME=%q"), "the attribution reruns source it from the launcher env");
+    }
+
+    #[test]
+    fn a_host_round_computes_its_image_tag_without_the_schedulers_registry_home() {
+        let unset = REMOTE_SCRIPT.lines().position(|l| l == "unset SPIRA_HOME").expect("the script starts without an inherited registry home");
+        assert!(unset <= 1, "before any command runs");
+        let prelude: String = REMOTE_SCRIPT.lines().take(unset + 1).collect::<Vec<_>>().join("\n");
+        let out = std::process::Command::new("bash")
+            .args(["-c", &format!("{prelude}\nprintf %s \"${{SPIRA_HOME-unset}}\"")])
+            .env_clear()
+            .env("SPIRA_HOME", "/active/release/spira")
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "unset", "positive control: the caller's value is gone");
     }
 
     #[test]
