@@ -519,6 +519,7 @@ art_id="$(art_key "$art_tree" "$(rustc -vV | sed -n 's/^\(release\|commit-hash\)
 t0=$(date +%s)
 if art_fetch "$art_id" ~/round-work/target/release; then
     echo "round-vm: used the stored build of this tree; cargo did not run" >&2
+    cargo fetch -q --locked >/dev/null 2>&1 || true
 else
     if ! cargo build -q --profile release --workspace --locked --config profile.release.incremental=false; then
         echo "round-vm: the round's workspace build failed, built $sccache_mode" >&2
@@ -860,7 +861,7 @@ lint_rc=0
 lint_secs=0
 if [ -n "$lint" ]; then
     t_lint=$(date +%s)
-    CARGO_HOME="$CARGO_HOME" "$HOME/round-work/target/release/spira-lint" --root "$HOME/round-work" --base origin/base > ~/round-lint.out 2> ~/round-lint.err
+    "$HOME/round-work/target/release/spira-lint" --root "$HOME/round-work" --base origin/base > ~/round-lint.out 2> ~/round-lint.err
     lint_rc=$?
     lint_secs=$(( $(date +%s) - t_lint ))
     if [ "$lint_rc" -ne 0 ]; then
@@ -3664,8 +3665,11 @@ mod tests {
     }
 
     #[test]
-    fn the_lint_resolves_against_the_cargo_home_the_build_used() {
-        assert!(REMOTE_SCRIPT.contains("CARGO_HOME=\"$CARGO_HOME\" \"$HOME/round-work/target/release/spira-lint\""));
+    fn a_stored_build_still_fills_the_cargo_home_the_lint_resolves_against() {
+        let stored = REMOTE_SCRIPT.find("used the stored build of this tree").unwrap();
+        let fetch = REMOTE_SCRIPT.find("cargo fetch -q --locked").expect("a stored build skips cargo, leaving the cargo home without a registry for the offline lint");
+        let lint = REMOTE_SCRIPT.find("target/release/spira-lint\"").unwrap();
+        assert!(stored < fetch && fetch < lint);
     }
 
     #[test]

@@ -48,13 +48,9 @@ pub fn version_tuple(v: &str) -> Option<Vec<u64>> {
 /// what the manifests resolve to — the check the forge's `--locked` build makes.
 pub fn lock_drift(root: &std::path::Path) -> Result<Option<String>, String> {
     // batch-job: cargo resolves the whole workspace; 120 s hang guard
-    let mut cmd = std::process::Command::new("timeout");
-    cmd.args(["120", "cargo", "metadata", "--locked", "--offline", "--format-version", "1"])
-        .current_dir(root);
-    if let Some(home) = std::env::var_os("CARGO_HOME").filter(|h| !h.is_empty()) {
-        cmd.env("CARGO_HOME", home);
-    }
-    let out = cmd
+    let out = std::process::Command::new("timeout")
+        .args(["120", "cargo", "metadata", "--locked", "--offline", "--format-version", "1"])
+        .current_dir(root)
         .output()
         .map_err(|e| format!("cargo metadata: {e}"))?;
     if out.status.success() {
@@ -112,17 +108,13 @@ impl Rule for LockfileLint {
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
         self.checked.set(None);
-        let mut drift = Vec::new();
         if let Some(why) = lock_drift(&tree.root).map_err(LintError::Refused)? {
-            drift.push(Finding {
+            return Ok(vec![Finding {
                 rule: NAME,
                 path: LOCK.into(),
                 line: None,
                 message: format!("{LOCK} is not what the manifests resolve to (cargo metadata --locked --offline): {why}"),
-            });
-        }
-        if !drift.is_empty() {
-            return Ok(drift);
+            }]);
         }
         let base = tree.base_commit()?;
         let head = std::fs::read_to_string(tree.root.join(LOCK))
@@ -140,14 +132,14 @@ impl Rule for LockfileLint {
             .git(&["diff", &base, "--", "*Cargo.toml"])
             .map(|b| String::from_utf8_lossy(&b).into_owned())
             .map_err(LintError::Refused)?;
-        let out: Vec<Finding> = drift.into_iter().chain(offenders(&prior, &head, &diff)
+        let out: Vec<Finding> = offenders(&prior, &head, &diff)
             .into_iter()
             .map(|(n, bv, hv)| Finding {
                 rule: NAME,
                 path: LOCK.into(),
                 line: None,
                 message: format!("{n} {} -> {hv} with no matching Cargo.toml change", bv.join("/")),
-            }))
+            })
             .collect();
         if out.is_empty() {
             self.checked.set(Some(head.values().map(BTreeSet::len).sum()));
@@ -239,6 +231,15 @@ mod tests {
         let why = refusal(stderr).unwrap_err();
         assert!(why.contains("no matching package named `x`"), "{why}");
         assert!(!why.contains("profiles"), "{why}");
+    }
+
+    #[test]
+    fn a_cargo_that_fails_for_another_reason_is_refused_with_its_error_line() {
+        let t = project("b = { path = \"../missing\" }\n");
+        let why = lock_drift(t.path()).unwrap_err();
+        assert!(why.contains("failed to"), "{why}");
+        assert!(!why.contains("warning"), "{why}");
+        assert!(!why.contains('\n'), "{why}");
     }
 
     #[test]
