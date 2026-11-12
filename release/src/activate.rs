@@ -186,6 +186,8 @@ struct Change {
 pub struct Switched {
     pub rewritten: Vec<String>,
     pub restarted: Vec<String>,
+    /// Running services whose unit text and programs match the outgoing release's: untouched.
+    pub left_running: Vec<String>,
     /// Installed services found failed that this activation did not restart: reset and
     /// started. One that fails again is reported, never a reason to roll back.
     pub revived: Vec<String>,
@@ -332,6 +334,9 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn() -> Result
         let long_running = is_up(&st.active) && st.kind != "oneshot";
         let why = fixed.or_else(|| (long_running && unit != KILL_RESTARTED && unit != COMPILER_CACHE_BACKEND).then(|| live_reason(old, new, &roots, ctx.sc.running_exe(unit).as_deref(), ctx.sc.running_release(unit).as_deref())).flatten());
         let Some(why) = why else {
+            if long_running {
+                out.left_running.push(unit.clone());
+            }
             if *changed {
                 eprintln!("release: {unit} differs only in the release root and runs the same bytes; left running");
             }

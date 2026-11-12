@@ -194,6 +194,9 @@ fn banner(v: &View) -> Vec<String> {
     if let Some(p) = v.progress.as_ref().filter(|p| p.running(v.now)) {
         out.push(pass_line(p, v.now));
     }
+    if let Some(a) = &v.read_age {
+        out.push(format!("{YEL}  showing the read from {a} ago; a source did not answer{R}"));
+    }
     if !v.errors.is_empty() {
         let first = v.errors.first().cloned().unwrap_or_default();
         let more = if v.errors.len() > 1 { format!(" (+{} more)", v.errors.len() - 1) } else { String::new() };

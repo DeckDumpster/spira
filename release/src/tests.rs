@@ -1003,6 +1003,7 @@ fn an_activation_that_changes_neither_the_cache_backends_unit_nor_its_binary_lea
     let out = activate_with(&w, &sc).unwrap();
     assert_eq!(out.retired, Vec::<String>::new(), "the unit must be live for this to show anything");
     assert!(!out.restarted.iter().any(|u| u == "sccache-dav.service"), "{:?}", out.restarted);
+    assert_eq!(out.left_running, vec!["sccache-dav.service".to_string()], "the activation names what it left running");
     assert_eq!(*sc.cache_server_stops.borrow(), 0);
 }
 
@@ -1011,8 +1012,9 @@ fn an_activation_that_changes_the_cache_backends_binary_restarts_it_and_stops_th
     let w = world_activating_over_a_running_cache(true);
     let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
     sc.states.borrow_mut().insert("sccache-dav.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
-    activate_with(&w, &sc).unwrap();
+    let out = activate_with(&w, &sc).unwrap();
     assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
+    assert!(out.left_running.is_empty(), "{:?}", out.left_running);
     assert_eq!(*sc.cache_server_stops.borrow(), 1);
 }
 

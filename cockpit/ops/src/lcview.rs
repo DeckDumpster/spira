@@ -369,6 +369,9 @@ impl EpicRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub now: i64,
+    /// When the data shown was last read whole; 0 means `now`.
+    #[serde(default)]
+    pub good_at: i64,
     pub release: String,
     pub world: String,
     pub base: String,
@@ -472,8 +475,15 @@ pub fn carry_forward(new: &mut Snapshot, last: &Snapshot) {
         new.claimable = last.claimable.clone();
         kept = true;
     }
-    if kept {
-        new.errors.push(format!("showing the last good read from {} ago", age(new.now - last.now)));
+    if !kept {
+        return;
+    }
+    let from = if last.good_at > 0 { last.good_at } else { last.now };
+    new.good_at = from;
+    if new.now - from <= STALE_WARN_S {
+        new.errors.clear();
+    } else {
+        new.errors.push(format!("showing the last good read from {} ago", age(new.now - from)));
     }
 }
 
@@ -827,6 +837,8 @@ pub struct View {
     pub working: usize,
     pub ceiling: usize,
     pub errors: Vec<String>,
+    /// Set while a failed source is covered by an earlier read still inside the staleness bound.
+    pub read_age: Option<String>,
     pub gather_ms: u64,
     pub failures: u64,
     /// FLOW: (state, count) in pipeline order, LANDED as its 24 h count.
@@ -1343,6 +1355,7 @@ pub fn view(s: &Snapshot) -> View {
         working: count("WORKING"),
         ceiling: s.ceiling,
         errors: s.errors.clone(),
+        read_age: (s.good_at > 0 && s.errors.is_empty()).then(|| age(s.now - s.good_at)),
         gather_ms: s.gather_ms,
         failures: s.failures,
         ready: ready.len(),
@@ -1658,6 +1671,9 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
         v.gather_ms,
         v.failures
     ));
+    if let Some(a) = &v.read_age {
+        out.push(format!("{YEL}  showing the read from {a} ago; a source did not answer{R}"));
+    }
     for e in &v.errors {
         out.push(format!("{RED}  source failed: {}{R}", cut(e, w - 18)));
     }
@@ -2090,7 +2106,7 @@ mod tests {
         let mut last = Snapshot { now: 100, ..Default::default() };
         last.rows.push(Row { id: "sp-a".into(), state: "WORKING".into(), ..Default::default() });
         last.batches.push(BatchRow { id: "r-1".into(), state: "OPEN".into(), ..Default::default() });
-        let mut new = Snapshot { now: 160, errors: vec!["spira-lc list: exit 124".into()], ..Default::default() };
+        let mut new = Snapshot { now: 100 + STALE_WARN_S + 60, errors: vec!["spira-lc list: exit 124".into()], ..Default::default() };
         carry_forward(&mut new, &last);
         assert_eq!(new.rows.len(), 1);
         assert_eq!(new.batches.len(), 1);
@@ -2098,6 +2114,36 @@ mod tests {
         let mut clean = Snapshot { now: 160, ..Default::default() };
         carry_forward(&mut clean, &last);
         assert!(clean.rows.is_empty(), "with no failure an empty read is the truth");
+    }
+
+    fn failed_after(last: &Snapshot, secs: i64) -> Snapshot {
+        let mut new = Snapshot { now: last.now + secs, errors: vec!["spira-lc list: exit 1".into()], ..Default::default() };
+        carry_forward(&mut new, last);
+        new
+    }
+
+    #[test]
+    fn a_failed_source_with_a_fresh_previous_read_shows_the_read_and_its_age_not_source_failed() {
+        let mut last = snap(vec![]);
+        last.rows.push(Row { id: "sp-a".into(), state: "WORKING".into(), ..Default::default() });
+        let new = failed_after(&last, 40);
+        let v = view(&new);
+        for page in [plain(&render(&v, 100)), render_html(&v, None, 10)] {
+            assert!(!page.contains("source failed"), "{page}");
+            assert!(page.contains("read from 40s ago"), "{page}");
+        }
+    }
+
+    #[test]
+    fn the_age_of_a_read_counts_from_the_good_read_across_consecutive_failures() {
+        let mut last = snap(vec![]);
+        last.rows.push(Row { id: "sp-a".into(), state: "WORKING".into(), ..Default::default() });
+        let once = failed_after(&last, 100);
+        let twice = failed_after(&once, 100);
+        assert!(plain(&render(&view(&twice), 100)).contains("read from 3m ago"), "{:?}", twice.errors);
+        let late = failed_after(&twice, STALE_WARN_S);
+        let page = plain(&render(&view(&late), 100));
+        assert!(page.contains("source failed"), "{page}");
     }
 
     #[test]
