@@ -536,7 +536,8 @@ exits 0.
   `reentry`:
   `testenv --suites <a,b> "$SPIRA_GATE_BRANCH"`, the runner's 2/3 (and 127, not on PATH) mapped to 75
   as the gate string maps them, **no `--deadline`** (the round named them; the phase is bounded
-  by what is left of `SPIRA_GATE_TIMEOUT`), through the same `run_gate` port, environment and
+  by what is left of `SPIRA_GATE_TIMEOUT`), through the stall-watched `run_build` port, charged to
+  `SPIRA_GATE_DEADLINE` only for the `suites:<s>` testenv reports (recorded `reentry-build` / `reentry`; a run with no `phases:` line is charged its whole wall). Once suites start, only the stall watch and `SPIRA_GATE_TIMEOUT` can end the phase; the deadline is applied when it exits, environment and
   tree. After a unit or fences composition, or suites off, that is all of *required*; after a
   suites gate that already ran them, nothing (no second container); after one whose budget
   deferred some, just those.

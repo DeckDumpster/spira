@@ -168,6 +168,13 @@ pub fn fault_detail(msg: &str) -> String {
     tail_bytes(&kept.join(" | "), 600)
 }
 
+/// The seconds testenv's `phases:` line reports for its suites phase.
+pub fn testenv_suites_secs(out: &str) -> Option<u64> {
+    let line = out.lines().rev().find(|l| l.trim_start().starts_with("batch: phases: ") || l.trim_start().starts_with("phases: "))?;
+    let list = line.split("phases: ").nth(1)?.split_whitespace().next()?;
+    list.split(',').find_map(|p| p.strip_prefix("suites:")?.parse().ok())
+}
+
 /// The test runner's `VERDICT FAULT … reason=<word>` (its last line), when the suites step
 /// ended in a harness fault. testenv prints exactly one VERDICT line per run.
 pub fn testenv_fault_reason(out: &str) -> Option<String> {

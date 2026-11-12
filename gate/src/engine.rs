@@ -1807,7 +1807,11 @@ impl<'w, W: World> Trial<'w, W> {
                     );
                 } else {
                     let st = vd.status.to_string();
-                    let detail = if vd.reason == "harness-fault" { parse::fault_detail(&vd.msg) } else { String::new() };
+                    let detail = match vd.reason.as_str() {
+                        "harness-fault" => parse::fault_detail(&vd.msg),
+                        "deadline" | "build-stall" => parse::tail_bytes(&vd.msg, 4000),
+                        _ => String::new(),
+                    };
                     w.yield_sh(
                         &y,
                         &self.s.run,
@@ -1940,7 +1944,12 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
 /// Whether a phase's wall counts against SPIRA_GATE_DEADLINE (`base-` prefix ignored).
 /// Compilation is never charged: a build is ended for stalling, not for taking long.
 pub fn charged(name: &str) -> bool {
-    !matches!(name.strip_prefix("base-").unwrap_or(name), "tools" | "fences" | "build")
+    !matches!(name.strip_prefix("base-").unwrap_or(name), "tools" | "fences" | "build" | "reentry-build")
+}
+
+/// A re-entry phase is watched for stall and charged the suites' seconds testenv reports, not its wall.
+fn reports_its_own_time(name: &str) -> bool {
+    name.strip_prefix("base-").unwrap_or(name) == "reentry"
 }
 
 pub fn last_phase_charged(phases: &[(String, u64)]) -> bool {
@@ -2185,7 +2194,7 @@ pub fn run_composed<W: World>(
     let start = w.now();
     let left = |name: &str, spent: u64| {
         let outer = budget.map(|b| b.saturating_sub(w.now().saturating_sub(start)).max(1));
-        let test = charged(name).then(|| limits.deadline.saturating_sub(spent).max(1));
+        let test = (charged(name) && !reports_its_own_time(name)).then(|| limits.deadline.saturating_sub(spent).max(1));
         [outer, test, phase_cap(name)]
             .into_iter()
             .flatten()
@@ -2195,13 +2204,15 @@ pub fn run_composed<W: World>(
     let go = |name: &str, env: &[(String, String)], cmd: &str, spent: &mut u64| {
         let t = w.now();
         let to = left(name, *spent);
-        let (rc, out) = if charged(name) {
+        let (rc, out) = if charged(name) && !reports_its_own_time(name) {
             w.run_gate(tree, env, &to, cmd)
         } else {
             w.run_build(tree, env, &to, limits.stall, cmd)
         };
         let wall = w.now().saturating_sub(t);
-        if charged(name) {
+        if reports_its_own_time(name) {
+            *spent += parse::testenv_suites_secs(&out).unwrap_or(wall);
+        } else if charged(name) {
             *spent += wall;
         }
         (rc, out, wall)
@@ -2302,7 +2313,13 @@ pub fn run_composed<W: World>(
             w.remove(&report);
         }
         let (r, o, wall) = go(name, step_env, &c, test_secs);
-        phases.push((format!("{prefix}{name}"), wall));
+        match parse::testenv_suites_secs(&o).filter(|_| reports_its_own_time(name)) {
+            Some(suites) => {
+                phases.push((format!("{prefix}{name}-build"), wall.saturating_sub(suites)));
+                phases.push((format!("{prefix}{name}"), suites));
+            }
+            None => phases.push((format!("{prefix}{name}"), wall)),
+        }
         if timed {
             *timing = w
                 .read(&report)
@@ -2322,6 +2339,9 @@ pub fn run_composed<W: World>(
         }
         if w.signalled() {
             return (r, out, phases);
+        }
+        if reports_its_own_time(name) && *test_secs >= limits.deadline {
+            return (124, out, phases);
         }
     }
     (fences_rc, out, phases)
