@@ -222,7 +222,7 @@ tier = "T2"
 statement = "`owned.sh list` emits every artefact kind in 5-field rows, with unit rows equal to `install.sh --render` for that instance; `check` reports absent, present or drifted per artefact"
 
 [use_case.uncovered]
-reason = "owned.sh check derives unit status from systemd/install.sh --diff, which no longer exists, so every unit reads absent; list is exercised only incidentally by test-drift and test-uninstall.sh, and no suite asserts the 5-field rows or the check statuses"
+reason = "owned.sh check derives unit status from systemd/install.sh --diff, which no longer exists, so every unit reads absent; list is exercised only incidentally by the drift suite and test-uninstall.sh, and no suite asserts the 5-field rows or the check statuses"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 

@@ -14,7 +14,7 @@ test-bd-schema-stamp.sh
 test-bd-stdin.sh
 test-beads-push-verify.sh
 test-bin-manifest.sh
-test-boundary
+test-boundary.sh
 test-branch-guard.sh
 test-budget-drift.sh
 test-builder-qa-proposed.sh

@@ -21,7 +21,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789600962	01bb04cbfb98	parallel	test-host-reason.sh	red	0	0
 1789600965	01bb04cbfb98	parallel	test-sop.sh	red	0	0
 1789600965	01bb04cbfb98	parallel	test-sending-unlanded-guard.sh	red	0	0
-1789600966	01bb04cbfb98	parallel	test-testenv-systemctl	red	0	0
+1789600966	01bb04cbfb98	parallel	test-testenv-systemctl.sh	red	0	0
 1789600964	01bb04cbfb98	parallel	test-null-close-reason.sh	red	0	0
 1789600964	01bb04cbfb98	parallel	test-output-visibility.sh	red	0	0
 1789600959	01bb04cbfb98	parallel	test-build-tarball.sh	red	0	0
@@ -48,7 +48,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789600965	01bb04cbfb98	parallel	test-scratch-fence.sh	red	0	0
 1789600961	01bb04cbfb98	parallel	test-fayth.sh	red	0	0
 1789600961	01bb04cbfb98	parallel	test-doctor-cargo.sh	red	0	0
-1789600959	01bb04cbfb98	parallel	test-boundary	red	0	0
+1789600959	01bb04cbfb98	parallel	test-boundary.sh	red	0	0
 1789600965	01bb04cbfb98	parallel	test-sending-metrics.sh	red	0	0
 1789600960	01bb04cbfb98	parallel	test-check5-sweep-delivers.sh	red	0	0
 1789600960	01bb04cbfb98	parallel	test-cockpit-landed.sh	red	0	0
@@ -62,7 +62,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789600963	01bb04cbfb98	parallel	test-model-switch-report.sh	red	0	0
 1789600964	01bb04cbfb98	parallel	test-owned.sh	red	0	0
 1789600960	01bb04cbfb98	parallel	test-configure.sh	red	0	0
-1789600967	01bb04cbfb98	parallel	test-worktree-absent	red	0	0
+1789600967	01bb04cbfb98	parallel	test-worktree-absent.sh	red	0	0
 1789600961	01bb04cbfb98	parallel	test-fayth-predicates.sh	red	0	0
 1789600965	01bb04cbfb98	parallel	test-session-hook.sh	red	0	0
 1789600962	01bb04cbfb98	parallel	test-gate-fixture-diag.sh	red	0	0
@@ -217,7 +217,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789600963	01bb04cbfb98	parallel	test-livelock.sh	red	0	0
 1789600967	01bb04cbfb98	parallel	test-uninstall.sh	red	0	0
 1789600960	01bb04cbfb98	parallel	test-cockpit.sh	red	0	0
-1789600966	01bb04cbfb98	parallel	test-testenv	red	0	0
+1789600966	01bb04cbfb98	parallel	test-testenv.sh	red	0	0
 1789600965	01bb04cbfb98	parallel	test-select.sh	red	0	0
 1789600966	01bb04cbfb98	parallel	test-testenv-doctor-check.sh	red	0	0
 1789600965	01bb04cbfb98	parallel	test-sentinel-capacity.sh	red	0	0
@@ -285,7 +285,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789600968	01bb04cbfb98	parallel	test-yield.sh	red	0	0
 1789600961	01bb04cbfb98	parallel	test-ctx-pointer.sh	red	0	0
 1789600965	01bb04cbfb98	parallel	test-sending-squash-merged.sh	red	0	0
-1789600962	01bb04cbfb98	parallel	test-install-exec	red	0	0
+1789600962	01bb04cbfb98	parallel	test-install-exec.sh	red	0	0
 # literal-ok: measurement data; the configured name is part of a suite FILENAME harvested from this tree, not a label read here.
 1789600964	01bb04cbfb98	parallel	test-reclaim-needs-ryan.sh	red	0	0
 1789600962	01bb04cbfb98	parallel	test-gate-preflight.sh	red	0	0
@@ -307,7 +307,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789600959	01bb04cbfb98	parallel	test-bd-resolve.sh	red	0	0
 1789600967	01bb04cbfb98	parallel	test-unmapped-repo-park.sh	red	0	0
 1789600958	01bb04cbfb98	parallel	test-answers-premise-rejected.sh	red	0	0
-1789600961	01bb04cbfb98	parallel	test-cross-repo	red	0	0
+1789600961	01bb04cbfb98	parallel	test-cross-repo.sh	red	0	0
 1789600961	01bb04cbfb98	parallel	test-gate-check-flaky.sh	red	0	0
 1789600964	01bb04cbfb98	parallel	test-ready.sh	red	0	0
 1789600967	01bb04cbfb98	parallel	test-watch-unit-restart.sh	red	0	0
@@ -402,7 +402,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789507422	0963f457ee29	parallel	test-unit-name.sh	ok	11	0
 1789507424	0963f457ee29	parallel	test-work-services-exclusion.sh	ok	7	0
 1789507419	0963f457ee29	parallel	test-testenv-image-tag.sh	ok	6	0
-1789507416	0963f457ee29	parallel	test-install-exec	ok	12	0
+1789507416	0963f457ee29	parallel	test-install-exec.sh	ok	12	0
 1789507427	0963f457ee29	parallel	test-render-memories.sh	ok	25	0
 1789507396	0963f457ee29	parallel	test-conf.sh	ok	24	0
 1789507398	0963f457ee29	parallel	test-containment.sh	ok	22	0
@@ -439,7 +439,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789525698	0c2f4a6719aa	parallel	test-fayth.sh	ok	9	0
 1789525512	0c2f4a6719aa	parallel	test-aeon-lease.sh	ok	15	0
 1789525742	0c2f4a6719aa	parallel	test-maechen-blind-window.sh	ok	5	0
-1789525848	0c2f4a6719aa	parallel	test-worktree-absent	ok	6	0
+1789525848	0c2f4a6719aa	parallel	test-worktree-absent.sh	ok	6	0
 1789525801	0c2f4a6719aa	parallel	test-review.sh	ok	25	0
 1789525749	0c2f4a6719aa	parallel	test-landed-stays-landed.sh	ok	14	0
 1789525628	0c2f4a6719aa	parallel	test-builder-qa-proposed.sh	ok	4	0
@@ -500,7 +500,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789525532	0c2f4a6719aa	parallel	test-aeon-exit.sh	ok	10	0
 1789525747	0c2f4a6719aa	parallel	test-now.sh	ok	88	0
 1789525631	0c2f4a6719aa	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789525593	0c2f4a6719aa	parallel	test-cross-repo	ok	8	0
+1789525593	0c2f4a6719aa	parallel	test-cross-repo.sh	ok	8	0
 1789525542	0c2f4a6719aa	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789525627	0c2f4a6719aa	parallel	test-timeout.sh	ok	22	0
 1789525608	0c2f4a6719aa	parallel	test-aeon-verdict.sh	ok	41	0
@@ -533,7 +533,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789557110	0c4970af9bb8	parallel	test-aeon-heartbeat.sh	skip	0	0
 1789557133	0c4970af9bb8	parallel	test-aeon-exit.sh	ok	10	0
 1789557253	0c4970af9bb8	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789557205	0c4970af9bb8	parallel	test-cross-repo	ok	8	0
+1789557205	0c4970af9bb8	parallel	test-cross-repo.sh	ok	8	0
 1789557143	0c4970af9bb8	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789557238	0c4970af9bb8	parallel	test-timeout.sh	ok	22	0
 1789557224	0c4970af9bb8	parallel	test-aeon-verdict.sh	ok	41	0
@@ -550,7 +550,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789559019	0cc55a9b1442	parallel	test-fayth.sh	ok	9	0
 1789558911	0cc55a9b1442	parallel	test-aeon-lease.sh	ok	15	0
 1789559084	0cc55a9b1442	parallel	test-maechen-blind-window.sh	ok	5	0
-1789559213	0cc55a9b1442	parallel	test-worktree-absent	ok	6	0
+1789559213	0cc55a9b1442	parallel	test-worktree-absent.sh	ok	6	0
 1789559151	0cc55a9b1442	parallel	test-review.sh	ok	25	0
 1789559070	0cc55a9b1442	parallel	test-landed-stays-landed.sh	ok	14	0
 1789558932	0cc55a9b1442	parallel	test-builder-qa-proposed.sh	ok	4	0
@@ -607,7 +607,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789558936	0cc55a9b1442	parallel	test-aeon-exit.sh	ok	10	0
 1789559079	0cc55a9b1442	parallel	test-now.sh	ok	88	0
 1789559216	0cc55a9b1442	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789559012	0cc55a9b1442	parallel	test-cross-repo	ok	8	0
+1789559012	0cc55a9b1442	parallel	test-cross-repo.sh	ok	8	0
 1789559198	0cc55a9b1442	parallel	test-timeout.sh	ok	22	0
 1789559018	0cc55a9b1442	parallel	test-drain-expiry.sh	ok	13	0
 1789559034	0cc55a9b1442	parallel	test-lane-ceiling.sh	ok	9	0
@@ -692,7 +692,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789542393	131354b06b1b	parallel	test-unit-name.sh	ok	11	0
 1789542395	131354b06b1b	parallel	test-work-services-exclusion.sh	ok	7	0
 1789542390	131354b06b1b	parallel	test-testenv-image-tag.sh	ok	6	0
-1789542375	131354b06b1b	parallel	test-install-exec	ok	12	0
+1789542375	131354b06b1b	parallel	test-install-exec.sh	ok	12	0
 1789542392	131354b06b1b	parallel	test-render-memories.sh	ok	25	0
 1789542344	131354b06b1b	parallel	test-conf.sh	ok	28	0
 1789542347	131354b06b1b	parallel	test-containment.sh	ok	22	0
@@ -857,7 +857,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789517381	1befd266ea55	parallel	test-aeon-lease.sh	ok	15	0
 1789517564	1befd266ea55	parallel	test-maechen-blind-window.sh	ok	5	0
 1789517341	1befd266ea55	parallel	test-configure.sh	ok	18	0
-1789517704	1befd266ea55	parallel	test-worktree-absent	ok	6	0
+1789517704	1befd266ea55	parallel	test-worktree-absent.sh	ok	6	0
 1789517352	1befd266ea55	parallel	test-fayth-predicates.sh	ok	23	0
 1789517382	1befd266ea55	parallel	test-review.sh	ok	25	0
 1789517365	1befd266ea55	parallel	test-maechen-trigger.sh	ok	45	0
@@ -931,7 +931,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789517380	1befd266ea55	parallel	test-aeon-heartbeat.sh	skip	0	0
 1789517489	1befd266ea55	parallel	test-check5-drop.sh	ok	13	0
 1789517642	1befd266ea55	parallel	test-sending-squash-merged.sh	ok	9	0
-1789517365	1befd266ea55	parallel	test-install-exec	ok	12	0
+1789517365	1befd266ea55	parallel	test-install-exec.sh	ok	12	0
 1789517379	1befd266ea55	parallel	test-render-memories.sh	ok	25	0
 1789517339	1befd266ea55	parallel	test-conf.sh	ok	24	0
 1789517342	1befd266ea55	parallel	test-containment.sh	ok	22	0
@@ -940,7 +940,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789517356	1befd266ea55	parallel	test-host-unit-names.sh	skip	0	0
 1789517330	1befd266ea55	parallel	test-bd-resolve.sh	ok	8	0
 1789517702	1befd266ea55	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789517516	1befd266ea55	parallel	test-cross-repo	ok	8	0
+1789517516	1befd266ea55	parallel	test-cross-repo.sh	ok	8	0
 1789517369	1befd266ea55	parallel	test-ready.sh	ok	52	0
 1789517687	1befd266ea55	parallel	test-timeout.sh	ok	22	0
 1789517517	1befd266ea55	parallel	test-drain-expiry.sh	ok	13	0
@@ -986,7 +986,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789531132	1c1df74ad9ff	parallel	test-unit-name.sh	ok	11	0
 1789531135	1c1df74ad9ff	parallel	test-work-services-exclusion.sh	ok	7	0
 1789531129	1c1df74ad9ff	parallel	test-testenv-image-tag.sh	ok	6	0
-1789531123	1c1df74ad9ff	parallel	test-install-exec	ok	12	0
+1789531123	1c1df74ad9ff	parallel	test-install-exec.sh	ok	12	0
 1789531136	1c1df74ad9ff	parallel	test-render-memories.sh	ok	25	0
 1789531099	1c1df74ad9ff	parallel	test-conf.sh	ok	24	0
 1789531102	1c1df74ad9ff	parallel	test-containment.sh	ok	22	0
@@ -1000,7 +1000,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789605752	1cc1ae89e4a8	parallel	test-maechen.sh	ok	45	0
 1789601945	1cf422593db2	parallel	test-doctor-unit-dup.sh	ok	10	0
 1789601942	1cf422593db2	parallel	test-doctor-dolt.sh	ok	13	0
-1789601945	1cf422593db2	parallel	test-install-exec	ok	12	0
+1789601945	1cf422593db2	parallel	test-install-exec.sh	ok	12	0
 1789523769	1d6c4ac47e0d	parallel	test-suites-timer.sh	ok	16	0
 1789515134	1dc8b9f5f5e0	parallel	test-gate-workflow.sh	ok	37	0
 1789689105	1e25fefcebf9	parallel	test-attribution.sh	ok	27	0
@@ -1018,7 +1018,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789571865	1f03894a51e5	parallel	test-fayth.sh	ok	9	0
 1789571755	1f03894a51e5	parallel	test-aeon-lease.sh	ok	15	0
 1789571759	1f03894a51e5	parallel	test-maechen-blind-window.sh	ok	5	0
-1789572091	1f03894a51e5	parallel	test-worktree-absent	ok	6	0
+1789572091	1f03894a51e5	parallel	test-worktree-absent.sh	ok	6	0
 1789572033	1f03894a51e5	parallel	test-review.sh	ok	25	0
 1789571933	1f03894a51e5	parallel	test-landed-stays-landed.sh	ok	14	0
 1789571780	1f03894a51e5	parallel	test-builder-qa-proposed.sh	ok	4	0
@@ -1079,7 +1079,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789571779	1f03894a51e5	parallel	test-aeon-exit.sh	ok	10	0
 1789571939	1f03894a51e5	parallel	test-now.sh	ok	88	0
 1789572093	1f03894a51e5	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789571855	1f03894a51e5	parallel	test-cross-repo	ok	8	0
+1789571855	1f03894a51e5	parallel	test-cross-repo.sh	ok	8	0
 1789572073	1f03894a51e5	parallel	test-timeout.sh	ok	22	0
 1789571859	1f03894a51e5	parallel	test-drain-expiry.sh	ok	13	0
 1789571885	1f03894a51e5	parallel	test-lane-ceiling.sh	ok	9	0
@@ -1125,7 +1125,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789600212	2222caef53e2	parallel	test-host-reason.sh	ok	24	0
 1789600778	2222caef53e2	parallel	test-sop.sh	ok	113	0
 1789600693	2222caef53e2	parallel	test-sending-unlanded-guard.sh	ok	10	0
-1789600918	2222caef53e2	parallel	test-testenv-systemctl	red	0	0
+1789600918	2222caef53e2	parallel	test-testenv-systemctl.sh	red	0	0
 1789600456	2222caef53e2	parallel	test-null-close-reason.sh	ok	19	0
 1789600532	2222caef53e2	parallel	test-output-visibility.sh	ok	9	0
 1789599761	2222caef53e2	parallel	test-build-tarball.sh	ok	11	0
@@ -1152,7 +1152,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789600655	2222caef53e2	parallel	test-scratch-fence.sh	ok	15	0
 1789600147	2222caef53e2	parallel	test-fayth.sh	ok	9	0
 1789600137	2222caef53e2	parallel	test-doctor-cargo.sh	ok	11	0
-1789599758	2222caef53e2	parallel	test-boundary	ok	8	0
+1789599758	2222caef53e2	parallel	test-boundary.sh	ok	8	0
 1789600673	2222caef53e2	parallel	test-sending-metrics.sh	ok	14	0
 1789599942	2222caef53e2	parallel	test-check5-sweep-delivers.sh	ok	15	0
 1789600015	2222caef53e2	parallel	test-cockpit-landed.sh	ok	6	0
@@ -1166,7 +1166,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789600453	2222caef53e2	parallel	test-model-switch-report.sh	ok	16	0
 1789600532	2222caef53e2	parallel	test-owned.sh	ok	18	0
 1789600046	2222caef53e2	parallel	test-configure.sh	ok	18	0
-1789600919	2222caef53e2	parallel	test-worktree-absent	red	0	0
+1789600919	2222caef53e2	parallel	test-worktree-absent.sh	red	0	0
 1789600147	2222caef53e2	parallel	test-fayth-predicates.sh	ok	22	0
 1789600706	2222caef53e2	parallel	test-session-hook.sh	ok	94	0
 1789600165	2222caef53e2	parallel	test-gate-fixture-diag.sh	ok	6	0
@@ -1321,7 +1321,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789600446	2222caef53e2	parallel	test-livelock.sh	ok	57	0
 1789600918	2222caef53e2	parallel	test-uninstall.sh	red	0	0
 1789600028	2222caef53e2	parallel	test-cockpit.sh	ok	22	0
-1789600918	2222caef53e2	parallel	test-testenv	red	0	0
+1789600918	2222caef53e2	parallel	test-testenv.sh	red	0	0
 1789600658	2222caef53e2	parallel	test-select.sh	ok	67	0
 1789600917	2222caef53e2	parallel	test-testenv-doctor-check.sh	red	0	0
 1789600696	2222caef53e2	parallel	test-sentinel-capacity.sh	ok	6	0
@@ -1389,7 +1389,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789600920	2222caef53e2	parallel	test-yield.sh	red	0	0
 1789600112	2222caef53e2	parallel	test-ctx-pointer.sh	ok	22	0
 1789600688	2222caef53e2	parallel	test-sending-squash-merged.sh	ok	9	0
-1789600313	2222caef53e2	parallel	test-install-exec	ok	12	0
+1789600313	2222caef53e2	parallel	test-install-exec.sh	ok	12	0
 # literal-ok: measurement data; the configured name is part of a suite FILENAME harvested from this tree, not a label read here.
 1789600572	2222caef53e2	parallel	test-reclaim-needs-ryan.sh	ok	6	0
 1789600181	2222caef53e2	parallel	test-gate-preflight.sh	ok	10	0
@@ -1411,7 +1411,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789599741	2222caef53e2	parallel	test-bd-resolve.sh	ok	8	0
 1789600919	2222caef53e2	parallel	test-unmapped-repo-park.sh	red	0	0
 1789599681	2222caef53e2	parallel	test-answers-premise-rejected.sh	ok	20	0
-1789600130	2222caef53e2	parallel	test-cross-repo	ok	8	0
+1789600130	2222caef53e2	parallel	test-cross-repo.sh	ok	8	0
 1789600165	2222caef53e2	parallel	test-gate-check-flaky.sh	ok	5	0
 1789600553	2222caef53e2	parallel	test-ready.sh	ok	59	0
 1789600919	2222caef53e2	parallel	test-watch-unit-restart.sh	red	0	0
@@ -1444,7 +1444,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789541813	230aaaffe05c	parallel	test-fayth.sh	ok	9	0
 1789541710	230aaaffe05c	parallel	test-aeon-lease.sh	ok	15	0
 1789541884	230aaaffe05c	parallel	test-maechen-blind-window.sh	ok	5	0
-1789542010	230aaaffe05c	parallel	test-worktree-absent	ok	6	0
+1789542010	230aaaffe05c	parallel	test-worktree-absent.sh	ok	6	0
 1789541957	230aaaffe05c	parallel	test-review.sh	ok	25	0
 1789541867	230aaaffe05c	parallel	test-landed-stays-landed.sh	ok	14	0
 1789541727	230aaaffe05c	parallel	test-builder-qa-proposed.sh	ok	4	0
@@ -1501,7 +1501,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789541731	230aaaffe05c	parallel	test-aeon-exit.sh	ok	10	0
 1789541880	230aaaffe05c	parallel	test-now.sh	ok	88	0
 1789542010	230aaaffe05c	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789541808	230aaaffe05c	parallel	test-cross-repo	ok	8	0
+1789541808	230aaaffe05c	parallel	test-cross-repo.sh	ok	8	0
 1789541994	230aaaffe05c	parallel	test-timeout.sh	ok	22	0
 1789541808	230aaaffe05c	parallel	test-drain-expiry.sh	ok	13	0
 1789541829	230aaaffe05c	parallel	test-lane-ceiling.sh	ok	9	0
@@ -1521,7 +1521,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789467393	231dd833163e	parallel	test-fayth.sh	ok	9	0
 1789467213	231dd833163e	parallel	test-aeon-lease.sh	ok	15	0
 1789467429	231dd833163e	parallel	test-maechen-blind-window.sh	ok	5	0
-1789467532	231dd833163e	parallel	test-worktree-absent	ok	6	0
+1789467532	231dd833163e	parallel	test-worktree-absent.sh	ok	6	0
 1789467494	231dd833163e	parallel	test-review.sh	ok	25	0
 1789467445	231dd833163e	parallel	test-landed-stays-landed.sh	ok	14	0
 1789467564	231dd833163e	parallel	test-suites-fixture-fault.sh	ok	19	0
@@ -1585,7 +1585,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789467234	231dd833163e	parallel	test-aeon-exit.sh	ok	10	0
 1789467434	231dd833163e	parallel	test-now.sh	ok	88	0
 1789467330	231dd833163e	parallel	test-unmapped-repo-park.sh	ok	4	0
-1789467294	231dd833163e	parallel	test-cross-repo	ok	8	0
+1789467294	231dd833163e	parallel	test-cross-repo.sh	ok	8	0
 1789467243	231dd833163e	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789467322	231dd833163e	parallel	test-timeout.sh	ok	22	0
 1789467310	231dd833163e	parallel	test-aeon-verdict.sh	ok	41	0
@@ -1644,7 +1644,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789515600	2588380263ce	parallel	test-aeon-heartbeat.sh	skip	0	0
 1789515626	2588380263ce	parallel	test-aeon-exit.sh	ok	10	0
 1789515737	2588380263ce	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789515696	2588380263ce	parallel	test-cross-repo	ok	8	0
+1789515696	2588380263ce	parallel	test-cross-repo.sh	ok	8	0
 1789515638	2588380263ce	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789515728	2588380263ce	parallel	test-timeout.sh	ok	22	0
 1789515714	2588380263ce	parallel	test-aeon-verdict.sh	ok	41	0
@@ -1699,7 +1699,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789451115	298b12d52f5c	serial	test-install-instance.sh	ok	20	0
 1789531486	299879040ef7	parallel	test-citations.sh	ok	20	0
 1789531488	299879040ef7	parallel	test-install-aeons.sh	ok	25	0
-1789531455	299879040ef7	parallel	test-boundary	ok	8	0
+1789531455	299879040ef7	parallel	test-boundary.sh	ok	8	0
 1789531481	299879040ef7	parallel	test-ask-dedupe.sh	ok	17	0
 1789531462	299879040ef7	parallel	test-skew-foreign.sh	ok	19	0
 1789531556	299879040ef7	parallel	test-landing.sh	ok	142	0
@@ -1809,7 +1809,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789615794	2ec9e774a4fd	parallel	test-sentinel.sh	ok	3	0
 1789615801	2ec9e774a4fd	parallel	test-loop-readonly.sh	ok	11	0
 1789504645	2f4c70830d66	parallel	test-gate-verdict.sh	ok	36	0
-1789504662	2f4c70830d66	parallel	test-testenv-systemctl	skip	0	0
+1789504662	2f4c70830d66	parallel	test-testenv-systemctl.sh	skip	0	0
 1789504647	2f4c70830d66	parallel	test-maechen.sh	ok	43	0
 1789504616	2f4c70830d66	parallel	test-cadence.sh	skip	0	0
 1789504649	2f4c70830d66	parallel	test-promote.sh	ok	16	0
@@ -1840,7 +1840,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789504639	2f4c70830d66	parallel	test-gate-workflow.sh	ok	31	0
 1789504685	2f4c70830d66	parallel	test-testenv-scratch.sh	ok	15	0
 1789504614	2f4c70830d66	parallel	test-archivist.sh	ok	51	0
-1789504662	2f4c70830d66	parallel	test-testenv	skip	0	0
+1789504662	2f4c70830d66	parallel	test-testenv.sh	skip	0	0
 1789504609	2f4c70830d66	parallel	test-batch-maxpar.sh	ok	6	0
 1789504648	2f4c70830d66	parallel	test-parallel-isolation.sh	skip	0	0
 1789504645	2f4c70830d66	parallel	test-install-rehearsal.sh	skip	0	0
@@ -1853,7 +1853,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789504663	2f4c70830d66	parallel	test-unit-name.sh	ok	11	0
 1789504664	2f4c70830d66	parallel	test-work-services-exclusion.sh	ok	7	0
 1789504654	2f4c70830d66	parallel	test-testenv-image-tag.sh	ok	6	0
-1789504648	2f4c70830d66	parallel	test-install-exec	ok	12	0
+1789504648	2f4c70830d66	parallel	test-install-exec.sh	ok	12	0
 1789504662	2f4c70830d66	parallel	test-render-memories.sh	ok	25	0
 1789504618	2f4c70830d66	parallel	test-conf.sh	ok	24	0
 1789504619	2f4c70830d66	parallel	test-containment.sh	ok	22	0
@@ -1874,7 +1874,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789455467	2f4d49fd5eab	parallel	test-fayth.sh	ok	9	0
 1789455285	2f4d49fd5eab	parallel	test-aeon-lease.sh	ok	15	0
 1789455504	2f4d49fd5eab	parallel	test-maechen-blind-window.sh	ok	5	0
-1789455571	2f4d49fd5eab	parallel	test-worktree-absent	red	0	0
+1789455571	2f4d49fd5eab	parallel	test-worktree-absent.sh	red	0	0
 1789455518	2f4d49fd5eab	parallel	test-landed-stays-landed.sh	ok	14	0
 1789455396	2f4d49fd5eab	parallel	test-builder-qa-proposed.sh	ok	4	0
 1789455452	2f4d49fd5eab	parallel	test-cockpit-fuse.sh	ok	18	0
@@ -1931,7 +1931,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789455306	2f4d49fd5eab	parallel	test-aeon-exit.sh	ok	10	0
 1789455509	2f4d49fd5eab	parallel	test-now.sh	ok	88	0
 1789455403	2f4d49fd5eab	parallel	test-unmapped-repo-park.sh	ok	4	0
-1789455367	2f4d49fd5eab	parallel	test-cross-repo	ok	8	0
+1789455367	2f4d49fd5eab	parallel	test-cross-repo.sh	ok	8	0
 1789455315	2f4d49fd5eab	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789455395	2f4d49fd5eab	parallel	test-timeout.sh	ok	22	0
 1789455384	2f4d49fd5eab	parallel	test-aeon-verdict.sh	ok	41	0
@@ -2065,7 +2065,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789463715	3d1dbaec5cf7	parallel	test-unit-name.sh	ok	11	0
 1789463716	3d1dbaec5cf7	parallel	test-work-services-exclusion.sh	ok	7	0
 1789463714	3d1dbaec5cf7	parallel	test-testenv-image-tag.sh	ok	5	0
-1789463710	3d1dbaec5cf7	parallel	test-install-exec	ok	12	0
+1789463710	3d1dbaec5cf7	parallel	test-install-exec.sh	ok	12	0
 1789463722	3d1dbaec5cf7	parallel	test-render-memories.sh	ok	25	0
 1789463693	3d1dbaec5cf7	parallel	test-conf.sh	ok	24	0
 1789463694	3d1dbaec5cf7	parallel	test-containment.sh	ok	22	0
@@ -2113,7 +2113,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789511834	3d230b4b14b3	parallel	test-unit-name.sh	ok	11	0
 1789511836	3d230b4b14b3	parallel	test-work-services-exclusion.sh	ok	7	0
 1789511832	3d230b4b14b3	parallel	test-testenv-image-tag.sh	ok	6	0
-1789511828	3d230b4b14b3	parallel	test-install-exec	ok	12	0
+1789511828	3d230b4b14b3	parallel	test-install-exec.sh	ok	12	0
 1789511841	3d230b4b14b3	parallel	test-render-memories.sh	ok	25	0
 1789511780	3d230b4b14b3	parallel	test-conf.sh	ok	24	0
 1789511782	3d230b4b14b3	parallel	test-containment.sh	ok	22	0
@@ -2146,7 +2146,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789513782	3e0abae6f994	parallel	test-aeon-heartbeat.sh	skip	0	0
 1789513806	3e0abae6f994	parallel	test-aeon-exit.sh	ok	10	0
 1789513921	3e0abae6f994	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789513875	3e0abae6f994	parallel	test-cross-repo	ok	8	0
+1789513875	3e0abae6f994	parallel	test-cross-repo.sh	ok	8	0
 1789513817	3e0abae6f994	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789513912	3e0abae6f994	parallel	test-timeout.sh	ok	22	0
 1789513892	3e0abae6f994	parallel	test-aeon-verdict.sh	ok	41	0
@@ -2175,7 +2175,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789526038	3e71947fd161	parallel	test-aeon-heartbeat.sh	skip	0	0
 1789526058	3e71947fd161	parallel	test-aeon-exit.sh	ok	10	0
 1789526159	3e71947fd161	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789526120	3e71947fd161	parallel	test-cross-repo	ok	8	0
+1789526120	3e71947fd161	parallel	test-cross-repo.sh	ok	8	0
 1789526068	3e71947fd161	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789526148	3e71947fd161	parallel	test-timeout.sh	ok	22	0
 1789526135	3e71947fd161	parallel	test-aeon-verdict.sh	ok	41	0
@@ -2201,7 +2201,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789474566	3f58c3221dc2	parallel	test-fayth.sh	ok	9	0
 1789474387	3f58c3221dc2	parallel	test-aeon-lease.sh	ok	15	0
 1789474601	3f58c3221dc2	parallel	test-maechen-blind-window.sh	ok	5	0
-1789474704	3f58c3221dc2	parallel	test-worktree-absent	ok	6	0
+1789474704	3f58c3221dc2	parallel	test-worktree-absent.sh	ok	6	0
 1789474665	3f58c3221dc2	parallel	test-review.sh	ok	25	0
 1789474616	3f58c3221dc2	parallel	test-landed-stays-landed.sh	ok	14	0
 1789474761	3f58c3221dc2	parallel	test-suites-fixture-fault.sh	ok	19	0
@@ -2274,7 +2274,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789474408	3f58c3221dc2	parallel	test-aeon-exit.sh	ok	10	0
 1789474606	3f58c3221dc2	parallel	test-now.sh	ok	88	0
 1789474503	3f58c3221dc2	parallel	test-unmapped-repo-park.sh	ok	4	0
-1789474467	3f58c3221dc2	parallel	test-cross-repo	ok	8	0
+1789474467	3f58c3221dc2	parallel	test-cross-repo.sh	ok	8	0
 1789474416	3f58c3221dc2	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789474495	3f58c3221dc2	parallel	test-timeout.sh	ok	22	0
 1789474484	3f58c3221dc2	parallel	test-aeon-verdict.sh	ok	41	0
@@ -2330,7 +2330,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789576875	4330e9b2eb6d	parallel	test-unit-name.sh	ok	11	0
 1789576878	4330e9b2eb6d	parallel	test-work-services-exclusion.sh	ok	7	0
 1789576872	4330e9b2eb6d	parallel	test-testenv-image-tag.sh	ok	6	0
-1789576853	4330e9b2eb6d	parallel	test-install-exec	ok	12	0
+1789576853	4330e9b2eb6d	parallel	test-install-exec.sh	ok	12	0
 1789576879	4330e9b2eb6d	parallel	test-render-memories.sh	ok	25	0
 1789576784	4330e9b2eb6d	parallel	test-conf.sh	ok	28	0
 1789576785	4330e9b2eb6d	parallel	test-containment.sh	ok	22	0
@@ -2417,7 +2417,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789499725	49cf747a4e75	parallel	test-unit-name.sh	ok	11	0
 1789499728	49cf747a4e75	parallel	test-work-services-exclusion.sh	ok	7	0
 1789499724	49cf747a4e75	parallel	test-testenv-image-tag.sh	ok	5	0
-1789499711	49cf747a4e75	parallel	test-install-exec	ok	12	0
+1789499711	49cf747a4e75	parallel	test-install-exec.sh	ok	12	0
 1789499728	49cf747a4e75	parallel	test-render-memories.sh	ok	25	0
 1789499686	49cf747a4e75	parallel	test-conf.sh	ok	24	0
 1789499686	49cf747a4e75	parallel	test-containment.sh	ok	22	0
@@ -2430,7 +2430,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789539514	4a21d8cf4525	parallel	test-aeon-sweep.sh	ok	13	0
 1789539572	4a21d8cf4525	parallel	test-aeon-verdict.sh	ok	41	0
 1789598780	4af4568f44b2	parallel	test-bead-lint.sh	ok	10	0
-1789531081	4b24993aa1fd	parallel	test-boundary	ok	8	0
+1789531081	4b24993aa1fd	parallel	test-boundary.sh	ok	8	0
 1789531083	4b24993aa1fd	parallel	test-skew-foreign.sh	ok	19	0
 1789531081	4b24993aa1fd	parallel	test-skew-escalate.sh	ok	20	0
 1789531081	4b24993aa1fd	parallel	test-skew-check-release.sh	ok	15	0
@@ -2463,7 +2463,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789520048	4c2f16b05e2a	parallel	test-aeon-heartbeat.sh	skip	0	0
 1789520069	4c2f16b05e2a	parallel	test-aeon-exit.sh	ok	10	0
 1789520170	4c2f16b05e2a	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789520134	4c2f16b05e2a	parallel	test-cross-repo	ok	8	0
+1789520134	4c2f16b05e2a	parallel	test-cross-repo.sh	ok	8	0
 1789520080	4c2f16b05e2a	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789520159	4c2f16b05e2a	parallel	test-timeout.sh	ok	22	0
 1789520146	4c2f16b05e2a	parallel	test-aeon-verdict.sh	ok	41	0
@@ -2515,7 +2515,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789512168	4f498ce32c6f	parallel	test-unit-name.sh	ok	11	0
 1789512170	4f498ce32c6f	parallel	test-work-services-exclusion.sh	ok	7	0
 1789512166	4f498ce32c6f	parallel	test-testenv-image-tag.sh	ok	6	0
-1789512161	4f498ce32c6f	parallel	test-install-exec	ok	12	0
+1789512161	4f498ce32c6f	parallel	test-install-exec.sh	ok	12	0
 1789512173	4f498ce32c6f	parallel	test-render-memories.sh	ok	25	0
 1789512136	4f498ce32c6f	parallel	test-conf.sh	ok	24	0
 1789512139	4f498ce32c6f	parallel	test-containment.sh	ok	22	0
@@ -2537,7 +2537,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789514996	51871ac6cb77	parallel	test-fayth.sh	ok	9	0
 1789514881	51871ac6cb77	parallel	test-aeon-lease.sh	red	14	1
 1789515038	51871ac6cb77	parallel	test-maechen-blind-window.sh	ok	5	0
-1789515155	51871ac6cb77	parallel	test-worktree-absent	ok	6	0
+1789515155	51871ac6cb77	parallel	test-worktree-absent.sh	ok	6	0
 1789515122	51871ac6cb77	parallel	test-review.sh	ok	25	0
 1789515023	51871ac6cb77	parallel	test-landed-stays-landed.sh	red	12	2
 1789514878	51871ac6cb77	parallel	test-literal-lint.sh	ok	31	0
@@ -2606,7 +2606,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789514905	51871ac6cb77	parallel	test-aeon-exit.sh	ok	10	0
 1789515033	51871ac6cb77	parallel	test-now.sh	ok	88	0
 1789515165	51871ac6cb77	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789514994	51871ac6cb77	parallel	test-cross-repo	red	3	5
+1789514994	51871ac6cb77	parallel	test-cross-repo.sh	red	3	5
 1789515154	51871ac6cb77	parallel	test-timeout.sh	ok	22	0
 1789514989	51871ac6cb77	parallel	test-drain-expiry.sh	ok	13	0
 1789515012	51871ac6cb77	parallel	test-lane-ceiling.sh	ok	9	0
@@ -2630,7 +2630,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789471487	520599b86c07	parallel	test-fayth.sh	ok	9	0
 1789471305	520599b86c07	parallel	test-aeon-lease.sh	ok	15	0
 1789471522	520599b86c07	parallel	test-maechen-blind-window.sh	ok	5	0
-1789471626	520599b86c07	parallel	test-worktree-absent	ok	6	0
+1789471626	520599b86c07	parallel	test-worktree-absent.sh	ok	6	0
 1789471587	520599b86c07	parallel	test-review.sh	ok	25	0
 1789471537	520599b86c07	parallel	test-landed-stays-landed.sh	ok	14	0
 1789471658	520599b86c07	parallel	test-suites-fixture-fault.sh	ok	19	0
@@ -2694,7 +2694,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789471326	520599b86c07	parallel	test-aeon-exit.sh	ok	10	0
 1789471527	520599b86c07	parallel	test-now.sh	ok	88	0
 1789471422	520599b86c07	parallel	test-unmapped-repo-park.sh	ok	4	0
-1789471386	520599b86c07	parallel	test-cross-repo	ok	8	0
+1789471386	520599b86c07	parallel	test-cross-repo.sh	ok	8	0
 1789471335	520599b86c07	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789471415	520599b86c07	parallel	test-timeout.sh	ok	22	0
 1789471403	520599b86c07	parallel	test-aeon-verdict.sh	ok	41	0
@@ -2713,7 +2713,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789527410	53cec7f6ace7	parallel	test-watchd-unit-name.sh	ok	17	0
 1789527416	53cec7f6ace7	parallel	test-watch-refresh.sh	ok	81	0
 1789527414	53cec7f6ace7	parallel	test-work-services-exclusion.sh	ok	7	0
-1789527423	53cec7f6ace7	parallel	test-install-exec	ok	12	0
+1789527423	53cec7f6ace7	parallel	test-install-exec.sh	ok	12	0
 1789527410	53cec7f6ace7	parallel	test-host-unit-names.sh	skip	0	0
 1789527409	53cec7f6ace7	parallel	test-watch-unit-restart.sh	ok	5	0
 1789527418	53cec7f6ace7	parallel	test-unit-drift.sh	ok	16	0
@@ -2742,7 +2742,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789523391	56d146347a7d	parallel	test-aeon-heartbeat.sh	skip	0	0
 1789523414	56d146347a7d	parallel	test-aeon-exit.sh	ok	10	0
 1789523514	56d146347a7d	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789523477	56d146347a7d	parallel	test-cross-repo	ok	8	0
+1789523477	56d146347a7d	parallel	test-cross-repo.sh	ok	8	0
 1789523425	56d146347a7d	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789523504	56d146347a7d	parallel	test-timeout.sh	ok	22	0
 1789523492	56d146347a7d	parallel	test-aeon-verdict.sh	ok	41	0
@@ -2819,7 +2819,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789565525	5dedfc379fc0	parallel	test-skew-check-release.sh	ok	15	0
 1789580633	5e5c7b0938c4	parallel	test-citations.sh	ok	20	0
 1789580596	5e5c7b0938c4	parallel	test-gate-verdict.sh	ok	36	0
-1789580630	5e5c7b0938c4	parallel	test-testenv-systemctl	skip	0	0
+1789580630	5e5c7b0938c4	parallel	test-testenv-systemctl.sh	skip	0	0
 1789580609	5e5c7b0938c4	parallel	test-mail-deliver.sh	ok	7	0
 1789580582	5e5c7b0938c4	parallel	test-doctor-bd-tag.sh	ok	16	0
 1789580602	5e5c7b0938c4	parallel	test-maechen.sh	red	44	1
@@ -2854,7 +2854,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789580562	5e5c7b0938c4	parallel	test-activate.sh	ok	22	0
 1789580593	5e5c7b0938c4	parallel	test-groomer.sh	ok	38	0
 1789580569	5e5c7b0938c4	parallel	test-archivist.sh	ok	51	0
-1789580631	5e5c7b0938c4	parallel	test-testenv	skip	0	0
+1789580631	5e5c7b0938c4	parallel	test-testenv.sh	skip	0	0
 1789580629	5e5c7b0938c4	parallel	test-testenv-doctor-check.sh	ok	13	0
 1789580564	5e5c7b0938c4	parallel	test-batch-maxpar.sh	ok	6	0
 1789580628	5e5c7b0938c4	parallel	test-install-rehearsal.sh	skip	0	0
@@ -2869,7 +2869,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789580620	5e5c7b0938c4	parallel	test-unit-name.sh	ok	11	0
 1789580623	5e5c7b0938c4	parallel	test-work-services-exclusion.sh	ok	7	0
 1789580618	5e5c7b0938c4	parallel	test-testenv-image-tag.sh	ok	6	0
-1789580601	5e5c7b0938c4	parallel	test-install-exec	ok	12	0
+1789580601	5e5c7b0938c4	parallel	test-install-exec.sh	ok	12	0
 1789580625	5e5c7b0938c4	parallel	test-render-memories.sh	ok	25	0
 1789580575	5e5c7b0938c4	parallel	test-conf.sh	ok	28	0
 1789580577	5e5c7b0938c4	parallel	test-containment.sh	ok	22	0
@@ -2922,7 +2922,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789581699	5fd1fb38249a	parallel	test-unit-name.sh	ok	11	0
 1789581702	5fd1fb38249a	parallel	test-work-services-exclusion.sh	ok	7	0
 1789581696	5fd1fb38249a	parallel	test-testenv-image-tag.sh	ok	6	0
-1789581678	5fd1fb38249a	parallel	test-install-exec	ok	12	0
+1789581678	5fd1fb38249a	parallel	test-install-exec.sh	ok	12	0
 1789581702	5fd1fb38249a	parallel	test-render-memories.sh	ok	32	0
 1789581647	5fd1fb38249a	parallel	test-conf.sh	ok	28	0
 1789581653	5fd1fb38249a	parallel	test-containment.sh	ok	22	0
@@ -2963,7 +2963,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789479956	60644c57835f	parallel	test-unit-name.sh	ok	11	0
 1789479959	60644c57835f	parallel	test-work-services-exclusion.sh	ok	7	0
 1789479955	60644c57835f	parallel	test-testenv-image-tag.sh	ok	5	0
-1789479951	60644c57835f	parallel	test-install-exec	ok	12	0
+1789479951	60644c57835f	parallel	test-install-exec.sh	ok	12	0
 1789479963	60644c57835f	parallel	test-render-memories.sh	ok	25	0
 1789479923	60644c57835f	parallel	test-conf.sh	ok	24	0
 1789479926	60644c57835f	parallel	test-containment.sh	ok	22	0
@@ -3030,7 +3030,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789540378	66b62bc7f708	parallel	test-fayth.sh	ok	9	0
 1789540274	66b62bc7f708	parallel	test-aeon-lease.sh	ok	15	0
 1789540444	66b62bc7f708	parallel	test-maechen-blind-window.sh	ok	5	0
-1789540577	66b62bc7f708	parallel	test-worktree-absent	ok	6	0
+1789540577	66b62bc7f708	parallel	test-worktree-absent.sh	ok	6	0
 1789540521	66b62bc7f708	parallel	test-review.sh	ok	25	0
 1789540432	66b62bc7f708	parallel	test-landed-stays-landed.sh	ok	14	0
 1789540290	66b62bc7f708	parallel	test-builder-qa-proposed.sh	ok	4	0
@@ -3087,7 +3087,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789540294	66b62bc7f708	parallel	test-aeon-exit.sh	ok	10	0
 1789540445	66b62bc7f708	parallel	test-now.sh	ok	88	0
 1789540574	66b62bc7f708	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789540371	66b62bc7f708	parallel	test-cross-repo	ok	8	0
+1789540371	66b62bc7f708	parallel	test-cross-repo.sh	ok	8	0
 1789540558	66b62bc7f708	parallel	test-timeout.sh	ok	22	0
 1789540373	66b62bc7f708	parallel	test-drain-expiry.sh	ok	13	0
 1789540394	66b62bc7f708	parallel	test-lane-ceiling.sh	ok	9	0
@@ -3136,7 +3136,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789459546	6703e94c498a	parallel	test-work-services-exclusion.sh	ok	7	0
 1789459584	6703e94c498a	parallel	test-suites-timer.sh	ok	13	0
 1789459543	6703e94c498a	parallel	test-testenv-image-tag.sh	ok	5	0
-1789459541	6703e94c498a	parallel	test-install-exec	ok	12	0
+1789459541	6703e94c498a	parallel	test-install-exec.sh	ok	12	0
 1789459562	6703e94c498a	parallel	test-ctrl.sh	ok	45	0
 1789459551	6703e94c498a	parallel	test-render-memories.sh	ok	25	0
 1789459517	6703e94c498a	parallel	test-conf.sh	ok	24	0
@@ -3149,7 +3149,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789516248	67bffabfe65e	parallel	test-incident-delivers-satisfiable.sh	ok	7	0
 1789579923	67ed5688d4d6	parallel	test-citations.sh	ok	20	0
 1789579799	67ed5688d4d6	parallel	test-gate-verdict.sh	ok	36	0
-1789579917	67ed5688d4d6	parallel	test-testenv-systemctl	skip	0	0
+1789579917	67ed5688d4d6	parallel	test-testenv-systemctl.sh	skip	0	0
 1789579854	67ed5688d4d6	parallel	test-mail-deliver.sh	ok	7	0
 1789579788	67ed5688d4d6	parallel	test-doctor-bd-tag.sh	ok	16	0
 1789579811	67ed5688d4d6	parallel	test-maechen.sh	red	44	1
@@ -3184,7 +3184,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789579584	67ed5688d4d6	parallel	test-activate.sh	ok	22	0
 1789579795	67ed5688d4d6	parallel	test-groomer.sh	ok	38	0
 1789579704	67ed5688d4d6	parallel	test-archivist.sh	ok	51	0
-1789579917	67ed5688d4d6	parallel	test-testenv	skip	0	0
+1789579917	67ed5688d4d6	parallel	test-testenv.sh	skip	0	0
 1789579916	67ed5688d4d6	parallel	test-testenv-doctor-check.sh	ok	13	0
 1789579738	67ed5688d4d6	parallel	test-batch-maxpar.sh	ok	6	0
 1789579915	67ed5688d4d6	parallel	test-install-rehearsal.sh	skip	0	0
@@ -3199,7 +3199,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789579912	67ed5688d4d6	parallel	test-unit-name.sh	ok	11	0
 1789579914	67ed5688d4d6	parallel	test-work-services-exclusion.sh	ok	7	0
 1789579911	67ed5688d4d6	parallel	test-testenv-image-tag.sh	ok	6	0
-1789579809	67ed5688d4d6	parallel	test-install-exec	ok	12	0
+1789579809	67ed5688d4d6	parallel	test-install-exec.sh	ok	12	0
 1789579910	67ed5688d4d6	parallel	test-render-memories.sh	ok	25	0
 1789579784	67ed5688d4d6	parallel	test-conf.sh	ok	28	0
 1789579784	67ed5688d4d6	parallel	test-containment.sh	ok	22	0
@@ -3279,7 +3279,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789463174	6db0232c78f9	parallel	test-fayth.sh	ok	9	0
 1789462982	6db0232c78f9	parallel	test-aeon-lease.sh	ok	15	0
 1789463210	6db0232c78f9	parallel	test-maechen-blind-window.sh	ok	5	0
-1789463310	6db0232c78f9	parallel	test-worktree-absent	ok	6	0
+1789463310	6db0232c78f9	parallel	test-worktree-absent.sh	ok	6	0
 1789463270	6db0232c78f9	parallel	test-review.sh	ok	25	0
 1789463221	6db0232c78f9	parallel	test-landed-stays-landed.sh	ok	14	0
 1789463095	6db0232c78f9	parallel	test-builder-qa-proposed.sh	ok	4	0
@@ -3339,7 +3339,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789463002	6db0232c78f9	parallel	test-aeon-exit.sh	ok	10	0
 1789463215	6db0232c78f9	parallel	test-now.sh	ok	88	0
 1789463103	6db0232c78f9	parallel	test-unmapped-repo-park.sh	ok	4	0
-1789463065	6db0232c78f9	parallel	test-cross-repo	ok	8	0
+1789463065	6db0232c78f9	parallel	test-cross-repo.sh	ok	8	0
 1789463013	6db0232c78f9	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789463094	6db0232c78f9	parallel	test-timeout.sh	ok	22	0
 1789463082	6db0232c78f9	parallel	test-aeon-verdict.sh	ok	41	0
@@ -3405,7 +3405,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789458232	71273c37b6bd	parallel	test-work-services-exclusion.sh	ok	7	0
 1789458270	71273c37b6bd	parallel	test-suites-timer.sh	ok	13	0
 1789458230	71273c37b6bd	parallel	test-testenv-image-tag.sh	ok	5	0
-1789458228	71273c37b6bd	parallel	test-install-exec	ok	12	0
+1789458228	71273c37b6bd	parallel	test-install-exec.sh	ok	12	0
 1789458247	71273c37b6bd	parallel	test-ctrl.sh	ok	45	0
 1789458238	71273c37b6bd	parallel	test-render-memories.sh	ok	25	0
 1789458210	71273c37b6bd	parallel	test-conf.sh	ok	24	0
@@ -3462,7 +3462,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789451467	738061f59378	parallel	test-work-services-exclusion.sh	ok	7	0
 1789451503	738061f59378	parallel	test-suites-timer.sh	ok	13	0
 1789451464	738061f59378	parallel	test-testenv-image-tag.sh	ok	5	0
-1789451455	738061f59378	parallel	test-install-exec	ok	12	0
+1789451455	738061f59378	parallel	test-install-exec.sh	ok	12	0
 1789451483	738061f59378	parallel	test-ctrl.sh	ok	45	0
 1789451470	738061f59378	parallel	test-render-memories.sh	ok	25	0
 1789451433	738061f59378	parallel	test-conf.sh	ok	24	0
@@ -3488,7 +3488,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789522758	73f8c82bd033	parallel	test-check5-sweep-delivers.sh	ok	15	0
 1789522448	73f8c82bd033	parallel	test-aeon-lease.sh	ok	15	0
 1789522596	73f8c82bd033	parallel	test-maechen-blind-window.sh	ok	5	0
-1789522719	73f8c82bd033	parallel	test-worktree-absent	ok	6	0
+1789522719	73f8c82bd033	parallel	test-worktree-absent.sh	ok	6	0
 1789522668	73f8c82bd033	parallel	test-review.sh	ok	25	0
 1789522595	73f8c82bd033	parallel	test-landed-stays-landed.sh	ok	14	0
 1789522754	73f8c82bd033	parallel	test-check5-landed-assert.sh	ok	11	0
@@ -3550,7 +3550,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789522600	73f8c82bd033	parallel	test-now.sh	ok	88	0
 1789522768	73f8c82bd033	parallel	test-content-landed-no-reopen.sh	ok	10	0
 1789522723	73f8c82bd033	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789522540	73f8c82bd033	parallel	test-cross-repo	ok	8	0
+1789522540	73f8c82bd033	parallel	test-cross-repo.sh	ok	8	0
 1789522704	73f8c82bd033	parallel	test-timeout.sh	ok	22	0
 1789522542	73f8c82bd033	parallel	test-drain-expiry.sh	ok	13	0
 1789522560	73f8c82bd033	parallel	test-lane-ceiling.sh	ok	9	0
@@ -3609,7 +3609,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789584182	74e73042ed14	parallel	test-work-services-exclusion.sh	ok	7	0
 1789584193	74e73042ed14	parallel	test-gate-discover-branch.sh	ok	5	0
 1789584176	74e73042ed14	parallel	test-testenv-image-tag.sh	ok	6	0
-1789584104	74e73042ed14	parallel	test-install-exec	ok	12	0
+1789584104	74e73042ed14	parallel	test-install-exec.sh	ok	12	0
 1789584173	74e73042ed14	parallel	test-render-memories.sh	ok	32	0
 1789584039	74e73042ed14	parallel	test-conf.sh	ok	28	0
 1789584042	74e73042ed14	parallel	test-containment.sh	ok	22	0
@@ -3678,7 +3678,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789621695	7ccfd09c18c2	parallel	test-timeout.sh	ok	22	0
 1789602005	7cd90277d8f8	parallel	test-doctor-unit-dup.sh	ok	10	0
 1789602001	7cd90277d8f8	parallel	test-doctor-dolt.sh	ok	13	0
-1789602003	7cd90277d8f8	parallel	test-install-exec	ok	12	0
+1789602003	7cd90277d8f8	parallel	test-install-exec.sh	ok	12	0
 1789601997	7cd90277d8f8	parallel	test-install-dolt.sh	ok	16	0
 1789604754	7cf36e36a2d1	parallel	test-governor-host-cores.sh	ok	5	0
 1789555543	7d773fbe2f7e	parallel	test-citations.sh	ok	20	0
@@ -3915,7 +3915,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789469745	9f1f20bae232	parallel	test-fayth.sh	ok	9	0
 1789469562	9f1f20bae232	parallel	test-aeon-lease.sh	ok	15	0
 1789469780	9f1f20bae232	parallel	test-maechen-blind-window.sh	ok	5	0
-1789469885	9f1f20bae232	parallel	test-worktree-absent	ok	6	0
+1789469885	9f1f20bae232	parallel	test-worktree-absent.sh	ok	6	0
 1789469846	9f1f20bae232	parallel	test-review.sh	ok	25	0
 1789469796	9f1f20bae232	parallel	test-landed-stays-landed.sh	ok	14	0
 1789469918	9f1f20bae232	parallel	test-suites-fixture-fault.sh	ok	19	0
@@ -3979,7 +3979,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789469584	9f1f20bae232	parallel	test-aeon-exit.sh	ok	10	0
 1789469785	9f1f20bae232	parallel	test-now.sh	ok	88	0
 1789469681	9f1f20bae232	parallel	test-unmapped-repo-park.sh	ok	4	0
-1789469645	9f1f20bae232	parallel	test-cross-repo	ok	8	0
+1789469645	9f1f20bae232	parallel	test-cross-repo.sh	ok	8	0
 1789469593	9f1f20bae232	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789469674	9f1f20bae232	parallel	test-timeout.sh	ok	22	0
 1789469662	9f1f20bae232	parallel	test-aeon-verdict.sh	ok	41	0
@@ -4005,7 +4005,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789619537	a058cfb3e64d	parallel	test-host-reason.sh	ok	24	0
 1789620345	a058cfb3e64d	parallel	test-sop.sh	ok	113	0
 1789620239	a058cfb3e64d	parallel	test-sending-unlanded-guard.sh	ok	10	0
-1789620596	a058cfb3e64d	parallel	test-testenv-systemctl	skip	0	0
+1789620596	a058cfb3e64d	parallel	test-testenv-systemctl.sh	skip	0	0
 1789619961	a058cfb3e64d	parallel	test-null-close-reason.sh	ok	19	0
 1789619985	a058cfb3e64d	parallel	test-output-visibility.sh	ok	9	0
 1789618911	a058cfb3e64d	parallel	test-build-tarball.sh	ok	11	0
@@ -4032,7 +4032,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789620199	a058cfb3e64d	parallel	test-scratch-fence.sh	ok	15	0
 1789619452	a058cfb3e64d	parallel	test-fayth.sh	ok	9	0
 1789619419	a058cfb3e64d	parallel	test-doctor-cargo.sh	ok	11	0
-1789618911	a058cfb3e64d	parallel	test-boundary	ok	8	0
+1789618911	a058cfb3e64d	parallel	test-boundary.sh	ok	8	0
 1789620225	a058cfb3e64d	parallel	test-sending-metrics.sh	ok	14	0
 1789619165	a058cfb3e64d	parallel	test-check5-sweep-delivers.sh	ok	15	0
 1789619258	a058cfb3e64d	parallel	test-cockpit-landed.sh	ok	6	0
@@ -4046,7 +4046,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789619954	a058cfb3e64d	parallel	test-model-switch-report.sh	ok	16	0
 1789619997	a058cfb3e64d	parallel	test-owned.sh	ok	18	0
 1789619357	a058cfb3e64d	parallel	test-configure.sh	ok	18	0
-1789620751	a058cfb3e64d	parallel	test-worktree-absent	ok	6	0
+1789620751	a058cfb3e64d	parallel	test-worktree-absent.sh	ok	6	0
 1789619451	a058cfb3e64d	parallel	test-fayth-predicates.sh	ok	22	0
 1789620262	a058cfb3e64d	parallel	test-session-hook.sh	ok	94	0
 1789619501	a058cfb3e64d	parallel	test-gate-fixture-diag.sh	ok	6	0
@@ -4209,7 +4209,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789620631	a058cfb3e64d	parallel	test-uninstall.sh	ok	23	0
 1789619353	a058cfb3e64d	parallel	test-cockpit.sh	ok	22	0
 1789619256	a058cfb3e64d	parallel	test-cockpit-layout-mail.sh	ok	12	0
-1789620596	a058cfb3e64d	parallel	test-testenv	skip	0	0
+1789620596	a058cfb3e64d	parallel	test-testenv.sh	skip	0	0
 1789620200	a058cfb3e64d	parallel	test-select.sh	ok	67	0
 1789620586	a058cfb3e64d	parallel	test-testenv-doctor-check.sh	ok	13	0
 1789620249	a058cfb3e64d	parallel	test-sentinel-capacity.sh	ok	6	0
@@ -4282,7 +4282,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789620772	a058cfb3e64d	parallel	test-yield.sh	ok	74	0
 1789619386	a058cfb3e64d	parallel	test-ctx-pointer.sh	ok	22	0
 1789620238	a058cfb3e64d	parallel	test-sending-squash-merged.sh	ok	9	0
-1789619712	a058cfb3e64d	parallel	test-install-exec	ok	12	0
+1789619712	a058cfb3e64d	parallel	test-install-exec.sh	ok	12	0
 # literal-ok: measurement data; the configured name is part of a suite FILENAME harvested from this tree, not a label read here.
 1789620073	a058cfb3e64d	parallel	test-reclaim-needs-ryan.sh	ok	6	0
 1789619503	a058cfb3e64d	parallel	test-gate-preflight.sh	ok	10	0
@@ -4305,7 +4305,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789618881	a058cfb3e64d	parallel	test-bd-resolve.sh	ok	8	0
 1789620643	a058cfb3e64d	parallel	test-unmapped-repo-park.sh	ok	5	0
 1789618700	a058cfb3e64d	parallel	test-answers-premise-rejected.sh	ok	20	0
-1789619384	a058cfb3e64d	parallel	test-cross-repo	ok	8	0
+1789619384	a058cfb3e64d	parallel	test-cross-repo.sh	ok	8	0
 1789619484	a058cfb3e64d	parallel	test-gate-check-flaky.sh	ok	5	0
 1789620060	a058cfb3e64d	parallel	test-ready.sh	ok	59	0
 1789620663	a058cfb3e64d	parallel	test-watch-unit-restart.sh	ok	5	0
@@ -4421,7 +4421,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789458733	a67773631967	parallel	test-work-services-exclusion.sh	ok	7	0
 1789458771	a67773631967	parallel	test-suites-timer.sh	ok	13	0
 1789458732	a67773631967	parallel	test-testenv-image-tag.sh	ok	5	0
-1789458730	a67773631967	parallel	test-install-exec	ok	12	0
+1789458730	a67773631967	parallel	test-install-exec.sh	ok	12	0
 1789458749	a67773631967	parallel	test-ctrl.sh	ok	45	0
 1789458740	a67773631967	parallel	test-render-memories.sh	ok	25	0
 1789458712	a67773631967	parallel	test-conf.sh	ok	24	0
@@ -4450,7 +4450,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789473003	a84d3790ba8a	parallel	test-fayth.sh	ok	9	0
 1789472819	a84d3790ba8a	parallel	test-aeon-lease.sh	ok	15	0
 1789473038	a84d3790ba8a	parallel	test-maechen-blind-window.sh	ok	5	0
-1789473143	a84d3790ba8a	parallel	test-worktree-absent	ok	6	0
+1789473143	a84d3790ba8a	parallel	test-worktree-absent.sh	ok	6	0
 1789473104	a84d3790ba8a	parallel	test-review.sh	ok	25	0
 1789473054	a84d3790ba8a	parallel	test-landed-stays-landed.sh	ok	14	0
 1789473202	a84d3790ba8a	parallel	test-suites-fixture-fault.sh	ok	19	0
@@ -4523,7 +4523,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789472840	a84d3790ba8a	parallel	test-aeon-exit.sh	ok	10	0
 1789473043	a84d3790ba8a	parallel	test-now.sh	ok	88	0
 1789472938	a84d3790ba8a	parallel	test-unmapped-repo-park.sh	ok	4	0
-1789472901	a84d3790ba8a	parallel	test-cross-repo	ok	8	0
+1789472901	a84d3790ba8a	parallel	test-cross-repo.sh	ok	8	0
 1789472849	a84d3790ba8a	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789472931	a84d3790ba8a	parallel	test-timeout.sh	ok	22	0
 1789472919	a84d3790ba8a	parallel	test-aeon-verdict.sh	ok	41	0
@@ -4592,7 +4592,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789580211	ab022ad72cc0	parallel	test-unit-name.sh	ok	11	0
 1789580213	ab022ad72cc0	parallel	test-work-services-exclusion.sh	ok	7	0
 1789580209	ab022ad72cc0	parallel	test-testenv-image-tag.sh	ok	6	0
-1789580193	ab022ad72cc0	parallel	test-install-exec	ok	12	0
+1789580193	ab022ad72cc0	parallel	test-install-exec.sh	ok	12	0
 1789580215	ab022ad72cc0	parallel	test-render-memories.sh	ok	25	0
 1789580159	ab022ad72cc0	parallel	test-conf.sh	ok	28	0
 1789580163	ab022ad72cc0	parallel	test-containment.sh	ok	22	0
@@ -4697,7 +4697,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789665556	bce4f13caff6	parallel	test-aeon-resume.sh	ok	19	0
 1789530142	bd4a55cc4ec1	parallel	test-citations.sh	ok	20	0
 1789530144	bd4a55cc4ec1	parallel	test-install-aeons.sh	ok	25	0
-1789530114	bd4a55cc4ec1	parallel	test-boundary	red	7	1
+1789530114	bd4a55cc4ec1	parallel	test-boundary.sh	red	7	1
 1789530136	bd4a55cc4ec1	parallel	test-ask-dedupe.sh	ok	17	0
 1789530121	bd4a55cc4ec1	parallel	test-skew-foreign.sh	ok	19	0
 1789530213	bd4a55cc4ec1	parallel	test-landing.sh	ok	142	0
@@ -4827,7 +4827,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789613523	c429d85fe154	parallel	test-work-services-exclusion.sh	ok	7	0
 1789613514	c429d85fe154	parallel	test-testenv-image-tag.sh	ok	6	0
 1789613514	c429d85fe154	parallel	test-submit.sh	ok	15	0
-1789613460	c429d85fe154	parallel	test-install-exec	ok	12	0
+1789613460	c429d85fe154	parallel	test-install-exec.sh	ok	12	0
 1789613503	c429d85fe154	parallel	test-render-memories.sh	ok	32	0
 1789613427	c429d85fe154	parallel	test-conf.sh	ok	28	0
 1789613427	c429d85fe154	parallel	test-containment.sh	ok	22	0
@@ -4898,7 +4898,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789561876	c5141a7b4b1b	parallel	test-unit-name.sh	ok	11	0
 1789561877	c5141a7b4b1b	parallel	test-work-services-exclusion.sh	ok	7	0
 1789561873	c5141a7b4b1b	parallel	test-testenv-image-tag.sh	ok	6	0
-1789561858	c5141a7b4b1b	parallel	test-install-exec	ok	12	0
+1789561858	c5141a7b4b1b	parallel	test-install-exec.sh	ok	12	0
 1789561874	c5141a7b4b1b	parallel	test-render-memories.sh	ok	25	0
 1789561831	c5141a7b4b1b	parallel	test-conf.sh	ok	28	0
 1789561835	c5141a7b4b1b	parallel	test-containment.sh	ok	22	0
@@ -4954,7 +4954,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789468423	c6591ed12adc	parallel	test-fayth.sh	ok	9	0
 1789468243	c6591ed12adc	parallel	test-aeon-lease.sh	ok	15	0
 1789468458	c6591ed12adc	parallel	test-maechen-blind-window.sh	ok	5	0
-1789468562	c6591ed12adc	parallel	test-worktree-absent	ok	6	0
+1789468562	c6591ed12adc	parallel	test-worktree-absent.sh	ok	6	0
 1789468523	c6591ed12adc	parallel	test-review.sh	ok	25	0
 1789468473	c6591ed12adc	parallel	test-landed-stays-landed.sh	ok	14	0
 1789468595	c6591ed12adc	parallel	test-suites-fixture-fault.sh	ok	19	0
@@ -5018,7 +5018,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789468263	c6591ed12adc	parallel	test-aeon-exit.sh	ok	10	0
 1789468463	c6591ed12adc	parallel	test-now.sh	ok	88	0
 1789468359	c6591ed12adc	parallel	test-unmapped-repo-park.sh	ok	4	0
-1789468323	c6591ed12adc	parallel	test-cross-repo	ok	8	0
+1789468323	c6591ed12adc	parallel	test-cross-repo.sh	ok	8	0
 1789468272	c6591ed12adc	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789468352	c6591ed12adc	parallel	test-timeout.sh	ok	22	0
 1789468340	c6591ed12adc	parallel	test-aeon-verdict.sh	ok	41	0
@@ -5050,7 +5050,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789520838	c7a34edcade4	parallel	test-aeon-lease.sh	ok	15	0
 1789521013	c7a34edcade4	parallel	test-maechen-blind-window.sh	ok	5	0
 1789520797	c7a34edcade4	parallel	test-configure.sh	ok	18	0
-1789521152	c7a34edcade4	parallel	test-worktree-absent	ok	6	0
+1789521152	c7a34edcade4	parallel	test-worktree-absent.sh	ok	6	0
 1789520808	c7a34edcade4	parallel	test-fayth-predicates.sh	ok	23	0
 1789520839	c7a34edcade4	parallel	test-review.sh	ok	25	0
 1789520821	c7a34edcade4	parallel	test-maechen-trigger.sh	ok	45	0
@@ -5124,7 +5124,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789520837	c7a34edcade4	parallel	test-aeon-heartbeat.sh	skip	0	0
 1789520947	c7a34edcade4	parallel	test-check5-drop.sh	ok	13	0
 1789521095	c7a34edcade4	parallel	test-sending-squash-merged.sh	ok	9	0
-1789520822	c7a34edcade4	parallel	test-install-exec	ok	12	0
+1789520822	c7a34edcade4	parallel	test-install-exec.sh	ok	12	0
 1789520836	c7a34edcade4	parallel	test-render-memories.sh	ok	25	0
 1789520796	c7a34edcade4	parallel	test-conf.sh	ok	24	0
 1789520798	c7a34edcade4	parallel	test-containment.sh	ok	22	0
@@ -5133,7 +5133,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789520813	c7a34edcade4	parallel	test-host-unit-names.sh	skip	0	0
 1789520787	c7a34edcade4	parallel	test-bd-resolve.sh	ok	8	0
 1789521154	c7a34edcade4	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789520963	c7a34edcade4	parallel	test-cross-repo	ok	8	0
+1789520963	c7a34edcade4	parallel	test-cross-repo.sh	ok	8	0
 1789520825	c7a34edcade4	parallel	test-ready.sh	ok	52	0
 1789521136	c7a34edcade4	parallel	test-timeout.sh	ok	22	0
 1789520967	c7a34edcade4	parallel	test-drain-expiry.sh	ok	13	0
@@ -5183,7 +5183,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789453421	ca2e1a8338fb	parallel	test-fayth.sh	ok	9	0
 1789453241	ca2e1a8338fb	parallel	test-aeon-lease.sh	ok	15	0
 1789453462	ca2e1a8338fb	parallel	test-maechen-blind-window.sh	ok	5	0
-1789453567	ca2e1a8338fb	parallel	test-worktree-absent	ok	6	0
+1789453567	ca2e1a8338fb	parallel	test-worktree-absent.sh	ok	6	0
 1789453524	ca2e1a8338fb	parallel	test-review.sh	ok	25	0
 1789453476	ca2e1a8338fb	parallel	test-landed-stays-landed.sh	ok	14	0
 1789453351	ca2e1a8338fb	parallel	test-builder-qa-proposed.sh	ok	4	0
@@ -5243,7 +5243,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789453262	ca2e1a8338fb	parallel	test-aeon-exit.sh	ok	10	0
 1789453467	ca2e1a8338fb	parallel	test-now.sh	ok	88	0
 1789453359	ca2e1a8338fb	parallel	test-unmapped-repo-park.sh	ok	4	0
-1789453322	ca2e1a8338fb	parallel	test-cross-repo	ok	8	0
+1789453322	ca2e1a8338fb	parallel	test-cross-repo.sh	ok	8	0
 1789453270	ca2e1a8338fb	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789453351	ca2e1a8338fb	parallel	test-timeout.sh	ok	22	0
 1789453339	ca2e1a8338fb	parallel	test-aeon-verdict.sh	ok	41	0
@@ -5268,7 +5268,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789475548	cab5006f6626	parallel	test-fayth.sh	ok	9	0
 1789475371	cab5006f6626	parallel	test-aeon-lease.sh	ok	15	0
 1789475583	cab5006f6626	parallel	test-maechen-blind-window.sh	ok	5	0
-1789475685	cab5006f6626	parallel	test-worktree-absent	ok	6	0
+1789475685	cab5006f6626	parallel	test-worktree-absent.sh	ok	6	0
 1789475647	cab5006f6626	parallel	test-review.sh	ok	25	0
 1789475598	cab5006f6626	parallel	test-landed-stays-landed.sh	ok	14	0
 1789475744	cab5006f6626	parallel	test-suites-fixture-fault.sh	ok	19	0
@@ -5341,7 +5341,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789475392	cab5006f6626	parallel	test-aeon-exit.sh	ok	10	0
 1789475588	cab5006f6626	parallel	test-now.sh	ok	88	0
 1789475487	cab5006f6626	parallel	test-unmapped-repo-park.sh	ok	4	0
-1789475451	cab5006f6626	parallel	test-cross-repo	ok	8	0
+1789475451	cab5006f6626	parallel	test-cross-repo.sh	ok	8	0
 1789475400	cab5006f6626	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789475479	cab5006f6626	parallel	test-timeout.sh	ok	22	0
 1789475467	cab5006f6626	parallel	test-aeon-verdict.sh	ok	41	0
@@ -5404,7 +5404,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789584629	cccec127a4d3	parallel	test-unit-name.sh	ok	11	0
 1789584630	cccec127a4d3	parallel	test-work-services-exclusion.sh	ok	7	0
 1789584623	cccec127a4d3	parallel	test-testenv-image-tag.sh	ok	6	0
-1789584556	cccec127a4d3	parallel	test-install-exec	ok	12	0
+1789584556	cccec127a4d3	parallel	test-install-exec.sh	ok	12	0
 1789584619	cccec127a4d3	parallel	test-render-memories.sh	ok	32	0
 1789584484	cccec127a4d3	parallel	test-conf.sh	ok	28	0
 1789584492	cccec127a4d3	parallel	test-containment.sh	ok	22	0
@@ -5546,7 +5546,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789622896	d4d466bf3c56	parallel	test-host-reason.sh	ok	24	0
 1789623833	d4d466bf3c56	parallel	test-sop.sh	ok	113	0
 1789623713	d4d466bf3c56	parallel	test-sending-unlanded-guard.sh	ok	10	0
-1789623874	d4d466bf3c56	parallel	test-testenv-systemctl	red	0	0
+1789623874	d4d466bf3c56	parallel	test-testenv-systemctl.sh	red	0	0
 1789623378	d4d466bf3c56	parallel	test-null-close-reason.sh	ok	19	0
 1789623413	d4d466bf3c56	parallel	test-output-visibility.sh	ok	9	0
 1789622134	d4d466bf3c56	parallel	test-build-tarball.sh	ok	11	0
@@ -5573,7 +5573,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789623658	d4d466bf3c56	parallel	test-scratch-fence.sh	ok	15	0
 1789622818	d4d466bf3c56	parallel	test-fayth.sh	ok	9	0
 1789622783	d4d466bf3c56	parallel	test-doctor-cargo.sh	ok	11	0
-1789622129	d4d466bf3c56	parallel	test-boundary	ok	8	0
+1789622129	d4d466bf3c56	parallel	test-boundary.sh	ok	8	0
 1789623698	d4d466bf3c56	parallel	test-sending-metrics.sh	ok	14	0
 1789622511	d4d466bf3c56	parallel	test-check5-sweep-delivers.sh	ok	15	0
 1789622596	d4d466bf3c56	parallel	test-cockpit-landed.sh	ok	6	0
@@ -5587,7 +5587,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789623367	d4d466bf3c56	parallel	test-model-switch-report.sh	ok	16	0
 1789623426	d4d466bf3c56	parallel	test-owned.sh	ok	18	0
 1789622718	d4d466bf3c56	parallel	test-configure.sh	ok	18	0
-1789623880	d4d466bf3c56	parallel	test-worktree-absent	red	0	0
+1789623880	d4d466bf3c56	parallel	test-worktree-absent.sh	red	0	0
 1789622817	d4d466bf3c56	parallel	test-fayth-predicates.sh	ok	22	0
 1789623739	d4d466bf3c56	parallel	test-session-hook.sh	ok	94	0
 1789622856	d4d466bf3c56	parallel	test-gate-fixture-diag.sh	ok	6	0
@@ -5747,7 +5747,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789623876	d4d466bf3c56	parallel	test-uninstall.sh	red	0	0
 1789622696	d4d466bf3c56	parallel	test-cockpit.sh	ok	22	0
 1789622600	d4d466bf3c56	parallel	test-cockpit-layout-mail.sh	ok	12	0
-1789623875	d4d466bf3c56	parallel	test-testenv	red	0	0
+1789623875	d4d466bf3c56	parallel	test-testenv.sh	red	0	0
 1789623661	d4d466bf3c56	parallel	test-select.sh	ok	67	0
 1789623873	d4d466bf3c56	parallel	test-testenv-doctor-check.sh	red	0	0
 1789623726	d4d466bf3c56	parallel	test-sentinel-capacity.sh	ok	6	0
@@ -5819,7 +5819,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789623881	d4d466bf3c56	parallel	test-yield.sh	red	0	0
 1789622755	d4d466bf3c56	parallel	test-ctx-pointer.sh	ok	22	0
 1789623713	d4d466bf3c56	parallel	test-sending-squash-merged.sh	ok	9	0
-1789623078	d4d466bf3c56	parallel	test-install-exec	ok	12	0
+1789623078	d4d466bf3c56	parallel	test-install-exec.sh	ok	12	0
 # literal-ok: measurement data; the configured name is part of a suite FILENAME harvested from this tree, not a label read here.
 1789623520	d4d466bf3c56	parallel	test-reclaim-needs-ryan.sh	ok	6	0
 1789622860	d4d466bf3c56	parallel	test-gate-preflight.sh	ok	10	0
@@ -5842,7 +5842,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789622105	d4d466bf3c56	parallel	test-bd-resolve.sh	ok	8	0
 1789623877	d4d466bf3c56	parallel	test-unmapped-repo-park.sh	red	0	0
 1789621921	d4d466bf3c56	parallel	test-answers-premise-rejected.sh	ok	20	0
-1789622751	d4d466bf3c56	parallel	test-cross-repo	ok	8	0
+1789622751	d4d466bf3c56	parallel	test-cross-repo.sh	ok	8	0
 1789622848	d4d466bf3c56	parallel	test-gate-check-flaky.sh	ok	5	0
 1789623503	d4d466bf3c56	parallel	test-ready.sh	ok	59	0
 1789623878	d4d466bf3c56	parallel	test-watch-unit-restart.sh	red	0	0
@@ -5890,7 +5890,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789500331	d6c4714013b6	parallel	test-doctor-cargo.sh	ok	11	0
 1789500237	d6c4714013b6	parallel	test-aeon-lease.sh	ok	15	0
 1789500375	d6c4714013b6	parallel	test-maechen-blind-window.sh	ok	5	0
-1789500493	d6c4714013b6	parallel	test-worktree-absent	ok	6	0
+1789500493	d6c4714013b6	parallel	test-worktree-absent.sh	ok	6	0
 1789500440	d6c4714013b6	parallel	test-review.sh	ok	25	0
 1789500386	d6c4714013b6	parallel	test-landed-stays-landed.sh	ok	14	0
 1789500254	d6c4714013b6	parallel	test-builder-qa-proposed.sh	ok	4	0
@@ -5955,7 +5955,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789500261	d6c4714013b6	parallel	test-aeon-exit.sh	ok	10	0
 1789500379	d6c4714013b6	parallel	test-now.sh	ok	88	0
 1789500496	d6c4714013b6	parallel	test-unmapped-repo-park.sh	ok	4	0
-1789500326	d6c4714013b6	parallel	test-cross-repo	ok	8	0
+1789500326	d6c4714013b6	parallel	test-cross-repo.sh	ok	8	0
 1789500480	d6c4714013b6	parallel	test-timeout.sh	ok	22	0
 1789500339	d6c4714013b6	parallel	test-drain-expiry.sh	ok	13	0
 1789500353	d6c4714013b6	parallel	test-lane-ceiling.sh	ok	9	0
@@ -5976,7 +5976,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789570011	d8efd62c7771	parallel	test-fayth.sh	ok	9	0
 1789569917	d8efd62c7771	parallel	test-aeon-lease.sh	ok	15	0
 1789569919	d8efd62c7771	parallel	test-maechen-blind-window.sh	red	3	2
-1789570203	d8efd62c7771	parallel	test-worktree-absent	ok	6	0
+1789570203	d8efd62c7771	parallel	test-worktree-absent.sh	ok	6	0
 1789570149	d8efd62c7771	parallel	test-review.sh	ok	25	0
 1789570059	d8efd62c7771	parallel	test-landed-stays-landed.sh	ok	14	0
 1789569939	d8efd62c7771	parallel	test-builder-qa-proposed.sh	ok	4	0
@@ -6037,7 +6037,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789569937	d8efd62c7771	parallel	test-aeon-exit.sh	ok	10	0
 1789570064	d8efd62c7771	parallel	test-now.sh	ok	88	0
 1789570204	d8efd62c7771	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789570002	d8efd62c7771	parallel	test-cross-repo	ok	8	0
+1789570002	d8efd62c7771	parallel	test-cross-repo.sh	ok	8	0
 1789570187	d8efd62c7771	parallel	test-timeout.sh	ok	22	0
 1789570006	d8efd62c7771	parallel	test-drain-expiry.sh	ok	13	0
 1789570024	d8efd62c7771	parallel	test-lane-ceiling.sh	ok	9	0
@@ -6099,7 +6099,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789583255	db713fa0dd41	parallel	test-unit-name.sh	ok	11	0
 1789583256	db713fa0dd41	parallel	test-work-services-exclusion.sh	ok	7	0
 1789583254	db713fa0dd41	parallel	test-testenv-image-tag.sh	ok	6	0
-1789583189	db713fa0dd41	parallel	test-install-exec	ok	12	0
+1789583189	db713fa0dd41	parallel	test-install-exec.sh	ok	12	0
 1789583241	db713fa0dd41	parallel	test-render-memories.sh	ok	32	0
 1789583144	db713fa0dd41	parallel	test-conf.sh	ok	28	0
 1789583147	db713fa0dd41	parallel	test-containment.sh	ok	22	0
@@ -6196,7 +6196,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789548402	dc1bb48d7e19	parallel	test-unit-name.sh	ok	11	0
 1789548404	dc1bb48d7e19	parallel	test-work-services-exclusion.sh	ok	7	0
 1789548400	dc1bb48d7e19	parallel	test-testenv-image-tag.sh	ok	6	0
-1789548385	dc1bb48d7e19	parallel	test-install-exec	ok	12	0
+1789548385	dc1bb48d7e19	parallel	test-install-exec.sh	ok	12	0
 1789548401	dc1bb48d7e19	parallel	test-render-memories.sh	ok	25	0
 1789548363	dc1bb48d7e19	parallel	test-conf.sh	ok	28	0
 1789548365	dc1bb48d7e19	parallel	test-containment.sh	ok	22	0
@@ -6250,7 +6250,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789459245	dcca2730aebd	parallel	test-work-services-exclusion.sh	ok	7	0
 1789459283	dcca2730aebd	parallel	test-suites-timer.sh	ok	13	0
 1789459244	dcca2730aebd	parallel	test-testenv-image-tag.sh	ok	5	0
-1789459241	dcca2730aebd	parallel	test-install-exec	ok	12	0
+1789459241	dcca2730aebd	parallel	test-install-exec.sh	ok	12	0
 1789459260	dcca2730aebd	parallel	test-ctrl.sh	ok	45	0
 1789459253	dcca2730aebd	parallel	test-render-memories.sh	ok	25	0
 1789459224	dcca2730aebd	parallel	test-conf.sh	ok	24	0
@@ -6383,7 +6383,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789695402	e13c274db901	parallel	test-testdb-concurrent.sh	red	4	1
 1789530794	e163a056a9d8	parallel	test-configure.sh	ok	18	0
 1789530795	e163a056a9d8	parallel	test-install-prod-checkout.sh	ok	6	0
-1789530799	e163a056a9d8	parallel	test-install-exec	ok	12	0
+1789530799	e163a056a9d8	parallel	test-install-exec.sh	ok	12	0
 1789530793	e163a056a9d8	parallel	test-conf.sh	ok	24	0
 1789621798	e2917f6d8340	parallel	test-sending-certified-guard.sh	red	8	1
 1789621794	e2917f6d8340	parallel	test-batch-certified-orphan.sh	red	5	1
@@ -6443,7 +6443,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789546631	e4c058b2ac85	parallel	test-unit-name.sh	ok	11	0
 1789546632	e4c058b2ac85	parallel	test-work-services-exclusion.sh	ok	7	0
 1789546628	e4c058b2ac85	parallel	test-testenv-image-tag.sh	ok	6	0
-1789546607	e4c058b2ac85	parallel	test-install-exec	ok	12	0
+1789546607	e4c058b2ac85	parallel	test-install-exec.sh	ok	12	0
 1789546629	e4c058b2ac85	parallel	test-render-memories.sh	ok	25	0
 1789546582	e4c058b2ac85	parallel	test-conf.sh	ok	28	0
 1789546584	e4c058b2ac85	parallel	test-containment.sh	ok	22	0
@@ -6505,7 +6505,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789617907	e7c4f61329e4	serial	test-watchd-tail.sh	red	7	8
 1789522716	e80e8d2ccaf5	parallel	test-install-paths.sh	ok	12	0
 1789522720	e80e8d2ccaf5	parallel	test-install-idempotent.sh	ok	15	0
-1789522708	e80e8d2ccaf5	parallel	test-install-exec	ok	12	0
+1789522708	e80e8d2ccaf5	parallel	test-install-exec.sh	ok	12	0
 1789510498	e89904e203cf	parallel	test-citations.sh	ok	20	0
 1789510470	e89904e203cf	parallel	test-gate-verdict.sh	ok	36	0
 1789510473	e89904e203cf	parallel	test-maechen.sh	ok	43	0
@@ -6546,7 +6546,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789510484	e89904e203cf	parallel	test-unit-name.sh	ok	11	0
 1789510486	e89904e203cf	parallel	test-work-services-exclusion.sh	ok	7	0
 1789510481	e89904e203cf	parallel	test-testenv-image-tag.sh	ok	6	0
-1789510474	e89904e203cf	parallel	test-install-exec	ok	12	0
+1789510474	e89904e203cf	parallel	test-install-exec.sh	ok	12	0
 1789510488	e89904e203cf	parallel	test-render-memories.sh	ok	25	0
 1789510440	e89904e203cf	parallel	test-conf.sh	ok	24	0
 1789510443	e89904e203cf	parallel	test-containment.sh	ok	22	0
@@ -6687,7 +6687,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789469051	fbb073ecb511	parallel	test-fayth.sh	ok	9	0
 1789468869	fbb073ecb511	parallel	test-aeon-lease.sh	ok	15	0
 1789469087	fbb073ecb511	parallel	test-maechen-blind-window.sh	ok	5	0
-1789469191	fbb073ecb511	parallel	test-worktree-absent	ok	6	0
+1789469191	fbb073ecb511	parallel	test-worktree-absent.sh	ok	6	0
 1789469153	fbb073ecb511	parallel	test-review.sh	ok	25	0
 1789469103	fbb073ecb511	parallel	test-landed-stays-landed.sh	ok	14	0
 1789469224	fbb073ecb511	parallel	test-suites-fixture-fault.sh	ok	19	0
@@ -6751,7 +6751,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789468891	fbb073ecb511	parallel	test-aeon-exit.sh	ok	10	0
 1789469092	fbb073ecb511	parallel	test-now.sh	ok	88	0
 1789468987	fbb073ecb511	parallel	test-unmapped-repo-park.sh	ok	4	0
-1789468951	fbb073ecb511	parallel	test-cross-repo	ok	8	0
+1789468951	fbb073ecb511	parallel	test-cross-repo.sh	ok	8	0
 1789468899	fbb073ecb511	parallel	test-aeon-worktree-guard.sh	ok	7	0
 1789468980	fbb073ecb511	parallel	test-timeout.sh	ok	22	0
 1789468968	fbb073ecb511	parallel	test-aeon-verdict.sh	ok	41	0
@@ -6774,7 +6774,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789560126	fd44737757e8	parallel	test-fayth.sh	ok	9	0
 1789560016	fd44737757e8	parallel	test-aeon-lease.sh	ok	15	0
 1789560192	fd44737757e8	parallel	test-maechen-blind-window.sh	ok	5	0
-1789560323	fd44737757e8	parallel	test-worktree-absent	ok	6	0
+1789560323	fd44737757e8	parallel	test-worktree-absent.sh	ok	6	0
 1789560262	fd44737757e8	parallel	test-review.sh	ok	25	0
 1789560181	fd44737757e8	parallel	test-landed-stays-landed.sh	ok	14	0
 1789560040	fd44737757e8	parallel	test-builder-qa-proposed.sh	ok	4	0
@@ -6832,7 +6832,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789560040	fd44737757e8	parallel	test-aeon-exit.sh	ok	10	0
 1789560190	fd44737757e8	parallel	test-now.sh	ok	88	0
 1789560325	fd44737757e8	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789560119	fd44737757e8	parallel	test-cross-repo	ok	8	0
+1789560119	fd44737757e8	parallel	test-cross-repo.sh	ok	8	0
 1789560305	fd44737757e8	parallel	test-timeout.sh	ok	22	0
 1789560121	fd44737757e8	parallel	test-drain-expiry.sh	ok	13	0
 1789560138	fd44737757e8	parallel	test-lane-ceiling.sh	ok	9	0
@@ -6858,7 +6858,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789564938	fff974d15dd4	parallel	test-aeon-lease.sh	ok	15	0
 1789565288	fff974d15dd4	parallel	test-doctor-goal.sh	ok	8	0
 1789565115	fff974d15dd4	parallel	test-maechen-blind-window.sh	ok	5	0
-1789565244	fff974d15dd4	parallel	test-worktree-absent	ok	6	0
+1789565244	fff974d15dd4	parallel	test-worktree-absent.sh	ok	6	0
 1789565182	fff974d15dd4	parallel	test-review.sh	ok	25	0
 1789565097	fff974d15dd4	parallel	test-landed-stays-landed.sh	ok	14	0
 1789565283	fff974d15dd4	parallel	test-check5-landed-assert.sh	ok	11	0
@@ -6925,7 +6925,7 @@ epoch	batch	mode	suite	status	n_ok	n_fail
 1789565112	fff974d15dd4	parallel	test-now.sh	ok	88	0
 1789565308	fff974d15dd4	parallel	test-content-landed-no-reopen.sh	ok	10	0
 1789565247	fff974d15dd4	parallel	test-unmapped-repo-park.sh	ok	5	0
-1789565035	fff974d15dd4	parallel	test-cross-repo	ok	8	0
+1789565035	fff974d15dd4	parallel	test-cross-repo.sh	ok	8	0
 1789565228	fff974d15dd4	parallel	test-timeout.sh	ok	22	0
 1789565037	fff974d15dd4	parallel	test-drain-expiry.sh	ok	13	0
 1789565057	fff974d15dd4	parallel	test-lane-ceiling.sh	ok	9	0

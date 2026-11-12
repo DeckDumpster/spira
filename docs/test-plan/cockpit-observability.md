@@ -82,7 +82,7 @@
 
 > **2026-09-25 (sp-s088v.11): rows 17, 33, 35, 39, 40 closed.** Row 33: `test-loom-page.sh`'s
 > 12 fixture arms moved into `loom/static/model.test.js`, run under `node --test`; the
-> real-bd arm is now `test-cockpit-bd-contract`'s "loom's model.js parses what the tracker
+> real-bd arm is now the cockpit-bd-contract suite's "loom's model.js parses what the tracker
 > actually emits" row, and `test-testdb-failsafe.sh` was repointed at that suite for its
 > testdb_up fail-safe check. Missing node now exits 77, not 0 (gap #11). Row 35:
 > `test-ready.sh`'s nc-absent port-open case is a real `skip` now, not two fake `ok` lines;
@@ -103,7 +103,7 @@
 > there when the variable is set, which is the one chokepoint every `*_keys` function's bd
 > read already funnels through. Converted off `testdb_up` onto that seam: dup-refs,
 > repo-labels, well, and sop (which absorbed sweep's cases; `test-cockpit-sweep.sh` is
-> deleted — coverage row 14, cluster 5). `test-cockpit-bd-contract` is new: one real-bd row
+> deleted — coverage row 14, cluster 5). the cockpit-bd-contract suite is new: one real-bd row
 > per query shape (label AND + lookback, default exclude-closed, `--all`, bare `memories`,
 > `SP_READY`), including `test-cockpit-ready-seeded.sh`'s two cases per coverage row 08 (that
 > file is deleted). Rows 09 (unsent/unadopted), 10/11 (landed/unlanded/queue/queue-section)
@@ -290,12 +290,12 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 | 05 | test-cockpit-tiered-collector.sh::8b, 8c, 12, 13; test-cockpit-collect-probes.sh::_probe_body_test; test-cockpit-collector-quota.sh::pass log | T2 | KEEP tiered::8b/8c/12/13; DELETE collect-probes::_probe_body_test and quota::pass-log (the regex case subsumes 3 of its 4 assertions) |
 | 06 | test-cockpit-tmp.sh::TERM/INT/HUP ×3, published untouched, startup sweep; test-cockpit-tiered-collector.sh::12, 14 | test-cockpit-tmp.sh is T3 **non-hermetic** (11 s, real probe against the ambient conf/DB) | KEEP test-cockpit-tmp.sh but **DEMOTE-TO-T2 hermetic**: add a sleeping probe seam like COCK's plus `env -i`, bringing it to about 3 s |
 | 07 | test-cockpit-tiered-collector.sh::9, 10; test-cockpit-conf-change.sh (health.sh); test-loom-conf-change.sh (loom.sh) | T2 timing-bound: 17 (part) + 8 + 6 | **DEMOTE-TO-T1**: one table-driven suite over the three loops, with a sub-second tick (`SPIRA_LOOM_TICK` already exists; add the same to health and collect). Keep 1 s windows. |
-| 08 | test-cockpit-probe-fault.sh::collector SP_WAITING/NEXT_N/INFLOW_N/UNLANDED_N; test-cockpit-ready.sh::refusal, persona unresolved; test-cockpit-reachable.sh::refusal; test-cockpit-ready-seeded.sh::empty db 0, seeded 2; test-cockpit-unsent.sh::bd-fail, bd-zero-empty | T2 + T3 (ready-seeded 9 s) | KEEP probe-fault as the collector FC table. test-cockpit-ready.sh: **DEMOTE-TO-T1** (call `core`/`core_detail`, not `once`). test-cockpit-ready-seeded.sh: **MERGE-INTO the new test-cockpit-bd-contract** |
+| 08 | test-cockpit-probe-fault.sh::collector SP_WAITING/NEXT_N/INFLOW_N/UNLANDED_N; test-cockpit-ready.sh::refusal, persona unresolved; test-cockpit-reachable.sh::refusal; test-cockpit-ready-seeded.sh::empty db 0, seeded 2; test-cockpit-unsent.sh::bd-fail, bd-zero-empty | T2 + T3 (ready-seeded 9 s) | KEEP probe-fault as the collector FC table. test-cockpit-ready.sh: **DEMOTE-TO-T1** (call `core`/`core_detail`, not `once`). test-cockpit-ready-seeded.sh: **MERGE-INTO the new the cockpit-bd-contract suite** |
 | 09 | test-cockpit-reachable.sh (all 11 cases) | T2 stub-bd, 4 | KEEP (T1-shaped already). Fix: health.sh runs without `env -i`, and the stub ignores its args, so query shape is unverified. Add one argv assertion. |
 | 10 | test-cockpit-landed.sh::SP_CLOSED 24h, SP_LANDED, SP_UNLANDED_N; test-cockpit-unlanded.sh::main+master, zero case, pane QUEUE; test-cockpit-queue-section.sh::body mention; test-cockpit-queue.sh::SP_UNLANDED_N | T3 real bd + git: 14 + 15 + parts | **MERGE** landed into test-cockpit-unlanded.sh (keep its main/master pair and add the body-mention case from queue-section). **DEMOTE-TO-T2**: stub bd returns the closed list, git stays real. Call the section, not `once`. |
 | 11 | test-cockpit-queue.sh (all); test-cockpit-queue-section.sh (all) | T3 real bd: 9 + 13 | **MERGE** test-cockpit-queue.sh INTO test-cockpit-queue-section.sh, keeping only its unique quarantine and BATCH_AGE rows. Replace embedded Dolt with fixture JSON. Separate priority from epoch in the ordering case. |
 | 12 | test-cockpit-unsent.sh (13 cases); test-cockpit-unadopted-queue.sh (5) | T3: 39 + 12 | **MERGE** unadopted-queue INTO test-cockpit-unsent.sh (same `sp-true-stray` fixture). Run `cockpit.sh unsent` rather than 7× `once`, with stub bd and real git. Move `no timeout(1) wraps a shell function` to **T0 (SOURCE-GREP to lint)**. |
-| 13 | test-cockpit-dup-refs.sh (6); test-cockpit-repo-labels.sh (8); test-cockpit-well.sh (5) | T3 real bd: 7 + 6 + 7 | **DEMOTE-TO-T1** each, using fixture JSON through a stub `bdjson`. Keep one real-bd row per query (label filter, `--all`, lookback) in test-cockpit-bd-contract. Dup-refs currently rebuilds the store 5× (`testdb_up`). |
+| 13 | test-cockpit-dup-refs.sh (6); test-cockpit-repo-labels.sh (8); test-cockpit-well.sh (5) | T3 real bd: 7 + 6 + 7 | **DEMOTE-TO-T1** each, using fixture JSON through a stub `bdjson`. Keep one real-bd row per query (label filter, `--all`, lookback) in the cockpit-bd-contract suite. Dup-refs currently rebuilds the store 5× (`testdb_up`). |
 | 14 | test-cockpit-sop.sh (9); test-cockpit-sweep.sh (9) | T3 real bd: 4 + 4 | **MERGE** test-cockpit-sweep.sh INTO test-cockpit-sop.sh (identical `run_sops` harness, same broken-shelf and dir-as-ledger fixtures). DEMOTE-TO-T1 with a stub bd. Replace the `<60 s` wall-clock bound with `SPIRA_NOW`. |
 | 15 | test-cockpit-gate.sh (8); test-cockpit-fuse.sh (9) | T2: 14 + 5 | test-cockpit-gate.sh: **DEMOTE-TO-T1/T2**. Six full `once` runs against a missing DB are the whole 14 s; call the land/gate section function instead. KEEP fuse, and tighten `grep -q ?` to the exact column. |
 | 16 | test-cockpit.sh::ratelim ×2; test-cockpit-self.sh::repeating, stillborn ×7 | T2: 6 + 6 | **DEMOTE-TO-T1**: call the ratelim parser and cockpit-metrics.py functions with a fixed now. Replace the 4-fixture "no SELF rows" guard with one row in the UC-21 renderer table. |
@@ -315,7 +315,7 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 | 30 | none | — | **GAP** (§6) |
 | 31 | beads.rs (4); endpoint.rs (5) via test-loom.sh | T1 + T3, 31 | KEEP beads.rs. endpoint.rs: **DEMOTE 4 of 5 tests to T2** against a fake `bd` that serves canned JSON and counts calls (cache, budget 503, failure 502, static routes). Keep `the_payload_is_bounded…` as the real-bd shape row. |
 | 32 | ops.rs (7); test-loom-ops.sh (8, **never runs in CI**: 77 skip, no prebuilt binary) | T1; dead T2 | KEEP ops.rs. **DELETE test-loom-ops.sh**; move its `/api/ops` route, `halted` and `cockpit_env_age_s` cases into endpoint.rs. Its header claims that "the gate covers `cargo test --lib`", which is false. |
-| 33 | test-loom-page.sh (13) | T3, 9 | **DEMOTE-TO-T1**: move 12 arms to `node --test` over fixture.json. The real-bd arm moves to test-cockpit-bd-contract. The static page-shape greps become T0. Fix: missing node exits 0, not 77. |
+| 33 | test-loom-page.sh (13) | T3, 9 | **DEMOTE-TO-T1**: move 12 arms to `node --test` over fixture.json. The real-bd arm moves to the cockpit-bd-contract suite. The static page-shape greps become T0. Fix: missing node exits 0, not 77. |
 | 34 | test-loom-rebuild.sh (5) | T1, 2 | KEEP. The restart case should assert that the restart is (or is not) issued, not just queried. |
 | 35 | test-ready.sh (35) | T2 stubbed, 6 | KEEP (a good model). Fix: when nc is absent the port-open case prints two fake "ok" lines; make that a skip. Pin ephemeral ports. |
 | 36 | test-ctx-pointer.sh (13) | T1, 5 | KEEP |
@@ -372,7 +372,7 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 
 | Logic | Today tested through | Seam for a T1 test |
 |---|---|---|
-| Per-section probe functions (`queue_keys`, `unsent_keys`, `dup_refs_keys`, `repo_label_keys`, `well_keys`, `sop_keys`, `reachable_keys`, `core_counts_keys`) in spira/cockpit.sh | full `cockpit.sh once` (all 16 probes) on embedded Dolt; 7× in unsent alone | Two changes:<br>• every section already has a subcommand (`cockpit.sh unsent`, `sops`, `reachable`, …), so tests must call it, not `once`;<br>• route all bd reads through `bdjson`, overridable by `SPIRA_BDJSON_FIXTURE=<file>`, so the Python classification gets canned JSON.<br>Real bd is kept only in test-cockpit-bd-contract. |
+| Per-section probe functions (`queue_keys`, `unsent_keys`, `dup_refs_keys`, `repo_label_keys`, `well_keys`, `sop_keys`, `reachable_keys`, `core_counts_keys`) in spira/cockpit.sh | full `cockpit.sh once` (all 16 probes) on embedded Dolt; 7× in unsent alone | Two changes:<br>• every section already has a subcommand (`cockpit.sh unsent`, `sops`, `reachable`, …), so tests must call it, not `once`;<br>• route all bd reads through `bdjson`, overridable by `SPIRA_BDJSON_FIXTURE=<file>`, so the Python classification gets canned JSON.<br>Real bd is kept only in the cockpit-bd-contract suite. |
 | `_merge_fragments` (Python) | pasted copy in two tests | Tests call the existing `collect.sh merge <dir>` on fixture fragments. |
 | `health.sh` section renderers | ~25 `health.sh once` process starts per suite (1,844 lines + conf.sh each) | Add `health.sh render-many <dir>`, which renders every `*.env` in a directory in one process. probe-fault, now, mail-pane, drain-banner, snap-absent, self and gate then become one-spawn table tests. |
 | `trace_stats`, `trace_tail`, `model_short`, and the collector's SAID sanitiser | health.sh renders; `model_short` is pulled out with `sed+eval`; the sanitiser is re-implemented in the test | Move them into a sourceable `cockpit/lib-trace.sh` (or a Python module) and call them directly. |
@@ -454,7 +454,7 @@ sparklines 3 + collect-probes 1 + quota 4 + watchdog 4 + conf-change 8 + dup-ref
 | Unsent + unadopted merge; section subcommand; stub bd | 39 + 12 = 51 → 8 | −43 |
 | Landed + unlanded merge; stub bd, real git | 14 + 15 = 29 → 5 | −24 |
 | Queue + queue-section merge; fixture JSON | 9 + 13 = 22 → 5 | −17 |
-| Real-bd meters to T1, plus one shared contract suite:<br>• dup-refs 7→1<br>• repo-labels 6→1<br>• well 7→1<br>• sop 4 + sweep 4 → 2<br>• ready-seeded 9 → 0<br>• loom-page 9 → 3<br>• new test-cockpit-bd-contract 10 | 46 → 18 | −28 |
+| Real-bd meters to T1, plus one shared contract suite:<br>• dup-refs 7→1<br>• repo-labels 6→1<br>• well 7→1<br>• sop 4 + sweep 4 → 2<br>• ready-seeded 9 → 0<br>• loom-page 9 → 3<br>• new the cockpit-bd-contract suite 10 | 46 → 18 | −28 |
 | Gate section, not `once` | 14 → 3 | −11 |
 | Collector: tiered + collect-probes (real merge, short tick); quota split out (0) | 17 + 1 + 4 = 22 → 6 | −16 |
 | Config-change trio with an injected tick | 8 + 6 → 2 + 2 | −10 |
@@ -469,7 +469,7 @@ sparklines 3 + collect-probes 1 + quota 4 + watchdog 4 + conf-change 8 + dup-ref
 
 - 480 − (17 + 29 + 43 + 24 + 17 + 28 + 11 + 16 + 10 + 8 + 9 + 24 + 36 + 20) = 480 − 292 = **188 s**, a 61% cut.
 - About 150 s of the 188 moves to T1 (certification-eligible, under 1 s per case).
-- About 38 s stays T2/T3: test-cockpit-rebuild.sh, the ghost PTY case, tmux-env, test-cockpit-bd-contract, and the real-bd loom row. These run in batch/main CI.
+- About 38 s stays T2/T3: test-cockpit-rebuild.sh, the ghost PTY case, tmux-env, the cockpit-bd-contract suite, and the real-bd loom row. These run in batch/main CI.
 - **Cross-area bonus:** retiring test-world-drain.sh (58 s) in favour of test-drain-banner.sh.
 
 **Tier placement:**

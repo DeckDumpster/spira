@@ -724,7 +724,7 @@ named unit tests.
 | 32 | `test-check4-unit.sh` | drives lib.sh `check4_decide`; it follows spira-claim's cutover item 7, not this one |
 | 33 | `test-check8-progressed.sh` | drives lib.sh `check8_should_judge`, which has no caller once sentinel.sh is gone; retire together with the function (row 38). Its table is `judge::tests::judgement_table` |
 | 34 | `test-ready-timers.sh:88` | mocks `sentinel.sh --report`; mock `SPIRA_SENTINEL_BIN` instead |
-| 35 | `test-install-exec:146,207` | drop `sentinel.sh` from the executable list; the render-fallback assertion becomes `ExecStart=$(dirname "$HERE")/bin/sentinel` |
+| 35 | `the install-exec suite:146,207` | drop `sentinel.sh` from the executable list; the render-fallback assertion becomes `ExecStart=$(dirname "$HERE")/bin/sentinel` |
 | 36 | `test-install-conflicts.sh:57` | the fake foreign unit becomes `ExecStart=$FOREIGN_HOME/../bin/sentinel` |
 | 37 | `test-deploy.sh:140,433` | the stub moves to `current/bin/sentinel` |
 | 39 | `spira/hel.sh:488` | `lc_content_on_base …` | the `hel` binary writes the ContentOnBase event (hel/DESIGN.md §2); the OFF-mode `content-landed` label went with the switch (sp-v62vn) |

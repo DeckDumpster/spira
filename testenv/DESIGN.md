@@ -1152,7 +1152,7 @@ that this cleanup ran.
   test-testenv-resource-diagnosis.sh and test-testenv-owner-guard.sh drove the script
   against a podman stub (or, for the owner guard, real throwaway containers whose only
   discriminating fact was the owner file); `container::tests` drives the same cases through
-  the `Host` port. test-testenv and test-testenv-systemctl (real podman, real systemd)
+  the `Host` port. the testenv suite and the testenv-systemctl suite (real podman, real systemd)
   and every suite that boots its own container are repointed.
 * **D21 — the in-container cargo-volume chown stays one `sh -c`.** It runs inside the
   container, as root, on paths the image defines; one exec instead of nine.

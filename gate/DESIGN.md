@@ -899,7 +899,7 @@ Rust gate already does:
   a beads database fails closed today and is not the rewrite to attempt under a P0 clock.
 
 Parity: every suite this bead's own changes touch still passes under `testenv` (from the
-worktree, never the host): `test-exclude.sh`, `test-build-fence`, `test-orphan-test.sh`,
+worktree, never the host): `test-exclude.sh`, the build-fence suite, `test-orphan-test.sh`,
 `test-sop-gate-wired.sh` at each stage of this branch's history, and the full `spira-lint`
 run (18 rules, including `config-fence`) is clean against the merged tree. `cargo test -p
 gate` is green (149 tests, including `a_unit_gate_builds_once_and_every_other_composition_

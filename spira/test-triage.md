@@ -47,8 +47,8 @@ migration bead per family from this table.
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-sim-scenarios.sh | 195 | every scenario × fixed seeds reaches its goal with all invariants; two controls prove the invariant checker can fail | keep+shard | **Done (sp-ypunvh):** one `test-sim-<scenario>.sh` per scenario file over `sim-scenario-lib.sh`; the two controls and the every-scenario-has-a-suite check are `test-sim-controls`. |
-| test-sim-happy-path | 64 | the happy-path world runs submit → land end to end under the real units' wiring | keep | **Done (sp-ypunvh):** it is the happy-path scenario's suite (run, probe, replay, unreachable-goal control); the shard loop does not run it a second time. |
+| test-sim-scenarios.sh | 195 | every scenario × fixed seeds reaches its goal with all invariants; two controls prove the invariant checker can fail | keep+shard | **Done (sp-ypunvh):** one `test-sim-<scenario>.sh` per scenario file over `sim-scenario-lib.sh`; the two controls and the every-scenario-has-a-suite check are the sim-controls suite. |
+| the sim-happy-path suite | 64 | the happy-path world runs submit → land end to end under the real units' wiring | keep | **Done (sp-ypunvh):** it is the happy-path scenario's suite (run, probe, replay, unreachable-goal control); the shard loop does not run it a second time. |
 
 ### B — landing hand-offs
 
@@ -67,15 +67,15 @@ migration bead per family from this table.
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
 | test-batcher-cut.sh | 77 | a whole round through a fixture repo, stub round-vm and fake forge: the batcher binary's IO wiring | sim | `cut-in-bare-env.toml` and `publish-then-cut.toml` cover the wiring; the shell suite is the older copy. |
-| test-batcher-cut-land | 88 | the land-mode half of the batcher-cut cases | sim | Shard of the above; goes with it. |
+| the batcher-cut-land suite | 88 | the land-mode half of the batcher-cut cases | sim | Shard of the above; goes with it. |
 | test-queue-publish.sh | 50 | `queue publish` pushes local/main's new commits to one forge branch and opens one PR; verdict settles it separately | sim | `publish-then-cut.toml` is this hand-off; the red-verdict fix-forward bead row stays as a unit test in the queue crate. |
 | test-queue-open-batch.sh | 39 | open-batch assembles, pushes, opens the PR and writes the open record in one command | keep | Real git merges and conflicts against a fixture remote; the assembly is retired code paths' last cover. Decide delete-with-the-code in the family bead. |
 | test-queue-transition.sh | 38 | `to-forge` holds the lock, publishes green, checks heads equal, flips the repo-map row, archives local/main | sim | Multi-step state machine with a lock; scenario step. |
-| test-queue-land-local | 36 | land-local fast-forwards only a descendant head, archives it, marks members landed, closes beads | sim | The landing leg of `happy-path.toml`; the refuse-non-descendant row is a unit test in the queue crate. |
+| the queue-land-local suite | 36 | land-local fast-forwards only a descendant head, archives it, marks members landed, closes beads | sim | The landing leg of `happy-path.toml`; the refuse-non-descendant row is a unit test in the queue crate. |
 | test-queue-ops.sh | 55 | queue eject and abandon | sim | Eject is a hand-off (`work`/lifecycle/queue); add a scenario step. |
 | test-land-local-release.sh | 34 | a harness landing under queue.local builds, verifies and activates a release; a failed build leaves current alone | keep | Exercises the real release build/activate on the filesystem; the refusal rows (no corpus) are unit. |
-| test-batch-owner.sh | 96 | owner-file protocol lets an orphan sweep find a container after its owner dies | keep | Needs real podman. Only `test-round-vm-e2e` still references `batch-owner.sh`: the family bead should first ask whether the protocol outlived `testenv-batch.sh`, and delete suite and script if not. |
-| test-cross-repo | 34 | a dwarf on a non-home-repo bead cuts its worktree in that repo and commits land there | sim | A scenario with two repos; the actor already has a repo param. |
+| test-batch-owner.sh | 96 | owner-file protocol lets an orphan sweep find a container after its owner dies | keep | Needs real podman. Only the round-vm-e2e suite still references `batch-owner.sh`: the family bead should first ask whether the protocol outlived `testenv-batch.sh`, and delete suite and script if not. |
+| the cross-repo suite | 34 | a dwarf on a non-home-repo bead cuts its worktree in that repo and commits land there | sim | A scenario with two repos; the actor already has a repo param. |
 | test-cockpit-funnel.sh | 41 | the DONE → LANDED funnel in the QUEUE section counts done, certify and red from lifecycle rows | unit | A read-model count over rows; test the collector in `cockpit-collect`. |
 
 ### D — dwarf teardown and close fences
@@ -143,7 +143,7 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | test-groom-escalation-check.sh | 71 | the groom ask label is a conf key defaulting to `groom-asked` | unit | One config key; the plan asks fixtures pin a non-default. |
 | test-mimir-closed-record.sh | 32 | the closed-record INVALID-CLOSED trigger and allowlist | unit | A trigger over rows. |
 | test-yield.sh | 32 | a gate red lands in the right column; an unreadable record says `?` | unit | Panel column rule. |
-| test-holds | 42 | holds reports open beads whose branch touches a set of paths | unit | Path-overlap set logic. |
+| the holds suite | 42 | holds reports open beads whose branch touches a set of paths | unit | Path-overlap set logic. |
 | test-verdict-flow.sh | 36 | mail sendmail: bead closing and decision-bead verdict flow back | sim | Hand-off across mail, bead and sentinel. |
 
 ### I — lifecycle store (Dolt)
@@ -159,10 +159,10 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
 | test-gate-tree.sh | 32 | the gate tree is locked per branch; same-branch serialise, different-branch run concurrently | keep | Needs real concurrent locks. |
-| test-commit-cite | 31 | the gate refuses a commit citing a nonexistent bead and never mistakes "store could not answer" for "exists" | unit | Two-valued lookup with an error state. |
+| the commit-cite suite | 31 | the gate refuses a commit citing a nonexistent bead and never mistakes "store could not answer" for "exists" | unit | Two-valued lookup with an error state. |
 | test-statute-projection.sh | 44 | rule.sh: synth-failure propagation and the enact/retire/list/show set | keep | Real statute book; fixture is the cost. |
 
-Migrated (sp-k8z731): test-gate-verdict.sh (49 s) and test-gate-base-evidence.sh (30 s) moved to `cargo test -p gate` (whole crate 7.5 s warm, these tests sub-second). test-commit-cite stays: the id extraction is `commit-cite.sh`'s grep -P over real `bd show`, not yet a Rust unit; the Rust gate tests hold only its exit-code mapping.
+Migrated (sp-k8z731): test-gate-verdict.sh (49 s) and test-gate-base-evidence.sh (30 s) moved to `cargo test -p gate` (whole crate 7.5 s warm, these tests sub-second). the commit-cite suite stays: the id extraction is `commit-cite.sh`'s grep -P over real `bd show`, not yet a Rust unit; the Rust gate tests hold only its exit-code mapping.
 
 ### K — bead tooling
 
