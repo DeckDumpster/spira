@@ -1143,6 +1143,18 @@ impl Scripts for RealScripts {
             .and_then(|u| runtime::units::live_round_units(&u, repo, batch, &|_| false))
             .map_or(true, |live| !live.is_empty())
     }
+    fn live_pass_scopes(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
+        let units =
+            runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock))
+                .map_err(|e| e.0)?;
+        runtime::units::live_pass_scopes(&units, repo, batch)
+    }
+    fn stop_pass_scopes(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
+        let units =
+            runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock))
+                .map_err(|e| e.0)?;
+        runtime::units::stop_pass_scopes(&units, repo, batch)
+    }
     fn unit_active_state(&self, unit: &str) -> String {
         #[cfg(target_os = "linux")]
         {

@@ -1477,6 +1477,7 @@ pub(super) fn assemble(
         let _ = fs::create_dir_all(p);
     }
     if !w.git.worktree_add_detached(path, wt, base_sha) {
+        let _ = w.git.worktree_add_detached(path, wt, fallback);
         return Err("cannot create the round worktree".into());
     }
     for m in members {
@@ -3974,6 +3975,19 @@ fn eject(
     if let Err(rc) = lease.guard(w, label, &c, batch) {
         return rc;
     }
+    if matches!(lease, LeaseCheck::Check(_)) {
+        match w.scripts.live_pass_scopes(&c.r.name, batch) {
+            Ok(live) if live.is_empty() => {}
+            Ok(live) => {
+                w.err(format!("queue.sh {label}: a pass of round {batch} is running ({}); rebuilding the round would pull its worktree from under it — stop it with `queue round preempt {batch} --eject {id} --reason ...` — nothing changed", live.join(" ")));
+                return FAIL;
+            }
+            Err(e) => {
+                w.err(format!("queue.sh {label}: cannot tell whether a pass of round {batch} is running ({e}) — nothing changed"));
+                return FAIL;
+            }
+        }
+    }
     let _g = match lock(w, label, &c) {
         Ok(g) => g,
         // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
@@ -4034,7 +4048,13 @@ fn eject(
         match assemble(w, &c, &path, &wt, &base_sha, &survivors, &old_head) {
             Ok(h) => new_head = h,
             Err(why) => {
-                w.err(format!("queue.sh {label}: cannot rebuild the round without {id}: {why} — nothing changed"));
+                let intact = w.git.rev_parse(&wt, "HEAD").as_deref() == Some(old_head.as_str());
+                let left = if intact {
+                    "nothing changed".to_string()
+                } else {
+                    format!("the round worktree {} was removed and is not at the round's head {old_head}", wt.display())
+                };
+                w.err(format!("queue.sh {label}: cannot rebuild the round without {id}: {why} — {left}"));
                 return FAIL;
             }
         }
@@ -4335,10 +4355,21 @@ fn preempt(
             .ok()
             .and_then(|t| t.trim().parse::<u32>().ok())
             .filter(|p| w.scripts.pass_alive(*p));
-        let Some(pid) = pid.filter(|_| phase == "certifying") else {
+        let scopes = if pid.is_none() && phase == "certifying" {
+            match w.scripts.live_pass_scopes(&c.r.name, batch) {
+                Ok(s) => s,
+                Err(e) => {
+                    w.err(format!("queue.sh {label}: cannot tell whether a pass of round {batch} is running ({e}) — nothing preempted"));
+                    return FAIL;
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        if phase != "certifying" || (pid.is_none() && scopes.is_empty()) {
             w.err(format!("queue.sh {label}: round {batch} is {phase}, with no pass running — nothing to preempt"));
             return FAIL;
-        };
+        }
         let _ = fs::create_dir_all(rounds_dir(&c));
         if let Err(e) = fs::write(preempt_marker(&c, batch), one_line(&reason)) {
             w.err(format!(
@@ -4346,15 +4377,21 @@ fn preempt(
             ));
             return FAIL;
         }
-        w.scripts.pass_terminate(pid);
-        let mut polls = 0;
-        while w.scripts.pass_alive(pid) && polls < PREEMPT_POLLS {
-            w.clock.sleep(1);
-            polls += 1;
-        }
-        if w.scripts.pass_alive(pid) {
+        if let Some(pid) = pid {
+            w.scripts.pass_terminate(pid);
+            let mut polls = 0;
+            while w.scripts.pass_alive(pid) && polls < PREEMPT_POLLS {
+                w.clock.sleep(1);
+                polls += 1;
+            }
+            if w.scripts.pass_alive(pid) {
+                let _ = fs::remove_file(preempt_marker(&c, batch));
+                w.err(format!("queue.sh {label}: the pass of round {batch} (pid {pid}) did not stop after {PREEMPT_POLLS} polls — left running, not killed: a kill would lose its salvaged results"));
+                return FAIL;
+            }
+        } else if let Err(e) = w.scripts.stop_pass_scopes(&c.r.name, batch) {
             let _ = fs::remove_file(preempt_marker(&c, batch));
-            w.err(format!("queue.sh {label}: the pass of round {batch} (pid {pid}) did not stop after {PREEMPT_POLLS} polls — left running, not killed: a kill would lose its salvaged results"));
+            w.err(format!("queue.sh {label}: the pass scope of round {batch} did not stop ({e}) — left running"));
             return FAIL;
         }
         (

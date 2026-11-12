@@ -347,6 +347,11 @@ pub trait Scripts {
     /// Whether any unit or scope the legs of `batch` in `repo` run in is live; true when the
     /// units cannot be read, as a round that may be running is not abandoned.
     fn round_legs_live(&self, repo: &str, batch: &str) -> bool;
+    /// The scopes a pass of `batch` in `repo` runs `round-vm` in that are live, by unit name;
+    /// `Err` when the units cannot be read.
+    fn live_pass_scopes(&self, repo: &str, batch: &str) -> Result<Vec<String>, String>;
+    /// Stops those scopes and waits for each to exit, leaving the legs that drive the round.
+    fn stop_pass_scopes(&self, repo: &str, batch: &str) -> Result<Vec<String>, String>;
     /// A user unit's `ActiveState` (`systemctl --user show -p ActiveState --value`); empty when unreadable.
     fn unit_active_state(&self, unit: &str) -> String;
     /// `round-vm run <tree> --results-dir <results> --base <base> --round-batch <batch> --round-repo <repo>` under `timeout <wall_secs>`: the full

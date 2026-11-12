@@ -773,6 +773,28 @@ impl Scripts for FScripts {
             .iter()
             .any(|(r, b, _)| r == repo && b == batch)
     }
+    fn live_pass_scopes(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
+        Ok(self
+            .round_legs
+            .borrow()
+            .iter()
+            .filter(|(r, b, u)| r == repo && b == batch && u.ends_with(".scope"))
+            .map(|(_, _, u)| u.clone())
+            .collect())
+    }
+    fn stop_pass_scopes(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
+        if self.round_legs_stubborn.get() {
+            return Err("1 still running after its stop".into());
+        }
+        let (mine, rest): (Vec<_>, Vec<_>) = self
+            .round_legs
+            .borrow()
+            .iter()
+            .cloned()
+            .partition(|(r, b, u)| r == repo && b == batch && u.ends_with(".scope"));
+        *self.round_legs.borrow_mut() = rest;
+        Ok(mine.into_iter().map(|(_, _, u)| u).collect())
+    }
     fn unit_active_state(&self, unit: &str) -> String {
         self.unit_asked.borrow_mut().push(unit.to_string());
         let mut q = self.unit_states.borrow_mut();
