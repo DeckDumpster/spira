@@ -852,6 +852,19 @@ impl RoundRunner for VmRunner<'_> {
         filter_red_in(self.prior.as_deref()?, &self.members, &self.changed)
     }
 
+    fn prior_red_suites(&mut self) -> Vec<String> {
+        let Some(dir) = self.prior.as_deref() else { return vec![] };
+        let mut reds: Vec<String> = fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| e.file_name().to_string_lossy().strip_suffix(".result").map(str::to_string))
+            .filter(|stem| io::result_status(dir, stem) == Some(false))
+            .collect();
+        reds.sort();
+        reds
+    }
+
     fn build_output(&mut self) -> String {
         self.stderr_text()
     }
@@ -1612,6 +1625,20 @@ mod abandon_tests {
         let mut r = r.after_pass(Some(d.path().to_path_buf()));
         let red = r.prior_red().expect("the pass's red");
         assert_eq!((red.name.as_str(), red.failed), ("integration-tests", vec!["FAIL dir:testenv lint_x".to_string()]));
+    }
+
+    #[test]
+    fn an_attribution_after_a_pass_reads_which_suites_that_pass_ran_red() {
+        let d = testkit::TempDir::new("vm-prior-red-suites");
+        fs::write(d.path().join("a.sh.result"), "ok\n").unwrap();
+        fs::write(d.path().join("b.sh.result"), "red\n").unwrap();
+        fs::write(d.path().join("c.sh.result"), "timeout\n").unwrap();
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        assert!(r.prior_red_suites().is_empty(), "no prior pass: the corpus runs");
+        let mut r = r.after_pass(Some(d.path().to_path_buf()));
+        assert_eq!(r.prior_red_suites(), vec!["b.sh".to_string(), "c.sh".to_string()]);
     }
 
     #[test]
