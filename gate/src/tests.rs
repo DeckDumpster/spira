@@ -4290,3 +4290,25 @@ fn a_deadline_record_carries_the_tail_of_the_phase_output() {
     let detail = y.last().unwrap();
     assert!(detail.contains("RUNNING-WHEN-CUT"), "{y:?}");
 }
+
+#[test]
+fn a_reentry_with_no_phases_report_is_charged_its_whole_wall() {
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+    f.phase_secs.set(53);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(meter(&f).contains("test_clock=106s"), "{}", meter(&f));
+}
+
+#[test]
+fn a_deadline_record_keeps_only_the_last_4000_bytes() {
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+    f.phase_secs.set(53);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
+    let long = format!("HEAD-MARK\n{}\n{}", "x".repeat(6000), REENTRY_PHASES.replace("suites:8", "suites:400"));
+    f.reentry_runs.borrow_mut().insert(MERGE_SHA.into(), (0, long));
+    assert_eq!(f.run(), NOVERDICT);
+    let y = f.yields.borrow().iter().find(|y| y.get(1).map(String::as_str) == Some("record")).cloned().expect("a record");
+    let detail = y.last().unwrap();
+    assert!(detail.contains("suites:400") && !detail.contains("HEAD-MARK") && detail.len() <= 4100, "{}", detail.len());
+}
