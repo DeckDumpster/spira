@@ -270,6 +270,13 @@ mod retired_keys {
     }
 
     #[test]
+    fn a_config_written_while_the_repo_events_poll_shipped_still_validates() {
+        let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nruntime_repo_events_secs = 45\n")
+            .expect("a retired key must validate, not error");
+        assert!(warnings.iter().any(|w| w.contains("runtime_repo_events_secs is retired (sp-nao9lu.2)")), "got {warnings:?}");
+    }
+
+    #[test]
     fn a_misspelt_key_warns_and_is_ignored() {
         let (_, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_batch_idle_cutt = 1\n").unwrap();
         assert!(w.iter().any(|m| m.starts_with("spira.queue_batch_idle_cutt")), "{w:?}");

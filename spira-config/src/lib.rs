@@ -872,6 +872,7 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "release_rust_toolchain", bead: "sp-nx83lb" },
     RetiredKey { key: "sift_mend_hold_secs", bead: "sp-luwtqz" },
     RetiredKey { key: "lc_live_check_secs", bead: "sp-kti9ip" },
+    RetiredKey { key: "runtime_repo_events_secs", bead: "sp-nao9lu.2" },
 ];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old
