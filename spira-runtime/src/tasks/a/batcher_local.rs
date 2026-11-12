@@ -846,6 +846,17 @@ pub fn unit_key(repo: &str, round: &str, what: &str, run: u32) -> String {
     format!("{}.{what}{run}", runtime::units::round_stem(repo, round))
 }
 
+/// Where a certify leg's output is kept, relative to the run's parent.
+pub fn certify_output_file(batch: &str, run: u32) -> String {
+    format!("run/rounds/{batch}.certify-{run}.out")
+}
+
+/// Why a certify leg that judged nothing leaves its round open: its last line and the kept file.
+pub fn certify_fault_reason(exit: Exit, out: &str, kept: &str) -> String {
+    let said = out.trim().lines().last().map(|l| format!(": {l}")).unwrap_or_default();
+    format!("queue round certify exited ({exit:?}) naming no verdict and no suite{said}; its output is kept at {kept}; the round is left open")
+}
+
 /// The verdict line and the red suites a `queue round certify` leg printed.
 pub fn certify_red_evidence(out: &str) -> (Option<String>, Vec<String>) {
     let verdict = out.lines().rev().find(|l| l.contains(" is RED at ")).map(|l| l.trim().to_string());
@@ -1491,9 +1502,8 @@ impl Machine<'_> {
     /// the round is left open for the re-drive, and the pace counts an Infra fault, not a pause.
     fn certify_faulted(&mut self, exit: Exit, out: &str) {
         let batch = self.rc.batch.clone().unwrap_or_default();
-        let kept = format!("run/rounds/{batch}.certify-{}.out", self.rc.run);
-        let said = out.trim().lines().last().map(|l| format!(": {l}")).unwrap_or_default();
-        let why = format!("queue round certify exited ({exit:?}) naming no verdict and no suite{said}; its output is kept at {kept}; the round is left open");
+        let kept = certify_output_file(&batch, self.rc.run);
+        let why = certify_fault_reason(exit, out, &kept);
         let leg = Leg { why: out.to_string(), key: kept, ..self.leg() };
         self.acts.push(leg.act(KEEP_CERTIFY_OUTPUT));
         self.go(Trigger::CertifyLostSpent);

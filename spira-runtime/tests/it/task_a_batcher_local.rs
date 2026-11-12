@@ -418,6 +418,22 @@ fn sp_byw57t_a_certify_that_judged_nothing_keeps_its_output_and_names_it_in_the_
     let kept = &after.iter().find(|(e, _)| e == KEEP_CERTIFY_OUTPUT).unwrap_or_else(|| panic!("output not kept: {after:?}")).1;
     assert_eq!(kept.key, "run/rounds/r9.certify-1.out");
     assert_eq!(kept.why, out, "the whole output is kept");
+    let reason = certify_fault_reason(runtime::units::Exit::Code(1), out, &kept.key);
+    assert!(reason.contains("already being certified") && reason.contains("run/rounds/r9.certify-1.out"), "{reason}");
+}
+
+/// A pass scope that outlives the wall does not hold certify for good.
+#[test]
+fn sp_byw57t_a_pass_scope_that_outlives_the_wall_releases_certify() {
+    let mut c = driving(State::Certifying, "");
+    let rc = c.repos.get_mut("spira").unwrap();
+    rc.leg = None;
+    rc.certify_held = true;
+    rc.leg_at_ms = 0;
+    let mut snap = idle();
+    snap.repos.get_mut("spira").unwrap().scoped_batches = Some(vec!["r9".into()]);
+    let (_, acts) = decide(&c, &snap);
+    assert!(acts.iter().any(|a| a.effect == CERTIFY), "{acts:?}");
 }
 
 /// Certify refuses a round whose pass scope is still finishing: the attribution's survivors wait
