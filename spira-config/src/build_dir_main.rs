@@ -107,7 +107,9 @@ fn hold(args: &[String]) -> Result<(), String> {
             true,
         );
     }
-    lease.release();
+    let dir = lease.dir().to_path_buf();
+    let trimmed = lease.release();
+    eprintln!("released build directory {}: {trimmed}", dir.display());
     Ok(())
 }
 

@@ -1508,7 +1508,9 @@ impl<'a> Run<'a> {
                 self.log(&format!("{}: could not record the tree {} holds ({e}) — the next lease cleans its workspace crates", self.f(), lease.dir().display()));
             }
         }
-        lease.release();
+        let dir = lease.dir().to_path_buf();
+        let trimmed = lease.release();
+        self.log(&format!("{}: released build directory {}: {trimmed}", self.f(), dir.display()));
     }
 
     /// The session-id arguments for this launch. A checkpoint left by a world stop is
