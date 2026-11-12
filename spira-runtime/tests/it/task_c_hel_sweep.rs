@@ -164,7 +164,7 @@ fn the_pace_is_read_from_the_pinned_ms_and_a_non_number_refuses() {
 struct Timed(std::sync::Mutex<Vec<std::time::Duration>>);
 
 impl spira_store::lc_call::Transport for Timed {
-    fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+    fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
         let at = std::time::Instant::now();
         let reply = spira_store::lc_call::Reply { code: 0, out: "[]".into(), err: String::new() };
         self.0.lock().unwrap().push(at.elapsed());
