@@ -84,9 +84,12 @@ impl<B: Backend> Store<B> {
     }
 
     /// A planning write changed what `id`'s claim reads: its record is judged unclaimable,
-    /// naming `blocked_by`, until the publisher judges it again. Its revision moves, so a claim
+    /// naming `blocked_by`, until the publisher judges it again; a record no pass has judged is left as it is. Its revision moves, so a claim
     /// that read the old judgement loses its compare.
     pub fn mark_rejudge(&self, id: &str, blocked_by: &[String], req: &Request) -> Result<u64> {
+        if !self.readiness(id)?.is_some_and(|r| r.value.judged_for_claim) {
+            return self.contract.head();
+        }
         self.merge_readiness(&[id], |i| i, "mark-rejudge", req, |r, _, _| {
             r.claimable = false;
             r.judged_for_claim = true;

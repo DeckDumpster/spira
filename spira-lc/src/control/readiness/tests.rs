@@ -488,6 +488,15 @@ fn a_mark_moves_the_readiness_revision_and_leaves_the_record_judged_but_not_clai
 }
 
 #[test]
+fn a_mark_on_a_record_no_pass_has_judged_leaves_it_claimable() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.ok(&["mark-rejudge", "sp-a", "--blocked-by", "sp-b"]);
+    assert!(r.store.readiness("sp-a").unwrap().is_none());
+    assert_eq!(r.claim("sp-a").0, 0);
+}
+
+#[test]
 fn a_claim_judged_at_the_planning_watermark_it_finds_goes_through() {
     let r = Rig::new();
     r.ok(&["create-bead", "sp-a", "--ready"]);
