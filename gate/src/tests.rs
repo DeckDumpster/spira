@@ -4252,3 +4252,41 @@ fn a_gate_records_its_start_for_the_bead_once_it_holds_the_tree() {
     g.run();
     assert!(g.gate_starts.borrow().is_empty(), "a gate with no bead has no fact to write");
 }
+
+const REENTRY_PHASES: &str = "  test-b.sh   ok   3s\nbatch: phases: resolve:0,build:290,up:1,suites:8 (setup 291s, warm: cold)\nVERDICT GREEN";
+
+#[test]
+fn a_reentry_phase_is_charged_for_its_suites_not_its_container_build() {
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+    f.phase_secs.set(53);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
+    f.reentry_runs.borrow_mut().insert(MERGE_SHA.into(), (0, REENTRY_PHASES.into()));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let line = meter(&f);
+    assert!(line.contains("test_clock=61s"), "{line}");
+    assert!(line.contains("reentry-build:45,reentry:8"), "{line}");
+}
+
+#[test]
+fn a_reentry_whose_suites_run_past_the_deadline_is_still_a_deadline() {
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+    f.phase_secs.set(53);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
+    let slow = REENTRY_PHASES.replace("suites:8", "suites:400");
+    f.reentry_runs.borrow_mut().insert(MERGE_SHA.into(), (0, slow));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=deadline"), "{}", f.verdict_line());
+}
+
+#[test]
+fn a_deadline_record_carries_the_tail_of_the_phase_output() {
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+    f.phase_secs.set(53);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
+    let slow = REENTRY_PHASES.replace("suites:8", "suites:400").replace("test-b.sh   ok", "test-b.sh   RUNNING-WHEN-CUT");
+    f.reentry_runs.borrow_mut().insert(MERGE_SHA.into(), (0, slow));
+    assert_eq!(f.run(), NOVERDICT);
+    let y = f.yields.borrow().iter().find(|y| y.get(1).map(String::as_str) == Some("record")).cloned().expect("a record");
+    let detail = y.last().unwrap();
+    assert!(detail.contains("RUNNING-WHEN-CUT"), "{y:?}");
+}
