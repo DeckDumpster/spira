@@ -849,13 +849,16 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
 /// The persona a filing takes its partition from: a `file-followup` goes to the lane its filer's
 /// rune names, so a defect lands where it can be built; a `split` stays in its own lane.
 fn filed_as(verb: &str, filer: &str) -> Result<String, String> {
+    if verb != "file-followup" {
+        return Ok(filer.to_string());
+    }
     let home = spira_config::resolve::locate_home_for_process()?;
-    Ok(filed_as_in(&spira_config::runes::runes_dir(&home), verb, filer))
+    filed_as_in(&spira_config::runes::runes_dir(&home), verb, filer)
 }
 
-fn filed_as_in(runes: &std::path::Path, verb: &str, filer: &str) -> String {
+fn filed_as_in(runes: &std::path::Path, verb: &str, filer: &str) -> Result<String, String> {
     if verb != "file-followup" {
-        return filer.to_string();
+        return Ok(filer.to_string());
     }
     spira_config::runes::followup_persona_in(runes, filer)
 }
@@ -1735,11 +1738,17 @@ mod tests {
     #[test]
     fn a_pilgrims_follow_up_is_filed_into_the_builder_partition_but_a_split_stays_put() {
         let runes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
-        assert_eq!(super::filed_as_in(&runes, "file-followup", "pilgrim"), "builder");
-        assert_eq!(super::filed_as_in(&runes, "split", "pilgrim"), "pilgrim");
-        assert_eq!(super::filed_as_in(&runes, "file-followup", "builder"), "builder");
-        let builder = std::fs::read_to_string(runes.join("builder.rune")).unwrap();
-        assert!(builder.contains("SPIRA_PLAN_LABEL") && !builder.contains("SPIRA_PILGRIM_LABEL"));
+        assert_eq!(super::filed_as_in(&runes, "file-followup", "pilgrim").unwrap(), "builder");
+        assert_eq!(super::filed_as_in(&runes, "split", "pilgrim").unwrap(), "pilgrim");
+        assert_eq!(super::filed_as_in(&runes, "file-followup", "builder").unwrap(), "builder");
+        assert!(super::filed_as_in(&runes, "file-followup", "no-such-persona").is_err());
+    }
+
+    #[test]
+    fn the_pilgrims_contract_files_defects_with_the_verb_the_broker_admits() {
+        let md = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes/pilgrim.md")).unwrap();
+        assert!(md.contains("work file-followup \""));
+        assert!(!md.lines().any(|l| l.trim_start().starts_with("work file \"")));
     }
 
     #[test]

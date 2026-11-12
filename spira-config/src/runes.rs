@@ -329,9 +329,10 @@ pub const FOLLOWUP_AS_KEY: &str = "RUNE_FOLLOWUP_AS";
 
 /// The persona whose partition a follow-up filed by `rune` takes: the rune's
 /// `RUNE_FOLLOWUP_AS`, or `rune` itself when it declares none.
-pub fn followup_persona_in(runes: &Path, rune: &str) -> String {
-    let text = std::fs::read_to_string(runes.join(format!("{rune}.rune"))).unwrap_or_default();
-    assigned_value(&text, FOLLOWUP_AS_KEY).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| rune.to_string())
+pub fn followup_persona_in(runes: &Path, rune: &str) -> Result<String, String> {
+    let path = runes.join(format!("{rune}.rune"));
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(assigned_value(&text, FOLLOWUP_AS_KEY).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| rune.to_string()))
 }
 
 /// `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS`, fully resolved and fail-closed — THE shared
@@ -564,9 +565,9 @@ mod tests {
         write_rune(&ws, "walker", "RUNE_FOLLOWUP_AS=fixer\n");
         write_rune(&ws, "plain", "RUNE_NAME=plain\n");
         let dir = runes_dir(&ws);
-        assert_eq!(followup_persona_in(&dir, "walker"), "fixer");
-        assert_eq!(followup_persona_in(&dir, "plain"), "plain");
-        assert_eq!(followup_persona_in(&dir, "ghost"), "ghost");
+        assert_eq!(followup_persona_in(&dir, "walker").unwrap(), "fixer");
+        assert_eq!(followup_persona_in(&dir, "plain").unwrap(), "plain");
+        assert!(followup_persona_in(&dir, "ghost").is_err());
     }
 
     #[test]
