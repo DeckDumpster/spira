@@ -1846,7 +1846,8 @@ pub fn on_ran_with(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64) -
     })?;
     let mut next = carry.clone();
     let mut m = Machine { repo, rc: rc.holding(&rc.rounds()[at]), acts: vec![], now_ms, below: at > 0 };
-    m.leg_ended_with(ran.exit, out.stdout_tail.as_deref().unwrap_or_default());
+    let said = format!("{}{}", out.stdout_tail.as_deref().unwrap_or_default(), out.stderr_tail.as_deref().unwrap_or_default());
+    m.leg_ended_with(ran.exit, &said);
     let acts = std::mem::take(&mut m.acts);
     store(&mut next, repo, replace_round(rc, at, &m));
     Some((next, acts))
