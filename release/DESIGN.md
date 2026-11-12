@@ -190,6 +190,12 @@ over `spira/testlib/complete.toml` in the `config-delta` lint and when the relea
 read, so a value of the wrong type is refused there, naming the key. `removed` and `renamed`
 stay lists because a merge cannot delete a key.
 
+A release that stops registering a scheduler task declares it `removed_tasks = ["name"]`: activation
+drops that entry from the host's `spira.task_modes` before `current` moves. A host entry naming a task
+the release's `SPIRA_TASK_MODES` default lacks and `removed_tasks` does not name refuses the
+activation, naming the entry. A restarted unit must still be `active` after the settle time, or the
+activation is rolled back.
+
 A renamed config key is declared `[renamed]` with `"spira.old" = "spira.new"`, never as removed
 plus added: activation carries the operator's value to the new key and drops the old one, and
 `config-delta` refuses a delta that drops and adds a key pair differing only by a rename word.

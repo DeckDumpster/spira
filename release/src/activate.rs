@@ -421,6 +421,9 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn() -> Result
             }
         }
     }
+    if failed.is_empty() {
+        failed.extend(stayed_up(ctx, &out.restarted));
+    }
     // A rollback returns to a release that served before; refusing it would strand the box.
     if failed.is_empty() && install_new {
         if let Err(e) = serves_reads(ctx.reads, &rel) {
@@ -459,6 +462,31 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn() -> Result
         eprintln!("release: WHEN IDLE: {s}");
     }
     Ok(out)
+}
+
+/// A restarted unit that reached `active` and then left it did not come up: a service that
+/// fails after its start job is reported ready is caught by watching it for the settle time,
+/// not by one read.
+fn stayed_up(ctx: &Ctx, units: &[String]) -> Vec<String> {
+    const POLLS: u32 = 5;
+    let mut gone: BTreeSet<String> = BTreeSet::new();
+    let mut failed = Vec::new();
+    for _ in 0..POLLS {
+        std::thread::sleep(ctx.settle / POLLS);
+        for u in units {
+            if gone.contains(u) {
+                continue;
+            }
+            let why = match ctx.sc.state(u) {
+                Ok(st) if st.active == "active" => continue,
+                Ok(st) => format!("did not stay up after its restart (ActiveState={}, Result={})", st.active, st.result),
+                Err(e) => format!("cannot read its state: {e}"),
+            };
+            gone.insert(u.clone());
+            failed.push(format!("{u}: {why}"));
+        }
+    }
+    failed
 }
 
 fn left_running(unit: &str, why: &str, reason: &str) -> String {

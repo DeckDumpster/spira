@@ -153,12 +153,12 @@ pub fn delta_added(text: &str) -> Result<toml::map::Map<String, toml::Value>, St
     let mut added = toml::map::Map::new();
     for (k, v) in top {
         match (k.as_str(), v) {
-            ("removed", _) | ("renamed", _) => {}
+            ("removed", _) | ("renamed", _) | ("removed_tasks", _) => {}
             ("added", _) => return Err("[added] is gone: write the keys under their spira.toml tables, e.g. [spira] new_key = 300".into()),
             (_, toml::Value::Table(t)) => {
                 added.insert(k, toml::Value::Table(t));
             }
-            (other, _) => return Err(format!("unknown or mistyped entry {other:?}: only `removed`, `renamed` and spira.toml tables are allowed")),
+            (other, _) => return Err(format!("unknown or mistyped entry {other:?}: only `removed`, `removed_tasks`, `renamed` and spira.toml tables are allowed")),
         }
     }
     Ok(added)
