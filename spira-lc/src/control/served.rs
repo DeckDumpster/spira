@@ -352,13 +352,13 @@ mod tests {
         drop(seed);
         let p = path.to_str().unwrap();
 
-        let err = modeled(p, slow_reads(1_000), 0).err().expect("a build held to the steady limit must end");
+        let err = modeled(p, slow_reads(1_000), 0).expect_err("a build held to the steady limit must end");
         assert!(err.contains(state_store::READ_ENDED), "{err}");
 
         let built = modeled(p, slow_reads(1_000), BUILD_READ_MS).expect("the build has its own budget");
         assert_eq!(built.size().0, 1);
 
-        let later = state_store::Backend::log(built.inner(), 0, 10).err().expect("a read after the build is held to the steady limit again");
+        let later = state_store::Backend::log(built.inner(), 0, 10).expect_err("a read after the build is held to the steady limit again");
         assert!(state_store_sqlite::is_read_ended(&later), "{later}");
     }
 
