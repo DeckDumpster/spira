@@ -73,7 +73,7 @@ fn rows_on(client: &LcClient, args: &[&str]) -> Option<Vec<Value>> {
 
 pub fn beads_in(state: &str) -> Option<Vec<BeadRow>> {
     Some(
-        rows(&["list", "--state", state, "--snapshot"])?
+        rows(&["list", "--state", state])?
             .iter()
             .map(|r| BeadRow { id: text(r, "bead_id"), tip: text(r, "tip"), since: epoch(r, "since") })
             .collect(),
@@ -152,9 +152,9 @@ mod tests {
     #[test]
     fn rows_are_read_through_the_client_not_a_program() {
         let (t, c) = scripted(0, r#"[{"bead_id":"sp-a","tip":"abc","since":7}]"#);
-        let rows = rows_on(&c, &["list", "--state", "CERTIFIED", "--snapshot"]).expect("the client's answer");
+        let rows = rows_on(&c, &["list", "--state", "CERTIFIED"]).expect("the client's answer");
         assert_eq!(rows.len(), 1);
-        assert_eq!(t.seen.lock().unwrap().as_slice(), &[vec!["list".to_string(), "--state".into(), "CERTIFIED".into(), "--snapshot".into()]]);
+        assert_eq!(t.seen.lock().unwrap().as_slice(), &[vec!["list".to_string(), "--state".into(), "CERTIFIED".into()]]);
     }
 
     #[test]

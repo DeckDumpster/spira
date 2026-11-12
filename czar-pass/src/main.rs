@@ -1140,7 +1140,7 @@ fn repo_branch_ids(repo_path: &Path) -> Vec<String> {
 /// pool it could not see.
 fn certified_depth(cfg: &Config, repo_path: &Path) -> u32 {
     let what = "czar-pass: spira-lc list --state CERTIFIED";
-    let answer = spira_config::lc_call::LcClient::for_bin(&cfg.seams.spira_lc).map_err(spira_config::lc_call::LcError::Fault).and_then(|c| c.call(&["list", "--state", "CERTIFIED", "--snapshot"]));
+    let answer = spira_config::lc_call::LcClient::for_bin(&cfg.seams.spira_lc).map_err(spira_config::lc_call::LcError::Fault).and_then(|c| c.call(&["list", "--state", "CERTIFIED"]));
     let out = match answer {
         Ok(r) if r.code == 0 => r.out.into_bytes(),
         Ok(r) => {

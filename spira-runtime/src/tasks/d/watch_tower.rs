@@ -19,7 +19,7 @@
 //! | halt / drain | `run/world.halted`, `run/world.draining` (`collect.rs:143-166,172-173`) | file read (host) |
 //! | failed units, CPU throttle | `systemctl --user list-units --failed` (`failed_units.rs:30-33`); `systemctl show -p ControlGroup` + `cpu.stat` (`cpu_throttle.rs:104-107`, `collect.rs:185`) | `unit.facts` (S6) + cgroupfs |
 //! | pipeline counters `SP_*` | `run/cockpit/cockpit.env` (`collect.rs:192-217`) | the cockpit projection (S7b) |
-//! | last landing, WORKING / SUBMITTED rows | `spira-lc list --state X --snapshot` (`lc.rs:48-72`, `collect.rs:220,301`) | `LcClient` list (S7a) |
+//! | last landing, WORKING / SUBMITTED rows | `spira-lc list --state X` (`lc.rs:48-72`, `collect.rs:220,301`) | `LcClient` list (S7a) |
 //! | gate wait / slow / silence | `run/gate.log` (`collect.rs:228-232`) | file read |
 //! | yield | `bash yield.sh report` (`collect.rs:235-246`) | port into the task, or `(unverified)` keep |
 //! | no-verdict streaks | `run/noverdict/*` (`collect.rs:268-287`) | file read |

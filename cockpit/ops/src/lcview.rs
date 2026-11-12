@@ -90,7 +90,7 @@ pub fn num(v: &serde_json::Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 
-/// One row of `spira-lc list --live --snapshot` as the pane keeps it.
+/// One row of `spira-lc list --live` as the pane keeps it.
 pub fn live_row(r: &serde_json::Value) -> Result<(Row, Meta), String> {
     let repo = repo_column(r)?;
     let id = text(&r["bead_id"]);
@@ -1902,7 +1902,7 @@ mod tests {
         plain(&render(&view(s), 120))
     }
 
-    /// A parent in delivery and its READY child, as `spira-lc list --live --snapshot` emits them.
+    /// A parent in delivery and its READY child, as `spira-lc list --live` emits them.
     fn child_of_a_parent_in_delivery() -> Snapshot {
         let raw = [
             r#"{"bead_id":"sp-p","state":"IN_DELIVERY","holds":"[]","repo":"spira","blocked_by":[]}"#,

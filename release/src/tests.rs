@@ -769,14 +769,14 @@ fn a_documentation_line_names_current_so_two_releases_render_one_unit() {
 
 #[test]
 fn a_delta_naming_a_placeholder_path_is_refused_and_the_shipped_one_is_clean() {
-    let bad = "[spira]\nlc_snapshot = \"/placeholder/run/bead-snapshot.json\"\n";
+    let bad = "[spira]\nbatch_ledger = \"/placeholder/run/batch-timing.tsv\"\n";
     let err = config_delta::Delta::parse(bad).unwrap_err();
     assert!(err.contains("placeholder path"), "{err}");
-    let ok = config_delta::Delta::parse("[spira]\nlc_snapshot = \"/srv/run/bead-snapshot.json\"\ngroom_gate_label = \"placeholder-gate\"\n");
+    let ok = config_delta::Delta::parse("[spira]\nbatch_ledger = \"/srv/run/batch-timing.tsv\"\ngroom_gate_label = \"placeholder-gate\"\n");
     assert!(ok.is_ok(), "{ok:?}");
     let shipped = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../", "spira/config-delta.toml")).unwrap();
     let d = config_delta::Delta::parse(&shipped).unwrap();
-    assert!(!d.added.contains_key("spira.lc_snapshot"), "the snapshot path derives from the install's run dir");
+    assert!(!d.added.contains_key("spira.batch_ledger"), "the ledger path derives from the install's run dir");
 }
 const TC: &str = "1.99.0 abc";
 
