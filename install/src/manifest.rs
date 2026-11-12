@@ -368,6 +368,7 @@ mod tests {
         let m = build(&inputs()).unwrap();
         assert!(m.units.iter().any(|u| u.name == "spira-psi-sample.timer" && u.enable));
         assert!(m.units.iter().any(|u| u.name == "spira-psi-sample.service" && !u.enable), "the timer runs it, never boot");
+        assert!(m.enable("prod").contains(&"spira-psi-sample-prod.timer".to_string()));
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
         let timer = std::fs::read_to_string(dir.join("spira-psi-sample.timer")).unwrap();
         assert!(timer.contains("OnUnitActiveSec=10s"), "{timer}");
