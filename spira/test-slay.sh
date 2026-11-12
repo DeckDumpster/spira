@@ -362,6 +362,8 @@ bdq label add sp-s5r "branch:spira/sp-s5r" >/dev/null 2>&1
 out="$(slay --bead sp-s5r 2>&1)"
 is   "release keeps the branch at its commit" "$_tip" \
      "$(git -C "$REPO" rev-parse refs/heads/spira/sp-s5r 2>/dev/null)"
+is   "release removes the worktree"           no \
+     "$([ -d "$SPIRA_RUN/worktree/sp-s5r" ] && echo yes || echo no)"
 is   "release does not park"                  1 \
      "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-s5r 2>/dev/null; echo $?)"
 if has_label sp-s5r "branch:spira/sp-s5r"; then ok "release keeps the branch: label"
