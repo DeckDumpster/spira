@@ -1236,6 +1236,7 @@ fn run_main() -> ExitCode {
         info("lifecycle store NOT built — SPIRA_INSTALL_LC_STORE_CONSIDERED is set (a fixture with no real Dolt server); spira-lc will not answer until install runs without it");
     } else if opts.dry {
         would("apply lifecycle/schema.sql, lifecycle/migrations/*.sql (spira-lc admin-migrate) and lifecycle/grants.sql as the Dolt admin");
+        would("create the control store at SPIRA_LC_STORE_PATH if absent (spira-lc admin-create-store)");
         if let Err(e) = populate_phase(true) {
             eprintln!("install: phase lifecycle population failed — {e}");
             return ExitCode::from(2);
@@ -1248,13 +1249,14 @@ fn run_main() -> ExitCode {
                     info(&l);
                 }
                 changes += 1;
+                phase("phase 4.5b: control store");
+                if let Err(e) = control_store_phase() {
+                    eprintln!("install: phase control store failed — {e}");
+                    return ExitCode::from(2);
+                }
                 // ---- phase 4.6: lifecycle population (sp-k62xz8) --------------------------
                 // The store now exists and its user can write: every bead already in the
                 // beads database gets its row, once — before lc-serve starts answering for it.
-                if let Err(e) = control_store_phase() {
-                    eprintln!("install: phase lifecycle store failed — {e}");
-                    return ExitCode::from(2);
-                }
                 phase("phase 4.6: lifecycle population");
                 if let Err(e) = populate_phase(false) {
                     eprintln!("install: phase lifecycle population failed — {e}");
@@ -1984,10 +1986,6 @@ fn round_records_phase(dry: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Phase 4.5 (sp-xfqnr): build spira_lifecycle through `spira-lc`'s admin verbs, as the Dolt
-/// admin: `SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD` when set, else root with the
-/// password this phase provisions on first run (a fresh Dolt's root has none, and is never
-/// left that way), against the SQL this release ships beside its unit templates.
 /// The control store at `SPIRA_LC_STORE_PATH`, made once: no verb creates it on open.
 fn control_store_phase() -> Result<(), String> {
     let Some(path) = bootstrap::declared("SPIRA_LC_STORE_PATH") else {
@@ -2011,6 +2009,10 @@ fn control_store_phase() -> Result<(), String> {
     Ok(())
 }
 
+/// Phase 4.5 (sp-xfqnr): build spira_lifecycle through `spira-lc`'s admin verbs, as the Dolt
+/// admin: `SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD` when set, else root with the
+/// password this phase provisions on first run (a fresh Dolt's root has none, and is never
+/// left that way), against the SQL this release ships beside its unit templates.
 fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
     use install::lifecycle_store::{self, Admin};
     let host = nonempty_env("SPIRA_LC_HOST");
