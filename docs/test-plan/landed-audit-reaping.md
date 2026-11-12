@@ -109,7 +109,7 @@ Verdict key: **KEEP** · **MERGE-INTO** · **DEMOTE-TO-T1** · **DELETE** · **S
 | 10 | check5-unmapped-repo::stay closed, log once | T3 15 (3 identical seeds) | **DEMOTE-TO-T1** |
 | 11 | check5-sweep-delivers (mimir-sweep partition) | T3 18 | **MERGE-INTO test-check5.sh** (one non-builder-partition row) |
 | 12 | check5-drop::bulk listing labels/supersedes; check5-nopayload::bulk carries delivers; content-landed-no-reopen::seam; landed-no-delivers::IFS read of a literal line | T3 | seam rows → **MERGE-INTO test-check5.sh**. landed-no-delivers → **DEMOTE-TO-T1**: extract sentinel's row reader and test it. Today's case restates the bash idiom and cannot catch a separator change in sentinel.sh. |
-| 13 | check5-sweep-delivers::case 4, 5 | T1-in-T3 | **MERGE-INTO test-mimir-trigger.sh / test-groom-trigger.sh** |
+| 13 | check5-sweep-delivers::case 4, 5 | T1-in-T3 | **MERGE-INTO test-mimir-trigger.sh / the retired groom-trigger suite** |
 | 14 | content-landed-empty-branch::empty not landed, squash landed; destroy-branch::content_landed refuses/approves; hel-empty-commit::content_landed approves/refuses; hel-unlanded-guard::fixture rows; hel-certified-guard::fixture rows; hel-squash-merged::sp-sq (conflict) | T3 7 / T2 1 / T3 8 / 7 / 5 / 8 | the content_landed rows **MERGE-INTO test-destroy-branch.sh** (git only), which becomes the content_landed + fence table |
 | 15 | destroy-branch::refuses unlanded, bypass, squash; reclaim-slay-branch-guard::gate ±ctrl, no-bypass refuse/allow; hel-certified-guard::sp-cert survives + REFUSED | T2 1 / T3 13 / T3 5 | destroy-branch **KEEP** (the model suite) and add the CERTIFIED/BATCHED, holder and checked-out rows. reclaim-slay gate section → **DELETE** (duplicate). |
 | 16 | hel-unlanded-guard::KEEP sp-ul / SENT sp-la; hel-empty-commit::SENT sp-empty, KEEP sp-real; content-landed-empty-branch::hel reaps ff / not empty; hel-squash-merged::REAPED sp-sq, KEEP sp-post/sp-unland; hel-certified-guard::SENT sp-norm, no SENT sp-cert | T3 7 / 8 / 7 / 8 / 5 | all → **MERGE-INTO test-hel.sh** (one fixture, one pass, stub bd). Each suite rebuilds the same bare+clone+testdb today for a single pass. |
@@ -168,7 +168,7 @@ Verdict key: **KEEP** · **MERGE-INTO** · **DEMOTE-TO-T1** · **DELETE** · **S
 8. **There is no base `test-hel.sh`.** These dispositions are untested:
    - `HELD` (live holder, including mid-send).
    - `UNADOPTED`.
-   - Superseded-but-unsafe `KEEP` (covered at most by test-superseded.sh in landing-merge-queue).
+   - Superseded-but-unsafe `KEEP` (covered at most by the retired superseded suite in landing-merge-queue).
    - Pass-2 orphaned-worktree `SENT`.
    - Legacy `.landing`/`.rebase` `RETIRED`.
    - `SKIP` for an unresolvable land ref.

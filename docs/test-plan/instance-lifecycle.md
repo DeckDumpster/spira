@@ -4,7 +4,7 @@ Part of [[test-plan-2026-09-23]], section 5. Area id `instance-lifecycle`; use-c
 
 Scope: getting a Spira instance onto a box and switching it on and off. That covers build and release tarballs, deploy, activate and rollback, root `install.sh` phases and `systemd/install.sh` unit and timer rendering, the owned-artifact inventory (`owned.sh`), drift and skew detection (`skew.sh`, `install.sh --diff`), `uninstall.sh`, and `world.sh stop|start|drain|resume|status`. It also covers `ctrl.sh` suspensions, because both `install.sh` and `world.sh` honour them.
 
-Inputs: 62 primary files plus 1 secondary (`test-pr-notify.sh`, unit-render section only), from taxonomy.json and map/*.jsonl. Costs come from signals.tsv, main-push run 35947142904. Four primary files have no timing because they did not run there (NA): `test-cadence.sh`, `test-cadence-tool.sh`, `test-install-rehearsal.sh`, `test-host-unit-names.sh`.
+Inputs: 62 primary files plus 1 secondary (`test-pr-notify.sh`, unit-render section only), from taxonomy.json and map/*.jsonl. Costs come from signals.tsv, main-push run 35947142904. Four primary files have no timing because they did not run there (NA): `test-cadence.sh`, `test-cadence-tool.sh`, the retired install-rehearsal suite, `test-host-unit-names.sh`.
 
 **Misfiled in this area:** 5 files belong elsewhere, and this plan only prices them.
 - `test-capacity-probe.sh` belongs to dispatch.
@@ -123,10 +123,10 @@ The cost column is ci_secs from the main-push run; NA means not run there.
 | UC | Existing tests (file::case) | Level / cost now | Verdict |
 |---|---|---|---|
 | 01 | test-build.sh::absent cargo, normal run, second run, --skip-build | T1-ish, 4 | KEEP. Make the idempotence case assert on the cargo call log, not on the names printed. |
-| 02, 04 | test-build-tarball.sh::build/name/MANIFEST/verify/wrong commit/--name | T2, 4 | KEEP |
-| 03 | test-tarball-bins.sh::1–5; test-build-tarball.sh::bins present | T2, 1 + dup | test-tarball-bins: MERGE-INTO test-build-tarball.sh (the `--supervise-bin` refusal) and MERGE-INTO the unit-lint T0 (the ExecStart token scan, deriving OPTIONAL from `units.sh` instead of a hand-copied list). Delete release.yml grep (belongs in test-release-workflow). |
-| 05 | test-build-bd-release.sh::all | T2, 6 | KEEP |
-| 06 | test-release.sh::1–7 | T2, 6 | KEEP. Drop case 8 (a trivially-true self-check). |
+| 02, 04 | the retired build-tarball suite::build/name/MANIFEST/verify/wrong commit/--name | T2, 4 | KEEP |
+| 03 | test-tarball-bins.sh::1–5; the retired build-tarball suite::bins present | T2, 1 + dup | test-tarball-bins: MERGE-INTO the retired build-tarball suite (the `--supervise-bin` refusal) and MERGE-INTO the unit-lint T0 (the ExecStart token scan, deriving OPTIONAL from `units.sh` instead of a hand-copied list). Delete release.yml grep (belongs in test-release-workflow). |
+| 05 | the retired build-bd-release suite::all | T2, 6 | KEEP |
+| 06 | the retired release suite::1–7 | T2, 6 | KEEP. Drop case 8 (a trivially-true self-check). |
 | 08 | test-activate.sh::basic, dry-run; test-rollback.sh::activate-A/B; test-loop-readonly.sh::activate/ro; test-artifact-install.sh::activate | T2, 2 (+4 +12 +152 dup legs) | KEEP test-activate.sh. Delete the activate legs elsewhere. |
 | 09 | test-activate.sh::prune | T2, 2 | KEEP + fix. The test sets `current` to the oldest release, but activation repoints it before the prune runs, so "never prunes current" is not exercised (Gap G4). |
 | 10 | test-activate.sh::dwarf-guard, force, restart | T2, 2 | KEEP. Add the reload-before-restart ordering assertion. |
@@ -155,12 +155,12 @@ The cost column is ci_secs from the main-push run; NA means not run there.
 | 35 | test-skew-check-release.sh::all | T2, 2 | KEEP (exemplar 0/1/3 contract) |
 | 36 | test-skew-foreign.sh::all | T2, 3 | KEEP |
 | 37 | test-skew-refresh.sh::all | T2, 2 | KEEP |
-| 38 | test-uninstall.sh::all; test-install-rehearsal.sh::stray sweep | T2, 78; T4, gate.yml host-run | KEEP test-uninstall.sh, but share the render fixture and drop the git bare/clone used only for the landref bypass (use FORCE or artifact mode). Target ~20 s. |
+| 38 | the retired uninstall suite::all; the retired install-rehearsal suite::stray sweep | T2, 78; T4, gate.yml host-run | KEEP the retired uninstall suite, but share the render fixture and drop the git bare/clone used only for the landref bypass (use FORCE or artifact mode). Target ~20 s. |
 | 39 | *(none)* | — | GAP G1 |
-| 40 | test-install-rehearsal.sh::all; test-cadence.sh | T4, gate.yml host-run | test-install-rehearsal: KEEP (case "sentinel timer enabled" deleted: it flipped under load, `is-enabled` read `disabled` right after install; coverage left uncovered here is that the installer enables the sentinel timer, only the later start of the timer is still exercised; a follow-on may re-add it once it waits for systemd to settle); case "uninstall.sh --yes exits 0" also deleted: it flipped under host load (exit 124 at its 120 s guard, then red in a round with no uninstall change); coverage left uncovered here is uninstall.sh's exit status, only the post-uninstall clean-state assertions still exercise its effect; a follow-on that makes the exit deterministic under load may re-add it), runs directly on gate.yml's own runner (real podman + user systemd), never nested inside the corpus's testenv container (which carries no podman) and never in acceptance.yml. test-cadence.sh: DELETE. Its formula check is covered by test-watchd-unit-name.sh (hermetic), and its live half by the rehearsal. |
+| 40 | the retired install-rehearsal suite::all; test-cadence.sh | T4, gate.yml host-run | test-install-rehearsal: KEEP (case "sentinel timer enabled" deleted: it flipped under load, `is-enabled` read `disabled` right after install; coverage left uncovered here is that the installer enables the sentinel timer, only the later start of the timer is still exercised; a follow-on may re-add it once it waits for systemd to settle); case "uninstall.sh --yes exits 0" also deleted: it flipped under host load (exit 124 at its 120 s guard, then red in a round with no uninstall change); coverage left uncovered here is uninstall.sh's exit status, only the post-uninstall clean-state assertions still exercise its effect; a follow-on that makes the exit deterministic under load may re-add it), runs directly on gate.yml's own runner (real podman + user systemd), never nested inside the corpus's testenv container (which carries no podman) and never in acceptance.yml. test-cadence.sh: DELETE. Its formula check is covered by test-watchd-unit-name.sh (hermetic), and its live half by the rehearsal. |
 | 41 | test-world.sh::stop*, hard halt, CI watchers; test-work-services-exclusion.sh::all; test-world-timer-names.sh::A–D | T2, 25+3+13 | DEMOTE-TO-T1: `work_services` filter + `_resolve_timer` as a table in test-world-timer-names.sh. work-services-exclusion goes MERGE-INTO it; its "positive control" re-runs a hand-copied regex. test-world.sh keeps stop-failure honesty and /proc counting. |
 | 42 | test-world-start-honours-ctrl.sh::all; test-world-start-revives-watchers.sh::all (greps) | T2, 71; T0, 20 | DEMOTE-TO-T1 for the start skip decision. world-start-revives-watchers: SOURCE-GREP → rewrite as behavioural cases on the same stub, then MERGE-INTO world-start-honours-ctrl. |
-| 43 | test-world.sh::drain*, resume, drain --timeout 0, gate covers every door; test-world-drain-deadline.sh::all | T2, 25 + 20 | test-world.sh's `drain --timeout 0` case is a duplicate: DELETE it from test-world.sh and keep it in drain-deadline. The door-coverage grep moves to T0. |
+| 43 | test-world.sh::drain*, resume, drain --timeout 0, gate covers every door; the retired world-drain-deadline suite::all | T2, 25 + 20 | test-world.sh's `drain --timeout 0` case is a duplicate: DELETE it from test-world.sh and keep it in drain-deadline. The door-coverage grep moves to T0. |
 | 44 | test-world.sh::status*; test-world-timer-service-result.sh::all; test-unit-name.sh::A–D; test-world-drain.sh::all | T2, 25+17+1+58 | world-timer-service-result: MERGE-INTO the test-world-timer-names T1 table. test-world-drain.sh: DELETE (redundant; the subject is `cockpit/health.sh` `drain_banner`, owned by test-drain-banner.sh at 2 s). test-unit-name.sh: KEEP. |
 | 45 | test-ctrl.sh::suspend…divergence | T2, 27 | KEEP the ctrl core as T1. DELETE its install tier (moved to UC-22). |
 | 46 | test-acceptance-ci.sh::all | T2, 6 | KEEP. Drop the git positive control (it tests git itself). Move the YAML greps to workflow lint. Assert the git-identity side effect on `$HERE/..`. |
@@ -188,8 +188,8 @@ The cost column is ci_secs from the main-push run; NA means not run there.
    - **Keep:** none as they stand. Keep T1 tests of the extracted functions, plus the real acceptance run.
 
 4. **Drain `--timeout` with a live dwarf → NOT DRAINED / REMAIN GATED / exit 1.**
-   - Files: test-world.sh, test-world-drain-deadline.sh case 3 (near-verbatim).
-   - **Keep:** test-world-drain-deadline.sh.
+   - Files: test-world.sh, the retired world-drain-deadline suite case 3 (near-verbatim).
+   - **Keep:** the retired world-drain-deadline suite.
 
 5. **Drain banner.**
    - Files: test-world-drain.sh (58 s, 6 full health.sh frames), test-drain-banner.sh (2 s).
@@ -210,7 +210,7 @@ The cost column is ci_secs from the main-push run; NA means not run there.
 
 9. **Tarball has `bin/spira-supervise` executable.**
    - Files: test-tarball-bins case 3, test-build-tarball (identical assertion text).
-   - **Keep:** test-build-tarball.sh.
+   - **Keep:** the retired build-tarball suite.
 
 10. **Watcher unit-name formula.**
     - Files: test-cadence.sh (NA), test-host-unit-names.sh (NA), test-install-instance watcher cases, test-watchd-unit-name.sh (other area, hermetic).
@@ -259,7 +259,7 @@ The cost column is ci_secs from the main-push run; NA means not run there.
 | G9 | **Stage isolation from the real DB is unverified.** `_REAL_DB` is never set, so test-canary::T3 "not visible in real db" always auto-passes. | test-canary notes. | Set `_REAL_DB` to a second throwaway store and assert absence (a positive control first). |
 | G10 | **unit-ensure MISSING-TARGET tests an in-test reimplementation.** It would pass if the guard in `unit-ensure.sh` were deleted. | test-install-unit-ensure notes. | Drive the real script with a unit whose ExecStart lacks +x. |
 | G11 | **`world.sh start` watcher revival has no behavioural test.** The escalation-undelivered-8-hours scar in world.sh's own comment is guarded only by a source grep. | test-world-start-revives-watchers (SG); world.sh:289–327. | T2 on the recording stub: an inactive `spira-watch-x-prod` gets started; a oneshot or already-active one is not. |
-| G12 | **The real-systemd properties run nowhere automated.** cadence "never disarms" (sp-dah), the install→uninstall byte-identical round trip, and the installed watcher names are all NA in CI; they are container- or host-only. | signals.tsv NA ×4; r1 "not_run_in_ci". | RESOLVED: test-install-rehearsal.sh and test-cadence-tool.sh run directly on gate.yml's own runner — real podman, real user systemd, no acceptance.yml involvement. They cannot run through the normal corpus step (testenv-batch.sh execs suites inside its own container, which carries no podman, so both would only ever SKIP there); a dedicated gate.yml step runs them host-side instead, reusing the same warm testenv image and the job's own compiled binaries. |
+| G12 | **The real-systemd properties run nowhere automated.** cadence "never disarms" (sp-dah), the install→uninstall byte-identical round trip, and the installed watcher names are all NA in CI; they are container- or host-only. | signals.tsv NA ×4; r1 "not_run_in_ci". | RESOLVED: the retired install-rehearsal suite and test-cadence-tool.sh run directly on gate.yml's own runner — real podman, real user systemd, no acceptance.yml involvement. They cannot run through the normal corpus step (testenv-batch.sh execs suites inside its own container, which carries no podman, so both would only ever SKIP there); a dedicated gate.yml step runs them host-side instead, reusing the same warm testenv image and the job's own compiled binaries. |
 | G13 | **Vacuous exit-code assertions.** In test-install-idempotent, `ctrl_rc`/`noop_rc` are read after `$(cat …)`. The FORCE nowant cases in test-install-landref, and test-install-halt, have no rc assertion at all. | mapper notes. | Fix while porting to the T1 table. Add a T0 lint that flags `rc=$?` following a command substitution. |
 | G14 | **test-install-conflicts binds a fixed port (19877) shared with test-install-dolt-port-wait.** Under parallel batch this is a flake source. | mapper notes. | Allocate an ephemeral port (`python -c 'socket…bind(0)'`). |
 

@@ -1103,7 +1103,7 @@ inventory this fence exists to keep out of a shared repository.
 (`main.rs`): scans one file's content against the same patterns and deny list, printing one
 offending token per line, exit 0 either way. `spira/inventory.sh --scan /dev/stdin` had one
 real caller beyond its own tests — `sop write`/`validate`, checking a runbook body before
-it is staged — and `test-cockpit-remote.sh`'s positive control on two shipped files. Both now
+it is staged — and the retired cockpit-remote suite's positive control on two shipped files. Both now
 call `"$SPIRA_LINT_BIN" --only inventory --scan <file>`.
 
 **Where the bash heuristic was wrong, and what changed.** A malformed `inventory-deny` entry
@@ -1290,7 +1290,7 @@ candidates. A candidate names a script two ways:
 
 A resolved path missing from the tree is a finding, **unless** the same file creates that
 exact basename itself: a redirect (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`) onto it, or it is an
-argument to `cp`/`install`/`ln`/`tee`/`write_exe` — `test-world-drain-deadline.sh`'s
+argument to `cp`/`install`/`ln`/`tee`/`write_exe` — the retired world-drain-deadline suite's
 `printf … > "$SH/dwarf.sh"` before `bash "$SH/dwarf.sh"`, and every `test-world-*.sh`'s
 `cp "$WORLD_BIN" "$SH/world.sh"`, are exempt this way, deliberately: `SH` there is pointed
 at a sandbox, and the suite's whole point is to exercise the real binary under that name.

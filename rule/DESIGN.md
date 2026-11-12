@@ -44,7 +44,7 @@ already present, so `rule enact law-foo ...` and `rule enact foo ...` enact the 
 Q) are `spira/lib.sh`'s `render_memories`/`system_prompt_split` shim doors, not statute
 writes, and do NOT share the `enact`/`retire`/`list`/`show` `$SPIRA_DB/.beads` gate above —
 `render-memories` can run entirely off the `SPIRA_MEMORIES_CMD` test seam with no database
-at all (test-render-memories.sh's own shape), and `system-prompt-split` touches no database
+at all (the retired render-memories suite's own shape), and `system-prompt-split` touches no database
 ever. `render-memories` additionally reads `SPIRA_STATUTE_CORE` (when `core-csv` is omitted
 or empty), `SPIRA_REPO` (the index tier's `rule.sh show` hint — `<harness>` when unset),
 `SPIRA_MEMORIES_CACHE`/`SPIRA_MEMORIES_CACHE_AGE` (the read-through cache), and

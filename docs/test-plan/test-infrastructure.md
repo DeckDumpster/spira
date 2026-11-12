@@ -50,7 +50,7 @@ Part of [[test-plan-2026-09-23]], section 5. Area id `test-infrastructure`; use-
 
 Scope: the machinery that selects, runs and reports suites. That covers `select.sh` and suite header metadata (`# covers:`, `# requires:`, `# exclusive:`, `# timeout:`, `# priority:`, `# selects-on:`, `# host-reason:`, `# defect:`). It also covers `testenv.sh` (image and container), `testenv-batch.sh` (runner, verdict cache, parallelism), `testdb.sh` fixtures, `suites.sh` (timed runner: budget, watchdog, red classification, filing, quarantine hygiene), `suite-assert.sh` (ASSERTIONS trailer), `suite-state*.sh`, `suite-times.sh`, `gate-retry.sh`, `gate-diag.sh` and `gate-check.sh` (annotation to bead), and the `gate.yml`/`release.yml`/`acceptance.yml`/`testenv-image.yml` workflows.
 
-Inputs: 53 primary files (42 with CI timings, 531 suite-seconds; 11 absent from the main-push run 35947142904) and 5 secondary files (`test-batch-repeat-refused-delivers.sh`, `test-host-reason.sh`, `test-orphan-test.sh`, `test-install-self-test.sh`, and the Rust-crate record). Sources: mapper records `map/*.jsonl`, reducers `r0` suite-runner/ci-pipeline, `r1` test-infrastructure, `r2` test-harness and `r3` test-harness-ci, and `signals.tsv`. The harness source was read to confirm the gaps. No suite was executed.
+Inputs: 53 primary files (42 with CI timings, 531 suite-seconds; 11 absent from the main-push run 35947142904) and 5 secondary files (`test-batch-repeat-refused-delivers.sh`, the retired host-reason suite, the retired orphan-test suite, `test-install-self-test.sh`, and the Rust-crate record). Sources: mapper records `map/*.jsonl`, reducers `r0` suite-runner/ci-pipeline, `r1` test-infrastructure, `r2` test-harness and `r3` test-harness-ci, and `signals.tsv`. The harness source was read to confirm the gaps. No suite was executed.
 
 ---
 
@@ -183,8 +183,8 @@ Costs are `ci_secs` from main-push run 35947142904. NA means the suite is absent
 | 18 | test-testenv-timeout.sh::A1–A3, B1 | NA | **DEMOTE** to T2: stub `podman exec` that sleeps, with timeout=1 |
 | 19 | test-testenv-batch.sh::B7a–f, B8; test-batch-repeat-refused-delivers.sh (secondary, 25 s, never calls testenv-batch.sh) | NA; 25 s | B7 **DEMOTE** to T2 with a stub filer (run with no container: the verdict cache is pre-exec). B8 (real incident.sh dedupe) **DELETE**; it belongs to the incident area. Recommend ops-detection rewrite repeat-refused-delivers to call testenv-batch's real filing path. |
 | 20 | test-testenv-batch.sh::C1–C3, D-pos/D1–D5 | NA | C **MOVE to T0** lint (never runs today). D **DELETE** (tests an in-test stub trap) and replace with a T2 test of the real `_batch_cleanup` (the function exists at testenv-batch.sh:484). |
-| 21 | test-testdb-concurrent.sh::all; test-testenv-batch-baseline.sh::B1,B2,C1–C3 | T2 10 s; 7 s | concurrent **KEEP**. baseline Part A **DELETE** (tests its own `check_baseline`), Part B **KEEP** (runner env contract), Part C **MERGE-INTO test-testdb-concurrent.sh**. |
-| 22 | test-testdb-failsafe.sh::testdb_up non-zero, SPIRA_DB unset, six-suite sweep, count unchanged; test-testdb-concurrent.sh::gone baseline 75 | T2 15 s | **DEMOTE-TO-T1**: keep the two testdb_up contract cases with a stub server bd. Replace the hardcoded six-suite sweep with a T0 lint "every `testdb_up` call is followed by `|| exit`". |
+| 21 | the retired testdb-concurrent suite::all; test-testenv-batch-baseline.sh::B1,B2,C1–C3 | T2 10 s; 7 s | concurrent **KEEP**. baseline Part A **DELETE** (tests its own `check_baseline`), Part B **KEEP** (runner env contract), Part C **MERGE-INTO the retired testdb-concurrent suite**. |
+| 22 | the retired testdb-failsafe suite::testdb_up non-zero, SPIRA_DB unset, six-suite sweep, count unchanged; the retired testdb-concurrent suite::gone baseline 75 | T2 15 s | **DEMOTE-TO-T1**: keep the two testdb_up contract cases with a stub server bd. Replace the hardcoded six-suite sweep with a T0 lint "every `testdb_up` call is followed by `|| exit`". |
 | 23 | test-testenv-scratch.sh::all | T2 40 s (≈4 real bd inits) | **DEMOTE (partial)**: one real-bd "scratch opens and is empty". Teardown and `-c` run with stubbed testdb_up. Fix the vacuous "production not mutated" case, which re-counts the scratch DB; point it at a stand-in production store. |
 | 24 | test-suites.sh::gate-suites names only existing, every suite claimed, glob discovery, gated not re-run, no-covers omission, unreadable gate list, gate-spira list refusals | T3 part of 80 s | real-tree claims **MOVE to T0**. Discovery/gated/omission **DEMOTE** to T1 via sourced `all_suites`/`gated_suites`/`is_gated`. Unreadable list stays as one T2 case. |
 | 25 | test-suites-setup-fault.sh::all; test-suites-fixture-fault.sh::all; test-suites-watchdog-classify.sh::TERM-trapping; test-suites-confirm-red.sh::red-unconfirmed; test-suites.sh::77 status; test-suites-timeout.sh::rc 124 grep | T3 24+18+25+16 s | **DEMOTE-TO-T1**: one classification table (one row per status) after extracting `classify()` from `cmd_run`. The watchdog TERM-trap row keeps one real process in UC-30. |
@@ -197,16 +197,16 @@ Costs are `ci_secs` from main-push run 35947142904. NA means the suite is absent
 | 32 | test-suite-state.sh::all; test-suite-state-fence.sh::all | T1 2 s; T2 4 s | suite-state **KEEP** (the model bash unit test; delete the dead `result`-file block). fence **MERGE-INTO test-suite-state.sh**: its three structural rules duplicate `suite_state_lint`, and the CLOSED-bead rule becomes T1 with a stub `bd show`. |
 | 33 | test-budget-drift.sh; test-suites-timer.sh; test-suites-timeout.sh::unit TimeoutStartSec/MAXSEC/SuccessExitStatus; test-install-self-test.sh (secondary) | T0 2 + 3 + part of 9 s | **MERGE** into one T0 `test-suites-unit-lint.sh` (lint stage) |
 | 34 | test-suite-times.sh::A1–A4 (report), B0–B7 (NA inside CI: exits early); test-suites-setup-fault.sh::suite-assert helper; test-gate-ci-diag.sh (fixes the `.result` schema by fixture) | T1 1 s | suite-times A **KEEP**. B **DEMOTE** to T2: run the per-suite wrapper on the host with the bd shim; B5 must fail when bd_calls = 0. Add a T1 test of `suite-assert.sh` itself and a T0 adoption lint (see Gaps G1). |
-| 35 | test-gate-retry.sh::all; test-gate-retry-structural.sh::all | T1 5 + 2 s | **MERGE** structural into test-gate-retry.sh (identical stub and `first()` helper) |
+| 35 | the retired gate-retry suite::all; the retired gate-retry-structural suite::all | T1 5 + 2 s | **MERGE** structural into the retired gate-retry suite (identical stub and `first()` helper) |
 | 36 | test-gate-ci-diag.sh::1–8 (section 9 greps gate.yml) | T1 1 s | **KEEP**; section 9 moves to the workflow lint |
 | 37 | test-gate-check-flaky.sh::all; test-gate-check-red-twice.sh::all | T2 8 + 15 s | **MERGE** into `test-gate-check-annotations.sh`: T1 table over canned gh JSON plus the existing-bead list, and one real-bd filing/dedupe/raise case. Add the retry → check string contract (Gap G4). |
-| 38 | test-gate-workflow.sh::1–19; test-release-workflow.sh::1–8; test-gate-vitals.sh::A0,A1,B3–B5; test-testenv-publish.sh::section 1; test-gate-ci-diag.sh::9 | T0 1 + 3 + 1 + part of 5 + part of 1 s | **MERGE** into one T0 workflow lint in the lint stage, rewritten on `yq`/actionlint instead of substrings (e.g. `'75'` anywhere, `always()` anywhere). Delete gate-workflow 16a (tests `find`) and gate-vitals B1/B2/C (test the test's own sampler and `kill`). |
-| 39 | test-runner-deps.sh::broken runtime, MISSING, not 75, branch not at fault; 9 grep cases | T1+grep 4 s | behaviour cases **KEEP**. 9 grep cases **SOURCE-GREP**: add `--check --dry-run` printing the planned commands, then assert on that. |
-| 40 | test-citations.sh::all | T2 6 s | **DEMOTE-TO-T1** (stub `bd show` returning found or not-found JSON) |
+| 38 | test-gate-workflow.sh::1–19; the retired release-workflow suite::1–8; test-gate-vitals.sh::A0,A1,B3–B5; test-testenv-publish.sh::section 1; test-gate-ci-diag.sh::9 | T0 1 + 3 + 1 + part of 5 + part of 1 s | **MERGE** into one T0 workflow lint in the lint stage, rewritten on `yq`/actionlint instead of substrings (e.g. `'75'` anywhere, `always()` anywhere). Delete gate-workflow 16a (tests `find`) and gate-vitals B1/B2/C (test the test's own sampler and `kill`). |
+| 39 | the retired runner-deps suite::broken runtime, MISSING, not 75, branch not at fault; 9 grep cases | T1+grep 4 s | behaviour cases **KEEP**. 9 grep cases **SOURCE-GREP**: add `--check --dry-run` printing the planned commands, then assert on that. |
+| 40 | the retired citations suite::all | T2 6 s | **DEMOTE-TO-T1** (stub `bd show` returning found or not-found JSON) |
 | 41 | test-script-exec.sh::all | T0 in batch 5 s | **MERGE-INTO test-suite-metadata-lint.sh** (lint stage). Read the sourced-only list from headers rather than hardcoding it. |
 | 42 | none | – | **GAP** (G2) |
 | 43 | none (grep: no suite mentions `suite-skip:` or "skipping on consecutive") | – | **GAP** (G3) |
-| (secondary) | test-host-reason.sh (14 s), test-orphan-test.sh (12 s) | T2 | Owned by safety-fences. Note: host-reason spends most of its 14 s on a real `suites.sh status` sweep of the shipped tree. The orphan-test "broken matcher" control is tautological. |
+| (secondary) | the retired host-reason suite (14 s), the retired orphan-test suite (12 s) | T2 | Owned by safety-fences. Note: host-reason spends most of its 14 s on a real `suites.sh status` sweep of the shipped tree. The orphan-test "broken matcher" control is tautological. |
 
 ---
 
@@ -220,7 +220,7 @@ Costs are `ci_secs` from main-push run 35947142904. NA means the suite is absent
 | D4 | Two-observation quarantine on a branch, checkout clean | test-suites-flake-branch.sh (1 s, stubbed) and test-suites-hygiene.sh Part 1 (real bd and a worktree) | **test-suites-flake-branch.sh** |
 | D5 | Suite-state lint rules (no bead, missing suite, missing reason) | test-suite-state.sh (sourced `suite_state_lint`) and test-suite-state-fence.sh (same rules through the fence with a real DB) | **test-suite-state.sh**, plus the CLOSED-bead row with a stub `bd show` |
 | D6 | spira-suites unit static parse | test-budget-drift.sh, test-suites-timer.sh, test-suites-timeout.sh (static half) | One **T0 unit lint** |
-| D7 | gate.yml Suites step and workflow greps | test-gate-workflow.sh, test-gate-vitals.sh (same awk extraction), test-gate-ci-diag.sh §9, test-testenv-publish.sh §1, test-release-workflow.sh | One **T0 workflow lint** (yq-based) |
+| D7 | gate.yml Suites step and workflow greps | test-gate-workflow.sh, test-gate-vitals.sh (same awk extraction), test-gate-ci-diag.sh §9, test-testenv-publish.sh §1, the retired release-workflow suite | One **T0 workflow lint** (yq-based) |
 | D8 | Maxpar derivation | test-batch-maxpar.sh (behaviour), test-gate-vitals.sh A2/A3 (same sed extraction), test-testenv-batch.sh B6a/B6b | **test-batch-maxpar.sh** |
 | D9 | Registry and publish | test-testenv-registry.sh and test-testenv-publish.sh §2–3 (identical podman stub, fixture and asserts) | **test-testenv-registry.sh** |
 | D10 | Explicit selection via `--suites` list or stdin | test-testenv-stdin.sh and test-testenv-suites.sh (same fixture, same C/B1 asserts), plus test-testenv-batch.sh B5b | One T1 case table in **test-testenv-batch-unit.sh** |
@@ -228,8 +228,8 @@ Costs are `ci_secs` from main-push run 35947142904. NA means the suite is absent
 | D12 | Suite metadata parsing | test-dummy.sh (covers and requires), test-requires.sh Part A (requires), test-testenv-batch.sh A4 (exclusive), test-covers-entries.sh (covers resolution) | **test-suite-covers.sh** (T1 parse) plus **test-suite-metadata-lint.sh** (T0 tree) |
 | D13 | Selection logic | test-select.sh vs test-testenv-batch.sh Part A (a stale copy of the algorithm inside the test, contradicting select.sh on unmapped files); select E8 ≡ K1; G mirrors B/C/F | **test-select.sh**, trimmed |
 | D14 | Annotation to bead with gh stub, real bd and count-by-title | test-gate-check-flaky.sh and test-gate-check-red-twice.sh (same harness; red-twice Part 4 re-asserts the flaky path) | One **test-gate-check-annotations.sh** |
-| D15 | Serial retry stub batch | test-gate-retry.sh and test-gate-retry-structural.sh (same `GATE_RETRY_BATCH` stub and `first()`; both assert `--mode serial`) | **test-gate-retry.sh** |
-| D16 | Shared-fixture failure and production isolation | test-testdb-failsafe.sh, test-testdb-concurrent.sh (exit 75), test-testenv-scratch.sh, test-testenv-batch-baseline.sh Part C | test-testdb-concurrent.sh (T2) plus the failsafe T1 contract |
+| D15 | Serial retry stub batch | the retired gate-retry suite and the retired gate-retry-structural suite (same `GATE_RETRY_BATCH` stub and `first()`; both assert `--mode serial`) | **the retired gate-retry suite** |
+| D16 | Shared-fixture failure and production isolation | the retired testdb-failsafe suite, the retired testdb-concurrent suite (exit 75), test-testenv-scratch.sh, test-testenv-batch-baseline.sh Part C | the retired testdb-concurrent suite (T2) plus the failsafe T1 contract |
 | D17 | Copied ~20-line `sut()/beads()/count()` harness | ~10 test-suites-*.sh files | Not a test cluster but a helper duplication: extract `spira/testlib/suites-harness.sh` |
 
 ---
@@ -321,16 +321,16 @@ The runner-classification cluster (suites, cluster, result-files, unreached, red
 | test-suites-unit-lint.sh (new; lint stage) | T0 | 1 | budget-drift 2, suites-timer 3 |
 | workflow lint (new; lint stage) | T0 | 2 | gate-workflow 1, release-workflow 3, gate-vitals 1 |
 | test-gate-check-annotations.sh | T1 + 1 T2 | 6 | flaky 8, red-twice 15 |
-| test-gate-retry.sh | T1 | 4 | 5 + 2 |
+| the retired gate-retry suite | T1 | 4 | 5 + 2 |
 | test-gate-ci-diag.sh | T1 | 1 | 1 |
-| test-runner-deps.sh | T1 | 2 | 4 |
-| test-citations.sh | T1 | 1 | 6 |
+| the retired runner-deps suite | T1 | 2 | 4 |
+| the retired citations suite | T1 | 1 | 6 |
 | test-batch-maxpar.sh (renamed) | T1 | 3 | 6 |
 | test-testenv-image-tag.sh | T1 | 3 | 5 |
 | test-testenv-registry.sh | T1 | 3 | 3 + publish 5 |
 | test-testenv-scratch.sh | T2 | 8 | 40 |
-| test-testdb-concurrent.sh (+ baseline C) | T2 | 8 | 10 |
-| test-testdb-failsafe.sh | T1 | 2 | 15 |
+| the retired testdb-concurrent suite (+ baseline C) | T2 | 8 | 10 |
+| the retired testdb-failsafe suite | T1 | 2 | 15 |
 | test-testenv-batch-baseline.sh (Part B only) | T2 | 2 | 7 |
 | test-testenv-batch-unit.sh (new; stub podman: args/selection/verdict cache/liveness/exec env/tmux/skip-req/timeout/branch/cleanup) | T1/T2 | 8 | tmux-isolation 2 (+ 9 NA suites' logic) |
 

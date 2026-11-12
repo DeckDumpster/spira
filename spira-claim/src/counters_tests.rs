@@ -2,7 +2,7 @@
 //! arithmetic, metadata/label parsing). The one process boundary each public function
 //! crosses (`bd sql`/`bd show`/`bd update`, the filesystem, `date`) is exercised instead
 //! by the real suites this bead's report names (test-attempts-sql.sh, test-census*.sh,
-//! test-watchtower*.sh, test-thrash-teardown.sh) against a real bd store.
+//! test-watchtower*.sh) against a real bd store.
 
 use super::*;
 

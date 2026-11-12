@@ -8,7 +8,7 @@
 # MERGED (sp-eq8a4.2.4, duplicate clusters D1/D5/D6, UC-dwarf-execution-19): test-attempts.sh's
 # dolt fixture (b1..b8, the _attempts_sql_query builder), test-check4-events.sh (events-trail
 # counting, no counter labels), test-check4-batch.sh (dispatchable_open's shape and
-# check4_bulk_data agreeing with the per-bead functions), test-timeout.sh's
+# check4_bulk_data agreeing with the per-bead functions), the
 # fresh-bead/one-timeout/in_progress counter rows, and test-requeue.sh's counter assertions
 # (a reopened event is a requeue, not an attempt). The sentinel-INTEGRATION criteria those
 # files also carried — a bead poisoning via events, CHECK 4 acting on bulk data — moved with
@@ -209,7 +209,7 @@ seed sp-ev2
 # Seeded like b1..b8, not driven through bd's status (nothing writes a status around the
 # lifecycle machine, sp-hyo5e); the value is the shape bd's own status_changed row carries.
 seedn sp-ev2 status_changed '{"status":"in_progress"}' 1
-is "one in_progress transition is one attempt (fresh-bead/one case, ex test-timeout.sh)" \
+is "one in_progress transition is one attempt (fresh-bead/one case)" \
    "1" "$(num "$(attempts_of sp-ev2)")"
 
 # NO OVER-COUNT FROM OTHER EVENT TYPES. A label whose text contains 'in_progress' must not

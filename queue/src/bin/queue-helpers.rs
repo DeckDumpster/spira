@@ -5,8 +5,7 @@
 //! DELIBERATELY A SEPARATE BINARY FROM `queue`. The first cut named these subcommands
 //! on `queue` itself; that broke production's `spira_git_push` the moment it ran under
 //! any fixture that stubs the `queue` binary by NAME on PATH to isolate dispatch
-//! behaviour (sp-gypjk's convention, used by `test-certify.sh` among others — see its
-//! `queue-bin` stub, injected "ahead of the release's"). The stub swallowed `queue
+//! behaviour (a convention several suites use). The stub swallowed `queue
 //! git-push` silently: exit 0, nothing pushed, because the stub's job is to log argv and
 //! return — it has no idea it was just asked to do a real push. A caller's config
 //! problem with the bigger CLI must never take down a plain git/mail primitive these

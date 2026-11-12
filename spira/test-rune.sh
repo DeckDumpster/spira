@@ -7,7 +7,7 @@
 #
 # T1 for dispatch UC-07/08. Merges test-rune-predicates.sh's runtime rows (the exact
 # source-text rows are deleted: the runtime override rows below already prove the property
-# that a predicate is built from a variable, not a literal), test-lanes.sh's roster-split
+# that a predicate is built from a variable, not a literal), the roster-split
 # and real-roster rows, and test-spike.sh's rune-fields row.
 #
 # UC-dispatch-13 (effective lanes: .spira/modes ∩ repo-map lanes ∩ SPIRA_RUNES, all of the
@@ -163,7 +163,7 @@ is "ops is called on its own predicate even when plan_ready=0" "1" "$(calls)"
 
 # ==========================================================================================
 # A quota-recording mock: the CPUQuota=70%/90% rows this fixture used to carry moved to
-# test-call-rune.sh (D2/UC-dispatch-23). The express-grant test below still needs an
+# the Rust call_rune tests. The express-grant test below still needs an
 # argv-capturing mock, so it stays.
 # ==========================================================================================
 ARGS_FILE="$T/call-args"
@@ -195,7 +195,7 @@ want "express grant: SPIRA_REQUIRE_EXPRESS=1 appears in args" \
 export SPIRA_CALL="$MOCK_CALL"
 
 # ==========================================================================================
-# D5 — spira_lane_runes / spira_task_runes: the roster split (from test-lanes.sh)
+# D5 — spira_lane_runes / spira_task_runes: the roster split (from the old lanes suite)
 # ==========================================================================================
 # A synthetic runes, neither rune named "builder" or "ops" — the rule must be bound to
 # the RUNE_LANE declaration, not to a hardcoded name.
@@ -246,7 +246,7 @@ is "there is at least one lane rune"  "1" "$([ -n "$lane" ] && echo 1 || echo 0)
 is "there is at least one task rune"  "1" "$([ -n "$task" ] && echo 1 || echo 0)"
 
 # ==========================================================================================
-# D5 — the real roster: ops is a lane rune, builder is a task rune (from test-lanes.sh)
+# D5 — the real roster: ops is a lane rune, builder is a task rune (from the old lanes suite)
 # ==========================================================================================
 export SPIRA_HOME="$HERE"
 export SPIRA_RUNES="builder ops"

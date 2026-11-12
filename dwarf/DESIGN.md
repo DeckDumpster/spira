@@ -672,23 +672,23 @@ Kept, although they look wrong (flagged for the operator):
     `test-dwarf-runes-overlay.sh:54`, `test-dwarf-eviction-race.sh:135`,
     `test-dwarf-gate-close-silent.sh:184`, `test-dwarf-gate-unfinished-attempts.sh:90`,
     `test-dwarf-resume-collision.sh:47`,
-    `test-dwarf-resume.sh:148`, `test-dwarf-prompt-layers.sh:112`,
+    the retired dwarf-resume suite, `test-dwarf-prompt-layers.sh:112`,
     `test-dwarf-lifecycle-cutover.sh:206`, `test-dwarf-slain-attempts.sh:83`,
     `test-dwarf-wiki-dirty.sh:120`,
     `test-dwarf-worktree-collision.sh:57`, `test-dwarf-world-stop.sh:94`,
-    `test-dwarf-teardown-e2e.sh:515`, `test-dwarf-sweep.sh:52`, the cross-repo suite (line 141),
+    `test-dwarf-teardown-e2e.sh:515`, the retired dwarf-sweep suite, the cross-repo suite (line 141),
     `test-epic-claim-order.sh:261`, `test-groom-escalation-check.sh:101`,
     the holds suite (line 210), `test-lifecycle-enforce-gate.sh:93`,
     `test-ops-closing.sh:82`, `test-persona-model.sh:183,233`, `test-spike.sh:77`,
-    `test-submitted-lands.sh:105`, `test-thrash-teardown.sh:110,192`, `test-timeout.sh:188`,
-    `test-world-drain-deadline.sh:89,119`. Those that `cp "$HERE/dwarf.sh" "$SPIRA_HOME/"`
+    `test-submitted-lands.sh:105`, the retired thrash-teardown suite, the retired timeout suite,
+    the retired world-drain-deadline suite. Those that `cp "$HERE/dwarf.sh" "$SPIRA_HOME/"`
     stop copying it (the binary takes `--home`).
 13. **Structural greps that read dwarf.sh's source** — retire the assertion; the property is
     a `cargo test -p dwarf` case now:
     `test-brief-notes.sh:170-174` (T6 BEAD_BODY through bound_bead_notes → `brief::tests::bead_body_is_bounded`),
     `test-census-events.sh:410-432` (sp-ytw2h cause pairs: repoint its scan to `dwarf/src/*.rs`,
     where the causes are `const` strings in `verdict.rs`),
-    `test-thrash-teardown.sh:220-225` (process-group kill → `heartbeat::tests::trip_signals_session_group`),
+    the retired thrash-teardown suite (process-group kill → `heartbeat::tests::trip_signals_session_group`),
     `test-attempts.sh:197`, `test-event-taxonomy.sh:55`, `test-world.sh:249`, and the
     `grep`-for-shape guards in the suites of item 12 (same rows as their exec line, per
     the list in the commit that added this file).
@@ -988,23 +988,23 @@ Kept, although they look wrong (flagged for the operator):
     `test-dwarf-runes-overlay.sh:54`, `test-dwarf-eviction-race.sh:135`,
     `test-dwarf-gate-close-silent.sh:184`, `test-dwarf-gate-unfinished-attempts.sh:90`,
     `test-dwarf-resume-collision.sh:47`,
-    `test-dwarf-resume.sh:148`, `test-dwarf-prompt-layers.sh:112`,
+    the retired dwarf-resume suite, `test-dwarf-prompt-layers.sh:112`,
     `test-dwarf-lifecycle-cutover.sh:206`, `test-dwarf-slain-attempts.sh:83`,
     `test-dwarf-wiki-dirty.sh:120`,
     `test-dwarf-worktree-collision.sh:57`, `test-dwarf-world-stop.sh:94`,
-    `test-dwarf-teardown-e2e.sh:515`, `test-dwarf-sweep.sh:52`, the cross-repo suite (line 141),
+    `test-dwarf-teardown-e2e.sh:515`, the retired dwarf-sweep suite, the cross-repo suite (line 141),
     `test-epic-claim-order.sh:261`, `test-groom-escalation-check.sh:101`,
     the holds suite (line 210), `test-lifecycle-enforce-gate.sh:93`,
     `test-ops-closing.sh:82`, `test-persona-model.sh:183,233`, `test-spike.sh:77`,
-    `test-submitted-lands.sh:105`, `test-thrash-teardown.sh:110,192`, `test-timeout.sh:188`,
-    `test-world-drain-deadline.sh:89,119`. Those that `cp "$HERE/dwarf.sh" "$SPIRA_HOME/"`
+    `test-submitted-lands.sh:105`, the retired thrash-teardown suite, the retired timeout suite,
+    the retired world-drain-deadline suite. Those that `cp "$HERE/dwarf.sh" "$SPIRA_HOME/"`
     stop copying it (the binary takes `--home`).
 13. **Structural greps that read dwarf.sh's source** — retire the assertion; the property is
     a `cargo test -p dwarf` case now:
     `test-brief-notes.sh:170-174` (T6 BEAD_BODY through bound_bead_notes → `brief::tests::bead_body_is_bounded`),
     `test-census-events.sh:410-432` (sp-ytw2h cause pairs: repoint its scan to `dwarf/src/*.rs`,
     where the causes are `const` strings in `verdict.rs`),
-    `test-thrash-teardown.sh:220-225` (process-group kill → `heartbeat::tests::trip_signals_session_group`),
+    the retired thrash-teardown suite (process-group kill → `heartbeat::tests::trip_signals_session_group`),
     `test-attempts.sh:197`, `test-event-taxonomy.sh:55`, `test-world.sh:249`, and the
     `grep`-for-shape guards in the suites of item 12 (same rows as their exec line, per
     the list in the commit that added this file).

@@ -148,8 +148,8 @@ ledger file shape this crate writes.
   rendered to the Ops persona) becomes `"sop"`.
 - `spira/watchtower.sh`, `spira/incident.sh`, `spira/lib.sh`: comment-only mentions updated
   for accuracy.
-- `spira/test-guards.sh`, `spira/test-dwarf-wiki-dirty.sh`, `spira/test-lint-runes.sh`,
-  `spira/test-render-memories.sh`, `spira/test-ops-closing.sh`: repointed to invoke `sop` by
+- `spira/test-guards.sh`, `spira/test-dwarf-wiki-dirty.sh`, the retired lint-runes suite,
+  the retired render-memories suite, `spira/test-ops-closing.sh`: repointed to invoke `sop` by
   binary name rather than `$HERE/sop.sh`.
 
 ## RUN: the tool a watcher may run

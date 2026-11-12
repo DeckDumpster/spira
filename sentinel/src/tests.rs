@@ -772,7 +772,7 @@ fn world_gate_cmd_halts_and_a_drain_holds_however_old() {
 }
 
 // ---------------------------------------------------------------------------------------
-// call_rune's refusal ladder (the rows test-call-rune.sh used to prove in a shell).
+// call_rune's refusal ladder (rows once proved in a shell suite).
 // The roster is `builder`, `ops`; each rule binds to a declaration (RUNE_ELASTIC,
 // RUNE_LANE, RUNE_MAX_CONCURRENT), so the same two names play different roles per test.
 /// sp-hh599, law-a-control-that-cannot-check-must-refuse: `rune_ready`'s own rc contract

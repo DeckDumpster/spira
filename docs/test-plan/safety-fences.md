@@ -66,7 +66,7 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 | 01 | test-dwarf-fence::A1–A5, E0–E3, I0–I4 | T1-ish, 10 s (shared with 02) | MERGE-INTO test-guards.sh (row table) |
 | 01 (static half) | test-dwarf-fence::D0–D3 (grep archivist.md for prohibitions) | source grep | SOURCE-GREP → move to the UC-33 runes lint (T0) or delete; the prose is not the fence |
 | 02 | test-dwarf-fence::A6, A7, F0–F16, G0, G(8 brief cmds), H0/H1 | T1, (in 10 s) | MERGE-INTO test-guards.sh |
-| 03 | test-dwarf-fence-bd-create::positive control, A1, A2, A3, B1–B3, C1, D1 | T2 (real bd + testdb_up), 6 s | DEMOTE-TO-T1 + MERGE-INTO test-guards.sh. Drop A2 and the control (identical command to A1, run 3×). One row goes to test-bd-contract.sh |
+| 03 | test-dwarf-fence-bd-create::positive control, A1, A2, A3, B1–B3, C1, D1 | T2 (real bd + testdb_up), 6 s | DEMOTE-TO-T1 + MERGE-INTO test-guards.sh. Drop A2 and the control (identical command to A1, run 3×). One row goes to the retired bd-contract suite |
 | 04 | test-bd-close-unacked-guard::guard blocks…, names id, names override, exits 2, ACK note, env/inline override, pre-claim, self-comment, fails-open baseline | T3-ish (real Dolt, 6× `sleep 2`), 39 s | DEMOTE-TO-T1 (stub bd with canned timestamps; removes 12 s of sleeps and the double `run_guard`) |
 | 05 | test-bd-close-unacked-guard::deliver outputs additionalContext…, second deliver empty, pre-claim/self not delivered | (in 39 s) | DEMOTE-TO-T1, kept as its own rows (PostToolUse, not PreToolUse) |
 | 06 | test-bd-delivers-label-guard::PC, A1–A3, B1–B2, D1 | T2 (testdb), 6 s | DEMOTE-TO-T1 + MERGE-INTO test-guards.sh. DELETE "label remains after blocked remove" (vacuous: the guard never runs the command) |
@@ -91,7 +91,7 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 | 26 | test-orphan-test::all | T2, 12 s | KEEP. DELETE "broken matcher does not refuse" and "real fence still refuses after restoration" (they swap in a stub script, a tautological control) |
 | 27 | test-host-reason::all except suites.sh status; test-host-reason::suites.sh status rows | T2, 14 s | KEEP host-check rows (demote the git fixture to a plain dir if host-check reads files, not the index). MOVE the two `suites.sh status` rows (the real shipped-tree sweep, most of the 14 s) to test-infrastructure, and make them unconditional |
 | 28 | test-suite-state-fence::all (secondary); test-suite-state::lint rejections | T2 4 s; T1 2 s | MERGE the structural rows of test-suite-state-fence INTO test-suite-state (already there). Keep one CLOSED-bead row with stub bd (DEMOTE-TO-T1). Add a pass/fail summary line |
-| 29 | test-set-state-writers::scanner controls + 2 static rows; ::set-state semantics rows | T2 (testdb), 8 s | Split: lint rows → T0 (keep as a lint); bd set-state rows → MERGE-INTO test-bd-contract.sh |
+| 29 | test-set-state-writers::scanner controls + 2 static rows; ::set-state semantics rows | T2 (testdb), 8 s | Split: lint rows → T0 (keep as a lint); bd set-state rows → MERGE-INTO the retired bd-contract suite |
 | 30 | test-ops-allowlist::all | T1, 6 s (sourcing lib.sh) | KEEP. Read `RUNE_TOOLS` by sourcing the rune alone, not lib.sh. Extend to czar.rune. TI: `ops_allows` reimplements the CLI matcher (see Gaps) |
 | 31 | test-czar-shadow::all (secondary) | T1, 1 s | KEEP; fix the positive-control bug (below). Move the 11 conf/rune/brief grep rows to T0 lint |
 | 32 | test-spike::confine refuses/allows/plan bead/unreadable/adjacent/deep/merge-base; ::landing lands/refuses | T3, (part of 24 s) | KEEP confine as T2 (git + stub bead-label lookup). Keep the two landing rows as T3 on main only |
@@ -202,7 +202,7 @@ Secondary files add 13 s (czar-shadow 1, freshclone 3, schema-migration-guard 3,
 | Group | Projection | Seconds |
 |---|---|---|
 | test-guards.sh (all 10 guard suites merged; stub bd; still one fork per row) | ~130 rows × ~0.15 s under CI load | **20** |
-| test-bd-contract.sh (new T2: bd `--dry-run` test-data text, `comments --json` / `show --json` shapes the guards parse, set-state single-valued) | one testdb | **8** |
+| the retired bd-contract suite (new T2: bd `--dry-run` test-data text, `comments --json` / `show --json` shapes the guards parse, set-state single-valued) | one testdb | **8** |
 | Git hooks | branch-guard with worktree rows 5 + ref-guard 1 + dirty-commit on host, now actually running 2 | **8** |
 | Lints | inventory 2 (−shipped-tree row) + scratch 3 + orphan 10 (−2 tautological rows) + host-reason 4 (−`suites.sh status` sweep, moved) + destructive 4 + ops-allowlist 2 (no lib.sh) + set-state lint 1 | **26** |
 | test-spike | T0 lints 2 + confine T2 3 + landing T3 10; partition rows moved to dispatch | **15** |
@@ -315,7 +315,7 @@ By the time this bead ran, sp-qsr44, sp-pohf2 and sp-rv8jt above had already lan
 verdict on UC-32's partition rows — see below.
 
 **Landed in this slice (UC 27, 29, 30, 31 of this bead's scope):**
-- **UC-27 / gap 12 (the `suites.sh status` half).** test-host-reason.sh keeps only
+- **UC-27 / gap 12 (the `suites.sh status` half).** the retired host-reason suite keeps only
   host-check.sh's own fence rows. The two `suites.sh status` sweep-line assertions moved
   to `test-suites-classify.sh` (test-infrastructure area, which already sources
   `suites.sh`'s functions directly) and now run unconditionally via `cmd_status()` — the
@@ -323,10 +323,10 @@ verdict on UC-32's partition rows — see below.
   when the label text was ever absent. The focus-close-guard half of gap 12 is moot, as
   this bead's own filing already noted: no live `test-focus-close-guard.sh` exists after
   sp-fjsxb.
-- **UC-29.** `test-set-state-writers.sh` split: the static lint (no `label add`/
+- **UC-29.** the retired set-state-writers suite split: the static lint (no `label add`/
   `SPIRA_INCIDENT_LABELS` writer for a dimension) stays as its own T0 suite under the same
   name. The `bd set-state` semantics (atomicity, event trail) moved to a new
-  `test-set-state-semantics.sh` (T2, real db) — `test-bd-contract.sh` still does not exist,
+  `test-set-state-semantics.sh` (T2, real db) — the retired bd-contract suite still does not exist,
   so per the UC-29 verdict's fallback these rows keep their own suite rather than merging
   into a file that isn't there.
 - **UC-30.** `test-ops-allowlist.sh` reads each persona's `RUNE_TOOLS` by sourcing that
@@ -348,7 +348,7 @@ verdict on UC-32's partition rows — see below.
 **Not touched, and why:**
 - **UC-24/UC-25.** Already KEEP; nothing in this bead's own filing asked for more here.
 - **UC-26.** Not in this bead's description bullets (the title's "26" does not appear in
-  the body text); `test-orphan-test.sh` is untouched.
+  the body text); the retired orphan-test suite is untouched.
 - **UC-32.** The 9 partition rows in `test-spike.sh` were **not** moved to
   `test-rune-predicates.sh` as this bead's filing proposed. `docs/test-plan/dispatch.md`
   (the dispatch area's own test plan, row 09 of its coverage map) already reached and

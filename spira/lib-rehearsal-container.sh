@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# lib-test-install-rehearsal.sh — Sourced, never executed: the container both install-rehearsal
-# suites run in (up, stubbed bd/loom, fake release root, the tree's binaries streamed in,
-# configure.sh run). Sourced by test-install-rehearsal.sh and test-install-rehearsal-stray.sh after
-# they source testlib.sh and podman-exec-diag.sh and define iszero.
-# What is real and what is stubbed is stated in test-install-rehearsal.sh's header.
+# lib-rehearsal-container.sh — Sourced, never executed: the container the install-rehearsal
+# stray-sweep suite runs in (up, stubbed bd/loom, fake release root, the tree's binaries streamed in,
+# configure.sh run). Sourced by test-install-rehearsal-stray.sh after it
+# sources testlib.sh and podman-exec-diag.sh and defines iszero.
 
 command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 CNAME="spira-testenv-reh-$$"
@@ -22,7 +21,7 @@ testenv container up --name "$CNAME" >&2
 iszero "up exits 0" "$?"
 
 if ! testenv container probe --name "$CNAME"; then
-    printf 'SKIP test-install-rehearsal.sh: user systemd not available in container\n' >&2
+    printf 'SKIP install-rehearsal: user systemd not available in container\n' >&2
     exit 77
 fi
 ok "user systemd running (probe exits 0)"

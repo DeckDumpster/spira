@@ -47,7 +47,7 @@ fn main() {
     // `render_memories`/`system_prompt_split` shim doors: pure string transforms, or a read
     // the `SPIRA_MEMORIES_CMD` test seam bypasses `bd` for entirely, so they must not share
     // this gate — concierge.sh is their one production caller and always has a real `$SPIRA_DB`,
-    // but test-render-memories.sh's seam cases deliberately never set one. SPIRA_DB is a
+    // but the seam cases deliberately never set one. SPIRA_DB is a
     // registered config key (spira/conf.d) — resolved only for the commands that need it, via
     // the one source of config, never a process-environment read.
     spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-rule", &cmd);

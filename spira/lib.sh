@@ -436,8 +436,7 @@ ready_shared_exclude() {
 # `ck7_pool_subtracts_task_live_and_floors_at_zero`,
 # `ck7_throttled_is_the_stamp_unless_the_override_pins_it_clear` and
 # `ck7_fill_cap_stops_on_either_the_pool_or_the_per_persona_cap` for the same cases
-# test-watchtower-throttle.sh/test-express-lane.sh/test-call-rune.sh used to assert
-# directly against the bash originals.
+# shell suites used to assert directly against the bash originals.
 
 # mark_queue_waiters / close_landed_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on
 # beads whose closed blocker is in the queue pipeline (CERTIFIED/BATCHED, not yet LANDED),
@@ -676,7 +675,7 @@ park_unmapped() {
 # DELIBERATELY NOT SHIMMED (wave 4.23, sp-0ffox), unlike dwarf_count/dwarves_live_total above.
 # strand/src/probe.rs carries its own Rust copy of this same arithmetic for any FUTURE
 # in-process Rust caller, but THIS body stays bash: it calls rune_get/dwarf_count BY NAME,
-# and six suites (test-call-rune.sh, test-dwarf-elastic-concurrency.sh, test-rune.sh,
+# and several suites (test-dwarf-elastic-concurrency.sh, test-rune.sh,
 # test-builder-qa-proposed.sh, test-czar-partition.sh, test-dependents.sh) redefine those
 # bash functions after sourcing this file, to control rune_free's inputs without a real
 # process table. Reducing rune_free itself to a one-line exec shim would move that
@@ -1124,7 +1123,7 @@ _counter_events_query() {   # _counter_events_query <id> <event_type> -> count, 
 # accounting (DESIGN.md §6) — this stays the bare _counter_events_query census.sh,
 # landing-pass and dwarf/teardown.rs already depend on counting EVERY requeue, including
 # a rebase-conflict one that attempts_of exempts (test-census-events.sh sp-9edq8,
-# test-landing-rebase.sh, test-dwarf-teardown-e2e.sh all assert exactly that). Tried
+# test-dwarf-teardown-e2e.sh assert exactly that). Tried
 # shimming this onto `spira-claim requeues` first; all three suites went red on that
 # exact distinction, which is the regression this comment now guards against.
 requeues_of() { _counter_events_query "${1:-}" requeued; }
@@ -1430,10 +1429,9 @@ conflict_reopen_note() {
 # door, concierge.sh's own call site unchanged. SPIRA_HOME and SPIRA_REPO are threaded
 # explicitly — conf.sh deliberately never exports either (the EXEC-BOUNDARY TRAP comment at
 # the top of this file) — SPIRA_REPO is the harness path the index tier's own "rule.sh show"
-# hint names, caught red by test-render-memories.sh's "rule.sh path is executable" the one
-# time this shim left it unthreaded. SPIRA_STATUTE_CORE/SPIRA_MEMORIES_CACHE/
-# SPIRA_MEMORIES_CACHE_AGE/SPIRA_MEMORIES_CMD need no re-threading — test-render-memories.sh's
-# own fixture calls already export them (bash prefix assignment exports for that command's
+# hint names, caught red once when this shim left it unthreaded. SPIRA_STATUTE_CORE/SPIRA_MEMORIES_CACHE/
+# SPIRA_MEMORIES_CACHE_AGE/SPIRA_MEMORIES_CMD need no re-threading — the fixture calls
+# already export them (bash prefix assignment exports for that command's
 # whole subtree), and production always passes core_csv as $3 rather than relying on the
 # env fallback.
 render_memories() {      # render_memories <prefix-csv> [char-budget] [core-csv]
@@ -1451,7 +1449,7 @@ render_memories() {      # render_memories <prefix-csv> [char-budget] [core-csv]
 # PORTED (wave 4.35, sp-kelr2, row Q): the split/file-write itself is `rule`'s
 # `system-prompt-split` CLI door (`rule::memories::split`); dwarf.sh retired its own call to
 # this function already (sp-j89pd, wave 4.2 — it renders through dwarf/src/brief.rs
-# in-process), so test-render-memories.sh's G-08 delivery-fence check is this shim's one
+# in-process), so a delivery-fence check is this shim's one
 # live caller now. The SPIRA_SYSTEM_FLAG assignment has no caller left either (same retirement)
 # but stays here, computed locally rather than moved into the binary, since it is a plain
 # shell-variable side effect a subprocess cannot set in its caller's shell.
@@ -1497,7 +1495,7 @@ all_partition_members() {
 # (sp-b0j0s) is retired, not ported: it was a workaround for a bash function having no
 # persistent, correctly-resolved context across calls, and this binary resolves its config
 # once at startup the same way for every check in the pass (law-a-binary-resolves-the-
-# config-it-reads) — see test-unclaimable-worktree.sh for the suite kept to prove this.
+# config-it-reads).
 detect_unclaimable_ready() {
     sentinel --detect-unclaimable
 }
@@ -2288,7 +2286,7 @@ _tsd_escape() {
 # EXECS `queue-helpers`, NOT `queue` — a SEPARATE binary, on purpose (same crate, a second
 # [[bin]]). The first cut named this subcommand on `queue` itself; that broke production
 # the moment it ran under any fixture that stubs `queue` by NAME on PATH to isolate
-# dispatch behaviour (sp-gypjk's convention — test-certify.sh's `queue-bin` stub is one).
+# dispatch behaviour (a convention several suites use).
 # The stub logs argv and returns 0; it has no idea it was just asked to do a real git
 # push, and the caller saw a quiet success with nothing moved. A plain git/mail primitive
 # must never share a name with the big multi-purpose operator CLI that tests routinely
@@ -2325,7 +2323,7 @@ queue_certified_list() {
 # batcher cut nothing for nine hours with 40 branches certified and waiting. Ported to
 # Rust now (sp-hwjsq, "wave 4.32"), queue/src/ops/helpers.rs `sort_rows` — same ranking,
 # same fail-open contract — called in process from queue's own Lib::sort_rows. Kept as a
-# shim: test-queue-sort-large.sh and cockpit-collect still call this by name. PRIO_JSON is
+# shim: cockpit-collect still calls this by name. PRIO_JSON is
 # written to a temp file and unset BEFORE this shim execs the `queue-helpers` binary (a
 # SEPARATE binary from `queue` itself — see queue_certified_list's note above; a stub of
 # `queue` must never also swallow this), for exactly the reason above: the payload must
@@ -2386,7 +2384,7 @@ bead_is_decision_type() {
 # redirects stdout or stderr — that stays the caller's choice, exactly as before.
 #
 # SCAR (sp-hwjsq, round 160): the first cut execed `queue git-push`, the operator CLI
-# itself. test-certify.sh stubs `queue` by NAME on PATH to prove the landing pass never calls it
+# itself. a landing-pass suite stubs `queue` by NAME on PATH to prove the landing pass never calls it
 # (sp-gypjk's convention), so production's push-mode landing silently hit that stub —
 # exit 0, nothing pushed, "not ok 30 - push-mode remote actually moved" — while every
 # suite this bead ran was one that never stubs `queue`, so nothing caught it before it

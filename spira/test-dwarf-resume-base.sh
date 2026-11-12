@@ -3,7 +3,7 @@
 # test-dwarf-resume-base.sh — a dwarf cuts a fresh branch from the freshly fetched origin/main, not
 #   from a stale local main.
 #
-# SPLIT FROM test-dwarf-resume.sh for the 30 s cap (each real dwarf launch costs about 9 s).
+# Split from a larger suite for the 30 s cap (each real dwarf launch costs about 9 s).
 # defect: sp-2e4v
 # tier: T2
 # covers: dwarf/src/* landing-pass/src/* spira/lib.sh UC-dwarf-execution-07

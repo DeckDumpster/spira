@@ -364,7 +364,7 @@ incident.sh, mail, host-check.sh and the queue (whole programs, §5).
   `$(...)` that captured the bead id and were discarded; they go to stderr.
 * **D10 — the population is sorted bytewise.** suites.sh piped the glob through `sort`,
   which collates by the caller's locale (en_US puts `test-acceptance-local-stop.sh` before
-  `test-acceptance-local.sh`; C does the reverse), so `list`/`names`/`corpus` order changed
+  the retired acceptance-local suite; C does the reverse), so `list`/`names`/`corpus` order changed
   with whoever ran it. Byte order is deterministic. The sets are identical (verified, §8).
 
 ## 6b. `lint` retires `spira/suite-state.sh` (sp-9gd4e)
@@ -436,7 +436,7 @@ Line numbers against 4764d03ec. `SPIRA_TESTENV_BIN` is new, resolved like its ne
 | 7 | `spira/runes/ops.md:49-66` | step 2 running `{{SUITES}} run` | replace the command with `{{SUITES}} status` and the paragraph with: "It prints which suites run nowhere and what each last said; name the timed suites it reports in your close. A red there is ordinary work for whoever can change the code." (drop the "budgeted to fit inside your wall" text; nothing runs) |
 | 8 | `spira/runes/ops.rune:165` | `Bash(*suites.sh*),Bash(*testenv-batch.sh*)` | `Bash(*testenv *)` (testenv's own cutover makes the same change for testenv-batch.sh) |
 | 9 | prod `~/.config/spira/spira.toml` `persona.ops` tools (`"Bash(*suites.sh*)"`, line 225) | — | `"Bash(*testenv *)"`, through `spira-config` (law-config-through-the-cli-only) |
-| 10 | `spira/test-lint-runes.sh:127` | `-e "s\|{{SUITES}}\|$HERE/suites.sh\|g"` | `-e "s\|{{SUITES}}\|testenv suites\|g"` |
+| 10 | the retired lint-runes suite | `-e "s\|{{SUITES}}\|$HERE/suites.sh\|g"` | `-e "s\|{{SUITES}}\|testenv suites\|g"` |
 | 11 | `spira/conf.sh:1750,1764-1769,1832-1836`, `spira.conf.example:271-293`, `README.md:321,467`, `CLAUDE.md:48,59-61`, `spira/gate-suites` header, `spira/gate-spira.sh:235,374`, `spira/suite-state-fence.sh:6`, `spira/suite-covers.sh:3-12,73`, `spira/tap-jsonl.sh:5,12`, `spira/suite-assert.sh:5-10`, `spira/dwarf.sh:1733`, `spira/test-lifecycle-guard.sh:7`, `spira/test-test-plan-crate.sh:9` | comments naming `suites.sh` | name `testenv suites` (comments only) |
 | 12 | **delete** `spira/suites.sh` | — | replaced by `testenv suites` |
 | 13 | `spira/suite-state.sh` | **done (sp-9gd4e).** `suites.sh` and `testenv-batch.sh` are both already gone; the one remaining blocker, `suite-state-fence.sh`'s `suite_state_lint`/`suite_state_parse`, is now `testenv suites lint` (§2.3, §6b). File deleted, along with `test-suite-state.sh` (§6b). |

@@ -90,11 +90,11 @@
 > **2026-09-25 (sp-s088v.11): rows 17, 33, 35, 39, 40 closed.** Row 33: `test-loom-page.sh`'s
 > 12 fixture arms moved into `loom/static/model.test.js`, run under `node --test`; the
 > real-bd arm is now the cockpit-bd-contract suite's "loom's model.js parses what the tracker
-> actually emits" row, and `test-testdb-failsafe.sh` was repointed at that suite for its
+> actually emits" row, and the retired testdb-failsafe suite was repointed at that suite for its
 > testdb_up fail-safe check. Missing node now exits 77, not 0 (gap #11). Row 35:
 > `test-ready.sh`'s nc-absent port-open case is a real `skip` now, not two fake `ok` lines;
 > its dolt-server.yaml ports are pinned into the ephemeral range instead of hardcoded.
-> Row 39: `test-tokens.sh` pins `SPIRA_HOME`/`SPIRA_REPO` off the real checkout it happens to
+> Row 39: the retired tokens suite pins `SPIRA_HOME`/`SPIRA_REPO` off the real checkout it happens to
 > live in, so sourcing conf.sh does not shell out to git against a repo the token split has
 > no reason to touch; `test-released-defects.sh` is demoted off `testdb_up` onto a `--graph
 > <json>` fixture the script now accepts, keeping real git for the commit-ordering half. Row
@@ -290,7 +290,7 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 | 02 | test-cockpit.sh::SP_AT ordering; test-cockpit-tiered-collector.sh::7 cockpit.sh now, ::11 SP_COLLECTOR_REV; test-cockpit-self.sh::pass_secs | T2 | MERGE-INTO test-cockpit.sh (drop the tiered::7 duplicate, which the file itself says is explicitly duplicated) |
 | 06 | test-cockpit-tmp.sh::TERM/INT/HUP ×3, published untouched, startup sweep; test-cockpit-tiered-collector.sh::12, 14 | test-cockpit-tmp.sh is T3 **non-hermetic** (11 s, real probe against the ambient conf/DB) | KEEP test-cockpit-tmp.sh but **DEMOTE-TO-T2 hermetic**: add a sleeping probe seam like COCK's plus `env -i`, bringing it to about 3 s |
 | 07 | test-cockpit-tiered-collector.sh::9, 10; test-cockpit-conf-change.sh (health.sh); test-loom-conf-change.sh (loom.sh) | T2 timing-bound: 17 (part) + 8 + 6 | **DEMOTE-TO-T1**: one table-driven suite over the three loops, with a sub-second tick (`SPIRA_LOOM_TICK` already exists; add the same to health and collect). Keep 1 s windows. |
-| 08 | test-cockpit-probe-fault.sh::collector SP_WAITING/NEXT_N/INFLOW_N/UNLANDED_N; test-cockpit-ready.sh::refusal, persona unresolved; test-cockpit-reachable.sh::refusal; test-cockpit-ready-seeded.sh::empty db 0, seeded 2; test-cockpit-unsent.sh::bd-fail, bd-zero-empty | T2 + T3 (ready-seeded 9 s) | KEEP probe-fault as the collector FC table. test-cockpit-ready.sh: **DEMOTE-TO-T1** (call `core`/`core_detail`, not `once`). test-cockpit-ready-seeded.sh: **MERGE-INTO the new the cockpit-bd-contract suite** |
+| 08 | the retired cockpit-probe-fault suite::collector SP_WAITING/NEXT_N/INFLOW_N/UNLANDED_N; test-cockpit-ready.sh::refusal, persona unresolved; test-cockpit-reachable.sh::refusal; test-cockpit-ready-seeded.sh::empty db 0, seeded 2; test-cockpit-unsent.sh::bd-fail, bd-zero-empty | T2 + T3 (ready-seeded 9 s) | KEEP probe-fault as the collector FC table. test-cockpit-ready.sh: **DEMOTE-TO-T1** (call `core`/`core_detail`, not `once`). test-cockpit-ready-seeded.sh: **MERGE-INTO the new the cockpit-bd-contract suite** |
 | 09 | test-cockpit-reachable.sh (all 11 cases) | T2 stub-bd, 4 | KEEP (T1-shaped already). Fix: health.sh runs without `env -i`, and the stub ignores its args, so query shape is unverified. Add one argv assertion. |
 | 10 | test-cockpit-landed.sh::SP_CLOSED 24h, SP_LANDED, SP_UNLANDED_N; test-cockpit-unlanded.sh::main+master, zero case, pane QUEUE; test-cockpit-queue-section.sh::body mention; test-cockpit-queue.sh::SP_UNLANDED_N | T3 real bd + git: 14 + 15 + parts | **MERGE** landed into test-cockpit-unlanded.sh (keep its main/master pair and add the body-mention case from queue-section). **DEMOTE-TO-T2**: stub bd returns the closed list, git stays real. Call the section, not `once`. |
 | 11 | test-cockpit-queue.sh (all); test-cockpit-queue-section.sh (all) | T3 real bd: 9 + 13 | **MERGE** test-cockpit-queue.sh INTO test-cockpit-queue-section.sh, keeping only its unique quarantine and BATCH_AGE rows. Replace embedded Dolt with fixture JSON. Separate priority from epoch in the ordering case. |
@@ -303,7 +303,7 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 | 18 | test-statute-projection.sh::statute_keys ×3 cases | T3 (secondary), 5 | KEEP under operator-channel. `PAGE_N` is already seeded from the WIKI_TMP fixture page, not brain. |
 | 19 | test-beads-sparklines.sh (8) | T1, 3 | KEEP. Move the Python block into its own file (it is extracted today with awk by indentation). The "no HIST_COLS" source grep becomes T0. Add a bucket-distribution assertion. |
 | 20 | test-event.sh (15) | T1 + sleeps, 11 | **DEMOTE**: add an injected clock (≈7 s of real `sleep`). The taxonomy and call-site greps become **SOURCE-GREP to T0 lint**. Fix the unconditional "kind format" ok. |
-| 21 | test-cockpit-probe-fault.sh (renderer half, ~35 assertions); test-mail-pane.sh::? probe; test-now.sh::no trace ?; test-cockpit-reachable.sh::'? reachable' | T2, 13 (~25 `health.sh once` renders) | KEEP probe-fault as the **single** renderer FC table. **DEMOTE-TO-T1** via a health.sh seam that renders N snapshots per process. DELETE the weak bare-`?` duplicate in mail-pane. |
+| 21 | the retired cockpit-probe-fault suite (renderer half, ~35 assertions); test-mail-pane.sh::? probe; test-now.sh::no trace ?; test-cockpit-reachable.sh::'? reachable' | T2, 13 (~25 `health.sh once` renders) | KEEP probe-fault as the **single** renderer FC table. **DEMOTE-TO-T1** via a health.sh seam that renders N snapshots per process. DELETE the weak bare-`?` duplicate in mail-pane. |
 | 22 | test-now.sh::52/60/200/45/20-row panes, width, column 9; test-cockpit-fuse.sh::row fits 70/96 | T2, 8 | KEEP test-now.sh as golden frames. DELETE the width duplicate in fuse. |
 | 23 | test-now.sh::trace_stats ×6, model_short, model substitution, live PID | T2 | **DEMOTE-TO-T1**: source `trace_stats`/`trace_tail`/`model_short` instead of `sed+eval`. The dirty-trace case tests an **in-test copy** of the sanitiser: make it call the collector's own. |
 | 24 | test-drain-banner.sh (5); test-snap-stale-threshold.sh (7) | T2: 2 + 4 + 6 | KEEP drain-banner. **Cross-area:** test-world-drain.sh (58 s, instance-lifecycle) duplicates it case for case, so keep 2 s here. Move quota::STALE badge INTO probe-fault's table. KEEP snap-stale-threshold as the three-reader contract. |
@@ -318,10 +318,10 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 | 33 | test-loom-page.sh (13) | T3, 9 | **DEMOTE-TO-T1**: move 12 arms to `node --test` over fixture.json. The real-bd arm moves to the cockpit-bd-contract suite. The static page-shape greps become T0. Fix: missing node exits 0, not 77. |
 | 34 | test-loom-rebuild.sh (5) | T1, 2 | KEEP. The restart case should assert that the restart is (or is not) issued, not just queried. |
 | 35 | test-ready.sh (35) | T2 stubbed, 6 | KEEP (a good model). Fix: when nc is absent the port-open case prints two fake "ok" lines; make that a skip. Pin ephemeral ports. |
-| 36 | test-ctx-pointer.sh (13) | T1, 5 | KEEP |
-| 37 | test-limits.sh (28) | T1, 13 | KEEP (exemplary). An optional speed-up is to generate the blobs once per file. |
+| 36 | the retired ctx-pointer suite (13) | T1, 5 | KEEP |
+| 37 | the retired limits suite (28) | T1, 13 | KEEP (exemplary). An optional speed-up is to generate the blobs once per file. |
 | 38 | (test-statusline.sh retired with its subject) | - | DELETED |
-| 39 | test-tokens.sh (8); test-model-switch-report.sh (6); test-released-defects.sh (5) | T1/T1/T3: 16 + 1 + 8 | KEEP tokens and report. Investigate the 16 s for 4 runs of tokens.sh (header says under 1 s; possibly scanning a real transcript dir, a hermeticity leak). released-defects: **DEMOTE-TO-T2**, with a bd graph JSON fixture and real git. |
+| 39 | the retired tokens suite (8); test-model-switch-report.sh (6); test-released-defects.sh (5) | T1/T1/T3: 16 + 1 + 8 | KEEP tokens and report. Investigate the 16 s for 4 runs of tokens.sh (header says under 1 s; possibly scanning a real transcript dir, a hermeticity leak). released-defects: **DEMOTE-TO-T2**, with a bd graph JSON fixture and real git. |
 | 40 | test-resolve-output.sh (7) | T1, 1 | KEEP. Fix: a missing subject exits 0 ("SKIP"); make it 77 or a failure. |
 | 41 | test-cockpit-layout-identity.sh (5); test-cockpit-rebuild.sh::health tag/one session pane | T2 tmux, 3 | KEEP one tmux case in the shared-server suite. **DEMOTE the predicate to T1** over argv strings. |
 | 42 | test-cockpit-layout-mail.sh (5 groups); test-cockpit-rebuild.sh::mail build | T2 tmux: 5 + part of 18 | **MERGE** layout-mail INTO a shared-tmux-server suite with rebuild. Drop rebuild's mail build case, which duplicates it. |
@@ -329,8 +329,8 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 | 44 | test-cockpit-layout-conf.sh (4 groups); test-cockpit-mouse.sh (6, all source grep) | T2 tmux 4; T0 7 | **DEMOTE-TO-T1**: factor `build_health_cmd`, and call `apply_mouse_mode` with a PATH-shimmed tmux recording argv. test-cockpit-mouse.sh: **SOURCE-GREP to a behaviour test** (the `off\|no\|0)` regex matches any case arm). |
 | 45 | test-layout-guard.sh (5); test-cockpit-collector-watchdog.sh (4) | T2 6; T1 4 | KEEP both. Fix guard: its installed-copy `ensure` talks to the **ambient tmux server** with no pinned socket, so pin `-L`. Fix watchdog: source the function instead of extracting it with awk, and a missing function gives SKIP with exit 0. |
 | 46 | test-cockpit-rebuild.sh (8 groups) | T3 tmux, 18 | KEEP as the single tmux end-to-end. Fix the case that accepts `absent` as a pass for the long socket. Move remote.sh's source grep of rebuild.sh `COCKPIT_SESSIONS` here as a behaviour case. |
-| 47 | test-tmux-env.sh (8) | T2 tmux, 12 | KEEP. Run it on the shared server and shorten the 10×0.3 s poll. |
-| 48 | test-cockpit-remote.sh (10); test-cockpit-watcher-owner.sh (8) | T2: 1 + 3 | KEEP both. Remote: assert the dialer's rc, which is computed and never checked. The exec-bit and inventory greps move to T0. |
+| 47 | the retired tmux-env suite (8) | T2 tmux, 12 | KEEP. Run it on the shared server and shorten the 10×0.3 s poll. |
+| 48 | the retired cockpit-remote suite (10); test-cockpit-watcher-owner.sh (8) | T2: 1 + 3 | KEEP both. Remote: assert the dialer's rc, which is computed and never checked. The exec-bit and inventory greps move to T0. |
 
 ## 4. Duplicate clusters
 
@@ -355,7 +355,7 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
    - **Keep:** one merge table in tiered-collector that calls `collect.sh merge`.
 7. **Unsupervised-loop refusal and SP_AT ordering tested twice.** test-cockpit.sh and test-cockpit-tiered-collector.sh::6/7; the mapper notes "explicitly duplicated".
    - **Keep:** test-cockpit.sh for `cockpit.sh`, and tiered::6 for `collect.sh` only.
-8. **"? not 0" rendering spread across five suites.** test-cockpit-probe-fault.sh, test-mail-pane.sh, test-now.sh, test-cockpit-reachable.sh and test-cockpit-gate.sh.
+8. **"? not 0" rendering spread across five suites.** the retired cockpit-probe-fault suite, test-mail-pane.sh, test-now.sh, test-cockpit-reachable.sh and test-cockpit-gate.sh.
    - **Keep:** probe-fault's renderer table as the single place, and add a row for every new key. The other suites keep only their positive value rows.
 9. **Config-change exit tested three times.** test-cockpit-conf-change.sh (health.sh, 8 s), test-loom-conf-change.sh (loom.sh, 6 s) and test-cockpit-tiered-collector.sh::10 (collect.sh). Same contract (`law-long-lived-processes-pin-their-config`), three timing-bound copies.
    - **Keep:** one table-driven T1 suite parameterised by script, with an injected tick.

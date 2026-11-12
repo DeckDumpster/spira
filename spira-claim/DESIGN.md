@@ -786,7 +786,7 @@ grow `unpoison::one` a mode it does not otherwise have.
 
 `deadlocked` releases the poison hold on finished, mergeable work; it does not and must not
 touch the attempt count — the rungs are the record of how the bead got here
-(test-requeue.sh's sp-rq-s, and test-deadlock-sweep.sh's own assertion, both pre-date this
+(test-requeue.sh's sp-rq-s, and the retired deadlock-sweep suite's own assertion, both pre-date this
 bead and are unchanged). Without a record of the lift, CHECK 4's very next pass reads that
 same unchanged count against a bead no longer held and poisons it right back within
 minutes — sp-wiyr2. `mark_poison_lifted` writes `$SPIRA_RUN/poison-lifted/<id>` (last line =
@@ -871,7 +871,7 @@ out to be wrong and a lift reaching work in progress.
   writes nothing, `--apply` restores and leaves the attempt record standing, a live-work claim refuses and writes nothing, a lost CAS
   race retries once, a lift that does not verify reports `REFUSED`, and the sp-wiyr2 mark is
   written with the count at the moment of the lift. The git half (`groomer.sh deadlocked`)
-  is exercised end to end by the updated test-deadlock-sweep.sh and test-poison.sh (real
+  is exercised end to end by the updated the retired deadlock-sweep suite and test-poison.sh (real
   `spira-lc`/Dolt server, real git merge-tree), against the same fixtures attempts.sh's
   `deadlocked` was proven against.
 - **`reclassify`/`prune-reclaims` retirement**: evidence is §9.4's read-only label count, not

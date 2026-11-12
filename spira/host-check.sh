@@ -132,7 +132,7 @@ WHY
     fi
     bad=0
     for f in "${suites[@]}"; do
-        case "${f##*/}" in test-host-check.sh|test-host-reason.sh) continue ;; esac
+        case "${f##*/}" in test-host-check.sh) continue ;; esac
         rel="${f#"$ROOT"/}"
         host_check_one "$f" "$rel" || bad=1
     done

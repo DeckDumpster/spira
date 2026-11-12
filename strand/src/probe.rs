@@ -326,8 +326,7 @@ pub fn dwarves_live_lanes(cfg: &Config) -> u32 {
 
 /// `rune_free <rune> [pool-remaining] [exclude-unit]` (lib.sh): how many more of this
 /// persona may be called right now. lib.sh's OWN `rune_free` stays bash — it calls
-/// `dwarf_count`/`rune_get` BY NAME, and several suites (test-call-rune.sh,
-/// test-dwarf-elastic-concurrency.sh, test-rune.sh, test-builder-qa-proposed.sh,
+/// `dwarf_count`/`rune_get` BY NAME, and several suites (test-dwarf-elastic-concurrency.sh, test-rune.sh, test-builder-qa-proposed.sh,
 /// test-czar-partition.sh, test-dependents.sh) redefine those bash functions to control
 /// `rune_free`'s inputs without a real process table. Reducing `rune_free` itself to a
 /// one-line shim would move that arithmetic into a separate process where a bash-level

@@ -56,9 +56,7 @@ migration bead per family from this table.
 | --- | ---: | --- | --- | --- |
 | test-landing.sh | 88 | a landing pass puts finished work back on the board only when the work itself disagrees with the base | sim | Hand-off between pass, gate and lifecycle; `resubmit-moved-tip` and `conflicting-siblings` scenarios already cover the neighbouring rows. |
 | test-submitted-lands.sh | 85 | a model-submitted work bead in a non-queue repo submits, gates, lands and is closed by close-on-land | sim | Literally the happy-path hand-off; `happy-path.toml` + `submit-from-other-cwd.toml` cover it, so this is the first candidate to delete. |
-| test-landing-rebase.sh | 52 | survivor sweep rebases withheld branches when the base moves; loop-defer guard; checkout refresh | sim | Base-moves-under-a-branch is a scenario (`resubmit-moved-tip`); the checkout-refresh row is a unit test in the landing-pass crate. |
 | test-landing-base-fail.sh | 30 | a red base holds every pending branch and files one incident; the held branch lands once base is green | sim | Multi-pass interleaving over time is what the sim's clock is for. |
-| test-certify.sh | 54 | a closed branch is gated once per tip and certified on PASS, with no local rebase | sim | `certify-twice.toml` already asserts once-per-tip; add the no-rebase row there. |
 | test-express-lane.sh | 56 | the express label bypasses sentinel admission, and only that | unit | Admission is a predicate in the sentinel crate; the shell fixture only reaches it through a repo. |
 | test-config-compat-master-base.sh | 38 | the landing path works with a `master` base, not just `main` | sim | Same scenarios with `base = "master"`; a parameter, not a suite. |
 
@@ -87,7 +85,6 @@ migration bead per family from this table.
 | test-dwarf-teardown-e2e-exit.sh | 81 | yield-headless, exit-code and operator-wait rows | **partly migrated**: yield-headless and exit-code rows moved to `dwarf/src/tests.rs`; the operator-wait rows stay (real work broker and mail) | Shard; goes with parent. |
 | test-dwarf-lifecycle-cutover.sh | 65 | dwarf.sh on the semantic layer against a throwaway Dolt and real bd | sim (not migrated: the sim has no dwarf actor, and the property is dwarf against real bd) | The semantic layer has a sim; the Dolt-grant half belongs to family I. |
 | test-ops-closing.sh | 92 | close-time fences on a dwarf's finished session, through the real dwarf with a shim | **migrated**: dwarf runs are whole-run tests; the shell keeps only the pure phrase table | Fence = predicate over close evidence (unit) + wiring (scenario step); neither needs 92 s of dwarf. |
-| test-thrash-teardown.sh | 45 | a thrash disposition requeues instead of charging an attempt | **partly migrated**: dispositions moved to `dwarf/src/tests.rs`; the real-SIGTERM single-teardown case stays (needs a real process group) | Branch in `cleanup()` over a recorded disposition; belongs in the dwarf crate's `decide` tests. |
 | test-dwarf-gate-unfinished-attempts.sh | 31 | releasing a bead while its gate is still running leaves `attempts_of` unchanged | **migrated**: `dwarf/src/tests.rs` plus `spira-claim` events fold; suite deleted | An SQL net-zero rule over events; test the attempts query. |
 | test-slay.sh | 52 | slay stops one dwarf cleanly, removes its work, makes the bead say what is true | sim (not migrated: the sim has no dwarf actor or process group to slay) | Operator action in a world with a live dwarf. |
 
@@ -95,16 +92,13 @@ migration bead per family from this table.
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-dwarf-resume.sh | 80 | a branch with prior commits renders RESUME_BRIEF; a slay wip salvage renders SLAIN_BRIEF | unit | Text render over inputs. |
 | test-dwarf-resume-collision.sh | 40 | a lost resume race falls through to the next resumable candidate, not the general queue head | unit | Candidate selection after a failed claim; pure ordering. |
 | test-epic-claim-order.sh | 74 | claim rank: min(epic, bead) priority, started epic first, resumable before fresh, oldest | unit | A sort key; `epic_rank_rows` already isolates it. Cheapest win in the family. |
 | test-dwarf-worktree-collision.sh | 77 | never a second live session in a worktree another bead holds | sim | Two dwarves racing is a scenario, and flips in shell. |
 | test-dwarf-world-stop.sh | 40 | a world-stop-labelled bead is not run while live dwarves exist | unit | A predicate over labels and live count. |
 | test-dwarf-prod-dirty.sh | 55 | the prod-dirty guard is bound to the dwarf's own worktree, not the shared checkout | unit | Retired: `own_dirty` and `own_dirty_note` unit tests in `dwarf/src/verdict.rs` (UC-dwarf-execution-16). |
 | test-dwarf-wiki-dirty.sh | 39 | only this session's own still-dirty wiki writes are committed at exit, never `wiki/tasks.md` | unit | Path filter over a transcript. |
-| test-dwarf-sweep.sh | 44 | `dwarf.sh --sweep` runs the persona without a bead | keep | Launcher wiring with real argv; only a real dwarf.sh proves it. Candidate to share the full-dwarf fixture with D. |
 | test-unclaimable.sh | 30 | ready beads no persona can claim are surfaced; the detector does not report its own reports | unit | Claimers arithmetic plus a cycle guard. |
-| test-unclaimable-worktree.sh | 35 | detection uses production config, not the calling worktree's conf.sh | unit | One resolver call with two configs. |
 
 ### F — persona brief, prompt, model
 
@@ -116,7 +110,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | test-dwarf-runes-overlay.sh, -mech.sh | 60 + 60 | builder brief says how to verify once; overlay beats release text | deleted. Overlay mechanism was already `brief::tests::overlays_whole_section_append_and_absent`, doctor's rows `doctor::tests::runes_overlays_*`; added `brief::tests::the_shipped_builder_brief_has_one_way_to_verify_and_the_work_verbs_to_finish` (golden rows). |
 | test-dwarf-prompt-layers.sh, -sticking.sh | 53 + 58 | claude argv from the rune knobs, thrash banner | deleted. Banner and split were `brief::tests`; added `dwarf::tests::a_replace_rune_…`, `an_append_rune_…` and `brief::tests::the_shipped_groomer_splits_…`. |
 | test-persona-model.sh | 42 | one resolver for a persona's launch model | deleted. Resolver was `conf::tests::persona_model_reads_…`; added `dwarf::tests::the_launch_model_is_the_toml_persona_model_…` and `conf::tests::no_launcher_scrapes_a_model_…` (the source greps). |
-| test-call-rune.sh | 86 | `call_rune` refusal ladder and `rune_free` arithmetic | ladder moved to eight `sentinel` tests (`an_elastic_rune_…`, `a_task_rune_yields_…`, `the_collective_lane_cap_…`, `the_fleet_ceiling_…`, `a_task_rune_honours_the_pool_…`, `an_elastic_rune_takes_the_pool_remainder_…`, `a_call_carries_a_timeout_…`, `a_halt_refuses_…`). Kept: lib.sh `rune_free` (real bash), `dwarf --escape` through the world gate, the `world drain` expiry writer. Alone: 312 s before, 133 s after. |
 | test-concierge.sh | 32 | Concierge brief composition, resume/headless handling, historic ways in broke | kept. `concierge.sh` is the shell program under test (statute-book brief, tmux, `/proc` holder scan, wake delivery); there is no Rust owner to move it to, and a unit test of a shell function is the same shell test. |
 
 ### G — install, deploy, units
@@ -124,7 +117,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
 | test-install-dwarves.sh | 59 | install's live-dwarf guard, oneshot drain and end-state check | keep | Real install.sh against a mock systemctl; bare-host. |
-| test-uninstall.sh | 59 | uninstall removes the default tier, is idempotent and instance-aware, reports planted strays | keep | Bare-host, 816 lines of real filesystem effects. |
 | test-deploy.sh | 33 | deploy: fetch, drain, activate, re-render, health check, rollback, dry-run, draft refusal | keep | Real deploy path; wall is 1,792 lines, shard by property. |
 | test-cadence-tool.sh | 84 | cadence.sh changes a timer's cadence and refuses to disarm one | keep | Real systemd; wall is two fixed sleeps (8 s unit, 2 s) repeated per row. |
 | test-canary.sh | 74 | `release stage` and `release canary` build an isolated environment and run the pipeline end to end | keep | The canary is the thing it tests. |

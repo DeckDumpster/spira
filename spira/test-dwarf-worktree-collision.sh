@@ -44,7 +44,7 @@ tl_config SPIRA_TEST_CASE_DEADLINE=120
 . "$HERE/testdb.sh"
 testdb_require test-dwarf-worktree-collision
 TMP="$(mktemp -d)"
-# See test-dwarf-resume.sh: INT/TERM must call exit explicitly or suites.sh's orphan-kill
+# INT/TERM must call exit explicitly or suites.sh's orphan-kill
 # leaves the trap running forward against a deleted $TMP.
 trap 'testdb_drop; rm -rf "$TMP"' EXIT
 trap 'testdb_drop; rm -rf "$TMP"; exit 130' INT

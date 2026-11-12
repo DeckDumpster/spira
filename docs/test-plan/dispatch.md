@@ -66,7 +66,7 @@ Cost is ci_secs from the main-push run. When a file covers several use cases, it
 
 | UC | existing tests (file::case) | level & cost now | verdict |
 |---|---|---|---|
-| 01 | test-bead-file-kinds::`work: exits 0`, `kind+for`, `no-for`, `unknown kind` | T2-hermetic (argv-stub bd), 4 s | **KEEP as host** of `test-bead-file.sh`, T1; add missing `--repo`, unknown persona and label-less persona rows (G12) |
+| 01 | test-bead-file-kinds::`work: exits 0`, `kind+for`, `no-for`, `unknown kind` | T2-hermetic (argv-stub bd), 4 s | **KEEP as host** of the retired bead-file suite, T1; add missing `--repo`, unknown persona and label-less persona rows (G12) |
 | 02 | test-bead-file-kinds::`event`, `escalation`, `proposal`, `insight`, `insight p2`, `event+repo`, `event no-repo`, `gate` | (shared) | KEEP (same host) |
 | 03 | test-bead-lane-guard::`self-repo`, `dev-repo`, `override`, `builder plan` | T2-hermetic, 4 s | **MERGE-INTO test-bead-file-kinds.sh** (same fixture copy-pasted: fake rune, repo-map, argv-stub bd, 14-var env) |
 | 04 | test-bead-lint (retired) | — | **RETIRED** into `bead` crate unit tests over `LintSource` (`lint`, `remedy_edge`), each `// covers: UC-dispatch-04`; no bd, no Dolt. |
@@ -75,11 +75,11 @@ Cost is ci_secs from the main-push run. When a file covers several use cases, it
 | 07 | test-lanes::`roster split`, `roster non-empty`, `real roster`; test-rune::`builder/ops in roster` | T1, 6 s + 2 s (shared) | MERGE both into the roster suite (**test-rune.sh as host**) |
 | 08 | test-rune-predicates::`every callable persona resolves`, `schema_name *`, `SPIRA_PLAN_LABEL=work`; test-rune::`ops RUNE_LABELS contains incident`; secondary test-spike::`spike.rune fields` | T0+T1, 2 s | **MERGE-INTO test-rune.sh** (runtime rows). **SOURCE-GREP/DELETE**: `builder RUNE_LABELS built from $SPIRA_PLAN_LABEL`, `ops … $SPIRA_INCIDENT_LABEL`, `builder does not hardcode plan`, `ops does not hardcode incident` (exact source strings; the runtime override row already proves this). Keep the generic bare-literal scan as T0. |
 | 09 | test-rune::`call_rune ops asks its own predicate`, `ops predicate asked even when plan_ready=0`, `builder asks its own predicate`; test-spike::`partition (9 asserts)` | T1 2 s; spike T3 (shared) | KEEP T1 rows (drop the tautological `old code plan_ready=0` control). The spike partition rows stay T2 and are owned by safety-fences. |
-| 10 | test-elastic-ceiling::all; test-lane-ceiling::(a)(b)(c) + controls; test-drain-expiry::`live drain gates`; test-lanes::`task pool=0 not called`, `lane without pool called` | T1, 2+1+2+(6) s | **MERGE** into one table-driven `test-call-rune.sh` (host: test-elastic-ceiling.sh; its counting `rune_ready` stub is the template). Drop elastic `crit3` (verbatim duplicate of the first control). Add rows for halt and fleet-ceiling refusal (G5, G6); G7 (governor withhold) is stale — `spira/governor.sh` is gone. |
-| 11 | test-rune-free::all; test-lanes::`rune_free arithmetic (4)` | T1, 4 s | **MERGE-INTO test-call-rune.sh**; delete the tautological `buggy formula disagrees` control, and replace it with a row that fails under `max-have` applied to a remainder |
-| 12 | test-drain-expiry::all 7 | T1, 2 s | **MERGE-INTO test-call-rune.sh** (same stub fixture). This is the best seam test in the area: writer and reader are pinned in one file. |
+| 10 | test-elastic-ceiling::all; test-lane-ceiling::(a)(b)(c) + controls; test-drain-expiry::`live drain gates`; test-lanes::`task pool=0 not called`, `lane without pool called` | T1, 2+1+2+(6) s | **MERGE** into one table-driven the retired call-rune suite (host: test-elastic-ceiling.sh; its counting `rune_ready` stub is the template). Drop elastic `crit3` (verbatim duplicate of the first control). Add rows for halt and fleet-ceiling refusal (G5, G6); G7 (governor withhold) is stale — `spira/governor.sh` is gone. |
+| 11 | test-rune-free::all; test-lanes::`rune_free arithmetic (4)` | T1, 4 s | **MERGE-INTO the retired call-rune suite**; delete the tautological `buggy formula disagrees` control, and replace it with a row that fails under `max-have` applied to a remainder |
+| 12 | test-drain-expiry::all 7 | T1, 2 s | **MERGE-INTO the retired call-rune suite** (same stub fixture). This is the best seam test in the area: writer and reader are pinned in one file. |
 | 13 | test-effective-lanes::crit1–6 | T1, 2 s | KEEP T1 (it can sit in the roster suite). Fix the vacuous `nowant 'effective:.*mimir-sweep'`, which is a glob literal and always passes. |
-| 14 | test-sentinel-order::`pool=1/pool=3`, `CHECK7 before hel`, stamp rows; test-lane-ceiling::`(d) rotation` (**rotation reimplemented in the test**); secondary test-watchtower-throttle::`sentinel reads throttle stamp` (source grep); test-strand-truncated::case 4 (budget, real pass) | T3, 25 s | **KEEP test-sentinel-order.sh as the one T3 host** (rename `test-sentinel-pass.sh`), cut from 5 passes to 2 (fill+order in one pass, stamp-skip in a second). **SOURCE-GREP**: the rotation and throttle rows must go through an extracted `ck7_order`/`ck7_pool` in T1 (G1, G2). |
+| 14 | test-sentinel-order::`pool=1/pool=3`, `CHECK7 before hel`, stamp rows; test-lane-ceiling::`(d) rotation` (**rotation reimplemented in the test**); secondary test-watchtower-throttle::`sentinel reads throttle stamp` (source grep); test-strand-truncated::case 4 (budget, real pass) | T3, 25 s | **KEEP test-sentinel-order.sh as the one T3 host** (rename the retired sentinel-pass suite), cut from 5 passes to 2 (fill+order in one pass, stamp-skip in a second). **SOURCE-GREP**: the rotation and throttle rows must go through an extracted `ck7_order`/`ck7_pool` in T1 (G1, G2). |
 | 15 | test-lanes::`escape.sh calls`, `nothing ready`; `escape.sh contains 'control plane'` | T1 (shared) | KEEP both behaviour rows; **DELETE** the comment grep |
 | 16 | test-unclaimable-bead::case1–12; test-unclaimable-cycle::control/guard/both | T3 47 s (12 resets); T1 72 s (anomalous: 3 python calls; declared timeout 60) | **DEMOTE-TO-T1** cases 1–7, 10, 12 plus the cycle rows as one fixture-JSON table in `test-unclaimable.sh` (host: test-unclaimable-cycle.sh, which already drives the real python body without a DB). Keep 1 T2 row (the bd-ready JSON shape) and the incident-filing rows 8, 9, 11 against a mock `incident.sh`. unclaimable-cycle is **SOURCE-GREP** in a different sense: it extracts code by splitting lib.sh text, so move the python body to `sentinel/src/unclaimable.rs`. |
 | 17 | test-cockpit-unclaimable::case1–4 (secondary) | T1-ish 3 s | KEEP (cockpit area); assert per-id attribution, since case 4 cannot tell which id got which label |
@@ -88,7 +88,7 @@ Cost is ci_secs from the main-push run. When a file covers several use cases, it
 | 20 | none (CHECK 2 reclaim loop, `bump_reclaim`, CHECK 2c `release_orphan_claims`) | — | **GAP** (G9, G10) |
 | 21 | test-reclaim-needs-ryan::3; test-reclaim-escalated::cases 1–4; other area test-check2-reclaim | T1 2 s; T2 7 s | reclaim-needs-ryan **MERGE-INTO** the strand-classify table (test-strand-partition.sh, ops area). Keep reclaim-escalated as the single T2 chain and **DELETE** its case 1 (same control as needs-ryan). Recommend that test-check2-reclaim drop its label-only assertions. |
 | 22 | test-unmapped-repo-park::all 5 | T3 5 s, **exercises only bd's own `--exclude-label`**, never dwarf.sh | **DELETE (tests the dependency, not Spira)**; replace with a T1 test of the dwarf.sh park path (G13) |
-| 23 | test-rune::`default CPUQuota=70%`, `custom CPUQuota=90%`; test-rune-project-instructions (secondary) | T1 (shared); 2 s | MERGE the CPUQuota rows into test-call-rune.sh. project-instructions stays in dwarf-execution, but covers only sweep mode (G17). |
+| 23 | test-rune::`default CPUQuota=70%`, `custom CPUQuota=90%`; test-rune-project-instructions (secondary) | T1 (shared); 2 s | MERGE the CPUQuota rows into the retired call-rune suite. project-instructions stays in dwarf-execution, but covers only sweep mode (G17). |
 | 24 | test-ops-allowlist (secondary) | T1 6 s | KEEP in safety-fences; the matcher is the test's own glob, not CLI semantics |
 
 ---
@@ -97,8 +97,8 @@ Cost is ci_secs from the main-push run. When a file covers several use cases, it
 
 | # | behaviour | files | evidence | keep |
 |---|---|---|---|---|
-| D1 | `bead.sh file` fixture and builder `--for` control | test-bead-file-kinds, test-bead-lane-guard | Mapper notes an identical copy-pasted 14-var env, fake rune, repo-map and argv-stub bd; both run a builder `--for` control | **test-bead-file-kinds.sh**, renamed `test-bead-file.sh` |
-| D2 | `call_rune` stub fixture (`dwarf_count`, `capacity_paused`, `rune_ready`, `SPIRA_CALL` mock) and the "held back" last-slot log | test-elastic-ceiling, test-lane-ceiling, test-drain-expiry, test-lanes, test-rune | Five files each source lib.sh (5,571 lines) and rebuild the same stubs. `held back` is asserted in both ceiling suites. elastic `crit3` repeats its own first control verbatim. | one table **test-call-rune.sh** (from test-elastic-ceiling) |
+| D1 | `bead.sh file` fixture and builder `--for` control | test-bead-file-kinds, test-bead-lane-guard | Mapper notes an identical copy-pasted 14-var env, fake rune, repo-map and argv-stub bd; both run a builder `--for` control | **test-bead-file-kinds.sh**, renamed the retired bead-file suite |
+| D2 | `call_rune` stub fixture (`dwarf_count`, `capacity_paused`, `rune_ready`, `SPIRA_CALL` mock) and the "held back" last-slot log | test-elastic-ceiling, test-lane-ceiling, test-drain-expiry, test-lanes, test-rune | Five files each source lib.sh (5,571 lines) and rebuild the same stubs. `held back` is asserted in both ceiling suites. elastic `crit3` repeats its own first control verbatim. | one table **the retired call-rune suite** (from test-elastic-ceiling) |
 | D3 | `rune_free` elastic/pool arithmetic | test-rune-free, test-lanes::`rune_free arithmetic` | Same function and same elastic-returns-pool rows (0/2) | rows from test-rune-free, inside D2's host |
 | D4 | ops/builder predicate built from the incident/plan labels | test-rune-predicates (exact source strings), test-rune (runtime `rune_get`), test-spike (`spike.rune fields`) | The same property is checked three ways; the source-string form breaks on harmless refactors | runtime rows in **test-rune.sh** plus one generic T0 literal scan |
 | D5 | Roster discovery | test-rune, test-lanes (`roster split`, `real roster`), test-spike (`rune discovered without listing`), test-mimir (other area) | Each asserts that `spira_runes` lists a runes persona | **test-rune.sh** |
@@ -132,10 +132,10 @@ Cost is ci_secs from the main-push run. When a file covers several use cases, it
 2. **G2: throttle → task pool 0 is tested only by source grep.** test-watchtower-throttle l.308–318 greps `SPIRA_THROTTLE_STAMP` in sentinel.sh. Nothing tests the behaviour that lanes stay unaffected (sp-h7zzx) or that `SPIRA_QUEUE_THROTTLE_OVERRIDE=off`.
 3. **G3: per-persona fill cap is untested.** The fill-loop break `_fill >= ${SPIRA_MAX_LIVE_DWARVES:-4}` with no pool set (sentinel.sh l.1272) is what stops an unbounded call loop on a host without a pool.
 4. **G4: `RUNE_RESERVE` is documented but not implemented.** sentinel.sh l.1188 says "Ops also RESERVES a slot (RUNE_RESERVE in its .rune)". `grep RUNE_RESERVE lib.sh runes/*.rune` finds nothing. Either the spec is dead or a feature was lost; decide, then test or delete the comment.
-5. **G5: RESOLVED (sp-9ce60.2.1).** A direct row in test-call-rune.sh now asserts that `call_rune` returns 1 and logs `halted — not calling` while `world.halted` is present; previously asserted only by test-world.sh's source grep.
-6. **G6: RESOLVED (sp-9ce60.2.1).** A direct row in test-call-rune.sh now asserts `N/M dwarf(s) live across the whole fleet — not calling` (lib.sh) at the plain fleet ceiling, distinct from the last-slot rules the ceiling suites already covered.
+5. **G5: RESOLVED (sp-9ce60.2.1).** A direct row in the retired call-rune suite now asserts that `call_rune` returns 1 and logs `halted — not calling` while `world.halted` is present; previously asserted only by test-world.sh's source grep.
+6. **G6: RESOLVED (sp-9ce60.2.1).** A direct row in the retired call-rune suite now asserts `N/M dwarf(s) live across the whole fleet — not calling` (lib.sh) at the plain fleet ceiling, distinct from the last-slot rules the ceiling suites already covered.
 7. **G7: STALE, noted MOOT (sp-9ce60.2.1).** `spira/governor.sh` and every `SP_GOVERNOR*`/governor reference are confirmed gone from `lib.sh` as of sp-8mzsh landing on `main`. The `enforce`-mode clamp this gap named no longer exists in `rune_free`, and UC-dispatch-11 above has been trimmed of its governor-clamp clause to match (sp-9ce60.4). No governor-mode row is written for `rune_free` or anywhere else in this area.
-8. **G8: PARTIALLY RESOLVED.** `escape.sh` hard-coded `CPUQuota=70%`, ignoring `SPIRA_DWARF_CPU_QUOTA`; fixed (sp-9ce60.4) by sharing `call_argv()` (lib.sh) with `call_rune`, so the flag now reaches `escape.sh` exactly as it reaches `call_rune`. The halt/drain question is unchanged: sp-9ce60.2.1 wrote a characterization row (test-call-rune.sh) asserting today's bypass and opened the decision as sp-6rv05, still unanswered. An mail asking the same question was sent independently (sp-9ce60.4) before sp-6rv05 was found; sp-6rv05 is canonical. `escape.sh` still does not call `world_gate()` — only `call_rune` does — pending that decision.
+8. **G8: PARTIALLY RESOLVED.** `escape.sh` hard-coded `CPUQuota=70%`, ignoring `SPIRA_DWARF_CPU_QUOTA`; fixed (sp-9ce60.4) by sharing `call_argv()` (lib.sh) with `call_rune`, so the flag now reaches `escape.sh` exactly as it reaches `call_rune`. The halt/drain question is unchanged: sp-9ce60.2.1 wrote a characterization row (the retired call-rune suite) asserting today's bypass and opened the decision as sp-6rv05, still unanswered. An mail asking the same question was sent independently (sp-9ce60.4) before sp-6rv05 was found; sp-6rv05 is canonical. `escape.sh` still does not call `world_gate()` — only `call_rune` does — pending that decision.
 9. **G9: RESOLVED (sp-i2m7y).** `check2_reclaim_stale` no longer loops over `rune_partitions` calling `bdq reclaim` — it scans every spira-lc bead row in `WORKING` state once and fires a real `HolderDead` event on each whose lease is stale past `SPIRA_RECLAIM_GRACE_SECS` and carries no `wait` hold. test-check2-reaper.sh's G9 cases now drive this against a real spira-lc/Dolt: the positive control (expired lease reaped and charged), a live lease left alone, a wait-held bead exempted, and the empty-set no-op.
 10. **G10: RESOLVED (sp-i2m7y).** `release_orphan_claims`/`release_orphan_claims_partitions` are gone — the race they released (a bd status reset leaving the assignee standing) cannot occur in spira_lifecycle, where holder and state change together in one version-checked transaction. CHECK 2c now calls `check2c_lc_consistency` (lib.sh), a detector rather than a repair: it names a spira-lc row whose holder and state disagree instead of releasing a bd claim. test-check2-reaper.sh's G10 cases seed such a row directly by SQL (the only way to produce one, since no legal transition can) and assert it is flagged, plus a positive control that a consistent row is not.
 11. **G11: two implementations of the bead contract, and the harness one accepts unmapped repos.** Harness `spira/bead.sh file --for builder --repo typo` succeeds, because `spira_repo_lanes` on an unmapped repo returns every lane (lib.sh l.4035–4043), so the bead gets `repo:typo`. CHECK 5 later skips it ("not in repo-map"). The brain's `.claude/bead.sh` (41 KB) refuses unmapped repos and re-checks claimers, but it is tested only by `brain/.claude/test-bead.sh`, outside harness CI. The CLAUDE.md claim "requires a `repo:` the repo-map resolves" holds only for the brain copy.
@@ -163,13 +163,13 @@ Of that, 72 s is test-unclaimable-cycle, a 60-line file that runs 3 python proce
 | suite (tier) | absorbs | projected s | arithmetic |
 |---|---|---|---|
 | T0 lint rows (bare-dash, bare-literal RUNE_LABELS, gh-intake token greps) | bd-stdin, parts of rune-predicates and gh-intake | 2 | one scan of spira/ and runes/ once, instead of 5 s with a double scan |
-| test-bead-file.sh (T1) | bead-file-kinds + bead-lane-guard + G12 rows | 4 | 8 → 4: one fixture, one conf.sh source per row |
+| the retired bead-file suite (T1) | bead-file-kinds + bead-lane-guard + G12 rows | 4 | 8 → 4: one fixture, one conf.sh source per row |
 | test-rune.sh (T1 roster/predicates) | rune + rune-predicates runtime + lanes roster + effective-lanes | 3 | 2+2+2(lanes share)+2 = 8 → 3: one lib.sh source |
-| test-call-rune.sh (T1 table) | elastic-ceiling + lane-ceiling + drain-expiry + rune-free + lanes (call/free/escape) + rune CPUQuota + G5–G8 rows | 4 | 2+1+2+4+4(lanes rest) = 13 → 4: one lib.sh source instead of six |
+| the retired call-rune suite (T1 table) | elastic-ceiling + lane-ceiling + drain-expiry + rune-free + lanes (call/free/escape) + rune CPUQuota + G5–G8 rows | 4 | 2+1+2+4+4(lanes rest) = 13 → 4: one lib.sh source instead of six |
 | check8 predicate (T1) | check8-progressed + G15 rows | 1 | 10 → 1: no Dolt, no pass |
 | test-gh-intake.sh (T2) | gh-intake | 8 | 12 − static rows − duplicate reruns ≈ 8 |
 | test-reclaim-escalated.sh (T2 chain) + classifier rows | reclaim-escalated − case 1; reclaim-needs-ryan → strand table | 7 | 6 + 1 (the 3 rows added to the strand-classify table, costed here) |
-| test-sentinel-pass.sh (T3, batch/main) | sentinel-order + sentinel-capacity (+ G1–G3 through extracted functions in T1) | 12 | 25 + 6 = 31 (7 passes, 2 testdb_up) → 2 passes on one testdb ≈ 10 s + unreadable-DB pass with no testdb ≈ 2 s |
+| the retired sentinel-pass suite (T3, batch/main) | sentinel-order + sentinel-capacity (+ G1–G3 through extracted functions in T1) | 12 | 25 + 6 = 31 (7 passes, 2 testdb_up) → 2 passes on one testdb ≈ 10 s + unreadable-DB pass with no testdb ≈ 2 s |
 | test-unclaimable.sh (T1 table + 1 T2 row) | unclaimable-bead + unclaimable-cycle | 8 | 47 + 72 = 119 → T1 ≈ 2 s + one testdb_up/seed/`bd ready` ≈ 6 s |
 | park_unmapped (T1) | replaces unmapped-repo-park | 1 | 5 → 1 |
 | new gap rows G9/G10 (T1 parse + stub) | — | 1 | new |
@@ -197,16 +197,16 @@ own children (sp-9ce60.1 through .8) and this closing session's rebase onto `ori
   `spira/plan-lint.sh`-readable `UC-dispatch-NN` declarations in §2, and every suite below
   tagged `# tier:`/`# covers: UC-dispatch-NN`.
 - **D1–D8 applied.** D1: `test-bead-file-kinds.sh` + `test-bead-lane-guard.sh` →
-  `test-bead-file.sh` (adds the G12 refusal rows and UC-dispatch-03's unmapped-repo
+  the retired bead-file suite (adds the G12 refusal rows and UC-dispatch-03's unmapped-repo
   refusal, sp-pnhtt). D2/D3/D4/D5: `test-elastic-ceiling.sh`, `test-lane-ceiling.sh`,
-  `test-drain-expiry.sh`, `test-rune-free.sh`, `test-lanes.sh` and
-  `test-rune-predicates.sh` → `test-call-rune.sh` (arithmetic) and `test-rune.sh`
+  `test-drain-expiry.sh`, `test-rune-free.sh`, the retired lanes suite and
+  `test-rune-predicates.sh` → the retired call-rune suite (arithmetic) and `test-rune.sh`
   (roster/predicates), one `lib.sh` source and one stub set instead of six. D6:
   `test-unclaimable-bead.sh` + `test-unclaimable-cycle.sh` → `test-unclaimable.sh`, the
   classifier body moved to `sentinel/src/unclaimable.rs`. D7: `test-reclaim-needs-ryan.sh` merged
   into `test-strand-partition.sh`'s classifier table and `test-reclaim-escalated.sh`'s T2
   chain. D8: `test-sentinel-order.sh` + `test-sentinel-capacity.sh` + the two full-pass
-  cases from `test-check8-progressed.sh` → `test-sentinel-pass.sh` (T3, 2 Dolt passes
+  cases from `test-check8-progressed.sh` → the retired sentinel-pass suite (T3, 2 Dolt passes
   instead of 9).
 - **Row 05/06 verdicts applied** via dedicated fences rather than one combined grep
   script: `test-bd-stdin.sh` now tests `spira/bd-stdin-lint.sh` (T0, wired into
@@ -215,17 +215,17 @@ own children (sp-9ce60.1 through .8) and this closing session's rebase onto `ori
   static rows moved to `spira/gh-intake-lint.sh`.
 - **G1–G3, G9, G10, G13–G18 closed.** `lane_rotate`, `ck7_pool`, `ck7_fill_cap`,
   `check8_should_judge`, `check2_reclaim_stale` and `parse_reclaimed` are `lib.sh` seams
-  with direct T1 tables (`test-call-rune.sh`, `test-watchtower-throttle.sh`,
+  with direct T1 tables (the retired call-rune suite, `test-watchtower-throttle.sh`,
   `test-check8-progressed.sh`, `test-check2-reaper.sh`). G4 (`RUNE_RESERVE`): the dead
   comment describing an unimplemented reservation was removed; there is no feature to
   test. G5/G6: the halt gate and the plain fleet-ceiling refusal each have a positive
-  control plus a refusal row in `test-call-rune.sh`. G7 (governor withholding): moot,
-  `spira/governor.sh` is deleted (sp-8mzsh) and `test-call-rune.sh` asserts its absence.
+  control plus a refusal row in the retired call-rune suite. G7 (governor withholding): moot,
+  `spira/governor.sh` is deleted (sp-8mzsh) and the retired call-rune suite asserts its absence.
   G8 (escape.sh vs. halt/drain): characterized as current behaviour in
-  `test-call-rune.sh`, filed as a decision bead (sp-6rv05) rather than changed here; the
+  the retired call-rune suite, filed as a decision bead (sp-6rv05) rather than changed here; the
   `CPUQuota` half of G8 (hard-coded 70%) is fixed and tested. G11: `bead.sh file` now
   refuses an unmapped `--repo` before calling `bd create` (sp-pnhtt), tested in
-  `test-bead-file.sh`. G13: `spira/test-unmapped-repo-park.sh` deleted (it exercised only
+  the retired bead-file suite. G13: `spira/test-unmapped-repo-park.sh` deleted (it exercised only
   `bd`'s own `--exclude-label`); `park_unmapped` is extracted and tested directly. G14:
   `bead.sh contract` output has its own suite (`test-bead-contract.sh`). G16:
   `rune_exclude` has a direct table in `test-rune.sh`. G17/G18: bead-mode
@@ -250,11 +250,11 @@ Deferred, as follow-up work under this bead's epic (`sp-s088v`), not blocking th
 
 **Measured suite-seconds (testenv, this closing session), against §7's projection.** The
 17 primary dispatch suites landed by this bead's children (`test-bd-stdin.sh`,
-`test-gh-intake-lint.sh`, `test-bead-file.sh`, `test-rune.sh`,
-`test-call-rune.sh`, `test-check8-progressed.sh`, `test-gh-intake.sh`,
+`test-gh-intake-lint.sh`, the retired bead-file suite, `test-rune.sh`,
+the retired call-rune suite, `test-check8-progressed.sh`, `test-gh-intake.sh`,
 `test-reclaim-escalated.sh`, `test-strand-partition.sh`, `test-check2-reaper.sh`,
-`test-check2-reclaim.sh`, `test-sentinel-pass.sh`, `test-unclaimable.sh`,
-`test-park-unmapped.sh`, `test-lanes.sh`, `test-bead-contract.sh`) via
+`test-check2-reclaim.sh`, the retired sentinel-pass suite, `test-unclaimable.sh`,
+the retired park-unmapped suite, the retired lanes suite, `test-bead-contract.sh`) via
 `spira/testenv-batch.sh`: 158 s summed per-suite (§7's own "sum ci_secs" method), 93 s
 wall (serial, one container). Against the §7 baseline (240 s main-push, 168 s
 anomaly-free) that is −34% summed / −61% wall; against §7's 57 s projection, testenv's

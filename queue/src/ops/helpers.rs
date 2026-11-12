@@ -8,7 +8,7 @@
 //!
 //! The other three keep external callers and so keep a one-line lib.sh shim onto `queue`'s
 //! own CLI (`main.rs`): `queue_certified_list` (`queue-certified-list.sh`, cockpit-collect),
-//! `queue_sort_rows` (`test-queue-sort-large.sh`, cockpit-collect) and `spira_git_push`
+//! `queue_sort_rows` (cockpit-collect) and `spira_git_push`
 //! (`branch-sweep.sh`, `test-git-push-app.sh`, and landing-pass's own separate seam, a
 //! different crate this bead does not touch).
 

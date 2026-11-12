@@ -37,7 +37,7 @@ WIN_STAY_TOUCH=3
 WIN_CHANGE=15
 
 # wait_for_marker <marker> -> 0 once <marker> exists, 1 after ~10s. The bounded poll idiom
-# already used elsewhere in this tree (test-thrash-teardown.sh) for "wait on a real signal",
+# already used elsewhere in this tree for "wait on a real signal",
 # never a fixed sleep guessing how long the signal takes to arrive.
 wait_for_marker() {
     local marker="$1" waited=0

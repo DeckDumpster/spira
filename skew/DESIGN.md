@@ -207,4 +207,4 @@ forge, `refresh`'s release-mode `release build/verify/activate` against a real r
 directory, and `check_local`'s `release verify` against a real MANIFEST. Those remain the
 round's integration coverage through `test-skew-escalate.sh`, `test-unit-drift.sh`, and the
 suites that exercise `deploy.sh`/`release`/`queue` end to end (`test-deploy.sh`,
-`test-land-local-release.sh`, `test-landing-rebase.sh`).
+`test-land-local-release.sh`, the retired landing-rebase suite).

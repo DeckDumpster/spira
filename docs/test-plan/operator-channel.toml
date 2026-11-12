@@ -271,6 +271,11 @@ id = "UC-operator-channel-39"
 tier = "T1"
 statement = "A rune with RUNE_CALL=operator never enters the task pool or the lanes. The shipped concierge is operator-only and the builder stays callable."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-operator-channel-40"
 tier = "T1"
@@ -285,6 +290,11 @@ statement = "The composed brief has no surviving {{, names an executable mail an
 id = "UC-operator-channel-42"
 tier = "T1"
 statement = "render_memories renders SPIRA_STATUTE_CORE in full and every other statute as exactly one slug line. An over-budget core statute falls back to a slug. The…"
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-zxj2fq"
 
 [[use_case]]
 id = "UC-operator-channel-43"

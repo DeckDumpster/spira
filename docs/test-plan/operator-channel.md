@@ -138,10 +138,10 @@ The "file::case" entries use the mapper's case names. The cost column shows ci_s
 | 36 | test-watcher-reopen.sh::pc1/pc2/case1/case2 | T3 server-mode Dolt, 45 s | DEMOTE-TO-T1 the interval→cause classifier. **MERGE-INTO test-incident-recur-cause.sh** the events-table and dep-blocked cases. Delete case2 (duplicates pc2) and the unconditional "dep added" ok |
 | 37 | test-watch-unit-restart.sh (5); test-unit-restart-limits.sh (secondary); render/install sections of test-watch-notify.sh, test-watch-refresh.sh, test-pr-notify.sh; unit greps of test-mail-tidy.sh | T0 + T2 install runs | **DELETE test-watch-unit-restart.sh** (the `systemd/*.service` glob in test-unit-restart-limits.sh already covers it). Fold the render/install checks into one T0 unit-render lint |
 | 38 | test-pr-notify.sh::positive control … push/hold not scanned | T2, 22 s (full install.sh run + ~10 invocations) | DEMOTE-TO-T1 the gh-JSON classifier. Keep one T2 branch-without-PR case. Install section → T0 |
-| 39 | test-concierge.sh::roster (task pool/lane/operator exact, shipped concierge) | T1-shaped inside a T4-shaped file, 6 s | KEEP as T1 in a split test-concierge-roster.sh (also overlaps test-rune-predicates.sh; keep one) |
+| 39 | test-concierge.sh::roster (task pool/lane/operator exact, shipped concierge) | T1-shaped inside a T4-shaped file, 6 s | KEEP as T1 in a split the retired concierge-roster suite (also overlaps test-rune-predicates.sh; keep one) |
 | 40 | test-concierge.sh::_resume-id, session hook recording (8), _live-pid, HEADLESS ×2, dangling resume, start survives cgroup, layout pane | mixed; ~40 % skipped in CI and the skips are not counted | Split: T1/T2 cases → CI. **DELETE the duplicate HEADLESS and duplicate launcher `--resume` sections.** systemd/tmux cases → host-only T4 with skips **reported as skips** |
 | 41 | test-concierge.sh::brief composed (reads the **live** statute book), missing brief, all-typo core, no-wiki brief | non-hermetic | DEMOTE-TO-T1 with a fixture statute set via the render_memories seam |
-| 42 | test-render-memories.sh (13) | T3 (testdb as key-value store), 7 s | **DEMOTE-TO-T1** (12 cases over a slug→body fixture); keep 1 real-bd read |
+| 42 | the retired render-memories suite (13) | T3 (testdb as key-value store), 7 s | **DEMOTE-TO-T1** (12 cases over a slug→body fixture); keep 1 real-bd read |
 | 43 | test-statute-projection.sh (12) | T3, 5 s | RESOLVED (sp-fe3ee): law-synth.sh now ships as spira/law-synth.sh, so the law-synth half no longer skips. KEEP at T2 |
 | 44 | test-sop-lint.sh (13); test-sop.sh::lint METRIC (4) | T3, 8 s + part of 24 s | **MERGE**: test-sop-lint.sh MERGE-INTO test-sop.sh as a T1 validator table. Keep 1 fail-closed read. The "gate calls sop.sh lint" grep → T0 |
 | 45 | test-sop.sh (≈110 asserts); test-ops-closing.sh (secondary, 102 s: SOP closing rule, which is now **off** for every shipped persona, sp-q27cp) | T3, 24 s | KEEP at T2 behind a shelf seam. **Stop invoking sop.sh twice per rc+output pair.** The ops.md brief-text check → T0 brief lint (**SOURCE-GREP**). test-ops-closing.sh's SOP half is flagged to its owning area as testing a mechanism no persona enables |
@@ -219,7 +219,7 @@ answers-premise-rejected 18 + answers-silent-seed 5 + archivist-cited-bead 8 + b
 | test-mail-deliver.sh / test-mail-health.sh / test-skew-escalate.sh | 3 + 3 + 2 | 3 + 3 + 2 | unchanged |
 | test-brief-mail-options.sh (T0) | 4 | 1 | parse cmd_send once |
 | test-concierge (CI part) | 6 | 4 | systemd/tmux parts move to host acceptance |
-| test-render-memories.sh | 7 | 5 | T1 + one real-bd read (testdb_up dominates) |
+| the retired render-memories suite | 7 | 5 | T1 + one real-bd read (testdb_up dominates) |
 | test-sop.sh (+sop-lint) | 24 + 8 = 32 | 10 | T1 validator; shelf seam; no double invocation |
 | test-statute-projection.sh | 5 | 5 | unchanged |
 | test-verify-asks.sh | 31 | 6 | T1 sweep + one seed/close |

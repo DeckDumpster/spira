@@ -6,6 +6,11 @@ id = "UC-landing-merge-queue-01"
 tier = "T3"
 statement = "A closed queue-mode branch whose gate passes is `CERTIFIED` at its tip. Main is unchanged and the bead stays closed."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-a3q7hi"
+
 [[use_case]]
 id = "UC-landing-merge-queue-02"
 tier = "T1"
@@ -20,6 +25,11 @@ bead = "sp-94lbj.2"
 id = "UC-landing-merge-queue-03"
 tier = "T3"
 statement = "A gate FAIL or a failed rebase at certification reopens the bead and marks it `RED`. Main is unchanged. The reopen note (the tail of the gate output) names the offending file:line."
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-a3q7hi"
 
 [[use_case]]
 id = "UC-landing-merge-queue-04"
@@ -96,30 +106,60 @@ id = "UC-landing-merge-queue-13"
 tier = "T3"
 statement = "An uncontested branch lands by ancestry and advances the operator checkout. The pass records `bead.landed`."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-a3q7hi"
+
 [[use_case]]
 id = "UC-landing-merge-queue-14"
 tier = "T3"
 statement = "A push rejected because the base moved is retried and lands the branch's own commits. The next pass does not land it again. A rejection that is not a race is not called a race, and neither case reopens the bead."
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-a3q7hi"
 
 [[use_case]]
 id = "UC-landing-merge-queue-15"
 tier = "T3"
 statement = "A pass reopens a bead only for a failure it can attribute: a failed gate (`bead.reopened`) or a real conflict naming the file. A parallel-duplicate note names the bead that already landed."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-a3q7hi"
+
 [[use_case]]
 id = "UC-landing-merge-queue-16"
 tier = "T2"
 statement = "`rebase_branch` classifies `no-branch`, `no-base`, `conflict` and `rebase-refused` (keeping git's reason), and names the conflicting files. It succeeds without an ambient git identity by using `SPIRA_GIT_NAME/EMAIL`. Every arm in landing.sh reads `REBASE_FAILURE`."
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
 
 [[use_case]]
 id = "UC-landing-merge-queue-17"
 tier = "T3"
 statement = "A branch reaped or slain mid-pass, or between a race and its retry, is never reported as a conflict. The pass says whether the work is on the base."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-a3q7hi"
+
 [[use_case]]
 id = "UC-landing-merge-queue-18"
 tier = "T3"
 statement = "After a landing moves the base, withheld survivors are rebased at once. A survivor that truly conflicts is reopened, naming the landing. A branch held by a live dwarf is never rewritten or landed."
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-a3q7hi"
 
 [[use_case]]
 id = "UC-landing-merge-queue-19"
@@ -127,7 +167,7 @@ tier = "T2"
 statement = "Repeated rebase failures escalate at `SPIRA_REBASE_ESCALATE_AT` instead of reopening, exactly once. A merge-conflict event is written once per (tip, base)."
 
 [use_case.uncovered]
-reason = "escalation exactly once and the per-(tip, base) merge-conflict event are pinned only by landing-pass pr_branch/pass cargo tests; test-landing-rebase.sh asserts one escalation at the threshold but not once-only or the event dedupe"
+reason = "escalation exactly once and the per-(tip, base) merge-conflict event are pinned only by landing-pass pr_branch/pass cargo tests; the retired landing-rebase suite asserts one escalation at the threshold but not once-only or the event dedupe"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 
@@ -146,15 +186,30 @@ id = "UC-landing-merge-queue-21"
 tier = "T3"
 statement = "The pass skips a superseded closed bead's branch instead of reopening it. The other branches still land."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-a3q7hi"
+
 [[use_case]]
 id = "UC-landing-merge-queue-22"
 tier = "T2"
 statement = "The bead scan issues one bulk `bd show`. A branch with no bead is never landed. A bead without a `repo:` label lands in the swept repo. A bead reopened during its gate is not landed and not reopened again."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-a3q7hi"
+
 [[use_case]]
 id = "UC-landing-merge-queue-23"
 tier = "T1"
 statement = "The pass prunes verdict-cache entries older than `SPIRA_VERDICT_TTL` and reports a reused verdict."
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-a3q7hi"
 
 [[use_case]]
 id = "UC-landing-merge-queue-24"
@@ -170,6 +225,11 @@ statement = "`submit` accepts only `spira/<id>` branches. It runs the gate again
 id = "UC-landing-merge-queue-28"
 tier = "T1"
 statement = "`flush` runs the builder now with wait=0 and refuses push-mode and unknown repos. `step` runs the verdict before the batch. Landing's queue pass calls `queue.sh step`."
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-l301es"
 
 [[use_case]]
 id = "UC-landing-merge-queue-29"
@@ -191,10 +251,20 @@ id = "UC-landing-merge-queue-31"
 tier = "T1"
 statement = "`queue_sort_rows` keeps every row when the priority JSON is over 128 KiB, orders by priority with suite-state transitions first, and fails open on bad JSON."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-ugnv1x"
+
 [[use_case]]
 id = "UC-landing-merge-queue-32"
 tier = "T1"
 statement = "`queue.sh protect` sets branch protection on the repo's base branch and writes a receipt."
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-l301es"
 
 [[use_case]]
 id = "UC-landing-merge-queue-33"
@@ -335,3 +405,9 @@ statement = "The broker refuses verbs outside its policy table, and refuses czar
 id = "UC-landing-merge-queue-57"
 tier = "T2"
 statement = "When a bead with a GitHub ref lands, its issue is commented (short SHA + link) and closed once, with a marker. An unlanded bead's issue is never closed. Backfill decides landed-ness by ancestry of `spira: land <id>`. The unlanded scan asks once, logs refusals, and marks issues already closed on the forge."
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-y3jpuc"
+

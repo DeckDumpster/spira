@@ -116,6 +116,11 @@ id = "UC-ops-detection-remediation-22"
 tier = "T2"
 statement = "`strand.sh report` detects an exhausted sentinel pass budget (\"CHECK7 <rune>: not evaluated\" in the latest pass) and reports pass-truncated, marking every rune not evaluated and calling none."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-w5l1pi"
+
 [[use_case]]
 id = "UC-ops-detection-remediation-23"
 tier = "T1"
@@ -172,10 +177,20 @@ id = "UC-ops-detection-remediation-32"
 tier = "T1"
 statement = "Groomer subcommands validate their arguments before touching bd: `unwanted` is refused with exit 2; `supersede`, `close` and `depends-on-fix` require `--with`, `--evidence` or `--fix`; `depends-on-fix` refuses a closed fix bead."
 
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-8566or"
+
 [[use_case]]
 id = "UC-ops-detection-remediation-33"
 tier = "T1"
 statement = "groom-trigger files one trigger, with scope and groomer labels, only when the backlog score is at or above `SPIRA_GROOM_THRESHOLD`, no trigger is already open, and some repo admits the groom lane; an empty scope label gives no leading comma; a create failure exits 1."
+
+[use_case.uncovered]
+reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
+date = "2026-11-12"
+bead = "sp-6yu1y8"
 
 [[use_case]]
 id = "UC-ops-detection-remediation-34"

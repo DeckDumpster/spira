@@ -83,7 +83,7 @@ Rust cutover was "leave lib.sh alone"):**
 ## Parity
 
 See the sibling bead report: the bash `bead.sh` and the shimmed `bead` binary run against
-`test-bead-file.sh`, `test-bead-dep-add.sh`, `test-bead-contract.sh`
+the retired bead-file suite, `test-bead-dep-add.sh`, `test-bead-contract.sh`
 and `test-bead-repo-guard.sh`'s fixtures (repo-map, runes, stub `bd`), output and exit
 code compared line for line. Every one of these suites continues to run unmodified through
 `testenv` — they name `bead.sh` by its unchanged path, and the shim makes that
@@ -146,7 +146,7 @@ this process's own environment happened to inherit.
   neither this crate's source nor its output may spell the map's hyphenated name.
   `lane_check`'s refusal now says "refused by its admitted lanes (…)" instead of "refused by
   repo-map (lanes=…)"; `contract`'s missing-map line now says `(no repository map)` instead
-  of `(no repo-map)`. `test-bead-file.sh` and `test-bead-contract.sh` were repointed to the
+  of `(no repo-map)`. the retired bead-file suite and `test-bead-contract.sh` were repointed to the
   new wording in the same commit (their own header comments say so); every other assertion
   in both suites — repo, lane, override-variable, exit code — is untouched.
 - **`bdq` was bridged to, not ported, as of this crate's own first landing** — it was
