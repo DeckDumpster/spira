@@ -485,6 +485,7 @@ mod tests {
         let ids: Vec<String> = (0..EVENT_CHUNK + 1).map(|i| format!("sp-{i}")).collect();
         st.events(&ids).unwrap();
         let seen = t.seen.lock().unwrap();
-        assert_eq!(seen.iter().filter(|a| a[0] == "content").count(), 2);
+        let shape: Vec<(&str, usize)> = seen.iter().map(|a| (a[0].as_str(), a[a.len() - 1].split(',').count())).collect();
+        assert_eq!(shape, vec![("content", 200), ("facts", 200), ("content", 1), ("facts", 1)]);
     }
 }
