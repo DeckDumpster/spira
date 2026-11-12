@@ -90,7 +90,13 @@ fn main() {
     };
     let actor = std::env::var("SPIRA_RUNE").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "dwarf".to_string());
 
-    if verb == "submit" && !checks_passed_at_tip() && checks(&[]) != 0 {
+    let mut red_tests = Vec::new();
+    let base_red = if verb == "submit" { work::unit_red_on_base(&verb_args).is_some() } else { false };
+    if verb == "submit" && !checks_passed_at_tip() && {
+        let (code, waived) = run_checks(&[], base_red);
+        red_tests = waived;
+        code != 0
+    } {
         eprintln!("work submit: refused: the repository's done checks failed (output above) — fix them, commit, and run `work submit` again; `work checks` runs them alone");
         { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
     }
@@ -121,7 +127,12 @@ fn main() {
     };
 
     let req = match work::build_request_with_body(&bound, &verb, &verb_args, tip.as_deref(), &actor, body.as_deref()) {
-        Ok(r) => r,
+        Ok(mut r) => {
+            if base_red {
+                r.extend([work::UNIT_RED_TESTS.to_string(), red_tests.join(",")]);
+            }
+            r
+        }
         Err(e) => {
             eprintln!("{e}");
             { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
@@ -537,19 +548,25 @@ fn image_gate(bead: &str) -> Result<(), String> {
 /// `work checks [--list]`: the repository's `[[check]]` rows from `.spira/checks.toml`, run in
 /// order from the worktree root. Every row runs; the exit is non-zero if any failed.
 fn checks(args: &[String]) -> i32 {
+    run_checks(args, false).0
+}
+
+/// [`checks`], with the failing test names of every red row that declares `deferred_to` when
+/// `base_red` waives it (a submit naming the bead that records the base red).
+fn run_checks(args: &[String], base_red: bool) -> (i32, Vec<String>) {
     let list_only = match args {
         [] => false,
         [a] if a == "--list" => true,
         _ => {
             eprintln!("{}", refusal(R::ChecksUsage, "checks", &[]));
-            return REFUSED;
+            return (REFUSED, Vec::new());
         }
     };
     let root = match spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => {
             eprintln!("{}", refusal(R::ChecksGit, "checks", &[]));
-            return REFUSED;
+            return (REFUSED, Vec::new());
         }
     };
     let root = std::path::Path::new(&root);
@@ -557,14 +574,17 @@ fn checks(args: &[String]) -> i32 {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{}", refusal(R::ChecksConfig, "checks", &[("err", &e.to_string())]));
-            return REFUSED;
+            return (REFUSED, Vec::new());
         }
     };
     if rows.is_empty() {
         println!("work checks: this repository declares no [[check]] rows");
-        return 0;
+        return (0, Vec::new());
     }
     let mut failed = Vec::new();
+    let mut deferred = false;
+    let mut waived_tests = Vec::new();
+    let branch = git_line(&["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
     let mut scope: Option<work::Affected> = None;
     for row in &rows {
         if list_only {
@@ -574,11 +594,11 @@ fn checks(args: &[String]) -> i32 {
         println!("== {}: {}", row.name, row.run);
         let none = work::Affected::Crates(Vec::new());
         let scope = if row.run.contains(work::AFFECTED) { &*scope.get_or_insert_with(|| affected_scope(work::CHECKS_BASE)) } else { &none };
-        let Some(argv) = work::check_argv(&row.run, scope) else {
+        let Some(argv) = work::check_argv(&row.run, scope, &branch) else {
             println!("-- {}: ok (the diff affects no crate; nothing to check)", row.name);
             continue;
         };
-        if argv != work::done_argv(&row.run) {
+        if argv != work::done_argv(&row.run) || row.run.contains("{branch}") {
             println!("runs: {}", argv.join(" "));
         }
         let Some((prog, rest)) = argv.split_first() else {
@@ -626,11 +646,30 @@ fn checks(args: &[String]) -> i32 {
                 if let Some(w) = work::admission_wait_secs(&err) {
                     println!("{}: waited {w}s for a compile slot before its {} ms budget started", row.name, row.budget_ms);
                 }
-                if o.status.success() {
-                    println!("-- {}: ok", row.name);
-                } else {
-                    println!("-- {}: FAIL ({})", row.name, o.status);
-                    failed.push(row.name.clone());
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                match work::row_outcome(o.status.code().unwrap_or(-1), row.deferred_to.as_deref()) {
+                    work::Outcome::Ok => println!("-- {}: ok", row.name),
+                    work::Outcome::Deferred => {
+                        let stage = row.deferred_to.as_deref().unwrap_or_default();
+                        println!("-- {}: deferred to the {stage} (cut at its {} ms budget): {}", row.name, row.budget_ms, selected_crates(work::CHECKS_BASE).join(" "));
+                        deferred = true;
+                    }
+                    work::Outcome::Fail => {
+                        let tests = work::failing_tests(&stdout);
+                        if row.deferred_to.is_some() && base_red && !tests.is_empty() {
+                            println!("-- {}: FAIL ({}) — waived: the red is recorded on the base (--unit-red-on-base)", row.name, o.status);
+                            waived_tests.extend(tests);
+                            deferred = true;
+                        } else {
+                            let exit = if row.deferred_to.is_some() {
+                                " — if the same tests are red on the base, file a bead recording it and run `work submit --unit-red-on-base <bead-id>`"
+                            } else {
+                                ""
+                            };
+                            println!("-- {}: FAIL ({}){exit}", row.name, o.status);
+                            failed.push(row.name.clone());
+                        }
+                    }
                 }
             }
             Err(e) => {
@@ -640,13 +679,13 @@ fn checks(args: &[String]) -> i32 {
         }
     }
     if failed.is_empty() {
-        if !list_only {
+        if !list_only && !deferred {
             record_checks_pass();
         }
-        0
+        (0, waived_tests)
     } else {
         eprintln!("work checks: failed: {}", failed.join(", "));
-        REFUSED
+        (REFUSED, Vec::new())
     }
 }
 
@@ -664,6 +703,16 @@ fn affected_scope(base: &str) -> work::Affected {
         println!("work checks: cannot select the affected crates ({e}); checking the whole workspace");
         work::Affected::Workspace
     })
+}
+
+/// The crates `work crates` selects for this worktree's diff against `base`; empty when the diff
+/// or the workspace cannot be read.
+fn selected_crates(base: &str) -> Vec<String> {
+    let run = |argv: &[&str]| spira_config::bounded::bounded(argv[0]).args(&argv[1..]).output().ok().filter(|o| o.status.success()).map(|o| o.stdout);
+    let diff = run(&["git", "diff", "--raw", "-z", "--no-renames", &format!("{base}...HEAD")]);
+    let meta = run(&["cargo", "metadata", "--format-version", "1", "--no-deps"]);
+    let (Some(diff), Some(meta)) = (diff, meta) else { return Vec::new() };
+    work::crates_selection(&diff, &String::from_utf8_lossy(&meta)).unwrap_or_default()
 }
 
 fn git_line(args: &[&str]) -> Option<String> {

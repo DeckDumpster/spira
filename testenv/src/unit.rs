@@ -184,7 +184,7 @@ pub struct Picked {
 /// empty file means the diff touches no crate. Under `--tests` the list is narrowed to the
 /// affected crates that hold a named test ([`holding`]), so `cargo test -p` builds those
 /// crates and their dependencies, never every dependent of the diff.
-pub fn write_crates(repo: &Path, base: &str, rev: &str, tree: &Path, tests: Option<&[String]>) -> Result<Picked, String> {
+pub fn write_crates(repo: &Path, base: &str, rev: &str, tree: &Path, tests: Option<&[String]>, transitive: bool) -> Result<Picked, String> {
     let diff = output(
         Command::new("git")
             .arg("-C")
@@ -197,19 +197,27 @@ pub fn write_crates(repo: &Path, base: &str, rev: &str, tree: &Path, tests: Opti
     let meta = output(Command::new("cargo").current_dir(tree).args(["metadata", "--format-version", "1", "--no-deps", "--offline"]))
         .map_err(|e| format!("cargo metadata: {e}"))?;
     let meta = String::from_utf8_lossy(&meta);
-    let affected = gate::compose::select_crates(&diff, &meta, true)?;
-    let crates = match tests {
-        Some(names) => holding(tree, &gate::compose::parse_metadata(&meta)?, &affected, names),
-        None => affected.clone(),
-    };
+    let picked = pick(&diff, &meta, tree, tests, transitive)?;
+    let crates = &picked.crates;
     let path = crates_path(tree);
     let body: String = crates.iter().map(|c| format!("{c}\n")).collect();
     std::fs::create_dir_all(path.parent().unwrap_or(tree))
         .and_then(|_| std::fs::write(&path, body))
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    let bins: String = test_bins(&meta, &crates)?.iter().map(|c| format!("{c}\n")).collect();
+    let bins: String = test_bins(&meta, crates)?.iter().map(|c| format!("{c}\n")).collect();
     let path = bins_path(tree);
     std::fs::write(&path, bins).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    Ok(picked)
+}
+
+/// The crates a diff selects: touched plus their dependents (every transitive one, or only the
+/// direct ones), narrowed under `--tests` to those holding a named test.
+pub fn pick(diff: &[u8], meta: &str, tree: &Path, tests: Option<&[String]>, transitive: bool) -> Result<Picked, String> {
+    let affected = gate::compose::select_crates(diff, meta, transitive)?;
+    let crates = match tests {
+        Some(names) => holding(tree, &gate::compose::parse_metadata(meta)?, &affected, names),
+        None => affected.clone(),
+    };
     Ok(Picked { affected, crates })
 }
 
@@ -313,6 +321,25 @@ mod tests {
         assert!(f[0].1[1].contains("assertion"));
         assert_eq!(failing_report(RED)[0], "unit-tests: 1 failing test(s):");
         assert_eq!(failing("test a ... FAILED\ntest b ... FAILED\ntest a ... FAILED\n").len(), 2);
+    }
+
+    #[test]
+    fn direct_selects_the_touched_crate_and_its_direct_dependents_only() {
+        let pkg = |n: &str, dep: Option<&str>| {
+            let deps = dep.map(|d| format!(r#"{{"path":"/w/{d}"}}"#)).unwrap_or_default();
+            format!(r#"{{"id":"{n}","name":"{n}","manifest_path":"/w/{n}/Cargo.toml","dependencies":[{deps}]}}"#)
+        };
+        let meta = format!(
+            r#"{{"workspace_root":"/w","workspace_members":["leaf","mid","top"],"packages":[{},{},{}]}}"#,
+            pkg("leaf", None),
+            pkg("mid", Some("leaf")),
+            pkg("top", Some("mid"))
+        );
+        let diff = b":100644 100644 aaa bbb M\0leaf/src/lib.rs\0";
+        let tree = Path::new("/nonexistent");
+        let names = |transitive| pick(diff, &meta, tree, None, transitive).unwrap().crates;
+        assert_eq!(names(false), vec!["leaf", "mid"]);
+        assert_eq!(names(true), vec!["leaf", "mid", "top"]);
     }
 
     #[test]

@@ -248,7 +248,7 @@ pub static ENTRIES: &[Entry] = &[
     Entry {
         verb: "checks",
         group: Group::Verify,
-        does: "Runs each `[[check]]` row the repository declares in `.spira/checks.toml`, each bounded by its budget, and prints `-- <name>: ok` or `FAIL` per row. A row with `build = \"<package>\"` runs the binary built from this worktree; every other program resolves from the release `bin/`. `{affected}` in a row becomes `-p` for each crate the diff against `local/main` touches plus its dependents (the round's unit-tier selection), or `--workspace` when a workspace-wide input changed; a row naming it is skipped when the diff affects no crate. A cargo row waits for its compile slot before its budget starts. A pass is recorded for the tip, so `work submit` on that clean tip does not run the checks again.",
+        does: "Runs each `[[check]]` row the repository declares in `.spira/checks.toml`, each bounded by its budget, and prints `-- <name>: ok` or `FAIL` per row. A row with `build = \"<package>\"` runs the binary built from this worktree; every other program resolves from the release `bin/`. `{affected}` in a row becomes `-p` for each crate the diff against `local/main` touches plus its dependents (the round's unit-tier selection), or `--workspace` when a workspace-wide input changed; a row naming it is skipped when the diff affects no crate. `{branch}` becomes the current branch. A row that declares `deferred_to = \"<stage>\"` and is cut at its budget prints `deferred to the <stage>` instead of failing, and no pass is recorded; its FAIL line names `work submit --unit-red-on-base <bead-id>`. A cargo row waits for its compile slot before its budget starts. A pass is recorded for the tip, so `work submit` on that clean tip does not run the checks again.",
         when: "Before you submit, to run the checks the repository itself asks of a finished change. `--list` prints the rows without running them.",
         args: &["[--list]"],
         checks: &["run it inside your worktree", "exits non-zero when any row fails, naming each failed row"],
@@ -281,7 +281,7 @@ pub static ENTRIES: &[Entry] = &[
         group: Group::Submit,
         does: "Moves your bead to SUBMITTED; the landing pass certifies and lands it.",
         when: "The work is committed on your branch, its commit subject names your bead, and you rebased onto local/main. Do not run the full gate first.",
-        args: &["--met \"<measured value and where>\" | --contradicted \"<evidence>\" | --short \"<value>\" with --follow-on <id> or --escalation <id>   (only when the description carries a `Target:` line)"],
+        args: &["--met \"<measured value and where>\" | --contradicted \"<evidence>\" | --short \"<value>\" with --follow-on <id> or --escalation <id>   (only when the description carries a `Target:` line)", "[--unit-red-on-base <bead-id>]   (a filed bead recording that the failing unit-tests row is red on the base too)"],
         checks: &[
             "the tip is read from your branch, never taken from you",
             "a branch whose diff touches the round image recipe has its Round AMI build dispatched and awaited; a failed build refuses, naming the step and its last log lines",

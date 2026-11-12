@@ -3,7 +3,7 @@
 
 use crate::record::Mode;
 
-pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--runner container|sandbox] [--report [N]] <branch> [<repo-name>]";
+pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--direct] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--runner container|sandbox] [--report [N]] <branch> [<repo-name>]";
 
 /// Where the explicit suite list comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +36,9 @@ pub struct RunArgs {
     /// `--bare-tip`: test the branch tip alone, not merged onto the landing ref (sp-5zz517);
     /// for a red-first run, which must see the old base exactly.
     pub bare_tip: bool,
+    /// `--direct`: the unit tier selects the touched crates and their direct dependents, not
+    /// every transitive one; the gate and the round never pass it.
+    pub direct: bool,
     pub branch: String,
     pub repo: Option<String>,
 }
@@ -60,6 +63,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut profile: Option<String> = None;
     let mut with_bins = false;
     let mut bare_tip = false;
+    let mut direct = false;
     let mut report: Option<usize> = None;
     let mut deadline: Option<u64> = None;
     let mut artifacts: Option<String> = None;
@@ -119,6 +123,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             }
             "--bare-tip" => {
                 bare_tip = true;
+                i += 1;
+            }
+            "--direct" => {
+                direct = true;
                 i += 1;
             }
             "--with-bins" => {
@@ -238,6 +246,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         profile,
         with_bins,
         bare_tip,
+        direct,
         deadline,
         artifacts,
         repeat_reason,
@@ -269,6 +278,12 @@ mod tests {
             Some("first check of this tip")
         );
         assert_eq!(run(&["b"]).repeat_reason, None);
+    }
+
+    #[test]
+    fn direct_is_taken_from_its_flag_and_is_off_without_it() {
+        assert!(run(&["--direct", "b"]).direct);
+        assert!(!run(&["b"]).direct);
     }
 
     #[test]
