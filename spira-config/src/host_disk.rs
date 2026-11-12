@@ -31,6 +31,14 @@ pub fn fault_of(stderr: &str) -> Option<String> {
     }
 }
 
+/// The harness-fault line for a failed install, naming the cause when the host filesystem is it.
+pub fn install_failed_line(stderr: &str) -> String {
+    match fault_of(stderr) {
+        Some(fs) => format!("round-vm: harness fault — {CAUSE}: install failed, {fs}"),
+        None => "round-vm: harness fault — install failed".to_string(),
+    }
+}
+
 /// The mount point of `path` in `/proc/mounts` text: the longest mount that is a prefix of it.
 pub fn mount_of(mounts: &str, path: &Path) -> Option<String> {
     mounts

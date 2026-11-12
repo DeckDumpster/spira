@@ -122,10 +122,7 @@ pub fn corpus_end(
             }
             "round-vm: harness fault — the round VM did not come up, its container died, or round-vm itself failed".to_string()
         }
-        INSTALL_FAILED_RC => match spira_config::host_disk::fault_of(stderr) {
-            Some(fs) => format!("round-vm: harness fault — {}: install failed, {fs}", spira_config::host_disk::CAUSE),
-            None => "round-vm: harness fault — install failed".to_string(),
-        },
+        INSTALL_FAILED_RC => spira_config::host_disk::install_failed_line(stderr),
         124 | 137 => {
             let named = over_cap
                 .filter(|r| !r.is_empty())
