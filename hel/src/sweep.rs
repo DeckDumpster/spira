@@ -468,9 +468,9 @@ impl<'a> Sweep<'a> {
         }
 
         // PASS 1 — every spira/* branch, exactly one disposition, from where a budget-cut
-        // sweep stopped. A cursor naming no branch starts over.
+        // sweep stopped. The list is refname-sorted and a sent branch is gone, so the cursor is a position in that order, not a branch that must still exist.
         let resume = if self.opts.only.is_some() { None } else { self.w.resume_after(&r.name) };
-        let skip = resume.as_ref().and_then(|c| brs.iter().position(|b| b == c)).map_or(0, |i| i + 1);
+        let skip = resume.as_ref().map_or(0, |c| brs.partition_point(|b| b <= c));
         let mut cut_after: Option<&String> = None;
         let mut cut = false;
         for br in &brs[skip..] {

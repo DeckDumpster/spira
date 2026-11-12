@@ -369,6 +369,28 @@ mod resume {
     }
 
     #[test]
+    fn a_cursor_naming_a_branch_already_sent_still_resumes_after_it() {
+        let t = testkit::TempDir::new("hel-resume-gone");
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        let ids = ["sp-a", "sp-b", "sp-d", "sp-e"];
+        for id in ids {
+            git(&root, &["branch", &format!("spira/{id}")]);
+        }
+        let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
+        let beads = ids.iter().map(|id| (id.to_string(), serde_json::json!({"id": id, "labels": []}))).collect();
+        let f = Fake { base: Some(base), beads, wts: t.path().join("wt"), ..Default::default() };
+        *f.resume.borrow_mut() = Some("spira/sp-c".into());
+        let repo = crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false };
+        let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
+        let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
+        s.repo(&repo);
+        assert_eq!(sent(&f), vec!["spira/sp-d".to_string(), "spira/sp-e".to_string()].iter().map(|b| b.strip_prefix("spira/").unwrap().to_string()).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn each_branch_sent_is_followed_by_the_configured_rest() {
         let t = testkit::TempDir::new("hel-pace");
         let root = t.path().join("repo");
