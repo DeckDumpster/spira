@@ -377,6 +377,8 @@ mod tests {
         let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap())), ("SPIRA_SLOW_QUERY_MS", Some("0"))]);
         request_done("watch", "watch", "spira-runtime", None, Duration::from_secs(2));
         assert!(std::fs::read_to_string(&log).unwrap_or_default().is_empty());
+        let s: serde_json::Value = serde_json::from_str(&stats_json()).unwrap();
+        assert_eq!(s["verbs"]["watch"], serde_json::json!({"count": 1, "total_ms": 2000}));
         request_done("list", "list", "spira-runtime", None, Duration::from_secs(2));
         let got = std::fs::read_to_string(&log).unwrap();
         assert_eq!(got.lines().filter(|l| l.ends_with("REQUEST")).count(), 1, "{got}");
