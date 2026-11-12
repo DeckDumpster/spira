@@ -278,6 +278,8 @@ round_exit() {
     done
     { mkdir -p "$dir" && cp -f ~/round-script.log "$dir/round-script.log" \
         && printf 'phase=%s rc=%s\n' "${fault_phase:-$round_phase}" "${fault_rc:-$rc}" > "$dir/round-phase"; } 2>/dev/null || true
+    # The round's own cache server ends with the round: nothing of a pass outlives it.
+    if [ -n "${SCCACHE_SERVER_PORT:-}" ] && [ -n "${RUSTC_WRAPPER:-}" ]; then "$RUSTC_WRAPPER" --stop-server >/dev/null 2>&1 || true; fi
     exit "$rc"
 }
 trap round_exit EXIT
@@ -490,10 +492,20 @@ if [ ! -x "$RUSTC_WRAPPER" ]; then
     echo "round-vm: sccache is missing on this VM: $RUSTC_WRAPPER" >&2
     exit 5
 fi
+# A round runs the same tests wherever it runs: round-vm/tests/unit_cov_real.rs returns early
+# without cargo-llvm-cov, so a machine without it passed a test another machine failed.
+if [ ! -x "$CARGO_HOME/bin/cargo-llvm-cov" ]; then
+    echo "round-vm: cargo-llvm-cov is missing on this machine: $CARGO_HOME/bin/cargo-llvm-cov (the round image installs it; install the same version here)" >&2
+    exit 5
+fi
 export SCCACHE_IGNORE_SERVER_IO_ERROR=1
 export SCCACHE_WEBDAV_ENDPOINT="http://${host_addr}:9431"
 export SCCACHE_WEBDAV_KEY_PREFIX="/"
 export SCCACHE_ERROR_LOG="$HOME/sccache-error.log"
+# The round's own cache server, on its own port: on a shared host the default port is the server
+# every builder compiles through, and a round that stops and restarts that one kills their builds
+# and leaves it living in the round's process group. A server left on this port is a round's own.
+export SCCACHE_SERVER_PORT=4231
 start_sccache() {
     export SCCACHE_STARTUP_TIMEOUT="${SCCACHE_STARTUP_TIMEOUT:-120}"
     for attempt in 1 2; do
@@ -533,7 +545,7 @@ echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
 # launcher's SPIRA_RELEASE/SPIRA_REPO/PATH leak into tests that resolve configuration.
 unit_env() {
     env -i HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
-        CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
+        CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SERVER_PORT="${SCCACHE_SERVER_PORT:-4226}" \
         SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
         UNIT_COV_ENV="$unit_cov_env" bash -c 'eval "$UNIT_COV_ENV"; exec cargo "$@"' _ "$@"

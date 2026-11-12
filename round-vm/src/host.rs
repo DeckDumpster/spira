@@ -74,6 +74,27 @@ pub fn operator_dirs(get: &dyn Fn(&str) -> Option<String>) -> Vec<(&'static str,
     vec![("XDG_DATA_HOME", pick("XDG_DATA_HOME", ".local/share")), ("XDG_CONFIG_HOME", pick("XDG_CONFIG_HOME", ".config"))]
 }
 
+/// The search path a round script starts with on this host: what a fresh login on a round VM has.
+/// The script sets its own `PATH` in its preflight; nothing of the caller's is on it.
+pub const LOGIN_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+/// The caller's variables a host round is started with, besides its own `HOME`. A round VM's
+/// script starts in a fresh login, so this one starts with a cleared environment and these alone:
+/// who the user is, the user's session bus and runtime directory (rootless podman and
+/// `systemctl --user` need both), the operator's container store ([`operator_dirs`]) and
+/// [`LOGIN_PATH`]. Nothing the scheduler exports for itself reaches the round: an inherited
+/// `SPIRA_HOME` once made a round read its tree's config against the active release's registry.
+pub fn round_env(get: &dyn Fn(&str) -> Option<String>) -> Vec<(&'static str, String)> {
+    let mut env: Vec<(&'static str, String)> = vec![("PATH", LOGIN_PATH.to_string())];
+    for key in ["USER", "LOGNAME", "LANG", "SHELL", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"] {
+        if let Some(v) = get(key).filter(|v| !v.is_empty()) {
+            env.push((key, v));
+        }
+    }
+    env.extend(operator_dirs(get));
+    env
+}
+
 /// [`Remote`] over this machine: the VM's `$HOME` is `home`, and no ssh or rsync is involved.
 pub struct LocalRemote {
     pub home: PathBuf,
@@ -87,8 +108,8 @@ impl LocalRemote {
 
     fn shell(&self, script: &str) -> std::process::Command {
         let mut c = command("bash");
-        c.arg("-c").arg(script).current_dir(&self.home).env("HOME", &self.home);
-        for (k, v) in operator_dirs(&|k| std::env::var(k).ok()) {
+        c.arg("-c").arg(script).current_dir(&self.home).env_clear().env("HOME", &self.home);
+        for (k, v) in round_env(&|k| std::env::var(k).ok()) {
             c.env(k, v);
         }
         c
@@ -280,6 +301,30 @@ mod tests {
         };
         assert_eq!(operator_dirs(&set)[0], ("XDG_DATA_HOME", "/data".to_string()));
         assert!(operator_dirs(&|_| None).is_empty());
+    }
+
+    #[test]
+    fn a_host_round_starts_with_a_login_environment_not_the_callers() {
+        let caller = |k: &str| match k {
+            "HOME" => Some("/ops/home".to_string()),
+            "USER" => Some("ops".to_string()),
+            "XDG_RUNTIME_DIR" => Some("/run/user/7".to_string()),
+            "PATH" => Some("/active/release/bin:/usr/bin".to_string()),
+            "SPIRA_HOME" | "SPIRA_RELEASE" | "SPIRA_TOML" | "SPIRA_DB" | "SPIRA_RUN" | "SSH_AUTH_SOCK" | "NOTIFY_SOCKET" => Some("leak".to_string()),
+            _ => None,
+        };
+        let env = round_env(&caller);
+        let names: Vec<&str> = env.iter().map(|(k, _)| *k).collect();
+        assert_eq!(names, vec!["PATH", "USER", "XDG_RUNTIME_DIR", "XDG_DATA_HOME", "XDG_CONFIG_HOME"]);
+        assert_eq!(env[0].1, LOGIN_PATH, "the caller's PATH is not the round's");
+        assert!(env.iter().all(|(_, v)| v != "leak"), "{env:?}");
+
+        // Through the real spawn: a variable the caller exports is not in the script's environment.
+        let home = testkit::TempDir::new("host-round-env");
+        let remote = LocalRemote { home: home.path().to_path_buf() };
+        let _probe = testkit::env(&[("SPIRA_ROUND_ENV_LEAK_PROBE", Some("leak"))]);
+        let out = remote.shell("printf '%s|%s|%s' \"${SPIRA_ROUND_ENV_LEAK_PROBE-unset}\" \"$PATH\" \"$HOME\"").output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("unset|{LOGIN_PATH}|{}", home.path().display()));
     }
 
     #[test]
