@@ -36,7 +36,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CUT_PART="${CUT_PART:-main}"
 case "$CUT_PART" in
     main)  CUT_SECTIONS="A D" ;;
-    wiring) CUT_SECTIONS="F Gf" ;;
+    wiring) CUT_SECTIONS="F Gf Cf" ;;
     land)  CUT_SECTIONS="Gl I J O Nr" ;;
     stack) CUT_SECTIONS="M" ;;
     *) echo "test-batcher-cut: unknown CUT_PART $CUT_PART" >&2; exit 1 ;;
@@ -158,6 +158,15 @@ fi
 done_file() { printf 'rc=%s\n' "$2" > "$1.tmp" && mv "$1.tmp" "$1"; }
 [ -n "${STUB_SLEEP_SECS:-}" ] && sleep "$STUB_SLEEP_SECS"
 if [ -n "${STUB_EXIT4:-}" ]; then done_file "$spool/corpus.done" 4; exit 4; fi
+# STUB_CONFIG_FAULT: the image step on a tree whose fixture config lacks a key the tree's
+# registry still carries — round-vm's install failure (exit 3), with testenv's own refusal.
+if [ -n "${STUB_CONFIG_FAULT:-}" ] && [ -n "$wt" ] \
+    && git -C "$wt" cat-file -e HEAD:spira/conf.d/GONE_SECS 2>/dev/null \
+    && ! git -C "$wt" show HEAD:spira/testlib/complete.toml | grep -q '^gone_secs'; then
+    echo "round-vm: PHASE-FAILED phase=image" >&2
+    echo "testenv container: SPIRA_GONE_SECS is not declared: spira.toml has no spira.gone_secs — every key is required; refusing" >&2
+    done_file "$spool/corpus.done" 3; exit 3
+fi
 : "${results:?round-vm-stub: --results-dir not given}"
 mkdir -p "$results"
 IFS=',' read -r -a redset <<< "${STUB_RED_SUITES:-}"
@@ -346,6 +355,7 @@ cut_repo() {
     STUB_ARGV_LOG="${STUB_ARGV_LOG:-}" \
     STUB_SLEEP_SECS="${STUB_SLEEP_SECS:-}" \
     STUB_EXIT4="${STUB_EXIT4:-}" \
+    STUB_CONFIG_FAULT="${STUB_CONFIG_FAULT:-}" \
     SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-$TMP/lc-default.log}" \
     SPIRA_LC_STUB_RC="${SPIRA_LC_STUB_RC:-0}" \
         batcher "${BATCHER_VERB:-cut}" "$REPONAME" --round-vm "$SH/round-vm-stub.sh" 2>&1
@@ -593,6 +603,46 @@ out_f_refused="$(PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" SPIRA_
 want "F: PLANTED REFUSAL — the refusal is logged" "spira-lc cut refused for" "$out_f_refused"
 is   "F: PLANTED REFUSAL — forge pr-create not called" "$prcreate_before_f" "$(grep -c '^pr-create' "$FORGE_LOG")"
 is   "F: PLANTED REFUSAL — queue batch show prints no open batch" "0" "$(has_open)"
+fi
+
+if cut_runs Cf; then
+
+# =============================================================================
+# CASE Cf — a member that retires a config key the merged tree still reads: the round's image
+# step faults on the undeclared key, the member whose diff retires it is ejected with the
+# fault's own lines, and the other two members land in the round.
+# =============================================================================
+echo
+echo "Cf. config key retired by one member: it is ejected and the other two land:"
+end_forge_batch "$REPONAME" "the case before is done" || bad "the case before's batch is ended" "abandon failed"
+mkdir -p "$REPO/spira/conf.d" "$REPO/spira/testlib"
+: > "$REPO/spira/conf.d/GONE_SECS"
+printf '[spira]\ngone_secs = 5\n' > "$REPO/spira/testlib/complete.toml"
+git -C "$REPO" add -A && git -C "$REPO" commit -q -m "a registry key and its fixture"
+for id in sp-ccfa1 sp-ccfb2 sp-ccfc3; do
+    plant "$id" express
+    git -C "$REPO" worktree add -q -b "spira/$id" "$RUN/worktree/$id" main
+    if [ "$id" = sp-ccfb2 ]; then
+        printf '[spira]\n' > "$RUN/worktree/$id/spira/testlib/complete.toml"
+    else
+        printf '%s\n' "$id" > "$RUN/worktree/$id/$id.txt"
+    fi
+    git -C "$RUN/worktree/$id" add -A
+    git -C "$RUN/worktree/$id" commit -q -m "$id: work"
+    git -C "$REPO" worktree remove -f "$RUN/worktree/$id"
+    certify "$id" "$(git -C "$REPO" rev-parse "spira/$id")"
+done
+tip_cfa="$(git -C "$REPO" rev-parse spira/sp-ccfa1)"
+tip_cfc="$(git -C "$REPO" rev-parse spira/sp-ccfc3)"
+
+out_cf="$(STUB_CONFIG_FAULT=1 cut_repo)"
+want   "Cf: the member that retired the key is ejected on the config fault" "sp-ccfb2" "$out_cf"
+want   "Cf: the round still opens a PR" "PR " "$out_cf"
+members_cf="$(open_field members)"
+want   "Cf: the open batch carries the first member that kept the key" "sp-ccfa1:$tip_cfa" "$members_cf"
+want   "Cf: the open batch carries the second member that kept the key" "sp-ccfc3:$tip_cfc" "$members_cf"
+nowant "Cf: the open batch does not carry the member that retired it" "sp-ccfb2" "$members_cf"
+
 fi
 
 

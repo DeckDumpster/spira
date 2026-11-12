@@ -523,6 +523,9 @@ fn step_label(step: &str) -> String {
     if step.contains("SPIRA_GUARD_BIN") {
         return crate::fence::GUARD.into();
     }
+    if step.contains(&format!(" {} ", crate::fixture::FENCE)) {
+        return crate::fixture::FENCE.into();
+    }
     let stem = |w: &str| w.rsplit('/').next().unwrap_or(w).trim_end_matches(".sh").to_string();
     match crate::parse::bash_paths(step).first() {
         Some(p) => stem(p),

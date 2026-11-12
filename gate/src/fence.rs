@@ -120,6 +120,9 @@ pub fn expected(cmd: &str) -> Vec<String> {
             words.push((at, vec![GUARD.to_string()]));
         }
     }
+    if let Some(at) = cmd.find(&format!(" {} ", crate::fixture::FENCE)) {
+        words.push((at, vec![crate::fixture::FENCE.to_string()]));
+    }
     words.sort_by_key(|(at, _)| *at);
     for (_, names) in words {
         for n in names {
@@ -204,6 +207,11 @@ mod tests {
                 "build-fence",
             ]
         );
+    }
+
+    #[test]
+    fn the_fixture_config_word_is_a_fence() {
+        assert_eq!(expected(r#""$SPIRA_FIXTURE_BIN" fixture-config --tree . && x"#), ["fixture-config"]);
     }
 
     #[test]
