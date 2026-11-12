@@ -221,6 +221,12 @@ pub fn load_strict(path: &Path) -> Result<(SpiraToml, Vec<String>), String> {
 /// replaces the earlier one, nested tables merge); the result is validated once. Every listed
 /// file must exist. Callers never see layers — they get one [`SpiraToml`].
 fn load_layered(spec: &str) -> Result<(SpiraToml, Vec<String>), String> {
+    let merged = merge_layers(spec)?;
+    validate_value(toml::Value::Table(merged), registry::for_process()?).map_err(|e| format!("{spec}: {e}"))
+}
+
+/// The layers `spec` names, read and merged, and nothing else: no schema, no registry.
+pub(crate) fn merge_layers(spec: &str) -> Result<toml::map::Map<String, toml::Value>, String> {
     let mut merged = toml::map::Map::new();
     let mut any = false;
     for p in spec.split(':').filter(|p| !p.is_empty()) {
@@ -234,7 +240,7 @@ fn load_layered(spec: &str) -> Result<(SpiraToml, Vec<String>), String> {
     if !any {
         return Err("no config file named".to_string());
     }
-    validate_value(toml::Value::Table(merged), registry::for_process()?).map_err(|e| format!("{spec}: {e}"))
+    Ok(merged)
 }
 
 /// `over`'s keys into `base`: a nested table merges, anything else replaces.
@@ -1433,25 +1439,29 @@ pub fn spira_value_map(doc: &SpiraToml, include_secrets: bool) -> BTreeMap<Strin
         if !include_secrets && is_secret_shaped(key) {
             continue;
         }
-        let shell_val = match val {
-            toml::Value::String(s) => s.clone(),
-            toml::Value::Boolean(b) => b.to_string(),
-            toml::Value::Integer(n) => n.to_string(),
-            toml::Value::Array(items) => {
-                if items.is_empty() && !include_secrets {
-                    continue;
-                }
-                items
-                    .iter()
-                    .map(|v| v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string()))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            }
-            _ => continue,
-        };
-        out.insert(key.to_uppercase(), shell_val);
+        if matches!(val, toml::Value::Array(items) if items.is_empty() && !include_secrets) {
+            continue;
+        }
+        if let Some(shell_val) = shell_value(val) {
+            out.insert(key.to_uppercase(), shell_val);
+        }
     }
     out
+}
+
+/// A `[spira]` value as the string every reader sees; `None` for a value with no scalar or list shape.
+pub(crate) fn shell_value(val: &toml::Value) -> Option<String> {
+    Some(match val {
+        toml::Value::String(s) => s.clone(),
+        toml::Value::Boolean(b) => b.to_string(),
+        toml::Value::Integer(n) => n.to_string(),
+        toml::Value::Array(items) => items
+            .iter()
+            .map(|v| v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string()))
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => return None,
+    })
 }
 
 /// Renders `[spira]` as quoted `KEY=value` lines — `spira-config export --sh` — for the
