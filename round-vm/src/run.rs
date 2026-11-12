@@ -579,13 +579,9 @@ unit_cov_init() {
     if [ -x "$CARGO_HOME/bin/cargo-llvm-cov" ]; then
         # A clean environment: an inherited CARGO_TARGET_DIR, LLVM_PROFILE_FILE or CARGO_LLVM_COV_*
         # (e.g. from an outer coverage run) would point the profiles somewhere the report never reads.
-        # The rustup home and toolchain are named through it: a cargo that is a rustup proxy finds
-        # no toolchain under a HOME that is not the one rustup was installed for.
-        unit_cov_env=$(env -i HOME="$HOME" CARGO_HOME="$CARGO_HOME" ${RUSTUP_HOME:+RUSTUP_HOME="$RUSTUP_HOME"} ${RUSTUP_TOOLCHAIN:+RUSTUP_TOOLCHAIN="$RUSTUP_TOOLCHAIN"} PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" cargo llvm-cov show-env --export-prefix) || unit_cov_env=""
-        [ -n "$unit_cov_env" ] || echo "round-vm: COVERAGE: lines unavailable (cargo llvm-cov show-env failed on this machine)" >&2
-    else
-        echo "round-vm: COVERAGE: lines unavailable (the image has no cargo-llvm-cov)" >&2
+        unit_cov_env=$(env -i HOME="$HOME" CARGO_HOME="$CARGO_HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" cargo llvm-cov show-env --export-prefix) || unit_cov_env=""
     fi
+    [ -n "$unit_cov_env" ] || echo "round-vm: COVERAGE: lines unavailable (the image has no cargo-llvm-cov)" >&2
 }
 phase unit-build
 unit_cov_init
