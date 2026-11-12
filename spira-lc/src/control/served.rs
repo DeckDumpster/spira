@@ -73,15 +73,27 @@ pub const UNMODELED: &[&str] = &[
 /// snapshot while this many commits land keeps reading from memory.
 pub const MODEL_WINDOW: u64 = 1_024;
 
-fn open(path: &str) -> Result<Store<Served>, String> {
+/// The longest the cold read-model build may read: it scans every modeled key once, which a
+/// cold page cache stretches well past the steady-state read limit.
+const BUILD_READ_MS: u64 = 120_000;
+
+/// The store's backend under a read model built within `build_ms`, then held to `opts`' own limit.
+fn modeled(path: &str, opts: Options, build_ms: u64) -> Result<Served, String> {
     // Opening creates a missing file, which would answer every read as an empty store.
     if !Path::new(path).is_file() {
         return Err(format!("no control store at {path}"));
     }
-    let backend = SqliteBackend::open(Path::new(path), Options::default())
+    let steady = opts.max_read_ms;
+    let backend = SqliteBackend::open(Path::new(path), Options { max_read_ms: build_ms.max(steady), ..opts })
         .map_err(|e| format!("{path}: {e}"))?;
     let backend = Modeled::open(backend, UNMODELED, MODEL_WINDOW)
         .map_err(|e| format!("{path}: the read model: {e}"))?;
+    backend.inner().set_max_read_ms(steady);
+    Ok(backend)
+}
+
+fn open(path: &str) -> Result<Store<Served>, String> {
+    let backend = modeled(path, Options::default(), BUILD_READ_MS)?;
     let floor = lock_floor_ms()?;
     let ports = Ports {
         mono: Arc::new(MonotonicClock::new()),
@@ -318,6 +330,37 @@ fn dispatch_sections(args: &[String]) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use runtime::ports::VirtualClock;
+
+    fn slow_reads(steady_ms: u64) -> Options {
+        let clock = VirtualClock::new(0);
+        let tick = clock.clone();
+        Options {
+            max_read_ms: steady_ms,
+            clock: Arc::new(clock),
+            read_probe: Some(Arc::new(move || tick.advance(5 * steady_ms))),
+            ..Options::default()
+        }
+    }
+
+    #[test]
+    fn a_read_model_build_slower_than_the_steady_read_limit_still_opens() {
+        let dir = testkit::TempDir::new("lc-served-cold");
+        let path = dir.join("control.db");
+        let seed = SqliteBackend::open(&path, Options::default()).unwrap();
+        seed.bulk_load(2, vec![("k".to_string(), b"v".to_vec())]).unwrap();
+        drop(seed);
+        let p = path.to_str().unwrap();
+
+        let Err(err) = modeled(p, slow_reads(1_000), 0) else { panic!("a build held to the steady limit must end") };
+        assert!(err.contains(state_store::READ_ENDED), "{err}");
+
+        let built = modeled(p, slow_reads(1_000), BUILD_READ_MS).expect("the build has its own budget");
+        assert_eq!(built.size().0, 1);
+
+        let later = state_store::Backend::log(built.inner(), 0, 10).expect_err("a read after the build is held to the steady limit again");
+        assert!(state_store_sqlite::is_read_ended(&later), "{later}");
+    }
 
     #[test]
     fn the_new_verbs_take_no_name_an_existing_verb_answers() {
