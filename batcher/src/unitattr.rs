@@ -72,6 +72,32 @@ pub fn failing_packages(lines: &[String]) -> Vec<String> {
     out
 }
 
+/// What a rerun of a red test phase judges: `package=test` for each failing test, the bare
+/// `package` for a failure whose test name cannot be handed to a test filter. A run of exactly
+/// the failed tests is never narrower than the red.
+pub fn rerun_scope(failed: &[String], graph: Option<&PackageGraph>) -> Vec<String> {
+    let name_ok = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b':');
+    let mut out: Vec<String> = vec![];
+    for l in failed {
+        let mut w = l.split_whitespace();
+        let (Some(_), Some(bin), Some(test)) = (w.next(), w.next(), w.next()) else {
+            continue;
+        };
+        let package = bin.split("::").next().unwrap_or(bin).to_string();
+        let package = match graph {
+            Some(g) => g.resolve(&[package]).remove(0),
+            None => package,
+        };
+        let token = if name_ok(test) { format!("{package}={test}") } else { package.clone() };
+        if !out.contains(&token) {
+            out.push(token);
+        }
+    }
+    let whole: Vec<String> = out.iter().filter(|t| !t.contains('=')).cloned().collect();
+    out.retain(|t| t.split_once('=').is_none_or(|(p, _)| !whole.iter().any(|w| w == p)));
+    out
+}
+
 /// The failing-test lines of a unit phase's output: `<STATUS> <binary> <test>`, once each, in order.
 pub fn failing_lines(out: &str) -> Vec<String> {
     const STATUS: [&str; 5] = ["FAIL", "TIMEOUT", "LEAK-FAIL", "EXEC-FAIL", "SIGSEGV"];
@@ -149,6 +175,22 @@ mod tests {
             paths: vec![path.into()],
             added: String::new(),
         }
+    }
+
+    #[test]
+    fn a_red_naming_one_integration_test_reruns_that_test_alone() {
+        let g = PackageGraph {
+            dirs: [("testenv".to_string(), "testenv".to_string())].into(),
+            deps: BTreeMap::new(),
+        };
+        let failed = vec!["FAIL dir:testenv lint_does_not_refuse_a_key".to_string()];
+        assert_eq!(rerun_scope(&failed, Some(&g)), vec!["testenv=lint_does_not_refuse_a_key"]);
+    }
+
+    #[test]
+    fn a_failure_whose_name_a_test_filter_cannot_take_reruns_its_whole_package() {
+        let failed = vec!["FAIL runtime::bin odd$name".to_string(), "FAIL runtime::bin ok::t".to_string()];
+        assert_eq!(rerun_scope(&failed, None), vec!["runtime"]);
     }
 
     #[test]

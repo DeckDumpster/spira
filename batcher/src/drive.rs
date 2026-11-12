@@ -67,6 +67,11 @@ pub trait RoundRunner {
     fn filter_red(&mut self) -> Option<FilterRed> {
         None
     }
+    /// The low-pass filter red of the corpus pass this attribution follows, when its results are
+    /// at hand: the red is attributed from it without running the corpus again.
+    fn prior_red(&mut self) -> Option<FilterRed> {
+        None
+    }
     /// The compiler's output of the main run that ended `WorkspaceBuild`.
     fn build_output(&mut self) -> String {
         String::new()
@@ -91,11 +96,11 @@ pub trait RoundRunner {
     fn runner_survives(&mut self, _members: &[Member]) -> Option<bool> {
         None
     }
-    /// Like `filter_green`, judging only the tests of `packages`, the ones that failed.
+    /// Like `filter_green`, judging only `scope` (`unitattr::rerun_scope`): the tests that failed.
     fn filter_green_in(
         &mut self,
         name: &str,
-        _packages: &[String],
+        _scope: &[String],
         members: &[Member],
     ) -> Option<bool> {
         self.filter_green(name, members)
@@ -583,6 +588,35 @@ fn with_dependents(members: &[Member], out: &mut BTreeMap<Id, Vec<String>>) {
     }
 }
 
+/// Finds the members a filter red belongs to by running `scope` on member subsets: bisection,
+/// the lone member, then each member alone.
+fn probe_filter_owners<R: RoundRunner>(
+    runner: &mut R,
+    f: &FilterRed,
+    tests: &str,
+    scope: &[String],
+    members: &[Member],
+) -> (Vec<Action>, &'static str, String) {
+    let red = format!("{} red{tests}", f.name);
+    let mut actions = bisect_members(
+        &red,
+        &mut |m| runner.filter_green_in(&f.name, scope, m),
+        members,
+    )
+    .unwrap_or_default();
+    if actions.is_empty() {
+        actions = sole_member_culprit(&red, members);
+    }
+    if actions.is_empty() && members.len() > 1 {
+        match red_alone(&red, &mut |m| runner.filter_green_in(&f.name, scope, m), members) {
+            Alone::Owners(found) => return (found, "unattributed", String::new()),
+            Alone::Base(said) => return (actions, "base", said),
+            Alone::Cleared(said) => return (actions, "unattributed", said),
+        }
+    }
+    (actions, "unattributed", String::new())
+}
+
 /// A filter's red names its owners: they leave with the red as their evidence and the survivors
 /// run the corpus again. A red naming no member cannot be attributed: it is filed (which holds
 /// this membership) instead of re-cut — unless the runner can run the filter on member subsets,
@@ -606,6 +640,7 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
             packages = g.resolve(&packages);
         }
         let tests = noted_tests(&f.failed);
+        let scope = unitattr::rerun_scope(&f.failed, graph.as_ref());
         let mapped = graph
             .map(|g| unitattr::reaching(&g, &packages, &ops.diffs(&ids)))
             .unwrap_or_default();
@@ -619,32 +654,13 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
                 id,
             })
             .collect();
-        if actions.is_empty() {
-            let red = format!("{} red{tests}", f.name);
-            actions = bisect_members(
-                &red,
-                &mut |m| runner.filter_green_in(&f.name, &packages, m),
-                members,
-            )
-            .unwrap_or_default();
-            if actions.is_empty() {
-                actions = sole_member_culprit(&red, members);
-            }
-        }
         let mut kind = "unattributed";
         let mut cleared = String::new();
-        if actions.is_empty() && members.len() > 1 {
-            match red_alone(
-                &format!("{} red{tests}", f.name),
-                &mut |m| runner.filter_green_in(&f.name, &packages, m),
-                members,
-            ) {
-                Alone::Owners(found) => actions = found,
-                Alone::Base(said) => {
-                    kind = "base";
-                    cleared = said;
-                }
-                Alone::Cleared(said) => cleared = said,
+        if actions.is_empty() {
+            let narrow = probe_filter_owners(runner, f, &tests, &scope, members);
+            (actions, kind, cleared) = narrow;
+            if actions.is_empty() && kind == "unattributed" && scope != packages {
+                (actions, kind, cleared) = probe_filter_owners(runner, f, &tests, &packages, members);
             }
         }
         if actions.is_empty() {
@@ -663,10 +679,11 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
                 }
             )));
         }
+        let left = who_left(members, &leaving(members, &actions, &f.name));
         return Ok(
             match apply_build_actions(ops, members, &actions, &f.name)? {
                 Some(next) => FilterEject::Survivors(next),
-                None => FilterEject::Emptied,
+                None => FilterEject::Emptied(left),
             },
         );
     }
@@ -688,12 +705,13 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         .filter(|m| !out.contains_key(&m.id))
         .cloned()
         .collect();
+    let left = who_left(members, &out);
     if survivors.is_empty() {
-        return Ok(FilterEject::Emptied);
+        return Ok(FilterEject::Emptied(left));
     }
     let rebuilt = ops.rebuild(&survivors)?;
     Ok(if rebuilt.is_empty() {
-        FilterEject::Emptied
+        FilterEject::Emptied(left)
     } else {
         FilterEject::Survivors(rebuilt)
     })
@@ -727,7 +745,8 @@ fn sole_member_culprit(red: &str, members: &[Member]) -> Vec<Action> {
 
 enum FilterEject {
     Unnamed(String),
-    Emptied,
+    /// Nothing is left to land; who left and who stayed.
+    Emptied(String),
     Survivors(Vec<Member>),
 }
 
@@ -831,12 +850,7 @@ fn apply_build_actions<O: RoundOps>(
     if actions.is_empty() {
         return Ok(None);
     }
-    let mut out: BTreeMap<Id, Vec<String>> = BTreeMap::new();
-    for a in actions {
-        let (Action::Eject { id, .. } | Action::Sequence { id, .. }) = a;
-        out.insert(id.clone(), vec![filter.to_string()]);
-    }
-    with_dependents(members, &mut out);
+    let out = leaving(members, actions, filter);
     for m in members {
         match actions.iter().find(
             |a| matches!(a, Action::Eject { id, .. } | Action::Sequence { id, .. } if *id == m.id),
@@ -857,6 +871,33 @@ fn apply_build_actions<O: RoundOps>(
     }
     let rebuilt = ops.rebuild(&survivors)?;
     Ok((!rebuilt.is_empty()).then_some(rebuilt))
+}
+
+/// The members the actions take out of the round, with the members stacked on them.
+fn leaving(members: &[Member], actions: &[Action], filter: &str) -> BTreeMap<Id, Vec<String>> {
+    let mut out: BTreeMap<Id, Vec<String>> = BTreeMap::new();
+    for a in actions {
+        let (Action::Eject { id, .. } | Action::Sequence { id, .. }) = a;
+        out.insert(id.clone(), vec![filter.to_string()]);
+    }
+    with_dependents(members, &mut out);
+    out
+}
+
+/// Who left a round and who stayed, for the reason a round that ended carries.
+fn who_left(members: &[Member], out: &BTreeMap<Id, Vec<String>>) -> String {
+    let ids = |left: bool| {
+        members
+            .iter()
+            .filter(|m| out.contains_key(&m.id) == left)
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    match ids(false).as_str() {
+        "" => format!("ejected every member ({})", ids(true)),
+        kept => format!("ejected {}, kept {kept}", ids(true)),
+    }
 }
 
 fn action_id(a: &Action) -> &Id {
@@ -1026,6 +1067,24 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     let mut image_retried = false;
     let mut base_retried = false;
     let t0 = runner.now();
+    runner.set_members(&members);
+    if let Some(f) = runner.prior_red() {
+        println!(
+            "batcher: {} red in the corpus pass — attributing it by its failing tests, without running the corpus again",
+            f.name
+        );
+        return Ok(match eject_filter_owners(runner, ops, &f, &members)? {
+            FilterEject::Survivors(members) => RoundEnd::Land {
+                members,
+                attribution_secs: None,
+            },
+            FilterEject::Emptied(left) => RoundEnd::Emptied(format!("{} red {left}", f.name)),
+            FilterEject::Unnamed(tests) => RoundEnd::Blocked(format!(
+                "{} red{tests} names no member that can be ejected",
+                f.name
+            )),
+        });
+    }
     for iteration in 0..bound {
         if runner.abandoned() {
             return Ok(RoundEnd::Abandoned);
@@ -1126,11 +1185,8 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             );
             let next = match eject_filter_owners(runner, ops, f, &members)? {
                 FilterEject::Survivors(next) => next,
-                FilterEject::Emptied => {
-                    return Ok(RoundEnd::Emptied(format!(
-                        "{} red ejected every member",
-                        f.name
-                    )))
+                FilterEject::Emptied(left) => {
+                    return Ok(RoundEnd::Emptied(format!("{} red {left}", f.name)))
                 }
                 FilterEject::Unnamed(tests) => {
                     return Ok(RoundEnd::Blocked(format!(
@@ -1481,6 +1537,8 @@ pub(crate) mod tests {
         pub alone: Vec<(String, Vec<String>)>,
         /// The packages each scoped filter probe was asked to judge.
         pub scoped: Vec<Vec<String>>,
+        /// The filter red of the corpus pass this attribution follows.
+        pub prior: Option<FilterRed>,
         /// A runner that cannot build a tree with members taken out: every such job fails to launch.
         pub refuses_removals: bool,
         /// Suite → the members whose diff adds it: a run naming it on a tree holding none of them dies as round-vm does.
@@ -1527,6 +1585,7 @@ pub(crate) mod tests {
                 runs_alone: false,
                 alone: vec![],
                 scoped: vec![],
+                prior: None,
                 refuses_removals: false,
                 added_by: BTreeMap::new(),
                 abandoned_after_starts: None,
@@ -1625,6 +1684,9 @@ pub(crate) mod tests {
         }
         fn filter_red(&mut self) -> Option<FilterRed> {
             self.filtered.take()
+        }
+        fn prior_red(&mut self) -> Option<FilterRed> {
+            self.prior.take()
         }
         fn build_output(&mut self) -> String {
             self.build_failed.clone().unwrap_or_default()
@@ -1748,6 +1810,8 @@ pub(crate) mod tests {
         pub config_changes: Vec<(Id, String)>,
         pub sequenced: Vec<(String, Vec<String>)>,
         pub graph: Option<PackageGraph>,
+        /// The re-cut of the survivors merges none of them.
+        pub rebuilt_empty: bool,
     }
 
     impl RoundOps for Ops {
@@ -1783,7 +1847,7 @@ pub(crate) mod tests {
         fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
             self.rebuilt
                 .push(survivors.iter().map(|m| m.id.clone()).collect());
-            Ok(survivors.to_vec())
+            Ok(if self.rebuilt_empty { vec![] } else { survivors.to_vec() })
         }
         fn fix_integration(&mut self, _: &[Member], _: &[String]) -> bool {
             self.fix_calls += 1;
@@ -3125,7 +3189,7 @@ pub(crate) mod tests {
             vec![("m3".to_string(), vec!["unit-tests".to_string()])]
         );
         assert!(
-            !f.probes.is_empty() && f.scoped.iter().all(|p| p == &["loom".to_string()]),
+            !f.probes.is_empty() && f.scoped.iter().all(|p| p == &["loom=factory::tests::a_refused_dwell_blinds", "loom=factory::tests::a_round_open_elsewhere"]),
             "{:?} {:?}",
             f.probes,
             f.scoped
@@ -4180,6 +4244,75 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_two_member_round_red_on_one_integration_test_runs_only_that_test_per_member_ejects_its_owner_and_lands_the_other_without_the_corpus_again(
+    ) {
+        let red = FilterRed {
+            name: "integration-tests".into(),
+            named: vec![],
+            failed: vec!["FAIL dir:testenv lint_does_not_refuse_a_key".into()],
+        };
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.runs_alone = true;
+        f.filter = Some(Box::new({
+            let red = red.clone();
+            move |tree| tree.contains("m2").then(|| red.clone())
+        }));
+        f.prior = Some(red);
+        let mut ops = Ops {
+            graph: Some(PackageGraph {
+                dirs: [("testenv".to_string(), "testenv".to_string())].into(),
+                deps: Default::default(),
+            }),
+            ..Ops::default()
+        };
+        let two = vec![member("m1"), member("m2")];
+        let end = attribute_round(&mut f, &mut ops, &corpus(40), two, Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec!["integration-tests".to_string()])]
+        );
+        assert!(!f.scoped.is_empty());
+        assert!(
+            f.scoped.iter().all(|s| s == &["testenv=lint_does_not_refuse_a_key"]),
+            "{:?}",
+            f.scoped
+        );
+        assert!(f.main_kind.is_empty(), "no corpus or verify run: {:?}", f.main_kind);
+        assert_eq!(land_ids(end), vec!["m1"]);
+    }
+
+    #[test]
+    fn a_round_that_loses_its_only_member_to_a_named_test_red_says_who_left() {
+        let red = FilterRed {
+            name: "integration-tests".into(),
+            named: vec![],
+            failed: vec!["FAIL dir:testenv t".into()],
+        };
+        let mut f = Fake::new(|_, _| false);
+        f.prior = Some(red);
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(
+            end,
+            RoundEnd::Emptied("integration-tests red ejected every member (m1)".into())
+        );
+    }
+
+    #[test]
+    fn a_red_that_ejects_one_of_two_members_names_who_left_and_who_stayed_when_the_rest_cannot_be_re_cut(
+    ) {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(lint_naming("m1"));
+        let mut ops = Ops { rebuilt_empty: true, ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        match end {
+            RoundEnd::Emptied(why) => assert!(why.contains("ejected m1, kept m2"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn an_integration_red_no_member_maps_to_is_bisected_on_the_failing_crate_alone() {
         let mut f = Fake::new(|_, _| false);
         f.bisects = true;
@@ -4204,7 +4337,7 @@ pub(crate) mod tests {
             vec![("m2".to_string(), vec!["integration-tests".to_string()])]
         );
         assert!(
-            f.scoped.iter().all(|p| p == &["runtime".to_string()]),
+            f.scoped.iter().all(|p| p == &["runtime=leg_lost::pauses", "runtime=leg_lost::abandons"]),
             "{:?}",
             f.scoped
         );

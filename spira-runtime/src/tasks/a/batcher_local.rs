@@ -718,6 +718,15 @@ pub struct Leg {
     /// The suites a red certify named, for the abandon to keep their evidence.
     #[serde(default)]
     pub reds: Vec<String>,
+    /// The results of the corpus pass an attribution leg follows: it attributes that pass's red
+    /// tests from them instead of running the corpus again.
+    #[serde(default)]
+    pub after_pass: String,
+}
+
+/// Where the corpus leg `unit` of the round tree `wt` keeps its results.
+pub fn round_results(wt: &str, unit: &str) -> std::path::PathBuf {
+    std::path::Path::new(wt).join(format!(".round-results-{unit}"))
 }
 
 impl Leg {
@@ -1039,17 +1048,23 @@ impl Machine<'_> {
     /// The attribution leg: `batcher attribute` (`drive::attribute_round`) on the red round, a
     /// corpus leg marked [`ATTRIBUTE`] so it runs under the same effect, captured.
     fn attribute(&mut self) {
-        self.attribute_suites(Vec::new());
+        self.attribute_after(Vec::new(), String::new());
     }
 
     /// [`Self::attribute`], restricted to `suites` when any are named.
     fn attribute_suites(&mut self, suites: Vec<String>) {
+        self.attribute_after(suites, String::new());
+    }
+
+    /// [`Self::attribute`] of the corpus pass whose results are at `after_pass`, when named.
+    fn attribute_after(&mut self, suites: Vec<String>, after_pass: String) {
         self.rc.run += 1;
         self.start(CORPUS, "attribute");
         if let Some(a) = self.acts.last_mut() {
             let mut leg: Leg = serde_json::from_str(&a.input).unwrap_or_default();
             leg.why = ATTRIBUTE.into();
             leg.reds = suites;
+            leg.after_pass = after_pass;
             a.input = serde_json::to_string(&leg).unwrap_or_default();
         }
     }
@@ -1453,7 +1468,8 @@ impl Machine<'_> {
                 // owners from the round (or hands them to their menders) and re-runs only their
                 // suites on the survivors.
                 self.go(Trigger::LegRed);
-                self.attribute();
+                let pass = self.rc.leg.as_deref().map(|unit| round_results(&self.rc.wt, unit).display().to_string()).unwrap_or_default();
+                self.attribute_after(Vec::new(), pass);
             }
             (State::Attributing, _) => match Attribution::parse(out) {
                 Some(Attribution::Land { members, mended, .. }) if !members.is_empty() => {
@@ -2209,6 +2225,9 @@ pub mod edge {
         if !leg.reds.is_empty() {
             argv.extend(["--suites".into(), leg.reds.join(",")]);
         }
+        if !leg.after_pass.is_empty() {
+            argv.extend(["--after-pass".into(), leg.after_pass.clone()]);
+        }
         start_scope(e, task, &leg.unit, argv, home_vars(env), None)
     }
 
@@ -2380,7 +2399,7 @@ pub mod edge {
         let wt = PathBuf::from(&leg.wt);
         let history = std::fs::read_to_string(tsd::family_path(&env.run, "suite-timing")).unwrap_or_default();
         let suites = batcher_cut::order::longest_first(&io::suites_in(&wt, "HEAD"), &history).list;
-        let results = wt.join(format!(".round-results-{}", leg.unit));
+        let results = super::round_results(&leg.wt, &leg.unit);
         let argv = ["timeout", "-k", "10", &env.wall_secs.to_string()].iter().map(|s| s.to_string()).chain([env.round_vm.display().to_string(), "run".into(), wt.display().to_string(), "--suites".into(), suites.join(","), "--maxpar".into(), env.maxpar.to_string(), "--results-dir".into(), results.display().to_string(), "--base".into(), repo.base.clone()]).collect();
         start_unit(e, task, &leg.unit, argv, home_vars(&env), None)
     }
