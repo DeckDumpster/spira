@@ -120,7 +120,6 @@ bead_sweep_cert_min = 10
 bead_sweep_wait_min = 120
 bead_sweep_batch_min = 180
 runtime_publish_backlog_secs = 900
-runtime_repo_events_secs = 45
 runtime_overrides_secs = 60
 runtime_readiness_dependents_secs = 5
 runtime_view_secs = 3
