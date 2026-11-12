@@ -147,7 +147,7 @@ fn glob_matches() {
     assert!(!glob("a/", "ab/c"));
 }
 
-const FEATURE_PANIC: &str = "thread 'x' panicked at round-vm/tests/unit_cov_real.rs:39:5:\nerror: the package 'tiny' does not contain this feature: integration\n";
+const FEATURE_PANIC: &str = "thread 'x' panicked at round-vm/tests/unit_deadline_real.rs:39:5:\nerror: the package 'tiny' does not contain this feature: integration\n";
 
 #[test]
 fn a_red_naming_a_test_file_no_member_touched_is_owned_by_the_one_member_that_touches_its_crate() {
@@ -174,7 +174,7 @@ fn a_red_naming_a_crate_two_members_touch_stays_ambiguous() {
 #[test]
 fn the_exact_file_outranks_its_crate() {
     let members = vec![
-        m("sp-a", &["round-vm/tests/unit_cov_real.rs"]),
+        m("sp-a", &["round-vm/tests/unit_deadline_real.rs"]),
         m("sp-b", &["round-vm/src/vm.rs"]),
     ];
     assert_eq!(

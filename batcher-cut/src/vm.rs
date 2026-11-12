@@ -1367,7 +1367,7 @@ mod tests {
             "{\"stage\":\"integration-tests\",\"verdict\":\"red\"}",
         )
         .unwrap();
-        fs::write(d.path().join("integration-tests.out"), "thread 'main' panicked at round-vm/tests/unit_cov_real.rs:39:5:\nerror: the package 'tiny' does not contain this feature: integration\n").unwrap();
+        fs::write(d.path().join("integration-tests.out"), "thread 'main' panicked at round-vm/tests/unit_deadline_real.rs:39:5:\nerror: the package 'tiny' does not contain this feature: integration\n").unwrap();
         let red = filter_red_in(d.path(), &ms, &changed).unwrap();
         assert_eq!(
             (

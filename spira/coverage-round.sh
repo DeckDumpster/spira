@@ -18,15 +18,12 @@ bash "$tree/spira/suite-coverage-json.sh" > "$tmp/suites.json" 2>"$tmp/suites.er
 
 args=(--catalogue-dir "$tree/docs/test-plan" --suites "$tmp/suites.json" --round "$round"
       --out-json "$results/coverage.json" --out-txt "$results/coverage.txt")
-if [ -s "$results/coverage-lines.json" ]; then
-    args+=(--llvm-cov "$results/coverage-lines.json" --root "$(head -1 "$results/coverage-root" 2>/dev/null)")
-fi
 [ -s "$latest" ] && args+=(--prev "$latest")
 
 if ! test-plan coverage-report "${args[@]}" > "$tmp/report.out"; then
     echo "coverage-round: test-plan coverage-report failed" >&2
     exit 0
 fi
-sed 's/^/coverage: /' "$tmp/report.out" | grep -E '^coverage: (lines|use cases|delta):' >&2
+sed 's/^/coverage: /' "$tmp/report.out" | grep -E '^coverage: (use cases|delta):' >&2
 mkdir -p "$state" && cp "$results/coverage.json" "$latest.tmp" && mv -f "$latest.tmp" "$latest"
 exit 0
