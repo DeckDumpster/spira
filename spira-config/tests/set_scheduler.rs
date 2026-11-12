@@ -83,7 +83,7 @@ fn a_set_the_scheduler_has_not_taken_says_what_it_still_holds_and_what_it_waits_
     let b = setup("set-sched-wait-box", &sock);
     let o = run(&b, &["set", "spira.max_dwarves", "4", b.toml.to_str().unwrap()]);
     assert!(o.status.success());
-    assert!(out(&o).contains(&format!("written; the scheduler still holds \"0\" for {KEY} and takes \"4\" at its next safe point (the batcher to finish the round it is driving)")), "{}", out(&o));
+    assert!(out(&o).contains(&format!("written; the scheduler still holds 0 for {KEY} and takes 4 at its next safe point (the batcher to finish the round it is driving)")), "{}", out(&o));
 }
 
 #[test]

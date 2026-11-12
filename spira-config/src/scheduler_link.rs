@@ -55,8 +55,8 @@ pub fn told(sock: Result<String, String>, key: &str) -> String {
     let v: serde_json::Value = serde_json::from_str(&reply).unwrap_or_default();
     let (held, wanted) = (v["held"].as_str().unwrap_or("").to_string(), v["wanted"].as_str().unwrap_or("").to_string());
     match v["state"].as_str() {
-        Some("unchanged") => format!("scheduler already holds {held:?} for {key}"),
-        Some("restart") => format!("written; the scheduler reads {key} only when it starts and holds {held:?}; restart it to take {wanted:?}"),
+        Some("unchanged") => format!("scheduler already holds {held} for {key}"),
+        Some("restart") => format!("written; the scheduler reads {key} only when it starts and holds {held}; restart it to take {wanted}"),
         Some("pending") => {
             for _ in 0..POLLS {
                 if call(sock, &["scheduler", "running", key]).is_ok_and(|r| r == wanted) {
@@ -66,7 +66,7 @@ pub fn told(sock: Result<String, String>, key: &str) -> String {
             }
             let held_now = call(sock, &["scheduler", "running", key]).unwrap_or(held);
             let waits = call(sock, &["scheduler", "status"]).ok().and_then(|d| serde_json::from_str::<serde_json::Value>(&d).ok()).and_then(|d| d["repin"]["waits"].as_str().map(str::to_string)).unwrap_or_else(|| "a turn".into());
-            format!("written; the scheduler still holds {held_now:?} for {key} and takes {wanted:?} at its next safe point ({waits})")
+            format!("written; the scheduler still holds {held_now} for {key} and takes {wanted} at its next safe point ({waits})")
         }
         _ => format!("written; the scheduler's answer about {key} was not understood: {reply}"),
     }
