@@ -223,7 +223,17 @@ struct Inner {
     read_steps: AtomicU64,
     /// Held for the life of the handle: the exclusive opener. Last, so it outlives the
     /// connections.
-    _lock: File,
+    _lock: OpenerLock,
+}
+
+/// Unlocks on drop: a child forked while the store was open holds a duplicate of the
+/// descriptor until it execs, and closing ours alone would leave the lock held.
+struct OpenerLock(File);
+
+impl Drop for OpenerLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 struct Writer {
@@ -545,7 +555,7 @@ impl SqliteBackend {
             clock: opts.clock,
             probe: opts.read_probe,
             read_steps: AtomicU64::new(0),
-            _lock: lock_file,
+            _lock: OpenerLock(lock_file),
         })))
     }
 
@@ -1101,6 +1111,18 @@ impl Backend for SqliteBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_path_reopens_after_its_handle_drops_though_a_forked_child_holds_the_lock_descriptor() {
+        let dir = testkit::TempDir::new("sqlite-reopen");
+        let path = dir.path().join("s.db");
+        let mut forked = Vec::new();
+        for _ in 0..200 {
+            let b = SqliteBackend::open(&path, Options::default()).unwrap();
+            forked.push(b.0._lock.0.try_clone().unwrap());
+            drop(b);
+        }
+    }
 
     #[test]
     fn lowering_the_read_budget_lowers_the_readers_busy_timeout() {
