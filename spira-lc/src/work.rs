@@ -449,20 +449,27 @@ fn lint_refusal(conn: &Conn, bead_id: &str, tip: &str, actor: &str) -> Option<(i
     }
 }
 
+#[derive(Debug, PartialEq)]
+enum UnitRedError {
+    Refused(String),
+    CannotTell(String),
+}
+
 /// The note a submission's `--unit-red-on-base <id>` leaves on the submitting bead: the filed
 /// bead that records the base red, and the failing tests the client's check row printed. `Err`
-/// is the refusal text; `Ok(None)` is a submission that names no base red.
-fn unit_red_line(args: &[String], self_id: &str, exists: &dyn Fn(&str) -> Result<bool, String>) -> Result<Option<String>, String> {
+/// is a refusal or a lookup that could not tell; `Ok(None)` is a submission that names no base red.
+fn unit_red_line(args: &[String], self_id: &str, exists: &dyn Fn(&str) -> Result<bool, String>) -> Result<Option<String>, UnitRedError> {
+    use UnitRedError::{CannotTell, Refused};
     let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).filter(|v| !v.trim().is_empty());
     if !args.iter().any(|a| a == "--unit-red-on-base") {
         return Ok(None);
     }
-    let Some(id) = value("--unit-red-on-base") else { return Err("refused: --unit-red-on-base needs the id of the bead recording the base red".to_string()) };
+    let Some(id) = value("--unit-red-on-base") else { return Err(Refused("refused: --unit-red-on-base needs the id of the bead recording the base red".to_string())) };
     if id == self_id {
-        return Err(format!("refused: --unit-red-on-base {id} is this bead; file a bead recording the base red"));
+        return Err(Refused(format!("refused: --unit-red-on-base {id} is this bead; file a bead recording the base red")));
     }
-    if !exists(id)? {
-        return Err(format!("refused: --unit-red-on-base {id} does not exist; file it first (work file-followup)"));
+    if !exists(id).map_err(CannotTell)? {
+        return Err(Refused(format!("refused: --unit-red-on-base {id} does not exist; file it first (work file-followup)")));
     }
     let tests = value("--unit-red-tests").map(String::as_str).unwrap_or("(none printed)");
     Ok(Some(format!("Unit red on base: {id} records it; failing tests the row printed: {tests}")))
@@ -472,11 +479,11 @@ fn record_unit_red_on_base(bead_id: &str, args: &[String]) -> Result<(), (i32, S
     let exists = |id: &str| match crate::bd::show(id) {
         Ok(_) => Ok(true),
         Err(e) if e.contains("no issue found matching") => Ok(false),
-        Err(e) => Err(format!("cannot tell: {e}")),
+        Err(e) => Err(e),
     };
     match unit_red_line(args, bead_id, &exists) {
-        Err(e) if e.starts_with("cannot tell") => Err((CANNOT_TELL, e)),
-        Err(e) => Err((REFUSED, format!("work submit: {e}"))),
+        Err(UnitRedError::CannotTell(e)) => Err((CANNOT_TELL, format!("cannot tell: {e}"))),
+        Err(UnitRedError::Refused(e)) => Err((REFUSED, format!("work submit: {e}"))),
         Ok(None) => Ok(()),
         Ok(Some(line)) => crate::bd::note(bead_id, &line).map(|_| ()).map_err(|e| (CANNOT_TELL, format!("cannot tell: {e}"))),
     }
@@ -1708,7 +1715,7 @@ mod tests {
         let line = super::unit_red_line(&args, "sp-me", &has("sp-base1")).unwrap().unwrap();
         assert!(line.contains("sp-base1") && line.contains("a::bad,b::worse"), "{line}");
         let err = super::unit_red_line(&v(&["--unit-red-on-base", "sp-ghost"]), "sp-me", &has("sp-base1")).unwrap_err();
-        assert!(err.contains("sp-ghost") && err.contains("does not exist"), "{err}");
+        assert!(matches!(&err, super::UnitRedError::Refused(m) if m.contains("sp-ghost") && m.contains("does not exist")), "{err:?}");
         assert!(super::unit_red_line(&v(&["--unit-red-on-base", "sp-me"]), "sp-me", &has("sp-me")).is_err());
         assert!(super::unit_red_line(&v(&["--unit-red-on-base"]), "sp-me", &has("sp-base1")).is_err());
         assert_eq!(super::unit_red_line(&v(&["--met", "x"]), "sp-me", &has("sp-base1")), Ok(None));
