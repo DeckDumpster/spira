@@ -3,6 +3,7 @@
 
 #[cfg(any(test, feature = "integration"))]
 pub mod fixture;
+pub mod api_budget;
 pub mod forge;
 pub mod classes;
 pub mod hunk;
