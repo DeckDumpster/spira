@@ -98,6 +98,27 @@ fn flush_to(sink: &MetricsSink) {
     }
 }
 
+/// The core budget out of `gh api rate_limit` (a read GitHub does not charge).
+pub fn core_rate(json: &str) -> Option<Rate> {
+    let v: Value = serde_json::from_str(json).ok()?;
+    let core = v.get("resources")?.get("core")?;
+    let n = |k: &str| core.get(k).and_then(Value::as_u64);
+    Some(Rate { limit: n("limit")?, remaining: n("remaining")?, reset: n("reset")? })
+}
+
+/// The caller that spent most, and how much, among the exported `spira_gh_api_calls` series.
+pub fn top_spender(series: &[spira_otel::query::Exported]) -> Option<(String, u64)> {
+    let mut by: BTreeMap<&str, f64> = BTreeMap::new();
+    for s in series {
+        let Some(caller) = s.labels.get("caller") else { continue };
+        if !matches!(s.labels.get("outcome").map(String::as_str), Some(FRESH | FAILED)) {
+            continue;
+        }
+        *by.entry(caller).or_default() += s.samples.iter().map(|(_, v)| v).sum::<f64>();
+    }
+    by.into_iter().max_by(|a, b| a.1.total_cmp(&b.1)).map(|(c, n)| (c.to_string(), n as u64))
+}
+
 pub fn clock_of(epoch: u64) -> String {
     let d = epoch % 86_400;
     format!("{:02}:{:02}:{:02}Z", d / 3600, d % 3600 / 60, d % 60)
@@ -123,6 +144,30 @@ mod tests {
         assert!(remaining.value <= 12.0);
         assert!(got.iter().any(|s| s.name == LIMIT));
         assert_eq!(calls_after_flush(), 0, "a flush leaves nothing to count twice");
+    }
+
+    #[test]
+    fn the_core_budget_is_read_from_a_rate_limit_answer_and_nothing_else_is_taken_for_it() {
+        let body = r#"{"resources":{"core":{"limit":5000,"remaining":0,"reset":1793003600},"graphql":{"limit":5000,"remaining":4999,"reset":1}}}"#;
+        assert_eq!(core_rate(body), Some(Rate { limit: 5000, remaining: 0, reset: 1_793_003_600 }));
+        assert_eq!(core_rate(r#"{"message":"Bad credentials"}"#), None);
+        assert_eq!(core_rate("not json"), None);
+    }
+
+    #[test]
+    fn the_top_spender_is_the_caller_with_most_charged_calls() {
+        let with = |caller: &str, outcome: &str, vals: &[f64]| spira_otel::query::Exported {
+            labels: [("caller".to_string(), caller.to_string()), ("outcome".to_string(), outcome.to_string())].into(),
+            samples: vals.iter().enumerate().map(|(i, v)| (i as i64, *v)).collect(),
+        };
+        let series = |caller: &str, vals: &[f64]| with(caller, FRESH, vals);
+        let got = top_spender(&[series("a", &[3.0, 4.0]), series("b", &[20.0]), series("c", &[1.0])]);
+        assert_eq!(got, Some(("b".to_string(), 20)));
+        let erroring = [with("e", FAILED, &[9.0]), with("e", CACHED, &[500.0]), series("a", &[5.0])];
+        assert_eq!(top_spender(&erroring), Some(("e".to_string(), 9)));
+        let unlabelled = spira_otel::query::Exported { labels: Default::default(), samples: vec![(0, 99.0)] };
+        assert_eq!(top_spender(&[unlabelled, series("a", &[2.0])]), Some(("a".to_string(), 2)));
+        assert_eq!(top_spender(&[]), None);
     }
 
     fn calls_after_flush() -> u64 {

@@ -91,11 +91,16 @@ fn run(repo: Option<&Path>, args: &[&str], input: Option<&[u8]>, merge_stderr: b
 
 impl Gh for RealGh {
     fn call(&self, repo: Option<&Path>, args: &[&str]) -> GhOut {
-        run(repo, args, None, false)
+        counted(args, run(repo, args, None, false))
     }
     fn call_merged(&self, repo: Option<&Path>, args: &[&str], input: Option<&[u8]>) -> GhOut {
-        run(repo, args, input, true)
+        counted(args, run(repo, args, input, true))
     }
+}
+
+fn counted(args: &[&str], out: GhOut) -> GhOut {
+    crate::spend::note(args, out.code);
+    out
 }
 
 pub struct RealProc;

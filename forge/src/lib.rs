@@ -12,6 +12,7 @@ pub mod diag;
 pub mod fork_scan;
 pub mod ports;
 pub mod real;
+pub mod spend;
 pub mod telemetry;
 pub mod time;
 pub mod zipread;

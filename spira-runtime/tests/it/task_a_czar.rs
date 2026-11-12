@@ -39,6 +39,7 @@ fn idle() -> Snapshot {
         base_ci: [("spira".to_string(), Read::Observed(BaseCi { conclusion: Some("success".into()), head_sha: "b1".into(), ..BaseCi::default() }))].into(),
         reconciler_last_pass_ms: Read::Observed(Some(NOW - 30_000)),
         now_ms: NOW,
+        gh_budget: None,
     }
 }
 
@@ -131,4 +132,21 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+}
+
+/// A spent GitHub budget is one page with its reset and the top spender, not one per repository.
+#[test]
+fn a_spent_budget_files_one_page_naming_the_reset_and_the_top_spender() {
+    let blind = |repo: &str| (repo.to_string(), Read::Unobservable("forge exited 1".into()));
+    let spent = Snapshot {
+        base_ci: [blind("spira"), blind("other")].into(),
+        gh_budget: Some(SpentBudget { reset: NOW / 1000 + 600, top_spender: Some(("forge:pr-state".into(), 900)) }),
+        ..idle()
+    };
+    let p = Policy { base_ci_unreadable_grace_secs: 0, ..policy(Stage::Act) };
+    let (_, acts) = decide(&p, &Carry::default(), &spent);
+    let filed: Vec<&Act> = acts.iter().filter(|a| a.effect == FILE_BASE_RED).collect();
+    assert_eq!(filed.len(), 1, "{acts:?}");
+    let text = format!("{:?}", filed[0]);
+    assert!(text.contains("forge:pr-state") && text.contains(&spira_runtime::api_budget::clock_of(NOW / 1000 + 600)), "{text}");
 }

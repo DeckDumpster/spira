@@ -55,7 +55,10 @@ pub fn operation(first_arg: Option<&str>) -> &'static str {
 
 pub fn run(sink: &MetricsSink, first_arg: Option<&str>, f: impl FnOnce() -> i32) -> i32 {
     let op = operation(first_arg);
-    metrics::timed(sink, COMPONENT, op, f)
+    crate::spend::set_caller(op);
+    let code = metrics::timed(sink, COMPONENT, op, f);
+    crate::spend::flush(sink);
+    code
 }
 
 #[cfg(test)]
