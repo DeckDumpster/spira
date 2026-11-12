@@ -102,7 +102,7 @@ impl Run<'_> {
 
     /// The session's `TMPDIR`: inside its worktree, where the worktree reap already cleans.
     pub(crate) fn session_tmpdir(work: &Path) -> PathBuf {
-        work.join(".runtime").join("session-tmp")
+        work.join(".runtime").join(format!("session-tmp-{}", std::process::id()))
     }
 
     fn remove_tmpdir(&self) {
@@ -631,6 +631,20 @@ mod tests {
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o555)).unwrap();
         remove_session_tmpdir(&dir.path().join("t"));
         assert!(!dir.path().join("t").exists());
+    }
+
+    #[test]
+    fn a_symlink_in_the_session_tmpdir_is_unlinked_not_followed() {
+        let dir = testkit::TempDir::new("link");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("keep"), "x").unwrap();
+        let own = dir.path().join("own");
+        std::fs::create_dir_all(&own).unwrap();
+        std::os::unix::fs::symlink(&outside, own.join("l")).unwrap();
+        remove_session_tmpdir(&own);
+        assert!(!own.exists());
+        assert!(outside.join("keep").is_file());
     }
 
     #[test]
