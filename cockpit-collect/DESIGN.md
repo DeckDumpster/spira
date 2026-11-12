@@ -168,6 +168,6 @@ unilaterally.
   fixtures, the same `SPIRA_BDJSON_FIXTURE`/fake-`systemctl`/mock-`COCK` seams the bash
   suites already used — never a copy of the logic under test.
 - **Cannot be verified without production**: the live collector's actual probe timings
-  under the real fleet (the tiered cadences, `SLOW_CONCURRENT`'s real contention). Verified
+  under the real fleet (the tiered cadences). Verified
   by deploying and watching `collector.log`/the watchdog, same as any other collector
   change.

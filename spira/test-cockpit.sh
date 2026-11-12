@@ -67,7 +67,7 @@ echo
 echo "once never writes, whatever the environment claims:"
 
 rm -f "$RUN/cockpit.env"
-claim_out="$(run_cockpit env INVOCATION_ID=inv-42)"
+claim_out="$(run_cockpit env INVOCATION_ID=inv-42 SPIRA_COCKPIT_FORCE=1)"
 want "the claiming run printed its keys" "SP_AT=" "$claim_out"
 if [ ! -f "$RUN/cockpit.env" ]; then
     ok "INVOCATION_ID does not make once write"
