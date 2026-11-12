@@ -98,6 +98,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-runtime.service", true));
     m.units.push(t("spira-vm-pool-section.service", false));
     m.units.push(t("spira-vm-pool-section.timer", true));
+    m.units.push(t("spira-psi-sample.service", false));
+    m.units.push(t("spira-psi-sample.timer", true));
     // The one timer outside the scheduler (S15): it restarts and pages when the scheduler is
     // wedged or absent. Rendered from watchdog::render, not from a template file.
     m.units.push(t("spira-watchdog.service", false));
@@ -359,6 +361,18 @@ mod tests {
         assert!(timer.contains("OnUnitActiveSec=300s") && timer.contains("Plane=observability"), "{timer}");
         let service = std::fs::read_to_string(dir.join("spira-vm-pool-section.service")).unwrap();
         assert!(service.contains("bin/round-vm section") && service.contains("Plane=observability"), "{service}");
+    }
+
+    #[test]
+    fn the_pressure_sampler_is_a_ten_second_timer_the_manifest_enables() {
+        let m = build(&inputs()).unwrap();
+        assert!(m.units.iter().any(|u| u.name == "spira-psi-sample.timer" && u.enable));
+        assert!(m.units.iter().any(|u| u.name == "spira-psi-sample.service" && !u.enable), "the timer runs it, never boot");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let timer = std::fs::read_to_string(dir.join("spira-psi-sample.timer")).unwrap();
+        assert!(timer.contains("OnUnitActiveSec=10s"), "{timer}");
+        let service = std::fs::read_to_string(dir.join("spira-psi-sample.service")).unwrap();
+        assert!(service.contains("bin/round-vm psi-sample"), "{service}");
     }
 
     #[test]

@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=round
+DOC=SPIRA_ROUND_VM_HOST_CPU_SOME_5M_TM90 — host cpu-pressure (PSI some, five-minute trimmed mean) above which a round is not taken on the host.
+SCHEMA=Host cpu-pressure (PSI `some`, percent; five-minute tm90 of 10-second samples) above which a round spills instead of running on the host (default 60).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_HOST_CPU_SOME_5M_TM90:=60}"
+SPIRA_CONF_DEFAULT_EOF

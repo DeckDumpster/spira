@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=round
+DOC=SPIRA_ROUND_VM_HOST_IO_FULL_5M_TM90 — host io-pressure (PSI full, five-minute trimmed mean) above which a round is not taken on the host.
+SCHEMA=Host io-pressure (PSI `full`, percent; five-minute tm90 of 10-second samples) above which a round spills instead of running on the host (default 50).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_HOST_IO_FULL_5M_TM90:=50}"
+SPIRA_CONF_DEFAULT_EOF

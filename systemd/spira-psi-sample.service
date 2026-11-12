@@ -1,0 +1,16 @@
+[Unit]
+Description=Record one sample of the host's io and cpu pressure for the round placement
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+CPUQuota=10%
+ExecStart=@SPIRA_PROD_ROOT@/bin/round-vm psi-sample
+TimeoutStartSec=5
+StandardOutput=append:@SPIRA_RUN@/psi-sample.log
+StandardError=append:@SPIRA_RUN@/psi-sample.log
+
+[X-Spira]
+Plane=observability
