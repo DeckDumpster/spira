@@ -770,16 +770,9 @@ impl Scripts for FScripts {
         if self.tree_holders_stubborn.get() {
             return Err("1 still running after its stop".into());
         }
-        let (mine, rest): (Vec<_>, Vec<_>) = self
-            .tree_holders
-            .borrow()
-            .iter()
-            .cloned()
-            .partition(|d| d.starts_with(tree));
+        let (mine, rest): (Vec<_>, Vec<_>) = self.tree_holders.borrow().iter().cloned().partition(|d| d.starts_with(tree));
         *self.tree_holders.borrow_mut() = rest;
-        self.stopped_holders
-            .borrow_mut()
-            .extend(mine.iter().map(|d| (d.clone(), tree.exists())));
+        self.stopped_holders.borrow_mut().extend(mine.iter().map(|d| (d.clone(), tree.exists())));
         Ok(mine.iter().map(|d| d.display().to_string()).collect())
     }
     fn round_legs_live(&self, repo: &str, batch: &str) -> bool {
@@ -4841,6 +4834,18 @@ fn publish_adopts_an_open_pr_at_the_same_head_instead_of_opening_a_second() {
         rec.starts_with("pr=1086\nhead=m3\n") && rec.contains("branch=spira/publish/1794422613"),
         "{rec}"
     );
+}
+
+#[test]
+fn publish_does_not_adopt_an_open_pr_at_another_head() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    t.git.set("refs/remotes/origin/spira/publish/OLD", "m2");
+    *t.forge.publish_prs.borrow_mut() = vec![("587".into(), "spira/publish/OLD".into())];
+    *t.forge.pr.borrow_mut() = Some("588".into());
+    assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
+    assert!(t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")));
+    assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=588\n"));
 }
 
 // ------------------------------------------------------------------------------ auto-stack

@@ -429,6 +429,7 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
                         return (OK, out);
                     }
                     Drive::Red => {
+                        let _ = std::fs::remove_file(&marker);
                         let out = "red\nfailed-step: checks / cancelled again after a re-drive\n"
                             .to_string();
                         return (RED, out);
