@@ -1056,11 +1056,11 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             Err(e) => match eject_runner_abort(runner, ops, &members, &e)? {
                 Some(next) if next.is_empty() => {
                     return Ok(RoundEnd::Emptied(
-                        "testenv died on a signal and every member left".into(),
+                        "the runner failed and every member left".into(),
                     ))
                 }
                 Some(next) => {
-                    println!("batcher: testenv died on a signal — its one runner-touching member left, re-cutting {} member(s)", next.len());
+                    println!("batcher: the runner failed — the member whose diff owns the failure left, re-cutting {} member(s)", next.len());
                     let _ = runner.stop_main();
                     members = next;
                     continue;
