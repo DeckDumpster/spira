@@ -405,7 +405,7 @@ prune_other_releases() {
         d="${d%/}"
         [ -d "$d" ] && [ "$(basename "$d")" != "$keep" ] || continue
         echo "round-vm: removing superseded release $d" >&2
-        rm -rf "$d"
+        { chmod -R u+w "$d" && rm -rf "$d"; } || echo "round-vm: could not remove superseded release $d" >&2
     done
 }
 disk_report start
@@ -3517,7 +3517,14 @@ mod tests {
         let d = TempDir::new();
         let releases = d.path().join("round-releases");
         let pass = |sha: &str| {
-            std::fs::create_dir_all(releases.join(sha)).unwrap();
+            let dir = releases.join(sha);
+            std::fs::create_dir_all(dir.join("bin")).unwrap();
+            std::fs::write(dir.join("bin/tool"), "x").unwrap();
+            if sha == "aaa" {
+                for p in [dir.join("bin/tool"), dir.join("bin"), dir.clone()] {
+                    std::fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(if p.is_dir() { 0o555 } else { 0o444 })).unwrap();
+                }
+            }
             let script = format!("set -euo pipefail\n{}\nprune_other_releases {sha}\n", script_fn("prune_other_releases"));
             let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).output().unwrap();
             assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
