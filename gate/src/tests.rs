@@ -2201,7 +2201,7 @@ fn a_unit_gate_builds_in_the_directory_its_builder_leased_and_says_so() {
     assert!(f.stderr().contains("gate: build in /fixture-builds/dir.7 (leased from sp-a's builder)"), "{}", f.stderr());
     assert_eq!(*f.leases.borrow(), [Some("/fixture-builds/dir.7".to_string())]);
     assert_eq!(*f.aged_from.borrow(), ["builder-tip".to_string()]);
-    let builds: Vec<_> = f.cmds.borrow().iter().cloned().zip(f.ran.borrow().iter().cloned()).filter(|(c, _)| c.starts_with("cargo test")).collect();
+    let builds: Vec<_> = f.cmds.borrow().iter().cloned().zip(f.ran.borrow().iter().cloned()).filter(|(c, _)| c.contains("cargo test")).collect();
     assert_eq!(builds.len(), 2, "the build and the test phase: {:?}", f.cmds.borrow());
     for (c, env) in &builds {
         assert!(env.iter().any(|(k, v)| k == "CARGO_TARGET_DIR" && v == "/fixture-builds/dir.7"), "{c}: {env:?}");
@@ -2241,7 +2241,7 @@ fn a_facts_read_that_fails_gives_no_verdict_and_never_a_cold_build() {
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
     assert!(f.stderr().contains("cannot tell where sp-a's builder built"), "{}", f.stderr());
     assert!(f.leases.borrow().is_empty(), "nothing is leased on a guess");
-    assert!(f.cmds.borrow().iter().all(|c| !c.starts_with("cargo test")), "no build ran");
+    assert!(f.cmds.borrow().iter().all(|c| !c.contains("cargo test")), "no build ran");
 }
 
 #[test]
