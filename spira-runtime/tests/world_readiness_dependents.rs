@@ -106,7 +106,7 @@ fn reconcile_content_since_asks_the_store_from_the_cursor_and_reads_its_through_
         "reconcile-content" => Some("would close sp-a (done)\nthrough-seq: 52\n".into()),
         _ => None,
     });
-    let lc = spira_config::lc_call::LcClient::socket(path);
+    let lc = spira_store::lc_call::LcClient::socket(path);
     let out = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "since:40").unwrap();
     assert!(out.contains("\"through_seq\":52") && out.contains("\"pass\":\"since\""), "{out}");
     assert_eq!(*sent.lock().unwrap(), ["reconcile-content --dry-run --since-seq 40"]);
@@ -119,7 +119,7 @@ fn reconcile_content_full_reads_the_head_then_the_whole_dry_run() {
         "event-seq" => Some(serde_json::json!({ "seq": 9, "keys": [] }).to_string()),
         _ => None,
     });
-    let lc = spira_config::lc_call::LcClient::socket(path);
+    let lc = spira_store::lc_call::LcClient::socket(path);
     let out = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "full").unwrap();
     assert!(out.contains("\"through_seq\":9"), "{out}");
     assert_eq!(*sent.lock().unwrap(), ["event-seq --head", "reconcile-content --dry-run"]);
@@ -128,7 +128,7 @@ fn reconcile_content_full_reads_the_head_then_the_whole_dry_run() {
 #[test]
 fn reconcile_content_observe_names_an_unknown_input() {
     let (dir, path, _) = serve(|_| None);
-    let lc = spira_config::lc_call::LcClient::socket(path);
+    let lc = spira_store::lc_call::LcClient::socket(path);
     let err = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "weekly").unwrap_err();
     assert!(err.contains("weekly"), "{err}");
 }
@@ -137,7 +137,7 @@ fn reconcile_content_observe_names_an_unknown_input() {
 fn reconcile_content_observe_reports_a_halted_world_without_asking_the_store() {
     let (dir, path, sent) = serve(|_| None);
     std::fs::write(dir.path().join("world.halted"), "").unwrap();
-    let lc = spira_config::lc_call::LcClient::socket(path);
+    let lc = spira_store::lc_call::LcClient::socket(path);
     let out = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "").unwrap();
     assert!(out.contains("\"world_halted\":true"), "{out}");
     assert!(sent.lock().unwrap().is_empty());
