@@ -128,6 +128,13 @@ fn an_unchanged_head_inside_the_full_pass_window_asks_for_nothing() {
 }
 
 #[test]
+fn a_head_the_store_could_not_read_asks_for_no_scan_so_a_scan_answered_with_a_head_cannot_loop() {
+    let h = t::handler::<H>(SET);
+    let (c, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot::default()), TICK).unwrap();
+    assert_eq!((c, names(&acts)), (Carry::default(), Vec::<&str>::new()));
+}
+
+#[test]
 fn a_moved_head_asks_for_an_incremental_scan_from_the_carried_seq() {
     let h = t::handler::<H>(SET);
     let (_, acts) = task::decide(&h.cfg, &carried_at(40, TICK), &head_at(52), 2 * TICK).unwrap();

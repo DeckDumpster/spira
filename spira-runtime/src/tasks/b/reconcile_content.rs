@@ -206,6 +206,9 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 return Ok((carry.clone(), vec![]));
             }
             if snap.pass == Pass::Head {
+                if snap.through_seq.is_none() {
+                    return Ok((carry.clone(), vec![]));
+                }
                 let full_due = carry.through_seq.is_none() || now_ms >= carry.full_at + full_ms;
                 let input = match (full_due, carry.through_seq) {
                     (false, Some(_)) if snap.through_seq == carry.through_seq => return Ok((carry.clone(), vec![])),
