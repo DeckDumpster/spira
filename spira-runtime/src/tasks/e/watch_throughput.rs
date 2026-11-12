@@ -27,7 +27,7 @@ use spira_config::process::cfg_parse;
 
 use crate::tasks::d::pattern;
 use crate::watchers::halt::Halt;
-use crate::watchers::{carried, INBOX_APPEND};
+use crate::watchers::{carried, iso8601, just_activated, INBOX_APPEND};
 
 pub const NAME: &str = "watch.throughput";
 pub const STREAM: &str = "watch.throughput";
@@ -110,6 +110,9 @@ pub struct Snapshot {
     pub records: Records,
     #[serde(default)]
     pub halt: Option<Halt>,
+    /// The newest release activation, epoch seconds.
+    #[serde(default)]
+    pub activated_at: Option<u64>,
 }
 
 /// What `watch.throughput.file` is handed: one stall episode and the incident that names it.
@@ -144,6 +147,8 @@ pub struct Carry {
     pub halted: String,
     /// The last time a halt was seen: no wait counts from before it.
     pub resumed_at: u64,
+    /// The read just after an activation that was let go unreported; the next unreadable one pages.
+    pub retried: bool,
 }
 
 pub struct Verdict {
@@ -183,13 +188,20 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     }
     next.halted.clear();
     if !snap.readable {
+        if !carry.blind && !carry.retried && just_activated(snap.activated_at, now_ms / 1000) {
+            next.retried = true;
+            return Verdict { carry: next, acts };
+        }
         if !carry.blind {
-            acts.push(say(now_ms, "P0 BLIND: the landings cannot be read, so landing stalls are not being checked"));
+            let after = if carry.retried { snap.activated_at.map_or(String::new(), |at| format!(" (still unreadable on the retry after the activation at {})", iso8601(at))) } else { String::new() };
+            acts.push(say(now_ms, &format!("P0 BLIND: the landings cannot be read{after}, so landing stalls are not being checked")));
         }
         next.blind = true;
+        next.retried = false;
         return Verdict { carry: next, acts };
     }
     next.blind = false;
+    next.retried = false;
 
     next.stalled.retain(|repo, _| snap.landings.iter().any(|l| l.repo == *repo && is_stalled(l, now_ms, cfg)));
     for l in snap.landings.iter().filter(|l| is_stalled(l, now_ms, cfg)) {
@@ -258,7 +270,7 @@ impl WatchThroughput {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("retried")];
 
 impl Handler for WatchThroughput {
     fn interests(&self) -> &[EventKindTag] {

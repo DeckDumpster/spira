@@ -927,7 +927,7 @@ impl World for Real {
         let held = |name: &str| target::held_by_gate(Path::new(run), name);
         let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &target::mem_available_mib, &held)?;
         let mut line = format!("gate: build on tmpfs at {}", p.dir.display());
-        if let Some(warm) = crate::warm::warm_start(&root, &p.dir.join("dwarf"), tree) {
+        if let Some(warm) = crate::warm::warm_start(&root, &p.dir.join("debug"), tree) {
             line.push_str(&format!("\n{warm}"));
         }
         if p.disk_freed_mib > 0 {
@@ -1031,9 +1031,9 @@ fn tree_home(tree: &Path) -> Option<PathBuf> {
 }
 
 /// [`World::install_tools`] on the filesystem (sp-g9f3t). Copies, never links: a hard link
-/// into `target/dwarf` would change under the next build of a different tree.
+/// into `target/debug` would change under the next build of a different tree.
 pub fn install_tools_at(tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
-    install_from(&tree.join("target").join("dwarf"), pkgs, dir, tree_id)
+    install_from(&tree.join("target").join("debug"), pkgs, dir, tree_id)
 }
 
 /// [`install_tools_at`] from any directory of built binaries (`<src>/<pkg>`).
@@ -1199,12 +1199,12 @@ mod tests {
         let r = super::Real::new(t.path().to_path_buf());
         let run = t.path().to_str().unwrap();
         r.target_on_tmpfs(&a, root.to_str().unwrap(), run, &lim).unwrap();
-        fs::create_dir_all(a.join("target/dwarf/deps")).unwrap();
-        fs::write(a.join("target/dwarf/deps/libx.rlib"), "x").unwrap();
+        fs::create_dir_all(a.join("target/debug/deps")).unwrap();
+        fs::write(a.join("target/debug/deps/libx.rlib"), "x").unwrap();
         r.release_target(&a, false, true);
         let line = r.target_on_tmpfs(&b, root.to_str().unwrap(), run, &lim).unwrap();
         assert!(line.contains("warm from"), "{line}");
-        assert!(b.join("target/dwarf/deps/libx.rlib").is_file());
+        assert!(b.join("target/debug/deps/libx.rlib").is_file());
     }
 
     #[test]
@@ -1220,8 +1220,8 @@ mod tests {
         use std::fs;
         let t = testkit::TempDir::new("tree-tools");
         let tree = t.path();
-        fs::create_dir_all(tree.join("target/dwarf")).unwrap();
-        fs::write(tree.join("target/dwarf/spira-lint"), "built-from-A").unwrap();
+        fs::create_dir_all(tree.join("target/debug")).unwrap();
+        fs::write(tree.join("target/debug/spira-lint"), "built-from-A").unwrap();
         let root = tree.join(crate::def::TOOLS_DIR);
         fs::create_dir_all(root.join("B")).unwrap();
         fs::write(root.join("B/spira-lint"), "built-from-B").unwrap();
@@ -1231,7 +1231,7 @@ mod tests {
         assert_eq!(fs::read_to_string(dir.join("TREE")).unwrap(), "A\n");
         assert!(!root.join("B").exists(), "another tree's tools survived");
         // A later build of the tree does not reach into the installed copy.
-        fs::write(tree.join("target/dwarf/spira-lint"), "built-from-C").unwrap();
+        fs::write(tree.join("target/debug/spira-lint"), "built-from-C").unwrap();
         assert_eq!(fs::read_to_string(dir.join("spira-lint")).unwrap(), "built-from-A");
         // A package the build did not produce: Err, and nothing left at the keyed path.
         let e = super::install_tools_at(tree, &["nope".into()], &root.join("D"), "D").unwrap_err();

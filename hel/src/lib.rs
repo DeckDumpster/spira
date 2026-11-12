@@ -31,7 +31,7 @@ pub fn locate_home(env_home: Option<&str>, env_release: Option<&str>) -> Option<
 
 /// The sweep's own command line; Err is the usage error to print.
 pub fn parse(args: &[String]) -> Result<(Opts, Option<String>), String> {
-    let mut o = Opts { dry: false, fetch: true, only: None, scope: Scope::All, budget: None };
+    let mut o = Opts { dry: false, fetch: true, only: None, scope: Scope::All, budget: None, pace: std::time::Duration::from_millis(spira_config::process::cfg_parse::<u64>("SPIRA_HEL_PACE_MS").unwrap_or(0)) };
     let (mut skip, mut qonly, mut status) = (false, false, None);
     let mut it = args.iter();
     while let Some(a) = it.next() {

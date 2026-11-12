@@ -46,7 +46,7 @@ fn t3_a_pass_observes_acts_and_ends_and_a_tick_while_acting_is_refused() {
     assert!(ran.key_for(task::NAME).is_some());
     let (c, _) = task::decide(&h.cfg, &c, &Input::Ran(ran), AT_35 + 30_000).unwrap();
     assert_eq!(c.phase, Phase::Idle, "the last leg ended, the pass is done");
-    let spent = Carry { phase: Phase::Acting, pass: Some(Pass { started: AT_35, repos_left: vec!["spira".into()], cursor: 0 }), ..Carry::default() };
+    let spent = Carry { phase: Phase::Acting, pass: Some(Pass { started: AT_35, repos_left: vec!["spira".into()], cursor: 0, ..Pass::default() }), ..Carry::default() };
     let (c, acts) = task::decide(&h.cfg, &spent, &Input::Outcome { effect: task::SEND.into(), ok: true, body: "sent".into() }, AT_35 + 901_000).unwrap();
     assert_eq!(c.phase, Phase::BudgetSpent);
     assert!(acts.is_empty(), "past the 900 s budget nothing more is issued: {acts:?}");
@@ -101,4 +101,35 @@ fn a_boot_repeats_no_side_effect_and_misses_none() {
 fn a_store_that_would_not_answer_the_branch_read_fails_the_pass_naming_the_repo_and_the_stores_text() {
     let e = task::store_failure("spira", "reads every bead ever filed and is refused");
     assert!(e.starts_with("hel.sweep: spira:") && e.contains("refused"), "{e}");
+}
+
+/// A pass whose scheduler restarts before its next slot: the timer that held the slot is gone,
+/// and the boot must run the sweep that was due rather than wait an hour for the next one.
+#[test]
+fn a_slot_missed_across_a_restart_runs_when_the_scheduler_comes_back() {
+    let worlds = [json(&Snapshot { branches: vec![branch("sp-a", true)], rows: [("sp-a".to_string(), "SUBMITTED".to_string())].into(), ..keep() }), json(&Snapshot { branches: vec![branch("sp-b", true)], rows: [("sp-b".to_string(), "SUBMITTED".to_string())].into(), ..keep() })];
+    let asked = std::sync::atomic::AtomicUsize::new(0);
+    let observe = move |_: &str| Ok(worlds[asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst).min(1)].clone());
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, observe).double(task::SEND, |_| Ok("started".into()));
+    let (_, stream, boot) = H::boot();
+    r.tick(stream, boot.clone()).unwrap();
+    r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).unwrap();
+    assert!(r.requested().iter().any(|q| q.name == task::SEND && q.input.contains("sp-a")), "the pass sends sp-a");
+
+    let down_until = 2 * AT_35 / 3 * 2;
+    assert!(down_until > AT_35 && down_until < AT_35 + 3_600_000);
+    r.clock.advance_to(down_until);
+    r.reopen(t::handler::<H>(SET).registration()).unwrap();
+    r.tick(stream, boot).unwrap();
+    assert!(r.requested().iter().any(|q| q.name == task::SEND && q.input.contains("sp-b")), "the sweep due while the scheduler was down runs at its boot: {:?}", r.requested().iter().map(|q| (&q.name, &q.input)).collect::<Vec<_>>());
+}
+
+#[test]
+fn a_restart_that_lost_the_probe_of_a_pass_between_repositories_observes_that_repository_again() {
+    let cadence = runtime::calendar::Calendar::parse(SPEC).map(spira_runtime::tasks::b::kit::Cadence::Calendar).unwrap();
+    let between = Carry { phase: Phase::Observing, pass: Some(Pass { started: AT_35, repos_left: vec![], cursor: 1, observing: "second".into() }), ..Carry::default() };
+    assert_eq!(task::catch_up(&between, AT_35 + 60_000, &cadence), Some("second".to_string()));
+    let idle_and_current = Carry { last_fired: Some(AT_35), ..Carry::default() };
+    assert_eq!(task::catch_up(&idle_and_current, AT_35 + 60_000, &cadence), None, "the next slot has not passed");
+    assert_eq!(task::catch_up(&Carry::default(), AT_35 + 7_200_000, &cadence), None, "a fresh journal only arms");
 }

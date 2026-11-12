@@ -47,7 +47,7 @@
 //! | Certifying | `unit.ran` red naming suites in a round of several members, first time | Attributing (only the named suites run, alone on each member) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
-//! | Attributing | `unit.ran` land | Certifying, certify held until no pass scope of the round is alive |
+//! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
@@ -681,6 +681,18 @@ pub struct Carry {
     pub repos: BTreeMap<String, RepoCarry>,
 }
 
+impl State {
+    /// A round is open and the machine is moving it.
+    pub fn drives_a_round(self) -> bool {
+        !matches!(self, State::Idle | State::Held | State::Orphan | State::Done)
+    }
+}
+
+/// Whether the carry `body` has any repo driving a round.
+pub fn driving(body: &str) -> bool {
+    serde_json::from_str::<Carry>(body).is_ok_and(|c| c.repos.values().any(|r| r.state.drives_a_round()))
+}
+
 /// Everything one act of this task (and of [`super::batcher_forge`]) carries as its input.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Leg {
@@ -718,6 +730,15 @@ pub struct Leg {
     /// The suites a red certify named, for the abandon to keep their evidence.
     #[serde(default)]
     pub reds: Vec<String>,
+    /// The results of the corpus pass an attribution leg follows: it attributes that pass's red
+    /// tests from them instead of running the corpus again.
+    #[serde(default)]
+    pub after_pass: String,
+}
+
+/// Where the corpus leg `unit` of the round tree `wt` keeps its results.
+pub fn round_results(wt: &str, unit: &str) -> std::path::PathBuf {
+    std::path::Path::new(wt).join(format!(".round-results-{unit}"))
 }
 
 impl Leg {
@@ -1039,17 +1060,23 @@ impl Machine<'_> {
     /// The attribution leg: `batcher attribute` (`drive::attribute_round`) on the red round, a
     /// corpus leg marked [`ATTRIBUTE`] so it runs under the same effect, captured.
     fn attribute(&mut self) {
-        self.attribute_suites(Vec::new());
+        self.attribute_after(Vec::new(), String::new());
     }
 
     /// [`Self::attribute`], restricted to `suites` when any are named.
     fn attribute_suites(&mut self, suites: Vec<String>) {
+        self.attribute_after(suites, String::new());
+    }
+
+    /// [`Self::attribute`] of the corpus pass whose results are at `after_pass`, when named.
+    fn attribute_after(&mut self, suites: Vec<String>, after_pass: String) {
         self.rc.run += 1;
         self.start(CORPUS, "attribute");
         if let Some(a) = self.acts.last_mut() {
             let mut leg: Leg = serde_json::from_str(&a.input).unwrap_or_default();
             leg.why = ATTRIBUTE.into();
             leg.reds = suites;
+            leg.after_pass = after_pass;
             a.input = serde_json::to_string(&leg).unwrap_or_default();
         }
     }
@@ -1058,7 +1085,7 @@ impl Machine<'_> {
         self.start(CERTIFY, "certify");
     }
 
-    /// Certify refuses a round whose last pass scope is still finishing: it starts once none is alive.
+    /// Certify refuses a round whose last pass is still finishing: it starts once none is running.
     fn hold_certify(&mut self) {
         self.rc.certify_held = true;
         self.rc.leg = None;
@@ -1453,7 +1480,8 @@ impl Machine<'_> {
                 // owners from the round (or hands them to their menders) and re-runs only their
                 // suites on the survivors.
                 self.go(Trigger::LegRed);
-                self.attribute();
+                let pass = self.rc.leg.as_deref().map(|unit| round_results(&self.rc.wt, unit).display().to_string()).unwrap_or_default();
+                self.attribute_after(Vec::new(), pass);
             }
             (State::Attributing, _) => match Attribution::parse(out) {
                 Some(Attribution::Land { members, mended, .. }) if !members.is_empty() => {
@@ -1893,14 +1921,21 @@ pub fn on_ran(carry: &Carry, ran: &UnitRan, now_ms: u64) -> Option<(Carry, Vec<A
 /// [`on_ran`] with what the leg wrote (its `unit.ran`'s captured stdout tail): the attribution
 /// and certify legs are judged by their own lines.
 pub fn on_ran_with(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64) -> Option<(Carry, Vec<Act>)> {
+    on_ran_seeing(carry, ran, out, now_ms, &|_, _| None)
+}
+
+/// [`on_ran_with`] that first reads the round's head as of now (`head_of(repo, batch)`): a step
+/// started for another head is replaced whatever the carried head last said.
+pub fn on_ran_seeing(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64, head_of: &dyn Fn(&str, &str) -> Option<String>) -> Option<(Carry, Vec<Act>)> {
     let key = ran.key_for(NAME)?;
     let (repo, rc, at) = carry.repos.iter().find_map(|(repo, rc)| {
         let at = rc.rounds().iter().position(|r| r.leg.as_deref() == Some(key.as_str()) && matches!(r.state, State::Corpus | State::Attributing | State::Certifying))?;
         Some((repo, rc, at))
     })?;
     let held = &rc.rounds()[at];
-    if !held.head.is_empty() && !held.leg_head.is_empty() && held.head != held.leg_head {
-        eprintln!("{NAME} {repo}: step {key} was started for head {} and the round is at {}: its result is discarded", held.leg_head, held.head);
+    let current = held.batch.as_deref().and_then(|b| head_of(repo, b)).filter(|h| !h.is_empty()).unwrap_or_else(|| held.head.clone());
+    if !current.is_empty() && !held.leg_head.is_empty() && current != held.leg_head {
+        eprintln!("{NAME} {repo}: step {key} was started for head {} and the round is at {current}: its result is discarded", held.leg_head);
         return None;
     }
     let mut next = carry.clone();
@@ -2066,10 +2101,18 @@ impl Handler for BatcherLocal {
             Err(_) => (Carry { repos: carry.repos.clone() }, vec![]),
         };
         let out = RanOutput::from_event_kind(&ev.kind).unwrap_or_default();
-        let ran = |carry: &Carry, r: &UnitRan| on_ran_with(carry, r, &out, ev.at);
+        let ran = |carry: &Carry, r: &UnitRan| on_ran_seeing(carry, r, &out, ev.at, &round_head_now);
         let legs = |carry: &Carry| carry.repos.values().flat_map(|rc| rc.rounds()).filter(|r| matches!(r.state, State::Corpus | State::Attributing | State::Certifying)).filter_map(|r| r.leg).collect();
         handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran, legs })
     }
+}
+
+/// The head the store's projection holds for `batch` right now; `None` when this process keeps
+/// no projection or the round is not open.
+fn round_head_now(repo: &str, batch: &str) -> Option<String> {
+    let views = store_view::shared()?;
+    let view = views.round_view(repo).ok()?;
+    view.value.rounds.iter().find(|r| r.record.id == batch).and_then(|r| r.record.get("head")).map(str::to_string)
 }
 
 /// Each repo of `snap` given the effects of this task the stream has asked for and not had answered.
@@ -2209,6 +2252,9 @@ pub mod edge {
         if !leg.reds.is_empty() {
             argv.extend(["--suites".into(), leg.reds.join(",")]);
         }
+        if !leg.after_pass.is_empty() {
+            argv.extend(["--after-pass".into(), leg.after_pass.clone()]);
+        }
         start_scope(e, task, &leg.unit, argv, home_vars(env), None)
     }
 
@@ -2258,11 +2304,20 @@ pub mod edge {
         Some(super::running_legs(&all))
     }
 
-    /// Of the carried batches, those with a pass scope running; `None` when the manager cannot say.
+    /// Of the carried batches, those with a pass running; `None` when the manager cannot say.
+    /// A scope whose pass has exited is stopped here, said on stderr, so a daemon left in it
+    /// cannot hold the round's certify.
     fn scoped_batches(e: &Effects, repo: &str, carried: &super::Carry) -> Option<Vec<String>> {
-        let units = e.units.as_deref()?;
+        scoped_batches_in(e.units.as_deref()?, repo, carried)
+    }
+
+    pub fn scoped_batches_in(units: &dyn runtime::units::Units, repo: &str, carried: &super::Carry) -> Option<Vec<String>> {
         let mut live = vec![];
         for batch in carried.repos.get(repo)?.rounds().into_iter().filter_map(|r| r.batch) {
+            match runtime::units::stop_ended_pass_scopes(units, repo, &batch) {
+                Ok(lines) => lines.iter().for_each(|l| eprintln!("batcher.local: {repo} {batch}: {l}")),
+                Err(why) => eprintln!("batcher.local: {repo} {batch}: cannot stop an ended pass scope: {why}"),
+            }
             if runtime::units::round_scope_live(units, repo, &batch).ok()? {
                 live.push(batch);
             }
@@ -2380,7 +2435,7 @@ pub mod edge {
         let wt = PathBuf::from(&leg.wt);
         let history = std::fs::read_to_string(tsd::family_path(&env.run, "suite-timing")).unwrap_or_default();
         let suites = batcher_cut::order::longest_first(&io::suites_in(&wt, "HEAD"), &history).list;
-        let results = wt.join(format!(".round-results-{}", leg.unit));
+        let results = super::round_results(&leg.wt, &leg.unit);
         let argv = ["timeout", "-k", "10", &env.wall_secs.to_string()].iter().map(|s| s.to_string()).chain([env.round_vm.display().to_string(), "run".into(), wt.display().to_string(), "--suites".into(), suites.join(","), "--maxpar".into(), env.maxpar.to_string(), "--results-dir".into(), results.display().to_string(), "--base".into(), repo.base.clone()]).collect();
         start_unit(e, task, &leg.unit, argv, home_vars(&env), None)
     }

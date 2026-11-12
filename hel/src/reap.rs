@@ -343,7 +343,7 @@ pub fn destroy_worktree(run: &Path, reaplog_path: &Path, id: &str, w: &Path, rep
     }
     // THE FENCE. Guards only paths whose directories exist; the absent case is handled above.
     let wt_root = run.join("worktree");
-    if !(w.starts_with(&wt_root) && w != wt_root) {
+    if !inside_worktree_root(run, w) {
         reaplog(reaplog_path, "REFUSED", id, &format!("{} is not under {} — refusing to remove it", w.display(), wt_root.display()));
         return false;
     }
@@ -480,6 +480,32 @@ pub enum ReapOutcome {
     Failed(String),
 }
 
+fn inside_worktree_root(run: &Path, w: &Path) -> bool {
+    let root = run.join("worktree");
+    w.starts_with(&root) && w != root
+}
+
+/// A worktree outside the sanctioned root is never removed here. The finding is logged once
+/// per path, naming the exit. A terminal bead's clean tree is detached so the landed or
+/// archived branch can go; any other tree keeps the branch, and that is the `Some` outcome.
+fn release_outside_root(run: &Path, reaplog_path: &Path, id: &str, w: &Path, bd: &dyn ClaimProbe, log: &dyn Fn(&str)) -> Option<ReapOutcome> {
+    let root = run.join("worktree");
+    let terminal = matches!(bd.probe(id), Ok(Some(row)) if row.terminal());
+    let g = Git(w);
+    let clean = g.out(&["status", "--porcelain"]).is_some_and(|s| s.trim().is_empty());
+    let held = holder_witnesses(run, id, bd).is_some();
+    let detached = terminal && clean && !held && g.ok(&["checkout", "-q", "--detach"]);
+    let mark = format!("{} is outside {}", w.display(), root.display());
+    let seen = std::fs::read_to_string(reaplog_path).is_ok_and(|t| t.lines().any(|l| l.contains("OUTSIDE") && l.contains(&mark)));
+    if !seen {
+        let why = if detached { "its branch is sent and the tree is left detached" } else { "its branch is kept" };
+        let finding = format!("worktree {mark}; {why}; remove it with `git worktree remove {}` when it is clean", w.display());
+        reaplog(reaplog_path, "OUTSIDE", id, &finding);
+        log(&format!("reap {id}: {finding}"));
+    }
+    (!detached).then(|| ReapOutcome::Failed(format!("worktree {} is outside {} and was not removed — see {}", w.display(), root.display(), reaplog_path.display())))
+}
+
 /// lib.sh `spira_reap_landed_branch <id> <branch> <repo> <why> [caller]`: the one sequence
 /// every deleter of a landed branch shares — worktree first (git refuses to delete a branch
 /// a worktree still holds), then the branch, then its remote counterpart, then the
@@ -502,7 +528,11 @@ pub fn reap_landed_branch(
 ) -> ReapOutcome {
     let g = Git(repo);
     if let Some(w) = g.worktree_of(br) {
-        if !destroy_worktree(run, reaplog_path, id, &w, repo, why, bd) {
+        if w.exists() && !inside_worktree_root(run, &w) {
+            if let Some(failed) = release_outside_root(run, reaplog_path, id, &w, bd, log) {
+                return failed;
+            }
+        } else if !destroy_worktree(run, reaplog_path, id, &w, repo, why, bd) {
             return ReapOutcome::Failed(format!("worktree {} was not removed — see {}", w.display(), reaplog_path.display()));
         }
     }
@@ -771,5 +801,74 @@ mod tests {
         std::fs::create_dir_all(proc.join("100")).unwrap();
         std::os::unix::fs::symlink(&work, proc.join("100/cwd")).unwrap();
         assert_eq!(stop_occupants(&proc, &work, &mut |_| {}, 2, &|| {}), Err(vec![100]));
+    }
+
+    // ---- worktrees outside the sanctioned root ---------------------------------------------
+
+    fn outside_root_repo(run: &Path, scratch: &Path, dirty: bool) -> (PathBuf, PathBuf) {
+        let repo = run.join("repo");
+        let g = |dir: &Path, args: &[&str]| {
+            let o = Command::new("git").arg("-C").arg(dir).args(args).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").output().unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        std::fs::create_dir_all(&repo).unwrap();
+        g(&repo, &["init", "-q", "-b", "main"]);
+        g(&repo, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        let wt = scratch.join("wt-sp-out");
+        g(&repo, &["worktree", "add", "-q", "-b", "spira/sp-out", wt.to_str().unwrap()]);
+        if dirty {
+            std::fs::write(wt.join("unsaved"), "x").unwrap();
+        }
+        (repo, wt)
+    }
+
+    fn reap_out(run: &Path, repo: &Path, state: &str) -> (ReapOutcome, Vec<String>) {
+        let logged = std::cell::RefCell::new(vec![]);
+        let out = reap_landed_branch(run, &run.join("reap.log"), "sp-out", "spira/sp-out", repo, "landed", "hel", None, None, &FakeBd { state: Some(state.into()) }, &|m| logged.borrow_mut().push(m.to_string()), &|_, _| {});
+        (out, logged.into_inner())
+    }
+
+    #[test]
+    fn a_terminal_beads_clean_worktree_outside_the_root_is_reported_once_and_its_branch_still_sent() {
+        let (run, scratch) = (tempdir(), tempdir());
+        let (repo, wt) = outside_root_repo(&run, &scratch, false);
+        let (out, logged) = reap_out(&run, &repo, "LANDED");
+        assert!(matches!(out, ReapOutcome::Done), "the branch is sent");
+        assert!(!Git(&repo).branch_exists("spira/sp-out"));
+        assert!(wt.exists(), "a tree outside the root is never removed by the reaper");
+        let finding = format!("git worktree remove {}", wt.display());
+        assert_eq!(logged.iter().filter(|l| l.contains(&finding) && l.contains(&wt.display().to_string())).count(), 1, "{logged:?}");
+    }
+
+    #[test]
+    fn a_dirty_worktree_outside_the_root_keeps_its_branch_and_is_reported_once_across_passes() {
+        let (run, scratch) = (tempdir(), tempdir());
+        let (repo, wt) = outside_root_repo(&run, &scratch, true);
+        let (first, logged) = reap_out(&run, &repo, "LANDED");
+        assert!(matches!(first, ReapOutcome::Failed(_)));
+        assert!(Git(&repo).branch_exists("spira/sp-out"));
+        assert_eq!(logged.iter().filter(|l| l.contains(&wt.display().to_string())).count(), 1, "{logged:?}");
+        let (_, again) = reap_out(&run, &repo, "LANDED");
+        assert!(again.is_empty(), "the second pass does not repeat the finding: {again:?}");
+    }
+
+    #[test]
+    fn a_terminal_beads_tree_outside_the_root_that_somebody_holds_is_not_detached() {
+        let (run, scratch) = (tempdir(), tempdir());
+        let (repo, wt) = outside_root_repo(&run, &scratch, false);
+        std::fs::write(run.join("hold-sp-out.pid"), std::process::id().to_string()).unwrap();
+        let (out, _) = reap_out(&run, &repo, "LANDED");
+        assert!(matches!(out, ReapOutcome::Failed(_)));
+        assert!(Git(&repo).branch_exists("spira/sp-out"));
+        assert_eq!(Git(&wt).out(&["symbolic-ref", "-q", "HEAD"]).unwrap().trim(), "refs/heads/spira/sp-out");
+    }
+
+    #[test]
+    fn a_live_beads_worktree_outside_the_root_is_left_alone() {
+        let (run, scratch) = (tempdir(), tempdir());
+        let (repo, _) = outside_root_repo(&run, &scratch, false);
+        let (out, _) = reap_out(&run, &repo, "IN_PROGRESS");
+        assert!(matches!(out, ReapOutcome::Failed(_)));
+        assert!(Git(&repo).branch_exists("spira/sp-out"));
     }
 }

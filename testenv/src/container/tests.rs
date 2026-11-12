@@ -986,14 +986,14 @@ fn up_refuses_to_start_when_the_podman_mode_is_unknown() {
     assert!(f.calls_with("run").is_empty());
 }
 
-/// THE PRODUCTION BUG (sp-e5v53-3, 2026-10-01): a gate tree's `target/{dwarf,release,debug,
+/// THE PRODUCTION BUG (sp-e5v53-3, 2026-10-01): a gate tree's `target/{release,debug,
 /// tree-tools}` are symlinks to a tmpfs root outside the checkout (gate/src/target.rs,
 /// sp-z61hj). `--checkout /wt` bind-mounts `/wt` at `/workspace`, preserving the symlink as
-/// a symlink — `/workspace/target/dwarf`, from inside the container, points to a host path
+/// a symlink — `/workspace/target/debug`, from inside the container, points to a host path
 /// that was never mounted there, so a binary built right through it is invisible to `stage`
-/// ("testenv: stage: dwarf was not built into /workspace/target/dwarf"), even though it
+/// ("testenv: stage: dwarf was not built into /workspace/target/debug"), even though it
 /// genuinely was built. Reproduced directly against this repository before this fix: `cargo
-/// build --profile dwarf --workspace` in such a tree succeeds, `stage` still faults rc=1.
+/// build --workspace` in such a tree succeeds, `stage` still faults rc=1.
 ///
 /// Fix: `up` now also mounts whatever `symlinked_targets` names, at the same absolute path,
 /// so the symlink resolves inside the container too.
@@ -1431,12 +1431,12 @@ fn sizes_read_like_df_h() {
 fn symlinked_targets_finds_a_real_symlinked_build_dir_and_collapses_a_shared_root() {
     let d = testkit::TempDir::new("testenv-symlinked-targets");
     let root = d.join("tmpfs-root").join("tree-x");
-    for p in ["dwarf", "release", "debug", "tree-tools"] {
+    for p in ["release", "debug", "tree-tools"] {
         std::fs::create_dir_all(root.join(p)).unwrap();
     }
     let target = d.join("checkout").join("target");
     std::fs::create_dir_all(&target).unwrap();
-    for p in ["dwarf", "release", "debug", "tree-tools"] {
+    for p in ["release", "debug", "tree-tools"] {
         std::os::unix::fs::symlink(root.join(p), target.join(p)).unwrap();
     }
     // An ordinary, non-symlinked entry alongside them (e.g. ".rustc_info.json" or any real
@@ -1447,7 +1447,7 @@ fn symlinked_targets_finds_a_real_symlinked_build_dir_and_collapses_a_shared_roo
     assert_eq!(
         got,
         vec![std::fs::canonicalize(&root).unwrap()],
-        "all four symlinks share one root (gate/src/target.rs) — one mount, not four"
+        "all three symlinks share one root (gate/src/target.rs) — one mount, not three"
     );
 }
 
@@ -1455,7 +1455,7 @@ fn symlinked_targets_finds_a_real_symlinked_build_dir_and_collapses_a_shared_roo
 fn symlinked_targets_is_empty_for_an_ordinary_non_symlinked_target_dir() {
     let d = testkit::TempDir::new("testenv-symlinked-targets-plain");
     let target = d.join("checkout").join("target");
-    std::fs::create_dir_all(target.join("dwarf")).unwrap();
+    std::fs::create_dir_all(target.join("debug")).unwrap();
     assert_eq!(RealHost.symlinked_targets(&target), Vec::<PathBuf>::new());
 }
 

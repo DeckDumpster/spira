@@ -25,7 +25,7 @@ fn seeded(t: &testkit::TempDir, change: &str, contents: &str) -> Vec<String> {
     let (root, a, b) = (t.path().join("root"), t.path().join("tree-a"), t.path().join("tree-b"));
     std::fs::create_dir_all(a.join("leaf/src")).unwrap();
     std::fs::create_dir_all(a.join("base/src")).unwrap();
-    std::fs::write(a.join("Cargo.toml"), "[workspace]\nresolver = \"2\"\nmembers = [\"base\", \"leaf\"]\n[profile.dwarf]\ninherits = \"dev\"\n").unwrap();
+    std::fs::write(a.join("Cargo.toml"), "[workspace]\nresolver = \"2\"\nmembers = [\"base\", \"leaf\"]\n").unwrap();
     std::fs::write(a.join("base/Cargo.toml"), "[package]\nname = \"base\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
     std::fs::write(a.join("base/src/lib.rs"), "pub fn f() -> u8 { 1 }\n").unwrap();
     std::fs::write(a.join("leaf/Cargo.toml"), "[package]\nname = \"leaf\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nbase = { path = \"../base\" }\n").unwrap();
@@ -35,12 +35,12 @@ fn seeded(t: &testkit::TempDir, change: &str, contents: &str) -> Vec<String> {
     run(&a, "git", &["add", "."]);
     run(&a, "git", &["commit", "-qm", "base"]);
 
-    let dest = root.join("tree-a").join("dwarf");
+    let dest = root.join("tree-a").join("debug");
     std::fs::create_dir_all(a.join("target")).unwrap();
     std::fs::create_dir_all(&dest).unwrap();
-    std::os::unix::fs::symlink(&dest, a.join("target/dwarf")).unwrap();
+    std::os::unix::fs::symlink(&dest, a.join("target/debug")).unwrap();
     let build = |tree: &Path| {
-        let o = run(tree, "cargo", &["build", "--profile", "dwarf", "--color", "never"]);
+        let o = run(tree, "cargo", &["build", "--color", "never"]);
         compiled(&o)
     };
     assert_eq!(build(&a).len(), 2);
@@ -49,10 +49,10 @@ fn seeded(t: &testkit::TempDir, change: &str, contents: &str) -> Vec<String> {
     run(t.path(), "git", &["clone", "-q", a.to_str().unwrap(), b.to_str().unwrap()]);
     std::fs::write(b.join(change), contents).unwrap();
     run(&b, "git", &["commit", "-qam", "change"]);
-    let bdest = root.join("tree-b").join("dwarf");
+    let bdest = root.join("tree-b").join("debug");
     std::fs::create_dir_all(&bdest).unwrap();
     std::fs::create_dir_all(b.join("target")).unwrap();
-    std::os::unix::fs::symlink(&bdest, b.join("target/dwarf")).unwrap();
+    std::os::unix::fs::symlink(&bdest, b.join("target/debug")).unwrap();
     let line = gate::warm::warm_start(&root, &bdest, &b).unwrap();
     assert!(line.contains("warm from"), "{line}");
 

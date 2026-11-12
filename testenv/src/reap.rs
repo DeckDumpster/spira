@@ -351,7 +351,7 @@ mod tests {
         Scratch(t, p)
     }
     fn wt(root: &Path, name: &str, bytes: usize) {
-        let d = root.join(name).join("target/dwarf");
+        let d = root.join(name).join("target/debug");
         fs::create_dir_all(&d).unwrap();
         fs::write(d.join("x"), vec![1u8; bytes]).unwrap();
         fs::write(root.join(name).join("src.rs"), "kept").unwrap();
@@ -406,7 +406,7 @@ mod tests {
         assert!(!s.1.join("sp-done/target").exists() && s.1.join("sp-done/src.rs").is_file(), "only the build output goes");
         assert!(!s.1.join("concierge-sp-stuck/target").exists(), "landed, open bead or not, is still reaped");
         for kept in ["sp-open", "sp-ghost", "round-9"] {
-            assert!(s.1.join(kept).join("target/dwarf/x").is_file(), "{kept}");
+            assert!(s.1.join(kept).join("target/debug/x").is_file(), "{kept}");
         }
         let line = describe(&r, false);
         assert!(line.contains("kept 1 unlanded") && line.contains("sp-ghost"), "{line}");
@@ -432,7 +432,7 @@ mod tests {
         let r = reap(&s.1, false, &|_, _| Some(false), &never_busy).unwrap();
         assert_eq!(r.removed, Vec::<String>::new());
         assert_eq!(r.kept_unlanded, 1);
-        assert!(s.1.join("sp-busy/target/dwarf/x").is_file());
+        assert!(s.1.join("sp-busy/target/debug/x").is_file());
     }
 
     #[test]
@@ -442,7 +442,7 @@ mod tests {
         let r = reap(&s.1, false, &|_, _| None, &never_busy).unwrap();
         assert_eq!(r.removed, Vec::<String>::new());
         assert_eq!(r.kept_unknown, vec!["sp-done".to_string()]);
-        assert!(s.1.join("sp-done/target/dwarf/x").is_file());
+        assert!(s.1.join("sp-done/target/debug/x").is_file());
     }
 
     #[test]
@@ -480,7 +480,7 @@ mod tests {
         wt(&s.1, "sp-done", 10);
         let r = reap(&s.1, true, &|_, _| Some(true), &never_busy).unwrap();
         assert_eq!(r.removed, vec!["sp-done".to_string()]);
-        assert!(s.1.join("sp-done/target/dwarf/x").is_file());
+        assert!(s.1.join("sp-done/target/debug/x").is_file());
         assert!(describe(&r, true).starts_with("target-reap: would remove 1"));
     }
 
@@ -512,7 +512,7 @@ mod tests {
         let r = reap(&s.1, false, &|_, _| Some(true), &busy).unwrap();
         assert_eq!(r.removed, Vec::<String>::new());
         assert_eq!(r.kept_busy, 1);
-        assert!(s.1.join("sp-inflight/target/dwarf/x").is_file(), "a busy worktree's target/ must survive even though it is landed");
+        assert!(s.1.join("sp-inflight/target/debug/x").is_file(), "a busy worktree's target/ must survive even though it is landed");
         assert_eq!(busy_dirs.borrow().len(), 1);
     }
 
@@ -536,7 +536,7 @@ mod tests {
         assert_eq!((r.kept_active, r.kept_busy, r.kept_unknown.clone()), (1, 1, vec!["sp-nokey".to_string()]));
         assert!(!s.1.join("sp-idle/target").exists() && s.1.join("sp-idle/src.rs").is_file(), "source stays");
         for kept in ["sp-recent", "sp-busy", "sp-nokey"] {
-            assert!(s.1.join(kept).join("target/dwarf/x").is_file(), "{kept}");
+            assert!(s.1.join(kept).join("target/debug/x").is_file(), "{kept}");
         }
     }
 

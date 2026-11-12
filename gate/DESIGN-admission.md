@@ -203,8 +203,8 @@ run) and from the PSI of the host.
 
 | phase (one job) | wall | cores avg / peak | anon RAM peak | tmpfs | dolt | disk written |
 |---|---|---|---|---|---|---|
-| compile — agent `cargo build --profile dwarf --workspace --all-targets`, deps from sccache, cold target | 38–43 s | 8.1–9.8 / 14 | 2.7 GiB (rustc peak 8) | 0 | 0 | 0.8–1.2 GiB (3.0 GiB target on disk) |
-| compile — agent `cargo test --profile dwarf --workspace` after that build | 71 s | 1.0 / 5 | 0.6 GiB | 6 MiB | 0 | host-noisy |
+| compile — agent `cargo build --workspace --all-targets` (dev), deps from sccache, cold target | 38–43 s | 8.1–9.8 / 14 | 2.7 GiB (rustc peak 8) | 0 | 0 | 0.8–1.2 GiB (3.0 GiB target on disk) |
+| compile — agent `cargo test --workspace` (dev) after that build | 71 s | 1.0 / 5 | 0.6 GiB | 6 MiB | 0 | host-noisy |
 | compile — testenv in-place `cargo build --profile release --workspace` (LTO, cgu=1), cold target | 127–145 s | 7.1 / 33 | **15.3 GiB** (22 rustc alive; above 8 GiB for about 60 s) | 0 | 0 | ≈ 1.1 GiB (host) |
 | test — testenv `up`→teardown, 8 suites at `batch_maxpar` 8 | 78 s (up 3, install 11, testdb 4, suites 55, teardown 5) | 1.2 / 8 | 0.44–0.55 GiB container (testenv: "cgroup peak 536MiB, ~67MiB/slot") | 35 MiB in place; a scratch slot's release target ≈ 3.2 GiB | 7 private sql-servers at peak | 6.3 MiB/s host-wide during the suites; host io full avg10 ≤ 3.8% |
 | gate — a certification trial (gate.log, 2026-09-30, 30 trials) | 200–800 s (median ~400) | its own composition | a gate tree's target on tmpfs ≈ 0.7 GiB, plus a warm testenv slot ≈ 3.2 GiB | ≈ 3.9 GiB | ≤ 8 | — |

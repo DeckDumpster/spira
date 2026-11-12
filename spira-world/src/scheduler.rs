@@ -95,6 +95,10 @@ pub struct Status {
     pub halted: bool,
     pub held: u64,
     pub tasks: Vec<TaskRow>,
+    /// Config changes the scheduler has not taken: `(key, held, wanted)`.
+    pub repin: Vec<(String, String, String)>,
+    /// What the pending re-pin waits for; empty when nothing waits.
+    pub repin_waits: String,
 }
 
 /// Parse a `scheduler status` document; a document without `at` or `halted` is refused, named.
@@ -122,7 +126,10 @@ pub fn parse_status(doc: &str) -> Result<Status, String> {
                 .collect()
         })
         .unwrap_or_default();
-    Ok(Status { at, halted, held, tasks })
+    let text = |v: &serde_json::Value| v.as_str().unwrap_or("").to_string();
+    let repin = v.pointer("/repin/pending").and_then(serde_json::Value::as_object).map(|p| p.iter().map(|(k, r)| (k.clone(), text(&r["held"]), text(&r["wanted"]))).collect()).unwrap_or_default();
+    let repin_waits = text(v.pointer("/repin/waits").unwrap_or(&serde_json::Value::Null));
+    Ok(Status { at, halted, held, tasks, repin, repin_waits })
 }
 
 /// A span of milliseconds the way a status line reads it: `45s`, `12m`, `3h`, `2d`.
@@ -136,13 +143,19 @@ pub fn span(ms: u64) -> String {
     }
 }
 
-/// The headline: halted or running, and how many effects the halt holds.
+/// The headline: halted or running, how many effects the halt holds, and any config change the scheduler has not yet taken.
 pub fn headline(s: &Status) -> String {
-    if s.halted {
+    let base = if s.halted {
         format!("spira: scheduler HALTED — {} effect(s) held, observation continues", s.held)
     } else {
         format!("spira: scheduler RUNNING — {} task(s)", s.tasks.len())
+    };
+    if s.repin.is_empty() {
+        return base;
     }
+    let keys: Vec<String> = s.repin.iter().map(|(k, held, wanted)| format!("{k} {held} -> {wanted}")).collect();
+    let waits = if s.repin_waits.is_empty() { String::new() } else { format!(" (waiting for {})", s.repin_waits) };
+    format!("{base}; re-pin pending: {}{waits}", keys.join(", "))
 }
 
 /// One status line per task, against the document's own `at`: last fired, next due, lag and
@@ -213,6 +226,16 @@ mod tests {
         assert_eq!(keep_row("lc-serve.socket", "", ""), format!("  {:<30} inactive", "lc-serve.socket"));
         assert_eq!(timer_service("spira-watchdog-prod.timer").as_deref(), Some("spira-watchdog-prod.service"));
         assert_eq!(timer_service("lc-serve.socket"), None);
+    }
+
+    #[test]
+    fn the_headline_names_a_config_change_the_scheduler_has_not_taken_and_what_it_waits_for() {
+        let doc = |repin: &str| format!(r#"{{"at":1,"halted":false,"tasks":[],"repin":{repin}}}"#);
+        let quiet = parse_status(&doc(r#"{"pending":{},"waits":""}"#)).unwrap();
+        assert_eq!(headline(&quiet), "spira: scheduler RUNNING — 0 task(s)");
+        let waiting = parse_status(&doc(r#"{"pending":{"SPIRA_MAX_DWARVES":{"held":"0","wanted":"4"}},"waits":"the batcher to finish the round it is driving"}"#)).unwrap();
+        assert_eq!(headline(&waiting), "spira: scheduler RUNNING — 0 task(s); re-pin pending: SPIRA_MAX_DWARVES 0 -> 4 (waiting for the batcher to finish the round it is driving)");
+        assert!(parse_status(r#"{"at":1,"halted":false}"#).unwrap().repin.is_empty(), "an older scheduler's document has no repin section");
     }
 
     struct Fake {

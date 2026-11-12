@@ -265,7 +265,7 @@ mod tests {
         let d = tmp("ws");
         fs::write(
             d.join("Cargo.toml"),
-            "[workspace]\nmembers = [\n    \"a\",\n    \"nested/b\", \"lib-only\",\n    \"c\", # comment\n    \"a\",\n]\nresolver = \"2\"\n\n[profile.dwarf]\ninherits = \"dev\"\n",
+            "[workspace]\nmembers = [\n    \"a\",\n    \"nested/b\", \"lib-only\",\n    \"c\", # comment\n    \"a\",\n]\nresolver = \"2\"\n",
         )
         .unwrap();
         let member = |p: &str, toml: &str, main: bool| {

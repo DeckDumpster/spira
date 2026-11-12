@@ -24,7 +24,7 @@ fn binary_neutral(path: &str) -> bool {
     path.ends_with(".sh") || path.ends_with(".md")
 }
 
-/// `artifacts` when every removed member changed only binary-neutral files, else `dwarf`.
+/// `artifacts` when every removed member changed only binary-neutral files, else `dev`.
 pub fn build_for(removal: &[Id], changed: &BTreeMap<Id, Vec<String>>) -> &'static str {
     let neutral = removal.iter().all(|m| {
         changed
@@ -34,7 +34,7 @@ pub fn build_for(removal: &[Id], changed: &BTreeMap<Id, Vec<String>>) -> &'stati
     if neutral {
         "artifacts"
     } else {
-        "dwarf"
+        "dev"
     }
 }
 
@@ -236,13 +236,13 @@ pub fn survival_probe_result(rc: i32) -> Option<bool> {
     }
 }
 
-/// The `suites=` of a probe request: the build's own word, or for a unit probe the packages whose
-/// tests it judges (package names are `[A-Za-z0-9_-]`; anything else sends the probe to the whole workspace, never to a narrower set than failed).
-fn subset_scope(build: &str, packages: &[String]) -> String {
-    let ok = |p: &&String| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-    let named: Vec<&str> = packages.iter().filter(ok).map(String::as_str).collect();
-    if matches!(build, "unit" | INTEGRATION_BUILD) && !named.is_empty() && named.len() == packages.len() {
-        named.join(",")
+/// The `suites=` of a probe request: the build's own word, or for a unit or integration probe its
+/// scope (`unitattr::rerun_scope`: `package` or `package=test`). Package and test names are
+/// `[A-Za-z0-9_-]` and `::` in a test; anything else sends the probe to the whole workspace, never
+/// to a narrower set than failed.
+fn subset_scope(build: &str, scope: &[String]) -> String {
+    if matches!(build, "unit" | INTEGRATION_BUILD) && !scope.is_empty() && scope.iter().all(|t| batcher::unitattr::scope_token_ok(t)) {
+        scope.join(",")
     } else {
         build.to_string()
     }
@@ -271,6 +271,8 @@ pub struct VmRunner<'a> {
     build_n: u32,
     corpus_runs: u32,
     batch: Option<String>,
+    /// The results of the corpus pass this attribution follows.
+    prior: Option<PathBuf>,
 }
 
 /// The member a `member=` line of the VM's lint report blames: the bead id after `land` in a
@@ -426,10 +428,10 @@ impl<'a> VmRunner<'a> {
         &mut self,
         subset: &[Member],
         build: &str,
-        packages: &[String],
+        scope: &[String],
         verdict: fn(i32) -> Option<bool>,
     ) -> Option<bool> {
-        self.probe_scoped(subset, build, &subset_scope(build, packages), verdict)
+        self.probe_scoped(subset, build, &subset_scope(build, scope), verdict)
     }
 
     /// `probe_subset` with the request's `suites=` given.
@@ -488,6 +490,12 @@ impl<'a> VmRunner<'a> {
         ))
     }
 
+    /// Attributes from the results of the corpus pass that went red, found at `results`.
+    pub fn after_pass(mut self, results: Option<PathBuf>) -> Self {
+        self.prior = results;
+        self
+    }
+
     /// Names the round-vm scope after `batch`, so abandoning that batch stops it.
     pub fn in_batch(mut self, batch: Option<&str>) -> Self {
         self.batch = batch.map(str::to_string);
@@ -535,6 +543,7 @@ impl<'a> VmRunner<'a> {
             build_n: 0,
             corpus_runs: 0,
             batch: None,
+            prior: None,
         })
     }
 
@@ -839,6 +848,10 @@ impl RoundRunner for VmRunner<'_> {
         filter_red_in(&self.results, &self.members, &self.changed)
     }
 
+    fn prior_red(&mut self) -> Option<FilterRed> {
+        filter_red_in(self.prior.as_deref()?, &self.members, &self.changed)
+    }
+
     fn build_output(&mut self) -> String {
         self.stderr_text()
     }
@@ -859,11 +872,11 @@ impl RoundRunner for VmRunner<'_> {
         (seen == Some(green)).then_some(green)
     }
 
-    fn filter_green_in(&mut self, name: &str, packages: &[String], subset: &[Member]) -> Option<bool> {
+    fn filter_green_in(&mut self, name: &str, scope: &[String], subset: &[Member]) -> Option<bool> {
         match name {
             LINT => self.probe_subset(subset, "lint", &[], unit_probe_result),
-            UNIT_TESTS => self.probe_subset(subset, "unit", packages, unit_probe_result),
-            INTEGRATION_TESTS => self.probe_subset(subset, INTEGRATION_BUILD, packages, unit_probe_result),
+            UNIT_TESTS => self.probe_subset(subset, "unit", scope, unit_probe_result),
+            INTEGRATION_TESTS => self.probe_subset(subset, INTEGRATION_BUILD, scope, unit_probe_result),
             _ => None,
         }
     }
@@ -1079,11 +1092,11 @@ mod tests {
         assert_eq!(build_for(&["a".to_string()], &changed), "artifacts");
         assert_eq!(
             build_for(&["a".to_string(), "b".to_string()], &changed),
-            "dwarf"
+            "dev"
         );
         assert_eq!(
             build_for(&["unknown".to_string()], &changed),
-            "dwarf",
+            "dev",
             "unknown paths are never neutral"
         );
     }
@@ -1195,6 +1208,14 @@ mod tests {
         let red = filter_red_in(d.path(), &[], &BTreeMap::new()).expect("a red integration phase ends the pass");
         assert_eq!(red.name, "integration-tests");
         assert_eq!(red.failed, ["FAIL dir:spira-runtime leg_lost::a", "FAIL dir:spira-runtime leg_lost::b"]);
+    }
+
+    #[test]
+    fn a_probe_scoped_to_failing_tests_names_them_and_a_name_a_filter_cannot_take_widens_it() {
+        let scope = |t: &[&str]| subset_scope("integration", &t.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(scope(&["testenv=lint_x", "gate"]), "testenv=lint_x,gate");
+        assert_eq!(scope(&["a::b=t;rm"]), "integration");
+        assert_eq!(scope(&["p=m::t"]), "p=m::t");
     }
 
     #[test]
@@ -1577,6 +1598,20 @@ mod abandon_tests {
 
     fn repo(d: &std::path::Path) -> Repo {
         Repo { name: "fx".into(), path: d.join("repo"), base: "main".into(), forge: PathBuf::new(), land: Land::Local }
+    }
+
+    #[test]
+    fn an_attribution_after_a_red_pass_reads_that_pass_s_red_from_its_results_and_none_without_them() {
+        let d = testkit::TempDir::new("vm-prior-red");
+        fs::write(d.path().join("integration.json"), "{\"stage\":\"integration-tests\",\"verdict\":\"red\"}").unwrap();
+        fs::write(d.path().join("integration-tests.out"), "FAIL dir:testenv lint_x\n").unwrap();
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        assert!(r.prior_red().is_none(), "no prior pass: the corpus runs");
+        let mut r = r.after_pass(Some(d.path().to_path_buf()));
+        let red = r.prior_red().expect("the pass's red");
+        assert_eq!((red.name.as_str(), red.failed), ("integration-tests", vec!["FAIL dir:testenv lint_x".to_string()]));
     }
 
     #[test]

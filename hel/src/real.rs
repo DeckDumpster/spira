@@ -155,6 +155,10 @@ impl Real {
         self.run.clone()
     }
 
+    fn resume_path(&self, repo: &str) -> PathBuf {
+        self.run.join(format!("hel-resume.{}", repo.replace('/', "_")))
+    }
+
     /// `${SPIRA_REAPLOG:-$SPIRA_RUN/reap.log}` — the chokepoint's own log, as a real path
     /// (distinct from the `World::reaplog` trait method, which is display text for a "see
     /// …" message and keeps its existing placeholder default unchanged).
@@ -269,6 +273,20 @@ impl World for Real {
     fn destroy_worktree(&self, id: &str, w: &Path, repo: &Path, why: &str) -> bool {
         reap::destroy_worktree(&self.run(), &self.reaplog_path(), id, w, repo, why, self)
     }
+    fn resume_after(&self, repo: &str) -> Option<String> {
+        std::fs::read_to_string(self.resume_path(repo)).ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+    }
+    fn set_resume_after(&self, repo: &str, br: Option<&str>) {
+        let path = self.resume_path(repo);
+        match br {
+            Some(b) => {
+                let _ = std::fs::write(&path, b);
+            }
+            None => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
     fn prune(&self, repo: &Path) {
         reap::prune_worktrees(&self.reaplog_path(), repo);
     }
@@ -360,6 +378,19 @@ pub fn run_dir() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_resume_cursor_round_trips_per_repository_and_clears() {
+        let dir = testkit::TempDir::new("hel-real-resume");
+        std::fs::create_dir_all(dir.join("run")).unwrap();
+        let r = Real::minimal(dir.path().to_path_buf(), dir.join("run"), None);
+        assert_eq!(r.resume_after("spira"), None);
+        r.set_resume_after("spira", Some("spira/sp-m"));
+        assert_eq!(r.resume_after("spira").as_deref(), Some("spira/sp-m"));
+        assert_eq!(r.resume_after("other"), None);
+        r.set_resume_after("spira", None);
+        assert_eq!(r.resume_after("spira"), None);
+    }
 
     #[test]
     fn base_is_none_for_a_path_that_is_not_a_git_checkout() {

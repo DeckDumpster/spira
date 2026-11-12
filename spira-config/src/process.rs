@@ -15,15 +15,21 @@ static CONFIG: OnceLock<Result<Resolved, String>> = OnceLock::new();
 
 /// This process's resolved config: `$SPIRA_TOML`, read once.
 pub fn config() -> Result<&'static Resolved, String> {
-    CONFIG
-        .get_or_init(|| {
-            let env: BTreeMap<String, String> = std::env::vars().collect();
-            let home = crate::resolve::locate_home_for_process()?;
-            let repo = crate::resolve::derive_home_repo(&home, &env);
-            crate::resolve::resolve_for_process(&home, &repo, &env)
-        })
-        .as_ref()
-        .map_err(|e| e.clone())
+    CONFIG.get_or_init(resolve_now).as_ref().map_err(|e| e.clone())
+}
+
+fn resolve_now() -> Result<Resolved, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let home = crate::resolve::locate_home_for_process()?;
+    let repo = crate::resolve::derive_home_repo(&home, &env);
+    crate::resolve::resolve_for_process(&home, &repo, &env)
+}
+
+/// What `keys` resolve to now, read from the files again: the one way past the value this process pinned.
+/// A caller that re-pins takes exactly the keys it names; everything else stays as it was read.
+pub fn fresh(keys: &[String]) -> Result<BTreeMap<String, String>, String> {
+    let resolved = resolve_now()?;
+    keys.iter().map(|k| resolved.values.get(k).map(|v| (k.clone(), v.clone())).ok_or_else(|| format!("{k} is not a registered config key — refusing"))).collect()
 }
 
 /// The environment variable naming the one config spec: for a caller that must strip or hand

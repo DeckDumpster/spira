@@ -19,6 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub mod amendment;
+pub mod scheduler_link;
 pub mod admission;
 pub mod bounded;
 pub mod build;

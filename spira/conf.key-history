@@ -737,3 +737,4 @@ disk_watch_paths
 halt_page_after
 gate_build_stall
 lc_ship_dir
+hel_pace_ms

@@ -1020,7 +1020,7 @@ impl<'w, W: World> Trial<'w, W> {
         };
         // THE BASE'S TOOLS ARE THE BASE'S, PROVABLY (sp-g9f3t): after the checkout, the gate
         // tree must hold the base's tree id, and the tools the steps read are keyed by it —
-        // never the branch trial's build left in target/dwarf, never another tree's. One that
+        // never the branch trial's build left in target/debug, never another tree's. One that
         // cannot be attributed leaves the base untested (BaseUntestable), never judged.
         let base_tree = w.rev_parse(&repo, &format!("{base_rev}^{{tree}}")).unwrap_or_default();
         let base_tools = base_gate.as_ref().and_then(|(_, bdef)| {

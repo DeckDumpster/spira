@@ -332,8 +332,8 @@ impl Fake {
                 .collect();
             return (0, out.join("\n") + "\nVERDICT GREEN");
         }
-        if cmd.starts_with("cargo ") {
-            let kind = if cmd.starts_with("cargo build") || cmd.starts_with("cargo test --no-run") {
+        if cmd.starts_with("cargo ") || cmd.starts_with("CARGO_BUILD_JOBS=") {
+            let kind = if cmd.starts_with("cargo build") || cmd.contains("cargo test --no-run") {
                 "build"
             } else {
                 "test"
@@ -374,7 +374,7 @@ impl Fake {
     }
     /// A build phase the script drives; `stall` None is a phase nothing watches.
     fn scripted_build(&self, tree: &Path, env: &[(String, String)], timeout: &str, stall: Option<u64>, cmd: &str) -> (i32, String) {
-        let scripted = self.build_script.get().filter(|_| cmd.starts_with("cargo build") || cmd.starts_with("cargo test --no-run"));
+        let scripted = self.build_script.get().filter(|_| cmd.starts_with("cargo build") || cmd.contains("cargo test --no-run"));
         let Some((secs, every, until)) = scripted else { return self.plain_run(tree, env, timeout, cmd) };
         self.timeouts.borrow_mut().push((cmd.to_string(), timeout.to_string()));
         self.cmds.borrow_mut().push(cmd.to_string());
@@ -2162,7 +2162,7 @@ const UNIT_DATA = [{"name":"runtime","target":"","start":4.2,"duration":88.4},{"
         (0, "spira-admit: admitted to compile slot 1 after 86s\nspira-admit: admitted to compile slot 2 after 14s".into()),
     );
     assert_eq!(f.run(), PASS);
-    assert!(f.cmds.borrow().iter().any(|c| c.starts_with("cargo test --no-run") && c.contains(" --timings")), "{:?}", f.cmds.borrow());
+    assert!(f.cmds.borrow().iter().any(|c| c.contains("cargo test --no-run") && c.contains(" --timings")), "{:?}", f.cmds.borrow());
     let m = meter(&f);
     assert!(
         m.contains(" compiled=7 fresh=3 admit_wait=100 slowest=runtime/lib:88.4@4.2,gate/bin-test:31.0@90.0"),
@@ -2191,11 +2191,11 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     // spira-config brings its dependent queue
     assert_eq!(
         cmds[1],
-        "cargo test --no-run --timings --profile dwarf --config profile.dwarf.incremental=false -j 8 --features integration -p queue -p spira-config"
+        "CARGO_BUILD_JOBS=8 cargo test --no-run --timings --features integration -p queue -p spira-config"
     );
     assert_eq!(
         cmds[2],
-        "cargo test --profile dwarf --config profile.dwarf.incremental=false -j 8 --features integration -p queue -p spira-config -- --test-threads=8"
+        "cargo test -j 8 --features integration -p queue -p spira-config -- --test-threads=8"
     );
     assert!(f.stderr().contains(
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for 2 crates: queue spira-config (touched: spira-config)"
@@ -2227,7 +2227,7 @@ fn a_unit_gate_builds_once_and_every_other_composition_keeps_the_build_fence() {
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds[0], "bash spira/lint.sh && run-suites", "{cmds:?}");
     assert!(
-        cmds[1].starts_with("cargo test --no-run --timings --profile dwarf"),
+        cmds[1].starts_with("CARGO_BUILD_JOBS=8 cargo test --no-run --timings"),
         "{cmds:?}"
     );
     assert!(cmds.iter().all(|c| !c.contains("build-fence")), "{cmds:?}");
@@ -2713,8 +2713,8 @@ fn a_red_fence_in_unit_mode_still_runs_the_unit_phases() {
     // a red fence does not stop the unit phases: they report too, then the base's fences
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds[0], "bash spira/fence.sh && run-suites");
-    assert!(cmds[1].starts_with("cargo test --no-run --timings"), "{cmds:?}");
-    assert!(cmds[2].starts_with("cargo test --profile"), "{cmds:?}");
+    assert!(cmds[1].contains(" cargo test --no-run --timings"), "{cmds:?}");
+    assert!(cmds[2].starts_with("cargo test -j "), "{cmds:?}");
     assert!(cmds[3].starts_with("bash spira/fence.sh"), "{cmds:?}");
 }
 
@@ -3033,7 +3033,7 @@ fn a_tree_definition_is_the_gate_and_the_column_is_ignored() {
     assert!(f.stderr().contains("repo-map gate column is ignored"), "{}", f.stderr());
     // The tools phase ran first and the steps got the tree's spira-lint.
     let cmds = f.cmds.borrow();
-    assert!(cmds[0].starts_with("cargo build --profile dwarf") && cmds[0].contains("-p spira-lint"), "{cmds:?}");
+    assert!(cmds[0].starts_with("cargo build -j ") && cmds[0].contains("-p spira-lint"), "{cmds:?}");
     let lint = f.env_of(1, "SPIRA_LINT_BIN");
     // The binary the tools phase built, installed keyed by the merge's tree (sp-g9f3t).
     assert_eq!(lint, format!("{GATE_TREE}/target/tree-tools/tree-of-{MERGE_SHA}/spira-lint"));
@@ -3242,7 +3242,7 @@ fn the_runners_budget_knobs_reach_the_gate_command() {
 
 /// The 2026-09-30 base-red, as a fixture: the branch trial is red on its own, so the base
 /// trial runs in the same gate tree. A spira-lint from another tree — the unkeyed
-/// `target/dwarf/spira-lint` the branch trial left, or a keyed directory stamped for some other
+/// `target/debug/spira-lint` the branch trial left, or a keyed directory stamped for some other
 /// tree — flags literals the base's own spira-lint allows. Reading either would charge the
 /// branch's red to local/main (BASE_FAIL); the base's own tools, keyed by its tree, pass.
 #[test]
@@ -3252,7 +3252,7 @@ fn the_base_trial_runs_tools_keyed_by_the_base_tree_never_a_stale_one() {
     // literal-ok: the 2026-09-30 finding, quoted as the stale tool's answer.
     let stale = (1, "literal-lint: dwarf/src/tests.rs:249: \"needs-ryan\"".to_string());
     // path-ok: the unkeyed build output the branch trial left in the gate tree.
-    let unkeyed = format!("{GATE_TREE}/target/dwarf/spira-lint");
+    let unkeyed = format!("{GATE_TREE}/target/debug/spira-lint");
     let other = format!("{GATE_TREE}/target/tree-tools/tree-of-OTHER/spira-lint");
     f.lint_by_bin.borrow_mut().insert(unkeyed.clone(), stale.clone());
     f.lint_by_bin.borrow_mut().insert(other.clone(), stale);
@@ -3498,15 +3498,11 @@ fn a_gate_whose_built_binaries_vanished_is_no_verdict_never_branch_red() {
     assert_eq!(f.run(), FAIL, "a NotFound with the target intact is the branch's own: {}", f.stderr());
 }
 
-/// The tools phase and the unit phases are one-shot builds: no incremental cache, by a
-/// command-line switch (a CARGO_INCREMENTAL variable would split the cache).
 #[test]
-fn tree_builds_are_one_shot() {
+fn the_tools_build_names_no_incremental_override() {
     let d = crate::def::parse("bin SPIRA_LINT_BIN spira-lint\nstep \"$SPIRA_LINT_BIN\"\n").unwrap();
-    assert!(d.tools_command(4).unwrap().contains("--config profile.dwarf.incremental=false"));
-    for (_, c) in crate::compose::unit_commands(&["tsd".to_string()], 4) {
-        assert!(c.contains("--config profile.dwarf.incremental=false"), "{c}");
-    }
+    let c = d.tools_command(4).unwrap();
+    assert!(!c.contains("incremental") && !c.contains("--profile"), "{c}");
 }
 
 /// A tree-built testenv is told its harness is the gate tree: its own executable now
@@ -4106,7 +4102,7 @@ fn fences_mode_runs_the_fence_tools_the_fences_and_the_build_fence_and_no_test_o
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds.len(), 2, "the tools phase, then the fences: {cmds:?}");
     // The tools phase builds what the fences read — not the selector, not the suite runner.
-    assert!(cmds[0].starts_with("cargo build --profile dwarf"), "{cmds:?}");
+    assert!(cmds[0].starts_with("cargo build -j "), "{cmds:?}");
     assert!(cmds[0].contains("-p spira-lint") && cmds[0].contains("-p lifecycle-guard"), "{}", cmds[0]);
     assert!(!cmds[0].contains("suite-select") && !cmds[0].contains("testenv"), "{}", cmds[0]);
     // The fences: the checked-in definition without its suites step, the build fence kept.
@@ -4117,7 +4113,7 @@ fn fences_mode_runs_the_fence_tools_the_fences_and_the_build_fence_and_no_test_o
     for gone in ["SPIRA_SELECT_BIN", "SPIRA_TESTENV_BIN", "--suites"] {
         assert!(!cmds[1].contains(gone), "{gone}: {}", cmds[1]);
     }
-    assert!(!cmds.iter().any(|c| c.starts_with("cargo test --profile")), "no unit test phase: {cmds:?}");
+    assert!(!cmds.iter().any(|c| c.starts_with("cargo test -j ")), "no unit test phase: {cmds:?}");
     assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "off");
     assert_eq!(f.env_of(1, "SPIRA_GATE_COVERED"), "", "a certification selects no covering suites");
     assert_eq!(f.env_of(1, "SPIRA_TESTENV_BIN"), "", "the suite runner is not built or handed over");
@@ -4134,7 +4130,7 @@ fn fences_mode_a_planted_fence_violation_still_fails_the_gate_and_the_base_runs_
     let runs = gate_runs(&f);
     let want = crate::def::parse(&checked_in_steps()).unwrap().fences_only(&[]).command();
     assert_eq!(runs, [want.clone(), want], "the base trial composes fences mode too");
-    assert!(!f.cmds.borrow().iter().any(|c| c.starts_with("cargo test --profile")));
+    assert!(!f.cmds.borrow().iter().any(|c| c.starts_with("cargo test -j ")));
 }
 
 #[test]
@@ -4144,12 +4140,12 @@ fn fences_mode_a_unit_test_failure_in_a_touched_crate_fails_the_branch_at_the_ga
     let f = fences_fake(&["gate/src/x.rs"]);
     f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED".into()));
     assert_eq!(f.run(), FAIL, "{}", f.stderr());
-    assert!(f.cmds.borrow().iter().any(|c| c.starts_with("cargo test --profile")), "the touched crate's tests ran");
+    assert!(f.cmds.borrow().iter().any(|c| c.starts_with("cargo test -j ")), "the touched crate's tests ran");
     // Control: a branch touching no crate runs no unit tests and passes on the same fixture.
     let d = fences_fake(&["docs/x.md"]);
     d.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED".into()));
     assert_eq!(d.run(), PASS, "{}", d.stderr());
-    assert!(!d.cmds.borrow().iter().any(|c| c.starts_with("cargo test --profile")));
+    assert!(!d.cmds.borrow().iter().any(|c| c.starts_with("cargo test -j ")));
 }
 
 #[test]
@@ -4167,7 +4163,7 @@ fn fences_mode_a_re_entering_bead_runs_exactly_its_named_suites_and_a_fresh_one_
     assert!(!cmds[1].contains("--suites") && !cmds[1].contains("SPIRA_SELECT_BIN"), "{}", cmds[1]);
     assert!(cmds[2].contains("--suites test-b.sh,test-c.sh \"$SPIRA_GATE_BRANCH\""), "{}", cmds[2]);
     assert!(f.env_of(2, "SPIRA_TESTENV_BIN").ends_with("/testenv"), "the tree's own runner");
-    assert!(!cmds.iter().any(|c| c.starts_with("cargo test --profile")), "{cmds:?}");
+    assert!(!cmds.iter().any(|c| c.starts_with("cargo test -j ")), "{cmds:?}");
     assert!(meter(&f).contains("compose=fences+reentry phases=tools:7,fences:7,reentry:7"), "{}", meter(&f));
     assert!(f.stderr().contains("gate PASS covered suites: test-b.sh,test-c.sh"), "{}", f.stderr());
 

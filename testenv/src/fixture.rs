@@ -1593,7 +1593,7 @@ mod tests {
     }
 
     fn session(rt: &FakeRuntime) -> Session<'_> {
-        let mut s = Session::new(rt, "abc123", "dwarf");
+        let mut s = Session::new(rt, "abc123", "debug");
         s.liveness_sleep = Duration::from_millis(1);
         s
     }
@@ -1738,12 +1738,12 @@ mod tests {
         assert_eq!(argv[0][..3], ["bash", "-c", STAGE_SCRIPT]);
         assert_eq!(
             argv[0][3..],
-            ["_", "/tmp/spira-release-abc123", "/workspace/target/dwarf", "/workspace", "spira-config", "testenv"]
+            ["_", "/tmp/spira-release-abc123", "/workspace/target/debug", "/workspace", "spira-config", "testenv"]
         );
         let rt = FakeRuntime::new();
         rt.on(|r| r.argv.get(2).map(String::as_str) == Some(STAGE_SCRIPT), |_| ExecOutcome {
             rc: 1,
-            output: "testenv: stage: testenv was not built into /workspace/target/dwarf".into(),
+            output: "testenv: stage: testenv was not built into /workspace/target/debug".into(),
         });
         let e = run_setup(&session(&rt), Provision::Install, &[]).unwrap_err();
         assert_eq!(e.fault.rc(), 3, "a release that cannot be staged is a harness fault");

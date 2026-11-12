@@ -1033,3 +1033,35 @@ fn a_cut_stall_is_excused_per_repo_and_never_by_another_repos_batcher() {
     s.owners.insert(cut_owner_key("b"), pace_owner(Some(now - 5), None));
     assert!(keys(&s).is_empty(), "{:?}", keys(&s));
 }
+
+/// A store that cannot be read `ago` seconds after an activation, as `observe` answers it.
+fn blind_after_activation(now: u64, ago: u64) -> Snapshot {
+    Snapshot { activated_at: Some(now - ago), ..blind("spira-lc dwell: cannot tell: deadline") }
+}
+
+#[test]
+fn a_read_that_fails_just_after_an_activation_is_retried_on_the_next_tick_and_pages_nothing() {
+    let (mut r, w) = rig_at(|now| blind_after_activation(now, 5));
+    assert_eq!(lines(&r), Vec::<String>::new(), "the first unreadable tick after an activation says nothing: {:?}", lines(&r));
+    *w.lock().unwrap() = healthy(T0);
+    r.advance(300_000).unwrap();
+    let all = lines(&r);
+    assert!(all.iter().all(|l| !l.contains("BLIND")), "{all:?}");
+    assert!(all.iter().any(|l| l.contains("[watch:transitions] WAIT ") && l.contains("WORKING 3")), "the next tick reads: {all:?}");
+}
+
+#[test]
+fn a_store_that_stays_unreadable_for_two_ticks_after_an_activation_still_pages_blind_naming_it() {
+    let (mut r, _) = rig_at(|now| blind_after_activation(now, 5));
+    r.advance(300_000).unwrap();
+    let all = lines(&r);
+    let pages: Vec<&String> = all.iter().filter(|l| l.contains("P0 BLIND")).collect();
+    assert_eq!(pages.len(), 1, "{all:?}");
+    assert!(pages[0].contains("after the activation"), "the page names the activation: {pages:?}");
+}
+
+#[test]
+fn an_unreadable_store_long_after_an_activation_pages_at_once() {
+    let (r, _) = rig_at(|now| blind_after_activation(now, 10 * MIN));
+    assert_eq!(lines(&r).iter().filter(|l| l.contains("P0 BLIND")).count(), 1, "{:?}", lines(&r));
+}

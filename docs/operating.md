@@ -106,6 +106,16 @@ worktree: merging does not deploy, activation does.
 Never read state from the files, logs or process lists another component owns; each state has
 one owning command (see the lint rules in [development](development.md)).
 
+## A config change and the running scheduler
+
+`spira-config set` and `unset` tell the scheduler which key changed, and print either
+`scheduler re-pinned <key>` or `written; the scheduler still holds <old> for <key> and takes <new> at its next safe point (<what it waits for>)`.
+The scheduler takes a changed task key between turns, never while the batcher is driving a round
+or while a task that reads the key has an effect in flight; until then `spira-config get --running <key>`
+prints the value it holds and the `world status` scheduler line shows the pending re-pin. A key that
+is waiting does not hold back another that is free: each is taken on its own safe point. A key only
+the service itself reads (the sockets, the pool caps, the task modes) is taken at start: `set` says to restart.
+
 ## Pausing one task, or all of them
 
 Every loop step is a task inside `spira-runtime serve`, and `SPIRA_TASK_MODES` gives each one

@@ -58,7 +58,7 @@ one_shot(profile)       -> ["--config", "profile.<profile>.incremental=false"]
 **Measured (2026-09-30):** sccache hashes every `CARGO_*` environment variable into a
 compilation's key. A dependency built with `CARGO_INCREMENTAL=0` and the same dependency
 built without it (a dwarf's interactive `cargo test`) are **two cache entries** — 0 hits
-across the two. `--config profile.dwarf.incremental=false` is a command-line switch: the
+across the two. `--config profile.<p>.incremental=false` is a command-line switch: the
 dependency's key is unchanged (3/3 hits), and cargo still passes no `-C incremental` to the
 workspace crates. The same finding forbids `CARGO_TARGET_DIR` as an **environment variable**
 on any cached build: two target dirs set that way never share a key (0 hits measured);
@@ -67,10 +67,10 @@ on any cached build: two target dirs set that way never share a key (0 hits meas
 
 ### 2.3 The gate tree's target on tmpfs
 
-`<gate tree>/target` stays a real directory, and each of its build directories — `dwarf`,
+`<gate tree>/target` stays a real directory, and each of its build directories —
 `release`, `debug`, `tree-tools` — is a **symlink** to `<root>/<gate tree basename>/<dir>`,
 where `<root>` is `$SPIRA_GATE_TARGET_ROOT`, else `/tmp/spira-gate-target-<sha256(SPIRA_RUN)[..6]>`
-when `/tmp` is a tmpfs. Every path consumer (`target/dwarf/<pkg>`, `target/tree-tools/<tree
+when `/tmp` is a tmpfs. Every path consumer (`target/debug/<pkg>`, `target/tree-tools/<tree
 id>`, `git clean -e target`, `make build`) is unchanged; only where the bytes land moves.
 **Why the links are inside `target/` and not `target` itself:** `.gitignore` says `target/`,
 which matches a directory only. A `target` symlink would be an *untracked file* to every
@@ -182,7 +182,7 @@ box; the fixture image waives it, `spira/testenv/doctor-waivers`): the cache liv
 
 * **sccache, not a shared `CARGO_TARGET_DIR`.** cargo takes an exclusive lock on a target
   directory for a whole build, so a shared one serialises every concurrent gate, dwarf and
-  landing (certify_par=4 would become 1). It would also put every tree's `target/dwarf/<pkg>`
+  landing (certify_par=4 would become 1). It would also put every tree's `target/debug/<pkg>`
   at one path, which is exactly what sp-g9f3t's tree-keyed tools exist to stop. sccache
   keeps each tree's own target (attribution unchanged) and shares only compiler outputs,
   keyed by their full inputs; concurrent builds are safe.

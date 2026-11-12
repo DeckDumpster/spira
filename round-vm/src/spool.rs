@@ -21,8 +21,8 @@ pub enum Build {
     /// Reuse the round's own release binaries: the tree differs from the round's only in
     /// files no binary is built from.
     Artifacts,
-    /// A debug (`dwarf` profile) build of the job's own tree.
-    Dwarf,
+    /// A debug (`dev` profile) build of the job's own tree.
+    Dev,
     /// In `~/round-work` after the corpus: an incremental release build whose binaries land.
     Round,
     /// Only whether the job's tree builds as a workspace; no suite runs and no binaries land.
@@ -39,7 +39,7 @@ impl Build {
     pub fn word(self) -> &'static str {
         match self {
             Build::Artifacts => "artifacts",
-            Build::Dwarf => "dwarf",
+            Build::Dev => "dev",
             Build::Round => "round",
             Build::Workspace => "workspace",
             Build::Unit => "unit",
@@ -50,7 +50,7 @@ impl Build {
     pub fn parse(s: &str) -> Option<Build> {
         match s {
             "artifacts" => Some(Build::Artifacts),
-            "dwarf" => Some(Build::Dwarf),
+            "dev" => Some(Build::Dev),
             "round" => Some(Build::Round),
             "workspace" => Some(Build::Workspace),
             "unit" => Some(Build::Unit),
@@ -109,6 +109,19 @@ rm -rf "$SPIRA_BATCH_RESULTS"; mkdir -p "$SPIRA_BATCH_RESULTS"
 # path-ok: the round's own testenv, built on this VM from the round tree by the corpus run
 tenv="$HOME/round-work/target/release/testenv"
 set +e
+# suites= names packages, or package=test for a failing test: the run is then those tests alone,
+# unless a package is named bare, which keeps every test of the packages named.
+scope_of() {
+    scope="--workspace"; filters=""
+    [ "$suites" != "$1" ] || return 0
+    scope=""; local bare="" t p
+    for t in ${suites//,/ }; do
+        p="${t%%=*}"
+        case " $scope " in *" -p $p "*) ;; *) scope="$scope -p $p" ;; esac
+        if [ "$p" = "$t" ]; then bare=1; else filters="$filters ${t#*=}"; fi
+    done
+    if [ -n "$bare" ] || [ -z "$filters" ]; then filters=""; else filters="-- --exact$filters"; fi
+}
 case "$build" in
 round)
     cd "$HOME/round-work" || exit 2
@@ -134,10 +147,9 @@ unit)
     rm -rf "$d"; mkdir -p "$HOME/attr"
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
-    scope="--workspace"
-    if [ "$suites" != unit ]; then scope=""; for p in ${suites//,/ }; do scope="$scope -p $p"; done; fi
+    scope_of unit
     env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
-        cargo test -q --profile unittest $scope --features integration --no-fail-fast --lib --bins --config profile.unittest.incremental=false >&2
+        cargo test -q --profile unittest $scope --features integration --no-fail-fast --lib --bins --config profile.unittest.incremental=false $filters >&2
     rc=$?
     cd "$HOME" && rm -rf "$d"
     [ "$rc" -eq 101 ] && exit 5
@@ -149,10 +161,9 @@ integration)
     rm -rf "$d"; mkdir -p "$HOME/attr"
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
-    scope="--workspace"
-    if [ "$suites" != integration ]; then scope=""; for p in ${suites//,/ }; do scope="$scope -p $p"; done; fi
+    scope_of integration
     env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
-        cargo test -q --profile unittest $scope --features integration --no-fail-fast --test '*' --config profile.unittest.incremental=false >&2
+        cargo test -q --profile unittest $scope --features integration --no-fail-fast --test '*' --config profile.unittest.incremental=false $filters >&2
     rc=$?
     cd "$HOME" && rm -rf "$d"
     [ "$rc" -eq 101 ] && exit 5
@@ -171,7 +182,7 @@ lint)
     [ "$rc" -eq 0 ] || exit 5
     echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/spira-lint.result"
     exit 0 ;;
-artifacts|dwarf)
+artifacts|dev)
     d="$HOME/attr/$job"
     rm -rf "$d"; mkdir -p "$HOME/attr"
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
@@ -179,7 +190,7 @@ artifacts|dwarf)
     if [ "$build" = artifacts ]; then
         "$tenv" --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" --repeat-reason "$reason" HEAD
     else
-        "$tenv" --mode parallel --profile dwarf --suites "$suites" --repeat-reason "$reason" HEAD
+        "$tenv" --mode parallel --profile dev --suites "$suites" --repeat-reason "$reason" HEAD
     fi
     rc=$?
     cd "$HOME" && rm -rf "$d"
@@ -504,11 +515,11 @@ mod tests {
 
     #[test]
     fn a_request_names_its_branch_suites_and_build() {
-        let r = parse_request("j7", "branch=spira/batcher-attr/x-j7\nsuites=test-a.sh\nbuild=dwarf\n").unwrap();
-        assert_eq!((r.branch.as_str(), r.suites.as_str(), r.build), ("spira/batcher-attr/x-j7", "test-a.sh", Build::Dwarf));
+        let r = parse_request("j7", "branch=spira/batcher-attr/x-j7\nsuites=test-a.sh\nbuild=dev\n").unwrap();
+        assert_eq!((r.branch.as_str(), r.suites.as_str(), r.build), ("spira/batcher-attr/x-j7", "test-a.sh", Build::Dev));
         assert!(parse_request("j7", "branch=b\nsuites=s\nbuild=warp\n").is_err());
-        assert!(parse_request("j7", "suites=s\nbuild=dwarf\n").is_err());
-        assert!(parse_request("../x", "branch=b\nsuites=s\nbuild=dwarf\n").is_err());
+        assert!(parse_request("j7", "suites=s\nbuild=dev\n").is_err());
+        assert!(parse_request("../x", "branch=b\nsuites=s\nbuild=dev\n").is_err());
     }
 
     #[test]
@@ -590,6 +601,17 @@ mod tests {
         assert!(args.contains("-p spira-runtime -p gate") && args.contains("--test *") && args.contains("--features integration"), "{args}");
         assert_eq!(attr_job_rc("integration", 101, "integration-tests.result"), (5, false));
         assert_eq!(attr_job_rc("integration", 0, "integration-tests.result"), (0, true));
+    }
+
+    #[test]
+    fn an_integration_job_naming_a_failing_test_runs_that_test_alone_and_a_bare_package_keeps_them_all() {
+        let (_, _, args) = attr_job("integration", "testenv=lint_x,testenv=lint_y", 0, "integration-tests.result");
+        assert!(args.contains("-p testenv ") && args.contains("-- --exact lint_x lint_y") && !args.contains("testenv="), "{args}");
+        assert_eq!(args.matches("-p testenv").count(), 1, "{args}");
+        let (_, _, args) = attr_job("integration", "testenv=lint_x,gate", 0, "integration-tests.result");
+        assert!(args.contains("-p testenv -p gate") && !args.contains("--exact"), "{args}");
+        let (_, _, args) = attr_job("unit", "loom=a::b", 0, "unit-tests.result");
+        assert!(args.contains("-p loom") && args.contains("--lib --bins") && args.contains("-- --exact a::b"), "{args}");
     }
 
     #[test]

@@ -29,6 +29,21 @@ pub fn carried<T: DeserializeOwned + Default>(view: &Projection, stream: &Stream
     view.events(stream).iter().rev().find(|e| e.kind.tag == tag).and_then(|e| serde_json::from_str(&e.kind.body).ok()).unwrap_or_default()
 }
 
+/// How long after an activation restarts the store server a watcher's unreadable store is
+/// read again before it is called BLIND: the server's first reads pay for its cold build.
+pub const ACTIVATION_RETRY_S: u64 = 60;
+
+/// Whether an activation at `activated_at` (epoch seconds) is no more than `ACTIVATION_RETRY_S` before `now_s`.
+pub fn just_activated(activated_at: Option<u64>, now_s: u64) -> bool {
+    activated_at.is_some_and(|at| at <= now_s && now_s - at <= ACTIVATION_RETRY_S)
+}
+
+/// The newest `Activated` entry among the release machine records under `run_dir`, epoch seconds.
+pub fn last_activation(run_dir: &std::path::Path) -> Option<u64> {
+    let releases = release::machine::all(&run_dir.join("release")).ok()?;
+    releases.iter().flat_map(|r| r.events.iter()).filter(|e| e.to == release::machine::ReleaseState::Activated).map(|e| e.at).max()
+}
+
 /// The name of the effect that `ev` is the outcome of, when its stream requested one.
 pub fn answered_effect(view: &Projection, ev: &Event) -> Option<String> {
     let cause = ev.cause.as_ref()?;
@@ -68,7 +83,20 @@ pub fn iso8601(secs: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::iso8601;
+    use super::{iso8601, just_activated, last_activation};
+    use release::machine::{enter, ReleaseState};
+
+    #[test]
+    fn the_last_activation_is_the_activated_record_under_run_dir_and_nothing_else() {
+        let t = testkit::TempDir::new("last-activation");
+        let state = t.path().join("release");
+        assert_eq!(last_activation(t.path()), None, "no records: no activation");
+        enter(&state, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ReleaseState::Published, "published").unwrap();
+        assert_eq!(last_activation(t.path()), None, "a published release is not an activation");
+        enter(&state, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ReleaseState::Activated, "current switched").unwrap();
+        let at = last_activation(t.path()).expect("the activated record is read");
+        assert!(just_activated(Some(at), at + 60) && !just_activated(Some(at), at + 61) && !just_activated(Some(at), at.saturating_sub(1)));
+    }
 
     #[test]
     fn epoch_seconds_render_as_utc() {

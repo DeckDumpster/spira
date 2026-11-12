@@ -20,7 +20,7 @@ const USAGE: &str = "usage:
   release build <commit> [--repo R] [--target-dir T | --bin-dir D]
   release verify <sha> [--no-pre-activate]
   release config-stage <tree>   (prints SPIRA_TOML with <tree>'s config delta applied; the layers stay in a scratch dir)
-  release activate <sha> [--hotfix <reason>] [--repo R] [--landed-ref REF] [--settle SECS] [--drain-wait SECS]
+  release activate <sha> [--hotfix <reason>] [--repo R] [--landed-ref REF] [--settle SECS] [--drain-wait SECS] [--read-limit-ms MS] [--warm-wait SECS]
   release rollback [--repo R] [--settle SECS] [--drain-wait SECS]
   release prune [--keep N]
   release migrate-bead-clients    (moves the bead-store clients off passwordless root onto their own user; rotate-lc-credentials needs it)
@@ -48,6 +48,8 @@ struct Args {
     landed_ref: String,
     settle: Duration,
     drain: Duration,
+    steady: Duration,
+    warm_wait: Duration,
     pre_activate: bool,
     dry_run: bool,
     stage: Option<String>,
@@ -67,6 +69,8 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         hotfix: None,
         landed_ref: "local/main".into(),
         settle: Duration::from_secs(3),
+        steady: Duration::from_millis(3000),
+        warm_wait: Duration::from_secs(60), // batch-job: bounded wait for the store server to answer its first reads
         drain: Duration::from_secs(2700), // batch-job: bounded wait for a running gate to finish, defaults to the gate cap
         pre_activate: true,
         dry_run: false,
@@ -90,6 +94,8 @@ fn parse(argv: &[String]) -> Result<Args, String> {
             "--hotfix" => a.hotfix = Some(val(x)?),
             "--landed-ref" => a.landed_ref = val(x)?,
             "--drain-wait" => a.drain = Duration::from_secs(val(x)?.parse().map_err(|_| "--drain-wait needs whole seconds".to_string())?),
+            "--read-limit-ms" => a.steady = Duration::from_millis(val(x)?.parse().map_err(|_| "--read-limit-ms needs whole milliseconds".to_string())?),
+            "--warm-wait" => a.warm_wait = Duration::from_secs(val(x)?.parse().map_err(|_| "--warm-wait needs whole seconds".to_string())?),
             "--settle" => a.settle = Duration::from_secs(val(x)?.parse().map_err(|_| "--settle needs whole seconds".to_string())?),
             "--no-pre-activate" => a.pre_activate = false,
             "--dry-run" => a.dry_run = true,
@@ -524,7 +530,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         }
         "activate" | "rollback" => {
             let sc = RealSystemctl::from_env();
-            let ctx = Ctx { cfg: &cfg, reads: &activate::RealReads(&cfg), sc: &sc, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain };
+            let ctx = Ctx { cfg: &cfg, reads: &activate::RealReads(&cfg), sc: &sc, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain, steady: a.steady, warm_wait: a.warm_wait, warm_pause: Duration::from_secs(1) };
             if cmd == "activate" {
                 want(1)?;
                 if activate::current(&cfg).as_deref() != Some(rest[0].as_str()) {

@@ -301,7 +301,7 @@ mod tests {
             harness_hash: "h".into(),
             mode: Mode::Parallel,
             producer: Producer::Explicit,
-            profile: "dwarf".into(),
+            profile: "dev".into(),
             artifacts_id: None,
             tests: None,
             unit: None,
@@ -360,7 +360,7 @@ mod tests {
         // the default key is the pre-D8 line, byte for byte
         let v = inputs();
         let line = format!(
-            "spira abc t1 {} h parallel explicit dwarf\n",
+            "spira abc t1 {} h parallel explicit dev\n",
             v.selection_hash()
         );
         assert_eq!(v.key(), sha256_hex(line.as_bytes()));

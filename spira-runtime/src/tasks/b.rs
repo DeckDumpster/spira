@@ -20,6 +20,9 @@ use super::Task;
 /// `ROW_PARTS` and `decide`.
 macro_rules! hosted {
     ($ty:ident) => {
+        $crate::tasks::b::hosted!($ty, catch_up = $crate::tasks::b::kit::no_catch_up);
+    };
+    ($ty:ident, catch_up = $catch_up:path) => {
         impl $crate::tasks::b::kit::Stub for $ty {
             type Snapshot = Snapshot;
             type Carry = Carry;
@@ -41,6 +44,10 @@ macro_rules! hosted {
 
             fn decide(cfg: &$crate::tasks::b::kit::Cfg, carry: &Carry, input: &$crate::tasks::b::kit::Input<Snapshot>, now_ms: u64) -> $crate::tasks::b::kit::Decision<Carry> {
                 decide(cfg, carry, input, now_ms)
+            }
+
+            fn catch_up(carry: &Carry, now_ms: u64, cadence: &$crate::tasks::b::kit::Cadence) -> Option<String> {
+                $catch_up(carry, now_ms, cadence)
             }
         }
 
@@ -100,7 +107,7 @@ pub static TASKS: &[Task] = &[
         boot: ReconcileContent::boot,
         cadence_ms: cadence_ms::<ReconcileContent>,
         effects: reconcile_content::EFFECTS,
-        runners: &[(reconcile_content::OBSERVE, |e, _, _| reconcile_content::observe(&lc(e), &e.world.run_dir)), (reconcile_content::SKEW_CHECK, |e, _, _| reconcile_content::skew_check(&lc(e))), (reconcile_content::CLOSE, |e, _, s| reconcile_content::close(&lc(e), &s.input))],
+        runners: &[(reconcile_content::OBSERVE, |e, _, s| reconcile_content::observe(&lc(e), &e.world.run_dir, &s.input)), (reconcile_content::SKEW_CHECK, |e, _, _| reconcile_content::skew_check(&lc(e))), (reconcile_content::CLOSE, |e, _, s| reconcile_content::close(&lc(e), &s.input))],
         keys: &[reconcile_content::KEYS],
         build: build::<ReconcileContent>,
     },
@@ -347,6 +354,9 @@ pub mod kit {
         fn cadence(&self) -> &Cadence;
         fn cfg(&self) -> &Cfg;
         fn decide(cfg: &Cfg, carry: &Self::Carry, input: &Input<Self::Snapshot>, now_ms: u64) -> Decision<Self::Carry>;
+        /// A calendar task's boot tick: the probe input to observe at once because a restart
+        /// lost a slot or a pass, or `None`. The timer that held the slot lives in memory only.
+        fn catch_up(carry: &Self::Carry, now_ms: u64, cadence: &Cadence) -> Option<String>;
 
         fn registration(self) -> Registration {
             Registration::new(Self::SPEC.name, self).with_rows(runtime::row_codec!(Self::SPEC.stream, Self::SPEC.state, Self::ROWS))
@@ -387,6 +397,11 @@ pub mod kit {
         (T::SPEC.name, T::SPEC.stream, EventKind::new(T::SPEC.tick, if T::SPEC.calendar { BOOT } else { FIRE }))
     }
 
+    /// [`Stub::catch_up`] for a task whose boot tick only arms the next slot.
+    pub fn no_catch_up<C>(_: &C, _: u64, _: &Cadence) -> Option<String> {
+        None
+    }
+
     /// The runner of an effect whose task is not ported yet.
     pub fn not_ported<T: Stub>(_: &Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
         unimplemented!("{}: not ported yet", T::SPEC.name)
@@ -407,8 +422,12 @@ pub mod kit {
         }
         if ev.kind.tag == spec.tick {
             let mut cmds = vec![];
-            if !(t.cadence().is_calendar() && ev.kind.body == BOOT) {
+            let booting = t.cadence().is_calendar() && ev.kind.body == BOOT;
+            let resumed = if booting { T::catch_up(&carried::<T::Carry>(view, &stream, spec.state), ev.at, t.cadence()) } else { None };
+            if !booting {
                 let input = spec.probe_input_key.and_then(|k| t.cfg().get(k)).cloned().unwrap_or_default();
+                cmds.push(Command::Probe(EffectSpec::probe(spec.probe, input, spec.probe_deadline_ms)));
+            } else if let Some(input) = resumed {
                 cmds.push(Command::Probe(EffectSpec::probe(spec.probe, input, spec.probe_deadline_ms)));
             }
             cmds.push(Command::Timer { at: t.cadence().next(ev.at), kind: EventKind::new(spec.tick, FIRE) });

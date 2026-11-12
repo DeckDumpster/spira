@@ -159,14 +159,35 @@ fn is_webdav_location(line: &str) -> bool {
 /// always talks to, or spawns, the daemon, so this is not free.
 fn ensure_store_backend(sccache_bin: &Path, store: &Store) -> BackendCheck {
     let extra = store.env_pairs();
+    start_server_unit(sccache_bin, store);
     match show_stats_cache_location(sccache_bin, &extra) {
         None => BackendCheck::Unknown,
         Some(line) if is_webdav_location(&line) => BackendCheck::Matches,
         Some(line) => {
             let _ = crate::bounded::bounded(sccache_bin).arg("--stop-server").output();
+            start_server_unit(sccache_bin, store);
             BackendCheck::Restarted(line)
         }
     }
+}
+
+/// The transient user unit the box's one sccache server runs in. A server a client spawns
+/// lives in that client's cgroup (a round pass's scope, a builder's session) and keeps it
+/// alive for as long as the server answers every other build.
+pub const SERVER_UNIT: &str = "spira-sccache-server";
+
+/// `systemd-run` arguments that run the sccache server in the foreground as [`SERVER_UNIT`].
+pub fn server_unit_args(sccache_bin: &Path, store: &Store) -> Vec<String> {
+    let mut args: Vec<String> = ["--user", "--quiet", "--collect", &format!("--unit={SERVER_UNIT}"), "--setenv=SCCACHE_START_SERVER=1", "--setenv=SCCACHE_NO_DAEMON=1"].iter().map(|s| s.to_string()).collect();
+    args.extend(store.env_pairs().iter().map(|(k, v)| format!("--setenv={k}={v}")));
+    args.push(sccache_bin.display().to_string());
+    args
+}
+
+/// Starts the server as its own unit unless one is already running; a host without a user
+/// manager, or a unit already there, leaves the server to be spawned by its first client.
+fn start_server_unit(sccache_bin: &Path, store: &Store) {
+    let _ = crate::bounded::bounded(Path::new("systemd-run")).args(server_unit_args(sccache_bin, store)).output();
 }
 
 /// [`ensure_store_backend`] plus the two `SCCACHE_WEBDAV_*` vars, in one call — the one place
@@ -395,6 +416,17 @@ mod tests {
         // Off ignores a configured store too — there is no wrapper to point at it.
         let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
         assert_eq!(w.env(Some(&store)), vec![("RUSTC_WRAPPER".to_string(), String::new())]);
+    }
+
+    #[test]
+    fn the_shared_server_runs_as_its_own_foreground_unit_on_the_configured_store() {
+        let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
+        let args = server_unit_args(Path::new("/opt/bin/sccache"), &store);
+        assert!(args.contains(&"--user".to_string()) && args.contains(&format!("--unit={SERVER_UNIT}")), "{args:?}");
+        for want in ["--setenv=SCCACHE_START_SERVER=1", "--setenv=SCCACHE_NO_DAEMON=1", "--setenv=SCCACHE_WEBDAV_ENDPOINT=http://box:9431", "--setenv=SCCACHE_WEBDAV_KEY_PREFIX=/"] {
+            assert!(args.contains(&want.to_string()), "{want} in {args:?}");
+        }
+        assert_eq!(args.last().map(String::as_str), Some("/opt/bin/sccache"), "the command comes after every option");
     }
 
     // ------------------------------------------------------------- Store (sp-xtdqi)

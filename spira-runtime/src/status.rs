@@ -49,12 +49,18 @@ pub struct Control {
     /// Journals one event; the host's submission channel.
     pub submit: SubmitFn,
     pub clock: Arc<dyn Clock>,
+    repin: Option<Arc<crate::repin::Repin>>,
     seq: AtomicU64,
 }
 
 impl Control {
     pub fn new(board: Arc<StatusBoard>, submit: SubmitFn, clock: Arc<dyn Clock>) -> Self {
-        Control { board, submit, clock, seq: AtomicU64::new(0) }
+        Control { board, submit, clock, repin: None, seq: AtomicU64::new(0) }
+    }
+
+    pub fn with_repin(mut self, repin: Arc<crate::repin::Repin>) -> Self {
+        self.repin = Some(repin);
+        self
     }
 
     pub fn respond(&self, argv: &[String]) -> runtime::Result<String> {
@@ -62,11 +68,28 @@ impl Control {
         match argv.as_slice() {
             ["scheduler", "status"] => {
                 let s = self.board.get().ok_or_else(|| RuntimeError::new("cannot tell: no turn has run yet"))?;
-                Ok(document(&s).to_string())
+                let mut doc = document(&s);
+                if let Some(r) = &self.repin {
+                    doc["repin"] = r.document();
+                }
+                Ok(doc.to_string())
+            }
+            ["scheduler", "repin", key] => {
+                let r = self.repin.as_ref().ok_or_else(|| RuntimeError::refused("this scheduler re-pins nothing"))?;
+                let answer = r.request(key).map_err(RuntimeError::refused)?;
+                if answer["state"] == "pending" {
+                    let id = format!("{}/{}/{}/{key}", crate::repin::WANTED, self.clock.now_ms(), self.seq.fetch_add(1, Ordering::SeqCst));
+                    (self.submit)(&id, crate::repin::STREAM, EventKind::new(crate::repin::WANTED, key)).map_err(RuntimeError::new)?;
+                }
+                Ok(answer.to_string())
+            }
+            ["scheduler", "running", key] => {
+                let r = self.repin.as_ref().ok_or_else(|| RuntimeError::refused("this scheduler re-pins nothing"))?;
+                r.held(key).ok_or_else(|| RuntimeError::refused(format!("{key} is not a key the scheduler pins per task")))
             }
             ["scheduler", "halt", reason @ ..] => self.gate(SCHEDULER_HALTED, &reason.join(" ")),
             ["scheduler", "resume"] => self.gate(SCHEDULER_RESUMED, ""),
-            _ => Err(RuntimeError::refused(format!("unknown request {argv:?} (scheduler status|halt [reason]|resume)"))),
+            _ => Err(RuntimeError::refused(format!("unknown request {argv:?} (scheduler status|halt [reason]|resume|repin <key>|running <key>)"))),
         }
     }
 

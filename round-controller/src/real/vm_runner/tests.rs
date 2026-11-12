@@ -17,9 +17,9 @@ fn a_rerun_reuses_the_round_binaries_only_when_the_removed_members_changed_no_so
     assert_eq!(build_for(&["a".to_string()], &changed), "artifacts");
     assert_eq!(
         build_for(&["a".to_string(), "b".to_string()], &changed),
-        "dwarf"
+        "dev"
     );
-    assert_eq!(build_for(&["unknown".to_string()], &changed), "dwarf");
+    assert_eq!(build_for(&["unknown".to_string()], &changed), "dev");
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn a_removal_set_tree_merges_every_member_left_and_a_vm_gone_answers_its_pending
         "the removed member is left out"
     );
     let req = fs::read_to_string(r.spool.join("req/v0j9.req")).unwrap();
-    assert!(req.ends_with("build=dwarf\n"), "{req}");
+    assert!(req.ends_with("build=dev\n"), "{req}");
     vm.signal(Signal::Term).unwrap();
     assert_eq!(r.poll_jobs(), [(9, JobResult::Fault)]);
 }
