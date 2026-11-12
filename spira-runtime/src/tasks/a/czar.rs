@@ -152,6 +152,8 @@ pub const KEYS: &[&str] = &[
     "SPIRA_CZAR_LABEL",
     "SPIRA_REPO_MAP",
     "SPIRA_FORGE",
+    "SPIRA_GH",
+    "SPIRA_METRICS_ENDPOINT",
     "SPIRA_INSTANCE",
     "SPIRA_METRICS_ENDPOINT",
     "SPIRA_CZAR_STAGE_DEADLOCK",
@@ -223,6 +225,13 @@ pub struct BaseCi {
     pub red_suites: Vec<String>,
 }
 
+/// GitHub's core budget, spent and not yet reset: why base CI cannot be read, said once.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpentBudget {
+    pub reset: u64,
+    pub top_spender: Option<(String, u64)>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     /// Landing outcomes since the carried cursor.
@@ -234,6 +243,8 @@ pub struct Snapshot {
     pub base_ci: BTreeMap<String, Read<BaseCi>>,
     pub reconciler_last_pass_ms: Read<Option<u64>>,
     pub now_ms: u64,
+    #[serde(default)]
+    pub gh_budget: Option<SpentBudget>,
 }
 
 /// `act`, or anything else: shadow, where a remedy is a `CZAR-WOULD` line only.
@@ -540,7 +551,18 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
             Remedy::File(czar_pass::Filing::queue("ci-red", &format!("ci-red-{safe}"), &format!("QUEUE: CI run completed red, verdict not acting for {age}s ({repo})"), &format!("CI run completed red for the open batch in {repo}.\nRed for {age}s; verdict has not acted.\n"), ""))
         });
     }
+    let unreadable = snap.base_ci.values().any(|b| !matches!(b, Read::Observed(_)));
+    if let (Some(spent), true) = (&snap.gh_budget, unreadable) {
+        let until = crate::api_budget::clock_of(spent.reset);
+        let who = spent.top_spender.as_ref().map_or("no caller is named by the panel".to_string(), |(c, n)| format!("top spender in the last hour: {c} ({n} calls)"));
+        let why = format!("the GitHub API budget is spent until {until}");
+        let body = format!("Base CI status could not be read for any repository: {why} (epoch {}).\n{who}.\nA base whose status cannot be read is treated as failed, not green; it is read again after the reset.\n", spent.reset);
+        p.run("base-red", "base-red:gh-budget", unobservable(why), policy.base_ci_unreadable_grace_secs, |_| Remedy::File(czar_pass::Filing::base_red(&format!("gh-budget:{}", spent.reset), &format!("QUEUE: the GitHub API budget is spent until {until} — {who}"), &body, "", "")));
+    }
     for (repo, base) in &snap.base_ci {
+        if snap.gh_budget.is_some() && !matches!(base, Read::Observed(_)) {
+            continue;
+        }
         let safe = czar_pass::repo_safe(repo);
         let key = format!("base-red:{safe}");
         match base {
@@ -727,6 +749,8 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let refreshed = views.as_ref().map_err(Clone::clone).and_then(|v| v.batches_current().map_err(String::from));
     let home = spira_config::resolve::locate_home_for_process()?;
     let reg = spira_config::repos::Registry::from_env(std::env::vars().chain(req.pinned.clone()).collect(), &home);
+    let gh_pinned = req.pinned.get("SPIRA_GH").cloned().unwrap_or_default();
+    let metrics = req.pinned.get("SPIRA_METRICS_ENDPOINT").cloned();
     let forge = req.pinned.get("SPIRA_FORGE").cloned().unwrap_or_else(|| "forge".into());
     for name in reg.all() {
         let land = reg.land(&name);
@@ -774,7 +798,19 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         }
         snap.open_batch.insert(name, batch);
     }
+    if snap.base_ci.values().any(|b| matches!(b, Read::Unobservable(_))) {
+        snap.gh_budget = spent_budget(&gh_pinned, metrics.as_deref(), snap.now_ms / 1000);
+    }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+/// Set when `gh api rate_limit` (not charged) says the core budget is zero until a future reset.
+fn spent_budget(gh: &str, metrics: Option<&str>, now: u64) -> Option<SpentBudget> {
+    let gh = if gh.is_empty() { "gh" } else { gh };
+    let out = spira_config::bounded::bounded(gh).args(["api", "rate_limit"]).output().ok().filter(|o| o.status.success())?;
+    let rate = crate::api_budget::core_rate(&String::from_utf8_lossy(&out.stdout)).filter(|r| r.remaining == 0 && r.reset > now)?;
+    let top_spender = spira_otel::query::Store::new(metrics).ok().and_then(|s| s.export(&format!("{}{{outcome=\"fresh\"}}", crate::api_budget::CALLS), now.saturating_sub(3600)).ok()).and_then(|series| crate::api_budget::top_spender(&series));
+    Some(SpentBudget { reset: rate.reset, top_spender })
 }
 
 /// The repo's unheld CERTIFIED beads: held rows when the process keeps the store's watch (a
