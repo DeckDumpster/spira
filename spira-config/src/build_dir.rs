@@ -63,11 +63,13 @@ impl Lease {
         self.started
     }
 
-    /// Release the directory to idle, stamping now as its idle time so the next lease prefers it.
-    pub fn release(self) {
+    /// Trim the directory ([`trim`]), then release it to idle, stamping now as its idle time so
+    /// the next lease prefers it.
+    pub fn release(self) -> Trimmed {
+        let trimmed = trim(&self.dir, self.started, SystemTime::now());
         let _ = self.lock.set_len(0);
         let _ = self.lock.set_modified(SystemTime::now());
-        drop(self);
+        trimmed
     }
 }
 
@@ -195,7 +197,8 @@ fn remove_any(p: &Path) {
     let _ = if std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir()) { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
 }
 
-/// Remove each of `entries` that nothing touched since `cut`; returns the bytes removed.
+/// Remove each of `entries` that nothing touched since `cut`; returns the bytes removed. Reads
+/// count only where the filesystem records them: under `noatime` a read-only file looks untouched.
 fn remove_untouched(entries: Vec<PathBuf>, cut: SystemTime) -> u64 {
     let mut bytes = 0;
     for p in entries {
@@ -222,7 +225,8 @@ fn dirs(p: &Path) -> Vec<PathBuf> {
 pub fn trim(dir: &Path, lease_start: SystemTime, now: SystemTime) -> Trimmed {
     let mut t = Trimmed { before: crate::build::size_of(dir), ..Trimmed::default() };
     let stale_cut = lease_start.min(now - STALE_AFTER);
-    for profile in dirs(dir) {
+    let profiles = dirs(dir).into_iter().filter(|d| ["deps", ".fingerprint", "build", "incremental"].iter().any(|s| d.join(s).is_dir()));
+    for profile in profiles {
         if newest_touch(&profile, true) < now - PROFILE_IDLE_AFTER {
             t.idle_profiles += crate::build::size_of(&profile);
             remove_any(&profile);
@@ -380,11 +384,38 @@ mod tests {
         touch(&d.path().join("unittest/deps/x"), 8 * H, 8 * H);
         touch(&d.path().join("debug/deps/y"), 8 * H, 2 * H);
         touch(&d.path().join(".unit-tests-built-manifest"), 8 * H, 8 * H);
+        touch(&d.path().join("scratch/note"), 8 * H, 8 * H);
         let t = trim(d.path(), SystemTime::now(), SystemTime::now());
         assert!(!d.path().join("unittest").exists(), "idle over 6 hours goes");
         assert!(d.path().join("debug/deps/y").exists(), "written within 6 hours stays");
         assert!(d.path().join(".unit-tests-built-manifest").exists(), "files beside the profiles are not profiles");
+        assert!(d.path().join("scratch/note").exists(), "a directory that is no profile is not trimmed");
         assert!(t.idle_profiles > 0, "{t:?}");
+    }
+
+    #[test]
+    fn trim_keeps_what_a_lease_older_than_a_day_touched() {
+        let d = testkit::TempDir::new("bdir-trim-cut");
+        let p = d.path().join("debug");
+        touch(&p.join("anchor"), 0, 0);
+        touch(&p.join("deps/in_lease.rlib"), 30 * H, 30 * H);
+        touch(&p.join("deps/before_lease.rlib"), 60 * H, 60 * H);
+        let lease_start = SystemTime::now() - std::time::Duration::from_secs(40 * H);
+        trim(d.path(), lease_start, SystemTime::now());
+        assert!(p.join("deps/in_lease.rlib").exists(), "touched after the lease began stays, though over 24 hours old");
+        assert!(!p.join("deps/before_lease.rlib").exists());
+    }
+
+    #[test]
+    fn releasing_a_lease_trims_its_directory() {
+        let d = testkit::TempDir::new("bdir-release-trim");
+        let base = d.path().join("base");
+        let l = lease(&base, "sp-a").unwrap();
+        touch(&l.dir().join("debug/anchor"), 0, 0);
+        touch(&l.dir().join("debug/deps/old.rlib"), 30 * H, 30 * H);
+        let t = l.release();
+        assert!(!base.join("dir.1/debug/deps/old.rlib").exists());
+        assert!(t.stale > 0, "{t:?}");
     }
 
     #[test]
