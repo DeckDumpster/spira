@@ -219,7 +219,7 @@ bead = "sp-js5e4e"
 [[use_case]]
 id = "UC-landed-audit-reaping-23"
 tier = "T2"
-statement = "`slay --bead` deletes a landed branch without parking it. An unlanded tip is parked at `refs/slain/<id>` (same SHA) and the command reports \"parked\"."
+statement = "`slay --bead` deletes a landed branch without parking it. With `--close`, an unlanded tip is parked at `refs/slain/<id>` (same SHA) and the command reports \"parked\"."
 
 [use_case.uncovered]
 reason = "the 2026-09-27 corpus audit (sp-5ayw5) tagged test-slay.sh's # covers: line with UC-dwarf-execution-26 instead; nothing currently names this id"
