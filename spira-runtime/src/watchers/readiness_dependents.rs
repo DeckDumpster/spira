@@ -6,11 +6,12 @@ use runtime::event::*;
 use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
-use super::{answered_effect, carried};
+use super::{answered_effect, answers_observe, carried};
 
 pub const STREAM: &str = "watch.readiness-dependents";
 pub const TICK: EventKindTag = "readiness-dependents.tick";
 pub const STATE: EventKindTag = "readiness-dependents.state";
+pub const LOOK: &str = "readiness-dependents.look";
 pub const RUN: &str = "readiness-dependents.run";
 pub const NAME: &str = "readiness-dependents";
 
@@ -34,7 +35,10 @@ pub struct Carry {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pass {
     pub through: Option<u64>,
+    #[serde(default)]
     pub changed: u64,
+    #[serde(default)]
+    pub keys: Vec<String>,
 }
 
 impl ReadinessDependents {
@@ -66,11 +70,27 @@ impl Handler for ReadinessDependents {
         }
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         if ev.kind.tag == TICK {
-            let input = serde_json::to_string(&Pass { through: carry.through, changed: 0 }).unwrap_or_default();
+            let input = serde_json::to_string(&Pass { through: carry.through, ..Pass::default() }).unwrap_or_default();
             return vec![
-                Command::Effect(EffectSpec::keyed(RUN, format!("{NAME}:run:{}", ev.at), input, DEADLINE_MS)),
+                Command::Probe(EffectSpec::probe(LOOK, input, DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
+        }
+        if answers_observe(view, ev, LOOK) {
+            if ev.kind.tag != EFFECT_SUCCEEDED {
+                return vec![];
+            }
+            let Ok(seen) = serde_json::from_str::<Pass>(&ev.kind.body) else { return vec![] };
+            if !seen.keys.is_empty() {
+                let through = seen.through.map_or(String::new(), |t| t.to_string());
+                let input = serde_json::to_string(&seen).unwrap_or_default();
+                return vec![Command::Effect(EffectSpec::keyed(RUN, format!("{NAME}:run:{through}"), input, DEADLINE_MS))];
+            }
+            let next = decide(&carry, &ev.kind.body);
+            if next == carry {
+                return vec![];
+            }
+            return vec![Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default()))];
         }
         if answered_effect(view, ev).as_deref() != Some(RUN) {
             return vec![];
@@ -103,38 +123,46 @@ mod tests {
         (e, clock)
     }
 
-    fn asked(e: &Engine) -> Vec<Pass> {
-        e.pending_effects().iter().filter(|p| p.spec.name == RUN).map(|p| serde_json::from_str(&p.spec.input).unwrap()).collect()
+    fn looks(e: &Engine) -> Vec<Pass> {
+        e.pending_effects().iter().filter(|p| p.spec.name == LOOK).map(|p| serde_json::from_str(&p.spec.input).unwrap()).collect()
     }
 
-    fn answer(e: &mut Engine, body: &str) {
+    fn look(e: &mut Engine, body: &str) {
+        let probe = e.pending_effects().into_iter().filter(|p| p.spec.name == LOOK).last().unwrap();
+        e.complete(&probe.key, Outcome::Succeeded(body.into())).unwrap();
+        e.run_until_idle().unwrap();
+    }
+
+    fn run(e: &mut Engine, out: Outcome) {
         let run = e.pending_effects().into_iter().find(|p| p.spec.name == RUN).unwrap();
-        e.complete(&run.key, Outcome::Succeeded(body.into())).unwrap();
+        e.complete(&run.key, out).unwrap();
+        e.run_until_idle().unwrap();
+    }
+
+    fn tick(e: &mut Engine, clock: &VirtualClock) {
+        clock.advance(1000);
         e.run_until_idle().unwrap();
     }
 
     #[test]
-    fn a_pass_that_reached_a_revision_is_not_asked_for_again_below_it() {
+    fn a_look_through_a_revision_is_not_asked_for_again_below_it() {
         let (mut e, clock) = engine();
-        assert_eq!(asked(&e), [Pass { through: None, changed: 0 }]);
-        answer(&mut e, r#"{"through":41,"changed":3}"#);
-        clock.advance(1000);
-        e.run_until_idle().unwrap();
-        assert_eq!(asked(&e).last(), Some(&Pass { through: Some(41), changed: 0 }));
+        assert_eq!(looks(&e), [Pass::default()]);
+        look(&mut e, r#"{"through":41,"keys":["sp-a"]}"#);
+        run(&mut e, Outcome::Succeeded(r#"{"through":41,"changed":1}"#.into()));
+        tick(&mut e, &clock);
+        assert_eq!(looks(&e).last(), Some(&Pass { through: Some(41), ..Pass::default() }));
     }
 
     #[test]
     fn a_failed_pass_leaves_the_revision_so_the_same_changes_are_asked_for_again() {
         let (mut e, clock) = engine();
-        answer(&mut e, r#"{"through":41,"changed":0}"#);
-        clock.advance(1000);
-        e.run_until_idle().unwrap();
-        let run = e.pending_effects().into_iter().find(|p| p.spec.name == RUN).unwrap();
-        e.complete(&run.key, Outcome::Failed("store down".into())).unwrap();
-        e.run_until_idle().unwrap();
-        clock.advance(1000);
-        e.run_until_idle().unwrap();
-        assert_eq!(asked(&e).last(), Some(&Pass { through: Some(41), changed: 0 }));
+        look(&mut e, r#"{"through":41,"keys":[]}"#);
+        tick(&mut e, &clock);
+        look(&mut e, r#"{"through":42,"keys":["sp-a"]}"#);
+        run(&mut e, Outcome::Failed("store down".into()));
+        tick(&mut e, &clock);
+        assert_eq!(looks(&e).last(), Some(&Pass { through: Some(41), ..Pass::default() }));
     }
 
     #[test]

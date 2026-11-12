@@ -174,6 +174,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("mail.wake.wake", Host),
     ("operator.note", Store),
     ("overrides.apply", Host),
+    ("readiness-dependents.look", Store),
     ("readiness-dependents.run", Store),
     ("persona.archivist.brief", Host),
     ("persona.archivist.commit", Git),
