@@ -100,14 +100,33 @@ pub struct BreakGlass {
     pub evidence: String,
 }
 
-fn break_glass(w: &World, repo: &Path, head: &str, reason: String) -> Result<BreakGlass, String> {
-    let by = w.var("SPIRA_LAND_UNGATED_BY").unwrap_or_default();
+/// An ungated landing's provenance handed in by a verb that carries it, instead of the
+/// environment `land-local` reads it from.
+pub struct UngatedOverride {
+    pub reason: String,
+    pub by: String,
+    pub evidence: String,
+}
+
+/// Whether an ungated landing of `head` would be admitted, without landing anything.
+pub fn ungated_admitted(w: &World, repo: &Path, head: &str, o: &UngatedOverride) -> Result<(), String> {
+    break_glass(w, repo, head, o.reason.clone(), Some(o)).map(|_| ())
+}
+
+fn break_glass(
+    w: &World,
+    repo: &Path,
+    head: &str,
+    reason: String,
+    given: Option<&UngatedOverride>,
+) -> Result<BreakGlass, String> {
+    let by = given.map_or_else(|| w.var("SPIRA_LAND_UNGATED_BY").unwrap_or_default(), |o| o.by.clone());
     if by != "concierge" && by != "operator" {
         return Err(format!(
             "SPIRA_LAND_UNGATED_BY must be concierge or operator (got {by:?})"
         ));
     }
-    let spec = w.var("SPIRA_LAND_UNGATED_EVIDENCE").unwrap_or_default();
+    let spec = given.map_or_else(|| w.var("SPIRA_LAND_UNGATED_EVIDENCE").unwrap_or_default(), |o| o.evidence.clone());
     if spec.is_empty() {
         return Err("SPIRA_LAND_UNGATED_EVIDENCE=<rev in the head's history> is required".into());
     }
@@ -162,7 +181,7 @@ pub fn land_local_with(
     worktree: Option<&Path>,
     lock_held: bool,
 ) -> i32 {
-    land_local_deferring(w, repo, head_arg, members, worktree, lock_held, false).0
+    land_local_deferring(w, repo, head_arg, members, worktree, lock_held, false, None).0
 }
 
 /// A release verified and ready to activate, held back by a landing that has later steps.
@@ -249,6 +268,7 @@ impl PendingActivation {
 }
 
 /// `land_local_with`, returning the activation instead of running it when `defer` is set.
+#[allow(clippy::too_many_arguments)]
 pub fn land_local_deferring(
     w: &World,
     repo: Option<&str>,
@@ -257,6 +277,7 @@ pub fn land_local_deferring(
     worktree: Option<&Path>,
     lock_held: bool,
     defer: bool,
+    given: Option<&UngatedOverride>,
 ) -> (i32, Option<PendingActivation>) {
     let rc = |r: i32| (r, None);
     if !czar_ok(w) {
@@ -361,12 +382,13 @@ pub fn land_local_deferring(
     // head's tree, or the named, logged override.
     let ungated = match certified(w, &path, &name, &c.s, &head, head_arg) {
         Ok(()) => None,
-        Err(refusal) => match w
-            .var("SPIRA_LAND_UNGATED")
+        Err(refusal) => match given
+            .map(|o| o.reason.clone())
+            .or_else(|| w.var("SPIRA_LAND_UNGATED"))
             .map(|r| crate::ident::bounded_text(&r))
             .filter(|r| !r.is_empty())
         {
-            Some(reason) => match break_glass(w, &path, &head, reason) {
+            Some(reason) => match break_glass(w, &path, &head, reason, given) {
                 Ok(bg) => Some(bg),
                 Err(why) => {
                     w.err(format!("queue.sh land-local: {refusal}; SPIRA_LAND_UNGATED is set but {why}; refused, nothing changed"));

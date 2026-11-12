@@ -300,3 +300,33 @@ fn wait_refuses_a_tip_that_the_round_it_waited_for_landed_past() {
     assert!(!t.qfile("cut-hold").exists());
     assert!(t.landing_log().contains("verify=refused: base moved"), "{}", t.landing_log());
 }
+
+fn uncertified_world() -> T {
+    let t = world();
+    t.git.trees.borrow_mut().insert(TIP.into(), "9999999999999999999999999999999999999999".into());
+    t.git.ancestor("b0", "b0");
+    t
+}
+
+#[test]
+fn subvert_lands_an_uncertified_tip_on_the_verbs_own_evidence_with_no_environment() {
+    let t = uncertified_world();
+    assert_eq!(hand_land(&t, &["--round", "subvert"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some(TIP));
+    assert!(t.landing_log().contains("QUEUE UNGATED") && t.landing_log().contains("by=concierge"), "{}", t.landing_log());
+    assert!(t.out().contains("verify: "), "{}", t.out());
+}
+
+#[test]
+fn a_landing_that_cannot_be_admitted_exits_before_the_round_is_touched() {
+    let t = uncertified_world();
+    let rc = t.run(&[
+        "hand-land", "sp-z", "--tip", TIP, "--by", "nobody", "--reason", "r", "--evidence", "e",
+        "--evidence-tip", TIP, "--round", "subvert",
+    ]);
+    assert_eq!(rc, 1, "{}", t.err());
+    assert!(t.err().contains("cannot be landed ungated"), "{}", t.err());
+    assert!(t.qfile("round").exists(), "the round was left alone");
+    assert!(!t.lc.has("abandon-batch"));
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
+}
