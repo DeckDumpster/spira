@@ -66,6 +66,11 @@ pub fn cmd_fact(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+/// The insert for a submit's `build-dir` fact: the tip submitted and the directory it was built in.
+pub fn build_dir_sql(bead: &str, tip: &str, dir: &str, actor: &str, at: i64) -> String {
+    insert_sql(bead, "build-dir", &format!("{tip}\t{dir}"), &bounded(actor), at)
+}
+
 pub fn select_sql(ids: &[String], kinds: &[String], since: Option<i64>) -> String {
     let list = |v: &[String]| v.iter().map(|i| format!("'{}'", rows::escape(i))).collect::<Vec<_>>().join(",");
     let long = LONG_KINDS.iter().map(|k| format!("event = '{k}'")).collect::<Vec<_>>().join(" OR ");
@@ -297,6 +302,13 @@ mod tests {
     fn a_build_dir_fact_keeps_the_tab_between_the_tip_and_the_directory() {
         assert!(KINDS.contains(&"build-dir"));
         assert_eq!(bounded("abc\t/b/dir.1\n"), "abc\t/b/dir.1");
+    }
+
+    #[test]
+    fn a_submits_build_dir_fact_is_an_applied_row_whose_cause_is_the_tip_tab_directory() {
+        let q = build_dir_sql("sp-a", "abc", "/b/dir.3", "builder", 7);
+        assert!(q.contains("'fact', 'sp-a', 'build-dir'"), "{q}");
+        assert!(q.contains(r#"{"cause":"abc\\t/b/dir.3"}"#), "the tab survives the SQL literal as a JSON escape: {q}");
     }
 
     #[test]

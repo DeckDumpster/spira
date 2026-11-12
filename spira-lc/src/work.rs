@@ -225,7 +225,7 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let build_dir = flag(args, "--build-dir").filter(|d| !d.is_empty());
     let done = apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip: tip.clone() });
     if let (0, Some(dir)) = (done.0, build_dir) {
-        let fact = crate::facts::insert_sql(bead_id, "build-dir", &format!("{tip}\t{dir}"), &actor, crate::db::now_epoch());
+        let fact = crate::facts::build_dir_sql(bead_id, &tip, &dir, &actor, crate::db::now_epoch());
         if let Err(e) = conn.append_event(&fact) {
             return (done.0, format!("{}\nwork submit: the build directory was not recorded ({e:?}); the gate builds cold", done.1));
         }
