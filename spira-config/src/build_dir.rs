@@ -17,6 +17,9 @@
 //!   directories go least recently used first, until the total is under; live ones are counted
 //!   but never removed.
 //!
+//! - **Trim on release.** [`trim`] drops what no later build can use: idle profiles, and
+//!   incremental, `deps`, `.fingerprint` and `build` entries untouched in the lease and a day old.
+//!
 //! Dependencies still come from sccache, which is shared, content-addressed and append-only, so
 //! no lease can make another session's dependencies cold.
 
@@ -41,6 +44,7 @@ pub struct Lease {
     lock: std::fs::File,
     /// True when the directory held a previous session's build (a warm start).
     pub reused: bool,
+    started: SystemTime,
 }
 
 impl std::fmt::Debug for Lease {
@@ -52,6 +56,11 @@ impl std::fmt::Debug for Lease {
 impl Lease {
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// When the lease was taken: the cut [`trim`] measures "touched during the lease" against.
+    pub fn started(&self) -> SystemTime {
+        self.started
     }
 
     /// Release the directory to idle, stamping now as its idle time so the next lease prefers it.
@@ -132,7 +141,7 @@ pub fn lease(base: &Path, who: &str) -> std::io::Result<Lease> {
     // holder that dies without releasing reads as idle since it leased.
     let _ = lock.set_len(0);
     let _ = lock.write_all(who.as_bytes());
-    Ok(Lease { dir, lock, reused })
+    Ok(Lease { dir, lock, reused, started: SystemTime::now() })
 }
 
 /// Empty `dir` in place: everything under it goes, the directory stays. Only for a directory
@@ -144,6 +153,89 @@ pub fn empty(dir: &Path) {
             let _ = if e.file_type().is_ok_and(|t| t.is_dir()) { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
         }
     }
+}
+
+/// A file or directory untouched for this long, and not touched in the lease, is dropped on release.
+pub const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+/// A profile folder nothing wrote in this long is dropped on release.
+pub const PROFILE_IDLE_AFTER: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+
+/// What a release's [`trim`] measured and removed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Trimmed {
+    pub before: u64,
+    pub after: u64,
+    pub idle_profiles: u64,
+    pub incremental: u64,
+    pub stale: u64,
+}
+
+impl std::fmt::Display for Trimmed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} bytes before, {} after; removed {} in idle profiles, {} of stale incremental state, {} of stale deps/fingerprint/build",
+            self.before, self.after, self.idle_profiles, self.incremental, self.stale
+        )
+    }
+}
+
+/// The newest access (unless `writes_only`) or modification time of any file under `p`.
+/// Directories' own times are ignored: listing one moves its atime, and this scan lists them.
+fn newest_touch(p: &Path, writes_only: bool) -> SystemTime {
+    let Ok(md) = std::fs::symlink_metadata(p) else { return SystemTime::UNIX_EPOCH };
+    if md.is_dir() {
+        return children(p).iter().map(|c| newest_touch(c, writes_only)).max().unwrap_or(SystemTime::UNIX_EPOCH);
+    }
+    let w = md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    if writes_only { w } else { w.max(md.accessed().unwrap_or(SystemTime::UNIX_EPOCH)) }
+}
+
+fn remove_any(p: &Path) {
+    let _ = if std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir()) { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
+}
+
+/// Remove each of `entries` that nothing touched since `cut`; returns the bytes removed.
+fn remove_untouched(entries: Vec<PathBuf>, cut: SystemTime) -> u64 {
+    let mut bytes = 0;
+    for p in entries {
+        if newest_touch(&p, false) < cut {
+            bytes += crate::build::size_of(&p);
+            remove_any(&p);
+        }
+    }
+    bytes
+}
+
+fn children(p: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| e.path()).collect()).unwrap_or_default()
+}
+
+fn dirs(p: &Path) -> Vec<PathBuf> {
+    children(p).into_iter().filter(|c| std::fs::symlink_metadata(c).is_ok_and(|m| m.is_dir())).collect()
+}
+
+/// Trim a released build directory of what no later build can use: a profile folder nothing
+/// wrote in [`PROFILE_IDLE_AFTER`]; then, per remaining profile, incremental session folders and
+/// `deps`/`.fingerprint`/`build` entries that neither the lease (from `lease_start`) nor the last
+/// [`STALE_AFTER`] read or wrote. `now` is injected.
+pub fn trim(dir: &Path, lease_start: SystemTime, now: SystemTime) -> Trimmed {
+    let mut t = Trimmed { before: crate::build::size_of(dir), ..Trimmed::default() };
+    let stale_cut = lease_start.min(now - STALE_AFTER);
+    for profile in dirs(dir) {
+        if newest_touch(&profile, true) < now - PROFILE_IDLE_AFTER {
+            t.idle_profiles += crate::build::size_of(&profile);
+            remove_any(&profile);
+            continue;
+        }
+        let sessions = dirs(&profile.join("incremental")).iter().flat_map(|c| children(c)).collect();
+        t.incremental += remove_untouched(sessions, stale_cut);
+        for sub in ["deps", ".fingerprint", "build"] {
+            t.stale += remove_untouched(children(&profile.join(sub)), stale_cut);
+        }
+    }
+    t.after = crate::build::size_of(dir);
+    t
 }
 
 /// Evict idle directories under `base`, least recently used first, until every directory
@@ -229,6 +321,70 @@ mod tests {
         let n = dir.file_name().unwrap().to_str().unwrap().to_string();
         let f = std::fs::OpenOptions::new().write(true).open(base.join(format!("{n}.lock"))).unwrap();
         f.set_modified(SystemTime::now() - std::time::Duration::from_secs(secs_ago)).unwrap();
+    }
+
+    fn touch(p: &Path, accessed_ago: u64, modified_ago: u64) {
+        fill(p, 1);
+        let ago = |s: u64| SystemTime::now() - std::time::Duration::from_secs(s);
+        let times = std::fs::FileTimes::new().set_accessed(ago(accessed_ago)).set_modified(ago(modified_ago));
+        std::fs::File::options().write(true).open(p).unwrap().set_times(times).unwrap();
+    }
+
+    const H: u64 = 3600;
+
+    #[test]
+    fn trim_drops_incremental_session_folders_the_lease_did_not_touch_and_a_day_old() {
+        let d = testkit::TempDir::new("bdir-trim-inc");
+        let inc = d.path().join("debug/incremental/crate_a-1");
+        touch(&inc.join("s-old/dep-graph.bin"), 30 * H, 30 * H);
+        touch(&inc.join("s-fresh/dep-graph.bin"), 30 * H, 30 * H);
+        touch(&inc.join("s-read/dep-graph.bin"), 30 * H, 30 * H);
+        touch(&inc.join("s-recent/dep-graph.bin"), 2 * H, 2 * H);
+        touch(&d.path().join("debug/deps/anchor"), 0, 0);
+        let lease_start = SystemTime::now() - std::time::Duration::from_secs(5 * H);
+        touch(&inc.join("s-fresh/query-cache.bin"), 30 * H, H);
+        touch(&inc.join("s-read/query-cache.bin"), H, 30 * H);
+        let t = trim(d.path(), lease_start, SystemTime::now());
+        assert!(!inc.join("s-old").exists(), "untouched in the lease and over 24 hours old goes");
+        assert!(inc.join("s-fresh").exists(), "written in the lease stays");
+        assert!(inc.join("s-read").exists(), "read in the lease stays");
+        assert!(inc.join("s-recent").exists(), "untouched but under 24 hours old stays");
+        assert!(t.incremental > 0 && t.stale == 0 && t.idle_profiles == 0 && t.after < t.before, "{t:?}");
+    }
+
+    #[test]
+    fn trim_drops_deps_fingerprint_and_build_entries_untouched_in_the_lease_and_a_day_old() {
+        let d = testkit::TempDir::new("bdir-trim-deps");
+        let p = d.path().join("debug");
+        touch(&p.join("anchor"), 0, 0);
+        for sub in ["deps/old.rlib", ".fingerprint/old-1/lib-old", "build/old-1/out"] {
+            touch(&p.join(sub), 30 * H, 30 * H);
+        }
+        touch(&p.join("deps/used.rlib"), H, 30 * H);
+        touch(&p.join("deps/written.rlib"), 30 * H, H);
+        touch(&p.join("deps/newish.rlib"), 3 * H, 3 * H);
+        let lease_start = SystemTime::now() - std::time::Duration::from_secs(5 * H);
+        let t = trim(d.path(), lease_start, SystemTime::now());
+        for gone in ["deps/old.rlib", ".fingerprint/old-1", "build/old-1"] {
+            assert!(!p.join(gone).exists(), "{gone}");
+        }
+        for kept in ["deps/used.rlib", "deps/written.rlib", "deps/newish.rlib"] {
+            assert!(p.join(kept).exists(), "{kept}");
+        }
+        assert!(t.stale > 0 && t.incremental == 0, "{t:?}");
+    }
+
+    #[test]
+    fn trim_drops_a_profile_nothing_wrote_in_six_hours_and_keeps_a_fresh_one() {
+        let d = testkit::TempDir::new("bdir-trim-profile");
+        touch(&d.path().join("unittest/deps/x"), 8 * H, 8 * H);
+        touch(&d.path().join("debug/deps/y"), 8 * H, 2 * H);
+        touch(&d.path().join(".unit-tests-built-manifest"), 8 * H, 8 * H);
+        let t = trim(d.path(), SystemTime::now(), SystemTime::now());
+        assert!(!d.path().join("unittest").exists(), "idle over 6 hours goes");
+        assert!(d.path().join("debug/deps/y").exists(), "written within 6 hours stays");
+        assert!(d.path().join(".unit-tests-built-manifest").exists(), "files beside the profiles are not profiles");
+        assert!(t.idle_profiles > 0, "{t:?}");
     }
 
     #[test]

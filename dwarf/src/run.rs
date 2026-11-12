@@ -1508,6 +1508,8 @@ impl<'a> Run<'a> {
                 self.log(&format!("{}: could not record the tree {} holds ({e}) — the next lease cleans its workspace crates", self.f(), lease.dir().display()));
             }
         }
+        let trimmed = spira_config::build_dir::trim(lease.dir(), lease.started(), std::time::SystemTime::now());
+        self.log(&format!("{}: released build directory {}: {trimmed}", self.f(), lease.dir().display()));
         lease.release();
     }
 
