@@ -29,6 +29,9 @@ pub const READER_COLUMNS: &[(&str, &[&str])] = &[
     ("events", &["issue_id", "event_type", "new_value", "created_at"]),
 ];
 
+/// The tables every content read but `events` needs; `events` is served only to a store that has it.
+pub const CORE_TABLES: &[&str] = &["issues", "labels", "dependencies", "comments", "config"];
+
 /// The key bd's kv keeps the watermark under, so a restored bd carries its own.
 pub const KV_KEY: &str = "spira.planning_watermark";
 

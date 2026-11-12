@@ -234,6 +234,46 @@ impl Sql for Arc<Fake> {
     }
 }
 
+fn without_events() -> Reader {
+    let mut columns = full_layout();
+    columns.retain(|(t, _)| t != "events");
+    Reader::new(Box::new(Fake { columns: Mutex::new(columns), issues: vec![issue("sp-a", "A")], ..Fake::default() }), DB.into())
+}
+
+#[test]
+fn a_store_without_the_events_columns_still_serves_show_list_and_label_list() {
+    let reader = without_events();
+    for args in [v(&["show", "sp-a"]), v(&["list"]), v(&["label", "list", "sp-a"]), v(&["search", "A"]), v(&["dep", "list", "sp-a"]), v(&["memories"])] {
+        reader.read(&args).unwrap_or_else(|e| panic!("{args:?}: {e:?}"));
+    }
+    reader.layout().unwrap();
+}
+
+#[test]
+fn a_store_without_the_events_columns_refuses_events_alone_naming_them() {
+    let e = without_events().read(&v(&["events", "--id", "sp-a"])).unwrap_err();
+    assert!(matches!(&e, Failure::Store(t) if ["events.issue_id", "events.event_type", "events.new_value", "events.created_at"].iter().all(|c| t.contains(c)) && t.contains("exit 2")), "{e:?}");
+}
+
+#[test]
+fn a_gap_outside_a_reads_tables_does_not_refuse_it() {
+    let mut columns = full_layout();
+    columns.retain(|(t, c)| !(t == "comments" && c == "text"));
+    let reader = Reader::new(Box::new(Fake { columns: Mutex::new(columns), ..Fake::default() }), DB.into());
+    reader.read(&v(&["label", "list", "sp-a"])).unwrap();
+    assert!(matches!(reader.read(&v(&["comments", "sp-a"])), Err(Failure::Store(t)) if t.contains("comments.text")));
+}
+
+#[test]
+fn every_reads_tables_are_in_the_readers_columns() {
+    let known: Vec<&str> = crate::plan::READER_COLUMNS.iter().map(|(t, _)| *t).collect();
+    for args in [&["list"][..], &["show", "x"], &["comments", "x"], &["gate", "list"], &["memories"], &["state", "x", "d"], &["config", "get", "k"], &["search", "q"], &["dep", "list", "x"], &["label", "list", "x"], &["events", "--id", "x"]] {
+        for t in parse(&v(args)).unwrap().tables() {
+            assert!(known.contains(t), "{args:?}: {t}");
+        }
+    }
+}
+
 #[test]
 fn a_known_layout_is_checked_once_and_serves_reads() {
     let f = Arc::new(Fake { columns: Mutex::new(full_layout()), issues: vec![issue("sp-a", "A")], ..Fake::default() });

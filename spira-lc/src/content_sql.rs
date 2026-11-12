@@ -169,6 +169,21 @@ pub enum Read {
     Events(Vec<String>),
 }
 
+impl Read {
+    /// The tables this read selects from: the layout it needs, and no more.
+    pub fn tables(&self) -> &'static [&'static str] {
+        match self {
+            Read::List(_) | Read::Show(_) | Read::Search { .. } => &["issues", "labels", "dependencies", "comments"],
+            Read::Comments(_) => &["comments"],
+            Read::Gates { .. } | Read::Memories => &["issues", "labels", "dependencies"],
+            Read::State { .. } | Read::Labels(_) => &["labels"],
+            Read::ConfigGet(_) => &["config"],
+            Read::DepList { .. } => &["dependencies"],
+            Read::Events(_) => &["events"],
+        }
+    }
+}
+
 fn csv(v: &str) -> impl Iterator<Item = String> + '_ {
     v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }
@@ -687,6 +702,11 @@ pub fn layout_gaps(sql: &dyn Sql, db: &str) -> Res<Vec<String>> {
     Ok(crate::plan::missing_columns(&have))
 }
 
+/// The gaps in `tables` only: a read is refused for the columns it selects, not for another read's.
+fn gaps_in(gaps: &[String], tables: &[&str]) -> Vec<String> {
+    gaps.iter().filter(|g| tables.iter().any(|t| g.strip_prefix(t).is_some_and(|rest| rest.starts_with('.')))).cloned().collect()
+}
+
 fn refusal(db: &str, gaps: &[String]) -> String {
     format!(
         "the beads database {} does not have the layout the content reads query (missing {}); content reads are refused (exit 2), not served by forking bd",
@@ -699,9 +719,9 @@ fn refusal(db: &str, gaps: &[String]) -> String {
 pub struct Reader {
     sql: Box<dyn Sql + Send + Sync>,
     db: String,
-    /// The verdict on the layout and when it was reached: a refusal is asked again after
+    /// Every gap the layout check found and when: a store with gaps is asked again after
     /// `recheck`, so a repaired store is served without a restart; an unreadable server is asked again at once.
-    verdict: Mutex<Option<(std::time::Instant, Option<String>)>>,
+    verdict: Mutex<Option<(std::time::Instant, Vec<String>)>>,
     recheck: std::time::Duration,
 }
 
@@ -716,18 +736,20 @@ impl Reader {
         self
     }
 
-    /// `Ok` when the layout is known; the refusal otherwise.
-    pub fn layout(&self) -> Res<()> {
+    /// `Ok` when the columns of `tables` are all present; the refusal naming the missing ones otherwise.
+    fn layout_of(&self, tables: &[&str]) -> Res<()> {
         let mut held = self.verdict.lock().unwrap_or_else(|p| p.into_inner());
-        let stale = held.as_ref().is_some_and(|(at, refusal)| refusal.is_some() && at.elapsed() >= self.recheck);
+        let stale = held.as_ref().is_some_and(|(at, gaps)| !gaps.is_empty() && at.elapsed() >= self.recheck);
         if held.is_none() || stale {
-            let gaps = layout_gaps(self.sql.as_ref(), &self.db)?;
-            *held = Some((std::time::Instant::now(), (!gaps.is_empty()).then(|| refusal(&self.db, &gaps))));
+            *held = Some((std::time::Instant::now(), layout_gaps(self.sql.as_ref(), &self.db)?));
         }
-        match held.as_ref().and_then(|(_, r)| r.as_ref()) {
-            Some(r) => Err(Failure::Store(r.clone())),
-            None => Ok(()),
-        }
+        let gaps = gaps_in(held.as_ref().map_or(&[][..], |(_, g)| g), tables);
+        if gaps.is_empty() { Ok(()) } else { Err(Failure::Store(refusal(&self.db, &gaps))) }
+    }
+
+    /// `Ok` when the layout every read but `events` needs is known; the refusal otherwise.
+    pub fn layout(&self) -> Res<()> {
+        self.layout_of(crate::plan::CORE_TABLES)
     }
 
     /// `ask` against this store once its layout is known.
@@ -737,7 +759,7 @@ impl Reader {
     }
 
     pub fn read(&self, args: &[String]) -> Res<String> {
-        self.layout()?;
+        self.layout_of(parse(args).map_err(Failure::Request)?.tables())?;
         answer(self.sql.as_ref(), &self.db, args)
     }
 }

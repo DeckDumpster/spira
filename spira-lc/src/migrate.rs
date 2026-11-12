@@ -629,7 +629,7 @@ fn apply_grants(admin: &dyn Sql, grants: &str) -> Result<(), String> {
 
 /// The bead-content tables the service user and the read-only user read (`plan items`, sift,
 /// reconcile-content, and every `content` read).
-pub const CONTENT_TABLES: [&str; 5] = ["issues", "labels", "dependencies", "comments", "config"];
+pub const CONTENT_TABLES: [&str; 6] = ["issues", "labels", "dependencies", "comments", "config", "events"];
 
 /// The users that read the content store: the service user and the read-only user the content
 /// door's SQL reads log in as (`beads_sql_user`).
@@ -997,6 +997,18 @@ mod tests {
         let none = Recorder(Default::default());
         apply_content_grants(&none, None).unwrap();
         assert!(none.0.borrow().is_empty());
+    }
+
+    #[test]
+    fn the_readers_tables_are_the_tables_the_read_only_user_is_granted() {
+        let mut readers: Vec<&str> = crate::plan::READER_COLUMNS.iter().map(|(t, _)| *t).collect();
+        let mut granted = CONTENT_TABLES.to_vec();
+        readers.sort_unstable();
+        granted.sort_unstable();
+        assert_eq!(readers, granted);
+        let mut core: Vec<&str> = crate::plan::CORE_TABLES.iter().copied().chain(["events"]).collect();
+        core.sort_unstable();
+        assert_eq!(core, granted);
     }
 
     #[test]
