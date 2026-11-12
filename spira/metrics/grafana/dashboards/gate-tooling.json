@@ -355,7 +355,7 @@
             "uid": "${DS_VM}"
           },
           "expr": "sum(sum_over_time(spira_gate_runs{status=\"FAIL\"}[1d])) or vector(0)",
-          "legendFormat": "gate fails",
+          "legendFormat": "gate fails (every mode; no unit-only series exists)",
           "refId": "B"
         },
         {
