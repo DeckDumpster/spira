@@ -100,7 +100,7 @@ pub static TASKS: &[Task] = &[
         boot: ReconcileContent::boot,
         cadence_ms: cadence_ms::<ReconcileContent>,
         effects: reconcile_content::EFFECTS,
-        runners: &[(reconcile_content::OBSERVE, |e, _, _| reconcile_content::observe(&lc(e), &e.world.run_dir)), (reconcile_content::SKEW_CHECK, |e, _, _| reconcile_content::skew_check(&lc(e))), (reconcile_content::CLOSE, |e, _, s| reconcile_content::close(&lc(e), &s.input))],
+        runners: &[(reconcile_content::OBSERVE, |e, _, s| reconcile_content::observe(&lc(e), &e.world.run_dir, &s.input)), (reconcile_content::SKEW_CHECK, |e, _, _| reconcile_content::skew_check(&lc(e))), (reconcile_content::CLOSE, |e, _, s| reconcile_content::close(&lc(e), &s.input))],
         keys: &[reconcile_content::KEYS],
         build: build::<ReconcileContent>,
     },
