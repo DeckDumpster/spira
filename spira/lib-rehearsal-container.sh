@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # lib-rehearsal-container.sh — Sourced, never executed: the container the install-rehearsal
-# suite runs in (up, stubbed bd/loom, fake release root, the tree's binaries streamed in,
-# configure.sh run). Sourced by test-install-rehearsal-stray.sh after
-# they source testlib.sh and podman-exec-diag.sh and define iszero.
-# 
+# stray-sweep suite runs in (up, stubbed bd/loom, fake release root, the tree's binaries streamed in,
+# configure.sh run). Sourced by test-install-rehearsal-stray.sh after it
+# sources testlib.sh and podman-exec-diag.sh and defines iszero.
+
 command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 CNAME="spira-testenv-reh-$$"
 # Stubs live inside the container at /tmp/spira-stubs, created as spirauser.

@@ -260,7 +260,7 @@ because they need the testlib/plan-lint dependencies actually present in `origin
   for Ryan (the SOP mechanism is off for every shipped rune but its tests still hold most of
   test-ops-closing.sh's runs).
 
-Verified: `bash spira/testenv-batch.sh --suites the retired host-reason suite,test-gate-verdict.sh
+Verified: `bash spira/testenv-batch.sh --suites test-gate-verdict.sh
 spira/sp-eq8a4` in testenv (the two gate suites that scan the whole tree for exactly this kind
 of change — a deleted suite, an edited doctor.sh, a new doc).
 
@@ -307,10 +307,9 @@ its own `closed` event; these four write neither, so CHECK 4 will eventually poi
 that only ever hit them, contradicting their own "no attempt charged" notes. `lapsed` is
 correctly exempt from this finding — it is documented and coded to charge.
 
-Verified: `bash spira/testenv-batch.sh --suites test-dwarf-disposition.sh,test-attempts.sh,
-the retired timeout suite,test-thrash.sh,test-dwarf-decision-blocked.sh,test-dwarf-operator-wait.sh,
+Verified: `bash spira/testenv-batch.sh --suites test-dwarf-disposition.sh,test-attempts.sh,test-thrash.sh,test-dwarf-decision-blocked.sh,test-dwarf-operator-wait.sh,
 test-dwarf-presession-death.sh,test-dwarf-yield-headless.sh,test-dwarf-gate-close-silent.sh,
-test-plan-lint.sh,test-requeue.sh,test-covers-entries.sh,the retired host-reason suite,
+test-plan-lint.sh,test-requeue.sh,test-covers-entries.sh,
 test-gate-verdict.sh,test-inventory.sh,test-literal-lint.sh spira/sp-eq8a4.2.1`
 in testenv — all green. Before/after suite-seconds: the touched existing suites are
 unchanged in cost (still their full DB/e2e runs; file consolidation is sp-eq8a4.2.6's job),
@@ -350,8 +349,7 @@ projection that the hb_tick/lease/thrash cluster and its share of the D1 cluster
 single digits once `check4_decide` also lands (sp-eq8a4.2.4) and the file-consolidation bead
 (sp-eq8a4.2.6) runs.
 
-Verified: `bash spira/testenv-batch.sh --suites test-dwarf-lease.sh,test-thrash.sh,
-the retired thrash-teardown suite,test-check4-events.sh,the retired timeout suite,test-attempts.sh,
+Verified: `bash spira/testenv-batch.sh --suites test-dwarf-lease.sh,test-thrash.sh,test-check4-events.sh,test-attempts.sh,
 test-dwarf-heartbeat.sh spira/sp-eq8a4.2.2` in testenv.
 
 ### sp-eq8a4.2.6's slice
@@ -416,7 +414,7 @@ own file (UC-07, a separate bead) and stop sharing this suite's dwarf.sh fixture
 
 Verified: `bash spira/testenv-batch.sh --suites test-dwarf-verdict.sh,test-check5-nopayload.sh,
 test-check5-delivers-check.sh,test-check5-delivers-action.sh,
-test-check5-delivers-falls-through.sh,test-check5-sweep-delivers.sh,the retired dwarf-resume suite
+test-check5-delivers-falls-through.sh,test-check5-sweep-delivers.sh
 spira/sp-eq8a4.2.3` in testenv.
 
 ## 11. Implementation status (sp-eq8a4.2.7)
@@ -470,7 +468,7 @@ back real git/bd state risks silently losing e2e coverage the T1 tables don't re
 one thing law-a-regression-test-must-be-seen-to-fail exists to catch, and a half-migrated
 suite is exactly the shape that hides a miss). Filed as sp-eq8a4.2.8.
 
-Verified: `bash spira/testenv-batch.sh --suites test-attempts.sh,the retired timeout suite,
+Verified: `bash spira/testenv-batch.sh --suites test-attempts.sh,
 test-attempts-sql.sh spira/sp-eq8a4.2.7` in testenv — all green.
 
 ## 12. D8/D12/D15 landed (sp-g44ke)
@@ -488,9 +486,8 @@ and the retired deadlock-sweep suite (`attempts.sh deadlocked`, UC-24, split fro
 no dwarf.sh run needed there either). Three lower-frequency cases were cut for the area's
 wall-clock budget rather than dropped silently; sp-5t53s tracks rehoming them.
 
-Verified: `bash spira/testenv-batch.sh --suites test-dwarf-teardown-e2e.sh,
-the retired deadlock-sweep suite,test-session-result-fields.sh,test-session-yield-headless.sh,
-test-testlib-migrated.sh,the retired dwarf-resume suite spira/sp-g44ke` — all green. `plan-lint.sh
+Verified: `bash spira/testenv-batch.sh --suites test-dwarf-teardown-e2e.sh,test-session-result-fields.sh,test-session-yield-headless.sh,
+test-testlib-migrated.sh spira/sp-g44ke` — all green. `plan-lint.sh
 --orphans` against the pre-consolidation tip reports no UC left uncovered.
 
 ## 13. Wave 4.2: dead lib.sh functions retired (sp-j89pd)
