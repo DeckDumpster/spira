@@ -785,7 +785,7 @@ fn file_work(lc_socket: &std::path::Path, f: &Filing, priority: Option<&str>, de
     let stream = std::os::unix::net::UnixStream::connect(lc_socket).map_err(|e| format!("cannot tell: the lifecycle service is not answering on {}: {e}", lc_socket.display()))?;
     let wait = Some(std::time::Duration::from_millis(deadline_ms.max(1)));
     stream.set_read_timeout(wait).and_then(|_| stream.set_write_timeout(wait)).map_err(|e| e.to_string())?;
-    let reply = spira_config::lc_call::exchange(stream, &argv, None)?;
+    let reply = spira_store::lc_call::exchange(stream, &argv, None)?;
     match reply.code {
         0 => Ok(reply.out),
         _ => Err(format!("work file {:?}: {}", f.title, reply.why())),
