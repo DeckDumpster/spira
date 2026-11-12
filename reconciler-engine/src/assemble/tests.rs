@@ -27,7 +27,7 @@ fn the_pass_numbers_from_one_and_follows_the_previous_record() {
 
 mod verb {
     use super::*;
-    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 

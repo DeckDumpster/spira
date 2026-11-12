@@ -371,7 +371,7 @@ fn cmd_bdq(args: &[String]) -> i32 {
     // nothing, as a failed bd show refused nothing before it. `bead::guard::claim` is the one
     // implementation, shared with the content door.
     let rows = |id: &str| {
-        spira_config::lc_state::row(id).unwrap_or_else(|e| {
+        spira_store::lc_state::row(id).unwrap_or_else(|e| {
             eprintln!("bdq: lifecycle state unreadable for {id} ({e}); not checking for a live claim");
             None
         })
@@ -413,17 +413,17 @@ fn cmd_bdq(args: &[String]) -> i32 {
         let _ = std::io::stdout().write_all(&created_out);
         let _ = std::io::stdout().flush();
         if rc == 0 {
-            if let Err(e) = spira_config::lifecycle_row::after_create_ids("bdq", &String::from_utf8_lossy(&created_out)) {
+            if let Err(e) = spira_store::lifecycle_row::after_create_ids("bdq", &String::from_utf8_lossy(&created_out)) {
                 eprintln!("bdq: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
             }
         }
     }
     if rc == 0 {
         if matches!(after, bead::guard::After::Terminal(_)) {
-            let _ = spira_config::lifecycle_row::after_close("bdq", args);
+            let _ = spira_store::lifecycle_row::after_close("bdq", args);
         }
-        if spira_config::planning::is_planning_write(args) {
-            spira_config::planning::stamp_after("bdq");
+        if spira_store::planning::is_planning_write(args) {
+            spira_store::planning::stamp_after("bdq");
         }
     }
     if let Some(run) = spira_config::process::cfg("SPIRA_RUN").ok().filter(|v| !v.is_empty()) {
@@ -498,10 +498,10 @@ fn acknowledge_forced_edit(timeout_s: &str, bd_bin: &str, db: &str, id: &str, cl
         .unwrap_or_else(|| "unknown".to_string());
     if let Some(hash) = claimdesc::desc_hash(&util_json_only(&bd_capture(timeout_s, bd_bin, db, &["show", id, "--json"]))) {
         bd_capture(timeout_s, bd_bin, db, &["update", id, "--set-metadata", &format!("{}={hash}", claimdesc::HASH_KEY)]);
-        spira_config::planning::stamp_after("bdq");
+        spira_store::planning::stamp_after("bdq");
     }
     bd_capture(timeout_s, bd_bin, db, &["note", id, &claimdesc::override_note(&actor, claim, reason)]);
-    spira_config::planning::stamp_after("bdq");
+    spira_store::planning::stamp_after("bdq");
     // Best-effort notification: by this point `cfg` has already resolved successfully at
     // least once in this process (SPIRA_DB/SPIRA_BD above), so these two cannot newly
     // fail; `unwrap_or_default` only ever matters if SPIRA_RUN/SPIRA_MAIL themselves

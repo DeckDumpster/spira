@@ -10,7 +10,7 @@ use std::cell::OnceCell;
 use std::time::{Duration, Instant};
 
 use runtime::units::{UnitHandle, UnitState, Units};
-use spira_config::lc_call::{LcClient, LcError};
+use spira_store::lc_call::{LcClient, LcError};
 
 use crate::host::Out;
 
@@ -50,11 +50,11 @@ pub trait Services {
     fn mail(&self, ask: &Ask) -> bool;
 }
 
-fn out_of(r: Result<spira_config::lc_call::Reply, LcError>) -> Out {
+fn out_of(r: Result<spira_store::lc_call::Reply, LcError>) -> Out {
     match r {
         Ok(r) => Out { rc: r.code, stdout: r.out, stderr: r.err },
         // No answer at all is "cannot tell" — the CLI's own exit 2.
-        Err(e) => Out { rc: spira_config::lc_call::CANNOT_TELL, stdout: String::new(), stderr: e.to_string() },
+        Err(e) => Out { rc: spira_store::lc_call::CANNOT_TELL, stdout: String::new(), stderr: e.to_string() },
     }
 }
 
@@ -82,7 +82,7 @@ impl RealServices {
         self.lc
             .get_or_init(|| LcClient::for_bin(bin))
             .as_ref()
-            .map_err(|e| Out { rc: spira_config::lc_call::CANNOT_TELL, stdout: String::new(), stderr: e.clone() })
+            .map_err(|e| Out { rc: spira_store::lc_call::CANNOT_TELL, stdout: String::new(), stderr: e.clone() })
     }
 
     fn units(&self) -> Result<&dyn Units, String> {

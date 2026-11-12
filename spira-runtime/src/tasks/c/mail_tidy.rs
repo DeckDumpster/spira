@@ -205,7 +205,7 @@ fn cfg(key: &str) -> Result<String, String> {
 /// The runner of [`OBSERVE`]: the open asks over the store's `content` door (with the positive
 /// control), the mailbox `mailbox` newest first, and for each fresh message naming a bead
 /// whether the store reports it closed. A refusal is the snapshot's error.
-pub fn observe(lc: &spira_config::lc_call::LcClient, mailbox: &str, now: u64) -> Snapshot {
+pub fn observe(lc: &spira_store::lc_call::LcClient, mailbox: &str, now: u64) -> Snapshot {
     let read = || -> Result<Snapshot, String> {
         let (root, label, db, fresh) = (cfg("SPIRA_MAIL")?, cfg("SPIRA_ASK_LABEL")?, cfg("SPIRA_DB")?, cfg(FRESH_KEY)?);
         let fresh_s: u64 = fresh.trim().parse().map_err(|_| format!("{FRESH_KEY} must be a number of seconds, got {fresh:?}"))?;

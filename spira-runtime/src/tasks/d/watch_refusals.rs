@@ -192,7 +192,7 @@ pub fn filed(carry: &Carry, spec: &EffectSpec, now_ms: u64) -> Carry {
 
 /// The probe: the store's `ops-refusals <window>` over `LcClient`, parsed by `refusal_watch::parse`.
 pub fn observe(cfg: &Config) -> Result<String, String> {
-    let lc = spira_config::lc_call::LcClient::configured()?;
+    let lc = spira_store::lc_call::LcClient::configured()?;
     let (now, classes) = refusal_watch::read_refusals(&lc, cfg.window_secs).and_then(|j| refusal_watch::parse(&j))?;
     let snap = Snapshot { now: u64::try_from(now).unwrap_or(0), classes: classes.into_iter().map(Class::of).collect() };
     serde_json::to_string(&snap).map_err(|e| e.to_string())

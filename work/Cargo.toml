@@ -5,11 +5,12 @@ edition = "2021"
 description = "work — the dwarf semantic layer client: show/note/submit/done/blocked/file-followup/split/superseded-by, bound to one called bead and reached only through the spira-lc socket. Holds no DB connection code at all, by construction — the dwarf's environment has no credential for one to hold. Deploys inert."
 
 [features]
-integration = ["bead/integration", "forge/integration", "gate/integration", "habits/integration", "rule/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
+integration = ["bead/integration", "forge/integration", "gate/integration", "habits/integration", "rule/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 serde_json = "1"
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 habits = { path = "../habits" }
 gate = { path = "../gate" }

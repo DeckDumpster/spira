@@ -73,7 +73,7 @@ impl RealBd {
     /// One call through the store's content door, which applies every protection bdq applies
     /// and writes a created bead's lifecycle row in the same request: its stdout when it applied.
     fn content(&self, argv: &[&str], body: Option<&str>) -> Result<String, String> {
-        let lc = spira_config::lc_call::LcClient::configured()?;
+        let lc = spira_store::lc_call::LcClient::configured()?;
         let argv: Vec<&str> = std::iter::once("content").chain(argv.iter().copied()).collect();
         let r = match body {
             Some(b) => lc.call_stdin(&argv, b),
@@ -134,7 +134,7 @@ impl Bd for RealBd {
 
     fn close(&self, id: &str, reason: &str) -> Result<(), String> {
         // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
-        spira_config::lifecycle_row::close(id, reason, "groomer", None)
+        spira_store::lifecycle_row::close(id, reason, "groomer", None)
     }
 
     fn note(&self, id: &str, text: &str) -> Result<(), String> {
@@ -160,11 +160,11 @@ impl Bd for RealBd {
     }
 
     fn supersede(&self, id: &str, with: &str) -> Result<(), String> {
-        spira_config::lifecycle_row::close(id, &format!("superseded by {with}"), "groomer", Some(with))
+        spira_store::lifecycle_row::close(id, &format!("superseded by {with}"), "groomer", Some(with))
     }
 
     fn lifecycle_terminal(&self, id: &str) -> Result<bool, String> {
-        match spira_config::lc_state::row(id)? {
+        match spira_store::lc_state::row(id)? {
             Some(r) => Ok(r.terminal()),
             None => Err(format!("no lifecycle row for {id}")),
         }
@@ -280,7 +280,7 @@ pub mod fake {
         }
 
         fn lifecycle_terminal(&self, id: &str) -> Result<bool, String> {
-            self.states.borrow().get(id).map(|s| spira_config::lc_state::is_terminal(s)).ok_or_else(|| format!("no lifecycle row for {id}"))
+            self.states.borrow().get(id).map(|s| spira_store::lc_state::is_terminal(s)).ok_or_else(|| format!("no lifecycle row for {id}"))
         }
 
         fn supersede(&self, id: &str, with: &str) -> Result<(), String> {

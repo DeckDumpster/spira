@@ -224,8 +224,8 @@ pub fn now_ms() -> u64 {
 
 /// The store client every family B runner reaches lc-serve through: the world's socket, with the
 /// socket client's 5 s deadline.
-pub fn lc(e: &crate::Effects) -> spira_config::lc_call::LcClient {
-    spira_config::lc_call::LcClient::socket(e.world.lc_socket.clone())
+pub fn lc(e: &crate::Effects) -> spira_store::lc_call::LcClient {
+    spira_store::lc_call::LcClient::socket(e.world.lc_socket.clone())
 }
 
 /// The family's rows, complete but not yet in `TASKS` (see the module doc).

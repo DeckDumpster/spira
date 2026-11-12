@@ -51,7 +51,7 @@ pub trait World {
 
     // ---- the lifecycle machine ----
     /// `spira-lc list`: every bead's lifecycle row. Err when the machine cannot answer.
-    fn lc_rows(&self) -> Result<Vec<spira_config::lc_state::Row>, String>;
+    fn lc_rows(&self) -> Result<Vec<spira_store::lc_state::Row>, String>;
 
     // ---- git ----
     fn git_branch_exists_matching(&self, repo: &str, pattern: &str) -> bool;

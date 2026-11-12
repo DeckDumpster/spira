@@ -45,7 +45,7 @@ pub struct Cfg {
 
     pub incident_sh: String,
     /// The store's client: bd's rows through its content door.
-    pub lc: spira_config::lc_call::LcClient,
+    pub lc: spira_store::lc_call::LcClient,
     pub suites_sh: Option<String>,
     /// `COCKPIT_DB`; `None` when it does not resolve (the moot-sweep then checks nothing).
     pub cockpit_db: Option<String>,

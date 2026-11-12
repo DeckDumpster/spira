@@ -218,7 +218,7 @@ struct Wire {
 /// The store's `event-continuity` answer as a snapshot: one JSON line per first break per key;
 /// exit 0 when every break is acknowledged, 3 when one is not. Anything else is no answer.
 pub fn parse(code: i32, out: &str) -> Result<Snapshot, String> {
-    if code != 0 && code != spira_config::lc_call::REFUSED {
+    if code != 0 && code != spira_store::lc_call::REFUSED {
         return Err(format!("event-continuity: exit {code}: {}", out.trim()));
     }
     let mut breaks = vec![];
@@ -231,7 +231,7 @@ pub fn parse(code: i32, out: &str) -> Result<Snapshot, String> {
 }
 
 /// The runner of [`OBSERVE`]: `event-continuity` over the socket.
-pub fn observe(lc: &spira_config::lc_call::LcClient) -> Result<String, String> {
+pub fn observe(lc: &spira_store::lc_call::LcClient) -> Result<String, String> {
     let r = lc.call(&["event-continuity"]).map_err(String::from)?;
     serde_json::to_string(&parse(r.code, &r.out)?).map_err(|e| e.to_string())
 }

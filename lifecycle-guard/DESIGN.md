@@ -11,7 +11,7 @@ Design §3.4: bd holds content, spira-lc holds state. A Rust decision that reads
 bd `status` or `assignee` is a finding (`src/bd_status.rs`), in four shapes: a bd status
 value compared against a status-named operand, a `match` arm on one, a bd query filtered by
 `--status`, and an `assignee` read in a condition. A work bead's state is read through
-`spira_config::lc_state` (`spira-lc list` / `show`).
+`spira_store::lc_state` (`spira-lc list` / `show`).
 
 Scope, which is not an allow-list:
 
@@ -52,7 +52,7 @@ here. A new call site of the same kind states its reason there the same way.
 
 A finding is cleared exactly three ways:
 
-1. move the access to spira-lc (`spira_config::lc_state`);
+1. move the access to spira-lc (`spira_store::lc_state`);
 2. delete the access;
 3. argue a named exception in the owning crate's design, as the rowless controls are argued
    above, and name it in the rule's source by file and function.

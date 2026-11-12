@@ -40,7 +40,7 @@ pub fn decide(name: &str, state: Option<&str>, is_git: bool, unsaved: Unsaved, a
         return Decision::Keep(why);
     }
     let why = match state {
-        Some(s) if spira_config::lc_state::is_terminal(s) => Why::Terminal,
+        Some(s) if spira_store::lc_state::is_terminal(s) => Why::Terminal,
         Some(_) => return Decision::Keep("live bead"),
         None if age < max_age => return Decision::Keep("younger than the scratch age"),
         None => Why::Scratch,

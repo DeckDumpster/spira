@@ -209,13 +209,13 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
 /// A restricted session handed its bead on by `work submit`: the row stands SUBMITTED. The
 /// close guards (prod-dirty, close-reason, groom escalation) judge this hand-on as they judge an
 /// unrestricted close; without it they never ran, since every session is restricted.
-pub fn builder_submitted(restricted: bool, row: Option<&spira_config::lc_state::Row>) -> bool {
+pub fn builder_submitted(restricted: bool, row: Option<&spira_store::lc_state::Row>) -> bool {
     restricted && row.is_some_and(|r| r.state == "SUBMITTED")
 }
 
 /// The status word the dwarf ledger has always recorded (`done … status=<word>`), from the
 /// lifecycle row: `?` when there is none.
-pub fn ledger_word(row: Option<&spira_config::lc_state::Row>) -> &'static str {
+pub fn ledger_word(row: Option<&spira_store::lc_state::Row>) -> &'static str {
     match row {
         None => "?",
         Some(r) if r.working() => "in_progress",
@@ -467,7 +467,7 @@ mod tests {
 
     #[test]
     fn a_restricted_submission_is_judged_by_the_close_guards() {
-        let row = |st: &str| spira_config::lc_state::Row { bead_id: "sp-x".into(), state: st.into(), ..Default::default() };
+        let row = |st: &str| spira_store::lc_state::Row { bead_id: "sp-x".into(), state: st.into(), ..Default::default() };
         // Every session is restricted: its hand-on is SUBMITTED, never a bd close.
         assert!(builder_submitted(true, Some(&row("SUBMITTED"))));
         assert!(!builder_submitted(true, Some(&row("WORKING"))));

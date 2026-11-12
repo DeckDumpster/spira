@@ -10,7 +10,7 @@ const MAX_ROUNDS: usize = 4;
 
 pub fn round_keys(cap_secs: i64) -> Kv {
     let batches = list_batches().and_then(|raw| parse_batches(&raw));
-    let pool = super::lc::funnel_raw().and_then(|raw| spira_config::lc_state::parse_rows(&raw).ok()).map(|rows| pool_waiting(&rows));
+    let pool = super::lc::funnel_raw().and_then(|raw| spira_store::lc_state::parse_rows(&raw).ok()).map(|rows| pool_waiting(&rows));
     let mut kv = round_keys_from(batches.as_deref(), pool, cap_secs, &batch_show);
     stop_keys(&mut kv, &spira_config::scoped_stop::repo_stops(&crate::io::run_dir()));
     if let Some(batches) = batches.as_deref() {
@@ -59,7 +59,7 @@ pub fn list_batches_live() -> Option<String> {
     if let Some(held) = store_view::shared() {
         return held.answer(&["list", "--batches"]).ok().filter(|r| r.value.code == 0).map(|r| r.value.out);
     }
-    let client = spira_config::lc_call::LcClient::configured().ok()?;
+    let client = spira_store::lc_call::LcClient::configured().ok()?;
     crate::store::answer_on(&client, &["list", "--batches"])
 }
 
@@ -146,7 +146,7 @@ pub fn parse_batches(raw: &str) -> Option<Vec<Batch>> {
     )
 }
 
-pub fn pool_waiting(rows: &[spira_config::lc_state::Row]) -> usize {
+pub fn pool_waiting(rows: &[spira_store::lc_state::Row]) -> usize {
     rows.iter().filter(|r| matches!(r.state.as_str(), "SUBMITTED" | "CERTIFIED") && r.holds.is_empty()).count()
 }
 
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn the_pool_counts_submitted_and_certified_without_a_hold() {
-        use spira_config::lc_state::Row;
+        use spira_store::lc_state::Row;
         let row = |state: &str, holds: &[&str]| Row { bead_id: "x".into(), state: state.into(), holds: holds.iter().map(|s| s.to_string()).collect(), ..Default::default() };
         let rows = [row("SUBMITTED", &[]), row("CERTIFIED", &[]), row("CERTIFIED", &["wait"]), row("WORKING", &[]), row("LANDED", &[])];
         assert_eq!(pool_waiting(&rows), 2);

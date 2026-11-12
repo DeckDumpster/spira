@@ -101,7 +101,7 @@ fn main() {
                 if rc != 0 {
                     return None;
                 }
-                spira_config::lc_state::parse_show(&out).ok().flatten().map(|r| r.state)
+                spira_store::lc_state::parse_show(&out).ok().flatten().map(|r| r.state)
             };
             std::process::exit(close_on_land::run(&args[1..], &mut state, &mut record, &mut close_on_land::show_row))
         }
@@ -132,7 +132,7 @@ fn main() {
         }
         Some("unpublished") => {
             let (code, out) = unpublished::run(&args[1..]);
-            spira_config::lc_call::print_answer(code, &out);
+            spira_store::lc_call::print_answer(code, &out);
             std::process::exit(code)
         }
         Some("content-landed") if args.len() == 4 => {
@@ -166,7 +166,7 @@ fn main() {
                     stdin: &mut stdin,
                     run_dir: &lifecycle_run_dir,
                     now: db::now_epoch(),
-                    caller: &spira_config::lc_call::guard_vars(std::env::vars()),
+                    caller: &spira_store::lc_call::guard_vars(std::env::vars()),
                 };
                 let ans = composed::run(&args, ports);
                 std::process::exit(emit(&args[1..], ans));
@@ -189,7 +189,7 @@ fn main() {
     // fixture with no service) or a verb never forwarded reaches the connection below.
     let args = cutover::inline_stdin_payload(args);
     if let Some((code, out)) = client::try_socket(&args) {
-        spira_config::lc_call::print_answer(code, &out);
+        spira_store::lc_call::print_answer(code, &out);
         std::process::exit(code);
     }
 

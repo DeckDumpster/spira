@@ -133,7 +133,7 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
         // The ask's state is written first; its decision bead then follows through reconcile-content.
         "close-ask" => {
             let (code, out) = m.call(argv);
-            let mut ans = if spira_config::lc_call::is_refusal(code, &out) {
+            let mut ans = if spira_store::lc_call::is_refusal(code, &out) {
                 Answer { code, stderr: line(&out), ..Default::default() }
             } else {
                 Answer::out(code, out)

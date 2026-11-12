@@ -84,14 +84,14 @@ pub(crate) fn forward(socket_path: &str, args: &[String]) -> (i32, String) {
 
 /// One request with `stdin` as its body; the answer's stdout and stderr apart.
 pub(crate) fn forward_with(socket_path: &str, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
-    use spira_config::lc_call::{retrying, Fail};
+    use spira_store::lc_call::{retrying, Fail};
     let batch = args.first().is_some_and(|v| v == "facts-query" || crate::composed::SWEEPS.contains(&v.as_str()));
     let limit = if batch { BATCH_TIMEOUT } else { TIMEOUT };
     let answer = retrying(args, limit, |left| {
         let stream = UnixStream::connect(socket_path).map_err(|e| Fail::Final(down(socket_path, &e).1))?;
         let left = left.max(Duration::from_millis(1));
         stream.set_read_timeout(Some(left)).and_then(|_| stream.set_write_timeout(Some(left))).map_err(|e| Fail::Final(down(socket_path, &e).1))?;
-        spira_config::lc_call::exchange_once(stream, args, stdin)
+        spira_store::lc_call::exchange_once(stream, args, stdin)
     });
     match answer {
         Ok(r) => (r.code, r.out, r.err),
@@ -103,7 +103,7 @@ pub(crate) fn forward_with(socket_path: &str, args: &[String], stdin: Option<&st
 /// happens to the reply, so a lost reply is "cannot tell" and never a fallback.
 #[cfg(test)]
 pub(crate) fn exchange(stream: UnixStream, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
-    match spira_config::lc_call::exchange(stream, args, stdin) {
+    match spira_store::lc_call::exchange(stream, args, stdin) {
         Ok(r) => (r.code, r.out, r.err),
         Err(msg) => (2, msg, String::new()),
     }

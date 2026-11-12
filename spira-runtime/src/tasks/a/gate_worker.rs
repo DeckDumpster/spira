@@ -744,7 +744,7 @@ pub fn complete(e: &crate::Effects, input: &str) -> Result<String, String> {
         _ => word.to_string(),
     };
     if let landing_pass::gateq::Settled::Held(h) = &settled {
-        let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_secs(5));
+        let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_secs(5));
         let hold = |bead: &str, why: &str| {
             lc.call(&["hold", bead, "wait", why, NAME])
                 .map_err(|e| e.to_string())

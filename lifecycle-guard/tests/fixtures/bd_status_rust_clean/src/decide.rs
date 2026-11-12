@@ -1,5 +1,6 @@
 // The same decisions, through the machine and the non-work scope.
-use spira_config::{lc_state, nonwork};
+use spira_config::nonwork;
+use spira_store::lc_state;
 
 pub fn has_open_child(list: &[Bead], rows: &Rows, id: &str) -> bool {
     list.iter().any(|b| b.parent.as_deref() == Some(id) && rows.get(&b.id).is_some_and(|r| !r.terminal()))

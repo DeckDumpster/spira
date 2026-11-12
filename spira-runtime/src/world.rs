@@ -537,7 +537,7 @@ impl World {
     /// The label is not the repository: a bead filed for another repository carries the scope
     /// label too, and a live epic has a lifecycle row, so the content store decides both.
     fn flow_backlog(&self) -> Result<u64, String> {
-        let rows = spira_config::lc_state::parse_rows(&self.lc_listed(&["list", "--live"])?).map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+        let rows = spira_store::lc_state::parse_rows(&self.lc_listed(&["list", "--live"])?).map_err(|e| format!("lifecycle state unreadable: {e}"))?;
         let live: Vec<&str> = rows.iter().filter(|r| !r.terminal()).map(|r| r.bead_id.as_str()).collect();
         let mut ids = vec![];
         for chunk in live.chunks(FLOW_CONTENT_CHUNK) {
@@ -546,7 +546,7 @@ impl World {
             let found = plan_items(&out).ok_or_else(|| format!("spira-lc plan items printed no item list: {:?}", out.chars().take(200).collect::<String>()))?;
             ids.extend(found.iter().filter(|r| self.in_flow_backlog(r)).filter_map(|r| r["id"].as_str().map(str::to_string)));
         }
-        Ok(::reconciler_flow::io::backlog_of(&ids, &spira_config::lc_state::index(rows)))
+        Ok(::reconciler_flow::io::backlog_of(&ids, &spira_store::lc_state::index(rows)))
     }
 
     fn in_flow_backlog(&self, content: &Value) -> bool {

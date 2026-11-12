@@ -566,7 +566,7 @@ impl Run<'_> {
                     let until = util::iso_utc(until_epoch);
                     // A timed `wait` hold on the lifecycle row: claim reads the expiry from its
                     // reason, so nothing has to lift it and no bd status or defer is written.
-                    let held = self.hold_unless_terminal(&id, "wait", &format!("{} no-progress: {reason}", spira_config::lc_state::snooze_reason(until_epoch)), "dwarf");
+                    let held = self.hold_unless_terminal(&id, "wait", &format!("{} no-progress: {reason}", spira_store::lc_state::snooze_reason(until_epoch)), "dwarf");
                     if let Some(held) = held.filter(|h| h.code != 0) {
                         self.log(&format!("{f}: {id} snooze hold refused (rc={}): {}", held.code, held.stdout.trim()));
                     }

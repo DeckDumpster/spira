@@ -5,7 +5,7 @@ edition = "2021"
 description = "spira desired-state — typed resource kinds, the producer contract, the composer, and `spira apply`."
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration"]
+integration = ["spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -15,6 +15,7 @@ serde_path_to_error = "0.1"
 schemars = "0.8"
 sha2 = "0.10"
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 
 [[bin]]

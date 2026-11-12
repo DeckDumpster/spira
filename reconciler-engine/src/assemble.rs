@@ -92,11 +92,11 @@ impl Snapshot {
 
 /// [`SnapshotSource`] over the store's `section snapshot` verb, in-process through `lc`.
 pub struct Verb {
-    pub lc: spira_config::lc_call::LcClient,
+    pub lc: spira_store::lc_call::LcClient,
 }
 
 impl Verb {
-    pub fn new(lc: spira_config::lc_call::LcClient) -> Verb {
+    pub fn new(lc: spira_store::lc_call::LcClient) -> Verb {
         Verb { lc }
     }
 }

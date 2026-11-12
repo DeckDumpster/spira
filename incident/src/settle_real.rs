@@ -87,7 +87,7 @@ impl Settler for RealSettler<'_> {
     }
 
     fn fix_state(&self, fix: &str) -> Result<FixState, String> {
-        match spira_config::lc_state::row(fix)? {
+        match spira_store::lc_state::row(fix)? {
             Some(r) if matches!(r.state.as_str(), "LANDED" | "DONE") => Ok(FixState::Landed),
             Some(r) => Ok(FixState::Unlanded(r.state)),
             None => Err("no lifecycle row".into()),
@@ -129,7 +129,7 @@ impl Settler for RealSettler<'_> {
     }
 
     fn close(&self, id: &str, evidence: &str) -> Result<(), String> {
-        spira_config::lifecycle_row::close(id, evidence, "incident", None)
+        spira_store::lifecycle_row::close(id, evidence, "incident", None)
     }
 
     fn persist(&self, id: &str, label: &str, note: &str) -> Result<(), String> {
@@ -197,9 +197,9 @@ mod tests {
         };
         let rows = vec![inc("sp-i1", "sp-f1"), inc("sp-i2", "sp-f1"), json!({"id": "sp-f1", "labels": ["repo:other"]})];
         let fake = std::sync::Arc::new(
-            spira_config::lc_call::fake::Content::new(rows).with_live(vec![live("sp-i1", "READY"), live("sp-i2", "REWORK"), live("sp-f1", "LANDED")]),
+            spira_store::lc_call::fake::Content::new(rows).with_live(vec![live("sp-i1", "READY"), live("sp-i2", "REWORK"), live("sp-f1", "LANDED")]),
         );
-        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_config::lc_call::LcClient::over(fake.clone(), true)) };
+        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
         let s = settler(&bd);
         let cands = s.candidates().unwrap();
         assert_eq!(cands.iter().map(|c| c.fixes.clone()).collect::<Vec<_>>(), vec![vec!["sp-f1".to_string()]; 2]);

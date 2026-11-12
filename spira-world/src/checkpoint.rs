@@ -2,13 +2,13 @@
 //! a `wait` hold with a `checkpoint-until:` reason, and `world.sh start` lifts them.
 
 use serde_json::Value;
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 /// The beads in `spira-lc list --hold wait` output whose hold is a checkpoint.
 pub fn checkpointed(list_json: &str) -> Vec<String> {
     let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(list_json.trim()) else { return Vec::new() };
     rows.iter()
-        .filter(|r| r.get("reason").and_then(Value::as_str).is_some_and(spira_config::lc_state::is_checkpoint))
+        .filter(|r| r.get("reason").and_then(Value::as_str).is_some_and(spira_store::lc_state::is_checkpoint))
         .filter_map(|r| r.get("bead_id").and_then(Value::as_str).map(str::to_string))
         .collect()
 }
@@ -43,7 +43,7 @@ pub fn unhold_wait(client: &LcClient, bead: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spira_config::lc_call::{Reply, Transport};
+    use spira_store::lc_call::{Reply, Transport};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 

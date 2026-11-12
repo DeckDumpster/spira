@@ -15,7 +15,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use spira_config::lc_call::LcError;
+use spira_store::lc_call::LcError;
 
 use crate::bead::{self, Bd};
 use crate::lc::{self, Lc, Lift};

@@ -217,7 +217,7 @@ pub fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
         .lc_bin
         .as_ref()
         .ok_or_else(|| "no spira-lc program".to_string())?;
-    let client = spira_config::lc_call::LcClient::for_bin(&bin.to_string_lossy())?
+    let client = spira_store::lc_call::LcClient::for_bin(&bin.to_string_lossy())?
         .within(std::time::Duration::from_secs(env.lc_timeout));
     lc_answer(client.call(args))
 }
@@ -246,7 +246,7 @@ fn show_bead(env: &Env, id: &str) -> Result<String, String> {
 /// An answer as the `spira-lc` child's was read: its stdout when it applied; otherwise its exit
 /// and the last line it said.
 fn lc_answer(
-    r: Result<spira_config::lc_call::Reply, spira_config::lc_call::LcError>,
+    r: Result<spira_store::lc_call::Reply, spira_store::lc_call::LcError>,
 ) -> Result<String, String> {
     let r = r.map_err(|e| format!("spira-lc: {e}"))?;
     if r.code != 0 {
@@ -723,11 +723,11 @@ fn base_fix_ids(
         .filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string))
         .collect();
     let Ok(lc) = lc_rows_of(env, &basefail_ids)
-        .and_then(|r| spira_config::lc_state::parse_rows(&serde_json::Value::Array(r).to_string()))
+        .and_then(|r| spira_store::lc_state::parse_rows(&serde_json::Value::Array(r).to_string()))
     else {
         return fixes;
     };
-    let lc = spira_config::lc_state::index(lc);
+    let lc = spira_store::lc_state::index(lc);
     let open: Vec<String> = basefail_ids
         .into_iter()
         .filter(|id| lc.get(id).is_some_and(|row| !row.terminal()))
@@ -801,7 +801,7 @@ pub fn read_open_batch(env: &Env, repo: &str) -> Result<Option<OpenBatch>, Strin
         }
         return Ok(open_batch_from(&run.out));
     }
-    let views = store_view::Projection::hot(spira_config::lc_call::LcClient::configured()?)?;
+    let views = store_view::Projection::hot(spira_store::lc_call::LcClient::configured()?)?;
     views
         .batches_current()
         .map_err(|e| format!("could not say: {e}"))?;
@@ -810,7 +810,7 @@ pub fn read_open_batch(env: &Env, repo: &str) -> Result<Option<OpenBatch>, Strin
 
 /// The open batch a view's answer holds; a refused read could not say.
 fn open_batch_of(
-    read: Result<store_view::BatchView, spira_config::lc_call::LcError>,
+    read: Result<store_view::BatchView, spira_store::lc_call::LcError>,
 ) -> Result<Option<OpenBatch>, String> {
     read.map(|v| open_batch_from(&v.shown()))
         .map_err(|e| format!("could not say: {e}"))
@@ -1568,7 +1568,7 @@ pub fn lc_supersede(env: &Env, id: &str, keeper: &str) -> Result<(), String> {
         .as_ref()
         .ok_or_else(|| "no spira-lc program".to_string())?;
     // FORK-EDGE: unserved verb close (the spira-lc CLI answers it; the socket does not)
-    spira_config::lifecycle_row::close_with(
+    spira_store::lifecycle_row::close_with(
         &bin.to_string_lossy(),
         id,
         &reason,
@@ -4872,7 +4872,7 @@ mod forge_release_tests {
 
     #[test]
     fn a_lifecycle_answer_reads_as_the_childs_did() {
-        use spira_config::lc_call::{LcError, Reply};
+        use spira_store::lc_call::{LcError, Reply};
         assert_eq!(
             lc_answer(Ok(Reply {
                 code: 0,
@@ -4896,7 +4896,7 @@ mod forge_release_tests {
 
     #[test]
     fn an_open_batch_the_store_cannot_vouch_for_could_not_say() {
-        use spira_config::lc_call::LcError;
+        use spira_store::lc_call::LcError;
         use store_view::{BatchView, Record};
         assert!(open_batch_of(Err(LcError::Refused("stale".into())))
             .unwrap_err()

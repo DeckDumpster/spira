@@ -21,7 +21,7 @@ path = "tests/store_parity.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["reconciler-engine/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
+integration = ["reconciler-engine/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }
@@ -31,6 +31,7 @@ toml = "0.8"
 reconciler-engine = { path = "../reconciler-engine" }
 tsd = { path = "../tsd" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 
 [profile.release]
 opt-level = "z"

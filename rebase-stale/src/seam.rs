@@ -135,7 +135,7 @@ impl Seam for LibSeam {
     }
 
     fn bead_status(&self, id: &str) -> BeadStatus {
-        match spira_config::lc_state::row_with(&self.lc_bin, id) {
+        match spira_store::lc_state::row_with(&self.lc_bin, id) {
             Err(_) => BeadStatus::Unreachable,
             Ok(row) => BeadStatus::Known(row.map(|r| r.state).unwrap_or_default()),
         }
@@ -152,7 +152,7 @@ impl Seam for LibSeam {
     /// Through the store's content door (every protection bdq applies), the text as the
     /// request body. Best-effort, as the lib.sh `bdq note` it replaces was.
     fn note(&self, id: &str, text: &str) {
-        if let Ok(lc) = spira_config::lc_call::LcClient::for_bin(&self.lc_bin) {
+        if let Ok(lc) = spira_store::lc_call::LcClient::for_bin(&self.lc_bin) {
             let _ = lc.call_stdin(&["content", "note", id, "--stdin"], text);
         }
     }

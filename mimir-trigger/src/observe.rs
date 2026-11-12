@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 use spira_config::repos::{Column, Registry};
 
 use crate::engine;
@@ -27,8 +27,8 @@ pub fn open_trigger_count_on(lc: &LcClient, labels: &str) -> Result<u64, String>
     if ids.is_empty() {
         return Ok(0);
     }
-    let rows = spira_config::lc_state::list_on(lc).map_err(|e| format!("lifecycle state unreadable ({e})"))?;
-    Ok(unfinished_count(&ids, &spira_config::lc_state::index(rows)))
+    let rows = spira_store::lc_state::list_on(lc).map_err(|e| format!("lifecycle state unreadable ({e})"))?;
+    Ok(unfinished_count(&ids, &spira_store::lc_state::index(rows)))
 }
 
 /// The value of `key` in the pinned `config`, or a refusal naming it.
@@ -116,7 +116,7 @@ pub fn invalid_closed_raw() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spira_config::lc_call::{Reply, Transport};
+    use spira_store::lc_call::{Reply, Transport};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 

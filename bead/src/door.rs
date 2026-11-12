@@ -3,8 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
-use spira_config::lc_call::LcClient;
-use spira_config::lc_state::Row as LifecycleRow;
+use spira_store::lc_call::LcClient;
+use spira_store::lc_state::Row as LifecycleRow;
 
 use crate::{branch_candidate, branch_label, parse_list_ids, parse_show_row, IdeaRow, LintSource, ShowRow};
 
@@ -137,7 +137,7 @@ mod tests {
     use super::*;
     use crate::{lint, LintCfg};
     use serde_json::json;
-    use spira_config::lc_call::fake::Content;
+    use spira_store::lc_call::fake::Content;
     use std::sync::Arc;
 
     fn bead(id: &str, labels: &[&str], blocks: &[&str]) -> Value {
@@ -200,8 +200,8 @@ mod tests {
     }
 
     struct Down;
-    impl spira_config::lc_call::Transport for Down {
-        fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+    impl spira_store::lc_call::Transport for Down {
+        fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             Err("socket down".into())
         }
     }

@@ -171,10 +171,10 @@ pub fn child_path(cfg: &Cfg) -> String {
 /// One call through the store's content door (`content <args>`), in-process over the declared
 /// socket: its stdout, unless it failed and printed nothing.
 pub fn content(args: &[&str]) -> Result<String, String> {
-    content_on(&spira_config::lc_call::LcClient::configured()?, args)
+    content_on(&spira_store::lc_call::LcClient::configured()?, args)
 }
 
-fn content_on(lc: &spira_config::lc_call::LcClient, args: &[&str]) -> Result<String, String> {
+fn content_on(lc: &spira_store::lc_call::LcClient, args: &[&str]) -> Result<String, String> {
     let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
     let r = lc.call(&argv).map_err(|e| format!("spira-lc content: {e}"))?;
     if r.code != 0 && r.out.is_empty() {
@@ -219,10 +219,10 @@ fn day_before(now: i64, days: i64) -> String {
 /// rows could stand in for these, so silently returning an empty list would render "nothing is
 /// waiting" over an unread queue.
 fn fetch_beads() -> Result<Vec<Value>, String> {
-    fetch_beads_on(&spira_config::lc_call::LcClient::configured()?, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64))
+    fetch_beads_on(&spira_store::lc_call::LcClient::configured()?, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64))
 }
 
-fn fetch_beads_on(lc: &spira_config::lc_call::LcClient, now: i64) -> Result<Vec<Value>, String> {
+fn fetch_beads_on(lc: &spira_store::lc_call::LcClient, now: i64) -> Result<Vec<Value>, String> {
     let mut all = rows(&content_on(lc, &["list", "--limit", "0", "--json"])?, "issues")?;
     let since = day_before(now, CLOSED_WINDOW_DAYS);
     let recent = rows(&content_on(lc, &["list", "--all", "--limit", "0", "--json", "--updated-after", &since])?, "issues")?;
@@ -237,7 +237,7 @@ fn fetch_conditions(cfg: &Cfg) -> Result<Vec<Value>, String> {
     fetch_conditions_with(&crate::lcio::client(cfg)?)
 }
 
-fn fetch_conditions_with(client: &spira_config::lc_call::LcClient) -> Result<Vec<Value>, String> {
+fn fetch_conditions_with(client: &spira_store::lc_call::LcClient) -> Result<Vec<Value>, String> {
     let out = crate::lcio::read(client, &["condition", "list", "--owner", ALERT_OWNER])?;
     rows(&out, "conditions")
 }
@@ -888,12 +888,12 @@ mod tests {
     fn the_pane_reads_open_beads_and_a_closed_window_and_never_the_history() {
         let mut rows = vec![row("sp-open", "open", "2026-11-01"), row("sp-event", "closed", "2026-11-09")];
         rows.extend((0..80).map(|i| row(&format!("sp-h{i}"), "closed", "2025-01-01")));
-        let store = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows));
-        let lc = spira_config::lc_call::LcClient::over(store.clone(), true);
+        let store = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows));
+        let lc = spira_store::lc_call::LcClient::over(store.clone(), true);
         let got = fetch_beads_on(&lc, 1_794_000_000).unwrap();
         assert!(!got.iter().any(|r| r["id"].as_str().unwrap_or("").starts_with("sp-h")), "closed beads outside the window stay out");
         assert!(got.iter().any(|r| r["id"] == "sp-open") && got.iter().any(|r| r["id"] == "sp-event"));
-        assert!(store.requests().iter().all(|r| !spira_config::lc_call::reads_whole_history(r)), "{:?}", store.requests());
+        assert!(store.requests().iter().all(|r| !spira_store::lc_call::reads_whole_history(r)), "{:?}", store.requests());
         assert!(store.requests().iter().any(|r| r.contains(&"--updated-after".to_string()) && r.contains(&"2026-10-23".to_string())));
     }
 

@@ -174,9 +174,9 @@ fn cmd_settle(env: &Env, bd: &RealBd) -> ExitCode {
     }
 }
 
-/// The store over [`spira_config::lc_call::LcClient`], every answer JSON.
+/// The store over [`spira_store::lc_call::LcClient`], every answer JSON.
 struct SpiraLc {
-    client: spira_config::lc_call::LcClient,
+    client: spira_store::lc_call::LcClient,
 }
 
 impl reconciler_engine::goodput_pass::Lc for SpiraLc {
@@ -195,7 +195,7 @@ impl incident::alarms_pass::Http for UreqHttp {
 }
 
 fn spira_lc() -> Result<SpiraLc, String> {
-    Ok(SpiraLc { client: spira_config::lc_call::LcClient::configured()? })
+    Ok(SpiraLc { client: spira_store::lc_call::LcClient::configured()? })
 }
 
 fn alarms_config(env: &Env, fallback: bool) -> Result<incident::alarms_pass::Config, String> {

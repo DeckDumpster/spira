@@ -11,7 +11,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["mail/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration"]
+integration = ["mail/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
 crossterm = "0.28"
@@ -25,6 +25,9 @@ strip = true
 
 [dependencies.spira-config]
 path = "../../spira-config"
+
+[dependencies.spira-store]
+path = "../../spira-store"
 
 [dependencies.spira-otel]
 path = "../../spira-otel"

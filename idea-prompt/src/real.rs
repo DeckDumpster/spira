@@ -2,7 +2,7 @@
 //! through `bead.sh`, and the operator mail through the `mail` library.
 
 use crate::{Idea, Ports};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -132,7 +132,7 @@ fn has_holds(v: Option<&serde_json::Value>) -> bool {
 #[cfg(test)]
 mod real_tests {
     use super::*;
-    use spira_config::lc_call::{Reply, Transport};
+    use spira_store::lc_call::{Reply, Transport};
     use std::sync::{Arc, Mutex};
 
     struct Scripted(&'static str, Mutex<Vec<String>>);

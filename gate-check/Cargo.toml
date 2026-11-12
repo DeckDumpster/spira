@@ -13,12 +13,13 @@ name = "gate-check"
 path = "src/main.rs"
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration"]
+integration = ["spira-config/integration", "spira-store/integration", "spira-otel/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 serde_json = "1"
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 
 [profile.release]
 opt-level = "z"

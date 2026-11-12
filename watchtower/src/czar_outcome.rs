@@ -7,10 +7,10 @@
 //! caller itself moved to Rust. The logic is unchanged line-for-line from the python.
 
 use crate::incident::{self, Finding};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 use crate::log::{log, parse_iso_utc};
 use serde::Deserialize;
-use spira_config::lc_state;
+use spira_store::lc_state;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Deserialize)]

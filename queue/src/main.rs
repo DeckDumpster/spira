@@ -42,7 +42,7 @@ fn main() -> ExitCode {
                     .lc_bin
                     .as_ref()
                     .ok_or_else(|| "no spira-lc program".to_string())
-                    .and_then(|b| spira_config::lc_call::LcClient::for_bin(&b.to_string_lossy())),
+                    .and_then(|b| spira_store::lc_call::LcClient::for_bin(&b.to_string_lossy())),
             },
             RealLc::configured(s.lc_bin.clone()),
         ),

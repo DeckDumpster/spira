@@ -80,7 +80,7 @@ use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
 
 use runtime::ports::{Proc, ProcSpec};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 use crate::tasks::b::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 
@@ -364,7 +364,7 @@ impl cockpit_ops::resolve::Closer for Store<'_> {
     fn withdraw_ask_row(&self, id: &str, reason: &str) -> (i32, String) {
         match self.0.call(&["close-ask", id, "--exit", "withdrawn", "--quote", reason, "--actor", ACTOR]) {
             Ok(r) => (r.code, r.text()),
-            Err(e) => (spira_config::lc_call::CANNOT_TELL, e.to_string()),
+            Err(e) => (spira_store::lc_call::CANNOT_TELL, e.to_string()),
         }
     }
 }
@@ -415,7 +415,7 @@ crate::tasks::b::hosted!(AsksMoot);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spira_config::lc_call::fake;
+    use spira_store::lc_call::fake;
     use std::sync::Arc;
 
     fn ask(id: &str, status: &str) -> serde_json::Value {
@@ -427,6 +427,6 @@ mod tests {
         let store = Arc::new(fake::Content::new(vec![ask("sp-open", "open"), ask("sp-done", "closed")]));
         let snap: Snapshot = serde_json::from_str(&observe_on(&LcClient::over(store.clone(), true), "needs-x").unwrap()).unwrap();
         assert_eq!(snap.asks.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["sp-open"]);
-        assert!(store.requests().iter().all(|r| !spira_config::lc_call::reads_whole_history(r)), "{:?}", store.requests());
+        assert!(store.requests().iter().all(|r| !spira_store::lc_call::reads_whole_history(r)), "{:?}", store.requests());
     }
 }

@@ -229,7 +229,7 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     log(&format!("bead: {bead_id}"));
 
     // Its lifecycle row, READY, in the stage's machine: a work bead is the machine's to move.
-    let created = run(staged(Command::new("timeout").args(LC_DEADLINE).args([spira_config::lifecycle_row::lc_bin()?.as_str(), "create-bead", &bead_id]), env), "spira-lc create-bead")?;
+    let created = run(staged(Command::new("timeout").args(LC_DEADLINE).args([spira_store::lifecycle_row::lc_bin()?.as_str(), "create-bead", &bead_id]), env), "spira-lc create-bead")?;
     if !created.status.success() {
         return Err(format!("spira-lc create-bead {bead_id} failed ({}): {}", created.status, String::from_utf8_lossy(&created.stderr).trim()));
     }
@@ -247,7 +247,7 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
         }
         log(&format!("sentinel pass {pass} of {SENTINEL_PASSES} left the bead unclaimed (state={})", state.as_deref().unwrap_or("(unreadable)")));
     }
-    if !spira_config::lc_state::past_builder(state.as_deref().unwrap_or("")) {
+    if !spira_store::lc_state::past_builder(state.as_deref().unwrap_or("")) {
         let msg = format!("sentinel pass did not hand the bead on: lifecycle state={}", state.as_deref().unwrap_or("(unreadable)"));
         log(&format!("FAIL: {msg}"));
         file_incident(prod, "canary: pipeline bead not submitted", &format!("The sentinel pass completed but the bead {bead_id}'s lifecycle row is {}.\n\nStage: {}", state.as_deref().unwrap_or("unreadable"), stage_root.display()));
@@ -320,11 +320,11 @@ fn staged<'c>(cmd: &'c mut Command, env: &[(String, String)]) -> &'c mut Command
 /// The bead's lifecycle state in the stage's machine (`spira-lc show`); `None` when there
 /// is no row or the machine cannot be read.
 fn lc_state(env: &[(String, String)], id: &str) -> Option<String> {
-    let out = staged(Command::new("timeout").args(LC_DEADLINE).args([spira_config::lifecycle_row::lc_bin().ok()?.as_str(), "show", id]), env).stdin(Stdio::null()).output().ok()?;
+    let out = staged(Command::new("timeout").args(LC_DEADLINE).args([spira_store::lifecycle_row::lc_bin().ok()?.as_str(), "show", id]), env).stdin(Stdio::null()).output().ok()?;
     if !out.status.success() {
         return None;
     }
-    spira_config::lc_state::parse_show(&String::from_utf8_lossy(&out.stdout)).ok()?.map(|r| r.state)
+    spira_store::lc_state::parse_show(&String::from_utf8_lossy(&out.stdout)).ok()?.map(|r| r.state)
 }
 
 /// `release canary-worker` (was `spira/canary-worker.sh`): the synthetic dwarf. Invoked by
@@ -410,7 +410,7 @@ pub fn canary_worker() -> Result<(), String> {
 /// `timeout`'s argv for the worker's Submit: `spira-lc work <id> submit --tip <tip> --actor
 /// <holder>`, the verb `work submit` sends for a dwarf.
 pub(crate) fn submit_args(id: &str, tip: &str, holder: &str) -> Result<Vec<String>, String> {
-    Ok(["5", spira_config::lifecycle_row::lc_bin()?.as_str(), "work", id, "submit", "--tip", tip, "--actor", holder].iter().map(|s| s.to_string()).collect())
+    Ok(["5", spira_store::lifecycle_row::lc_bin()?.as_str(), "work", id, "submit", "--tip", tip, "--actor", holder].iter().map(|s| s.to_string()).collect())
 }
 
 /// The stage's one rune (stage.rs `rune_content`): the worker's ready set is this rune's.
@@ -455,7 +455,7 @@ pub(crate) fn claim_canary_bead(
 /// Let go of a claim the worker cannot finish: `spira-lc unclaim` (lib.sh
 /// `release_own_claim`). Best-effort, as before.
 fn release_bead(id: &str, holder: &str) {
-    let Ok(lc) = spira_config::lifecycle_row::lc_bin() else { return };
+    let Ok(lc) = spira_store::lifecycle_row::lc_bin() else { return };
     let _ = Command::new("timeout").args(["5", lc.as_str(), "unclaim", id, holder]).stdin(Stdio::null()).output();
 }
 

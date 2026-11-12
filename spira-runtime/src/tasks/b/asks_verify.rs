@@ -332,14 +332,14 @@ pub fn observe(e: &crate::Effects, label: &str) -> Result<String, String> {
     observe_on(&super::lc(e), label)
 }
 
-pub fn observe_on(lc: &spira_config::lc_call::LcClient, label: &str) -> Result<String, String> {
+pub fn observe_on(lc: &spira_store::lc_call::LcClient, label: &str) -> Result<String, String> {
     let text = lc.answer(&["content", "list", "--limit", "0", "--json", "--label-any", label]).map_err(String::from)?;
     let doc: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("content list: {e}"))?;
     let (asks, mislabelled) = parse_rows(&doc, label);
     let mut work_states = BTreeMap::new();
     if asks.iter().any(|a| !a.works.is_empty()) {
         let works: Vec<String> = asks.iter().flat_map(|a| a.works.iter().cloned()).collect();
-        for row in spira_config::lc_state::list_ids_on(lc, &works)? {
+        for row in spira_store::lc_state::list_ids_on(lc, &works)? {
             work_states.insert(row.bead_id, row.state);
         }
     }
@@ -396,7 +396,7 @@ super::hosted!(AsksVerify);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spira_config::lc_call::{fake, LcClient};
+    use spira_store::lc_call::{fake, LcClient};
     use std::sync::Arc;
 
     fn ask(id: &str, status: &str) -> serde_json::Value {
@@ -408,6 +408,6 @@ mod tests {
         let store = Arc::new(fake::Content::new(vec![ask("sp-open", "open"), ask("sp-done", "closed")]));
         let snap: Snapshot = serde_json::from_str(&observe_on(&LcClient::over(store.clone(), true), "needs-x").unwrap()).unwrap();
         assert_eq!(snap.asks.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["sp-open"]);
-        assert!(store.requests().iter().all(|r| !spira_config::lc_call::reads_whole_history(r)), "{:?}", store.requests());
+        assert!(store.requests().iter().all(|r| !spira_store::lc_call::reads_whole_history(r)), "{:?}", store.requests());
     }
 }

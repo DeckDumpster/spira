@@ -33,7 +33,7 @@ pub struct Fake {
     pub covers_in: RefCell<String>,
     pub covers_closed_in: RefCell<String>,
     /// `spira-lc list`'s rows.
-    pub lc: RefCell<Result<Vec<spira_config::lc_state::Row>, String>>,
+    pub lc: RefCell<Result<Vec<spira_store::lc_state::Row>, String>>,
 }
 
 impl Default for Fake {
@@ -69,7 +69,7 @@ impl Fake {
     fn set_lc(&self, rows: &[(&str, &str)]) {
         *self.lc.borrow_mut() = Ok(rows
             .iter()
-            .map(|(id, st)| spira_config::lc_state::Row { bead_id: id.to_string(), state: st.to_string(), ..Default::default() })
+            .map(|(id, st)| spira_store::lc_state::Row { bead_id: id.to_string(), state: st.to_string(), ..Default::default() })
             .collect());
     }
     fn set(&self, k: &str, v: &str) {
@@ -145,7 +145,7 @@ impl World for Fake {
     fn bd_list_all_json(&self, _label_pattern: &str) -> String {
         self.remedies.borrow().clone()
     }
-    fn lc_rows(&self) -> Result<Vec<spira_config::lc_state::Row>, String> {
+    fn lc_rows(&self) -> Result<Vec<spira_store::lc_state::Row>, String> {
         self.lc.borrow().clone()
     }
     fn git_branch_exists_matching(&self, _repo: &str, pattern: &str) -> bool {

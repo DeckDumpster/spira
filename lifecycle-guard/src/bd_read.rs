@@ -79,7 +79,7 @@ pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
                 line: idx + 1,
                 function: None,
                 callee: Some(verb.clone()),
-                detail: format!("bd {verb} read decides on bd's state; read the lifecycle row (`spira_config::lc_state`)"),
+                detail: format!("bd {verb} read decides on bd's state; read the lifecycle row (`spira_store::lc_state`)"),
             });
         }
     }

@@ -97,8 +97,8 @@ impl World for Real {
         }
         let ids = json_ids(&String::from_utf8_lossy(&out.stdout))
             .ok_or_else(|| "bd list output is not a JSON array".to_string())?;
-        let rows = spira_config::lc_state::list().map_err(|e| format!("lifecycle state unreadable ({e})"))?;
-        Ok(unfinished_count(&ids, &spira_config::lc_state::index(rows)))
+        let rows = spira_store::lc_state::list().map_err(|e| format!("lifecycle state unreadable ({e})"))?;
+        Ok(unfinished_count(&ids, &spira_store::lc_state::index(rows)))
     }
 
     fn lane_admitted(&self, lane: &str) -> bool {
@@ -189,7 +189,7 @@ pub fn json_ids(input: &str) -> Option<Vec<String>> {
 /// row READY, WORKING or REWORK (what bd's `open,in_progress` meant). A bead with no row can
 /// never be worked, and a poisoned one is not claimable again: neither is open, or one dead
 /// trigger would suppress every later one.
-pub fn unfinished_count(ids: &[String], lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> u64 {
+pub fn unfinished_count(ids: &[String], lc: &std::collections::HashMap<String, spira_store::lc_state::Row>) -> u64 {
     ids.iter().filter(|id| lc.get(*id).is_some_and(|r| !r.past_builder() && !r.held("poison"))).count() as u64
 }
 
@@ -209,7 +209,7 @@ fn humantime_utc_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spira_config::lc_state::Row;
+    use spira_store::lc_state::Row;
 
     /// sp-mve9i: an open trigger is one whose lifecycle row is still before its builder's
     /// hand-off; bd's status is not read.

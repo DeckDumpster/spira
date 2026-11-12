@@ -54,7 +54,7 @@ pub struct LibSeam {
     pub lib_sh: PathBuf,
     registry: OnceCell<spira_config::repos::Registry>,
     strand_cfg: OnceCell<strand::config::Config>,
-    lc: OnceCell<Result<spira_config::lc_call::LcClient, String>>,
+    lc: OnceCell<Result<spira_store::lc_call::LcClient, String>>,
     cfg: CfgFn,
     claim: ClaimFn,
 }
@@ -77,8 +77,8 @@ impl LibSeam {
     /// binary resolves it (env, then the resolved toml config, then the conf.sh default) —
     /// never from this struct's own `lib_sh` path, since the detectors no longer source it.
     /// The store's client, resolved once per process from the declared route.
-    fn lc(&self) -> Result<&spira_config::lc_call::LcClient, String> {
-        self.lc.get_or_init(spira_config::lc_call::LcClient::configured).as_ref().map_err(String::clone)
+    fn lc(&self) -> Result<&spira_store::lc_call::LcClient, String> {
+        self.lc.get_or_init(spira_store::lc_call::LcClient::configured).as_ref().map_err(String::clone)
     }
 
     fn strand_cfg(&self) -> &strand::config::Config {

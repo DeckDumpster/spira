@@ -27,7 +27,7 @@ use std::collections::{BTreeSet, HashSet};
 use crate::model::Bead;
 use crate::pass::Sentinel;
 use crate::store;
-use spira_config::lc_state;
+use spira_store::lc_state;
 use spira_config::nonwork::{self, Kind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

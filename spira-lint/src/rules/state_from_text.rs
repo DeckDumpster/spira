@@ -54,16 +54,16 @@ impl Class {
     pub fn message(self, what: &str) -> String {
         match self {
             Class::Output => format!(
-                "decides state from command output text ({what}) — read a typed value instead: spira_config::lc_state / LcClient, the command's `--json` deserialised into a struct, or its exit code mapped to an enum"
+                "decides state from command output text ({what}) — read a typed value instead: spira_store::lc_state / LcClient, the command's `--json` deserialised into a struct, or its exit code mapped to an enum"
             ),
             Class::CannotTell => format!(
                 "matches \"cannot tell\" as a substring ({what}) — \"cannot tell\" is a typed variant: map the exit code to an enum (LC_UNKNOWN, Holds::Unknown, an Err), never search the message"
             ),
             Class::StateWord => format!(
-                "matches a state word as a substring of command output ({what}) — read the state as a typed field: spira_config::lc_state::Row, the command's `--json` deserialised into a struct, or its exit code mapped to an enum"
+                "matches a state word as a substring of command output ({what}) — read the state as a typed field: spira_store::lc_state::Row, the command's `--json` deserialised into a struct, or its exit code mapped to an enum"
             ),
             Class::UnitName => format!(
-                "derives an identity by parsing a unit name ({what}) — read the identity from a typed record: the lifecycle row (spira_config::lc_state) or the unit's own typed properties; spira_config::unit builds names, nothing parses them"
+                "derives an identity by parsing a unit name ({what}) — read the identity from a typed record: the lifecycle row (spira_store::lc_state) or the unit's own typed properties; spira_config::unit builds names, nothing parses them"
             ),
         }
     }
@@ -652,7 +652,7 @@ const HEADER: &str = "\
 # unit name). Generated: spira-lint --only state-from-text --emit-allow.
 #
 # SHRINK-ONLY. Never add a line for new code. A count goes down as a site moves to a typed
-# read (spira_config::lc_state / LcClient, `--json` into a struct, an exit-code enum); a file
+# read (spira_store::lc_state / LcClient, `--json` into a struct, an exit-code enum); a file
 # under its count fails until the line is lowered or removed.
 ";
 
@@ -718,7 +718,7 @@ impl Rule for StateFromText {
     fn hint(&self) -> &'static str {
         "a decision about an object's state (bead, round, batch, ask, unit, release, mail) reads a \
 typed value, never text (law-lifecycle-state-is-not-text): an in-process typed API \
-(spira_config::lc_state, LcClient), the command's `--json` answer deserialised into a struct, or \
+(spira_store::lc_state, LcClient), the command's `--json` answer deserialised into a struct, or \
 its exit code mapped to an enum. \"Cannot tell\" is a typed variant, never a substring, and a \
 unit's identity comes from a typed record, never from parsing its name. Existing sites are \
 counted in spira-lint/state-from-text-allow, which only shrinks and never takes a line for new \
@@ -856,13 +856,13 @@ mod tests {
 
     #[test]
     fn a_typed_lc_read_passes() {
-        passes("fn f(c: &LcClient, id: &str) -> bool {\n    match spira_config::lc_state::row_on(c, id) {\n        Ok(Some(r)) => r.state == \"READY\",\n        _ => false,\n    }\n}\n");
+        passes("fn f(c: &LcClient, id: &str) -> bool {\n    match spira_store::lc_state::row_on(c, id) {\n        Ok(Some(r)) => r.state == \"READY\",\n        _ => false,\n    }\n}\n");
     }
 
     #[test]
     fn json_deserialised_into_a_struct_passes() {
         passes("fn f(id: &str) -> bool {\n    let o = Command::new(\"spira-lc\").args([\"show\", id, \"--json\"]).output().unwrap();\n    let text = String::from_utf8_lossy(&o.stdout);\n    let row: Row = serde_json::from_str(&text).unwrap();\n    if row.state == \"WORKING\" {\n        return true;\n    }\n    false\n}\n");
-        passes("fn f(id: &str) -> Option<Row> {\n    let o = Command::new(\"spira-lc\").args([\"show\", id]).output().ok()?;\n    let rows = spira_config::lc_state::parse_show(&String::from_utf8_lossy(&o.stdout)).ok()?;\n    rows.filter(|r| r.state == \"READY\")\n}\n");
+        passes("fn f(id: &str) -> Option<Row> {\n    let o = Command::new(\"spira-lc\").args([\"show\", id]).output().ok()?;\n    let rows = spira_store::lc_state::parse_show(&String::from_utf8_lossy(&o.stdout)).ok()?;\n    rows.filter(|r| r.state == \"READY\")\n}\n");
     }
 
     #[test]

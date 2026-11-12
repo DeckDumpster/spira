@@ -8,7 +8,7 @@ use std::io::Write;
 use std::process::Stdio;
 
 use serde_json::Value;
-use spira_config::lc_call::LcError;
+use spira_store::lc_call::LcError;
 
 #[derive(Debug, Default, Clone)]
 pub struct BdOut {
@@ -82,10 +82,10 @@ pub fn door(args: &[String], stdin: Option<&str>) -> Door {
 
 impl Bd for BdCli {
     fn ensure_ask(&self, id: &str, work_bead: &str) -> Result<(), String> {
-        spira_config::lifecycle_row::create_ask(id, work_bead)
+        spira_store::lifecycle_row::create_ask(id, work_bead)
     }
     fn close(&self, id: &str, reason: &str) -> Result<(), LcError> {
-        spira_config::lifecycle_row::close_as(id, reason, "mail")
+        spira_store::lifecycle_row::close_as(id, reason, "mail")
     }
     fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut {
         let tries = self.conn_retries.max(1);
@@ -103,7 +103,7 @@ impl Bd for BdCli {
 impl BdCli {
     fn run_once(&self, args: &[String], stdin: Option<&str>) -> BdOut {
         let Door::Content(argv, body) = door(args, stdin) else { return self.run_bdq(args, stdin) };
-        let lc = match spira_config::lc_call::LcClient::configured() {
+        let lc = match spira_store::lc_call::LcClient::configured() {
             Ok(c) => c,
             Err(e) => return BdOut::fail(2, e),
         };

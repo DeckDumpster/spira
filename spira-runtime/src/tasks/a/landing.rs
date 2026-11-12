@@ -43,7 +43,7 @@
 //!   then `spira_refs` (`pr.rs:94`) and `rev_parse`/`content_on_base` (`pr.rs:118,141`). All of
 //!   these are git class probes.
 //! - **Bead rows.** `bdq show <ids> --json` (`real.rs:644-668`, `pr.rs:99-100`) becomes the
-//!   content-store `show` verb (S7a). The lc state comes from `spira_config::lc_state::list_with`
+//!   content-store `show` verb (S7a). The lc state comes from `spira_store::lc_state::list_with`
 //!   or `row_with` (`real.rs:630-641`), which becomes LcClient `list`/`show`. The per-branch
 //!   `bead_lc_state` (`pr_branch.rs:45`) becomes the same projection.
 //! - **PR state.** `forge pr-state | pr-mergeability | pr-red | pr-list-open`
@@ -524,8 +524,8 @@ pub fn on_outcome(carry: &Carry, effect: &str, input: &str, ok: bool, body: &str
 // Runners. The repository map is `spira_config::repos`, the store is `LcClient`, the forge is
 // `forge::client` in this process (its one child is `gh`), and git is a `git` child.
 
-fn lc() -> Result<spira_config::lc_call::LcClient, String> {
-    Ok(spira_config::lc_call::LcClient::configured()?.within(std::time::Duration::from_secs(5)))
+fn lc() -> Result<spira_store::lc_call::LcClient, String> {
+    Ok(spira_store::lc_call::LcClient::configured()?.within(std::time::Duration::from_secs(5)))
 }
 
 fn registry() -> Result<spira_config::repos::Registry, String> {
@@ -570,7 +570,7 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
             continue;
         }
         let ids: Vec<String> = refs.iter().map(|(b, _)| b.trim_start_matches("spira/").to_string()).collect();
-        let rows = spira_config::lc_state::index(spira_config::lc_state::list_ids_on(&lc, &ids)?);
+        let rows = spira_store::lc_state::index(spira_store::lc_state::list_ids_on(&lc, &ids)?);
         let mut argv = vec!["content".to_string(), "show".to_string()];
         argv.extend(ids.iter().cloned());
         argv.push("--json".into());

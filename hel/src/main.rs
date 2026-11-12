@@ -135,7 +135,7 @@ fn cmd_reap_terminal(mut args: Vec<String>) -> ExitCodeLike {
         Err(e) => return die(&e),
     };
     // batch-job: a unit with TimeoutStartSec=900 may outwait a loaded store; 5 s failed it intermittently.
-    let rows = match spira_config::lifecycle_row::lc_bin().and_then(|lc| spira_config::lc_state::list_within(&lc, 120)) {
+    let rows = match spira_store::lifecycle_row::lc_bin().and_then(|lc| spira_store::lc_state::list_within(&lc, 120)) {
         Ok(r) if !r.is_empty() => r,
         Ok(_) => return die("reap-terminal: the lifecycle machine listed no beads — refusing to judge against nothing"),
         Err(e) => return die(&format!("reap-terminal: cannot read the lifecycle machine: {e}")),

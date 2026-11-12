@@ -235,26 +235,26 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
 }
 
 /// The hel world for this run, its store calls over `lc`.
-pub fn world(run: &std::path::Path, release: &str, lc: &spira_config::lc_call::LcClient) -> Result<hel::real::Real, String> {
+pub fn world(run: &std::path::Path, release: &str, lc: &spira_store::lc_call::LcClient) -> Result<hel::real::Real, String> {
     let home = hel::locate_home(None, Some(release)).ok_or("SPIRA_RELEASE does not resolve to a release — refusing")?;
     Ok(hel::real::Real::minimal(home, run.to_path_buf(), None).with_lc(lc.clone()))
 }
 
 /// The runner of [`OBSERVE`]: `hel::stale::scan` in-process, with each tree's lifecycle row
 /// (one `list` over the socket) as its state, and the world's halt stamp.
-pub fn observe(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient, proc_root: &std::path::Path) -> Result<String, String> {
+pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, proc_root: &std::path::Path) -> Result<String, String> {
     let run = real.run();
     if run.join("world.halted").exists() {
         return serde_json::to_string(&Snapshot { halted: true, repos: vec![] }).map_err(|e| e.to_string());
     }
-    let mut rows = spira_config::lc_state::index(spira_config::lc_state::list_live_on(lc)?);
+    let mut rows = spira_store::lc_state::index(spira_store::lc_state::list_live_on(lc)?);
     let unread = std::cell::Cell::new(None::<String>);
     let memo = std::cell::RefCell::new(&mut rows);
     let asked = std::cell::RefCell::new(std::collections::HashSet::<String>::new());
     let state_of = |id: &str| {
         if !memo.borrow().contains_key(id) && asked.borrow_mut().insert(id.to_string()) {
-            match spira_config::lc_state::list_ids_on(lc, &[id.to_string()]) {
-                Ok(found) => memo.borrow_mut().extend(spira_config::lc_state::index(found)),
+            match spira_store::lc_state::list_ids_on(lc, &[id.to_string()]) {
+                Ok(found) => memo.borrow_mut().extend(spira_store::lc_state::index(found)),
                 Err(e) => unread.set(Some(e)),
             }
         }

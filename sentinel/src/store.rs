@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use crate::cfg::Cfg;
 use crate::host::{Host, Out, Spec};
 use crate::model::{parse_beads, Bead, LcRow};
-use spira_config::lc_state;
+use spira_store::lc_state;
 
 /// lib.sh `bdq`: `timeout $BD_TIMEOUT $SPIRA_BD -C $SPIRA_DB …`, retried while the failure
 /// is a dropped pooled connection; refuses outright with no SPIRA_DB.

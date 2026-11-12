@@ -60,7 +60,7 @@ mod tests {
         fn run(&self, _args: &[String], _stdin: Option<&str>) -> BdOut {
             BdOut::ok("")
         }
-        fn close(&self, _id: &str, _reason: &str) -> Result<(), spira_config::lc_call::LcError> {
+        fn close(&self, _id: &str, _reason: &str) -> Result<(), spira_store::lc_call::LcError> {
             Ok(())
         }
         fn ensure_ask(&self, _id: &str, _work_bead: &str) -> Result<(), String> {

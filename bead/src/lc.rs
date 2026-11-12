@@ -3,7 +3,7 @@
 //! keeps no title or priority: those are the planning plane's. Each was a
 //! `timeout spira-lc …` child; the store's socket answers them now.
 
-use spira_config::lc_call::{LcClient, LcError};
+use spira_store::lc_call::{LcClient, LcError};
 
 /// `create-bead <id> [--submitted-tip S] [--repo R]`.
 pub fn create_bead_argv(id: &str, tip: Option<&str>, repo: Option<&str>) -> Vec<String> {
@@ -70,7 +70,7 @@ pub fn set_repo(lc: &LcClient, verb: &str, id: &str, repo: &str) -> SetRepo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spira_config::lc_call::{Reply, Transport};
+    use spira_store::lc_call::{Reply, Transport};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 

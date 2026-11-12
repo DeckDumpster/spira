@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use spira_config::lc_call::{LcClient, LcError};
+use spira_store::lc_call::{LcClient, LcError};
 use store_view::{Projection, Read};
 
 /// The configured client, bounded at `SPIRA_LC_TIMEOUT` for a program route; `None` when the
@@ -79,7 +79,7 @@ pub fn round_members(repo: &str) -> Option<HashSet<String>> {
 
 #[cfg(test)]
 pub mod scripted {
-    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 

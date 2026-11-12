@@ -11,11 +11,12 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["bead/integration", "mail/integration", "reconciler-engine/integration", "runtime/integration", "spira-config/integration", "spira-desired-state/integration", "spira-world/integration", "testkit/integration", "tsd/integration"]
+integration = ["bead/integration", "mail/integration", "reconciler-engine/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-world/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 bead = { path = "../bead" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 regex = "1"

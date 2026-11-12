@@ -11,7 +11,7 @@ use std::process::Command;
 
 use serde_json::Value;
 use sift::{Acts, Candidate, FileStore, GitProbe};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 use spira_config::repos::Registry;
 
 const WHO: &str = "round-controller";
@@ -40,7 +40,7 @@ impl Env {
         Ok(Env {
             home,
             run: PathBuf::from(run),
-            lc_bin: spira_config::lifecycle_row::lc_bin()?,
+            lc_bin: spira_store::lifecycle_row::lc_bin()?,
             lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
             wiki: cfg("SPIRA_WIKI").unwrap_or_default(),
             identity_projects: cfg("SPIRA_IDENTITY_PROJECTS").unwrap_or_default(),
@@ -184,7 +184,7 @@ impl Acts for Live<'_> {
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         let reason = format!("Sift: identical patch (patch-id) to {keeper}.");
         // FORK-EDGE: unserved verb close (the spira-lc CLI answers it; the socket does not)
-        spira_config::lifecycle_row::close_with(&self.env.lc_bin, id, &reason, "sift", Some(keeper))
+        spira_store::lifecycle_row::close_with(&self.env.lc_bin, id, &reason, "sift", Some(keeper))
     }
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {
         if self.sifted.get(id).map(String::as_str) == Some(tip) {
@@ -250,7 +250,7 @@ fn lcq_with(lc: &LcClient, args: &[&str]) -> Result<String, String> {
 /// An answer as the `spira-lc` child's was read: its stdout when it applied; otherwise its
 /// exit and the last line it said.
 fn lc_answer(
-    r: Result<spira_config::lc_call::Reply, spira_config::lc_call::LcError>,
+    r: Result<spira_store::lc_call::Reply, spira_store::lc_call::LcError>,
 ) -> Result<String, String> {
     let r = r.map_err(|e| format!("spira-lc: {e}"))?;
     if r.code != 0 {
@@ -570,7 +570,7 @@ fn bd_show_text(env: &Env, id: &str) -> Result<String, String> {
 /// The repository's open forge batch record from the store's views, as `queue batch show --repo
 /// <repo>` printed it: `key=value` lines; nothing when none is open.
 fn batch_show(env: &Env, repo: &str) -> Result<String, String> {
-    let client = spira_config::lc_call::LcClient::for_bin(&env.lc_bin)
+    let client = spira_store::lc_call::LcClient::for_bin(&env.lc_bin)
         .map_err(|e| format!("could not say: {e}"))?
         .within(std::time::Duration::from_secs(env.lc_timeout));
     let views = store_view::Projection::hot(client).map_err(|e| format!("could not say: {e}"))?;
@@ -990,10 +990,10 @@ mod tests {
         assert!(open_round(&|_| Err("queue batch show exited 1".into()), "deck").is_err(), "cannot tell is not no round");
     }
 
-    struct Store(std::sync::Mutex<Vec<Result<spira_config::lc_call::Reply, String>>>);
+    struct Store(std::sync::Mutex<Vec<Result<spira_store::lc_call::Reply, String>>>);
 
-    impl spira_config::lc_call::Transport for Store {
-        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+    impl spira_store::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             assert_eq!(argv[..2], ["rc", "list"], "only the batch records are read");
             crate::lock(&self.0).remove(0)
         }
@@ -1001,8 +1001,8 @@ mod tests {
 
     /// Views on `answers` whose clock moves a second at every look, so a zero staleness is stale
     /// by the first read.
-    fn views(answers: Vec<Result<spira_config::lc_call::Reply, String>>, stale: std::time::Duration) -> store_view::Projection {
-        let client = spira_config::lc_call::LcClient::over(std::sync::Arc::new(Store(std::sync::Mutex::new(answers))), true);
+    fn views(answers: Vec<Result<spira_store::lc_call::Reply, String>>, stale: std::time::Duration) -> store_view::Projection {
+        let client = spira_store::lc_call::LcClient::over(std::sync::Arc::new(Store(std::sync::Mutex::new(answers))), true);
         let (t0, looks) = (std::time::Instant::now(), std::sync::atomic::AtomicU64::new(0));
         let clock = move || t0 + std::time::Duration::from_secs(looks.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         store_view::Projection::new(client, stale, std::sync::Arc::new(clock))
@@ -1014,7 +1014,7 @@ mod tests {
             {"key": "batches/deck/deck-1", "create_rev": {"main": 2}, "value": {"data": {
                 "batch_id": "deck-1", "state": "OPEN", "repo": "deck",
                 "round": {"members": "sp-a:ta sp-b:tb", "forge.phase": "armed", "pr": "12"}}}}]}});
-        let ok = Ok(spira_config::lc_call::Reply { code: 0, out: listed.to_string(), err: String::new() });
+        let ok = Ok(spira_store::lc_call::Reply { code: 0, out: listed.to_string(), err: String::new() });
         let v = views(vec![ok.clone(), ok.clone()], std::time::Duration::from_secs(60));
         let open = open_round(&|r| shown_in(&v, r), "deck").unwrap();
         assert_eq!(open.iter().map(|c| (c.id.as_str(), c.tip.as_str())).collect::<Vec<_>>(), [("sp-a", "ta"), ("sp-b", "tb")]);

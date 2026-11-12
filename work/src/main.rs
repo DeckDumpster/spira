@@ -148,7 +148,7 @@ fn main() {
     spira_otel::run::phase("reply", asked.elapsed().as_millis() as u64);
     match answer {
         Ok((code, out)) => {
-            spira_config::lc_call::print_answer(code, &out);
+            spira_store::lc_call::print_answer(code, &out);
             { spira_otel::run::finish(code); std::process::exit(code) };
         }
         Err(e) => {

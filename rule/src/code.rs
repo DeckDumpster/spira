@@ -606,7 +606,7 @@ pub fn open_bead_labelled(label: &str) -> Result<Option<String>, String> {
     }
     let rows: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("rule: spira-lc content list output is not JSON: {e}"))?;
     for id in rows.as_array().into_iter().flatten().filter_map(|r| r.get("id")?.as_str()) {
-        let past = spira_config::lc_state::row(id)?.is_some_and(|r| r.past_builder());
+        let past = spira_store::lc_state::row(id)?.is_some_and(|r| r.past_builder());
         if !past {
             return Ok(Some(id.to_string()));
         }

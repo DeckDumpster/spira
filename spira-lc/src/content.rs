@@ -99,7 +99,7 @@ const TICK_DRIVEN: &[&str] = &["spira-runtime", "cockpit-collect", "panel"];
 pub fn refuse_whole_history(args: &[String], caller: &str) -> Option<Answer> {
     let argv: Vec<&str> = std::iter::once("content").chain(args.iter().map(String::as_str)).collect();
     let program = caller.split('/').next().unwrap_or("");
-    if !spira_config::lc_call::reads_whole_history(&argv) || !TICK_DRIVEN.contains(&program) {
+    if !spira_store::lc_call::reads_whole_history(&argv) || !TICK_DRIVEN.contains(&program) {
         return None;
     }
     Some(Answer {
@@ -135,7 +135,7 @@ pub struct Guards<'a> {
 pub fn guard(args: &[String], body: Option<&str>, g: &Guards, m: &mut dyn crate::callers::Machine) -> Result<String, Answer> {
     let rows = std::cell::RefCell::new(m);
     let row = |id: &str| match rows.borrow_mut().call(&["show".to_string(), id.to_string()]) {
-        (0, out) => spira_config::lc_state::parse_show(&out).ok().flatten(),
+        (0, out) => spira_store::lc_state::parse_show(&out).ok().flatten(),
         _ => None,
     };
     let vars = |k: &str| g.caller.get(k).cloned();
@@ -163,7 +163,7 @@ pub fn after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine,
     match bead::guard::after(args) {
         bead::guard::After::Nothing => String::new(),
         bead::guard::After::Rows => {
-            let ids = spira_config::lifecycle_row::created_ids(stdout);
+            let ids = spira_store::lifecycle_row::created_ids(stdout);
             if ids.is_empty() {
                 return format!("spira-lc content: LIFECYCLE: cannot read any created bead id from {stdout:?}; the new beads have no lifecycle row and cannot be claimed\n");
             }
@@ -511,8 +511,8 @@ mod tests {
         spira_config::repos::Registry::new(Some(map), &BTreeMap::new(), std::path::Path::new("/r/spira"))
     }
 
-    fn row_of(row: Option<&serde_json::Value>) -> Option<spira_config::lc_state::Row> {
-        row.and_then(|r| spira_config::lc_state::parse_show(&serde_json::json!({"bead": r}).to_string()).ok().flatten())
+    fn row_of(row: Option<&serde_json::Value>) -> Option<spira_store::lc_state::Row> {
+        row.and_then(|r| spira_store::lc_state::parse_show(&serde_json::json!({"bead": r}).to_string()).ok().flatten())
     }
 
     /// bdq's guards as `src/bin/bdq.rs` calls them, each at its own point and in its order: the

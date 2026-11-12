@@ -17,7 +17,7 @@ use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
 use crate::ports::*;
 use crate::records::Kv;
 use crate::seam::{self, Op};
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 /// Close every fd >= 3 in the child before it execs. This process's own fds are already
 /// close-on-exec (Rust's std opens them that way), but a caller's lock fd this process
@@ -619,7 +619,7 @@ impl Lib for RealLib {
             // Every harness tool by name, on the launcher's PATH (sp-gypjk).
             batcher_bin: Some(PathBuf::from(spira_config::release_env::tool("batcher")?)),
             batcher_off: g("batcher_enable").trim() == "0",
-            lc_bin: Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)),
+            lc_bin: Some(PathBuf::from(spira_store::lifecycle_row::lc_bin()?)),
             submitted_label: g("submitted_label"),
             home_repo: reg.home_repo().to_string(),
             db: g("db"),
@@ -707,10 +707,10 @@ impl Lib for RealLib {
     }
     // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
     fn bead_close(&self, id: &str, reason: &str) -> bool {
-        spira_config::lifecycle_row::close_landed(id, reason, "queue").is_ok()
+        spira_store::lifecycle_row::close_landed(id, reason, "queue").is_ok()
     }
     fn bead_retire(&self, id: &str, reason: &str) -> Result<(), String> {
-        spira_config::lifecycle_row::close(id, reason, "queue", None)
+        spira_store::lifecycle_row::close(id, reason, "queue", None)
     }
     fn reap_landed_branch(
         &self,

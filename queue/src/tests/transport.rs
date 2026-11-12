@@ -5,7 +5,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use spira_config::lc_call::{LcClient, Reply, Transport};
+use spira_store::lc_call::{LcClient, Reply, Transport};
 
 use crate::ports::{Lc, Rerun, RoundLease};
 use crate::real::{self, RealLc};

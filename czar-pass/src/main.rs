@@ -501,7 +501,7 @@ fn projection_batch_show() -> BatchShow {
     std::sync::Arc::new(move |repo: &str| {
         let p = views
             .get_or_init(|| {
-                let p = store_view::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
+                let p = store_view::Projection::configured(spira_store::lc_call::LcClient::configured()?)?;
                 p.refresh_batches().map_err(String::from)?;
                 Ok(p)
             })
@@ -512,7 +512,7 @@ fn projection_batch_show() -> BatchShow {
 }
 
 /// `batch show`'s stdout from a view's answer; a refusal is "could not say".
-fn shown_of(read: Result<store_view::BatchView, spira_config::lc_call::LcError>) -> Result<String, String> {
+fn shown_of(read: Result<store_view::BatchView, spira_store::lc_call::LcError>) -> Result<String, String> {
     read.map(|v| v.shown()).map_err(|e| format!("could not say: {e}"))
 }
 
@@ -1140,7 +1140,7 @@ fn repo_branch_ids(repo_path: &Path) -> Vec<String> {
 /// pool it could not see.
 fn certified_depth(cfg: &Config, repo_path: &Path) -> u32 {
     let what = "czar-pass: spira-lc list --state CERTIFIED";
-    let answer = spira_config::lc_call::LcClient::for_bin(&cfg.seams.spira_lc).map_err(spira_config::lc_call::LcError::Fault).and_then(|c| c.call(&["list", "--state", "CERTIFIED"]));
+    let answer = spira_store::lc_call::LcClient::for_bin(&cfg.seams.spira_lc).map_err(spira_store::lc_call::LcError::Fault).and_then(|c| c.call(&["list", "--state", "CERTIFIED"]));
     let out = match answer {
         Ok(r) if r.code == 0 => r.out.into_bytes(),
         Ok(r) => {
@@ -1691,7 +1691,7 @@ mod tests {
 
     #[test]
     fn a_batch_view_the_store_cannot_vouch_for_could_not_say() {
-        use spira_config::lc_call::LcError;
+        use spira_store::lc_call::LcError;
         use store_view::{BatchView, Record};
         let err = shown_of(Err(LcError::Refused("stale past 3000ms".into()))).unwrap_err();
         assert!(err.starts_with("could not say") && err.contains("stale"), "{err}");

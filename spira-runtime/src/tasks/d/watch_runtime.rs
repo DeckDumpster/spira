@@ -288,7 +288,7 @@ fn git(path: &str, args: &[&str]) -> Result<String, String> {
 
 /// A live bump for `(repo, rt)`: the ledgered id when the store shows it live, else the first
 /// live bead of the repo whose title names a bump of `rt` (`runtime-watch/src/real.rs:144-226`).
-fn open_bump(lc: &spira_config::lc_call::LcClient, ledgered: Option<&String>, live: &[serde_json::Value], rt: runtime_watch::Runtime) -> Result<Option<String>, String> {
+fn open_bump(lc: &spira_store::lc_call::LcClient, ledgered: Option<&String>, live: &[serde_json::Value], rt: runtime_watch::Runtime) -> Result<Option<String>, String> {
     if let Some(id) = ledgered {
         let out = lc.call(&["show", id.as_str()]).map_err(|e| format!("cannot tell whether {id} is open: {e}"))?;
         match out.code {
@@ -313,7 +313,7 @@ pub fn observe(input: &str) -> Result<String, String> {
     let ledger: BTreeMap<String, String> = serde_json::from_str(input).unwrap_or_default();
     let home = spira_config::resolve::locate_home_for_process()?;
     let registry = Registry::from_env(std::env::vars().collect(), &home);
-    let lc = spira_config::lc_call::LcClient::configured()?;
+    let lc = spira_store::lc_call::LcClient::configured()?;
     let mut repos = vec![];
     let mut open_bumps = BTreeMap::new();
     for name in registry.all() {
@@ -355,7 +355,7 @@ pub fn observe(input: &str) -> Result<String, String> {
 /// answer is the bead id, which the ledger records.
 pub fn file_bump(input: &str) -> Result<String, String> {
     let b: Bump = serde_json::from_str(input).map_err(|e| format!("{FILE_BUMP}: {e}"))?;
-    let lc = spira_config::lc_call::LcClient::configured()?.within(std::time::Duration::from_millis(FILE_DEADLINE_MS));
+    let lc = spira_store::lc_call::LcClient::configured()?.within(std::time::Duration::from_millis(FILE_DEADLINE_MS));
     let out = lc.call_stdin(&["work", "-", "file", &b.title, "--for", &b.persona, "--repo", &b.repo, "--body-file", "-", "--actor", COMPONENT], &b.body).map_err(|e| format!("work file {:?}: {e}", b.title))?;
     if out.code != 0 {
         return Err(format!("work file {:?}: {}", b.title, out.why()));

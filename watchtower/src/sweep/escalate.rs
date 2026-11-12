@@ -450,7 +450,7 @@ mod tests {
             throttle_stamp: None,
             queue_throttle_override: String::new(),
             incident_sh,
-            lc: spira_config::lc_call::LcClient::socket("/does/not/exist/lc.sock"),
+            lc: spira_store::lc_call::LcClient::socket("/does/not/exist/lc.sock"),
             suites_sh: None,
             cockpit_db: None,
             moot_timeout_s: 30,

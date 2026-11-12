@@ -52,7 +52,7 @@ pub fn witness(run: &Path, id: &str, seam: &dyn Seam) -> Option<String> {
         BeadStatus::Unreachable => {
             Some("the lifecycle machine did not answer, so the claim witness proves nothing".into())
         }
-        BeadStatus::Known(s) if spira_config::lc_state::is_working(&s) => {
+        BeadStatus::Known(s) if spira_store::lc_state::is_working(&s) => {
             Some("WORKING — the lease has not been released".into())
         }
         BeadStatus::Known(_) => None,

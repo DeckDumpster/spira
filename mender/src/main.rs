@@ -12,13 +12,13 @@ struct Real;
 
 impl World for Real {
     fn lc(&self, args: &[&str]) -> (i32, String) {
-        let bin = match spira_config::lc_call::lc_bin() {
+        let bin = match spira_store::lc_call::lc_bin() {
             Ok(b) => b,
             Err(e) => return (2, e),
         };
         let mut cmd = Command::new(bin);
         cmd.args(args);
-        spira_config::lc_call::run_bounded(cmd, spira_config::lc_call::LC_TIMEOUT)
+        spira_store::lc_call::run_bounded(cmd, spira_store::lc_call::LC_TIMEOUT)
     }
 
     fn git(&self, repo: &str, args: &[&str]) -> Result<String, String> {

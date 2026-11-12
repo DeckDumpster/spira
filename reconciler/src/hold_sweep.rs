@@ -117,7 +117,7 @@ pub fn exits_from_history(history_json: &str) -> Result<Vec<Exit>, String> {
             "Unhold" if same_kind(&kind, Kind::Ask) => ask_live = false,
             "Hold" if same_kind(&kind, Kind::Wait) && text(e, "actor").is_some_and(|a| a == NO_PROGRESS_ACTOR) => {
                 let detail = text(&body, "detail").unwrap_or_default();
-                if spira_config::lc_state::snooze_until(&detail).is_some() && !spira_config::lc_state::is_checkpoint(&detail) {
+                if spira_store::lc_state::snooze_until(&detail).is_some() && !spira_store::lc_state::is_checkpoint(&detail) {
                     exits.push(Exit { ended_at: epoch(e, "at").unwrap_or(0), note: detail });
                 }
             }

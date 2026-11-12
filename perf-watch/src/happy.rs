@@ -236,10 +236,10 @@ mod tests {
     use std::cell::Cell;
 
     struct Store(String);
-    impl spira_config::lc_call::Transport for Store {
-        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+    impl spira_store::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             let out = if argv[0] == "rc" { self.0.clone() } else { "[]".to_string() };
-            Ok(spira_config::lc_call::Reply { code: 0, out, err: String::new() })
+            Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new() })
         }
     }
 
@@ -248,7 +248,7 @@ mod tests {
         let views = |state: &str| {
             let store = serde_json::json!({"ok": {"list_rev": 2, "items": [{"key": "batches/spira/r1", "create_rev": {"main": 1},
                 "value": {"data": {"batch_id": "r1", "state": state, "repo": "spira", "round": {"head": "h", "members": "sp-a:t"}}}}]}});
-            let client = spira_config::lc_call::LcClient::over(std::sync::Arc::new(Store(store.to_string())), true);
+            let client = spira_store::lc_call::LcClient::over(std::sync::Arc::new(Store(store.to_string())), true);
             let p = store_view::Projection::new(client, std::time::Duration::from_secs(60), std::sync::Arc::new(std::time::Instant::now));
             p.load().unwrap();
             p

@@ -71,13 +71,13 @@ pub fn backlog_count(bdq: &str, scope_label: &str) -> Result<u64, String> {
     let rows: Vec<Value> = serde_json::from_str(text.trim())
         .map_err(|e| format!("{bdq} list: unparsable json: {e}"))?;
     let ids: Vec<String> = rows.iter().filter_map(|r| r.get("id").and_then(Value::as_str).map(str::to_string)).collect();
-    let lc = spira_config::lc_state::list().map_err(|e| format!("lifecycle state unreadable: {e}"))?;
-    Ok(backlog_of(&ids, &spira_config::lc_state::index(lc)))
+    let lc = spira_store::lc_state::list().map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+    Ok(backlog_of(&ids, &spira_store::lc_state::index(lc)))
 }
 
 /// How many of `ids` are still in the backlog: a lifecycle row that is not terminal. A bead
 /// with no row can never be worked, so it is not backlog.
-pub fn backlog_of(ids: &[String], lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> u64 {
+pub fn backlog_of(ids: &[String], lc: &std::collections::HashMap<String, spira_store::lc_state::Row>) -> u64 {
     ids.iter().filter(|id| lc.get(*id).is_some_and(|r| !r.terminal())).count() as u64
 }
 
@@ -412,7 +412,7 @@ fn read_flow_floors(desired_dir: &Path) -> Option<(Option<f64>, Option<u64>)> {
 #[cfg(test)]
 mod backlog_tests {
     use super::*;
-    use spira_config::lc_state::Row;
+    use spira_store::lc_state::Row;
 
     /// sp-mve9i: the backlog is the beads whose lifecycle row is not terminal.
     #[test]

@@ -211,14 +211,14 @@ pub fn content(args: &[&str]) -> Option<String> {
             return None;
         }
     }
-    let lc = spira_config::lc_call::LcClient::configured().ok()?;
+    let lc = spira_store::lc_call::LcClient::configured().ok()?;
     let tries: u32 = env_or("SPIRA_BDQ_CONN_RETRIES", "2").parse().unwrap_or(2).max(1);
     content_on(&lc, args, tries)
 }
 
 /// [`content`] through `lc`: the store's `content` verb, retried up to `tries` times while
 /// bd's answer says its connection was invalid.
-pub fn content_on(lc: &spira_config::lc_call::LcClient, args: &[&str], tries: u32) -> Option<String> {
+pub fn content_on(lc: &spira_store::lc_call::LcClient, args: &[&str], tries: u32) -> Option<String> {
     let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
     let mut attempt: u32 = 1;
     loop {
@@ -392,7 +392,7 @@ pub const ONLINE_WINDOW_SECS: i64 = 14 * 86_400;
 
 /// Beads carrying `labels` updated in the `window_secs` before `now`, closed ones included, no
 /// descriptions. The window and the label filter are the store's.
-pub fn history_on(lc: &spira_config::lc_call::LcClient, labels: &str, window_secs: i64, now: i64) -> Option<String> {
+pub fn history_on(lc: &spira_store::lc_call::LcClient, labels: &str, window_secs: i64, now: i64) -> Option<String> {
     let since = bead::claimdesc::iso_of(now - window_secs);
     let mut args = vec!["list", "--all", "--brief", "--limit", "0", "--json", "--updated-after", &since];
     if !labels.is_empty() {
@@ -410,7 +410,7 @@ pub fn history_beads(labels: &str, window_secs: i64) -> Option<String> {
         if fixture_mode() {
             return read_json(&["list", "--all", "--closed-after", "1970-01-01", "--json"]);
         }
-        let lc = spira_config::lc_call::LcClient::configured().ok()?;
+        let lc = spira_store::lc_call::LcClient::configured().ok()?;
         history_on(&lc, labels, window_secs, now())
     });
     with_labels(merge_rows(&[live_base(), all]), labels)
@@ -830,7 +830,7 @@ mod pane_read_tests {
 #[cfg(test)]
 mod history_tests {
     use super::*;
-    use spira_config::lc_call::{fake::Content, LcClient};
+    use spira_store::lc_call::{fake::Content, LcClient};
     use std::sync::Arc;
 
     #[test]

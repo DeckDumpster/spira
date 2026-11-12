@@ -5,7 +5,7 @@
 use std::io::Write;
 use std::process::Stdio;
 
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 /// One trigger bead: the fields `bead.sh file` / `bdq create` write today.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,11 +102,11 @@ mod tests {
     /// The store as a scripted transport: records each request and its body.
     struct Script(std::sync::Mutex<Vec<(Vec<String>, Option<String>)>>);
 
-    impl spira_config::lc_call::Transport for Script {
-        fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+    impl spira_store::lc_call::Transport for Script {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push((argv.to_vec(), stdin.map(str::to_string)));
             let out = if argv.first().map(String::as_str) == Some("content") { "sp-new\n".to_string() } else { String::new() };
-            Ok(spira_config::lc_call::Reply { code: 0, out, err: String::new() })
+            Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new() })
         }
     }
 

@@ -5,7 +5,7 @@
 # unit name). Generated: spira-lint --only state-from-text --emit-allow.
 #
 # SHRINK-ONLY. Never add a line for new code. A count goes down as a site moves to a typed
-# read (spira_config::lc_state / LcClient, `--json` into a struct, an exit-code enum); a file
+# read (spira_store::lc_state / LcClient, `--json` into a struct, an exit-code enum); a file
 # under its count fails until the line is lowered or removed.
 1 unit-name cert-sweep/src/lib.rs
 1 unit-name cockpit/ops/src/lcview.rs

@@ -310,7 +310,7 @@ fn close_decision(db: &str, item: &Item, reason: &str, cfg: &Cfg) -> Result<(), 
     // The CLI-answered close (LcClient::CLI_VERBS): the library runs it.
     // FORK-EDGE: unserved verb close (the machine close also writes the planning store).
     let lc = crate::store::bin("spira-lc", cfg);
-    let e = match spira_config::lifecycle_row::close_with(&lc, id, reason, actor, None) {
+    let e = match spira_store::lifecycle_row::close_with(&lc, id, reason, actor, None) {
         Ok(()) => {
             record_answer(item, reason, actor, cfg);
             lift_work_holds(db, item, actor, cfg);
@@ -334,7 +334,7 @@ fn record_answer(item: &Item, reason: &str, actor: &str, cfg: &Cfg) {
     let mut c = Command::new(crate::store::bin("spira-lc", cfg));
     c.args(["close-ask", &item.id, "--exit", "answered", "--quote", reason, "--actor", actor, "--channel", "pane", "--message-id", &item.id])
         .env("PATH", crate::store::child_path(cfg));
-    let (code, out) = spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT);
+    let (code, out) = spira_store::lc_call::run_bounded(c, spira_store::lc_call::LC_TIMEOUT);
     if !matches!(code, 0 | 1 | 3) {
             let _ = content(&["comments", "add", &item.id, &format!("[answer not recorded on the ask machine: exit {code}: {}]", out.trim())]);
     }
@@ -357,7 +357,7 @@ fn lift_work_holds(_db: &str, item: &Item, actor: &str, cfg: &Cfg) {
         // FORK-EDGE: unserved verb reply (a callers.rs verb the socket does not serve).
         let mut c = Command::new(crate::store::bin("spira-lc", cfg));
         c.args(["reply", w, &item.id, actor]).env("PATH", crate::store::child_path(cfg));
-        let failed = match spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT) {
+        let failed = match spira_store::lc_call::run_bounded(c, spira_store::lc_call::LC_TIMEOUT) {
             (0 | 1 | 3, _) => None,
             (code, out) => Some(format!("exit {code}: {}", out.trim())),
         };
@@ -479,7 +479,7 @@ fn condition(args: &[&str], cfg: &Cfg) -> Result<(), String> {
     condition_with(&crate::lcio::client(cfg)?, args)
 }
 
-fn condition_with(client: &spira_config::lc_call::LcClient, args: &[&str]) -> Result<(), String> {
+fn condition_with(client: &spira_store::lc_call::LcClient, args: &[&str]) -> Result<(), String> {
     let mut argv = vec!["condition"];
     argv.extend_from_slice(args);
     argv.extend(["--owner", crate::store::ALERT_OWNER]);

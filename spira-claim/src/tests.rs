@@ -95,7 +95,7 @@ fn express_is_a_bool_flag_and_never_swallows_what_follows() {
 
 mod published {
     use super::*;
-    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -295,12 +295,12 @@ mod published {
 mod published_read {
     use super::*;
     use serde_json::{json, Value};
-    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     fn snooze() -> String {
-        spira_config::lc_state::snooze_reason(ready::now_epoch() + 3_600)
+        spira_store::lc_state::snooze_reason(ready::now_epoch() + 3_600)
     }
 
     fn lifecycle() -> Vec<Value> {

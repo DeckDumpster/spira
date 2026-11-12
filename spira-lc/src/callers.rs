@@ -18,7 +18,7 @@ use lifecycle::bead::{DwarfPhase, BeadEventKind, BeadState, BreakGlass, Disposit
 use lifecycle::delivery::DeliveryEventKind;
 use lifecycle::reason::{DropReason, GateRedReason, HoldCause, ReturnedReason};
 use serde_json::Value;
-use spira_config::lc_state;
+use spira_store::lc_state;
 
 /// Exit codes, the shell library's own: 0 applied · 1 no row · 2 cannot tell · 3 refused.
 pub const APPLIED: i32 = 0;

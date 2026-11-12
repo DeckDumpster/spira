@@ -41,7 +41,7 @@ path = "tests/test_sandbox.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["gate/integration", "spira-config/integration", "spira-otel/integration", "suite-select/integration", "testkit/integration", "tsd/integration"]
+integration = ["gate/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "suite-select/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }
@@ -51,6 +51,7 @@ regex = "1"
 sha2 = "0.10"
 libc = "0.2"
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 gate = { path = "../gate" }
 tsd = { path = "../tsd" }
 suite-select = { path = "../suite-select" }

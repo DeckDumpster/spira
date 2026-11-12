@@ -11,12 +11,13 @@ path = "tests/e2e_goodput_20d.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["bead/integration", "incident/integration", "lifecycle/integration", "reconciler-engine/integration", "runtime/integration", "round-vm/integration", "sentinel/integration", "spira-config/integration", "spira-desired-state/integration", "spira-otel/integration", "state-store/integration", "state-store-sqlite/integration", "testkit/integration", "tsd/integration"]
+integration = ["bead/integration", "incident/integration", "lifecycle/integration", "reconciler-engine/integration", "runtime/integration", "round-vm/integration", "sentinel/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-otel/integration", "state-store/integration", "state-store-sqlite/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 bead = { path = "../bead" }
 lifecycle = { path = "../lifecycle" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 spira-otel = { path = "../spira-otel" }

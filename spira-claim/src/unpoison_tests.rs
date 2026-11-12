@@ -467,8 +467,8 @@ fn stop_occupants_stops_the_occupants_unit_through_the_port() {
 }
 
 /// `Live` over a scripted lifecycle service: `content` answers `content`, `show` answers `show`.
-fn live_over(content: spira_config::lc_call::Reply, show: spira_config::lc_call::Reply) -> Live {
-    use spira_config::lc_call::{LcClient, Reply, Transport};
+fn live_over(content: spira_store::lc_call::Reply, show: spira_store::lc_call::Reply) -> Live {
+    use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::Arc;
     struct Two(Reply, Reply);
     impl Transport for Two {
@@ -493,8 +493,8 @@ fn live_over(content: spira_config::lc_call::Reply, show: spira_config::lc_call:
     }
 }
 
-fn reply(code: i32, out: &str) -> spira_config::lc_call::Reply {
-    spira_config::lc_call::Reply { code, out: out.into(), err: String::new() }
+fn reply(code: i32, out: &str) -> spira_store::lc_call::Reply {
+    spira_store::lc_call::Reply { code, out: out.into(), err: String::new() }
 }
 
 const ROW: &str = r#"{"bead":{"bead_id":"sp-a","state":"READY","holds":[],"version":1}}"#;

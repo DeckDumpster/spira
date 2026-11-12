@@ -371,7 +371,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
 pub(crate) struct Request {
     pub argv: Vec<String>,
     pub stdin: Option<String>,
-    /// The caller's guard variables (`spira_config::lc_call::GUARD_VARS`), which a content
+    /// The caller's guard variables (`spira_store::lc_call::GUARD_VARS`), which a content
     /// write is judged on as bdq judged it in the caller's own process.
     pub caller: std::collections::BTreeMap<String, String>,
     /// The store revision the caller's answer must reflect (`{"min_rev": N}`): a caller that
@@ -919,7 +919,7 @@ mod tests {
         let caller: std::collections::BTreeMap<String, String> =
             [("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-t")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let argv: Vec<String> = ["content", "update", "sp-a", "--add-label", "x"].iter().map(|s| s.to_string()).collect();
-        let line = spira_config::lc_call::request_head(&argv, None, &caller, None).unwrap();
+        let line = spira_store::lc_call::request_head(&argv, None, &caller, None).unwrap();
         let mut wire = std::io::Cursor::new(format!("{line}\n").into_bytes());
         let (req, _) = super::read_request(&mut wire).unwrap().unwrap();
         assert_eq!(req.caller, caller, "the variables survive the wire");
@@ -936,7 +936,7 @@ mod tests {
         assert_eq!(ans.code, 0, "{ans:?}");
         assert_eq!(*c.0.borrow(), ["update sp-a --add-label x"]);
 
-        let line = spira_config::lc_call::request_head(&argv, Some(2), &caller, None).unwrap();
+        let line = spira_store::lc_call::request_head(&argv, Some(2), &caller, None).unwrap();
         let mut wire = std::io::Cursor::new(format!("{line}\nhi").into_bytes());
         assert_eq!(super::read_request(&mut wire).unwrap().unwrap().0.stdin.as_deref(), Some("hi"), "a body still rides with its len");
         let mut wire = std::io::Cursor::new(b"{\"argv\":[\"list\"]}\n".to_vec());
@@ -1056,9 +1056,9 @@ mod tests {
         super::answer(req, &mut m, &mut b, c, &|| Err("no run dir here".to_string()))
     }
 
-    fn state(w: &World, id: &str) -> Option<spira_config::lc_state::Row> {
+    fn state(w: &World, id: &str) -> Option<spira_store::lc_state::Row> {
         match w.lc(&["show", id]) {
-            (0, out) => spira_config::lc_state::parse_show(&out).unwrap(),
+            (0, out) => spira_store::lc_state::parse_show(&out).unwrap(),
             _ => None,
         }
     }

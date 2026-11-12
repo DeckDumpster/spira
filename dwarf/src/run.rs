@@ -1562,7 +1562,7 @@ impl<'a> Run<'a> {
             return false;
         }
         let now = self.now();
-        let reason = spira_config::lc_state::checkpoint_reason(now + checkpoint::HOLD_SECS);
+        let reason = spira_store::lc_state::checkpoint_reason(now + checkpoint::HOLD_SECS);
         let Some(held) = self.hold_unless_terminal(id, "wait", &reason, "dwarf") else {
             return false;
         };

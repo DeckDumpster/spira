@@ -94,7 +94,7 @@ fn blocked_bead_none_on_malformed_json() {
 
 fn lc(rows: &[(&str, &str)]) -> Lc {
     rows.iter()
-        .map(|(id, st)| (id.to_string(), spira_config::lc_state::Row { bead_id: id.to_string(), state: st.to_string(), ..Default::default() }))
+        .map(|(id, st)| (id.to_string(), spira_store::lc_state::Row { bead_id: id.to_string(), state: st.to_string(), ..Default::default() }))
         .collect()
 }
 

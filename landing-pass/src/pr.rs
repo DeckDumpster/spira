@@ -187,7 +187,7 @@ pub struct RealPrTools<'a> {
     pub s: &'a Settings,
     pub out: &'a Reporter,
     /// A pinned store client (tests); `None` resolves one from `s.lc_bin`.
-    pub lc: Option<spira_config::lc_call::LcClient>,
+    pub lc: Option<spira_store::lc_call::LcClient>,
 }
 
 impl<'a> PrTools for RealPrTools<'a> {

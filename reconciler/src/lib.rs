@@ -35,7 +35,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -788,7 +788,7 @@ fn owner_landed(cfg: &Config, owner: &str) -> bool {
     if owner.is_empty() {
         return false;
     }
-    matches!(cfg.lc(&["show", owner]).and_then(|out| spira_config::lc_state::parse_show(&out)), Ok(Some(r)) if r.state == "LANDED")
+    matches!(cfg.lc(&["show", owner]).and_then(|out| spira_store::lc_state::parse_show(&out)), Ok(Some(r)) if r.state == "LANDED")
 }
 
 fn reminder_body(subject: &str, why: &str, reason: &str, owner: &str) -> String {
@@ -1699,7 +1699,7 @@ fn observe_queue_lock_age(cfg: &Config) -> Vec<Check> {
 
 const JUNK_ROW_PREFIX: &str = "junk-row:";
 
-fn junk_row_ids(rows: &[spira_config::lc_state::Row], store_ids: &HashSet<String>) -> Vec<String> {
+fn junk_row_ids(rows: &[spira_store::lc_state::Row], store_ids: &HashSet<String>) -> Vec<String> {
     rows.iter()
         .filter(|r| r.state == "READY" && !store_ids.contains(&r.bead_id))
         .map(|r| r.bead_id.clone())
@@ -1730,7 +1730,7 @@ fn observe_junk_rows(cfg: &Config) -> Vec<Check> {
             remedy: Remedy::Escalate,
         }]
     };
-    let rows = match cfg.lc(&["list", "--state", "READY"]).and_then(|out| spira_config::lc_state::parse_rows(&out)) {
+    let rows = match cfg.lc(&["list", "--state", "READY"]).and_then(|out| spira_store::lc_state::parse_rows(&out)) {
         Ok(rows) => rows,
         Err(e) => return unobservable(e),
     };
@@ -2615,7 +2615,7 @@ mod tests {
 
     #[test]
     fn junk_rows_are_ready_rows_without_a_bead() {
-        let row = |id: &str, state: &str| spira_config::lc_state::Row {
+        let row = |id: &str, state: &str| spira_store::lc_state::Row {
             bead_id: id.into(),
             state: state.into(),
             ..Default::default()
@@ -2677,10 +2677,10 @@ mod tests {
     /// The lifecycle store's answers, and every argv it was asked.
     struct Store(std::sync::Mutex<Vec<Vec<String>>>);
 
-    impl spira_config::lc_call::Transport for Store {
-        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+    impl spira_store::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            Ok(spira_config::lc_call::Reply { code: 0, out: format!("answered {}", argv[0]), err: String::new() })
+            Ok(spira_store::lc_call::Reply { code: 0, out: format!("answered {}", argv[0]), err: String::new() })
         }
     }
 
@@ -2688,7 +2688,7 @@ mod tests {
         let store = Arc::new(Store(std::sync::Mutex::default()));
         let mut cfg = test_config();
         cfg.seams.spira_lc = "/nonexistent/spira-lc".into();
-        cfg.lc_client = Some(LcClient::over(Arc::clone(&store) as Arc<dyn spira_config::lc_call::Transport>, true));
+        cfg.lc_client = Some(LcClient::over(Arc::clone(&store) as Arc<dyn spira_store::lc_call::Transport>, true));
         (cfg, store)
     }
 
@@ -2745,7 +2745,7 @@ mod tests {
         }
         fn lc(&self, argv: &[&str]) -> Result<String, String> {
             self.asked.lock().unwrap().push(argv.join(" "));
-            if spira_config::lc_call::reads_whole_history(argv) {
+            if spira_store::lc_call::reads_whole_history(argv) {
                 return Err("refused: reads every bead ever filed".into());
             }
             match argv {

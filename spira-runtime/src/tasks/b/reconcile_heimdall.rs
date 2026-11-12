@@ -357,7 +357,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
 /// store's heimdall conditions (and the write probe, which stays part of observe), the run
 /// dir's halt and drain stamps and its strands file. A store that answers removes a fallback
 /// file left by an outage. Restart counts wait on `NRestarts` in `UnitFacts` and are empty.
-pub fn observe(lc: &spira_config::lc_call::LcClient, run_dir: &std::path::Path, control: &str, now_ms: u64) -> Result<String, String> {
+pub fn observe(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path, control: &str, now_ms: u64) -> Result<String, String> {
     use heimdall::conditions::{Conditions, Failure, LcConditions};
     let status: Option<serde_json::Value> = runtime::socket::lc_call(std::path::Path::new(control), &["scheduler", "status"]).ok().and_then(|t| serde_json::from_str(&t).ok());
     let task = |name: &str| status.as_ref().and_then(|s| s["tasks"].as_array()?.iter().find(|t| t["name"] == name).cloned());
@@ -383,18 +383,18 @@ pub fn observe(lc: &spira_config::lc_call::LcClient, run_dir: &std::path::Path, 
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
-fn ops(lc: &spira_config::lc_call::LcClient) -> heimdall::conditions::LcConditions {
+fn ops(lc: &spira_store::lc_call::LcClient) -> heimdall::conditions::LcConditions {
     heimdall::conditions::LcConditions { client: lc.clone() }
 }
 
 /// The runner of [`RAISE`] and [`REFRESH`]: `condition set <key> --status True`.
-pub fn raise(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn raise(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     let w: Write = serde_json::from_str(input).map_err(|e| e.to_string())?;
     heimdall::alerts::alert_write(&ops(lc), &w.key, &w.title, &w.body).map_err(|f| format!("{}: {f:?}", w.key))
 }
 
 /// The runner of [`CLEAR`]: `condition clear <key>`; nothing firing is success.
-pub fn clear(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn clear(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     use heimdall::conditions::Conditions;
     let c: Clear = serde_json::from_str(input).map_err(|e| e.to_string())?;
     ops(lc).clear(&c.key, "Cleared", &c.reason).map(|()| c.key.clone()).map_err(|f| format!("{}: {f:?}", c.key))

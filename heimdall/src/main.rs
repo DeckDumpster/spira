@@ -91,7 +91,7 @@ fn pass() -> i32 {
     // "unreachable" as far as a watchdog is concerned.
     let store_timeout = env_n(&original, "SPIRA_HEIMDALL_BD_TIMEOUT", 10).max(1);
     // The store's door, in-process over its socket; nothing is launched to reach it.
-    let lc = match spira_config::lc_call::LcClient::configured() {
+    let lc = match spira_store::lc_call::LcClient::configured() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("heimdall: {e}");

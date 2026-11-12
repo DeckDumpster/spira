@@ -15,16 +15,16 @@ pub const VERB: &str = "goodput-pass";
 /// The lifecycle store, in-process over its socket: every verb the pass speaks (`intent`,
 /// `lock`, `pass`, `section`) is served there.
 pub struct SpiraLc {
-    client: spira_config::lc_call::LcClient,
+    client: spira_store::lc_call::LcClient,
 }
 
 impl SpiraLc {
     pub fn installed() -> Result<SpiraLc, String> {
-        Ok(SpiraLc { client: spira_config::lc_call::LcClient::configured()? })
+        Ok(SpiraLc { client: spira_store::lc_call::LcClient::configured()? })
     }
 
     #[cfg(test)]
-    pub fn over(client: spira_config::lc_call::LcClient) -> SpiraLc {
+    pub fn over(client: spira_store::lc_call::LcClient) -> SpiraLc {
         SpiraLc { client }
     }
 }
@@ -112,7 +112,7 @@ pub fn main(sink: &MetricsSink) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
 
     struct Store(Mutex<Vec<Vec<String>>>, i32, &'static str);

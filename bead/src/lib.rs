@@ -166,7 +166,7 @@ pub const PARTITION_CHECK_TYPES: &[&str] = &["task", "bug", "feature", "chore", 
 /// Whether a work bead still waits for dispatch, the one fact the partition check needs: the
 /// lifecycle row's answer (READY/REWORK), never bd's `status` (design §3.4, sp-mve9i). A bead
 /// with no row can never be claimed, so it waits for nothing.
-pub fn awaits_dispatch(row: Option<&spira_config::lc_state::Row>) -> bool {
+pub fn awaits_dispatch(row: Option<&spira_store::lc_state::Row>) -> bool {
     row.is_some_and(|r| r.claimable())
 }
 
@@ -597,7 +597,7 @@ pub trait LintSource {
     /// `None` when the dep list could not be read: unreadable, never "no blockers".
     fn blocks_targets(&self, id: &str) -> Option<Vec<String>>;
     fn relates_targets(&self, id: &str) -> Result<Vec<String>, String>;
-    fn lifecycle(&self) -> Result<HashMap<String, spira_config::lc_state::Row>, String>;
+    fn lifecycle(&self) -> Result<HashMap<String, spira_store::lc_state::Row>, String>;
 }
 
 pub struct LintCfg {
@@ -608,7 +608,7 @@ pub struct LintCfg {
     pub incident_label: String,
 }
 
-pub type Lifecycle = Option<Result<HashMap<String, spira_config::lc_state::Row>, String>>;
+pub type Lifecycle = Option<Result<HashMap<String, spira_store::lc_state::Row>, String>>;
 
 /// Finished by the lifecycle machine's judgement, never bd status; an unreadable state counts as not finished.
 pub fn lc_done(src: &dyn LintSource, lc: &mut Lifecycle, id: &str) -> bool {
@@ -956,7 +956,7 @@ mod tests {
     /// and for no other, whatever bd's status says.
     #[test]
     fn the_partition_check_follows_the_lifecycle_row_not_bd_status() {
-        use spira_config::lc_state::Row;
+        use spira_store::lc_state::Row;
         let row = |st: &str| Row { bead_id: "sp-a".into(), state: st.into(), ..Default::default() };
         for (st, want) in [("READY", 1), ("REWORK", 1), ("WORKING", 0), ("SUBMITTED", 0), ("LANDED", 0)] {
             let (n, _) = lint_judge("repo:spira", awaits_dispatch(Some(&row(st))), "task", PART, NO_LOOP);
@@ -1160,7 +1160,7 @@ mod tests {
 
     // -- lint over a LintSource ----------------------------------------------------------
 
-    use spira_config::lc_state::Row as LcRow;
+    use spira_store::lc_state::Row as LcRow;
 
     const INCIDENT: &str = "incident-test";
     const ASK: &str = "needs-op-test";

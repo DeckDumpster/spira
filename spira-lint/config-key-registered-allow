@@ -165,12 +165,12 @@ SPIRA_CTRL_SH spira/deploy.sh
 SPIRA_CZAR_CLASS bead/src/guard.rs
 SPIRA_CZAR_CLASS dwarf/src/run.rs
 SPIRA_CZAR_CLASS queue/src/ops/mod.rs
-SPIRA_CZAR_CLASS spira-config/src/lc_call.rs
+SPIRA_CZAR_CLASS spira-store/src/lc_call.rs
 SPIRA_CZAR_PASS_BIN spira-config/src/convert.rs
-SPIRA_CZAR_STAGE_ spira-config/src/lc_call.rs
+SPIRA_CZAR_STAGE_ spira-store/src/lc_call.rs
 SPIRA_CZAR_TRIGGER_BEAD bead/src/guard.rs
 SPIRA_CZAR_TRIGGER_BEAD dwarf/src/run.rs
-SPIRA_CZAR_TRIGGER_BEAD spira-config/src/lc_call.rs
+SPIRA_CZAR_TRIGGER_BEAD spira-store/src/lc_call.rs
 SPIRA_DB_OK spira/lib.sh
 SPIRA_DECISION_TYPES spira/lib.sh
 SPIRA_DEFAULT_WATCHERS spira-runtime/src/tasks/a/sentinel_pass.rs
@@ -499,7 +499,7 @@ SPIRA_LC_ADMIN_USER spira/cutover-deploy.sh
 SPIRA_LC_ADMIN_USER spira/sim/src/world.rs
 SPIRA_LC_BACKUP_LOCK_WAIT_SECS spira/lc-backup.sh
 SPIRA_LC_BIN spira-config/src/convert.rs
-SPIRA_LC_BIN spira-config/src/lifecycle_row.rs
+SPIRA_LC_BIN spira-store/src/lifecycle_row.rs
 SPIRA_LC_BIN spira/groom-trigger.sh
 SPIRA_LC_BIN spira/warden-trigger.sh
 SPIRA_LC_CRED_FILE spira/cutover-deploy.sh
@@ -737,7 +737,7 @@ SPIRA_RUNE broker/src/login.rs
 SPIRA_RUNE dwarf/src/restrict.rs
 SPIRA_RUNE dwarf/src/run.rs
 SPIRA_RUNE queue/src/ops/mod.rs
-SPIRA_RUNE spira-config/src/lc_call.rs
+SPIRA_RUNE spira-store/src/lc_call.rs
 SPIRA_RUNE spira-lc/src/bd.rs
 SPIRA_RUNE work/src/main.rs
 SPIRA_SCCACHE_BIN sentinel/src/tower.rs

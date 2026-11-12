@@ -16,7 +16,7 @@ pub struct BdCli<'a> {
     pub conn_retries: u32,
     pub fixture: Option<String>,
     pub env: &'a Env,
-    pub lc: spira_config::lc_call::LcClient,
+    pub lc: spira_store::lc_call::LcClient,
 }
 
 /// A read the content door serves: `show`, `list`, `state`, `memories`, `comments` not `add`.
@@ -198,10 +198,10 @@ pub fn note(bd: &dyn Bd, id: &str, text: &str) {
 mod tests {
     use super::*;
 
-    fn door(rows: Vec<serde_json::Value>) -> (BdCli<'static>, std::sync::Arc<spira_config::lc_call::fake::Content>) {
+    fn door(rows: Vec<serde_json::Value>) -> (BdCli<'static>, std::sync::Arc<spira_store::lc_call::fake::Content>) {
         let env: &'static Env = Box::leak(Box::new(Env::new(Default::default(), Default::default())));
-        let fake = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows));
-        let lc = spira_config::lc_call::LcClient::over(fake.clone(), true);
+        let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows));
+        let lc = spira_store::lc_call::LcClient::over(fake.clone(), true);
         (BdCli { bdq: "/nonexistent/bdq".into(), timeout_s: 5, conn_retries: 1, fixture: None, env, lc }, fake)
     }
 

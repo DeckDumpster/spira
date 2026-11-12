@@ -31,7 +31,7 @@ pub struct Ctx<'a> {
     pub home_repo: &'a str,
     pub incident_sh: &'a str,
     /// The store's client: bd's rows through its content door.
-    pub lc: &'a spira_config::lc_call::LcClient,
+    pub lc: &'a spira_store::lc_call::LcClient,
     /// The lifecycle machine (`spira-lc`): an incident bead is a work bead, so whether it is
     /// still unfinished is its lifecycle row's answer, never bd's status (sp-jgjvh).
     pub lc_bin: &'a str,
@@ -66,7 +66,7 @@ fn open_beads(ctx: &Ctx, reference: &str) -> Option<Vec<String>> {
 pub(crate) fn unfinished(lc_bin: &str, ids: Vec<String>) -> Option<Vec<String>> {
     let mut out = Vec::new();
     for id in ids {
-        match spira_config::lc_state::row_with(lc_bin, &id) {
+        match spira_store::lc_state::row_with(lc_bin, &id) {
             Ok(Some(r)) if !r.past_builder() => out.push(id),
             Ok(_) => {}
             Err(_) => return None,
@@ -77,7 +77,7 @@ pub(crate) fn unfinished(lc_bin: &str, ids: Vec<String>) -> Option<Vec<String>> 
 
 // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
 fn close_bead(ctx: &Ctx, id: &str, why: &str) -> bool {
-    spira_config::lifecycle_row::close_with(ctx.lc_bin, id, &format!("OUTCOME: delivered\n{why}\n"), "watchtower", None).is_ok()
+    spira_store::lifecycle_row::close_with(ctx.lc_bin, id, &format!("OUTCOME: delivered\n{why}\n"), "watchtower", None).is_ok()
 }
 
 pub fn reconcile(now: i64, ctx: &Ctx, probe: &str, reading: Reading) {

@@ -162,7 +162,7 @@ pub fn split_remedies(w: &dyn World, bd_json: &str) -> (String, String) {
         _ => Vec::new(),
     };
     let lc = match w.lc_rows() {
-        Ok(r) => spira_config::lc_state::index(r),
+        Ok(r) => spira_store::lc_state::index(r),
         Err(e) => {
             if !rows.is_empty() {
                 w.err(&format!("census: the lifecycle machine cannot say which remedies are open ({e}) — not suppressing any class"));

@@ -425,7 +425,7 @@ pub fn rotate_from_env(env: &std::collections::BTreeMap<String, String>) -> Resu
     let metadata = Path::new(store_dir).join(".beads/metadata.json");
     let client_cred = env.get("SPIRA_BEAD_CLIENT_CREDENTIALS").filter(|p| !p.is_empty()).map(PathBuf::from);
     let tmp = std::env::temp_dir();
-    let lc = spira_config::lifecycle_row::lc_bin()?;
+    let lc = spira_store::lifecycle_row::lc_bin()?;
     let run = |args: &[String], e: &[(String, String)]| {
         // batch-job: one operator-run rotation against the local Dolt; bounded at 120 s by timeout(1).
         let mut c = std::process::Command::new("timeout");
@@ -502,7 +502,7 @@ pub fn migrate_bead_clients_from_env(env: &std::collections::BTreeMap<String, St
         Some(p) => p.parse().map_err(|e| format!("SPIRA_LC_PORT: {e}"))?,
         None => 3307,
     };
-    let lc = spira_config::lifecycle_row::lc_bin()?;
+    let lc = spira_store::lifecycle_row::lc_bin()?;
     let run = |args: &[String], e: &[(String, String)]| {
         // batch-job: one operator-run migration against the local Dolt; bounded at 120 s by timeout(1).
         let mut c = std::process::Command::new("timeout");

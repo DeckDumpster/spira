@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use reconciler_engine::goodput_pass::Lc;
 use reconciler_engine::select::knob_key;
 use serde_json::{json, Value};
-use spira_config::lc_state::past_builder;
+use spira_store::lc_state::past_builder;
 use spira_desired_state::intent::{parse_intent, parse_key, Intent};
 use spira_desired_state::section::{parse_rfc3339, parse_section, ConditionStatus, Section};
 use spira_desired_state::sections::dwarf_fleet as fleet;

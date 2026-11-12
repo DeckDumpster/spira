@@ -57,7 +57,7 @@ use serde::{Deserialize, Serialize};
 
 use mimir_trigger::engine;
 use mimir_trigger::observe as obs;
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 
 use super::trigger_groom::{config_input, config_of, dedup_labels, file_effect, guard, halted, run_file_with, walk};
 use super::{Bead, Cycle, Decision, Transition};

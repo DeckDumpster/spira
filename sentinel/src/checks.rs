@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use crate::model::{Bead, LcRow};
-use spira_config::lc_state;
+use spira_store::lc_state;
 
 /// CHECK 2 (reaper half): WORKING rows, not wait-held, whose lease expired more than `grace`
 /// ago, or has expired at all with no live holder → (id, seconds since expiry).

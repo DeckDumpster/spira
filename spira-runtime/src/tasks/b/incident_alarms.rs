@@ -450,7 +450,7 @@ fn outcome(carry: &Carry, effect: &str, ok: bool, body: &str) -> Decision<Carry>
 
 /// The observe probe's inputs, read here and nowhere else.
 pub struct Observed<'a> {
-    pub lc: &'a spira_config::lc_call::LcClient,
+    pub lc: &'a spira_store::lc_call::LcClient,
     pub run_dir: &'a std::path::Path,
     /// The scheduler's control socket, for `scheduler status`.
     pub control: &'a std::path::Path,
@@ -506,7 +506,7 @@ impl incident::alarms_pass::Switch for NoSwitch {
 
 impl Delivery {
     /// The configured delivery: the process's mail environment, as `incident alarms-pass` built it.
-    pub fn configured(lc: &spira_config::lc_call::LcClient, run_dir: &std::path::Path) -> Result<Delivery, String> {
+    pub fn configured(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path) -> Result<Delivery, String> {
         let env = mail::env::Env::load()?;
         let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
         let fallback = incident::alarms_pass::MaildirFallback { mail_root: env.mail_root.clone(), mute: env.mute };
@@ -521,7 +521,7 @@ impl Delivery {
 }
 
 /// The observe runner over the process's run dir, socket and spira home.
-pub fn observe_with(lc: &spira_config::lc_call::LcClient, run_dir: &std::path::Path, control: &str, now_ms: u64) -> Result<String, String> {
+pub fn observe_with(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path, control: &str, now_ms: u64) -> Result<String, String> {
     let causal_map = incident::intake::spira_home_dir().ok().and_then(|h| h.parent().map(|r| r.join("reconciler/causal-map.toml")));
     observe(&Observed { lc, run_dir, control: std::path::Path::new(control), causal_map, now_ms })
 }
@@ -552,12 +552,12 @@ pub fn retry(d: &Delivery, input: &str) -> Result<String, String> {
 }
 
 /// The runner of [`KNOB_INIT`].
-pub fn knob_init(lc: &spira_config::lc_call::LcClient) -> Result<String, String> {
+pub fn knob_init(lc: &spira_store::lc_call::LcClient) -> Result<String, String> {
     incident::alarms_pass::knob_init(&reconciler_engine::goodput_pass::Socket(lc.clone())).map(|()| "initialised".into())
 }
 
 /// The runner of [`PUBLISH`]: `section publish-status --expect-rev`.
-pub fn publish(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn publish(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     let p: Publish = serde_json::from_str(input).map_err(|e| e.to_string())?;
     incident::alarms_pass::publish_section(&reconciler_engine::goodput_pass::Socket(lc.clone()), &p.body, &p.rev).map(|()| "published".into())
 }

@@ -443,7 +443,7 @@ pub fn release_store(cfg: &Cfg) -> Reading {
 pub const ROWLESS_REFERENCE: &str = "incident:lifecycle-rowless-beads";
 
 pub struct RowlessCfg {
-    pub lc: spira_config::lc_call::LcClient,
+    pub lc: spira_store::lc_call::LcClient,
     pub cap: usize,
     pub sustain_secs: i64,
     pub state: std::path::PathBuf,
@@ -480,7 +480,7 @@ pub fn rowless_cond(missing: &[String], cap: usize, sustain_secs: i64) -> Option
 }
 
 /// The bead ids among `ids` that have a lifecycle row (`list --ids`); `None` when it did not answer.
-pub fn lifecycle_ids(lc: &spira_config::lc_call::LcClient, ids: &[String]) -> Option<Vec<String>> {
+pub fn lifecycle_ids(lc: &spira_store::lc_call::LcClient, ids: &[String]) -> Option<Vec<String>> {
     let mut found = Vec::new();
     for chunk in ids.chunks(100) {
         found.extend(ids_of(lc.answer(&["list", "--ids", &chunk.join(",")]).ok()?.as_bytes(), "bead_id")?);
@@ -578,7 +578,7 @@ fn save_rowless_state(path: &Path, st: &RowlessState) {
 pub const CONTENT_DRIFT_REFERENCE: &str = "incident:lifecycle-content-drift";
 
 pub struct ContentDriftCfg {
-    pub lc: spira_config::lc_call::LcClient,
+    pub lc: spira_store::lc_call::LcClient,
     pub slack: usize,
     pub sustain_secs: i64,
     pub state: std::path::PathBuf,

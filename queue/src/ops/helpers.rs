@@ -23,7 +23,7 @@ use crate::real::{RealGit, RealLc};
 /// CERTIFIED, as `(id, tip, epoch)` — the selection primitive any cutter (the batcher, the
 /// reconciler's mergeability check, cockpit-collect's "next up" pane) draws from.
 pub fn certified_list(repo: &Path) -> Result<Vec<(String, String, u64)>, String> {
-    let lc = RealLc::configured(Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)));
+    let lc = RealLc::configured(Some(PathBuf::from(spira_store::lifecycle_row::lc_bin()?)));
     Ok(certified_rows(
         &lc,
         &RealGit.branches(repo, "refs/heads/spira/"),

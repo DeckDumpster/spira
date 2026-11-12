@@ -24,8 +24,8 @@ fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 
-fn client() -> Result<spira_config::lc_call::LcClient, String> {
-    spira_config::lc_call::LcClient::configured()
+fn client() -> Result<spira_store::lc_call::LcClient, String> {
+    spira_store::lc_call::LcClient::configured()
 }
 
 /// One check, by its CHECKS name; `Ok` names what ran.
@@ -141,7 +141,7 @@ fn conditions_check(n: i64, run: &Path) -> Result<(), String> {
         psi_sustain_secs: reg_i64("SPIRA_PSI_SUSTAIN_SECS")?,
     };
     let (db, home_repo, inc) = (reg("SPIRA_DB")?, reg("SPIRA_HOME_REPO")?, resolved_incident_sh());
-    let lc_bin = spira_config::lifecycle_row::lc_bin()?;
+    let lc_bin = spira_store::lifecycle_row::lc_bin()?;
     let lc = client()?;
     let ctx = conditions::Ctx { run, db: &db, home_repo: &home_repo, incident_sh: &inc, lc: &lc, lc_bin: &lc_bin };
     conditions::reconcile(n, &ctx, "release-currency", probes::release_currency(&cfg));

@@ -6,7 +6,7 @@
 use super::{push, Cfg, Kv};
 use crate::io;
 use serde_json::Value;
-use spira_config::lc_state;
+use spira_store::lc_state;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// A label set that, if fully contained in a bead's labels, marks it a "stopper" — never

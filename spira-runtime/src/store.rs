@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use spira_config::lc_call::LcClient;
+use spira_store::lc_call::LcClient;
 use store_view::Projection;
 
 /// The watch thread; dropping it asks the thread to stop.
@@ -39,6 +39,6 @@ pub fn run(views: Projection) -> Result<Store, String> {
     }
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
-    std::thread::Builder::new().name("store-watch".into()).spawn(move || spira_config::lc_call::as_task("store-watch", || views.run(&flag))).map_err(|e| format!("store watch thread: {e}"))?;
+    std::thread::Builder::new().name("store-watch".into()).spawn(move || spira_store::lc_call::as_task("store-watch", || views.run(&flag))).map_err(|e| format!("store watch thread: {e}"))?;
     Ok(Store { stop })
 }

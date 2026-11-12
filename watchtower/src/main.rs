@@ -11,8 +11,8 @@ use std::time::Duration;
 
 /// A release tool this pass cannot run without, or exit 2 naming the refusal.
 /// The store's client on the declared route; refuses the run when none resolves.
-fn required_client() -> spira_config::lc_call::LcClient {
-    spira_config::lc_call::LcClient::configured().unwrap_or_else(|e| {
+fn required_client() -> spira_store::lc_call::LcClient {
+    spira_store::lc_call::LcClient::configured().unwrap_or_else(|e| {
         log::log(&format!("watchtower: {e}"));
         std::process::exit(2)
     })
@@ -304,7 +304,7 @@ fn main() {
             let db = reg("SPIRA_DB");
             let home_repo = reg("SPIRA_HOME_REPO");
             let inc = resolved_incident_sh();
-            let lc_bin = required(spira_config::lifecycle_row::lc_bin());
+            let lc_bin = required(spira_store::lifecycle_row::lc_bin());
             let lc = required_client();
             let ctx = conditions::Ctx { run: &run, db: &db, home_repo: &home_repo, incident_sh: &inc, lc: &lc, lc_bin: &lc_bin };
             conditions::reconcile(n, &ctx, "release-currency", probes::release_currency(&cfg));

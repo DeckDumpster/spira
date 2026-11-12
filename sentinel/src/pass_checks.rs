@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use spira_config::lc_state;
+use spira_store::lc_state;
 use spira_config::nonwork::{self, Kind};
 
 use crate::model::{Bead, LcRow};

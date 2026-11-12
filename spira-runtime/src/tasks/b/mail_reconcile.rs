@@ -65,7 +65,7 @@
 //! | `mail.reconcile.inbox` | host | 10 s | `<msgid>/refused-inbox\|abandoned-inbox` | writes the concierge maildir (`reconcile.rs:108-116`); becomes `inbox.append` |
 //! | `mail.reconcile.mark` | host | 5 s | `<msgid>/<step>` (append-only line) | nothing; appends the ledger (`reconcile.rs:50-61`) |
 //!
-//! Deadline 15 s = `LC_TIMEOUT` (`spira-config/src/lc_call.rs:7`); bdq calls run under
+//! Deadline 15 s = `LC_TIMEOUT` (`spira-store/src/lc_call.rs:7`); bdq calls run under
 //! `timeout 5` (`spira-config/src/bounded.rs:7`, `mail/src/bead.rs:77`). Every store act
 //! marks its step on success, and `fail:<step>` on failure, so a re-offered effect is a no-op.
 //!
@@ -80,8 +80,8 @@
 //! - `spira-mail-reconcile-prod.{service,timer}` (`CPUQuota=25%`, `Nice=10`,
 //!   `TimeoutStartSec=300`, `Environment=SPIRA_DB=…`). No watchd row.
 //! - Children: `timeout 5 bdq` (note, show, dep list) via `BdCli` (`mail/src/bead.rs:62-80`);
-//!   `timeout spira-lc close` via `spira_config::lifecycle_row::close`
-//!   (`spira-config/src/lifecycle_row.rs:332-341`); `spira-lc state|reply|close-ask` via
+//!   `timeout spira-lc close` via `spira_store::lifecycle_row::close`
+//!   (`spira-store/src/lifecycle_row.rs:332-341`); `spira-lc state|reply|close-ask` via
 //!   `LcCli` (`mail/src/lc.rs:23-31`).
 //! - Pinned keys (`mail/src/env.rs:58-83`): `SPIRA_MAIL`, `SPIRA_DB`, `SPIRA_RUN`; unregistered
 //!   env `SPIRA_BDQ_CONN_RETRIES` (default 2) joins `Settings::KEYS` (S10).
@@ -96,7 +96,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use runtime::event::EventKindTag;
-use spira_config::lc_call::LcError;
+use spira_store::lc_call::LcError;
 use serde::{Deserialize, Serialize};
 
 use super::kit::{Act, Cadence, Cfg, Decision, Input, Spec};

@@ -11,11 +11,12 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["mail/integration", "reconciler-engine/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration"]
+integration = ["mail/integration", "reconciler-engine/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 spira-config = { path = "../spira-config" }
+spira-store = { path = "../spira-store" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reconciler-engine = { path = "../reconciler-engine" }

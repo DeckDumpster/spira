@@ -507,7 +507,7 @@ impl<'a> Pass<'a> {
         }
         // A queued repository's terminal bead off the base is the batcher's: no content read.
         // Push and other modes keep it, because `push_or_hold` relies on it there.
-        if !w.merged.contains(br) && repo.mode.queued() && spira_config::lc_state::is_terminal(&bead.state) {
+        if !w.merged.contains(br) && repo.mode.queued() && spira_store::lc_state::is_terminal(&bead.state) {
             self.log(&format!("CHECK6 {id}: {br} is {} — the batcher's now, not certified again", bead.state));
             return Screen::Done(Flow::Next);
         }
@@ -551,7 +551,7 @@ impl<'a> Pass<'a> {
         if self.files.announce_content(br, &tip) {
             self.log(&format!("{} already contains every change on {br} — nothing to land", w.base));
         }
-        if spira_config::lc_state::is_terminal(&bead.state) {
+        if spira_store::lc_state::is_terminal(&bead.state) {
             self.files.settle_content(br, &tip);
             return;
         }
