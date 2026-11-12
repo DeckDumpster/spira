@@ -11,7 +11,7 @@ const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
 
 /// Closed: a kind outside this list is refused, so a typo cannot start a new history.
-pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "eject-failure", "blind-rework", "rejection", "escalated", "no-progress", "gate-start", "__doctor_probe__"];
+pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "eject-failure", "blind-rework", "rejection", "escalated", "no-progress", "gate-start", "build-dir", "__doctor_probe__"];
 
 pub const MACHINE: &str = "fact";
 pub const CAUSE_MAX: usize = 200;
@@ -25,7 +25,7 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 }
 
 fn bounded(s: &str) -> String {
-    s.chars().filter(|c| !c.is_control()).take(CAUSE_MAX).collect()
+    s.chars().filter(|c| *c == '\t' || !c.is_control()).take(CAUSE_MAX).collect()
 }
 
 fn bounded_long(s: &str) -> String {
@@ -291,6 +291,12 @@ mod tests {
     fn the_gate_start_kind_the_gate_sends_is_one_the_fact_verb_accepts() {
         assert!(KINDS.contains(&"gate-start"));
         assert!(insert_sql("sp-a", "gate-start", "", "gate", 5).contains("'fact', 'sp-a', 'gate-start'"));
+    }
+
+    #[test]
+    fn a_build_dir_fact_keeps_the_tab_between_the_tip_and_the_directory() {
+        assert!(KINDS.contains(&"build-dir"));
+        assert_eq!(bounded("abc\t/b/dir.1\n"), "abc\t/b/dir.1");
     }
 
     #[test]
