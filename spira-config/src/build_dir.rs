@@ -394,6 +394,24 @@ mod tests {
     }
 
     #[test]
+    fn trimmed_display_names_bytes_before_after_and_each_step() {
+        let t = Trimmed { before: 900, after: 100, idle_profiles: 5, incremental: 7, stale: 11 };
+        let line = t.to_string();
+        for want in ["900 bytes before", "100 after", "5 in idle profiles", "7 of stale incremental", "11 of stale deps"] {
+            assert!(line.contains(want), "{line}");
+        }
+        assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn trim_drops_an_idle_profile_even_if_the_lease_only_read_it() {
+        let d = testkit::TempDir::new("bdir-trim-read-profile");
+        touch(&d.path().join("unittest/deps/x"), 0, 8 * H);
+        trim(d.path(), SystemTime::now() - std::time::Duration::from_secs(H), SystemTime::now());
+        assert!(!d.path().join("unittest").exists(), "the idle test is on writes: a read does not keep a profile");
+    }
+
+    #[test]
     fn trim_keeps_what_a_lease_older_than_a_day_touched() {
         let d = testkit::TempDir::new("bdir-trim-cut");
         let p = d.path().join("debug");
