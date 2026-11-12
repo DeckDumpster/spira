@@ -3559,6 +3559,19 @@ fn preempting_a_host_placed_pass_stops_its_scope_ejects_and_restarts() {
 }
 
 #[test]
+fn a_rebuild_that_cannot_cut_the_base_restores_the_head_and_says_nothing_changed() {
+    let (t, batch) = preempt_world();
+    let rec = kv_of(&t, "round");
+    let (base, head) = (rec["base"].to_string(), rec["head"].to_string());
+    *t.git.add_refused.borrow_mut() = Some(base);
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]), 1);
+    assert!(t.err().contains("cannot create the round worktree — nothing changed"), "{}", t.err());
+    let wt = kv_of(&t, "round")["worktree"].to_string();
+    assert_eq!(t.git.refs.borrow().get(&format!("{wt}:HEAD")), Some(&head), "the worktree is back at the round's head");
+    assert!(!t.lc.has("eject-member"));
+}
+
+#[test]
 fn eject_refuses_while_a_pass_scope_runs_and_touches_nothing() {
     let (t, batch, scope) = host_pass_world();
     let before = t.git.calls.borrow().len();

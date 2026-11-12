@@ -52,6 +52,8 @@ struct FGit {
     heads_name_their_base: Cell<bool>,
     /// A worktree add makes its directory and a worktree remove deletes it, as the real git does.
     materialise: Cell<bool>,
+    /// A sha `worktree_add_detached` refuses to check out.
+    add_refused: RefCell<Option<String>>,
 }
 
 impl FGit {
@@ -181,6 +183,9 @@ impl Git for FGit {
     }
     fn worktree_prune(&self, _: &Path) {}
     fn worktree_add_detached(&self, _: &Path, p: &Path, sha: &str) -> bool {
+        if self.add_refused.borrow().as_deref() == Some(sha) {
+            return false;
+        }
         self.refs
             .borrow_mut()
             .insert(format!("{}:HEAD", p.display()), sha.into());
