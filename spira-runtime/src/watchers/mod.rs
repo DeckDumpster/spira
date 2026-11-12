@@ -83,7 +83,20 @@ pub fn iso8601(secs: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::iso8601;
+    use super::{iso8601, just_activated, last_activation};
+    use release::machine::{enter, ReleaseState};
+
+    #[test]
+    fn the_last_activation_is_the_activated_record_under_run_dir_and_nothing_else() {
+        let t = testkit::TempDir::new("last-activation");
+        let state = t.path().join("release");
+        assert_eq!(last_activation(t.path()), None, "no records: no activation");
+        enter(&state, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ReleaseState::Published, "published").unwrap();
+        assert_eq!(last_activation(t.path()), None, "a published release is not an activation");
+        enter(&state, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ReleaseState::Activated, "current switched").unwrap();
+        let at = last_activation(t.path()).expect("the activated record is read");
+        assert!(just_activated(Some(at), at + 60) && !just_activated(Some(at), at + 61) && !just_activated(Some(at), at.saturating_sub(1)));
+    }
 
     #[test]
     fn epoch_seconds_render_as_utc() {
