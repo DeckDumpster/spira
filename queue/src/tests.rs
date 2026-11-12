@@ -487,6 +487,7 @@ struct FScripts {
     /// was handed.
     release_calls: RefCell<Vec<(String, String, String)>>,
     fence_ok: Cell<bool>,
+    build_refused: RefCell<Option<String>>,
     calls: RefCell<Vec<String>>,
     /// What `batcher judgement-ci` answers.
     judgement: RefCell<RunOut>,
@@ -811,6 +812,18 @@ impl Scripts for FScripts {
     }
     fn release_tool(&self) -> Result<PathBuf, String> {
         Ok(PathBuf::from("release"))
+    }
+    fn build_release(&self, wt: &Path, who: &str) -> Result<Box<dyn std::any::Any>, String> {
+        self.calls
+            .borrow_mut()
+            .push(format!("build_release {} {who}", wt.display()));
+        if let Some(why) = self.build_refused.borrow().as_ref() {
+            return Err(why.clone());
+        }
+        let dir = wt.join("target/release");
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        testkit::write_exe(dir.join("release"), "#!/bin/sh\n");
+        Ok(Box::new(()))
     }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
         self.release_calls.borrow_mut().push((

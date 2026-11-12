@@ -494,6 +494,7 @@ pub const CONFIG_KEYS: &[&str] = &[
     "SPIRA_PUBLISH_RED_PRIORITY",
     "SPIRA_PUBLISH_RED_ESCALATE_AFTER",
     "SPIRA_PUBLISH_SETTLE_DEFER_MAX",
+    "SPIRA_DWARF_BUILD_BASE",
 ];
 
 /// The settings lib.sh's CONTEXT seam answered, from the config's declared values (`value`):
@@ -953,6 +954,16 @@ pub fn active_state_of(facts: Option<runtime::units::UnitFacts>) -> String {
     .to_string()
 }
 
+struct HeldBuild(Option<spira_config::build_dir::Lease>);
+
+impl Drop for HeldBuild {
+    fn drop(&mut self) {
+        if let Some(l) = self.0.take() {
+            l.release();
+        }
+    }
+}
+
 pub struct RealScripts {
     pub home: PathBuf,
 }
@@ -1099,6 +1110,31 @@ impl Scripts for RealScripts {
     }
     fn release_tool(&self) -> Result<PathBuf, String> {
         spira_config::release_env::tool("release").map(PathBuf::from)
+    }
+    fn build_release(&self, wt: &Path, who: &str) -> Result<Box<dyn std::any::Any>, String> {
+        use spira_config::build_dir as bd;
+        let base = spira_config::process::cfg(bd::BASE_ENV)?;
+        if base.is_empty() {
+            return Err(format!("{} is not set — set dwarf_build_base in the config document", bd::BASE_ENV));
+        }
+        let lease = bd::lease(Path::new(&base), who).map_err(|e| format!("cannot lease a build directory under {base}: {e}"))?;
+        let held = HeldBuild(Some(lease));
+        let dir = held.0.as_ref().map(|l| l.dir().to_path_buf()).unwrap_or_default();
+        // FORK-EDGE: machine leg cargo (release build)
+        let (rc, out) = run_combined(
+            Command::new("cargo")
+                .args(["build", "-q", "--profile", "release", "--workspace", "--config", "profile.release.incremental=false"])
+                .current_dir(wt)
+                .env("CARGO_TARGET_DIR", &dir),
+        );
+        if rc != 0 {
+            let tail: Vec<&str> = out.lines().rev().take(40).collect();
+            return Err(format!("cargo build --profile release failed (rc={rc}): {}", tail.into_iter().rev().collect::<Vec<_>>().join("\n")));
+        }
+        let target = wt.join("target");
+        fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(dir.join("release"), target.join("release")).map_err(|e| e.to_string())?;
+        Ok(Box::new(held))
     }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
         // batch-job: this runs whatever its caller names, as long as that takes

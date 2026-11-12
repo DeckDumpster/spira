@@ -366,3 +366,79 @@ fn a_landing_refused_after_the_round_was_voided_says_so_and_what_state_the_bead_
         t.err()
     );
 }
+
+fn certified_harness_world() -> (T, testkit::TempDir) {
+    let mut t = round_world();
+    t.lib.s.home_repo = "spira".into();
+    release_in_force(&t);
+    t.git.set("HEAD", TIP);
+    t.git.ancestor("b0", TIP);
+    t.git.trees.borrow_mut().insert(TIP.into(), T1.into());
+    t.certify("spira", T1, gate::cert::Source::Round, "-");
+    t.lc_row("sp-z", "CERTIFIED", TIP, 100);
+    (t, testkit::TempDir::new("queue-hand-land-none"))
+}
+
+fn build_calls(t: &T) -> Vec<String> {
+    t.scripts.calls.borrow().iter().filter(|c| c.starts_with("build_release ")).cloned().collect()
+}
+
+#[test]
+fn a_certified_harness_bead_with_no_round_open_lands_on_a_build_of_the_tip_it_makes_itself() {
+    let (t, _keep) = certified_harness_world();
+    assert_eq!(hand_land(&t, &["--round", "wait"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some(TIP));
+    assert!(t.out().contains("sp-z landed at"), "{}", t.out());
+    let builds = build_calls(&t);
+    assert_eq!(builds.len(), 1, "{builds:?}");
+    assert!(builds[0].contains("/worktree/") && builds[0].ends_with(" sp-z"), "{builds:?}");
+    assert!(release_argv(&t).iter().any(|a| a.starts_with("activate ")));
+}
+
+#[test]
+fn a_hand_landing_given_a_worktree_builds_nothing() {
+    let (t, _keep) = certified_harness_world();
+    let bins = testkit::TempDir::new("queue-hand-land-bins");
+    fs::create_dir_all(bins.path().join("target/release")).unwrap();
+    testkit::write_exe(bins.path().join("target/release/release"), "#!/bin/sh\n");
+    let wt = bins.path().display().to_string();
+    assert_eq!(hand_land(&t, &["--round", "wait", "--worktree", &wt]), 0, "{}", t.err());
+    assert!(build_calls(&t).is_empty());
+}
+
+#[test]
+fn a_refused_landing_step_exits_non_zero_and_says_the_bead_did_not_land() {
+    let (t, _keep) = certified_harness_world();
+    *t.scripts.build_refused.borrow_mut() = Some("cargo build --profile release failed (rc=101)".into());
+    let rc = hand_land(&t, &["--round", "wait"]);
+    assert_ne!(rc, 0, "{}", t.out());
+    assert!(t.err().contains("sp-z did not land") && t.err().contains("rc=101"), "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
+    assert_eq!(state(&t, "sp-z"), "CERTIFIED");
+}
+
+#[test]
+fn a_landing_the_gate_refuses_exits_non_zero_and_says_the_bead_did_not_land() {
+    let (t, _keep) = certified_harness_world();
+    let rc = hand_land(&t, &["--round", "wait", "--worktree", "/no such;dir"]);
+    assert_ne!(rc, 0);
+    assert!(t.err().contains("sp-z did not land"), "{}", t.err());
+}
+
+#[test]
+fn a_dry_run_says_a_build_will_be_needed_and_its_last_measured_duration() {
+    let (t, _keep) = certified_harness_world();
+    let secs = t.s().run.join("release-build-secs");
+    fs::create_dir_all(secs.parent().unwrap()).unwrap();
+    fs::write(&secs, "412\n").unwrap();
+    assert_eq!(hand_land(&t, &["--dry-run"]), 0, "{}", t.err());
+    assert!(t.out().contains("will build the release from the tip") && t.out().contains("last build took 412s"), "{}", t.out());
+    assert!(build_calls(&t).is_empty());
+}
+
+#[test]
+fn a_build_that_succeeds_records_its_duration_for_the_next_dry_run() {
+    let (t, _keep) = certified_harness_world();
+    assert_eq!(hand_land(&t, &["--round", "wait"]), 0, "{}", t.err());
+    assert!(t.s().run.join("release-build-secs").exists());
+}

@@ -18,6 +18,7 @@ use crate::records::one_line;
 const POLL_SECS: u64 = 30;
 const CONF_DIR: &str = "spira/conf.d/";
 const HOLD_MARGIN_SECS: u64 = 900;
+const BUILD_SECS_FILE: &str = "release-build-secs";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Policy {
@@ -151,6 +152,48 @@ fn config_keys(w: &World, path: &Path, base_sha: &str, tip: &str) -> (Vec<String
     (added, retired)
 }
 
+fn read_text_file(w: &World, p: &Path) -> Option<String> {
+    w.env.read_file(p).ok()
+}
+
+/// A worktree at the tip with the release built in it, for a landing nobody handed one: both
+/// the worktree and the build directory lease go when it is dropped.
+struct TipBuild<'a> {
+    w: &'a World<'a>,
+    repo: &'a Path,
+    wt: std::path::PathBuf,
+    _lease: Box<dyn std::any::Any>,
+}
+
+impl Drop for TipBuild<'_> {
+    fn drop(&mut self) {
+        self.w.git.worktree_remove(self.repo, &self.wt);
+    }
+}
+
+fn build_tip<'a>(w: &'a World<'a>, c: &Ctx, path: &'a Path, a: &Args) -> Result<TipBuild<'a>, String> {
+    let wt = c.s.run.join("worktree").join(format!(".hand-land-{}-{}", a.bead, w.env.pid()));
+    w.git.worktree_prune(path);
+    w.git.worktree_remove(path, &wt);
+    if let Some(p) = wt.parent() {
+        let _ = std::fs::create_dir_all(p);
+    }
+    if !w.git.worktree_add_detached(path, &wt, a.tip) {
+        return Err(format!("cannot create a worktree at {} for the build", a.tip));
+    }
+    let started = w.clock.now();
+    match w.scripts.build_release(&wt, a.bead) {
+        Ok(lease) => {
+            let _ = std::fs::write(c.s.run.join(BUILD_SECS_FILE), format!("{}\n", w.clock.now().saturating_sub(started)));
+            Ok(TipBuild { w, repo: path, wt, _lease: lease })
+        }
+        Err(e) => {
+            w.git.worktree_remove(path, &wt);
+            Err(e)
+        }
+    }
+}
+
 fn list(v: &[String]) -> String {
     if v.is_empty() {
         "none".into()
@@ -277,6 +320,12 @@ pub fn hand_land(w: &World, a: &Args) -> i32 {
         list(&retired)
     ));
     w.out(format!("queue.sh {label}: {}", consequence(&rounds, a.round)));
+    if a.worktree.is_none() && super::land::ships_release(&c.s, &c.r.name) {
+        let last = read_text_file(w, &c.s.run.join(BUILD_SECS_FILE))
+            .and_then(|t| t.trim().parse::<u64>().ok())
+            .map_or("no build measured yet".to_string(), |s| format!("last build took {s}s"));
+        w.out(format!("queue.sh {label}: will build the release from the tip before landing ({last})"));
+    }
     if a.dry_run {
         return OK;
     }
@@ -445,12 +494,24 @@ fn land_and_verify(
         .map(super::deploy::current_name)
         .and_then(|n| Path::new(&n).file_name().map(|f| f.to_string_lossy().into_owned()))
         .filter(|n| n != "absent");
+    let built = if a.worktree.is_none() && super::land::ships_release(&c.s, &c.r.name) {
+        w.out(format!("queue.sh {label}: building the release from {} for {}", a.tip, a.bead));
+        match build_tip(w, c, path, a) {
+            Ok(b) => Some(b),
+            Err(e) => {
+                w.err(format!("queue.sh {label}: the release build failed: {e}"));
+                return did_not_land(w, c, a, policy, voided, base, FAIL);
+            }
+        }
+    } else {
+        None
+    };
     let (rc, pending) = super::land::land_local_deferring(
         w,
         Some(&c.r.name),
         a.tip,
         &Text::Arg(format!("{}:{}", a.bead, a.tip)),
-        a.worktree,
+        built.as_ref().map(|b| b.wt.as_path()).or(a.worktree),
         false,
         true,
         Some(ungated),
@@ -464,8 +525,7 @@ fn land_and_verify(
             let now = w.lc.bead_row(a.bead).map(|b| b.state).unwrap_or_default();
             w.err(format!("queue.sh {label}: round {voided} was voided and nothing landed; {} is {now}, {base} is unchanged", a.bead));
         }
-        log(w, c, a, policy, voided, "refused: land-local");
-        return rc;
+        return did_not_land(w, c, a, policy, voided, base, rc);
     }
     let rollback = pending.as_ref().map(|p| p.rollback_plan());
     let outcome = pending.map(|p| p.activate(w));
@@ -477,6 +537,12 @@ fn land_and_verify(
     }
     w.err(format!("queue.sh {label}: {base} stays at {} — revert the landing with: queue rollback-local {}", a.tip, c.r.name));
     DEPLOY_FAULT
+}
+
+fn did_not_land(w: &World, c: &Ctx, a: &Args, policy: Policy, voided: &str, base: &str, rc: i32) -> i32 {
+    w.err(format!("queue.sh hand-land: {} did not land; {base} is unchanged", a.bead));
+    log(w, c, a, policy, voided, "refused: landing");
+    if rc == OK { FAIL } else { rc }
 }
 
 struct Verify {

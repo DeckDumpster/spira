@@ -41,6 +41,12 @@ pub fn round_bins(w: &World, repo: &Path, head: &str, worktree: &Path) -> Result
     Ok(dir)
 }
 
+/// True when landing `repo` publishes a release: it is the harness and a release is in force.
+pub fn ships_release(s: &crate::ports::Settings, repo: &str) -> bool {
+    repo == s.home_repo
+        && s.releases.as_deref().is_some_and(super::deploy::release_in_force)
+}
+
 /// Where tree certificates are kept, as the gate resolves it.
 pub fn verdicts_dir(w: &World, s: &crate::ports::Settings) -> PathBuf {
     gate::cert::verdicts_dir(w.var("SPIRA_VERDICTS").as_deref(), &s.run)
