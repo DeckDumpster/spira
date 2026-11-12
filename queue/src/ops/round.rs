@@ -2157,7 +2157,7 @@ fn stop(w: &World, repo: Option<&str>, by: &str, reason: &Text, until: &str) -> 
         }
     };
     let lanes = [ROUNDS_LANE.to_string()];
-    match scoped_stop::pause_repo(&c.s.run, &c.r.name, &lanes, by, &reason, until, w.clock.now()) {
+    match scoped_stop::pause_repo_typed(&c.s.run, &c.r.name, &lanes, by, &reason, until, w.clock.now(), tsd::stop::Reason::Operator, None) {
         Ok(s) => {
             w.out(format!(
                 "queue.sh {label}: {} rounds stopped by {} until {} — {}; an open round is not touched, a landing does not lift this; lift with: queue round start {} --by <owner> --reason <why>",
@@ -2193,6 +2193,18 @@ fn start(w: &World, repo: Option<&str>, by: &str, reason: &Text) -> i32 {
     };
     match scoped_stop::unpause_repo(&c.s.run, &c.r.name, &[ROUNDS_LANE.to_string()]) {
         Ok(_) => {
+            let lift = tsd::stop::StopRecord {
+                kind: tsd::stop::Kind::Release,
+                reason: tsd::stop::Reason::Operator,
+                actor: by.into(),
+                repo: Some(c.r.name.clone()),
+                bead: None,
+                detail: reason.clone(),
+            };
+            let now = w.clock.now();
+            if let Err(e) = lift.write(&c.s.run, &tsd::default_host(), &tsd::iso_utc(now)) {
+                w.err(format!("queue.sh {label}: the stop is lifted but its record failed: {e}"));
+            }
             w.out(format!(
                 "queue.sh {label}: {} rounds started by {by} ({reason}); the stop was set by {} until {} — {}",
                 c.r.name, held.owner, held.until, held.reason

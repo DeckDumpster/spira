@@ -8606,3 +8606,11 @@ fn stop_without_a_release_condition_is_refused() {
     let t = round_world();
     assert_eq!(t.run(&["round", "stop", "--by", "concierge", "--reason", "x"]), 2);
 }
+
+#[test]
+fn start_with_no_stop_in_force_says_so_and_changes_nothing() {
+    let t = round_world();
+    let args = ["round", "start", "--by", "concierge", "--reason", "x"];
+    assert_eq!(t.run(&args), 0, "{}", t.err());
+    assert!(t.out().contains("no stop of its rounds in force"), "{}", t.out());
+}
