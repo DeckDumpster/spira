@@ -3526,6 +3526,64 @@ fn preempting_a_running_pass_salvages_ejects_rebuilds_and_restarts() {
     );
 }
 
+fn host_pass_world() -> (T, String, String) {
+    let (t, batch) = preempt_world();
+    fs::remove_file(marker(&t, &batch, "pass")).unwrap();
+    t.scripts.pass_alive.set(false);
+    let scope = format!("{}.scope", runtime::units::round_scope_unit("spira", &batch, "9-1"));
+    t.scripts.round_legs.borrow_mut().push(("spira".into(), batch.clone(), scope.clone()));
+    (t, batch, scope)
+}
+
+#[test]
+fn preempting_a_host_placed_pass_stops_its_scope_ejects_and_restarts() {
+    let (t, batch, scope) = host_pass_world();
+    seed_suite(&t, "test-b.sh");
+    let rc = t.run(&[
+        "round", "preempt", &batch, "--eject", "sp-b", "--reason", "red on test-b.sh at 2/3", "--suites", "test-b.sh",
+    ]);
+    assert_eq!(rc, 0, "{}", t.err());
+    assert!(
+        !t.scripts.round_legs.borrow().iter().any(|(_, _, u)| u == &scope),
+        "the pass scope is stopped by its unit name"
+    );
+    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 4 {{\"PassPreempted\":{{\"n\":1,\"done\":2,\"total\":3,\"red_suites\":[\"test-b.sh\"]}}}}")), "{:?}", t.lc.calls.borrow());
+    assert!(t.lc.has(&format!("eject-member {batch} sp-b ")) && t.lib.has("bead_reopen sp-b eject-red test-b.sh"));
+    let rec = kv_of(&t, "round");
+    assert_eq!(rec["members"].as_str(), "sp-a:ta sp-c:tc");
+    assert!(
+        t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")),
+        "the next pass starts without the member: {:?}",
+        t.scripts.calls.borrow()
+    );
+}
+
+#[test]
+fn a_rebuild_that_cannot_cut_the_base_restores_the_head_and_says_nothing_changed() {
+    let (t, batch) = preempt_world();
+    let rec = kv_of(&t, "round");
+    let (base, head) = (rec["base"].to_string(), rec["head"].to_string());
+    *t.git.add_refused.borrow_mut() = Some(base);
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]), 1);
+    assert!(t.err().contains("cannot create the round worktree — nothing changed"), "{}", t.err());
+    let wt = kv_of(&t, "round")["worktree"].to_string();
+    assert_eq!(t.git.refs.borrow().get(&format!("{wt}:HEAD")), Some(&head), "the worktree is back at the round's head");
+    assert!(!t.lc.has("eject-member"));
+}
+
+#[test]
+fn eject_refuses_while_a_pass_scope_runs_and_touches_nothing() {
+    let (t, batch, scope) = host_pass_world();
+    let before = t.git.calls.borrow().len();
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]),
+        1
+    );
+    assert!(t.err().contains("preempt") && t.err().contains(&scope), "{}", t.err());
+    assert_eq!(t.git.calls.borrow().len(), before, "no worktree is pruned or removed");
+    assert!(!t.lc.has("eject-member"));
+}
+
 #[test]
 fn preempt_refuses_without_a_running_pass_and_names_the_phase() {
     let (t, batch) = preempt_world();

@@ -784,6 +784,9 @@ impl RoundRunner for VmRunner<'_> {
                     clear_results(&self.results, suites);
                 }
                 self.corpus_runs += 1;
+                if let Some(batch) = self.batch.as_deref() {
+                    io::round_pass_start(self.env, self.repo, batch);
+                }
                 let err = fs::File::create(&self.stderr_path)
                     .map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
                 // batch-job: this runs whatever its caller names, as long as that takes
@@ -1588,6 +1591,27 @@ mod abandon_tests {
         crate::io::round_abandon(&env, &repo, "b1", "x", "error");
         assert!(!calls.exists(), "an ended round is never abandoned again");
     }
+    #[test]
+    fn a_later_corpus_run_of_a_batch_records_its_pass_start() {
+        let d = testkit::TempDir::new("vm-pass-start");
+        let mut env = lifecycle_tests_env(d.path());
+        let calls = d.path().join("queue-calls");
+        env.queue_bin = d.path().join("queue-stub");
+        testkit::write_exe(&env.queue_bin, &format!("#!/bin/sh\necho \"$@\" >> {}\n", calls.display()));
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new())
+            .unwrap()
+            .in_batch(Some("b1"));
+        r.corpus_runs = 1;
+        let _ = r.start_main(MainKind::Corpus, &["a.sh".to_string()]);
+        let seen = fs::read_to_string(&calls).unwrap_or_default();
+        assert_eq!(
+            seen.lines().collect::<Vec<_>>(),
+            ["round pass-start --resume b1 fx", "round suites-started b1 fx"],
+            "{seen}"
+        );
+    }
+
     #[test]
     fn a_red_unit_phase_carries_its_failing_test_lines_and_a_probe_names_the_packages_it_judges() {
         let d = testkit::TempDir::new("vm-unit-failed");

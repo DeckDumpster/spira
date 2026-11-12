@@ -52,6 +52,8 @@ struct FGit {
     heads_name_their_base: Cell<bool>,
     /// A worktree add makes its directory and a worktree remove deletes it, as the real git does.
     materialise: Cell<bool>,
+    /// A sha `worktree_add_detached` refuses to check out.
+    add_refused: RefCell<Option<String>>,
 }
 
 impl FGit {
@@ -181,6 +183,9 @@ impl Git for FGit {
     }
     fn worktree_prune(&self, _: &Path) {}
     fn worktree_add_detached(&self, _: &Path, p: &Path, sha: &str) -> bool {
+        if self.add_refused.borrow().as_deref() == Some(sha) {
+            return false;
+        }
         self.refs
             .borrow_mut()
             .insert(format!("{}:HEAD", p.display()), sha.into());
@@ -772,6 +777,28 @@ impl Scripts for FScripts {
             .borrow()
             .iter()
             .any(|(r, b, _)| r == repo && b == batch)
+    }
+    fn live_pass_scopes(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
+        Ok(self
+            .round_legs
+            .borrow()
+            .iter()
+            .filter(|(r, b, u)| r == repo && b == batch && u.ends_with(".scope"))
+            .map(|(_, _, u)| u.clone())
+            .collect())
+    }
+    fn stop_pass_scopes(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
+        if self.round_legs_stubborn.get() {
+            return Err("1 still running after its stop".into());
+        }
+        let (mine, rest): (Vec<_>, Vec<_>) = self
+            .round_legs
+            .borrow()
+            .iter()
+            .cloned()
+            .partition(|(r, b, u)| r == repo && b == batch && u.ends_with(".scope"));
+        *self.round_legs.borrow_mut() = rest;
+        Ok(mine.into_iter().map(|(_, _, u)| u).collect())
     }
     fn unit_active_state(&self, unit: &str) -> String {
         self.unit_asked.borrow_mut().push(unit.to_string());
