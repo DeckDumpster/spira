@@ -1109,7 +1109,7 @@ mod tests {
         let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
         b.set_max_read_ms(1_000);
         let busy: i64 = lock(&b.0.readers[0].conn)
-            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .pragma_query_value(None, "busy_timeout", |r| r.get(0))
             .unwrap();
         assert_eq!(busy, 1_000);
     }
