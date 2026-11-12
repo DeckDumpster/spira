@@ -8684,6 +8684,9 @@ fn a_worktree_rebuilt_from_the_surviving_members_after_an_eject_is_adopted_by_ce
     assert!(t.out().contains("adopted"), "{}{}", t.out(), t.err());
     assert_eq!(kv_of(&t, "round")["head"], "merged-ta");
     assert_eq!(round_phase(&t), "GREEN");
+
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-ta"));
 }
 
 #[test]
