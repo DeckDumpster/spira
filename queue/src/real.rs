@@ -1123,7 +1123,8 @@ impl Scripts for RealScripts {
         // FORK-EDGE: machine leg cargo (release build)
         let (rc, out) = run_combined(
             Command::new("cargo")
-                .args(["build", "-q", "--profile", "release", "--workspace", "--config", "profile.release.incremental=false"])
+                .args(["build", "-q", "--profile", "release", "--workspace"])
+                .args(spira_config::build::one_shot("release"))
                 .current_dir(wt)
                 .env("CARGO_TARGET_DIR", &dir),
         );

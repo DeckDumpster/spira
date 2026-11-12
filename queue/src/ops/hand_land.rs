@@ -171,6 +171,8 @@ impl Drop for TipBuild<'_> {
     }
 }
 
+/// Rebuilds from the tip because no round holds a build to land (law-deploy-the-tested-artifacts
+/// forbids a rebuild only where a tested one exists); the landing still checks the tree and binaries.
 fn build_tip<'a>(w: &'a World<'a>, c: &Ctx, path: &'a Path, a: &Args) -> Result<TipBuild<'a>, String> {
     let wt = c.s.run.join("worktree").join(format!(".hand-land-{}-{}", a.bead, w.env.pid()));
     w.git.worktree_prune(path);
@@ -184,7 +186,9 @@ fn build_tip<'a>(w: &'a World<'a>, c: &Ctx, path: &'a Path, a: &Args) -> Result<
     let started = w.clock.now();
     match w.scripts.build_release(&wt, a.bead) {
         Ok(lease) => {
-            let _ = std::fs::write(c.s.run.join(BUILD_SECS_FILE), format!("{}\n", w.clock.now().saturating_sub(started)));
+            if let Err(e) = std::fs::write(c.s.run.join(BUILD_SECS_FILE), format!("{}\n", w.clock.now().saturating_sub(started))) {
+                w.err(format!("queue.sh hand-land: could not record the build duration: {e}"));
+            }
             Ok(TipBuild { w, repo: path, wt, _lease: lease })
         }
         Err(e) => {

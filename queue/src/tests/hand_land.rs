@@ -440,5 +440,5 @@ fn a_dry_run_says_a_build_will_be_needed_and_its_last_measured_duration() {
 fn a_build_that_succeeds_records_its_duration_for_the_next_dry_run() {
     let (t, _keep) = certified_harness_world();
     assert_eq!(hand_land(&t, &["--round", "wait"]), 0, "{}", t.err());
-    assert!(t.s().run.join("release-build-secs").exists());
+    assert_eq!(fs::read_to_string(t.s().run.join("release-build-secs")).unwrap(), "0\n");
 }
