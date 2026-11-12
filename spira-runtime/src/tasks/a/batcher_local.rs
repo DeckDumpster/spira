@@ -677,6 +677,9 @@ pub struct Leg {
     /// The head of the open round an assemble builds on, when it stacks; empty for the landing ref.
     #[serde(default)]
     pub onto: String,
+    /// How many members were ejected before this abandon, when the leg knows.
+    #[serde(default)]
+    pub ejected: Option<usize>,
     /// The suites a red certify named, for the abandon to keep their evidence.
     #[serde(default)]
     pub reds: Vec<String>,
@@ -1009,8 +1012,12 @@ impl Machine<'_> {
     }
 
     fn abandon_naming(&mut self, why: &str, reds: Vec<String>) {
+        self.abandon_ejecting(why, reds, None);
+    }
+
+    fn abandon_ejecting(&mut self, why: &str, reds: Vec<String>, ejected: Option<usize>) {
         if self.rc.batch.is_some() {
-            let leg = Leg { why: why.to_string(), reds, key: format!("{}:{}", self.repo, self.rc.batch.clone().unwrap_or_default()), ..self.leg() };
+            let leg = Leg { why: why.to_string(), reds, ejected, key: format!("{}:{}", self.repo, self.rc.batch.clone().unwrap_or_default()), ..self.leg() };
             self.acts.push(leg.act(ABANDON));
         }
     }
@@ -1433,7 +1440,7 @@ impl Machine<'_> {
                     let evidence = output.map_or_else(|| why.clone(), |o| format!("{why}; output kept at {o}"));
                     let key = format!("{}:{}:sole", self.repo, self.rc.batch.clone().unwrap_or_default());
                     self.acts.push(Leg { bead: id.clone(), head: tip.clone(), why: evidence, reds: reds.clone(), key, ..self.leg() }.act(EJECT));
-                    self.abandon_naming(&why, reds);
+                    self.abandon_ejecting(&why, reds, Some(1));
                     self.finish(pace::Outcome::Quiet, "");
                     return;
                 }
@@ -2338,7 +2345,7 @@ pub mod edge {
             return Ok("{}".into());
         }
         let why = io::keep_red_evidence(&env.run, &leg.batch, &leg.why, &leg.reds);
-        io::round_abandon(&env, &repo_of(&env, &leg)?, &leg.batch, &why, "red");
+        io::round_abandon_ejecting(&env, &repo_of(&env, &leg)?, &leg.batch, &why, "red", leg.ejected);
         io::write_local_verdict(&env, &leg.repo, "red", &why);
         Ok("{}".into())
     }

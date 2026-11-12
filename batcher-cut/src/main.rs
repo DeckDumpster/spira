@@ -1158,6 +1158,7 @@ fn finish_local_round(
                     ));
                 }
                 let ci = io::ci_red_suites(wt);
+                let mut ejected = 0;
                 for id in &guilty {
                     if let Some(m) = stable.members.iter().find(|m| m.id == *id) {
                         redtip::record(&env_.run, &repo.name, id, &m.tip);
@@ -1179,7 +1180,10 @@ fn finish_local_round(
                         vec![(ci[0].clone(), first)]
                     };
                     match io::round_eject(env_, repo, batch, id, &ci, &fails, true) {
-                        Ok(()) => println!("batcher {}: ejected {id} from round {batch} — the repository's ci is red on its files ({output})", repo.name),
+                        Ok(()) => {
+                            ejected += 1;
+                            println!("batcher {}: ejected {id} from round {batch} — the repository's ci is red on its files ({output})", repo.name)
+                        }
                         Err(e) => println!("batcher {}: could not eject {id} from round {batch}: {e}", repo.name),
                     }
                 }
@@ -1192,7 +1196,7 @@ fn finish_local_round(
                         guilty.join(", ")
                     ),
                     "ci-red",
-                    guilty.len(),
+                    Some(ejected),
                 );
                 io::tsd_append_round(
                     env_,

@@ -3230,22 +3230,23 @@ pub fn round_attribution_failed(env: &Env, repo: &Repo, batch: &str, why: &str) 
     }
 }
 
-/// What the batcher tells `queue round abandon` it considered: it claims ejections only when
-/// `ejected` is more than none.
-pub fn abandon_considered(cause: &str, ejected: usize) -> String {
+/// What the batcher tells `queue round abandon` it considered. It claims ejections only for a
+/// known count above none, and says none were made only for a known zero.
+pub fn abandon_considered(cause: &str, ejected: Option<usize>) -> String {
     match ejected {
-        0 => format!("the batcher's {cause} abandon; no member was ejected"),
-        n => format!("the batcher's {cause} abandon, after ejecting {n} member(s) it could implicate"),
+        None => format!("the batcher's {cause} abandon"),
+        Some(0) => format!("the batcher's {cause} abandon; no member was ejected"),
+        Some(n) => format!("the batcher's {cause} abandon, after ejecting {n} member(s) it could implicate"),
     }
 }
 
-/// [`round_abandon_ejecting`] for an abandon that ejected no one first.
+/// [`round_abandon_ejecting`] for a caller that does not know how many members were ejected first.
 pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str) -> bool {
-    round_abandon_ejecting(env, repo, batch, why, cause, 0)
+    round_abandon_ejecting(env, repo, batch, why, cause, None)
 }
 
-/// `ejected` is how many members the caller ejected from the round before abandoning it.
-pub fn round_abandon_ejecting(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str, ejected: usize) -> bool {
+/// `ejected` is how many members the caller ejected from the round before abandoning it, when it knows.
+pub fn round_abandon_ejecting(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str, ejected: Option<usize>) -> bool {
     if spira_config::round_ended::is_ended(&env.run, batch) {
         println!("batcher {}: round {batch} has already ended — no second abandon", repo.name);
         let files = crate::pace::Files::new(&env.run, &repo.name);
@@ -5010,10 +5011,12 @@ mod abandon_hold_tests {
 
     #[test]
     fn an_abandon_after_zero_ejects_does_not_claim_an_ejection() {
-        let none = abandon_considered("red", 0);
+        let unknown = abandon_considered("red", None);
+        assert!(!unknown.contains("after ejecting"), "{unknown}");
+        let none = abandon_considered("red", Some(0));
         assert!(!none.contains("after ejecting"), "{none}");
         assert!(none.contains("no member was ejected"), "{none}");
-        let some = abandon_considered("ci-red", 2);
+        let some = abandon_considered("ci-red", Some(2));
         assert!(some.contains("after ejecting 2 member(s)"), "{some}");
     }
 

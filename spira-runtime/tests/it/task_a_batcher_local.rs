@@ -306,6 +306,22 @@ fn sp_z43b7y_a_red_certify_of_a_one_member_round_ejects_the_member_and_writes_no
     }
 }
 
+/// The sole-member abandon follows its eject, so it may say one was made; a multi-member abandon
+/// that ejected nothing at decision time claims no count.
+#[test]
+fn sp_b0lhx6_an_abandon_carries_the_ejects_the_decision_made() {
+    let mut r = carried(&attributed(sole_member(driving(State::Certifying, "spira.c3"))));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
+    let after = asked_after(&r, n);
+    assert_eq!(after.iter().find(|(e, _)| e == ABANDON).unwrap().1.ejected, Some(1));
+    let mut r = carried(&attributed(driving(State::Certifying, "spira.c3")));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
+    let after = asked_after(&r, n);
+    assert_eq!(after.iter().find(|(e, _)| e == ABANDON).unwrap().1.ejected, None);
+}
+
 /// Two members and no file named: the red has no culprit to eject, so the pause stands for a person.
 #[test]
 fn sp_z43b7y_a_red_certify_of_a_two_member_round_naming_no_member_still_pauses() {
