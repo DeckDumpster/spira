@@ -167,7 +167,9 @@ pub fn state_index_of(ids: &[String]) -> Option<HashMap<String, Row>> {
     for csv in id_chunks(ids) {
         all.extend(read_rows(&format!("ids-{}", digest(&csv)), &["list", "--ids", &csv])?);
     }
-    forget_old_reads("ids-");
+    if store_view::shared().is_none() {
+        forget_old_reads("ids-");
+    }
     Some(all)
 }
 
