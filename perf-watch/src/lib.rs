@@ -5,7 +5,6 @@
 use spira_otel::metrics::{MetricsSink, Point};
 use std::collections::BTreeMap;
 
-pub mod happy;
 
 pub struct Probe {
     pub name: String,

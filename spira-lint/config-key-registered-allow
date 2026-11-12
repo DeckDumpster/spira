@@ -892,7 +892,6 @@ SPIRA_TOML spira-lint/src/rules/workflow_config.rs
 SPIRA_TOML spira-otel/src/fixture.rs
 SPIRA_TOML spira-runtime/src/tasks/a/sentinel_call.rs
 SPIRA_TOML spira-runtime/src/tasks/a/sentinel_pass.rs
-SPIRA_TOML spira-runtime/src/tasks/d/watch_perf_happy.rs
 SPIRA_TOML spira-runtime/src/tasks/f/persona_ops.rs
 SPIRA_TOML spira/acceptance-local.sh
 SPIRA_TOML spira/conf.sh

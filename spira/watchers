@@ -85,7 +85,6 @@
 #   pr-notify, view, inbox-keeper, publish-backlog, round-duty, asks, supersede-duty,
 #   brain-dirty, design-asks           spira-runtime handlers (spira-runtime/src/watchers)
 #   lc-backup                          task watch.backup_age (lc-backup.timer still runs the backup)
-#   round-spill-key                    task watch.spill_key
 #   round-ami-stale                    task watch.ami_stale
 #   ci-spill-guard                     task watch.ci_spill
 #   pass-rate                          task watch.pass_rate

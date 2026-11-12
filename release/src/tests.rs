@@ -886,14 +886,14 @@ fn completion_gives_a_task_the_live_task_modes_lacks_its_release_default_mode() 
         );
         root.to_path_buf()
     };
-    let active = tree(&tmp.path().join("old"), "heartbeat=act watch.spill_key=act");
-    let new = tree(&tmp.path().join("new"), "heartbeat=act watch.spill_key=act watch.throughput=act");
-    let live: toml::Table = "[spira]\ntask_modes = \"heartbeat=act watch.spill_key=observe\"\n".parse().unwrap();
+    let active = tree(&tmp.path().join("old"), "heartbeat=act watch.ami_stale=act");
+    let new = tree(&tmp.path().join("new"), "heartbeat=act watch.ami_stale=act watch.throughput=act");
+    let live: toml::Table = "[spira]\ntask_modes = \"heartbeat=act watch.ami_stale=observe\"\n".parse().unwrap();
     let d = config_delta::complete(std::slice::from_ref(&live), &new, Some(&active), None).unwrap().expect("a delta that completes task_modes");
     let (_, post, undo) = config_delta::apply(std::slice::from_ref(&live), &d, &[], true).unwrap();
     assert_eq!(
         post[0]["spira"]["task_modes"].as_str(),
-        Some("heartbeat=act watch.spill_key=observe watch.throughput=act"),
+        Some("heartbeat=act watch.ami_stale=observe watch.throughput=act"),
         "the new task takes the release default; the live override stands"
     );
     let (_, back, _) = config_delta::apply(&post, &undo, &[], false).unwrap();

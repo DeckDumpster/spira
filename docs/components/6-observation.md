@@ -9,7 +9,7 @@
 | **metrics stack** | `spira/metrics-stack.sh vm\|logs\|collector\|grafana`; `spira-metrics-{vm,logs,collector,grafana}.service` | VictoriaMetrics, VictoriaLogs (wide events; keeps `SPIRA_OTEL_KEEP_DAYS`), an OpenTelemetry Collector (span files → metrics; OTLP logs → VictoriaLogs on loopback :4318) and Grafana, under podman. Needs `SPIRA_METRICS_DATA`; otherwise the units idle. Producers push to `SPIRA_METRICS_ENDPOINT`; empty disables. |
 | **heimdall** | `heimdall [--report]`; task `reconcile.heimdall` (2 min) | Watchdog over the loop: classifies a stalled loop and only speaks, raising or clearing one alert bead per cause. Repairs nothing. |
 | **watchtower** | `watchtower`; task `watch.tower` (30 min) | Hands Ops the pipeline's vital signs and runs cheap detectors for "every unit green but nothing landing": throttle, czar outcome, PR stall, release skew, deploy fault, slow query, drift, disk and memory. |
-| **perf-watch** | `perf-watch --probes FILE`, `perf-watch happy`; tasks `watch.perf` (5 min), `watch.perf_happy` (1 h) | Times the hot read paths end to end and alarms past a limit with the top callers. |
+| **perf-watch** | `perf-watch --probes FILE`; task `watch.perf` (5 min) | Times the hot read paths end to end and alarms past a limit with the top callers. |
 | **census** | `census [--with-suppressed]` | Ranks failure classes by distinct beads since the last watermark, suppressing classes with an open remedy. |
 | **strand** | `strand report\|check\|throttle-state` | Reports work that exists and is not moving, with the reason and the one action that clears it; `check` acts where the fix is mechanical. |
 | **doctor** | `doctor` | Read-only runtime health ([install](../install.md)). |

@@ -14,7 +14,7 @@
 //!
 //! A scenario file with `driver = "loop"` is one of these ([`parse`]); `sim run` drives it and
 //! writes `exec.log` in the kept run directory, one line per effect in the world's own format
-//! (`=== t=<vt> <effect> exit status: <rc> in <ms>ms`), which `perf-watch`'s `slowest_phase` reads.
+//! (`=== t=<vt> <effect> exit status: <rc> in <ms>ms`).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};

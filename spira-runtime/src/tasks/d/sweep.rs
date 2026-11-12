@@ -758,8 +758,38 @@ pub fn file_bead(e: &crate::Effects, spec: &EffectSpec) -> Result<String, String
     if let Some(id) = cert_sweep::open_duplicate(&open, &req.suite, req.kind) {
         return Ok(format!("{DUPLICATE}{id}"));
     }
-    let filing = super::watch_statute_audit::Filing { title: req.title, body: cert_sweep::filing_text(&req.body), persona: "builder".into(), repo: "spira".into() };
-    super::watch_statute_audit::file_work(&e.world.lc_socket, &filing, Some(&req.priority.to_string()), spec.deadline_ms)
+    let filing = Filing { title: req.title, body: cert_sweep::filing_text(&req.body), persona: "builder".into(), repo: "spira".into() };
+    file_work(&e.world.lc_socket, &filing, Some(&req.priority.to_string()), spec.deadline_ms)
+}
+
+/// What `work - file` takes: the title, the body on stdin, the persona it is for and the repo.
+pub struct Filing {
+    pub title: String,
+    pub body: String,
+    pub persona: String,
+    pub repo: String,
+}
+
+/// The persona a scheduler filing is made under: one the broker's allow table lets file work
+/// for another persona.
+const FILER: &str = "ops";
+
+/// A work bead filed through the store's brokered `work - file` verb, over the socket with the
+/// effect's own deadline. Answers the verb's stdout.
+fn file_work(lc_socket: &std::path::Path, f: &Filing, priority: Option<&str>, deadline_ms: u64) -> Result<String, String> {
+    let mut argv: Vec<String> = ["work", "-", "file", &f.title, "--for", &f.persona, "--repo", &f.repo].iter().map(|s| s.to_string()).collect();
+    if let Some(p) = priority {
+        argv.extend(["--priority".to_string(), p.to_string()]);
+    }
+    argv.extend(["--body-file", "-", "--stdin", &f.body, "--actor", FILER].iter().map(|s| s.to_string()));
+    let stream = std::os::unix::net::UnixStream::connect(lc_socket).map_err(|e| format!("cannot tell: the lifecycle service is not answering on {}: {e}", lc_socket.display()))?;
+    let wait = Some(std::time::Duration::from_millis(deadline_ms.max(1)));
+    stream.set_read_timeout(wait).and_then(|_| stream.set_write_timeout(wait)).map_err(|e| e.to_string())?;
+    let reply = spira_config::lc_call::exchange(stream, &argv, None)?;
+    match reply.code {
+        0 => Ok(reply.out),
+        _ => Err(format!("work file {:?}: {}", f.title, reply.why())),
+    }
 }
 
 /// The record: under the history's named lock, the event rows in order, then the history rows.

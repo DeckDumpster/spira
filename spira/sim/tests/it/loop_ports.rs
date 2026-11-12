@@ -121,10 +121,8 @@ fn conflicting_siblings_priority_wins_the_conflict_and_the_loser_is_returned_and
     assert_no_process(&r);
 }
 
-/// Replaces the world scenario `happy-path` (sp-npsese), which `watch.perf_happy` runs in
-/// production: the shipped scenario file, now a loop world, files one bead and ends with it
-/// LANDED and its landed head published by PR, as `sim run happy-path` checks it. The run's
-/// exec.log, one line per effect, is what `perf-watch` reads its slowest phase from.
+/// The shipped `happy-path` scenario, a loop world, files one bead and ends with it LANDED and
+/// its landed head published by PR, as `sim run happy-path` checks it.
 #[test]
 fn happy_path_the_shipped_loop_scenario_lands_and_publishes_and_logs_its_effects() {
     let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/happy-path.toml")).expect("the shipped scenario");
@@ -137,8 +135,6 @@ fn happy_path_the_shipped_loop_scenario_lands_and_publishes_and_logs_its_effects
     assert_eq!(r.published, [(100, loopworld::main_after(1))], "one publish PR, at the landed head: {}", r.dump());
     assert!(r.refused.is_empty(), "{:?}", r.refused);
     let log = r.exec_log.join("\n");
-    let slowest = perf_watch::happy::slowest_phase(&log);
-    assert!(slowest.is_some(), "perf-watch reads a slowest phase from the run's exec.log: {log}");
     assert!(log.contains(" publish.pr_create exit status: 0 in "), "{log}");
     assert_no_process(&r);
 }

@@ -103,7 +103,7 @@ fn the_shipped_loop_worlds_parse() {
         .map(|p| p.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string())
         .collect();
     loops.sort();
-    assert!(loops.contains(&"happy-path".to_string()), "watch.perf_happy's scenario is a loop world: {loops:?}");
+    assert!(loops.contains(&"happy-path".to_string()), "the happy-path scenario is a loop world: {loops:?}");
     for name in loops {
         let text = std::fs::read_to_string(dir.join(format!("{name}.toml"))).expect("readable");
         loopworld::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));

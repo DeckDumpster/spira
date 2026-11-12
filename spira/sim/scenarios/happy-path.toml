@@ -7,9 +7,6 @@
 # manager; the landing is `queue round land`'s double; the forge is the publish task's doubles,
 # which open the PR. Merging that PR and tagging the release were GitHub's acts in the world
 # scenario this replaces (sim gh's `pr-merge` and `tag`), not the loop's.
-#
-# `watch.perf_happy` runs this hourly in production (`sim run happy-path --seed 7 --keep`) and
-# measures its wall time; the run directory's exec.log carries one line per effect.
 driver = "loop"
 goal = "sp-hp01:LANDED"
 publish = true
