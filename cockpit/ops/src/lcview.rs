@@ -481,10 +481,14 @@ pub fn carry_forward(new: &mut Snapshot, last: &Snapshot) {
     let from = if last.good_at > 0 { last.good_at } else { last.now };
     new.good_at = from;
     if new.now - from <= STALE_WARN_S {
-        new.errors.retain(|e| !e.starts_with("spira-lc"));
+        new.errors.retain(|e| !e.starts_with("spira-lc list:"));
     } else {
         new.errors.push(format!("showing the last good read from {} ago", age(new.now - from)));
     }
+}
+
+pub fn read_age_line(age: &str) -> String {
+    format!("{YEL}  showing the read from {age} ago; a source did not answer{R}")
 }
 
 /// The ids a commit subject names as its own work: `sp-x: …` or `… merge sp-x (…`.
@@ -1672,7 +1676,7 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
         v.failures
     ));
     if let Some(a) = &v.read_age {
-        out.push(format!("{YEL}  showing the read from {a} ago; a source did not answer{R}"));
+        out.push(read_age_line(a));
     }
     for e in &v.errors {
         out.push(format!("{RED}  source failed: {}{R}", cut(e, w - 18)));
@@ -2144,6 +2148,17 @@ mod tests {
         let late = failed_after(&twice, STALE_WARN_S);
         let page = plain(&render(&view(&late), 100));
         assert!(page.contains("source failed"), "{page}");
+    }
+
+    #[test]
+    fn a_live_failure_is_not_covered_by_a_carried_list_read() {
+        let mut last = snap(vec![]);
+        last.rows.push(Row { id: "sp-a".into(), state: "WORKING".into(), ..Default::default() });
+        let mut new = Snapshot { now: last.now + 30, errors: vec!["spira-lc list: exit 1".into(), "spira-lc list --live: exit 1".into()], ..Default::default() };
+        carry_forward(&mut new, &last);
+        let page = plain(&render(&view(&new), 100));
+        assert!(page.contains("source failed: spira-lc list --live"), "{page}");
+        assert!(!page.contains("source failed: spira-lc list: "), "{page}");
     }
 
     #[test]
