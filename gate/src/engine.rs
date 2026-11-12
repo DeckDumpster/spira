@@ -1093,7 +1093,7 @@ impl<'w, W: World> Trial<'w, W> {
                 base_fkey.as_ref(),
                 &mut |_, _| {},
                 &mut None,
-                &[],
+                &phase_env,
             );
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
