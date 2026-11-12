@@ -234,6 +234,64 @@ impl Sql for Arc<Fake> {
     }
 }
 
+fn without_events() -> Reader {
+    let mut columns = full_layout();
+    columns.retain(|(t, _)| t != "events");
+    Reader::new(Box::new(Fake { columns: Mutex::new(columns), issues: vec![issue("sp-a", "A")], ..Fake::default() }), DB.into())
+}
+
+#[test]
+fn a_store_without_the_events_columns_still_serves_show_list_and_label_list() {
+    let reader = without_events();
+    for args in [v(&["show", "sp-a"]), v(&["list"]), v(&["label", "list", "sp-a"]), v(&["search", "A"]), v(&["dep", "list", "sp-a"]), v(&["memories"])] {
+        reader.read(&args).unwrap_or_else(|e| panic!("{args:?}: {e:?}"));
+    }
+    reader.layout().unwrap();
+}
+
+#[test]
+fn a_store_without_the_events_columns_refuses_events_alone_naming_them() {
+    let e = without_events().read(&v(&["events", "--id", "sp-a"])).unwrap_err();
+    assert!(matches!(&e, Failure::Store(t) if ["events.issue_id", "events.event_type", "events.new_value", "events.created_at"].iter().all(|c| t.contains(c)) && t.contains("exit 2")), "{e:?}");
+}
+
+#[test]
+fn events_is_served_by_a_layout_that_has_its_columns_and_a_gap_elsewhere_costs_it_no_reprobe() {
+    let mut columns = full_layout();
+    columns.retain(|(t, c)| !(t == "comments" && c == "text"));
+    let f = Arc::new(Fake { columns: Mutex::new(columns), ..Fake::default() });
+    let reader = Reader::new(Box::new(f.clone()), DB.into()).rechecking_at(std::time::Duration::ZERO);
+    reader.read(&v(&["events", "--id", "sp-a"])).unwrap();
+    reader.read(&v(&["events", "--id", "sp-a"])).unwrap();
+    assert_eq!(f.seen.lock().unwrap().iter().filter(|q| q.contains("information_schema")).count(), 1);
+}
+
+#[test]
+fn the_events_columns_are_the_ones_the_production_probe_reported() {
+    let production = ["issue_id", "event_type", "actor", "old_value", "new_value", "comment", "created_at", "id"];
+    let named = crate::plan::READER_COLUMNS.iter().find(|(t, _)| *t == "events").unwrap().1;
+    assert!(named.iter().all(|c| production.contains(c)), "{named:?}");
+}
+
+#[test]
+fn a_gap_outside_a_reads_tables_does_not_refuse_it() {
+    let mut columns = full_layout();
+    columns.retain(|(t, c)| !(t == "comments" && c == "text"));
+    let reader = Reader::new(Box::new(Fake { columns: Mutex::new(columns), ..Fake::default() }), DB.into());
+    reader.read(&v(&["label", "list", "sp-a"])).unwrap();
+    assert!(matches!(reader.read(&v(&["comments", "sp-a"])), Err(Failure::Store(t)) if t.contains("comments.text")));
+}
+
+#[test]
+fn every_reads_tables_are_in_the_readers_columns() {
+    let known: Vec<&str> = crate::plan::READER_COLUMNS.iter().map(|(t, _)| *t).collect();
+    for args in [&["list"][..], &["show", "x"], &["comments", "x"], &["gate", "list"], &["memories"], &["state", "x", "d"], &["config", "get", "k"], &["search", "q"], &["dep", "list", "x"], &["label", "list", "x"], &["events", "--id", "x"]] {
+        for t in parse(&v(args)).unwrap().tables() {
+            assert!(known.contains(t), "{args:?}: {t}");
+        }
+    }
+}
+
 #[test]
 fn a_known_layout_is_checked_once_and_serves_reads() {
     let f = Arc::new(Fake { columns: Mutex::new(full_layout()), issues: vec![issue("sp-a", "A")], ..Fake::default() });
@@ -327,4 +385,84 @@ fn show_text_leads_with_the_head_line_work_show_rewrites_and_carries_the_descrip
     assert!(text.starts_with("○ sp-a · A title   [P1 · open]\n"), "{text}");
     assert!(text.contains("Labels: repo:spira\n") && text.contains("DESCRIPTION\nthe body\n") && text.contains("me: a comment"), "{text}");
     assert_eq!(show_text(&Fake::default(), DB, "sp-none").unwrap(), None);
+}
+
+#[test]
+fn search_is_one_issues_query_locating_the_text_in_four_columns_and_a_quote_cannot_end_the_string() {
+    let f = Fake { issues: vec![issue("sp-a", "A")], ..Fake::default() };
+    let out = answer(&f, DB, &v(&["search", "merge queue", "--json"])).unwrap();
+    assert!(out.contains("sp-a"));
+    let q = first_sql(&f);
+    assert!(q.contains("LOCATE(LOWER('merge queue'), LOWER(title))") && q.contains("status <> 'closed'"), "{q}");
+    for col in ["id", "description", "notes"] {
+        assert!(q.contains(&format!("LOWER({col})")), "{col}");
+    }
+    assert!(q.contains("LIMIT 50"), "{q}");
+    let f = Fake::default();
+    answer(&f, DB, &v(&["search", "x') OR 1=1 --", "--all", "--limit", "0"])).unwrap();
+    let q = first_sql(&f);
+    assert!(q.contains("LOWER('x\\') OR 1=1 --')") && !q.contains("status <> 'closed'") && !q.contains("LIMIT"), "{q}");
+}
+
+#[test]
+fn dep_list_up_with_a_type_is_one_dependencies_query_answering_the_other_end() {
+    let f = Fake { reply: Mutex::new(vec![json!({ "issue_id": "sp-b", "depends_on_issue_id": "sp-a", "type": "blocks" })]), ..Fake::default() };
+    let out = answer(&f, DB, &v(&["dep", "list", "sp-a", "--direction", "up", "--type", "blocks", "--json"])).unwrap();
+    assert_eq!(f.seen.lock().unwrap().len(), 1);
+    let q = first_sql(&f);
+    assert!(q.contains("depends_on_issue_id = 'sp-a'") && q.contains("type = 'blocks'"), "{q}");
+    assert_eq!(serde_json::from_str::<Value>(&out).unwrap(), json!([{ "id": "sp-b", "type": "blocks" }]));
+}
+
+#[test]
+fn dep_list_down_reads_the_beads_own_edges_and_accepts_the_equals_form() {
+    let f = Fake { reply: Mutex::new(vec![json!({ "issue_id": "sp-a", "depends_on_issue_id": "sp-z", "type": "parent-child" })]), ..Fake::default() };
+    let out = answer(&f, DB, &v(&["dep", "list", "sp-a"])).unwrap();
+    assert!(first_sql(&f).contains("issue_id = 'sp-a'"));
+    assert_eq!(serde_json::from_str::<Value>(&out).unwrap(), json!([{ "id": "sp-z", "type": "parent-child" }]));
+    let f = Fake::default();
+    answer(&f, DB, &v(&["dep", "list", "sp-a", "--direction=up"])).unwrap();
+    assert!(first_sql(&f).contains("depends_on_issue_id = 'sp-a'"));
+    assert!(parse(&v(&["dep", "list", "sp-a", "--direction", "sideways"])).is_err());
+}
+
+#[test]
+fn label_list_answers_the_labels_sorted_as_a_json_array() {
+    let f = Fake { reply: Mutex::new(vec![json!({ "label": "rune:x" }), json!({ "label": "a" })]), ..Fake::default() };
+    let out = answer(&f, DB, &v(&["label", "list", "sp-a", "--json"])).unwrap();
+    assert!(first_sql(&f).contains(".labels WHERE issue_id = 'sp-a'"));
+    assert_eq!(serde_json::from_str::<Value>(&out).unwrap(), json!(["a", "rune:x"]));
+}
+
+#[test]
+fn events_is_one_typed_query_over_the_ids_and_chunks_by_id_chunk() {
+    let f = Fake { reply: Mutex::new(vec![json!({ "issue_id": "sp-a", "event_type": "claimed", "new_value": "", "created_at": "2026-11-01T00:00:00Z" })]), ..Fake::default() };
+    let out = answer(&f, DB, &v(&["events", "--id", "sp-a,sp-b"])).unwrap();
+    let q = first_sql(&f);
+    assert!(q.contains(".events WHERE issue_id IN ('sp-a','sp-b')") && q.contains("'poison.cleared'") && q.contains("SUBSTRING(COALESCE(new_value,''),1,120)"), "{q}");
+    assert_eq!(serde_json::from_str::<Value>(&out).unwrap()[0]["event_type"], "claimed");
+    let ids: Vec<String> = (0..201 * 5 / 2).map(|i| format!("sp-{i}")).collect();
+    assert!(ids.len() > ID_CHUNK);
+    let f = Fake::default();
+    answer(&f, DB, &v(&["events", "--id", &ids.join(",")])).unwrap();
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen.len(), ids.len().div_ceil(ID_CHUNK));
+    for (chunk, q) in ids.chunks(ID_CHUNK).zip(seen.iter()) {
+        assert!(q.contains(&format!("issue_id IN ({})", quoted(chunk))), "{q}");
+    }
+    drop(seen);
+    answer(&f, DB, &v(&["events", "--json", "--id", "sp-a"])).unwrap();
+}
+
+#[test]
+fn events_with_no_id_is_a_request_failure() {
+    assert!(matches!(answer(&Fake::default(), DB, &v(&["events"])), Err(Failure::Request(_))));
+}
+
+#[test]
+fn the_readers_columns_include_the_events_columns() {
+    let named = crate::plan::READER_COLUMNS.iter().find(|(t, _)| *t == "events").expect("events table").1;
+    for col in ["issue_id", "event_type", "new_value", "created_at"] {
+        assert!(named.contains(&col), "{col}");
+    }
 }
