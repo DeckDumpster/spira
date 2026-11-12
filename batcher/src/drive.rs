@@ -180,6 +180,11 @@ pub trait RoundOps {
 /// The round-level pseudo-suite name a --with-bins build failure (exit 4) reports under —
 /// never a real `test-*.sh` file, so it can't collide with one a suite selection would pick.
 pub const WORKSPACE_BUILD: &str = "workspace-build";
+
+/// What a main run's error starts with when the pass built a tree the round was not cut for
+/// because the base moved under it: the round is rebuilt once on the new base, never sent to
+/// attribution as a harness fault.
+pub const BASE_MOVED: &str = "round-vm: base moved from ";
 pub const RUNNER_ABORT: &str = "runner-abort";
 
 /// Ids of the settled-owner reruns start here, clear of the attributor's own.
@@ -985,6 +990,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     let bound = members.len() as u32 + 2;
     let mut retried = false;
     let mut image_retried = false;
+    let mut base_retried = false;
     let t0 = runner.now();
     for iteration in 0..bound {
         if runner.abandoned() {
@@ -1000,6 +1006,19 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         let s = match drive(runner, &*ops, kind, &suites, &members, budget) {
             Ok(s) => s,
             Err(_) if runner.abandoned() => return Ok(RoundEnd::Abandoned),
+            Err(e) if e.starts_with(BASE_MOVED) && !base_retried => {
+                base_retried = true;
+                println!("batcher: {e} — rebuilding the round once on the new base");
+                let _ = runner.stop_main();
+                match ops.base_moved(&members)? {
+                    Some((sha, rebuilt)) => {
+                        runner.set_base(&sha);
+                        members = rebuilt;
+                    }
+                    None => members = ops.rebuild(&members)?,
+                }
+                continue;
+            }
             Err(e) => match eject_runner_abort(runner, ops, &members, &e)? {
                 Some(next) if next.is_empty() => {
                     return Ok(RoundEnd::Emptied(
@@ -1418,6 +1437,8 @@ pub(crate) mod tests {
         pub build_failed: Option<String>,
         /// A runner that dies with this text while the member is in the tree.
         pub aborts_with: Option<(String, String)>,
+        /// The next main run's poll fails with this, once.
+        pub fails_once: Option<String>,
         /// Whether the fake can build a member subset, and each subset it was asked to build.
         pub bisects: bool,
         pub probes: Vec<Vec<String>>,
@@ -1466,6 +1487,7 @@ pub(crate) mod tests {
                 compiler: None,
                 build_failed: None,
                 aborts_with: None,
+                fails_once: None,
                 bisects: false,
                 probes: vec![],
                 runs_alone: false,
@@ -1544,6 +1566,9 @@ pub(crate) mod tests {
         }
         fn poll_main(&mut self) -> Result<MainPoll, String> {
             let mut p = MainPoll::default();
+            if let Some(text) = self.fails_once.take() {
+                return Err(text);
+            }
             if let Some((m, text)) = &self.aborts_with {
                 if self.members.contains(m) {
                     return Err(text.clone());
@@ -3287,6 +3312,40 @@ pub(crate) mod tests {
             "{:?}",
             ops.eject_evidence
         );
+    }
+
+    #[test]
+    fn a_pass_that_found_the_base_moved_rebuilds_once_on_the_new_base_and_lands() {
+        let mut f = Fake::new(|_, _| false);
+        f.fails_once = Some(format!("{BASE_MOVED}aaa to bbb by 1234abc land sp-z — the pass built a tree the round was not cut for, not a harness fault"));
+        let mut ops = Ops { moves: vec!["bbb".into()], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+        assert_eq!(f.bases, vec!["bbb".to_string()], "the runner builds on the new base");
+        assert!(ops.ejected.is_empty() && ops.incidents.is_empty());
+    }
+
+    #[test]
+    fn a_base_that_moved_again_after_the_one_rebuild_is_an_error_not_a_loop() {
+        let mut f = Fake::new(|_, _| false);
+        let moved = format!("{BASE_MOVED}aaa to bbb by 1234abc land sp-z");
+        f.fails_once = Some(moved.clone());
+        let mut ops = Ops { moves: vec!["bbb".into()], ..Ops::default() };
+        struct Twice(Fake, String);
+        impl RoundRunner for Twice {
+            fn set_members(&mut self, m: &[Member]) { self.0.set_members(m) }
+            fn set_base(&mut self, sha: &str) { self.0.set_base(sha); self.0.fails_once = Some(self.1.clone()); }
+            fn start_main(&mut self, k: MainKind, s: &[String]) -> Result<(), String> { self.0.start_main(k, s) }
+            fn poll_main(&mut self) -> Result<MainPoll, String> { self.0.poll_main() }
+            fn stop_main(&mut self) -> Result<(), String> { self.0.stop_main() }
+            fn launch(&mut self, j: &Job) -> Result<(), String> { self.0.launch(j) }
+            fn poll_jobs(&mut self) -> Vec<(u64, JobResult)> { self.0.poll_jobs() }
+            fn now(&self) -> u64 { self.0.now() }
+            fn wait(&mut self) { self.0.wait() }
+        }
+        let mut twice = Twice(f, moved);
+        let err = attribute_round(&mut twice, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap_err();
+        assert!(err.starts_with(BASE_MOVED), "{err}");
     }
 
     #[test]

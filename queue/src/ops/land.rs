@@ -179,6 +179,14 @@ pub struct PendingActivation {
 }
 
 impl PendingActivation {
+    /// The plan that re-activates an existing release, for the undo of this one.
+    pub fn rollback_plan(&self) -> super::deploy::Plan {
+        super::deploy::Plan {
+            bins: None,
+            ..self.plan.clone()
+        }
+    }
+
     /// Give the release up unactivated, releasing its pin.
     pub fn discard(self) {
         if let Some(pin) = &self.pin {

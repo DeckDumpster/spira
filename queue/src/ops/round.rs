@@ -3068,6 +3068,45 @@ fn faulted_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 
     FAULT
 }
 
+/// Why a pass whose tree was refused did not build the tree the round was cut for, when the
+/// landing ref moved off the round's head: the old base, the new one and the landing between.
+fn base_moved_cause(w: &World, c: &Ctx, path: &Path, head: &str, err: &str) -> Option<String> {
+    if !err.contains(spira_config::cut_hold::TREE_MISMATCH) {
+        return None;
+    }
+    let new = w.git.rev_parse(path, c.r.landref.as_deref()?)?;
+    if w.git.is_ancestor(path, &new, head) {
+        return None;
+    }
+    let old = w.git.merge_base(path, &new, head)?;
+    let landing = w
+        .git
+        .log_range(path, &format!("{old}..{new}"))
+        .ok()
+        .and_then(|l| l.into_iter().next())
+        .map(|l| format!("{} {}", l.sha.chars().take(7).collect::<String>(), l.subject))
+        .unwrap_or_else(|| "a landing no log names".into());
+    Some(format!("base moved from {old} to {new} by {landing}"))
+}
+
+/// The base moved under a round whose pass found its tree not the expected one: rebuild the
+/// round on the new base once, to be certified again. No member is charged with the pass.
+fn rebuild_on_moved_base(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, why: &str) -> i32 {
+    w.err(format!("queue.sh {label}: {why}; the round is not judged"));
+    let _g = match lock(w, label, c) {
+        Ok(g) => g,
+        Err(rc) => return rc,
+    };
+    let Ok(mut kv) = load(w, label, c, batch) else {
+        return FAIL;
+    };
+    match remerge_if_moved(w, label, c, path, batch, &mut kv) {
+        Some((_, rc)) if rc == FAIL => super::LAND_BASE_MOVED,
+        Some((_, rc)) => rc,
+        None => FAIL,
+    }
+}
+
 pub(super) fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
@@ -3482,7 +3521,9 @@ fn certify_pass(
                 w.out(line);
             }
         }
+        let moved = base_moved_cause(w, c, path, &head, &out.err);
         let fault = match out.rc {
+            _ if moved.is_some() => moved.clone(),
             1 if ended_by_unit => None,
             0 | 1 if found.is_empty() => Some(vm_named.as_ref().map_or_else(
                 || "round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string(),
@@ -3529,6 +3570,9 @@ fn certify_pass(
                 "the incomplete pass",
                 pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
             );
+            if moved.is_some() {
+                return rebuild_on_moved_base(w, label, c, path, batch, &why);
+            }
             let shown = tail(&out.err, 20);
             w.err(format!(
                 "queue.sh {label}: {why}; the round is not judged\n{shown}"
@@ -4929,6 +4973,30 @@ fn abandon(
     token: Option<&str>,
     cause: &str,
 ) -> i32 {
+    abandon_with(w, batch, repo, reason, token, cause, true)
+}
+
+/// A hand landing's void of the open round: the round's red is no reason to keep it, and a
+/// leased round is taken under its holder's own token.
+pub(super) fn abandon_for_landing(
+    w: &World,
+    batch: &str,
+    repo: &str,
+    reason: &str,
+    token: Option<&str>,
+) -> i32 {
+    abandon_with(w, batch, Some(repo), &Text::Arg(reason.to_string()), token, "hand-landing", false)
+}
+
+fn abandon_with(
+    w: &World,
+    batch: &str,
+    repo: Option<&str>,
+    reason: &Text,
+    token: Option<&str>,
+    cause: &str,
+    considered: bool,
+) -> i32 {
     let label = "round abandon";
     let reason = read_text(w, reason).unwrap_or_default();
     if reason.trim().is_empty() {
@@ -4962,6 +5030,7 @@ fn abandon(
         }
         Some(kv) => (kv, reason),
         None => match load(w, label, &c, batch) {
+            Ok(kv) if !considered => (kv, reason),
             Ok(kv) => match considered_abandon(w, label, &kv, reason) {
                 Ok(reason) => (kv, reason),
                 Err(rc) => return rc,

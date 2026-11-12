@@ -152,6 +152,12 @@ fn rounds_stop_note(run: &Path, repo: &str) -> Option<String> {
         .map(|s| format!("batcher {repo}: rounds lane stopped on purpose by {} ({}) — no cut; lift with: world.sh unpause --repo {repo} --lanes rounds", s.owner, s.reason))
 }
 
+fn cut_hold_note(queue_dir: &Path, repo: &str) -> Option<String> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    spira_config::cut_hold::held(queue_dir, repo, now)
+        .map(|h| format!("batcher {repo}: cut held by {} ({}) — no cut until it lifts or its holder ends", h.owner, h.reason))
+}
+
 fn cut(o: &Opts) -> Result<(), pace::CutError> {
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
@@ -162,6 +168,10 @@ fn cut(o: &Opts) -> Result<(), pace::CutError> {
     io::lc_forget(&env_);
     let repo = find_repo(&env_, &o.repo)?;
     if let Some(note) = rounds_stop_note(&env_.run, &repo.name) {
+        println!("{note}");
+        return Ok(());
+    }
+    if let Some(note) = cut_hold_note(&env_.queue_dir, &repo.name) {
         println!("{note}");
         return Ok(());
     }
@@ -2411,6 +2421,26 @@ mod tests {
             rounds_stop_note(d.path(), "spira").is_some(),
             "lifting another lane keeps rounds stopped"
         );
+    }
+
+    #[test]
+    fn a_hand_landings_cut_hold_stops_the_cut_of_its_repo_only() {
+        let d = testkit::TempDir::new("batcher-cut-hold");
+        assert!(cut_hold_note(d.path(), "spira").is_none(), "no hold, no note: the matcher can be silent");
+        let far = u64::MAX;
+        let hold = spira_config::cut_hold::CutHold {
+            owner: "hand-land sp-x".into(),
+            reason: "landing out of turn".into(),
+            pid: std::process::id(),
+            since: 1,
+            until: far,
+        };
+        spira_config::cut_hold::place(d.path(), "spira", &hold).unwrap();
+        let note = cut_hold_note(d.path(), "spira").unwrap();
+        assert!(note.contains("hand-land sp-x") && note.contains("no cut"), "{note}");
+        assert!(cut_hold_note(d.path(), "cubby").is_none());
+        spira_config::cut_hold::lift(d.path(), "spira", std::process::id());
+        assert!(cut_hold_note(d.path(), "spira").is_none());
     }
 
     #[test]
