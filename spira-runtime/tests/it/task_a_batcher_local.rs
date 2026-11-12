@@ -1138,3 +1138,16 @@ fn a_round_open_lost_at_restart_is_asked_again() {
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Opened, "not an open failure");
 }
+
+/// Certify writes its refusals to stderr: they are kept with the stdout, on their own line.
+#[test]
+fn sp_byw57t_a_certify_legs_stderr_is_kept_with_its_stdout() {
+    let mut c = driving(State::Certifying, "spira.c3");
+    c.repos.get_mut("spira").unwrap().attributed = true;
+    let out = runtime::units::RanOutput::captured(b"starting", b"queue round certify: refused, the round worktree is not at the head");
+    let ran = runtime::units::UnitRan { exit: runtime::units::Exit::Code(1), ..ran_of("spira.c3") };
+    let (_, acts) = on_ran_with(&c, &ran, &out, NOW).expect("its own leg");
+    let kept = acts.iter().find(|a| a.effect == KEEP_CERTIFY_OUTPUT).unwrap_or_else(|| panic!("output not kept: {acts:?}"));
+    let why = serde_json::from_str::<Leg>(&kept.input).unwrap().why;
+    assert_eq!(why, "starting\nqueue round certify: refused, the round worktree is not at the head");
+}
