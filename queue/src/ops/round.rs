@@ -3314,7 +3314,6 @@ pub(super) fn certify(
     rc
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Whether `head` is the recorded base with the recorded members merged in and nothing else:
 /// every member tip is under it, and each commit it adds over the base that is not a merge belongs
 /// to a member.
@@ -3341,6 +3340,7 @@ fn members_merged_on_base(w: &World, path: &Path, kv: &Kv, head: &str) -> bool {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn certify_pass(
     w: &World,
     label: &str,
