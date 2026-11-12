@@ -136,7 +136,7 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     let scoped = since.is_some() || !only.is_empty();
     let recs = match &scope {
         Some(keys) => records_of(m, &keys.iter().cloned().collect::<Vec<_>>()),
-        None if scoped => records_of(m, &only),
+        None if !only.is_empty() => records_of(m, &only),
         None => records(m),
     };
     let recs = match recs {

@@ -99,3 +99,36 @@ fn reconcile_content_reads_only_the_head_of_the_event_log() {
     assert!(out.contains("\"through_seq\":7"), "{out}");
     assert_eq!(*sent.lock().unwrap(), ["event-seq --head"]);
 }
+
+#[test]
+fn reconcile_content_since_asks_the_store_from_the_cursor_and_reads_its_through_seq() {
+    let (dir, path, sent) = serve(|argv| match argv[0].as_str() {
+        "reconcile-content" => Some("would close sp-a: done\nthrough-seq: 52\n".into()),
+        _ => None,
+    });
+    let lc = spira_config::lc_call::LcClient::socket(path);
+    let out = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "since:40").unwrap();
+    assert!(out.contains("\"through_seq\":52") && out.contains("\"pass\":\"Since\""), "{out}");
+    assert_eq!(*sent.lock().unwrap(), ["reconcile-content --dry-run --since-seq 40"]);
+}
+
+#[test]
+fn reconcile_content_full_reads_the_head_then_the_whole_dry_run() {
+    let (dir, path, sent) = serve(|argv| match argv[0].as_str() {
+        "reconcile-content" => Some(String::new()),
+        "event-seq" => Some(serde_json::json!({ "seq": 9, "keys": [] }).to_string()),
+        _ => None,
+    });
+    let lc = spira_config::lc_call::LcClient::socket(path);
+    let out = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "full").unwrap();
+    assert!(out.contains("\"through_seq\":9"), "{out}");
+    assert_eq!(*sent.lock().unwrap(), ["event-seq --head", "reconcile-content --dry-run"]);
+}
+
+#[test]
+fn reconcile_content_observe_names_an_unknown_input() {
+    let (dir, path, _) = serve(|_| None);
+    let lc = spira_config::lc_call::LcClient::socket(path);
+    let err = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "weekly").unwrap_err();
+    assert!(err.contains("weekly"), "{err}");
+}

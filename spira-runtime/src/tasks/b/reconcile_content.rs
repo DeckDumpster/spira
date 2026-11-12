@@ -216,9 +216,9 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             let mut next = carry.clone();
             if snap.cannot_tell.is_none() {
                 next.through_seq = carry.through_seq.max(snap.through_seq);
-            }
-            if snap.pass == Pass::Full {
-                next.full_at = now_ms;
+                if snap.pass == Pass::Full {
+                    next.full_at = now_ms;
+                }
             }
             let listed: Vec<&Close> = snap.work.iter().chain(&snap.asks).chain(&snap.epics).collect();
             let fresh: Vec<Close> = listed.iter().filter(|c| matches!(carry.beads.get(&c.id).copied().unwrap_or_default(), Phase::Open | Phase::Failed)).map(|c| (*c).clone()).collect();

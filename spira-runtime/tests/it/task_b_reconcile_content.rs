@@ -187,3 +187,11 @@ fn a_scan_that_could_not_tell_holds_the_cursor() {
     let (later, _) = task::decide(&h.cfg, &Carry { through_seq: Some(40), ..Carry::default() }, &Input::Observed(snap), TICK).unwrap();
     assert_eq!(later.through_seq, Some(40));
 }
+
+#[test]
+fn a_full_pass_that_could_not_tell_stays_due() {
+    let h = t::handler::<H>(SET);
+    let snap = Snapshot { pass: Pass::Full, through_seq: Some(52), cannot_tell: Some("asks unreadable".into()), ..Snapshot::default() };
+    let (later, _) = task::decide(&h.cfg, &Carry { through_seq: Some(40), full_at: 7, ..Carry::default() }, &Input::Observed(snap), TICK).unwrap();
+    assert_eq!(later.full_at, 7);
+}
