@@ -64,10 +64,11 @@ pub fn affected_scope(diff_raw: &[u8], metadata_json: &str) -> Result<Affected, 
     select_crates(diff_raw, metadata_json, true).map(Affected::Crates)
 }
 
-/// A row's argv with `{affected}` expanded to `--workspace` or `-p <crate>` words. `None`: the
-/// row names `{affected}` and the diff affects no crate, so there is nothing for it to check.
-pub fn check_argv(run: &str, affected: &Affected) -> Option<Vec<String>> {
-    let argv = done_argv(run);
+/// A row's argv with `{branch}` expanded to `branch` and `{affected}` to `--workspace` or
+/// `-p <crate>` words. `None`: the row names `{affected}` and the diff affects no crate, so
+/// there is nothing for it to check.
+pub fn check_argv(run: &str, affected: &Affected, branch: &str) -> Option<Vec<String>> {
+    let argv = habits::config::argv(run, &[("branch", branch)]);
     if !argv.iter().any(|t| t == AFFECTED) {
         return Some(argv);
     }
@@ -78,6 +79,46 @@ pub fn check_argv(run: &str, affected: &Affected) -> Option<Vec<String>> {
     };
     Some(argv.into_iter().flat_map(|t| if t == AFFECTED { words.clone() } else { vec![t] }).collect())
 }
+
+/// How one `[[check]]` row ended, from its exit status alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    Ok,
+    Fail,
+    /// Cut at its budget (`timeout`'s 124) by a row that names the stage that runs it again.
+    Deferred,
+}
+
+const TIMEOUT_CUT: i32 = 124;
+
+pub fn row_outcome(code: i32, deferred_to: Option<&str>) -> Outcome {
+    match code {
+        0 => Outcome::Ok,
+        TIMEOUT_CUT if deferred_to.is_some() => Outcome::Deferred,
+        _ => Outcome::Fail,
+    }
+}
+
+/// The failing test names a testenv unit-tier row printed (`unit-tests: N failing test(s):`,
+/// then one two-space-indented name per test).
+pub fn failing_tests(output: &str) -> Vec<String> {
+    let mut lines = output.lines().skip_while(|l| !(l.starts_with("unit-tests: ") && l.ends_with("failing test(s):")));
+    lines.next();
+    lines
+        .take_while(|l| l.starts_with("  "))
+        .filter(|l| !l.starts_with("   ") && !l.trim_start().starts_with("(+"))
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
+/// The value of `--unit-red-on-base` in a `submit`'s arguments.
+pub fn unit_red_on_base(args: &[String]) -> Option<&str> {
+    args.iter().position(|a| a == UNIT_RED_ON_BASE).and_then(|i| args.get(i + 1)).map(String::as_str)
+}
+
+pub const UNIT_RED_ON_BASE: &str = "--unit-red-on-base";
+/// The failing test names the client appends beside [`UNIT_RED_ON_BASE`]; a caller never types it.
+pub const UNIT_RED_TESTS: &str = "--unit-red-tests";
 
 /// What a pass of `work checks` is recorded against: the tip, the base the crates were selected
 /// against, and the checks file's text.
@@ -122,6 +163,9 @@ const TARGET_EXIT_FLAGS: &[&str] = &["--follow-on", "--escalation"];
 pub fn foreign_bead_reference<'a>(verb: &str, bound: &str, args: &'a [String]) -> Option<&'a str> {
     for (i, a) in args.iter().enumerate() {
         if verb == "superseded-by" && i == 0 {
+            continue;
+        }
+        if i > 0 && verb == "submit" && args[i - 1] == UNIT_RED_ON_BASE {
             continue;
         }
         if i > 0 && matches!(verb, "submit" | "done") && TARGET_EXIT_FLAGS.contains(&args[i - 1].as_str()) {
@@ -197,7 +241,7 @@ pub fn crates_words(crates: &[String]) -> String {
 
 /// The tokens the client appends itself; a caller typing one could otherwise name another
 /// persona (`--actor`) or smuggle a body (`--stdin`) past the broker's trailer parse.
-pub const RESERVED: &[&str] = &["--actor", "--stdin"];
+pub const RESERVED: &[&str] = &["--actor", "--stdin", UNIT_RED_TESTS];
 
 /// A bound verb needs `SPIRA_WORK_BEAD_ID`; a lane verb runs unbound too (the archivist
 /// has no bead of its own), and sends `-` in the bound slot.
@@ -502,7 +546,7 @@ mod tests {
     #[test]
     fn the_clippy_check_names_only_a_touched_leaf_and_its_dependents() {
         let scope = affected_scope(&raw(&["a/src/lib.rs"]), META).unwrap();
-        assert_eq!(check_argv(&repo_clippy_row(), &scope).unwrap(), v(&["cargo", "clippy", "-p", "a", "-p", "b", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
+        assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x").unwrap(), v(&["cargo", "clippy", "-p", "a", "-p", "b", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
     }
 
     #[test]
@@ -510,7 +554,7 @@ mod tests {
         for input in ["Cargo.lock", "Cargo.toml", "rust-toolchain.toml", ".cargo/config.toml"] {
             let scope = affected_scope(&raw(&["c/src/lib.rs", input]), META).unwrap();
             assert_eq!(scope, Affected::Workspace, "{input}");
-            assert_eq!(check_argv(&repo_clippy_row(), &scope).unwrap(), v(&["cargo", "clippy", "--workspace", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
+            assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x").unwrap(), v(&["cargo", "clippy", "--workspace", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
         }
     }
 
@@ -518,8 +562,43 @@ mod tests {
     fn the_clippy_check_is_skipped_when_the_diff_affects_no_crate() {
         let scope = affected_scope(&raw(&["docs/x.md", "spira/x.sh"]), META).unwrap();
         assert_eq!(scope, Affected::Crates(vec![]));
-        assert_eq!(check_argv(&repo_clippy_row(), &scope), None);
-        assert_eq!(check_argv("spira-lint --diff x", &scope).unwrap(), v(&["spira-lint", "--diff", "x"]));
+        assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x"), None);
+        assert_eq!(check_argv("spira-lint --diff x", &scope, "spira/sp-x").unwrap(), v(&["spira-lint", "--diff", "x"]));
+    }
+
+    #[test]
+    fn a_branch_token_in_a_row_becomes_the_current_branch() {
+        let scope = Affected::Crates(vec![]);
+        assert_eq!(
+            check_argv("testenv --suites unit-tests --direct {branch}", &scope, "spira/sp-x").unwrap(),
+            v(&["testenv", "--suites", "unit-tests", "--direct", "spira/sp-x"])
+        );
+        assert_eq!(check_argv("spira-lint --diff x", &scope, "spira/sp-x").unwrap(), v(&["spira-lint", "--diff", "x"]));
+    }
+
+    #[test]
+    fn a_row_is_deferred_only_when_it_names_a_stage_and_is_cut_at_its_budget() {
+        assert_eq!(row_outcome(124, Some("gate")), Outcome::Deferred);
+        assert_eq!(row_outcome(124, None), Outcome::Fail, "a clippy row cut at its budget still fails");
+        assert_eq!(row_outcome(0, Some("gate")), Outcome::Ok);
+        assert_eq!(row_outcome(1, Some("gate")), Outcome::Fail);
+        assert_eq!(row_outcome(1, None), Outcome::Fail);
+    }
+
+    #[test]
+    fn the_failing_tests_a_unit_row_printed_are_read_without_their_detail() {
+        let out = "building\nunit-tests: 2 failing test(s):\n  a::bad\n    assertion failed\n  b::worse\n    left: 1\n  (+3 more)\nVERDICT RED\n";
+        assert_eq!(failing_tests(out), v(&["a::bad", "b::worse"]));
+        assert!(failing_tests("test result: ok").is_empty());
+    }
+
+    #[test]
+    fn a_submit_may_name_the_bead_recording_the_base_red_and_a_bare_foreign_id_is_still_refused() {
+        let args = ["--unit-red-on-base".to_string(), "sp-other1".into()];
+        assert_eq!(foreign_bead_reference("submit", "sp-3m1p9", &args), None);
+        assert_eq!(foreign_bead_reference("done", "sp-3m1p9", &args), Some("sp-other1"));
+        assert_eq!(foreign_bead_reference("submit", "sp-3m1p9", &["sp-other1".to_string()]), Some("sp-other1"));
+        assert_eq!(unit_red_on_base(&args), Some("sp-other1"));
     }
 
     #[test]

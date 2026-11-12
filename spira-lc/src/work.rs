@@ -216,6 +216,9 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             return refusal;
         }
     }
+    if let Err(refusal) = record_unit_red_on_base(bead_id, args) {
+        return refusal;
+    }
     if let Err(refusal) = record_target_verdict(bead_id, "submit", args) {
         return refusal;
     }
@@ -443,6 +446,34 @@ fn lint_refusal(conn: &Conn, bead_id: &str, tip: &str, actor: &str) -> Option<(i
         (0, _) => None,
         (1, out) => Some((REFUSED, out.trim_end().to_string())),
         (_, out) => Some((CANNOT_TELL, format!("cannot tell: the compile-and-lint check could not run: {}", out.trim_end()))),
+    }
+}
+
+/// The note a submission's `--unit-red-on-base <id>` leaves on the submitting bead: the filed
+/// bead that records the base red, and the failing tests the client's check row printed. `Err`
+/// is the refusal text; `Ok(None)` is a submission that names no base red.
+fn unit_red_line(args: &[String], self_id: &str, exists: &dyn Fn(&str) -> Result<bool, String>) -> Result<Option<String>, String> {
+    let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).filter(|v| !v.trim().is_empty());
+    if !args.iter().any(|a| a == "--unit-red-on-base") {
+        return Ok(None);
+    }
+    let Some(id) = value("--unit-red-on-base") else { return Err("refused: --unit-red-on-base needs the id of the bead recording the base red".to_string()) };
+    if id == self_id {
+        return Err(format!("refused: --unit-red-on-base {id} is this bead; file a bead recording the base red"));
+    }
+    if !exists(id)? {
+        return Err(format!("refused: --unit-red-on-base {id} does not exist; file it first (work file-followup)"));
+    }
+    let tests = value("--unit-red-tests").map(String::as_str).unwrap_or("(none printed)");
+    Ok(Some(format!("Unit red on base: {id} records it; failing tests the row printed: {tests}")))
+}
+
+fn record_unit_red_on_base(bead_id: &str, args: &[String]) -> Result<(), (i32, String)> {
+    let exists = |id: &str| Ok(crate::bd::show(id).is_ok());
+    match unit_red_line(args, bead_id, &exists) {
+        Err(e) => Err((REFUSED, format!("work submit: {e}"))),
+        Ok(None) => Ok(()),
+        Ok(Some(line)) => crate::bd::note(bead_id, &line).map(|_| ()).map_err(|e| (CANNOT_TELL, format!("cannot tell: {e}"))),
     }
 }
 
@@ -1664,6 +1695,20 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_unit_red_on_base_must_name_a_bead_that_exists_and_leaves_a_note_line() {
+        let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let has = |known: &'static str| move |id: &str| Ok(id == known);
+        let args = v(&["--unit-red-on-base", "sp-base1", "--unit-red-tests", "a::bad,b::worse"]);
+        let line = super::unit_red_line(&args, "sp-me", &has("sp-base1")).unwrap().unwrap();
+        assert!(line.contains("sp-base1") && line.contains("a::bad,b::worse"), "{line}");
+        let err = super::unit_red_line(&v(&["--unit-red-on-base", "sp-ghost"]), "sp-me", &has("sp-base1")).unwrap_err();
+        assert!(err.contains("sp-ghost") && err.contains("does not exist"), "{err}");
+        assert!(super::unit_red_line(&v(&["--unit-red-on-base", "sp-me"]), "sp-me", &has("sp-me")).is_err());
+        assert!(super::unit_red_line(&v(&["--unit-red-on-base"]), "sp-me", &has("sp-base1")).is_err());
+        assert_eq!(super::unit_red_line(&v(&["--met", "x"]), "sp-me", &has("sp-base1")), Ok(None));
+    }
+
     #[test]
     fn a_calls_body_names_its_failure() {
         let body = "  spec: /x/y.json\n  Batch: r-1\n  Pass: 2\n  Suite: test-a.sh\n";

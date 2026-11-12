@@ -1325,13 +1325,18 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     }
     let mut unit_selection: Option<verdict::UnitSelection> = None;
     if crate::unit::selected(&selected) {
-        let crates = match crate::unit::write_crates(&repo.path, &base, br, &wt.path, args.tests.as_deref()) {
+        let crates = match crate::unit::write_crates(&repo.path, &base, br, &wt.path, args.tests.as_deref(), !args.direct) {
             Ok(p) if p.affected.is_empty() && args.tests.is_some() => {
                 stderr("batch: --tests: the diff touches no crate, so no named test can run");
                 return Finish::fault(2, "tests-no-crates", 0);
             }
             Ok(crate::unit::Picked { affected: c, crates }) => {
-                deps.log(&format!("unit-tests: {} affected crate(s): {}", c.len(), c.join(" ")));
+                deps.log(&format!(
+                    "unit-tests: {} affected crate(s) (selection={}): {}",
+                    c.len(),
+                    if args.direct { "direct" } else { "transitive" },
+                    c.join(" ")
+                ));
                 // law-absence-needs-a-positive-control: an empty list over a wrong base would
                 // pass having tested nothing.
                 match c.is_empty().then(|| crate::unit::no_crate_doubt(&repo.path, &base, br)) {

@@ -28,6 +28,10 @@ pub struct Check {
     /// The cargo package of this repository whose same-named binary is the row's program.
     #[serde(default)]
     pub build: Option<String>,
+    /// The stage that runs this row's suite again on the merged tree (`"gate"`). Only a row that
+    /// names one may be deferred when it is cut at its budget; every other row fails.
+    #[serde(default)]
+    pub deferred_to: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -131,6 +135,14 @@ mod build_row_tests {
         std::fs::create_dir_all(dir.join(".spira")).unwrap();
         std::fs::write(dir.join(".spira/checks.toml"), toml).unwrap();
         load_checks(dir.path())
+    }
+
+    #[test]
+    fn a_row_may_declare_the_stage_it_defers_to_and_an_unknown_key_is_refused() {
+        let rows = load("[[check]]\nname = \"u\"\nrun = \"testenv {branch}\"\ndeferred_to = \"gate\"\n").unwrap();
+        assert_eq!(rows[0].deferred_to.as_deref(), Some("gate"));
+        assert_eq!(load("[[check]]\nname = \"u\"\nrun = \"x\"\n").unwrap()[0].deferred_to, None);
+        assert!(load("[[check]]\nname = \"u\"\nrun = \"x\"\ndefer = \"gate\"\n").is_err());
     }
 
     #[test]
