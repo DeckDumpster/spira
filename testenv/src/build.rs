@@ -330,15 +330,15 @@ mod tests {
         let d = testkit::TempDir::new("warm-link");
         let base = d.join("warm-base");
         let slot = base.join("slot.1");
-        std::fs::create_dir_all(slot.join("dwarf")).unwrap();
-        std::fs::write(slot.join("dwarf").join("tool"), "x").unwrap();
+        std::fs::create_dir_all(slot.join("debug")).unwrap();
+        std::fs::write(slot.join("debug").join("tool"), "x").unwrap();
         let wt = d.join("wt");
-        std::fs::create_dir_all(wt.join("target").join("dwarf")).unwrap();
-        std::fs::write(wt.join("target").join("dwarf").join("stale"), "x").unwrap();
-        link_artifacts(&wt, "dwarf", &slot).unwrap();
-        link_artifacts(&wt, "dwarf", &slot).unwrap();
-        assert!(artifacts_dir(&wt, "dwarf").join("tool").is_file());
-        assert!(!artifacts_dir(&wt, "dwarf").join("stale").exists());
+        std::fs::create_dir_all(wt.join("target").join("debug")).unwrap();
+        std::fs::write(wt.join("target").join("debug").join("stale"), "x").unwrap();
+        link_artifacts(&wt, "dev", &slot).unwrap();
+        link_artifacts(&wt, "dev", &slot).unwrap();
+        assert!(artifacts_dir(&wt, "dev").join("tool").is_file());
+        assert!(!artifacts_dir(&wt, "dev").join("stale").exists());
     }
 
     #[test]
@@ -347,13 +347,13 @@ mod tests {
         let base = d.join("warm-base");
         let wt = d.join("wt");
         std::fs::create_dir_all(&base).unwrap();
-        std::fs::create_dir_all(wt.join("target").join("dwarf")).unwrap();
-        std::fs::write(wt.join("target").join("dwarf").join("tool"), "x").unwrap();
+        std::fs::create_dir_all(wt.join("target").join("debug")).unwrap();
+        std::fs::write(wt.join("target").join("debug").join("tool"), "x").unwrap();
         let slot = base.join("slot.1");
         std::os::unix::fs::symlink(wt.join("target"), &slot).unwrap();
         assert_eq!(warm_target(Some(slot.clone().into()), Some(&base)), Some(slot.clone()));
-        link_artifacts(&wt, "dwarf", &slot).unwrap();
-        assert!(artifacts_dir(&wt, "dwarf").join("tool").is_file());
+        link_artifacts(&wt, "dev", &slot).unwrap();
+        assert!(artifacts_dir(&wt, "dev").join("tool").is_file());
     }
 
     #[test]
@@ -361,25 +361,24 @@ mod tests {
         let d = testkit::TempDir::new("dangling-link");
         let wt = d.join("wt");
         std::fs::create_dir_all(wt.join("target")).unwrap();
-        let gone = d.join("slot.1").join("dwarf");
-        std::os::unix::fs::symlink(&gone, wt.join("target").join("dwarf")).unwrap();
-        assert!(std::fs::create_dir_all(wt.join("target").join("dwarf")).is_err());
-        clear_dangling_artifacts(&wt, "dwarf").unwrap();
-        std::fs::create_dir_all(wt.join("target").join("dwarf")).unwrap();
-        std::fs::write(wt.join("target/dwarf/keep"), "x").unwrap();
-        clear_dangling_artifacts(&wt, "dwarf").unwrap();
-        assert!(wt.join("target/dwarf/keep").is_file());
+        let gone = d.join("slot.1").join("debug");
+        std::os::unix::fs::symlink(&gone, wt.join("target").join("debug")).unwrap();
+        assert!(std::fs::create_dir_all(wt.join("target").join("debug")).is_err());
+        clear_dangling_artifacts(&wt, "dev").unwrap();
+        std::fs::create_dir_all(wt.join("target").join("debug")).unwrap();
+        std::fs::write(wt.join("target/debug/keep"), "x").unwrap();
+        clear_dangling_artifacts(&wt, "dev").unwrap();
+        assert!(wt.join("target/debug/keep").is_file());
     }
 
     #[test]
     fn profile_directories() {
-        assert_eq!(profile_dir("dwarf"), "dwarf");
         assert_eq!(profile_dir("release"), "release");
         assert_eq!(profile_dir("dev"), "debug");
         assert_eq!(profile_dir("test"), "debug");
         assert_eq!(
-            artifacts_dir(Path::new("/wt"), "dwarf"),
-            PathBuf::from("/wt/target/dwarf")
+            artifacts_dir(Path::new("/wt"), "dev"),
+            PathBuf::from("/wt/target/debug")
         );
     }
 }

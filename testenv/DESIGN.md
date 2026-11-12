@@ -53,7 +53,7 @@ testenv [--mode parallel|serial] [--suites <a.sh,b.sh,...|->] [--profile <p>]
 | `--suites LIST` | comma list; each name must exist in the suite dir, else exit 2 with `batch: unknown suite: <name>`. Duplicates dropped, order kept. Given twice → exit 2. |
 | `--suites -` | names one per line on stdin, blank lines ignored; **empty stdin = nothing to run, exit 0**. |
 | (no `--suites`) | diff-derived: the `suite-select` library (`io::select_diff`, linked; sp-wx2tw) over `<landref>...<branch>`, no all-suites fallback, tiers `$SPIRA_BATCH_TIERS` (T2,T3) filter the always-run and reach-selected suites — a suite whose `# covers:` matches the diff runs whatever its tier (`covers_outrank_tiers`); its mode names the producer (`diff`/`all`). A selection it cannot compute is `FAULT rc=2 reason=select-refused` (an unclaimed source file: `select-unclaimed`), never an empty selection. |
-| `--profile P` | cargo profile. Default `dwarf` (dwarf and gate runs). A round passes `release` (its binaries ship). |
+| `--profile P` | cargo profile. Default `dev` (dwarf and gate runs). A round passes `release` (its binaries ship). |
 | `--with-bins` | **no build mode of its own** (builds, unless `--artifacts`). Accepted as an alias for `--profile release` when `--profile` is not given, because every caller that passes it today is a round whose binaries ship (round.sh, round-vm.sh, batcher-cut). See §7, decision D1. |
 | `--artifacts DIR` | **do not build**: DIR holds the workspace's executables, prebuilt from this tree (CI's `bin/`). Relative to the current directory. Validated before anything else happens: DIR must be a directory holding an executable for every workspace binary target of the tree under test (read from the worktree's `Cargo.toml` files) and at least `spira-config`, `test-plan` and `testenv`; otherwise `VERDICT FAULT rc=2 reason=artifacts-invalid` naming what is missing — never a build, never a partial set. Exclusive with `--profile` and `--with-bins` (usage error). Only the flag selects this mode: an inherited `SPIRA_ARTIFACTS` is still ignored (§5). See D8. |
 | `--deadline S` | a **hard** wall-clock budget, in whole seconds (> 0), for the **whole trial** (sp-govet, §11): the clock starts when testenv starts. Setup (build, container, install, test databases) must finish within its share of S (`SPIRA_TESTENV_SETUP_SHARE`, default 50 %) or the run is `VERDICT FAULT rc=2 reason=deadline-<phase>`; the suite phase gets what is left of S: after that no suite starts and running suites are killed; both are recorded `deferred`. It also selects the warm path (§11.2). Absent = no deadline, and the run is byte-for-byte what it was before the flag existed. See D7, D9. |
@@ -597,12 +597,10 @@ other tool by name. `testlib.sh` does not touch PATH. Host-side helpers (`gate-t
 set by whoever launched testenv. testenv still strips an inherited `SPIRA_ARTIFACTS` from
 cargo and `testenv.sh`, as hygiene against a stale shell.
 
-## 6. Build profile (`[profile.dwarf]`, already in the workspace Cargo.toml)
+## 6. Build profile (`dev`, with the per-package optimisations in `[profile.dev.package.*]`)
 
-`inherits = "dev"`, `opt-level = 0`, `incremental = true`, `debug = false`;
-outputs to `target/dwarf` (the profile's name); `dev` maps to cargo's `debug` directory.
-Measured in this worktree, 2026-09-28, full workspace (`cargo build --profile dwarf
---workspace`), host rustc 1.82.0:
+Outputs go to `target/debug` (`dev` maps to cargo's `debug` directory).
+Measured in this worktree, 2026-09-28, under the since-retired `dwarf` profile, full workspace, host rustc 1.82.0:
 
 | case | wall | what cargo compiled |
 |---|---|---|
@@ -1164,13 +1162,13 @@ that this cleanup ran.
   *outside* the checkout (gate/src/target.rs, sp-z61hj — "every path a step or the tools
   phase reads is unchanged; only where the bytes land moves"). `up`'s bind mount of the
   checkout preserves that symlink as a symlink; a binary built right through it is
-  genuinely there on the host, but `/workspace/target/dwarf` inside the container resolves
+  genuinely there on the host, but `/workspace/target/debug` inside the container resolves
   to a host path nothing mounted there, so `stage` faults "dwarf was not built into
-  /workspace/target/dwarf" — a suite the gate's own targeted base-suite rerun (sp-kqger,
+  /workspace/target/debug" — a suite the gate's own targeted base-suite rerun (sp-kqger,
   sp-e5v53, sp-e5v53-2) was the first caller to hit, because it is the one caller that
   builds "in place" directly inside a gate tree rather than a warm or scratch slot (those
   are ordinary directories, never symlinked this way). Reproduced directly: `cargo build
-  --profile dwarf --workspace` in such a tree succeeds; `stage` still faults rc=1, same
+  --workspace` in such a tree succeeds; `stage` still faults rc=1, same
   message, until the extra mount is added. Fix: `Host::symlinked_targets(dir)` lists each
   of `dir`'s immediate entries that is a symlink, resolved to its target's own canonical
   parent, each listed once — every `[LINKED]` entry in a gate tree shares one root

@@ -142,7 +142,7 @@ pub trait World {
     /// `gate_at`: the tree holds `rev` (proved) → Ok; Err(what went wrong) otherwise.
     fn checkout(&self, repo: &Path, tree: &Path, rev: &str, want: &str) -> Result<(), String>;
     fn remove_worktree(&self, repo: &Path, tree: &Path);
-    /// Install a trial's freshly built tools (sp-g9f3t): copy each `<tree>/target/dwarf/<pkg>`
+    /// Install a trial's freshly built tools (sp-g9f3t): copy each `<tree>/target/debug/<pkg>`
     /// into `<dir>.tmp`, write `<dir>/TREE` = `tree_id`, rename it to `dir`, and remove every
     /// other entry of `dir`'s parent. Err(why) when any step fails; nothing half-installed
     /// is left at `dir`.

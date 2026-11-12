@@ -305,7 +305,7 @@ fn release_like_rustc_invocations_weigh_more() {
     assert_eq!(build_weight(&v(&["--crate-name", "x", "-C", "lto=off"])), 1);
     assert_eq!(build_weight(&v(&["--crate-name", "x"])), 1);
     assert_eq!(profile_weight("release"), WEIGHT_RELEASE);
-    assert_eq!(profile_weight("dwarf"), 1);
+    assert_eq!(profile_weight("dev"), 1);
 }
 
 #[test]

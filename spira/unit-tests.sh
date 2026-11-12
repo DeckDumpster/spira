@@ -50,5 +50,11 @@ IFS=: read -ra _dirs <<< "$PATH"
 for d in "${_dirs[@]}"; do
   [ -x "$d/spira-config" ] || [ -f "$d/conf.sh" ] || unit_path="${unit_path:+$unit_path:}$d"
 done
+BUILD="$ROOT/target/unit-tests.build"
+[ -f "$BUILD" ] || { echo "unit-tests: $BUILD missing — run through testenv --suites unit-tests" >&2; exit 2; }
+build=()
+while IFS= read -r w; do [ -n "$w" ] && build+=("$w"); done < "$BUILD"
+env -u SPIRA_RELEASE -u SPIRA_TOML -u SPIRA_HOME PATH="$unit_path" CARGO_BUILD_JOBS="$jobs" \
+    "${build[@]}" || exit 1
 env -u SPIRA_RELEASE -u SPIRA_TOML -u SPIRA_HOME PATH="$unit_path" \
     cargo test "${words[@]}" --features integration -j "$jobs" -- --test-threads="$threads" "${filters[@]}" "${skips[@]}"

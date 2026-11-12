@@ -21,8 +21,8 @@ pub enum Build {
     /// Reuse the round's own release binaries: the tree differs from the round's only in
     /// files no binary is built from.
     Artifacts,
-    /// A debug (`dwarf` profile) build of the job's own tree.
-    Dwarf,
+    /// A debug (`dev` profile) build of the job's own tree.
+    Dev,
     /// In `~/round-work` after the corpus: an incremental release build whose binaries land.
     Round,
     /// Only whether the job's tree builds as a workspace; no suite runs and no binaries land.
@@ -39,7 +39,7 @@ impl Build {
     pub fn word(self) -> &'static str {
         match self {
             Build::Artifacts => "artifacts",
-            Build::Dwarf => "dwarf",
+            Build::Dev => "dev",
             Build::Round => "round",
             Build::Workspace => "workspace",
             Build::Unit => "unit",
@@ -50,7 +50,7 @@ impl Build {
     pub fn parse(s: &str) -> Option<Build> {
         match s {
             "artifacts" => Some(Build::Artifacts),
-            "dwarf" => Some(Build::Dwarf),
+            "dev" => Some(Build::Dev),
             "round" => Some(Build::Round),
             "workspace" => Some(Build::Workspace),
             "unit" => Some(Build::Unit),
@@ -182,7 +182,7 @@ lint)
     [ "$rc" -eq 0 ] || exit 5
     echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/spira-lint.result"
     exit 0 ;;
-artifacts|dwarf)
+artifacts|dev)
     d="$HOME/attr/$job"
     rm -rf "$d"; mkdir -p "$HOME/attr"
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
@@ -190,7 +190,7 @@ artifacts|dwarf)
     if [ "$build" = artifacts ]; then
         "$tenv" --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" --repeat-reason "$reason" HEAD
     else
-        "$tenv" --mode parallel --profile dwarf --suites "$suites" --repeat-reason "$reason" HEAD
+        "$tenv" --mode parallel --profile dev --suites "$suites" --repeat-reason "$reason" HEAD
     fi
     rc=$?
     cd "$HOME" && rm -rf "$d"
@@ -515,11 +515,11 @@ mod tests {
 
     #[test]
     fn a_request_names_its_branch_suites_and_build() {
-        let r = parse_request("j7", "branch=spira/batcher-attr/x-j7\nsuites=test-a.sh\nbuild=dwarf\n").unwrap();
-        assert_eq!((r.branch.as_str(), r.suites.as_str(), r.build), ("spira/batcher-attr/x-j7", "test-a.sh", Build::Dwarf));
+        let r = parse_request("j7", "branch=spira/batcher-attr/x-j7\nsuites=test-a.sh\nbuild=dev\n").unwrap();
+        assert_eq!((r.branch.as_str(), r.suites.as_str(), r.build), ("spira/batcher-attr/x-j7", "test-a.sh", Build::Dev));
         assert!(parse_request("j7", "branch=b\nsuites=s\nbuild=warp\n").is_err());
-        assert!(parse_request("j7", "suites=s\nbuild=dwarf\n").is_err());
-        assert!(parse_request("../x", "branch=b\nsuites=s\nbuild=dwarf\n").is_err());
+        assert!(parse_request("j7", "suites=s\nbuild=dev\n").is_err());
+        assert!(parse_request("../x", "branch=b\nsuites=s\nbuild=dev\n").is_err());
     }
 
     #[test]
