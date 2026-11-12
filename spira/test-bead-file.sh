@@ -101,6 +101,15 @@ cat > "$STUB_LC" <<'STUB'
 printf '%s\n' "$*" >> "$LC_LOG_PATH"
 [ -n "${LC_FAIL:-}" ] && exit 2
 [ "${1:-}" = "list" ] && echo '[{"bead_id":"sp-done","state":"LANDED"}]'
+if [ "${1:-}" = "content" ] && [ "${2:-}" = "show" ]; then
+    case "${3:-}" in
+        sp-base)  echo '[{"id":"sp-base","status":"open","issue_type":"task","labels":["plan","repo:testrepo"]}]' ;;
+        sp-other) echo '[{"id":"sp-other","status":"open","issue_type":"task","labels":["develop","repo:dev-repo"]}]' ;;
+        sp-epic)  echo '[{"id":"sp-epic","status":"open","issue_type":"epic","labels":["repo:testrepo"]}]' ;;
+        sp-done)  echo '[{"id":"sp-done","status":"closed","issue_type":"task","labels":["repo:testrepo"]}]' ;;
+        *)        exit 1 ;;
+    esac
+fi
 exit 0
 STUB
 chmod +x "$STUB_LC"
