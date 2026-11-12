@@ -29,6 +29,8 @@ pub struct Opts {
     /// Wall-clock allowance for one invocation; spent, the sweep stops and exits 0 with the
     /// remainder for the next tick (law-calls-have-deadlines).
     pub budget: Option<Duration>,
+    /// Rest after each branch that was sent or failed, so a long pass leaves the store's readers room.
+    pub pace: Duration,
 }
 
 /// One branch's disposition: what may happen to it, and why. Decided by reading only —
@@ -492,7 +494,11 @@ impl<'a> Sweep<'a> {
                 continue;
             }
             let d = disposition(&c, id, br);
+            let worked = self.tally.sent + self.tally.failed;
             self.act(&c, id, br, d);
+            if !self.opts.dry && self.tally.sent + self.tally.failed != worked {
+                std::thread::sleep(self.opts.pace);
+            }
         }
 
         if self.opts.only.is_none() && !self.opts.dry {

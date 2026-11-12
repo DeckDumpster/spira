@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=disk
+DOC=Milliseconds the Hel waits after each branch it sends, so a pass of hundreds of branches does not hold the store's writer against its readers; 0 turns the pacing off.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_HEL_PACE_MS:=250}"
+SPIRA_CONF_DEFAULT_EOF

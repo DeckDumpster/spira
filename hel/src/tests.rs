@@ -300,7 +300,7 @@ mod unreadable_store {
         git(&root, &["branch", "spira/sp-x"]);
         let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
         let f = Fake { base: Some(base), wts: t.path().join("wt"), refuse: Some("store said no".into()), ..Default::default() };
-        let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None };
+        let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
         let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
         s.repo(&crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false });
         assert!(f.out().contains("SKIP   spira  store unreadable: store said no"), "{}", f.out());
@@ -346,7 +346,7 @@ mod resume {
         let f = Fake { base: Some(base), beads, wts: t.path().join("wt"), send_takes: std::time::Duration::from_millis(150), ..Default::default() };
         let repo = crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false };
         let pass = |budget_ms: u64| {
-            let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None };
+            let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
             let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: Some(std::time::Instant::now() + std::time::Duration::from_millis(budget_ms)), truncated: false };
             s.repo(&repo);
         };
@@ -358,5 +358,27 @@ mod resume {
         let all = sent(&f);
         assert_eq!(all[first.len()..], ids.iter().map(|s| s.to_string()).skip(first.len()).collect::<Vec<_>>(), "the second pass starts after the last handled branch: {all:?}");
         assert_eq!(*f.resume.borrow(), None, "a finished pass clears the cursor");
+    }
+
+    #[test]
+    fn each_branch_sent_is_followed_by_the_configured_rest() {
+        let t = testkit::TempDir::new("hel-pace");
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        let ids = ["sp-a", "sp-b", "sp-c"];
+        for id in ids {
+            git(&root, &["branch", &format!("spira/{id}")]);
+        }
+        let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
+        let beads = ids.iter().map(|id| (id.to_string(), serde_json::json!({"id": id, "labels": []}))).collect();
+        let f = Fake { base: Some(base), beads, wts: t.path().join("wt"), ..Default::default() };
+        let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: std::time::Duration::from_millis(80) };
+        let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
+        let began = std::time::Instant::now();
+        s.repo(&crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false });
+        assert_eq!(s.tally.sent, 3);
+        assert!(began.elapsed() >= std::time::Duration::from_millis(240), "{:?}", began.elapsed());
     }
 }
