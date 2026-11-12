@@ -70,7 +70,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         landed_ref: "local/main".into(),
         settle: Duration::from_secs(3),
         steady: Duration::from_millis(3000),
-        warm_wait: Duration::from_secs(60),
+        warm_wait: Duration::from_secs(60), // batch-job: bounded wait for the store server to answer its first reads
         drain: Duration::from_secs(2700), // batch-job: bounded wait for a running gate to finish, defaults to the gate cap
         pre_activate: true,
         dry_run: false,
