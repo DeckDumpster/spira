@@ -113,3 +113,18 @@ fn a_step_result_whose_head_equals_the_head_read_at_apply_time_is_applied() {
     let (_, acts) = on_ran_seeing(&carried("A", "A"), &ran(), &fault(), NOW, &same).expect("its own step");
     assert!(effects(&acts).contains(&ABANDON), "{acts:?}");
 }
+
+/// The incident's actual order: the preempt moves the round to head B, the stopped step's fault
+/// arrives before the batcher has observed the round again, and the next pass then decides it.
+#[test]
+fn a_preempted_steps_fault_delivered_before_the_next_observation_does_not_abandon_the_round() {
+    let (carry, _) = decide(&carried("", ""), &snapshot("A", "certifying"));
+    let head_now_b = |_: &str, _: &str| Some("B".to_string());
+    assert!(on_ran_seeing(&carry, &ran(), &fault(), NOW, &head_now_b).is_none(), "the fault arrives first and is not applied");
+    let (carry, acts) = decide(&carry, &snapshot("B", "certifying"));
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Attributing);
+    let (carry, acts) = decide(&carry, &snapshot("B", "green"));
+    assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "the next pass decides the round: {acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Landing);
+}
