@@ -9,6 +9,7 @@ pub mod classes;
 pub mod hunk;
 pub mod modes;
 pub mod notify;
+pub mod repin;
 pub mod reconcile_host;
 pub mod settings;
 pub mod sink;

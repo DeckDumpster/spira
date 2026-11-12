@@ -202,6 +202,31 @@ fn cmd_get(path: &str, file: Option<&str>) -> ExitCode {
     }
 }
 
+/// After a write to the config in force, says whether the running scheduler took the new value.
+/// A write typed against a staged release is not the config the scheduler runs on.
+fn tell_scheduler(written: ExitCode, in_force: bool, path: &str) -> ExitCode {
+    if let (true, true, Some(key)) = (in_force, format!("{written:?}") == format!("{:?}", ExitCode::SUCCESS), spira_config::scheduler_link::key_of_path(path)) {
+        println!("{}", spira_config::scheduler_link::told(spira_config::process::cfg("SPIRA_RUNTIME_SOCKET"), &key));
+    }
+    written
+}
+
+/// `get --running <KEY>` — the value the running scheduler holds for `KEY`, which is the one
+/// `get` of the file does not tell once a change is waiting for its safe point.
+fn cmd_get_running(key: &str) -> ExitCode {
+    let held = spira_config::process::cfg("SPIRA_RUNTIME_SOCKET").and_then(|sock| spira_config::scheduler_link::running(&sock, key));
+    match held {
+        Ok(v) => {
+            println!("{v}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("spira-config get --running: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn cmd_export_sh(file: Option<&str>) -> ExitCode {
     match load_input(file, false) {
         Ok((doc, _)) => {
@@ -1617,6 +1642,13 @@ fn main() -> ExitCode {
 fn dispatch(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
         Some("validate") => cmd_validate(args.get(1).map(String::as_str)),
+        Some("get") if args.get(1).map(String::as_str) == Some("--running") => match args.get(2) {
+            Some(key) => cmd_get_running(key),
+            None => {
+                eprintln!("usage: spira-config get --running <KEY>");
+                ExitCode::FAILURE
+            }
+        },
         Some("get") => match args.get(1) {
             Some(path) => cmd_get(path, args.get(2).map(String::as_str)),
             None => {
@@ -1675,7 +1707,7 @@ fn dispatch(args: &[String]) -> ExitCode {
         Some("convert") => cmd_convert(&args[1..]),
         Some("repo") => cmd_repo(&args[1..]),
         Some("set") => match split_release(&args[1..]) {
-            Ok((reg, [path, value, file])) => cmd_set(reg.as_ref(), path, value, file),
+            Ok((reg, [path, value, file])) => tell_scheduler(cmd_set(reg.as_ref(), path, value, file), reg.is_none(), path),
             Ok(_) => {
                 eprintln!("usage: spira-config set [--release <dir>] <dotted.path> <value> <file>");
                 ExitCode::FAILURE
@@ -1686,7 +1718,7 @@ fn dispatch(args: &[String]) -> ExitCode {
             }
         },
         Some("unset") => match split_release(&args[1..]) {
-            Ok((reg, [path, file])) => cmd_unset(reg.as_ref(), path, file),
+            Ok((reg, [path, file])) => tell_scheduler(cmd_unset(reg.as_ref(), path, file), reg.is_none(), path),
             Ok(_) => {
                 eprintln!("usage: spira-config unset [--release <dir>] <dotted.path> <file>");
                 ExitCode::FAILURE

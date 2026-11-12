@@ -727,6 +727,22 @@ impl Engine {
         Ok(())
     }
 
+    /// Replaces the handler of task `name`, keeping its mode, plane, effects and carry. `false` when no task has that name.
+    pub fn rebind(&mut self, name: &str, handler: Box<dyn Handler>) -> bool {
+        match self.regs.iter_mut().find(|r| r.name == name) {
+            Some(r) => {
+                r.handler = handler;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The body of the newest carry of `task` under `tag`, as the engine holds it now.
+    pub fn carry_body(&self, task: &str, tag: &str) -> Option<String> {
+        self.carries.get(task)?.iter().filter(|((_, t), _)| t == tag).map(|(_, e)| e).max_by_key(|e| e.at).map(|e| e.kind.body.clone())
+    }
+
     pub fn into_registrations(mut self) -> Vec<Registration> {
         std::mem::take(&mut self.regs)
     }

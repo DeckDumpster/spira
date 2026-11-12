@@ -37,6 +37,11 @@ path = "tests/set_release.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "set_scheduler"
+path = "tests/set_scheduler.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "validate"
 path = "tests/validate.rs"
 required-features = ["integration"]
