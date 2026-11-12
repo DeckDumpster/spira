@@ -43,7 +43,10 @@ pub fn check_landref(host: &HostValues) -> Result<(), String> {
 }
 
 fn no_spira_units_installed(unit_dir: &Path) -> bool {
-    std::fs::read_dir(unit_dir).map_or(true, |rd| !rd.flatten().any(|e| e.file_name().to_string_lossy().starts_with("spira-")))
+    match std::fs::read_dir(unit_dir) {
+        Ok(rd) => !rd.flatten().any(|e| e.file_name().to_string_lossy().starts_with("spira-")),
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    }
 }
 
 fn landref_currency(repo: &str, exe: Option<&Path>, fresh_install: bool, landref: impl Fn() -> Option<String>) -> Result<(), String> {
@@ -245,6 +248,16 @@ mod tests {
     fn sp_0g8vmz_a_release_behind_the_limit_is_refused_even_on_a_fresh_install() {
         assert!(release_verdict(Some(3), "abc", "main", true).is_err());
         assert_eq!(release_verdict(Some(0), "abc", "main", true), Ok(()));
+    }
+
+    #[test]
+    fn sp_0g8vmz_a_release_the_repository_never_held_passes_the_guard_on_a_fresh_install_only() {
+        let (d, _) = repo_with_commits(2);
+        let rel = release_dir_at(&"0".repeat(40));
+        let exe = rel.path().join("bin/units-install");
+        let repo = d.path().to_str().unwrap();
+        assert_eq!(landref_currency(repo, Some(&exe), true, || Some("main".into())), Ok(()));
+        assert!(landref_currency(repo, Some(&exe), false, || Some("main".into())).is_err());
     }
 
     #[test]
