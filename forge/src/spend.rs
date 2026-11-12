@@ -70,7 +70,7 @@ mod tests {
         note(&["pr", "view"], 0);
         note(&["pr", "view"], 1);
         note(&["api", "rate_limit"], 0);
-        let (_, got) = fixture::capture(|sink| flush(sink));
+        let (_, got) = fixture::capture(flush);
         let of = |outcome: &str| {
             got.iter()
                 .find(|s| {
