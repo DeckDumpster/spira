@@ -343,7 +343,7 @@ pub fn destroy_worktree(run: &Path, reaplog_path: &Path, id: &str, w: &Path, rep
     }
     // THE FENCE. Guards only paths whose directories exist; the absent case is handled above.
     let wt_root = run.join("worktree");
-    if !(w.starts_with(&wt_root) && w != wt_root) {
+    if !inside_worktree_root(run, w) {
         reaplog(reaplog_path, "REFUSED", id, &format!("{} is not under {} — refusing to remove it", w.display(), wt_root.display()));
         return false;
     }
@@ -493,7 +493,8 @@ fn release_outside_root(run: &Path, reaplog_path: &Path, id: &str, w: &Path, bd:
     let terminal = matches!(bd.probe(id), Ok(Some(row)) if row.terminal());
     let g = Git(w);
     let clean = g.out(&["status", "--porcelain"]).is_some_and(|s| s.trim().is_empty());
-    let detached = terminal && clean && g.ok(&["checkout", "-q", "--detach"]);
+    let held = holder_witnesses(run, id, bd).is_some();
+    let detached = terminal && clean && !held && g.ok(&["checkout", "-q", "--detach"]);
     let mark = format!("{} is outside {}", w.display(), root.display());
     let seen = std::fs::read_to_string(reaplog_path).is_ok_and(|t| t.lines().any(|l| l.contains("OUTSIDE") && l.contains(&mark)));
     if !seen {
@@ -849,6 +850,17 @@ mod tests {
         assert_eq!(logged.iter().filter(|l| l.contains(&wt.display().to_string())).count(), 1, "{logged:?}");
         let (_, again) = reap_out(&run, &repo, "LANDED");
         assert!(again.is_empty(), "the second pass does not repeat the finding: {again:?}");
+    }
+
+    #[test]
+    fn a_terminal_beads_tree_outside_the_root_that_somebody_holds_is_not_detached() {
+        let (run, scratch) = (tempdir(), tempdir());
+        let (repo, wt) = outside_root_repo(&run, &scratch, false);
+        std::fs::write(run.join("hold-sp-out.pid"), std::process::id().to_string()).unwrap();
+        let (out, _) = reap_out(&run, &repo, "LANDED");
+        assert!(matches!(out, ReapOutcome::Failed(_)));
+        assert!(Git(&repo).branch_exists("spira/sp-out"));
+        assert_eq!(Git(&wt).out(&["symbolic-ref", "-q", "HEAD"]).unwrap().trim(), "refs/heads/spira/sp-out");
     }
 
     #[test]

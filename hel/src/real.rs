@@ -380,6 +380,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_resume_cursor_round_trips_per_repository_and_clears() {
+        let dir = testkit::TempDir::new("hel-real-resume");
+        std::fs::create_dir_all(dir.join("run")).unwrap();
+        let r = Real::minimal(dir.path().to_path_buf(), dir.join("run"), None);
+        assert_eq!(r.resume_after("spira"), None);
+        r.set_resume_after("spira", Some("spira/sp-m"));
+        assert_eq!(r.resume_after("spira").as_deref(), Some("spira/sp-m"));
+        assert_eq!(r.resume_after("other"), None);
+        r.set_resume_after("spira", None);
+        assert_eq!(r.resume_after("spira"), None);
+    }
+
+    #[test]
     fn base_is_none_for_a_path_that_is_not_a_git_checkout() {
         let dir = testkit::TempDir::new("hel-real-base-not-a-repo");
         let r = Real::minimal(dir.path().to_path_buf(), dir.join("run"), None);

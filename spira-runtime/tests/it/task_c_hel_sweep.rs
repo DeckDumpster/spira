@@ -123,3 +123,13 @@ fn a_slot_missed_across_a_restart_runs_when_the_scheduler_comes_back() {
     r.tick(stream, boot).unwrap();
     assert!(r.requested().iter().any(|q| q.name == task::SEND && q.input.contains("sp-b")), "the sweep due while the scheduler was down runs at its boot: {:?}", r.requested().iter().map(|q| (&q.name, &q.input)).collect::<Vec<_>>());
 }
+
+#[test]
+fn a_restart_that_lost_the_probe_of_a_pass_between_repositories_observes_that_repository_again() {
+    let cadence = runtime::calendar::Calendar::parse(SPEC).map(spira_runtime::tasks::b::kit::Cadence::Calendar).unwrap();
+    let between = Carry { phase: Phase::Observing, pass: Some(Pass { started: AT_35, repos_left: vec![], cursor: 1, observing: "second".into() }), ..Carry::default() };
+    assert_eq!(task::catch_up(&between, AT_35 + 60_000, &cadence), Some("second".to_string()));
+    let idle_and_current = Carry { last_fired: Some(AT_35), ..Carry::default() };
+    assert_eq!(task::catch_up(&idle_and_current, AT_35 + 60_000, &cadence), None, "the next slot has not passed");
+    assert_eq!(task::catch_up(&Carry::default(), AT_35 + 7_200_000, &cadence), None, "a fresh journal only arms");
+}
