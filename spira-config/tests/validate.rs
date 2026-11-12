@@ -263,6 +263,13 @@ mod retired_keys {
     }
 
     #[test]
+    fn a_config_written_while_the_repo_events_task_shipped_still_validates() {
+        let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nruntime_repo_events_secs = 86400\n")
+            .expect("a retired key must validate, not error");
+        assert!(warnings.iter().any(|w| w.contains("runtime_repo_events_secs is retired (sp-nao9lu)")), "got {warnings:?}");
+    }
+
+    #[test]
     fn a_config_written_while_lc_serve_held_live_rows_still_validates() {
         let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nlc_live_check_secs = 60\n")
             .expect("a retired key must validate, not error");

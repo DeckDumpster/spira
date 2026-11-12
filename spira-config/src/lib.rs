@@ -779,6 +779,7 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "throughput_restop_after", bead: "sp-ner2yi" },
     RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
     RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
+    RetiredKey { key: "runtime_repo_events_secs", bead: "sp-nao9lu" },
     RetiredKey { key: "cert_idle_skip", bead: "sp-6d9th" },
     RetiredKey { key: "hook_lines", bead: "sp-o9nkc" },
     RetiredKey { key: "answer_state", bead: "sp-xsl8i" },
