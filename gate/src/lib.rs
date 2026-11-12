@@ -21,6 +21,7 @@ pub mod parse;
 pub mod ports;
 pub mod real;
 pub mod target;
+pub mod unitrecord;
 pub mod telemetry;
 pub mod toolkey;
 pub mod wait;
