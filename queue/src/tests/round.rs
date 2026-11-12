@@ -8558,3 +8558,59 @@ fn a_hand_mend_without_its_reason_evidence_or_evidence_tip_is_refused_before_spi
     }
     assert!(!t.lc.has("mend "));
 }
+
+#[test]
+fn stop_records_owner_reason_and_release_condition_and_status_prints_them() {
+    let t = round_world();
+    let args = [
+        "round", "stop", "--by", "concierge", "--reason", "fixes unlanded", "--until",
+        "bead:sp-byw57t=LANDED",
+    ];
+    assert_eq!(t.run(&args), 0, "{}", t.err());
+    let mark = t.io.out.borrow().len();
+    assert_eq!(t.run(&["round", "status"]), 0, "{}", t.err());
+    let shown = t.out()[mark..].to_string();
+    assert!(
+        shown.contains("stop_owner=concierge")
+            && shown.contains("stop_reason=fixes unlanded")
+            && shown.contains("stop_until=bead:sp-byw57t=LANDED"),
+        "{shown}"
+    );
+}
+
+#[test]
+fn a_stop_stands_after_a_round_lands_until_start_lifts_it() {
+    let t = concurrent_world();
+    open_and_certify(&t, "sp-a", "r-1");
+    assert_eq!(t.run(&["round", "certify", "r-1"]), 0, "{}", t.err());
+    t.git.ancestor("ta", "merged-ta");
+    let args = ["round", "stop", "--by", "concierge", "--reason", "hold", "--until", "fix landed"];
+    assert_eq!(t.run(&args), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
+    let c = t.run(&["round", "status"]);
+    assert_eq!(c, 0, "{}", t.err());
+    assert!(t.out().contains("stop=in-force"), "the landing lifted the stop: {}", t.out());
+    assert_eq!(
+        t.run(&["round", "start", "--by", "concierge", "--reason", "fixes landed"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let mark = t.io.out.borrow().len();
+    assert_eq!(t.run(&["round", "status"]), 0, "{}", t.err());
+    assert!(!t.out()[mark..].contains("stop="), "{}", &t.out()[mark..]);
+}
+
+#[test]
+fn stop_without_a_release_condition_is_refused() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "stop", "--by", "concierge", "--reason", "x"]), 2);
+}
+
+#[test]
+fn start_with_no_stop_in_force_says_so_and_changes_nothing() {
+    let t = round_world();
+    let args = ["round", "start", "--by", "concierge", "--reason", "x"];
+    assert_eq!(t.run(&args), 0, "{}", t.err());
+    assert!(t.out().contains("no stop of its rounds in force"), "{}", t.out());
+}

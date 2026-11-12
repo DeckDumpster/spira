@@ -60,11 +60,18 @@ route is settled by `queue verdict` whatever the mode, and `rounds-local` ignore
 
 ```sh
 queue round status [<repo>]
+queue round stop [<repo>] --by <owner> --reason <text> --until <condition>
+queue round start [<repo>] --by <owner> --reason <text>
 queue step <repo>
 queue eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>]
 queue abandon [<repo>] --reason <text> [--dry-run]
 queue open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run]
 ```
+
+`round stop` holds the repository's rounds with its owner, reason and release condition: no round
+is cut while it stands, an open round is left alone, and a landing never lifts it (the batcher's
+own red pause is lifted by a landing). Only `round start` ends it; `round status` and the ops pane
+show it.
 
 `queue` with no arguments prints the full verb set.
 

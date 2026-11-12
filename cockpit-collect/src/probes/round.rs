@@ -12,10 +12,21 @@ pub fn round_keys(cap_secs: i64) -> Kv {
     let batches = list_batches().and_then(|raw| parse_batches(&raw));
     let pool = super::lc::funnel_raw().and_then(|raw| spira_config::lc_state::parse_rows(&raw).ok()).map(|rows| pool_waiting(&rows));
     let mut kv = round_keys_from(batches.as_deref(), pool, cap_secs, &batch_show);
+    stop_keys(&mut kv, &spira_config::scoped_stop::repo_stops(&crate::io::run_dir()));
     if let Some(batches) = batches.as_deref() {
         progress_keys(&mut kv, batches);
     }
     kv
+}
+
+/// `SP_ROUND_STOP*`: the first stop of the `rounds` lane in force, with its owner, reason and
+/// release condition, so the pane shows a stop that holds the rounds.
+fn stop_keys(out: &mut Kv, stops: &[spira_config::scoped_stop::RepoStop]) {
+    let Some(s) = stops.iter().find(|s| s.lanes.iter().any(|l| l == "rounds")) else { return };
+    push(out, "SP_ROUND_STOP", sanitize(&s.repo));
+    push(out, "SP_ROUND_STOP_OWNER", sanitize(&s.owner));
+    push(out, "SP_ROUND_STOP_REASON", sanitize(&s.reason));
+    push(out, "SP_ROUND_STOP_UNTIL", sanitize(&s.until));
 }
 
 /// The verdict's last look at the forge for `batch`: the `forge.<field>` lines of the record the
@@ -251,6 +262,16 @@ mod tests {
 
     fn none(_: &str) -> Option<String> {
         None
+    }
+
+    #[test]
+    fn a_rounds_stop_is_carried_with_owner_reason_and_release_condition() {
+        let stop = |lanes: &[&str]| spira_config::scoped_stop::RepoStop { repo: "spira".into(), lanes: lanes.iter().map(|l| l.to_string()).collect(), owner: "concierge".into(), reason: "fixes unlanded".into(), until: "bead:sp-x=LANDED".into(), since: 1 };
+        let mut kv = Kv::new();
+        stop_keys(&mut kv, &[stop(&["claims"])]);
+        assert_eq!(get(&kv, "SP_ROUND_STOP"), None, "another lane's stop is not a rounds stop");
+        stop_keys(&mut kv, &[stop(&["claims", "rounds"])]);
+        assert_eq!((get(&kv, "SP_ROUND_STOP"), get(&kv, "SP_ROUND_STOP_OWNER"), get(&kv, "SP_ROUND_STOP_UNTIL")), (Some("spira"), Some("concierge"), Some("bead:sp-x LANDED")));
     }
 
     #[test]

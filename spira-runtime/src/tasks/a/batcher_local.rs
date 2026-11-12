@@ -891,7 +891,7 @@ fn held_key_why(key: &str) -> String {
 /// Why a held repo cuts nothing, with how the hold lifts.
 fn hold_why(h: &pace::Hold, repo: &str, r: &Repo) -> String {
     match h {
-        pace::Hold::Stopped => format!("the rounds lane is stopped ({}) — lift with: world.sh unpause --repo {repo} --lanes rounds", r.stop_why.as_deref().unwrap_or("no reason recorded")),
+        pace::Hold::Stopped => format!("the rounds lane is stopped ({}) — a landing does not lift it; lift with: queue round start {repo} --by <owner> --reason <why>", r.stop_why.as_deref().unwrap_or("no reason recorded")),
         pace::Hold::Paused => format!(
             "paused by a red round ({}) — the next landing on {repo} lifts it, or rm run/rounds-pace/{repo}/pause",
             r.paused.as_deref().unwrap_or("").trim()
@@ -2181,7 +2181,7 @@ pub mod edge {
     /// pause file's text — each told apart, so the hold the pass names is the one that stands.
     fn holds(env: &Env, repo: &str) -> (bool, Option<String>, Option<String>) {
         let files = batcher_cut::pace::Files::new(&env.run, repo);
-        let stop = spira_config::scoped_stop::stop_for(&env.run, repo, "rounds").map(|s| format!("{}: {}", s.owner, s.reason));
+        let stop = spira_config::scoped_stop::stop_for(&env.run, repo, "rounds").map(|s| format!("{}: {} (until: {})", s.owner, s.reason, s.until));
         let paused = files.pause_file().exists().then(|| std::fs::read_to_string(files.pause_file()).unwrap_or_default());
         (stop.is_some(), stop, paused)
     }
