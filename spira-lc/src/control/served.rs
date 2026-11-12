@@ -352,7 +352,7 @@ mod tests {
         drop(seed);
         let p = path.to_str().unwrap();
 
-        let err = modeled(p, slow_reads(1_000), 0).expect_err("a build held to the steady limit must end");
+        let Err(err) = modeled(p, slow_reads(1_000), 0) else { panic!("a build held to the steady limit must end") };
         assert!(err.contains(state_store::READ_ENDED), "{err}");
 
         let built = modeled(p, slow_reads(1_000), BUILD_READ_MS).expect("the build has its own budget");
