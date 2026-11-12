@@ -599,6 +599,9 @@ pub fn round_scope_unit(repo: &str, round: &str, tag: &str) -> String {
     format!("{ROUND_SCOPE_PREFIX}{}-{tag}", escape(&round_stem(repo, round)))
 }
 
+/// The [`Units::list`] glob of every round pass scope, of any round.
+pub const ROUND_SCOPE_ALL: &str = "spira-round-*.scope";
+
 /// Every scope [`round_scope_unit`] names for `round` in `repo`, as a [`Units::list`] glob.
 pub fn round_scope_glob(repo: &str, round: &str) -> String {
     format!("{ROUND_SCOPE_PREFIX}{}-*.scope", escape(&round_stem(repo, round)))

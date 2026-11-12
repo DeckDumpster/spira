@@ -319,9 +319,17 @@ pub struct World {
     pub lc: Mutex<Lc>,
     pub script: Script,
     pub proc: Arc<CountingProc>,
+    /// Round pass scopes a test keeps alive: (scope name, virtual ms it ends).
+    pub pass_scopes: Mutex<Vec<(String, u64)>>,
 }
 
 impl World {
+    /// The names of the pass scopes still alive now.
+    pub fn live_pass_scopes(&self) -> Vec<String> {
+        let now = self.now();
+        self.pass_scopes.lock().unwrap_or_else(|e| e.into_inner()).iter().filter(|(_, until)| *until > now).map(|(n, _)| n.clone()).collect()
+    }
+
     pub fn now(&self) -> u64 {
         self.clock.now_ms()
     }
@@ -449,7 +457,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
         .collect();
     let open_round = lc.round.as_ref().map(|(id, m)| bl::Round { id: id.clone(), members: m.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: format!("/sim/wt/{id}"), driven: held.as_ref() == Some(id), ..bl::Round::default() });
     let live_legs = units::Units::list(&*w.units, &units::task_glob(bl::NAME)).ok().map(|all| bl::running_legs(&all));
-    let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), stopped: w.now() < w.script.stopped_until, live_legs, ..bl::Repo::default() };
+    let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), stopped: w.now() < w.script.stopped_until, live_legs, live_scopes: Some(w.live_pass_scopes()), ..bl::Repo::default() };
     json(&bl::Snapshot { repos: [(REPO.to_string(), repo)].into(), now_ms: w.now() })
 }
 
@@ -747,7 +755,7 @@ pub fn run_with(seed: u64, script: Script, extra: impl FnOnce(Doubles, &Arc<Worl
         lc.due.push((v.at, Due::Verdict { bead: v.bead.clone(), verdict: v.verdict }));
     }
     let settings = settings_for(&script)?;
-    let world = Arc::new(World { clock: clock.clone(), units: units.clone(), lc: Mutex::new(lc), script, proc: CountingProc::refusing() });
+    let world = Arc::new(World { clock: clock.clone(), units: units.clone(), lc: Mutex::new(lc), script, proc: CountingProc::refusing(), pass_scopes: Mutex::default() });
     let inner = Arc::new(extra(doubles(&world), &world));
     let runner = Arc::new(Timed { inner: inner.clone(), clock: clock.clone(), log: Mutex::new(vec![]) });
     let journal: Arc<dyn Journal> = MemJournal::new();

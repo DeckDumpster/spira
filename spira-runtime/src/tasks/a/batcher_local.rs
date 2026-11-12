@@ -46,6 +46,8 @@
 //! | Certifying | `unit.ran` red naming no suite and no guilty file, first time | Attributing (the round is attributed, not abandoned whole) |
 //! | Certifying | `unit.ran` red naming suites in a round of several members, first time | Attributing (only the named suites run, alone on each member) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
+//! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
+//! | Attributing | `unit.ran` land | Certifying, certify held until no pass scope of the round is alive |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
@@ -126,6 +128,7 @@ pub const PROMOTE: &str = "batcher.local.promote";
 pub const REDRIVE: &str = "batcher.local.redrive";
 pub const FILE: &str = "batcher.local.file";
 pub const PAUSE: &str = "batcher.local.pause";
+pub const KEEP_CERTIFY_OUTPUT: &str = "batcher.local.keep_certify_output";
 pub const INBOX_APPEND: &str = crate::watchers::INBOX_APPEND;
 
 pub const CADENCE_MS: u64 = 30_000;
@@ -155,12 +158,13 @@ pub const ACTS: &[(&str, u64)] = &[
     (REDRIVE, 60_000),
     (FILE, 30_000),
     (PAUSE, 5_000),
+    (KEEP_CERTIFY_OUTPUT, 5_000),
     (INBOX_APPEND, 10_000),
 ];
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, PAUSE, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -270,6 +274,9 @@ pub struct Repo {
     /// The keys of the leg units the unit manager lists as running; `None` when it could not say.
     #[serde(default)]
     pub live_legs: Option<Vec<String>>,
+    /// The round pass scopes (`systemd-run --scope`) the unit manager lists as running, any round; `None` when it could not say.
+    #[serde(default)]
+    pub live_scopes: Option<Vec<String>>,
     /// The effects of this task asked for this repo and not yet answered, as the scheduler holds
     /// them; `None` when the handler could not say.
     #[serde(default)]
@@ -510,6 +517,9 @@ pub struct RepoCarry {
     /// This round's unnamed certify red has already been attributed.
     #[serde(default)]
     pub attributed: bool,
+    /// The attribution's survivors await certify, which starts once no pass scope of the round is alive.
+    #[serde(default)]
+    pub certify_held: bool,
     /// Certify passes of this round whose VM answered ssh and never started the round.
     #[serde(default)]
     pub no_output_vms: u32,
@@ -586,6 +596,7 @@ impl RepoCarry {
             suites: self.suites,
             lost_vms: self.lost_vms,
             attributed: self.attributed,
+            certify_held: self.certify_held,
             leg: self.leg.clone(),
             leg_at_ms: self.leg_at_ms,
             run: self.run,
@@ -616,6 +627,7 @@ impl RepoCarry {
             suites: round.suites,
             lost_vms: round.lost_vms,
             attributed: round.attributed,
+            certify_held: round.certify_held,
             leg: round.leg.clone(),
             leg_at_ms: round.leg_at_ms,
             run: round.run,
@@ -790,6 +802,16 @@ pub fn running_legs(listed: &[runtime::units::UnitDetail]) -> Vec<String> {
         .iter()
         .filter(|d| matches!(d.state, UnitState::Active | UnitState::Activating))
         .filter_map(|d| UnitHandle::named(&d.name).owner().filter(|(t, _)| t == NAME).map(|(_, k)| k))
+        .collect()
+}
+
+/// The names (without `.scope`) of the round pass scopes among `listed` that are running.
+pub fn running_scopes(listed: &[runtime::units::UnitDetail]) -> Vec<String> {
+    use runtime::units::UnitState;
+    listed
+        .iter()
+        .filter(|d| matches!(d.state, UnitState::Active | UnitState::Activating | UnitState::Deactivating))
+        .map(|d| d.name.trim_end_matches(".scope").to_string())
         .collect()
 }
 
@@ -1011,6 +1033,23 @@ impl Machine<'_> {
         self.start(CERTIFY, "certify");
     }
 
+    /// Certify refuses a round whose last pass scope is still finishing: it starts once none is alive.
+    fn hold_certify(&mut self) {
+        self.rc.certify_held = true;
+        self.rc.leg = None;
+        self.rc.leg_at_ms = self.now_ms;
+    }
+
+    fn release_certify(&mut self, policy: &Policy, repo: &Repo) {
+        let prefix = runtime::units::round_scope_unit(self.repo, self.rc.batch.as_deref().unwrap_or_default(), "");
+        let alive = repo.live_scopes.as_ref().is_some_and(|s| s.iter().any(|n| n.starts_with(&prefix)));
+        if alive && self.now_ms.saturating_sub(self.rc.leg_at_ms) <= policy.wall_ms {
+            return;
+        }
+        self.rc.certify_held = false;
+        self.certify();
+    }
+
     fn abandon_naming(&mut self, why: &str, reds: Vec<String>) {
         self.abandon_ejecting(why, reds, None);
     }
@@ -1086,6 +1125,7 @@ impl Machine<'_> {
         }
         self.note_waiting();
         match self.rc.state {
+            State::Certifying if self.rc.certify_held => self.release_certify(policy, repo),
             State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > leg_deadline_ms(policy, self.rc.state == State::Attributing, self.rc.members.len()) => self.leg_ended(Exit::Unknown),
             State::Corpus | State::Attributing | State::Certifying => self.watch_leg(repo),
             State::Opened if self.rc.batch.is_none() => {
@@ -1373,7 +1413,7 @@ impl Machine<'_> {
                     } else {
                         self.go(Trigger::RerunCertifying);
                     }
-                    self.certify();
+                    self.hold_certify();
                 }
                 Some(Attribution::Land { .. }) => {
                     self.go(Trigger::RerunBlocked);
@@ -1427,6 +1467,7 @@ impl Machine<'_> {
                 self.go(Trigger::CertifyRedNamed);
                 self.attribute_suites(certify_red_evidence(out).1);
             }
+            (State::Certifying, false) if self.rc.members.len() != 1 && certify_red_evidence(out).0.is_none() && certify_red_evidence(out).1.is_empty() && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => self.certify_faulted(exit, out),
             (State::Certifying, false) => {
                 self.go(Trigger::CertifyRed);
                 let (verdict, reds) = certify_red_evidence(out);
@@ -1454,6 +1495,20 @@ impl Machine<'_> {
             }
             _ => {}
         }
+    }
+
+    /// `queue round certify` exited non-zero naming no verdict, no suite and no red output, after
+    /// the round was attributed: it judged nothing, so the round is not red. Its output is kept,
+    /// the round is left open for the re-drive, and the pace counts an Infra fault, not a pause.
+    fn certify_faulted(&mut self, exit: Exit, out: &str) {
+        let batch = self.rc.batch.clone().unwrap_or_default();
+        let kept = format!("run/rounds/{batch}.certify-{}.out", self.rc.run);
+        let said = out.trim().lines().last().map(|l| format!(": {l}")).unwrap_or_default();
+        let why = format!("queue round certify exited ({exit:?}) naming no verdict and no suite{said}; its output is kept at {kept}; the round is left open");
+        let leg = Leg { why: out.to_string(), key: kept, ..self.leg() };
+        self.acts.push(leg.act(KEEP_CERTIFY_OUTPUT));
+        self.go(Trigger::CertifyLostSpent);
+        self.finish(pace::Outcome::Infra, &why);
     }
 
     /// `queue round certify` exited VM_LOST: the pass was recorded incomplete and the round is
@@ -2114,6 +2169,7 @@ pub mod edge {
             let repo = batcher_cut::find_repo(&env, &name)?;
             let mut seen = observe_repo(&env, &repo)?;
             seen.live_legs = live_legs(e);
+            seen.live_scopes = live_scopes(e);
             seen.settled = carried.repos.get(&name).map(|rc| settled_batches(&env, rc, &seen)).unwrap_or_default();
             snap.repos.insert(name.clone(), seen);
         }
@@ -2141,6 +2197,14 @@ pub mod edge {
         let listed = runtime::units::effect(units, runtime::units::UNIT_LIST, &json(&runtime::units::task_glob(super::NAME)).ok()?).ok()?;
         let all: Vec<runtime::units::UnitDetail> = serde_json::from_str(&listed).ok()?;
         Some(super::running_legs(&all))
+    }
+
+    /// The round pass scopes the manager lists as running; `None` when it cannot say.
+    fn live_scopes(e: &Effects) -> Option<Vec<String>> {
+        let units = e.units.as_deref()?;
+        let listed = runtime::units::effect(units, runtime::units::UNIT_LIST, &json(&runtime::units::ROUND_SCOPE_ALL).ok()?).ok()?;
+        let all: Vec<runtime::units::UnitDetail> = serde_json::from_str(&listed).ok()?;
+        Some(super::running_scopes(&all))
     }
 
     fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo) -> Result<Repo, String> {
@@ -2367,6 +2431,17 @@ pub mod edge {
     pub fn file(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         io::file_orphan_round_incident(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.why)
+    }
+
+    /// Keeps a certify leg's full output where `leg.key` (relative to the run dir's parent) names it.
+    pub fn keep_certify_output(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let name = std::path::Path::new(&leg.key).file_name().ok_or("no file name to keep the output under")?;
+        let dir = env.run.join("rounds");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let path = dir.join(name);
+        std::fs::write(&path, &leg.why).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok("{}".into())
     }
 
     /// The pace's hold: the pause file on a red, the scoped stop on repeated infra faults.
