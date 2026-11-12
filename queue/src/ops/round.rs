@@ -2525,7 +2525,7 @@ fn build_log(err: &str, rc: i32, wall: u64) -> String {
         blocks
     };
     format!(
-        "command: cargo build -q --profile release --workspace --locked --config profile.release.incremental=false\nexit: {rc}\nwall_secs: {wall}\n\n{body}\n"
+        "command: cargo build -q --profile release --workspace --config profile.release.incremental=false\nexit: {rc}\nwall_secs: {wall}\n\n{body}\n"
     )
 }
 
