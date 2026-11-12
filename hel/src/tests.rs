@@ -53,6 +53,11 @@ struct Fake {
     out: RefCell<Vec<String>>,
     calls: RefCell<Vec<String>>,
     prefetched: RefCell<Vec<String>>,
+    resume: RefCell<Option<String>>,
+    /// Each send takes this long on the fake clock, so a short budget cuts the sweep between branches.
+    send_takes: std::time::Duration,
+    started: std::cell::OnceCell<std::time::Instant>,
+    elapsed: std::cell::Cell<std::time::Duration>,
 }
 
 impl Fake {
@@ -84,6 +89,7 @@ impl World for Fake {
     /// afterwards is what lib.sh would have left.
     fn send(&self, id: &str, br: &str, repo: &Path, why: &str, caller: &str) -> Sent {
         self.call(format!("send {id} {br} {why} {caller}"));
+        self.elapsed.set(self.elapsed.get() + self.send_takes);
         if self.held_mid.contains(id) || self.held.contains(id) {
             return Sent::Held("in_progress — the lease has not been released".into());
         }
@@ -109,6 +115,18 @@ impl World for Fake {
         }
         let _ = Command::new("git").arg("-C").arg(repo).args(["worktree", "remove", "--force"]).arg(w).output();
         true
+    }
+    fn now(&self) -> std::time::Instant {
+        *self.started.get_or_init(std::time::Instant::now) + self.elapsed.get()
+    }
+    fn rest(&self, d: std::time::Duration) {
+        self.elapsed.set(self.elapsed.get() + d);
+    }
+    fn resume_after(&self, _repo: &str) -> Option<String> {
+        self.resume.borrow().clone()
+    }
+    fn set_resume_after(&self, _repo: &str, br: Option<&str>) {
+        *self.resume.borrow_mut() = br.map(String::from);
     }
     fn prune(&self, _repo: &Path) {
         self.call("prune".into());
@@ -290,7 +308,7 @@ mod unreadable_store {
         git(&root, &["branch", "spira/sp-x"]);
         let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
         let f = Fake { base: Some(base), wts: t.path().join("wt"), refuse: Some("store said no".into()), ..Default::default() };
-        let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None };
+        let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
         let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
         s.repo(&crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false });
         assert!(f.out().contains("SKIP   spira  store unreadable: store said no"), "{}", f.out());
@@ -310,5 +328,87 @@ mod unreadable_store {
         let e = crate::sweep::scan_repo(&f, &root, "submitted", false).err().unwrap();
         assert!(matches!(&e, crate::sweep::ScanError::Store(m) if m == "store said no"), "{e:?}");
         assert_eq!(*f.prefetched.borrow(), ["sp-x"]);
+    }
+}
+
+mod resume {
+    use super::*;
+
+    fn sent(f: &Fake) -> Vec<String> {
+        f.calls.borrow().iter().filter_map(|c| c.strip_prefix("send ")).map(|c| c.split(' ').next().unwrap().to_string()).collect()
+    }
+
+    #[test]
+    fn a_pass_cut_at_its_budget_resumes_after_the_last_branch_it_handled() {
+        let t = testkit::TempDir::new("hel-resume");
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        let ids = ["sp-a", "sp-b", "sp-c", "sp-d", "sp-e", "sp-f"];
+        for id in ids {
+            git(&root, &["branch", &format!("spira/{id}")]);
+        }
+        let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
+        let beads = ids.iter().map(|id| (id.to_string(), serde_json::json!({"id": id, "labels": []}))).collect();
+        let f = Fake { base: Some(base), beads, wts: t.path().join("wt"), send_takes: std::time::Duration::from_millis(150), ..Default::default() };
+        let repo = crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false };
+        let pass = |budget_ms: u64| {
+            let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
+            let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: Some(f.now() + std::time::Duration::from_millis(budget_ms)), truncated: false };
+            s.repo(&repo);
+        };
+        pass(200);
+        let first = sent(&f);
+        assert!(!first.is_empty() && first.len() < ids.len(), "the budget cut the pass part-way: {first:?}");
+        assert_eq!(f.resume.borrow().as_deref(), Some(format!("spira/{}", first.last().unwrap()).as_str()));
+        pass(60_000);
+        let all = sent(&f);
+        assert_eq!(all[first.len()..], ids.iter().map(|s| s.to_string()).skip(first.len()).collect::<Vec<_>>(), "the second pass starts after the last handled branch: {all:?}");
+        assert_eq!(*f.resume.borrow(), None, "a finished pass clears the cursor");
+    }
+
+    #[test]
+    fn a_cursor_naming_a_branch_already_sent_still_resumes_after_it() {
+        let t = testkit::TempDir::new("hel-resume-gone");
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        let ids = ["sp-a", "sp-b", "sp-d", "sp-e"];
+        for id in ids {
+            git(&root, &["branch", &format!("spira/{id}")]);
+        }
+        let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
+        let beads = ids.iter().map(|id| (id.to_string(), serde_json::json!({"id": id, "labels": []}))).collect();
+        let f = Fake { base: Some(base), beads, wts: t.path().join("wt"), ..Default::default() };
+        *f.resume.borrow_mut() = Some("spira/sp-c".into());
+        let repo = crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false };
+        let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
+        let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
+        s.repo(&repo);
+        assert_eq!(sent(&f), ["sp-d", "sp-e"].map(String::from).to_vec());
+    }
+
+    #[test]
+    fn each_branch_sent_is_followed_by_the_configured_rest() {
+        let t = testkit::TempDir::new("hel-pace");
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        let ids = ["sp-a", "sp-b", "sp-c"];
+        for id in ids {
+            git(&root, &["branch", &format!("spira/{id}")]);
+        }
+        let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
+        let beads = ids.iter().map(|id| (id.to_string(), serde_json::json!({"id": id, "labels": []}))).collect();
+        let f = Fake { base: Some(base), beads, wts: t.path().join("wt"), ..Default::default() };
+        let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: std::time::Duration::from_millis(80) };
+        let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
+        let began = f.now();
+        s.repo(&crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false });
+        assert_eq!(s.tally.sent, 3);
+        assert_eq!(f.now() - began, std::time::Duration::from_millis(240));
     }
 }

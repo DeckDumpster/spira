@@ -29,6 +29,8 @@ pub struct Opts {
     /// Wall-clock allowance for one invocation; spent, the sweep stops and exits 0 with the
     /// remainder for the next tick (law-calls-have-deadlines).
     pub budget: Option<Duration>,
+    /// Rest after each branch that was sent or failed, so a long pass leaves the store's readers room.
+    pub pace: Duration,
 }
 
 /// One branch's disposition: what may happen to it, and why. Decided by reading only —
@@ -399,7 +401,7 @@ impl<'a> Sweep<'a> {
     /// The whole invocation: every repository in scope, then the tally line. Returns the
     /// exit status (0 when nothing failed).
     pub fn run(&mut self, repos: &[Repo]) -> i32 {
-        self.deadline = self.opts.budget.map(|b| Instant::now() + b);
+        self.deadline = self.opts.budget.map(|b| self.w.now() + b);
         for r in repos {
             if self.out_of_time() {
                 break;
@@ -418,7 +420,7 @@ impl<'a> Sweep<'a> {
     }
 
     fn out_of_time(&mut self) -> bool {
-        if self.deadline.is_some_and(|d| Instant::now() >= d) {
+        if self.deadline.is_some_and(|d| self.w.now() >= d) {
             if !self.truncated {
                 self.truncated = true;
                 self.w.log("hel: time budget spent — remaining branches and worktrees wait for the next pass");
@@ -465,11 +467,18 @@ impl<'a> Sweep<'a> {
             }
         }
 
-        // PASS 1 — every spira/* branch, exactly one disposition.
-        for br in &brs {
+        // PASS 1 — every spira/* branch, exactly one disposition, from where a budget-cut
+        // sweep stopped. The list is refname-sorted and a sent branch is gone, so the cursor is a position in that order, not a branch that must still exist.
+        let resume = if self.opts.only.is_some() { None } else { self.w.resume_after(&r.name) };
+        let skip = resume.as_ref().map_or(0, |c| brs.partition_point(|b| b <= c));
+        let mut cut_after: Option<&String> = None;
+        let mut cut = false;
+        for br in &brs[skip..] {
             if self.out_of_time() {
+                cut = true;
                 break;
             }
+            cut_after = Some(br);
             let id = br.strip_prefix("spira/").unwrap_or(br);
             if let Some(only) = self.opts.only.as_deref() {
                 if only != id && only != br {
@@ -485,7 +494,16 @@ impl<'a> Sweep<'a> {
                 continue;
             }
             let d = disposition(&c, id, br);
+            let worked = self.tally.sent + self.tally.failed;
             self.act(&c, id, br, d);
+            if !self.opts.dry && self.tally.sent + self.tally.failed != worked {
+                self.w.rest(self.opts.pace);
+            }
+        }
+
+        if self.opts.only.is_none() && !self.opts.dry {
+            let last_handled = if cut { cut_after.map(String::as_str).or(resume.as_deref().filter(|_| skip > 0)) } else { None };
+            self.w.set_resume_after(&r.name, last_handled);
         }
 
         // PASS 2 — orphaned worktrees: registered under $SPIRA_RUN/worktree, branch gone.

@@ -341,6 +341,7 @@ groomer_label = "groom"
 groom_ask_label = "groom-asked"
 groom_gate_label = "placeholder-gate"
 groom_threshold = "5"
+hel_pace_ms = 250
 health_timeout = "10"
 home_repo = "spira"
 hypervisor_mem_mib = 0
