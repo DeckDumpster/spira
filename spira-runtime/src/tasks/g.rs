@@ -170,10 +170,26 @@ pub mod cockpit {
     /// writer.
     pub const WRITE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_WRITE";
 
-    /// Keys that move on every read and so never make a snapshot new on their own: the pass's
-    /// own time, and each probe's read time.
+    /// Keys whose value moves with the clock alone: an age, a countdown, an elapsed time.
+    pub const CLOCK_ONLY: &[&str] = &[
+        "SP_SENTINEL_AGE", "SP_OPS_AGE", "SP_HEIMDALL_AGE", "SP_LC_STALE_S", "SP_CAPACITY_LEFT",
+        "SP_AWAITING_AGE", "SP_QUEUE_BATCH_AGE", "SP_RATELIM_AGE", "SP_RATELIM_5H_MIN", "SP_RATELIM_7D_MIN",
+        "SP_FUNNEL_CERTIFY_AGE", "SP_FUNNEL_RED_AGE", "SP_FUNNEL_CERT_AGE", "SP_FUNNEL_DONE_AGE",
+        "SP_MAIL_OLDEST_AGE", "SP_SWEEP_AGE", "SP_SENT_FAILED_AGE_M", "SP_UNSENT_OLDEST_H", "SP_CLOSED_STRANDED_OLDEST_H",
+    ];
+
+    /// The per-dwarf suffixes of the same kind, spelled `SP_DWARF<i>_<suffix>`.
+    pub const CLOCK_ONLY_DWARF: &[&str] = &["MIN", "WALL", "FUSE", "LEASE"];
+
+    fn clock_only(key: &str) -> bool {
+        CLOCK_ONLY.contains(&key)
+            || key.strip_prefix("SP_DWARF").and_then(|r| r.split_once('_')).is_some_and(|(i, suffix)| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()) && CLOCK_ONLY_DWARF.contains(&suffix))
+    }
+
+    /// Keys that never make a snapshot new on their own: the pass's own time, each probe's read
+    /// time, and every clock-only value. The file keeps them current through the refresh path.
     pub fn volatile(key: &str) -> bool {
-        key == "SP_AT" || key == "SP_PASS_SECS" || key.starts_with("_PROBE_AT_")
+        key == "SP_AT" || key == "SP_PASS_SECS" || key.starts_with("_PROBE_AT_") || clock_only(key)
     }
 
     /// The probe's name as the registry and the pane's meta keys spell it: `cockpit.now` is `now`.
@@ -345,6 +361,16 @@ pub mod cockpit {
 
         fn snap(at: u64, round: &str) -> Snapshot {
             Snapshot { supervised: true, fragments: [("cockpit.now".to_string(), frag(FragmentState::Ok, at, &[("SP_AT", &at.to_string())])), ("cockpit.round".to_string(), frag(FragmentState::Ok, at, &[("SP_ROUND", round)]))].into() }
+        }
+
+        #[test]
+        fn the_digest_ignores_clock_only_keys_and_sees_every_other() {
+            let kv = |extra: &[(&str, &str)]| -> Vec<(String, String)> { extra.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect() };
+            let base = kv(&[("SP_DWARVES", "1"), ("SP_SENTINEL_AGE", "3"), ("SP_DWARF0_MIN", "4"), ("SP_DWARF12_LEASE", "9"), ("SP_MAIL_OLDEST_AGE", "5")]);
+            let aged = kv(&[("SP_DWARVES", "1"), ("SP_SENTINEL_AGE", "8"), ("SP_DWARF0_MIN", "9"), ("SP_DWARF12_LEASE", "2"), ("SP_MAIL_OLDEST_AGE", "50")]);
+            assert_eq!(digest(&base), digest(&aged));
+            assert_ne!(digest(&base), digest(&kv(&[("SP_DWARVES", "2"), ("SP_SENTINEL_AGE", "3")])));
+            assert!(!volatile("SP_DWARF_N") && !volatile("SP_DWARFX_MIN") && !volatile("SP_DWARF0_BEAD"));
         }
 
         #[test]

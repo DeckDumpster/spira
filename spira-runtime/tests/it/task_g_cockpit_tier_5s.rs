@@ -70,6 +70,19 @@ fn t2_an_unchanged_snapshot_publishes_nothing_and_journals_nothing() {
 }
 
 #[test]
+fn a_tick_where_only_ages_moved_journals_nothing() {
+    let mut r = rig(1, |n| {
+        let mut s = snap(true, "");
+        let now = s.fragments.get_mut("cockpit.now").unwrap();
+        now.kv.insert("SP_SENTINEL_AGE".into(), (10 + n).to_string());
+        now.kv.insert("SP_DWARF0_MIN".into(), (3 + n).to_string());
+        s
+    });
+    assert_silent_tick(&mut r, STREAM);
+    running(&r);
+}
+
+#[test]
 fn t3_never_ok_stale_error_timeout_ok_is_legal_and_stale_before_ok_is_refused_naming_the_state() {
     for t in TRANSITIONS {
         assert_eq!(step(t.from, t.on), Ok(t.to), "{:?} on {}", t.from, t.on);
