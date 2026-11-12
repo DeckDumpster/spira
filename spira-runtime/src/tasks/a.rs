@@ -102,7 +102,7 @@ pub static TASKS: &[Task] = &[
         effects: batcher_local::EFFECTS,
         runners: {
             use batcher_local::{edge as x, *};
-            &[(OBSERVE, x::observe), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (ROUND_OPEN, x::round_open), (CORPUS, x::corpus), (STAGE, x::stage), (STAGE_TEST, x::stage_test), (EJECT, x::eject), (WITHDRAW, x::withdraw), (REBASE_STALE, x::rebase_stale), (CERTIFY, x::certify), (LC_CERTIFY, x::lc_certify), (LAND, x::land), (ABANDON, x::abandon), (PROMOTE, x::promote), (REDRIVE, x::redrive), (FILE, x::file), (PAUSE, x::pause)]
+            &[(OBSERVE, x::observe), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (ROUND_OPEN, x::round_open), (CORPUS, x::corpus), (STAGE, x::stage), (STAGE_TEST, x::stage_test), (EJECT, x::eject), (WITHDRAW, x::withdraw), (REBASE_STALE, x::rebase_stale), (CERTIFY, x::certify), (LC_CERTIFY, x::lc_certify), (LAND, x::land), (ABANDON, x::abandon), (PROMOTE, x::promote), (REDRIVE, x::redrive), (FILE, x::file), (PAUSE, x::pause), (KEEP_CERTIFY_OUTPUT, x::keep_certify_output)]
         },
         keys: &[batcher_local::KEYS],
         build: |s| batcher_local::BatcherLocal::from_settings(s).registration(),

@@ -238,6 +238,49 @@ fn attributing_redrive_a_red_early_round_is_redriven_on_its_own_batch_and_lands_
     assert_no_process(&r);
 }
 
+/// An attribution leg that ends while its pass scope is still in its post phase: `round certify`
+/// refuses a round whose pass scope is alive, so the batcher starts it only once the scope has
+/// ended, and the round that re-ran green lands without a hand.
+#[test]
+fn an_attribution_leg_that_ends_while_its_pass_scope_is_finishing_still_lands_the_round() {
+    let script = Script { beads: vec![Bead::new("sp-pp01", 30_000)], max_concurrent: 1, until: 40 * MIN, ..Script::default() };
+    let certifies: Arc<Mutex<Vec<u64>>> = Arc::default();
+    let seen = certifies.clone();
+    let (r, _) = run_keeping(35, script, move |d, w| {
+        let (wa, wc) = (w.clone(), w.clone());
+        d.double(bl::CORPUS, move |input| {
+            let l = leg(input)?;
+            let spec = UnitSpec { task: bl::NAME.into(), key: l.unit.clone(), argv: vec!["round-vm".into(), "run".into(), l.wt.clone()], env: vec![], cwd: None };
+            if l.why == bl::ATTRIBUTE {
+                wa.units.script(bl::NAME, MIN, Exit::Code(0));
+                wa.units.script_output(bl::NAME, attribution_land(&l.members).as_bytes(), b"");
+                let ends = wa.now() + MIN + 90_000;
+                wa.pass_scopes.lock().unwrap_or_else(|e| e.into_inner()).push((l.batch.clone(), ends));
+                let scope = ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None };
+                return units::effect(&*wa.units, UNIT_RUN_SCOPE, &serde_json::to_string(&scope).map_err(|e| e.to_string())?);
+            }
+            wa.units.script(bl::NAME, MIN, Exit::Code(1));
+            units::effect(&*wa.units, UNIT_START, &serde_json::to_string(&StartSpec { unit: spec, props: Default::default() }).map_err(|e| e.to_string())?)
+        })
+        .double(bl::CERTIFY, move |input| {
+            let l = leg(input)?;
+            seen.lock().unwrap_or_else(|e| e.into_inner()).push(wc.now());
+            let spec = UnitSpec { task: bl::NAME.into(), key: l.unit.clone(), argv: vec!["queue".into(), "round".into(), "certify".into(), l.batch, REPO.into()], env: vec![], cwd: None };
+            let refused = !wc.live_pass_scopes().is_empty();
+            wc.units.script(bl::NAME, if refused { 784 } else { MIN }, Exit::Code(i32::from(refused)));
+            let said: &[u8] = if refused { b"queue.sh round certify: round round-1 is already being certified (pid=7) \xe2\x80\x94 refused\n" } else { b"certified\n" };
+            wc.units.script_output(bl::NAME, said, b"");
+            units::effect(&*wc.units, UNIT_RUN_SCOPE, &serde_json::to_string(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None }).map_err(|e| e.to_string())?)
+        })
+    });
+    show("pass-scope-still-finishing", &r);
+    let certifies = certifies.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    assert_eq!(certifies.len(), 1, "certify started once, after the pass scope ended: {certifies:?}");
+    assert_eq!(r.lifecycle_of("sp-pp01").last().map(String::as_str), Some("LANDED"), "{}", r.dump());
+    assert!(!r.asked.iter().any(|n| n == bl::ABANDON), "{:?}", r.asked);
+    assert_no_process(&r);
+}
+
 /// Replaces `rc-fences-in-vm` (sp-ol6x08): a round's fences run inside the round VM from the
 /// tree's gate.steps, never on the host. On the service's tasks the round's checks are its two
 /// legs, both units: the corpus (`round-vm run`, which lists and runs the fences in the VM) and

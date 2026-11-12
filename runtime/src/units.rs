@@ -604,6 +604,13 @@ pub fn round_scope_glob(repo: &str, round: &str) -> String {
     format!("{ROUND_SCOPE_PREFIX}{}-*.scope", escape(&round_stem(repo, round)))
 }
 
+/// Whether a pass scope of `round` in `repo` is alive.
+pub fn round_scope_live(units: &dyn Units, repo: &str, round: &str) -> std::result::Result<bool, String> {
+    let glob = round_scope_glob(repo, round);
+    let listed = units.list(&glob).map_err(|e| format!("cannot list {glob}: {}", e.0))?;
+    Ok(listed.iter().any(|d| is_live(d.state)))
+}
+
 const STOP_POLL_MS: u64 = 100;
 const STOP_POLLS: u32 = 300;
 
@@ -2333,6 +2340,15 @@ mod tests {
         assert_eq!(stop_pass_scopes(&u, "spira", "spira-A").unwrap(), vec![scope]);
         assert!(is_live(u.facts(&leg).unwrap().state));
         assert!(live_pass_scopes(&u, "spira", "spira-A").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_round_scope_is_live_for_its_own_round_only() {
+        let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
+        let live = UnitFacts { state: UnitState::Active, main_pid: Some(7), exit: None, since_ms: Some(0) };
+        u.install(&format!("{}.scope", round_scope_unit("spira", "spira-A", "7-1")), live);
+        assert!(round_scope_live(&u, "spira", "spira-A").unwrap());
+        assert!(!round_scope_live(&u, "spira", "spira-B").unwrap());
     }
 
     #[test]

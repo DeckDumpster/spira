@@ -51,7 +51,7 @@ fn t3_a_foreign_round_leg_in_corpus_is_refused_naming_corpus() {
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, busy());
-    r.advance(CADENCE_MS).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
     kit::assert_read_equals_record::<Carry>(&r, STATE, OBSERVE);
 }
@@ -205,6 +205,7 @@ fn t3_the_attribution_line_decides_certify_mending_or_blocked() {
         let n = r.requested().len();
         r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(0), &format!("batcher spira: attributing\n{line}\n"))).unwrap();
         kit::assert_unpoisoned(&r, STREAM);
+        r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
         let after = asked_after(&r, n);
         assert_eq!(after.iter().map(|(e, _)| e.as_str()).collect::<Vec<_>>(), [CERTIFY], "mended={mended}: {after:?}");
         assert_eq!(after[0].1.members, [("sp-b".to_string(), "t2".to_string())], "the survivors certify");
@@ -373,9 +374,9 @@ fn sp_7yu70y_a_red_certify_with_only_a_red_line_still_says_what_it_had() {
 }
 
 /// A certify red naming no suite is attributed, once per round, before it is abandoned whole
-/// (sp-7yu70y.2): the second unnamed red abandons.
+/// (sp-7yu70y.2): the second is a fault of the machinery, not a red.
 #[test]
-fn sp_7yu70y_2_an_unnamed_certify_red_attributes_once_then_abandons() {
+fn sp_7yu70y_2_an_unnamed_certify_red_attributes_once_then_faults_without_a_red() {
     let mut r = carried(&driving(State::Certifying, "spira.c3"));
     let n = r.requested().len();
     r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "queue.sh round certify: nothing useful\n")).unwrap();
@@ -384,18 +385,75 @@ fn sp_7yu70y_2_an_unnamed_certify_red_attributes_once_then_abandons() {
     assert_eq!(after.iter().map(|(e, l)| (e.as_str(), l.why.as_str())).collect::<Vec<_>>(), [(CORPUS, "attribute")], "{after:?}");
     let attribution_unit = after[0].1.unit.clone();
 
-    let land = batcher_cut::attribute::Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: false }.line();
+    let land = batcher_cut::attribute::Attribution::Land { members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], attribution_secs: None, mended: false }.line();
     let n = r.requested().len();
     r.tick(STREAM, ended(&attribution_unit, runtime::units::Exit::Code(0), &format!("{land}\n"))).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     let after = asked_after(&r, n);
     assert_eq!(after.iter().map(|(e, _)| e.as_str()).collect::<Vec<_>>(), [CERTIFY], "{after:?}");
     let certify_unit = after[0].1.unit.clone();
 
     let n = r.requested().len();
-    r.tick(STREAM, ended(&certify_unit, runtime::units::Exit::Code(1), "")).unwrap();
+    r.tick(STREAM, ended(&certify_unit, runtime::units::Exit::Code(1), "queue.sh round certify: refused, nothing ran\n")).unwrap();
     let after = asked_after(&r, n);
-    let abandon = &after.iter().find(|(e, _)| e == ABANDON).unwrap_or_else(|| panic!("no abandon: {after:?}")).1;
-    assert!(abandon.why.contains("no verdict and no suite"), "{}", abandon.why);
+    let names: Vec<&str> = after.iter().map(|(e, _)| e.as_str()).collect();
+    assert!(!names.contains(&ABANDON) && !names.contains(&PAUSE) && !names.contains(&EJECT), "a certify that judged nothing is no red: {names:?}");
+}
+
+/// A certify that exits non-zero naming no verdict and no suite, after the attribution, is a
+/// fault of the machinery: its full output is kept and the reason carries its last line and the
+/// file, the round stays open, and no pause is written.
+#[test]
+fn sp_byw57t_a_certify_that_judged_nothing_keeps_its_output_and_names_it_in_the_reason() {
+    let mut c = driving(State::Certifying, "spira.c3");
+    c.repos.get_mut("spira").unwrap().attributed = true;
+    let mut r = carried(&c);
+    let n = r.requested().len();
+    let out = "queue.sh round certify: first line\nqueue.sh round certify: round r9 is already being certified (pid=7) — refused\n";
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), out)).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let after = asked_after(&r, n);
+    let names: Vec<&str> = after.iter().map(|(e, _)| e.as_str()).collect();
+    assert!(!names.contains(&ABANDON) && !names.contains(&PAUSE), "the round stays open and unpaused: {names:?}");
+    let kept = &after.iter().find(|(e, _)| e == KEEP_CERTIFY_OUTPUT).unwrap_or_else(|| panic!("output not kept: {after:?}")).1;
+    assert_eq!(kept.key, "run/rounds/r9.certify-1.out");
+    assert_eq!(kept.why, out, "the whole output is kept");
+    let reason = certify_fault_reason(runtime::units::Exit::Code(1), out, &kept.key);
+    assert!(reason.contains("already being certified") && reason.contains("run/rounds/r9.certify-1.out"), "{reason}");
+}
+
+/// A pass scope that outlives the wall does not hold certify for good.
+#[test]
+fn sp_byw57t_a_pass_scope_that_outlives_the_wall_releases_certify() {
+    let mut c = driving(State::Certifying, "");
+    let rc = c.repos.get_mut("spira").unwrap();
+    rc.leg = None;
+    rc.certify_held = true;
+    rc.leg_at_ms = 0;
+    let mut snap = idle();
+    snap.repos.get_mut("spira").unwrap().scoped_batches = Some(vec!["r9".into()]);
+    let (_, acts) = decide(&c, &snap);
+    assert!(acts.iter().any(|a| a.effect == CERTIFY), "{acts:?}");
+}
+
+/// Certify refuses a round whose pass scope is still finishing: the attribution's survivors wait
+/// for the scope to end, then certify starts.
+#[test]
+fn sp_byw57t_certify_waits_for_the_attribution_passs_scope_to_end() {
+    let mut c = driving(State::Certifying, "");
+    {
+        let rc = c.repos.get_mut("spira").unwrap();
+        rc.leg = None;
+        rc.certify_held = true;
+        rc.leg_at_ms = NOW;
+    }
+    let mut snap = idle();
+    snap.repos.get_mut("spira").unwrap().scoped_batches = Some(vec!["r9".into()]);
+    let (held, acts) = decide(&c, &snap);
+    assert!(acts.iter().all(|a| a.effect != CERTIFY), "a live pass scope holds certify: {acts:?}");
+    snap.repos.get_mut("spira").unwrap().scoped_batches = Some(vec![]);
+    let (_, acts) = decide(&held, &snap);
+    assert!(acts.iter().any(|a| a.effect == CERTIFY), "certify starts once the scope has ended: {acts:?}");
 }
 
 /// A certify red naming a suite in a round of several members is attributed on that suite,
@@ -415,6 +473,7 @@ fn sp_b0lhx6_a_named_suite_red_attributes_that_suite_and_the_survivors_land() {
     let land = batcher_cut::attribute::Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: false }.line();
     let n = r.requested().len();
     r.tick(STREAM, ended(&unit, runtime::units::Exit::Code(0), &format!("{land}\n"))).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     let after = asked_after(&r, n);
     assert_eq!(after.iter().map(|(e, _)| e.as_str()).collect::<Vec<_>>(), [CERTIFY], "{after:?}");
     let certify_unit = after[0].1.unit.clone();
@@ -838,7 +897,7 @@ fn sp_2gcs4h_after_a_landing_with_a_certified_bead_and_no_round_open_the_next_ti
 
 fn at_work() -> TaskRig {
     let mut r = rig(1, busy());
-    r.advance(CADENCE_MS).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     r
 }
 
@@ -1098,4 +1157,17 @@ fn a_round_open_lost_at_restart_is_asked_again() {
     let (carry, acts) = on_outcome(&carry, ROUND_OPEN, false, "lost at restart", &leg, NOW);
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Opened, "not an open failure");
+}
+
+/// Certify writes its refusals to stderr: they are kept with the stdout, on their own line.
+#[test]
+fn sp_byw57t_a_certify_legs_stderr_is_kept_with_its_stdout() {
+    let mut c = driving(State::Certifying, "spira.c3");
+    c.repos.get_mut("spira").unwrap().attributed = true;
+    let out = runtime::units::RanOutput::captured(b"starting", b"queue round certify: refused, the round worktree is not at the head");
+    let ran = runtime::units::UnitRan { exit: runtime::units::Exit::Code(1), ..ran_of("spira.c3") };
+    let (_, acts) = on_ran_with(&c, &ran, &out, NOW).expect("its own leg");
+    let kept = acts.iter().find(|a| a.effect == KEEP_CERTIFY_OUTPUT).unwrap_or_else(|| panic!("output not kept: {acts:?}"));
+    let why = serde_json::from_str::<Leg>(&kept.input).unwrap().why;
+    assert_eq!(why, "starting\nqueue round certify: refused, the round worktree is not at the head");
 }
