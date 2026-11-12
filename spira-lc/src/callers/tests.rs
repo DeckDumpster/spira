@@ -34,6 +34,8 @@ struct Fake {
     seq: u64,
     changed: Vec<String>,
     content_reads: usize,
+    /// `list` calls with no `--ids`, `--state` or `--live`: every record.
+    whole_lists: usize,
     deleted: Vec<String>,
     /// The `skew-check` answer; `None` is the planes agreeing.
     skew: Option<(i32, String)>,
@@ -125,6 +127,9 @@ impl Machine for Fake {
                 (0, json!({"watermark": 0, "items": rows}).to_string())
             }
             "list" => {
+                if flag(args, "--ids").is_none() && flag(args, "--state").is_none() && !args.iter().any(|a| a == "--live") {
+                    self.whole_lists += 1;
+                }
                 let st = flag(args, "--state");
                 let hold = flag(args, "--hold");
                 let live = args.iter().any(|a| a == "--live");
@@ -1154,6 +1159,43 @@ fn reconcile_content_since_seq_reads_only_what_changed_and_nothing_when_nothing_
     let carried = reconcile_content(&v(&["--since-seq", "7", "sp-b"]), &mut f, &mut b);
     assert!(carried.stdout.contains("would close sp-b") && !carried.stdout.contains("sp-a"), "{}", carried.stdout);
     assert_eq!(reconcile_content(&v(&["--since-seq", "x"]), &mut f, &mut b).code, 2);
+}
+
+#[test]
+fn reconcile_content_since_seq_and_apply_by_id_never_list_every_record() {
+    let mut f = Fake::default();
+    let mut b = FakeBd::default();
+    for id in ["sp-a", "sp-b"] {
+        f.bead(id, BeadState::Landed);
+        b.rows.insert(id.into(), ("task".into(), None));
+        f.content.insert(id.into(), "open".into());
+    }
+    f.seq = 7;
+    f.changed = vec!["sp-a".into()];
+    let since = reconcile_content(&v(&["--since-seq", "3"]), &mut f, &mut b);
+    assert!(since.stdout.contains("would close sp-a") && !since.stdout.contains("sp-b"), "{}", since.stdout);
+    let applied = reconcile_content(&v(&["--apply", "sp-a"]), &mut f, &mut b);
+    assert_eq!(applied.code, APPLIED, "{}", applied.stderr);
+    assert_eq!(b.closed.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>(), ["sp-a"]);
+    assert_eq!(f.whole_lists, 0, "a scoped pass reads the records of its ids only");
+    reconcile_content(&[], &mut f, &mut b);
+    assert_eq!(f.whole_lists, 1, "a full pass lists once");
+}
+
+#[test]
+fn reconcile_content_since_seq_scoped_to_a_child_still_closes_its_complete_epic() {
+    let w = super::world::World::new();
+    w.file("sp-e", "epic", None, &[]);
+    w.file("sp-a", "task", Some("sp-e"), &[]);
+    w.file("sp-b", "task", Some("sp-e"), &[]);
+    w.ok(&["create-bead", "sp-a", "--ready"]);
+    w.ok(&["create-bead", "sp-b", "--ready"]);
+    w.drop("sp-a");
+    w.drop("sp-b");
+    let (mut m, mut b) = (&w, &w);
+    let done = reconcile_content(&v(&["--since-seq", "0", "sp-a", "--apply"]), &mut m, &mut b);
+    assert_eq!(done.code, APPLIED, "{done:?}");
+    assert_eq!(w.status("sp-e"), "closed", "{}", done.stdout);
 }
 
 #[test]

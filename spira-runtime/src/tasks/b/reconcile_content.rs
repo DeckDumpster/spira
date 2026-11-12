@@ -12,7 +12,10 @@
 //!
 //! ## Observe
 //!
-//! `reconcile.content.observe` is a Probe. Its snapshot:
+//! `reconcile.content.observe` is a Probe, asked in two phases. The tick asks with no input and
+//! reads only the halt stamp and the event head (`pass: Head`). `decide` then asks again, as a
+//! probe act, for `since:<carried seq>` when the head moved, or `full` when no seq is carried or
+//! the full pass is due. Its snapshot:
 //!
 //! ```text
 //! Snapshot { world_halted: bool,
@@ -41,13 +44,14 @@
 //! `reconcile_content` at its `apply` branch (`reconcile_content.rs:176`) gives the decide:
 //!
 //! ```text
-//! decide(carry: Carry { through_seq: Option<u64>, full_at: u64 }, snap)
+//! decide(carry: Carry { through_seq: Option<u64>, full_at: u64 }, snap /* pass: Head|Since|Full */)
 //!     -> (Carry, Vec<Close>)
 //! ```
 //!
-//! - **Scope.** Today every run is a full pass: the unit passes no `--since-seq`. The task
-//!   carries `through_seq` and runs incremental passes, with a full pass every 6 h so ask and
-//!   epic sweeps still happen. The 6 h figure is a new choice, not current behaviour.
+//! - **Scope.** A tick whose event head equals the carried `through_seq` stops after the head
+//!   read. Otherwise it runs `--dry-run --since-seq <carried>`. A full pass runs when no seq is
+//!   carried and every `SPIRA_RUNTIME_RECONCILE_CONTENT_FULL_SECS` (6 h), so the ask and epic
+//!   sweeps still happen; it sets `full_at`.
 //! - **Fixtures.** The existing `callers/tests.rs:962,992,1032,1054` cases: an epic closes only
 //!   when every child is terminal; every terminal state closes; `--since-seq` reads only the
 //!   changed beads; a store that is down means no bd read and cannot tell.
@@ -69,10 +73,8 @@
 //!
 //! ## Silence
 //!
-//! When nothing needs closing, the snapshot holds no closes and the carried seq is unchanged.
-//! Nothing is emitted. If only `through_seq` advanced, one `reconcile.content.state` Emit is
-//! journaled. To keep that within the budget, the Emit is written only when the seq moved **and**
-//! a close happened, or when a full pass completed.
+//! A tick that finds the head unchanged emits nothing. The carry moves when the cursor moves:
+//! one `reconcile.content.state` Emit per changed tick, whether or not anything closes.
 //!
 //! ## Replaces
 //!
@@ -124,9 +126,20 @@ pub struct Close {
     pub reason: String,
 }
 
+/// What a snapshot answers: the event head alone, an incremental scan, or a full one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Pass {
+    #[default]
+    Head,
+    Since,
+    Full,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Snapshot {
+    pub pass: Pass,
     pub world_halted: bool,
     pub through_seq: Option<u64>,
     pub work: Vec<Close>,
@@ -191,7 +204,20 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             if snap.world_halted || carry.skew_red_at.is_some_and(|at| now_ms < at + full_ms) {
                 return Ok((carry.clone(), vec![]));
             }
+            if snap.pass == Pass::Head {
+                let full_due = carry.through_seq.is_none() || now_ms >= carry.full_at + full_ms;
+                let input = match (full_due, carry.through_seq) {
+                    (false, Some(_)) if snap.through_seq == carry.through_seq => return Ok((carry.clone(), vec![])),
+                    (false, Some(seq)) => format!("since:{seq}"),
+                    _ => "full".to_string(),
+                };
+                return Ok((carry.clone(), vec![Act { name: OBSERVE.into(), key: format!("{NAME}:scan"), input, deadline_ms: SPEC.probe_deadline_ms, probe: true }]));
+            }
             let mut next = carry.clone();
+            next.through_seq = carry.through_seq.max(snap.through_seq);
+            if snap.pass == Pass::Full {
+                next.full_at = now_ms;
+            }
             let listed: Vec<&Close> = snap.work.iter().chain(&snap.asks).chain(&snap.epics).collect();
             let fresh: Vec<Close> = listed.iter().filter(|c| matches!(carry.beads.get(&c.id).copied().unwrap_or_default(), Phase::Open | Phase::Failed)).map(|c| (*c).clone()).collect();
             if next.beads.len() > CLOSED_KEEP {
@@ -200,7 +226,6 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             if fresh.is_empty() {
                 return Ok((next, vec![]));
             }
-            next.through_seq = carry.through_seq.max(snap.through_seq);
             next.pending = fresh;
             Ok((next, vec![Act { name: SKEW_CHECK.into(), key: format!("{NAME}:skew-check:{now_ms}"), input: String::new(), deadline_ms: 5_000, probe: false }]))
         }
@@ -258,23 +283,43 @@ pub fn parse_dry_run(out: &str) -> Vec<Close> {
         .collect()
 }
 
-/// The runner of [`OBSERVE`]: the halt stamp, then the store's `reconcile-content --dry-run`
-/// and `event-seq`, over the socket. A cannot-tell on the ask or epic half still lists the
-/// work closes, as the store's own pass does.
-pub fn observe(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path) -> Result<String, String> {
-    if run_dir.join("world.halted").exists() {
-        return serde_json::to_string(&Snapshot { world_halted: true, ..Snapshot::default() }).map_err(|e| e.to_string());
+/// The runner of [`OBSERVE`], by `input`: `""` reads the halt stamp and the event head;
+/// `since:<N>` is the store's incremental dry run; `full` is its whole dry run. A cannot-tell
+/// on the ask or epic half still lists the work closes, as the store's own pass does.
+pub fn observe(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path, input: &str) -> Result<String, String> {
+    let (pass, since) = match input {
+        "" => {
+            if run_dir.join("world.halted").exists() {
+                return serde_json::to_string(&Snapshot { world_halted: true, ..Snapshot::default() }).map_err(|e| e.to_string());
+            }
+            return serde_json::to_string(&Snapshot { through_seq: head(lc)?, ..Snapshot::default() }).map_err(|e| e.to_string());
+        }
+        "full" => (Pass::Full, None),
+        other => match other.strip_prefix("since:").and_then(|n| n.parse::<u64>().ok()) {
+            Some(n) => (Pass::Since, Some(n.to_string())),
+            None => return Err(format!("{OBSERVE}: unknown input {other:?}")),
+        },
+    };
+    let mut through_seq = if pass == Pass::Full { head(lc)? } else { None };
+    let mut argv = vec!["reconcile-content", "--dry-run"];
+    if let Some(n) = &since {
+        argv.extend(["--since-seq", n]);
     }
-    let sweep = lc.within(spira_store::lc_call::SWEEP_DEADLINE);
-    let r = sweep.call(&["reconcile-content", "--dry-run"]).map_err(String::from)?;
+    let r = lc.within(spira_store::lc_call::SWEEP_DEADLINE).call(&argv).map_err(String::from)?;
     let cannot_tell = match r.code {
         0 => None,
         spira_store::lc_call::CANNOT_TELL if r.out.contains("would close") || r.out.contains("reconcile-content: ") => Some(r.why()),
         _ => return Err(format!("reconcile-content --dry-run: exit {}: {}", r.code, r.why())),
     };
+    if pass == Pass::Since {
+        through_seq = r.out.lines().find_map(|l| l.trim().strip_prefix("through-seq: ")).and_then(|n| n.trim().parse().ok());
+    }
+    serde_json::to_string(&Snapshot { pass, through_seq, work: parse_dry_run(&r.out), cannot_tell, ..Snapshot::default() }).map_err(|e| e.to_string())
+}
+
+fn head(lc: &spira_store::lc_call::LcClient) -> Result<Option<u64>, String> {
     let seq = lc.answer(&["event-seq", "--head"]).map_err(String::from)?;
-    let through_seq = serde_json::from_str::<serde_json::Value>(seq.trim()).ok().and_then(|v| v["seq"].as_u64());
-    serde_json::to_string(&Snapshot { world_halted: false, through_seq, work: parse_dry_run(&r.out), asks: vec![], epics: vec![], cannot_tell }).map_err(|e| e.to_string())
+    Ok(serde_json::from_str::<serde_json::Value>(seq.trim()).ok().and_then(|v| v["seq"].as_u64()))
 }
 
 /// The runner of [`SKEW_CHECK`]: the store's `skew-check`; exit 3 (the planes disagree) fails it.
@@ -297,6 +342,6 @@ pub fn close(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String,
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("through_seq"), runtime::rows::Part::Map { name: "beads", drop: &[] }, runtime::rows::Part::Field("skew_red_at")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("through_seq"), runtime::rows::Part::Field("full_at"), runtime::rows::Part::Map { name: "beads", drop: &[] }, runtime::rows::Part::Field("skew_red_at")];
 
 super::hosted!(ReconcileContent);

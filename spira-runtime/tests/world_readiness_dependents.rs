@@ -95,7 +95,7 @@ fn reconcile_content_reads_only_the_head_of_the_event_log() {
         _ => None,
     });
     let lc = spira_store::lc_call::LcClient::socket(path);
-    let out = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path()).unwrap();
+    let out = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "").unwrap();
     assert!(out.contains("\"through_seq\":7"), "{out}");
-    assert_eq!(sent.lock().unwrap().last().unwrap(), "event-seq --head");
+    assert_eq!(*sent.lock().unwrap(), ["event-seq --head"]);
 }

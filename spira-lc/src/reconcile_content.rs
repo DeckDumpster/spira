@@ -118,10 +118,6 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
             _ => only.push(a.clone()),
         }
     }
-    let recs = match records(m) {
-        Ok(r) => r,
-        Err(e) => return cannot(e),
-    };
     let mut through = None;
     let mut scope: Option<BTreeSet<String>> = None;
     if let Some(since) = &since {
@@ -137,6 +133,16 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
         keys.extend(only.iter().cloned());
         scope = Some(keys);
     }
+    let scoped = since.is_some() || !only.is_empty();
+    let recs = match &scope {
+        Some(keys) => records_of(m, &keys.iter().cloned().collect::<Vec<_>>()),
+        None if scoped => records_of(m, &only),
+        None => records(m),
+    };
+    let recs = match recs {
+        Ok(r) => r,
+        Err(e) => return cannot(e),
+    };
     let in_scope = |id: &str| match &scope {
         Some(keys) => keys.contains(id),
         None => only.is_empty() || only.iter().any(|i| i == id),
@@ -169,7 +175,7 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
         None if !only.is_empty() => Ok(only.clone()),
         None => plan(m, &["items", "--type", "epic", "--open"]).map(|i| i.iter().map(|r| s(r, "id")).collect()),
     };
-    match epics.and_then(|e| complete_epics(m, &recs, &e)) {
+    match epics.and_then(|e| complete_epics(m, &recs, scoped, &e)) {
         Ok(c) => closes.extend(c),
         Err(e) => unread.push(e),
     }
@@ -256,25 +262,32 @@ fn rowless_closed(row: &Value) -> bool {
 
 /// Each open epic among `ids` with at least one child and every child terminal: a child is
 /// terminal when its record is, or, with no record, when bd holds it closed.
-fn complete_epics(m: &mut dyn Machine, recs: &BTreeMap<String, (String, String)>, ids: &[String]) -> Result<Vec<Close>, String> {
+fn complete_epics(m: &mut dyn Machine, recs: &BTreeMap<String, (String, String)>, scoped: bool, ids: &[String]) -> Result<Vec<Close>, String> {
     let epics: Vec<String> = items_of(m, ids, &["--open"])?.iter().filter(|r| s(r, "issue_type") == "epic").map(|r| s(r, "id")).collect();
     if epics.is_empty() {
         return Ok(Vec::new());
     }
     let mut tally: BTreeMap<String, (BTreeMap<String, usize>, bool)> = epics.iter().map(|e| (e.clone(), (BTreeMap::new(), false))).collect();
+    let mut children = Vec::new();
     for chunk in epics.chunks(CHUNK) {
-        for child in plan(m, &["children", "--ids", &chunk.join(",")])? {
-            let Some((counts, pending)) = tally.get_mut(&s(&child, "parent")) else { continue };
-            let state = match recs.get(&s(&child, "id")) {
-                Some((st, _)) => st.clone(),
-                None if rowless_closed(&child) => "CLOSED".into(),
-                None => String::new(),
-            };
-            if state == "CLOSED" || terminal(&state) {
-                *counts.entry(state).or_default() += 1;
-            } else {
-                *pending = true;
-            }
+        children.extend(plan(m, &["children", "--ids", &chunk.join(",")])?);
+    }
+    let mut known = recs.clone();
+    if scoped {
+        let missing: Vec<String> = children.iter().map(|c| s(c, "id")).filter(|id| !known.contains_key(id)).collect();
+        known.extend(records_of(m, &missing)?);
+    }
+    for child in children {
+        let Some((counts, pending)) = tally.get_mut(&s(&child, "parent")) else { continue };
+        let state = match known.get(&s(&child, "id")) {
+            Some((st, _)) => st.clone(),
+            None if rowless_closed(&child) => "CLOSED".into(),
+            None => String::new(),
+        };
+        if state == "CLOSED" || terminal(&state) {
+            *counts.entry(state).or_default() += 1;
+        } else {
+            *pending = true;
         }
     }
     Ok(tally
