@@ -16,6 +16,7 @@ use batcher_cut::io::{self, Env, Hypervisor, Land, Repo};
 use serde_json::{json, Value};
 use spira_config::lc_call::{LcClient, Reply, Transport};
 use spira_runtime::tasks::a::sentinel_pass::beads_on;
+use spira_runtime::world::World;
 use store_view::Projection;
 
 struct Store {
@@ -144,12 +145,22 @@ fn a_quiet_tick_of_each_task_that_read_the_store_every_tick_never_reaches_its_so
     let reg = spira_config::repos::Registry::new(Some(&map), &BTreeMap::new(), dir.path());
     let reads = round_controller::sifts::Reads { lc: &lc, views: &installed, reg: &reg, wiki: "", identity_projects: "", work: dir.path().join("sift") };
 
+    let map = dir.path().join("repos");
+    std::fs::write(&map, "alpha|/x|queue.local|main\n").unwrap();
+    let world = World { lc_socket: sock.clone(), repo_map: map, run_dir: dir.path().join("run"), home_repo: "alpha".into(), ..World::default() };
+
     let tick = || {
         assert!(beads_on(&lc, &[], &[]).is_some(), "sentinel.pass reads its content rows");
         let pool = io::certified_pool(&env, &repo).expect("batcher reads its pool");
         assert_eq!(pool.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-a"]);
         assert_eq!(io::lcq_held(&env, &["show-batch", "b-1"]).unwrap(), json!({ "pass": 1 }).to_string(), "batcher reads a round's pass");
         round_controller::sifts::observe_repo(&reads, "alpha", true).expect("sift reads its repo");
+        assert_eq!(world.supersede_snapshot("{}").unwrap(), json!({ "held": [] }).to_string(), "supersede-duty lists the manual holds");
+        assert_eq!(world.held_asks().unwrap(), Vec::<String>::new(), "the asks task lists the ask holds");
+        assert_eq!(world.waiting_rows().unwrap().as_array().map(Vec::len), Some(0), "watch.throughput counts the waiting rows");
+        assert!(spira_runtime::reconcile_host::lc_read(&sock, &["list", "--state", "CERTIFIED"]).unwrap().contains("sp-a"), "the reconciler lists CERTIFIED");
+        assert!(cockpit_collect::probes::lc::state_index_of(&["sp-a".to_string()]).unwrap().contains_key("sp-a"), "the cockpit reads its ids");
+        assert!(cockpit_collect::probes::lc::held_rows("manual").unwrap().is_empty(), "the cockpit lists the manual holds");
         assert_eq!(cockpit_collect::probes::round::list_batches_live().as_deref(), Some("[]"), "the cockpit reads the round history");
     };
     tick();

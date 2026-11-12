@@ -26,6 +26,8 @@ pub struct Store {
     /// the one that takes stdin (`claim-verdicts`).
     pub lc_bin: String,
     pub timeout: Duration,
+    /// The process's held lifecycle rows, when it keeps the store's watch.
+    pub views: Option<std::sync::Arc<store_view::Projection>>,
 }
 
 impl std::fmt::Debug for Store {
@@ -104,7 +106,7 @@ impl Store {
     pub fn new(timeout_s: u64) -> Result<Store, String> {
         let lc_bin = spira_config::lifecycle_row::lc_bin()?;
         let timeout = Duration::from_secs(timeout_s.max(1));
-        Ok(Store { bdq: spira_config::release_env::tool("bdq")?, lc: LcClient::for_bin(&lc_bin)?.within(timeout), lc_bin, timeout })
+        Ok(Store { bdq: spira_config::release_env::tool("bdq")?, lc: LcClient::for_bin(&lc_bin)?.within(timeout), lc_bin, timeout, views: store_view::shared() })
     }
 
     /// One lifecycle request; any exit code is an answer. `Err` only when there is none.
@@ -191,14 +193,14 @@ impl Store {
 
     /// The lifecycle rows in `states`. Never the whole store: it holds every bead ever.
     pub fn lifecycle_in_states(&self, states: &[&str]) -> Result<HashMap<String, LifecycleRow>, String> {
-        self.lc_list(&["--state", &states.join(","), "--snapshot"])
+        self.lc_list(&["--state", &states.join(",")], true)
     }
 
     /// The lifecycle rows of exactly `ids`, one `spira-lc list --ids` per [`EVENT_CHUNK`].
     pub fn lifecycle_of(&self, ids: &[String]) -> Result<HashMap<String, LifecycleRow>, String> {
         let mut out = HashMap::new();
         for chunk in ids.chunks(EVENT_CHUNK) {
-            out.extend(self.lc_list(&["--ids", &chunk.join(",")])?);
+            out.extend(self.lc_list(&["--ids", &chunk.join(",")], false)?);
         }
         Ok(out)
     }
@@ -221,12 +223,17 @@ impl Store {
     }
 
     pub fn express_ids(&self) -> Result<std::collections::BTreeSet<String>, String> {
-        Ok(self.lc_list(&["--express", "--live", "--snapshot"])?.into_keys().collect())
+        Ok(self.lc_list(&["--express", "--live"], true)?.into_keys().collect())
     }
 
-    fn lc_list(&self, filter: &[&str]) -> Result<HashMap<String, LifecycleRow>, String> {
+    /// `list <filter>`: from the held view when `held` and this process keeps one (a stale view
+    /// refuses; it never falls through to the store), else from the store.
+    fn lc_list(&self, filter: &[&str], held: bool) -> Result<HashMap<String, LifecycleRow>, String> {
         let argv: Vec<&str> = std::iter::once("list").chain(filter.iter().copied()).collect();
-        let text = self.lc_run(&argv).map_err(|e| format!("spira-lc list: {e}"))?;
+        let text = match self.views.as_ref().filter(|_| held).and_then(|v| v.list_answer(&argv)) {
+            Some(answer) => answer.map_err(|e| format!("spira-lc list: {e}"))?,
+            None => self.lc_run(&argv).map_err(|e| format!("spira-lc list: {e}"))?,
+        };
         crate::rank::parse_lifecycle(&text)
     }
 
@@ -421,8 +428,12 @@ mod tests {
     }
 
     fn store_over(reply: fn(&[String]) -> Reply) -> (Store, Arc<Scripted>) {
+        store_over_views(reply, None)
+    }
+
+    fn store_over_views(reply: fn(&[String]) -> Reply, views: Option<Arc<store_view::Projection>>) -> (Store, Arc<Scripted>) {
         let t = Arc::new(Scripted { seen: Mutex::new(Vec::new()), reply });
-        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(t.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) };
+        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(t.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views };
         (st, t)
     }
 
@@ -442,6 +453,34 @@ mod tests {
         assert_eq!(seen[1], ["facts", "--ids", "sp-a"]);
         assert_eq!(seen[2], ["list-asks"]);
         assert_eq!(seen.last().unwrap(), &["release", "sp-a", "dwarf-x"]);
+    }
+
+    #[test]
+    fn a_store_with_a_loaded_view_answers_state_and_express_reads_without_the_socket() {
+        let held = Arc::new(Scripted {
+            seen: Mutex::new(Vec::new()),
+            reply: |argv| match argv[0].as_str() {
+                "rc" => Reply { code: 0, out: r#"{"ok":{"items":[],"list_rev":3}}"#.into(), err: String::new() },
+                _ => Reply { code: 0, out: r#"[{"bead_id":"sp-a","state":"READY","version":1,"holds":[],"express":"1","updated_at":4000000000},{"bead_id":"sp-b","state":"LANDED","version":1,"holds":[],"express":"0","updated_at":4000000000},{"bead_id":"sp-c","state":"REWORK","version":1,"holds":[],"express":"0","updated_at":4000000000}]"#.into(), err: String::new() },
+            },
+        });
+        let view = Arc::new(store_view::Projection::new(LcClient::over(held, true), Duration::from_secs(60), Arc::new(std::time::Instant::now)));
+        view.load().unwrap();
+        let (st, t) = store_over_views(|_| Reply { code: 0, out: "[]".into(), err: String::new() }, Some(view));
+        let ready = st.lifecycle_in_states(&["READY", "REWORK"]).unwrap();
+        assert_eq!(ready.keys().cloned().collect::<std::collections::BTreeSet<_>>(), ["sp-a".to_string(), "sp-c".to_string()].into());
+        assert_eq!(st.express_ids().unwrap(), ["sp-a".to_string()].into());
+        assert!(t.seen.lock().unwrap().is_empty(), "the held view answered: {:?}", t.seen.lock().unwrap());
+        st.lifecycle_of(&["sp-a".into()]).unwrap();
+        assert_eq!(t.seen.lock().unwrap()[0], ["list", "--ids", "sp-a"]);
+    }
+
+    #[test]
+    fn a_store_with_no_view_asks_the_socket_for_state_and_express_reads() {
+        let (st, t) = store_over(|_| Reply { code: 0, out: "[]".into(), err: String::new() });
+        st.lifecycle_in_states(&["READY", "REWORK"]).unwrap();
+        st.express_ids().unwrap();
+        assert_eq!(*t.seen.lock().unwrap(), [vec!["list", "--state", "READY,REWORK"], vec!["list", "--express", "--live"]]);
     }
 
     #[test]

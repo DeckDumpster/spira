@@ -112,7 +112,7 @@ fn list_live(states: &str) -> Option<String> {
             let states: Vec<&str> = states.split(',').collect();
             serde_json::Value::Array(held.rows(&store_view::RowQuery { states: &states, ..Default::default() }).ok()?.value).to_string()
         }
-        None => verb(&["list", "--state", states, "--snapshot"])?,
+        None => verb(&["list", "--state", states])?,
     };
     parse_rows(&raw).map(|_| raw)
 }
@@ -152,6 +152,9 @@ fn forget_old_reads(prefix: &str) {
 }
 
 fn read_rows(key: &str, args: &[&str]) -> Option<HashMap<String, Row>> {
+    if let Some(held) = store_view::held_list(args) {
+        return lc_state::parse_rows(&held.ok()?).ok().map(lc_state::index);
+    }
     let raw = last_good(&cache_dir(), key, io::now(), || shared_live(key, || verb(args).filter(|r| lc_state::parse_rows(r).is_ok())))?;
     lc_state::parse_rows(&raw).ok().map(lc_state::index)
 }
@@ -164,13 +167,15 @@ pub fn state_index_of(ids: &[String]) -> Option<HashMap<String, Row>> {
     for csv in id_chunks(ids) {
         all.extend(read_rows(&format!("ids-{}", digest(&csv)), &["list", "--ids", &csv])?);
     }
-    forget_old_reads("ids-");
+    if store_view::shared().is_none() {
+        forget_old_reads("ids-");
+    }
     Some(all)
 }
 
 /// Rows carrying hold `kind` that are not long terminal (`list --hold <kind> --live`).
 pub fn held_rows(kind: &str) -> Option<HashMap<String, Row>> {
-    read_rows(&format!("hold-{kind}"), &["list", "--hold", kind, "--live", "--snapshot"])
+    read_rows(&format!("hold-{kind}"), &["list", "--hold", kind, "--live"])
 }
 
 #[cfg(test)]

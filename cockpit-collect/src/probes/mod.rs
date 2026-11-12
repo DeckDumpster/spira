@@ -8,7 +8,7 @@
 mod admission;
 mod core_detail;
 mod inflight;
-mod lc;
+pub mod lc;
 mod queue;
 mod ratelim;
 mod reachable;

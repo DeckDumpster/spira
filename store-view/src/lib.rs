@@ -135,6 +135,9 @@ pub struct RowQuery<'a> {
     /// `list --live`: not terminal, or terminal and updated within [`LIVE_WINDOW_SECS`].
     pub live: bool,
     pub ids: Option<&'a [String]>,
+    /// A row whose holds contain this kind.
+    pub hold: Option<&'a str>,
+    pub express: bool,
 }
 
 /// How long a terminal row stays in `list --live`.
@@ -210,6 +213,11 @@ pub fn install(p: Arc<Projection>) -> Arc<Projection> {
 /// The projection this process keeps current, when it installed one.
 pub fn shared() -> Option<Arc<Projection>> {
     SHARED.get().cloned()
+}
+
+/// [`Projection::list_answer`] on this process's projection; `None` when it keeps none.
+pub fn held_list(argv: &[&str]) -> Option<Result<String, LcError>> {
+    shared()?.list_answer(argv)
 }
 
 fn fault(e: impl std::fmt::Display) -> LcError {
@@ -602,10 +610,44 @@ impl Projection {
                 (q.states.is_empty() || q.states.contains(&b.row.state.as_str()))
                     && q.repo.is_none_or(|r| b.raw.get("repo").and_then(Value::as_str) == Some(r))
                     && q.ids.is_none_or(|ids| ids.contains(&b.row.bead_id))
+                    && q.hold.is_none_or(|h| b.row.held(h))
+                    && (!q.express || b.row.express)
                     && (!q.live || !b.row.terminal() || updated.is_some_and(|u| u >= now - LIVE_WINDOW_SECS))
             };
             Ok(beads.values().filter(kept).map(|b| b.raw.clone()).collect())
         })
+    }
+
+    /// `argv`'s answer when it is a `list` over only the filters [`RowQuery`] holds, rendered as the
+    /// store prints it; `None` for any other read, which the caller asks of the store. A stale
+    /// view answers `Some(Err)`: the caller must not fall back to the store.
+    pub fn list_answer(&self, argv: &[&str]) -> Option<Result<String, LcError>> {
+        let [verb, rest @ ..] = argv else { return None };
+        if *verb != "list" {
+            return None;
+        }
+        let mut q = RowQuery::default();
+        let mut states: Vec<&str> = Vec::new();
+        let mut ids: Vec<String> = Vec::new();
+        let mut has_ids = false;
+        let mut it = rest.iter();
+        while let Some(&tok) = it.next() {
+            match tok {
+                "--live" => q.live = true,
+                "--express" => q.express = true,
+                "--state" => states = it.next()?.split(',').collect(),
+                "--repo" => q.repo = Some(it.next()?),
+                "--hold" => q.hold = Some(it.next()?),
+                "--ids" => {
+                    has_ids = true;
+                    ids = it.next()?.split(',').map(str::to_string).collect();
+                }
+                _ => return None,
+            }
+        }
+        q.states = &states;
+        q.ids = has_ids.then_some(ids.as_slice());
+        Some(self.rows(&q).map(|r| Value::Array(r.value).to_string()))
     }
 
     /// The store's answer to a content, planning, `show-batch` or `list --batches` read: held until

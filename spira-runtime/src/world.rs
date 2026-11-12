@@ -337,9 +337,18 @@ impl World {
         Err(format!("spira-lc {} failed after {STORE_ATTEMPTS} attempts: {}", argv.join(" "), last.trim()))
     }
 
+    /// A lifecycle `list` from the store view when this process keeps one (a stale view refuses, it
+    /// does not fall through to the store), else [`Self::lc_named`].
+    fn lc_listed(&self, argv: &[&str]) -> Result<String, String> {
+        match store_view::held_list(argv) {
+            Some(held) => held.map_err(|e| e.to_string()),
+            None => self.lc_named(argv),
+        }
+    }
+
     /// The beads the lifecycle holds on an ask, from the socket's `list` (the `list-held` caller verb is the CLI's composition of it).
-    fn held_asks(&self) -> Result<Vec<String>, String> {
-        let out = self.lc_named(&["list", "--live", "--hold", "ask"])?;
+    pub fn held_asks(&self) -> Result<Vec<String>, String> {
+        let out = self.lc_listed(&["list", "--live", "--hold", "ask"])?;
         let rows: Vec<Value> = serde_json::from_str(&out).map_err(|e| format!("held asks unparsed: {e}"))?;
         Ok(rows.iter().filter_map(|r| r["bead_id"].as_str().map(str::to_string)).collect())
     }
@@ -476,7 +485,7 @@ impl World {
     /// Every bead under a manual hold, read unless `input` says its version was already read as no request.
     pub fn supersede_snapshot(&self, input: &str) -> Result<String, String> {
         let known: BTreeMap<String, String> = serde_json::from_str(input).unwrap_or_default();
-        let listed = lc_call(&self.lc_socket, &["list", "--live", "--hold", "manual", "--snapshot"]).map_err(|e| e.to_string())?;
+        let listed = crate::reconcile_host::lc_read(&self.lc_socket, &["list", "--live", "--hold", "manual"])?;
         let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("held list unparsed: {e}"))?;
         let text = |v: &Value| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
         let held = rows
@@ -521,7 +530,7 @@ impl World {
     /// The label is not the repository: a bead filed for another repository carries the scope
     /// label too, and a live epic has a lifecycle row, so the content store decides both.
     fn flow_backlog(&self) -> Result<u64, String> {
-        let rows = spira_config::lc_state::parse_rows(&self.lc_named(&["list", "--live"])?).map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+        let rows = spira_config::lc_state::parse_rows(&self.lc_listed(&["list", "--live"])?).map_err(|e| format!("lifecycle state unreadable: {e}"))?;
         let live: Vec<&str> = rows.iter().filter(|r| !r.terminal()).map(|r| r.bead_id.as_str()).collect();
         let mut ids = vec![];
         for chunk in live.chunks(FLOW_CONTENT_CHUNK) {
@@ -766,6 +775,11 @@ impl World {
         Ok("forgot".into())
     }
 
+    /// The rows waiting to land: SUBMITTED and IN_DELIVERY.
+    pub fn waiting_rows(&self) -> Result<Value, String> {
+        serde_json::from_str(&self.lc_listed(&["list", "--state", "SUBMITTED,IN_DELIVERY"])?).map_err(|e| e.to_string())
+    }
+
     /// The day's landings and rounds for `watch.throughput`: per repo, the beads landed on its
     /// landing ref by hour and the beads waiting to land, and every repo's rounds from the batch rows.
     pub fn throughput_snapshot(&self, input: &str) -> Result<String, String> {
@@ -775,7 +789,7 @@ impl World {
         let blind = ThroughputSnapshot { readable: false, halt: halt.clone(), ..Default::default() };
         let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&blind) };
         let Ok(mut landings) = self.landed_on_refs(p.now, &prefix) else { return to_json(&blind) };
-        let Ok(waiting) = self.lc_json(&["list", "--state", "SUBMITTED,IN_DELIVERY"]) else { return to_json(&blind) };
+        let Ok(waiting) = self.waiting_rows() else { return to_json(&blind) };
         let Ok(batches) = self.lc_json(&["list", "--batches", "--window", &day.to_string()]) else { return to_json(&blind) };
         let Some(rows) = batches.as_array() else { return to_json(&blind) };
         stamp_landings(&mut landings, rows);
