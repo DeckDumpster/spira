@@ -28,6 +28,7 @@ pub mod runes;
 pub mod containment;
 pub mod convert;
 pub mod cut_hold;
+pub mod host_disk;
 pub mod deps;
 pub mod edges;
 pub mod ejection;

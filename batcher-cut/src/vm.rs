@@ -111,7 +111,10 @@ pub fn corpus_end(
             }
             "round-vm: harness fault — the round VM did not come up, its container died, or round-vm itself failed".to_string()
         }
-        INSTALL_FAILED_RC => "round-vm: harness fault — install failed".to_string(),
+        INSTALL_FAILED_RC => match spira_config::host_disk::fault_of(stderr) {
+            Some(fs) => format!("round-vm: harness fault — {}: install failed, {fs}", spira_config::host_disk::CAUSE),
+            None => "round-vm: harness fault — install failed".to_string(),
+        },
         124 | 137 => {
             let named = stderr
                 .lines()
@@ -259,6 +262,7 @@ pub struct VmRunner<'a> {
     child: Option<Child>,
     child_rc: Option<i32>,
     install_failed: bool,
+    host_disk: bool,
     harness_fault: bool,
     probe_n: u32,
     stderr_path: PathBuf,
@@ -523,6 +527,7 @@ impl<'a> VmRunner<'a> {
             child: None,
             child_rc: None,
             install_failed: false,
+            host_disk: false,
             harness_fault: false,
             probe_n: 0,
             members: vec![],
@@ -667,6 +672,11 @@ impl<'a> VmRunner<'a> {
     /// Did the corpus run end on a failed container install?
     pub fn install_failed(&self) -> bool {
         self.install_failed
+    }
+
+    /// Did the install fail because the host filesystem is full?
+    pub fn host_disk(&self) -> bool {
+        self.host_disk
     }
 
     /// Did the corpus run end without a verdict the round can be judged on?
@@ -893,6 +903,7 @@ impl RoundRunner for VmRunner<'_> {
         }
         self.child_rc = None;
         self.install_failed = false;
+        self.host_disk = false;
         self.main = Main::None;
         self.jobs.clear();
         let _ = fs::remove_dir_all(&self.spool);
@@ -946,6 +957,7 @@ impl RoundRunner for VmRunner<'_> {
                 _ => (0, 0),
             };
             let stderr = self.stderr_text();
+            self.host_disk = self.install_failed && spira_config::host_disk::fault_of(&stderr).is_some();
             let ended = corpus_end(rc, &stderr, self.env.wall_secs, reported, total);
             p.done = Some(match ended {
                 Ok(end) => end,
@@ -1373,6 +1385,15 @@ mod tests {
             None
         );
         assert_eq!(blamed_member("lint noise without the prefix", &ms), None);
+    }
+
+    #[test]
+    fn an_install_that_hit_a_full_filesystem_is_a_host_disk_fault_naming_it() {
+        let err = "tar: spira-install: Cannot write: Disk quota exceeded\nround-vm run: host-disk: filesystem /tmp is full (x); largest: /tmp/k5 6020 MiB\n";
+        let e = corpus_end(INSTALL_FAILED_RC, err, 600, 0, 5).unwrap_err();
+        assert!(e.contains("host-disk: install failed, /tmp is full"), "{e}");
+        let plain = corpus_end(INSTALL_FAILED_RC, "tar: x: Cannot open: Permission denied", 600, 0, 5).unwrap_err();
+        assert!(!plain.contains("host-disk"), "{plain}");
     }
 
     /// sp-dp872: two walkthrough rounds ended "round-vm: unexpected exit 101" and the round

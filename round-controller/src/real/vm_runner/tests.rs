@@ -431,3 +431,12 @@ fn an_over_cap_fault_kind_file_in_the_results_names_the_cap_and_no_file_names_no
     fs::write(d.join("round-fault-kind"), "over-cap guard=suites-cap cap=900s\n").unwrap();
     assert_eq!(over_cap_detail(&d).as_deref(), Some("guard=suites-cap cap=900s"));
 }
+
+#[test]
+fn an_install_that_hit_a_full_filesystem_is_a_host_disk_fault_naming_it() {
+    let err = "tar: spira-install: Cannot write: Disk quota exceeded\nround-vm run: host-disk: filesystem /tmp is full (x); largest: /tmp/k5 6020 MiB\n";
+    let e = corpus_end(INSTALL_FAILED_RC, err, None, 600, 0, 5).unwrap_err();
+    assert!(e.contains("host-disk: install failed, /tmp is full"), "{e}");
+    let plain = corpus_end(INSTALL_FAILED_RC, "tar: x: Permission denied", None, 600, 0, 5).unwrap_err();
+    assert!(!plain.contains("host-disk"), "{plain}");
+}
