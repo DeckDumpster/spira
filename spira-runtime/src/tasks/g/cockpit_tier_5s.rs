@@ -42,8 +42,7 @@
 //!
 //! The 5 s rows of `PROBES` and their child chain (supervisor re-exec, `timeout`, `cockpit-collect
 //! probe`); per tick `spira-lc` ×2–3, `queue batch show` per repo, `systemctl` ×3, `release`,
-//! `overrides.sh`, `git` per dwarf, `date`. Pinned config: [`KEYS`]. The other fifteen registry
-//! rows become projections the pane reads at render time.
+//! `overrides.sh`, `git` per dwarf, `date`. Pinned config: [`KEYS`].
 //!
 //! # Reverse
 //!
@@ -72,7 +71,7 @@ pub const PROBES: &[(&str, u64)] = &[("cockpit.now", 30_000), ("cockpit.round", 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_5S_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, WRITE_KEY, "SPIRA_SNAP_STALE_S", "SPIRA_PANE_READ_TTL", "SPIRA_LC_TIMEOUT", "SPIRA_TRACE_MARK"];
 
-const OBSERVE_DEADLINE_MS: u64 = 60_000;
+pub const OBSERVE_DEADLINE_MS: u64 = 60_000;
 const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: OBSERVE_DEADLINE_MS };
 
 pub const TRANSITIONS: &[Transition<FragmentState>] = FRAGMENT_TRANSITIONS;

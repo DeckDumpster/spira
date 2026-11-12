@@ -58,12 +58,39 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
     r
 }
 
+const PROBE_DISPATCH: &str = include_str!("../../../cockpit-collect/src/probes/mod.rs");
+
+fn dispatched_probes() -> Vec<&'static str> {
+    let run = PROBE_DISPATCH.split("pub fn run(subcommand").nth(1).expect("probes::run is in probes/mod.rs");
+    let body = run.split("\n}\n").next().unwrap();
+    body.lines().filter_map(|l| l.trim().strip_prefix('"')).filter(|l| l.contains("\" =>")).filter_map(|l| l.split('"').next()).collect()
+}
+
 #[test]
-fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_three_probes() {
+fn every_registry_probe_runs_in_exactly_one_tier() {
+    use spira_runtime::tasks::g::cockpit::registry_name;
+    use spira_runtime::tasks::g::{cockpit_tier_5s as t5, cockpit_tier_600s as t600};
+    let registry = dispatched_probes();
+    assert_eq!(registry.len(), 23, "the dispatch lists {registry:?}");
+    let tiers: [(&str, &[(&str, u64)], u64); 3] = [(t5::NAME, t5::PROBES, t5::OBSERVE_DEADLINE_MS), (NAME, PROBES, OBSERVE_DEADLINE_MS), (t600::NAME, t600::PROBES, t600::OBSERVE_DEADLINE_MS)];
+    for name in &registry {
+        let homes: Vec<&str> = tiers.iter().filter(|(_, probes, _)| probes.iter().any(|p| registry_name(p.0) == *name)).map(|t| t.0).collect();
+        assert_eq!(homes.len(), 1, "probe {name} runs in {homes:?}");
+    }
+    for (tier, probes, deadline) in tiers {
+        for (probe, timeout) in probes {
+            assert!(registry.contains(&registry_name(probe)), "{tier} runs {probe}, which probes::run does not dispatch");
+            assert!(*timeout <= deadline, "{tier} gives {probe} {timeout} ms, past the tier deadline {deadline}");
+        }
+    }
+}
+
+#[test]
+fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_eleven_probes() {
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::PENDING"));
     assert_eq!(row.stream(), STREAM);
     assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
-    assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.slots", "cockpit.reachable", "cockpit.tsd"]);
+    assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.slots", "cockpit.reachable", "cockpit.tsd", "cockpit.admission", "cockpit.well", "cockpit.repo_labels", "cockpit.strands", "cockpit.ratelim", "cockpit.core", "cockpit.queue", "cockpit.mail"]);
     let mut r = TaskRig::new(1, handler().registration()).unwrap();
     let (_, stream, kind) = (row.boot)();
     r.tick(stream, kind).unwrap();

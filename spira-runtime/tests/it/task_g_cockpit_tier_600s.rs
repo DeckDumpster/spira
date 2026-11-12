@@ -55,11 +55,11 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
 }
 
 #[test]
-fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_two_probes() {
+fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_nine_probes() {
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::PENDING"));
     assert_eq!(row.stream(), STREAM);
     assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
-    assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.livelock", "cockpit.drift"]);
+    assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.livelock", "cockpit.drift", "cockpit.core_detail", "cockpit.sops", "cockpit.dup_refs", "cockpit.unsent", "cockpit.statute", "cockpit.czar_triggers", "cockpit.hel"]);
     let mut r = TaskRig::new(1, handler().registration()).unwrap();
     let (_, stream, kind) = (row.boot)();
     r.tick(stream, kind).unwrap();
