@@ -472,4 +472,19 @@ mod tests {
         let rc = remote.run_attr("h", &attr_job()).expect("the script's exit, not a stdin error");
         assert_ne!(rc, 0);
     }
+
+    #[test]
+    fn the_plans_load_is_the_samples_file_not_the_kernels_one_minute_reading() {
+        let tmp = testkit::TempDir::new("host-plan-load");
+        let now = crate::spill::unix_now();
+        for i in 0..30u64 {
+            let io_full = if i >= 27 { 95.0 } else { 10.0 };
+            let at = now - (29 - i) * crate::spill::SAMPLE_EVERY_SECS;
+            crate::spill::record_sample(&tmp.path().join(crate::spill::SAMPLES_FILE), crate::spill::Sample { at, io_full, cpu_some: 1.0 }).unwrap();
+        }
+        let plan = HostPlan::from_config(tmp.path(), &|_| None).unwrap().unwrap();
+        let load = (plan.load)();
+        assert_eq!(load.io_full.map(|p| (p.value, p.basis)), Some((10.0, crate::spill::Basis::Tm90)));
+        assert_eq!(plan.rule.io_full_5m_tm90, 50.0);
+    }
 }

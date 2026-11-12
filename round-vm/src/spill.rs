@@ -120,12 +120,16 @@ pub fn unix_now() -> u64 {
 
 /// The host's io `full` and cpu `some` pressure as the placement judges them.
 pub fn host_load(run_dir: &std::path::Path, now: u64) -> HostLoad {
+    host_load_with(run_dir, now, read_psi(PSI_IO, "full", "avg300"), read_psi(PSI_CPU, "some", "avg300"))
+}
+
+pub fn host_load_with(run_dir: &std::path::Path, now: u64, io_avg300: Option<f64>, cpu_avg300: Option<f64>) -> HostLoad {
     let samples = read_samples(&run_dir.join(SAMPLES_FILE), now);
     let io: Vec<f64> = samples.iter().map(|s| s.io_full).collect();
     let cpu: Vec<f64> = samples.iter().map(|s| s.cpu_some).collect();
     HostLoad {
-        io_full: pressure(&io, read_psi(PSI_IO, "full", "avg300")),
-        cpu_some: pressure(&cpu, read_psi(PSI_CPU, "some", "avg300")),
+        io_full: pressure(&io, io_avg300),
+        cpu_some: pressure(&cpu, cpu_avg300),
     }
 }
 
@@ -327,7 +331,8 @@ mod tests {
         let kept = read_samples(&file, now);
         assert_eq!(kept.len(), 30);
         assert_eq!(kept[0].io_full, 10.0);
-        assert_eq!(host_load(&dir, now).io_full.map(|p| p.basis), Some(Basis::Tm90));
-        assert_eq!(host_load(&dir, now + 3600).io_full.map(|p| p.basis).filter(|b| *b == Basis::Tm90), None);
+        assert_eq!(host_load_with(&dir, now, Some(99.0), None).io_full.map(|p| p.basis), Some(Basis::Tm90));
+        let stale = host_load_with(&dir, now + 3600, Some(99.0), None);
+        assert_eq!(stale.io_full, Some(Pressure { value: 99.0, basis: Basis::Avg300 }));
     }
 }
