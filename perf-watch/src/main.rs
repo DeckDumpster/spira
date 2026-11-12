@@ -284,3 +284,17 @@ fn run_happy() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_probe_that_exits_non_zero_is_an_error_not_an_answer() {
+        let mut spawn = Spawn { scoped: false, measured: None, phases: None };
+        let argv = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let err = spawn.run(&argv(&["sh", "-c", "echo refused >&2; echo refused; exit 3"])).unwrap_err();
+        assert!(err.contains("refused"), "{err}");
+        assert_eq!(spawn.run(&argv(&["sh", "-c", "echo fine"])).unwrap().trim(), "fine");
+    }
+}

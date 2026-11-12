@@ -54,8 +54,8 @@ impl Run<'_> {
             }
         };
         let since = util::iso_utc(now - SUBMIT_BLOCKED_WINDOW_S);
-        let seen = std::fs::read_to_string(&inbox).unwrap_or_default();
         append(format!("{SUBMIT_REFUSED} {bead}: {refusal}"));
+        let seen = std::fs::read_to_string(&inbox).unwrap_or_default();
         let others = others_refused(&seen, &since, bead);
         let paged = seen.lines().any(|l| l.contains(SUBMIT_BLOCKED) && l.split(' ').next().is_some_and(|st| st >= since.as_str()));
         if !others.is_empty() && !paged {
