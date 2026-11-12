@@ -104,10 +104,11 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     // One unit manager: the `unit.*` effects and the `unit.ran` source share it, so one reader drains its signals.
     let backend = runtime::units::from_env(clock.clone()).map_err(|e| format!("unit manager: {e}"))?;
     let _sources = spira_runtime::sources::real(&|k: &str| spira_config::process::cfg(k), backend.completions(), clock.clone())?.start(tx.clone()).map_err(|e| e.to_string())?;
-    let control = spira_runtime::status::Control::new(board, spira_runtime::control_submit(tx), clock.clone());
+    let repin = Arc::new(spira_runtime::repin::Repin::new(settings.clone(), Arc::new(|keys: &[String]| spira_config::process::fresh(keys)), Arc::new(|k: &str| spira_config::process::cfg(k))));
+    let control = spira_runtime::status::Control::new(board, spira_runtime::control_submit(tx), clock.clone()).with_repin(repin.clone());
     spira_runtime::spawn_control(&settings.control_socket, control)?;
     notifier.ready();
-    let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None };
+    let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None, before_turn: Some(Arc::new(move |engine| repin.apply(engine))) };
     let units = backend.units();
     serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)), reconciler: Some(settings.reconciler.clone()), concierge_mail: Some(Arc::new(concierge_mail)), units: Some(units), ..Effects::default() }), settings.pool_caps, rx, opts).await.map_err(|e| e.to_string())
 }

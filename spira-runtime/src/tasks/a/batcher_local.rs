@@ -681,6 +681,18 @@ pub struct Carry {
     pub repos: BTreeMap<String, RepoCarry>,
 }
 
+impl State {
+    /// A round is open and the machine is moving it.
+    pub fn drives_a_round(self) -> bool {
+        !matches!(self, State::Idle | State::Held | State::Orphan | State::Done)
+    }
+}
+
+/// Whether the carry `body` has any repo driving a round.
+pub fn driving(body: &str) -> bool {
+    serde_json::from_str::<Carry>(body).is_ok_and(|c| c.repos.values().any(|r| r.state.drives_a_round()))
+}
+
 /// Everything one act of this task (and of [`super::batcher_forge`]) carries as its input.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Leg {

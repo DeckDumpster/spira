@@ -99,7 +99,13 @@ pub struct ServeOpts {
     /// here: each host gives its turns a worker of their own, so a pool full of long effects
     /// cannot hold the loop's turn.
     pub pool: Option<Arc<Pool>>,
+    /// Called at the start of every turn, after the turn's submissions and outcomes are applied
+    /// and before any handler runs: the one point where the engine is between ticks.
+    pub before_turn: Option<TurnHook>,
 }
+
+/// See [`ServeOpts::before_turn`].
+pub type TurnHook = Arc<dyn Fn(&mut Engine) + Send + Sync>;
 
 enum Done {
     Started(String),
@@ -113,6 +119,7 @@ struct Turn {
     subs: Vec<Submit>,
     done: Vec<Done>,
     in_flight: BTreeSet<String>,
+    before: Option<TurnHook>,
 }
 
 struct TurnOut {
@@ -153,7 +160,12 @@ fn apply(t: &mut Turn) -> Result<()> {
 }
 
 fn run_turn(mut t: Turn) -> TurnOut {
-    let result = apply(&mut t).and_then(|()| t.engine.run_until_idle()); // loop-safe: runs on the offload pool
+    let result = apply(&mut t).and_then(|()| {
+        if let Some(before) = &t.before {
+            before(&mut t.engine);
+        }
+        t.engine.run_until_idle()
+    }); // loop-safe: runs on the offload pool
     let launch: Vec<PendingEffect> = t.engine.pending_effects().into_iter().filter(|p| !t.in_flight.contains(&p.key)).collect();
     // The host now owns each of these until it starts: its deadline waits for the runner.
     for p in &launch {
@@ -234,7 +246,7 @@ pub async fn serve_with(
         }
         let wakes = |done: &[Done]| done.iter().any(|d| !matches!(d, Done::Deferred(..) | Done::Started(_)));
         if let Some(e) = engine.take_if(|_| running.is_none() && (dirty || !subs.is_empty() || wakes(&done)) && Instant::now() >= retry_at) {
-            let turn = Turn { engine: e, subs: std::mem::take(&mut subs), done: std::mem::take(&mut done), in_flight: in_flight.keys().cloned().collect() };
+            let turn = Turn { engine: e, subs: std::mem::take(&mut subs), done: std::mem::take(&mut done), in_flight: in_flight.keys().cloned().collect(), before: opts.before_turn.clone() };
             let slot = Arc::new(Mutex::new(Some(turn)));
             let s = slot.clone();
             let job = move || run_turn(s.lock().unwrap_or_else(|e| e.into_inner()).take().expect("the turn is put in the slot before it is offered")); // loop-safe: the slot is uncontended; the pool takes it after the offer
