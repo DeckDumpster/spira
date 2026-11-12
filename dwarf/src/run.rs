@@ -567,14 +567,17 @@ impl<'a> Run<'a> {
                 let line = format!("{who}: {id} refused by spira-claim stack ({reason}), trying the next ranked candidate");
                 self.log(&line);
                 stack_refusals.push(line);
-                return claim::LC_REFUSED;
+                return claim::Attempt { rc: claim::LC_REFUSED, reason: reason.to_string() };
             }
-            let rc = self.sdo(
+            let o = self.d.seam.call(
                 "lc_claim_bead",
                 &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.rune.name, &directs]),
             );
+            o.stdout.lines().for_each(|l| self.d.sink.out(l));
+            o.stderr.lines().for_each(|l| self.d.sink.err(l));
             stacks.insert(id.to_string(), p.stack);
-            claim::settle_claim(rc, self.d.exec, id, &holder, tries, delay, self.d.sleep)
+            let rc = claim::settle_claim(o.code, self.d.exec, id, &holder, tries, delay, self.d.sleep);
+            claim::Attempt { rc, reason: o.stderr }
         });
         self.s.refused.extend(stack_refusals);
         for l in logs {

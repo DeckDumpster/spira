@@ -260,23 +260,36 @@ pub fn double_hold(exec: &dyn Exec, mine: &str, live: &dyn Fn(&str) -> bool) -> 
     }))
 }
 
+/// One claim attempt's exit code and, for a refusal, the lifecycle's own words.
+pub struct Attempt {
+    pub rc: i32,
+    pub reason: String,
+}
+
+impl From<i32> for Attempt {
+    fn from(rc: i32) -> Self {
+        Attempt { rc, reason: String::new() }
+    }
+}
+
 /// The lifecycle claim loop: one Claim event per ranked candidate until one applies. A refused
 /// candidate goes to `release` before the next is tried (false: cannot confirm, stop), so a
 /// claim that applied and was then refused is never left held. The row is the claim, so a refusal is the bead no longer READY/REWORK — another dwarf won it — and
 /// the next candidate is tried. Returns the claimed id, the log lines, and whether every
 /// attempt was "cannot tell" (a machine that never answered is not an idle queue).
-pub fn lc_claim_loop(
+pub fn lc_claim_loop<A: Into<Attempt>>(
     ids: &[String],
     resumable: &[String],
     tier: Option<&str>,
     who: &str,
     mut release: impl FnMut(&str) -> bool,
-    mut attempt: impl FnMut(&str) -> i32,
+    mut attempt: impl FnMut(&str) -> A,
 ) -> (Option<String>, Vec<String>, bool) {
     let mut logs = Vec::new();
     let mut answered = false;
     for id in ids {
-        match attempt(id) {
+        let Attempt { rc, reason } = attempt(id).into();
+        match rc {
             LC_APPLIED => {
                 if resumable.iter().any(|r| r == id) {
                     logs.push(format!("{who}: resuming {id} ({}) — it already has work on its branch", tier.unwrap_or("top rank")));
@@ -291,9 +304,8 @@ pub fn lc_claim_loop(
                     logs.push(format!("{who}: the refused candidate {id} could not be confirmed released — it may be held, so no other candidate is claimed"));
                     return (None, logs, true);
                 }
-                logs.push(format!(
-                    "{who}: the lifecycle machine refused ranked candidate {id} (no longer READY/REWORK, or its stack exceeds stack_max_depth) — trying the next ranked candidate"
-                ));
+                let reason = if reason.trim().is_empty() { "no reason returned".to_string() } else { reason.trim().to_string() };
+                logs.push(format!("{who}: the lifecycle machine refused ranked candidate {id}: {reason} — trying the next ranked candidate"));
             }
             LC_UNKNOWN => {
                 logs.push(format!(
@@ -392,6 +404,14 @@ mod tests {
         assert!(logs[0].contains("refused ranked candidate sp-held"), "{logs:?}");
         assert!(logs[1].contains("could not be reached for ranked candidate sp-down (rc=2)"), "{logs:?}");
         assert_eq!(logs[2], "builder/eitri: resuming sp-ok (P1/P2) — it already has work on its branch");
+    }
+
+    #[test]
+    fn a_refused_candidates_log_line_carries_the_lifecycles_reason_word_for_word() {
+        let ids = vec!["sp-a".to_string()];
+        let said = "refused: judged not claimable (blocked by sp-b)";
+        let (_, logs, _) = lc_claim_loop(&ids, &[], None, "b/x", |_| true, |_| Attempt { rc: LC_REFUSED, reason: format!("{said}\n") });
+        assert!(logs[0].contains(&format!("refused ranked candidate sp-a: {said} —")), "{logs:?}");
     }
 
     #[test]

@@ -27,6 +27,10 @@ fn store_path() -> Option<Result<String, String>> {
     Some(confined(&path).map(|()| path))
 }
 
+pub fn store_configured() -> bool {
+    store_path().is_some()
+}
+
 fn confined(path: &str) -> Result<(), String> {
     let instance = spira_config::process::cfg("SPIRA_INSTANCE")?;
     let workspaces = spira_config::process::cfg("SPIRA_WORKSPACES")?;
