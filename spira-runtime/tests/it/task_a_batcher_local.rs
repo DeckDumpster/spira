@@ -191,6 +191,7 @@ fn t3_a_red_corpus_enters_attribution() {
     let after = asked_after(&r, n);
     assert_eq!(after.iter().map(|(e, l)| (e.as_str(), l.why.as_str())).collect::<Vec<_>>(), [(CORPUS, "attribute")], "{after:?}");
     assert_eq!(after[0].1.members.len(), 2, "every member is attributed");
+    assert_eq!(after[0].1.after_pass, "/w/.round-results-spira.c1", "the attribution reads the red pass's results");
 }
 
 /// Attributing × `unit.ran`: the attribution's own line decides. Survivors go on to certify

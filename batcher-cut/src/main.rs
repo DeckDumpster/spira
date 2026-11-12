@@ -59,6 +59,7 @@ struct Opts {
     members: Option<String>,
     evidence: Option<String>,
     reds: Option<PathBuf>,
+    after_pass: Option<PathBuf>,
     record: Option<PathBuf>,
     wt: Option<PathBuf>,
     base: Option<String>,
@@ -72,7 +73,7 @@ fn usage() -> ExitCode {
     eprintln!("       batcher sifts [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher path-attribute <repo> --members id:tip,... --reds FILE [--record FILE] [--run DIR] [--db DIR] [--home DIR]");
-    eprintln!("       batcher attribute <repo> --members id:tip,... --wt DIR --base SHA [--batch ID] [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
+    eprintln!("       batcher attribute <repo> --members id:tip,... --wt DIR --base SHA [--batch ID] [--after-pass RESULTS] [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
     ExitCode::from(2)
 }
 
@@ -95,6 +96,7 @@ fn parse() -> Result<Opts, String> {
         members: None,
         evidence: None,
         reds: None,
+        after_pass: None,
         record: None,
         wt: None,
         base: None,
@@ -111,6 +113,7 @@ fn parse() -> Result<Opts, String> {
             "--members" => o.members = Some(val()?),
             "--evidence" => o.evidence = Some(val()?),
             "--reds" => o.reds = Some(val()?.into()),
+            "--after-pass" => o.after_pass = Some(val()?.into()),
             "--record" => o.record = Some(val()?.into()),
             "--wt" => o.wt = Some(val()?.into()),
             "--base" => o.base = Some(val()?),
@@ -1973,6 +1976,7 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
                 members: None,
                 evidence: None,
                 reds: None,
+        after_pass: None,
                 record: None,
                 wt: None,
                 base: None,
@@ -2035,6 +2039,7 @@ fn sifts(o: &Opts) -> Result<(), String> {
             members: None,
             evidence: None,
             reds: None,
+        after_pass: None,
             record: None,
             wt: None,
             base: None,
@@ -2176,7 +2181,8 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         .map(|m| (m.id.clone(), io::changed_paths(&repo, &start_sha, &m.tip)))
         .collect();
     let mut runner = vm::VmRunner::new(&env_, &repo, &wt, &start_sha, &round, changed.clone())?
-        .in_batch(o.batch.as_deref());
+        .in_batch(o.batch.as_deref())
+        .after_pass(o.after_pass.clone());
     let mut ops = LiveOps {
         env: &env_,
         repo: &repo,
