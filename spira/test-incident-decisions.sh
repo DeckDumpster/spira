@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-incident-decisions.sh — the intake's decision layer against a stateful stand-in bd:
-# the dedup lookup is label-keyed and never shows a bead, a declared repo is recorded and an
+# the dedup lookup is label-keyed, a declared repo is recorded and an
 # undeclared one is flagged for triage, and recurrence notes stay bounded for an unchanged payload.
 #
 # tier: T1
@@ -59,7 +59,7 @@ calls() { grep -c "^$1\b" "$STUB_BD_LOG" 2>/dev/null || true; }
 
 # ======================================================================================
 echo
-echo "UC-04 — the dedup lookup is label-keyed and never shows a bead:"
+echo "UC-04 — the dedup lookup is label-keyed:"
 # ======================================================================================
 ref="incident:decisions-keyed"
 for i in 1 2 3; do file_incident "$ref" "keyed incident" "payload $i" >/dev/null; done
@@ -67,7 +67,6 @@ is "three filings of one ref leave one bead" 1 "$(bead_count)"
 case " $(field_of "$ref" labels) " in *" ref:"*) ok "the bead carries a ref: label" ;; *) bad "the bead carries a ref: label" "$(field_of "$ref" labels)" ;; esac
 [ "$(calls list)" -gt 0 ] && ok "the log saw the list calls (the counter could have fired)" || bad "the log saw the list calls" "no list line in $STUB_BD_LOG"
 want "a list call filtered on the ref: label" "--label ref:" "$(cat "$STUB_BD_LOG")"
-is "no bd show call was issued" 0 "$(calls show)"
 
 reset_store
 python3 -c '
@@ -105,8 +104,8 @@ file_incident "$ref" "notes incident" "$X" >/dev/null
 before="$(len_notes)"
 file_incident "$ref" "notes incident" "$X" >/dev/null
 after="$(len_notes)"
-[ "$((after - before))" -le 120 ] && [ "$after" -gt "$before" ] \
-    && ok "an unchanged payload grows the notes by at most 120 B" \
-    || bad "an unchanged payload grows the notes by at most 120 B" "grew $((after - before)) B"
+[ "$after" -eq "$before" ] \
+    && ok "an unchanged payload adds no note: the payload-hash label is found through the door" \
+    || bad "an unchanged payload adds no note: the payload-hash label is found through the door" "grew $((after - before)) B"
 
 tl_summary

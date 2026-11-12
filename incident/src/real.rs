@@ -33,7 +33,7 @@ impl RealBd {
         let mut attempt = 0u32;
         loop {
             attempt += 1;
-            // FORK-EDGE: unserved verb content (bd reads) and content store write (label/set-state/dep/duplicate)
+            // FORK-EDGE: content store write (label/set-state/dep/duplicate)
             let mut cmd = Command::new("timeout");
             cmd.arg(self.timeout_secs.to_string()).arg(&self.bdq).args(args);
             let out = cmd.output().map_err(|e| format!("{}: {e}", self.bdq))?;
@@ -46,17 +46,61 @@ impl RealBd {
         }
     }
 
+    fn with_client<T>(&self, f: impl FnOnce(&spira_config::lc_call::LcClient) -> Result<T, String>) -> Result<T, String> {
+        match &self.lc {
+            Some(c) => f(c),
+            None => f(&spira_config::lc_call::LcClient::configured()?),
+        }
+    }
+
     fn run_lc(&self, args: &[&str]) -> Result<(i32, String, String), String> {
-        let configured;
-        let client = match &self.lc {
-            Some(c) => c,
-            None => {
-                configured = spira_config::lc_call::LcClient::configured()?;
-                &configured
+        self.with_client(|c| {
+            let r = c.call(args).map_err(String::from)?;
+            Ok((r.code, r.out, r.err))
+        })
+    }
+
+    /// `content show <id> --json`: the bead as the door gives it, or `None` when it cannot.
+    fn show(&self, id: &str) -> Option<serde_json::Value> {
+        let (rc, out, _) = self.run_lc(&["content", "show", id, "--json"]).ok()?;
+        if rc != 0 {
+            return None;
+        }
+        let v: serde_json::Value = serde_json::from_str(json_only(&out)).ok()?;
+        if v.is_array() {
+            v.get(0).cloned()
+        } else {
+            Some(v)
+        }
+    }
+
+    /// One `content list --all --limit 0 --json` request, its rows as JSON.
+    pub fn list_json(&self, extra: &[&str]) -> Result<Vec<serde_json::Value>, String> {
+        let mut args = vec!["content", "list", "--all", "--limit", "0", "--json"];
+        args.extend_from_slice(extra);
+        let (rc, out, err) = self.run_lc(&args)?;
+        if rc != 0 {
+            return Err(format!("content list exited {rc}: {}", err.trim()));
+        }
+        match serde_json::from_str::<serde_json::Value>(json_only(&out)) {
+            Ok(serde_json::Value::Array(a)) => Ok(a),
+            Ok(other) => Ok(vec![other]),
+            Err(e) => Err(format!("content list answered something that is not JSON: {e}")),
+        }
+    }
+
+    /// The rows of `ids`, a request per 100.
+    pub fn list_ids_json(&self, ids: &[String], label: Option<&str>) -> Result<Vec<serde_json::Value>, String> {
+        let mut rows = Vec::new();
+        for chunk in ids.chunks(100) {
+            let joined = chunk.join(",");
+            let mut extra = vec!["--id", joined.as_str()];
+            if let Some(l) = label {
+                extra.extend(["--label", l]);
             }
-        };
-        let r = client.call(args).map_err(String::from)?;
-        Ok((r.code, r.out, r.err))
+            rows.extend(self.list_json(&extra)?);
+        }
+        Ok(rows)
     }
 
     fn run_stdin(&self, args: &[&str], stdin_body: &str) -> Result<(i32, String, String), String> {
@@ -101,6 +145,7 @@ pub fn json_only_pub(s: &str) -> &str {
     json_only(s)
 }
 
+#[cfg(test)]
 fn rows_from_json(text: &str) -> Vec<BeadRow> {
     let parsed: serde_json::Value = match serde_json::from_str(json_only(text)) {
         Ok(v) => v,
@@ -110,6 +155,10 @@ fn rows_from_json(text: &str) -> Vec<BeadRow> {
         serde_json::Value::Array(a) => a,
         other => vec![other],
     };
+    bead_rows(arr)
+}
+
+fn bead_rows(arr: Vec<serde_json::Value>) -> Vec<BeadRow> {
     arr.into_iter()
         .filter_map(|b| {
             let id = b.get("id")?.as_str()?.to_string();
@@ -137,56 +186,36 @@ pub fn join_lc(rows: Vec<BeadRow>, lc: &std::collections::HashMap<String, spira_
         .collect()
 }
 
-impl Bd for RealBd {
-    fn list(&self, db: &str, scope: Scope, label: Option<&str>, closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
-        // A machine that cannot answer is Err, never "no incident".
-        let unfinished_sweep = label.is_none() && scope == Scope::Unfinished;
-        let live = if unfinished_sweep { Some(spira_config::lc_state::list_live().map(spira_config::lc_state::index)?) } else { None };
-        let mut base: Vec<String> = vec!["list".into(), "--all".into(), "--limit".into(), "0".into(), "--json".into()];
-        if let Some(c) = closed_after {
-            base.push("--closed-after".into());
-            base.push(c.into());
-        }
-        let mut queries: Vec<Vec<String>> = Vec::new();
-        match label {
-            Some(l) => {
-                let mut q = base.clone();
-                q.push("--label".into());
-                q.push(l.into());
-                queries.push(q);
+impl RealBd {
+    /// [`Bd::list`] with each row's bead as the door gave it (its labels and edges).
+    pub fn list_beads(&self, scope: Scope, label: Option<&str>, closed_after: Option<&str>) -> Result<Vec<(BeadRow, serde_json::Value)>, String> {
+        // A machine that cannot answer is Err, never "no incident". The door refuses a list
+        // of every bead, so the unfinished ones are named by id from the lifecycle.
+        let (beads, lc) = if let Some(c) = closed_after {
+            let mut extra = vec!["--closed-after", c];
+            if let Some(l) = label {
+                extra.extend(["--label", l]);
             }
-            // The unlabelled fallback over every unfinished bead: those ids from the machine,
-            // their content from bd by id, chunked (never the whole store).
-            None if scope == Scope::Unfinished => {
-                let mut ids: Vec<&String> = live.iter().flat_map(|m| m.values()).filter(|r| !r.past_builder()).map(|r| &r.bead_id).collect();
-                ids.sort();
-                for chunk in ids.chunks(100) {
-                    let mut q = base.clone();
-                    q.push("--id".into());
-                    q.push(chunk.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(","));
-                    queries.push(q);
-                }
-            }
-            None => queries.push(base),
-        }
-        let mut rows = Vec::new();
-        for q in queries {
-            let arg_refs: Vec<&str> = q.iter().map(String::as_str).collect();
-            let (rc, out, _err) = self.run(db, &arg_refs)?;
-            if rc != 0 {
-                return Err(format!("bd list exited {rc}"));
-            }
-            rows.extend(rows_from_json(&out));
-        }
-        let lc = match live {
-            Some(m) => m,
-            None => {
-                let bin = spira_config::lifecycle_row::lc_bin()?;
-                let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
-                spira_config::lc_state::index(spira_config::lc_state::list_ids_with(&bin, &ids)?)
-            }
+            let beads = self.list_json(&extra)?;
+            let ids: Vec<String> = beads.iter().filter_map(|b| b.get("id")?.as_str().map(str::to_string)).collect();
+            let lc = self.with_client(|c| spira_config::lc_state::list_ids_on(c, &ids).map(spira_config::lc_state::index))?;
+            (beads, lc)
+        } else {
+            let lc = self.with_client(|c| spira_config::lc_state::list_live_on(c).map(spira_config::lc_state::index))?;
+            let mut ids: Vec<String> = lc.values().filter(|r| !r.past_builder()).map(|r| r.bead_id.clone()).collect();
+            ids.sort();
+            (self.list_ids_json(&ids, label)?, lc)
         };
-        Ok(join_lc(rows, &lc, scope))
+        let rows = bead_rows(beads.clone());
+        let by_id: std::collections::HashMap<&str, &serde_json::Value> = beads.iter().filter_map(|b| Some((b.get("id")?.as_str()?, b))).collect();
+        let joined = join_lc(rows, &lc, scope);
+        Ok(joined.into_iter().filter_map(|r| by_id.get(r.id.as_str()).map(|b| (*b).clone()).map(|b| (r, b))).collect())
+    }
+}
+
+impl Bd for RealBd {
+    fn list(&self, _db: &str, scope: Scope, label: Option<&str>, closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
+        Ok(self.list_beads(scope, label, closed_after)?.into_iter().map(|(r, _)| r).collect())
     }
 
     fn create(
@@ -236,19 +265,10 @@ impl Bd for RealBd {
     fn label_remove(&self, db: &str, id: &str, label: &str) -> bool {
         self.run(db, &["label", "remove", id, label]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
-    fn label_list(&self, db: &str, id: &str) -> Vec<String> {
-        // `--json`, not the default human rendering: without it this returned a "🏷 Labels
-        // for <id>:" header line plus each label prefixed "  - ", so the payload-hash
-        // lookup below (an exact `starts_with("payload-hash:")` match) never matched and
-        // every recurrence re-wrote the note body as if the payload had changed — found
-        // via test-incident.sh's "an unchanged payload is recorded exactly once" case.
-        let Ok((rc, out, _)) = self.run(db, &["label", "list", id, "--json"]) else {
-            return Vec::new();
-        };
-        if rc != 0 {
-            return Vec::new();
-        }
-        serde_json::from_str::<Vec<String>>(json_only(&out)).unwrap_or_default()
+    fn label_list(&self, _db: &str, id: &str) -> Vec<String> {
+        self.show(id)
+            .and_then(|b| b.get("labels").and_then(|l| l.as_array()).map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect()))
+            .unwrap_or_default()
     }
     fn note(&self, _db: &str, id: &str, text: &str) -> bool {
         self.run_stdin(&["note", id, "--stdin"], text).map(|(rc, ..)| rc == 0).unwrap_or(false)
@@ -268,47 +288,28 @@ impl Bd for RealBd {
     fn duplicate(&self, db: &str, id: &str, survivor: &str) -> bool {
         self.run(db, &["duplicate", id, "--of", survivor]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
-    fn live_successor(&self, db: &str, id: &str) -> Option<String> {
-        let (rc, out, _) = self.run(db, &["show", id, "--json"]).ok()?;
-        if rc != 0 {
-            return None;
-        }
-        let v: serde_json::Value = serde_json::from_str(json_only(&out)).ok()?;
-        let obj = if v.is_array() { v.get(0)?.clone() } else { v };
+    fn live_successor(&self, _db: &str, id: &str) -> Option<String> {
+        let obj = self.show(id)?;
         let successor = obj
             .get("dependencies")?
             .as_array()?
             .iter()
-            .find(|d| d.get("dependency_type").and_then(|t| t.as_str()) == Some("supersedes"))?
-            .get("id")?
+            .find(|d| d.get("type").and_then(|t| t.as_str()) == Some("supersedes"))?
+            .get("depends_on_id")?
             .as_str()?
             .to_string();
-        let row = spira_config::lc_state::row(&successor).ok()??;
+        let row = self.with_client(|c| spira_config::lc_state::row_on(c, &successor)).ok()??;
         (!row.terminal()).then_some(successor)
     }
-    fn show_closed_at(&self, db: &str, id: &str) -> Option<String> {
-        let (rc, out, _) = self.run(db, &["show", id, "--json"]).ok()?;
-        if rc != 0 {
-            return None;
-        }
-        let v: serde_json::Value = serde_json::from_str(json_only(&out)).ok()?;
-        let obj = if v.is_array() { v.get(0)?.clone() } else { v };
-        obj.get("closed_at").and_then(|c| c.as_str()).map(str::to_string)
+    fn show_closed_at(&self, _db: &str, id: &str) -> Option<String> {
+        self.show(id)?.get("closed_at").and_then(|c| c.as_str()).map(str::to_string)
     }
-    fn show_created_at(&self, db: &str, id: &str) -> Option<String> {
-        let (rc, out, _) = self.run(db, &["show", id, "--json"]).ok()?;
-        if rc != 0 {
-            return None;
-        }
-        let v: serde_json::Value = serde_json::from_str(json_only(&out)).ok()?;
-        let obj = if v.is_array() { v.get(0)?.clone() } else { v };
-        // Real bd's field is `created_at`; the bash's grep keyed on a literal `"created"`
-        // key that never existed in bd's schema, so its age-in-hours clause never fired —
-        // an accreted accident, dropped here (DESIGN.md Decisions).
+    fn show_created_at(&self, _db: &str, id: &str) -> Option<String> {
+        let obj = self.show(id)?;
         obj.get("created_at").or_else(|| obj.get("created")).and_then(|c| c.as_str()).map(str::to_string)
     }
-    fn reachable(&self, db: &str) -> bool {
-        self.run(db, &["list", "--limit", "1"]).map(|(rc, ..)| rc == 0).unwrap_or(false)
+    fn reachable(&self, _db: &str) -> bool {
+        self.run_lc(&["content", "list", "--limit", "1", "--json"]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
     fn fact(&self, id: &str, kind: &str, cause: &str) -> bool {
         let args = ["fact", id, "--kind", kind, "--actor", "incident", "--cause", cause];
@@ -417,6 +418,67 @@ mod tests {
         let (a, body) = question("disk full", "prune", "detail");
         assert_eq!((a.mailbox, a.from, a.kind, a.default, a.subject), ("operator", Some("Incident <incident@spira>"), "question", "prune", "disk full"));
         assert_eq!(body, "## Question\ndisk full\n\n## Default\nprune\n\ndetail\n");
+    }
+
+    /// sp-7crdc8: the payload-hash label survives the read through the door, and no program is spawned.
+    #[test]
+    fn label_list_reads_payload_hash_labels_through_the_door() {
+        let rows = vec![serde_json::json!({"id": "sp-1", "labels": ["payload-hash:abc", "incident"]})];
+        let fake = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows));
+        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_config::lc_call::LcClient::over(fake, true)) };
+        assert_eq!(bd.label_list("", "sp-1"), vec!["payload-hash:abc", "incident"]);
+        assert_eq!(bd.show_closed_at("", "sp-1"), None);
+        assert!(bd.reachable(""));
+    }
+
+    /// sp-7crdc8: unfinished beads are read a request per 100 live ids, every one bounded by `--id`.
+    #[test]
+    fn a_list_of_many_live_beads_is_chunked_by_id() {
+        let live: Vec<_> = (0..250).map(|i| serde_json::json!({"bead_id": format!("sp-{i:03}"), "state": "READY"})).collect();
+        let rows: Vec<_> = (0..250).map(|i| serde_json::json!({"id": format!("sp-{i:03}"), "status": "open", "labels": ["incident"]})).collect();
+        let fake = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows).with_live(live));
+        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_config::lc_call::LcClient::over(fake.clone(), true)) };
+        assert_eq!(bd.list("", Scope::Unfinished, Some("incident"), None).unwrap().len(), 250);
+        let seen = fake.requests();
+        assert_eq!(seen.len(), 1 + 3, "{seen:?}");
+        assert!(seen[1..].iter().all(|r| r.iter().any(|a| a == "--id")), "{seen:?}");
+    }
+
+    /// sp-7crdc8: a closed-after list is one bounded request.
+    #[test]
+    fn a_closed_after_list_is_one_bounded_request() {
+        let rows = vec![serde_json::json!({"id": "sp-1", "labels": ["incident"]})];
+        let live = vec![serde_json::json!({"bead_id": "sp-1", "state": "LANDED"})];
+        let fake = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows).with_live(live));
+        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_config::lc_call::LcClient::over(fake.clone(), true)) };
+        bd.list("", Scope::HandedOn, Some("incident"), Some("2026-01-01")).unwrap();
+        let seen = fake.requests();
+        let lists: Vec<_> = seen.iter().filter(|r| r.iter().any(|a| a == "--closed-after")).collect();
+        assert_eq!(lists.len(), 1, "{seen:?}");
+    }
+
+    #[test]
+    fn a_reply_that_is_not_json_is_an_error_never_no_incident() {
+        let t = std::sync::Arc::new(Scripted(Default::default(), "garbled".into()));
+        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_config::lc_call::LcClient::over(t, true)) };
+        assert!(bd.list_json(&["--id", "sp-1"]).is_err());
+    }
+
+    #[test]
+    fn live_successor_follows_a_supersedes_edge_to_a_live_bead() {
+        let edge = |to: &str| serde_json::json!([{"type": "supersedes", "depends_on_id": to}]);
+        let rows = vec![
+            serde_json::json!({"id": "sp-a", "dependencies": edge("sp-live")}),
+            serde_json::json!({"id": "sp-b", "dependencies": edge("sp-done")}),
+        ];
+        let live = vec![
+            serde_json::json!({"bead_id": "sp-live", "state": "READY"}),
+            serde_json::json!({"bead_id": "sp-done", "state": "LANDED"}),
+        ];
+        let fake = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows).with_live(live));
+        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_config::lc_call::LcClient::over(fake, true)) };
+        assert_eq!(bd.live_successor("", "sp-a"), Some("sp-live".to_string()));
+        assert_eq!(bd.live_successor("", "sp-b"), None);
     }
 
     #[test]

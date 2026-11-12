@@ -14,6 +14,7 @@ pub struct Candidate {
     pub id: String,
     pub external_ref: Option<String>,
     pub labels: Vec<String>,
+    pub fixes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,7 +39,6 @@ pub struct Landing {
 
 pub trait Settler {
     fn candidates(&self) -> Result<Vec<Candidate>, String>;
-    fn fixes(&self, incident: &str) -> Result<Vec<String>, String>;
     fn fix_state(&self, fix: &str) -> Result<FixState, String>;
     /// `Ok(None)`: the fix landed but the active release does not carry it yet.
     fn landing_in_force(&self, fix: &str) -> Result<Option<Landing>, String>;
@@ -65,10 +65,7 @@ pub fn fired_label(fixes: &[String]) -> String {
 pub fn settle_one(s: &dyn Settler, c: &Candidate) -> Outcome {
     let skip = |why: String| Outcome::Skipped { id: c.id.clone(), why };
     let wait = |why: String| Outcome::Waiting { id: c.id.clone(), why };
-    let mut fixes = match s.fixes(&c.id) {
-        Ok(f) => f,
-        Err(e) => return skip(format!("cannot read its fixes: {e}")),
-    };
+    let mut fixes = c.fixes.clone();
     if fixes.is_empty() {
         return skip("no fix dependency".into());
     }
@@ -177,10 +174,7 @@ mod tests {
 
     impl Settler for Fake {
         fn candidates(&self) -> Result<Vec<Candidate>, String> {
-            Ok(vec![cand(&[])])
-        }
-        fn fixes(&self, _: &str) -> Result<Vec<String>, String> {
-            Ok(self.fixes.clone())
+            Ok(vec![Candidate { fixes: self.fixes.clone(), ..cand(&[]) }])
         }
         fn fix_state(&self, fix: &str) -> Result<FixState, String> {
             self.states.get(fix).cloned().ok_or_else(|| "no row".into())
@@ -205,7 +199,7 @@ mod tests {
     }
 
     fn cand(labels: &[&str]) -> Candidate {
-        Candidate { id: "sp-inc".into(), external_ref: Some("incident:x.service".into()), labels: labels.iter().map(|s| s.to_string()).collect() }
+        Candidate { id: "sp-inc".into(), external_ref: Some("incident:x.service".into()), labels: labels.iter().map(|s| s.to_string()).collect(), fixes: vec!["sp-fix".into()] }
     }
 
     #[test]
@@ -274,9 +268,9 @@ mod tests {
     fn an_incident_with_no_probe_or_no_fix_is_never_closed() {
         let f = Fake::new(FixState::Landed, Detector::NoProbe);
         assert!(matches!(settle_one(&f, &cand(&[])), Outcome::Skipped { .. }));
-        let mut g = Fake::new(FixState::Landed, Detector::Quiet);
-        g.fixes.clear();
-        assert!(matches!(settle_one(&g, &cand(&[])), Outcome::Skipped { .. }));
+        let g = Fake::new(FixState::Landed, Detector::Quiet);
+        let none = Candidate { fixes: vec![], ..cand(&[]) };
+        assert!(matches!(settle_one(&g, &none), Outcome::Skipped { .. }));
         assert!(f.closed.borrow().is_empty() && g.closed.borrow().is_empty());
     }
 

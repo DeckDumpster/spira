@@ -106,63 +106,21 @@ fn cmd_drain(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock) -> 
     }
 }
 
-fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
+fn cmd_list(env: &Env, bd: &incident::real::RealBd) -> ExitCode {
     if env.db.is_none() {
         return require_db(env);
     }
-    // bd's human table for an operator to read. Which incidents are open is each bead's
-    // lifecycle row: the labelled beads come from bd as content, the unfinished ones are kept,
-    // and bd renders those by id, minus its tip/warning chrome.
-    let bdq = match spira_config::release_env::tool("bdq") {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("incident: list: {e}");
-            return ExitCode::from(2);
-        }
-    };
-    let lc = match spira_config::lc_state::list_live().map(spira_config::lc_state::index) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("incident: list: cannot tell which incidents are open: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    // Both reads are bounded (spira-lint call-deadline): an operator's `list` waits 5 s at most.
-    // FORK-EDGE: unserved verb content (bd's labelled rows and its human table)
-    let labelled = std::process::Command::new("timeout")
-        .arg("5")
-        .arg(&bdq)
-        .args(["list", "--all", "--limit", "0", "--json", "--label", &env.labels])
-        .output();
-    let ids: Vec<String> = match labelled {
-        Ok(out) if out.status.success() => {
-            let v: serde_json::Value = serde_json::from_str(incident::real::json_only_pub(&String::from_utf8_lossy(&out.stdout))).unwrap_or(serde_json::Value::Null);
-            v.as_array()
-                .map(|a| a.iter().filter_map(|b| b.get("id").and_then(|x| x.as_str())).filter(|id| lc.get(*id).is_some_and(|r| !r.past_builder())).map(str::to_string).collect())
-                .unwrap_or_default()
-        }
-        Ok(_) => {
-            eprintln!("incident: list: bd list failed");
-            return ExitCode::FAILURE;
-        }
+    let rows = match bd.list_beads(incident::decide::Scope::Unfinished, Some(&env.labels), None) {
+        Ok(r) => r,
         Err(e) => {
             eprintln!("incident: list: {e}");
             return ExitCode::FAILURE;
         }
     };
-    if !ids.is_empty() {
-        // FORK-EDGE: unserved verb content
-        match std::process::Command::new("timeout").arg("5").arg(&bdq).args(["list", "--all", "--limit", "0", "--id", &ids.join(",")]).output() {
-            Ok(out) => {
-                for line in String::from_utf8_lossy(&out.stdout).lines() {
-                    if line.starts_with("💡") || line.starts_with("warning") || line.starts_with("  Fix") || line.starts_with("  Or") {
-                        continue;
-                    }
-                    println!("{line}");
-                }
-            }
-            Err(e) => eprintln!("incident: list: {e}"),
-        }
+    for (row, bead) in rows {
+        let priority = bead.get("priority").and_then(|p| p.as_i64()).map(|p| p.to_string()).unwrap_or_else(|| "?".into());
+        let title = bead.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        println!("{} P{priority} {title}", row.id);
     }
     let spooled = std::fs::read_dir(&env.spool_dir).into_iter().flatten().flatten().filter(|e| e.path().extension().map(|x| x != "bad").unwrap_or(true)).count();
     if spooled > 0 {
@@ -194,6 +152,7 @@ fn cmd_settle(env: &Env, bd: &RealBd) -> ExitCode {
         registry: spira_config::repos::Registry::from_env(env_map, &home),
         release_sha: raw_env("SPIRA_RELEASE").and_then(|r| incident::settle_real::release_sha_of(&r)),
         units: incident::settle_real::host_units(),
+        fixes: Default::default(),
     };
     match incident::settle::settle(&settler) {
         Ok(outcomes) => {
