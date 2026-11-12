@@ -1632,6 +1632,18 @@ impl Forge for RealForge {
     fn check_status(&self, forge: &Path, repo: &Path, pr: &str, branch: &str) -> Option<String> {
         forge_call(forge, "check-status", repo, &[pr, branch], None).stdout()
     }
+    fn pr_checks(&self, forge: &Path, repo: &Path, pr: &str) -> Option<Vec<(String, String)>> {
+        let out = forge_call(forge, "pr-checks", repo, &[pr], None);
+        let text = out.stdout()?;
+        Some(
+            text.lines()
+                .filter_map(|l| {
+                    let mut f = l.split_whitespace();
+                    Some((f.next()?.to_string(), f.next().unwrap_or("").to_string()))
+                })
+                .collect(),
+        )
+    }
     fn run_id(&self, forge: &Path, repo: &Path, branch: &str) -> Option<String> {
         forge_call(forge, "run-id", repo, &[branch], None)
             .stdout()

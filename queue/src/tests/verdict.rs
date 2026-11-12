@@ -182,6 +182,48 @@ fn publish_pending_or_faulted_waits_and_changes_nothing() {
     }
 }
 
+fn cancelled_checks(t: &T) {
+    *t.forge.checks.borrow_mut() = Some(vec![
+        ("COMPLETED".into(), "SUCCESS".into()),
+        ("COMPLETED".into(), "CANCELLED".into()),
+    ]);
+}
+
+#[test]
+fn completed_checks_with_a_cancelled_one_are_redriven_once_then_red() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    cancelled_checks(&t);
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert_eq!(count(&t.forge.calls, "workflow-rerun 77"), 1);
+    assert!(t.out().contains("re-driven once"), "{}", t.out());
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert_eq!(count(&t.forge.calls, "workflow-rerun 77"), 1);
+    assert!(has_call(&t.forge.calls, "pr-close 77"));
+    assert!(t.out().contains("publish PR 77 red"), "{}", t.out());
+    assert!(!t.qfile("publish").exists());
+}
+
+#[test]
+fn checks_still_running_or_unreadable_are_not_redriven() {
+    for checks in [
+        Some(vec![
+            ("IN_PROGRESS".to_string(), "-".to_string()),
+            ("COMPLETED".to_string(), "CANCELLED".to_string()),
+        ]),
+        Some(vec![]),
+        None,
+    ] {
+        let t = T::new(LandMode::QueueLocal);
+        publish_record(&t);
+        *t.forge.run.borrow_mut() = Some("77".into());
+        *t.forge.checks.borrow_mut() = checks;
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+        assert_eq!(count(&t.forge.calls, "workflow-rerun"), 0);
+    }
+}
+
 #[test]
 fn a_publish_harness_fault_reruns_within_the_budget_and_never_files_a_bead() {
     let t = T::new(LandMode::QueueLocal);

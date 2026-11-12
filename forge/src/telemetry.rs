@@ -11,6 +11,7 @@ pub const OPERATIONS: &[&str] = &[
     "pr-list-open",
     "pr-mergeability",
     "pr-state",
+    "pr-checks",
     "pr-merge-commit",
     "pr-red",
     "pr-automerge",

@@ -770,9 +770,16 @@ impl Scripts for FScripts {
         if self.tree_holders_stubborn.get() {
             return Err("1 still running after its stop".into());
         }
-        let (mine, rest): (Vec<_>, Vec<_>) = self.tree_holders.borrow().iter().cloned().partition(|d| d.starts_with(tree));
+        let (mine, rest): (Vec<_>, Vec<_>) = self
+            .tree_holders
+            .borrow()
+            .iter()
+            .cloned()
+            .partition(|d| d.starts_with(tree));
         *self.tree_holders.borrow_mut() = rest;
-        self.stopped_holders.borrow_mut().extend(mine.iter().map(|d| (d.clone(), tree.exists())));
+        self.stopped_holders
+            .borrow_mut()
+            .extend(mine.iter().map(|d| (d.clone(), tree.exists())));
         Ok(mine.iter().map(|d| d.display().to_string()).collect())
     }
     fn round_legs_live(&self, repo: &str, batch: &str) -> bool {
@@ -878,6 +885,8 @@ struct FForge {
     queue_prs: RefCell<Vec<(String, String)>>,
     /// Open `spira/publish/*` PRs as `(number, branch)`.
     publish_prs: RefCell<Vec<(String, String)>>,
+    /// What `pr-checks` answers; `None` is a forge that cannot say.
+    checks: RefCell<Option<Vec<(String, String)>>>,
     calls: RefCell<Vec<String>>,
     /// check-status answers in order; when none is left the answer is `pending`. A `None`
     /// entry is a failed call.
@@ -983,6 +992,10 @@ impl Forge for FForge {
         } else {
             q.remove(0)
         }
+    }
+    fn pr_checks(&self, _: &Path, _: &Path, pr: &str) -> Option<Vec<(String, String)>> {
+        self.calls.borrow_mut().push(format!("pr-checks {pr}"));
+        self.checks.borrow().clone()
     }
     fn run_id(&self, _: &Path, _: &Path, branch: &str) -> Option<String> {
         self.calls.borrow_mut().push(format!("run-id {branch}"));
@@ -4805,6 +4818,28 @@ fn settle_adopts_a_green_forge_publish_the_record_does_not_know_then_opens_the_n
         t.out().contains("adopted open publish PR 587"),
         "{}",
         t.out()
+    );
+}
+
+#[test]
+fn publish_adopts_an_open_pr_at_the_same_head_instead_of_opening_a_second() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    t.git
+        .set("refs/remotes/origin/spira/publish/1794422613", "m3");
+    *t.forge.publish_prs.borrow_mut() = vec![("1086".into(), "spira/publish/1794422613".into())];
+    *t.forge.pr.borrow_mut() = Some("1087".into());
+    assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
+    let calls = t.forge.calls.borrow().clone();
+    assert!(
+        !calls.iter().any(|c| c.starts_with("pr-create")),
+        "{calls:?}"
+    );
+    assert!(!t.lib.has("push"), "{:?}", t.lib.calls.borrow());
+    let rec = fs::read_to_string(t.qfile("publish")).unwrap();
+    assert!(
+        rec.starts_with("pr=1086\nhead=m3\n") && rec.contains("branch=spira/publish/1794422613"),
+        "{rec}"
     );
 }
 

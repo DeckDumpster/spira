@@ -449,6 +449,9 @@ pub trait Forge {
     /// `pr-merge-commit`: the sha a merged PR landed as; None when the forge cannot say.
     fn pr_merge_commit(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String>;
     fn check_status(&self, forge: &Path, repo: &Path, pr: &str, branch: &str) -> Option<String>;
+    /// `pr-checks <repo> <pr>` → every check on the PR as `(status, conclusion)`, upper-case as
+    /// the forge names them; None when the forge cannot say.
+    fn pr_checks(&self, forge: &Path, repo: &Path, pr: &str) -> Option<Vec<(String, String)>>;
     /// `run-id <repo> <branch>` → the latest run's id (None when empty or failed).
     fn run_id(&self, forge: &Path, repo: &Path, branch: &str) -> Option<String>;
     /// `run-metadata <repo> <run>` → its stdout (empty when it failed).
