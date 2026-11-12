@@ -912,7 +912,7 @@ impl World {
         };
         let mut pushed = false;
         for line in input.lines().filter(|l| !l.is_empty()) {
-            pushed |= inbox_rules::record(&self.inbox, line, &self.push_wake, &self.push_pattern, &flusher)?;
+            pushed |= inbox_rules::record(&self.inbox, line, &self.push_wake, &self.push_pattern, flusher)?;
         }
         Ok(if pushed { "appended, pushed" } else { "appended" }.into())
     }
