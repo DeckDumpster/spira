@@ -385,11 +385,34 @@ pub fn live_beads(labels: &str) -> Option<String> {
     with_labels(live_base(), labels)
 }
 
-/// Every bead carrying `labels`, closed ones included, for the probes that count history. Read
-/// at most once per `SPIRA_HISTORY_READ_TTL` across all probes.
-pub fn history_beads(labels: &str) -> Option<String> {
+/// The window the cockpit's day counts read: THROUGHPUT and the landing funnel.
+pub const DAY_WINDOW_SECS: i64 = 86_400;
+/// The window of the czar triggers: the lifecycle store serves online data (law-the-lifecycle-store-serves-online-data).
+pub const ONLINE_WINDOW_SECS: i64 = 14 * 86_400;
+
+/// Beads carrying `labels` updated in the `window_secs` before `now`, closed ones included, no
+/// descriptions. The window and the label filter are the store's.
+pub fn history_on(lc: &spira_config::lc_call::LcClient, labels: &str, window_secs: i64, now: i64) -> Option<String> {
+    let since = bead::claimdesc::iso_of(now - window_secs);
+    let mut args = vec!["list", "--all", "--brief", "--limit", "0", "--json", "--updated-after", &since];
+    if !labels.is_empty() {
+        args.extend(["--label", labels]);
+    }
+    content_on(lc, &args, 1).map(|s| json_only(&s).to_string())
+}
+
+/// Beads carrying `labels` updated inside `window_secs`, closed ones included, for the probes
+/// that count history. Read at most once per `SPIRA_HISTORY_READ_TTL` per label set and window.
+pub fn history_beads(labels: &str, window_secs: i64) -> Option<String> {
     let ttl = ttl_from_env("SPIRA_HISTORY_READ_TTL", HISTORY_TTL_SECS);
-    let all = base_read("history", ttl, || read_json(&["list", "--all", "--limit", "100000", "--json"]));
+    let key = format!("history-{}-{window_secs}", labels.replace(|c: char| !c.is_ascii_alphanumeric(), "_"));
+    let all = base_read(&key, ttl, || {
+        if fixture_mode() {
+            return read_json(&["list", "--all", "--closed-after", "1970-01-01", "--json"]);
+        }
+        let lc = spira_config::lc_call::LcClient::configured().ok()?;
+        history_on(&lc, labels, window_secs, now())
+    });
     with_labels(merge_rows(&[live_base(), all]), labels)
 }
 
@@ -833,16 +856,48 @@ mod pane_read_tests {
     #[test]
     fn no_probe_reads_all_history_from_the_store() {
         let probes = [
+            include_str!("io.rs"),
             include_str!("probes/core_detail.rs"),
             include_str!("probes/mod.rs"),
             include_str!("probes/reachable.rs"),
             include_str!("probes/unsent.rs"),
         ];
-        let needle = ["\"--all\"", "\"--limit\", \"0\""];
-        let hits = |s: &str| s.lines().filter(|l| !l.trim_start().starts_with("//") && l.contains(needle[0]) && l.contains(needle[1])).count();
-        assert!(hits(&format!("x(&[{}, {}])", needle[0], needle[1])) == 1, "matcher must see a planted offender");
+        let bounding = ["--id", "--parent", "--updated-after", "--closed-after", "--created-after"].map(|f| format!("\"{f}\""));
+        let hits = |s: &str| {
+            s.lines()
+                .filter(|l| !l.trim_start().starts_with("//") && l.contains(&["\"-", "-all\""].concat()) && !bounding.iter().any(|b| l.contains(b.as_str()))
+                    && !l.contains("\"--limit\", \"1\""))
+                .count()
+        };
+        for planted in ["x(&[\"list\", \"--all\", \"--limit\", \"0\"])", "x(&[\"list\", \"--all\", \"--limit\", \"100000\"])"] {
+            assert_eq!(hits(planted), 1, "matcher must see a planted offender: {planted}");
+        }
+        assert_eq!(hits("x(&[\"list\", \"--all\", \"--limit\", \"0\", \"--updated-after\", d])"), 0);
         for p in probes {
             assert_eq!(hits(p), 0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+    use spira_config::lc_call::{fake::Content, LcClient};
+    use std::sync::Arc;
+
+    #[test]
+    fn history_reads_only_the_window_it_names() {
+        let now = 1_794_000_000;
+        let row = |id: &str, at: i64| serde_json::json!({"id": id, "status": "closed", "labels": ["plan"], "updated_at": bead::claimdesc::iso_of(at)});
+        let fake = Arc::new(Content::new(vec![row("old", now - 30 * 86_400), row("new", now - 3_600)]));
+        let lc = LcClient::over(fake.clone(), true);
+        let got = history_on(&lc, "plan", DAY_WINDOW_SECS, now).unwrap();
+        let ids: Vec<String> = json_rows(Some(got)).unwrap().iter().map(|r| r["id"].as_str().unwrap().to_string()).collect();
+        assert_eq!(ids, ["new"]);
+        for req in fake.requests() {
+            assert!(req.iter().any(|a| a == "--updated-after") && req.iter().any(|a| a == "--brief"), "{req:?}");
+            let limits: Vec<&String> = req.windows(2).filter(|w| w[0] == "--limit").map(|w| &w[1]).collect();
+            assert!(limits.iter().all(|l| *l == "0"), "{req:?}");
         }
     }
 }

@@ -1012,7 +1012,7 @@ const CZAR_CLASSES: &[(&str, &str)] = &[
 pub fn czar_triggers_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let label = cfg.czar_label.as_str();
-    let raw = io::history_beads(label);
+    let raw = io::history_beads(label, io::ONLINE_WINDOW_SECS);
     let rows = match &raw {
         Some(s) if !s.trim().is_empty() => serde_json::from_str::<Value>(s.trim()).ok().map(|v| match v {
             Value::Array(a) => a,
