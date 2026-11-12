@@ -1183,7 +1183,7 @@ fn finish_local_round(
                         Err(e) => println!("batcher {}: could not eject {id} from round {batch}: {e}", repo.name),
                     }
                 }
-                io::round_abandon(
+                io::round_abandon_ejecting(
                     env_,
                     repo,
                     batch,
@@ -1192,6 +1192,7 @@ fn finish_local_round(
                         guilty.join(", ")
                     ),
                     "ci-red",
+                    guilty.len(),
                 );
                 io::tsd_append_round(
                     env_,
@@ -2135,11 +2136,14 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
     io::set_branch(&repo, &round_branch, &io::head_of(&wt)?);
     let history =
         std::fs::read_to_string(tsd::family_path(&env_.run, "suite-timing")).unwrap_or_default();
-    let suites = order::longest_first(&io::all_suites(&repo, &round_branch), &history).list;
+    let suites = named_suites(
+        order::longest_first(&io::all_suites(&repo, &round_branch), &history).list,
+        o.suites.as_deref(),
+    );
     if suites.is_empty() {
         println!(
             "{}",
-            Attribution::Blocked("the round tree has no test-*.sh suites to attribute".into())
+            Attribution::Blocked("the round tree has none of the suites to attribute".into())
                 .line()
         );
         return Ok(());
@@ -2202,6 +2206,13 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
     };
     println!("{}", outcome.line());
     Ok(())
+}
+
+/// `all` narrowed to the CSV `named` when one is given; a name the tree does not hold is dropped.
+fn named_suites(all: Vec<String>, named: Option<&str>) -> Vec<String> {
+    let Some(named) = named else { return all };
+    let want: Vec<&str> = named.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+    all.into_iter().filter(|s| want.contains(&s.as_str())).collect()
 }
 
 fn changed_paths(repo: &Repo, tip: &str) -> Result<Vec<String>, String> {
@@ -2388,6 +2399,14 @@ fn dispatch() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_suites_narrow_the_corpus_and_drop_names_the_tree_lacks() {
+        let all = vec!["test-a.sh".to_string(), "test-b.sh".to_string()];
+        assert_eq!(named_suites(all.clone(), None), all);
+        assert_eq!(named_suites(all.clone(), Some("test-b.sh, test-z.sh")), ["test-b.sh"]);
+        assert!(named_suites(all, Some("test-z.sh")).is_empty());
+    }
 
     const ALL: Switches = Switches {
         local: true,

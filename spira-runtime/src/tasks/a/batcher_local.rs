@@ -44,6 +44,7 @@
 //! | Mending | `mending.settled` or timer 900 s (`main.rs:368`) | Certifying |
 //! | Certifying | `unit.ran` green | Landing (`lc_certify`, `land`) |
 //! | Certifying | `unit.ran` red naming no suite and no guilty file, first time | Attributing (the round is attributed, not abandoned whole) |
+//! | Certifying | `unit.ran` red naming suites in a round of several members, first time | Attributing (only the named suites run, alone on each member) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
@@ -349,6 +350,9 @@ pub enum Trigger {
     /// A red certify named no suite and no guilty file: the round is attributed, once, instead of
     /// abandoned whole.
     CertifyRedUnnamed,
+    /// A red certify named suites: the round is attributed on those suites, once, so the member
+    /// that reds one is ejected before the round is abandoned.
+    CertifyRedNamed,
     LandedStaged,
     Landed,
     LandRefused,
@@ -404,6 +408,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Certifying, Trigger::CertifyGreen, State::Landing),
     (State::Certifying, Trigger::CertifyRed, State::Done),
     (State::Certifying, Trigger::CertifyRedUnnamed, State::Attributing),
+    (State::Certifying, Trigger::CertifyRedNamed, State::Attributing),
     (State::Landing, Trigger::LandedStaged, State::Promoting),
     (State::Landing, Trigger::Landed, State::Done),
     (State::Landing, Trigger::LandRefused, State::Done),
@@ -984,11 +989,17 @@ impl Machine<'_> {
     /// The attribution leg: `batcher attribute` (`drive::attribute_round`) on the red round, a
     /// corpus leg marked [`ATTRIBUTE`] so it runs under the same effect, captured.
     fn attribute(&mut self) {
+        self.attribute_suites(Vec::new());
+    }
+
+    /// [`Self::attribute`], restricted to `suites` when any are named.
+    fn attribute_suites(&mut self, suites: Vec<String>) {
         self.rc.run += 1;
         self.start(CORPUS, "attribute");
         if let Some(a) = self.acts.last_mut() {
             let mut leg: Leg = serde_json::from_str(&a.input).unwrap_or_default();
             leg.why = ATTRIBUTE.into();
+            leg.reds = suites;
             a.input = serde_json::to_string(&leg).unwrap_or_default();
         }
     }
@@ -1403,6 +1414,11 @@ impl Machine<'_> {
                 self.rc.attributed = true;
                 self.go(Trigger::CertifyRedUnnamed);
                 self.attribute();
+            }
+            (State::Certifying, false) if !self.rc.attributed && self.rc.members.len() > 1 && !certify_red_evidence(out).1.is_empty() => {
+                self.rc.attributed = true;
+                self.go(Trigger::CertifyRedNamed);
+                self.attribute_suites(certify_red_evidence(out).1);
             }
             (State::Certifying, false) => {
                 self.go(Trigger::CertifyRed);
@@ -2068,6 +2084,9 @@ pub mod edge {
         let mut argv = vec![batcher, "attribute".into(), leg.repo.clone(), "--members".into(), batcher_cut::attribute::members_arg(&leg.members), "--wt".into(), leg.wt.clone(), "--base".into(), leg.base.clone(), "--round-vm".into(), env.round_vm.display().to_string()];
         if !leg.batch.is_empty() {
             argv.extend(["--batch".into(), leg.batch.clone()]);
+        }
+        if !leg.reds.is_empty() {
+            argv.extend(["--suites".into(), leg.reds.join(",")]);
         }
         start_scope(e, task, &leg.unit, argv, home_vars(env), None)
     }

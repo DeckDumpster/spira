@@ -3230,9 +3230,22 @@ pub fn round_attribution_failed(env: &Env, repo: &Repo, batch: &str, why: &str) 
     }
 }
 
-/// The batcher abandons only after it has ejected every member it can implicate, so its abandon
-/// of a red round is a considered one; `queue round abandon` refuses any other.
+/// What the batcher tells `queue round abandon` it considered: it claims ejections only when
+/// `ejected` is more than none.
+pub fn abandon_considered(cause: &str, ejected: usize) -> String {
+    match ejected {
+        0 => format!("the batcher's {cause} abandon; no member was ejected"),
+        n => format!("the batcher's {cause} abandon, after ejecting {n} member(s) it could implicate"),
+    }
+}
+
+/// [`round_abandon_ejecting`] for an abandon that ejected no one first.
 pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str) -> bool {
+    round_abandon_ejecting(env, repo, batch, why, cause, 0)
+}
+
+/// `ejected` is how many members the caller ejected from the round before abandoning it.
+pub fn round_abandon_ejecting(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str, ejected: usize) -> bool {
     if spira_config::round_ended::is_ended(&env.run, batch) {
         println!("batcher {}: round {batch} has already ended — no second abandon", repo.name);
         let files = crate::pace::Files::new(&env.run, &repo.name);
@@ -3241,8 +3254,7 @@ pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str
         }
         return true;
     }
-    let considered =
-        format!("the batcher's {cause} abandon, after ejecting every member it could implicate");
+    let considered = abandon_considered(cause, ejected);
     let vars = [("QUEUE_ABANDON_CONSIDERED", considered.as_str())];
     let files = crate::pace::Files::new(&env.run, &repo.name);
     let refused = match round_verb_with(
@@ -4994,6 +5006,15 @@ mod abandon_hold_tests {
             forge: PathBuf::new(),
             land: Land::Local,
         }
+    }
+
+    #[test]
+    fn an_abandon_after_zero_ejects_does_not_claim_an_ejection() {
+        let none = abandon_considered("red", 0);
+        assert!(!none.contains("after ejecting"), "{none}");
+        assert!(none.contains("no member was ejected"), "{none}");
+        let some = abandon_considered("ci-red", 2);
+        assert!(some.contains("after ejecting 2 member(s)"), "{some}");
     }
 
     #[test]

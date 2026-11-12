@@ -271,6 +271,11 @@ fn t3_a_red_certify_ejects_the_guilty_then_abandons() {
     assert_eq!((after[eject].1.why.as_str(), after[eject].1.bead.as_str()), ("/run/certify-r9.out", ""), "the guilty are read from the output");
 }
 
+fn attributed(mut c: Carry) -> Carry {
+    c.repos.get_mut("spira").unwrap().attributed = true;
+    c
+}
+
 fn sole_member(mut c: Carry) -> Carry {
     c.repos.get_mut("spira").unwrap().members = vec![("sp-a".into(), "t1".into())];
     c
@@ -329,7 +334,7 @@ fn sp_z43b7y_a_pause_without_a_culprit_carries_the_reason_a_person_acts_on() {
 /// act (sp-7yu70y): the Concierge attributes the red from the reason, not from a guess.
 #[test]
 fn sp_7yu70y_a_red_certify_abandons_naming_its_verdict_and_red_suites() {
-    let mut r = carried(&driving(State::Certifying, "spira.c3"));
+    let mut r = carried(&attributed(driving(State::Certifying, "spira.c3")));
     let n = r.requested().len();
     let out = "queue.sh round certify: round r9 is RED at abc123: test-a.sh,test-b.sh\nred=test-a.sh,test-b.sh\n";
     r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), out)).unwrap();
@@ -342,7 +347,7 @@ fn sp_7yu70y_a_red_certify_abandons_naming_its_verdict_and_red_suites() {
 
 #[test]
 fn sp_7yu70y_a_red_certify_with_only_a_red_line_still_says_what_it_had() {
-    let mut r = carried(&driving(State::Certifying, "spira.c3"));
+    let mut r = carried(&attributed(driving(State::Certifying, "spira.c3")));
     let n = r.requested().len();
     r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
     let after = asked_after(&r, n);
@@ -375,6 +380,44 @@ fn sp_7yu70y_2_an_unnamed_certify_red_attributes_once_then_abandons() {
     let after = asked_after(&r, n);
     let abandon = &after.iter().find(|(e, _)| e == ABANDON).unwrap_or_else(|| panic!("no abandon: {after:?}")).1;
     assert!(abandon.why.contains("no verdict and no suite"), "{}", abandon.why);
+}
+
+/// A certify red naming a suite in a round of several members is attributed on that suite,
+/// and the survivors are certified again and land (sp-b0lhx6).
+#[test]
+fn sp_b0lhx6_a_named_suite_red_attributes_that_suite_and_the_survivors_land() {
+    let mut r = carried(&driving(State::Certifying, "spira.c3"));
+    let n = r.requested().len();
+    let out = "queue.sh round certify: round r9 is RED at abc123: test-release-activate-config.sh\nred=test-release-activate-config.sh\nred-output=/run/rounds/r9.results/testenv.out\n";
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), out)).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let after = asked_after(&r, n);
+    assert_eq!(after.iter().map(|(e, l)| (e.as_str(), l.why.as_str())).collect::<Vec<_>>(), [(CORPUS, "attribute")], "no abandon yet: {after:?}");
+    assert_eq!(after[0].1.reds, ["test-release-activate-config.sh"], "only the named suite is attributed");
+    let unit = after[0].1.unit.clone();
+
+    let land = batcher_cut::attribute::Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: false }.line();
+    let n = r.requested().len();
+    r.tick(STREAM, ended(&unit, runtime::units::Exit::Code(0), &format!("{land}\n"))).unwrap();
+    let after = asked_after(&r, n);
+    assert_eq!(after.iter().map(|(e, _)| e.as_str()).collect::<Vec<_>>(), [CERTIFY], "{after:?}");
+    let certify_unit = after[0].1.unit.clone();
+
+    let n = r.requested().len();
+    r.tick(STREAM, ended(&certify_unit, runtime::units::Exit::Code(0), "verdict=green\n")).unwrap();
+    let names: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
+    assert!(names.contains(&LAND.to_string()) && !names.contains(&ABANDON.to_string()), "{names:?}");
+}
+
+/// The named-suite attribution runs once; a second named red abandons and says what it had.
+#[test]
+fn sp_b0lhx6_a_named_suite_red_after_attribution_abandons_without_claiming_ejects() {
+    let mut r = carried(&attributed(driving(State::Certifying, "spira.c3")));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
+    let after = asked_after(&r, n);
+    assert!(after.iter().any(|(e, _)| e == ABANDON), "{after:?}");
+    assert!(!after.iter().any(|(e, _)| e == CORPUS), "{after:?}");
 }
 
 // --- sp-8nlvra: a held or skipping repo names why, and a red round's pause ends on a landing ---
