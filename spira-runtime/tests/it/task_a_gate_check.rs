@@ -1,7 +1,5 @@
 //! Acceptance T1–T6 for `gate.check`, instantiated from its contract
-//! (`wiki/projects/spira/designs/tasks/gate-check.md`, Acceptance) on `TaskRig`. Red until the
-//! port lands: `decide` and `record_ingested` are `unimplemented!`, and the row waits in
-//! `tasks::a::PENDING`. T6 runs two virtual days (the contract asks seven); its idle budget is
+//! (`wiki/projects/spira/designs/tasks/gate-check.md`, Acceptance) on `TaskRig`. T6 runs two virtual days (the contract asks seven); its idle budget is
 //! the contract's "0 per idle hour".
 
 use std::collections::BTreeMap;
