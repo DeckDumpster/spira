@@ -149,7 +149,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
 
 fn rounds_stop_note(run: &Path, repo: &str) -> Option<String> {
     spira_config::scoped_stop::stop_for(run, repo, "rounds")
-        .map(|s| format!("batcher {repo}: rounds lane stopped on purpose by {} ({}) — no cut; lift with: world.sh unpause --repo {repo} --lanes rounds", s.owner, s.reason))
+        .map(|s| format!("batcher {repo}: rounds lane stopped on purpose by {} ({}) — no cut, and a landing does not lift it; lift with: queue round start {repo} --by <owner> --reason <why>", s.owner, s.reason))
 }
 
 fn cut_hold_note(queue_dir: &Path, repo: &str) -> Option<String> {

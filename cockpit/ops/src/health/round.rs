@@ -95,11 +95,16 @@ fn suites_cell(snap: &Snapshot, k: &str) -> String {
 pub fn round_section(snap: &Snapshot, cols: i64, now: i64, rows: i64) -> Vec<String> {
     let phone = cols < PHONE_COLS;
     let pool = snap.q("SP_ROUND_POOL");
-    match snap.get("SP_ROUND_STATE") {
+    let mut out = match snap.get("SP_ROUND_STATE") {
         Some("open") => open_rows(snap, cols, now, phone, rows),
         Some("idle") => vec![idle_row(snap, now, phone, pool)],
         _ => vec![format!(" {DIM}ROUNDS{RST}  {BAD}?{RST} {DIM}cannot read the rounds{RST}")],
+    };
+    if let Some(repo) = snap.get("SP_ROUND_STOP").filter(|s| !s.is_empty()) {
+        let (owner, reason, until) = (snap.q("SP_ROUND_STOP_OWNER"), snap.q("SP_ROUND_STOP_REASON"), snap.q("SP_ROUND_STOP_UNTIL"));
+        out.push(format!("        {WARN}STOPPED{RST} {repo} by {owner}  {DIM}{}  until {until}{RST}", fit(reason, cols - 30)));
     }
+    out
 }
 
 fn open_rows(snap: &Snapshot, cols: i64, now: i64, phone: bool, rows: i64) -> Vec<String> {
@@ -209,6 +214,13 @@ mod tests {
 
     fn two() -> String {
         format!("SP_ROUND_STATE='open'\nSP_ROUND_CAP='900'\nSP_ROUNDS_N='2'\n{}{}", round(0, "r-11", "staged"), round(1, "r-10", "certifying"))
+    }
+
+    #[test]
+    fn a_stop_of_the_rounds_is_shown_with_owner_reason_and_release_condition() {
+        let rows = render("SP_ROUND_STATE='idle'\nSP_ROUND_POOL='2'\nSP_ROUND_STOP='spira'\nSP_ROUND_STOP_OWNER='concierge'\nSP_ROUND_STOP_REASON='fixes unlanded'\nSP_ROUND_STOP_UNTIL='bead:sp-x=LANDED'\n", 120, 1000);
+        let stop = strip(rows.last().unwrap());
+        assert!(stop.contains("STOPPED spira by concierge") && stop.contains("fixes unlanded") && stop.contains("until bead:sp-x=LANDED"), "{stop}");
     }
 
     #[test]

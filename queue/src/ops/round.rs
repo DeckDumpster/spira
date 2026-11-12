@@ -25,6 +25,9 @@ use crate::model::{parse_members, render_members, EjectCause, LandMode, Member};
 use crate::ports::{ref_branch, AmiBuild, AmiLookup, RunOut};
 use crate::records::{self, one_line, write_atomic, Kv};
 use landing_pass::gateq::GateQueue;
+use spira_config::scoped_stop;
+
+const ROUNDS_LANE: &str = "rounds";
 use landing_pass::model::GateOutcome;
 
 /// certify's exit when the corpus could not be judged (the VM, the wall, the install), as
@@ -243,6 +246,13 @@ pub fn run(w: &World, r: &Round) -> i32 {
             reason,
             suites,
         } => preempt(w, batch, repo.as_deref(), eject, reason, suites),
+        Round::Stop {
+            repo,
+            by,
+            reason,
+            until,
+        } => stop(w, repo.as_deref(), by, reason, until),
+        Round::Start { repo, by, reason } => start(w, repo.as_deref(), by, reason),
         Round::Status { repo } => status(w, repo.as_deref()),
         Round::PassStart {
             batch,
@@ -2134,6 +2144,68 @@ fn first_parent_chain(w: &World, path: &Path, base: &str, landed: &str) -> Strin
     chain.join(" ")
 }
 
+fn stop(w: &World, repo: Option<&str>, by: &str, reason: &Text, until: &str) -> i32 {
+    let label = "round stop";
+    let Ok(c) = resolve(w, label, repo) else {
+        return FAIL;
+    };
+    let reason = match read_text(w, reason) {
+        Ok(r) => one_line(&r),
+        Err(e) => {
+            w.err(format!("queue.sh {label}: {e}"));
+            return FAIL;
+        }
+    };
+    let lanes = [ROUNDS_LANE.to_string()];
+    match scoped_stop::pause_repo(&c.s.run, &c.r.name, &lanes, by, &reason, until, w.clock.now()) {
+        Ok(s) => {
+            w.out(format!(
+                "queue.sh {label}: {} rounds stopped by {} until {} — {}; an open round is not touched, a landing does not lift this; lift with: queue round start {} --by <owner> --reason <why>",
+                s.repo, s.owner, s.until, s.reason, s.repo
+            ));
+            OK
+        }
+        Err(e) => {
+            w.err(format!("queue.sh {label}: {e}"));
+            FAIL
+        }
+    }
+}
+
+fn start(w: &World, repo: Option<&str>, by: &str, reason: &Text) -> i32 {
+    let label = "round start";
+    let Ok(c) = resolve(w, label, repo) else {
+        return FAIL;
+    };
+    let reason = match read_text(w, reason) {
+        Ok(r) => one_line(&r),
+        Err(e) => {
+            w.err(format!("queue.sh {label}: {e}"));
+            return FAIL;
+        }
+    };
+    let Some(held) = scoped_stop::stop_for(&c.s.run, &c.r.name, ROUNDS_LANE) else {
+        w.out(format!(
+            "queue.sh {label}: {} has no stop of its rounds in force",
+            c.r.name
+        ));
+        return OK;
+    };
+    match scoped_stop::unpause_repo(&c.s.run, &c.r.name, &[ROUNDS_LANE.to_string()]) {
+        Ok(_) => {
+            w.out(format!(
+                "queue.sh {label}: {} rounds started by {by} ({reason}); the stop was set by {} until {} — {}",
+                c.r.name, held.owner, held.until, held.reason
+            ));
+            OK
+        }
+        Err(e) => {
+            w.err(format!("queue.sh {label}: {e}"));
+            FAIL
+        }
+    }
+}
+
 fn status(w: &World, repo: Option<&str>) -> i32 {
     let label = "round status";
     let Ok(c) = resolve(w, label, repo) else {
@@ -2150,6 +2222,14 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
         }
     };
     report_ended(w, label, &c);
+    if let Some(s) = scoped_stop::stop_for(&c.s.run, &c.r.name, ROUNDS_LANE) {
+        w.out(format!(
+            "stop=in-force\nstop_owner={}\nstop_reason={}\nstop_until={}",
+            s.owner,
+            one_line(&s.reason),
+            one_line(&s.until)
+        ));
+    }
     let Some(kv) = open.first() else {
         w.out(format!("round=none\nrepo={}", c.r.name));
         return OK;

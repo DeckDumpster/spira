@@ -582,7 +582,26 @@ fn sp_8nlvra_a_stopped_repo_names_the_stop() {
     r.stop_why = Some("concierge: hand fix".into());
     let (carry, _) = decide(&Carry::default(), &s);
     let why = carry.repos["spira"].skip_why.clone().expect("named");
-    assert!(why.contains("stopped") && why.contains("concierge: hand fix") && why.contains("world.sh unpause --repo spira --lanes rounds"), "{why}");
+    assert!(why.contains("stopped") && why.contains("concierge: hand fix") && why.contains("queue round start spira"), "{why}");
+}
+
+/// An owned stop outlives the landing that lifts a red pause: the pause goes, the stop holds, and
+/// nothing is cut.
+#[test]
+fn sp_banzvc_the_landing_that_lifts_a_red_pause_leaves_an_owned_stop_in_force() {
+    let mut s = paused("b1");
+    let r = s.repos.get_mut("spira").unwrap();
+    r.stopped = true;
+    r.stop_why = Some("concierge: fixes unlanded (until: bead:sp-x=LANDED)".into());
+    let (carry, acts) = decide(&paused_on("b0"), &s);
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert_eq!(names, [PAUSE], "the pause lifts and nothing is cut: {acts:?}");
+    let rc = &carry.repos["spira"];
+    assert_eq!(rc.state, State::Held);
+    let why = rc.skip_why.clone().expect("named");
+    assert!(why.contains("concierge") && why.contains("bead:sp-x=LANDED") && why.contains("queue round start spira"), "{why}");
+    let (_, later) = decide(&carry, &Snapshot { repos: [("spira".to_string(), Repo { paused: None, ..s.repos["spira"].clone() })].into(), now_ms: NOW });
+    assert!(later.is_empty(), "{later:?}");
 }
 
 /// A feature group whose every member waits on an unlanded prerequisite must not starve the
