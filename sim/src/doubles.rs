@@ -60,7 +60,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("bead-sweep", &["bead-sweep.observe", "bead-sweep.repair", "inbox.append"]),
     ("publish-backlog", &["publish-backlog.observe", "inbox.append"]),
     ("overrides", &["overrides.apply", "inbox.append"]),
-    ("readiness-dependents", &["readiness-dependents.run"]),
+    ("readiness-dependents", &["readiness-dependents.look", "readiness-dependents.run"]),
     ("view", &["view.observe", "view.flip", "view.forget"]),
     ("reconciler", &["reconciler.observe", "reconciler.record", "reconciler.remedy", "reconciler.mail"]),
     ("reconciler-flow", &["reconciler-flow.observe", "reconciler-flow.status", "reconciler-flow.mail"]),

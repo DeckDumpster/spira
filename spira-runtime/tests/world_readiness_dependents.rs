@@ -37,29 +37,39 @@ fn double(keys: &'static [&'static str]) -> Double {
 }
 
 fn input(through: Option<u64>) -> String {
-    serde_json::to_string(&Pass { through, changed: 0 }).unwrap()
+    serde_json::to_string(&Pass { through, changed: 0, keys: vec![] }).unwrap()
 }
 
 #[test]
 fn the_first_pass_takes_the_head_as_its_baseline_and_judges_nothing() {
     let d = double(&[]);
-    let out: Pass = serde_json::from_str(&d.world.readiness_dependents(&input(None)).unwrap()).unwrap();
-    assert_eq!(out, Pass { through: Some(90), changed: 0 });
+    let out: Pass = serde_json::from_str(&d.world.readiness_look(&input(None)).unwrap()).unwrap();
+    assert_eq!(out, Pass { through: Some(90), changed: 0, keys: vec![] });
     assert_eq!(*d.sent.lock().unwrap(), ["event-seq --since 18446744073709551615"]);
 }
 
 #[test]
 fn a_later_pass_reads_since_the_carried_revision() {
     let d = double(&[]);
-    d.world.readiness_dependents(&input(Some(41))).unwrap();
+    d.world.readiness_look(&input(Some(41))).unwrap();
     assert_eq!(*d.sent.lock().unwrap(), ["event-seq --since 41"]);
 }
 
 #[test]
-fn a_pass_whose_judgement_fails_fails_so_the_revision_is_not_taken() {
-    let d = double(&["sp-w"]);
-    let err = d.world.readiness_dependents(&input(Some(41))).unwrap_err();
+fn a_look_names_the_changed_keys_and_judges_nothing() {
+    let d = double(&["sp-a", "sp-b"]);
+    let out: Pass = serde_json::from_str(&d.world.readiness_look(&input(Some(41))).unwrap()).unwrap();
+    assert_eq!(out, Pass { through: Some(90), changed: 0, keys: vec!["sp-a".into(), "sp-b".into()] });
+    assert_eq!(*d.sent.lock().unwrap(), ["event-seq --since 41"]);
+}
+
+#[test]
+fn a_pass_with_keys_reads_no_event_seq_and_its_failed_judgement_fails_the_pass() {
+    let d = double(&[]);
+    let keyed = serde_json::to_string(&Pass { through: Some(41), changed: 0, keys: vec!["sp-w".into()] }).unwrap();
+    let err = d.world.readiness_dependents(&keyed).unwrap_err();
     assert!(err.contains("republish-dependents"), "{err}");
+    assert!(d.sent.lock().unwrap().is_empty());
 }
 
 fn serve(replies: fn(&[String]) -> Option<String>) -> (testkit::TempDir, std::path::PathBuf, Arc<Mutex<Vec<String>>>) {
