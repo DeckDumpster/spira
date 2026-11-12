@@ -133,3 +133,54 @@ fn a_restart_that_lost_the_probe_of_a_pass_between_repositories_observes_that_re
     assert_eq!(task::catch_up(&idle_and_current, AT_35 + 60_000, &cadence), None, "the next slot has not passed");
     assert_eq!(task::catch_up(&Carry::default(), AT_35 + 7_200_000, &cadence), None, "a fresh journal only arms");
 }
+
+fn real_in(run: &std::path::Path) -> hel::real::Real {
+    hel::real::Real::minimal(run.to_path_buf(), run.to_path_buf(), None)
+}
+
+#[test]
+fn the_resume_cursor_is_kept_per_repo_in_the_run_dir_and_only_moves_forward() {
+    use hel::ports::World;
+    let dir = testkit::TempDir::new("hel-sweep-cursor");
+    let real = real_in(dir.path());
+    task::mark_handled(&real, "spira", "spira/sp-c");
+    task::mark_handled(&real, "spira", "spira/sp-a");
+    assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-c"), "a late answer does not pull the cursor back");
+    assert_eq!(std::fs::read_to_string(dir.path().join("hel-resume.spira")).unwrap().trim(), "spira/sp-c");
+    assert_eq!(real.resume_after("other"), None);
+    task::mark_handled(&real, "spira", "spira/sp-d");
+    assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-d"));
+}
+
+#[test]
+fn the_pace_is_read_from_the_pinned_ms_and_a_non_number_refuses() {
+    let get = |ms: &'static str| move |k: &str| Ok::<String, String>(if k == task::PACE_KEY { ms.to_string() } else { "x".to_string() });
+    assert_eq!(task::Pinned::read(&get("40")).unwrap().pace, std::time::Duration::from_millis(40));
+    assert_eq!(task::Pinned::read(&get("0")).unwrap().pace, std::time::Duration::ZERO);
+    assert!(task::Pinned::read(&get("soon")).err().unwrap().contains(task::PACE_KEY));
+    assert!(task::KEYS.contains(&task::PACE_KEY));
+}
+
+struct Timed(std::sync::Mutex<Vec<std::time::Duration>>);
+
+impl spira_store::lc_call::Transport for Timed {
+    fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+        let at = std::time::Instant::now();
+        let reply = spira_store::lc_call::Reply { code: 0, out: "[]".into(), err: String::new() };
+        self.0.lock().unwrap().push(at.elapsed());
+        Ok(reply)
+    }
+}
+
+#[test]
+fn a_600_branch_pass_reads_the_store_in_bounded_calls_none_over_a_second() {
+    use hel::ports::World;
+    let dir = testkit::TempDir::new("hel-sweep-600");
+    let timed = std::sync::Arc::new(Timed(Default::default()));
+    let real = real_in(dir.path()).with_lc(spira_store::lc_call::LcClient::over(timed.clone(), true));
+    let ids: Vec<String> = (0..600).map(|i| format!("sp-{i:03}")).collect();
+    real.prefetch(&ids).unwrap();
+    let calls = timed.0.lock().unwrap();
+    assert_eq!(calls.len(), 12, "6 content reads and 6 list reads of 100 ids, not one per branch");
+    assert!(calls.iter().all(|d| *d < std::time::Duration::from_millis(1000)), "{calls:?}");
+}
