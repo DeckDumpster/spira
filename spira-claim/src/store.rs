@@ -488,4 +488,10 @@ mod tests {
         let shape: Vec<(&str, usize)> = seen.iter().map(|a| (a[0].as_str(), a[a.len() - 1].split(',').count())).collect();
         assert_eq!(shape, vec![("content", 200), ("facts", 200), ("content", 1), ("facts", 1)]);
     }
+
+    #[test]
+    fn events_surface_a_failed_content_events_read_as_err() {
+        let (st, _t) = store_over(|_| Reply { code: 1, out: String::new(), err: "boom".into() });
+        assert!(st.events(&["sp-a".into()]).is_err());
+    }
 }
