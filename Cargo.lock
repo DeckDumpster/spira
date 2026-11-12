@@ -1239,8 +1239,6 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
- "spira-store",
- "store-view",
  "testkit",
 ]
 
@@ -2222,7 +2220,6 @@ dependencies = [
  "ring",
  "round-controller",
  "round-vm",
- "rule",
  "runtime",
  "runtime-watch",
  "sentinel",
@@ -2254,7 +2251,6 @@ name = "spira-sim"
 version = "0.1.0"
 dependencies = [
  "lifecycle",
- "perf-watch",
  "queue",
  "runtime",
  "serde",

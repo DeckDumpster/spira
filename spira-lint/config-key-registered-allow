@@ -759,7 +759,6 @@ SPIRA_SENTINEL_PASS_TARGET_SECS spira-runtime/src/tasks/a/sentinel_pass.rs
 SPIRA_SIM_CACHE spira/sim-scenario-lib.sh
 SPIRA_SIM_CACHE spira/sim/src/world.rs
 SPIRA_SIM_DUCKDB spira/sim/src/trace.rs
-SPIRA_SIM_RELEASE perf-watch/src/main.rs
 SPIRA_SIM_RELEASE spira/sim/src/roundvm.rs
 SPIRA_SIM_RELEASE spira/sim/src/world.rs
 SPIRA_SIM_SCENARIO spira/sim/src/agent.rs
@@ -892,7 +891,6 @@ SPIRA_TOML spira-lint/src/rules/workflow_config.rs
 SPIRA_TOML spira-otel/src/fixture.rs
 SPIRA_TOML spira-runtime/src/tasks/a/sentinel_call.rs
 SPIRA_TOML spira-runtime/src/tasks/a/sentinel_pass.rs
-SPIRA_TOML spira-runtime/src/tasks/d/watch_perf_happy.rs
 SPIRA_TOML spira-runtime/src/tasks/f/persona_ops.rs
 SPIRA_TOML spira/acceptance-local.sh
 SPIRA_TOML spira/conf.sh

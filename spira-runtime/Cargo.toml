@@ -68,7 +68,7 @@ path = "tests/world_round_snapshot.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["dep:testkit", "archivist/integration", "batcher/integration", "batcher-cut/integration", "bead/integration", "cert-sweep/integration", "cockpit-collect/integration", "cockpit-ops/integration", "czar-pass/integration", "dwarf/integration", "filings-collect/integration", "forge/integration", "gate-check/integration", "gate-worker/integration", "gh-intake/integration", "groomer/integration", "heimdall/integration", "hel/integration", "idea-prompt/integration", "inbox-rules/integration", "incident/integration", "install/integration", "kit-bump/integration", "landing-pass/integration", "mail/integration", "mimir-trigger/integration", "perf-watch/integration", "queue/integration", "reclaim/integration", "reconciler/integration", "reconciler-engine/integration", "reconciler-flow/integration", "refusal-watch/integration", "release/integration", "round-controller/integration", "round-vm/integration", "rule/integration", "runtime/integration", "runtime-watch/integration", "sentinel/integration", "sift/integration", "sim/integration", "skew/integration", "sop/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "spira-submission/integration", "spira-world/integration", "store-view/integration", "testenv/integration", "testkit/integration", "tsd/integration", "unit-run/integration", "watchd/integration", "watchtower/integration"]
+integration = ["dep:testkit", "archivist/integration", "batcher/integration", "batcher-cut/integration", "bead/integration", "cert-sweep/integration", "cockpit-collect/integration", "cockpit-ops/integration", "czar-pass/integration", "dwarf/integration", "filings-collect/integration", "forge/integration", "gate-check/integration", "gate-worker/integration", "gh-intake/integration", "groomer/integration", "heimdall/integration", "hel/integration", "idea-prompt/integration", "inbox-rules/integration", "incident/integration", "install/integration", "kit-bump/integration", "landing-pass/integration", "mail/integration", "mimir-trigger/integration", "perf-watch/integration", "queue/integration", "reclaim/integration", "reconciler/integration", "reconciler-engine/integration", "reconciler-flow/integration", "refusal-watch/integration", "release/integration", "round-controller/integration", "round-vm/integration", "runtime/integration", "runtime-watch/integration", "sentinel/integration", "sift/integration", "sim/integration", "skew/integration", "sop/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "spira-submission/integration", "spira-world/integration", "store-view/integration", "testenv/integration", "testkit/integration", "tsd/integration", "unit-run/integration", "watchd/integration", "watchtower/integration"]
 
 [dependencies]
 testkit = { path = "../testkit", optional = true }
@@ -128,9 +128,8 @@ incident = { path = "../incident" }
 watchtower = { path = "../watchtower" }
 runtime-watch = { path = "../runtime-watch" }
 refusal-watch = { path = "../refusal-watch" }
-# Family D watchers (sop-lint, statute-audit, the cert sweeps): their libraries.
+# Family D watchers (sop-lint, the cert sweeps): their libraries.
 sop = { path = "../sop" }
-rule = { path = "../rule" }
 cert-sweep = { path = "../cert-sweep" }
 release = { path = "../release" }
 cockpit-collect = { path = "../cockpit-collect" }

@@ -56,7 +56,7 @@
 //!   - `spira-lc stats` (`main.rs:112`)
 //! - Keys pinned (S10): `SPIRA_READ_WATCH_BUDGET_MS`, `SPIRA_READ_WATCH_INTERVAL`, `SPIRA_READ_WATCH_REMIND`, `SPIRA_CONCIERGE_INBOX` (`main.rs:140`), the metrics endpoint (`main.rs:152`).
 //!
-//! Catalogue differs: perf-watch forks `spira-lc stats` and the probe CLIs, not `queue round`. `queue round status` is perf-happy-path's child (`main.rs:191`).
+//! Catalogue differs: perf-watch forks `spira-lc stats` and the probe CLIs, not `queue round`.
 //!
 //! ## Reverse
 //!

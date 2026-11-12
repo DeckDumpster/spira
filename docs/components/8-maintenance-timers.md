@@ -12,7 +12,6 @@ not repeated here unless they have no other home.
 | `sweep.export_beads` | `export-beads.sh` | every 6 h | regenerate the bead mirror |
 | `sweep.nix_gc` | `nix-gc.sh` | weekly | collect Nix garbage keeping the current and previous environment |
 | `watch.sop_lint` | `sop-lint-watch.sh` | every 1 h | lint the SOP shelf |
-| `watch.statute_audit` | `rule audit --file --for builder --max 5` | weekly | statutes naming tools that do not exist |
 | `incident.settle` | `incident settle` | every 5 min | close incidents whose fix landed and detector is quiet |
 
 Long-running services with no timer: `spira-runtime`, `dolt-beads`, `dolt-persist`,
