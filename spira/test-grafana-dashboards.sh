@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: T1
 # covers: spira/metrics/grafana/** work/src/main.rs habits/src/lib.rs gate/src/telemetry.rs spira/testlib.sh
 #
 # The gate-tooling dashboard's check panels (the yield meter and the unit-tests check seconds)

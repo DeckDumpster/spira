@@ -48,7 +48,7 @@ pub struct RunArgs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Invocation {
     Report(usize),
-    Run(RunArgs),
+    Run(Box<RunArgs>),
 }
 
 /// A usage error: message lines for stderr; exit status 2.
@@ -244,7 +244,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             SuitesArg::List(s)
         }
     });
-    Ok(Invocation::Run(RunArgs {
+    Ok(Invocation::Run(Box::new(RunArgs {
         mode,
         suites,
         profile,
@@ -259,7 +259,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         record,
         branch,
         repo,
-    }))
+    })))
 }
 
 #[cfg(test)]
@@ -271,7 +271,7 @@ mod tests {
     }
     fn run(a: &[&str]) -> RunArgs {
         match p(a).unwrap() {
-            Invocation::Run(r) => r,
+            Invocation::Run(r) => *r,
             other => panic!("{other:?}"),
         }
     }
