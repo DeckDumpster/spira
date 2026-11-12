@@ -15,7 +15,7 @@ use super::store::{Filing, Judged, Pass, Store};
 use crate::{flag, CANNOT_TELL, REFUSED};
 
 /// The verbs this module answers.
-pub const VERBS: &[&str] = &["publish-readiness", "expire-claims", "sweep-open"];
+pub const VERBS: &[&str] = &["publish-readiness", "expire-claims", "sweep-open", "mark-rejudge"];
 
 pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let rest = &args[1..];
@@ -23,6 +23,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         Some("publish-readiness") => publish(store, rest, call),
         Some("expire-claims") => expire(store, rest, call),
         Some("sweep-open") => sweep_open(store, rest, call),
+        Some("mark-rejudge") => mark_rejudge(store, rest, call),
         other => {
             return (
                 CANNOT_TELL,
@@ -114,6 +115,14 @@ fn publish<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> Answer
     let rev = store
         .publish_readiness(&judged, &pass, &req)
         .map_err(cannot_tell)?;
+    Ok(json!({ "rev": rev }).to_string())
+}
+
+/// `mark-rejudge <id> [--blocked-by a,b]`: a planning write changed what the bead's claim reads.
+fn mark_rejudge<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> Answer {
+    let id = args.first().filter(|a| !a.starts_with('-')).ok_or_else(|| (CANNOT_TELL, "mark-rejudge: the bead id is missing".into()))?;
+    let req = Request::new(call.request, "spira-lc", "lc.mark-rejudge");
+    let rev = store.mark_rejudge(id, &ids(args, "--blocked-by"), &req).map_err(cannot_tell)?;
     Ok(json!({ "rev": rev }).to_string())
 }
 

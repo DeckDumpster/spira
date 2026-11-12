@@ -36,9 +36,33 @@ fn record_call(args: &[&str], started: std::time::Instant, ok: bool) {
 /// Every planning write this process makes moves the planning watermark once it has landed.
 fn stamped<S: AsRef<str>>(args: &[S], res: Result<String, String>) -> Result<String, String> {
     if res.is_ok() && spira_config::planning::is_planning_write(args) {
+        if let Some((bead, blocked_by)) = spira_config::planning::claim_input_change(args) {
+            mark_rejudge(&bead, &blocked_by);
+        }
         crate::plan::stamp_after_write();
     }
     res
+}
+
+/// Marks the bead's readiness record for re-judgement before the write is reported done, so a
+/// claim cannot act on a judgement the write has outdated. A failed mark is reported, never
+/// raised: the write it follows has already landed.
+fn mark_rejudge(bead: &str, blocked_by: &[String]) {
+    if !crate::control::served::store_configured() {
+        return;
+    }
+    let mut argv = vec!["mark-rejudge".to_string(), bead.to_string()];
+    if !blocked_by.is_empty() {
+        argv.extend(["--blocked-by".to_string(), blocked_by.join(",")]);
+    }
+    let (code, out) = if crate::plan::serving() {
+        crate::control::served::dispatch(&argv).unwrap_or((2, "not a control-store verb".into()))
+    } else {
+        crate::client::try_socket(&argv).or_else(|| crate::control::served::dispatch(&argv)).unwrap_or((2, "not a control-store verb".into()))
+    };
+    if code != 0 {
+        eprintln!("spira-lc: the write to {bead} landed but its readiness was not marked for re-judgement: exit {code}: {out}");
+    }
 }
 
 const WRITE_SECS: u64 = 60;

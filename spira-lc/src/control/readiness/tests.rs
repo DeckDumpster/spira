@@ -449,25 +449,51 @@ fn a_verdict_pass_after_a_readiness_pass_keeps_its_revision_and_a_readiness_pass
 }
 
 #[test]
-fn an_edge_added_after_judgement_refuses_the_claim_until_the_record_is_judged_again() {
+fn an_unrelated_planning_write_after_judgement_does_not_refuse_the_claim() {
     let r = Rig::new();
     r.ok(&["create-bead", "sp-a", "--ready"]);
     r.stamp_planning(7);
     r.judged_at("sp-a", "7", json!({ "claimable": true }));
     r.stamp_planning(8);
     let (code, out) = r.claim("sp-a");
-    assert_eq!(code, crate::REFUSED, "{out}");
-    assert!(out.contains("planning moved") && out.contains('7') && out.contains('8'), "{out}");
-    assert_eq!(r.state("sp-a"), "READY");
-    r.ok(&["create-bead", "sp-late", "--ready"]);
-    r.judged_at(
-        "sp-a",
-        "8",
-        json!({ "claimable": false, "blocked_by": ["sp-late"], "gates": { "sp-late": { "class": "idle" } } }),
-    );
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(r.state("sp-a"), "WORKING");
+}
+
+#[test]
+fn an_edge_added_through_the_door_refuses_the_claim_naming_the_blocker_before_any_publish() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.ok(&["create-bead", "sp-b", "--ready"]);
+    r.judged_at("sp-a", "7", json!({ "claimable": true }));
+    r.ok(&["mark-rejudge", "sp-a", "--blocked-by", "sp-b"]);
     let (code, out) = r.claim("sp-a");
     assert_eq!(code, crate::REFUSED, "{out}");
-    assert!(out.contains("judged not claimable") && out.contains("sp-late"), "{out}");
+    assert!(out.contains("judged not claimable") && out.contains("sp-b"), "{out}");
+    assert_eq!(r.state("sp-a"), "READY");
+    r.judged_at("sp-a", "8", json!({ "claimable": true }));
+    assert_eq!(r.claim("sp-a").0, 0);
+}
+
+#[test]
+fn a_mark_moves_the_readiness_revision_and_leaves_the_record_judged_but_not_claimable() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.judged_at("sp-a", "7", json!({ "claimable": true }));
+    let before = r.store.readiness("sp-a").unwrap().unwrap().mod_rev;
+    r.ok(&["mark-rejudge", "sp-a"]);
+    assert_ne!(r.store.readiness("sp-a").unwrap().unwrap().mod_rev, before);
+    let marked = r.store.readiness("sp-a").unwrap().unwrap().value;
+    assert!(marked.judged_for_claim && !marked.claimable);
+}
+
+#[test]
+fn a_mark_on_a_record_no_pass_has_judged_leaves_it_claimable() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.ok(&["mark-rejudge", "sp-a", "--blocked-by", "sp-b"]);
+    assert!(r.store.readiness("sp-a").unwrap().is_none());
+    assert_eq!(r.claim("sp-a").0, 0);
 }
 
 #[test]

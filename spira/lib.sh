@@ -516,7 +516,7 @@ print("%s\t%s\t%s\t%s" % (b.get("state") or "", b.get("version") if b.get("versi
 # refused, 2 cannot tell (the machine was unreachable — never treated as a refusal, so a
 # caller that retries a "cannot tell" is safe and one that retries a real refusal is not).
 lc_event_bead() {
-    spira-lc event bead "$1" --expect "$2" --version "$3" --actor "$4" --kind "$5" >/dev/null 2>&1
+    LC_EVENT_REPLY="$(spira-lc event bead "$1" --expect "$2" --version "$3" --actor "$4" --kind "$5" 2>&1)"
 }
 
 # lc_claim_bead <id> <holder> <lease-until-epoch> [<stack-json> <stack-depth>
@@ -556,6 +556,7 @@ lc_claim_bead() {
         IFS=$'\t' read -r state _ cur_holder _ <<< "$row"
         [ "$state" = WORKING ] && [ "$cur_holder" = "$holder" ] && return 0
     fi
+    if [ "$rc" -eq 3 ]; then printf '%s\n' "$LC_EVENT_REPLY" >&2; fi
     [ "$rc" -eq 0 ] || return "$rc"
     _bump_write_event "$id" claimed "$holder"
 }

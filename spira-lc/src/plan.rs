@@ -409,6 +409,10 @@ fn merge_planning(rows: &mut [Value], planned: &BTreeMap<String, Titled>) {
 /// instead of calling back into the socket it is serving.
 static SERVED: OnceLock<Arc<Conn>> = OnceLock::new();
 
+pub fn serving() -> bool {
+    SERVED.get().is_some()
+}
+
 pub fn serve_on(conn: Arc<Conn>) {
     let _ = SERVED.set(conn);
 }
