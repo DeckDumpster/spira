@@ -20,7 +20,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration"]
+integration = ["spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
 serde_json = "1"

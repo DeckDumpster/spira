@@ -9,7 +9,7 @@ name = "batcher"
 path = "src/main.rs"
 
 [features]
-integration = ["batcher/integration", "forge/integration", "gate/integration", "lifecycle/integration", "migration-numbers/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-otel/integration", "state-store/integration", "store-view/integration", "suite-select/integration", "testkit/integration", "tsd/integration"]
+integration = ["batcher/integration", "forge/integration", "gate/integration", "lifecycle/integration", "migration-numbers/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "store-view/integration", "suite-select/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 batcher = { path = "../batcher" }

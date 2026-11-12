@@ -5,7 +5,7 @@ edition = "2021"
 description = "spira-store — the lifecycle store client: LcClient, typed state reads, row writes, planning-write recognition."
 
 [features]
-integration = ["lifecycle/integration", "testkit/integration"]
+integration = ["lifecycle/integration", "spira-config/integration", "testkit/integration"]
 
 [dependencies]
 spira-config = { path = "../spira-config" }

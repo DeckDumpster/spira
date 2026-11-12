@@ -14,7 +14,7 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "tsd/integration"]
+integration = ["spira-config/integration", "spira-store/integration", "spira-otel/integration", "tsd/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }

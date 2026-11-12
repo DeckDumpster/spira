@@ -18,7 +18,7 @@ path = "tests/scenarios.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["batcher/integration", "forge/integration", "incident/integration", "lifecycle/integration", "migration-numbers/integration", "reconciler-engine/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-desired-state/integration", "spira-lc/integration", "spira-otel/integration", "spira-sim/integration", "state-store/integration", "state-store-sqlite/integration", "store-view/integration", "testkit/integration"]
+integration = ["batcher/integration", "forge/integration", "incident/integration", "lifecycle/integration", "migration-numbers/integration", "reconciler-engine/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-lc/integration", "spira-otel/integration", "spira-sim/integration", "state-store/integration", "state-store-sqlite/integration", "store-view/integration", "testkit/integration"]
 
 [dependencies]
 batcher = { path = "../batcher" }

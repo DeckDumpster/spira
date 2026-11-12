@@ -16,7 +16,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["cockpit-ops/integration", "lifecycle/integration", "release/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-desired-state/integration", "spira-otel/integration", "spira-runtime/integration", "store-view/integration", "testkit/integration", "tsd/integration"]
+integration = ["cockpit-ops/integration", "lifecycle/integration", "release/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-otel/integration", "spira-runtime/integration", "store-view/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 spira-config = { path = "../spira-config" }

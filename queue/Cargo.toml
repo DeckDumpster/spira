@@ -5,7 +5,7 @@ edition = "2021"
 description = "queue — the merge queue's operator and landing tool (submit, eject, abandon, open-batch, claim/release, land-local, publish, to-forge/to-local, rollback-local, stats). Replaces spira/queue.sh."
 
 [features]
-integration = ["bead/integration", "forge/integration", "gate/integration", "landing-pass/integration", "lifecycle/integration", "migration-numbers/integration", "release/integration", "runtime/integration", "spira-config/integration", "spira-otel/integration", "state-store/integration", "testkit/integration", "tsd/integration"]
+integration = ["bead/integration", "forge/integration", "gate/integration", "landing-pass/integration", "lifecycle/integration", "migration-numbers/integration", "release/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

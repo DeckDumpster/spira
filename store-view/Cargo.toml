@@ -15,7 +15,7 @@ path = "tests/store.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["spira-config/integration"]
+integration = ["spira-config/integration", "spira-store/integration"]
 
 [dependencies]
 spira-config = { path = "../spira-config" }

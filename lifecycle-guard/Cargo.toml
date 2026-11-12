@@ -5,7 +5,7 @@ edition = "2021"
 description = "lifecycle-guard — static analyser: refuses any path that reaches spira_lifecycle by anything but the machine."
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration"]
+integration = ["spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }
