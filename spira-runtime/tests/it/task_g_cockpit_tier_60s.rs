@@ -60,6 +60,8 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
 
 const PROBE_DISPATCH: &str = include_str!("../../../cockpit-collect/src/probes/mod.rs");
 
+type Tier = (&'static str, &'static [(&'static str, u64)], u64);
+
 fn dispatched_probes() -> Vec<&'static str> {
     let run = PROBE_DISPATCH.split("pub fn run(subcommand").nth(1).expect("probes::run is in probes/mod.rs");
     let body = run.split("\n}\n").next().unwrap();
@@ -72,7 +74,7 @@ fn every_registry_probe_runs_in_exactly_one_tier() {
     use spira_runtime::tasks::g::{cockpit_tier_5s as t5, cockpit_tier_600s as t600};
     let registry = dispatched_probes();
     assert_eq!(registry.len(), 23, "the dispatch lists {registry:?}");
-    let tiers: [(&str, &[(&str, u64)], u64); 3] = [(t5::NAME, t5::PROBES, t5::OBSERVE_DEADLINE_MS), (NAME, PROBES, OBSERVE_DEADLINE_MS), (t600::NAME, t600::PROBES, t600::OBSERVE_DEADLINE_MS)];
+    let tiers: [Tier; 3] = [(t5::NAME, t5::PROBES, t5::OBSERVE_DEADLINE_MS), (NAME, PROBES, OBSERVE_DEADLINE_MS), (t600::NAME, t600::PROBES, t600::OBSERVE_DEADLINE_MS)];
     for name in &registry {
         let homes: Vec<&str> = tiers.iter().filter(|(_, probes, _)| probes.iter().any(|p| registry_name(p.0) == *name)).map(|t| t.0).collect();
         assert_eq!(homes.len(), 1, "probe {name} runs in {homes:?}");
