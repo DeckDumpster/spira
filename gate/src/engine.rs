@@ -2110,7 +2110,7 @@ fn lease_builders_dir<W: World>(w: &W, ctx: &Ctx, tree: &Path, bead: &str, path:
             Err(e) => return (None, Some(v(NOVERDICT, "build-dir-unreadable", format!("gate: cannot tell where {bead}'s builder built: {e}\ngate: refusing to guess; this is the host's store, not a fault in the branch.")))),
         }
     };
-    let (dir, why) = match w.lease_build_dir(base, recorded.as_ref().map(|(_, d)| d.as_str()), &format!("gate {bead}")) {
+    let (dir, why) = match w.lease_build_dir(base, recorded.as_ref().map(|(_, d)| d.as_str()), &spira_config::build_dir::gate_label(bead)) {
         Ok(l) => l,
         Err(e) => return (None, Some(v(NOVERDICT, "scratch-short", format!("gate: {e}\ngate: this is the host's room, not a fault in the branch.")))),
     };

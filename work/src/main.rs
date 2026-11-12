@@ -127,6 +127,9 @@ fn main() {
     };
 
     let build_dir = if verb == "submit" { owned_build_dir() } else { None };
+    if let Some(d) = &build_dir {
+        reserve_for_gate(&bound, d);
+    }
     let req = match work::build_request_in(&bound, &verb, &verb_args, tip.as_deref(), &actor, body.as_deref(), build_dir.as_deref()) {
         Ok(mut r) => {
             if base_red {
@@ -163,6 +166,12 @@ fn main() {
 fn owned_build_dir() -> Option<String> {
     let base = spira_config::process::cfg(spira_config::build_dir::BASE_ENV).ok().filter(|b| !b.is_empty()).map(std::path::PathBuf::from);
     spira_config::build_dir::owned(std::env::var_os("CARGO_TARGET_DIR"), base.as_deref()).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Keep the submitted directory for the bead's own gate: other claimers skip it until the gate leases it.
+fn reserve_for_gate(bead: &str, dir: &str) {
+    let Some(base) = spira_config::process::cfg(spira_config::build_dir::BASE_ENV).ok().filter(|b| !b.is_empty()) else { return };
+    let _ = spira_config::build_dir::reserve(std::path::Path::new(&base), std::path::Path::new(dir), &spira_config::build_dir::gate_label(bead));
 }
 
 /// `submit` never takes a tip argument (design §3.5): it is read here, the only place this
