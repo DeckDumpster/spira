@@ -367,7 +367,7 @@ fn filed_and_said() -> TaskRig {
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_and_said(), NAME);
-    assert_eq!(rows, ["blind", "diluted", "halted", "held", "resumed_at", "stalled/alpha", "starved", "unlanded"]);
+    assert_eq!(rows, ["blind", "diluted", "halted", "held", "resumed_at", "retried", "stalled/alpha", "starved", "unlanded"]);
 }
 
 #[test]
@@ -427,4 +427,39 @@ fn after_a_halt_lifts_the_stall_clock_restarts() {
     let later = now + 7_300_000;
     let v = decide(&held.carry, &stalled_snapshot(later / 1000), later, &config());
     assert_eq!(v.acts.iter().filter(|a| a.name == FILE).count(), 1);
+}
+
+fn blind_after_activation(host: Arc<Mutex<Host>>) -> TaskRig {
+    let (_, stream, kind) = WatchThroughput::boot();
+    let observe = move |input: &str| {
+        let now = serde_json::from_str::<serde_json::Value>(input).unwrap()["now"].as_u64().unwrap();
+        let h = host.lock().unwrap();
+        let mut snap = h.snap.clone();
+        snap.activated_at = Some(now - 5);
+        Ok(serde_json::to_string(&snap).unwrap())
+    };
+    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, observe).double(FILE, |_| Ok("filed".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
+    r.clock.advance_to(3 * DAY_MS);
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+#[test]
+fn a_landings_read_that_fails_just_after_an_activation_is_retried_and_pages_nothing_if_the_next_reads() {
+    let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
+    let mut r = blind_after_activation(host.clone());
+    assert_eq!(named(&r, INBOX_APPEND), Vec::<String>::new(), "the first unreadable tick after an activation says nothing");
+    host.lock().unwrap().snap.readable = true;
+    r.advance(60_000).unwrap();
+    assert_eq!(named(&r, INBOX_APPEND), Vec::<String>::new(), "the next tick reads");
+}
+
+#[test]
+fn a_landings_read_that_stays_unreadable_for_two_ticks_after_an_activation_pages_blind_naming_it() {
+    let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
+    let mut r = blind_after_activation(host);
+    r.advance(60_000).unwrap();
+    let pages = named(&r, INBOX_APPEND);
+    assert_eq!(pages.len(), 1, "{pages:?}");
+    assert!(pages[0].contains("P0 BLIND") && pages[0].contains("after the activation"), "{pages:?}");
 }
