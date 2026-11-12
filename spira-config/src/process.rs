@@ -44,8 +44,8 @@ pub fn spec() -> Result<String, String> {
 const COMPUTED_KEYS: &[&str] = &["SPIRA_RELEASE_REPO", "SPIRA_AGENT", "SPIRA_RUNES_DIR"];
 
 /// `key` as the merged `[spira]` table declares it, when that is the whole answer: a declared,
-/// plainly-valued key of a `prod` instance. It checks neither the file's schema nor the registry
-/// (that is the cost this path exists to skip; `check-config` and [`config`] still do). Anything
+/// plainly-valued key of a `prod` instance. It does not check the file's schema (the cost this path
+/// exists to skip; `check-config` and [`config`] still do); [`cfg`] checks the key is registered. Anything
 /// else is `None` and takes the full resolve, which owns every other refusal.
 pub(crate) fn declared_value(merged: &toml::map::Map<String, toml::Value>, key: &str) -> Option<String> {
     if !(key.starts_with("SPIRA_") || key.starts_with("COCKPIT_")) || COMPUTED_KEYS.contains(&key) {
@@ -70,11 +70,13 @@ fn declared_fast(key: &str) -> Option<String> {
 }
 
 /// One key's declared value. `Err` when the config cannot be resolved or the key is not a
-/// registered config key — never a default. A key a `prod` instance declares plainly is answered
-/// from the file without the registry check (see [`declared_value`]).
+/// registered config key — never a default. A registered key a `prod` instance declares plainly
+/// is answered from the file without the full resolve (see [`declared_value`]).
 pub fn cfg(key: &str) -> Result<String, String> {
     if let Some(v) = declared_fast(key) {
-        return Ok(v);
+        if crate::registry::declares_key(&crate::resolve::locate_home_for_process()?, key) {
+            return Ok(v);
+        }
     }
     config()?
         .values
@@ -251,7 +253,7 @@ mod declared_value_tests {
     }
 
     #[test]
-    fn an_unregistered_declared_key_is_answered_by_the_fast_path_which_skips_the_registry() {
+    fn declared_value_leaves_the_registry_check_to_cfg() {
         let dir = testkit::TempDir::new("spira-config-declared-unregistered");
         let toml = dir.path().join("spira.toml");
         std::fs::write(&toml, "[spira]\ninstance = \"prod\"\nnot_a_registered_key = \"typo\"\n").unwrap();

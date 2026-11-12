@@ -161,6 +161,12 @@ impl Registry {
     }
 }
 
+/// Whether `home` has a source file for `key`: two `stat`s, not the registry load, which stamps
+/// every source to trust its index.
+pub fn declares_key(home: &Path, key: &str) -> bool {
+    SOURCE_DIRS.iter().any(|d| home.join(d).join(key).is_file())
+}
+
 /// This process's registry, read once from the release [`crate::resolve::locate_home_for_process`]
 /// finds. A refusal is not remembered: the next call looks again.
 pub fn for_process() -> Result<&'static Registry, String> {
@@ -464,6 +470,18 @@ mod tests {
 
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn declares_key_sees_a_source_in_either_directory_and_not_an_absent_one() {
+        let dir = testkit::TempDir::new("declares-key");
+        for d in SOURCE_DIRS {
+            std::fs::create_dir_all(dir.path().join(d)).unwrap();
+        }
+        std::fs::write(dir.path().join("conf.d/SPIRA_A"), "").unwrap();
+        std::fs::write(dir.path().join("conf.toml.d/SPIRA_B"), "").unwrap();
+        assert!(declares_key(dir.path(), "SPIRA_A") && declares_key(dir.path(), "SPIRA_B"));
+        assert!(!declares_key(dir.path(), "SPIRA_C"));
+    }
 
     fn key(name: &str, body: &str) -> RegistryKey {
         RegistryKey {
