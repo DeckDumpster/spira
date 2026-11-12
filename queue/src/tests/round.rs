@@ -7986,15 +7986,19 @@ fn a_swept_round_sharing_a_live_rounds_worktree_is_closed_out_once() {
             .matches("abandoned:swept")
             .count()
     };
-    let before = swept(&t);
-    for name in ["r-next", "r-after"] {
-        t.run(&["round", "open", "--members", "sp-b:tb", "--name", name]);
-        assert_eq!(
-            swept(&t),
-            before,
-            "{name}: a sweep that removed nothing of r-gone's writes no line: {}",
-            t.err()
-        );
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-b:tb", "--name", "r-next"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(kv_of(&t, "round")["worktree"], wt, "the live round stands in r-gone's path");
+    fs::create_dir_all(&wt).unwrap();
+    let closed = swept(&t);
+    assert_eq!(closed, 1, "the sweep that removed r-gone's tree closed it out");
+    for _ in 0..2 {
+        t.run(&["round", "open", "--members", "sp-c:tc", "--name", "r-again"]);
+        assert_eq!(swept(&t), closed, "a sweep that removed nothing of r-gone's writes no line: {}", t.err());
     }
 }
 
