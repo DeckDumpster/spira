@@ -194,6 +194,9 @@ fn banner(v: &View) -> Vec<String> {
     if let Some(p) = v.progress.as_ref().filter(|p| p.running(v.now)) {
         out.push(pass_line(p, v.now));
     }
+    if let Some(a) = &v.read_age {
+        out.push(crate::lcview::read_age_line(a));
+    }
     if !v.errors.is_empty() {
         let first = v.errors.first().cloned().unwrap_or_default();
         let more = if v.errors.len() > 1 { format!(" (+{} more)", v.errors.len() - 1) } else { String::new() };
@@ -1060,6 +1063,15 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn the_banner_shows_a_carried_read_with_its_age_and_no_source_failed() {
+        let snap = crate::lcview::Snapshot { now: 1000, good_at: 960, ..Default::default() };
+        let v = crate::lcview::view(&snap);
+        let text = strip(&banner(&v).join("\n"));
+        assert!(text.contains("read from 40s ago"), "{text}");
+        assert!(!text.contains("source failed"), "{text}");
     }
 
     fn st(name: &str, count: usize, rates: &[i64]) -> SmState {
