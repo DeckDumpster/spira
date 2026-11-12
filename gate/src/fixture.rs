@@ -11,6 +11,7 @@ use std::process::Command;
 
 pub const FIXTURE: &str = "spira/testlib/complete.toml";
 pub const FENCE: &str = "fixture-config";
+static SCRATCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// The number of registry keys the fixture resolved, or the refusal naming the key it cannot.
 pub fn check(tree: &Path, base: Option<&str>) -> Result<usize, String> {
@@ -18,13 +19,13 @@ pub fn check(tree: &Path, base: Option<&str>) -> Result<usize, String> {
     let doc = spira_config::load(&fixture).map_err(|e| format!("{FIXTURE}: {e}"))?;
     let home = tree.join("spira");
     let env = BTreeMap::new();
-    let resolve_against = |conf_d: &Path, what: &str| {
-        resolve(ResolveInput { env: &env, home: &home, repo: tree, toml: Some(&doc), conf_d })
+    let resolve_against = |doc: &spira_config::SpiraToml, conf_d: &Path, what: &str| {
+        resolve(ResolveInput { env: &env, home: &home, repo: tree, toml: Some(doc), conf_d })
             .map_err(|e| format!("{FIXTURE} does not resolve against {what}: {e}"))
     };
-    let resolved = resolve_against(&default_conf_d(&home), "this tree's config keys")?;
+    let resolved = resolve_against(&doc, &default_conf_d(&home), "this tree's config keys")?;
     if let Some(base) = base {
-        let scratch = std::env::temp_dir().join(format!("gate-fixture-config-{}", std::process::id()));
+        let scratch = std::env::temp_dir().join(format!("gate-fixture-config-{}-{}", std::process::id(), SCRATCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         let _ = std::fs::remove_dir_all(&scratch);
         std::fs::create_dir_all(&scratch).map_err(|e| format!("scratch for the landing ref's keys: {e}"))?;
         let archive = Command::new("timeout").args(["5", "git", "-C"]).arg(tree).args(["archive", base, "spira/conf.d"]).output()
@@ -36,11 +37,20 @@ pub fn check(tree: &Path, base: Option<&str>) -> Result<usize, String> {
             .map_err(|e| format!("tar: {e}"))?;
         std::io::Write::write_all(&mut tar.stdin.take().unwrap(), &archive.stdout).map_err(|e| format!("tar: {e}"))?;
         let unpacked = tar.wait().map_err(|e| format!("tar: {e}"))?.success();
-        let landed = unpacked.then(|| resolve_against(&scratch.join("spira/conf.d"), &format!("the landing ref {base}'s config keys (a round runs that code against this fixture)")));
+        let landed = unpacked.then(|| landing_doc(&fixture, &scratch.join("spira")).and_then(|landing| resolve_against(&landing, &scratch.join("spira/conf.d"), &format!("the landing ref {base}'s config keys (a round runs that code against this fixture)"))));
         let _ = std::fs::remove_dir_all(&scratch);
         landed.unwrap_or_else(|| Err(format!("could not unpack the landing ref {base}'s config keys")))?;
     }
     Ok(resolved.values.len())
+}
+
+/// The fixture read against the landing ref's registry, so a key the tip's registry retired is
+/// still declared for the code that has not yet.
+fn landing_doc(fixture: &Path, home: &Path) -> Result<spira_config::SpiraToml, String> {
+    let text = std::fs::read_to_string(fixture).map_err(|e| format!("{FIXTURE}: {e}"))?;
+    std::fs::create_dir_all(home.join("conf.toml.d")).map_err(|e| format!("scratch for the landing ref's keys: {e}"))?;
+    let reg = spira_config::registry::Registry::load(home)?;
+    spira_config::validate_with(&text, &reg).map(|(doc, _)| doc).map_err(|e| format!("{FIXTURE}: {e}"))
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -116,5 +126,15 @@ mod tests {
         check(t.path(), None).expect("the tip alone is consistent: it retired the key from both");
         let e = check(t.path(), Some("main")).unwrap_err();
         assert!(e.contains("SPIRA_ARCHIVIST_EVERY") && e.contains("landing ref"), "{e}");
+    }
+
+    #[test]
+    fn a_tip_that_deleted_a_key_keeps_its_fixture_line_while_the_landing_ref_requires_it() {
+        let t = copy_tree();
+        testkit::git(t.path(), &["init", "-q", "-b", "main"]);
+        testkit::git(t.path(), &["add", "-A"]);
+        testkit::git(t.path(), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "landing ref"]);
+        std::fs::remove_file(t.path().join("spira/conf.d/SPIRA_ARCHIVIST_EVERY")).unwrap();
+        check(t.path(), Some("main")).expect("the fixture still declares the key the landing ref requires");
     }
 }
