@@ -1,15 +1,16 @@
-//! `cockpit-tier-60s`: the pane's minute tier, probes `slots`, `reachable` and `tsd`. Replaces
-//! those registry rows of `cockpit-collect` and their re-exec and `timeout` chain. Pattern P1.
+//! `cockpit-tier-60s`: the pane's minute tier, probes `slots`, `reachable`, `tsd`,
+//! `admission`, `well`, `repo_labels`, `strands`, `ratelim`, `core`, `queue` and `mail`. Pattern P1.
 //! Contract: `wiki/projects/spira/designs/tasks/cockpit-tier-60s.md`; siblings
-//! [`super::cockpit_tier_5s`] (which lists the rows that become projections) and
+//! [`super::cockpit_tier_5s`] and
 //! [`super::cockpit_tier_600s`]. The decision, the merge and the runners are shared in
 //! [`super::cockpit`]; the probes run in-process (`cockpit_collect::tiers`).
 //!
 //! # Tick
 //!
-//! Every 60 s (`SPIRA_RUNTIME_COCKPIT_TIER_60S_SECS`). The three probes ride one observe
-//! ([`OBSERVE`], input naming [`PROBES`]); each keeps its own timeout (`slots` 20 s, `tsd` 30 s,
-//! `reachable` 120 s) and the registry's skip-if-running when it overruns the cadence.
+//! Every 60 s (`SPIRA_RUNTIME_COCKPIT_TIER_60S_SECS`). The eleven probes ride one observe
+//! ([`OBSERVE`], input naming [`PROBES`]); each keeps its own timeout (`slots` and `admission` 20 s,
+//! `tsd` 30 s, `well`, `repo_labels`, `strands`, `ratelim`, `queue` and `mail` 90 s, `reachable` and
+//! `core` 120 s, the tier deadline) and skip-if-running when it overruns the cadence.
 //!
 //! # Observe
 //!
@@ -44,7 +45,7 @@
 //!
 //! # Replaces
 //!
-//! Registry rows `slots`, `reachable`, `tsd` and their chain; per minute `bash lib.sh`
+//! The `slots`, `reachable` and `tsd` rows and their chain; per minute `bash lib.sh`
 //! ×(2 + 1 + runes), `spira-lc` ×4 or more, `tsd-query.sh` ×2, `tsd-write` ×1. Pinned config:
 //! [`KEYS`]; the lanes cap and the ctrl path have no key of their own today.
 //!
@@ -71,12 +72,24 @@ pub const SLOTS_SAMPLE: &str = "cockpit-tier-60s.slots_sample";
 pub const EFFECTS: &[&str] = &[OBSERVE, PUBLISH, SLOTS_SAMPLE];
 
 /// The sub-probes [`OBSERVE`] runs, each with its own timeout.
-pub const PROBES: &[(&str, u64)] = &[("cockpit.slots", 20_000), ("cockpit.reachable", 120_000), ("cockpit.tsd", 30_000)];
+pub const PROBES: &[(&str, u64)] = &[
+    ("cockpit.slots", 20_000),
+    ("cockpit.reachable", 120_000),
+    ("cockpit.tsd", 30_000),
+    ("cockpit.admission", 20_000),
+    ("cockpit.well", 90_000),
+    ("cockpit.repo_labels", 90_000),
+    ("cockpit.strands", 90_000),
+    ("cockpit.ratelim", 90_000),
+    ("cockpit.core", OBSERVE_DEADLINE_MS),
+    ("cockpit.queue", 90_000),
+    ("cockpit.mail", 90_000),
+];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_60S_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, WRITE_KEY, "SPIRA_LC_TIMEOUT", "SPIRA_BDQ_CONN_RETRIES"];
 
-const OBSERVE_DEADLINE_MS: u64 = 120_000;
+pub const OBSERVE_DEADLINE_MS: u64 = 120_000;
 const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: OBSERVE_DEADLINE_MS };
 
 pub const TRANSITIONS: &[Transition<FragmentState>] = FRAGMENT_TRANSITIONS;

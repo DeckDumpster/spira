@@ -1,14 +1,14 @@
-//! `cockpit-tier-600s`: the pane's slow tier, probes `livelock` and `drift`. Replaces those
-//! registry rows of `cockpit-collect` and their re-exec and `timeout` chain. Pattern P1.
+//! `cockpit-tier-600s`: the pane's slow tier, probes `livelock`, `drift`,
+//! `core_detail`, `sops`, `dup_refs`, `unsent`, `statute`, `czar_triggers` and `hel`. Pattern P1.
 //! Contract: `wiki/projects/spira/designs/tasks/cockpit-tier-600s.md`; siblings
 //! [`super::cockpit_tier_5s`] and [`super::cockpit_tier_60s`]. The decision, the merge and the
 //! runners are shared in [`super::cockpit`]; the probes run in-process (`cockpit_collect::tiers`).
 //!
 //! # Tick
 //!
-//! Every 600 s (`SPIRA_RUNTIME_COCKPIT_TIER_600S_SECS`). Both probes ride one observe
-//! ([`OBSERVE`], input naming [`PROBES`]), timeout 300 s each. The effector class cap (S3)
-//! keeps it to one slow probe at a time.
+//! Every 600 s (`SPIRA_RUNTIME_COCKPIT_TIER_600S_SECS`). The nine probes ride one observe
+//! ([`OBSERVE`], input naming [`PROBES`]), timeout 300 s each except `core_detail`, which gets the
+//! tier deadline. They start together, as `tiers::observe` starts every probe of a tier.
 //!
 //! # Observe
 //!
@@ -40,7 +40,7 @@
 //!
 //! # Replaces
 //!
-//! Registry rows `livelock`, `drift` and their chain; per 10 min `bash drift.sh` ×2 and its
+//! The `livelock` and `drift` rows and their chain; per 10 min `bash drift.sh` ×2 and its
 //! children, `spira-lc content` ×2–4, the `bd`-via-strand list reads, `git rev-list` per ref.
 //! Pinned config: [`KEYS`]; the strand `Config` resolves from `strand::config::Live`.
 //!
@@ -66,12 +66,22 @@ pub const PUBLISH: &str = "cockpit-tier-600s.publish";
 pub const EFFECTS: &[&str] = &[OBSERVE, PUBLISH];
 
 /// The sub-probes [`OBSERVE`] runs, each with its own timeout.
-pub const PROBES: &[(&str, u64)] = &[("cockpit.livelock", 300_000), ("cockpit.drift", 300_000)];
+pub const PROBES: &[(&str, u64)] = &[
+    ("cockpit.livelock", 300_000),
+    ("cockpit.drift", 300_000),
+    ("cockpit.core_detail", OBSERVE_DEADLINE_MS),
+    ("cockpit.sops", 300_000),
+    ("cockpit.dup_refs", 300_000),
+    ("cockpit.unsent", 300_000),
+    ("cockpit.statute", 300_000),
+    ("cockpit.czar_triggers", 300_000),
+    ("cockpit.hel", 300_000),
+];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_600S_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, WRITE_KEY, "SPIRA_LOCAL_UNITS"];
 
-const OBSERVE_DEADLINE_MS: u64 = 600_000;
+pub const OBSERVE_DEADLINE_MS: u64 = 600_000;
 const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: OBSERVE_DEADLINE_MS };
 
 pub const TRANSITIONS: &[Transition<FragmentState>] = FRAGMENT_TRANSITIONS;
