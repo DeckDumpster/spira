@@ -214,7 +214,7 @@ is  "bd's own status field is unmoved by slay now" in_progress "$(status_of sp-s
 is  "the lifecycle row is released instead — WORKING to READY" READY "$(lc_state_of sp-s1)"
 is  "bead is unassigned"       ""   "$(assignee_of sp-s1)"
 is  "worktree is gone"         no   "$([ -d "$SPIRA_RUN/worktree/sp-s1" ] && echo yes || echo no)"
-is  "branch is gone"           1    "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s1 2>/dev/null; echo $?)"
+is  "branch carrying commits is kept for the next builder" 0 "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s1 2>/dev/null; echo $?)"
 is  "no marker file is left"   no   "$([ -f "$SPIRA_RUN/sp-s1.slain" ] && echo yes || echo no)"
 want "reports slain"            "slain: sp-s1" "$out"
 teardown sp-s1
@@ -326,7 +326,7 @@ teardown sp-wip1
 seed sp-wip2
 make_work sp-wip2
 
-out="$(slay --bead sp-wip2 2>&1)"
+out="$(slay --bead sp-wip2 --close "drop" 2>&1)"
 is  "clean slay: branch goes to refs/slain" 0 \
     "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-wip2 2>/dev/null; echo $?)"
 is  "clean slay: branch removed from refs/heads" 1 \
@@ -345,11 +345,30 @@ echo "parking:"
 seed sp-s5
 make_work sp-s5
 
-out="$(slay --bead sp-s5 2>&1)"
+bdq label add sp-s5 "branch:spira/sp-s5" >/dev/null 2>&1
+out="$(slay --bead sp-s5 --close "drop" 2>&1)"
+if has_label sp-s5 "branch:spira/sp-s5"; then bad "close drops the branch: label" "still present"
+else ok "close drops the branch: label"; fi
 is   "branch with unique work is parked" 0 \
      "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-s5 2>/dev/null; echo $?)"
 want "reports parking"                    "parked" "$out"
 teardown sp-s5
+
+# RELEASE keeps the branch: default disposition, clean worktree, one commit.
+seed sp-s5r
+make_work sp-s5r
+_tip="$(git -C "$REPO" rev-parse spira/sp-s5r)"
+bdq label add sp-s5r "branch:spira/sp-s5r" >/dev/null 2>&1
+out="$(slay --bead sp-s5r 2>&1)"
+is   "release keeps the branch at its commit" "$_tip" \
+     "$(git -C "$REPO" rev-parse refs/heads/spira/sp-s5r 2>/dev/null)"
+is   "release removes the worktree"           no \
+     "$([ -d "$SPIRA_RUN/worktree/sp-s5r" ] && echo yes || echo no)"
+is   "release does not park"                  1 \
+     "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-s5r 2>/dev/null; echo $?)"
+if has_label sp-s5r "branch:spira/sp-s5r"; then ok "release keeps the branch: label"
+else bad "release keeps the branch: label" "labels: $(bdq label list sp-s5r 2>&1)"; fi
+teardown sp-s5r
 
 # THE PAIR: a branch at main carries nothing worth keeping.
 seed sp-s6
