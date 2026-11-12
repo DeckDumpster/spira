@@ -466,7 +466,7 @@ mod tests {
         assert!(c.is_none() && unreachable);
         let (c, _, unreachable) = lc_claim_loop(&ids, &[], None, "b/x", |_| true, |_| LC_REFUSED);
         assert!(c.is_none() && !unreachable, "refusals are an answer: idle");
-        let (c, _, unreachable) = lc_claim_loop(&[], &[], None, "b/x", |_| true, |_| unreachable!());
+        let (c, _, unreachable) = lc_claim_loop(&[], &[], None, "b/x", |_| true, |_| -> i32 { unreachable!() });
         assert!(c.is_none() && !unreachable);
     }
 
