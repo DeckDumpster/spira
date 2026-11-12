@@ -582,12 +582,12 @@ pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2
         (
             "build",
             format!(
-                "cargo test --no-run --timings --profile dwarf {cfg} -j {jobs} --features integration{p}{built}"
+                "cargo test --no-run --timings --profile dwarf --locked {cfg} -j {jobs} --features integration{p}{built}"
             ),
         ),
         (
             "test",
-            format!("cargo test --profile dwarf {cfg} -j {jobs} --features integration{p} -- --test-threads={jobs}"),
+            format!("cargo test --profile dwarf --locked {cfg} -j {jobs} --features integration{p} -- --test-threads={jobs}"),
         ),
     ]
 }
@@ -1139,12 +1139,12 @@ mod tests {
         assert_eq!(b.0, "build");
         assert_eq!(
             b.1,
-            "cargo test --no-run --timings --profile dwarf --config profile.dwarf.incremental=false -j 4 --features integration -p gate -p queue"
+            "cargo test --no-run --timings --profile dwarf --locked --config profile.dwarf.incremental=false -j 4 --features integration -p gate -p queue"
         );
         assert_eq!(t.0, "test");
         assert_eq!(
             t.1,
-            "cargo test --profile dwarf --config profile.dwarf.incremental=false -j 4 --features integration -p gate -p queue -- --test-threads=4"
+            "cargo test --profile dwarf --locked --config profile.dwarf.incremental=false -j 4 --features integration -p gate -p queue -- --test-threads=4"
         );
     }
 

@@ -519,8 +519,9 @@ art_id="$(art_key "$art_tree" "$(rustc -vV | sed -n 's/^\(release\|commit-hash\)
 t0=$(date +%s)
 if art_fetch "$art_id" ~/round-work/target/release; then
     echo "round-vm: used the stored build of this tree; cargo did not run" >&2
+    cargo fetch -q --locked >/dev/null 2>&1 || true
 else
-    if ! cargo build -q --profile release --workspace --config profile.release.incremental=false; then
+    if ! cargo build -q --profile release --workspace --locked --config profile.release.incremental=false; then
         echo "round-vm: the round's workspace build failed, built $sccache_mode" >&2
         tail -40 "$SCCACHE_ERROR_LOG" >&2 2>/dev/null || true
         exit 4
@@ -539,7 +540,7 @@ unit_env() {
         UNIT_COV_ENV="$unit_cov_env" bash -c 'eval "$UNIT_COV_ENV"; exec cargo "$@"' _ "$@"
 }
 unit_cargo() {
-    unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false "$@"
+    unit_env test --profile unittest --workspace --locked --features integration --config profile.unittest.incremental=false "$@"
 }
 write_unit_nextest_config() {
     printf '[profile.default]\nslow-timeout = { period = "%ss", terminate-after = %s }\n' "$1" "$2" > "$3"
@@ -3597,7 +3598,7 @@ mod tests {
     #[test]
     fn the_round_builds_once_in_a_clean_tree_with_testenvs_own_flags() {
         assert!(!REMOTE_SCRIPT.contains("ln -sfn"), "a target symlink dirties the tree and dangles in the container");
-        assert!(REMOTE_SCRIPT.contains(&format!("cargo build -q --profile release --workspace {}", spira_config::build::one_shot_words("release"))));
+        assert!(REMOTE_SCRIPT.contains(&format!("cargo build -q --profile release --workspace --locked {}", spira_config::build::one_shot_words("release"))));
     }
 
     #[test]
@@ -3716,6 +3717,14 @@ mod tests {
         let err = String::from_utf8_lossy(&o.stderr).to_string();
         let out = fs::read_to_string(home.join("round-runner.out")).unwrap_or_default();
         (o.status.code().unwrap_or(-1), err, out)
+    }
+
+    #[test]
+    fn a_stored_build_still_fills_the_cargo_home_the_lint_resolves_against() {
+        let stored = REMOTE_SCRIPT.find("used the stored build of this tree").unwrap();
+        let fetch = REMOTE_SCRIPT.find("cargo fetch -q --locked").expect("a stored build skips cargo, leaving the cargo home without a registry for the offline lint");
+        let lint = REMOTE_SCRIPT.find("target/release/spira-lint\"").unwrap();
+        assert!(stored < fetch && fetch < lint);
     }
 
     #[test]
@@ -3864,7 +3873,7 @@ mod tests {
         let run = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast").unwrap();
         assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
         let body = script_fn("unit_cargo");
-        assert!(body.contains("unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false"), "{body}");
+        assert!(body.contains("unit_env test --profile unittest --workspace --locked --features integration --config profile.unittest.incremental=false"), "{body}");
         assert_eq!(REMOTE_SCRIPT.matches("exec cargo \"$@\"").count(), 1, "one definition of the cargo environment, shared by compile and both runs");
     }
 
