@@ -326,7 +326,7 @@ teardown sp-wip1
 seed sp-wip2
 make_work sp-wip2
 
-out="$(slay --bead sp-wip2 2>&1)"
+out="$(slay --bead sp-wip2 --close "drop" 2>&1)"
 is  "clean slay: branch goes to refs/slain" 0 \
     "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-wip2 2>/dev/null; echo $?)"
 is  "clean slay: branch removed from refs/heads" 1 \
@@ -345,11 +345,23 @@ echo "parking:"
 seed sp-s5
 make_work sp-s5
 
-out="$(slay --bead sp-s5 2>&1)"
+out="$(slay --bead sp-s5 --close "drop" 2>&1)"
 is   "branch with unique work is parked" 0 \
      "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-s5 2>/dev/null; echo $?)"
 want "reports parking"                    "parked" "$out"
 teardown sp-s5
+
+# RELEASE keeps the branch: default disposition, clean worktree, one commit.
+seed sp-s5r
+make_work sp-s5r
+_tip="$(git -C "$REPO" rev-parse spira/sp-s5r)"
+out="$(slay --bead sp-s5r 2>&1)"
+is   "release keeps the branch at its commit" "$_tip" \
+     "$(git -C "$REPO" rev-parse refs/heads/spira/sp-s5r 2>/dev/null)"
+is   "release does not park"                  1 \
+     "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-s5r 2>/dev/null; echo $?)"
+want "release keeps the branch: label"        "branch:spira/sp-s5r" "$out"
+teardown sp-s5r
 
 # THE PAIR: a branch at main carries nothing worth keeping.
 seed sp-s6

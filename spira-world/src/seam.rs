@@ -180,12 +180,15 @@ elif [ -n "$repo" ]; then
             fi
         fi
     fi
-    parked=""
+    parked=""; BRANCH_KEPT=0
     if [ -n "$tip" ] && [ "$fail" = 0 ] && [ "$WIP_COMMITTED" = 0 ]; then
         if base="$(spira_landref "$repo" 2>/dev/null)"; then
             ahead="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo 0)"
             if [ "${ahead:-0}" -gt 0 ] && ! spira-lc content-landed "$repo" "$br" "$base" 2>/dev/null; then
-                if git -C "$repo" update-ref "refs/slain/$ID" "$br" 2>/dev/null; then
+                if [ "$MODE" = reopen ]; then
+                    BRANCH_KEPT=1
+                    say "work: $br carries work $base does not — kept in refs/heads for the next builder"
+                elif git -C "$repo" update-ref "refs/slain/$ID" "$br" 2>/dev/null; then
                     parked="refs/slain/$ID"
                     say "work: $br carries work $base does not — parked at $parked"
                 else
@@ -195,7 +198,7 @@ elif [ -n "$repo" ]; then
             fi
         fi
     fi
-    if [ -n "$tip" ] && [ "$fail" = 0 ] && [ "$WIP_COMMITTED" = 0 ]; then
+    if [ -n "$tip" ] && [ "$fail" = 0 ] && [ "$WIP_COMMITTED" = 0 ] && [ "$BRANCH_KEPT" = 0 ]; then
         if spira_destroy_branch "$ID" "$br" "$repo" "slain: $WHY" slain; then
             nuked="branch $br deleted at $tip${parked:+, kept at $parked}"; say "work: $nuked"
         else
@@ -208,6 +211,7 @@ fi
 
 if [ -n "$nuked" ]; then bdq label remove "$ID" "branch:$br" >/dev/null 2>&1 || true; fi
 _work_msg="${nuked:-work kept}${saved:+; uncommitted changes salvaged to $saved}"
+[ "$BRANCH_KEPT" = 1 ] && _work_msg="branch $br kept in refs/heads with its commits"
 [ "$WIP_COMMITTED" = 1 ] && _work_msg="wip committed to $br; branch kept in refs/heads; patch at $saved"
 note="Slain by the operator: $WHY. Dwarf ${name:-?}${pid:+ (pid $pid)} stopped${unit:+ via $unit}. ${_work_msg}. No attempt charged."
 case "$MODE" in
@@ -220,7 +224,7 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; b=d[0] if d else {}
 print("bead: %s status=%s assignee=%s labels=%s" % (b.get("id"), b.get("status"), b.get("assignee") or "-", ",".join(b.get("labels") or [])))' 2>/dev/null
 
-[ "$KEEP" = 1 ] || [ "$WIP_COMMITTED" = 1 ] || [ -z "$repo" ] || ! git -C "$repo" show-ref --verify -q "refs/heads/$br" || { say "verify: $br still exists"; fail=1; }
+[ "$KEEP" = 1 ] || [ "$WIP_COMMITTED" = 1 ] || [ "${BRANCH_KEPT:-0}" = 1 ] || [ -z "$repo" ] || ! git -C "$repo" show-ref --verify -q "refs/heads/$br" || { say "verify: $br still exists"; fail=1; }
 printf '___SLAY_RESULT___\t%s\n' "$fail"
 "#;
 

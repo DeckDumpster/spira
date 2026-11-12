@@ -42,10 +42,12 @@ OPTIONAL
 
 WHAT HAPPENS TO THE WORK WITHOUT --keep-work
   It is RETIRED, not lost. Uncommitted changes are salvaged to SPIRA_RUN/reaped as a
-  patch; a branch carrying commits the base does not have is parked at refs/slain/<id>,
-  a real ref that survives gc; and if that parking fails the deletion is REFUSED. Only a
-  branch holding nothing the base lacks is simply removed. Use --keep-work when you want
-  the branch left in refs/heads, not because you fear losing the commits.
+  patch and committed to the branch. With --reopen (the default) a branch carrying commits
+  the base lacks stays at refs/heads/spira/<id> with its branch: label, so the next builder
+  continues from it; the worktree is removed. With --close such a branch is parked at
+  refs/slain/<id>, a real ref that survives gc; if parking fails the deletion is REFUSED.
+  A branch holding nothing the base lacks is simply removed. Use --keep-work to leave the
+  worktree in place too.
 
 EXIT
   0  the dwarf was stopped and the bead says what is true
