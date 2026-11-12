@@ -1036,8 +1036,7 @@ attempts_of() {
 # Failure is silent — a missed counter is acceptable; a crash in a caller is not.
 #
 # _bump_write_event_try — the real write, reporting whether it was accepted. PORTED TO
-# spira-claim (wave 4.18, sp-sn1re): `spira-claim write-event` is the same INSERT (now
-# properly quoted through store::sql_quote rather than interpolated raw), reached by name
+# spira-claim (wave 4.18, sp-sn1re): `spira-claim write-event` is the same INSERT, reached by name
 # so doctor's events-substrate probe and every test fixture that calls this directly with
 # an arbitrary event_type (census's recurred/reclaimed local wrappers) keep working.
 # _bump_write_event must keep returning 0: dwarf.sh runs under `set -e` and calls
