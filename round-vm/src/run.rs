@@ -860,7 +860,7 @@ lint_rc=0
 lint_secs=0
 if [ -n "$lint" ]; then
     t_lint=$(date +%s)
-    "$HOME/round-work/target/release/spira-lint" --root "$HOME/round-work" --base origin/base > ~/round-lint.out 2> ~/round-lint.err
+    CARGO_HOME="$CARGO_HOME" "$HOME/round-work/target/release/spira-lint" --root "$HOME/round-work" --base origin/base > ~/round-lint.out 2> ~/round-lint.err
     lint_rc=$?
     lint_secs=$(( $(date +%s) - t_lint ))
     if [ "$lint_rc" -ne 0 ]; then
@@ -3661,6 +3661,11 @@ mod tests {
         let err = String::from_utf8_lossy(&o.stderr).to_string();
         let out = fs::read_to_string(home.join("round-runner.out")).unwrap_or_default();
         (o.status.code().unwrap_or(-1), err, out)
+    }
+
+    #[test]
+    fn the_lint_resolves_against_the_cargo_home_the_build_used() {
+        assert!(REMOTE_SCRIPT.contains("CARGO_HOME=\"$CARGO_HOME\" \"$HOME/round-work/target/release/spira-lint\""));
     }
 
     #[test]

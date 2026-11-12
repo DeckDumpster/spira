@@ -48,9 +48,13 @@ pub fn version_tuple(v: &str) -> Option<Vec<u64>> {
 /// what the manifests resolve to — the check the forge's `--locked` build makes.
 pub fn lock_drift(root: &std::path::Path) -> Result<Option<String>, String> {
     // batch-job: cargo resolves the whole workspace; 120 s hang guard
-    let out = std::process::Command::new("timeout")
-        .args(["120", "cargo", "metadata", "--locked", "--offline", "--format-version", "1"])
-        .current_dir(root)
+    let mut cmd = std::process::Command::new("timeout");
+    cmd.args(["120", "cargo", "metadata", "--locked", "--offline", "--format-version", "1"])
+        .current_dir(root);
+    if let Some(home) = std::env::var_os("CARGO_HOME").filter(|h| !h.is_empty()) {
+        cmd.env("CARGO_HOME", home);
+    }
+    let out = cmd
         .output()
         .map_err(|e| format!("cargo metadata: {e}"))?;
     if out.status.success() {
@@ -59,11 +63,18 @@ pub fn lock_drift(root: &std::path::Path) -> Result<Option<String>, String> {
     if out.status.code() == Some(124) {
         return Err("cargo metadata --locked --offline: timed out after 120s".into());
     }
-    let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    if why.contains("lock file") {
-        Ok(Some(why))
+    refusal(&String::from_utf8_lossy(&out.stderr))
+}
+
+/// Reads a failed `cargo metadata`'s stderr: drift when cargo names the lock file, otherwise a
+/// refusal carrying cargo's last `error` line — the warnings before it are not the reason.
+pub fn refusal(stderr: &str) -> Result<Option<String>, String> {
+    let stderr = stderr.trim();
+    let error = stderr.lines().rev().find(|l| l.starts_with("error")).unwrap_or(stderr);
+    if stderr.contains("lock file") {
+        Ok(Some(error.to_string()))
     } else {
-        Err(format!("cargo metadata --locked --offline failed for another reason: {why}"))
+        Err(format!("cargo metadata --locked --offline failed for another reason: {error}"))
     }
 }
 
@@ -220,6 +231,21 @@ mod tests {
         let t = project("");
         let tree = Tree::from_paths(t.path(), ["a/Cargo.toml"], Vec::<String>::new());
         assert!(tree.entries.iter().any(|e| LockfileLint::default().applies_to(e)));
+    }
+
+    #[test]
+    fn a_failure_after_warnings_reports_the_error_line_not_the_warnings() {
+        let stderr = "warning: profiles for the non root package will be ignored\nwarning: another\nerror: no matching package named `x` found\n";
+        let why = refusal(stderr).unwrap_err();
+        assert!(why.contains("no matching package named `x`"), "{why}");
+        assert!(!why.contains("profiles"), "{why}");
+    }
+
+    #[test]
+    fn a_lock_file_error_after_warnings_is_drift_carrying_the_error_line() {
+        let stderr = "warning: w\nerror: the lock file /r/Cargo.lock needs to be updated but --locked was passed\n";
+        let why = refusal(stderr).unwrap().unwrap();
+        assert!(why.starts_with("error: the lock file"), "{why}");
     }
 
     #[test]
