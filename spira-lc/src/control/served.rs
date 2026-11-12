@@ -330,6 +330,50 @@ fn dispatch_sections(args: &[String]) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use runtime::ports::VirtualClock;
+
+    fn slow_reads(steady_ms: u64) -> Options {
+        let clock = VirtualClock::new(0);
+        let tick = clock.clone();
+        Options {
+            max_read_ms: steady_ms,
+            clock: Arc::new(clock),
+            read_probe: Some(Arc::new(move || tick.advance(5 * steady_ms))),
+            ..Options::default()
+        }
+    }
+
+    fn seeded(tag: &str) -> (testkit::TempDir, String) {
+        let dir = testkit::TempDir::new(tag);
+        let path = dir.join("control.db");
+        let seed = SqliteBackend::open(&path, Options::default()).unwrap();
+        seed.bulk_load(2, vec![("k".to_string(), b"v".to_vec())]).unwrap();
+        drop(seed);
+        let p = path.to_str().unwrap().to_string();
+        (dir, p)
+    }
+
+    #[test]
+    fn a_build_held_to_the_steady_read_limit_ends() {
+        let (_dir, p) = seeded("lc-served-steady");
+        let Err(err) = modeled(&p, slow_reads(1_000), 0) else { panic!("a build held to the steady limit must end") };
+        assert!(err.contains(state_store::READ_ENDED), "{err}");
+    }
+
+    #[test]
+    fn a_read_model_build_slower_than_the_steady_limit_opens_on_its_own_budget() {
+        let (_dir, p) = seeded("lc-served-budget");
+        let built = modeled(&p, slow_reads(1_000), BUILD_READ_MS).expect("the build has its own budget");
+        assert_eq!(built.size().0, 1);
+    }
+
+    #[test]
+    fn reads_after_the_build_are_held_to_the_steady_limit_again() {
+        let (_dir, p) = seeded("lc-served-after");
+        let built = modeled(&p, slow_reads(1_000), BUILD_READ_MS).unwrap();
+        let later = state_store::Backend::log(built.inner(), 0, 10).expect_err("a read after the build is held to the steady limit");
+        assert!(state_store_sqlite::is_read_ended(&later), "{later}");
+    }
 
     #[test]
     fn the_new_verbs_take_no_name_an_existing_verb_answers() {
