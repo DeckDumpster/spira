@@ -14,7 +14,7 @@
 //!
 //! Probe `batcher.local.observe` (deadline 10 s) returns one snapshot per admitted repo, from:
 //!
-//! - **LcClient (S7a):** `list --state SUBMITTED,CERTIFIED --snapshot` — pool and `sifted_tip` (`io.rs:212`, `:928-937`); `list --ids` for blockers (`io.rs:221`); `show <id>` for `stack` and the gate-red mark (`io.rs:244`, `:1614-1626`); `plan items --full --ids` for title, priority and dependencies (`io.rs:372-377`); `plan items --external-contains basefail:<repo>:` (`io.rs:495`).
+//! - **LcClient (S7a):** `list --state SUBMITTED,CERTIFIED` — pool and `sifted_tip` (`io.rs:212`, `:928-937`); `list --ids` for blockers (`io.rs:221`); `show <id>` for `stack` and the gate-red mark (`io.rs:244`, `:1614-1626`); `plan items --full --ids` for title, priority and dependencies (`io.rs:372-377`); `plan items --external-contains basefail:<repo>:` (`io.rs:495`).
 //! - **Round projection (S7b):** the open round id, members, head, worktree and phase, read in-process from the store's watched projection (`store_view`, `io::open_rounds`), no `queue round status` — and whether a `round certify` holds the round (`certify-<batch>.lock`, `io.rs:2316-2327`). The snapshot carries the "driven" bit from the projection.
 //! - **Config (S10), pinned:** the repo registry (`io.rs:135`; `spira_config::repos`), and the keys below.
 //! - Git is read at the edge (allowed child): branch tips `for-each-ref refs/heads/spira/*` (`io.rs:394-412`).

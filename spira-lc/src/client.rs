@@ -62,14 +62,13 @@ pub fn try_socket(args: &[String]) -> Option<(i32, String)> {
     if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-apply-ddl") | Some("admin-create-store") | Some("admin-migrate") | Some("admin-grants") | Some("admin-accounts") | Some("verify-login") | Some("classify")) {
         return None;
     }
-    if let Some(out) = crate::snapshot::answer(args) {
-        return Some((0, out));
-    }
-    let stripped = crate::snapshot::without_flag(args);
-    let args = &stripped[..];
     // One source of config (per Ryan 2026-10-05): $SPIRA_TOML's declared socket path, never
     // this process's own environment.
-    let socket_path = match route() {
+    route_call(args, route())
+}
+
+fn route_call(args: &[String], routed: Result<Route, String>) -> Option<(i32, String)> {
+    let socket_path = match routed {
         Ok(Route::Direct) => return None,
         Ok(Route::Service(p)) => p,
         Err(e) => return Some((2, e)),
@@ -120,6 +119,16 @@ mod tests {
         for verb in ["admin-apply-ddl", "admin-create-store", "admin-migrate", "admin-grants", "admin-accounts", "verify-login", "serve", "classify"] {
             assert!(super::try_socket(&[verb.to_string(), "/x".to_string()]).is_none(), "{verb}");
         }
+    }
+
+    #[test]
+    fn a_list_carrying_an_old_snapshot_flag_still_reaches_the_service() {
+        let dir = testkit::TempDir::new("lc-client-flag");
+        let path = dir.join("no-such.sock");
+        let args: Vec<String> = ["list", "--live", "--snapshot"].map(String::from).to_vec();
+        let (code, out) = super::route_call(&args, Ok(super::Route::Service(path.to_str().unwrap().into()))).expect("a routed call is answered");
+        assert_eq!(code, 2, "{out}");
+        assert!(out.contains(path.to_str().unwrap()), "the call reached the socket: {out}");
     }
 
     #[test]

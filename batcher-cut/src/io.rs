@@ -283,7 +283,7 @@ pub fn lc_rows(env: &Env) -> Result<Vec<serde_json::Value>, String> {
     }
     let rows: Vec<serde_json::Value> = serde_json::from_str(&lcq(
         env,
-        &["list", "--state", "SUBMITTED,CERTIFIED", "--snapshot"],
+        &["list", "--state", "SUBMITTED,CERTIFIED"],
     )?)
     .map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
     *held = Some(rows.clone());

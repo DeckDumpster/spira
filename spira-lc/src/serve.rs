@@ -145,19 +145,6 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("spira-lc serve: SPIRA_LC_STORE_PATH is unset: every lifecycle verb answers cannot-tell");
     }
     {
-        match (spira_config::process::cfg_parse::<u64>("SPIRA_LC_SNAPSHOT_SECS"), spira_config::process::cfg("SPIRA_LC_SNAPSHOT")) {
-            (Ok(secs), Ok(path)) if secs > 0 && !path.is_empty() => {
-                let refresher = Arc::clone(&conn);
-                std::thread::spawn(move || loop {
-                    if let Err(e) = crate::snapshot::write(&refresher, &path) {
-                        eprintln!("spira-lc serve: snapshot {path}: {e}");
-                    }
-                    std::thread::sleep(Duration::from_secs(secs));
-                });
-            }
-            (Ok(_), Ok(_)) => {}
-            (Err(e), _) | (_, Err(e)) => eprintln!("spira-lc serve: snapshot not written: {e}"),
-        }
         if let Some(mut shipping) = shipping {
             std::thread::spawn(move || {
                 let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();

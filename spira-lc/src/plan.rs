@@ -65,8 +65,6 @@ pub fn database_of(db: &std::path::Path) -> Result<String, String> {
     }
     Ok(format!("`{name}`"))
 }
-/// The planning fields a plain list joins onto a lifecycle row.
-pub const JOINED: [&str; 2] = ["title", "priority"];
 
 const RFC3339: &str = "%Y-%m-%dT%H:%i:%sZ";
 

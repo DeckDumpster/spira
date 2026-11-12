@@ -631,7 +631,7 @@ pub trait Lc {
     fn probe(&self) -> Result<(), String>;
     /// `list [--state S]`: every bead row (with `since`). Err = cannot tell.
     fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String>;
-    /// `list --state S --snapshot`: the same rows from the shared snapshot, for a poller that
+    /// `list --state S`: the same rows, for a poller that
     /// never reads back its own write. Defaults to the store read.
     fn polled_rows(&self, state: &str) -> Result<Vec<LcBeadRow>, String> {
         self.bead_rows(Some(state))

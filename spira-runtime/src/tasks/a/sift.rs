@@ -26,7 +26,7 @@
 //!
 //! | Field | Today | From (after the move) |
 //! |---|---|---|
-//! | `rows` — SUBMITTED + CERTIFIED with `tip`, `holds`, `ejected_red_tip`, `sifted_tip` | `spira-lc list --state SUBMITTED,CERTIFIED --snapshot` fork (`rs:252-258`) | LcClient `list --state SUBMITTED,CERTIFIED --snapshot` |
+//! | `rows` — SUBMITTED + CERTIFIED with `tip`, `holds`, `ejected_red_tip`, `sifted_tip` | `spira-lc list --state SUBMITTED,CERTIFIED` fork (`rs:252-258`) | LcClient `list --state SUBMITTED,CERTIFIED` |
 //! | `outside` rows of stacked-on beads not in the pool | `spira-lc list --ids` (`rs:260-266`) | LcClient `list --ids` |
 //! | `stack[id]`, `prereq_state[id]` | `spira-lc show <id>` per member and per prerequisite (`rs:394-438`) | LcClient `show` (batched) |
 //! | `items[id]` — description + notes (target verdict) | `spira-lc plan items --full --ids` (`rs:481-513`) | LcClient `plan items --full` |

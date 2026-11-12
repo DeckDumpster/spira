@@ -484,7 +484,7 @@ fn a_list_read_is_answered_from_the_held_rows_and_a_stale_view_refuses_it() {
         assert_eq!(ids(&["list"]), ["sp-a", "sp-b", "sp-c", "sp-d"]);
         assert_eq!(w.script.lock().unwrap().seen.len(), asked, "answering asks the store nothing");
 
-        for argv in [&["list", "--batches"][..], &["list", "--delivery"], &["list", "--snapshot"], &["list", "--live", "--window", "5"], &["show", "sp-a"], &[]] {
+        for argv in [&["list", "--batches"][..], &["list", "--delivery"], &["list", "--live", "--window", "5"], &["show", "sp-a"], &[]] {
             assert!(w.p.list_answer(argv).is_none(), "{argv:?} is the store's to answer");
         }
 

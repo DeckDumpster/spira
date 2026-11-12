@@ -314,7 +314,7 @@ fn pool_rows(env: &Env) -> Result<Vec<Value>, String> {
     }
     let text = lcq(
         env,
-        &["list", "--state", "SUBMITTED,CERTIFIED", "--snapshot"],
+        &["list", "--state", "SUBMITTED,CERTIFIED"],
     )?;
     serde_json::from_str(&text).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))
 }
@@ -859,7 +859,7 @@ pub fn observe_repo(r: &Reads, name: &str, local: bool) -> Result<RepoFacts, Str
     let repo = find_repo(r.reg, name, local)?;
     let rows: Vec<Value> = match held_rows(&store_view::RowQuery { states: &["SUBMITTED", "CERTIFIED"], ..Default::default() }) {
         Some(rows) => rows?,
-        None => serde_json::from_str(&lcq_with(r.lc, &["list", "--state", "SUBMITTED,CERTIFIED", "--snapshot"])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?,
+        None => serde_json::from_str(&lcq_with(r.lc, &["list", "--state", "SUBMITTED,CERTIFIED"])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?,
     };
     let mut f = RepoFacts { rows: rows.iter().filter_map(PoolRow::of).collect(), branch_tips: branch_tips(&repo)?, ..RepoFacts::default() };
     let ids = at_live_tips(&rows, &f.branch_tips);

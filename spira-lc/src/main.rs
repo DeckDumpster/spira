@@ -54,7 +54,6 @@ mod skew;
 mod slow;
 mod store_write;
 mod unpublished;
-mod snapshot;
 mod work;
 
 use db::Conn;

@@ -306,7 +306,7 @@ fn gather() -> Snapshot {
     });
     // A dwarf's phase is on its lifecycle row (sp-vknc2j.16); the pane never scans /proc.
     let mut phases: HashMap<i64, String> = HashMap::new();
-    match lc_json(&["list", "--live", "--snapshot"]) {
+    match lc_json(&["list", "--live"]) {
         Ok(rows) => {
             for r in rows {
                 let (row, meta) = match live_row(&r) {
