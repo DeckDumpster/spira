@@ -775,6 +775,9 @@ impl SqliteBackend {
     /// Sets the longest a read may run from here on; reads already running keep their deadline.
     pub fn set_max_read_ms(&self, ms: u64) {
         self.0.max_read_ms.store(ms, Ordering::SeqCst);
+        for r in &self.0.readers {
+            let _ = lock(&r.conn).busy_timeout(Duration::from_millis(ms));
+        }
     }
 
     /// Lifts the floor: compaction may drop any revision again.
@@ -1098,6 +1101,18 @@ impl Backend for SqliteBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lowering_the_read_budget_lowers_the_readers_busy_timeout() {
+        let dir = testkit::TempDir::new("sqlite-busy");
+        let opts = Options { max_read_ms: 120_000, readers: 1, ..Options::default() };
+        let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
+        b.set_max_read_ms(1_000);
+        let busy: i64 = lock(&b.0.readers[0].conn)
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(busy, 1_000);
+    }
 
     #[test]
     fn the_successor_bounds_exactly_the_keys_under_a_prefix() {
