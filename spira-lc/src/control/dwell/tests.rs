@@ -399,3 +399,42 @@ fn a_delivery_whose_audit_recorded_no_commit_is_reported_with_an_empty_one() {
         "{d}"
     );
 }
+
+#[test]
+fn loop_transitions_and_dwell_share_one_advance() {
+    let s = fresh();
+    work(&s, "sp-a", "harness", 2_000, Some(2_500));
+    s.dwell(4_000, 100_000, None).unwrap();
+    let t = s.loop_transitions(4_000, 100_000).unwrap();
+    assert_eq!((t.scanned, t.complete), (0, true), "{t:?}");
+}
+
+#[test]
+fn the_fold_keeps_landings_and_certified_stays_by_state_whatever_the_event() {
+    let mut idx = super::LastIndex::default();
+    let mut repo = |_: &str| Ok(Some("harness".to_string()));
+    for (at, from, to) in [(100, "SUBMITTED", "CERTIFIED"), (150, "CERTIFIED", "CERTIFIED"), (400, "CERTIFIED", "LANDED"), (500, "READY", "WORKING")] {
+        idx.fold_states("sp-a", at, (from, to), &mut repo).unwrap();
+        idx.fold_states("sp-a", at, (from, to), &mut repo).unwrap();
+    }
+    let kept = &idx.transitions["sp-a"].1;
+    assert_eq!(kept.iter().map(|t| t.0).collect::<Vec<_>>(), [100, 400], "idempotent, and only moves touching LANDED or CERTIFIED");
+    idx.prune(200);
+    assert_eq!(idx.transitions["sp-a"].1.len(), 1);
+    idx.prune(1_000);
+    assert!(idx.transitions.is_empty());
+}
+
+#[test]
+fn a_stay_ending_in_the_window_is_reported_and_one_with_no_entry_in_the_index_is_not() {
+    let s = fresh();
+    s.create("sp-a", Some("harness"), Some(TIP), 1_000, &req("c")).unwrap();
+    let gate = BeadEventKind::GatePass { tip: TIP.into(), gate_key: "k".into() };
+    let out = s.apply("sp-a", &ev(BeadState::Submitted, 1, gate, 2_000), &req("g")).unwrap();
+    assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
+    let out = s.apply("sp-a", &ev(BeadState::Certified, 2, BeadEventKind::Deliver, 2_300), &req("d")).unwrap();
+    assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
+    let t = s.loop_transitions(3_000, 5_000).unwrap();
+    assert_eq!(t.stays, [(2_300, 300)], "{t:?}");
+    assert!(s.loop_transitions(3_000, 600).unwrap().stays.is_empty(), "left before the window");
+}

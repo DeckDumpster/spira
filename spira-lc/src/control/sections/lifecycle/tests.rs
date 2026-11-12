@@ -62,8 +62,12 @@ struct Rig<B: Backend> {
 }
 
 fn rig() -> Rig<MemBackend> {
+    rig_on(MemBackend::new())
+}
+
+fn rig_on<B: Backend>(backend: B) -> Rig<B> {
     let clock = VirtualClock::new(T0 * 1000);
-    let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: FLOOR_MS }).unwrap();
+    let c = Contract::open(backend, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: FLOOR_MS }).unwrap();
     Rig {
         store: Store::new(c, FLOOR_MS),
         clock,
@@ -406,4 +410,98 @@ fn the_typed_stop_rows_replace_the_halt_stamp_and_a_pause_names_its_repo_and_bea
     let kinds: Vec<(StopKind, u64)> = stops.iter().map(|e| match e { LoopEvent::Stop { kind, at, .. } => (*kind, *at), _ => panic!() }).collect();
     assert_eq!(kinds, vec![(StopKind::Halt, 100), (StopKind::Release, 200), (StopKind::Pause, 300)], "a reason outside the closed set is no stop: {stops:?}");
     assert!(matches!(&stops[2], LoopEvent::Stop { repo: Some(r), bead: Some(b), .. } if r == "harness" && b == "b-9"));
+}
+
+/// Each read a backend served, by kind, prefix and limit.
+#[derive(Default)]
+struct Counting {
+    inner: MemBackend,
+    reads: std::sync::Mutex<Vec<(&'static str, String, usize)>>,
+}
+
+impl Counting {
+    fn note(&self, kind: &'static str, key: &str, limit: usize) {
+        self.reads.lock().unwrap().push((kind, key.to_string(), limit));
+    }
+    fn take(&self) -> Vec<(&'static str, String, usize)> {
+        std::mem::take(&mut *self.reads.lock().unwrap())
+    }
+}
+
+impl Backend for Counting {
+    fn head(&self) -> state_store::Result<u64> {
+        self.inner.head()
+    }
+    fn get(&self, key: &str, at: u64) -> state_store::Result<Option<state_store::Version>> {
+        self.note("get", key, 1);
+        self.inner.get(key, at)
+    }
+    fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
+        self.note("range", prefix, limit);
+        self.inner.range(prefix, after, limit, at)
+    }
+    fn range_in_state(&self, prefix: &str, state: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
+        self.note("range_in_state", &format!("{prefix}{state}"), limit);
+        self.inner.range_in_state(prefix, state, after, limit, at)
+    }
+    fn commit(&self, expect: u64, batch: &[state_store::Write]) -> state_store::Result<u64> {
+        self.inner.commit(expect, batch)
+    }
+    fn log(&self, from: u64, max_mains: usize) -> state_store::Result<Vec<state_store::LogEntry>> {
+        self.inner.log(from, max_mains)
+    }
+    fn compact(&self, rev: u64) -> state_store::Result<()> {
+        self.inner.compact(rev)
+    }
+}
+
+#[test]
+fn publish_reads_no_record_outside_its_window() {
+    let r = rig_on(Counting::default());
+    let now = r.now();
+    r.land("b-1", "harness", now - 2 * H - 20 * MIN, now - 2 * H);
+    r.land("b-2", "harness", now - 40 * MIN, now - 30 * MIN);
+    r.land("b-3", "site", now - 5 * H, now - 4 * H);
+    r.land("old", "site", now - 3 * DAY, now - 3 * DAY + MIN);
+    r.store.contract().backend().take();
+    assert_eq!(r.publish()["published"], true);
+    assert_eq!(value(&r.status()["landed_24h"]), 3.0);
+    let reads = r.store.contract().backend().take();
+    let under = |p: &str| reads.iter().filter(|(k, key, _)| *k == "range" && key.starts_with(p)).count();
+    for prefix in [crate::control::keys::LIFECYCLE, crate::control::keys::READINESS, state_store::LOCKS_PREFIX, crate::control::keys::HISTORY] {
+        assert_eq!(under(prefix), 0, "a range under {prefix}: {reads:?}");
+    }
+    let states: Vec<_> = reads.iter().filter(|(k, _, _)| *k == "range_in_state").collect();
+    assert!(states.len() == 1 && states[0].1.to_lowercase().contains("certified"), "{states:?}");
+}
+
+#[test]
+fn a_landing_by_reclassify_counts() {
+    let r = rig();
+    let now = r.now();
+    r.store.create("rc", Some("harness"), None, (now - 2 * H) as i64, &r.req("create")).unwrap();
+    let kind = BeadEventKind::Reclassify { state: BeadState::Landed, rule: "terminal-landing-line".into() };
+    let ev = BeadEvent { expect: BeadState::Ready, version: 0, kind, actor: "classifier".into(), at: Some((now - H) as i64) };
+    let out = r.store.apply("rc", &ev, &r.req("reclassify")).unwrap();
+    assert!(matches!(out, crate::control::store::Outcome::Applied { .. }), "{out:?}");
+    r.publish();
+    assert_eq!(value(&r.status()["landed_24h"]), 1.0);
+}
+
+#[test]
+fn an_index_short_of_the_window_is_unobservable_not_zero() {
+    let r = rig();
+    let now = r.now();
+    r.land("b-1", "harness", now - 2 * H - 20 * MIN, now - 2 * H);
+    r.land("b-2", "harness", now - 40 * MIN, now - 30 * MIN);
+    crate::control::dwell::SCAN_CAP.with(|c| c.set(Some(0)));
+    r.publish();
+    crate::control::dwell::SCAN_CAP.with(|c| c.set(None));
+    let st = r.status();
+    let why = st["landed_24h"]["unobservable"].as_str().unwrap_or_else(|| panic!("not unobservable: {st}"));
+    assert!(why.contains("reaches back only to"), "{why}");
+    assert_eq!(below_floor(&st)["status"], "Unknown");
+    r.advance(2 * MIN);
+    assert_eq!(r.publish()["published"], true);
+    assert_eq!(value(&r.status()["landed_24h"]), 2.0);
 }

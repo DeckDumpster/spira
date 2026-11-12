@@ -29,6 +29,7 @@ const MIN_GAP_SECS: u64 = 50;
 const DISTANCE_OPEN: f64 = 0.05;
 const DISTANCE_CLOSE: f64 = 0.02;
 const ALL: &str = "all";
+const SHORT_INDEX: &str = "audit index short of the window";
 
 /// The loop events spira-lc does not hold itself.
 pub trait Outside {
@@ -65,14 +66,31 @@ fn windowed(m: &Measure, window: &str) -> Windowed {
     }
 }
 
-fn fields(hour: &goodput::Goodput, day: &goodput::Goodput) -> Goodput {
+/// Which windows the audit index reaches back across, and how far it does.
+struct Cover {
+    horizon: u64,
+    hour: bool,
+    day: bool,
+}
+
+impl Cover {
+    fn windowed(&self, covered: bool, m: &Measure, window: &str) -> Windowed {
+        if covered {
+            return windowed(m, window);
+        }
+        let why = format!("the audit index reaches back only to {}", rfc3339(self.horizon * 1000));
+        Windowed::Unobservable(Unobservable { unobservable: why, window: window.into() })
+    }
+}
+
+fn fields(hour: &goodput::Goodput, day: &goodput::Goodput, cover: &Cover) -> Goodput {
     Goodput {
-        goodput_ratio_1h: Some(windowed(&hour.ratio, "1h")),
-        goodput_rate_1h: Some(windowed(&hour.rate, "1h")),
-        goodput_ratio_24h: Some(windowed(&day.ratio, "24h")),
-        goodput_rate_24h: Some(windowed(&day.rate, "24h")),
-        landed_1h: Some(windowed(&hour.landed, "1h")),
-        landed_24h: Some(windowed(&day.landed, "24h")),
+        goodput_ratio_1h: Some(cover.windowed(cover.hour, &hour.ratio, "1h")),
+        goodput_rate_1h: Some(cover.windowed(cover.hour, &hour.rate, "1h")),
+        goodput_ratio_24h: Some(cover.windowed(cover.day, &day.ratio, "24h")),
+        goodput_rate_24h: Some(cover.windowed(cover.day, &day.rate, "24h")),
+        landed_1h: Some(cover.windowed(cover.hour, &hour.landed, "1h")),
+        landed_24h: Some(cover.windowed(cover.day, &day.landed, "24h")),
     }
 }
 
@@ -183,8 +201,11 @@ fn distance(rate: &Measure, floor: Option<f64>, dwell: &Measure, dwell_target: O
     })
 }
 
-fn push_metrics(call: &Call, repo: &str, hour: &goodput::Goodput, day: &goodput::Goodput) {
-    for (window, g) in [("1h", hour), ("24h", day)] {
+fn push_metrics(call: &Call, repo: &str, hour: &goodput::Goodput, day: &goodput::Goodput, cover: &Cover) {
+    for (window, g, covered) in [("1h", hour, cover.hour), ("24h", day, cover.day)] {
+        if !covered {
+            continue;
+        }
         let mut points = Vec::new();
         for (name, m) in [("spira_goodput_ratio", &g.ratio), ("spira_goodput_rate", &g.rate), ("spira_goodput_landed", &g.landed)] {
             if let Measure::Value(value) = m {
@@ -219,64 +240,77 @@ fn publish_lifecycle<B: Backend>(store: &Store<B>, call: &Call, outside: &dyn Ou
         Ok(r) => events.extend(r),
         Err(e) => return cannot(format!("the loop's rounds: {e}")),
     }
-    let records = match store.records() {
-        Ok((r, _)) => r,
-        Err(e) => return cannot(e),
-    };
     let reverts = match outside.reverts() {
         Ok(r) => r,
         Err(e) => return cannot(format!("the loop's landings: {e}")),
     };
+    let lookback = now.saturating_sub(day.start.saturating_sub(DAY_SECS));
+    let seen = match store.loop_transitions(now as i64, lookback) {
+        Ok(t) => t,
+        Err(e) => return cannot(e),
+    };
+    let head = seen.rev;
+    let certified = match store.records_page(head, Some(&[BeadState::Certified]), None, None, None, |_| true) {
+        Ok(r) => r,
+        Err(e) => return cannot(e),
+    };
     let mut repo_of = BTreeMap::new();
-    let mut stays = Vec::new();
-    for r in &records {
+    let mut stays = seen.stays;
+    for a in &seen.arrivals {
+        repo_of.insert(a.bead.clone(), a.repo.clone());
+        events.push(LoopEvent::Landed { bead: a.bead.clone(), repo: a.repo.clone(), at: a.at, reverts: reverts.get(&a.bead).cloned(), subject: String::new() });
+    }
+    for r in &certified {
         let row = &r.value.row;
         if let Some(repo) = &r.value.repo {
             repo_of.insert(row.bead_id.clone(), repo.clone());
         }
-        let since = row.since.map(|s| s.max(0) as u64);
-        match (row.state, since) {
-            (BeadState::Landed, Some(at)) => {
-                events.push(LoopEvent::Landed {
-                    bead: row.bead_id.clone(),
-                    repo: r.value.repo.clone().unwrap_or_default(),
-                    at,
-                    reverts: reverts.get(&row.bead_id).cloned(),
-                    subject: String::new(),
-                });
-                if day.contains(at) {
-                    match store.history(&row.bead_id, Some("bead")) {
-                        Ok(h) => stays.extend(certified_stays(&h)),
-                        Err(e) => return cannot(e),
-                    }
-                }
-            }
-            (BeadState::Certified, Some(at)) => stays.push((now, now.saturating_sub(at))),
-            _ => {}
+        if let Some(at) = row.since {
+            stays.push((now, now.saturating_sub(at.max(0) as u64)));
         }
     }
+    let unnamed: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            LoopEvent::RedAttributed { bead, .. } | LoopEvent::Eject { bead, .. } => Some(bead.clone()),
+            _ => None,
+        })
+        .filter(|b| !repo_of.contains_key(b))
+        .collect();
+    if !unnamed.is_empty() {
+        match store.records_page(head, None, Some(&unnamed), None, None, |_| true) {
+            Ok(rs) => repo_of.extend(rs.into_iter().filter_map(|r| Some((r.value.row.bead_id, r.value.repo?)))),
+            Err(e) => return cannot(e),
+        }
+    }
+    let cover = Cover { horizon: seen.horizon.max(0) as u64, hour: seen.horizon <= hour.start as i64, day: seen.complete };
 
     let total = (goodput::goodput(&events, &hour, Scope::All, &repo_of), goodput::goodput(&events, &day, Scope::All, &repo_of));
-    let dwell = goodput::dwell_p95(&stays, &day);
+    let dwell = if cover.day { goodput::dwell_p95(&stays, &day) } else { Measure::Unobservable(SHORT_INDEX) };
     let mut status = Status {
-        certified_dwell_p95_secs: Some(windowed(&dwell, "24h")),
-        harmful: total.1.harmful.iter().map(|h| harm(h, &repo_of)).collect(),
+        certified_dwell_p95_secs: Some(cover.windowed(cover.day, &dwell, "24h")),
+        harmful: if cover.day { total.1.harmful.iter().map(|h| harm(h, &repo_of)).collect() } else { Vec::new() },
         warming_up_until: day.warming_until.max(hour.warming_until).map(|u| rfc3339(u * 1000)),
         ..Status::default()
     };
-    status.set_total(fields(&total.0, &total.1));
-    push_metrics(call, ALL, &total.0, &total.1);
+    status.set_total(fields(&total.0, &total.1, &cover));
+    push_metrics(call, ALL, &total.0, &total.1, &cover);
     for repo in repos_in(&events, &day, &repo_of) {
         let scope = Scope::Repo(&repo);
         let g = (goodput::goodput(&events, &hour, scope, &repo_of), goodput::goodput(&events, &day, scope, &repo_of));
-        push_metrics(call, &repo, &g.0, &g.1);
-        status.repos.insert(repo, fields(&g.0, &g.1));
+        push_metrics(call, &repo, &g.0, &g.1, &cover);
+        status.repos.insert(repo, fields(&g.0, &g.1, &cover));
     }
 
     let prev = existing.as_ref().map(|(s, _)| s);
     let floor = spec_value(prev, "goodput_rate_floor");
     let releases = outside.records_releases();
-    let (cond, reason) = below_floor(&total.1.rate, floor, day.warming_until, releases);
+    let (cond, reason) = if cover.day {
+        below_floor(&total.1.rate, floor, day.warming_until, releases)
+    } else {
+        (ConditionStatus::Unknown, format!("unobservable: the audit index reaches back only to {}", rfc3339(cover.horizon * 1000)))
+    };
+    let rate = if cover.day { total.1.rate.clone() } else { Measure::Unobservable(SHORT_INDEX) };
     let since = prev
         .and_then(|s| s.status.conditions.iter().find(|c| c.type_ == BELOW_FLOOR && c.status == cond))
         .map_or_else(|| rfc3339(call.now_ms), |c| c.last_transition_time.clone());
@@ -298,7 +332,7 @@ fn publish_lifecycle<B: Backend>(store: &Store<B>, call: &Call, outside: &dyn Ou
             consumes: vec!["round-controller/landed".into()],
             produces: Vec::new(),
         },
-        distance: distance(&total.1.rate, floor.filter(|_| releases), &dwell, spec_value(prev, "certified_dwell_p95_secs")),
+        distance: distance(&rate, floor.filter(|_| releases), &dwell, spec_value(prev, "certified_dwell_p95_secs")),
         actions: Vec::new(),
     };
     section.status.observed_generation = prev.and_then(|s| s.metadata.generation).unwrap_or(0);
