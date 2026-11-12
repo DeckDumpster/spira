@@ -105,7 +105,9 @@ want "and prints the watcher summary" "probe" "$out"
 out="$(printf '%s' "$hook_in" | client_env "$TMP/home" "$(unconfigured "$HOOK")" 2>&1)"
 nowant "SEEN RED: the same command without SPIRA_TOML prints no summary" "probe" "$out"
 
-# --- UC-cockpit-observability-51: the ops pane's start command -------------------------------
+# --- UC-cockpit-observability-51: the ops pane's start command
+# The snapshot below is a fixture shaped like the tiers' writer output (single-quoted values),
+# built from `once` stdout: nothing here runs the scheduler. -------------------------------
 printf '#!/bin/sh\ncase "$*" in *is-enabled*) exit 0 ;; *is-active*) echo active ;; esac\nexit 0\n' > "$TMP/stubs/systemctl"
 chmod +x "$TMP/stubs/systemctl"
 mkdir -p "$TMP/cockpit"

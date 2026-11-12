@@ -44,6 +44,7 @@ pub struct Fake {
     pub unit_execs: RefCell<Result<Vec<(String, String, String)>, String>>,
     pub enabled_units: RefCell<Result<Vec<String>, String>>,
     pub spira_unit: RefCell<String>,
+    pub spira_unit_asked: RefCell<Vec<(String, String)>>,
     pub file_ages: RefCell<BTreeMap<PathBuf, u64>>,
     pub bd_version: RefCell<Option<String>>,
     pub arch: RefCell<String>,
@@ -98,6 +99,7 @@ impl Default for Fake {
             unit_execs: RefCell::new(Ok(Vec::new())),
             enabled_units: RefCell::new(Ok(Vec::new())),
             spira_unit: RefCell::new(String::new()),
+            spira_unit_asked: RefCell::new(Vec::new()),
             file_ages: RefCell::new(BTreeMap::new()),
             bd_version: RefCell::new(None),
             arch: RefCell::new(String::new()),
@@ -217,7 +219,8 @@ impl World for Fake {
     fn systemd_installed_unit_execs(&self) -> Result<Vec<(String, String, String)>, String> {
         self.unit_execs.borrow().clone()
     }
-    fn spira_unit(&self, _kind: &str, _subkind: &str) -> String {
+    fn spira_unit(&self, kind: &str, subkind: &str) -> String {
+        self.spira_unit_asked.borrow_mut().push((kind.into(), subkind.into()));
         self.spira_unit.borrow().clone()
     }
     fn file_age_secs(&self, p: &Path) -> Option<u64> {
@@ -934,6 +937,15 @@ fn snapshot_stale_fails() {
     f.file_ages.borrow_mut().insert(PathBuf::from("/run/cockpit.env"), 120);
     let out = check_snapshot_fresh(&f);
     assert_eq!(out[0].level, Level::Fail);
+}
+
+#[test]
+fn a_stale_snapshot_hint_names_the_scheduler_unit() {
+    let f = Fake::default();
+    f.set("SPIRA_RUN", "/run");
+    f.file_ages.borrow_mut().insert(PathBuf::from("/run/cockpit.env"), 600);
+    check_snapshot_fresh(&f);
+    assert_eq!(*f.spira_unit_asked.borrow(), vec![("runtime".to_string(), "service".to_string())]);
 }
 
 #[test]
