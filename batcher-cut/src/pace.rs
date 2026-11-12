@@ -81,6 +81,8 @@ pub enum Outcome {
     Infra,
     /// The round's attribution reruns faulted: the round stays open and a person is told.
     AttributionFaulted,
+    /// A green round's landing was refused: the round stays open and a person is told.
+    LandRefused,
     NoVm,
     StaleImage,
     OpenFailed,
@@ -157,6 +159,9 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, detail: &str) -> (Stat
         Outcome::StaleImage => {}
         Outcome::AttributionFaulted => {
             fx.pages.push(format!("ATTRIBUTION FAULTED {repo} — the round is left open, no member charged ({detail})"));
+        }
+        Outcome::LandRefused => {
+            fx.pages.push(format!("LANDING REFUSED {repo} — {detail}"));
         }
         Outcome::NoVm => {
             next.no_vm += 1;
@@ -1249,5 +1254,14 @@ mod tests {
         assert_eq!(next.infra, st.infra);
         assert_eq!(fx.pages.len(), 1);
         assert!(fx.pages[0].starts_with("ATTRIBUTION FAULTED spira") && fx.pages[0].contains("test-x.sh"), "{:?}", fx.pages);
+    }
+
+    #[test]
+    fn a_refused_landing_pages_at_once_and_neither_pauses_nor_counts_toward_a_stop() {
+        let st = State { infra: 1, ..State::default() };
+        let (next, fx) = advance(&st, &Outcome::LandRefused, "spira", "round r9 refused");
+        assert!(!fx.pause && !fx.stop);
+        assert_eq!(next, st);
+        assert_eq!(fx.pages, ["LANDING REFUSED spira — round r9 refused"]);
     }
 }

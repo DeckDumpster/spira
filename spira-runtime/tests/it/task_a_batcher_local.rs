@@ -790,6 +790,29 @@ fn sp_822b8l_an_open_refusing_every_member_abandons_nothing() {
     assert_eq!((rc.state, rc.refused.len()), (State::Idle, 3));
 }
 
+// --- sp-xmqd8k: a refused landing of a green round leaves the round open ---
+
+/// A landing refused for one member's change is not a red round: the round stays open with all
+/// its members, the land output is kept, no pause is written, and the page carries the refusing
+/// line and the verbs that settle it.
+#[test]
+fn sp_xmqd8k_a_refused_landing_leaves_the_green_round_open_and_pages_the_refusing_line() {
+    let refusal = "queue.sh land-local: release c1ad5ddc failed to build or verify\nrelease: spira.task_modes names watch.perf_happy=observe, which this release does not register";
+    let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
+    let (carry, acts) = on_outcome(&landing(), LAND, false, refusal, &land, NOW);
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert!(!names.contains(&ABANDON) && !names.contains(&PAUSE) && !names.contains(&EJECT), "the round stays open and unpaused: {names:?}");
+    let kept = &acts.iter().find(|a| a.effect == KEEP_CERTIFY_OUTPUT).unwrap_or_else(|| panic!("output not kept: {acts:?}")).input;
+    let kept: Leg = serde_json::from_str(kept).unwrap();
+    assert_eq!((kept.key.as_str(), kept.why.as_str()), ("run/rounds/r9.land-1.out", refusal));
+    let page = &acts.iter().find(|a| a.effect == INBOX_APPEND).unwrap_or_else(|| panic!("no page: {acts:?}")).input;
+    assert!(page.contains("which this release does not register"), "the refusing line: {page}");
+    assert!(page.contains("queue round eject r9 <member>") && page.contains("certify") && page.contains("land"), "the next verbs: {page}");
+    let rc = carry.repos.get("spira").cloned().unwrap_or_default();
+    assert_eq!(rc.state, State::Idle);
+    assert!(rc.paused_on.is_none(), "no pause");
+}
+
 // --- sp-tjrjca: a green round refused base-moved is certified again, never abandoned ---
 
 fn landing() -> Carry {
