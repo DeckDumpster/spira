@@ -160,6 +160,22 @@ pub(crate) mod verdict_run {
         got
     }
 
+    #[test]
+    fn the_end_of_a_session_removes_its_tmpdir_and_nothing_beside_it() {
+        let work = testkit::TempDir::new("dwarf-tmpdir");
+        let dir = Run::make_session_tmpdir(work.path()).unwrap();
+        std::fs::write(dir.join("scratch"), "x").unwrap();
+        let sibling = work.path().join(".runtime").join("keep");
+        std::fs::write(&sibling, "y").unwrap();
+        let w = work.path().to_path_buf();
+        with_run(&NoBd, &Seams(Default::default()), Dirty(vec![]), "", |r| {
+            r.s.work = Some(w);
+            r.remove_tmpdir();
+        });
+        assert!(!dir.exists());
+        assert!(sibling.is_file());
+    }
+
     const REFUSED: &str = "The work is finished and checked, but work submit refuses: spira-lc content: cannot tell\nmore";
     const T0: i64 = 1_700_000_000;
 

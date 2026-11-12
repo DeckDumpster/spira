@@ -110,7 +110,7 @@ impl Run<'_> {
         std::fs::create_dir_all(&dir).map(|()| dir.clone()).map_err(|e| (dir, e))
     }
 
-    fn remove_tmpdir(&self) {
+    pub(crate) fn remove_tmpdir(&self) {
         let Some(work) = self.s.work.as_deref() else { return };
         let dir = Self::session_tmpdir(work);
         if !dir.is_dir() {
