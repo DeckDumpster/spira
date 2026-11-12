@@ -110,7 +110,7 @@ pub fn core_rate(json: &str) -> Option<Rate> {
 pub fn top_spender(series: &[spira_otel::query::Exported]) -> Option<(String, u64)> {
     let mut by: BTreeMap<&str, f64> = BTreeMap::new();
     for s in series {
-        let caller = s.labels.get("caller")?;
+        let Some(caller) = s.labels.get("caller") else { continue };
         *by.entry(caller).or_default() += s.samples.iter().map(|(_, v)| v).sum::<f64>();
     }
     by.into_iter().max_by(|a, b| a.1.total_cmp(&b.1)).map(|(c, n)| (c.to_string(), n as u64))
@@ -159,6 +159,8 @@ mod tests {
         };
         let got = top_spender(&[series("a", &[3.0, 4.0]), series("b", &[20.0]), series("c", &[1.0])]);
         assert_eq!(got, Some(("b".to_string(), 20)));
+        let unlabelled = spira_otel::query::Exported { labels: Default::default(), samples: vec![(0, 99.0)] };
+        assert_eq!(top_spender(&[unlabelled, series("a", &[2.0])]), Some(("a".to_string(), 2)));
         assert_eq!(top_spender(&[]), None);
     }
 
