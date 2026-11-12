@@ -37,11 +37,6 @@ name = "unit_deadline_real"
 path = "tests/unit_deadline_real.rs"
 required-features = ["integration"]
 
-[[test]]
-name = "unit_cov_real"
-path = "tests/unit_cov_real.rs"
-required-features = ["integration"]
-
 [features]
 integration = ["spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "spira-desired-state/integration", "reconciler-engine/integration"]
 

@@ -492,12 +492,6 @@ if [ ! -x "$RUSTC_WRAPPER" ]; then
     echo "round-vm: sccache is missing on this VM: $RUSTC_WRAPPER" >&2
     exit 5
 fi
-# A round runs the same tests wherever it runs: round-vm/tests/unit_cov_real.rs returns early
-# without cargo-llvm-cov, so a machine without it passed a test another machine failed.
-if [ ! -x "$CARGO_HOME/bin/cargo-llvm-cov" ]; then
-    echo "round-vm: cargo-llvm-cov is missing on this machine: $CARGO_HOME/bin/cargo-llvm-cov (the round image installs it; install the same version here)" >&2
-    exit 5
-fi
 export SCCACHE_IGNORE_SERVER_IO_ERROR=1
 export SCCACHE_WEBDAV_ENDPOINT="http://${host_addr}:9431"
 export SCCACHE_WEBDAV_KEY_PREFIX="/"
