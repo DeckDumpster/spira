@@ -104,8 +104,8 @@ file_incident "$ref" "notes incident" "$X" >/dev/null
 before="$(len_notes)"
 file_incident "$ref" "notes incident" "$X" >/dev/null
 after="$(len_notes)"
-[ "$((after - before))" -le 120 ] \
-    && ok "an unchanged payload grows the notes by at most 120 B" \
-    || bad "an unchanged payload grows the notes by at most 120 B" "grew $((after - before)) B"
+[ "$after" -eq "$before" ] \
+    && ok "an unchanged payload adds no note: the payload-hash label is found through the door" \
+    || bad "an unchanged payload adds no note: the payload-hash label is found through the door" "grew $((after - before)) B"
 
 tl_summary

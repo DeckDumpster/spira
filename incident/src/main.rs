@@ -118,7 +118,7 @@ fn cmd_list(env: &Env, bd: &incident::real::RealBd) -> ExitCode {
         }
     };
     for (row, bead) in rows {
-        let priority = bead.get("priority").map(|p| p.to_string()).unwrap_or_default();
+        let priority = bead.get("priority").and_then(|p| p.as_i64()).map(|p| p.to_string()).unwrap_or_else(|| "?".into());
         let title = bead.get("title").and_then(|t| t.as_str()).unwrap_or("");
         println!("{} P{priority} {title}", row.id);
     }

@@ -33,7 +33,7 @@ impl RealBd {
         let mut attempt = 0u32;
         loop {
             attempt += 1;
-            // FORK-EDGE: unserved verb content (bd reads) and content store write (label/set-state/dep/duplicate)
+            // FORK-EDGE: content store write (label/set-state/dep/duplicate)
             let mut cmd = Command::new("timeout");
             cmd.arg(self.timeout_secs.to_string()).arg(&self.bdq).args(args);
             let out = cmd.output().map_err(|e| format!("{}: {e}", self.bdq))?;
@@ -442,6 +442,19 @@ mod tests {
         let seen = fake.requests();
         assert_eq!(seen.len(), 1 + 3, "{seen:?}");
         assert!(seen[1..].iter().all(|r| r.iter().any(|a| a == "--id")), "{seen:?}");
+    }
+
+    /// sp-7crdc8: a closed-after list is one bounded request.
+    #[test]
+    fn a_closed_after_list_is_one_bounded_request() {
+        let rows = vec![serde_json::json!({"id": "sp-1", "labels": ["incident"]})];
+        let live = vec![serde_json::json!({"bead_id": "sp-1", "state": "LANDED"})];
+        let fake = std::sync::Arc::new(spira_config::lc_call::fake::Content::new(rows).with_live(live));
+        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_config::lc_call::LcClient::over(fake.clone(), true)) };
+        bd.list("", Scope::HandedOn, Some("incident"), Some("2026-01-01")).unwrap();
+        let seen = fake.requests();
+        let lists: Vec<_> = seen.iter().filter(|r| r.iter().any(|a| a == "--closed-after")).collect();
+        assert_eq!(lists.len(), 1, "{seen:?}");
     }
 
     #[test]

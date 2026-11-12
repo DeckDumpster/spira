@@ -231,8 +231,7 @@ testdb_reset
 mkdir -p "$RUN"
 > "$ILOG"
 
-# UC-05 (declared repo:brain / undeclared needs-repo-triage + mail) and UC-04 (0 bd show
-# calls under load) are demoted to T1 stub-bd rows in test-incident-decisions.sh — neither
+# UC-05 (declared repo:brain / undeclared needs-repo-triage + mail) is demoted to T1 stub-bd rows in test-incident-decisions.sh — neither
 # needs a real fixture database to be true. Only the fallback path below (a bead filed
 # before the ref: label existed) stays here, exercising the real end-to-end label promotion.
 
