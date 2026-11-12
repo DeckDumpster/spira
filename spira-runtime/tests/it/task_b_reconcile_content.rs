@@ -196,3 +196,21 @@ fn a_full_pass_that_could_not_tell_stays_due() {
     let (later, _) = task::decide(&h.cfg, &Carry { through_seq: Some(40), full_at: 7, ..Carry::default() }, &Input::Observed(snap), TICK).unwrap();
     assert_eq!(later.full_at, 7);
 }
+
+#[test]
+fn a_skew_red_or_failed_close_makes_the_next_scan_a_full_pass_so_the_bead_is_listed_again() {
+    let h = t::handler::<H>(SET);
+    let now = 30_000_000;
+    let carry = Carry { through_seq: Some(52), full_at: now, ..Carry::default() };
+    let red = Carry { pending: vec![close("sp-a", "LANDED")], ..carry.clone() };
+    let (after_red, _) = task::decide(&h.cfg, &red, &Input::Outcome { effect: task::SKEW_CHECK.into(), ok: false, body: "red".into() }, now).unwrap();
+    let later = now + 21_600_000;
+    let head = Snapshot { pass: Pass::Head, through_seq: Some(52), ..Snapshot::default() };
+    let (_, acts) = task::decide(&h.cfg, &after_red, &Input::Observed(head.clone()), later).unwrap();
+    assert_eq!(acts[0].input, "full");
+
+    let requested = Carry { beads: BTreeMap::from([("sp-a".to_string(), Phase::CloseRequested)]), ..carry };
+    let (failed, _) = task::decide(&h.cfg, &requested, &Input::Outcome { effect: task::CLOSE.into(), ok: false, body: "sp-a: boom".into() }, now).unwrap();
+    let (_, acts) = task::decide(&h.cfg, &failed, &Input::Observed(head), now + TICK).unwrap();
+    assert_eq!(acts[0].input, "full");
+}

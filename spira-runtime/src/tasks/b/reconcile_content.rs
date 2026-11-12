@@ -234,7 +234,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         Input::Outcome { effect, ok, .. } if effect == SKEW_CHECK => {
             let mut next = Carry { pending: vec![], skew_red_at: None, ..carry.clone() };
             if !ok {
-                return Ok((Carry { skew_red_at: Some(now_ms), ..next }, vec![]));
+                return Ok((Carry { skew_red_at: Some(now_ms), full_at: 0, ..next }, vec![]));
             }
             let mut acts = vec![];
             for c in &carry.pending {
@@ -253,6 +253,9 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 Phase::CloseRequested => {
                     let mut next = carry.clone();
                     next.beads.insert(id.to_string(), if *ok { Phase::Closed } else { Phase::Failed });
+                    if !*ok {
+                        next.full_at = 0;
+                    }
                     Ok((next, vec![]))
                 }
                 p => Err(format!("{NAME}: a close outcome for {id}, which is {}", phase_name(p))),
