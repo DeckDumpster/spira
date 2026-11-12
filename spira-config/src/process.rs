@@ -44,8 +44,9 @@ pub fn spec() -> Result<String, String> {
 const COMPUTED_KEYS: &[&str] = &["SPIRA_RELEASE_REPO", "SPIRA_AGENT", "SPIRA_RUNES_DIR"];
 
 /// `key` as the merged `[spira]` table declares it, when that is the whole answer: a declared,
-/// plainly-valued key of a `prod` instance. Anything else is `None` and takes the full resolve,
-/// which owns every refusal; so this never answers where resolution would have refused.
+/// plainly-valued key of a `prod` instance. It checks neither the file's schema nor the registry
+/// (that is the cost this path exists to skip; `check-config` and [`config`] still do). Anything
+/// else is `None` and takes the full resolve, which owns every other refusal.
 pub(crate) fn declared_value(merged: &toml::map::Map<String, toml::Value>, key: &str) -> Option<String> {
     if !(key.starts_with("SPIRA_") || key.starts_with("COCKPIT_")) || COMPUTED_KEYS.contains(&key) {
         return None;
