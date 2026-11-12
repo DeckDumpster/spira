@@ -29,7 +29,7 @@ fn views() -> Option<Arc<Projection>> {
         VIEWS
             .get_or_init(|| {
                 let p = Projection::configured(LcClient::configured().ok()?).ok()?;
-                p.load().ok()?;
+                p.refresh_batches().ok()?;
                 Some(Arc::new(p))
             })
             .clone()
@@ -37,13 +37,14 @@ fn views() -> Option<Arc<Projection>> {
 }
 
 /// `read` on `p`; a read refused as stale polls once and reads again, unless a watch owns `p`:
-/// then the refusal stands, since the watch is what fell behind.
+/// then the refusal stands, since the watch is what fell behind. An unwatched view reads the
+/// batch records again, never the lifecycle rows: both views are batch views.
 pub fn fresh<T>(p: &Projection, read: impl Fn(&Projection) -> Result<Read<T>, LcError>) -> Option<T> {
     match read(p) {
         Ok(r) => Some(r.value),
         Err(LcError::Refused(_)) if p.watching() => None,
         Err(LcError::Refused(_)) => {
-            p.poll().ok()?;
+            p.refresh_batches().ok()?;
             read(p).ok().map(|r| r.value)
         }
         Err(LcError::Fault(_)) => None,
@@ -155,6 +156,30 @@ mod tests {
         let m = round_members_in(&p, "spira").unwrap();
         let want: HashSet<String> = ["sp-a", "sp-b", "sp-c", "sp-d"].iter().map(|s| s.to_string()).collect();
         assert_eq!(m, want);
+    }
+
+    fn unloaded() -> (Projection, Arc<scripted::Scripted>) {
+        let store = rounds_store("spira");
+        let (c, sent) = client(&[("rc list", 0, &store), ("list", 0, "[]")]);
+        (Projection::new(c, Duration::from_secs(60), Arc::new(Instant::now)), sent)
+    }
+
+    fn bare_lists(sent: &scripted::Scripted) -> usize {
+        sent.sent.lock().unwrap().iter().filter(|a| a.as_slice() == ["list"]).count()
+    }
+
+    #[test]
+    fn batch_show_on_an_unwatched_view_reads_only_the_batch_records() {
+        let (p, sent) = unloaded();
+        assert!(batch_show_in(&p, "spira").unwrap().contains("batch_id=b1\n"));
+        assert_eq!(bare_lists(&sent), 0);
+    }
+
+    #[test]
+    fn round_members_on_an_unwatched_view_reads_only_the_batch_records() {
+        let (p, sent) = unloaded();
+        assert!(round_members_in(&p, "spira").unwrap().contains("sp-a"));
+        assert_eq!(bare_lists(&sent), 0);
     }
 
     #[test]

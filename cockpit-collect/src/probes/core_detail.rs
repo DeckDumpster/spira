@@ -448,7 +448,7 @@ fn awaiting_ci_section(out: &mut Kv, cfg: &Cfg) {
 fn throughput_section(out: &mut Kv, run: &std::path::Path, cfg: &Cfg) {
     let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-    let raw = io::history_beads(&label).unwrap_or_default();
+    let raw = io::history_beads(&label, io::DAY_WINDOW_SECS).unwrap_or_default();
     let landing_log = run.join("landing.log");
     if let Some(sparklines) = crate::sparklines::render(&raw, landing_log.to_str().unwrap_or(""), crate::timeutil::now_secs(), &crate::counts::from_config()) {
         for line in sparklines.lines() {
