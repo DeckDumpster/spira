@@ -159,7 +159,7 @@ mod published {
 
     fn judged(control_store: bool, publish: bool) -> (Vec<Vec<String>>, Vec<verdicts::Entry>) {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) };
+        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
         let config = Config { control_store, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
@@ -226,7 +226,7 @@ mod published {
     }
 
     fn store_over(t: Arc<dyn Transport>) -> Store {
-        Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(t, true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) }
+        Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(t, true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None }
     }
 
     fn judge_over(t: Arc<dyn Transport>) {
@@ -261,7 +261,7 @@ mod published {
     #[test]
     fn republish_dependents_judges_and_publishes_only_the_records_that_wait_on_or_descend_from_the_changed() {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) };
+        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
         let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
@@ -277,7 +277,7 @@ mod published {
     #[test]
     fn republish_dependents_judges_the_changed_record_itself_when_nothing_waits_on_it() {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) };
+        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
         let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
@@ -449,6 +449,7 @@ mod published_read {
             lc: LcClient::over(svc.clone(), true),
             lc_bin: "/nonexistent/spira-lc".into(),
             timeout: Duration::from_secs(1),
+            views: None,
         };
         (svc, st)
     }
@@ -572,6 +573,7 @@ mod published_read {
             lc: LcClient::over(svc, true),
             lc_bin: "/nonexistent/spira-lc".into(),
             timeout: Duration::from_secs(1),
+            views: None,
         };
         env_over(|env| {
             let (rows, fresh) = claimable_over(&Args::parse(&[]).unwrap(), env, &st).unwrap();
@@ -649,7 +651,7 @@ mod published_read {
             }
         }
         let inner = Arc::new(Store0 { seen: Mutex::new(Vec::new()), published: Mutex::new(None) });
-        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(Arc::new(Fixed(inner.clone(), judged_at.into())), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) };
+        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(Arc::new(Fixed(inner.clone(), judged_at.into())), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         (inner, st)
     }
 

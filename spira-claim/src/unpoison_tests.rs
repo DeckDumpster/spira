@@ -481,6 +481,7 @@ fn live_over(content: spira_config::lc_call::Reply, show: spira_config::lc_call:
         lc: LcClient::over(Arc::new(Two(content, show)), true),
         lc_bin: "/nonexistent/spira-lc".into(),
         timeout: std::time::Duration::from_secs(1),
+        views: None,
     };
     Live {
         store,

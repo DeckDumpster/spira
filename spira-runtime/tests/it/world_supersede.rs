@@ -101,7 +101,7 @@ fn the_snapshot_lists_the_manual_holds_and_reads_each_unknown_one() {
             Held { id: "sp-other".into(), version: "2".into(), reading: Reading::NotARequest },
         ]
     );
-    assert_eq!(d.sent(), ["list --live --hold manual --snapshot", "history sp-old --machine bead", "state sp-old", "state sp-new", "history sp-other --machine bead"]);
+    assert_eq!(d.sent(), ["list --live --hold manual", "history sp-old --machine bead", "state sp-old", "state sp-new", "history sp-other --machine bead"]);
 }
 
 #[test]

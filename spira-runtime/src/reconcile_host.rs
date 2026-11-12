@@ -58,6 +58,15 @@ fn read_units(bus: Option<&str>) -> Result<Units, String> {
     Ok(Units { active, files })
 }
 
+/// One lifecycle request for the reconciler: a `list` the view holds is answered from it (a stale
+/// view refuses, it never reaches the store); anything else goes to the store's socket.
+pub fn lc_read(socket: &Path, argv: &[&str]) -> Result<String, String> {
+    match store_view::held_list(argv) {
+        Some(held) => held.map_err(|e| e.to_string()),
+        None => lc_call(socket, argv).map_err(|e| e.to_string()),
+    }
+}
+
 pub struct RuntimeHost {
     pub world: World,
     pub forge: Forge,
@@ -284,7 +293,7 @@ impl Host for RuntimeHost {
     }
 
     fn lc(&self, argv: &[&str]) -> Result<String, String> {
-        lc_call(&self.world.lc_socket, argv).map_err(|e| e.to_string())
+        lc_read(&self.world.lc_socket, argv)
     }
 
     fn certified_list(&self, repo: &Path) -> String {
@@ -297,7 +306,7 @@ impl Host for RuntimeHost {
                 }
             };
         };
-        let Ok(rows) = self.lc(&["list", "--state", "CERTIFIED", "--snapshot"]) else { return String::new() };
+        let Ok(rows) = self.lc(&["list", "--state", "CERTIFIED"]) else { return String::new() };
         let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(&rows) else { return String::new() };
         branches
             .iter()

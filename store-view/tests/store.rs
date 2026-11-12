@@ -459,3 +459,36 @@ fn an_unwatched_view_holds_no_answer_and_a_verb_that_is_not_a_held_read_is_refus
         assert_eq!(asked(&w, "close"), 0, "and the store is not asked it");
     });
 }
+
+#[test]
+fn a_list_read_is_answered_from_the_held_rows_and_a_stale_view_refuses_it() {
+    within(|| {
+        let mut rows = vec![
+            bead("sp-a", "READY", "[\"manual\"]", None, true),
+            bead("sp-b", "CERTIFIED", "[]", None, false),
+            bead("sp-c", "CERTIFIED", "[]", None, false),
+            bead("sp-d", "READY", "[]", None, false),
+        ];
+        rows[2]["repo"] = json!("alpha");
+        let w = world(Script { list_rev: 3, rows, ..Default::default() }, Duration::from_secs(10));
+        w.p.load().unwrap();
+        let asked = w.script.lock().unwrap().seen.len();
+        let ids = |argv: &[&str]| -> Vec<String> {
+            let text = w.p.list_answer(argv).expect("a held read").expect("a fresh view");
+            serde_json::from_str::<Vec<Value>>(&text).unwrap().iter().map(|r| r["bead_id"].as_str().unwrap().to_string()).collect()
+        };
+        assert_eq!(ids(&["list", "--live", "--hold", "manual"]), ["sp-a"]);
+        assert_eq!(ids(&["list", "--express", "--live"]), ["sp-a"]);
+        assert_eq!(ids(&["list", "--state", "CERTIFIED", "--repo", "alpha"]), ["sp-c"]);
+        assert_eq!(ids(&["list", "--ids", "sp-a,sp-b"]), ["sp-a", "sp-b"]);
+        assert_eq!(ids(&["list"]), ["sp-a", "sp-b", "sp-c", "sp-d"]);
+        assert_eq!(w.script.lock().unwrap().seen.len(), asked, "answering asks the store nothing");
+
+        for argv in [&["list", "--batches"][..], &["list", "--delivery"], &["list", "--snapshot"], &["list", "--live", "--window", "5"], &["show", "sp-a"], &[]] {
+            assert!(w.p.list_answer(argv).is_none(), "{argv:?} is the store's to answer");
+        }
+
+        w.advance(Duration::from_secs(11));
+        assert!(matches!(w.p.list_answer(&["list", "--live"]), Some(Err(_))), "a stale view refuses");
+    });
+}
