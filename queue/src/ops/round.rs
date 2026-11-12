@@ -4725,6 +4725,7 @@ fn land_round(
         bins,
         true,
         true,
+        None,
     );
     let base = c.r.landref.clone().unwrap_or_default();
     if rc != OK && !w.git.is_ancestor(&path, &head, &base) {

@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use super::land::{ungated_admitted, UngatedOverride};
 use super::round::{abandon_for_landing, live_records, phase_of};
 use super::{
     idents, landing_log, read_text, repo_path, require_lc, resolve, simple, Ctx, World,
@@ -284,6 +285,17 @@ pub fn hand_land(w: &World, a: &Args) -> i32 {
         w.err(format!("queue.sh {label}: {} does not contain {base} ({base_sha}) — rebase it first; refused, nothing changed", a.tip));
         return FAIL;
     }
+    let ungated = UngatedOverride {
+        reason: format!("hand-land {}: {} — evidence: {}", a.bead, reason, evidence),
+        by: a.by.to_string(),
+        evidence: a.evidence_tip.to_string(),
+    };
+    if let Err(refusal) = super::land::certified(w, &path, &c.r.name, &c.s, a.tip, a.tip) {
+        if let Err(why) = ungated_admitted(w, &path, a.tip, &ungated) {
+            w.err(format!("queue.sh {label}: the landing would be refused — {refusal}; and it cannot be landed ungated: {why} — refused, nothing changed"));
+            return FAIL;
+        }
+    }
     let wait_bound = c.s.round_wall_secs + c.s.round_ami_wait_secs;
     let now = w.clock.now();
     let hold = spira_config::cut_hold::CutHold {
@@ -324,7 +336,7 @@ pub fn hand_land(w: &World, a: &Args) -> i32 {
         log(w, &c, a, policy, &voided, "refused: base moved");
         return FAIL;
     }
-    land_and_verify(w, &c, &path, &base, a, &evidence, policy, &voided)
+    land_and_verify(w, &c, &path, &base, a, &evidence, &ungated, policy, &voided)
 }
 
 fn subvert(w: &World, c: &Ctx, a: &Args, reason: &str, rounds: &[OpenRound]) -> Result<String, i32> {
@@ -391,13 +403,15 @@ fn land_and_verify(
     base: &str,
     a: &Args,
     evidence: &str,
+    ungated: &UngatedOverride,
     policy: Policy,
     voided: &str,
 ) -> i32 {
     let label = "hand-land";
     let state = w.lc.bead_row(a.bead).map(|b| b.state).unwrap_or_default();
     if matches!(state.as_str(), "SUBMITTED" | "CERTIFIED") {
-        w.out(format!("queue.sh {label}: {} is {state}; no resubmit needed", a.bead));
+        let held = w.lc.bead_row(a.bead).and_then(|b| b.tip).unwrap_or_default();
+        w.out(format!("queue.sh {label}: {} is {state} at {held}; no resubmit needed; the landing records {} as its tip", a.bead, a.tip));
     } else {
         let rc = simple::resubmit(
             w,
@@ -439,11 +453,16 @@ fn land_and_verify(
         a.worktree,
         false,
         true,
+        Some(ungated),
     );
     let landed = w.git.is_ancestor(path, a.tip, &w.git.rev_parse(path, base).unwrap_or_default());
     if rc != OK && !landed {
         if let Some(p) = pending {
             p.discard();
+        }
+        if voided != "-" {
+            let now = w.lc.bead_row(a.bead).map(|b| b.state).unwrap_or_default();
+            w.err(format!("queue.sh {label}: round {voided} was voided and nothing landed; {} is {now}, {base} is unchanged", a.bead));
         }
         log(w, c, a, policy, voided, "refused: land-local");
         return rc;

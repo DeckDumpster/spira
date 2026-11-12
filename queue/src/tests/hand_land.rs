@@ -300,3 +300,69 @@ fn wait_refuses_a_tip_that_the_round_it_waited_for_landed_past() {
     assert!(!t.qfile("cut-hold").exists());
     assert!(t.landing_log().contains("verify=refused: base moved"), "{}", t.landing_log());
 }
+
+fn uncertified_world() -> T {
+    let t = world();
+    t.git.trees.borrow_mut().insert(TIP.into(), "9999999999999999999999999999999999999999".into());
+    t.git.ancestor("b0", "b0");
+    t
+}
+
+#[test]
+fn subvert_lands_an_uncertified_tip_on_the_verbs_own_evidence_with_no_environment() {
+    let t = uncertified_world();
+    assert_eq!(hand_land(&t, &["--round", "subvert"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some(TIP));
+    assert!(t.landing_log().contains("QUEUE UNGATED") && t.landing_log().contains("by=concierge"), "{}", t.landing_log());
+    assert!(t.out().contains("verify: "), "{}", t.out());
+}
+
+#[test]
+fn a_landing_that_cannot_be_admitted_exits_before_the_round_is_touched() {
+    let t = uncertified_world();
+    let rc = t.run(&[
+        "hand-land", "sp-z", "--tip", TIP, "--by", "nobody", "--reason", "r", "--evidence", "e",
+        "--evidence-tip", TIP, "--round", "subvert",
+    ]);
+    assert_eq!(rc, 1, "{}", t.err());
+    assert!(t.err().contains("cannot be landed ungated"), "{}", t.err());
+    assert!(t.qfile("round").exists(), "the round was left alone");
+    assert!(!t.lc.has("abandon-batch"));
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
+}
+
+#[test]
+fn a_certified_bead_at_an_older_tip_is_landed_at_the_tip_given_and_the_line_names_both() {
+    let t = uncertified_world();
+    t.lc.rows.borrow_mut().as_mut().unwrap().retain(|r| r.bead_id != "sp-z");
+    t.lc_row("sp-z", "CERTIFIED", "older0000", 100);
+    assert_eq!(hand_land(&t, &["--round", "subvert"]), 0, "{}", t.err());
+    assert!(
+        t.out().contains(&format!("sp-z is CERTIFIED at older0000; no resubmit needed; the landing records {TIP} as its tip")),
+        "{}",
+        t.out()
+    );
+    assert!(t.out().contains("member sp-a: "), "the round was voided first: {}", t.out());
+}
+
+#[test]
+fn the_verbs_own_flags_win_over_a_conflicting_ungated_environment() {
+    let t = uncertified_world();
+    t.var("SPIRA_LAND_UNGATED", "env reason");
+    t.var("SPIRA_LAND_UNGATED_BY", "nobody");
+    t.var("SPIRA_LAND_UNGATED_EVIDENCE", "no-such-rev");
+    assert_eq!(hand_land(&t, &["--round", "subvert"]), 0, "{}", t.err());
+    let log = t.landing_log();
+    assert!(log.contains("by=concierge") && !log.contains("env reason"), "{log}");
+}
+
+#[test]
+fn a_landing_refused_after_the_round_was_voided_says_so_and_what_state_the_bead_is_in() {
+    let t = uncertified_world();
+    assert_eq!(hand_land(&t, &["--round", "subvert", "--worktree", "/no such;dir"]), 1);
+    assert!(
+        t.err().contains("round hand-1 was voided and nothing landed; sp-z is "),
+        "{}",
+        t.err()
+    );
+}
