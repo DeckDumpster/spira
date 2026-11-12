@@ -659,7 +659,8 @@ impl World for Fake {
     fn build_dir_fact(&self, _: &str) -> Result<Option<(String, String)>, String> {
         self.build_fact.borrow().clone()
     }
-    fn lease_build_dir(&self, _: &str, recorded: Option<&str>, _: &str) -> Result<(String, &'static str), String> {
+    fn lease_build_dir(&self, _: &str, recorded: Option<&str>, who: &str) -> Result<(String, &'static str), String> {
+        assert_eq!(who, spira_config::build_dir::gate_label(who.strip_prefix("gate ").unwrap_or("")), "the gate leases under the label the reservation is made out to");
         self.leases.borrow_mut().push(recorded.map(String::from));
         Ok(match recorded {
             Some(d) if !self.lease_held.get() => (d.to_string(), "recorded"),

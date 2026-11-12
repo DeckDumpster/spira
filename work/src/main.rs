@@ -127,9 +127,6 @@ fn main() {
     };
 
     let build_dir = if verb == "submit" { owned_build_dir() } else { None };
-    if let Some(d) = &build_dir {
-        reserve_for_gate(&bound, d);
-    }
     let req = match work::build_request_in(&bound, &verb, &verb_args, tip.as_deref(), &actor, body.as_deref(), build_dir.as_deref()) {
         Ok(mut r) => {
             if base_red {
@@ -152,6 +149,9 @@ fn main() {
     spira_otel::run::phase("reply", asked.elapsed().as_millis() as u64);
     match answer {
         Ok((code, out)) => {
+            if let (0, Some(d)) = (code, &build_dir) {
+                reserve_for_gate(&bound, d);
+            }
             spira_store::lc_call::print_answer(code, &out);
             { spira_otel::run::finish(code); std::process::exit(code) };
         }

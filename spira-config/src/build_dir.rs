@@ -135,6 +135,9 @@ fn reserved_for(base: &Path, n: u64) -> Option<String> {
 /// claimers skip it ([`lease`]), and the gate waits for the submitting builder's release.
 pub fn reserve(base: &Path, dir: &Path, who: &str) -> std::io::Result<()> {
     let n = slot_of(base, dir).ok_or_else(|| std::io::Error::other("not a build directory of the base"))?;
+    for other in slots(base).into_iter().filter(|&o| o != n && std::fs::read_to_string(reserve_path(base, o)).is_ok_and(|r| r == who)) {
+        let _ = std::fs::remove_file(reserve_path(base, other));
+    }
     std::fs::write(reserve_path(base, n), who)
 }
 
@@ -367,7 +370,7 @@ pub fn evict_idle_with(base: &Path, budget_bytes: u64, size: &dyn Fn(&Path) -> u
     if total <= budget_bytes {
         return gone;
     }
-    let mut idle: Vec<(SystemTime, u64, u64)> = sized.into_iter().filter(|&(_, b)| b > 0).map(|(n, b)| (idle_since(base, n), n, b)).collect();
+    let mut idle: Vec<(SystemTime, u64, u64)> = sized.into_iter().filter(|&(n, b)| b > 0 && reserved_for(base, n).is_none()).map(|(n, b)| (idle_since(base, n), n, b)).collect();
     idle.sort();
     for (_, n, bytes) in idle {
         if total <= budget_bytes {
@@ -716,6 +719,42 @@ mod tests {
         let old = SystemTime::now() - RESERVE_TTL - std::time::Duration::from_secs(60);
         std::fs::File::options().write(true).open(reserve_path(&base, 1)).unwrap().set_modified(old).unwrap();
         assert_eq!(lease(&base, "sp-y").unwrap().dir(), want.as_path());
+    }
+
+    #[test]
+    fn eviction_spares_a_directory_reserved_for_a_gate() {
+        let d = testkit::TempDir::new("bdir-evict-reserved");
+        let base = d.path().join("base");
+        let a = lease(&base, "sp-x").unwrap();
+        let want = a.dir().to_path_buf();
+        fill(&want.join("debug/x"), 1);
+        reserve(&base, &want, &gate_label("sp-x")).unwrap();
+        a.release();
+        assert!(evict_idle_with(&base, 0, &|p| if p == want { 10 } else { 0 }).is_empty());
+        assert!(want.join("debug/x").exists());
+    }
+
+    #[test]
+    fn a_resubmit_moves_the_reservation_instead_of_stranding_the_first() {
+        let d = testkit::TempDir::new("bdir-resubmit");
+        let base = d.path().join("base");
+        let a = lease(&base, "sp-x").unwrap();
+        let b = lease(&base, "sp-x").unwrap();
+        reserve(&base, a.dir(), &gate_label("sp-x")).unwrap();
+        reserve(&base, b.dir(), &gate_label("sp-x")).unwrap();
+        assert!(!reserve_path(&base, 1).exists());
+        assert!(reserve_path(&base, 2).exists());
+    }
+
+    #[test]
+    fn a_held_slot_is_not_waited_for_without_a_reservation_or_with_no_wait() {
+        let d = testkit::TempDir::new("bdir-nowait");
+        let base = d.path().join("base");
+        let live = lease(&base, "sp-x").unwrap();
+        let none = std::time::Duration::ZERO;
+        assert_eq!(lease_recorded_waiting(&base, Some(live.dir()), &gate_label("sp-x"), std::time::Duration::from_secs(30)).unwrap().1, Why::Held);
+        reserve(&base, live.dir(), &gate_label("sp-x")).unwrap();
+        assert_eq!(lease_recorded_waiting(&base, Some(live.dir()), &gate_label("sp-x"), none).unwrap().1, Why::Held);
     }
 
     #[test]
