@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn three_fresh_result_lines_are_one_inbox_effect() {
         use runtime::ports::VirtualClock;
-        use runtime::{Engine, Outcome};
+        use runtime::{Engine, Executor, MemJournal, Outcome};
         let clock = VirtualClock::new(1_800_000_000_000);
         let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![cfg().registration()], 0).unwrap();
         let (id, stream, kind) = RoundDuty::boot();
