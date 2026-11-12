@@ -132,7 +132,9 @@ pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_HEL_SWEEP_CALENDAR";
 pub const JITTER_KEY: &str = "SPIRA_RUNTIME_HEL_SWEEP_JITTER_SECS";
 /// The pass deadline in carried state (900 s); a new key.
 pub const BUDGET_KEY: &str = "SPIRA_RUNTIME_HEL_SWEEP_BUDGET_SECS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, JITTER_KEY, BUDGET_KEY, "SPIRA_RUN", "SPIRA_REAPLOG", "SPIRA_SUBMITTED_LABEL", "SPIRA_GH", "SPIRA_GH_TIMEOUT", "SPIRA_RELEASE"];
+/// Milliseconds of rest after each send leg starts.
+pub const PACE_KEY: &str = "SPIRA_HEL_PACE_MS";
+pub const KEYS: &[&str] = &[CADENCE_KEY, JITTER_KEY, BUDGET_KEY, "SPIRA_RUN", "SPIRA_REAPLOG", "SPIRA_SUBMITTED_LABEL", "SPIRA_GH", "SPIRA_GH_TIMEOUT", "SPIRA_RELEASE", PACE_KEY];
 
 pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None };
 
@@ -390,8 +392,11 @@ fn job(jobs: &mut BTreeMap<String, Job>, kind: &str, t: &Target) -> Result<Act, 
 /// One repository's acts: `hel::sweep::judge` per branch (round branches and held beads
 /// skipped), then the orphaned worktrees.
 pub fn plan(cfg: &Cfg, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) -> Result<Vec<Act>, String> {
+    plan_labelled(cfg.get("SPIRA_SUBMITTED_LABEL").map_or("", String::as_str), s, jobs)
+}
+
+fn plan_labelled(label: &str, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) -> Result<Vec<Act>, String> {
     use hel::sweep::Disp;
-    let label = cfg.get("SPIRA_SUBMITTED_LABEL").cloned().unwrap_or_default();
     let mut acts = vec![];
     for b in &s.branches {
         if b.id.starts_with("round-") || s.holders.contains_key(&b.id) {
@@ -399,7 +404,7 @@ pub fn plan(cfg: &Cfg, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) -> Result
         }
         let target = Target { repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), path: b.worktree.clone().unwrap_or_default() };
         let terminal = s.rows.get(&b.id).is_some_and(|r| spira_store::lc_state::is_terminal(r));
-        match hel::sweep::judge(&Snap { s, b, submitted_label: &label }) {
+        match hel::sweep::judge(&Snap { s, b, submitted_label: label }) {
             Disp::KeepUnlanded => {}
             Disp::KeepSupersededUnsafe => {
                 if b.worktree.is_some() {
@@ -589,11 +594,12 @@ pub struct Pinned {
     pub submitted_label: String,
     pub gh: String,
     pub gh_timeout: String,
+    pub pace: std::time::Duration,
 }
 
 impl Pinned {
     pub fn read(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Pinned, String> {
-        Ok(Pinned { submitted_label: get("SPIRA_SUBMITTED_LABEL")?, gh: get("SPIRA_GH")?, gh_timeout: get("SPIRA_GH_TIMEOUT")? })
+        Ok(Pinned { submitted_label: get("SPIRA_SUBMITTED_LABEL")?, gh: get("SPIRA_GH")?, gh_timeout: get("SPIRA_GH_TIMEOUT")?, pace: std::time::Duration::from_millis(get(PACE_KEY)?.trim().parse::<u64>().map_err(|e| format!("{PACE_KEY} must be a whole number of milliseconds: {e}"))?) })
     }
 }
 
@@ -612,6 +618,7 @@ pub fn world(run: &std::path::Path, release: &str, lc: &spira_store::lc_call::Lc
 /// fetch in-process through hel; the store over the socket), the first registered one when
 /// `repo` is empty, and the names of the repositories after it.
 pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &Pinned, repo: &str) -> Result<String, String> {
+    use hel::ports::World;
     let mut snap = Snapshot::default();
     if real.run().join("world.halted").exists() {
         snap.halted = true;
@@ -629,6 +636,8 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
         Err(hel::sweep::ScanError::Skip(_)) => return serde_json::to_string(&snap).map_err(|e| e.to_string()),
         Err(hel::sweep::ScanError::Store(e)) => return Err(store_failure(&r.name, &e)),
     };
+    let cursor = real.resume_after(&r.name);
+    let branches: Vec<_> = branches.into_iter().filter(|b| past_cursor(&b.br, cursor.as_deref())).collect();
     snap.base = Base { landref: base.landref, landrefs: base.landrefs, remote: base.remote.unwrap_or_default() };
     let ids: Vec<String> = branches.iter().map(|b| b.id.clone()).chain(orphans.iter().map(|o| o.id.clone())).collect();
     snap.rows = spira_store::lc_state::list_ids_on(lc, &ids).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();
@@ -661,7 +670,32 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
         }
         snap.orphans.push(Orphan { id: o.id, path: o.path.display().to_string(), br: o.br });
     }
+    if cursor.is_some() {
+        clear_cursor_when_idle(real, &p.submitted_label, &snap)?;
+    }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+/// Branches sort by refname, so a cursor is a position: a branch sent since is gone, the cursor still holds.
+pub fn past_cursor(br: &str, cursor: Option<&str>) -> bool {
+    cursor.is_none_or(|c| br > c)
+}
+
+/// A resumed repository with nothing left to act on will issue no prune, so the cursor is cleared here.
+pub fn clear_cursor_when_idle(real: &hel::real::Real, label: &str, snap: &Snapshot) -> Result<(), String> {
+    use hel::ports::World;
+    if plan_labelled(label, snap, &mut BTreeMap::new())?.is_empty() {
+        real.set_resume_after(&snap.repo, None);
+    }
+    Ok(())
+}
+
+/// Record that the pass handled `br`; the cursor only moves forward, so an act that answers late cannot pull it back.
+pub fn mark_handled(real: &hel::real::Real, repo: &str, br: &str) {
+    use hel::ports::World;
+    if real.resume_after(repo).is_none_or(|c| c.as_str() < br) {
+        real.set_resume_after(repo, Some(br));
+    }
 }
 
 /// The runner of [`PR_TIP`]: the merged PR's head for one branch (`gh pr view`, hel's one
@@ -675,7 +709,7 @@ pub fn pr_tip(real: &hel::real::Real, input: &str) -> Result<String, String> {
 /// The runner of [`SEND`]: the witness re-checked, the content-on-base evidence recorded
 /// first when asked, then the leg (`hel reap-landed-branch`, the verified deletion) started
 /// as a transient unit named for `repo:br:tip`; it ends on that unit's `unit.ran`.
-pub fn send(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, units: Option<&dyn runtime::units::Units>, input: &str) -> Result<String, String> {
+pub fn send(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, units: Option<&dyn runtime::units::Units>, p: &Pinned, input: &str) -> Result<String, String> {
     use hel::ports::World;
     let units = units.ok_or("no unit manager configured")?;
     let s: Send = serde_json::from_str(input).map_err(|e| e.to_string())?;
@@ -693,7 +727,10 @@ pub fn send(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, units: 
         env.push((spira_config::process::TOML_ENV.to_string(), spec));
     }
     let unit = runtime::units::UnitSpec { task: NAME.into(), key: leg_key(&s.repo, &s.br, &s.tip), argv: vec!["hel".into(), "reap-landed-branch".into(), s.id.clone(), s.br.clone(), root.display().to_string(), s.why.clone(), s.caller.clone()], env, cwd: Some(root) };
-    runtime::units::effect(units, runtime::units::UNIT_START, &serde_json::to_string(&unit).map_err(|e| e.to_string())?)
+    let started = runtime::units::effect(units, runtime::units::UNIT_START, &serde_json::to_string(&unit).map_err(|e| e.to_string())?)?;
+    mark_handled(real, &s.repo, &s.br);
+    real.rest(p.pace);
+    Ok(started)
 }
 
 /// The runner of [`CONTENT_ON_BASE`]: the evidence verb on its own, for one branch.
@@ -735,6 +772,9 @@ pub fn destroy_worktree(real: &hel::real::Real, kind: &str, input: &str) -> Resu
     }
     let why = if kind == ORPHAN_WORKTREE { format!("orphan: branch {} is gone", t.br) } else { format!("branch {} kept as superseded; worktree freed", t.id) };
     if real.destroy_worktree(&t.id, std::path::Path::new(&t.path), &root, &why) {
+        if kind == FREE_WORKTREE {
+            mark_handled(real, &t.repo, &t.br);
+        }
         Ok(format!("{kind}:{}:{}", t.repo, t.id))
     } else {
         Err(format!("{}: worktree {} was not removed — see {}", t.id, t.path, real.reaplog_path().display()))
@@ -746,6 +786,7 @@ pub fn prune(real: &hel::real::Real, input: &str) -> Result<String, String> {
     use hel::ports::World;
     let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
     real.prune(&root_of(real, &t.repo)?);
+    real.set_resume_after(&t.repo, None);
     Ok(format!("pruned {}", t.repo))
 }
 

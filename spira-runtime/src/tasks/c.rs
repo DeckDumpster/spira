@@ -48,7 +48,7 @@ pub static TASKS: &[Task] = &[
         runners: &[
             (hel_sweep::OBSERVE, |e, _, s| hel_sweep::observe(&sweep_world(e)?, &crate::tasks::b::lc(e), &hel_sweep::Pinned::read(&pinned)?, &s.input)),
             (hel_sweep::PR_TIP, |e, _, s| hel_sweep::pr_tip(&sweep_world(e)?, &s.input)),
-            (hel_sweep::SEND, |e, _, s| hel_sweep::send(&sweep_world(e)?, &crate::tasks::b::lc(e), e.units.as_deref(), &s.input)),
+            (hel_sweep::SEND, |e, _, s| hel_sweep::send(&sweep_world(e)?, &crate::tasks::b::lc(e), e.units.as_deref(), &hel_sweep::Pinned::read(&pinned)?, &s.input)),
             (hel_sweep::CONTENT_ON_BASE, |e, _, s| hel_sweep::content_on_base(&sweep_world(e)?, &crate::tasks::b::lc(e), &s.input)),
             (hel_sweep::CLOSE_ON_LAND, |e, _, s| hel_sweep::close_on_land(&sweep_world(e)?, &crate::tasks::b::lc(e), &s.input)),
             (hel_sweep::ARCHIVE, |e, _, s| hel_sweep::archive(&sweep_world(e)?, &s.input)),

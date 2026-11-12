@@ -133,3 +133,73 @@ fn a_restart_that_lost_the_probe_of_a_pass_between_repositories_observes_that_re
     assert_eq!(task::catch_up(&idle_and_current, AT_35 + 60_000, &cadence), None, "the next slot has not passed");
     assert_eq!(task::catch_up(&Carry::default(), AT_35 + 7_200_000, &cadence), None, "a fresh journal only arms");
 }
+
+fn real_in(run: &std::path::Path) -> hel::real::Real {
+    hel::real::Real::minimal(run.to_path_buf(), run.to_path_buf(), None)
+}
+
+#[test]
+fn the_resume_cursor_is_kept_per_repo_in_the_run_dir_and_only_moves_forward() {
+    use hel::ports::World;
+    let dir = testkit::TempDir::new("hel-sweep-cursor");
+    let real = real_in(dir.path());
+    task::mark_handled(&real, "spira", "spira/sp-c");
+    task::mark_handled(&real, "spira", "spira/sp-a");
+    assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-c"), "a late answer does not pull the cursor back");
+    assert_eq!(std::fs::read_to_string(dir.path().join("hel-resume.spira")).unwrap().trim(), "spira/sp-c");
+    assert_eq!(real.resume_after("other"), None);
+    task::mark_handled(&real, "spira", "spira/sp-d");
+    assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-d"));
+}
+
+#[test]
+fn the_pace_is_read_from_the_pinned_ms_and_a_non_number_refuses() {
+    let get = |ms: &'static str| move |k: &str| Ok::<String, String>(if k == task::PACE_KEY { ms.to_string() } else { "x".to_string() });
+    assert_eq!(task::Pinned::read(&get("40")).unwrap().pace, std::time::Duration::from_millis(40));
+    assert_eq!(task::Pinned::read(&get("0")).unwrap().pace, std::time::Duration::ZERO);
+    assert!(task::Pinned::read(&get("soon")).err().unwrap().contains(task::PACE_KEY));
+    assert!(task::KEYS.contains(&task::PACE_KEY));
+}
+
+struct Timed(std::sync::Mutex<Vec<std::time::Duration>>);
+
+impl spira_store::lc_call::Transport for Timed {
+    fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+        let at = std::time::Instant::now();
+        let reply = spira_store::lc_call::Reply { code: 0, out: "[]".into(), err: String::new() };
+        self.0.lock().unwrap().push(at.elapsed());
+        Ok(reply)
+    }
+}
+
+#[test]
+fn a_600_branch_prefetch_is_twelve_bounded_store_calls() {
+    use hel::ports::World;
+    let dir = testkit::TempDir::new("hel-sweep-600");
+    let timed = std::sync::Arc::new(Timed(Default::default()));
+    let real = real_in(dir.path()).with_lc(spira_store::lc_call::LcClient::over(timed.clone(), true));
+    let ids: Vec<String> = (0..600).map(|i| format!("sp-{i:03}")).collect();
+    real.prefetch(&ids).unwrap();
+    let calls = timed.0.lock().unwrap();
+    assert_eq!(calls.len(), 12, "6 content reads and 6 list reads of 100 ids, not one per branch");
+}
+
+#[test]
+fn a_cursor_skips_branches_up_to_it_even_when_the_branch_it_names_is_gone() {
+    assert!(!task::past_cursor("spira/sp-b", Some("spira/sp-c")));
+    assert!(!task::past_cursor("spira/sp-c", Some("spira/sp-c")));
+    assert!(task::past_cursor("spira/sp-d", Some("spira/sp-c")));
+    assert!(task::past_cursor("spira/sp-a", None));
+}
+
+#[test]
+fn a_resumed_repo_with_nothing_to_act_on_clears_its_cursor_and_one_with_work_keeps_it() {
+    use hel::ports::World;
+    let dir = testkit::TempDir::new("hel-sweep-idle");
+    let real = real_in(dir.path());
+    task::mark_handled(&real, "spira", "spira/sp-a");
+    task::clear_cursor_when_idle(&real, "submitted", &Snapshot { branches: vec![branch("sp-a", true)], ..keep() }).unwrap();
+    assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-a"), "a landed branch is still to be sent");
+    task::clear_cursor_when_idle(&real, "submitted", &keep()).unwrap();
+    assert_eq!(real.resume_after("spira"), None);
+}
