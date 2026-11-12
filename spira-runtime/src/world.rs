@@ -903,14 +903,17 @@ impl World {
         Ok(format!("cleared {cleared} of {}; {} refused", asked.len(), parts.held.len()))
     }
 
-    /// Records `line` in the Concierge inbox through the inbox's one append-and-push leg (`inbox_rules::record`),
+    /// Records each non-empty line of `input` in the Concierge inbox through the inbox's one append-and-push leg (`inbox_rules::record`),
     /// so a line matching the push pattern wakes the session as an `inbox-triage append` does.
-    pub fn inbox_append(&self, line: &str) -> Result<String, String> {
+    pub fn inbox_append(&self, input: &str) -> Result<String, String> {
         let flusher = || match self.inbox_flusher.as_os_str().is_empty() {
             true => spira_config::release_env::tool("inbox-triage").map(PathBuf::from),
             false => Ok(self.inbox_flusher.clone()),
         };
-        let pushed = inbox_rules::record(&self.inbox, line, &self.push_wake, &self.push_pattern, flusher)?;
+        let mut pushed = false;
+        for line in input.lines().filter(|l| !l.is_empty()) {
+            pushed |= inbox_rules::record(&self.inbox, line, &self.push_wake, &self.push_pattern, flusher)?;
+        }
         Ok(if pushed { "appended, pushed" } else { "appended" }.into())
     }
 }

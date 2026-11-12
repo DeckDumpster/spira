@@ -73,3 +73,13 @@ fn with_no_wake_configured_nothing_is_pushed() {
     assert_eq!(w.inbox_append(&blind_line()).unwrap(), "appended");
     assert!(!d.join("inbox.log.push").exists());
 }
+
+#[test]
+fn several_lines_in_one_input_are_each_recorded_and_any_push_answers_pushed() {
+    let d = testkit::TempDir::new("world-inbox-many");
+    let (exe, _) = flusher(d.path());
+    let w = world(d.path(), exe);
+    let input = "2026-11-07T00:00:00Z [watch:x] plain\n2026-11-07T00:00:01Z [watch:x] P0 loud\n";
+    assert_eq!(w.inbox_append(input).unwrap(), "appended, pushed");
+    assert_eq!(std::fs::read_to_string(d.join("inbox.log")).unwrap(), input, "both lines, one each");
+}

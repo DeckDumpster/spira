@@ -376,6 +376,28 @@ fn with_the_store_a_round_the_lifecycle_ended_is_swept_once_under_the_lock() {
 }
 
 #[test]
+fn a_swept_round_sharing_a_live_rounds_worktree_is_closed_out_once() {
+    let t = store_world();
+    let shared = t.qfile("shared-tree");
+    fs::create_dir_all(&shared).unwrap();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    for id in ["spira-open", "spira-landed"] {
+        let mut kv = batches::batch(d, "spira", id).unwrap().unwrap().kv;
+        kv.push("worktree", &shared.display().to_string());
+        batches::save(d, "spira", &kv).unwrap();
+    }
+    for _ in 0..2 {
+        assert_eq!(t.run(&["round", "open", "--members", "sp-b:tb"]), 1);
+    }
+    let landed = marker(&t, "spira-landed", "result");
+    assert!(
+        !landed.exists(),
+        "its tree is the live round's and nothing of its own was removed: {}",
+        fs::read_to_string(&landed).unwrap_or_default()
+    );
+}
+
+#[test]
 fn with_the_store_stage_stages_behind_the_open_round_or_reports_none_open() {
     let t = round_world();
     let d = t.lc.store.get_or_init(MemDoor::default);

@@ -199,7 +199,11 @@ impl Handler for RoundDuty {
         let now = ev.at / 1000;
         let (next, say) = decide(self, &carry, &snap, now);
         ctx.event().set("round_duty.said", say.len() as u64);
-        let mut cmds: Vec<Command> = say.into_iter().map(|m| Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS))).collect();
+        let mut cmds: Vec<Command> = vec![];
+        if !say.is_empty() {
+            let input = say.iter().map(|m| format!("{} [watch:{NAME}] {m}", iso8601(now))).collect::<Vec<_>>().join("\n");
+            cmds.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&input)), input, DEADLINE_MS)));
+        }
         if next != carry {
             cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
         }
@@ -303,6 +307,25 @@ mod tests {
         assert_eq!(say.iter().filter(|m| m.starts_with("ROUND NO VERDICTS 300")).count(), 1);
         assert!(say.iter().any(|m| m.starts_with("ROUNDS STOPPED ON PURPOSE: spira ")));
         assert!(decide(&cfg(), &c, &Snapshot { stopped: "spira".into(), ..snap(RoundState::None, 0) }, 1100).1.is_empty());
+    }
+
+    #[test]
+    fn three_fresh_result_lines_are_one_inbox_effect() {
+        use runtime::ports::VirtualClock;
+        use runtime::{Engine, Executor, MemJournal, Outcome};
+        let clock = VirtualClock::new(1_800_000_000_000);
+        let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![cfg().registration()], 0).unwrap();
+        let (id, stream, kind) = RoundDuty::boot();
+        e.submit(id, stream, kind).unwrap();
+        e.run_until_idle().unwrap();
+        let observe = e.pending_effects().remove(0);
+        let fresh = ["a", "b", "c"].iter().map(|r| (r.to_string(), format!("line {r}"))).collect();
+        let snap = Snapshot { fresh, ..snap(RoundState::None, 0) };
+        e.complete(&observe.key, Outcome::Succeeded(serde_json::to_string(&snap).unwrap())).unwrap();
+        e.run_until_idle().unwrap();
+        let sent: Vec<String> = e.pending_effects().into_iter().filter(|p| p.spec.name == INBOX_APPEND).map(|p| p.spec.input).collect();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0].lines().filter(|l| l.contains("[watch:round-duty] ROUND RESULT")).count(), 3, "{sent:?}");
     }
 
     fn halted(since: u64) -> Snapshot {
