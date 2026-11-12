@@ -1353,10 +1353,7 @@ impl<'a> Run<'a> {
         env.unset("GITHUB_TOKEN");
         env.set("GIT_SSH_COMMAND", "echo 'dwarf: no SSH credentials — landing.sh and the batcher handle forge writes' >&2; exit 1");
         env.set("GIT_TERMINAL_PROMPT", "0");
-        match Self::make_session_tmpdir(work) {
-            Ok(tmp) => env.set("TMPDIR", &tmp.display().to_string()),
-            Err((tmp, e)) => self.log(&format!("{}: session TMPDIR {} not created ({e}); scratch falls to the inherited temp root", self.s.bead, tmp.display())),
-        }
+        self.export_session_tmpdir(work);
         env.set("GIT_ASKPASS", "/bin/false");
         // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): the agent's cargo
         // compiles through the box's one sccache, so a worktree never builds its dependencies

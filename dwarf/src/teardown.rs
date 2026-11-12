@@ -110,6 +110,13 @@ impl Run<'_> {
         std::fs::create_dir_all(&dir).map(|()| dir.clone()).map_err(|e| (dir, e))
     }
 
+    pub(crate) fn export_session_tmpdir(&self, work: &Path) {
+        match Self::make_session_tmpdir(work) {
+            Ok(tmp) => self.d.env.set("TMPDIR", &tmp.display().to_string()),
+            Err((tmp, e)) => self.log(&format!("{}: session TMPDIR {} not created ({e}); scratch falls to the inherited temp root", self.s.bead, tmp.display())),
+        }
+    }
+
     pub(crate) fn remove_tmpdir(&self) {
         let Some(work) = self.s.work.as_deref() else { return };
         let dir = Self::session_tmpdir(work);
