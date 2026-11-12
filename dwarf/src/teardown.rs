@@ -14,7 +14,55 @@ use crate::ports::s;
 use crate::run::{Run, FIXTURE_DROP};
 use crate::util;
 
+/// Two refused submits from different beads inside this many seconds are one page.
+const SUBMIT_BLOCKED_WINDOW_S: i64 = 600;
+const SUBMIT_REFUSED: &str = "SUBMIT REFUSED";
+const SUBMIT_BLOCKED: &str = "SUBMIT BLOCKED";
+
+/// The dwarf's own last word when it names a refused `work submit`: its first line.
+fn submit_refusal(reason: &str) -> Option<&str> {
+    let first = reason.trim().lines().next()?.trim();
+    let low = first.to_lowercase();
+    (low.contains("work submit") && low.contains("refus")).then_some(first)
+}
+
+/// The beads, other than `bead`, with a refused-submit line stamped at or after `since` in the
+/// inbox text; ISO UTC stamps of one width order as strings.
+fn others_refused(inbox: &str, since: &str, bead: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in inbox.lines() {
+        let Some((stamp, rest)) = line.split_once(' ') else { continue };
+        let Some(who) = rest.split_once(SUBMIT_REFUSED).and_then(|(_, r)| r.trim().split(':').next()) else { continue };
+        if stamp >= since && who != bead && !who.is_empty() && !out.iter().any(|o| o == who) {
+            out.push(who.to_string());
+        }
+    }
+    out
+}
+
 impl Run<'_> {
+    /// A refused `work submit` ends a session with nothing the dwarf can do: say so in the inbox
+    /// (one line for the bead), and page once when a second bead says it inside the window.
+    pub(crate) fn report_refused_submit(&self, bead: &str, reason: &str) {
+        let Some(refusal) = submit_refusal(reason) else { return };
+        let now = self.now();
+        let inbox = self.conf.s("SPIRA_CONCIERGE_INBOX");
+        let append = |line: String| {
+            let o = self.d.exec.exec("inbox-triage", &s(&["append", &format!("[dwarf] {line}")]), None, None);
+            if !o.success() {
+                self.log(&format!("{}: inbox-triage append refused (rc={}): {}", self.f(), o.code, o.first_err_line()));
+            }
+        };
+        let since = util::iso_utc(now - SUBMIT_BLOCKED_WINDOW_S);
+        append(format!("{SUBMIT_REFUSED} {bead}: {refusal}"));
+        let seen = std::fs::read_to_string(&inbox).unwrap_or_default();
+        let others = others_refused(&seen, &since, bead);
+        let paged = seen.lines().any(|l| l.contains(SUBMIT_BLOCKED) && l.split(' ').next().is_some_and(|st| st >= since.as_str()));
+        if !others.is_empty() && !paged {
+            append(format!("P0 {SUBMIT_BLOCKED}: work submit refused for {bead} and {} within {} minutes: {refusal}", others.join(", "), SUBMIT_BLOCKED_WINDOW_S / 60));
+        }
+    }
+
     fn stop_heartbeat(&self) {
         self.hb_shutdown.store(true, Ordering::SeqCst);
         let t = Instant::now();
@@ -421,6 +469,7 @@ impl Run<'_> {
                     let r: String = r.chars().take(300).collect();
                     if r.is_empty() { "no reason given".to_string() } else { r }
                 };
+                self.report_refused_submit(&id, &reason);
                 let streak: i64 = self.sv("thrash_streak_bump", &s(&[&id, &tip, &reason])).text().trim().parse().unwrap_or(0);
                 let cap = self.conf.i("SPIRA_THRASH_STREAK_CAP");
                 self.bump_requeue(&cause);

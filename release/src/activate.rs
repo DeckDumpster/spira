@@ -21,8 +21,50 @@ const HOTFIX: &str = "hotfix";
 /// History is a rollback stack, not an audit log: the oldest entries go past this depth.
 const HISTORY_DEPTH: usize = 50;
 
+/// The reads activation makes through the new release's own `spira-lc`, once its units are up.
+pub trait Reads {
+    /// `spira-lc <args>` from the release at `rel`: its stdout, or the refusal in its words.
+    fn lc(&self, rel: &Path, args: &[&str]) -> Result<String, String>;
+}
+
+/// Runs the release's own `spira-lc` under the environment its services get.
+pub struct RealReads<'a>(pub &'a Config);
+
+impl Reads for RealReads<'_> {
+    fn lc(&self, rel: &Path, args: &[&str]) -> Result<String, String> {
+        let bin = rel.join("bin/spira-lc");
+        // batch-job: one bounded read through the new release; a hung store is a refusal
+        let mut cmd = Command::new("timeout");
+        cmd.arg("20").arg(&bin).args(args).env("SPIRA_HOME", rel.join("spira")).env_remove("SPIRA_REPO");
+        for (k, v) in verify::pre_activate_env(self.0, rel)? {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
+        let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
+        if out.status.success() {
+            return Ok(text(&out.stdout));
+        }
+        let said = [text(&out.stderr), text(&out.stdout)].join(" ");
+        Err(format!("{} ({}): {}", args.join(" "), out.status, one_line(&said)))
+    }
+}
+
+/// One lifecycle read and one content read through the release that was just started: a
+/// release whose store layout or client cannot answer them serves no caller. An empty
+/// listing passes; there is nothing to show.
+fn serves_reads(reads: &dyn Reads, rel: &Path) -> Result<(), String> {
+    let listed = reads.lc(rel, &["list", "--state", "READY"]).map_err(|e| format!("lifecycle read refused: spira-lc {e}"))?;
+    eprintln!("release: read through {}: spira-lc list --state READY", rel.display());
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&listed).map_err(|e| format!("lifecycle read unreadable: spira-lc list --state READY: {e}"))?;
+    let Some(id) = rows.first().and_then(|r| r["bead_id"].as_str()) else { return Ok(()) };
+    reads.lc(rel, &["content", "show", id]).map_err(|e| format!("content read refused: spira-lc {e}"))?;
+    eprintln!("release: read through {}: spira-lc content show {id}", rel.display());
+    Ok(())
+}
+
 pub struct Ctx<'a> {
     pub cfg: &'a Config,
+    pub reads: &'a dyn Reads,
     pub sc: &'a dyn Systemctl,
     pub git: &'a dyn Git,
     /// The repository the hotfix rule asks about ancestry in.
@@ -377,6 +419,12 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn() -> Result
                 Ok(st) => failed.push(format!("{u}: did not come up (ActiveState={}, Result={})", st.active, st.result)),
                 Err(e) => failed.push(format!("{u}: cannot read its state: {e}")),
             }
+        }
+    }
+    // A rollback returns to a release that served before; refusing it would strand the box.
+    if failed.is_empty() && install_new {
+        if let Err(e) = serves_reads(ctx.reads, &rel) {
+            failed.push(e);
         }
     }
     if !failed.is_empty() {

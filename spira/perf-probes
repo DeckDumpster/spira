@@ -8,3 +8,6 @@ work-list	work list --json
 # with it and ~215 ms without, 2026-11-01). sp-s5ndy5.
 claim-check	spira-claim rune-ready builder --json
 lc-ready	spira-lc list --state READY
+# content-read is the content door a builder's submit goes through; a store that cannot answer it
+# is UNRUNNABLE here instead of silent until a builder asks.
+content-read	spira-lc content list --limit 1 --json

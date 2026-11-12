@@ -446,6 +446,26 @@ mod tests {
         assert!(alarms(&[bare], 500, &[])[0].contains("phases unreported"));
     }
 
+    struct RefusesContent;
+    impl Runner for RefusesContent {
+        fn run(&mut self, argv: &[String]) -> Result<String, String> {
+            match argv.iter().any(|a| a == "content") {
+                true => Err("exit status: 2: cannot tell: the beads database does not have the layout the content reads query".to_string()),
+                false => Ok(String::new()),
+            }
+        }
+    }
+
+    #[test]
+    fn the_shipped_content_read_probe_is_unrunnable_against_a_store_that_refuses_content_reads() {
+        let probes = parse_probes(include_str!("../../spira/perf-probes")).unwrap();
+        assert!(probes.iter().any(|p| p.name == "content-read"), "the probe file lists it");
+        let clock = Stub { now: Cell::new(0), epoch: Cell::new(0) };
+        let lines = alarms(&time_probes(&probes, &clock, &mut RefusesContent), 500, &[]);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("PERF UNRUNNABLE content-read: "), "{lines:?}");
+    }
+
     struct Phased<'a>(&'a Stub);
     impl Runner for Phased<'_> {
         fn run(&mut self, _: &[String]) -> Result<String, String> {

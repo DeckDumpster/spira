@@ -103,6 +103,10 @@ impl Runner for Spawn {
         if self.scoped && status.code() == Some(127) {
             return Err(format!("{}: not found", argv[0]));
         }
+        if !status.success() {
+            let said = format!("{err} {out}");
+            return Err(format!("{}: {status}: {}", argv[0], said.split_whitespace().take(40).collect::<Vec<_>>().join(" ")));
+        }
         Ok(out)
     }
 }
@@ -279,4 +283,18 @@ fn run_happy() -> Result<(), String> {
         println!("{l}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_probe_that_exits_non_zero_is_an_error_not_an_answer() {
+        let mut spawn = Spawn { scoped: false, measured: None, phases: None };
+        let argv = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let err = spawn.run(&argv(&["sh", "-c", "echo refused >&2; echo refused; exit 3"])).unwrap_err();
+        assert!(err.contains("refused"), "{err}");
+        assert_eq!(spawn.run(&argv(&["sh", "-c", "echo fine"])).unwrap().trim(), "fine");
+    }
 }
