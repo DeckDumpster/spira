@@ -460,6 +460,12 @@ if [ -z "$cache_home" ]; then
     fi
 fi
 export CARGO_HOME="$cache_home"
+# The rustup home is named, never left to $HOME: a round's HOME is its own, a test's sandbox HOME
+# is another, and a cargo that is a rustup proxy (this host) finds no toolchain under either. An
+# image links cargo straight to its toolchain and keeps rustup's home beside the cargo home.
+if [ -z "${RUSTUP_HOME:-}" ]; then
+    if [ -d "$CARGO_HOME/rustup" ]; then export RUSTUP_HOME="$CARGO_HOME/rustup"; else export RUSTUP_HOME="$HOME/.rustup"; fi
+fi
 # The image links $CARGO_HOME/bin straight to ITS toolchain (template.sh runs only at image
 # build), so RUSTUP_TOOLCHAIN alone changes nothing: a round whose tree pins another release
 # installs it here and relinks, or a toolchain upgrade can never certify.
@@ -491,6 +497,14 @@ export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
 if [ ! -x "$RUSTC_WRAPPER" ]; then
     echo "round-vm: sccache is missing on this VM: $RUSTC_WRAPPER" >&2
     exit 5
+fi
+# cargo-llvm-cov needs the toolchain's llvm-tools; without them it asks to install them and a
+# round has nobody to answer. An image carries them; a rustup home that lacks them gets them here.
+if command -v rustup >/dev/null 2>&1; then
+    cov_toolchain="$(rustc -vV | sed -n 's/^release: //p')"
+    rustup component list --installed --toolchain "$cov_toolchain" 2>/dev/null | grep -q '^llvm-tools' \
+        || rustup component add llvm-tools --toolchain "$cov_toolchain" >&2 \
+        || echo "round-vm: could not add llvm-tools to toolchain $cov_toolchain; coverage will be unavailable" >&2
 fi
 # A round runs the same tests wherever it runs: round-vm/tests/unit_cov_real.rs returns early
 # without cargo-llvm-cov, so a machine without it passed a test another machine failed.
@@ -546,6 +560,7 @@ echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
 unit_env() {
     env -i HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
         CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SERVER_PORT="${SCCACHE_SERVER_PORT:-4226}" \
+        ${RUSTUP_HOME:+RUSTUP_HOME="$RUSTUP_HOME"} ${RUSTUP_TOOLCHAIN:+RUSTUP_TOOLCHAIN="$RUSTUP_TOOLCHAIN"} \
         SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
         UNIT_COV_ENV="$unit_cov_env" bash -c 'eval "$UNIT_COV_ENV"; exec cargo "$@"' _ "$@"
