@@ -398,6 +398,16 @@ prune_release_intermediates() {
     local d="$HOME/round-work/target/release"
     rm -rf "$d/deps" "$d/build" "$d/.fingerprint" "$d/incremental" "$d/examples"
 }
+# A host round runs one at a time and never reads an earlier head's release again.
+prune_other_releases() {
+    local keep="$1" d
+    for d in "$HOME/round-releases"/*/; do
+        d="${d%/}"
+        [ -d "$d" ] && [ "$(basename "$d")" != "$keep" ] || continue
+        echo "round-vm: removing superseded release $d" >&2
+        { chmod -R u+w "$d" && rm -rf "$d"; } || echo "round-vm: could not remove superseded release $d" >&2
+    done
+}
 disk_report start
 rm -f "$disk_growth_file"
 disk_base="$(fs_used)"
@@ -737,6 +747,7 @@ SPIRA_HOME="$HOME/round-work/spira" SPIRA_TOML="$SPIRA_TOML" target/release/spir
 rel_sha="$(SPIRA_HOME="$HOME/round-work/spira" target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases" 2> ~/round-release.err)" || release_red "build"
 SPIRA_HOME="$HOME/round-work/spira" target/release/release verify "$rel_sha" --no-pre-activate --releases "$HOME/round-releases" > /dev/null 2> ~/round-release.err || release_red "verify"
 prune_release_intermediates
+prune_other_releases "$rel_sha"
 export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
 export SPIRA_HOME="$SPIRA_RELEASE/spira"
 export SPIRA_REPO="$HOME/round-work"
@@ -3499,6 +3510,34 @@ mod tests {
         assert!(REMOTE_SCRIPT.find("release verify \"$rel_sha\"").unwrap() < prune, "pruned only once the release is verified");
         assert!(prune < REMOTE_SCRIPT.find("disk_report build").unwrap(), "the build report sees the pruned tree");
         assert!(prune < REMOTE_SCRIPT.find("testenv --mode parallel").unwrap());
+    }
+
+    #[test]
+    fn two_passes_at_different_heads_leave_one_release_and_the_log_names_the_removed() {
+        let d = TempDir::new();
+        let releases = d.path().join("round-releases");
+        let pass = |sha: &str| {
+            let dir = releases.join(sha);
+            std::fs::create_dir_all(dir.join("bin")).unwrap();
+            std::fs::write(dir.join("bin/tool"), "x").unwrap();
+            if sha == "aaa" {
+                for p in [dir.join("bin/tool"), dir.join("bin"), dir.clone()] {
+                    std::fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(if p.is_dir() { 0o555 } else { 0o444 })).unwrap();
+                }
+            }
+            let script = format!("set -euo pipefail\n{}\nprune_other_releases {sha}\n", script_fn("prune_other_releases"));
+            let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8(out.stderr).unwrap()
+        };
+        assert_eq!(pass("aaa"), "");
+        let log = pass("bbb");
+        let left: Vec<_> = std::fs::read_dir(&releases).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(left, ["bbb"]);
+        assert!(log.contains("removing superseded release") && log.contains("round-releases/aaa"), "{log}");
+        let verify = REMOTE_SCRIPT.find("release verify \"$rel_sha\"").unwrap();
+        let prune = REMOTE_SCRIPT.find("\nprune_other_releases \"$rel_sha\"\n").expect("the round prunes");
+        assert!(verify < prune && prune < REMOTE_SCRIPT.find("export SPIRA_RELEASE=\"$HOME").unwrap());
     }
 
     #[test]
