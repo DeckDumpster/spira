@@ -51,7 +51,7 @@
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
-//! | Landing | land refused (lock busy ×N) | Done (`abandon`, verdict red) |
+//! | Landing | land refused (lock busy ×N, or any other refusal) | Done (output kept, round left open, page with the refusing line, no pause) |
 //! | Promoting | promotion named | Corpus / Certifying for the staged round (`main.rs:1069`) |
 //! | Done | — | Idle (`pace.advance` writes carry, pages) |
 //!
@@ -895,6 +895,17 @@ pub fn certify_output_file(batch: &str, run: u32) -> String {
     format!("run/rounds/{batch}.certify-{run}.out")
 }
 
+/// Where a refused land leg's output is kept, relative to the run's parent.
+pub fn land_output_file(batch: &str, run: u32) -> String {
+    format!("run/rounds/{batch}.land-{run}.out")
+}
+
+/// What the page for a refused landing says: the refusing line, the kept file, the next verbs.
+pub fn land_refused_detail(batch: &str, out: &str, kept: &str) -> String {
+    let said = out.trim().lines().last().unwrap_or("no output");
+    format!("round {batch} is green and left open with its members; the landing was refused: {said}; output kept at {kept}; eject the member it names with `queue round eject {batch} <member>`, then `queue round certify {batch}` and `queue round land {batch}`")
+}
+
 /// Why a certify leg that judged nothing leaves its round open: its last line and the kept file.
 pub fn certify_fault_reason(exit: Exit, out: &str, kept: &str) -> String {
     let said = out.trim().lines().last().map(|l| format!(": {l}")).unwrap_or_default();
@@ -1672,10 +1683,7 @@ impl Machine<'_> {
                     }
                 }
             }
-            (State::Landing, LAND) => {
-                self.go(Trigger::LandRefused);
-                self.red(&format!("NOT LANDED: {}", body.trim()));
-            }
+            (State::Landing, LAND) => self.land_refused(body),
             (State::Promoting, PROMOTE) => {
                 let p: Promoted = if ok { serde_json::from_str(body).unwrap_or_default() } else { Promoted::default() };
                 if p.batch.is_empty() {
@@ -1757,6 +1765,16 @@ impl Machine<'_> {
         self.go(Trigger::LandBaseMoved);
         self.rc.run += 1;
         self.certify();
+    }
+
+    /// `round land` refused a green round: the refusal names a member, not the round, so the round
+    /// stays open with all of them, the output is kept, and a person is paged with the refusing line.
+    fn land_refused(&mut self, body: &str) {
+        let batch = self.rc.batch.clone().unwrap_or_default();
+        let kept = land_output_file(&batch, self.rc.run);
+        self.acts.push(Leg { why: body.to_string(), key: kept.clone(), ..self.leg() }.act(KEEP_CERTIFY_OUTPUT));
+        self.go(Trigger::LandRefused);
+        self.finish(pace::Outcome::LandRefused, &land_refused_detail(&batch, body, &kept));
     }
 
     fn assemble_failed(&mut self, err: &str) {
