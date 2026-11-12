@@ -105,6 +105,11 @@ impl Run<'_> {
         work.join(".runtime").join(format!("session-tmp-{}", std::process::id()))
     }
 
+    pub(crate) fn make_session_tmpdir(work: &Path) -> Result<PathBuf, (PathBuf, std::io::Error)> {
+        let dir = Self::session_tmpdir(work);
+        std::fs::create_dir_all(&dir).map(|()| dir.clone()).map_err(|e| (dir, e))
+    }
+
     fn remove_tmpdir(&self) {
         let Some(work) = self.s.work.as_deref() else { return };
         let dir = Self::session_tmpdir(work);
@@ -651,5 +656,15 @@ mod tests {
     fn the_session_tmpdir_lies_inside_the_worktree() {
         let w = Path::new("/w/wt");
         assert!(Run::session_tmpdir(w).starts_with(w));
+    }
+
+    #[test]
+    fn a_session_tmpdir_that_cannot_be_created_is_reported_with_its_path() {
+        let dir = testkit::TempDir::new("blocked");
+        std::fs::write(dir.path().join(".runtime"), "a file, not a directory").unwrap();
+        let (path, _) = Run::make_session_tmpdir(dir.path()).unwrap_err();
+        assert!(path.starts_with(dir.path()));
+        let ok = testkit::TempDir::new("ok");
+        assert!(Run::make_session_tmpdir(ok.path()).unwrap().is_dir());
     }
 }
