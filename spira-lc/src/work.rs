@@ -216,10 +216,10 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             return refusal;
         }
     }
-    if let Err(refusal) = record_unit_red_on_base(bead_id, args) {
+    if let Err(refusal) = record_target_verdict(bead_id, "submit", args) {
         return refusal;
     }
-    if let Err(refusal) = record_target_verdict(bead_id, "submit", args) {
+    if let Err(refusal) = record_unit_red_on_base(bead_id, args) {
         return refusal;
     }
     let done = apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip });
@@ -469,8 +469,13 @@ fn unit_red_line(args: &[String], self_id: &str, exists: &dyn Fn(&str) -> Result
 }
 
 fn record_unit_red_on_base(bead_id: &str, args: &[String]) -> Result<(), (i32, String)> {
-    let exists = |id: &str| Ok(crate::bd::show(id).is_ok());
+    let exists = |id: &str| match crate::bd::show(id) {
+        Ok(_) => Ok(true),
+        Err(e) if e.contains("no issue found matching") => Ok(false),
+        Err(e) => Err(format!("cannot tell: {e}")),
+    };
     match unit_red_line(args, bead_id, &exists) {
+        Err(e) if e.starts_with("cannot tell") => Err((CANNOT_TELL, e)),
         Err(e) => Err((REFUSED, format!("work submit: {e}"))),
         Ok(None) => Ok(()),
         Ok(Some(line)) => crate::bd::note(bead_id, &line).map(|_| ()).map_err(|e| (CANNOT_TELL, format!("cannot tell: {e}"))),

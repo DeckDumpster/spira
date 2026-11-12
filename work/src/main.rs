@@ -656,7 +656,7 @@ fn run_checks(args: &[String], base_red: bool) -> (i32, Vec<String>) {
                     }
                     work::Outcome::Fail => {
                         let tests = work::failing_tests(&stdout);
-                        if row.deferred_to.is_some() && base_red {
+                        if row.deferred_to.is_some() && base_red && !tests.is_empty() {
                             println!("-- {}: FAIL ({}) — waived: the red is recorded on the base (--unit-red-on-base)", row.name, o.status);
                             waived_tests.extend(tests);
                             deferred = true;

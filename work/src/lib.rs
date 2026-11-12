@@ -99,10 +99,12 @@ pub fn row_outcome(code: i32, deferred_to: Option<&str>) -> Outcome {
     }
 }
 
-/// The failing test names a testenv unit-tier row printed (`unit-tests: N failing test(s):`,
-/// then one two-space-indented name per test).
+/// The failing test names a testenv unit-tier row logged: `unit-tests: N failing test(s):`, then one
+/// name per line indented two spaces, each line behind testenv's `spira: batch: ` log prefix.
 pub fn failing_tests(output: &str) -> Vec<String> {
-    let mut lines = output.lines().skip_while(|l| !(l.starts_with("unit-tests: ") && l.ends_with("failing test(s):")));
+    const PREFIX: &str = "spira: batch: ";
+    let body = |l: &str| l.split_once(PREFIX).map_or(l, |(_, r)| r).to_string();
+    let mut lines = output.lines().map(body).skip_while(|l| !(l.starts_with("unit-tests: ") && l.ends_with("failing test(s):")));
     lines.next();
     lines
         .take_while(|l| l.starts_with("  "))
@@ -113,7 +115,7 @@ pub fn failing_tests(output: &str) -> Vec<String> {
 
 /// The value of `--unit-red-on-base` in a `submit`'s arguments.
 pub fn unit_red_on_base(args: &[String]) -> Option<&str> {
-    args.iter().position(|a| a == UNIT_RED_ON_BASE).and_then(|i| args.get(i + 1)).map(String::as_str)
+    args.iter().position(|a| a == UNIT_RED_ON_BASE).and_then(|i| args.get(i + 1)).map(String::as_str).filter(|v| looks_like_bead_id(v))
 }
 
 pub const UNIT_RED_ON_BASE: &str = "--unit-red-on-base";
@@ -587,7 +589,9 @@ mod tests {
 
     #[test]
     fn the_failing_tests_a_unit_row_printed_are_read_without_their_detail() {
-        let out = "building\nunit-tests: 2 failing test(s):\n  a::bad\n    assertion failed\n  b::worse\n    left: 1\n  (+3 more)\nVERDICT RED\n";
+        let p = "2026-11-12T08:00:18Z spira: batch: ";
+        let out = format!("building\n{p}unit-tests: 2 failing test(s):\n{p}  a::bad\n{p}    assertion failed\n{p}  b::worse\n{p}    left: 1\n{p}  (+3 more)\nVERDICT RED\n");
+        let out = out.as_str();
         assert_eq!(failing_tests(out), v(&["a::bad", "b::worse"]));
         assert!(failing_tests("test result: ok").is_empty());
     }
