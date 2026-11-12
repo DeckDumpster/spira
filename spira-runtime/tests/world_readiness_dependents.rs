@@ -103,12 +103,12 @@ fn reconcile_content_reads_only_the_head_of_the_event_log() {
 #[test]
 fn reconcile_content_since_asks_the_store_from_the_cursor_and_reads_its_through_seq() {
     let (dir, path, sent) = serve(|argv| match argv[0].as_str() {
-        "reconcile-content" => Some("would close sp-a: done\nthrough-seq: 52\n".into()),
+        "reconcile-content" => Some("would close sp-a (done)\nthrough-seq: 52\n".into()),
         _ => None,
     });
     let lc = spira_config::lc_call::LcClient::socket(path);
     let out = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "since:40").unwrap();
-    assert!(out.contains("\"through_seq\":52") && out.contains("\"pass\":\"Since\""), "{out}");
+    assert!(out.contains("\"through_seq\":52") && out.contains("\"pass\":\"since\""), "{out}");
     assert_eq!(*sent.lock().unwrap(), ["reconcile-content --dry-run --since-seq 40"]);
 }
 
