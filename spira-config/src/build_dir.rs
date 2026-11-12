@@ -113,7 +113,6 @@ fn holds_anything(dir: &Path) -> bool {
 /// Lease a build directory under `base` for `who`: the most recently idled one that holds a
 /// build, else an empty idle one, else a new one. Never waits and never touches a live one.
 pub fn lease(base: &Path, who: &str) -> std::io::Result<Lease> {
-    use std::io::Write;
     std::fs::create_dir_all(base)?;
     // Warm ones first, most recently idled first; then empty ones. Taking each lock in that
     // order means the first one won is the best idle directory, whatever races us.
@@ -136,7 +135,12 @@ pub fn lease(base: &Path, who: &str) -> std::io::Result<Lease> {
             n += 1;
         }
     }
-    let (n, mut lock, reused) = won.expect("a lock was won above");
+    let (n, lock, reused) = won.expect("a lock was won above");
+    take(base, n, lock, reused, who)
+}
+
+fn take(base: &Path, n: u64, mut lock: std::fs::File, reused: bool, who: &str) -> std::io::Result<Lease> {
+    use std::io::Write;
     let dir = dir_path(base, n);
     std::fs::create_dir_all(&dir)?;
     // The holder's name, for whoever reads the base; writing it stamps the lock file, so a
@@ -144,6 +148,58 @@ pub fn lease(base: &Path, who: &str) -> std::io::Result<Lease> {
     let _ = lock.set_len(0);
     let _ = lock.write_all(who.as_bytes());
     Ok(Lease { dir, lock, reused, started: SystemTime::now() })
+}
+
+/// Why [`pick`] chose the slot it did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Why {
+    Recorded,
+    Gone,
+    Held,
+    OutsideBase,
+    Unrecorded,
+}
+
+impl Why {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Why::Recorded => "recorded",
+            Why::Gone => "gone",
+            Why::Held => "held",
+            Why::OutsideBase => "outside-base",
+            Why::Unrecorded => "unrecorded",
+        }
+    }
+}
+
+/// Which slot to lease: the recorded directory's when it is a slot of `base` that exists and is
+/// not `held`, else `None` (any slot, in [`lease`]'s order), with the reason.
+pub fn pick(base: &Path, recorded: Option<&Path>, exists: &dyn Fn(&Path) -> bool, held: &dyn Fn(u64) -> bool) -> (Option<u64>, Why) {
+    let Some(rec) = recorded else { return (None, Why::Unrecorded) };
+    let slot = (rec.parent() == Some(base)).then(|| rec.file_name()?.to_str()?.strip_prefix("dir")?.strip_prefix('.')?.parse::<u64>().ok()).flatten();
+    let Some(n) = slot else { return (None, Why::OutsideBase) };
+    if !exists(rec) || !exists(&lock_path(base, n)) {
+        return (None, Why::Gone);
+    }
+    if held(n) {
+        return (None, Why::Held);
+    }
+    (Some(n), Why::Recorded)
+}
+
+/// Lease the `recorded` directory when [`pick`] allows it, else any one ([`lease`]); with the
+/// reason. Never waits and never touches a live lease.
+pub fn lease_recorded(base: &Path, recorded: Option<&Path>, who: &str) -> std::io::Result<(Lease, Why)> {
+    let probe = |n: u64| try_lock(base, n).is_none();
+    let (slot, why) = pick(base, recorded, &|p| p.exists(), &probe);
+    if let Some(n) = slot {
+        if let Some(lock) = try_lock(base, n) {
+            let warm = holds_anything(&dir_path(base, n));
+            return Ok((take(base, n, lock, warm, who)?, why));
+        }
+        return Ok((lease(base, who)?, Why::Held));
+    }
+    Ok((lease(base, who)?, why))
 }
 
 /// Empty `dir` in place: everything under it goes, the directory stays. Only for a directory
@@ -543,6 +599,57 @@ mod tests {
         assert!(!log.exists(), "recording never cleans");
         clean(&script(), &two, second.dir(), &path, false).expect("fourth clean");
         assert!(!log.exists(), "the release recorded the changed lock: nothing to clean");
+    }
+
+    #[test]
+    fn the_recorded_idle_directory_is_leased() {
+        let d = testkit::TempDir::new("bdir-rec");
+        let base = d.path().join("base");
+        let a = lease(&base, "sp-a").unwrap();
+        let b = lease(&base, "sp-b").unwrap();
+        let want = a.dir().to_path_buf();
+        fill(&want.join("debug/x"), 1);
+        a.release();
+        b.release();
+        let (l, why) = lease_recorded(&base, Some(&want), "gate").unwrap();
+        assert_eq!((l.dir(), why), (want.as_path(), Why::Recorded));
+        assert!(l.reused);
+    }
+
+    #[test]
+    fn a_recorded_directory_held_by_a_live_lease_yields_another_slot() {
+        let d = testkit::TempDir::new("bdir-held");
+        let base = d.path().join("base");
+        let live = lease(&base, "sp-a").unwrap();
+        let (l, why) = lease_recorded(&base, Some(live.dir()), "gate").unwrap();
+        assert_eq!(why, Why::Held);
+        assert_ne!(l.dir(), live.dir());
+    }
+
+    #[test]
+    fn a_missing_recorded_directory_yields_any_slot_as_gone() {
+        let d = testkit::TempDir::new("bdir-gone");
+        let base = d.path().join("base");
+        lease(&base, "sp-a").unwrap().release();
+        let (l, why) = lease_recorded(&base, Some(&base.join("dir.9")), "gate").unwrap();
+        assert_eq!(why, Why::Gone);
+        assert_eq!(l.dir(), base.join("dir.1"));
+    }
+
+    #[test]
+    fn a_path_outside_the_base_is_never_leased() {
+        let d = testkit::TempDir::new("bdir-outside");
+        let base = d.path().join("base");
+        let other = d.path().join("other");
+        lease(&base, "sp-a").unwrap().release();
+        std::fs::create_dir_all(other.join("dir.1")).unwrap();
+        std::fs::write(other.join("dir.1.lock"), "").unwrap();
+        for p in [other.join("dir.1"), base.join("../other/dir.1"), base.join("dir.1/sub"), base.clone()] {
+            let (l, why) = lease_recorded(&base, Some(&p), "gate").unwrap();
+            assert_eq!(why, Why::OutsideBase, "{}", p.display());
+            assert_eq!(l.dir(), base.join("dir.1"));
+        }
+        assert_eq!(lease_recorded(&base, None, "gate").unwrap().1, Why::Unrecorded);
     }
 
     #[test]
