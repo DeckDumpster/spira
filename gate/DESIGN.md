@@ -421,7 +421,7 @@ A fence red is still a `branch-red`; a unit test the branch breaks is the round'
 | `unit`, any **script** touched | `suites(script)` | the same |
 | `unit`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the same — the caller asked for the corpus |
 | `unit`, the touched set or the graph unreadable | `suites(no-diff)` / `suites(no-metadata)` | the same — no guessing a cheaper gate |
-| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `cargo test --no-run --profile dwarf -j J --features integration -p …` (build) and `cargo test --profile dwarf -j J --features integration -p … -- --test-threads=J` (test) |
+| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `CARGO_BUILD_JOBS=J cargo test --no-run --timings --features integration -p …` (build, `compose::unit_build_words`, the line testenv's unit tier also runs) and `cargo test -j J --features integration -p … -- --test-threads=J` (test), both in the `dev` profile |
 | `unit`, nothing buildable | `fences` | the gate string with **suites off** |
 | `fences`, a fresh bead | `fences` | the gate string **without its suites step** ("Fences mode") |
 | `fences`, a re-entering bead (named suites) or a changed suite | `fences+reentry` | the same, then the re-entry phase: exactly those suites |
@@ -658,8 +658,8 @@ land with is what its gate runs.
   column keeps today's check against the base (NO_VERDICT `cmd-missing-file`).
 * **Tools from the tree.** Each `bin <VAR> <package>` is built before any step, in a `tools`
   phase when the tree changes the tools' source — otherwise the active release's binaries
-  are used and nothing is built, see "Tools from the active release" — (`cargo build --profile dwarf -j <jobs> -p <package>…`, then `[ -x
-  target/dwarf/<package> ]`), and the steps get `<VAR>=<gate tree>/target/tree-tools/<tree id>/<package>` (the
+  are used and nothing is built, see "Tools from the active release" — (`cargo build -j <jobs> -p <package>…`, then `[ -x
+  target/debug/<package> ]`), and the steps get `<VAR>=<gate tree>/target/tree-tools/<tree id>/<package>` (the
   build's output, copied into a directory keyed by the tree it was built from — see "Tools
   keyed by the tree they were built from") in place of the installed value. The dwarf profile is the unit phases' profile, so a unit
   composition's build reuses it. The spira repository declares `bin SPIRA_LINT_BIN
@@ -705,7 +705,7 @@ land with is what its gate runs.
 
 A trial's tools must provably be the tree under test's own. Both trials build in the one gate
 tree (the base trial checks the landing ref out over the branch trial's merge), into the one
-`target/`, and the steps read `target/dwarf/<package>` — a path that names no tree. Whether the
+`target/`, and the steps read `target/debug/<package>` — a path that names no tree. Whether the
 binary there was built from the base or is the branch's, left behind, rests on cargo's mtime
 fingerprints and nothing the gate can show. On 2026-09-30 two base trials judged local/main
 red with `base-tools:0` and the question "which spira-lint did the base run?" had no answer
@@ -721,8 +721,8 @@ gate that cannot answer the question cannot rule it out either.)
   branch trial; for the base trial, no base trial (BaseUntestable, NO_VERDICT). Never a guess.
 * **Tools live in a directory keyed by that tree id:** `<gate tree>/target/tree-tools/<tree
   id>/<package>`, with `TREE` holding the id. The steps get `<VAR>=` that path — never
-  `target/dwarf/<package>`. After a build, the gate (Rust, `World::install_tools`) copies each
-  `target/dwarf/<package>` into `<dir>.tmp`, writes `TREE`, renames it into place, and removes
+  `target/debug/<package>`. After a build, the gate (Rust, `World::install_tools`) copies each
+  `target/debug/<package>` into `<dir>.tmp`, writes `TREE`, renames it into place, and removes
   every other keyed directory beside it (the gate tree is locked for the whole trial, so no
   other gate reads them).
 * **Reuse only for the same tree.** A keyed directory whose `TREE` equals the id and that holds
@@ -922,7 +922,7 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   preparation below applies to the same trials. `SPIRA_BUILD_CACHE=off` is
   honoured and printed.
 * **The tools phase and the unit phases are one-shot**: `--config
-  profile.dwarf.incremental=false` (never `CARGO_INCREMENTAL`, which sccache hashes into every
+  profile.<p>.incremental=false` (never `CARGO_INCREMENTAL`, which sccache hashes into every
   key and so would split the cache from a dwarf's interactive builds).
 * **The gate tree builds on tmpfs** (`src/target.rs`, `World::target_on_tmpfs`): after the
   checkout, `target/{dwarf,release,debug,tree-tools}` are links into
@@ -942,7 +942,7 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   crates fresh and rebuilds only what the branch (and its dependents) changed. An unreadable
   commit discards the directory and builds cold.
 * **No on-disk warm target (concierge/gate-overcap, 2026-10-14; retires sp-nv7btk's slots).**
-  sp-nv7btk linked `target/dwarf` to a per-admission-slot directory on the disk,
+  sp-nv7btk linked the `dwarf`-profile directory to a per-admission-slot directory on the disk,
   `<run>/gate-warm/slot.N/dwarf`, so a unit build would "recompile only what the branch
   changed". It never did: the slot's path was fixed but the gate tree's path changes with
   every branch, and every source file of a fresh gate tree is newer than the slot's outputs,

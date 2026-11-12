@@ -162,7 +162,7 @@ verdict already produced — the spool (2) is active only when `--attr-spool <di
 
 | file | writer | content |
 |---|---|---|
-| `<dir>/req/<job>.req` | batcher (tmp + rename) | `branch=<ref in the tree-dir repo>`, `suites=<csv>`, `build=artifacts\|dwarf\|round` |
+| `<dir>/req/<job>.req` | batcher (tmp + rename) | `branch=<ref in the tree-dir repo>`, `suites=<csv>`, `build=artifacts\|dev\|round` |
 | `<dir>/res/<job>/` | round-vm | the job's `<suite>.result`/`.out`, flattened; for `build=round` also `bins/` (the staged executables) and `batch.meta` |
 | `<dir>/res/<job>.done` | round-vm (tmp + rename) | `rc=<the job's testenv exit code, 255 ssh, 2 round-vm's own failure>` |
 | `<dir>/corpus.done` | round-vm (tmp + rename) | `rc=<what run would have exited with>` — written after results, tsd, manifest and binaries are in place |
@@ -173,7 +173,7 @@ the job's branch is fetched into the mirror as `refs/heads/attr-<job>`, then on 
 - `artifacts`: clone that ref into `~/attr/<job>` (objects shared with `~/round-work`) and run
   the round's own `~/round-work/target/release/testenv --artifacts ~/round-work/target/release
   --suites <csv>` there — no build;
-- `dwarf`: the same clone, `--profile dwarf` (a debug build of that tree);
+- `dev`: the same clone, `--profile dev` (a debug build of that tree);
 - `round`: waits for the corpus; checks the ref out in `~/round-work` itself and runs
   `cargo build -p testenv --bin testenv`, then that `testenv --profile release --suites <csv>` (incremental on
   the corpus's own target), then stages `target/release` into `~/round-bins/` as the corpus does.

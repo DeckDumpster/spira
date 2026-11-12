@@ -225,7 +225,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         if with_bins {
             "release".into()
         } else {
-            "dwarf".into()
+            "dev".into()
         }
     });
     if profile.is_empty()
@@ -298,10 +298,10 @@ mod tests {
     }
 
     #[test]
-    fn defaults_are_parallel_dwarf_diff() {
+    fn defaults_are_parallel_dev_diff() {
         let r = run(&["spira/sp-x"]);
         assert_eq!(r.mode, Mode::Parallel);
-        assert_eq!(r.profile, "dwarf");
+        assert_eq!(r.profile, "dev");
         assert_eq!(r.suites, None);
         assert_eq!(r.branch, "spira/sp-x");
         assert_eq!(r.repo, None);
@@ -328,8 +328,8 @@ mod tests {
     #[test]
     fn explicit_profile_wins_over_with_bins() {
         assert_eq!(
-            run(&["--with-bins", "--profile", "dwarf", "b"]).profile,
-            "dwarf"
+            run(&["--with-bins", "--profile", "dev", "b"]).profile,
+            "dev"
         );
         assert_eq!(
             run(&["--profile=release", "b", "/srv/repo"])

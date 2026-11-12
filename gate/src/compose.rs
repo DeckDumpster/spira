@@ -560,7 +560,8 @@ pub fn run_all(cmd: &str) -> String {
 /// directory (spira-sim's ci_cut runs spira-config), so selecting the crate builds it too.
 const NEEDS_BUILT: [(&str, &str); 1] = [("spira-sim", "spira-config")];
 
-/// The unit phases' commands, in order: build (the `dwarf` profile), then the tests.
+/// The words of the unit build line, shared by the gate's build phase and testenv's unit tier so
+/// both produce the same artefacts for the same crates: no profile, no config override, no `-j`.
 ///
 /// The build is `cargo test --no-run --timings`: it compiles the test harnesses only, with the flags the
 /// test phase uses, so the test phase recompiles nothing. The non-test build of each lib and
@@ -571,24 +572,28 @@ const NEEDS_BUILT: [(&str, &str); 1] = [("spira-sim", "spira-config")];
 /// build phase to the gate cap, and a test reaches its own package's binaries through
 /// `CARGO_BIN_EXE_*`, which cargo builds with the test. The exception is a binary of another
 /// package that a test runs from beside its own (`NEEDS_BUILT`): it is added to the build.
-pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2] {
-    let p = pkgs(crates);
-    let built = NEEDS_BUILT
+pub fn unit_build_words(crates: &[String]) -> Vec<String> {
+    let mut words: Vec<String> = ["cargo", "test", "--no-run", "--timings", "--features", "integration"]
+        .map(String::from)
+        .to_vec();
+    for c in crates {
+        words.extend(["-p".into(), c.clone()]);
+    }
+    for (_, bin) in NEEDS_BUILT
         .iter()
         .filter(|(user, bin)| crates.iter().any(|c| c == user) && !crates.iter().any(|c| c == bin))
-        .fold(String::new(), |acc, (_, bin)| acc + " -p " + bin);
-    let cfg = spira_config::build::one_shot_words("dwarf");
+    {
+        words.extend(["-p".into(), bin.to_string()]);
+    }
+    words
+}
+
+/// The unit phases' commands, in order: build ([`unit_build_words`], the default `dev` profile), then the tests.
+pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2] {
+    let p = pkgs(crates);
     [
-        (
-            "build",
-            format!(
-                "cargo test --no-run --timings --profile dwarf {cfg} -j {jobs} --features integration{p}{built}"
-            ),
-        ),
-        (
-            "test",
-            format!("cargo test --profile dwarf {cfg} -j {jobs} --features integration{p} -- --test-threads={jobs}"),
-        ),
+        ("build", format!("CARGO_BUILD_JOBS={jobs} {}", unit_build_words(crates).join(" "))),
+        ("test", format!("cargo test -j {jobs} --features integration{p} -- --test-threads={jobs}")),
     ]
 }
 
@@ -1116,12 +1121,13 @@ mod tests {
         let [b, t] = unit_commands(&["gate".into(), "queue".into()], 4);
         assert!(!b.1.contains("--all-targets"), "{}", b.1);
         let (test_flags, _) = t.1.split_once(" -- ").unwrap();
-        assert_eq!(b.1, test_flags.replacen("cargo test ", "cargo test --no-run --timings ", 1));
+        let build = b.1.strip_prefix("CARGO_BUILD_JOBS=4 ").unwrap();
+        assert_eq!(build, test_flags.replacen("cargo test -j 4 ", "cargo test --no-run --timings ", 1));
 
         let [b, t] = unit_commands(&["spira-sim".into()], 4);
         let (test_flags, _) = t.1.split_once(" -- ").unwrap();
-        let expected = test_flags.replacen("cargo test ", "cargo test --no-run --timings ", 1) + " -p spira-config";
-        assert_eq!(b.1, expected, "only the extra built package differs");
+        let expected = test_flags.replacen("cargo test -j 4 ", "cargo test --no-run --timings ", 1) + " -p spira-config";
+        assert_eq!(b.1.strip_prefix("CARGO_BUILD_JOBS=4 ").unwrap(), expected, "only the extra built package differs");
     }
 
     #[test]
@@ -1137,15 +1143,16 @@ mod tests {
     fn unit_commands_build_then_test_each_crate() {
         let [b, t] = unit_commands(&["gate".into(), "queue".into()], 4);
         assert_eq!(b.0, "build");
-        assert_eq!(
-            b.1,
-            "cargo test --no-run --timings --profile dwarf --config profile.dwarf.incremental=false -j 4 --features integration -p gate -p queue"
-        );
+        assert_eq!(b.1, "CARGO_BUILD_JOBS=4 cargo test --no-run --timings --features integration -p gate -p queue");
         assert_eq!(t.0, "test");
-        assert_eq!(
-            t.1,
-            "cargo test --profile dwarf --config profile.dwarf.incremental=false -j 4 --features integration -p gate -p queue -- --test-threads=4"
-        );
+        assert_eq!(t.1, "cargo test -j 4 --features integration -p gate -p queue -- --test-threads=4");
+    }
+
+    #[test]
+    fn unit_commands_name_neither_a_profile_nor_an_incremental_override() {
+        for (_, c) in unit_commands(&["gate".into()], 4) {
+            assert!(!c.contains("--profile") && !c.contains("incremental=false"), "{c}");
+        }
     }
 
     // -------------------------------------------------------------- re-entry (sp-p3srm)
@@ -1301,7 +1308,7 @@ cargo: test tests::x ... ok";
         // …and its build phase compiles the test harnesses the test phase then reuses.
         let [b, _] = unit_commands(&["tsd".into()], 4);
         assert!(
-            b.1.starts_with("cargo test --no-run --timings "),
+            b.1.contains(" cargo test --no-run --timings "),
             "{}",
             b.1
         );

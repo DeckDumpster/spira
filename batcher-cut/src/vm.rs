@@ -24,7 +24,7 @@ fn binary_neutral(path: &str) -> bool {
     path.ends_with(".sh") || path.ends_with(".md")
 }
 
-/// `artifacts` when every removed member changed only binary-neutral files, else `dwarf`.
+/// `artifacts` when every removed member changed only binary-neutral files, else `dev`.
 pub fn build_for(removal: &[Id], changed: &BTreeMap<Id, Vec<String>>) -> &'static str {
     let neutral = removal.iter().all(|m| {
         changed
@@ -34,7 +34,7 @@ pub fn build_for(removal: &[Id], changed: &BTreeMap<Id, Vec<String>>) -> &'stati
     if neutral {
         "artifacts"
     } else {
-        "dwarf"
+        "dev"
     }
 }
 
@@ -1079,11 +1079,11 @@ mod tests {
         assert_eq!(build_for(&["a".to_string()], &changed), "artifacts");
         assert_eq!(
             build_for(&["a".to_string(), "b".to_string()], &changed),
-            "dwarf"
+            "dev"
         );
         assert_eq!(
             build_for(&["unknown".to_string()], &changed),
-            "dwarf",
+            "dev",
             "unknown paths are never neutral"
         );
     }

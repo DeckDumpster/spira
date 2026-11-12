@@ -10,6 +10,7 @@ pub const NAME: &str = "unit-tests";
 pub const SCRIPT: &str = "unit-tests.sh";
 pub const CRATES_REL: &str = "target/unit-tests.crates";
 pub const BINS_REL: &str = "target/unit-tests.bins";
+pub const BUILD_REL: &str = "target/unit-tests.build";
 pub const FILTER_REL: &str = "target/unit-tests.filter";
 pub const SKIP_REL: &str = "target/unit-tests.skip";
 const MAX_FAILING: usize = 5;
@@ -180,7 +181,9 @@ pub struct Picked {
     pub crates: Vec<String>,
 }
 
-/// Writes the crates the tier runs, one per line, and the test-bins those crates declare; an
+/// Writes the crates the tier runs, one per line, the test-bins those crates declare, and the
+/// build line the gate runs for the same crates ([`gate::compose::unit_build_words`], one word
+/// per line, read by the script); an
 /// empty file means the diff touches no crate. Under `--tests` the list is narrowed to the
 /// affected crates that hold a named test ([`holding`]), so `cargo test -p` builds those
 /// crates and their dependencies, never every dependent of the diff.
@@ -207,6 +210,9 @@ pub fn write_crates(repo: &Path, base: &str, rev: &str, tree: &Path, tests: Opti
     let bins: String = test_bins(&meta, crates)?.iter().map(|c| format!("{c}\n")).collect();
     let path = bins_path(tree);
     std::fs::write(&path, bins).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    let words: String = gate::compose::unit_build_words(crates).iter().map(|w| format!("{w}\n")).collect();
+    let path = tree.join(BUILD_REL);
+    std::fs::write(&path, words).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(picked)
 }
 
@@ -380,6 +386,33 @@ mod tests {
         let names = |transitive| pick(diff, &meta, tree, None, transitive).unwrap().crates;
         assert_eq!(names(false), vec!["leaf", "mid"]);
         assert_eq!(names(true), vec!["leaf", "mid", "top"]);
+    }
+
+    #[test]
+    fn the_build_line_the_tier_writes_is_the_one_the_gate_runs() {
+        let git = |dir: &Path, args: &[&str]| {
+            let o = Command::new("git").arg("-C").arg(dir).args(args).env_remove("GIT_DIR").env_remove("GIT_WORK_TREE").output().unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        let t = testkit::TempDir::new("testenv-unit-build-line");
+        let repo = t.path();
+        std::fs::create_dir_all(repo.join("spira-sim/src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[workspace]\nresolver = \"2\"\nmembers = [\"spira-sim\"]\n").unwrap();
+        std::fs::write(repo.join("spira-sim/Cargo.toml"), "[package]\nname = \"spira-sim\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+        std::fs::write(repo.join("spira-sim/src/lib.rs"), "").unwrap();
+        git(repo, &["init", "-q", "-b", "main"]);
+        git(repo, &["-c", "user.name=t", "-c", "user.email=t@t", "add", "."]);
+        git(repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
+        git(repo, &["checkout", "-q", "-b", "work"]);
+        std::fs::write(repo.join("spira-sim/src/lib.rs"), "// changed\n").unwrap();
+        git(repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "change"]);
+
+        let picked = write_crates(repo, "main", "work", repo, None, true).unwrap();
+        assert_eq!(picked.crates, ["spira-sim"]);
+        let written: Vec<String> = std::fs::read_to_string(repo.join(BUILD_REL)).unwrap().lines().map(String::from).collect();
+        let [gate_build, _] = gate::compose::unit_commands(&["spira-sim".into()], 7);
+        assert_eq!(gate_build.1.strip_prefix("CARGO_BUILD_JOBS=7 ").unwrap(), written.join(" "));
+        assert!(written.windows(2).any(|w| w == ["-p", "spira-config"]), "{written:?}");
     }
 
     #[test]

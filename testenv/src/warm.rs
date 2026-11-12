@@ -292,7 +292,7 @@ pub fn boot(
         return Err(format!("slot {} has no checkout yet", slot.display()));
     }
     let name = fresh_name(i);
-    let mut session = Session::new(rt, "warm", "dwarf");
+    let mut session = Session::new(rt, "warm", "debug");
     session.name = name.clone();
     session.setup_deadline = Some(Instant::now() + timeout);
     session.testdb_cache = crate::fixture::host_testdb_cache(run);

@@ -1,4 +1,4 @@
-//! Warm unit builds: a finished gate hands its tmpfs `dwarf` build directory to a small pool
+//! Warm unit builds: a finished gate hands its tmpfs `debug` build directory to a small pool
 //! and the next gate adopts one. Cargo fingerprints are workspace-relative, so mtimes are the
 //! only obstacle; [`normalize_mtimes`] ages unchanged tracked files. Anything uncertain
 //! discards the directory: a cold build is slow, a wrongly warm one is a wrong verdict.
@@ -9,11 +9,11 @@ use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The pool's directory under the target root. No gate tree has this name.
-pub const POOL: &str = "warm-dwarf";
+pub const POOL: &str = "warm-debug";
 /// Donated directories kept; older ones are removed as new ones arrive.
 pub const KEEP: usize = 2;
 const BUILT_FROM: &str = "built-from";
-const BUILD_DIR: &str = "dwarf";
+const BUILD_DIR: &str = "debug";
 const AGED: Duration = Duration::from_secs(1_000_000_000);
 
 fn entries(root: &Path) -> Vec<PathBuf> {
@@ -39,7 +39,7 @@ pub fn shed(root: &Path) {
     let _ = fs::remove_dir_all(root.join(POOL));
 }
 
-/// Move `dest` (a gate tree's finished `dwarf` directory) into the pool, recorded as built from
+/// Move `dest` (a gate tree's finished `debug` directory) into the pool, recorded as built from
 /// `commit`. A directory with no compiled dependencies, or no commit, is not worth keeping.
 pub fn donate(root: &Path, dest: &Path, commit: &str) -> bool {
     if commit.is_empty() || !dest.join("deps").is_dir() {
@@ -145,7 +145,7 @@ pub fn warm_start(root: &Path, dest: &Path, tree: &Path) -> Option<String> {
     }
 }
 
-/// The gate's side of donation, for a finished `tree` whose `target/dwarf` links to the tmpfs.
+/// The gate's side of donation, for a finished `tree` whose `target/debug` links to the tmpfs.
 pub fn donate_tree(tree: &Path) -> bool {
     let Ok(dest) = fs::read_link(tree.join("target").join(BUILD_DIR)) else { return false };
     let Some(root) = dest.parent().and_then(Path::parent).filter(|_| !crate::target::is_warm(&dest)) else { return false };
@@ -177,7 +177,7 @@ mod tests {
     fn a_donated_build_directory_is_adopted_by_the_next_empty_one_and_only_once() {
         let t = testkit::TempDir::new("gate-warm-adopt");
         let root = t.path();
-        let (a, b, c) = (root.join("tree-a/dwarf"), root.join("tree-b/dwarf"), root.join("tree-c/dwarf"));
+        let (a, b, c) = (root.join("tree-a/debug"), root.join("tree-b/debug"), root.join("tree-c/debug"));
         built(&a);
         assert!(donate(root, &a, "abc123"));
         assert!(!a.exists());
@@ -192,7 +192,7 @@ mod tests {
     fn a_directory_that_already_holds_output_is_never_overwritten_by_adoption() {
         let t = testkit::TempDir::new("gate-warm-busy");
         let root = t.path();
-        let (a, b) = (root.join("a/dwarf"), root.join("b/dwarf"));
+        let (a, b) = (root.join("a/debug"), root.join("b/debug"));
         built(&a);
         donate(root, &a, "c1");
         built(&b);
@@ -204,7 +204,7 @@ mod tests {
     fn nothing_built_or_no_commit_is_not_donated() {
         let t = testkit::TempDir::new("gate-warm-empty");
         let root = t.path();
-        let a = root.join("a/dwarf");
+        let a = root.join("a/debug");
         fs::create_dir_all(&a).unwrap();
         assert!(!donate(root, &a, "c1"));
         built(&a);
@@ -217,7 +217,7 @@ mod tests {
         let t = testkit::TempDir::new("gate-warm-keep");
         let root = t.path();
         for i in 0..KEEP + 2 {
-            let d = root.join(format!("t{i}/dwarf"));
+            let d = root.join(format!("t{i}/debug"));
             built(&d);
             assert!(donate(root, &d, &format!("c{i}")));
             let e = entries(root).pop().unwrap();
@@ -276,7 +276,7 @@ mod tests {
         fs::write(tree.join("f"), "1").unwrap();
         git(&tree, &["add", "."]);
         git(&tree, &["commit", "-qm", "base"]);
-        let (a, b) = (root.join("a/dwarf"), root.join("b/dwarf"));
+        let (a, b) = (root.join("a/debug"), root.join("b/debug"));
         built(&a);
         donate(&root, &a, "0123456789012345678901234567890123456789");
         fs::create_dir_all(&b).unwrap();
@@ -295,9 +295,9 @@ mod tests {
         fs::write(tree.join("f"), "1").unwrap();
         git(&tree, &["add", "."]);
         git(&tree, &["commit", "-qm", "base"]);
-        let dest = root.join("name/dwarf");
+        let dest = root.join("name/debug");
         built(&dest);
-        std::os::unix::fs::symlink(&dest, tree.join("target/dwarf")).unwrap();
+        std::os::unix::fs::symlink(&dest, tree.join("target/debug")).unwrap();
         assert!(donate_tree(&tree));
         assert_eq!(entries(&root).len(), 1);
         assert!(!dest.exists());
