@@ -128,7 +128,7 @@ mod tests {
     }
 
     fn look(e: &mut Engine, body: &str) {
-        let probe = e.pending_effects().into_iter().filter(|p| p.spec.name == LOOK).last().unwrap();
+        let probe = e.pending_effects().into_iter().rfind(|p| p.spec.name == LOOK).unwrap();
         e.complete(&probe.key, Outcome::Succeeded(body.into())).unwrap();
         e.run_until_idle().unwrap();
     }
