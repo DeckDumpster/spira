@@ -1236,6 +1236,7 @@ fn run_main() -> ExitCode {
         info("lifecycle store NOT built — SPIRA_INSTALL_LC_STORE_CONSIDERED is set (a fixture with no real Dolt server); spira-lc will not answer until install runs without it");
     } else if opts.dry {
         would("apply lifecycle/schema.sql, lifecycle/migrations/*.sql (spira-lc admin-migrate) and lifecycle/grants.sql as the Dolt admin");
+        would("create the control store at SPIRA_LC_STORE_PATH if absent (spira-lc admin-create-store)");
         if let Err(e) = populate_phase(true) {
             eprintln!("install: phase lifecycle population failed — {e}");
             return ExitCode::from(2);
@@ -1248,6 +1249,11 @@ fn run_main() -> ExitCode {
                     info(&l);
                 }
                 changes += 1;
+                phase("phase 4.5b: control store");
+                if let Err(e) = control_store_phase() {
+                    eprintln!("install: phase control store failed — {e}");
+                    return ExitCode::from(2);
+                }
                 // ---- phase 4.6: lifecycle population (sp-k62xz8) --------------------------
                 // The store now exists and its user can write: every bead already in the
                 // beads database gets its row, once — before lc-serve starts answering for it.
@@ -1977,6 +1983,29 @@ fn round_records_phase(dry: bool) -> Result<(), String> {
             info(&format!("removed {}", p.display()));
         }
     }
+    Ok(())
+}
+
+/// The control store at `SPIRA_LC_STORE_PATH`, made once: no verb creates it on open.
+fn control_store_phase() -> Result<(), String> {
+    let Some(path) = bootstrap::declared("SPIRA_LC_STORE_PATH") else {
+        skip("SPIRA_LC_STORE_PATH is empty — no control store to create");
+        return Ok(());
+    };
+    if Path::new(&path).exists() {
+        skip(&format!("control store exists at {path}"));
+        return Ok(());
+    }
+    if let Some(dir) = Path::new(&path).parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
+    let lc = spira_store::lifecycle_row::lc_bin()?;
+    // batch-job: one-time creation of the control store; bounded at 60 s by timeout(1).
+    let o = Command::new("timeout").arg("60").arg(&lc).arg("admin-create-store").stdin(Stdio::null()).output().map_err(|e| format!("cannot run spira-lc: {e}"))?;
+    if !o.status.success() {
+        return Err(format!("spira-lc admin-create-store exited {:?}: {}{}", o.status.code(), String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)));
+    }
+    info(&format!("created the control store at {path}"));
     Ok(())
 }
 

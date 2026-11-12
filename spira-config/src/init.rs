@@ -118,6 +118,11 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
     if a.get("lc_password_file").is_none_or(|v| v.is_empty()) {
         a.insert("lc_password_file".into(), crate::resolve::lc_credential_default(reg.env));
     }
+    // The control store lc-serve opens: pinned under the run directory, because an empty path
+    // leaves every store-served verb (create-bead among them) answering cannot-tell.
+    if a.get("lc_store_path").is_none_or(|v| v.is_empty()) {
+        a.insert("lc_store_path".into(), PathBuf::from(&a["run"]).join("lc-control.db").display().to_string());
+    }
     // The bd every process runs: found once, here, on this box's PATH (what conf.sh's
     // env-bootstrap derived on every source); nothing derives it after the cutover. Not found
     // is an input the operator must answer.
@@ -416,6 +421,16 @@ mod tests {
         let e = ensure(&out, a, None, &reg()).unwrap_err();
         assert!(e.contains("instance, releases"), "{e}");
         assert!(!out.exists());
+    }
+
+    #[test]
+    fn a_fresh_config_declares_a_control_store_under_the_run_directory_unless_answered() {
+        let text = render(&full(), Path::new("/x/spira.toml"), &reg()).unwrap();
+        assert!(text.contains("lc_store_path = \"/b/run/lc-control.db\""), "{text}");
+        let mut a = full();
+        a.insert("lc_store_path".into(), "/b/run/elsewhere.db".into());
+        let text = render(&a, Path::new("/x/spira.toml"), &reg()).unwrap();
+        assert!(text.contains("lc_store_path = \"/b/run/elsewhere.db\""), "{text}");
     }
 
     #[test]
