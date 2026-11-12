@@ -906,7 +906,10 @@ fn lease_label(args: &RunArgs, deps: &Deps) -> String {
 /// Runs, then records the verdict in the run's event file once one was started.
 pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let results = std::cell::RefCell::new(None);
+    let rec = std::cell::RefCell::new(gate::unitrecord::UnitRecord::default());
+    let load1_start = (deps.load1)();
     let cap = cap::limit(deps.settings.suite_cap, deps.settings.gate_cap, args.deadline);
+    let mut load_wait_s = 0;
     if args.deadline.is_none() {
         let say = |l: &str| deps.log(l);
         match load::admit(
@@ -918,20 +921,40 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             &cancelled,
             &mut |l: &str| say(l),
         ) {
-            load::Admit::Waited(s) => deps.log(&format!("load-wait: admitted after {s}s")),
-            load::Admit::GaveUp(s, l) => deps.log(&format!("load-wait: starting after {s}s with load1={l:.2} still over the ceiling")),
+            load::Admit::Waited(s) => {
+                load_wait_s = s;
+                deps.log(&format!("load-wait: admitted after {s}s"))
+            }
+            load::Admit::GaveUp(s, l) => {
+                load_wait_s = s;
+                deps.log(&format!("load-wait: starting after {s}s with load1={l:.2} still over the ceiling"))
+            }
             load::Admit::Immediate => {}
         }
     }
     let armed = cap::arm(cap, Some(cap::ledger_path(&deps.settings.run, std::process::id())));
     let began = Instant::now();
-    let mut fin = run_recorded(args, deps, &results);
+    let mut fin = run_recorded(args, deps, &results, &rec);
     let queued = armed.waited().as_secs();
     if let Some((what, secs)) = armed.finish() {
         deps.log(&cap::over_cap_line(&what, secs, cap.source));
         fin = Finish::fault(2, "over-cap", fin.ran);
     }
     fin.timing = Some(Box::new((queued, began.elapsed().as_secs().saturating_sub(queued))));
+    if let Some(path) = &args.record {
+        let mut r = rec.into_inner();
+        if r.selection.is_some() {
+            r.load1_start = load1_start;
+            r.load_wait_s = Some(load_wait_s);
+            r.rc = Some(fin.rc);
+            if let Some(dir) = results.borrow().as_deref() {
+                write_unit_record(dir, &mut r);
+            }
+            if let Err(e) = fs::write(path, serde_json::to_string(&r).unwrap_or_default()) {
+                stderr(&format!("batch: unit record not written to {path}: {e}"));
+            }
+        }
+    }
     if let Some(dir) = results.into_inner() {
         let (word, reason, session) = fin.verdict_parts();
         note(RunLog::in_dir(&dir).record(RunEvent::Verdict { word, reason, session }, now_epoch()));
@@ -939,7 +962,18 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     fin
 }
 
-fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option<PathBuf>>) -> Finish {
+/// What the unit script's `.out` and `.result` say, added to what the run saw as it went.
+fn write_unit_record(dir: &Path, r: &mut gate::unitrecord::UnitRecord) {
+    let Ok(text) = fs::read_to_string(dir.join(format!("{}.out", crate::unit::SCRIPT))) else { return };
+    crate::unit::read_back(&text, r);
+    let secs = fs::read_to_string(dir.join(format!("{}.result", crate::unit::SCRIPT)))
+        .ok()
+        .and_then(|l| ResultRecord::parse(&l))
+        .map(|rec| rec.secs as f64);
+    r.test_s = secs.map(|t| ((t - r.build_s.unwrap_or(0.0)).max(0.0) * 10.0).round() / 10.0);
+}
+
+fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option<PathBuf>>, rec: &std::cell::RefCell<gate::unitrecord::UnitRecord>) -> Finish {
     let s = deps.settings.clone();
     // sp-tj8k3: a given-but-bad SPIRA_BATCH_MAXPAR (zero, negative, not a number) refuses by
     // name before any work starts — it is never silently folded into "unset" (the
@@ -1368,6 +1402,13 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             stderr(&format!("batch: unit-tests: no merge base of {base} and {br}"));
             return Finish::fault(2, "unit-crates", 0);
         };
+        {
+            let mut r = rec.borrow_mut();
+            r.selection = Some(if args.tests.is_some() { "tests" } else if args.direct { "direct" } else { "transitive" }.into());
+            r.crates = crates.clone();
+            r.runner = Some("container".into());
+            r.target = Some("branch".into());
+        }
         unit_selection = Some(verdict::UnitSelection { base: diff_base, crates });
         if let Err(e) = crate::unit::write_filter(&wt.path, args.tests.as_deref()) {
             stderr(&format!("batch: unit-tests: {e}"));
@@ -1644,7 +1685,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             .ok()
             .and_then(|r| r.strip_prefix("refs/heads/").map(str::to_string));
         let volume = crate::container::unit_target_volume(branch.as_deref(), &tree);
-        return run_sandboxed(args, deps, &s, &wt.path, &volume, &results);
+        return run_sandboxed(args, deps, &s, &wt.path, &volume, &results, rec);
     }
     // ---- build in place (or stage the prebuilt set: D8) -----------------------------
     let (pdir, artifacts) = match &prebuilt {
@@ -2881,13 +2922,18 @@ fn sweep_scratch(deps: &Deps) {
 /// A filtered unit run in the sandbox (sp-yx0yu9): `spira/unit-tests.sh` under bwrap in this
 /// run's worktree, its cargo target kept per branch under `testenv.sandbox_target_root`. The
 /// same `.out`/`.result` files and verdict as the container path; no image, volume or test DB.
-fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume: &str, results: &Path) -> Finish {
+fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume: &str, results: &Path, rec: &std::cell::RefCell<gate::unitrecord::UnitRecord>) -> Finish {
     let script = crate::unit::SCRIPT;
     // THE SESSION'S ONE TARGET (sp-ke0uk8): a dwarf session's owned build directory, else the
     // branch's own under the sandbox root.
     let base = spira_config::process::cfg(spira_config::build_dir::BASE_ENV).ok().filter(|b| !b.is_empty()).map(PathBuf::from);
     let owned = spira_config::build_dir::owned((deps.env)("CARGO_TARGET_DIR").map(Into::into), base.as_deref());
     let is_owned = owned.is_some();
+    {
+        let mut r = rec.borrow_mut();
+        r.runner = Some("sandbox".into());
+        r.target = Some(if is_owned { "owned" } else { "branch" }.into());
+    }
     let Some(target) = crate::sandbox::unit_target(owned, &s.sandbox_target_root, volume) else {
         deps.log("unit-tests: runner=sandbox needs SPIRA_TESTENV_SANDBOX_TARGET_ROOT (where each branch's cargo target lives) — set it, or run with --runner container");
         return Finish::fault(2, "sandbox-target-root", 0);

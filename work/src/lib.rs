@@ -42,6 +42,10 @@ pub const CHECKS_PASS_FILE: &str = "spira-checks.pass";
 /// The token in a `[[check]]` row's `run` that becomes the crates the diff affects.
 pub const AFFECTED: &str = "{affected}";
 
+/// The file under the worktree's git directory a row's record is written to.
+pub const CHECKS_RECORD_FILE: &str = "spira-check-record.json";
+pub const CHECKS_LOG: &str = "checks.log";
+
 /// The crates a branch's diff affects, as `{affected}` in a `[[check]]` row expands it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Affected {
@@ -64,11 +68,11 @@ pub fn affected_scope(diff_raw: &[u8], metadata_json: &str) -> Result<Affected, 
     select_crates(diff_raw, metadata_json, true).map(Affected::Crates)
 }
 
-/// A row's argv with `{branch}` expanded to `branch` and `{affected}` to `--workspace` or
-/// `-p <crate>` words. `None`: the row names `{affected}` and the diff affects no crate, so
-/// there is nothing for it to check.
-pub fn check_argv(run: &str, affected: &Affected, branch: &str) -> Option<Vec<String>> {
-    let argv = habits::config::argv(run, &[("branch", branch)]);
+/// A row's argv with `{branch}` expanded to `branch`, `{record}` to `record` and `{affected}` to
+/// `--workspace` or `-p <crate>` words. `None`: the row names `{affected}` and the diff affects no
+/// crate, so there is nothing for it to check.
+pub fn check_argv(run: &str, affected: &Affected, branch: &str, record: &std::path::Path) -> Option<Vec<String>> {
+    let argv = habits::config::argv(run, &[("branch", branch), ("record", &record.to_string_lossy())]);
     if !argv.iter().any(|t| t == AFFECTED) {
         return Some(argv);
     }
@@ -121,6 +125,69 @@ pub fn unit_red_on_base(args: &[String]) -> Option<&str> {
 pub const UNIT_RED_ON_BASE: &str = "--unit-red-on-base";
 /// The failing test names the client appends beside [`UNIT_RED_ON_BASE`]; a caller never types it.
 pub const UNIT_RED_TESTS: &str = "--unit-red-tests";
+/// The `checks.log` word for a row's exit: [`row_outcome`] with a fault (exit 2, or no exit) apart from a red.
+pub fn check_outcome(rc: Option<i32>, staged: bool) -> &'static str {
+    match (row_outcome(rc.unwrap_or(-1), staged.then_some("stage")), rc) {
+        (Outcome::Ok, _) => "pass",
+        (Outcome::Deferred, _) => "deferred",
+        (Outcome::Fail, Some(2) | None) => "fault",
+        (Outcome::Fail, _) => "red",
+    }
+}
+
+/// One row's facts, as `<run>/checks.log` states them.
+pub struct CheckLine<'a> {
+    pub ts: &'a str,
+    pub repo: &'a str,
+    pub branch: &'a str,
+    pub bead: &'a str,
+    pub row: &'a str,
+    pub via: &'a str,
+    pub rc: Option<i32>,
+    pub staged: bool,
+    pub ran_s: u64,
+    pub budget_s: u64,
+    pub load1: Option<f64>,
+    pub record: Option<&'a gate::unitrecord::UnitRecord>,
+}
+
+/// The `checks.log` line: fixed field order, `-` for what the row did not report.
+pub fn checks_log_line(l: &CheckLine) -> String {
+    fn or_dash<T: std::fmt::Display>(v: Option<T>) -> String {
+        v.map_or_else(|| "-".to_string(), |v| v.to_string())
+    }
+    let r = l.record;
+    let phases = match r {
+        Some(r) => format!("build:{},test:{}", or_dash(r.build_s), or_dash(r.test_s)),
+        None => "-".into(),
+    };
+    format!(
+        "{} {} {} bead={} row={} via={} rc={} outcome={} ran={} phases={} crates={} selection={} target={} compiled={} fresh={} load1={} load_wait={} budget={}",
+        l.ts,
+        l.repo,
+        l.branch,
+        if l.bead.is_empty() { "-" } else { l.bead },
+        l.row,
+        l.via,
+        or_dash(l.rc),
+        check_outcome(l.rc, l.staged),
+        l.ran_s,
+        phases,
+        or_dash(r.map(|r| r.crates.len())),
+        or_dash(r.and_then(|r| r.selection.as_deref())),
+        or_dash(r.and_then(|r| r.target.as_deref())),
+        or_dash(r.and_then(|r| r.compiled)),
+        or_dash(r.and_then(|r| r.fresh)),
+        or_dash(r.and_then(|r| r.load1_start).or(l.load1).map(|v| format!("{v:.2}"))),
+        or_dash(r.and_then(|r| r.load_wait_s)),
+        l.budget_s,
+    )
+}
+
+/// The 1-minute load average, as the kernel reports it.
+pub fn load1_now() -> Option<f64> {
+    std::fs::read_to_string("/proc/loadavg").ok()?.split_whitespace().next()?.parse().ok()
+}
 
 /// What a pass of `work checks` is recorded against: the tip, the base the crates were selected
 /// against, and the checks file's text.
@@ -379,6 +446,59 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
 mod tests {
     use super::*;
 
+    use std::path::Path;
+    fn rec_path() -> &'static Path {
+        Path::new("/g/rec.json")
+    }
+
+    fn line<'a>(rc: Option<i32>, staged: bool, record: Option<&'a gate::unitrecord::UnitRecord>) -> CheckLine<'a> {
+        CheckLine { ts: "2026-11-11T11:25:06Z", repo: "spira", branch: "spira/sp-x", bead: "sp-x", row: "unit-tests", via: "submit", rc, staged, ran_s: 121, budget_s: 180, load1: Some(31.5), record }
+    }
+
+    #[test]
+    fn the_checks_log_line_states_a_record_in_the_fixed_field_order() {
+        let r = gate::unitrecord::UnitRecord {
+            selection: Some("transitive".into()),
+            crates: vec!["a".into(), "b".into(), "c".into()],
+            target: Some("owned".into()),
+            compiled: Some(137),
+            fresh: Some(0),
+            build_s: Some(105.9),
+            test_s: Some(15.5),
+            load1_start: Some(28.25),
+            load_wait_s: Some(12),
+            ..Default::default()
+        };
+        assert_eq!(
+            checks_log_line(&line(Some(0), true, Some(&r))),
+            "2026-11-11T11:25:06Z spira spira/sp-x bead=sp-x row=unit-tests via=submit rc=0 outcome=pass ran=121 phases=build:105.9,test:15.5 crates=3 selection=transitive target=owned compiled=137 fresh=0 load1=28.25 load_wait=12 budget=180"
+        );
+    }
+
+    #[test]
+    fn a_row_with_no_record_writes_dashes_for_what_it_did_not_report() {
+        let mut l = line(Some(1), false, None);
+        l.row = "clippy";
+        l.via = "checks";
+        assert_eq!(
+            checks_log_line(&l),
+            "2026-11-11T11:25:06Z spira spira/sp-x bead=sp-x row=clippy via=checks rc=1 outcome=red ran=121 phases=- crates=- selection=- target=- compiled=- fresh=- load1=31.50 load_wait=- budget=180"
+        );
+    }
+
+    #[test]
+    fn the_outcome_comes_from_the_exit_code_and_a_staged_rows_124_is_a_deferral() {
+        let o = |rc, staged| check_outcome(rc, staged);
+        assert_eq!((o(Some(0), true), o(Some(1), true), o(Some(2), false), o(None, false)), ("pass", "red", "fault", "fault"));
+        assert_eq!((o(Some(124), true), o(Some(124), false), o(Some(101), true)), ("deferred", "red", "red"));
+    }
+
+    #[test]
+    fn the_record_token_becomes_the_runs_record_path() {
+        let scope = Affected::Crates(vec!["a".into()]);
+        assert_eq!(check_argv("testenv --record {record} {affected}", &scope, "spira/sp-x", rec_path()).unwrap(), v(&["testenv", "--record", "/g/rec.json", "-p", "a"]));
+    }
+
     #[test]
     fn a_checks_build_resolves_to_the_sessions_owned_build_directory() {
         let root = std::path::Path::new("/w/sp-x");
@@ -548,7 +668,7 @@ mod tests {
     #[test]
     fn the_clippy_check_names_only_a_touched_leaf_and_its_dependents() {
         let scope = affected_scope(&raw(&["a/src/lib.rs"]), META).unwrap();
-        assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x").unwrap(), v(&["cargo", "clippy", "-p", "a", "-p", "b", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
+        assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x", rec_path()).unwrap(), v(&["cargo", "clippy", "-p", "a", "-p", "b", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
     }
 
     #[test]
@@ -556,7 +676,7 @@ mod tests {
         for input in ["Cargo.lock", "Cargo.toml", "rust-toolchain.toml", ".cargo/config.toml"] {
             let scope = affected_scope(&raw(&["c/src/lib.rs", input]), META).unwrap();
             assert_eq!(scope, Affected::Workspace, "{input}");
-            assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x").unwrap(), v(&["cargo", "clippy", "--workspace", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
+            assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x", rec_path()).unwrap(), v(&["cargo", "clippy", "--workspace", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
         }
     }
 
@@ -564,18 +684,18 @@ mod tests {
     fn the_clippy_check_is_skipped_when_the_diff_affects_no_crate() {
         let scope = affected_scope(&raw(&["docs/x.md", "spira/x.sh"]), META).unwrap();
         assert_eq!(scope, Affected::Crates(vec![]));
-        assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x"), None);
-        assert_eq!(check_argv("spira-lint --diff x", &scope, "spira/sp-x").unwrap(), v(&["spira-lint", "--diff", "x"]));
+        assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x", rec_path()), None);
+        assert_eq!(check_argv("spira-lint --diff x", &scope, "spira/sp-x", rec_path()).unwrap(), v(&["spira-lint", "--diff", "x"]));
     }
 
     #[test]
     fn a_branch_token_in_a_row_becomes_the_current_branch() {
         let scope = Affected::Crates(vec![]);
         assert_eq!(
-            check_argv("testenv --suites unit-tests --direct {branch}", &scope, "spira/sp-x").unwrap(),
+            check_argv("testenv --suites unit-tests --direct {branch}", &scope, "spira/sp-x", rec_path()).unwrap(),
             v(&["testenv", "--suites", "unit-tests", "--direct", "spira/sp-x"])
         );
-        assert_eq!(check_argv("spira-lint --diff x", &scope, "spira/sp-x").unwrap(), v(&["spira-lint", "--diff", "x"]));
+        assert_eq!(check_argv("spira-lint --diff x", &scope, "spira/sp-x", rec_path()).unwrap(), v(&["spira-lint", "--diff", "x"]));
     }
 
     #[test]

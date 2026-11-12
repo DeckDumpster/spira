@@ -514,6 +514,7 @@ name = "gate"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "serde",
  "serde_json",
  "sha2",
  "spira-config",
@@ -3008,6 +3009,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "testkit",
+ "tsd",
 ]
 
 [[package]]

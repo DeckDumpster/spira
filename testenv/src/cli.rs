@@ -3,7 +3,7 @@
 
 use crate::record::Mode;
 
-pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--direct] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--runner container|sandbox] [--report [N]] <branch> [<repo-name>]";
+pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--direct] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--runner container|sandbox] [--record <path>] [--report [N]] <branch> [<repo-name>]";
 
 /// Where the explicit suite list comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +39,8 @@ pub struct RunArgs {
     /// `--direct`: the unit tier selects the touched crates and their direct dependents, not
     /// every transitive one; the gate and the round never pass it.
     pub direct: bool,
+    /// `--record PATH`: where a unit run leaves its [`gate::unitrecord::UnitRecord`] as JSON.
+    pub record: Option<String>,
     pub branch: String,
     pub repo: Option<String>,
 }
@@ -46,7 +48,7 @@ pub struct RunArgs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Invocation {
     Report(usize),
-    Run(RunArgs),
+    Run(Box<RunArgs>),
 }
 
 /// A usage error: message lines for stderr; exit status 2.
@@ -70,6 +72,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut repeat_reason: Option<String> = None;
     let mut tests: Option<Vec<String>> = None;
     let mut runner: Option<crate::sandbox::Runner> = None;
+    let mut record: Option<String> = None;
     let mut i = 0;
     let parse_deadline = |v: &str| -> Result<u64, UsageError> {
         v.parse::<u64>()
@@ -102,7 +105,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         let a = args[i].as_str();
         match a {
             "--mode" | "--suites" | "--profile" | "--deadline" | "--artifacts"
-            | "--repeat-reason" | "--tests" | "--runner" => {
+            | "--repeat-reason" | "--tests" | "--runner" | "--record" => {
                 let v = args
                     .get(i + 1)
                     .cloned()
@@ -112,6 +115,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     "--suites" => set_suites(&mut suites, v)?,
                     "--deadline" => deadline = Some(parse_deadline(&v)?),
                     "--artifacts" => artifacts = Some(v),
+                    "--record" => record = Some(v).filter(|p| !p.is_empty()),
                     "--repeat-reason" => repeat_reason = Some(v),
                     "--tests" => tests = Some(parse_tests(&v)?),
                     "--runner" => {
@@ -240,7 +244,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             SuitesArg::List(s)
         }
     });
-    Ok(Invocation::Run(RunArgs {
+    Ok(Invocation::Run(Box::new(RunArgs {
         mode,
         suites,
         profile,
@@ -252,9 +256,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         repeat_reason,
         tests,
         runner,
+        record,
         branch,
         repo,
-    }))
+    })))
 }
 
 #[cfg(test)]
@@ -266,9 +271,15 @@ mod tests {
     }
     fn run(a: &[&str]) -> RunArgs {
         match p(a).unwrap() {
-            Invocation::Run(r) => r,
+            Invocation::Run(r) => *r,
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn record_is_taken_from_its_flag() {
+        assert_eq!(run(&["--record", "p", "b"]).record.as_deref(), Some("p"));
+        assert_eq!(run(&["b"]).record, None);
     }
 
     #[test]

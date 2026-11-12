@@ -72,7 +72,7 @@ fn main() {
         { let code = law(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
     }
     if verb == "checks" {
-        { let code = checks(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
+        { let code = checks(&verb_args, "checks"); spira_otel::run::finish(code); std::process::exit(code) };
     }
     if work::LOCAL_VERBS.contains(&verb.as_str()) {
         { let code = crates(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
@@ -93,7 +93,7 @@ fn main() {
     let mut red_tests = Vec::new();
     let base_red = if verb == "submit" { work::unit_red_on_base(&verb_args).is_some() } else { false };
     if verb == "submit" && !checks_passed_at_tip() && {
-        let (code, waived) = run_checks(&[], base_red);
+        let (code, waived) = run_checks(&[], base_red, "submit");
         red_tests = waived;
         code != 0
     } {
@@ -547,13 +547,13 @@ fn image_gate(bead: &str) -> Result<(), String> {
 
 /// `work checks [--list]`: the repository's `[[check]]` rows from `.spira/checks.toml`, run in
 /// order from the worktree root. Every row runs; the exit is non-zero if any failed.
-fn checks(args: &[String]) -> i32 {
-    run_checks(args, false).0
+fn checks(args: &[String], via: &str) -> i32 {
+    run_checks(args, false, via).0
 }
 
 /// [`checks`], with the failing test names of every red row that declares `deferred_to` when
 /// `base_red` waives it (a submit naming the bead that records the base red).
-fn run_checks(args: &[String], base_red: bool) -> (i32, Vec<String>) {
+fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) {
     let list_only = match args {
         [] => false,
         [a] if a == "--list" => true,
@@ -586,6 +586,7 @@ fn run_checks(args: &[String], base_red: bool) -> (i32, Vec<String>) {
     let mut waived_tests = Vec::new();
     let branch = git_line(&["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
     let mut scope: Option<work::Affected> = None;
+    let log = RowLog::open(root, via);
     for row in &rows {
         if list_only {
             println!("{}: {} (budget {} ms)", row.name, row.run, row.budget_ms);
@@ -594,7 +595,10 @@ fn run_checks(args: &[String], base_red: bool) -> (i32, Vec<String>) {
         println!("== {}: {}", row.name, row.run);
         let none = work::Affected::Crates(Vec::new());
         let scope = if row.run.contains(work::AFFECTED) { &*scope.get_or_insert_with(|| affected_scope(work::CHECKS_BASE)) } else { &none };
-        let Some(argv) = work::check_argv(&row.run, scope, &branch) else {
+        let record_file = log.record_file(&row.name);
+        let _ = std::fs::remove_file(&record_file);
+        let started = std::time::Instant::now();
+        let Some(argv) = work::check_argv(&row.run, scope, &branch, &record_file) else {
             println!("-- {}: ok (the diff affects no crate; nothing to check)", row.name);
             continue;
         };
@@ -604,6 +608,7 @@ fn run_checks(args: &[String], base_red: bool) -> (i32, Vec<String>) {
         let Some((prog, rest)) = argv.split_first() else {
             println!("-- {}: FAIL (empty run)", row.name);
             failed.push(row.name.clone());
+            log.row(row, None, started.elapsed().as_secs(), &record_file);
             continue;
         };
         let secs = row.budget_ms.div_ceil(1000).max(1).to_string();
@@ -617,6 +622,7 @@ fn run_checks(args: &[String], base_red: bool) -> (i32, Vec<String>) {
                 Err(e) => {
                     println!("-- {}: FAIL (cannot build {pkg} from this worktree: {e})", row.name);
                     failed.push(row.name.clone());
+                    log.row(row, None, started.elapsed().as_secs(), &record_file);
                     continue;
                 }
             },
@@ -637,15 +643,18 @@ fn run_checks(args: &[String], base_red: bool) -> (i32, Vec<String>) {
             bounded = work::admitted(bounded, std::env::var("RUSTC_WRAPPER").ok().as_deref(), &who);
         }
         // batch-job: bounded by the row's budget through `timeout`; the admission wait ahead of it is reported below
+        let ran_from = std::time::Instant::now();
         let out = Command::new(&bounded[0]).args(&bounded[1..]).env("PATH", work::trusted::join_path(&dirs)).current_dir(root).output();
         match out {
             Ok(o) => {
                 print!("{}", String::from_utf8_lossy(&o.stdout));
                 let err = String::from_utf8_lossy(&o.stderr);
                 eprint!("{err}");
-                if let Some(w) = work::admission_wait_secs(&err) {
+                let waited = work::admission_wait_secs(&err);
+                if let Some(w) = waited {
                     println!("{}: waited {w}s for a compile slot before its {} ms budget started", row.name, row.budget_ms);
                 }
+                log.row(row, o.status.code(), ran_from.elapsed().as_secs().saturating_sub(waited.unwrap_or(0)), &record_file);
                 let stdout = String::from_utf8_lossy(&o.stdout);
                 match work::row_outcome(o.status.code().unwrap_or(-1), row.deferred_to.as_deref()) {
                     work::Outcome::Ok => println!("-- {}: ok", row.name),
@@ -675,6 +684,7 @@ fn run_checks(args: &[String], base_red: bool) -> (i32, Vec<String>) {
             Err(e) => {
                 println!("-- {}: FAIL (could not run: {e})", row.name);
                 failed.push(row.name.clone());
+                log.row(row, None, started.elapsed().as_secs(), &record_file);
             }
         }
     }
@@ -686,6 +696,86 @@ fn run_checks(args: &[String], base_red: bool) -> (i32, Vec<String>) {
     } else {
         eprintln!("work checks: failed: {}", failed.join(", "));
         (REFUSED, Vec::new())
+    }
+}
+
+/// Where a `work checks` run leaves what each row cost and decided: a line in `<run>/checks.log`
+/// and a few metrics. Neither can change the run's output or exit; a missing run directory or
+/// metrics endpoint leaves that half unwritten.
+struct RowLog {
+    via: String,
+    git_dir: std::path::PathBuf,
+    run: Option<std::path::PathBuf>,
+    repo: String,
+    branch: String,
+    bead: String,
+    sink: spira_otel::metrics::MetricsSink,
+}
+
+impl RowLog {
+    fn open(root: &std::path::Path, via: &str) -> RowLog {
+        let git_dir = std::path::Path::new(root).join(git_line(&["rev-parse", "--git-dir"]).unwrap_or_else(|| ".git".into()));
+        let repo = git_line(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
+            .and_then(|d| std::path::Path::new(&d).parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "-".into());
+        RowLog {
+            via: via.into(),
+            git_dir,
+            run: spira_config::resolve::run_dir_for_process().ok(),
+            repo,
+            branch: git_line(&["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|| "-".into()),
+            bead: std::env::var("SPIRA_WORK_BEAD_ID").unwrap_or_default(),
+            sink: spira_otel::metrics::MetricsSink::for_component(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "work"),
+        }
+    }
+
+    fn record_file(&self, row: &str) -> std::path::PathBuf {
+        self.git_dir.join(format!("{}.{row}", work::CHECKS_RECORD_FILE))
+    }
+
+    fn row(&self, row: &habits::config::Check, rc: Option<i32>, ran_s: u64, record_file: &std::path::Path) {
+        let record: Option<gate::unitrecord::UnitRecord> = std::fs::read_to_string(record_file).ok().and_then(|t| serde_json::from_str(&t).ok());
+        let staged = row.deferred_to.is_some();
+        let load1 = work::load1_now();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let ts = tsd::iso_utc(now);
+        let line = work::checks_log_line(&work::CheckLine {
+            ts: &ts,
+            repo: &self.repo,
+            branch: &self.branch,
+            bead: &self.bead,
+            row: &row.name,
+            via: &self.via,
+            rc,
+            staged,
+            ran_s,
+            budget_s: row.budget_ms.div_ceil(1000),
+            load1,
+            record: record.as_ref(),
+        });
+        if let Some(run) = &self.run {
+            use std::io::Write;
+            let _ = std::fs::OpenOptions::new().create(true).append(true).open(run.join(work::CHECKS_LOG)).and_then(|mut f| writeln!(f, "{line}"));
+        }
+        self.push(row, rc, staged, ran_s, record.as_ref());
+    }
+
+    fn push(&self, row: &habits::config::Check, rc: Option<i32>, staged: bool, ran_s: u64, record: Option<&gate::unitrecord::UnitRecord>) {
+        use spira_otel::metrics::Point;
+        let verdict = work::check_outcome(rc, staged);
+        let labels = [("repo", self.repo.as_str()), ("check", row.name.as_str())];
+        let mut points = vec![Point::Seconds { name: "check_seconds", value: ran_s as f64 }];
+        if let Some(b) = record.and_then(|r| r.build_s) {
+            points.push(Point::Seconds { name: "check_build_seconds", value: b });
+        }
+        if let Some(t) = record.and_then(|r| r.test_s) {
+            points.push(Point::Seconds { name: "check_test_seconds", value: t });
+        }
+        self.sink.push(&points, &labels);
+        self.sink.push(&[Point::Count { name: "check_verdict", value: 1 }], &[labels[0], labels[1], ("verdict", verdict)]);
+        if row.name == "unit-tests" && verdict == "red" && self.via == "submit" {
+            self.sink.push(&[Point::Count { name: "unit_red_at_submit", value: 1 }], &[labels[0], ("bead", self.bead.as_str())]);
+        }
     }
 }
 

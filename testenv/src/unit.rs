@@ -306,6 +306,46 @@ fn doubt(paths: &[String]) -> Option<String> {
     (!rust.is_empty()).then(|| format!("selects no crate but touches Rust sources: {}", rust.join(" ")))
 }
 
+/// Seconds cargo spent building, summed over its `Finished ... in 1m 06s` / `in 7.92s` lines
+/// (the bins build and the test build each print one); None when it printed none.
+pub fn build_seconds(output: &str) -> Option<f64> {
+    let secs: Vec<f64> = output
+        .lines()
+        .filter(|l| l.trim_start().starts_with("Finished "))
+        .filter_map(|l| duration_secs(l.rsplit_once(" in ")?.1))
+        .collect();
+    (!secs.is_empty()).then(|| (secs.iter().sum::<f64>() * 10.0).round() / 10.0)
+}
+
+fn duration_secs(text: &str) -> Option<f64> {
+    let mut total = 0.0;
+    let mut any = false;
+    for word in text.split_whitespace() {
+        let (num, unit) = word.split_at(word.find(|c: char| c.is_alphabetic())?);
+        let n: f64 = num.parse().ok()?;
+        total += n * match unit {
+            "h" => 3600.0,
+            "m" => 60.0,
+            "s" => 1.0,
+            _ => return None,
+        };
+        any = true;
+    }
+    any.then_some(total)
+}
+
+/// The record fields a run's `.out` text states: what was compiled, built, skipped and failed.
+pub fn read_back(output: &str, rec: &mut gate::unitrecord::UnitRecord) {
+    let count = |p: &str| output.lines().filter(|l| l.trim_start().starts_with(p)).count() as u64;
+    rec.compiled = Some(count("Compiling "));
+    rec.fresh = Some(count("Fresh ")).filter(|n| *n > 0);
+    rec.build_s = build_seconds(output);
+    rec.skipped = output
+        .lines()
+        .find_map(|l| Some(l.strip_prefix("unit-tests: skipped ")?.split_once(": ")?.1.split_whitespace().count() as u64));
+    rec.failing = failing(output).into_iter().map(|(n, _)| n).collect();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,5 +477,23 @@ mod tests {
     #[test]
     fn a_test_bin_that_is_not_a_workspace_crate_is_refused() {
         assert!(test_bins(META, &["bad".into()]).unwrap_err().contains("ghost"));
+    }
+
+    #[test]
+    fn the_finished_line_gives_the_build_seconds_and_no_finished_line_gives_none() {
+        let fin = |t: &str| format!("   Compiling a v0.1.0\n    Finished `dwarf` profile [unoptimized] target(s) in {t}\n");
+        assert_eq!(build_seconds(&fin("1m 06s")), Some(66.0));
+        assert_eq!(build_seconds(&fin("7.92s")), Some(7.9));
+        assert_eq!(build_seconds(&format!("{}{}", fin("1m 06s"), fin("4.0s"))), Some(70.0));
+        assert_eq!(build_seconds("   Compiling a v0.1.0\nerror: could not compile\n"), None);
+    }
+
+    #[test]
+    fn read_back_counts_compiled_units_and_names_the_failing_tests() {
+        let out = "   Compiling a v1\n   Compiling b v1\n    Finished x in 2.0s\nunit-tests: skipped (needs a running system): t1 t2\ntest m::bad ... FAILED\n";
+        let mut r = gate::unitrecord::UnitRecord::default();
+        read_back(out, &mut r);
+        assert_eq!((r.compiled, r.fresh, r.build_s, r.skipped), (Some(2), None, Some(2.0), Some(2)));
+        assert_eq!(r.failing, vec!["m::bad".to_string()]);
     }
 }
