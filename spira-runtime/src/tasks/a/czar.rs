@@ -555,7 +555,7 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
         let until = crate::api_budget::clock_of(spent.reset);
         let who = spent.top_spender.as_ref().map_or("no caller is named by the panel".to_string(), |(c, n)| format!("top spender in the last hour: {c} ({n} calls)"));
         let why = format!("the GitHub API budget is spent until {until}");
-        let body = format!("Base CI status could not be read for any repository: {why} (epoch {}).\n{who}.\nA base whose status cannot be read is treated as failed, not green; it is read again after the reset.\n", spent.reset);
+        let body = format!("Base CI status could not be read for the repositories whose read failed: {why} (epoch {}).\n{who}.\nA base whose status cannot be read is treated as failed, not green; it is read again after the reset.\n", spent.reset);
         p.run("base-red", "base-red:gh-budget", unobservable(why), policy.base_ci_unreadable_grace_secs, |_| Remedy::File(czar_pass::Filing::base_red(&format!("gh-budget:{}", spent.reset), &format!("QUEUE: the GitHub API budget is spent until {until} — {who}"), &body, "", "")));
     }
     for (repo, base) in &snap.base_ci {
@@ -808,7 +808,7 @@ fn spent_budget(gh: &str, metrics: Option<&str>, now: u64) -> Option<SpentBudget
     let gh = if gh.is_empty() { "gh" } else { gh };
     let out = spira_config::bounded::bounded(gh).args(["api", "rate_limit"]).output().ok().filter(|o| o.status.success())?;
     let rate = crate::api_budget::core_rate(&String::from_utf8_lossy(&out.stdout)).filter(|r| r.remaining == 0 && r.reset > now)?;
-    let top_spender = spira_otel::query::Store::new(metrics).ok().and_then(|s| s.export(&format!("{}{{outcome=\"fresh\"}}", crate::api_budget::CALLS), now.saturating_sub(3600)).ok()).and_then(|series| crate::api_budget::top_spender(&series));
+    let top_spender = spira_otel::query::Store::new(metrics).ok().and_then(|s| s.export(crate::api_budget::CALLS, now.saturating_sub(3600)).ok()).and_then(|series| crate::api_budget::top_spender(&series));
     Some(SpentBudget { reset: rate.reset, top_spender })
 }
 

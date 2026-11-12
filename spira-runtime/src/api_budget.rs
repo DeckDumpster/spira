@@ -111,6 +111,9 @@ pub fn top_spender(series: &[spira_otel::query::Exported]) -> Option<(String, u6
     let mut by: BTreeMap<&str, f64> = BTreeMap::new();
     for s in series {
         let Some(caller) = s.labels.get("caller") else { continue };
+        if !matches!(s.labels.get("outcome").map(String::as_str), Some(FRESH | FAILED)) {
+            continue;
+        }
         *by.entry(caller).or_default() += s.samples.iter().map(|(_, v)| v).sum::<f64>();
     }
     by.into_iter().max_by(|a, b| a.1.total_cmp(&b.1)).map(|(c, n)| (c.to_string(), n as u64))
@@ -153,12 +156,15 @@ mod tests {
 
     #[test]
     fn the_top_spender_is_the_caller_with_most_charged_calls() {
-        let series = |caller: &str, vals: &[f64]| spira_otel::query::Exported {
-            labels: [("caller".to_string(), caller.to_string())].into(),
+        let with = |caller: &str, outcome: &str, vals: &[f64]| spira_otel::query::Exported {
+            labels: [("caller".to_string(), caller.to_string()), ("outcome".to_string(), outcome.to_string())].into(),
             samples: vals.iter().enumerate().map(|(i, v)| (i as i64, *v)).collect(),
         };
+        let series = |caller: &str, vals: &[f64]| with(caller, FRESH, vals);
         let got = top_spender(&[series("a", &[3.0, 4.0]), series("b", &[20.0]), series("c", &[1.0])]);
         assert_eq!(got, Some(("b".to_string(), 20)));
+        let erroring = [with("e", FAILED, &[9.0]), with("e", CACHED, &[500.0]), series("a", &[5.0])];
+        assert_eq!(top_spender(&erroring), Some(("e".to_string(), 9)));
         let unlabelled = spira_otel::query::Exported { labels: Default::default(), samples: vec![(0, 99.0)] };
         assert_eq!(top_spender(&[unlabelled, series("a", &[2.0])]), Some(("a".to_string(), 2)));
         assert_eq!(top_spender(&[]), None);
