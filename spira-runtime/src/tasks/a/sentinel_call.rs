@@ -486,7 +486,13 @@ impl Handler for SentinelCall {
                 }
             }
             let metric = Act::new(METRIC, &start.key).with_input(serde_json::json!({"rune": start.rune, "result": if ok { "ok" } else { "failed" }}).to_string());
-            return kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, vec![metric]);
+            return kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, vec![metric])
+                .into_iter()
+                .map(|c| match c {
+                    Command::Effect(s) if s.name == METRIC => Command::Probe(EffectSpec::probe(s.name, s.input, s.deadline_ms)),
+                    c => c,
+                })
+                .collect();
         }
         let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
         let (next, acts) = decide(&carry, &snap);

@@ -220,3 +220,12 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+#[test]
+fn a_started_builders_metric_rides_as_a_probe_and_is_not_journaled() {
+    let r = at_work();
+    let metrics: Vec<_> = r.requested().iter().filter(|q| q.name == METRIC).collect();
+    assert!(!metrics.is_empty(), "no unit start was answered: {:?}", r.requested());
+    assert!(metrics.iter().all(|q| !q.journaled), "{metrics:?}");
+    assert!(r.requested().iter().any(|q| q.name == UNIT_START && q.journaled), "the start itself stays journaled");
+}
