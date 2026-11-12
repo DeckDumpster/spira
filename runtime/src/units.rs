@@ -2428,7 +2428,9 @@ mod tests {
     fn a_round_scope_is_live_for_its_own_round_only() {
         let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
         let live = UnitFacts { state: UnitState::Active, main_pid: Some(7), exit: None, since_ms: Some(0) };
-        u.install(&format!("{}.scope", round_scope_unit("spira", "spira-A", "7-1")), live);
+        let scope = format!("{}.scope", round_scope_unit("spira", "spira-A", "7-1"));
+        u.install(&scope, live);
+        u.hold_processes(&scope, vec![proc(7, "timeout")]);
         assert!(round_scope_live(&u, "spira", "spira-A").unwrap());
         assert!(!round_scope_live(&u, "spira", "spira-B").unwrap());
     }
