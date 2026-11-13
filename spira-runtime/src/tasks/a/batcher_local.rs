@@ -1755,14 +1755,11 @@ impl Machine<'_> {
     }
 
     /// An opened round whose `round open` outcome has not arrived, and which the queue already
-    /// holds with exactly our members in our tree, is driven now rather than after [`OUTCOME_WAIT_MS`].
+    /// holds with exactly our members (a member is in one open round at a time), is driven now rather than after [`OUTCOME_WAIT_MS`].
     fn adopt_opened(&mut self, repo: &Repo) {
         let ours: std::collections::BTreeSet<&str> = self.rc.members.iter().map(|(id, _)| id.as_str()).collect();
         let held = repo.open_rounds().find(|r| !ours.is_empty() && r.members.iter().map(String::as_str).collect::<std::collections::BTreeSet<_>>() == ours);
-        let Some(held) = held else {
-            eprintln!("{NAME} {}: round open has not answered and the queue holds no open round of members {ours:?} — still waiting", self.repo);
-            return;
-        };
+        let Some(held) = held else { return };
         eprintln!("{NAME} {}: round open's outcome did not arrive; adopting the queue's open round {} and starting its first pass", self.repo, held.id);
         self.rc.batch = Some(held.id.clone());
         self.opened(self.rc.suites.unwrap_or(true));
