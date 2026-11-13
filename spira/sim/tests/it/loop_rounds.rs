@@ -359,7 +359,7 @@ fn a_gate_red_recorded_for_a_provisional_member_mid_pass_preempts_the_pass_and_e
     assert_eq!(preempts[0].1, "sp-gr01", "the member whose gate went red was ejected");
     assert!(preempts[0].2.contains("its own gate went red") && preempts[0].2.contains("suites-failed"), "the gate's mark is the evidence: {}", preempts[0].2);
     let preempted_at = times(&r, bl::PREEMPT)[0];
-    assert!(preempted_at >= 4 * MIN && preempted_at < 6 * MIN, "preempted as soon as the red was seen: {preempted_at}");
+    assert!((4 * MIN..6 * MIN).contains(&preempted_at), "preempted as soon as the red was seen: {preempted_at}");
     assert_eq!(entered(&r, "sp-gr01", "REWORK"), Some(preempted_at), "the ejected member went back to its dwarf: {}", r.dump());
     let tip = r.submitted["sp-gr02"][0].clone();
     assert_eq!(r.lands[0], [("sp-gr02".to_string(), tip)], "the other member landed alone from the same round: {}", r.dump());

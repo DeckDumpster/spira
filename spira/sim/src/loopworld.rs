@@ -568,7 +568,7 @@ fn batcher_preempt(w: &World, input: &str) -> Result<String, String> {
     let mut lc = w.lc();
     let ids: Vec<&str> = leg.bead.split(',').filter(|s| !s.is_empty()).collect();
     match &mut lc.round {
-        Some((batch, members)) if *batch == leg.batch => members.retain(|(id, _)| !ids.contains(&id.as_str())),
+        Some((batch, members)) if *batch == leg.batch => members.retain(|(id, _)| !ids.iter().any(|i| i == id)),
         other => return Err(format!("preempt {}: the open round is {other:?}", leg.batch)),
     }
     lc.preempts.push((leg.batch.clone(), leg.bead.clone(), leg.why.clone()));

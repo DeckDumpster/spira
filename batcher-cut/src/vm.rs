@@ -516,6 +516,7 @@ impl<'a> VmRunner<'a> {
         self.build_n += 1;
         let key = format!("b{}", self.build_n);
         let branch = self.tree_without(self.branch(&key), &key, &removal).inspect_err(|e| eprintln!("batcher: fence probe tree not built: {e}")).ok()?;
+        // FORK-EDGE: machine leg gate (fence-run: one fence of the subset tree, seconds, no build)
         let out = spira_config::bounded::bounded_for("gate", FENCE_PROBE_DEADLINE)
             .args(["fence-run", fence, "--repo"])
             .arg(&self.repo.path)
