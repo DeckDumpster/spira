@@ -9,7 +9,7 @@
 use serde_json::Value;
 use spira_desired_state::section::Freshness;
 use spira_desired_state::sections::alarms::{self as alarms_kind, DeadManState, HeartbeatState};
-use spira_desired_state::sections::{dwarf_fleet, lifecycle, round_controller};
+use spira_desired_state::sections::{dwarf_fleet, host, lifecycle, round_controller};
 
 use crate::assemble::{Assembled, Current};
 use crate::effect::is_shadowed;
@@ -22,6 +22,7 @@ use crate::pass_record::{PassRecord, Step};
 pub const REPLACES: &[(&str, &[&str])] = &[
     (round_controller::NAME, &["batch-landed", "queue-mergeable", "lc-orphan-in-delivery", "queue-lock-age"]),
     (dwarf_fleet::NAME, &["fleet"]),
+    (host::NAME, &["disk"]),
     (lifecycle::NAME, &[]),
     (alarms_kind::NAME, &[]),
 ];

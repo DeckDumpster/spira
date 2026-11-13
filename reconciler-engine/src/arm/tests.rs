@@ -119,6 +119,11 @@ fn arming_a_kind_takes_it_off_the_list_and_puts_every_old_path_it_replaces_on_in
 }
 
 #[test]
+fn arming_host_hands_the_disk_remedies_to_its_levers_in_the_same_write() {
+    assert_eq!(armed_list(&list("Host RoundController"), "Host").unwrap(), list("RoundController disk"));
+}
+
+#[test]
 fn disarming_is_the_reverse_write() {
     let armed = armed_list(&list(ALL), "RoundController").unwrap();
     assert_eq!(
@@ -130,11 +135,11 @@ fn disarming_is_the_reverse_write() {
 
 #[test]
 fn a_kind_that_is_unknown_already_armed_or_hidden_behind_a_star_is_refused() {
-    assert!(armed_list(&list(ALL), "Host").unwrap_err().contains("no section kind"));
+    assert!(armed_list(&list(ALL), "Andon").unwrap_err().contains("no section kind"));
     assert!(armed_list(&list("Lifecycle"), "RoundController").unwrap_err().contains("already armed"));
     assert!(armed_list(&list("*"), "RoundController").unwrap_err().contains('*'));
     assert!(disarmed_list(&list(ALL), "Alarms").unwrap_err().contains("not armed"));
-    assert!(disarmed_list(&list(ALL), "Host").unwrap_err().contains("no section kind"));
+    assert!(disarmed_list(&list(ALL), "Andon").unwrap_err().contains("no section kind"));
 }
 
 #[test]
