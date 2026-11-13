@@ -90,6 +90,7 @@ pub fn lint_check(input: &LintInput, kinds_dir: &Path, id_prefix: &str) -> Resul
                         input.kind
                     ));
                 }
+                let before = msgs.len();
                 for section in &k.sections {
                     if kinds::section_empty(section, input.body) {
                         msgs.push(format!(
@@ -97,6 +98,9 @@ pub fn lint_check(input: &LintInput, kinds_dir: &Path, id_prefix: &str) -> Resul
                             section, input.kind
                         ));
                     }
+                }
+                if input.kind == "question" && msgs.len() > before {
+                    msgs.push(format!("mail: lint: a question for the operator also needs a '## Class basis' section and --class; a complete body:\n{}", crate::cmds::ASK_EXAMPLE_BODY));
                 }
             }
         }

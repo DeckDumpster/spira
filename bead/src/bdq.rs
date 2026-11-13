@@ -232,7 +232,7 @@ pub fn check_ask_label_write(args: &[String], ask_label: &str) -> Option<String>
     ))
 }
 
-/// The ask label belongs on a decision: a question, a stated default and one of the three
+/// The ask label belongs on a decision: a question, a stated default and one of the four
 /// operator classes. Anything else is worked by the overseer/ops queue without it.
 pub fn check_ask_shape(args: &[String], ask_label: &str) -> Option<String> {
     let (title, desc, labels) = ask_fields(args);
@@ -243,14 +243,14 @@ pub fn check_ask_shape(args: &[String], ask_label: &str) -> Option<String> {
     let has_default = desc.lines().any(|l| l.trim_start().to_ascii_lowercase().starts_with("default:") && l.trim().len() > "default:".len());
     let has_class = desc.lines().any(|l| {
         let l = l.trim().to_ascii_lowercase();
-        l.strip_prefix("class:").is_some_and(|c| ["permissions", "policy", "destructive"].contains(&c.trim()))
+        l.strip_prefix("class:").is_some_and(|c| ["permissions", "policy", "destructive", "design"].contains(&c.trim()))
     });
     if has_question && has_default && has_class {
         return None;
     }
     Some(format!(
         "spira: refusing label {ask_label} — it is the operator's decision queue and this bead states no complete decision (question: {has_question}, default: {has_default}, class: {has_class}).\n\
-         Exit: put a question (a '?' in the title or a '## Question' section), a 'Default: <what you would do>' line and a 'Class: permissions|policy|destructive' line in --description,\n\
+         Exit: put a question (a '?' in the title or a '## Question' section), a 'Default: <what you would do>' line and a 'Class: permissions|policy|destructive|design' line in --description,\n\
          or drop {ask_label} and label it overseer so the Concierge or Ops works it.\n"
     ))
 }
@@ -629,6 +629,8 @@ mod tests {
         assert!(check_ask_shape(&alarm, "needs-ryan").unwrap().contains("Exit:")); // literal-ok: fixture/fallback
         let ok = s(&["create", "Grant the token?", "-l", "needs-ryan", "-d", "## Question\nq\nDefault: grant\nClass: permissions"]); // literal-ok: fixture/fallback
         assert_eq!(check_ask_shape(&ok, "needs-ryan"), None); // literal-ok: fixture/fallback
+        let design = s(&["create", "Pick a shape?", "-l", "needs-ryan", "-d", "## Question\nq\nDefault: a\nClass: design"]); // literal-ok: fixture/fallback
+        assert_eq!(check_ask_shape(&design, "needs-ryan"), None); // literal-ok: fixture/fallback
         let bad_class = s(&["create", "Pick one?", "-l", "needs-ryan", "-d", "Default: a\nClass: architecture"]); // literal-ok: fixture/fallback
         assert!(check_ask_shape(&bad_class, "needs-ryan").is_some()); // literal-ok: fixture/fallback
         assert_eq!(check_ask_shape(&s(&["create", "SLOW QUERY", "-l", "overseer"]), "needs-ryan"), None); // literal-ok: fixture/fallback

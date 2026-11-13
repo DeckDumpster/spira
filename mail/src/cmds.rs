@@ -85,23 +85,44 @@ pub fn unknown_class_refusal(class: &str) -> Option<String> {
     Some(format!("unknown --class '{class}'; the escalation classes are: {}", class_names()))
 }
 
-/// Why a dwarf's decision ask for the operator does not qualify, or None if it does.
-/// A class is supported only when declared, one of `ESCALATION_CLASSES`, and argued in a
-/// non-empty `## Class basis` section (law-escalate-decisions-not-problems).
-pub fn class_refusal(class: &str, default: &str, body: &str) -> Option<String> {
+/// A body that satisfies both the kind's required sections and the routing's class basis;
+/// `--default` and `--class` supply the `Default:`/`Class:` lines the decision bead needs.
+pub const ASK_EXAMPLE_BODY: &str = "## Question\n<the decision, as a question>\n\n## Default\n<what you will do if no answer comes>\n\n## Class basis\n<why this is one of the classes>\n";
+
+/// Every way a dwarf's decision ask for the operator does not qualify, empty if it does. A class
+/// is supported only when declared, one of `ESCALATION_CLASSES`, and argued in a non-empty
+/// `## Class basis` section (law-escalate-decisions-not-problems).
+pub fn ask_shape_gaps(class: &str, default: &str, body: &str) -> Vec<String> {
+    let mut gaps = Vec::new();
     if default.trim().is_empty() {
-        return Some("no --default stated".to_string());
+        gaps.push("no --default stated".to_string());
     }
     if class.is_empty() {
-        return Some("no --class declared".to_string());
+        gaps.push(format!("no --class declared (one of: {})", class_names()));
+    } else if let Some(why) = unknown_class_refusal(class) {
+        gaps.push(why);
     }
-    if canonical_class(class).is_none() {
-        return Some(unknown_class_refusal(class).unwrap_or_default());
+    for section in ["Question", "Default", "Class basis"] {
+        if kinds::section_empty(section, body) {
+            gaps.push(format!("body has no filled '## {section}' section"));
+        }
     }
-    if kinds::section_empty("Class basis", body) {
-        return Some(format!("class '{class}' declared but the body has no '## Class basis' section supporting it"));
-    }
-    None
+    gaps
+}
+
+/// The refusal text for `gaps`, naming the whole shape and a complete example.
+pub fn ask_shape_message(gaps: &[String]) -> String {
+    format!(
+        "{}. An ask for the operator needs --kind question, --default, --class <{}> and a body with all of these sections:\n{ASK_EXAMPLE_BODY}",
+        gaps.join("; "),
+        class_names().replace(", ", "|")
+    )
+}
+
+/// Why a dwarf's decision ask for the operator does not qualify, or None if it does.
+pub fn class_refusal(class: &str, default: &str, body: &str) -> Option<String> {
+    let routing_ok = !default.trim().is_empty() && canonical_class(class).is_some() && !kinds::section_empty("Class basis", body);
+    (!routing_ok).then(|| ask_shape_message(&ask_shape_gaps(class, default, body)))
 }
 
 /// Why a mail for the operator does not belong in the operator mailbox, or None if it does.
@@ -207,7 +228,7 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
     if mailbox == "operator" && !args.digest && env.operator_considered.is_none() {
         if let Some(why) = operator_refusal(args.kind, args.default, args.class, &body, args.requested_by) {
             eprintln!(
-                "mail: routed to the concierge, not the operator — {why}. The operator mailbox admits only question asks with a class (permissions, policy, destructive, design), a default and a '## Class basis' section; everything else is the concierge's judgement, and carries no ask label."
+                "mail: routed to the concierge, not the operator — {why}. The operator mailbox admits only question asks with a class, a default and the sections above; everything else is the concierge's judgement, and carries no ask label."
             );
             body = format!("(Routed here from an operator mail: {why}.)\n\n{body}");
             mailbox = "concierge".to_string();
@@ -685,6 +706,21 @@ mod class_tests {
     }
 
     #[test]
+    fn the_documented_example_body_is_accepted_for_every_class() {
+        for (class, _) in super::ESCALATION_CLASSES {
+            assert_eq!(class_refusal(class, "take the safe path", super::ASK_EXAMPLE_BODY), None, "{class}");
+        }
+    }
+
+    #[test]
+    fn one_refusal_names_every_missing_part_and_carries_the_example() {
+        let why = class_refusal("", "", "text only\n").unwrap();
+        for part in ["--default", "--class", "'## Question'", "'## Default'", "'## Class basis'", "design", super::ASK_EXAMPLE_BODY] {
+            assert!(why.contains(part), "{part}: {why}");
+        }
+    }
+
+    #[test]
     fn a_missing_default_is_refused_whatever_the_class() {
         assert!(class_refusal("policy", "  ", BASIS).is_some());
     }
@@ -1052,6 +1088,17 @@ mod probe_tests {
 
     fn closed(bd: &FakeBd) -> bool {
         bd.calls().iter().any(|c| c.0[0] == "close" && c.0[1] == "sp-new1")
+    }
+
+    #[test]
+    fn the_documented_example_body_sends_to_the_operator_for_every_class() {
+        for (class, _) in ESCALATION_CLASSES {
+            let t = testkit::TempDir::new("mail-example-body");
+            let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+            let ask = SendArgs { class, ..ask_args() };
+            send(&bd, &ask_env(t.path()), &ask, ASK_EXAMPLE_BODY.into()).unwrap_or_else(|e| panic!("{class}: {e}"));
+            assert_eq!(root_mailbox_entries(t.path(), "operator"), 1, "{class}");
+        }
     }
 
     #[test]
