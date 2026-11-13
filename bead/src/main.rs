@@ -301,6 +301,35 @@ fn rune_label(home: &str, rune: &str) -> String {
 }
 
 const REQUIRES_BUILD_SPEC_KEY: &str = "RUNE_REQUIRES_BUILD_SPEC";
+const REQUIRES_SKULD_KEY: &str = "RUNE_REQUIRES_SKULD";
+
+fn requires_skuld(home: &str, rune: &str) -> bool {
+    spira_config::runes::rune_get(Path::new(&runes_home(home)), rune, REQUIRES_SKULD_KEY, "") == "1"
+}
+
+fn is_concierge() -> bool {
+    env::var("SPIRA_CONCIERGE").as_deref() == Ok("1")
+}
+
+/// Refuses (exit 2) a Concierge body no Skuld request holds verbatim; `Ok` carries the request id.
+fn skuld_gate(op: &str, title: &str, body: &str, drafted_by: Option<&str>) -> Result<String, i32> {
+    let refuse = |why: String| {
+        spira_otel::oneshot::event("spira_skuld_refusals", 1, &[("op", op)]);
+        eprintln!("bead: refusing: {why}");
+        Err(2)
+    };
+    let Some(id) = drafted_by else {
+        return refuse("a builder bead the Concierge files needs --drafted-by <request-id>: the id of a Skuld request whose note holds this exact text. Get a draft or review first: bead.sh file \"<title>\" --for skuld --repo <r> --body-file <the intent, or your draft for review>, then file the note's text with --drafted-by <that id>".to_string());
+    };
+    let (_, shown) = door(&s(&["show", id, "--json"]));
+    let Some(row) = parse_show_row(&shown) else {
+        return refuse(format!("--drafted-by {id}: no such bead; get a draft or review: bead.sh file \"<title>\" --for skuld --repo <r> --body-file <intent or draft>"));
+    };
+    match bead::skuld_drafted(title, body, &cfg_label("SPIRA_SKULD_LABEL"), id, &row.labels, &row.notes) {
+        Ok(()) => Ok(id.to_string()),
+        Err(why) => refuse(why),
+    }
+}
 
 fn requires_build_spec(home: &str, rune: &str) -> bool {
     spira_config::runes::rune_get(Path::new(&runes_home(home)), rune, REQUIRES_BUILD_SPEC_KEY, "") == "1"
@@ -543,10 +572,15 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     let mut target: Option<String> = None;
     let mut stack_after: Option<String> = None;
     let mut part: Option<String> = None;
+    let mut drafted_by: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "--drafted-by" => {
+                i += 1;
+                drafted_by = args.get(i).cloned();
+            }
             "--target" => {
                 i += 1;
                 target = args.get(i).cloned();
@@ -611,6 +645,23 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
         body_file = Some(path.to_string_lossy().into_owned());
+    }
+
+    if is_concierge() && for_rune.as_deref().is_some_and(|r| requires_skuld(home, r)) {
+        let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
+        let id = match skuld_gate("file", &title, &body, drafted_by.as_deref()) {
+            Ok(id) => id,
+            Err(rc) => return rc,
+        };
+        let path = env::temp_dir().join(format!("bead-drafted-{}.md", std::process::id()));
+        if let Err(e) = std::fs::write(&path, format!("Drafted by Skuld: {id}\n\n{body}")) {
+            eprintln!("bead: writing {}: {e}", path.display());
+            return 1;
+        }
+        body_file = Some(path.to_string_lossy().into_owned());
+    } else if drafted_by.is_some() {
+        eprintln!("bead: --drafted-by applies only to the Concierge's builder filings");
+        return 2;
     }
 
     if let Some(t) = &target {
@@ -1045,10 +1096,15 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     let mut replace = false;
     let mut express = false;
     let mut priority: Option<i64> = None;
+    let mut drafted_by: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "--drafted-by" => {
+                i += 1;
+                drafted_by = args.get(i).cloned();
+            }
             "--note" => {
                 i += 1;
                 note = args.get(i).cloned();
@@ -1129,6 +1185,25 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     }
     if replace && body_file.is_none() {
         eprintln!("bead: amend: --replace only qualifies --body-file");
+        return 2;
+    }
+
+    if replace && is_concierge() {
+        let (_, shown) = door(&s(&["show", &id, "--json"]));
+        let labels = parse_show_row(&shown).map(|r| r.labels).unwrap_or_default();
+        let skuld_bound = rune_names(home).iter().any(|r| {
+            let own: Vec<String> = rune_label(home, r).split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+            requires_skuld(home, r) && bead::is_builder_bead(&labels, &own)
+        });
+        if skuld_bound {
+            let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
+            let title = bead::parse_title(&shown).unwrap_or_default();
+            if let Err(rc) = skuld_gate("amend", &title, &body, drafted_by.as_deref()) {
+                return rc;
+            }
+        }
+    } else if drafted_by.is_some() {
+        eprintln!("bead: amend: --drafted-by applies only to the Concierge's --replace of a builder bead");
         return 2;
     }
 
