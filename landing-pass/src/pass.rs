@@ -479,6 +479,9 @@ impl<'a> Pass<'a> {
         let bead = w.beads.get(id);
         let st = bead.map(|b| b.state.as_str()).unwrap_or("");
         if !crate::model::handed_on(st) {
+            if w.merged.contains(br) {
+                return Screen::Done(Flow::Next);
+            }
             let shown = if st.is_empty() { "-" } else { st };
             if self.procs.holder_alive(id) {
                 self.log(&format!("CHECK6 {id}: {br} not landed — its bead is {shown}, held by a live dwarf"));
