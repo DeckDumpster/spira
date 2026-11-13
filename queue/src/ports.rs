@@ -195,6 +195,9 @@ pub trait Git {
         git_email: &str,
     ) -> bool;
     fn merge_abort(&self, wt: &Path);
+    /// After a member's merge at HEAD in `wt`: renumber its colliding migrations; false, with
+    /// the merge undone, when the numbering is still broken.
+    fn settle_migrations(&self, wt: &Path) -> bool;
     /// Replays `upstream..tip` onto `onto` in a throwaway worktree at `scratch`, leaving every
     /// branch alone: Ok(the rebased tip), or Err(the conflicting paths; empty when the rebase
     /// could not be attempted).

@@ -1567,6 +1567,19 @@ fn abandon_accepts_a_member_another_writer_moved_out_of_delivery() {
 }
 
 #[test]
+fn open_treats_a_member_whose_migration_numbering_cannot_settle_as_not_merging() {
+    let t = round_world();
+    t.git.settle_fails.set(true);
+    t.git.rebase_fail.borrow_mut().insert("ta".into(), vec![]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 1);
+    assert!(
+        t.git.calls.borrow().iter().any(|c| c == "settle_migrations"),
+        "a merged member's migrations are settled through the git port"
+    );
+    assert!(!t.lc.has("cut") && !t.qfile("round").exists(), "{}", t.err());
+}
+
+#[test]
 fn open_skips_what_is_not_certified_or_does_not_merge() {
     let t = round_world();
     t.lc_row("sp-d", "REWORK", "td", 100);
