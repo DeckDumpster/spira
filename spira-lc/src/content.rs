@@ -169,7 +169,10 @@ pub fn after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine,
             }
             let mut errs = Vec::new();
             for id in &ids {
-                let argv = ["create-bead".to_string(), id.clone(), "--ready".to_string()];
+                let mut argv = vec!["create-bead".to_string(), id.clone(), "--ready".to_string()];
+                if let Some(repo) = bead::bdq::created_repo(args) {
+                    argv.extend(["--repo".to_string(), repo]);
+                }
                 let mut last = m.call(&argv);
                 for n in 1..ROW_ATTEMPTS {
                     if last.0 == 0 {
@@ -662,6 +665,64 @@ mod tests {
         let mut refuse_all = |_: &[String], _: Option<&str>| Err(Answer { code: 1, stderr: "no\n".into(), ..Default::default() });
         let ans = run(&v(&["show", "sp-a"]), &mut body, &mut refuse_all, &mut no_after, &|_| Ok("read".into()), &never_w);
         assert_eq!((ans.code, ans.stdout.as_str()), (0, "read"), "a read is never guarded");
+    }
+
+    struct Recorder(Vec<Vec<String>>);
+
+    impl crate::callers::Machine for Recorder {
+        fn call(&mut self, args: &[String]) -> (i32, String) {
+            self.0.push(args.to_vec());
+            (0, String::new())
+        }
+    }
+
+    struct NoBd;
+
+    impl crate::callers::Bd for NoBd {
+        fn issue_type(&mut self, _: &str) -> Result<String, String> {
+            unreachable!("a create owes no bd read")
+        }
+        fn close(&mut self, _: &str, _: &str) -> Result<(), String> {
+            unreachable!("a create owes no bd read")
+        }
+        fn closed(&mut self, _: &[String]) -> Result<Vec<(String, String)>, String> {
+            unreachable!("a create owes no bd read")
+        }
+        fn known(&mut self, _: &[String]) -> Result<Vec<String>, String> {
+            unreachable!("a create owes no bd read")
+        }
+        fn open_among(&mut self, _: &[String]) -> Result<Vec<String>, String> {
+            unreachable!("a create owes no bd read")
+        }
+        fn reopen(&mut self, _: &str) -> Result<(), String> {
+            unreachable!("a create owes no bd read")
+        }
+        fn work_beads(&mut self, _: &str) -> Result<Vec<String>, String> {
+            unreachable!("a create owes no bd read")
+        }
+        fn external(&mut self, _: &str) -> Result<bool, String> {
+            unreachable!("a create owes no bd read")
+        }
+        fn blocking_dependents(&mut self, _: &str) -> Result<Vec<String>, String> {
+            unreachable!("a create owes no bd read")
+        }
+        fn planning_watermark(&mut self) -> Result<Option<u64>, String> {
+            unreachable!("a create owes no bd read")
+        }
+    }
+
+    fn rows_written_after(args: &[&str]) -> Vec<Vec<String>> {
+        let mut m = Recorder(vec![]);
+        assert_eq!(after(&v(args), "sp-new\n", &mut m, &mut NoBd, 0), "");
+        m.0
+    }
+
+    #[test]
+    fn a_created_beads_row_carries_the_repo_its_labels_name() {
+        let named = rows_written_after(&["create", "T", "--labels", "plan,repo:deck,x"]);
+        assert_eq!(named, [v(&["create-bead", "sp-new", "--ready", "--repo", "deck"])]);
+        let bare = rows_written_after(&["create", "T", "--labels", "plan"]);
+        assert_eq!(bare, [v(&["create-bead", "sp-new", "--ready"])], "no repo label, no repo");
     }
 
     #[test]
