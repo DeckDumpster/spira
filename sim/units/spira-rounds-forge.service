@@ -1,0 +1,6 @@
+[Unit]
+Description=Spira forge batcher, in the world sim only — one pass over every queue.forge repo
+
+[Service]
+Type=oneshot
+ExecStart=batcher rounds-forge

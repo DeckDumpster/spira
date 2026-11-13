@@ -411,3 +411,8 @@ reason = "its shell suite pinned calls or wording and was deleted; the Rust test
 date = "2026-11-12"
 bead = "sp-y3jpuc"
 
+
+[[use_case]]
+id = "UC-landing-merge-queue-58"
+tier = "T3"
+statement = "A `queue batch open` that dies between the forge's PR create and the move of its record out of `forge.phase=opening` leaves one batch PR and a record the forge batcher's sweep adopts. A second PR is never opened and nothing is merged."

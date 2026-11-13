@@ -1,0 +1,48 @@
+# The forge lane's crash between PR create and the phase move: the first `queue batch open` of a
+# queue.forge repo is killed right after the forge answered its pr-create, leaving the batch record
+# at forge.phase=opening with a PR on the forge. The forge batcher's passes then settle it: the
+# sweep adopts the PR once a lease TTL has passed. The step counts the batch PRs on the forge
+# (one, never a second), reads that none merged, and reads the record at forge.phase=open.
+epoch = 1790000000
+horizon = 1200000
+real_actors = ["rounds-forge"]
+repos = ["fg:queue"]
+
+[[step]]
+name = "file-first"
+at = 500
+file = "sp-fo01"
+repo = "fg"
+
+[[step]]
+name = "file-second"
+at = 600
+file = "sp-fo02"
+repo = "fg"
+
+[[step]]
+name = "make-members"
+at = 1000
+command = "sh spira/sim/scenarios/steps/rc-forge-open-crash.sh seed"
+
+[[step]]
+name = "arm-crash"
+at = 5000
+command = "sh spira/sim/scenarios/steps/rc-forge-open-crash.sh arm"
+
+[[step]]
+name = "one-adopted-batch"
+at = 1100000
+command = "sh spira/sim/scenarios/steps/rc-forge-open-crash.sh check"
+
+[[invariant]]
+name = "a_step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit <> 0"
+
+[[expect]]
+name = "the_forge_batcher_ran"
+sql = "SELECT 1 FROM events WHERE actor = 'rounds-forge' AND kind = 'complete' HAVING count(*) >= 10"
+
+[[expect]]
+name = "one_adopted_batch_unmerged"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'one-adopted-batch' AND exit = 0"
