@@ -149,7 +149,8 @@ pub fn idle_age_secs(dir: &Path) -> Option<u64> {
 
 /// Reclaim `target/` from every idle worktree, landed or not: no live process in it
 /// (`busy`), and nothing outside `target/` touched for `idle_secs` (`age`). Source is never
-/// touched; the cost of a wrong guess is a rebuild. Oldest idle first. With `floor`
+/// touched; the cost of a wrong guess is a rebuild. Oldest idle first. With `fraction`, only
+/// that share of the idle set by count is taken ([`gate::target::bound`]). With `floor`
 /// `Some((free, bytes))` it stops as soon as `free()` reports at least `bytes`; an
 /// unreadable free-space figure reclaims nothing rather than everything.
 pub fn reap_idle(
@@ -158,6 +159,7 @@ pub fn reap_idle(
     idle_secs: u64,
     age: &dyn Fn(&Path) -> Option<u64>,
     busy: &dyn Fn(&Path) -> bool,
+    fraction: Option<f64>,
     floor: Option<(&dyn Fn() -> Option<u64>, u64)>,
 ) -> Result<Reaped, String> {
     let mut out = Reaped::default();
@@ -176,6 +178,9 @@ pub fn reap_idle(
         }
     }
     idle.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    if let Some(f) = fraction {
+        idle.truncate(gate::target::bound(idle.len(), f));
+    }
     let mut freed = 0u64;
     for (_, id, _dir, t) in idle {
         if let Some((free, bytes)) = floor {
@@ -531,7 +536,7 @@ mod tests {
         }
         let age = age_from(&[("sp-idle", 7 * 3600), ("sp-recent", 60), ("sp-busy", 9 * 3600)]);
         let busy = |d: &Path| d.ends_with("sp-busy");
-        let r = reap_idle(&s.1, false, 6 * 3600, &age, &busy, None).unwrap();
+        let r = reap_idle(&s.1, false, 6 * 3600, &age, &busy, None, None).unwrap();
         assert_eq!(r.removed, vec!["sp-idle".to_string()]);
         assert_eq!((r.kept_active, r.kept_busy, r.kept_unknown.clone()), (1, 1, vec!["sp-nokey".to_string()]));
         assert!(!s.1.join("sp-idle/target").exists() && s.1.join("sp-idle/src.rs").is_file(), "source stays");
@@ -549,11 +554,11 @@ mod tests {
         let age = age_from(&[("sp-a", 10 * 3600), ("sp-b", 30 * 3600), ("sp-c", 20 * 3600)]);
         let root = s.1.clone();
         let free = move || Some(if root.join("sp-b/target").exists() { 10 } else { 100 });
-        let r = reap_idle(&s.1, false, 6 * 3600, &age, &|_| false, Some((&free, 50))).unwrap();
+        let r = reap_idle(&s.1, false, 6 * 3600, &age, &|_| false, None, Some((&free, 50))).unwrap();
         assert_eq!(r.removed, vec!["sp-b".to_string()], "the oldest, then stop once above the floor");
         assert!(s.1.join("sp-a/target").exists() && s.1.join("sp-c/target").exists());
         let none = || None;
-        let r = reap_idle(&s.1, false, 6 * 3600, &age, &|_| false, Some((&none, 50))).unwrap();
+        let r = reap_idle(&s.1, false, 6 * 3600, &age, &|_| false, None, Some((&none, 50))).unwrap();
         assert!(r.removed.is_empty(), "unreadable free space reclaims nothing");
     }
 

@@ -36,6 +36,11 @@ path = "tests/lint_registry.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "target_reap_cli"
+path = "tests/target_reap_cli.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "test_sandbox"
 path = "tests/test_sandbox.rs"
 required-features = ["integration"]
