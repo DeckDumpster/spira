@@ -151,6 +151,11 @@ fn repo_label_value(labels: &str) -> Option<&str> {
     labels.split(',').find_map(|t| t.strip_prefix("repo:"))
 }
 
+/// The repo a create's `--labels` name, for the lifecycle row it owes.
+pub fn created_repo(args: &[String]) -> Option<String> {
+    repo_label_value(&last_labels_value(args)).map(str::to_string)
+}
+
 /// Whether a `repo:<val>` claim is acceptable: no claim at all (`val` empty — the same
 /// `[ -z "$repo_val" ]` bash's own fence short-circuits on), the home repo, or a name the
 /// map carries. Shared core of `check_repo_label` (bdq's own argv-parsing entry point) and
