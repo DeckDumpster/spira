@@ -328,10 +328,14 @@ pub fn working_exits_in(runes: &Path, rune: &str) -> Result<Vec<String>, String>
 pub const FOLLOWUP_AS_KEY: &str = "RUNE_FOLLOWUP_AS";
 
 /// The persona whose partition a follow-up filed by `rune` takes: the rune's
-/// `RUNE_FOLLOWUP_AS`, or `rune` itself when it declares none.
+/// `RUNE_FOLLOWUP_AS`, or `rune` itself when it declares none or has no rune file.
 pub fn followup_persona_in(runes: &Path, rune: &str) -> Result<String, String> {
     let path = runes.join(format!("{rune}.rune"));
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(rune.to_string()),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
     Ok(assigned_value(&text, FOLLOWUP_AS_KEY).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| rune.to_string()))
 }
 
@@ -567,7 +571,7 @@ mod tests {
         let dir = runes_dir(&ws);
         assert_eq!(followup_persona_in(&dir, "walker").unwrap(), "fixer");
         assert_eq!(followup_persona_in(&dir, "plain").unwrap(), "plain");
-        assert!(followup_persona_in(&dir, "ghost").is_err());
+        assert_eq!(followup_persona_in(&dir, "ghost").unwrap(), "ghost", "a persona with no rune file files as itself");
     }
 
     #[test]

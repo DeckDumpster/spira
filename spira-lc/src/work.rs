@@ -853,14 +853,7 @@ fn filed_as(verb: &str, filer: &str) -> Result<String, String> {
         return Ok(filer.to_string());
     }
     let home = spira_config::resolve::locate_home_for_process()?;
-    filed_as_in(&spira_config::runes::runes_dir(&home), verb, filer)
-}
-
-fn filed_as_in(runes: &std::path::Path, verb: &str, filer: &str) -> Result<String, String> {
-    if verb != "file-followup" {
-        return Ok(filer.to_string());
-    }
-    spira_config::runes::followup_persona_in(runes, filer)
+    spira_config::runes::followup_persona_in(&spira_config::runes::runes_dir(&home), filer)
 }
 
 fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
@@ -1738,10 +1731,11 @@ mod tests {
     #[test]
     fn a_pilgrims_follow_up_is_filed_into_the_builder_partition_but_a_split_stays_put() {
         let runes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
-        assert_eq!(super::filed_as_in(&runes, "file-followup", "pilgrim").unwrap(), "builder");
-        assert_eq!(super::filed_as_in(&runes, "split", "pilgrim").unwrap(), "pilgrim");
-        assert_eq!(super::filed_as_in(&runes, "file-followup", "builder").unwrap(), "builder");
-        assert!(super::filed_as_in(&runes, "file-followup", "no-such-persona").is_err());
+        let at = |p: &str| spira_config::runes::followup_persona_in(&runes, p).unwrap();
+        assert_eq!(at("pilgrim"), "builder");
+        assert_eq!(at("builder"), "builder");
+        assert_eq!(at("archivist"), "archivist");
+        assert_eq!(super::filed_as("split", "pilgrim").unwrap(), "pilgrim");
     }
 
     #[test]
