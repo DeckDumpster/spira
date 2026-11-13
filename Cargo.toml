@@ -132,6 +132,9 @@ codegen-units = 4
 # full debug info made each linked test binary up to 464 MB and one bead's deps 36 GB
 # (2026-11-07). Line tables keep panic file:line and backtraces; dependencies need none.
 debug = "line-tables-only"
+# Unpacked: the linker leaves the line tables in the object files instead of copying them into
+# every test binary; backtraces still resolve them.
+split-debuginfo = "unpacked"
 
 # lifecycle-guard runs as a gate fence over the whole tree (gate.steps, sp-ts2qr), built in
 # this profile by the gate's tools phase. At opt-level 0 the tree-sitter bash parse of the

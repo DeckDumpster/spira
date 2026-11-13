@@ -1156,6 +1156,12 @@ mod tests {
     }
 
     #[test]
+    fn the_dev_profile_keeps_debuginfo_out_of_the_link() {
+        let dev = include_str!("../../Cargo.toml").split("[profile.dev]").nth(1).unwrap().split("\n[").next().unwrap();
+        assert!(dev.contains("split-debuginfo = \"unpacked\""), "{dev}");
+    }
+
+    #[test]
     fn unit_commands_name_neither_a_profile_nor_an_incremental_override() {
         for (_, c) in unit_commands(&["gate".into()], 4) {
             assert!(!c.contains("--profile") && !c.contains("incremental=false"), "{c}");
