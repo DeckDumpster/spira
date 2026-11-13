@@ -3530,6 +3530,51 @@ fn a_trial_that_loses_sccache_retries_once_without_the_cache() {
     assert_eq!(f.env_of(n - 1, "RUSTC_WRAPPER"), "");
 }
 
+/// A trial whose cache is already off, or whose red is not a cache fault, is never retried; a
+/// retry that fails the same way is the verdict.
+#[test]
+fn only_a_cache_fault_on_a_cached_trial_is_retried_and_a_failed_retry_is_no_verdict() {
+    let wedged = "test-a.sh RED\nsccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)";
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, wedged.into()));
+    f.runs.borrow_mut().insert(format!("{MERGE_SHA}:uncached"), (1, wedged.into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=build-cache-fault"), "{}", f.verdict_line());
+    let retries = f.stderr().matches("retrying the trial once").count();
+    assert_eq!(retries, 1, "a retry that fails the same way is not retried again: {}", f.stderr());
+
+    let f = Fake::new();
+    f.put_var("SPIRA_BUILD_CACHE", "off");
+    *f.wrapper.borrow_mut() = Ok(spira_config::build::Wrapper::Off);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, wedged.into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(!f.stderr().contains("retrying the trial"), "{}", f.stderr());
+
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nerror[E0308]: mismatched types".into()));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(!f.stderr().contains("retrying the trial"), "{}", f.stderr());
+}
+
+/// Under `spira-admit` the wrapper stays (the compile slot) and only its inner compiler drops
+/// sccache; an admitted build with no inner compiler is not a cached one.
+#[test]
+fn the_uncached_env_of_an_admitted_build_keeps_the_admit_wrapper_and_empties_its_inner_compiler() {
+    let env = |inner: &str| -> Vec<(String, String)> {
+        vec![
+            ("RUSTC_WRAPPER".into(), "/box/bin/spira-admit".into()),
+            ("SPIRA_ADMIT_INNER".into(), inner.into()),
+        ]
+    };
+    assert!(crate::engine::cache_in_force(&env("/box/.cargo/bin/sccache")));
+    assert!(!crate::engine::cache_in_force(&env("")));
+    let off = crate::engine::without_cache(env("/box/.cargo/bin/sccache"));
+    assert!(off.contains(&("RUSTC_WRAPPER".to_string(), "/box/bin/spira-admit".to_string())), "{off:?}");
+    assert!(off.contains(&("SPIRA_ADMIT_INNER".to_string(), String::new())), "{off:?}");
+    assert!(off.contains(&("SPIRA_BUILD_CACHE".to_string(), "off".to_string())), "{off:?}");
+    assert!(!crate::engine::cache_in_force(&off));
+}
+
 /// A test binary the gate built and something else removed is the host's fault: the red text
 /// may name `CARGO_BIN_EXE_*` or only say NotFound, and the branch is not blamed for either.
 #[test]

@@ -861,10 +861,8 @@ impl<'w, W: World> Trial<'w, W> {
                 )
             };
             let first_env = env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp);
-            let cached = first_env.iter().any(|(k, v)| k == "RUSTC_WRAPPER" && !v.is_empty())
-                && !first_env.iter().any(|(k, v)| k == spira_config::build::CACHE_ENV && v == "off");
             let first = run(first_env.clone());
-            if cached && first.0 != 0 && parse::cache_transport_failure(&first.1) {
+            if cache_in_force(&first_env) && first.0 != 0 && parse::cache_transport_failure(&first.1) {
                 w.eprint("gate: the build's sccache server was lost mid-build — retrying the trial once without the compiler cache");
                 let (rc, out, ph) = run(without_cache(first_env));
                 let ph = first.2.into_iter().chain(ph).collect();
@@ -2180,9 +2178,19 @@ pub fn release_bins_command() -> String {
     )
 }
 
+/// Whether the trial's builds compile through sccache: the admitted wrapper's inner compiler,
+/// or the wrapper itself when not admitted.
+pub(crate) fn cache_in_force(env: &[(String, String)]) -> bool {
+    let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+    match get(spira_config::admission::INNER_ENV) {
+        Some(inner) => !inner.is_empty(),
+        None => get("RUSTC_WRAPPER").is_some_and(|w| !w.is_empty()),
+    }
+}
+
 /// The trial's environment with its compiler cache switched off: under `spira-admit` the
 /// wrapper stays (the compile slot) and its inner compiler is rustc itself.
-fn without_cache(mut env: Vec<(String, String)>) -> Vec<(String, String)> {
+pub(crate) fn without_cache(mut env: Vec<(String, String)>) -> Vec<(String, String)> {
     let admitted = env.iter().any(|(k, _)| k == spira_config::admission::INNER_ENV);
     let mut set = |k: &str, v: &str| match env.iter_mut().find(|(n, _)| n == k) {
         Some(e) => e.1 = v.to_string(),
