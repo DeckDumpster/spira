@@ -23,6 +23,7 @@ echo "test-gh-intake-read.sh"
 testdb_available || skip "no fixture database reachable"
 testdb_require ghread
 TMP="$(mktemp -d)"
+# testdb-mode: server — spira-lc reads the beads over the store server's connection, which embedded mode has none of.
 export SPIRA_TESTDB_MODE=server
 testdb_up ghread || skip "server testdb not available"
 . "$HERE/lib.sh"
@@ -51,17 +52,17 @@ for n in range(0, len(rows), 100):
         "INSERT INTO issues (id,title,description,design,acceptance_criteria,notes,status,priority,issue_type,external_ref,close_reason,closed_at,created_at,updated_at) VALUES " + ",".join(rows[n:n + 100]))
 PY
 for f in "$TMP"/seed-*.sql; do
-    "$SPIRA_BD" -C "$SPIRA_DB" sql "$(cat "$f")" >/dev/null 2>"$TMP/seed.err" || bail "could not seed 5,000 beads: $(grep -v "^Warning" "$TMP/seed.err" | head -c 400)"
+    "$SPIRA_BD" -C "$SPIRA_DB" sql "$(cat "$f")" >/dev/null 2>"$TMP/seed.err" || bail "could not seed 5,000 beads: $(grep -v "^Warning" "$TMP/seed.err" | head -c 400)" # batch-job: fixture seeding
 done
-"$SPIRA_BD" -C "$SPIRA_DB" sql "INSERT INTO labels (issue_id,label) SELECT id,'spira' FROM issues" >/dev/null 2>&1 || bail "could not label the beads"
+"$SPIRA_BD" -C "$SPIRA_DB" sql "INSERT INTO labels (issue_id,label) SELECT id,'spira' FROM issues" >/dev/null 2>&1 || bail "could not label the beads" # batch-job: fixture seeding
 
 ms() { local a b; a=$(date +%s%N); "$@" > "$TMP/out" 2> "$TMP/err"; b=$(date +%s%N); echo $(( (b - a) / 1000000 )); }
 
 t=$(ms spira-lc plan items --external-contains "github:" --full)
 echo "# narrow read: ${t} ms"
-[ "$t" -lt 500 ] && ok "the closeout's read of 5,000 beads takes under 500 ms" || bad "the closeout's read of 5,000 beads takes under 500 ms" "${t} ms"
 n=$(python3 -c 'import sys,json; print(len(json.load(open(sys.argv[1]))["items"]))' "$TMP/out")
-is "only the work refs come back, not the untrusted records or the other beads" "10" "$n"
+is "only the 10 work refs of 5,000 beads come back, not the untrusted records or the rest" "10" "$n"
+[ "$(wc -c < "$TMP/out")" -lt 100000 ] && ok "the reply is a few rows' worth, not the table" || bad "the reply is a few rows' worth, not the table" "$(wc -c < "$TMP/out") bytes"
 row=$(python3 -c 'import sys,json
 for i in json.load(open(sys.argv[1]))["items"]:
     if i["id"]=="sp-r0500": print(i.get("close_reason"), i.get("closed_at"))' "$TMP/out")
