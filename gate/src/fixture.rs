@@ -201,4 +201,16 @@ mod tests {
         std::fs::remove_file(&planted).unwrap();
         check(t.path(), Some("main")).expect("the fixture still declares the key the landing ref requires");
     }
+
+    #[test]
+    fn a_retired_key_passes_the_fence_against_the_landing_ref_that_still_registers_it() {
+        let t = copy_tree();
+        std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/config-delta.toml"), t.path().join("spira/config-delta.toml")).unwrap();
+        testkit::git(t.path(), &["init", "-q", "-b", "main"]);
+        testkit::git(t.path(), &["add", "-A"]);
+        testkit::git(t.path(), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "landing ref"]);
+        spira_config::retire::retire_key(t.path(), "spira.archivist_every").unwrap();
+        assert!(!t.path().join("spira/conf.d/SPIRA_ARCHIVIST_EVERY").exists(), "the key is retired at the tip");
+        check(t.path(), Some("main")).expect("the fixture line stays while the landing ref requires it");
+    }
 }
