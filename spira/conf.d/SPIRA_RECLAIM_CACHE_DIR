@@ -1,7 +1,7 @@
 TYPE=string
 GROUP=runtime
-DOC=The shared compilation cache directory sweep.reclaim trims.
-SCHEMA=REQUIRED: The shared compilation cache directory sweep.reclaim trims. Declared by a spira-runtime task row written from its contract (wiki/projects/spira/designs/tasks/); nothing defaults it.
+DOC=Override for the cache directory sweep.reclaim trims; empty follows SPIRA_SCCACHE_DAV_ROOT.
+SCHEMA=Override for the shared compilation cache directory sweep.reclaim trims. Empty (the default) follows the store's own root, SPIRA_SCCACHE_DAV_ROOT, and an empty root means SPIRA_RUN/sccache-dav, so one key places the store and its cap.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+    : "${SPIRA_RECLAIM_CACHE_DIR:=}"
 SPIRA_CONF_DEFAULT_EOF
