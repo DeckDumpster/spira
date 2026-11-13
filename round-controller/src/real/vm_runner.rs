@@ -85,6 +85,15 @@ pub fn stderr_tail(text: &str) -> String {
 
 /// The corpus run's end, typed from round-vm's exit code (round-vm DESIGN.md §2.2). `Ok` is a
 /// verdict; every `Err` is a harness fault carrying round-vm's stderr.
+/// How a pass that exited 4 ended: its merged config delta, or the compiler.
+pub fn build_end(stderr: &str) -> MainEnd {
+    if batcher::buildattr::is_config_delta_red(stderr) {
+        MainEnd::ConfigDelta
+    } else {
+        MainEnd::WorkspaceBuild
+    }
+}
+
 pub fn corpus_end(
     rc: i32,
     stderr: &str,
@@ -112,7 +121,7 @@ pub fn corpus_end(
             };
             format!("round-vm: infrastructure fault — the round VM ({host}) was unreachable ({status}) and 0 of {total} suites reported within the {wall_secs}s wall bound; no member is implicated, and this is not a cap breach (rc {rc})")
         }
-        4 => return Ok(MainEnd::WorkspaceBuild),
+        4 => return Ok(build_end(stderr)),
         2 => {
             if let Some(line) = stderr.lines().find(|l| l.contains("batch: unknown suite:")) {
                 return Err(format!(
@@ -783,7 +792,7 @@ impl RoundRunner for VmRunner<'_, '_> {
                 }
                 MainEnd::Ran
             }
-            4 => MainEnd::WorkspaceBuild,
+            4 => build_end(&self.stderr_text()),
             c => {
                 return Err(format!(
                     "the survivors' verification faulted (rc {c}){}",

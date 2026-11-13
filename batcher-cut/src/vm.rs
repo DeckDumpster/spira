@@ -1633,6 +1633,40 @@ mod abandon_tests {
     }
 
     #[test]
+    fn two_members_whose_clean_merge_duplicates_the_removed_key_fail_the_delta_together_and_pass_it_alone() {
+        let d = testkit::TempDir::new("vm-config-applies");
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let r = &repo.path;
+        fs::create_dir_all(r.join("spira")).unwrap();
+        testkit::git(r, &["init", "-q", "-b", "main"]);
+        let delta = r.join(io::CONFIG_DELTA);
+        let write = |head: &str, tail: &str| fs::write(&delta, format!("# head\n{head}\n\n\n\n\n\n# tail\n{tail}\n[spira]\nk = 1\n")).unwrap();
+        let commit = |msg: &str| {
+            testkit::git(r, &["add", "-A"]);
+            testkit::git(r, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg]);
+            testkit::git(r, &["rev-parse", "HEAD"]).trim().to_string()
+        };
+        write("", "");
+        let base = commit("base");
+        testkit::git(r, &["checkout", "-q", "-b", "a"]);
+        write("removed = [\"x\"]", "");
+        let a = commit("a");
+        testkit::git(r, &["checkout", "-q", "main"]);
+        testkit::git(r, &["checkout", "-q", "-b", "b"]);
+        write("", "removed = [\"y\"]");
+        let b = commit("b");
+        testkit::git(r, &["checkout", "-q", "main"]);
+        let member = |id: &str, tip: &str| Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![] };
+        let (ma, mb) = (member("sp-a", &a), member("sp-b", &b));
+        let mut run = VmRunner::new(&env, &repo, &repo.path, &base, "r1", BTreeMap::new()).unwrap();
+        run.set_members(&[ma.clone(), mb.clone()]);
+        assert_eq!(run.config_applies(&[ma.clone()]), Some(true));
+        assert_eq!(run.config_applies(&[mb.clone()]), Some(true));
+        assert_eq!(run.config_applies(&[ma, mb]), Some(false));
+    }
+
+    #[test]
     fn an_attribution_after_a_red_pass_reads_that_pass_s_red_from_its_results_and_none_without_them() {
         let d = testkit::TempDir::new("vm-prior-red");
         fs::write(d.path().join("integration.json"), "{\"stage\":\"integration-tests\",\"verdict\":\"red\"}").unwrap();
