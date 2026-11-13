@@ -10,7 +10,7 @@ use spira_config::amendment;
 use bead::claimdesc::notify_live_dwarf;
 use bead::{
     runes_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
-    lane_check, stack_after_refusal, find_id_by_title, lint_judge, parse_created_id, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
+    lane_check, stack_after_refusal, lint_judge, parse_created_id, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
 
@@ -157,17 +157,27 @@ fn parent_labels(id: &str) -> Vec<String> {
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
 #[allow(clippy::too_many_arguments)]
-fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, stack_after: Option<&str>, title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
-    if incident.is_none() && stack_after.is_none() && title.is_none() && !express {
+fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, stack_after: Option<&str>, title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
+    if incident.is_none() && stack_after.is_none() && lookup_title.is_none() && !express {
         return bdq_status(home, args);
     }
-    let (code, mut stdout) = bdq_capture_with(home, args, Stdio::inherit());
+    let since = bead::bdq::utc_stamp_nanos(std::time::SystemTime::now() - std::time::Duration::from_secs(60));
+    let (mut code, mut stdout) = bdq_capture_with(home, args, Stdio::inherit());
     if parse_created_id(&stdout).is_none() {
-        if let Some(title) = title {
-            let (_, listing) = door(&s(&["list", "--limit", "0", "--json"]));
-            if let Some(found) = find_id_by_title(&listing, title) {
-                eprintln!("bead: file: bd create printed no id; found {found} by its title and creating its lifecycle row");
-                stdout = format!("{found}\n");
+        if let Some(title) = lookup_title {
+            if code == 0 || code == CANNOT_TELL {
+                let (list_code, listing) = door(&s(&["list", "--limit", "0", "--json"]));
+                match bead::readback(list_code, &listing, title, &since[..19]) {
+                    bead::Readback::Found(found) => {
+                        eprintln!("bead: file: bd create exited {code} without an id; read back from the store: {found} exists, reporting it as filed");
+                        stdout = format!("{found}\n");
+                        code = 0;
+                    }
+                    bead::Readback::Absent if code == CANNOT_TELL => eprintln!("bead: file: bd create exited {CANNOT_TELL}; read back from the store: no bead titled {title:?} exists, nothing was recorded"),
+                    bead::Readback::Ambiguous if code == CANNOT_TELL => eprintln!("bead: file: bd create exited {CANNOT_TELL}; the store holds several beads titled {title:?}, so whether this one was written is unknown; look them up before filing again"),
+                    _ if code == CANNOT_TELL => eprintln!("bead: file: bd create exited {CANNOT_TELL} and the store could not be read back; the bead may exist, so look it up by title {title:?} before filing again"),
+                    _ => {}
+                }
             }
         }
     }
@@ -251,6 +261,9 @@ fn lc() -> Result<spira_store::lc_call::LcClient, String> {
 }
 
 const ROW_ATTEMPTS: u32 = 3;
+
+/// The exit a store answers when it cannot tell whether a write committed.
+const CANNOT_TELL: i32 = 2;
 
 /// Filing is two writes; a transient store error on the second must not strand the first.
 fn create_row_retrying(id: &str, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
@@ -819,7 +832,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = bdq_create(home, &bd_args, incident_parent, stack_after.as_deref(), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()));
+        let rc = bdq_create(home, &bd_args, incident_parent, stack_after.as_deref(), Some(&title_for_row), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()));
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_rune), ("repo", &repo), ("kind", "work")]);
         }
@@ -840,6 +853,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             labels.push_str(&format!(",part:{n}"));
         }
 
+        let title_for_lookup = title.clone();
         let mut bd_args = s(&["create"]);
         bd_args.push(title);
         bd_args.push("-l".into());
@@ -872,7 +886,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = bdq_create(home, &bd_args, incident_parent, None, None, express, None, None);
+        let rc = bdq_create(home, &bd_args, incident_parent, None, None, Some(&title_for_lookup), express, None, None);
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", ""), ("repo", repo.as_deref().unwrap_or("")), ("kind", &kind)]);
         }

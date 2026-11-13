@@ -1154,6 +1154,25 @@ mod probe_tests {
     }
 
     #[test]
+    fn a_failed_duplicate_check_does_not_stop_a_create_whose_reply_was_then_lost_from_being_reported_as_sent() {
+        let t = testkit::TempDir::new("mail-ask-dupcheck-fails-lost-reply");
+        let bd = FakeBd::new(vec![BdOut::fail(2, "dolt: connection refused"), BdOut::fail(2, ""), BdOut::ok(ASK_LIST), BdOut::ok("")]);
+        let out = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap();
+        assert_eq!(out.x_bead.as_deref(), Some("sp-new1"));
+        assert_eq!(mailbox_entries(t.path()), 1);
+    }
+
+    #[test]
+    fn a_lost_create_whose_readback_also_fails_is_unknown_and_names_both_failures() {
+        let t = testkit::TempDir::new("mail-ask-lost-and-unreadable");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::fail(2, "bdq: bd create exited 2 with no output after 3 attempt(s)"), BdOut::fail(2, "dolt: connection refused")]);
+        let err = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap_err();
+        assert!(err.contains("bd create exited 2") && err.contains("dolt: connection refused") && err.contains("may exist"), "{err}");
+        assert!(!err.contains("no stderr"), "{err}");
+        assert_eq!(mailbox_entries(t.path()), 0);
+    }
+
+    #[test]
     fn a_created_ask_whose_mail_fails_names_the_bead_and_says_the_mail_was_not_delivered() {
         let t = testkit::TempDir::new("mail-ask-mail-fails");
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok(""), BdOut::ok("")]);

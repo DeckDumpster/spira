@@ -506,16 +506,35 @@ pub fn parse_created_id(out: &str) -> Option<String> {
     (!last.is_empty() && !last.contains(char::is_whitespace)).then(|| last.to_string())
 }
 
-/// The one non-event bead in a `bd list --json` payload whose title is `title`; two or
-/// none is `None`, so an ambiguous match never attaches a row to the wrong bead.
-pub fn find_id_by_title(json: &str, title: &str) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    let mut hits = v.as_array()?.iter().filter(|d| {
+/// What reading a title back from the store says about a create whose reply was lost.
+#[derive(Debug, PartialEq)]
+pub enum Readback {
+    Found(String),
+    Absent,
+    Ambiguous,
+    Unreadable,
+}
+
+/// Reads a `bd list --json` answer for the bead a lost create may have written: the one
+/// non-event bead titled `title` created at or after `since` (a UTC `YYYY-MM-DDTHH:MM:SS`
+/// prefix), so an older bead of the same title is never taken for this one. A listing that
+/// failed or is not JSON is `Unreadable`, never `Absent`: only a readable listing without the
+/// bead proves nothing was written.
+pub fn readback(list_code: i32, listing: &str, title: &str, since: &str) -> Readback {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(listing) else { return Readback::Unreadable };
+    let Some(rows) = v.as_array().filter(|_| list_code == 0) else { return Readback::Unreadable };
+    let mut hits = rows.iter().filter(|d| {
+        let at = d.get("created_at").and_then(|t| t.as_str()).unwrap_or("");
         d.get("title").and_then(|t| t.as_str()) == Some(title)
             && d.get("issue_type").and_then(|t| t.as_str()) != Some("event")
+            && at.ends_with('Z')
+            && at.get(..19).is_some_and(|p| p >= since)
     });
-    let id = hits.next()?.get("id")?.as_str()?.to_string();
-    hits.next().is_none().then_some(id)
+    let Some(first) = hits.next() else { return Readback::Absent };
+    match (first.get("id").and_then(|i| i.as_str()), hits.next()) {
+        (Some(id), None) => Readback::Found(id.to_string()),
+        _ => Readback::Ambiguous,
+    }
 }
 
 /// The `branch:` label a bead carries, if any (first one found, matching the bash's
@@ -1064,19 +1083,20 @@ mod tests {
     }
 
     #[test]
-    fn find_id_by_title_needs_exactly_one_match() {
-        let one = r#"[{"id":"sp-a","title":"t"},{"id":"sp-b","title":"u"},{"id":"sp-c","title":"t","issue_type":"event"}]"#;
-        assert_eq!(find_id_by_title(one, "t").as_deref(), Some("sp-a"));
-        assert_eq!(find_id_by_title(one, "missing"), None);
-        let two = r#"[{"id":"sp-a","title":"t"},{"id":"sp-b","title":"t"}]"#;
-        assert_eq!(find_id_by_title(two, "t"), None);
-        assert_eq!(find_id_by_title("nope", "t"), None);
-    }
-
-    #[test]
-    fn find_id_by_title_returns_the_row_whose_title_matches_not_the_first() {
-        let rows = r#"[{"id":"sp-a","title":"first"},{"id":"sp-b","title":"second"}]"#;
-        assert_eq!(find_id_by_title(rows, "second").as_deref(), Some("sp-b"));
+    fn readback_tells_a_missing_bead_from_an_unreadable_store() {
+        let since = "2026-11-13T10:00:00";
+        let row = |id: &str, title: &str, at: &str| format!(r#"{{"id":"{id}","title":"{title}","created_at":"{at}"}}"#);
+        let new = row("sp-a", "t", "2026-11-13T10:00:05.1Z");
+        let old = row("sp-old", "t", "2026-11-01T10:00:05Z");
+        assert_eq!(readback(0, &format!("[{new},{}]", row("sp-b", "u", "2026-11-13T10:00:06Z")), "t", since), Readback::Found("sp-a".into()));
+        assert_eq!(readback(0, &format!("[{old},{new}]"), "t", since), Readback::Found("sp-a".into()), "an older bead of the same title is not this create");
+        assert_eq!(readback(0, &format!("[{old}]"), "t", since), Readback::Absent);
+        assert_eq!(readback(0, &format!("[{new}]"), "gone", since), Readback::Absent);
+        assert_eq!(readback(0, &format!("[{new},{}]", row("sp-c", "t", "2026-11-13T10:00:09Z")), "t", since), Readback::Ambiguous);
+        assert_eq!(readback(0, &format!("[{}]", row("sp-z", "t", "2026-11-13T10:00:09+02:00")), "t", since), Readback::Absent, "a zone it cannot compare is not proof");
+        assert_eq!(readback(2, "", "t", since), Readback::Unreadable);
+        assert_eq!(readback(2, "[]", "t", since), Readback::Unreadable);
+        assert_eq!(readback(0, "{}", "t", since), Readback::Unreadable);
     }
 
     #[test]

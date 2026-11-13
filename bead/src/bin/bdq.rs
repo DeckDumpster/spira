@@ -409,6 +409,9 @@ fn cmd_bdq(args: &[String]) -> i32 {
         break (rc, err, out);
     };
     eprint!("{stderr_buf}");
+    if let Some(note) = bead::bdq::silent_failure_note(args, rc, &stderr_buf, try_n, t_start.elapsed().as_millis()) {
+        eprint!("{note}");
+    }
     if lc_row {
         let _ = std::io::stdout().write_all(&created_out);
         let _ = std::io::stdout().flush();
