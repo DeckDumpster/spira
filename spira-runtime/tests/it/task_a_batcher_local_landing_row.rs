@@ -27,7 +27,7 @@ impl EffectRunner for Runner {
         self.ran.lock().unwrap().push(spec.name.clone());
         match spec.name.as_str() {
             OBSERVE => Ok(serde_json::to_string(&waiting_pool(&self.settled, self.clock.now_ms())).unwrap()),
-            FETCH | CERTIFY => Ok("{}".into()),
+            FETCH | CERTIFY | LAND => Ok("{}".into()),
             ASSEMBLE => Ok(serde_json::to_string(&assembled()).unwrap()),
             ROUND_OPEN => Ok(serde_json::to_string(&Opened { batch: "next-round".into(), ..Opened::default() }).unwrap()),
             other => Err(format!("no double for {other}")),
