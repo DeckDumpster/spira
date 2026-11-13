@@ -370,7 +370,7 @@ pub fn provenance_mode(args: &[String]) -> Result<bool, String> {
 pub fn provenance_read(d: &Deps) -> Result<Vec<ProvRow>, String> {
     let snap = Snapshot::of(d.lc);
     let d = &Deps { lc: &snap, bd: d.bd, gh: d.gh, git: d.git, repo: d.repo, mail: d.mail };
-    let all = d.bd.list_all_json().ok_or("could not read the store")?;
+    let all = d.bd.list_github_json().ok_or("could not read the store")?;
     let mut out = Vec::new();
     for row in github_rows(&all) {
         let state = match d.lc.bead(&row.id).map_err(|e| format!("lifecycle machine unreachable ({e})"))? {
@@ -544,7 +544,7 @@ pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
     let d = &Deps { lc: &snap, bd: d.bd, gh: d.gh, git: d.git, repo: d.repo, mail: d.mail };
     let mut log = gh_resolve_stale_asks(d, ctx);
 
-    let Some(all) = d.bd.list_all_json() else { return log };
+    let Some(all) = d.bd.list_github_json() else { return log };
     for row in github_rows(&all) {
         if run_state::mark_exists(&ctx.run, &row.id) {
             continue;
@@ -619,7 +619,7 @@ pub fn backfill(d: &Deps, ctx: &Ctx, dry_run: bool) -> (Vec<String>, u32, u32, u
     let mut out = Vec::new();
     let (mut n_found, mut n_closed, mut n_skipped, mut n_dry) = (0u32, 0u32, 0u32, 0u32);
 
-    let Some(all) = d.bd.list_all_json() else {
+    let Some(all) = d.bd.list_github_json() else {
         out.push("gh-issue-backfill: could not read the store".to_string());
         return (out, 0, 0, 0, 0);
     };

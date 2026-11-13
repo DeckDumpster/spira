@@ -189,6 +189,9 @@ pub fn list_all_on(lc: &spira_store::lc_call::LcClient) -> Option<serde_json::Va
     serde_json::from_str(&r.out).ok()
 }
 
+/// The work beads' external-reference prefix: `github-untrusted:` records do not contain it.
+pub const WORK_REF_PREFIX: &str = "github:";
+
 /// The beads whose external reference contains `needle`, as the rows `store::ingested` reads.
 /// Err carries the store's own text: a refusal, a deadline or a reply that is no item list.
 pub fn github_refs_on(lc: &spira_store::lc_call::LcClient, needle: &str) -> Result<serde_json::Value, String> {
@@ -220,6 +223,11 @@ fn content<S: AsRef<str>>(argv: &[S], body: Option<&str>) -> Option<String> {
 }
 
 impl Bd for RealBd {
+    fn list_github_json(&self) -> Option<serde_json::Value> {
+        let lc = spira_store::lc_call::LcClient::configured().ok()?;
+        github_refs_on(&lc, WORK_REF_PREFIX).ok()
+    }
+
     fn list_all_json(&self) -> Option<serde_json::Value> {
         let lc = spira_store::lc_call::LcClient::configured().ok()?;
         list_all_on(&lc)
@@ -627,6 +635,14 @@ mod transport_tests {
         let refused = github_refs_on(&LcClient::over(Arc::new(Bounded(Mutex::default(), 3)), true), "o/r#").unwrap_err();
         assert!(refused.contains("reads every bead"), "{refused}");
         assert_eq!(list_all_on(&LcClient::over(Arc::new(Bounded(Mutex::default(), 0)), true)), None, "the whole-history read is what the store refuses");
+    }
+
+    #[test]
+    fn the_closeout_read_asks_only_for_work_refs_and_never_the_whole_history() {
+        let t = Arc::new(Bounded(Mutex::default(), 0));
+        github_refs_on(&LcClient::over(t.clone(), true), WORK_REF_PREFIX).unwrap();
+        let sent = t.0.lock().unwrap();
+        assert_eq!(sent[0], ["plan", "items", "--external-contains", "github:", "--full"]);
     }
 
     type Sent = Arc<Mutex<Vec<(String, String, String, String, String, String)>>>;
