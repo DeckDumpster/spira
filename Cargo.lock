@@ -2136,6 +2136,7 @@ name = "spira-lc"
 version = "1.0.0"
 dependencies = [
  "bead",
+ "forge",
  "gate",
  "groomer",
  "incident",
