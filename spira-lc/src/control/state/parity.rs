@@ -58,6 +58,7 @@ const BEFORE_CALLERS: &[&str] = &[
     "reconcile-asks",
     "reconcile-epics",
     "reconcile-content",
+    "backfill-repo",
     "drop-orphans",
     "close",
     "drop-bead",

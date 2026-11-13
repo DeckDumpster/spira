@@ -21,6 +21,7 @@ const OWN: &[&str] = &[
     "reconcile-asks",
     "reconcile-epics",
     "reconcile-content",
+    "backfill-repo",
     "drop-orphans",
     "close",
     "drop-bead",
@@ -33,7 +34,7 @@ const OWN: &[&str] = &[
 ];
 
 /// Sweeps over every row: batch jobs, bounded at the query deadline rather than a call's 3 s.
-pub const SWEEPS: &[&str] = &["reconcile-asks", "reconcile-epics", "reconcile-content", "drop-orphans"];
+pub const SWEEPS: &[&str] = &["reconcile-asks", "reconcile-epics", "reconcile-content", "backfill-repo", "drop-orphans"];
 
 /// Whether `verb` is answered by [`run`].
 pub fn is_served(verb: &str) -> bool {
@@ -150,6 +151,7 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
         "reconcile-asks" => crate::reconcile_content::reconcile_asks(rest, m, bd),
         "reconcile-epics" => callers::reconcile_epics(rest, m, bd),
         "reconcile-content" => callers::reconcile_content(rest, m, bd),
+        "backfill-repo" => crate::backfill_repo::backfill_repo(rest, m),
         "drop-orphans" => callers::drop_orphans(rest, m, bd),
         "close" => {
             let mut read = |f: &str| -> Result<String, String> {
