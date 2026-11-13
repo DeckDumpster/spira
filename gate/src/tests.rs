@@ -124,6 +124,7 @@ struct Fake {
     /// Another process removed the tree's build output after it was built.
     target_swept: Cell<bool>,
     targets: RefCell<Vec<PathBuf>>,
+    target_roots: RefCell<Vec<String>>,
     released: RefCell<Vec<(PathBuf, bool)>>,
     judged: RefCell<Vec<bool>>,
     // ---- the base-suite cache (sp-kqger)
@@ -278,6 +279,7 @@ impl Fake {
             target_swept: Cell::new(false),
             target_clears_tools: Cell::new(false),
             targets: RefCell::new(Vec::new()),
+            target_roots: RefCell::new(Vec::new()),
             released: RefCell::new(Vec::new()),
             judged: RefCell::new(Vec::new()),
             image_tag: RefCell::new((0, "tag1".into())),
@@ -628,14 +630,16 @@ impl World for Fake {
         self.wrapper_asked.borrow_mut().push((path.to_string(), setting.to_string()));
         self.wrapper.borrow().clone()
     }
-    fn target_on_tmpfs(&self, tree: &Path, _: &str, _: &str, _: &crate::target::Limits) -> Result<String, String> {
+    fn target_on_tmpfs(&self, tree: &Path, root: &str, _: &str, _: &crate::target::Limits) -> Result<String, String> {
         self.targets.borrow_mut().push(tree.to_path_buf());
+        self.target_roots.borrow_mut().push(root.to_string());
         if self.target_clears_tools.get() {
             let tools = tree.join("target/tree-tools");
             self.files.borrow_mut().retain(|p, _| !p.starts_with(&tools));
         }
         match self.target_err.borrow().clone() {
             Some(e) => Err(e),
+            None if !root.is_empty() => Ok(format!("gate: build on {root}/{}", tree.file_name().unwrap().to_string_lossy())),
             None => Ok(format!("gate: build on /tmp/t/{}", tree.file_name().unwrap().to_string_lossy())),
         }
     }
@@ -3433,6 +3437,16 @@ fn the_gate_tree_builds_on_tmpfs_and_short_room_is_no_verdict() {
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=scratch-short"), "{}", f.verdict_line());
     assert!(f.cmds.borrow().is_empty(), "nothing built: {:?}", f.cmds.borrow());
+}
+
+/// The configured target root reaches the build, and the gate says where it builds.
+#[test]
+fn the_gate_builds_on_the_configured_target_root() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    f.put_var("SPIRA_GATE_TARGET_ROOT", "/cfg/root");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(f.target_roots.borrow().as_slice(), &["/cfg/root".to_string()]);
+    assert!(f.stderr().contains("gate: build on /cfg/root/"), "{}", f.stderr());
 }
 
 /// The gate's target root is config; a scratch-short verdict names the room the root had.

@@ -318,6 +318,8 @@ if [ "$got" != "$round_sha" ]; then
     exit 2
 fi
 cd ~/round-work
+export TMPDIR="$HOME/round-scratch/tmp"
+mkdir -p "$TMPDIR" || { echo "round-vm: cannot make $TMPDIR, the round's temporary directory" >&2; exit 2; }
 disk_out="$HOME/round-work/.runtime/spira/batch-results/disk-usage"
 mkdir -p "$(dirname "$disk_out")"
 # Filesystem counters answer "how full" instantly, so the shared trees (the container store, /nix,
@@ -356,6 +358,7 @@ disk_report() {
     graph="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null || true)"
     fs_line "$phase" fs-home "$HOME"
     fs_line "$phase" fs-tmpdir "${TMPDIR:-/tmp}"
+    fs_line "$phase" fs-shared-tmp /tmp
     fs_line "$phase" fs-podman-graphroot "$graph"
     fs_line "$phase" fs-nix /nix
     total="$(fs_used)"
@@ -3569,6 +3572,14 @@ mod tests {
         assert!(func.contains("''|*[!0-9]*) bytes=unread"), "no number read is unread, not 0");
         assert!(func.contains("used=unread"), "an unnamed or unreadable filesystem is unread, not 0");
         assert!(!func.contains("bytes=0 ;;"), "no fallback to zero");
+    }
+
+    #[test]
+    fn the_round_writes_its_temporary_files_under_its_scratch_and_still_reports_the_shared_tmp() {
+        let export = REMOTE_SCRIPT.find("export TMPDIR=\"$HOME/round-scratch/tmp\"").expect("the script points TMPDIR at the round's scratch");
+        assert!(REMOTE_SCRIPT[export..].contains("mkdir -p \"$TMPDIR\" ||"), "a TMPDIR that cannot be made refuses the round");
+        assert!(export < REMOTE_SCRIPT.find("disk_report start").unwrap(), "before any report or tool runs");
+        assert!(script_fn("disk_report").contains("fs_line \"$phase\" fs-shared-tmp /tmp"), "the shared /tmp keeps its own line");
     }
 
     #[test]
