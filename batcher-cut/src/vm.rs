@@ -1744,8 +1744,10 @@ mod abandon_tests {
         let mut run = VmRunner::new(&env, &repo, &repo.path, &base, "r1", BTreeMap::new()).unwrap();
         run.set_members(&[ma.clone(), mb.clone()]);
         assert_eq!(run.config_applies(&[ma, mb]), Some(true));
-        let merged = io::config_delta_at(&repo, "sp-a").unwrap().unwrap();
-        assert!(merged.contains("spira.x") && !merged.contains("spira.y"), "{merged}");
+        testkit::git(r, &["checkout", "-q", "-b", "merged", &a]);
+        testkit::git(r, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit", &b]);
+        let merged = io::config_delta_at(&repo, "merged").unwrap().unwrap();
+        assert!(merged.contains("spira.x") && merged.contains("spira.y"), "{merged}");
     }
 
     #[test]

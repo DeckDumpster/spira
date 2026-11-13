@@ -181,10 +181,10 @@ impl Tree {
     }
 
     /// The tree's config delta: the base file and every fragment the tree lists, merged.
-    pub fn delta_text(&self) -> Option<String> {
+    pub fn delta_text(&self) -> Result<Option<String>, String> {
         let mut parts: Vec<(String, String)> = self.entries.iter().filter(|e| e.path == "spira/config-delta.toml" || (e.path.starts_with("spira/config-delta.d/") && e.path.ends_with(".toml"))).filter_map(|e| Some((e.path.clone(), self.text_of(&e.path)?))).collect();
         parts.sort();
-        spira_config::delta::merge_delta_texts(&parts).ok().flatten()
+        spira_config::delta::merge_delta_texts(&parts)
     }
 
     /// A repo-relative file's text, for allow files. Missing reads as empty — the bash

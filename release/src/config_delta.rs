@@ -210,7 +210,10 @@ fn persona_name(path: &str) -> Result<&str, String> {
 /// The delta a release declares, base file and fragments together; `None` when its tree has none.
 pub fn load(rel: &Path) -> Result<Option<Delta>, String> {
     let home = rel.join("spira");
-    let name = || home.join(spira_config::delta::DELTA_FILE).display().to_string();
+    let name = || {
+        let base = home.join(spira_config::delta::DELTA_FILE).display().to_string();
+        if spira_config::delta::fragment_paths(&home).is_ok_and(|f| !f.is_empty()) { format!("{base} with {}", spira_config::delta::DELTA_DIR) } else { base }
+    };
     let Some(text) = spira_config::delta::delta_text(&home)? else { return Ok(None) };
     let d = Delta::parse(&text).map_err(|e| format!("{}: {e}", name()))?;
     if home.join("testlib/complete.toml").is_file() {

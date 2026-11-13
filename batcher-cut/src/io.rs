@@ -5289,4 +5289,27 @@ mod config_key_tests {
         testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit", &b]);
         assert!(!parses("HEAD"), "git merged both lines without a conflict, and the result is not TOML");
     }
+
+    #[test]
+    fn two_merged_fragments_are_a_delta_that_parses_with_both_retirements() {
+        let root = testkit::TempDir::new("config-delta-fragments");
+        let d = root.path();
+        testkit::git(d, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir_all(d.join("spira")).unwrap();
+        std::fs::write(d.join(CONFIG_DELTA), "[spira]\nk = 1\n").unwrap();
+        commit(d, "base");
+        let fragment = |branch: &str, key: &str| {
+            testkit::git(d, &["checkout", "-q", "-b", branch, "main"]);
+            std::fs::create_dir_all(d.join(CONFIG_DELTA_DIR)).unwrap();
+            std::fs::write(d.join(CONFIG_DELTA_DIR).join(format!("{branch}.toml")), format!("removed = [\"{key}\"]\n")).unwrap();
+            commit(d, branch)
+        };
+        let (a, b) = (fragment("a", "spira.x"), fragment("b", "spira.y"));
+        let repo = Repo { name: "alpha".into(), path: d.to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+        testkit::git(d, &["checkout", "-q", "a"]);
+        testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit", &b]);
+        let text = config_delta_at(&repo, "HEAD").unwrap().unwrap();
+        assert!(spira_config::delta_added(&text).is_ok() && text.contains("spira.x") && text.contains("spira.y"), "{text}");
+        assert!(config_delta_at(&repo, &a).unwrap().unwrap().contains("spira.x"));
+    }
 }
