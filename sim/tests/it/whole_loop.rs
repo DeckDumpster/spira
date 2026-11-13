@@ -21,11 +21,13 @@
 use crate::common;
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use lifecycle::bead::{BeadEvent, BeadEventKind, BeadRow, BeadState};
 use lifecycle::reason::GateRedReason;
-use runtime::host::{EffectRunner, VirtualDriver};
+use runtime::host::{EffectRunner, Submit, VirtualDriver};
+use runtime::EventKind;
 use runtime::event::{Event, EFFECT_FAILED, EFFECT_REQUESTED, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT};
 use runtime::journal::{Boot, FaultyJournal, Journal, Poison, Turn};
 use runtime::ports::{Clock, CountingProc, Proc, ProcSpec, VirtualClock};
@@ -80,6 +82,7 @@ struct Lc {
     landed: Vec<String>,
     dwarves: BTreeMap<String, u64>,
     items: BTreeMap<String, String>,
+    pages: Vec<String>,
 }
 
 impl Lc {
@@ -153,6 +156,9 @@ struct World {
     crash: Option<Crash>,
     crashing: Mutex<Crashing>,
     faulty: Arc<FaultyJournal>,
+    /// Until this virtual time every store-class double answers `Err`.
+    cold_until: AtomicU64,
+    cold_refused: Mutex<Vec<String>>,
     units: Arc<ScriptedUnits>,
     lc: Mutex<Lc>,
     script: Script,
@@ -411,6 +417,9 @@ fn queue_step_observe(_: &World) -> Result<String, String> {
     json(&qs::Snapshot { repos: [(REPO.to_string(), repo)].into(), world_running: true })
 }
 
+/// The effects that read or write the lifecycle store.
+const STORE_CLASS: &[&str] = &[sc::OBSERVE, sc::UNIT_START, sift::OBSERVE, sift::RECORD_PASS, bl::OBSERVE, bl::ROUND_OPEN, bl::LC_CERTIFY, bl::LAND, bl::ABANDON];
+
 /// The quiet world with this world's doubles over it, and the unit effects on its manager.
 fn doubles(w: &Arc<World>) -> Doubles {
     let forks = w.proc.clone();
@@ -420,8 +429,25 @@ fn doubles(w: &Arc<World>) -> Doubles {
     });
     let on = |d: Doubles, name: &str, f: fn(&World, &str) -> Result<String, String>| {
         let w = w.clone();
-        d.double(name, move |input| f(&w, input))
+        let store = STORE_CLASS.contains(&name);
+        let name = name.to_string();
+        d.double(&name.clone(), move |input| {
+            if store && w.now() < w.cold_until.load(Ordering::SeqCst) {
+                w.cold_refused.lock().unwrap_or_else(|e| e.into_inner()).push(name.clone());
+                return Err("the lifecycle store is cold".into());
+            }
+            f(&w, input)
+        })
     };
+    let d = d.double(bl::INBOX_APPEND, {
+        let w = w.clone();
+        move |line| {
+            if let Some((_, page)) = line.split_once("[watch:rounds] ") {
+                w.lc.lock().unwrap_or_else(|e| e.into_inner()).pages.push(page.to_string());
+            }
+            Ok(String::new())
+        }
+    });
     let d = on(d, sc::OBSERVE, |w, _| sentinel_observe(w));
     let d = on(d, sc::UNIT_START, sentinel_unit_start);
     let d = on(d, sift::OBSERVE, |w, _| sift_observe(w));
@@ -454,6 +480,10 @@ struct Run {
     effects: Vec<(String, Vec<String>)>,
     /// Every request id a committed turn resolved, in order.
     resolved: Vec<String>,
+    /// The batcher's pages, without their stamp.
+    pages: Vec<String>,
+    /// The store-class effects the cold store refused, by name.
+    cold_refused: Vec<String>,
 }
 
 /// How a run is interrupted: where the scheduler dies, and whether the restarted one is told
@@ -462,6 +492,10 @@ struct Run {
 struct Interrupt {
     crash: Option<Crash>,
     blind: bool,
+    /// The scheduler is killed at this virtual instant, wherever its effects stand.
+    kill_at: Option<u64>,
+    /// After the restart the store answers `Err` for this long.
+    cold_ms: u64,
 }
 
 /// A journal that boots with no unresolved effect and delegates everything else.
@@ -503,56 +537,97 @@ fn run(seed: u64, script: Script) -> Run {
     r
 }
 
-fn run_interrupted(seed: u64, script: Script, interrupt: Interrupt) -> Run {
-    let began = std::time::Instant::now();
-    let clock = VirtualClock::new(0);
-    let c: Arc<dyn Clock> = Arc::new(clock.clone());
-    let units = Arc::new(ScriptedUnits::new(c.clone()));
-    let mut lc = Lc::default();
-    for (at, id) in &script.file {
-        lc.due.push((*at, Due::File(id.to_string())));
+/// The processes a crash leaves standing (the journal, the store, the units, the clock) and the
+/// way to boot a scheduler over them.
+struct Rig {
+    seed: u64,
+    clock: VirtualClock,
+    c: Arc<dyn Clock>,
+    units: Arc<ScriptedUnits>,
+    mem: Arc<MemJournal>,
+    faulty: Arc<FaultyJournal>,
+    world: Arc<World>,
+    runner: Arc<Doubles>,
+}
+
+impl Rig {
+    fn new(seed: u64, script: Script, crash: Option<Crash>) -> Rig {
+        let clock = VirtualClock::new(0);
+        let c: Arc<dyn Clock> = Arc::new(clock.clone());
+        let units = Arc::new(ScriptedUnits::new(c.clone()));
+        let mut lc = Lc::default();
+        for (at, id) in &script.file {
+            lc.due.push((*at, Due::File(id.to_string())));
+        }
+        let mem = MemJournal::new();
+        let faulty = FaultyJournal::new(mem.clone());
+        let world = Arc::new(World { clock: clock.clone(), crash, crashing: Mutex::default(), faulty: faulty.clone(), cold_until: AtomicU64::new(0), cold_refused: Mutex::default(), units: units.clone(), lc: Mutex::new(lc), script, proc: CountingProc::refusing() });
+        let runner = Arc::new(doubles(&world));
+        Rig { seed, clock, c, units, mem, faulty, world, runner }
     }
-    let mem = MemJournal::new();
-    let journal: Arc<dyn Journal> = mem.clone();
-    let faulty = FaultyJournal::new(journal.clone());
-    let world = Arc::new(World { clock: clock.clone(), crash: interrupt.crash, crashing: Mutex::default(), faulty: faulty.clone(), units: units.clone(), lc: Mutex::new(lc), script, proc: CountingProc::refusing() });
-    let runner = Arc::new(doubles(&world));
-    let settings = common::settings_with(&[("SPIRA_BATCHER_WALL_SECS", "3600"), ("SPIRA_ROUND_MAX_OPEN", "1")]);
-    let boot = |over: Arc<dyn Journal>| {
-        let mut engine = Engine::open(over, c.clone(), registrations(&settings), seed).expect("the service's registrations open");
+
+    /// The way `serve` boots over `over`: every task's tick started, and a new driver with a new unit source.
+    fn boot(&self, over: Arc<dyn Journal>) -> VirtualDriver {
+        let settings = common::settings_with(&[("SPIRA_BATCHER_WALL_SECS", "3600"), ("SPIRA_ROUND_MAX_OPEN", "1")]);
+        let mut engine = Engine::open(over, self.c.clone(), registrations(&settings), self.seed).expect("the service's registrations open");
         for (_, stream, kind) in tasks::boots() {
             engine.start(stream, kind);
         }
         let mut sources = Sources::default();
-        sources.register(Box::new(spira_runtime::sources::units::scripted(units.clone(), c.clone()))).expect("the unit.ran source");
-        VirtualDriver::new(engine, clock.clone(), runner.clone() as Arc<dyn EffectRunner>).with_sources(sources).expect("scripted sources only")
-    };
+        sources.register(Box::new(spira_runtime::sources::units::scripted(self.units.clone(), self.c.clone()))).expect("the unit.ran source");
+        VirtualDriver::new(engine, self.clock.clone(), self.runner.clone() as Arc<dyn EffectRunner>).with_sources(sources).expect("scripted sources only")
+    }
+
+    fn journal(&self) -> Arc<dyn Journal> {
+        self.mem.clone()
+    }
+
+    fn finish(&self, began: std::time::Instant, crashed: Option<String>) -> Run {
+        let lc = self.world.lc();
+        let journal = self.journal();
+        Run {
+            trace: runtime::conformance::trace(&*journal),
+            history: lc.history.clone(),
+            refused: lc.refused.clone(),
+            asked: self.runner.asked(),
+            unit_calls: self.units.calls(),
+            states: lc.rows.iter().map(|(id, r)| (id.clone(), r.state)).collect(),
+            spawned: self.world.proc.spawned(),
+            wall: began.elapsed(),
+            crashed,
+            rounds: lc.rounds,
+            round_open: lc.round.is_some(),
+            effects: effects_of(&journal.history()),
+            resolved: self.mem.commits().into_iter().flat_map(|t| t.resolved).collect(),
+            pages: lc.pages.clone(),
+            cold_refused: self.world.cold_refused.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        }
+    }
+}
+
+fn run_interrupted(seed: u64, script: Script, interrupt: Interrupt) -> Run {
+    let began = std::time::Instant::now();
+    let rig = Rig::new(seed, script, interrupt.crash);
     let mut crashed = None;
-    let mut driver = boot(faulty.clone());
-    if let Err(e) = driver.run_until(UNTIL_MS) {
+    let mut driver = rig.boot(rig.faulty.clone());
+    let outcome = match interrupt.kill_at {
+        Some(at) => driver.run_until(at).map(|()| {
+            crashed = Some(format!("killed at {at} ms"));
+        }),
+        None => driver.run_until(UNTIL_MS),
+    };
+    if let Err(e) = outcome {
         crashed = Some(e.to_string());
+    }
+    if crashed.is_some() {
         drop(driver);
-        world.crashing.lock().unwrap_or_else(|e| e.into_inner()).down = false;
-        let over: Arc<dyn Journal> = if interrupt.blind { Arc::new(Blind(journal.clone())) } else { journal.clone() };
-        driver = boot(over);
+        rig.world.crashing.lock().unwrap_or_else(|e| e.into_inner()).down = false;
+        rig.world.cold_until.store(rig.clock.now_ms() + interrupt.cold_ms, Ordering::SeqCst);
+        let over: Arc<dyn Journal> = if interrupt.blind { Arc::new(Blind(rig.journal())) } else { rig.journal() };
+        driver = rig.boot(over);
         driver.run_until(UNTIL_MS).expect("the restarted loop settles");
     }
-    let lc = world.lc();
-    Run {
-        trace: runtime::conformance::trace(&*journal),
-        history: lc.history.clone(),
-        refused: lc.refused.clone(),
-        asked: runner.asked(),
-        unit_calls: units.calls(),
-        states: lc.rows.iter().map(|(id, r)| (id.clone(), r.state)).collect(),
-        spawned: world.proc.spawned(),
-        wall: began.elapsed(),
-        crashed,
-        rounds: lc.rounds,
-        round_open: lc.round.is_some(),
-        effects: effects_of(&journal.history()),
-        resolved: mem.commits().into_iter().flat_map(|t| t.resolved).collect(),
-    }
+    rig.finish(began, crashed)
 }
 
 /// The batcher's carried machine state for the repo, each change once, in order; `Idle` when
@@ -671,6 +746,8 @@ fn two_members_sifted_in_one_pass_are_cut_into_one_round() {
 const GREEN2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: None };
 const RED2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: Some("sp-w3b") };
 const BEADS: [&str; 2] = ["sp-w3a", "sp-w3b"];
+/// The store writes one landing of `BEADS` makes: deliver and delivered per member, then the round's close.
+const LAND_WRITES: u32 = 2 * BEADS.len() as u32 + 1;
 
 /// Every requested effect has an outcome, and no outcome was handled twice. An outcome
 /// shipped by a turn that never committed is shipped again as the restart's own, under the
@@ -720,7 +797,7 @@ fn crash_at(name: &str, script: fn() -> Script, seed: u64, double: &'static str,
 /// [`crash_at`], for a crash after which the cut is made from what the store shows sifted so
 /// far: `rounds` is how many rounds that takes, where the uninterrupted run took the clean count.
 fn crash_at_cutting(name: &str, script: fn() -> Script, seed: u64, double: &'static str, after: u32, rounds: Option<u32>) {
-    let interrupt = Interrupt { crash: Some(Crash { double, after }), blind: false };
+    let interrupt = Interrupt { crash: Some(Crash { double, after }), ..Interrupt::default() };
     let clean = run(seed, script());
     let a = run_interrupted(seed, script(), interrupt);
     let b = run_interrupted(seed, script(), interrupt);
@@ -802,10 +879,114 @@ fn a_crash_after_the_survivor_was_delivered_converges_when_one_member_is_red() {
 /// the effects the first scheduler left open never answers the round open, and they fail.
 #[test]
 fn the_checks_see_an_effect_lost_at_a_restart() {
-    let blind = Interrupt { crash: Some(Crash { double: "batcher_round_open", after: 1 }), blind: true };
+    let blind = Interrupt { crash: Some(Crash { double: "batcher_round_open", after: 1 }), blind: true, ..Interrupt::default() };
     let a = run_interrupted(12, GREEN2(), blind);
     assert_eq!(a.crashed.as_deref(), Some("injected fault in append"));
     let pending = effects_resolved(&a).expect_err("the open round_open has no outcome");
     assert!(pending.contains("without exactly one outcome"), "{pending}");
     assert!(converged(&a, &run(12, GREEN2())).is_err(), "and the run does not converge");
+}
+
+// --- the restart every landing performs: scheduler and lifecycle store restarted together ---------
+
+/// What the loop does once recovered: where the uninterrupted run ends, no round abandoned or
+/// re-driven, no page the uninterrupted run did not raise, and no effect left without an outcome.
+fn assert_recovers(base: &Run, r: &Run, at: &str) {
+    if let Err(why) = converged(r, base) {
+        panic!("{at}: {why}");
+    }
+    assert_eq!(r.pages, base.pages, "{at}: no page the uninterrupted run did not raise");
+    for name in [bl::WITHDRAW, bl::ABANDON, bl::PAUSE, bl::REDRIVE] {
+        assert!(!r.asked.iter().any(|n| n == name), "{at}: {name} was asked: {}", dump(r));
+    }
+    assert_no_process(r);
+}
+
+/// J1: the store applied `land` and the scheduler died before it heard: the round ends landed with no page.
+#[test]
+fn a_restart_after_land_applied_ends_the_round_landed_without_a_landing_refused_page() {
+    let base = run(12, GREEN2());
+    let r = run_interrupted(12, GREEN2(), Interrupt { crash: Some(Crash { double: "batcher_land", after: LAND_WRITES }), ..Interrupt::default() });
+    assert!(r.crashed.is_some(), "the scheduler died after land applied");
+    let lost = r.trace.iter().filter(|e| e.1 == bl::STREAM && e.2 == runtime::EFFECT_TIMED_OUT && e.3 == runtime::engine::LOST_AT_RESTART).count();
+    assert!(lost >= 1, "the restart closed the unanswered land as lost at restart: {}", dump(&r));
+    assert!(!r.pages.iter().any(|p| p.contains("LANDING REFUSED")), "{:?}", r.pages);
+    assert_recovers(&base, &r, "crash after land applied");
+    for b in BEADS {
+        assert_eq!(r.states[b], BeadState::Landed, "{b}: {}", dump(&r));
+    }
+}
+
+/// J2: the same restart with the store cold for two virtual minutes.
+#[test]
+fn a_restart_at_landing_with_the_store_cold_for_two_minutes_raises_no_withdraw_abandon_pause_or_page() {
+    let base = run(12, GREEN2());
+    let cold = Interrupt { crash: Some(Crash { double: "batcher_land", after: LAND_WRITES }), cold_ms: 2 * MIN, ..Interrupt::default() };
+    let r = run_interrupted(12, GREEN2(), cold);
+    assert!(r.cold_refused.iter().any(|n| n.starts_with(bl::NAME)), "the cold store refused a batcher effect after the restart: {:?}", r.cold_refused);
+    assert_recovers(&base, &r, "restart at landing, store cold");
+}
+
+/// J3: the scheduler dies while the certify leg runs; the leg's `unit.ran` reaches the restarted batcher and the round lands.
+#[test]
+fn a_crash_mid_certify_lands_the_round_from_the_units_end_without_a_redrive() {
+    let base = run(12, GREEN2());
+    let entered = base.trace.iter().filter(|e| e.1 == bl::STREAM && e.2 == bl::STATE).find_map(|e| {
+        let carry: bl::Carry = serde_json::from_str(&e.3).unwrap_or_default();
+        (carry.repos.get(REPO).map(|rc| format!("{:?}", rc.state)).as_deref() == Some("Certifying")).then_some(e.4)
+    });
+    let at = entered.expect("the batcher certified") + CERTIFY_MS / 2;
+    let r = run_interrupted(12, GREEN2(), Interrupt { kill_at: Some(at), ..Interrupt::default() });
+    assert!(r.crashed.is_some(), "the scheduler was killed mid-certify");
+    let ends = r.trace.iter().filter(|e| e.1 == bl::STREAM && e.2 == units::UNIT_RAN && e.4 > at).count();
+    assert!(ends >= 1, "the certify leg's end reached the restarted batcher: {}", dump(&r));
+    let certifies = |run: &Run| run.unit_calls.iter().filter(|c| c.contains("certify")).count();
+    assert_eq!(certifies(&r), certifies(&base), "no second certify leg was started: {:?}", r.unit_calls);
+    assert_recovers(&base, &r, "crash mid certify");
+}
+
+fn held_ids(j: &dyn Journal) -> Vec<String> {
+    j.history().into_iter().filter(|e| e.kind.tag == runtime::EFFECT_HELD).map(|e| e.id.0).collect()
+}
+
+/// How many times each held effect was requested on its release.
+fn releases_of(j: &dyn Journal, held: &[String]) -> Vec<usize> {
+    let requested: Vec<_> = j.history().into_iter().filter(|e| e.kind.tag == runtime::EFFECT_REQUESTED).collect();
+    held.iter().map(|h| requested.iter().filter(|e| e.cause.as_ref().is_some_and(|c| &c.0 == h)).count()).collect()
+}
+
+/// J4: a halt survives the restart; each effect held before it is released once on resume.
+#[test]
+fn a_halt_holds_across_a_joint_crash_and_the_resume_releases_each_held_effect_once() {
+    let rig = Rig::new(13, Script { file: vec![(30_000, "sp-w3a")], max_concurrent: 1, guilty: None }, None);
+    let journal = rig.journal();
+    let finish = || rig.finish(std::time::Instant::now(), None);
+    let mut driver = rig.boot(journal.clone());
+    driver.submit(Submit::new("halt-1", runtime::HALT_STREAM, EventKind::new(runtime::SCHEDULER_HALTED, "the operator"))).unwrap();
+    driver.run_until(12 * MIN).unwrap();
+    let held = held_ids(&*journal);
+    assert!(!held.is_empty(), "work was held while halted: {}", dump(&finish()));
+    assert_eq!(releases_of(&*journal, &held), vec![0; held.len()], "nothing held is released while halted");
+
+    drop(driver);
+    driver = rig.boot(journal.clone());
+    assert!(driver.engine().is_halted(), "the halt survives the restart");
+    driver.run_until(20 * MIN).unwrap();
+    let after = held_ids(&*journal);
+    assert!(after.starts_with(&held), "every effect held before the crash is still held, in order: {held:?} then {after:?}");
+    let mut unique = after.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), after.len(), "no held effect is held twice");
+    assert_eq!(releases_of(&*journal, &after), vec![0; after.len()], "the restart released nothing");
+    assert_eq!(finish().states["sp-w3a"], BeadState::Ready, "the bead waits out the halt");
+
+    driver.submit(Submit::new("resume-1", runtime::HALT_STREAM, EventKind::new(runtime::SCHEDULER_RESUMED, "the operator"))).unwrap();
+    driver.run_until(UNTIL_MS).unwrap();
+    let r = finish();
+    let all = held_ids(&*journal);
+    assert!(releases_of(&*journal, &all).iter().all(|n| *n <= 1), "each held effect is released at most once");
+    assert!(releases_of(&*journal, &held).iter().all(|n| *n == 1), "each effect held before the crash was released once");
+    assert_eq!(r.states["sp-w3a"], BeadState::Landed, "{}", dump(&r));
+    assert_eq!(lifecycle_of(&r, "sp-w3a"), ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"]);
 }
