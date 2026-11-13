@@ -73,4 +73,13 @@ mod tests {
         assert!(lines[0].contains("5") && lines[0].contains("4 lane + 1 directed"), "{lines:?}");
         assert!(r.live_lines(Some(3), true)[1].contains("1 lane over"));
     }
+
+    #[test]
+    fn six_dwarves_against_a_cap_of_four_read_as_four_lane_and_two_directed() {
+        let mut all: Vec<&str> = vec!["spira-dwarf-builder-1.service", "spira-dwarf-builder-2.service", "spira-dwarf-builder-3.service", "spira-dwarf-builder-4.service"];
+        all.extend(["spira-dwarf-builder-directed-1.service", "spira-dwarf-czar-directed-2.service"]);
+        let r = Roster::of(&units(&all));
+        assert_eq!((r.lane, r.directed, r.total()), (4, 2, 6));
+        assert_eq!(r.live_lines(Some(4), true), vec!["  live now          6   (4 lane + 2 directed)".to_string()]);
+    }
 }
