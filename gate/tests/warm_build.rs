@@ -44,7 +44,7 @@ fn seeded(t: &testkit::TempDir, change: &str, contents: &str) -> Vec<String> {
         compiled(&o)
     };
     assert_eq!(build(&a).len(), 2);
-    assert!(gate::warm::donate_tree(&a));
+    assert!(gate::warm::donate_tree(&a, 1 << 20).is_some());
 
     run(t.path(), "git", &["clone", "-q", a.to_str().unwrap(), b.to_str().unwrap()]);
     std::fs::write(b.join(change), contents).unwrap();

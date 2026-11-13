@@ -145,13 +145,37 @@ pub fn warm_start(root: &Path, dest: &Path, tree: &Path) -> Option<String> {
     }
 }
 
-/// The gate's side of donation, for a finished `tree` whose `target/debug` links to the tmpfs.
-pub fn donate_tree(tree: &Path) -> bool {
-    let Ok(dest) = fs::read_link(tree.join("target").join(BUILD_DIR)) else { return false };
-    let Some(root) = dest.parent().and_then(Path::parent).filter(|_| !crate::target::is_warm(&dest)) else { return false };
+/// Hold the pool at or under `cap_bytes`: trim the newest entry of what no build can reuse, drop
+/// older entries while over, and empty the pool when the newest alone is still over. The line for
+/// the gate's log, with the pool's size before and after.
+pub fn bound(root: &Path, cap_bytes: u64) -> String {
+    let before = size(root);
+    let now = SystemTime::now();
+    if let Some(newest) = entries(root).pop() {
+        spira_config::build_dir::trim(&newest, now, now);
+    }
+    for old in entries(root).iter().rev().skip(1) {
+        if size(root) <= cap_bytes {
+            break;
+        }
+        let _ = fs::remove_dir_all(old);
+    }
+    if size(root) > cap_bytes {
+        shed(root);
+    }
+    let after = size(root);
+    let emptied = if before > 0 && after == 0 { ", emptied (over the cap)" } else { "" };
+    format!("gate: warm build directory {} MiB before trimming, {} MiB after (cap {} MiB){emptied}", before >> 20, after >> 20, cap_bytes >> 20)
+}
+
+/// The gate's side of donation, for a finished `tree` whose `target/debug` links to the tmpfs;
+/// the pool is then held under `cap_mib`. The line for the gate's log when something was donated.
+pub fn donate_tree(tree: &Path, cap_mib: u64) -> Option<String> {
+    let dest = fs::read_link(tree.join("target").join(BUILD_DIR)).ok()?;
+    let root = dest.parent().and_then(Path::parent).filter(|_| !crate::target::is_warm(&dest))?;
     let out = Command::new("git").arg("-C").arg(tree).args(["rev-parse", "HEAD"]).output(); // batch-job: local rev-parse in the gate tree
     let commit = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-    donate(root, &dest, &commit)
+    donate(root, &dest, &commit).then(|| bound(root, cap_mib << 20))
 }
 
 
@@ -285,6 +309,50 @@ mod tests {
         assert!(b.is_dir() && fs::read_dir(&b).unwrap().next().is_none());
     }
 
+    fn fill(dir: &Path, mib: usize) {
+        fs::create_dir_all(dir.join("deps")).unwrap();
+        fs::write(dir.join("deps/libbig.rlib"), vec![7u8; mib << 20]).unwrap();
+    }
+
+    #[test]
+    fn a_pool_over_the_cap_loses_its_older_entries_first_and_is_emptied_when_the_newest_alone_is_over() {
+        let t = testkit::TempDir::new("gate-warm-bound");
+        let root = t.path();
+        for i in 0..2 {
+            let d = root.join(format!("t{i}/debug"));
+            fill(&d, 2);
+            assert!(donate(root, &d, &format!("c{i}")));
+            let e = entries(root).pop().unwrap();
+            fs::File::open(&e).unwrap().set_modified(UNIX_EPOCH + Duration::from_secs(1000 + i as u64)).unwrap();
+        }
+        let newest = entries(root).pop().unwrap();
+        let line = bound(root, 3 << 20);
+        assert_eq!(entries(root), vec![newest], "{line}");
+        assert!(size(root) <= 3 << 20 && size(root) > 0, "{line}");
+        let line = bound(root, 1 << 20);
+        assert_eq!(size(root), 0, "{line}");
+        assert!(line.contains("emptied"), "{line}");
+    }
+
+    #[test]
+    fn trimming_a_pooled_entry_drops_the_dependency_files_nothing_touched_for_a_day() {
+        let t = testkit::TempDir::new("gate-warm-trim");
+        let root = t.path();
+        let d = root.join("t/debug");
+        fill(&d, 1);
+        let stale = d.join("deps/libstale.rlib");
+        fs::write(&stale, "s").unwrap();
+        let old = SystemTime::now() - Duration::from_secs(3 * 86_400);
+        let f = fs::File::options().write(true).open(&stale).unwrap();
+        f.set_modified(old).unwrap();
+        f.set_times(fs::FileTimes::new().set_accessed(old).set_modified(old)).unwrap();
+        assert!(donate(root, &d, "c"));
+        bound(root, 1 << 30);
+        let kept = entries(root).pop().unwrap().join("debug/deps");
+        assert!(kept.join("libbig.rlib").is_file());
+        assert!(!kept.join("libstale.rlib").exists());
+    }
+
     #[test]
     fn a_finished_tree_donates_the_directory_its_link_points_at() {
         let t = testkit::TempDir::new("gate-warm-tree");
@@ -298,7 +366,7 @@ mod tests {
         let dest = root.join("name/debug");
         built(&dest);
         std::os::unix::fs::symlink(&dest, tree.join("target/debug")).unwrap();
-        assert!(donate_tree(&tree));
+        assert!(donate_tree(&tree, 1 << 20).is_some());
         assert_eq!(entries(&root).len(), 1);
         assert!(!dest.exists());
     }
