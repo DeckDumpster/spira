@@ -162,3 +162,23 @@ command = '''out=$(SPIRA_CONCIERGE=1 bead.sh amend {bead:amend_a} --body-file "$
 at = 35000
 name = "filing_without_concierge_unaffected"
 command = '''bead.sh file "plain filed" --for builder --repo sim --body-file "$SPIRA_RUN/edited.md"'''
+
+[[expect]]
+name = "concierge_filing_without_record_refused"
+sql = "SELECT 1 FROM events WHERE actor = 'concierge_builder_filing_without_record_refused' AND exit = 0"
+
+[[expect]]
+name = "concierge_filing_with_edited_body_refused"
+sql = "SELECT 1 FROM events WHERE actor = 'concierge_builder_filing_with_edited_body_refused' AND exit = 0"
+
+[[expect]]
+name = "concierge_filing_with_record_files_the_drafted_body"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'concierge_builder_filing_with_record_files' AND e.exit = 0 AND b.title = 'concierge filed' AND b.body LIKE 'Drafted by Skuld: %' AND b.body LIKE '%the drafted build%'"
+
+[[expect]]
+name = "concierge_replace_without_record_refused_old_body_intact"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'concierge_replace_without_record_refused' AND e.exit = 0 AND b.title = 'amend target a' AND b.body NOT LIKE '%an edited build%'"
+
+[[expect]]
+name = "filing_without_concierge_unaffected"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'filing_without_concierge_unaffected' AND e.exit = 0 AND b.title = 'plain filed'"
