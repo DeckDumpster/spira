@@ -616,16 +616,23 @@ pub fn check_sccache_backend(w: &dyn World) -> Vec<Line> {
 /// under this base, so an unset base is a loop that can build nothing, and a base on a tmpfs puts
 /// 20-45 GiB targets in RAM.
 pub fn check_dwarf_build(w: &dyn World) -> Vec<Line> {
-    let Some(base) = w.dwarf_build_base() else {
+    let bases = w.dwarf_build_bases();
+    if bases.is_empty() {
         return vec![fail("SPIRA_DWARF_BUILD_BASE is not set", "building dwarves refuse to start without it; set dwarf_build_base (the config document) to a directory on the compile disk.")];
-    };
-    if w.on_tmpfs(&base) {
-        return vec![warn(
-            format!("dwarf build base {} is on a tmpfs", base.display()),
-            "each owned build directory holds a whole cargo target (20-45 GiB) for a session's life; RAM cannot hold them. Point dwarf_build_base at the compile disk (SSD-B).",
-        )];
     }
-    vec![ok(format!("dwarf build base {}", base.display()))]
+    bases
+        .iter()
+        .map(|base| {
+            if w.on_tmpfs(base) {
+                warn(
+                    format!("dwarf build base {} is on a tmpfs", base.display()),
+                    "each owned build directory holds a whole cargo target (20-45 GiB) for a session's life; RAM cannot hold them. Point dwarf_build_base at the compile disk (SSD-B).",
+                )
+            } else {
+                ok(format!("dwarf build base {}", base.display()))
+            }
+        })
+        .collect()
 }
 
 // ============================================================================ round-vm mirror

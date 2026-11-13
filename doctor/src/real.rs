@@ -489,8 +489,8 @@ impl World for Real {
         spira_config::hostaddr::resolve_hostport(&v).ok()
     }
 
-    fn dwarf_build_base(&self) -> Option<PathBuf> {
-        spira_config::process::cfg(spira_config::build_dir::BASE_ENV).ok().filter(|v| !v.is_empty()).map(PathBuf::from)
+    fn dwarf_build_bases(&self) -> Vec<PathBuf> {
+        spira_config::build_dir::configured_bases()
     }
 
     fn on_tmpfs(&self, p: &Path) -> bool {

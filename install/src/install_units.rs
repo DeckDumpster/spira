@@ -690,7 +690,7 @@ mod tests {
     use std::fs;
 
     fn host() -> HostValues {
-        HostValues { toml: "/h/cfg.toml".into(), home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into(), watchdog_every_s: "60".into() }
+        HostValues { toml: "/h/cfg.toml".into(), home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), sccache_dav_root: "/run/sccache-dav".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into(), watchdog_every_s: "60".into() }
     }
 
     fn tiny_manifest() -> Manifest {
@@ -1017,6 +1017,16 @@ mod tests {
         assert_eq!(outside_the_keep_list(&planted).len(), outside_the_keep_list(&rendered).len() + 2, "positive control: the check sees a loop timer and a watcher");
         let strays = outside_the_keep_list(&rendered);
         assert!(strays.is_empty(), "units the scheduler replaces are still rendered: {strays:?}");
+    }
+
+    #[test]
+    fn the_cache_service_roots_its_store_at_the_configured_path() {
+        let tmpl = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/sccache-dav.service");
+        let mut h = host();
+        h.sccache_dav_root = "/mnt/other-disk/store".into();
+        let unit = crate::values::render_file(&tmpl, &h, None).unwrap();
+        assert!(unit.lines().any(|l| l == "Environment=SCCACHE_DAV_ROOT=/mnt/other-disk/store"), "{unit}");
+        assert!(!unit.contains("@SPIRA_"), "every placeholder is filled");
     }
 
     #[test]

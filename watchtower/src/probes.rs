@@ -337,7 +337,7 @@ fn path_key(path: &str) -> String {
 
 /// Root, the run directory and the build pool, then the operator's extra paths.
 pub fn watch_paths(run: &Path, extra: &str, build_base: &str) -> Vec<String> {
-    ["/", &run.to_string_lossy(), build_base].into_iter().chain(extra.split_whitespace()).map(String::from).collect()
+    ["/", &run.to_string_lossy()].into_iter().chain(build_base.split_whitespace()).chain(extra.split_whitespace()).map(String::from).collect()
 }
 
 pub fn disk_room(cfg: &Cfg, now: i64, read: &dyn Fn(&str) -> Option<FsReading>) -> Reading {
@@ -966,7 +966,7 @@ mod tests {
 
     #[test]
     fn watch_paths_always_name_root_run_and_build_pool_before_the_extras() {
-        assert_eq!(watch_paths(Path::new("/r"), "/nix/store /x", "/b"), ["/", "/r", "/b", "/nix/store", "/x"]);
+        assert_eq!(watch_paths(Path::new("/r"), "/nix/store /x", "/b /c"), ["/", "/r", "/b", "/c", "/nix/store", "/x"]);
     }
 
     #[test]

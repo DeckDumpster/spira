@@ -140,8 +140,8 @@ pub trait World {
     /// never exported) was invisible to the bash capture and this check passed blind.
     fn sccache_dav_addr(&self) -> Option<String>;
 
-    /// `SPIRA_DWARF_BUILD_BASE` through the one config door; None when unset or empty.
-    fn dwarf_build_base(&self) -> Option<PathBuf>;
+    /// Every directory `SPIRA_DWARF_BUILD_BASE` lists, through the one config door; empty when unset.
+    fn dwarf_build_bases(&self) -> Vec<PathBuf>;
     /// Whether `p` is on a tmpfs.
     fn on_tmpfs(&self, p: &Path) -> bool;
 

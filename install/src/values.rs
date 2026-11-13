@@ -38,6 +38,8 @@ pub struct HostValues {
     /// `SPIRA_DOLT_DATA` rather than refused, in case a caller ever renders the template
     /// directly (`--render`) without going through the manifest's own gate.
     pub sccache_dav_addr: String,
+    /// `SPIRA_SCCACHE_DAV_ROOT`: the directory the shared compilation cache keeps its entries in.
+    pub sccache_dav_root: String,
     pub repo_map: String,
     pub lc_password_file: String,
     /// The spec SPIRA_TOML names — the one source every rendered unit runs under.
@@ -63,6 +65,7 @@ impl HostValues {
         m.insert("SPIRA_COCKPIT".into(), self.cockpit.clone());
         m.insert("SPIRA_DOLT_DATA".into(), self.dolt_data.clone());
         m.insert("SPIRA_SCCACHE_DAV_ADDR".into(), self.sccache_dav_addr.clone());
+        m.insert("SPIRA_SCCACHE_DAV_ROOT".into(), self.sccache_dav_root.clone());
         m.insert("DOLT".into(), self.dolt.clone());
         m.insert("SPIRA_PROD".into(), prod.clone());
         m.insert("SPIRA_INSTANCE".into(), self.instance.clone());
@@ -152,7 +155,7 @@ mod tests {
             path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(),
             lc_password_file: "/h/lc.credential".into(),
             toml: "/h/cfg.toml".into(),
-            sccache_dav_addr: "".into(),
+            sccache_dav_addr: "".into(), sccache_dav_root: "/run/sccache-dav".into(),
             repo_map: "".into(),
             watchdog_every_s: "60".into(),
         }

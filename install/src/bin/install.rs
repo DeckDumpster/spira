@@ -1157,8 +1157,8 @@ fn run_main() -> ExitCode {
             let _ = std::fs::create_dir_all(&run);
             let _ = std::fs::create_dir_all(Path::new(&run).join("watchd"));
         }
-        if let Some(base) = nonempty_env(spira_config::build_dir::BASE_ENV) {
-            // The owned build directories' base (sp-ke0uk8): leases make dir.<n> under it.
+        for base in spira_config::build_dir::configured_bases().iter().map(|b| b.display().to_string()) {
+            // Each owned build directories' base: leases make dir.<n> under it.
             match std::fs::create_dir_all(&base) {
                 Ok(()) => info(&format!("dwarf build base ready at {base}")),
                 Err(e) => {

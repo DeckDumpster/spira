@@ -26,7 +26,7 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr
 # installed at all — `install/src/manifest.rs` declines it outright when that key is unset,
 # the same as it would a template with an unfillable placeholder.
 Environment=SCCACHE_DAV_ADDR=@SPIRA_SCCACHE_DAV_ADDR@
-Environment=SCCACHE_DAV_ROOT=@SPIRA_RUN@/sccache-dav
+Environment=SCCACHE_DAV_ROOT=@SPIRA_SCCACHE_DAV_ROOT@
 Type=simple
 ExecStart=@SPIRA_PROD@/sccache-dav.sh
 Restart=always

@@ -118,20 +118,14 @@ fn script() -> Result<PathBuf, String> {
 }
 
 fn take(who: &str, root: &Path, out: &mut impl Write) -> Result<bd::Lease, String> {
-    let base = spira_config::process::cfg(bd::BASE_ENV)?;
-    if base.is_empty() {
+    let bases = bd::parse_bases(&spira_config::process::cfg(bd::BASE_ENV)?);
+    if bases.is_empty() {
         return Err(format!(
             "{} is not set — set dwarf_build_base in the config document",
             bd::BASE_ENV
         ));
     }
-    let base = PathBuf::from(base);
-    let lease = bd::lease(&base, who).map_err(|e| {
-        format!(
-            "cannot lease a build directory under {}: {e}",
-            base.display()
-        )
-    })?;
+    let lease = bd::lease(&bases, who).map_err(|e| format!("cannot lease a build directory under {bases:?}: {e}"))?;
     let path = std::env::var("PATH").unwrap_or_default();
     match bd::clean(&script()?, root, lease.dir(), &path, false) {
         Ok(text) => {
@@ -148,7 +142,7 @@ fn take(who: &str, root: &Path, out: &mut impl Write) -> Result<bd::Lease, Strin
         }
     }
     let budget = spira_config::process::cfg_parse::<i64>(bd::BUDGET_ENV)?.max(0) as u64;
-    for gone in bd::evict_idle(&base, budget.saturating_mul(1 << 30)) {
+    for gone in bd::evict_idle(&bases, budget.saturating_mul(1 << 30)) {
         let _ = writeln!(out, "# evicted idle build directory {}", gone.display());
     }
     let state = if lease.reused { "warm" } else { "new" };

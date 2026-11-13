@@ -323,17 +323,20 @@ echo "dwarf build directories"
 # =============================================================================
 # A building dwarf leases its one cargo target under dwarf_build_base (sp-ke0uk8) and refuses
 # to start without it, so an unset or unusable base is a loop that is armed and can build nothing.
-_build="${SPIRA_DWARF_BUILD_BASE:-}"
-if [ -z "$_build" ]; then
+_builds="${SPIRA_DWARF_BUILD_BASE:-}"
+if [ -z "${_builds//[[:space:]]/}" ]; then
     FAIL "SPIRA_DWARF_BUILD_BASE is not set" \
          "building dwarves refuse to start without it; set dwarf_build_base in the config document."
-elif [ ! -d "$_build" ] || [ ! -w "$_build" ]; then
-    FAIL "dwarf build base $_build is not a writable directory" \
-         "create it (install does) or point dwarf_build_base at a directory on the compile disk the loop can write."
-else
-    PASS "dwarf build base $_build"
 fi
-unset _build
+for _build in $_builds; do
+    if [ ! -d "$_build" ] || [ ! -w "$_build" ]; then
+        FAIL "dwarf build base $_build is not a writable directory" \
+             "create it (install does) or point dwarf_build_base at a directory on the compile disk the loop can write."
+    else
+        PASS "dwarf build base $_build"
+    fi
+done
+unset _build _builds
 
 # =============================================================================
 echo ""
