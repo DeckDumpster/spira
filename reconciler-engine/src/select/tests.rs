@@ -208,3 +208,56 @@ fn a_hold_member_step_with_no_member_left_to_hold_is_refused_by_name() {
         assert!(p.refused[0].reason.contains("RoundController/lane"), "{}", p.refused[0].reason);
     }
 }
+
+fn host(conditions: &[&str], io: f64) -> serde_json::Value {
+    use spira_desired_state::sections::host as h;
+    let conds: Vec<_> = [h::SCRATCH_SHORT, h::DISK_SHORT, h::IO_PRESSURE, h::HOST_SHEDDING, h::SHED]
+        .iter()
+        .map(|c| json!({ "type": c, "status": if conditions.contains(c) { "True" } else { "False" }, "reason": "t", "lastTransitionTime": NOW }))
+        .collect();
+    json!({ "section": {
+        "apiVersion": "spira/v1", "kind": h::NAME,
+        "metadata": { "name": h::SECTION, "owner": h::OWNER, "observedAt": NOW, "target_latency": "5m", "max_age": "15m" },
+        "status": {
+            "observedGeneration": 0, "conditions": conds,
+            h::SCRATCH: { "value": 0.5, "window": "level" }, h::WORKTREES: { "value": 0.5, "window": "level" },
+            h::ROOT: { "value": 0.5, "window": "level" }, h::IO: { "value": io, "window": "5m" },
+            h::CERTIFY_PAR: { "value": 1.0, "window": "level" },
+        },
+        "flow": { "consumes": [], "produces": ["host/scratch", "host/io"] },
+        "distance": { "fn": h::DISTANCE, "open": h::OPEN, "close": h::CLOSE },
+        "actions": h::actions(),
+    }})
+}
+
+fn host_knobs() -> serde_json::Value {
+    json!({
+        "knobs/Host/host/shed-gate-slot": 3, "knobs/Host/host/restore-gate-slot": 3,
+        "knobs/Host/host/reap-stale-scratch": 20, "knobs/Host/host/reap-stale-targets": 20,
+    })
+}
+
+#[test]
+fn the_host_reaps_are_refused_while_no_andon_section_exists() {
+    let p = plan(vec![host(&["DiskShort"], 80.0)], host_knobs());
+    assert!(p.steps.is_empty() && p.would_step.is_empty(), "{p:?}");
+    let mut got: Vec<_> = p.refused.iter().map(|r| (r.action.as_str(), r.code.as_str())).collect();
+    got.sort_unstable();
+    assert_eq!(got, [("reap-stale-scratch", "no-andon"), ("reap-stale-targets", "no-andon")]);
+}
+
+#[test]
+fn restore_gate_slot_is_a_candidate_only_under_shed() {
+    let shedding = plan(vec![host(&["HostShedding"], 80.0)], host_knobs());
+    assert!(shedding.steps.is_empty(), "a shed in force with the host still over its spec is not yet Shed: {shedding:?}");
+    let shed = plan(vec![host(&["HostShedding", "Shed"], 80.0)], host_knobs());
+    assert_eq!(shed.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(), ["restore-gate-slot"]);
+    assert_eq!((shed.steps[0].intent.from.clone(), shed.steps[0].intent.to.clone()), (json!(3), json!(4)));
+}
+
+#[test]
+fn io_pressure_picks_the_shed_not_a_reap_and_steps_certify_par_down_by_one() {
+    let p = plan(vec![host(&["IoPressure"], 80.0)], host_knobs());
+    assert_eq!(p.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(), ["shed-gate-slot"]);
+    assert_eq!((p.steps[0].intent.from.clone(), p.steps[0].intent.to.clone()), (json!(3), json!(2)));
+}

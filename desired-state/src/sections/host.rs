@@ -3,7 +3,7 @@
 //! stale; the applier compares what it holds against the intent's `from` before it acts.
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::{typed, ConditionDecl, FieldShape, SchemaError, SectionKind};
 use crate::section::{Numeric, Target};
@@ -72,6 +72,20 @@ pub struct Status {
     pub stale_targets: Option<Numeric>,
 }
 
+/// The levers the owner publishes with every status.
+pub fn actions() -> Value {
+    json!([
+        { "name": SHED_SLOT, "class": "capacity-lower", "step": "-1", "moves": IO,
+          "addresses": [IO_PRESSURE, SCRATCH_SHORT], "expected_effect": -5.0, "horizon": "15m" },
+        { "name": RESTORE_SLOT, "class": "capacity-raise", "step": "+1", "moves": CERTIFY_PAR,
+          "addresses": [SHED], "expected_effect": 1.0, "horizon": "15m" },
+        { "name": REAP_SCRATCH, "class": "destructive", "step": "10% fewer", "moves": SCRATCH,
+          "addresses": [SCRATCH_SHORT, DISK_SHORT], "expected_effect": 0.01, "horizon": "15m" },
+        { "name": REAP_TARGETS, "class": "destructive", "step": "10% fewer", "moves": WORKTREES,
+          "addresses": [SCRATCH_SHORT, DISK_SHORT], "expected_effect": 0.01, "horizon": "15m" },
+    ])
+}
+
 fn check_spec(v: &Value) -> Result<(), SchemaError> {
     typed::<Spec>(v)
 }
@@ -107,12 +121,11 @@ pub const KIND: SectionKind = SectionKind {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
 
     use super::*;
     use crate::section::{admit_publish, parse_section};
 
-    pub(crate) fn section(status: Value) -> Value {
+    fn section(status: Value) -> Value {
         json!({
             "apiVersion": "spira/v1",
             "kind": NAME,
@@ -120,16 +133,7 @@ mod tests {
             "status": status,
             "flow": { "consumes": [], "produces": ["host/scratch", "host/io"] },
             "distance": { "fn": DISTANCE, "open": OPEN, "close": CLOSE },
-            "actions": [
-                { "name": SHED_SLOT, "class": "capacity-lower", "step": "-1", "moves": IO,
-                  "addresses": [IO_PRESSURE, SCRATCH_SHORT], "expected_effect": -5.0, "horizon": "15m" },
-                { "name": RESTORE_SLOT, "class": "capacity-raise", "step": "+1", "moves": CERTIFY_PAR,
-                  "addresses": [SHED], "expected_effect": 1.0, "horizon": "15m" },
-                { "name": REAP_SCRATCH, "class": "destructive", "step": "10% fewer", "moves": SCRATCH,
-                  "addresses": [SCRATCH_SHORT, DISK_SHORT], "expected_effect": 0.01, "horizon": "15m" },
-                { "name": REAP_TARGETS, "class": "destructive", "step": "10% fewer", "moves": WORKTREES,
-                  "addresses": [SCRATCH_SHORT, DISK_SHORT], "expected_effect": 0.01, "horizon": "15m" },
-            ],
+            "actions": actions(),
         })
     }
 

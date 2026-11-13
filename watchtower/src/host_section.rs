@@ -144,16 +144,7 @@ pub fn section_body(status: &Value, now: u64) -> Value {
         "status": status,
         "flow": { "consumes": [], "produces": ["host/scratch", "host/io"] },
         "distance": { "fn": host::DISTANCE, "open": host::OPEN, "close": host::CLOSE },
-        "actions": [
-            { "name": host::SHED_SLOT, "class": "capacity-lower", "step": "-1", "moves": host::IO,
-              "addresses": [host::IO_PRESSURE, host::SCRATCH_SHORT], "expected_effect": -5.0, "horizon": "15m" },
-            { "name": host::RESTORE_SLOT, "class": "capacity-raise", "step": "+1", "moves": host::CERTIFY_PAR,
-              "addresses": [host::SHED], "expected_effect": 1.0, "horizon": "15m" },
-            { "name": host::REAP_SCRATCH, "class": "destructive", "step": "10% fewer", "moves": host::SCRATCH,
-              "addresses": [host::SCRATCH_SHORT, host::DISK_SHORT], "expected_effect": 0.01, "horizon": "15m" },
-            { "name": host::REAP_TARGETS, "class": "destructive", "step": "10% fewer", "moves": host::WORKTREES,
-              "addresses": [host::SCRATCH_SHORT, host::DISK_SHORT], "expected_effect": 0.01, "horizon": "15m" },
-        ],
+        "actions": host::actions(),
     })
 }
 
