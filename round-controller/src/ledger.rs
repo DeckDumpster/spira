@@ -822,6 +822,47 @@ mod tests {
         );
         let k = w.store.get("green-digests/lane/b0/sha256:d1").unwrap().unwrap();
         assert_eq!(k.value.metadata.owner_references, ["batches/lane/b1"]);
+        let id = PassIdentity::new("lane", vec![m("sp-a", "1")], "b0", "sha256:d1", "h1", "all").unwrap();
+        w.ledger
+            .record_attempt(&p, &id, "b9", &attempt(Class::Green, 9))
+            .unwrap();
+        let k = w.store.get("green-digests/lane/b0/sha256:d1").unwrap().unwrap();
+        assert_eq!(
+            k.value.metadata.owner_references,
+            ["batches/lane/b9"],
+            "the latest green's round retains the digest"
+        );
+        green("lane", "b01", "sha256:d6");
+        assert_eq!(
+            w.ledger.green_digests(&p, "lane", "b0").unwrap().len(),
+            2,
+            "base b01 is not base b0"
+        );
+    }
+
+    #[test]
+    fn a_base_green_only_on_the_digest_it_is_now_red_on_is_a_base_fault_not_an_image_one() {
+        let w = World::new();
+        let v = verbs();
+        let p = w.ports(&v);
+        let spec: crate::sim::judge::JudgeSpec = toml::from_str(
+            "repo = \"lane\"\nbatch = \"r2\"\nbase = \"b0\"\nimage_digest = \"sha256:d2\"\n\
+             [[member]]\nid = \"sp-a\"\ntip = \"1\"\n\
+             [result]\nexit = 1\nred = [\"test-x.sh\"]\n\
+             [[job]]\nremoval = []\nresults = [\"red\"]\nsecs = 5\n\
+             [[job]]\nremoval = [\"sp-a\"]\nresults = [\"red\", \"red\"]\nsecs = 5\n\
+             [[drive]]\npass = 1\n",
+        )
+        .unwrap();
+        let id = PassIdentity::new("lane", vec![m("sp-a", "1")], "b0", "sha256:d2", "h1", "all").unwrap();
+        w.ledger
+            .record_attempt(&p, &id, "r1", &attempt(Class::Green, 1))
+            .unwrap();
+        let run = crate::sim::judge::JudgeRun::new(&spec, &crate::sim::profiles().unwrap()[0]);
+        run.drive(&p, &w.clock, 1);
+        let fault: LaneFault =
+            decode(&w.store.get(&fault_key("lane", "b0", "sha256:d2")).unwrap().unwrap()).unwrap();
+        assert_eq!(fault.cause, Cause::Base);
     }
 
     #[test]
