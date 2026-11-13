@@ -99,8 +99,10 @@ RUNE_HEARTBEAT_SECONDS=30
 
 # A builder is handed a bead that names what to build. bead.sh file --for builder refuses a body
 # with no `## Build` section, bead.sh lint reports one already filed, and dwarf holds a claimed
-# bead without one with an ask — design work goes to spike.
+# bead without one with an ask — design work goes to spike. RUNE_REQUIRES_SKULD makes the
+# Concierge's filing or body replacement carry --drafted-by, a Skuld request holding the text.
 RUNE_REQUIRES_BUILD_SPEC=1
+RUNE_REQUIRES_SKULD=1
 
 RUNE_TOOLS="Bash,Read,Edit,Write,Glob,Grep,TodoWrite"
 RUNE_PROJECT_INSTRUCTIONS=repo

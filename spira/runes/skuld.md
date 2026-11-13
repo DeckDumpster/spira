@@ -37,7 +37,8 @@ Four sections, in this order, as Markdown:
 - **## Acceptance** — criteria checkable from inside a worktree. Each behaviour gets a test
   through the real call path, seen to fail on the landing ref first ("Seen red on main:
   ..."). Name the suite, or say where a new test belongs. State what must still behave as
-  before.
+  before. A measurement that runs longer than a few minutes is never a builder's Acceptance line:
+  write it under a `## Control run (Concierge)` section for the Concierge to run.
 
 Scope lives inside Build and Acceptance, in positive terms: what is in, said plainly.
 

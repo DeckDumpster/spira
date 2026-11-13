@@ -240,6 +240,31 @@ pub fn has_build_spec(text: &str) -> bool {
     false
 }
 
+/// `Ok` when `notes` holds `### Draft: <title>`, a blank line, then `body` trimmed and verbatim
+/// (ending the note or a line), on a request labelled `skuld_label`; else the refusal text.
+pub fn skuld_drafted(title: &str, body: &str, skuld_label: &str, request: &str, labels: &[String], notes: &str) -> Result<(), String> {
+    let how = "get a draft or review first: bead.sh file \"<title>\" --for skuld --repo <r> --body-file <the intent, or your draft for review>; then file the text of the note Skuld leaves with --drafted-by <that id>";
+    let body = body.replace("\r\n", "\n");
+    let body = body.trim();
+    if body.is_empty() {
+        return Err(format!("the body is empty; {how}"));
+    }
+    if !labels.iter().any(|l| l == skuld_label) {
+        return Err(format!("{request} is not a Skuld request (no `{skuld_label}` label); {how}"));
+    }
+    let wanted = format!("### Draft: {}\n\n{body}", title.trim());
+    let notes = notes.replace("\r\n", "\n");
+    let held = notes.match_indices(&wanted).any(|(at, m)| {
+        let rest = notes[at + m.len()..].trim_start();
+        rest.is_empty() || rest.starts_with("Open:") || rest.starts_with("### Draft:")
+    });
+    if held {
+        Ok(())
+    } else {
+        Err(format!("no `### Draft: {}` note on {request} holds this body verbatim; {how}", title.trim()))
+    }
+}
+
 pub const INTENT_HEADING: &str = "## Intent";
 pub const USER_PATH_HEADING: &str = "## User path";
 
@@ -323,6 +348,7 @@ pub struct ShowRow {
     pub status: String,
     pub issue_type: String,
     pub description: String,
+    pub notes: String,
 }
 
 /// An open idea in `bd list --json`.
@@ -383,12 +409,24 @@ pub fn parse_show_row(json: &str) -> Option<ShowRow> {
         .and_then(|s| s.as_str())
         .unwrap_or("")
         .to_string();
+    let notes = obj.get("notes").and_then(|s| s.as_str()).unwrap_or("").to_string();
     Some(ShowRow {
         labels,
         status,
         issue_type,
         description,
+        notes,
     })
+}
+
+/// The `title` of one `bd show --json` payload (object or one-element array).
+pub fn parse_title(json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let obj = match &v {
+        serde_json::Value::Array(a) => a.first()?,
+        other => other,
+    };
+    obj.get("title").and_then(|s| s.as_str()).map(str::to_string)
 }
 
 /// The `priority` field of one `bd show --json` payload (object or one-element array).
@@ -736,6 +774,29 @@ pub fn lint(src: &dyn LintSource, cfg: &LintCfg) -> (i32, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn skuld_drafted_passes_an_exact_match_and_an_open_line_after_it() {
+        let l = vec!["draft".to_string()];
+        let notes = "### Draft: T\n\nbody line\nmore\n";
+        assert!(skuld_drafted("T", "body line\nmore\n\n", "draft", "sp-r", &l, notes).is_ok());
+        let open = "chatter\n### Draft: T\n\nbody line\nmore\n\nOpen: which repo?\n";
+        assert!(skuld_drafted("T", "body line\nmore", "draft", "sp-r", &l, open).is_ok());
+    }
+
+    #[test]
+    fn skuld_drafted_refuses_an_edited_body_a_foreign_request_and_an_empty_body() {
+        let l = vec!["draft".to_string()];
+        let notes = "### Draft: T\n\nbody line\n";
+        let edited = skuld_drafted("T", "body line EDITED", "draft", "sp-r", &l, notes).unwrap_err();
+        assert!(edited.contains("--for skuld"));
+        assert!(skuld_drafted("T", "body", "draft", "sp-r", &l, notes).is_err(), "a prefix of a line is not a match");
+        let longer = "### Draft: T\n\na\nb\nc\n";
+        assert!(skuld_drafted("T", "a\nb", "draft", "sp-r", &l, longer).is_err(), "a truncated body is not verbatim");
+        assert!(skuld_drafted("U", "body line", "draft", "sp-r", &l, notes).is_err());
+        assert!(skuld_drafted("T", "body line", "draft", "sp-r", &[], notes).unwrap_err().contains("--for skuld"));
+        assert!(skuld_drafted("T", "  \n", "draft", "sp-r", &l, notes).unwrap_err().contains("--for skuld"));
+    }
 
     const DESIGN: &str = "# Agent tools\n\n## Intent\n\nLet an agent save a card.\n\n## User path\n\n1. Sign in.\n2. Save a card.\n\n## Test strategy\n\nfoo\n";
 
@@ -1170,7 +1231,7 @@ mod tests {
 
     #[test]
     fn a_stack_base_must_be_live_same_repo_work() {
-        let row = |ty: &str, st: &str, l: &str| ShowRow { labels: vec![l.into()], status: st.into(), issue_type: ty.into(), description: String::new() };
+        let row = |ty: &str, st: &str, l: &str| ShowRow { labels: vec![l.into()], status: st.into(), issue_type: ty.into(), description: String::new(), notes: String::new() };
         assert_eq!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:r")), false, "r"), None);
         assert!(stack_after_refusal("sp-a", None, false, "r").is_some());
         assert!(stack_after_refusal("sp-a", Some(&row("epic", "open", "repo:r")), false, "r").is_some());
@@ -1202,6 +1263,7 @@ mod tests {
                 status: "open".into(),
                 issue_type: ty.into(),
                 description: desc.into(),
+                notes: String::new(),
             };
             self.beads.push((id.into(), row));
             self.lc.push((id.into(), "READY".into()));

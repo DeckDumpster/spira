@@ -29,6 +29,12 @@ title = "amend target b"
 for = "builder"
 body = "## Build\nORIGINAL-B"
 
+[[seed]]
+handle = "skuld_req"
+title = "draft request"
+for = "skuld"
+body = "the intent"
+
 [[step]]
 at = 1000
 name = "label_add"
@@ -126,3 +132,67 @@ sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor =
 [[expect]]
 name = "drop_records_its_reason"
 sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'drop' AND e.exit = 0 AND b.title = 'blocked work' AND b.bd_status = 'closed' AND b.close_reason LIKE '%superseded by the sim%' AND b.lc_state = 'DROPPED'"
+
+[[step]]
+at = 30000
+name = "skuld_note_written"
+command = '''printf '## Build\nthe drafted build\n' > "$SPIRA_RUN/drafted.md"; bead.sh amend {bead:skuld_req} --note "$(printf '### Draft: concierge filed\n\n'; cat "$SPIRA_RUN/drafted.md")" '''
+
+[[step]]
+at = 31000
+name = "concierge_builder_filing_without_record_refused"
+command = '''out=$(SPIRA_CONCIERGE=1 bead.sh file "concierge filed" --for builder --repo sim --body-file "$SPIRA_RUN/drafted.md" 2>&1); [ $? = 2 ] && printf '%s' "$out" | grep -q -e '--for skuld' '''
+
+[[step]]
+at = 32000
+name = "concierge_builder_filing_with_edited_body_refused"
+command = '''printf '## Build\nan edited build\n' > "$SPIRA_RUN/edited.md"; out=$(SPIRA_CONCIERGE=1 bead.sh file "concierge filed" --for builder --repo sim --body-file "$SPIRA_RUN/edited.md" --drafted-by {bead:skuld_req} 2>&1); [ $? = 2 ] && printf '%s' "$out" | grep -q -e '--for skuld' '''
+
+[[step]]
+at = 33000
+name = "concierge_builder_filing_with_record_files"
+command = '''SPIRA_CONCIERGE=1 bead.sh file "concierge filed" --for builder --repo sim --body-file "$SPIRA_RUN/drafted.md" --drafted-by {bead:skuld_req}'''
+
+[[step]]
+at = 34000
+name = "concierge_replace_without_record_refused"
+command = '''out=$(SPIRA_CONCIERGE=1 bead.sh amend {bead:amend_a} --body-file "$SPIRA_RUN/edited.md" --replace 2>&1); [ $? = 2 ] && printf '%s' "$out" | grep -q -e '--for skuld' '''
+
+[[step]]
+at = 34500
+name = "skuld_note_for_replace"
+command = '''bead.sh amend {bead:skuld_req} --note "$(printf '### Draft: amend target a\n\n'; cat "$SPIRA_RUN/edited.md")" '''
+
+[[step]]
+at = 34600
+name = "concierge_replace_with_record_replaces"
+command = '''SPIRA_CONCIERGE=1 bead.sh amend {bead:amend_a} --body-file "$SPIRA_RUN/edited.md" --replace --drafted-by {bead:skuld_req}'''
+
+[[step]]
+at = 35000
+name = "filing_without_concierge_unaffected"
+command = '''bead.sh file "plain filed" --for builder --repo sim --body-file "$SPIRA_RUN/edited.md"'''
+
+[[expect]]
+name = "concierge_filing_without_record_refused"
+sql = "SELECT 1 FROM events WHERE actor = 'concierge_builder_filing_without_record_refused' AND exit = 0"
+
+[[expect]]
+name = "concierge_filing_with_edited_body_refused"
+sql = "SELECT 1 FROM events WHERE actor = 'concierge_builder_filing_with_edited_body_refused' AND exit = 0"
+
+[[expect]]
+name = "concierge_filing_with_record_files_the_drafted_body"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'concierge_builder_filing_with_record_files' AND e.exit = 0 AND b.title = 'concierge filed' AND b.body LIKE 'Drafted by Skuld: %' AND b.body LIKE '%the drafted build%'"
+
+[[expect]]
+name = "concierge_replace_without_record_refused_old_body_intact"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'concierge_replace_without_record_refused' AND e.exit = 0 AND b.title = 'amend target a' AND b.body NOT LIKE '%an edited build%'"
+
+[[expect]]
+name = "filing_without_concierge_unaffected"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'filing_without_concierge_unaffected' AND e.exit = 0 AND b.title = 'plain filed'"
+
+[[expect]]
+name = "concierge_replace_with_record_swaps_the_body"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'concierge_replace_with_record_replaces' AND e.exit = 0 AND b.title = 'amend target a' AND b.body LIKE '%an edited build%'"
