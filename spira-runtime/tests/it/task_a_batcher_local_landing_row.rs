@@ -65,9 +65,10 @@ fn a_tick_on_a_stored_landing_row_for_a_landed_batch_cuts_the_waiting_member() {
 }
 
 #[test]
-fn a_tick_on_a_stored_landing_row_for_a_batch_the_lifecycle_has_not_settled_waits() {
+fn a_tick_on_a_stored_landing_row_for_a_batch_the_lifecycle_has_not_settled_lands_it_before_cutting_another() {
     let ran = tick_on_row(STORED, "some-other-batch");
-    assert!(!ran.iter().any(|n| n == ROUND_OPEN), "{ran:?}");
+    let land = ran.iter().position(|n| n == LAND).unwrap_or_else(|| panic!("the unsettled round was not landed again: {ran:?}"));
+    assert!(ran.iter().position(|n| n == ROUND_OPEN).is_none_or(|open| open > land), "{ran:?}");
 }
 
 #[test]
