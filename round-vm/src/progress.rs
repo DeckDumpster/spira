@@ -97,6 +97,7 @@ pub struct Progress {
     suites_reported: bool,
     unpublished: Option<String>,
     place: Option<&'static str>,
+    placement: Option<Value>,
     last: Option<Value>,
     base: &'static str,
     detail: Option<String>,
@@ -171,6 +172,7 @@ impl Progress {
             suites_reported: false,
             unpublished: None,
             place: None,
+            placement: None,
             last: None,
             base: "vm",
             detail: Some("leasing a VM".into()),
@@ -247,6 +249,12 @@ impl Progress {
         self.write(results_dir, None);
     }
 
+    /// The spill setting, the decision that preceded EC2 and what the acquire came to, kept in the pass's own record.
+    pub fn placement(&mut self, results_dir: &Path, record: Value) {
+        self.placement = Some(record);
+        self.write(results_dir, None);
+    }
+
     /// Says what the current phase is doing; a changed detail counts as progress.
     pub fn detail(&mut self, results_dir: &Path, detail: String) {
         self.detail = Some(detail);
@@ -320,6 +328,7 @@ impl Progress {
             "suites_started": self.suites_started,
             "cap": self.cap,
             "place": self.place,
+            "placement": self.placement,
         });
         if self.last.as_ref() == Some(&body) {
             return;
@@ -347,6 +356,13 @@ impl Progress {
     /// Called after each streaming pull.
     pub fn update(&mut self, results_dir: &Path) {
         self.write(results_dir, None);
+    }
+
+    /// The pass never ran because the infrastructure refused it: a verdict of its own, so no reader takes it for a red.
+    pub fn finish_infra_refused(&mut self, results_dir: &Path, why: String) {
+        self.base = "done";
+        self.detail = Some(why);
+        self.write(results_dir, Some("infra-refused"));
     }
 
     pub fn finish(&mut self, results_dir: &Path, rc: i32) {
@@ -386,6 +402,18 @@ mod tests {
 
     fn read(p: &Path) -> Value {
         serde_json::from_str(&fs::read_to_string(p.join(FILE)).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn an_infrastructure_refusal_finishes_with_its_own_verdict_and_names_the_refusal() {
+        let d = TempDir::new();
+        let (run, res) = (d.path().join("run"), d.path().join("res"));
+        fs::create_dir_all(&res).unwrap();
+        let mut p = Progress::start(&run, &res, "r1", "p1", 3, 777, BUDGETS);
+        p.finish_infra_refused(&res, "AWS answered RequestLimitExceeded".into());
+        let v = read(&run);
+        assert_eq!((v["verdict"].as_str(), v["phase"].as_str()), (Some("infra-refused"), Some("done")));
+        assert!(v["detail"].as_str().unwrap().contains("RequestLimitExceeded"));
     }
 
     #[test]

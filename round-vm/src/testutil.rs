@@ -255,6 +255,7 @@ struct Ec2Inner {
     never_joins: bool,
     unregistered_calls: u32,
     fail_run: bool,
+    throttled: bool,
     refused_types: Vec<String>,
     vanishing: Vec<(String, String)>,
     ended: std::collections::HashMap<String, String>,
@@ -304,6 +305,9 @@ impl FakeEc2 {
     pub fn launched_types(&self) -> Vec<String> {
         self.0.lock().unwrap().launched_types.clone()
     }
+    pub fn throttle(&self) {
+        self.0.lock().unwrap().throttled = true;
+    }
     pub fn fail_run(&self) {
         self.0.lock().unwrap().fail_run = true;
     }
@@ -341,6 +345,9 @@ impl crate::ec2::Ec2Api for FakeEc2 {
         g.launched_amis.push(ami.to_string());
         if g.fail_run {
             return Err("fake run-instances refused".into());
+        }
+        if g.throttled {
+            return Err("aws run-instances: An error occurred (RequestLimitExceeded) when calling the RunInstances operation (still refused after 4 retries with backoff)".into());
         }
         if g.refused_types.iter().any(|t| t == instance_type) {
             return Err(format!("aws ec2: An error occurred (VcpuLimitExceeded) when calling the RunInstances operation: {instance_type}"));
