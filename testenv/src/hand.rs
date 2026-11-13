@@ -88,31 +88,6 @@ pub fn held(t: &HandTarget) -> bool {
     busy::worktree_busy(&t.path) || busy::worktree_busy(&t.guard)
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Reaped {
-    pub removed: Vec<PathBuf>,
-    pub bytes: u64,
-    pub kept_busy: Vec<PathBuf>,
-}
-
-/// Remove every candidate under `roots` last written at least `min_idle_secs` before `now` and
-/// not held by `is_held`. `is_held` is asked again immediately before each removal.
-pub fn reap(roots: &[PathBuf], now: SystemTime, min_idle_secs: u64, is_held: &dyn Fn(&HandTarget) -> bool) -> Result<Reaped, String> {
-    let mut out = Reaped::default();
-    for t in candidates(roots) {
-        if stale_written_at(&t.path, now, min_idle_secs).is_none() {
-            continue;
-        }
-        if is_held(&t) {
-            out.kept_busy.push(t.path);
-            continue;
-        }
-        out.bytes += reap::remove_target(&t.path)?;
-        out.removed.push(t.path);
-    }
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,79 +106,51 @@ mod tests {
 
     fn parents(t: &Path) -> Vec<PathBuf> {
         let (scratch, var_tmp, wt) = (t.join("scratch"), t.join("var-tmp"), t.join("worktree"));
-        put(&scratch.join("house-arrest/target/debug/a.o"));
-        put(&scratch.join("house-arrest/logs/build.log"));
-        put(&scratch.join("house-arrest/src/main.rs"));
-        put(&var_tmp.join("nxsurz-target/debug/b.o"));
+        put(&scratch.join("proj/target/debug/a.o"));
+        put(&scratch.join("proj/logs/build.log"));
+        put(&scratch.join("proj/src/main.rs"));
+        put(&var_tmp.join("old-target/debug/b.o"));
         put(&var_tmp.join("notes.txt"));
-        put(&wt.join("hotfix-target/debug/c.o"));
+        put(&wt.join("spare-target/debug/c.o"));
         put(&wt.join("sp-abc123/target/debug/live.o"));
         vec![scratch, var_tmp, wt]
     }
 
     #[test]
-    fn a_stale_target_under_each_parent_goes_and_its_siblings_stay() {
-        let t = testkit::TempDir::new("hand-reap");
+    fn only_a_target_unwritten_past_the_threshold_is_stale() {
+        let t = testkit::TempDir::new("hand-stale");
         let roots = parents(t.path());
-        let r = reap(&roots, later(10), 2 * DAY, &|_| false).unwrap();
-        assert_eq!(r.removed.len(), 3, "{r:?}");
-        assert!(r.bytes > 0);
-        for gone in ["scratch/house-arrest/target", "var-tmp/nxsurz-target", "worktree/hotfix-target"] {
-            assert!(!t.path().join(gone).exists(), "{gone} survived");
-        }
-        for kept in ["scratch/house-arrest/logs/build.log", "scratch/house-arrest/src/main.rs", "var-tmp/notes.txt", "worktree/sp-abc123/target/debug/live.o"] {
-            assert!(t.path().join(kept).exists(), "{kept} was removed");
-        }
-    }
-
-    #[test]
-    fn a_target_written_within_the_threshold_stays() {
-        let t = testkit::TempDir::new("hand-fresh");
-        let roots = parents(t.path());
-        let r = reap(&roots, later(1), 2 * DAY, &|_| false).unwrap();
-        assert!(r.removed.is_empty(), "{r:?}");
-        assert!(t.path().join("var-tmp/nxsurz-target/debug/b.o").exists());
-    }
-
-    #[test]
-    fn one_fresh_file_deep_in_a_target_keeps_the_whole_target() {
-        let t = testkit::TempDir::new("hand-deep");
-        let roots = parents(t.path());
+        let target = t.path().join("var-tmp/old-target");
+        assert!(stale_written_at(&target, later(10), 2 * DAY).is_some());
+        assert!(stale_written_at(&target, later(1), 2 * DAY).is_none());
         let old = SystemTime::now() - Duration::from_secs(10 * DAY);
-        for p in ["var-tmp/nxsurz-target/debug/b.o", "var-tmp/nxsurz-target/debug", "var-tmp/nxsurz-target"] {
-            File::open(t.path().join(p)).unwrap().set_modified(old).unwrap();
+        for p in ["debug/b.o", "debug", ""] {
+            File::open(target.join(p)).unwrap().set_modified(old).unwrap();
         }
-        let roots = vec![roots[1].clone()];
-        assert_eq!(reap(&roots, SystemTime::now(), 2 * DAY, &|_| false).unwrap().removed.len(), 1);
-        put(&t.path().join("var-tmp/other-target/debug/fresh.o"));
-        assert!(reap(&roots, SystemTime::now(), 2 * DAY, &|_| false).unwrap().removed.is_empty());
+        assert!(stale_written_at(&target, SystemTime::now(), 2 * DAY).is_some());
+        put(&target.join("debug/deep/fresh.o"));
+        assert!(stale_written_at(&target, SystemTime::now(), 2 * DAY).is_none(), "one fresh file keeps the whole target");
+        assert_eq!(candidates(&roots).len(), 3);
     }
 
     #[test]
-    fn a_target_a_live_process_holds_is_not_removed() {
-        let t = testkit::TempDir::new("hand-busy");
+    fn a_target_or_its_checkout_a_process_holds_is_held() {
+        let t = testkit::TempDir::new("hand-held");
         let roots = parents(t.path());
-        let held_file = File::open(t.path().join("var-tmp/nxsurz-target/debug/b.o")).unwrap();
-        let r = reap(&roots, later(10), 2 * DAY, &|h| held(h)).unwrap();
-        assert!(t.path().join("var-tmp/nxsurz-target/debug/b.o").exists(), "{r:?}");
-        assert_eq!(r.kept_busy, [t.path().join("var-tmp/nxsurz-target")]);
-        assert_eq!(r.removed.len(), 2, "the others are not held");
-        drop(held_file);
+        let find = |name: &str| candidates(&roots).into_iter().find(|c| c.path.ends_with(name)).unwrap();
+        let (quiet, scratch) = (find("proj/target"), find("var-tmp/old-target"));
+        assert!(!held(&quiet) && !held(&scratch));
+        let _in_target = File::open(scratch.path.join("debug/b.o")).unwrap();
+        let _in_checkout = File::open(t.path().join("scratch/proj/src/main.rs")).unwrap();
+        assert!(held(&scratch), "a file open under the target");
+        assert!(held(&quiet), "a file open in the checkout that builds into it");
     }
 
     #[test]
-    fn a_checkout_a_process_works_in_protects_its_quiet_target() {
-        let t = testkit::TempDir::new("hand-guard");
-        let roots = parents(t.path());
-        let held_file = File::open(t.path().join("scratch/house-arrest/src/main.rs")).unwrap();
-        let r = reap(&roots, later(10), 2 * DAY, &|h| held(h)).unwrap();
-        assert!(t.path().join("scratch/house-arrest/target").exists(), "{r:?}");
-        drop(held_file);
-    }
-
-    #[test]
-    fn a_root_and_a_linked_target_are_never_candidates() {
+    fn a_bead_worktree_and_a_linked_target_are_never_candidates() {
         let t = testkit::TempDir::new("hand-links");
+        let roots = parents(t.path());
+        assert!(candidates(&roots).iter().all(|c| !c.path.starts_with(t.path().join("worktree/sp-abc123"))));
         let elsewhere = t.path().join("elsewhere");
         put(&elsewhere.join("keep.txt"));
         let root = t.path().join("an-odd-target");
@@ -211,7 +158,5 @@ mod tests {
         std::os::unix::fs::symlink(&elsewhere, root.join("proj/target")).unwrap();
         std::os::unix::fs::symlink(&elsewhere, root.join("link-target")).unwrap();
         assert_eq!(candidates(std::slice::from_ref(&root)), vec![]);
-        reap(&[root], later(10), DAY, &|_| false).unwrap();
-        assert!(elsewhere.join("keep.txt").exists());
     }
 }
