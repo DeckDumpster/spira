@@ -1652,20 +1652,18 @@ impl<'w, W: World> Trial<'w, W> {
     fn target_limits(ctx: &Ctx) -> crate::target::Limits {
         crate::target::Limits::from_vars(
             ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
-            ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
-            ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
             ctx.var("SPIRA_TMPFS_SHED_FREE_MIB"),
         )
     }
 
-    /// The refusals a tree build meets before it starts: no build cache, no room on tmpfs.
+    /// The refusals a tree build meets before it starts: no build cache, a target that cannot be prepared.
     fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path) -> Option<Verdict> {
         let w = self.w;
         if let Some(e) = &self.s.cache_refusal {
             return Some(v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")));
         }
         let lim = Self::target_limits(ctx);
-        let short = |e: String| Some(v(NOVERDICT, "scratch-short", format!("{e}\ngate: this is the host's room, not a fault in the branch.")));
+        let short = |e: String| Some(v(NOVERDICT, "scratch-short", format!("{e}\ngate: the scratch target could not be prepared on the host, not a fault in the branch.")));
         match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
             Ok(line) => {
                 w.eprint(&line);

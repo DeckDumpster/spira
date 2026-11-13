@@ -88,8 +88,6 @@ const VARS: &[&str] = &[
     "SPIRA_BUILD_CACHE",
     "SPIRA_GATE_TARGET_ROOT",
     "SPIRA_GATE_TARGET_CAP_MIB",
-    "SPIRA_GATE_TARGET_MIN_FREE_MIB",
-    "SPIRA_GATE_TARGET_MIN_MEM_MIB",
     // sp-s8v5r: the free-space floor below which idle gate targets are evicted.
     "SPIRA_TMPFS_SHED_FREE_MIB",
     "SPIRA_RELEASE",
@@ -925,7 +923,7 @@ impl World for Real {
         };
         let trees = tree.parent().unwrap_or(Path::new("/"));
         let held = |name: &str| target::held_by_gate(Path::new(run), name);
-        let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &target::mem_available_mib, &held)?;
+        let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &held)?;
         let mut line = format!("gate: build on {}", p.dir.display());
         if let Some(warm) = crate::warm::warm_start(&root, &p.dir.join("debug"), tree) {
             line.push_str(&format!("\n{warm}"));
@@ -1164,7 +1162,7 @@ mod tests {
         let root = t.path().join("configured-root");
         let tree = t.path().join("trees/.gate.r.b");
         std::fs::create_dir_all(&tree).unwrap();
-        let lim = crate::target::Limits { cap_mib: 1024, min_free_mib: 0, min_mem_mib: 0, shed_free_mib: 0 };
+        let lim = crate::target::Limits { cap_mib: 1024, shed_free_mib: 0 };
         let line = super::Real::new(t.path().to_path_buf())
             .target_on_tmpfs(&tree, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim)
             .unwrap();
@@ -1237,7 +1235,7 @@ mod tests {
             git(tree, &["add", "."]);
             git(tree, &["commit", "-qm", "c"]);
         }
-        let lim = crate::target::Limits { cap_mib: 1 << 20, min_free_mib: 1, min_mem_mib: 1, shed_free_mib: 0 };
+        let lim = crate::target::Limits { cap_mib: 1 << 20, shed_free_mib: 0 };
         let r = super::Real::new(t.path().to_path_buf());
         let run = t.path().to_str().unwrap();
         r.target_on_tmpfs(&a, root.to_str().unwrap(), run, &lim).unwrap();
@@ -1261,7 +1259,7 @@ mod tests {
             let o = std::process::Command::new("git").arg("-C").arg(&a).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
             assert!(o.status.success());
         }
-        let lim = crate::target::Limits { cap_mib: 3, min_free_mib: 0, min_mem_mib: 0, shed_free_mib: 0 };
+        let lim = crate::target::Limits { cap_mib: 3, shed_free_mib: 0 };
         let r = super::Real::new(t.path().to_path_buf());
         r.target_on_tmpfs(&a, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim).unwrap();
         fs::create_dir_all(a.join("target/debug/deps")).unwrap();

@@ -928,8 +928,8 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   checkout, `target/{dwarf,release,debug,tree-tools}` are links into
   `$SPIRA_GATE_TARGET_ROOT` (registered key `gate_target_root`; default `/tmp/spira-gate-target-<run hash>`); orphaned
   directories are removed, the least recently used unlocked ones evicted over
-  `SPIRA_GATE_TARGET_CAP_MIB`, and short of room (`_MIN_FREE_MIB`, `_MIN_MEM_MIB`) is
-  `NO_VERDICT reason=scratch-short` — never the disk. No trial reserves room in advance: the
+  `SPIRA_GATE_TARGET_CAP_MIB`, and a filesystem that fills is classified after the fact as
+  `NO_VERDICT reason=scratch-short`. No trial reserves room in advance: the
   shared reservation ledger that once refused a trial for want of room it had not yet used is
   gone, since a filesystem that fills is cut at the consumer that filled it. A build whose output says
   `No space left on device` / `Disk quota exceeded` (branch or base trial) is

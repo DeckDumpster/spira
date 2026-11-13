@@ -3425,9 +3425,9 @@ fn the_opt_out_is_loud_and_reaches_the_command() {
     assert_eq!(f.env_of(0, "SPIRA_BUILD_CACHE"), "off");
 }
 
-/// The gate tree's build goes to tmpfs before anything builds; short of room is a refusal.
+/// The gate tree's build goes to tmpfs before anything builds; a target that cannot be prepared is no verdict.
 #[test]
-fn the_gate_tree_builds_on_tmpfs_and_short_room_is_no_verdict() {
+fn the_gate_tree_builds_on_tmpfs_and_an_unpreparable_target_is_no_verdict() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert_eq!(f.targets.borrow().as_slice(), &[PathBuf::from(GATE_TREE)]);
@@ -3436,7 +3436,7 @@ fn the_gate_tree_builds_on_tmpfs_and_short_room_is_no_verdict() {
     assert_eq!(f.released.borrow().as_slice(), &[(PathBuf::from(GATE_TREE), false)], "a finished gate drops its target");
 
     let f = tree_owned(Some(STEPS), Some(STEPS));
-    *f.target_err.borrow_mut() = Some("gate: MemAvailable is 12 MiB, below the 4096 MiB".into());
+    *f.target_err.borrow_mut() = Some("gate: cannot create /tmp/t/target: Permission denied".into());
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=scratch-short"), "{}", f.verdict_line());
     assert!(f.cmds.borrow().is_empty(), "nothing built: {:?}", f.cmds.borrow());
