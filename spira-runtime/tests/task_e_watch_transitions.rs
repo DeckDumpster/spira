@@ -1100,7 +1100,8 @@ fn edge_pages(s: &Snapshot, edge: &str, now: u64) -> usize {
 #[test]
 fn each_task_owned_edge_pages_unowned_is_quiet_while_its_task_pulses_and_pages_when_it_is_silent() {
     let now = T0;
-    let edges: [(&str, fn(u64) -> Snapshot); 3] = [("ASK→ANSWERED", ask_stall), ("LANDED→ACTIVATED", activation_stall), ("WORKING→SUBMITTED", submit_stall)];
+    type Make = fn(u64) -> Snapshot;
+    let edges: [(&str, Make); 3] = [("ASK→ANSWERED", ask_stall), ("LANDED→ACTIVATED", activation_stall), ("WORKING→SUBMITTED", submit_stall)];
     for (edge, make) in edges {
         assert_eq!(edge_pages(&make(now), edge, now), 1, "{edge}: no owner record pages on the bound");
         assert_eq!(edge_pages(&owned_by_task(make(now), edge, Some(300), now), edge, now), 0, "{edge}: a task that observed 5m ago is acting");
