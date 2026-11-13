@@ -59,6 +59,14 @@ enum Due {
     Event { bead: String, actor: String, kind: BeadEventKind },
 }
 
+/// The round the queue holds open: its batch, members and the worktree it was opened with.
+#[derive(Debug)]
+struct OpenRound {
+    batch: String,
+    members: Vec<(String, String)>,
+    wt: String,
+}
+
 /// The in-memory lifecycle store: rows, the writes due later (a dwarf submits when its session
 /// ends), the round the batcher has open, and each row's history.
 #[derive(Default)]
@@ -67,7 +75,7 @@ struct Lc {
     due: Vec<(u64, Due)>,
     history: Vec<(u64, String, String, String)>,
     refused: Vec<String>,
-    round: Option<(String, Vec<(String, String)>, String)>,
+    round: Option<OpenRound>,
     rounds: u32,
     landed: Vec<String>,
     dwarves: BTreeMap<String, u64>,
@@ -263,7 +271,7 @@ fn sift_observe(w: &World) -> Result<String, String> {
         repo.items.insert(r.bead_id.clone(), lc.items.get(&r.bead_id).cloned().unwrap_or_default());
         repo.candidates.insert(r.bead_id.clone(), sift::Candidate { base: BASE.into(), patch_id: Some(format!("patch-{}", r.bead_id)), ..sift::Candidate::default() });
     }
-    if let Some((_, members, _)) = &lc.round {
+    if let Some(OpenRound { members, .. }) = &lc.round {
         repo.open_round = members.iter().map(|(i, t)| format!("{i}:{t}")).collect();
     }
     json(&sift::Snapshot { repos: [(REPO.to_string(), repo)].into() })
@@ -290,7 +298,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
         .filter(|r| matches!(r.state, BeadState::Submitted | BeadState::Certified))
         .map(|r| bl::Member { id: r.bead_id.clone(), state: r.state.as_str().into(), version: r.version, tip: r.tip.clone().unwrap_or_default(), sifted_tip: r.sifted_tip.clone(), title: r.bead_id.clone(), priority: 2, ..bl::Member::default() })
         .collect();
-    let open_round = lc.round.as_ref().map(|(id, m, wt)| bl::Round { id: id.clone(), members: m.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: wt.clone(), driven: held.as_ref() == Some(id), ..bl::Round::default() });
+    let open_round = lc.round.as_ref().map(|r| bl::Round { id: r.batch.clone(), members: r.members.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: r.wt.clone(), driven: held.as_ref() == Some(&r.batch), ..bl::Round::default() });
     let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), ..bl::Repo::default() };
     json(&bl::Snapshot { repos: [(REPO.to_string(), repo)].into(), now_ms: w.now() })
 }
@@ -310,7 +318,7 @@ fn batcher_round_open(w: &World, input: &str) -> Result<String, String> {
     }
     lc.rounds += 1;
     let batch = format!("round-{}", lc.rounds);
-    lc.round = Some((batch.clone(), leg.members, leg.wt));
+    lc.round = Some(OpenRound { batch: batch.clone(), members: leg.members, wt: leg.wt });
     w.wrote("batcher_round_open");
     w.gate("batcher_round_open")?;
     json(&bl::Opened { batch, ..bl::Opened::default() })
@@ -370,7 +378,7 @@ fn batcher_land(w: &World, input: &str) -> Result<String, String> {
         return json(&bl::Landed::default());
     }
     match &lc.round {
-        Some((batch, _, _)) if *batch == leg.batch => {}
+        Some(r) if r.batch == leg.batch => {}
         other => return Err(format!("land {}: the open round is {other:?}", leg.batch)),
     }
     for (id, _) in &leg.members {
