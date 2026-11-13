@@ -1,7 +1,0 @@
-TYPE=string
-GROUP=round
-DOC=SPIRA_ROUND_VM_HOST_CPU_SOME_AVG60 — host cpu-pressure (PSI some avg60) above which a round is not taken on the host.
-SCHEMA=Host cpu-pressure (PSI some avg60, percent) above which a round spills instead of running on the host (default 60).
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_ROUND_VM_HOST_CPU_SOME_AVG60:=60}"
-SPIRA_CONF_DEFAULT_EOF
