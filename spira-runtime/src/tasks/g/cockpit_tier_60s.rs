@@ -7,7 +7,7 @@
 //!
 //! # Tick
 //!
-//! Every 60 s (`SPIRA_RUNTIME_COCKPIT_TIER_60S_SECS`). The eleven probes ride one observe
+//! Every 60 s (`SPIRA_RUNTIME_COCKPIT_TIER_60S_SECS`). The twelve probes ride one observe
 //! ([`OBSERVE`], input naming [`PROBES`]); each keeps its own timeout (`slots` and `admission` 20 s,
 //! `tsd` 30 s, `well`, `repo_labels`, `strands`, `ratelim`, `queue` and `mail` 90 s, `reachable` and
 //! `core` 120 s, the tier deadline) and skip-if-running when it overruns the cadence.
