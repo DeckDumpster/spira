@@ -711,6 +711,14 @@ fn run_corpus<S: SubPasses>(
         }
         subs.wait();
     };
+    if end == MainEnd::ConfigDelta {
+        return Ok((
+            Class::Red {
+                step: batcher::drive::CONFIG_DELTA.into(),
+            },
+            "the base tree's config delta does not apply".into(),
+        ));
+    }
     if end == MainEnd::WorkspaceBuild {
         return Ok((
             Class::Red {

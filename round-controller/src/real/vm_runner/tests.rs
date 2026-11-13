@@ -28,6 +28,8 @@ fn every_corpus_exit_is_typed_and_a_fault_carries_round_vm_s_stderr() {
     assert_eq!(corpus_end(0, err, None, 600, 1, 1), Ok(MainEnd::Ran));
     assert_eq!(corpus_end(1, err, None, 600, 1, 1), Ok(MainEnd::Ran));
     assert_eq!(corpus_end(4, err, None, 600, 1, 1), Ok(MainEnd::WorkspaceBuild));
+    let delta = "round-vm: CONFIG-DELTA: RED — the head's config delta does not apply on the merged tree\n";
+    assert_eq!(corpus_end(4, delta, None, 600, 0, 3), Ok(MainEnd::ConfigDelta));
     for rc in [2, 3, 101, 124, 137, -1] {
         let e = corpus_end(rc, err, None, 600, 3, 5).unwrap_err();
         assert!(e.contains("harness fault"), "rc {rc}: {e}");

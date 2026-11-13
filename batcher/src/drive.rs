@@ -27,6 +27,9 @@ pub enum MainEnd {
     Abandoned,
     /// The tree did not build (testenv rc 4): nothing to attribute suite by suite.
     WorkspaceBuild,
+    /// The merged tree's own config delta does not parse or apply (the check `config-delta`):
+    /// no suite ran, and the member whose merge breaks it is found without one.
+    ConfigDelta,
 }
 
 /// Which main run to start: the round's full corpus, or the survivors' verification of the
@@ -83,6 +86,11 @@ pub trait RoundRunner {
     /// Whether the workspace builds with exactly `members` merged onto the base; `None` when the
     /// runner cannot build a subset or the build faulted.
     fn builds(&mut self, _members: &[Member]) -> Option<bool> {
+        None
+    }
+    /// Whether the config delta of the base plus exactly `members` parses; `None` when it cannot
+    /// be told.
+    fn config_applies(&mut self, _members: &[Member]) -> Option<bool> {
         None
     }
     /// Whether filter `name` is green with exactly `members` merged onto the base; `None` when the
@@ -195,6 +203,9 @@ pub trait RoundOps {
 /// never a real `test-*.sh` file, so it can't collide with one a suite selection would pick.
 pub const WORKSPACE_BUILD: &str = "workspace-build";
 
+/// The check a merged tree's unappliable config delta is red under.
+pub const CONFIG_DELTA: &str = "config-delta";
+
 /// What a main run's error starts with when the pass built a tree the round was not cut for
 /// because the base moved under it: the round is rebuilt once on the new base, never sent to
 /// attribution as a harness fault.
@@ -300,7 +311,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
             }
         }
         if let Some(end) = poll.done {
-            if end == MainEnd::WorkspaceBuild {
+            if matches!(end, MainEnd::WorkspaceBuild | MainEnd::ConfigDelta) {
                 return Ok(Settled {
                     preempt: None,
                     decision: Decision::default(),
@@ -1150,6 +1161,24 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         if s.end == MainEnd::Abandoned {
             return Ok(RoundEnd::Abandoned);
         }
+        if s.end == MainEnd::ConfigDelta {
+            let actions = bisect_members(
+                "the merged config delta does not apply",
+                &mut |m| runner.config_applies(m),
+                &members,
+            )
+            .unwrap_or_default();
+            if let Some(next) = apply_build_actions(ops, &members, &actions, CONFIG_DELTA)? {
+                println!("batcher: the merged config delta does not apply — culprits left, re-cutting {} member(s)", next.len());
+                runner.stop_main()?;
+                members = next;
+                continue;
+            }
+            ops.incident(CONFIG_DELTA, &[CONFIG_DELTA.to_string()]);
+            return Ok(RoundEnd::Blocked(
+                "the merged config delta does not apply and no member's merge is to blame".into(),
+            ));
+        }
         if s.end == MainEnd::WorkspaceBuild {
             let output = runner.build_output();
             if buildattr::is_image_build_red(&output) {
@@ -1693,8 +1722,12 @@ pub(crate) mod tests {
                     return Err(text.clone());
                 }
             }
-            if self.build_failed.is_some() {
-                p.done = Some(MainEnd::WorkspaceBuild);
+            if let Some(out) = &self.build_failed {
+                p.done = Some(if buildattr::is_config_delta_red(out) {
+                    MainEnd::ConfigDelta
+                } else {
+                    MainEnd::WorkspaceBuild
+                });
                 return Ok(p);
             }
             for (s, fin, g) in &self.main {
@@ -1725,6 +1758,9 @@ pub(crate) mod tests {
             self.probes.push(tree.iter().cloned().collect());
             self.bisects
                 .then(|| self.compiler.as_ref().and_then(|c| c(&tree)).is_none())
+        }
+        fn config_applies(&mut self, members: &[Member]) -> Option<bool> {
+            self.builds(members)
         }
         fn suite_green(&mut self, suite: &str, members: &[Member]) -> Option<bool> {
             let tree: BTreeSet<String> = members.iter().map(|m| m.id.clone()).collect();
@@ -3417,6 +3453,20 @@ pub(crate) mod tests {
             "a mapped build red writes no pause: {:?}",
             ops.incidents
         );
+    }
+
+    #[test]
+    fn a_merged_config_delta_that_does_not_apply_ejects_the_member_whose_merge_breaks_it() {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.compiler = Some(Box::new(|tree| {
+            tree.contains("m2").then(|| format!("round-vm: {} — the head's config delta does not apply on the merged tree\n", buildattr::CONFIG_DELTA_RED))
+        }));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert_eq!(land_ids(end), vec!["m1", "m3"]);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec![CONFIG_DELTA.to_string()])]);
+        assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
     const IMAGE_RED: &str = "build-error: round image build 42553374751 failed at build / Build, image and tag\nround image setup failed rc=1\n";
