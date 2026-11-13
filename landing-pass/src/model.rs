@@ -380,6 +380,24 @@ impl GateRun {
     pub fn unjudged(&self) -> bool {
         self.outcome == GateOutcome::Fail && self.reason.as_deref().unwrap_or("").is_empty() && self.out.trim().is_empty()
     }
+    /// Where a red gate failed: its failing suite and the last output line that says so; empty
+    /// when the gate named neither.
+    pub fn failing(&self) -> String {
+        let line = self
+            .out
+            .lines()
+            .rev()
+            .filter(|l| !l.starts_with("gate: VERDICT="))
+            .map(str::trim)
+            .find(|l| ["FAIL", "error", "panicked"].iter().any(|k| l.contains(k)))
+            .unwrap_or("");
+        match (self.suite.as_str(), line) {
+            ("-", "") => String::new(),
+            ("-", l) => format!("failing line: {l}"),
+            (s, "") => format!("failing step: {s}"),
+            (s, l) => format!("failing step: {s}; failing line: {l}"),
+        }
+    }
     pub fn reason_or(&self, dflt: &str) -> String {
         self.reason.clone().filter(|r| !r.is_empty()).unwrap_or_else(|| dflt.to_string())
     }
@@ -491,6 +509,14 @@ mod gate_run_tests {
         assert_eq!(g.outcome, GateOutcome::NoVerdict);
         assert!(!g.outcome.blames_branch());
         assert_eq!(g.reason_or("x"), "over-cap");
+    }
+
+    #[test]
+    fn a_red_gate_names_its_failing_suite_and_the_last_line_that_says_so() {
+        let out = "running\nFAIL test-a.sh\nerror: callers.rs:726 retires x_secs\ngate: VERDICT=FAIL reason=suites-failed branch=b repo=r suite=test-a.sh\n";
+        let g = GateRun::parse(1, out.into());
+        assert_eq!(g.failing(), "failing step: test-a.sh; failing line: error: callers.rs:726 retires x_secs");
+        assert_eq!(GateRun::parse(1, "gate: VERDICT=FAIL reason=x suite=-\n".into()).failing(), "");
     }
 
     #[test]

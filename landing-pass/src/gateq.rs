@@ -213,6 +213,13 @@ impl GateQueue {
         self.read_done(repo, branch, tip).map(|(_, d)| d)
     }
 
+    /// Where the recorded verdict for this branch at this tip failed ([`GateRun::failing`]), if it
+    /// is a red that names a place.
+    pub fn failing_at(&self, repo: &str, branch: &str, tip: &str) -> Option<String> {
+        let f = self.peek_done(repo, branch, tip)?.run.failing();
+        (!f.is_empty()).then_some(f)
+    }
+
     /// The verdict for this branch at this tip, consumed.
     pub fn take_done(&self, repo: &str, branch: &str, tip: &str) -> Option<Done> {
         let (p, d) = self.read_done(repo, branch, tip)?;
@@ -442,6 +449,17 @@ mod tests {
 
     fn dead(job: &Job) -> Done {
         Done { job: job.clone(), run: GateRun::parse(1, CAP.into()), started_ms: 1, finished_ms: 2001, gate: String::new() }
+    }
+
+    #[test]
+    fn a_recorded_red_verdict_gives_the_failing_step_and_line_and_an_absent_one_gives_none() {
+        let d = tmpdir("failing-at");
+        let q = GateQueue::new(&d).with_gate("");
+        let job = Job::new("r", "spira/b", "b", "t1", false);
+        let out = "error: callers.rs:726 retires x_secs\ngate: VERDICT=FAIL reason=suites-failed branch=b repo=r suite=test-a.sh\n";
+        q.complete(0, &Done { job: job.clone(), run: GateRun::parse(1, out.into()), started_ms: 1, finished_ms: 2, gate: String::new() }).unwrap();
+        assert_eq!(q.failing_at("r", "spira/b", "t1").unwrap(), "failing step: test-a.sh; failing line: error: callers.rs:726 retires x_secs");
+        assert_eq!(q.failing_at("r", "spira/b", "other-tip"), None);
     }
 
     #[test]

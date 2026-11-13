@@ -78,6 +78,8 @@ pub struct Env {
     pub rebase_stale_bin: PathBuf,
     /// The `testenv` program (by name on the launcher's PATH): a forge repo's own declared tiers, run locally.
     pub testenv_bin: PathBuf,
+    /// The `gate` program, which runs one fence of a subset tree (`gate fence-run`).
+    pub gate_bin: PathBuf,
     /// The round's slot budget for concurrent attribution (DESIGN.md §4.2):
     /// SPIRA_BATCHER_ROUND_SLOTS, else maxpar + 4.
     pub round_slots: Option<u32>,
@@ -4841,6 +4843,7 @@ pub fn lifecycle_tests_env(dir: &Path) -> Env {
         queue_bin: dir.join("queue"),
         rebase_stale_bin: dir.join("rebase-stale"),
         testenv_bin: dir.join("testenv"),
+        gate_bin: dir.join("gate"),
         round_slots: None,
         hypervisor: Hypervisor {
             host_mib: 0,

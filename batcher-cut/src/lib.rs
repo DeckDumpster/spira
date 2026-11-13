@@ -94,6 +94,7 @@ pub fn env_from_cfg(home: PathBuf, run: PathBuf, round_vm: Option<PathBuf>) -> R
         queue_bin: PathBuf::from(spira_config::release_env::tool("queue")?),
         rebase_stale_bin: PathBuf::from(spira_config::release_env::tool("rebase-stale")?),
         testenv_bin: PathBuf::from(spira_config::release_env::tool("testenv")?),
+        gate_bin: PathBuf::from(spira_config::release_env::tool("gate")?),
         round_slots: var("SPIRA_BATCHER_ROUND_SLOTS")
             .and_then(|v| v.trim().parse().ok())
             .filter(|n: &u32| *n > 0),

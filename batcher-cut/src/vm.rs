@@ -278,6 +278,7 @@ pub struct VmRunner<'a> {
     jobs: BTreeMap<u64, (String, String)>,
     verify_n: u32,
     build_n: u32,
+    probe_said: String,
     corpus_runs: u32,
     batch: Option<String>,
     /// The results of the corpus pass this attribution follows.
@@ -517,7 +518,7 @@ impl<'a> VmRunner<'a> {
         let key = format!("b{}", self.build_n);
         let branch = self.tree_without(self.branch(&key), &key, &removal).inspect_err(|e| eprintln!("batcher: fence probe tree not built: {e}")).ok()?;
         // FORK-EDGE: machine leg gate (fence-run: one fence of the subset tree, seconds, no build)
-        let out = spira_config::bounded::bounded_for("gate", FENCE_PROBE_DEADLINE)
+        let out = spira_config::bounded::bounded_for(&self.env.gate_bin, FENCE_PROBE_DEADLINE)
             .args(["fence-run", fence, "--repo"])
             .arg(&self.repo.path)
             .args(["--tip", &branch, "--base", &self.base_sha])
@@ -526,6 +527,9 @@ impl<'a> VmRunner<'a> {
             .inspect_err(|e| eprintln!("batcher: fence {fence} probe: {e}"))
             .ok()?;
         let green = suite_probe_result(out.status.code().unwrap_or(-1));
+        if green == Some(false) {
+            self.probe_said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        }
         if green.is_none() {
             eprintln!("batcher: fence {fence} probe faulted: {}", String::from_utf8_lossy(&out.stderr).trim());
         }
@@ -592,6 +596,7 @@ impl<'a> VmRunner<'a> {
             jobs: BTreeMap::new(),
             verify_n: 0,
             build_n: 0,
+            probe_said: String::new(),
             corpus_runs: 0,
             batch: None,
             prior: None,
@@ -944,7 +949,12 @@ impl RoundRunner for VmRunner<'_> {
         (seen == Some(green)).then_some(green)
     }
 
+    fn probe_output(&mut self) -> String {
+        std::mem::take(&mut self.probe_said)
+    }
+
     fn filter_green_in(&mut self, name: &str, scope: &[String], subset: &[Member]) -> Option<bool> {
+        self.probe_said.clear();
         match probe_of(name)? {
             Probe::Lint => self.probe_subset(subset, "lint", &[], unit_probe_result),
             Probe::Unit => self.probe_subset(subset, "unit", scope, unit_probe_result),
