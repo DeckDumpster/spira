@@ -170,6 +170,20 @@ fn pass() -> i32 {
         restart_window,
     };
 
+    if !report {
+        match spira_config::scoped_stop::skip_if_stopped_registered(&run_dir, "heimdall", gather::LANE) {
+            Err(e) => {
+                sink.out(&util::log_line(now, &format!("heimdall: refused — {e}")));
+                return 1;
+            }
+            Ok(Some(why)) => {
+                sink.out(&util::log_line(now, &why));
+                return 0;
+            }
+            Ok(None) => {}
+        }
+    }
+
     // ---- state -----------------------------------------------------------------------
     let state_text = std::fs::read_to_string(&state_path).unwrap_or_default();
     let mut state = State::parse(&state_text);

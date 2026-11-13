@@ -1,0 +1,4 @@
+# Cutover mode.
+[[scope]]
+path = "spira-world/src/cutover.rs"
+functions = ["read", "enter", "leave", "write", "Record::describe"]

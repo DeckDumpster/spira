@@ -1,0 +1,5 @@
+# The czar lane the actors here honour.
+
+[[scope]]
+path = "czar-pass/src/main.rs"
+functions = ["run_pass"]

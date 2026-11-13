@@ -193,6 +193,32 @@ pub fn fixture_toml(dir: &std::path::Path, declare: &[(&str, &str)]) -> std::pat
     p
 }
 
+/// The repo map of a registry holding exactly `repos`, written under `dir`.
+pub fn fixture_repo_map(dir: &std::path::Path, repos: &[&str]) -> std::path::PathBuf {
+    let map: String = repos.iter().map(|r| format!("{r}|{}|local|local/main\n", dir.join(r).display())).collect();
+    let path = dir.join("fixture.repos");
+    std::fs::write(&path, map).expect("the fixture map is written");
+    path
+}
+
+/// The environment of a world whose registry holds exactly `repos` (the first is the home repo)
+/// and whose run directory is `run`, for a test that reads stops through the process's own
+/// registry: `Some` sets, `None` unsets.
+pub fn fixture_world_env(dir: &std::path::Path, run: &std::path::Path, repos: &[&str]) -> Vec<(&'static str, Option<String>)> {
+    let map_path = fixture_repo_map(dir, repos);
+    let (run_s, map_s) = (run.display().to_string(), map_path.display().to_string());
+    let workspaces = dir.display().to_string();
+    let toml = fixture_toml(dir, &[("SPIRA_RUN", &run_s), ("SPIRA_REPO_MAP", &map_s), ("SPIRA_HOME_REPO", repos[0]), ("SPIRA_WORKSPACES", &workspaces)]);
+    let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
+    vec![
+        ("SPIRA_TOML", Some(toml.display().to_string())),
+        ("SPIRA_HOME", Some(home.display().to_string())),
+        ("SPIRA_RELEASE", None),
+        ("SPIRA_REPO_MAP", None),
+        ("SPIRA_HOME_REPO", None),
+    ]
+}
+
 /// The environment that points a spawned binary's config door at a fixture declaring
 /// `SPIRA_METRICS_ENDPOINT = endpoint` (and `declare`'s other keys), for tests of what it pushes.
 pub fn fixture_metrics_env(dir: &std::path::Path, endpoint: &str, declare: &[(&str, &str)]) -> Vec<(&'static str, String)> {

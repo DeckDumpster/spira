@@ -75,6 +75,18 @@ fn world_halted(run: &std::path::Path) -> bool {
     run.join("world.halted").is_file()
 }
 
+/// Why a periodic check stands down: the world is halted, or the detectors' lane is stopped on
+/// every repo.
+fn stand_down(run: &std::path::Path, check: &str) -> Option<String> {
+    if world_halted(run) {
+        return Some(format!("watchtower: {check} skipped — world is halted"));
+    }
+    spira_config::scoped_stop::skip_if_stopped_registered(run, &format!("watchtower: {check}"), DETECTORS_LANE)
+        .unwrap_or_else(|e| Some(format!("watchtower: {check} refused — {e}")))
+}
+
+const DETECTORS_LANE: &str = "heimdall";
+
 /// `process::sweep_cfg`, refusing the process on a key that does not resolve.
 fn build_sweep_cfg() -> sweep::Cfg {
     process::sweep_cfg().unwrap_or_else(|e| {
@@ -90,11 +102,15 @@ fn main() {
     let n = now();
 
     match sub {
-        None => sweep::run_sweep(n, &build_sweep_cfg()),
+        // A halted sweep still runs: it reports the halt and files nothing.
+        None => match stand_down(&run, "sweep").filter(|_| !world_halted(&run)) {
+            Some(why) => log::log(&why),
+            None => sweep::run_sweep(n, &build_sweep_cfg()),
+        },
         Some("--show") => sweep::run_show(n, &build_sweep_cfg()),
         Some("--throttle-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: throttle-check skipped — world is halted");
+            if let Some(why) = stand_down(&run, "throttle-check") {
+                log::log(&why);
                 return;
             }
             let inc = resolved_incident_sh();
@@ -126,8 +142,8 @@ fn main() {
             throttle::run(n, &cfg, &ctx);
         }
         Some("--czar-outcome-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: czar-outcome-check skipped — world is halted");
+            if let Some(why) = stand_down(&run, "czar-outcome-check") {
+                log::log(&why);
                 return;
             }
             let cfg = czar_outcome::Cfg {
@@ -145,8 +161,8 @@ fn main() {
             );
         }
         Some("--pr-stall-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: pr-stall-check skipped — world is halted");
+            if let Some(why) = stand_down(&run, "pr-stall-check") {
+                log::log(&why);
                 return;
             }
             let cfg = pr_stall::Cfg {
@@ -164,8 +180,8 @@ fn main() {
             );
         }
         Some("--lock-holders-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: lock-holders-check skipped — world is halted");
+            if let Some(why) = stand_down(&run, "lock-holders-check") {
+                log::log(&why);
                 return;
             }
             let stall_mins = reg_i64("SPIRA_QUEUE_THROTTLE_STALL_MINS");
@@ -196,8 +212,8 @@ fn main() {
             );
         }
         Some("--release-skew-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: release-skew-check skipped — world is halted");
+            if let Some(why) = stand_down(&run, "release-skew-check") {
+                log::log(&why);
                 return;
             }
             let cfg = release_skew::Cfg {
@@ -215,8 +231,8 @@ fn main() {
             );
         }
         Some("--deploy-fault-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: deploy-fault-check skipped — world is halted");
+            if let Some(why) = stand_down(&run, "deploy-fault-check") {
+                log::log(&why);
                 return;
             }
             let cfg = deploy_fault::Cfg {
@@ -241,8 +257,8 @@ fn main() {
             );
         }
         Some("--sccache-wedge-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: sccache-wedge-check skipped \u{2014} world is halted");
+            if let Some(why) = stand_down(&run, "sccache-wedge-check") {
+                log::log(&why);
                 return;
             }
             let cfg = sccache_wedge::Cfg {
@@ -271,8 +287,8 @@ fn main() {
             load_fence::run(std::path::Path::new("/proc"), &cfg);
         }
         Some("--conditions-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: conditions-check skipped — world is halted");
+            if let Some(why) = stand_down(&run, "conditions-check") {
+                log::log(&why);
                 return;
             }
             let cfg = probes::Cfg {
@@ -335,8 +351,8 @@ fn main() {
             }
         }
         Some("--dolt-drop-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: dolt-drop-check skipped \u{2014} world is halted");
+            if let Some(why) = stand_down(&run, "dolt-drop-check") {
+                log::log(&why);
                 return;
             }
             let log_path = getenv("SPIRA_DOLT_LOG").map(PathBuf::from).unwrap_or_else(|| run.join("dolt-beads.log"));
@@ -350,8 +366,8 @@ fn main() {
             );
         }
         Some("--slow-query-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: slow-query-check skipped \u{2014} world is halted");
+            if let Some(why) = stand_down(&run, "slow-query-check") {
+                log::log(&why);
                 return;
             }
             let log_path = getenv("SPIRA_SLOW_QUERY_LOG").map(PathBuf::from).unwrap_or_else(|| run.join("slow-queries.log"));
@@ -364,8 +380,8 @@ fn main() {
             );
         }
         Some("--drift-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: drift-check skipped — world is halted");
+            if let Some(why) = stand_down(&run, "drift-check") {
+                log::log(&why);
                 return;
             }
             drift::run(
@@ -413,17 +429,12 @@ mod tests {
     }
 
     #[test]
-    fn world_halted_guards_every_periodic_subcommand() {
+    fn world_halted_reads_the_stamp() {
         let dir = testkit::TempDir::new("watchtower-halted");
         let run = dir.join("run");
         std::fs::create_dir_all(&run).unwrap();
         assert!(!world_halted(&run), "no marker: the world is running");
         std::fs::write(run.join("world.halted"), "").unwrap();
         assert!(world_halted(&run), "marker present: halted");
-        let src = include_str!("main.rs");
-        for sub in ["throttle-check", "czar-outcome-check", "pr-stall-check", "release-skew-check"] {
-            let msg = format!("watchtower: {sub} skipped \u{2014} world is halted");
-            assert!(src.contains(&format!("\"{}\"", msg)), "{sub} must carry the halted-world skip");
-        }
     }
 }

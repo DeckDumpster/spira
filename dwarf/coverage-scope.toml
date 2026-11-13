@@ -1,0 +1,5 @@
+# The dwarves lane the actors here honour.
+
+[[scope]]
+path = "dwarf/src/run.rs"
+functions = ["Run::decline", "Run::checkpoint_across_stop"]

@@ -10,6 +10,11 @@ name = "no_fork_edges"
 path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "stand_down"
+path = "tests/stand_down.rs"
+required-features = ["integration"]
+
 [features]
 integration = ["reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration"]
 

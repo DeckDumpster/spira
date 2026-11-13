@@ -433,7 +433,7 @@ impl<'a> Run<'a> {
     }
 
     /// The capacity / halted / draining / paused declines: Some(exit code) to stop.
-    fn decline(&mut self) -> Option<i32> {
+    pub(crate) fn decline(&mut self) -> Option<i32> {
         let own = self.own_unit.clone();
         let have: i64 = self.sv("dwarf_count", &s(&[self.f(), &own])).text().trim().parse().unwrap_or(0);
         let mut limit = self.rune.max_concurrent as i64;
@@ -456,6 +456,11 @@ impl<'a> Run<'a> {
         if self.run_dir().join("world.halted").is_file() {
             self.log(&format!("{}: halted — claiming nothing (world.sh start to lift)", self.f()));
             self.ledger.awake(self.now(), self.f(), "halted");
+            return Some(0);
+        }
+        if let Some(why) = spira_config::scoped_stop::skip_if_stopped(self.run_dir(), &self.conf.repos.all(), self.f(), "dwarves") {
+            self.log(&why);
+            self.ledger.awake(self.now(), self.f(), "stopped");
             return Some(0);
         }
         if self.run_dir().join("world.draining").is_file() {
@@ -1555,6 +1560,8 @@ impl<'a> Run<'a> {
     /// A slain session whose world is halted is held, not abandoned: the bead leaves WORKING
     /// but stays unclaimable until `world start` lifts the checkpoint hold. False when the
     /// session was never recorded or the hold was refused (the plain release then stands).
+    /// It reads the halt stamp and not the dwarves lane: `world stop` writes the stamp before it
+    /// slays, and cutover mode lifts it only after.
     pub(crate) fn checkpoint_across_stop(&self) -> bool {
         let id = &self.s.bead;
         if self.s.session_id.is_empty() || !self.run_dir().join("world.halted").is_file() {

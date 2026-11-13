@@ -1,0 +1,4 @@
+# The land lane.
+[[scope]]
+path = "landing-pass/src/stops.rs"
+functions = ["landable"]
