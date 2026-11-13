@@ -277,6 +277,9 @@ pub struct Summary {
     pub backoff_until: Option<Backoff>,
     /// The latest attempt's `at`.
     pub last_attempt: u64,
+    /// The lifecycle absolved a member proven red under this identity; see `ledger::refuses`.
+    #[serde(default)]
+    pub absolved: bool,
 }
 
 #[cfg(test)]
