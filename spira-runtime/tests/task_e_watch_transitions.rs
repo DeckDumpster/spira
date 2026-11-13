@@ -1144,3 +1144,68 @@ fn a_bound_over_two_hours_or_inside_its_owners_window_is_refused() {
     assert!(Config { ask_bound_s: 600, ..config() }.bounds_fit_owners().is_err());
     assert!(Config { activate_bound_s: 601, ..config() }.bounds_fit_owners().is_ok());
 }
+
+fn pace_file(run: &testkit::TempDir, repo: &str, name: &str, body: &str, mtime: u64) {
+    let dir = run.path().join("rounds-pace").join(repo);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = std::fs::File::create(dir.join(name)).unwrap();
+    std::io::Write::write_all(&mut &f, body.as_bytes()).unwrap();
+    f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(mtime)).unwrap();
+}
+
+#[test]
+fn each_repos_rounds_pace_state_is_its_cut_owner_and_a_standing_pause_is_its_failure() {
+    let run = testkit::TempDir::new("wt-pace");
+    pace_file(&run, "spira", "state", "infra=0\n", 1_700);
+    pace_file(&run, "held", "state", "infra=0\n", 1_800);
+    pace_file(&run, "held", "pause", "red: round 7\n", 1_800);
+    std::fs::create_dir_all(run.path().join("rounds-pace/never-cut")).unwrap();
+    let owners: BTreeMap<String, Owner> = pace_owners(run.path()).into_iter().collect();
+    assert_eq!(owners.len(), 2, "a repo with no state file has no owner: {owners:?}");
+    assert_eq!(owners[&cut_owner_key("spira")], Owner { beat: Some(1_700), failed: None });
+    assert_eq!(owners[&cut_owner_key("held")], Owner { beat: Some(1_800), failed: Some("paused: red: round 7".into()) });
+    assert!(pace_owners(&run.path().join("absent")).is_empty(), "no rounds-pace directory is no owner");
+}
+
+#[test]
+fn a_scoped_delivery_owner_outranks_the_edges_and_the_edges_covers_a_repo_without_one() {
+    let now = T0;
+    let mut s = owned(stuck_delivery(now), now, 5, None);
+    assert_eq!(delivery_pages(&s, now), 0, "the edge's own heartbeat covers repo spira");
+    s.owners.insert(format!("{DELIVERY_EDGE} spira"), Owner { beat: Some(now - 500), failed: None });
+    assert_eq!(delivery_pages(&s, now), 1, "a silent record for the repo outranks the edge's fresh one");
+}
+
+#[test]
+fn every_edge_reads_its_bound_from_the_config_and_an_unknown_edge_has_none() {
+    let cfg = Config { submit_bound_s: 11, cut_bound_s: 22, deliver_bound_s: 33, activate_bound_s: 44, ask_bound_s: 55, ..config() };
+    let bounds: Vec<Option<u64>> = EDGES.iter().map(|e| cfg.bound(e)).collect();
+    assert_eq!(bounds, [Some(11), Some(22), Some(33), Some(44), Some(55)]);
+    assert_eq!(cfg.bound("NOT→AN_EDGE"), None);
+    assert_eq!(cfg.window_s(), 44 + 600, "the audit window covers the audit-read edges, not the ask bound");
+    let asks_longest = Config { ask_bound_s: 9_999, ..cfg };
+    assert_eq!(asks_longest.window_s(), 44 + 600, "an ask's age comes from the store, so it does not widen the audit read");
+}
+
+#[test]
+fn a_stall_is_judged_on_the_bound_the_config_names_for_its_edge() {
+    let now = T0;
+    let s = stuck_delivery(now);
+    let tight = Config { deliver_bound_s: 3 * HOUR, ..config() };
+    let loose = Config { deliver_bound_s: HOUR, ..config() };
+    assert!(spira_runtime::tasks::e::watch_transitions::stalls(&s, now, &tight).iter().all(|x| x.edge != DELIVERY_EDGE), "2h in delivery is inside a 3h bound");
+    let page = spira_runtime::tasks::e::watch_transitions::stalls(&s, now, &loose).into_iter().find(|x| x.edge == DELIVERY_EDGE).expect("2h in delivery is past a 1h bound");
+    assert!(page.evidence.contains("bound 1h00m"), "{}", page.evidence);
+}
+
+#[test]
+fn a_stall_is_held_back_until_its_own_edges_bound_has_passed_since_the_plane_resumed() {
+    let now = T0;
+    let cfg = Config { submit_bound_s: 5_000, ..config() };
+    let s = todays_case(now - 6_000);
+    let age = |resumed_for: u64| Carry { resumed_at: now - resumed_for, ..Carry::default() };
+    let held = decide(&age(4_999), &s, now * 1000, &cfg).1;
+    assert!(pages(&held).is_empty(), "{:?}", pages(&held));
+    let due = decide(&age(5_000), &s, now * 1000, &cfg).1;
+    assert_eq!(pages(&due).len(), 1, "{:?}", pages(&due));
+}
