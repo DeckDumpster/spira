@@ -101,3 +101,31 @@ fn every_lifecycle_driven_state_drops_a_row_whose_batch_is_landed() {
         assert!(acts.iter().any(|a| a.effect == ASSEMBLE), "{state}: the settled round was forgotten and the next cut: {acts:?}");
     }
 }
+
+fn land_acts_for_landing_row(in_flight: Option<Vec<String>>) -> Vec<String> {
+    let row = STORED.replace("\"waiting\":{\"state\":\"Landing\",\"since_ms\":1794349965000}", "\"waiting\":null");
+    let rc: RepoCarry = serde_json::from_str(&row).unwrap();
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let mut snap = waiting_pool("some-other-batch", NOW);
+    snap.repos.get_mut("spira").unwrap().in_flight = in_flight;
+    let (_, acts) = decide(&carry, &snap);
+    acts.iter().map(|a| a.effect.clone()).collect()
+}
+
+#[test]
+fn a_landing_round_asks_to_land_again_only_when_the_scheduler_holds_other_effects_in_flight_and_no_land() {
+    let asked = land_acts_for_landing_row(Some(vec![]));
+    assert!(asked.iter().any(|e| e == LAND), "{asked:?}");
+}
+
+#[test]
+fn a_landing_round_does_not_ask_again_while_its_land_is_in_flight() {
+    let asked = land_acts_for_landing_row(Some(vec![LAND.to_string()]));
+    assert!(!asked.iter().any(|e| e == LAND), "{asked:?}");
+}
+
+#[test]
+fn a_landing_round_does_not_ask_again_when_the_scheduler_reports_no_in_flight_view() {
+    let asked = land_acts_for_landing_row(None);
+    assert!(!asked.iter().any(|e| e == LAND), "{asked:?}");
+}
