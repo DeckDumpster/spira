@@ -8,10 +8,10 @@ use spira_store::lc_call::LcClient;
 
 pub fn goodput_keys() -> Kv {
     let Some(client) = crate::store::client() else { return Kv::new() };
-    keys_on(&client, crate::io::now())
+    keys_on(&client)
 }
 
-pub fn keys_on(client: &LcClient, now: i64) -> Kv {
+pub fn keys_on(client: &LcClient) -> Kv {
     let Some(snap) = crate::store::answer_on(client, &["section", "snapshot"]).and_then(|raw| serde_json::from_str::<Value>(&raw).ok()) else { return Kv::new() };
     let mut out = Kv::new();
     let sections: Vec<&Value> = snap["sections"].as_array().map(|a| a.iter().filter_map(|e| e.get("section")).collect()).unwrap_or_default();
@@ -27,7 +27,7 @@ pub fn keys_on(client: &LcClient, now: i64) -> Kv {
 
     let pass = &snap["pass"];
     if pass.is_object() {
-        pass_keys(&mut out, &snap, pass, &by_ref, now);
+        pass_keys(&mut out, &snap, pass, &by_ref);
     }
 
     push(&mut out, "SP_GP_SEC_N", sections.len().to_string());
@@ -51,11 +51,10 @@ pub fn keys_on(client: &LcClient, now: i64) -> Kv {
     out
 }
 
-fn pass_keys<'a>(out: &mut Kv, snap: &Value, pass: &Value, by_ref: &impl Fn(&str) -> Option<&'a Value>, now: i64) {
+fn pass_keys<'a>(out: &mut Kv, snap: &Value, pass: &Value, by_ref: &impl Fn(&str) -> Option<&'a Value>) {
     if let Some(at) = pass["at"].as_str() {
-        push(out, "SP_GP_PASS_AT", plain(at));
         if let Some(t) = parse_iso8601(at) {
-            push(out, "SP_GP_PASS_AGE_S", (now - t).max(0).to_string());
+            push(out, "SP_GP_PASS_AT", t.to_string());
         }
     }
     if let Some(n) = number(&pass["goodput"]["rate_per_day"]) {
@@ -125,8 +124,6 @@ mod tests {
     use crate::store::scripted::client;
     use serde_json::json;
 
-    const NOW: i64 = 1_794_492_600; // 2026-11-12T14:10:00Z
-
     fn section(kind: &str, name: &str, status: serde_json::Value, observed: Option<&str>, actions: serde_json::Value, distance: bool) -> serde_json::Value {
         let mut s = json!({ "apiVersion": "spira/v1", "kind": kind, "metadata": { "name": name }, "status": status, "actions": actions });
         if let Some(at) = observed {
@@ -169,7 +166,7 @@ mod tests {
 
     fn keys(answer: &str) -> std::collections::HashMap<String, String> {
         let (c, _) = client(&[("section snapshot", 0, answer)]);
-        keys_on(&c, NOW).into_iter().collect()
+        keys_on(&c).into_iter().collect()
     }
 
     #[test]
@@ -177,8 +174,7 @@ mod tests {
         let k = keys(&snapshot());
         let want = [
             ("SP_GP_RATE", "3.2"),
-            ("SP_GP_PASS_AT", "2026-11-12T14:09:45Z"),
-            ("SP_GP_PASS_AGE_S", "15"),
+            ("SP_GP_PASS_AT", "1794492585"),
             ("SP_GP_BINDING", "RoundController/pokebot"),
             ("SP_GP_DISTANCE", "1 repeat identity open"),
             ("SP_GP_STEP", "hold-member b-17@3f2a"),
@@ -222,7 +218,7 @@ mod tests {
         let mut snap: serde_json::Value = serde_json::from_str(&snapshot()).unwrap();
         snap["pass"] = serde_json::Value::Null;
         let k = keys(&snap.to_string());
-        for key in ["SP_GP_PASS_AT", "SP_GP_PASS_AGE_S", "SP_GP_RATE", "SP_GP_BINDING", "SP_GP_DISTANCE", "SP_GP_STEP"] {
+        for key in ["SP_GP_PASS_AT", "SP_GP_RATE", "SP_GP_BINDING", "SP_GP_DISTANCE", "SP_GP_STEP"] {
             assert!(!k.contains_key(key), "{key}: {k:?}");
         }
         assert_eq!(k["SP_GP_SEC_N"], "3", "the sections are still read");
@@ -232,7 +228,7 @@ mod tests {
     #[test]
     fn a_snapshot_that_cannot_be_read_writes_nothing() {
         let (c, _) = client(&[("section snapshot", 1, "")]);
-        assert!(keys_on(&c, NOW).is_empty());
+        assert!(keys_on(&c).is_empty());
         assert!(keys("not json").is_empty());
     }
 
@@ -261,8 +257,7 @@ mod tests {
         snap["intents"][1]["intent"]["ack"] = serde_json::Value::Null;
         let k = keys(&snap.to_string());
         assert_eq!(k["SP_GP_BINDING"], "Ghost/none");
-        assert!(!k.contains_key("SP_GP_DISTANCE") && !k.contains_key("SP_GP_PASS_AGE_S"), "{k:?}");
-        assert_eq!(k["SP_GP_PASS_AT"], "yesterday");
+        assert!(!k.contains_key("SP_GP_DISTANCE") && !k.contains_key("SP_GP_PASS_AT"), "an unparseable time is no time: {k:?}");
         snap["pass"]["binding"] = json!("RoundController/pokebot");
         let k = keys(&snap.to_string());
         assert!(k.contains_key("SP_GP_STEP") && !k.contains_key("SP_GP_STEP_ACK"), "a step not yet acked names no ack time: {k:?}");

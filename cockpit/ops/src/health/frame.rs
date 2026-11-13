@@ -53,7 +53,7 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
         inputs.now,
         inputs.deadman_secs,
     );
-    let goodput_rows = super::goodput::sections_section(&snap, cols, inputs.deadman_secs);
+    let goodput_rows = super::goodput::sections_section(&snap, cols, inputs.deadman_secs, inputs.now);
     let slots = slots_line(&snap);
     let tokens = tokens_section(
         &snap,
@@ -276,7 +276,7 @@ mod tests {
         assert!(!out[0].contains('\u{25be}'), "header carries a fold-drop marker: {}", out[0]);
     }
 
-    const GOODPUT_FIXTURE: &str = "SP_AT='1000000000'\nSP_GP_RATE='3.2'\nSP_GP_TARGET='5'\nSP_GP_PASS_AT='2026-11-12T14:05:00Z'\nSP_GP_PASS_AGE_S='14'\n\
+    const GOODPUT_FIXTURE: &str = "SP_AT='1000000000'\nSP_GP_RATE='3.2'\nSP_GP_TARGET='5'\nSP_GP_PASS_AT='986'\n\
         SP_GP_BINDING='round-controller/pokebot'\nSP_GP_DISTANCE='1 repeat identity open'\nSP_GP_STEP='hold-member b-17@3f2a'\nSP_GP_STEP_ACK='14:02'\nSP_GP_STEP_HORIZON='10m'\n\
         SP_GP_SEC_N='3'\nSP_GP_SEC0_REF='round-controller/pokebot'\nSP_GP_SEC0_DIST='1'\nSP_GP_SEC0_AGE='12'\nSP_GP_SEC0_FRESH='fresh'\n\
         SP_GP_SEC1_REF='lifecycle/all'\nSP_GP_SEC1_DIST='0'\nSP_GP_SEC1_AGE='40'\nSP_GP_SEC1_FRESH='fresh'\n\
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn the_pane_greys_a_stale_pass_and_says_how_old_it_is() {
-        let out = goodput_frame(&*Box::leak(GOODPUT_FIXTURE.replace("AGE_S='14'", "AGE_S='999'").into_boxed_str()), 120);
+        let out = goodput_frame(&*Box::leak(GOODPUT_FIXTURE.replace("PASS_AT='986'", "PASS_AT='1'").into_boxed_str()), 120);
         let line = out.iter().find(|l| l.contains("stale pass, 999s old")).expect("a stale-pass line");
         assert!(line.starts_with(super::super::colors::DIM), "{line:?}");
     }

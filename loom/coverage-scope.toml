@@ -2,3 +2,7 @@
 [[scope]]
 path = "loom/src/goodput.rs"
 functions = ["render_json", "render_page"]
+
+[[scope]]
+path = "loom/src/lib.rs"
+functions = ["goodput_data", "goodput_page_route", "goodput_api_route"]

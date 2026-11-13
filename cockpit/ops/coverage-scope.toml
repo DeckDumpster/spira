@@ -1,4 +1,4 @@
 # The goodput view the pane and loom's page share (sp-4wz56p's gate reports any branch no test takes).
 [[scope]]
 path = "cockpit/ops/src/health/goodput.rs"
-functions = ["or_q", "wrap", "top_text", "row_text", "view", "top_lines", "sections_section"]
+functions = ["deadman_secs", "pass_age", "or_q", "wrap", "top_text", "row_text", "view", "top_lines", "sections_section"]

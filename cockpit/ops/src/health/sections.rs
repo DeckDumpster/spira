@@ -187,7 +187,7 @@ pub fn header_line(
         age_str(snap.q("SP_HEIMDALL_AGE"), 180),
     ));
 
-    out.extend(super::goodput::top_lines(snap, cols, deadman_secs));
+    out.extend(super::goodput::top_lines(snap, cols, deadman_secs, now));
 
     let firing = snap.get("SP_HEIMDALL_FIRING").unwrap_or("0");
     if firing == "?" {
