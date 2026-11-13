@@ -36,3 +36,9 @@ kind = "Gate"
 weight = 5.0
 unit = "landed per day per unit of distance"
 source = "throughput-bounds §2: 14% of gates ended without a verdict and used 49% of gate-hours; a wasted gate costs a rerun, judgement not measured"
+
+[[weight]]
+kind = "Supply"
+weight = 0.5
+unit = "landed per day per unit of distance"
+source = "throughput-bounds §3-4: landable filings run at about 75-90 a day against a floor of 150; the shortfall bounds landings only once drafting is the constraint, judgement not measured"

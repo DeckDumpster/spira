@@ -208,6 +208,16 @@ jq -r 'select(.repo=="repo-a" and .at>="2026-10-31")|.at|fromdate' sim/fixtures/
 390
 ```
 
+**10-31: beads filed (reached READY from another state, or dropped), landable (reached READY, not dropped) and dropped**
+
+```sh
+jq -s '[.[]|select(.kind=="bead")] as $b | ([$b[]|select(.to=="READY" and .from!="READY")|.id]|unique) as $r | ([$b[]|select(.to=="DROPPED")|.id]|unique) as $d | {filed:(($r+$d)|unique|length), landable:([$r[]|select(. as $x|$d|index($x)|not)]|length), dropped:($d|length)}' sim/fixtures/replay/1031/transition.ndjson
+```
+
+```
+{"filed":201,"landable":38,"dropped":163}
+```
+
 **10-31: rounds stacked on an unlanded parent (distinct children), and the parent**
 
 ```sh

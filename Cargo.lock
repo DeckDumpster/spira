@@ -633,9 +633,11 @@ dependencies = [
 name = "groomer"
 version = "1.0.0"
 dependencies = [
+ "reconciler-engine",
  "serde",
  "serde_json",
  "spira-config",
+ "spira-desired-state",
  "spira-otel",
  "spira-store",
  "strand",
@@ -2135,6 +2137,7 @@ version = "1.0.0"
 dependencies = [
  "bead",
  "gate",
+ "groomer",
  "incident",
  "lifecycle",
  "opentelemetry-proto",

@@ -9,16 +9,17 @@
 //!   groomer unpoison       <id> --cause <c> --evidence <text>            credit a harness-caused attempt, lift spira-poison
 //!   groomer triage-poison  <id> --verdict <work-fault|drop> --evidence <text>  close out a work-caused poison charge
 //!   groomer deadlocked     [--apply]                                      lift poison from finished, landable work (spira-claim/DESIGN.md §9)
+//!   groomer section                                                       publish Supply/supply at the end of a groom pass
 //!   groomer unwanted       ...                                            REFUSED — exits 2 always
 //!
 //! EXIT: 0 success, 1 usage error / missing required argument, 2 refused (groomer policy).
 
 use groomer::bd::RealBd;
 use groomer::seam::{locate_home, LibSeam};
-use groomer::{cmds, deadlocked, litter, unpoison};
+use groomer::{cmds, deadlocked, litter, section, unpoison};
 
 fn usage() -> ! {
-    eprintln!("usage: groomer split-piece|supersede|close|correct-lane|depends-on-fix|unpoison|triage-poison|deadlocked|unwanted ...");
+    eprintln!("usage: groomer split-piece|supersede|close|correct-lane|depends-on-fix|unpoison|triage-poison|deadlocked|section|unwanted ...");
     std::process::exit(1);
 }
 
@@ -162,6 +163,15 @@ fn main() {
             let (code, out) = deadlocked::run(&seam, &db, apply, "spira-claim");
             print!("{out}");
             { spira_otel::run::finish(code); std::process::exit(code) };
+        }
+        "section" => {
+            let interval: u64 = spira_config::process::cfg_parse("SPIRA_RUNTIME_TRIGGER_GROOM_SECS").unwrap_or_else(|e| die(&e));
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            let lc = section::SpiraLc(spira_store::lc_call::LcClient::configured().unwrap_or_else(|e| die(&e)));
+            match section::publish(&lc, now, interval) {
+                Ok(r) => println!("groomer section: filed {}, landable {}, dropped share {:.3}, claimable READY {}", r.filed, r.landable, r.dropped_share, r.claimable_ready),
+                Err(e) => die(&e),
+            }
         }
         "unwanted" => match cmds::unwanted() {
             Err((code, msg)) => {
