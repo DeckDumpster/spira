@@ -116,6 +116,8 @@ pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_SWEEP_RECLAIM_SECS";
 pub const MIN_FREE_KEY: &str = "SPIRA_RECLAIM_MIN_FREE_GIB";
 pub const TARGET_FREE_KEY: &str = "SPIRA_RECLAIM_TARGET_FREE_GIB";
 pub const PODMAN_CAP_KEY: &str = "SPIRA_RECLAIM_PODMAN_CAP_GIB";
+pub const CACHE_DIR_KEY: &str = "SPIRA_RECLAIM_CACHE_DIR";
+pub const STORE_ROOT_KEY: &str = "SPIRA_SCCACHE_DAV_ROOT";
 pub const CACHE_CAP_KEY: &str = "SPIRA_RECLAIM_CACHE_CAP_GIB";
 /// Today argv; each becomes a key.
 pub const KEYS: &[&str] = &[
@@ -126,7 +128,9 @@ pub const KEYS: &[&str] = &[
     "SPIRA_RECLAIM_IDLE_DAYS",
     MIN_FREE_KEY,
     TARGET_FREE_KEY,
-    "SPIRA_RECLAIM_CACHE_DIR",
+    CACHE_DIR_KEY,
+    STORE_ROOT_KEY,
+    "SPIRA_RUN",
     CACHE_CAP_KEY,
     "SPIRA_RECLAIM_PODMAN",
     "SPIRA_RECLAIM_PODMAN_DIR",
@@ -290,6 +294,19 @@ pub struct Pinned {
     pub podman_dir: Option<std::path::PathBuf>,
 }
 
+fn cache_dir(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<std::path::PathBuf>, String> {
+    for k in [CACHE_DIR_KEY, STORE_ROOT_KEY] {
+        let v = get(k)?;
+        let v = v.trim();
+        if v.is_empty() {
+            continue;
+        }
+        return if std::path::Path::new(v).is_absolute() { Ok(Some(v.into())) } else { Err(format!("{k} must be an absolute path, got {v:?}")) };
+    }
+    let run = get("SPIRA_RUN")?;
+    Ok(Some(std::path::Path::new(run.trim()).join("sccache-dav")).filter(|d| d.is_absolute()))
+}
+
 impl Pinned {
     pub fn read(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Pinned, String> {
         let words = |k: &str| get(k).map(|v| v.split_whitespace().map(str::to_string).collect::<Vec<_>>());
@@ -301,7 +318,7 @@ impl Pinned {
             lease_dir: dir("SPIRA_RECLAIM_LEASE_DIR")?,
             idle_secs: num("SPIRA_RECLAIM_IDLE_DAYS")? * 86_400,
             target_free_mib: num(TARGET_FREE_KEY)? << 10,
-            cache_dir: dir("SPIRA_RECLAIM_CACHE_DIR")?,
+            cache_dir: cache_dir(get)?,
             podman: get("SPIRA_RECLAIM_PODMAN")?.trim().to_string(),
             podman_dir: dir("SPIRA_RECLAIM_PODMAN_DIR")?,
         })
@@ -378,7 +395,7 @@ pub fn podman_prune(p: &Pinned, proc: &dyn runtime::ports::Proc, why: &str) -> R
 /// The runner of [`TRIM_CACHE`]: removes the chosen files, each still under the cache dir and
 /// not a `.tmp` younger than an hour.
 pub fn trim_cache(p: &Pinned, input: &str) -> Result<String, String> {
-    let dir = p.cache_dir.as_deref().ok_or("SPIRA_RECLAIM_CACHE_DIR is empty — refusing")?;
+    let dir = p.cache_dir.as_deref().ok_or("no cache store root resolves — refusing")?;
     let chosen: Vec<String> = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let live: std::collections::BTreeMap<String, u64> = reclaim::cache_files(dir, epoch_now()).into_iter().map(|(_, b, path)| (path.display().to_string(), b)).collect();
     let (mut n, mut freed) = (0u64, 0u64);
@@ -394,3 +411,48 @@ pub fn trim_cache(p: &Pinned, input: &str) -> Result<String, String> {
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("refused_cause"), runtime::rows::Part::Field("pending")];
 
 crate::tasks::b::hosted!(SweepReclaim);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read(pairs: &'static [(&'static str, &'static str)]) -> Pinned {
+        let get = move |k: &str| Ok(pairs.iter().find(|(n, _)| *n == k).map_or("", |p| p.1).to_string());
+        Pinned::read(&|k| if k.ends_with("_GIB") || k.ends_with("_DAYS") { Ok("1".into()) } else { get(k) }).unwrap()
+    }
+
+    #[test]
+    fn the_cache_cap_follows_the_stores_configured_root() {
+        let p = read(&[("SPIRA_SCCACHE_DAV_ROOT", "/mnt/other/store"), ("SPIRA_RUN", "/r")]);
+        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new("/mnt/other/store")));
+    }
+
+    #[test]
+    fn an_empty_store_root_means_the_run_dirs_sccache_dav() {
+        let p = read(&[("SPIRA_RUN", "/r")]);
+        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new("/r/sccache-dav")));
+    }
+
+    #[test]
+    fn an_explicit_reclaim_cache_dir_still_wins() {
+        let p = read(&[("SPIRA_RECLAIM_CACHE_DIR", "/x"), ("SPIRA_SCCACHE_DAV_ROOT", "/y")]);
+        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new("/x")));
+    }
+
+    #[test]
+    fn explicit_dir_wins_over_root_and_run_when_all_three_are_set() {
+        let p = read(&[("SPIRA_RECLAIM_CACHE_DIR", "/x"), ("SPIRA_SCCACHE_DAV_ROOT", "/y"), ("SPIRA_RUN", "/r")]);
+        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new("/x")));
+    }
+
+    #[test]
+    fn a_relative_store_root_is_refused_not_silently_untrimmed() {
+        let err = Pinned::read(&|k| Ok(match k { "SPIRA_SCCACHE_DAV_ROOT" => "store".into(), k if k.ends_with("_GIB") || k.ends_with("_DAYS") => "1".into(), _ => String::new() })).err().unwrap();
+        assert!(err.contains("SPIRA_SCCACHE_DAV_ROOT"), "{err}");
+    }
+
+    #[test]
+    fn no_root_and_no_run_dir_trims_nothing() {
+        assert_eq!(read(&[]).cache_dir, None);
+    }
+}
