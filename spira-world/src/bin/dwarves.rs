@@ -21,7 +21,7 @@ use std::env;
 use std::path::PathBuf;
 
 use spira_config::SpiraToml;
-use spira_world::{seam, sysctl};
+use spira_world::{fleet, seam, sysctl};
 
 fn toml_path() -> Option<PathBuf> {
     env::var_os("SPIRA_TOML_FILE")
@@ -39,10 +39,6 @@ fn load_doc() -> Result<(PathBuf, SpiraToml), String> {
     };
     let doc = spira_config::load(&path).map_err(|e| format!("dwarves.sh: {e}"))?;
     Ok((path, doc))
-}
-
-fn live_now() -> String {
-    sysctl::live_dwarf_units().len().to_string()
 }
 
 fn lane_caps(lib_sh: Option<&std::path::Path>) -> (u32, String) {
@@ -80,11 +76,13 @@ fn cmd_status() -> i32 {
 
     let lib_sh = spira_world::locate_home().map(|h| h.join("lib.sh"));
     let (lt, ld) = lane_caps(lib_sh.as_deref());
-    let live = live_now();
+    let roster = fleet::Roster::of(&sysctl::live_dwarf_units());
 
-    println!("  live now          {live}");
+    for line in roster.live_lines(None, false) {
+        println!("{line}");
+    }
     match ceiling {
-        Some(c) => println!("  fleet ceiling     {c}   (SPIRA_MAX_LIVE_DWARVES — counts every dwarf)"),
+        Some(c) => println!("  fleet ceiling     {c}   (SPIRA_MAX_LIVE_DWARVES — counts every lane dwarf; a directed one is outside it)"),
         None => println!("  fleet ceiling     none  (SPIRA_MAX_LIVE_DWARVES unset)"),
     }
     match pool {
@@ -99,12 +97,10 @@ fn cmd_status() -> i32 {
         println!("  effective split   builders {task_min}-{pool_n}, lanes 0-{cap}");
     }
     if let (Some(c), Some(cap)) = (ceiling, lanes_cap) {
-        if let Ok(l) = live.parse::<u32>() {
-            if l > c {
-                println!("  spill             live {l} / ceiling {c} — {} lane over, draining", l - c);
-            }
+        for line in roster.live_lines(Some(c), true).into_iter().skip(1) {
+            println!("{line}");
         }
-        println!("  lane spill        up to {cap} over the ceiling while a lane has ready work; no refill until live <= {c}");
+        println!("  lane spill        up to {cap} over the ceiling while a lane has ready work; no refill until lane dwarves <= {c}");
     }
     if let Some(c) = ceiling {
         println!(
