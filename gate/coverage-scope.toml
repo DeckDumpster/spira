@@ -2,4 +2,4 @@
 # no test takes.
 [[scope]]
 path = "gate/src/section.rs"
-functions = ["measure", "gate_rows", "status_of", "section_body", "run"]
+functions = ["measure", "gate_rows", "status_of", "section_body", "argv", "run", "publish"]

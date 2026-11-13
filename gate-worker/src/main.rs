@@ -166,10 +166,8 @@ impl gate::section::Lc for SpiraLc {
 /// The tick's last act, whether or not it gated anything: a section that is not republished
 /// goes stale, which is how a stopped gate-worker is seen.
 fn publish_section(run: &std::path::Path) -> Result<gate::section::Reading, String> {
-    let now = Wall.now_ms() / 1000;
-    let rows = gate::section::gate_rows(tsd::query::Source { reader: None, root: run }.rows(gate::telemetry::FAMILY, now.saturating_sub(gate::section::HOUR)))?;
     let lc = SpiraLc(spira_store::lc_call::LcClient::configured()?);
-    gate::section::run(&lc, now, &rows)
+    gate::section::publish(&lc, run, Wall.now_ms() / 1000)
 }
 
 #[cfg(test)]

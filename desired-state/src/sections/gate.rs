@@ -117,6 +117,14 @@ mod tests {
     }
 
     #[test]
+    fn a_malformed_cause_count_is_refused_by_its_path() {
+        let mut v = section(0.1);
+        v["status"][NO_VERDICT_BY_CAUSE] = json!([{ "cause": "died", "count": -1 }]);
+        let r = admit_publish(&parse_section(&v).unwrap()).unwrap_err();
+        assert!(r.field.contains("no_verdict_by_cause[0].count"), "{r:?}");
+    }
+
+    #[test]
     fn the_shipped_spec_seeds_the_target_and_the_distance_follows_it() {
         let fragment = crate::producer::parse_fragment(include_str!("../../examples/gate.toml")).unwrap();
         let composite = crate::compose::compose(&[fragment]).unwrap();

@@ -185,3 +185,48 @@ fn a_family_with_no_file_reads_as_no_gates_and_any_other_failure_stops_the_publi
     assert_eq!(section::gate_rows(Err(Failure { code: ERR_NO_FAMILY, message: "no rows yet".into() })).unwrap(), Vec::<Value>::new());
     assert_eq!(section::gate_rows(Err(Failure { code: 1, message: "unreadable".into() })).unwrap_err(), "unreadable");
 }
+
+#[test]
+fn a_tick_that_gated_nothing_still_publishes_from_a_run_directory_with_no_gate_run_family() {
+    let r = at_five();
+    let dir = testkit::TempDir::new("gate-section-publish");
+    let reading = section::publish(&Dispatch(&r), dir.path(), FIVE).unwrap();
+    assert_eq!((reading.gates, reading.no_verdict_share), (0, 0.0));
+    assert_eq!(published(&r)["metadata"]["observedAt"], format_rfc3339(FIVE));
+
+    std::fs::create_dir_all(dir.path().join("tsd")).unwrap();
+    std::fs::write(dir.path().join("tsd/gate-run.jsonl"), include_str!("../../../../gate/fixtures/gate-run-1h.ndjson")).unwrap();
+    assert_eq!(section::publish(&Dispatch(&r), dir.path(), FIVE).unwrap().gates, 20);
+}
+
+#[test]
+fn a_stored_section_the_schema_rejects_stops_the_publish_and_names_it() {
+    struct Garbled;
+    impl Lc for Garbled {
+        fn call(&self, args: &[String]) -> (i32, Value) {
+            assert_eq!(args[1], "get", "nothing is written over a section that cannot be read");
+            (0, json!({ "section": { "kind": 7 } }))
+        }
+    }
+    assert!(section::run(&Garbled, FIVE, &[]).unwrap_err().contains("Gate/gate is unreadable"));
+}
+
+#[test]
+fn a_publish_that_lost_the_race_on_the_revision_is_an_error_and_the_winner_stands() {
+    struct Raced<'a>(&'a Rig<MemBackend>);
+    impl Lc for Raced<'_> {
+        fn call(&self, args: &[String]) -> (i32, Value) {
+            let out = Dispatch(self.0).call(args);
+            if args[1] == "get" {
+                publish(self.0, &[]).unwrap();
+            }
+            out
+        }
+    }
+    let r = at_five();
+    publish(&r, &[]).unwrap();
+    r.clock.advance(MIN);
+    let e = section::run(&Raced(&r), r.clock.now_ms() / 1000, &fixture_rows()).unwrap_err();
+    assert!(e.contains("publish Gate/gate"), "{e}");
+    assert_eq!(published(&r)["status"][kind::GATES]["value"], 0.0);
+}

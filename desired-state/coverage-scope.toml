@@ -40,3 +40,7 @@ functions = ["check_spec", "check_status"]
 [[scope]]
 path = "desired-state/src/sections/dwarf_fleet.rs"
 functions = ["check_spec", "check_status"]
+
+[[scope]]
+path = "desired-state/src/sections/gate.rs"
+functions = ["check_spec", "check_status"]

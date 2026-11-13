@@ -110,3 +110,9 @@ pub fn run(lc: &dyn Lc, now: u64, rows: &[Value]) -> Result<Reading, String> {
         (code, v) => Err(format!("publish {name}: exit {code}: {v}")),
     }
 }
+
+/// One worker tick's publish, gating or not: the hour's rows under `run`, then [`run`].
+pub fn publish(lc: &dyn Lc, run: &std::path::Path, now: u64) -> Result<Reading, String> {
+    let read = tsd::query::Source { reader: None, root: run }.rows(crate::telemetry::FAMILY, now.saturating_sub(HOUR));
+    self::run(lc, now, &gate_rows(read)?)
+}
