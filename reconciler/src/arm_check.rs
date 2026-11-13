@@ -130,7 +130,7 @@ mod tests {
         let lc = canned("fresh");
         let out = run(&lc, &clock(), &shadow(), &["RoundController".into()]).unwrap();
         assert!(
-            out.ends_with("arm with: spira-config set spira.reconciler_shadow_kinds \"Lifecycle Alarms batch-landed queue-mergeable lc-orphan-in-delivery queue-lock-age\" \"$SPIRA_TOML\"\n"),
+            out.ends_with("arm with: spira-config set spira.reconciler_shadow_kinds \"Lifecycle Alarms batch-landed queue-mergeable lc-orphan-in-delivery queue-lock-age flow:velocity:queue flow:round-health\" \"$SPIRA_TOML\"\n"),
             "{out}"
         );
         assert!(out.contains("[ok] sections-fresh") && out.contains("[ok] shadow-passes"), "{out}");

@@ -2199,16 +2199,24 @@ fn describe(verdict: &Verdict) -> String {
 // not a bead. It goes to the Concierge inbox as one note per gap streak — `should_alert` keys
 // the streak by when it began, so a gap that persists is not re-sent every pass.
 fn escalate(rules: &Rules, acts: &mut Vec<Act>, alerted: &mut AlertedSinceMap, key: &str, verdict: &Verdict, last_remedy: Option<&str>) {
+    let shadowed = is_shadowed(&rules.shadow_kinds, kind_of(key));
     let (fire, next) = should_alert(verdict, alerted.get(key).copied());
-    match next {
-        Some(since) => alerted.insert(key.to_string(), since),
-        None => alerted.remove(key),
-    };
+    if !shadowed {
+        match next {
+            Some(since) => alerted.insert(key.to_string(), since),
+            None => alerted.remove(key),
+        };
+    }
     if !fire {
         return;
     }
     let subject = format!("RECONCILER: {} — {}", key, describe(verdict));
     let evidence = compose_alert(key, rules.now_secs, verdict, last_remedy);
+    if shadowed {
+        acts.push(Act::Log(format!("reconciler: {key} → escalation held (shadow)")));
+        event(acts, "shadow-page", key, &subject, 1.0, None);
+        return;
+    }
     acts.push(Act::Log(format!("reconciler: {} → escalate", key)));
     let body = format!("## Alert\n{subject}\n\nThe reconciler found a structural gap that has outlasted its grace period.\n\n{evidence}");
     acts.push(Act::Mail {
@@ -2879,6 +2887,34 @@ mod tests {
             assert!(matches!(observe_cockpit(&down).raw, RawStatus::Gap { observed, .. } if observed == "no server"));
         }
         assert_eq!(launches(&log), "", "a server the host knows is down needs no tmux to say so");
+    }
+
+    fn escalation_acts(shadow: &[&str]) -> Vec<Act> {
+        let rules = Rules { now_secs: 100, grace_secs: 0, effect_passes: 2, shadow_kinds: shadow.iter().map(|k| k.to_string()).collect() };
+        let raw = RawStatus::Gap { desired: "up".into(), observed: "down".into(), since_hint: None };
+        decide(&rules, &mut StateMap::new(), &mut PendingMap::new(), &mut AlertedSinceMap::new(), Check { key: "fleet:a".into(), raw, remedy: Remedy::Escalate })
+    }
+
+    #[test]
+    fn a_shadowed_kinds_page_is_recorded_not_sent_and_an_unshadowed_kinds_page_is_sent() {
+        let sent = |acts: &[Act]| acts.iter().any(|a| matches!(a, Act::Mail { .. }));
+        let recorded = |acts: &[Act]| acts.iter().any(|a| matches!(a, Act::Event(e) if e.event == "shadow-page" && e.key == "fleet:a"));
+        let live = escalation_acts(&["disk"]);
+        assert!(sent(&live) && !recorded(&live));
+        let held = escalation_acts(&["fleet"]);
+        assert!(!sent(&held) && recorded(&held));
+    }
+
+    #[test]
+    fn a_page_held_while_shadowed_is_still_sent_once_the_kind_is_unshadowed() {
+        let raw = || RawStatus::Gap { desired: "up".into(), observed: "down".into(), since_hint: None };
+        let mut alerted = AlertedSinceMap::new();
+        let mut pass = |shadow: &[&str]| {
+            let rules = Rules { now_secs: 100, grace_secs: 0, effect_passes: 2, shadow_kinds: shadow.iter().map(|k| k.to_string()).collect() };
+            decide(&rules, &mut StateMap::new(), &mut PendingMap::new(), &mut alerted, Check { key: "fleet:a".into(), raw: raw(), remedy: Remedy::Escalate })
+        };
+        assert!(!pass(&["fleet"]).iter().any(|a| matches!(a, Act::Mail { .. })));
+        assert!(pass(&[]).iter().any(|a| matches!(a, Act::Mail { .. })));
     }
 
     fn test_config() -> Config {
