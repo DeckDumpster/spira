@@ -122,7 +122,7 @@ mod store_client_tests {
 mod no_bead_fork {
     #[test]
     fn this_crate_files_through_the_content_door_and_forks_no_bead_tool() {
-        let found = bead::door::forks_a_bead_tool(include_str!("real.rs"));
+        let found = bead::door::forks_a_bead_tool_under(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
         assert!(found.is_empty(), "a bead tool is forked:\n{}", found.join("\n"));
     }
 }

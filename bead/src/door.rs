@@ -83,6 +83,24 @@ pub fn amend(client: &LcClient, id: &str, change: Change, note: &str) -> Result<
     write(client, &["content", "note", id, "--stdin"], Some(&note)).map(|_| ())
 }
 
+/// Every bead-tool fork in the Rust under `dir`, as `file:line: text`.
+pub fn forks_a_bead_tool_under(dir: &std::path::Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(d) = pending.pop() {
+        for entry in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let source = std::fs::read_to_string(&path).unwrap_or_default();
+                found.extend(forks_a_bead_tool(&source).into_iter().map(|l| format!("{}:{l}", path.display())));
+            }
+        }
+    }
+    found
+}
+
 /// The lines of `source` (a crate's Rust) that name a bead tool to run: `bead.sh`, `bdq`, or a
 /// spawn of `bead`. Comments are not code.
 pub fn forks_a_bead_tool(source: &str) -> Vec<String> {
