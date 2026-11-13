@@ -398,6 +398,11 @@ pub enum DestroyBranchErr {
 #[allow(clippy::too_many_arguments)]
 pub fn destroy_branch(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo: &Path, why: &str, caller: &str, base: Option<&str>, bd: &dyn ClaimProbe) -> Result<(), DestroyBranchErr> {
     let g = Git(repo);
+    if !g.ok(&["rev-parse", "--git-dir"]) {
+        let msg = format!("{} is not a git repository, so branch {br} was not looked for", repo.display());
+        reaplog(reaplog_path, "REFUSED", id, &msg);
+        return Err(DestroyBranchErr::Failed(msg));
+    }
     if !g.branch_exists(br) {
         return Ok(());
     }
@@ -443,6 +448,15 @@ pub fn destroy_branch(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo:
     }
     reaplog(reaplog_path, "REMOVED", id, &format!("branch {br}"));
     Ok(())
+}
+
+/// The checkout `destroy-branch` acts on: an existing directory is taken as the path, anything
+/// else is a registry name resolved to its root. An unknown name is an error, never a path.
+pub fn resolve_repo(reg: &spira_config::repos::Registry, arg: &str) -> Result<PathBuf, String> {
+    if Path::new(arg).is_dir() {
+        return Ok(PathBuf::from(arg));
+    }
+    reg.root(arg).map(PathBuf::from).ok_or_else(|| format!("{arg} is neither a directory nor a registered repository"))
 }
 
 /// 0 (recovery off) when the key cannot be read: a lock is never moved on a guessed threshold.
@@ -701,6 +715,54 @@ mod tests {
                 DestroyBranchErr::Failed(m) => write!(f, "Failed({m})"),
             }
         }
+    }
+
+    fn fixture_repo(run: &Path) -> PathBuf {
+        let repo = run.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        for args in [&["init", "-q", "-b", "main"][..], &["commit", "-q", "--allow-empty", "-m", "base"], &["branch", "spira/sp-gone"]] {
+            let o = Command::new("git").arg("-C").arg(&repo).args(args).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").output().unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        }
+        repo
+    }
+
+    #[test]
+    fn destroy_branch_deletes_the_local_ref_and_the_ref_is_gone_after() {
+        let run = tempdir();
+        let repo = fixture_repo(&run);
+        assert!(destroy_branch(&run, &run.join("reap.log"), "sp-gone", "spira/sp-gone", &repo, "test", "hel", None, &open()).is_ok());
+        assert!(!Git(&repo).branch_exists("spira/sp-gone"));
+    }
+
+    #[test]
+    fn destroy_branch_on_a_path_that_is_no_repository_fails_rather_than_report_success() {
+        let run = tempdir();
+        let not_a_repo = run.join("spira");
+        std::fs::create_dir_all(&not_a_repo).unwrap();
+        let r = destroy_branch(&run, &run.join("reap.log"), "sp-gone", "spira/sp-gone", &not_a_repo, "test", "hel", None, &open());
+        assert!(matches!(r, Err(DestroyBranchErr::Failed(ref m)) if m.contains("not a git repository")), "{r:?}");
+    }
+
+    #[test]
+    fn destroy_branch_a_hook_refuses_fails_with_the_hooks_reason_and_the_ref_stays() {
+        let run = tempdir();
+        let repo = fixture_repo(&run);
+        let hook = repo.join(".git/hooks/reference-transaction");
+        testkit::write_exe(&hook, "#!/bin/sh\ncat >/dev/null\n[ \"$1\" = prepared ] && { echo 'fence: backups are not deletable' >&2; exit 1; }\nexit 0\n");
+        let r = destroy_branch(&run, &run.join("reap.log"), "sp-gone", "spira/sp-gone", &repo, "test", "hel", None, &open());
+        assert!(matches!(r, Err(DestroyBranchErr::Failed(ref m)) if m.contains("backups are not deletable")), "{r:?}");
+        assert!(Git(&repo).branch_exists("spira/sp-gone"));
+    }
+
+    #[test]
+    fn resolve_repo_takes_a_directory_as_is_and_a_name_through_the_registry() {
+        let t = tempdir();
+        let reg = spira_config::repos::Registry::new(Some(&format!("spira|{}|push\n", t.display())), &Default::default(), t.path());
+        let elsewhere = tempdir();
+        assert_eq!(resolve_repo(&reg, elsewhere.path().to_str().unwrap()).unwrap(), elsewhere.path());
+        assert_eq!(resolve_repo(&reg, "spira").unwrap(), t.path());
+        assert!(resolve_repo(&reg, "nowhere").is_err());
     }
 
     // ---- holder_witnesses ------------------------------------------------------------------
