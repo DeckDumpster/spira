@@ -804,6 +804,10 @@ mod tests {
     }
 
     impl Bd for FakeBd {
+        fn list_github_json(&self) -> Option<serde_json::Value> {
+            self.list_all_json()
+        }
+
         fn list_all_json(&self) -> Option<serde_json::Value> {
             Some(self.all.borrow().clone())
         }

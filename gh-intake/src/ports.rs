@@ -44,9 +44,7 @@ pub trait Bd {
 
     /// Only the beads whose external reference is `github:…`, with the columns the closeout
     /// reads. A store that holds no such bead answers an empty list, not `None`.
-    fn list_github_json(&self) -> Option<serde_json::Value> {
-        self.list_all_json()
-    }
+    fn list_github_json(&self) -> Option<serde_json::Value>;
 
     /// `bd -C <db> create <title> --external-ref <ref> --labels <labels> -t bug -p <priority>
     /// --body-file -`, body on stdin. Returns whether the call succeeded.
