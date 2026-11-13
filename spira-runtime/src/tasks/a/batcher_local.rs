@@ -2213,6 +2213,29 @@ pub mod edge {
     use runtime::units::{ScopeSpec, UnitSpec, UNIT_RUN_SCOPE, UNIT_START};
 
     use super::{Assembled, Landed, Leg, Member, Opened, Promoted, Repo, Round, Snapshot};
+
+    /// Each gate-red row's mark, followed by where the gate recorded the failure when it did.
+    pub(super) fn with_failing(rows: Vec<(String, String, String)>, failing: impl Fn(&str, &str) -> Option<String>) -> Vec<(String, String, String)> {
+        rows.into_iter()
+            .map(|(id, tip, mark)| match failing(&id, &tip) {
+                Some(at) => (id, tip, format!("{mark}; {at}")),
+                None => (id, tip, mark),
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    mod failing_tests {
+        use super::with_failing;
+
+        #[test]
+        fn a_gate_red_mark_gains_the_failing_step_and_line_only_where_the_gate_recorded_one() {
+            let rows = vec![("a".to_string(), "t1".to_string(), "suites-failed".to_string()), ("b".to_string(), "t2".to_string(), "no-rebase".to_string())];
+            let got = with_failing(rows, |id, _| (id == "a").then(|| "failing step: s; failing line: error: x".to_string()));
+            assert_eq!(got[0].2, "suites-failed; failing step: s; failing line: error: x");
+            assert_eq!(got[1].2, "no-rebase");
+        }
+    }
     use crate::{Effects, EffectSpec};
 
     /// The seam's environment from the pinned config, as the `batcher` binary builds it.
@@ -2420,13 +2443,7 @@ pub mod edge {
             let driven = io::certify_driven(env, &repo.name, &r.id);
             let unfit = io::round_certifiable(env, repo, &r.id).err();
             let queue = landing_pass::gateq::GateQueue::new(&env.run);
-            let gate_red = io::gate_red_rows(env, &r.members)
-                .into_iter()
-                .map(|(id, tip, mark)| match queue.failing_at(&repo.name, &format!("spira/{id}"), &tip) {
-                    Some(at) => (id, tip, format!("{mark}; {at}")),
-                    None => (id, tip, mark),
-                })
-                .collect();
+            let gate_red = with_failing(io::gate_red_rows(env, &r.members), |id, tip| queue.failing_at(&repo.name, &format!("spira/{id}"), tip));
             Round { id: r.id, members: r.members, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
         });
         let open_round = open.next();

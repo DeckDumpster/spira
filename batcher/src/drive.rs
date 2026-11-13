@@ -4260,6 +4260,21 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_ejection_carries_the_probe_of_that_member_alone_and_only_the_tail_of_a_long_one() {
+        let said = vec![
+            (vec!["m1".to_string(), "m2".to_string()], "pair output".to_string()),
+            (vec!["m2".to_string()], format!("{}tail-é", "x".repeat(MAX_PROBE_OUTPUT * 2))),
+            (vec!["m3".to_string()], "last output".to_string()),
+        ];
+        let eject = |id: &str| Action::Eject { id: id.into(), line: "red".into() };
+        let got = with_probe_output(vec![eject("m2"), eject("m9")], &said);
+        let Action::Eject { line, .. } = &got[0] else { panic!() };
+        assert!(line.starts_with("red\n") && line.ends_with("tail-é") && line.len() <= 4 + MAX_PROBE_OUTPUT + 1, "{}", line.len());
+        let Action::Eject { line, .. } = &got[1] else { panic!() };
+        assert_eq!(line, "red\nlast output", "a member never probed alone gets the last red probe");
+    }
+
+    #[test]
     fn a_unit_test_red_one_member_causes_alone_ejects_that_member() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(unit_red_together(&["m2"]));
