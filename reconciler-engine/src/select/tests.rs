@@ -322,3 +322,9 @@ fn a_closed_fleet_with_nothing_addressed_reports_neither_a_missing_lever_nor_a_t
     let p = plan(vec![fleet(&["HostShedding"], 0.5, json!([]))], json!({}));
     assert_eq!(p, Plan::default(), "{p:?}");
 }
+
+#[test]
+fn a_closed_fleet_still_raises_for_a_saturated_condition_still_open_on_it() {
+    let p = plan(vec![fleet(&["Saturated"], 0.5, fleet_actions())], fleet_knobs());
+    assert_eq!(p.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(), ["max-live-dwarves-raise"], "{p:?}");
+}
