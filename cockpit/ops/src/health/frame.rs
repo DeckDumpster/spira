@@ -314,14 +314,14 @@ mod tests {
 
     #[test]
     fn landed_in_24h_is_the_lifecycle_sections_count_and_unread_is_a_question_mark() {
-        let landed = |content: &'static str| {
+        let lands_line = |content: &'static str| {
             let mut inputs = base_inputs();
             inputs.snapshot_content = content;
             inputs.snapshot_exists = true;
             render(120, 120, &inputs).into_iter().find(|l| l.contains("in 24h")).expect("the landed line")
         };
-        let read = landed("SP_LC_LANDED_24H='80'\nSP_BEADS_LANDED_24H='7'\n");
+        let read = lands_line("SP_LC_LANDED_24H='80'\nSP_BEADS_LANDED_24H='7'\n");
         assert!(read.contains("landed") && read.contains("80 in 24h") && !read.contains('7'), "{read}");
-        assert!(landed("SP_AT='1'\n").contains("? in 24h"));
+        assert!(lands_line("SP_AT='1'\n").contains("? in 24h"));
     }
 }
