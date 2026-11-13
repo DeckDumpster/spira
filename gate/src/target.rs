@@ -536,17 +536,16 @@ mod tests {
     }
 
     #[test]
-    fn short_room_is_a_refusal_never_the_disk() {
+    fn a_trial_starts_on_a_root_reporting_less_free_space_and_memory_than_the_old_floors() {
         let s = Scratch::new("short");
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
-        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 4096, min_mem_mib: 1, shed_free_mib: 0 }, &|_| Some(100), &mem, &|_| false).unwrap_err();
-        assert!(e.contains("100 MiB free") && e.contains("refusing to build on the disk"), "{e}");
-        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 1, min_mem_mib: 4096, shed_free_mib: 0 }, &roomy, &|| 12, &|_| false).unwrap_err();
-        assert!(e.contains("MemAvailable is 12 MiB"), "{e}");
-        assert!(!tree.join("target").exists(), "nothing linked, nothing built");
-        assert!(prepare(&root, &trees, &tree, &lim(100), &|_| None, &mem, &|_| false).is_err(), "an unreadable root refuses");
+        let lim = Limits { cap_mib: 100, min_free_mib: 4096, min_mem_mib: 4096, shed_free_mib: 0 };
+        let p = prepare(&root, &trees, &tree, &lim, &|_| Some(100), &|| 12, &|_| false).unwrap();
+        assert!(tree.join("target").is_symlink(), "linked and building");
+        assert_eq!(p.dir, root.join(".gate.harness.b"));
+        prepare(&root, &trees, &tree, &lim, &|_| None, &|| 0, &|_| false).unwrap();
     }
 
     #[test]
