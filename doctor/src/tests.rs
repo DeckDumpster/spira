@@ -250,8 +250,8 @@ impl World for Fake {
     fn sccache_dav_addr(&self) -> Option<String> {
         self.sccache_dav_addr.borrow().clone()
     }
-    fn dwarf_build_base(&self) -> Option<PathBuf> {
-        self.build_base.borrow().clone()
+    fn dwarf_build_bases(&self) -> Vec<PathBuf> {
+        self.build_base.borrow().clone().into_iter().collect()
     }
     fn on_tmpfs(&self, p: &Path) -> bool {
         self.tmpfs.borrow().iter().any(|t| p.starts_with(t))

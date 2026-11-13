@@ -351,14 +351,26 @@ pub fn on_tmpfs(p: &Path) -> bool {
     false
 }
 
-/// Bytes under `p`, not following symlinks.
+/// Bytes under `p`. A symlink at `p` itself is followed (a build directory may be a link to
+/// another disk); no symlink below it is.
 pub fn size_of(p: &Path) -> u64 {
+    match std::fs::metadata(p) {
+        Ok(md) if md.is_dir() => entries_size(p),
+        _ => within(p),
+    }
+}
+
+fn within(p: &Path) -> u64 {
     use std::os::unix::fs::MetadataExt;
     let Ok(md) = std::fs::symlink_metadata(p) else { return 0 };
     if !md.is_dir() {
         return md.blocks() * 512;
     }
-    std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| size_of(&e.path())).sum()).unwrap_or(0)
+    entries_size(p)
+}
+
+fn entries_size(p: &Path) -> u64 {
+    std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| within(&e.path())).sum()).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -380,6 +392,21 @@ mod tests {
         assert_eq!(std::fs::metadata(&sparse).unwrap().len(), 512 * 1024);
         assert!(size_of(&sparse) < 512 * 1024, "length is not usage: unallocated blocks do not count");
         assert!(size_of(&dense) >= 512 * 1024, "allocated blocks count");
+    }
+
+    #[test]
+    fn size_follows_a_link_at_the_root_but_not_below_it() {
+        let d = testkit::TempDir::new("size-link");
+        let real = d.path().join("real");
+        fill(&real.join("x"), 512);
+        let elsewhere = d.path().join("elsewhere");
+        fill(&elsewhere.join("big"), 512);
+        std::os::unix::fs::symlink(&elsewhere, real.join("inner")).unwrap();
+        let link = d.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(size_of(&link) >= 512 * 1024, "a linked build directory holds what its target holds");
+        assert!(size_of(&link) < 1024 * 1024, "a link below the root is not followed");
+        assert_eq!(size_of(&link), size_of(&real));
     }
 
     fn bin_dir(with: bool) -> (testkit::TempDir, String) {

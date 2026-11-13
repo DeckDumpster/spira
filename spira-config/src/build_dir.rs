@@ -121,40 +121,9 @@ fn holds_anything(dir: &Path) -> bool {
     std::fs::read_dir(dir).is_ok_and(|mut rd| rd.next().is_some())
 }
 
-/// How long a submitted bead's reservation keeps its directory from other claimers.
-pub const RESERVE_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
-/// How long the gate waits for the submitting builder to release its reserved directory.
-pub const HELD_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
-
-fn reserve_path(base: &Path, n: u64) -> PathBuf {
-    base.join(format!("dir.{n}.reserved"))
-}
-
-/// The label the gate leases under for `bead`; the reservation is made out to it.
-pub fn gate_label(bead: &str) -> String {
-    format!("gate {bead}")
-}
-
-/// Who the slot is reserved for, while the reservation is younger than [`RESERVE_TTL`].
-fn reserved_for(base: &Path, n: u64) -> Option<String> {
-    let p = reserve_path(base, n);
-    let fresh = std::fs::metadata(&p).and_then(|m| m.modified()).ok().and_then(|t| SystemTime::now().duration_since(t).ok()).is_some_and(|age| age < RESERVE_TTL);
-    if fresh { std::fs::read_to_string(&p).ok() } else { None }
-}
-
-/// Keep `dir` (a slot of `base`) for `who` from submit until its gate has leased it: other
-/// claimers skip it ([`lease`]), and the gate waits for the submitting builder's release.
-pub fn reserve(base: &Path, dir: &Path, who: &str) -> std::io::Result<()> {
-    let n = slot_of(base, dir).ok_or_else(|| std::io::Error::other("not a build directory of the base"))?;
-    for other in slots(base).into_iter().filter(|&o| o != n && std::fs::read_to_string(reserve_path(base, o)).is_ok_and(|r| r == who)) {
-        let _ = std::fs::remove_file(reserve_path(base, other));
-    }
-    std::fs::write(reserve_path(base, n), who)
-}
-
 /// Lease a build directory under `bases` for `who`: the most recently idled one that holds a
 /// build, else an empty idle one, else a new one on the base holding the fewest slots (the
-/// first listed on a tie). Never waits and never touches a live one or one reserved for another.
+/// first listed on a tie). Never waits and never touches a live one.
 pub fn lease(bases: &[PathBuf], who: &str) -> std::io::Result<Lease> {
     for b in bases {
         std::fs::create_dir_all(b)?;
@@ -164,7 +133,7 @@ pub fn lease(bases: &[PathBuf], who: &str) -> std::io::Result<Lease> {
     let mut order: Vec<(bool, SystemTime, usize, u64)> = bases
         .iter()
         .enumerate()
-        .flat_map(|(i, b)| slots(b).into_iter().filter(|&n| reserved_for(b, n).is_none_or(|r| r == who)).map(move |n| (holds_anything(&dir_path(b, n)), idle_since(b, n), i, n)))
+        .flat_map(|(i, b)| slots(b).into_iter().map(move |n| (holds_anything(&dir_path(b, n)), idle_since(b, n), i, n)))
         .collect();
     order.sort_by(|a, b| b.cmp(a));
     let mut won = order.iter().find_map(|&(warm, _, i, n)| try_lock(&bases[i], n).map(|f| (i, n, f, warm)));
@@ -187,7 +156,6 @@ pub fn lease(bases: &[PathBuf], who: &str) -> std::io::Result<Lease> {
     }
     let (i, n, lock, reused) = won.expect("a lock was won above");
     let base = &bases[i];
-    let _ = reserved_for(base, n).is_some_and(|r| r == who).then(|| std::fs::remove_file(reserve_path(base, n)));
     take(base, n, lock, reused, who)
 }
 
@@ -216,77 +184,6 @@ fn take(base: &Path, n: u64, mut lock: std::fs::File, reused: bool, who: &str) -
     let _ = lock.set_len(0);
     let _ = lock.write_all(who.as_bytes());
     Ok(Lease { dir, lock, reused, started: SystemTime::now() })
-}
-
-/// Why [`pick`] chose the slot it did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Why {
-    Recorded,
-    Gone,
-    Held,
-    OutsideBase,
-    Unrecorded,
-}
-
-impl Why {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Why::Recorded => "recorded",
-            Why::Gone => "gone",
-            Why::Held => "held",
-            Why::OutsideBase => "outside-base",
-            Why::Unrecorded => "unrecorded",
-        }
-    }
-}
-
-fn slot_of(base: &Path, dir: &Path) -> Option<u64> {
-    (dir.parent() == Some(base)).then(|| dir.file_name()?.to_str()?.strip_prefix("dir")?.strip_prefix('.')?.parse::<u64>().ok()).flatten()
-}
-
-/// Which slot to lease: the recorded directory's when it is a slot of `base` that exists and is
-/// not `held`, else `None` (any slot, in [`lease`]'s order), with the reason.
-pub fn pick(base: &Path, recorded: Option<&Path>, exists: &dyn Fn(&Path) -> bool, held: &dyn Fn(u64) -> bool) -> (Option<u64>, Why) {
-    let Some(rec) = recorded else { return (None, Why::Unrecorded) };
-    let Some(n) = slot_of(base, rec) else { return (None, Why::OutsideBase) };
-    if !exists(rec) || !exists(&lock_path(base, n)) {
-        return (None, Why::Gone);
-    }
-    if held(n) {
-        return (None, Why::Held);
-    }
-    (Some(n), Why::Recorded)
-}
-
-/// Lease the `recorded` directory when [`pick`] allows it, else any one ([`lease`]); with the
-/// reason. A recorded directory still held while it is reserved for `who` is waited for, up to
-/// [`HELD_WAIT`]; otherwise this never waits and never touches a live lease.
-pub fn lease_recorded(base: &Path, recorded: Option<&Path>, who: &str) -> std::io::Result<(Lease, Why)> {
-    lease_recorded_waiting(base, recorded, who, HELD_WAIT)
-}
-
-pub fn lease_recorded_waiting(base: &Path, recorded: Option<&Path>, who: &str, wait: std::time::Duration) -> std::io::Result<(Lease, Why)> {
-    let probe = |n: u64| try_lock(base, n).is_none();
-    let (mut slot, mut why) = pick(base, recorded, &|p| p.exists(), &probe);
-    if why == Why::Held {
-        let n = recorded.and_then(|r| slot_of(base, r)).expect("pick held a slot of the base");
-        if reserved_for(base, n).is_some_and(|r| r == who) {
-            let until = std::time::Instant::now() + wait;
-            while std::time::Instant::now() < until && probe(n) {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            (slot, why) = pick(base, recorded, &|p| p.exists(), &probe);
-        }
-    }
-    if let Some(n) = slot {
-        if let Some(lock) = try_lock(base, n) {
-            let warm = holds_anything(&dir_path(base, n));
-            let _ = reserved_for(base, n).is_some_and(|r| r == who).then(|| std::fs::remove_file(reserve_path(base, n)));
-            return Ok((take(base, n, lock, warm, who)?, why));
-        }
-        return Ok((lease(&[base.to_path_buf()], who)?, Why::Held));
-    }
-    Ok((lease(&[base.to_path_buf()], who)?, why))
 }
 
 /// Empty `dir` in place: everything under it goes, the directory stays. Only for a directory
@@ -402,7 +299,7 @@ pub fn evict_idle_with(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path
         return gone;
     }
     let mut idle: Vec<(SystemTime, usize, u64, u64)> =
-        sized.into_iter().filter(|&(i, n, b)| b > 0 && reserved_for(&bases[i], n).is_none()).map(|(i, n, b)| (idle_since(&bases[i], n), i, n, b)).collect();
+        sized.into_iter().filter(|&(i, n, b)| b > 0).map(|(i, n, b)| (idle_since(&bases[i], n), i, n, b)).collect();
     idle.sort();
     for (_, i, n, bytes) in idle {
         if total <= budget_bytes {
@@ -690,142 +587,6 @@ mod tests {
     }
 
     #[test]
-    fn the_recorded_idle_directory_is_leased() {
-        let d = testkit::TempDir::new("bdir-rec");
-        let base = d.path().join("base");
-        let a = lease(&[base.clone()], "sp-a").unwrap();
-        let b = lease(&[base.clone()], "sp-b").unwrap();
-        let want = a.dir().to_path_buf();
-        fill(&want.join("debug/x"), 1);
-        a.release();
-        b.release();
-        let (l, why) = lease_recorded(&base, Some(&want), "gate").unwrap();
-        assert_eq!((l.dir(), why), (want.as_path(), Why::Recorded));
-        assert!(l.reused);
-    }
-
-    #[test]
-    fn a_recorded_directory_survives_another_claim_between_submit_and_gate() {
-        let d = testkit::TempDir::new("bdir-reserve");
-        let base = d.path().join("base");
-        let builder = lease(&[base.clone()], "sp-x").unwrap();
-        let _other = lease(&[base.clone()], "sp-other").unwrap();
-        let want = builder.dir().to_path_buf();
-        fill(&want.join("debug/x"), 1);
-        reserve(&base, &want, &gate_label("sp-x")).unwrap();
-        builder.release();
-        let second = lease(&[base.clone()], "sp-y").unwrap();
-        assert_ne!(second.dir(), want.as_path(), "a reserved directory is not claimed");
-        let (g, why) = lease_recorded(&base, Some(&want), &gate_label("sp-x")).unwrap();
-        assert_eq!((g.dir(), why), (want.as_path(), Why::Recorded));
-        g.release();
-        assert!(!reserve_path(&base, 1).exists(), "leasing it ends the reservation");
-    }
-
-    #[test]
-    fn the_gate_waits_for_the_builder_to_release_a_reserved_directory() {
-        let d = testkit::TempDir::new("bdir-wait");
-        let base = d.path().join("base");
-        let builder = lease(&[base.clone()], "sp-x").unwrap();
-        let want = builder.dir().to_path_buf();
-        reserve(&base, &want, &gate_label("sp-x")).unwrap();
-        let (go, wait) = std::sync::mpsc::channel::<()>();
-        let t = std::thread::spawn(move || {
-            wait.recv().unwrap();
-            builder.release();
-        });
-        go.send(()).unwrap();
-        let (g, why) = lease_recorded_waiting(&base, Some(&want), &gate_label("sp-x"), std::time::Duration::from_secs(10)).unwrap();
-        t.join().unwrap();
-        assert_eq!((g.dir(), why), (want.as_path(), Why::Recorded));
-    }
-
-    #[test]
-    fn an_expired_reservation_frees_the_directory() {
-        let d = testkit::TempDir::new("bdir-expire");
-        let base = d.path().join("base");
-        let a = lease(&[base.clone()], "sp-x").unwrap();
-        let want = a.dir().to_path_buf();
-        reserve(&base, &want, &gate_label("sp-x")).unwrap();
-        a.release();
-        let old = SystemTime::now() - RESERVE_TTL - std::time::Duration::from_secs(60);
-        std::fs::File::options().write(true).open(reserve_path(&base, 1)).unwrap().set_modified(old).unwrap();
-        assert_eq!(lease(&[base.clone()], "sp-y").unwrap().dir(), want.as_path());
-    }
-
-    #[test]
-    fn eviction_spares_a_directory_reserved_for_a_gate() {
-        let d = testkit::TempDir::new("bdir-evict-reserved");
-        let base = d.path().join("base");
-        let a = lease(&[base.clone()], "sp-x").unwrap();
-        let want = a.dir().to_path_buf();
-        fill(&want.join("debug/x"), 1);
-        reserve(&base, &want, &gate_label("sp-x")).unwrap();
-        a.release();
-        assert!(evict_idle_with(&[base.clone()], 0, &|p| if p == want { 10 } else { 0 }).is_empty());
-        assert!(want.join("debug/x").exists());
-    }
-
-    #[test]
-    fn a_resubmit_moves_the_reservation_instead_of_stranding_the_first() {
-        let d = testkit::TempDir::new("bdir-resubmit");
-        let base = d.path().join("base");
-        let a = lease(&[base.clone()], "sp-x").unwrap();
-        let b = lease(&[base.clone()], "sp-x").unwrap();
-        reserve(&base, a.dir(), &gate_label("sp-x")).unwrap();
-        reserve(&base, b.dir(), &gate_label("sp-x")).unwrap();
-        assert!(!reserve_path(&base, 1).exists());
-        assert!(reserve_path(&base, 2).exists());
-    }
-
-    #[test]
-    fn a_held_slot_is_not_waited_for_without_a_reservation_or_with_no_wait() {
-        let d = testkit::TempDir::new("bdir-nowait");
-        let base = d.path().join("base");
-        let live = lease(&[base.clone()], "sp-x").unwrap();
-        let none = std::time::Duration::ZERO;
-        assert_eq!(lease_recorded_waiting(&base, Some(live.dir()), &gate_label("sp-x"), std::time::Duration::from_secs(30)).unwrap().1, Why::Held);
-        reserve(&base, live.dir(), &gate_label("sp-x")).unwrap();
-        assert_eq!(lease_recorded_waiting(&base, Some(live.dir()), &gate_label("sp-x"), none).unwrap().1, Why::Held);
-    }
-
-    #[test]
-    fn a_recorded_directory_held_by_a_live_lease_yields_another_slot() {
-        let d = testkit::TempDir::new("bdir-held");
-        let base = d.path().join("base");
-        let live = lease(&[base.clone()], "sp-a").unwrap();
-        let (l, why) = lease_recorded(&base, Some(live.dir()), "gate").unwrap();
-        assert_eq!(why, Why::Held);
-        assert_ne!(l.dir(), live.dir());
-    }
-
-    #[test]
-    fn a_missing_recorded_directory_yields_any_slot_as_gone() {
-        let d = testkit::TempDir::new("bdir-gone");
-        let base = d.path().join("base");
-        lease(&[base.clone()], "sp-a").unwrap().release();
-        let (l, why) = lease_recorded(&base, Some(&base.join("dir.9")), "gate").unwrap();
-        assert_eq!(why, Why::Gone);
-        assert_eq!(l.dir(), base.join("dir.1"));
-    }
-
-    #[test]
-    fn a_path_outside_the_base_is_never_leased() {
-        let d = testkit::TempDir::new("bdir-outside");
-        let base = d.path().join("base");
-        let other = d.path().join("other");
-        lease(&[base.clone()], "sp-a").unwrap().release();
-        std::fs::create_dir_all(other.join("dir.1")).unwrap();
-        std::fs::write(other.join("dir.1.lock"), "").unwrap();
-        for p in [other.join("dir.1"), base.join("../other/dir.1"), base.join("dir.1/sub"), base.clone()] {
-            let (l, why) = lease_recorded(&base, Some(&p), "gate").unwrap();
-            assert_eq!(why, Why::OutsideBase, "{}", p.display());
-            assert_eq!(l.dir(), base.join("dir.1"));
-        }
-        assert_eq!(lease_recorded(&base, None, "gate").unwrap().1, Why::Unrecorded);
-    }
-
-    #[test]
     fn only_an_absolute_directory_under_the_base_is_an_owned_build_directory() {
         let d = testkit::TempDir::new("bdir-owned");
         let base = d.path().join("base");
@@ -865,10 +626,12 @@ mod tests {
     fn eviction_counts_every_base_against_one_budget() {
         let d = testkit::TempDir::new("bdir-two-bases-evict");
         let bases = [d.path().join("b"), d.path().join("c")];
-        for (i, who) in ["sp-a", "sp-b"].iter().enumerate() {
-            let l = lease(&bases, who).unwrap();
+        let ls: Vec<Lease> = ["sp-a", "sp-b"].iter().map(|who| lease(&bases, who).unwrap()).collect();
+        for (i, l) in ls.iter().enumerate() {
             fill(&l.dir().join("debug/x"), 1);
             assert_eq!(l.dir().parent(), Some(bases[i].as_path()));
+        }
+        for l in ls {
             l.release();
         }
         let held = |p: &Path| u64::from(holds_anything(p)) * 100;

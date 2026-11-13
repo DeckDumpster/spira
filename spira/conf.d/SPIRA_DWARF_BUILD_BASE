@@ -1,7 +1,7 @@
 TYPE=string
 GROUP=dwarf
 DOC=WHERE EACH BUILDING DWARF'S ONE CARGO TARGET LIVES (sp-ke0uk8): owned build directories dir.N under this base on the compile disk, each leased by one session from claim to teardown, never touched while live. Required by building dwarves; doctor warns on a tmpfs.
-SCHEMA=The compile-disk directory holding the dwarves' owned build directories (dir.N, each leased by one session for its whole bead). Targets are whole workspaces (tens of GiB): never a tmpfs.
+SCHEMA=The compile-disk directories, whitespace-separated, holding the dwarves' owned build directories (dir.N, each leased by one session for its whole bead). A new directory is made on the listed base holding the fewest; an existing one stays where it is. List one base per disk to spread builders over several. Targets are whole workspaces (tens of GiB): never a tmpfs.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # WHERE EACH BUILDING DWARF'S ONE CARGO TARGET LIVES (sp-ke0uk8). A session that builds
     # leases one directory under this base for its whole bead — its own cargo, testenv's unit

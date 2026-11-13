@@ -158,6 +158,7 @@ pub fn host_from(instance: &str, env_map: &std::collections::BTreeMap<String, St
         path_tail,
         env_bin,
         sccache_dav_addr: dav_addr,
+        sccache_dav_root: cfg("SPIRA_SCCACHE_DAV_ROOT")?,
     })
 }
 
