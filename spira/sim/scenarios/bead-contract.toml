@@ -159,6 +159,16 @@ name = "concierge_replace_without_record_refused"
 command = '''out=$(SPIRA_CONCIERGE=1 bead.sh amend {bead:amend_a} --body-file "$SPIRA_RUN/edited.md" --replace 2>&1); [ $? = 2 ] && printf '%s' "$out" | grep -q -e '--for skuld' '''
 
 [[step]]
+at = 34500
+name = "skuld_note_for_replace"
+command = '''bead.sh amend {bead:skuld_req} --note "$(printf '### Draft: amend target a\n\n'; cat "$SPIRA_RUN/edited.md")" '''
+
+[[step]]
+at = 34600
+name = "concierge_replace_with_record_replaces"
+command = '''SPIRA_CONCIERGE=1 bead.sh amend {bead:amend_a} --body-file "$SPIRA_RUN/edited.md" --replace --drafted-by {bead:skuld_req}'''
+
+[[step]]
 at = 35000
 name = "filing_without_concierge_unaffected"
 command = '''bead.sh file "plain filed" --for builder --repo sim --body-file "$SPIRA_RUN/edited.md"'''
@@ -182,3 +192,7 @@ sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor =
 [[expect]]
 name = "filing_without_concierge_unaffected"
 sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'filing_without_concierge_unaffected' AND e.exit = 0 AND b.title = 'plain filed'"
+
+[[expect]]
+name = "concierge_replace_with_record_swaps_the_body"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'concierge_replace_with_record_replaces' AND e.exit = 0 AND b.title = 'amend target a' AND b.body LIKE '%an edited build%'"

@@ -244,6 +244,7 @@ pub fn has_build_spec(text: &str) -> bool {
 /// (ending the note or a line), on a request labelled `skuld_label`; else the refusal text.
 pub fn skuld_drafted(title: &str, body: &str, skuld_label: &str, request: &str, labels: &[String], notes: &str) -> Result<(), String> {
     let how = "get a draft or review first: bead.sh file \"<title>\" --for skuld --repo <r> --body-file <the intent, or your draft for review>; then file the text of the note Skuld leaves with --drafted-by <that id>";
+    let body = body.replace("\r\n", "\n");
     let body = body.trim();
     if body.is_empty() {
         return Err(format!("the body is empty; {how}"));
@@ -254,8 +255,8 @@ pub fn skuld_drafted(title: &str, body: &str, skuld_label: &str, request: &str, 
     let wanted = format!("### Draft: {}\n\n{body}", title.trim());
     let notes = notes.replace("\r\n", "\n");
     let held = notes.match_indices(&wanted).any(|(at, m)| {
-        let rest = &notes[at + m.len()..];
-        rest.is_empty() || rest.starts_with('\n')
+        let rest = notes[at + m.len()..].trim_start();
+        rest.is_empty() || rest.starts_with("Open:") || rest.starts_with("### Draft:")
     });
     if held {
         Ok(())
@@ -790,6 +791,8 @@ mod tests {
         let edited = skuld_drafted("T", "body line EDITED", "draft", "sp-r", &l, notes).unwrap_err();
         assert!(edited.contains("--for skuld"));
         assert!(skuld_drafted("T", "body", "draft", "sp-r", &l, notes).is_err(), "a prefix of a line is not a match");
+        let longer = "### Draft: T\n\na\nb\nc\n";
+        assert!(skuld_drafted("T", "a\nb", "draft", "sp-r", &l, longer).is_err(), "a truncated body is not verbatim");
         assert!(skuld_drafted("U", "body line", "draft", "sp-r", &l, notes).is_err());
         assert!(skuld_drafted("T", "body line", "draft", "sp-r", &[], notes).unwrap_err().contains("--for skuld"));
         assert!(skuld_drafted("T", "  \n", "draft", "sp-r", &l, notes).unwrap_err().contains("--for skuld"));
