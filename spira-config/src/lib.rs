@@ -785,6 +785,8 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
     RetiredKey { key: "cert_idle_skip", bead: "sp-6d9th" },
     RetiredKey { key: "hook_lines", bead: "sp-o9nkc" },
+    RetiredKey { key: "lc_snapshot", bead: "sp-hpv48b.2" },
+    RetiredKey { key: "lc_snapshot_secs", bead: "sp-hpv48b.2" },
     RetiredKey { key: "answer_state", bead: "sp-xsl8i" },
     RetiredKey { key: "answer_mark", bead: "sp-xsl8i" },
     RetiredKey { key: "answer_comment_mark", bead: "sp-xsl8i" },
