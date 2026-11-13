@@ -221,7 +221,7 @@ SNAP
 h_pass="$(run_health)"
 want   "pass_secs: 'pass 247s' in header"   "pass 247s"  "$h_pass"
 
-# SP_PASS_SECS absent → 'pass' does not appear at all (key is optional)
+# SP_PASS_SECS absent → no 'pass Ns' duration (the goodput line's 'pass ?' is a different key)
 cat > "$RUN/cockpit.env" <<'SNAP'
 SP_AT='1000000000'
 SP_SENTINEL_TIMER='1'
@@ -236,7 +236,7 @@ SP_SELF_STARVED_W='0'
 SP_SELF_STARVED_LAST='-'
 SNAP
 h_nopass="$(run_health)"
-nowant "no pass_secs: 'pass ' not in header" "pass " "$h_nopass"
+nowant "no pass_secs: no 'pass Ns' in header" "pass" "$(grep -oE 'pass [0-9]+s' <<< "$h_nopass")"
 
 # ======================================================================================
 echo
