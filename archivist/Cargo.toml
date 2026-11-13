@@ -2,6 +2,7 @@
 name = "archivist"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "archivist — rescue a full session's unfinished business before it is cleared: the sweep and its per-session archive run, the drift-ordered candidate budget, the transcript digest, and the daily digest mail. Replaces spira/archivist.sh."
 
 [features]
@@ -22,3 +23,8 @@ test = false
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "exit_commit"
+path = "tests/exit_commit.rs"
+required-features = ["integration"]
