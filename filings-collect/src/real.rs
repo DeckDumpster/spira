@@ -1,16 +1,11 @@
 use crate::{Filing, Host, World};
 use spira_config::bounded::bounded_for;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-static BODY_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
 const PERSONA: &str = "builder";
 
 pub struct Real {
     pub ssh: String,
-    pub bead: String,
     client: spira_store::lc_call::LcClient,
 }
 
@@ -21,7 +16,7 @@ impl Real {
 
     /// Store reads through `client`.
     pub fn over(client: spira_store::lc_call::LcClient) -> Real {
-        Real { ssh: "ssh".into(), bead: "bead.sh".into(), client }
+        Real { ssh: "ssh".into(), client }
     }
 }
 
@@ -43,22 +38,6 @@ impl Real {
         let mut c = bounded_for(&self.ssh, "60");
         c.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", &h.ssh, script]);
         run(c)
-    }
-
-    fn bead(&self, args: &[&str]) -> Result<String, String> {
-        // batch-job: bead.sh opens the store and runs as long as the filing takes
-        // FORK-EDGE: content store write (bead.sh file/amend, the operator filing tool)
-        let mut c = bounded_for(&self.bead, "120");
-        c.args(args);
-        run(c)
-    }
-
-    fn with_body<T>(&self, body: &str, f: impl FnOnce(&str) -> Result<T, String>) -> Result<T, String> {
-        let p: PathBuf = std::env::temp_dir().join(format!("filings-collect-{}-{}.md", std::process::id(), BODY_SEQ.fetch_add(1, Ordering::Relaxed)));
-        std::fs::write(&p, body).map_err(|e| e.to_string())?;
-        let r = f(&p.to_string_lossy());
-        let _ = std::fs::remove_file(&p);
-        r
     }
 }
 
@@ -92,12 +71,11 @@ impl World for Real {
     }
 
     fn file(&self, f: &Filing, body: &str) -> Result<String, String> {
-        let out = self.with_body(body, |p| self.bead(&["file", &f.title, "--for", PERSONA, "--repo", &f.repo, "--body-file", p]))?;
-        out.lines().rev().map(str::trim).find(|l| !l.is_empty()).map(String::from).ok_or_else(|| "bead.sh printed no id".into())
+        bead::door::file_work(&self.client, PERSONA, &f.repo, &f.title, body)
     }
 
     fn append(&self, id: &str, body: &str, note: &str) -> Result<(), String> {
-        self.with_body(body, |p| self.bead(&["amend", id, "--append-body", p, "--note", note])).map(|_| ())
+        bead::door::amend(&self.client, id, bead::door::Change::Append(body), note)
     }
 }
 
@@ -137,5 +115,14 @@ mod store_client_tests {
         assert_eq!(real.is_open("sp-gone"), Ok(false));
         assert!(real.is_open("sp-down").is_err());
         assert_eq!(t.0.lock().unwrap().len(), 4);
+    }
+}
+
+#[cfg(test)]
+mod no_bead_fork {
+    #[test]
+    fn this_crate_files_through_the_content_door_and_forks_no_bead_tool() {
+        let found = bead::door::forks_a_bead_tool(include_str!("real.rs"));
+        assert!(found.is_empty(), "a bead tool is forked:\n{}", found.join("\n"));
     }
 }

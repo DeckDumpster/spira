@@ -19,6 +19,85 @@ pub fn read(client: &LcClient, args: &[String]) -> (i32, String) {
     }
 }
 
+fn refused(r: spira_store::lc_call::Reply) -> String {
+    format!("exited {}: {}", r.code, if r.err.trim().is_empty() { r.out.trim() } else { r.err.trim() })
+}
+
+fn write(client: &LcClient, argv: &[&str], body: Option<&str>) -> Result<String, String> {
+    let sent = match body {
+        Some(b) => client.call_stdin(argv, b),
+        None => client.call(argv),
+    };
+    match sent {
+        Ok(r) if r.code == 0 => Ok(r.out),
+        Ok(r) => Err(refused(r)),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// `bead.sh file --for <persona> --repo <repo>` through the door: the new bead's id. The door
+/// applies the filing contract and writes the bead's lifecycle row.
+pub fn file_work(client: &LcClient, persona: &str, repo: &str, title: &str, body: &str) -> Result<String, String> {
+    file_under(client, &crate::filing::work_labels(&std::path::PathBuf::from(std::env::var("SPIRA_HOME").unwrap_or_default()), persona, repo)?, persona, repo, title, body)
+}
+
+fn file_under(client: &LcClient, labels: &str, persona: &str, repo: &str, title: &str, body: &str) -> Result<String, String> {
+    let out = write(client, &["content", "create", title, "--labels", labels, "--body-file", "-", "--silent"], Some(body))?;
+    let id = out.lines().rev().map(str::trim).find(|l| !l.is_empty()).ok_or("the door printed no id")?.to_string();
+    spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", persona), ("repo", repo), ("kind", "work")]);
+    Ok(id)
+}
+
+/// `bead.sh label add <id> <label>` through the door.
+pub fn label_add(client: &LcClient, id: &str, label: &str) -> Result<(), String> {
+    write(client, &["content", "label", "add", id, label], None).map(|_| ())
+}
+
+/// What `bead.sh amend` does to a description.
+pub enum Change<'a> {
+    Replace(&'a str),
+    Append(&'a str),
+}
+
+/// `bead.sh amend <id>` through the door: the description changed, then `note` recorded. A bead a
+/// builder holds keeps its description (the door refuses an unacknowledged edit): the note is
+/// recorded alone, with an appended text added to it, so the holder reads the change.
+pub fn amend(client: &LcClient, id: &str, change: Change, note: &str) -> Result<(), String> {
+    let (new, added) = match change {
+        Change::Replace(b) => (b.to_string(), None),
+        Change::Append(b) => {
+            let shown = write(client, &["content", "show", id, "--json"], None)?;
+            let old = crate::parse_description(&shown).ok_or_else(|| format!("cannot read the current description of {id}"))?;
+            (crate::appended_body(&old, b, &spira_otel::utc_date(std::time::SystemTime::now())), Some(b))
+        }
+    };
+    let mut note = note.to_string();
+    if let Err(e) = write(client, &["content", "update", id, "--body-file", "-"], Some(&new)) {
+        if !crate::claimdesc::is_refusal(&e) {
+            return Err(e);
+        }
+        if let Some(b) = added {
+            note = format!("{note}\n\n{b}");
+        }
+    }
+    write(client, &["content", "note", id, "--stdin"], Some(&note)).map(|_| ())
+}
+
+/// The lines of `source` (a crate's Rust) that name a bead tool to run: `bead.sh`, `bdq`, or a
+/// spawn of `bead`. Comments are not code.
+pub fn forks_a_bead_tool(source: &str) -> Vec<String> {
+    let spawners = ["Command::new(", "bounded(", "bounded_for("];
+    source
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            let code = l.split("//").next().unwrap_or("");
+            code.contains("\"bead.sh\"") || code.contains("\"bdq\"") || spawners.iter().any(|s| code.contains(&format!("{s}\"bead\"")))
+        })
+        .map(|(n, l)| format!("{}: {}", n + 1, l.trim()))
+        .collect()
+}
+
 /// The open ideas under `label`, newest first; `Err` carries the failing exit code.
 pub fn ideas(client: &LcClient, label: &str) -> Result<Vec<IdeaRow>, i32> {
     let mut args = vec!["list".to_string()];
@@ -220,5 +299,78 @@ mod tests {
         assert!(rows.is_empty());
         let want: Vec<String> = ["content", "list", "--status", "open", "--label", "idea-x", "--limit", "0", "--json"].map(String::from).to_vec();
         assert_eq!(fake.requests(), vec![want]);
+    }
+
+    struct Door(std::sync::Mutex<Vec<(Vec<String>, Option<String>)>>, Vec<(&'static str, i32, &'static str)>);
+
+    impl spira_store::lc_call::Transport for Door {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            self.0.lock().unwrap().push((argv.to_vec(), stdin.map(str::to_string)));
+            let (_, code, text) = self.1.iter().find(|(v, _, _)| argv[1] == *v).copied().unwrap_or(("", 0, ""));
+            Ok(spira_store::lc_call::Reply { code, out: if code == 0 { text.into() } else { String::new() }, err: if code == 0 { String::new() } else { text.into() } })
+        }
+    }
+
+    fn door(answers: Vec<(&'static str, i32, &'static str)>) -> (Arc<Door>, LcClient) {
+        let d = Arc::new(Door(Default::default(), answers));
+        (d.clone(), LcClient::over(d, true))
+    }
+
+    #[test]
+    fn a_work_filing_reaches_the_door_as_one_create_with_the_body_on_stdin_and_its_id_is_the_last_line() {
+        let (d, client) = door(vec![("create", 0, "noise\nsp-new\n")]);
+        assert_eq!(file_under(&client, "lane-x,repo:deck", "builder", "deck", "T", "the body"), Ok("sp-new".to_string()));
+        let sent = d.0.lock().unwrap().clone();
+        let want: Vec<String> = ["content", "create", "T", "--labels", "lane-x,repo:deck", "--body-file", "-", "--silent"].map(String::from).to_vec();
+        assert_eq!(sent, vec![(want, Some("the body".to_string()))]);
+    }
+
+    #[test]
+    fn a_filing_the_door_refuses_is_an_error_carrying_its_text() {
+        let (_, client) = door(vec![("create", 2, "bead: refusing: no build spec\n")]);
+        let e = file_under(&client, "l", "builder", "deck", "T", "b").unwrap_err();
+        assert_eq!(e, "exited 2: bead: refusing: no build spec");
+    }
+
+    #[test]
+    fn an_amend_replaces_the_description_then_notes_it() {
+        let (d, client) = door(vec![]);
+        amend(&client, "sp-a", Change::Replace("new"), "moved").unwrap();
+        let sent = d.0.lock().unwrap().clone();
+        assert_eq!(sent[0], (["content", "update", "sp-a", "--body-file", "-"].map(String::from).to_vec(), Some("new".to_string())));
+        assert_eq!(sent[1], (["content", "note", "sp-a", "--stdin"].map(String::from).to_vec(), Some("moved".to_string())));
+    }
+
+    #[test]
+    fn an_append_keeps_the_old_description_under_a_dated_separator() {
+        let (d, client) = door(vec![("show", 0, r#"[{"description":"old"}]"#)]);
+        amend(&client, "sp-a", Change::Append("more"), "again").unwrap();
+        let sent = d.0.lock().unwrap().clone();
+        let body = sent[1].1.clone().unwrap();
+        assert!(body.starts_with("old\n\n--- appended ") && body.ends_with("---\n\nmore\n"), "{body}");
+    }
+
+    #[test]
+    fn a_held_beads_amend_is_noted_alone_with_the_appended_text_and_a_refused_one_writes_nothing() {
+        let claimed = "bead: sp-a is claimed by dwarf-sp-a (lease expires x) — editing. Pass --force-claimed \"<reason>\" to override.\n";
+        let (d, client) = door(vec![("update", 1, claimed)]);
+        amend(&client, "sp-a", Change::Replace("new"), "moved").unwrap();
+        assert_eq!(d.0.lock().unwrap().last().unwrap().1.as_deref(), Some("moved"), "a replacement the holder is told of by the note");
+        let (d, client) = door(vec![("show", 0, r#"[{"description":"old"}]"#), ("update", 1, claimed)]);
+        amend(&client, "sp-a", Change::Append("more"), "again").unwrap();
+        assert_eq!(d.0.lock().unwrap().last().unwrap().1.as_deref(), Some("again\n\nmore"));
+        let (d, client) = door(vec![("update", 2, "bead: refusing: the text contradicts a statute\n")]);
+        assert!(amend(&client, "sp-a", Change::Replace("new"), "moved").unwrap_err().contains("contradicts a statute"));
+        assert_eq!(d.0.lock().unwrap().len(), 1, "no note follows a refused body");
+    }
+
+    #[test]
+    fn a_planted_bead_fork_is_found_and_the_door_filing_is_not() {
+        let planted = ["let mut c = bounded_for(\"bead.sh\", \"120\");", "Command::new(\"bead\")", "let b = bounded_for(&self.bdq_path, \"1\"); x(\"bdq\")"];
+        for p in planted {
+            assert_eq!(forks_a_bead_tool(p).len(), 1, "{p}");
+        }
+        let door = "let id = bead::door::file_work(&lc, p, r, t, b)?; // was bead.sh\nlet s = doc[\"bead\"][\"state\"];";
+        assert!(forks_a_bead_tool(door).is_empty());
     }
 }

@@ -104,18 +104,8 @@ impl Real {
         std::fs::write(&self.state, text).map_err(|e| format!("cannot record {id} in {}: {e}", self.state.display()))
     }
 
-    fn body_file(body: &str) -> Result<PathBuf, String> {
-        let p = std::env::temp_dir().join(format!("kit-bump-{}.md", std::process::id()));
-        std::fs::write(&p, format!("{body}\n\n## Build\n\nBump the kit dependency at this site as described above and land the change.\n")).map_err(|e| e.to_string())?;
-        Ok(p)
-    }
-
-    fn bead(&self, args: &[&str]) -> Result<String, String> {
-        // batch-job: bead.sh opens the store and runs as long as the filing takes
-        // FORK-EDGE: content store write (bead.sh file/amend/label, the operator filing tool)
-        let mut c = bounded_for("bead.sh", "120");
-        c.args(args);
-        run(c)
+    fn body(body: &str) -> String {
+        format!("{body}\n\n## Build\n\nBump the kit dependency at this site as described above and land the change.\n")
     }
 }
 
@@ -159,20 +149,14 @@ impl World for Real {
     }
 
     fn file_bump(&self, site: &Site, title: &str, body: &str, target: &str) -> Result<String, String> {
-        let f = Self::body_file(body)?;
-        let out = self.bead(&["file", title, "--for", &self.persona, "--repo", &site.name, "--body-file", &f.to_string_lossy()]);
-        let _ = std::fs::remove_file(&f);
-        let id = out?.lines().rev().map(str::trim).find(|l| !l.is_empty()).ok_or("bead.sh printed no id")?.to_string();
+        let id = bead::door::file_work(&self.lc, &self.persona, &site.name, title, &Self::body(body))?;
         self.record(site, &id, target)?;
-        let _ = self.bead(&["label", "add", &id, LABEL]);
+        let _ = bead::door::label_add(&self.lc, &id, LABEL);
         Ok(id)
     }
 
     fn amend_bump(&self, site: &Site, open: &Open, body: &str, target: &str) -> Result<(), String> {
-        let f = Self::body_file(body)?;
-        let out = self.bead(&["amend", &open.id, "--body-file", &f.to_string_lossy(), "--replace", "--note", &format!("kit-bump: target moved to {target}")]);
-        let _ = std::fs::remove_file(&f);
-        out?;
+        bead::door::amend(&self.lc, &open.id, bead::door::Change::Replace(&Self::body(body)), &format!("kit-bump: target moved to {target}"))?;
         self.record(site, &open.id, target)
     }
 }
@@ -218,5 +202,14 @@ mod store_client_tests {
         assert!(real.open_bump(&site("c")).unwrap().is_none());
         assert!(real.open_bump(&site("d")).is_err());
         assert_eq!(t.0.lock().unwrap().len(), 4);
+    }
+}
+
+#[cfg(test)]
+mod no_bead_fork {
+    #[test]
+    fn this_crate_files_through_the_content_door_and_forks_no_bead_tool() {
+        let found = bead::door::forks_a_bead_tool(include_str!("real.rs"));
+        assert!(found.is_empty(), "a bead tool is forked:\n{}", found.join("\n"));
     }
 }

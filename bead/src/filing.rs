@@ -111,6 +111,19 @@ fn personas(home: &Path) -> Vec<Persona> {
         .collect()
 }
 
+/// The labels `bead.sh file --for <persona> --repo <repo>` files a work bead under: the
+/// persona's predicate and the repo. A persona that does not resolve is refused as `bead.sh` refuses it.
+pub fn work_labels(home: &Path, persona: &str, repo: &str) -> Result<String, String> {
+    if !spira_config::runes::runes_dir(home).join(format!("{persona}.rune")).is_file() {
+        return Err(format!("bead: no such persona: {persona}"));
+    }
+    let predicate = spira_config::runes::rune_predicate(home, persona).map_err(|e| format!("bead: {e}"))?;
+    if predicate.labels.is_empty() {
+        return Err(format!("bead: persona {persona} has no partition labels"));
+    }
+    Ok(crate::work_labels(&predicate.labels, repo))
+}
+
 /// The identity guard on `text` filed for `repo`: `Ok(Some(line))` is the line to record on
 /// the bead when the named override admitted another repo's terms.
 pub fn identity_guard(registry: &BTreeMap<String, Vec<String>>, repo: &str, text: &str, vars: &Vars) -> Result<Option<String>, Refusal> {
