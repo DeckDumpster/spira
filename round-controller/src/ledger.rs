@@ -775,14 +775,9 @@ mod tests {
              [[drive]]\npass = 1\n",
         )
         .unwrap();
-        let green_on_d1 = PassIdentity {
-            members: vec![],
-            ..ident(&[("sp-a", "1")])
-        };
-        let green_on_d1 = PassIdentity {
-            image_digest: "sha256:d1".into(),
-            ..green_on_d1
-        };
+        let green_on_d1 =
+            PassIdentity::new("lane", vec![m("sp-a", "1")], "b0", "sha256:d1", "h1", "all")
+                .unwrap();
         w.ledger
             .record_attempt(&p, &green_on_d1, "r1", &attempt(Class::Green, 1))
             .unwrap();
