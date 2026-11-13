@@ -465,7 +465,7 @@ impl Config {
         let mut out: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
         let repos = seen.get("repos").and_then(|r| r.as_object())?;
         for (batch, repo) in repos {
-            let live = repo.as_str().is_none_or(|repo| self.host.as_ref().is_none_or(|h| h.round_legs_live(repo, batch)));
+            let live = repo.as_str().is_some_and(|repo| self.host.as_ref().is_none_or(|h| h.round_legs_live(repo, batch)));
             if live {
                 out.extend(["--live-round".to_string(), batch.clone()]);
             }
@@ -2188,8 +2188,11 @@ pub fn perform(cfg: &Config, alerted: &mut AlertedSinceMap, acts: Vec<Act>) {
                     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
                     if *program == cfg.seams.spira_lc && lc_served(&argv) {
                         if argv.first() == Some(&"requeue-orphans") && argv.contains(&"--apply") {
-                            if let Some(probed) = cfg.orphan_apply_argv(&argv) {
-                                let _ = cfg.lc(&probed.iter().map(String::as_str).collect::<Vec<_>>());
+                            match cfg.orphan_apply_argv(&argv) {
+                                Some(probed) => {
+                                    let _ = cfg.lc(&probed.iter().map(String::as_str).collect::<Vec<_>>());
+                                }
+                                None => log_print(cfg, "reconciler: requeue-orphans dry run unreadable; nothing applied"),
                             }
                             continue;
                         }
@@ -2825,6 +2828,22 @@ mod tests {
         orphan_apply(&cfg);
         let argv = applied(&store);
         assert!(argv.windows(2).any(|w| w == ["--live-round", "b-live"]) && argv.windows(2).any(|w| w == ["--live-round", "b-dead"]), "{argv:?}");
+    }
+
+    #[test]
+    fn orphan_apply_without_a_readable_dry_run_applies_nothing() {
+        struct Garbled(Arc<std::sync::Mutex<Vec<String>>>);
+        impl spira_store::lc_call::Transport for Garbled {
+            fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+                self.0.lock().unwrap().extend(argv.iter().cloned());
+                Ok(spira_store::lc_call::Reply { code: 0, out: "not json".into(), err: String::new() })
+            }
+        }
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut cfg = test_config();
+        cfg.lc_client = Some(LcClient::over(Arc::new(Garbled(Arc::clone(&seen))) as Arc<dyn spira_store::lc_call::Transport>, true));
+        orphan_apply(&cfg);
+        assert!(!seen.lock().unwrap().iter().any(|a| a == "--apply"));
     }
 
     #[test]
