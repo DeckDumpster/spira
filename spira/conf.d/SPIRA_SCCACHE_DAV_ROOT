@@ -1,7 +1,7 @@
 TYPE=string
 GROUP=sccache
-DOC=WHERE THE SHARED COMPILATION CACHE STORE LIVES: the directory sccache-dav owns, rendered into systemd/sccache-dav.service
-SCHEMA=The directory the shared compilation cache (sccache-dav) keeps its entries under, rendered into the unit's SCCACHE_DAV_ROOT. Put it on a different disk from the build directories (dwarf_build_base) so the two do not compete for one device. Moving it is a copy of the old store, this key, and a unit re-render.
+DOC=WHERE THE SHARED COMPILATION CACHE STORE LIVES: the directory sccache-dav owns, rendered into systemd/sccache-dav.service; empty means SPIRA_RUN/sccache-dav
+SCHEMA=The directory the shared compilation cache (sccache-dav) keeps its entries under, rendered into the unit's SCCACHE_DAV_ROOT; empty means SPIRA_RUN/sccache-dav. Put it on a different disk from the build directories (dwarf_build_base) so the two do not compete for one device. Moving it is a copy of the old store, this key, and a unit re-render.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_SCCACHE_DAV_ROOT:=$SPIRA_RUN/sccache-dav}"
+    : "${SPIRA_SCCACHE_DAV_ROOT:=}"
 SPIRA_CONF_DEFAULT_EOF

@@ -54,7 +54,7 @@ pub struct Fake {
     pub sccache_help: RefCell<Option<String>>,
     pub sccache_show_stats: RefCell<Option<String>>,
     pub sccache_dav_addr: RefCell<Option<String>>,
-    pub build_base: RefCell<Option<PathBuf>>,
+    pub build_base: RefCell<Vec<PathBuf>>,
     pub tmpfs: RefCell<Vec<PathBuf>>,
     pub daemon_bases: RefCell<Vec<String>>,
     pub hooks_path: RefCell<Option<String>>,
@@ -109,7 +109,7 @@ impl Default for Fake {
             sccache_help: RefCell::new(None),
             sccache_show_stats: RefCell::new(None),
             sccache_dav_addr: RefCell::new(None),
-            build_base: RefCell::new(None),
+            build_base: RefCell::new(Vec::new()),
             tmpfs: RefCell::new(Vec::new()),
             daemon_bases: RefCell::new(Vec::new()),
             hooks_path: RefCell::new(None),
@@ -251,7 +251,7 @@ impl World for Fake {
         self.sccache_dav_addr.borrow().clone()
     }
     fn dwarf_build_bases(&self) -> Vec<PathBuf> {
-        self.build_base.borrow().clone().into_iter().collect()
+        self.build_base.borrow().clone()
     }
     fn on_tmpfs(&self, p: &Path) -> bool {
         self.tmpfs.borrow().iter().any(|t| p.starts_with(t))
@@ -661,13 +661,18 @@ fn build_base_check_names_an_unset_key_a_base_in_ram_and_a_good_one() {
     assert!(unset[0].msg.contains("SPIRA_DWARF_BUILD_BASE"), "{:?}", unset[0].msg);
     assert!(unset[0].detail.as_deref().unwrap_or("").contains("dwarf_build_base"), "{:?}", unset[0].detail);
 
-    *f.build_base.borrow_mut() = Some("/srv/ssd-b/dwarf-build".into());
+    *f.build_base.borrow_mut() = vec!["/srv/ssd-b/dwarf-build".into()];
     assert_eq!(levels(&check_dwarf_build(&f)), vec![Level::Ok], "a base on the compile disk is good");
 
     f.tmpfs.borrow_mut().push("/srv/ssd-b".into());
     let ram = check_dwarf_build(&f);
     assert_eq!(levels(&ram), vec![Level::Warn], "planted offender: a base in RAM must be caught");
     assert!(ram[0].msg.contains("tmpfs"), "{:?}", ram[0].msg);
+
+    *f.build_base.borrow_mut() = vec!["/srv/ssd-b/dwarf-build".into(), "/srv/ssd-c/dwarf-build".into()];
+    f.tmpfs.borrow_mut().clear();
+    f.tmpfs.borrow_mut().push("/srv/ssd-c".into());
+    assert_eq!(levels(&check_dwarf_build(&f)), vec![Level::Ok, Level::Warn], "each listed base is judged on its own");
 }
 
 // -------------------------------------------------------- compilation cache backend (sp-xtdqi)

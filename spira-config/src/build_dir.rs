@@ -126,7 +126,7 @@ fn holds_anything(dir: &Path) -> bool {
 /// first listed on a tie). Never waits and never touches a live one.
 pub fn lease(bases: &[PathBuf], who: &str) -> std::io::Result<Lease> {
     for b in bases {
-        std::fs::create_dir_all(b)?;
+        let _ = std::fs::create_dir_all(b);
     }
     // Warm ones first, most recently idled first; then empty ones. Taking each lock in that
     // order means the first one won is the best idle directory, whatever races us.
@@ -620,6 +620,24 @@ mod tests {
         assert_eq!((da.parent(), db.parent()), (Some(bases[0].as_path()), Some(bases[1].as_path())));
         a.release();
         assert_eq!(lease(&bases, "sp-c").unwrap().dir(), da, "an idle slot is reused where it lives");
+    }
+
+    #[test]
+    fn a_new_slot_goes_to_the_base_with_fewer_slots_not_the_first_listed() {
+        let d = testkit::TempDir::new("bdir-uneven");
+        let bases = [d.path().join("b"), d.path().join("c")];
+        let _crowded: Vec<Lease> = (0..3).map(|i| lease(&bases[..1], &format!("sp-{i}")).unwrap()).collect();
+        assert_eq!(lease(&bases, "sp-new").unwrap().dir().parent(), Some(bases[1].as_path()));
+    }
+
+    #[test]
+    fn a_base_that_cannot_hold_a_slot_is_skipped_for_the_next() {
+        let d = testkit::TempDir::new("bdir-unusable");
+        let file = d.path().join("not-a-dir");
+        std::fs::write(&file, "").unwrap();
+        let bases = [file.join("b"), d.path().join("c")];
+        assert_eq!(lease(&bases, "sp-a").unwrap().dir().parent(), Some(bases[1].as_path()));
+        assert!(lease(&bases[..1], "sp-b").is_err(), "positive control: with only the unusable base there is no slot");
     }
 
     #[test]
