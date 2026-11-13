@@ -100,7 +100,10 @@ fn cmd_destroy_branch(mut args: Vec<String>) -> ExitCodeLike {
     let caller = args.get(4).map(String::as_str).unwrap_or("");
     let repo = match w.resolve_repo(&args[2]) {
         Ok(r) => r,
-        Err(e) => return die(&e),
+        Err(e) => {
+            print!("{e}");
+            return 1;
+        }
     };
     let repo = repo.as_path();
     // `--base` overrides for a caller that already resolved it; otherwise resolve it the
