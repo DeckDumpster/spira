@@ -401,6 +401,25 @@ const STOP_SECS: u64 = 300;
 
 const LINT: &str = "spira-lint";
 const FENCE_PREFIX: &str = "fence-";
+/// How a low-pass filter's red is rerun on a member subset.
+#[derive(Debug, PartialEq, Eq)]
+enum Probe<'a> {
+    Lint,
+    Unit,
+    Integration,
+    Fence(&'a str),
+}
+
+fn probe_of(filter: &str) -> Option<Probe<'_>> {
+    match filter {
+        LINT => Some(Probe::Lint),
+        UNIT_TESTS => Some(Probe::Unit),
+        INTEGRATION_TESTS => Some(Probe::Integration),
+        _ => filter.strip_prefix(FENCE_PREFIX).filter(|f| !f.is_empty()).map(Probe::Fence),
+    }
+}
+
+const FENCE_PROBE_DEADLINE: &str = "300";
 
 /// Removes the results of `suites`, which are about to run again, so the old verdict is not
 /// read as the new one. A result is `<suite>.<ext>` at the top or one directory down.
@@ -488,6 +507,28 @@ impl<'a> VmRunner<'a> {
             eprintln!("batcher: {build} probe of [{tried}] faulted (rc {rc})");
         }
         built
+    }
+
+    /// Runs fence `fence` of the tree that is the base plus exactly `subset`, on the host: a fence
+    /// takes seconds and needs no build, so it does not wait for a VM. `None` when it could not run.
+    fn fence_green(&mut self, fence: &str, subset: &[Member]) -> Option<bool> {
+        let removal: Vec<Id> = self.members.iter().filter(|m| !subset.iter().any(|s| s.id == m.id)).map(|m| m.id.clone()).collect();
+        self.build_n += 1;
+        let key = format!("b{}", self.build_n);
+        let branch = self.tree_without(self.branch(&key), &key, &removal).inspect_err(|e| eprintln!("batcher: fence probe tree not built: {e}")).ok()?;
+        let out = spira_config::bounded::bounded_for("gate", FENCE_PROBE_DEADLINE)
+            .args(["fence-run", fence, "--repo"])
+            .arg(&self.repo.path)
+            .args(["--tip", &branch, "--base", &self.base_sha])
+            .stdin(Stdio::null())
+            .output()
+            .inspect_err(|e| eprintln!("batcher: fence {fence} probe: {e}"))
+            .ok()?;
+        let green = suite_probe_result(out.status.code().unwrap_or(-1));
+        if green.is_none() {
+            eprintln!("batcher: fence {fence} probe faulted: {}", String::from_utf8_lossy(&out.stderr).trim());
+        }
+        green
     }
 
     fn scope_unit(&self) -> Option<String> {
@@ -903,11 +944,11 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn filter_green_in(&mut self, name: &str, scope: &[String], subset: &[Member]) -> Option<bool> {
-        match name {
-            LINT => self.probe_subset(subset, "lint", &[], unit_probe_result),
-            UNIT_TESTS => self.probe_subset(subset, "unit", scope, unit_probe_result),
-            INTEGRATION_TESTS => self.probe_subset(subset, INTEGRATION_BUILD, scope, unit_probe_result),
-            _ => None,
+        match probe_of(name)? {
+            Probe::Lint => self.probe_subset(subset, "lint", &[], unit_probe_result),
+            Probe::Unit => self.probe_subset(subset, "unit", scope, unit_probe_result),
+            Probe::Integration => self.probe_subset(subset, INTEGRATION_BUILD, scope, unit_probe_result),
+            Probe::Fence(fence) => self.fence_green(fence, subset),
         }
     }
 
@@ -1096,6 +1137,14 @@ impl RoundRunner for VmRunner<'_> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_fence_red_is_rerun_as_that_fence_on_a_member_subset() {
+        assert_eq!(super::probe_of("fence-fixture-config"), Some(super::Probe::Fence("fixture-config")));
+        assert_eq!(super::probe_of("spira-lint"), Some(super::Probe::Lint));
+        assert_eq!(super::probe_of("fence-"), None);
+        assert_eq!(super::probe_of("boundary"), None);
+    }
+
 
     #[test]
     fn a_tree_mismatch_after_the_base_moved_says_where_it_moved_and_is_not_a_harness_fault() {
