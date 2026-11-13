@@ -11,6 +11,7 @@ hel_pace_ms = 250
 stack_shared_files = "Cargo.lock Cargo.toml spira/config-delta.toml spira/conf.d/ spira-lint/"
 scratch_max_age_hours = 24
 sccache_dav_max_gb = 40
+sccache_dav_root = ""
 round_certify_wall_secs = 900
 round_fault_backoff_secs = 300
 round_fault_retries = 3

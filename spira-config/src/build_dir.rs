@@ -469,7 +469,7 @@ mod tests {
     fn releasing_a_lease_trims_its_directory() {
         let d = testkit::TempDir::new("bdir-release-trim");
         let base = d.path().join("base");
-        let l = lease(&[base.clone()], "sp-a").unwrap();
+        let l = lease(std::slice::from_ref(&base), "sp-a").unwrap();
         touch(&l.dir().join("debug/anchor"), 0, 0);
         touch(&l.dir().join("debug/deps/old.rlib"), 30 * H, 30 * H);
         let t = l.release();
@@ -482,15 +482,15 @@ mod tests {
         let held = |p: &Path| u64::from(holds_anything(p)) * 100;
         let d = testkit::TempDir::new("bdir-live");
         let base = d.path().join("base");
-        let a = lease(&[base.clone()], "sp-a").expect("first lease");
+        let a = lease(std::slice::from_ref(&base), "sp-a").expect("first lease");
         fill(&a.dir().join("debug/deps/liba.rlib"), 64);
-        let b = lease(&[base.clone()], "sp-b").expect("second lease");
+        let b = lease(std::slice::from_ref(&base), "sp-b").expect("second lease");
         assert_ne!(a.dir(), b.dir(), "a live directory is never handed out twice");
         assert!(a.dir().join("debug/deps/liba.rlib").exists());
-        assert!(evict_idle_with(&[base.clone()], 0, &held).is_empty(), "nothing idle: a budget of zero removes nothing live");
+        assert!(evict_idle_with(std::slice::from_ref(&base), 0, &held).is_empty(), "nothing idle: a budget of zero removes nothing live");
         assert!(a.dir().join("debug/deps/liba.rlib").exists(), "the live directory is untouched under budget pressure");
         b.release();
-        let c = lease(&[base.clone()], "sp-c").expect("third lease");
+        let c = lease(std::slice::from_ref(&base), "sp-c").expect("third lease");
         assert_ne!(a.dir(), c.dir(), "still live: the released one is taken instead");
         assert!(!c.reused, "the released directory held nothing, so it is no warm start");
     }
@@ -499,7 +499,7 @@ mod tests {
     fn eviction_under_budget_pressure_removes_only_idle_directories_least_recently_used_first() {
         let d = testkit::TempDir::new("bdir-evict");
         let base = d.path().join("base");
-        let ls: Vec<Lease> = (0..4).map(|i| lease(&[base.clone()], &format!("sp-{i}")).unwrap()).collect();
+        let ls: Vec<Lease> = (0..4).map(|i| lease(std::slice::from_ref(&base), &format!("sp-{i}")).unwrap()).collect();
         let dirs: Vec<PathBuf> = ls.iter().map(|l| l.dir().to_path_buf()).collect();
         for p in &dirs {
             fill(&p.join("debug/deps/x"), 256);
@@ -517,12 +517,12 @@ mod tests {
         set_idle(&base, &dirs[1], 3 * 3600);
         set_idle(&base, &dirs[2], 2 * 3600);
         set_idle(&base, &dirs[3], 3600);
-        assert!(evict_idle_with(&[base.clone()], 1000, &held).is_empty(), "under the budget nothing goes");
-        let gone = evict_idle_with(&[base.clone()], 250, &held);
+        assert!(evict_idle_with(std::slice::from_ref(&base), 1000, &held).is_empty(), "under the budget nothing goes");
+        let gone = evict_idle_with(std::slice::from_ref(&base), 250, &held);
         assert_eq!(gone, vec![dirs[1].clone(), dirs[2].clone()], "least recently used idle first, stopping once under");
         assert!(dirs[0].join("debug/deps/x").exists(), "the live directory is never evicted, though it is the oldest");
         assert!(dirs[3].join("debug/deps/x").exists(), "under the budget once two went: the newest idle stays");
-        let gone = evict_idle_with(&[base.clone()], 0, &held);
+        let gone = evict_idle_with(std::slice::from_ref(&base), 0, &held);
         assert_eq!(gone, vec![dirs[3].clone()], "a budget the live one alone exceeds evicts every idle one and stops");
         assert!(dirs[0].join("debug/deps/x").exists());
         drop(live);
@@ -559,7 +559,7 @@ mod tests {
         let (path, log) = fake_cargo(d.path());
         let one = d.path().join("wt-one");
         workspace(&one, "pub fn b() {}\n");
-        let first = lease(&[base.clone()], "sp-one").unwrap();
+        let first = lease(std::slice::from_ref(&base), "sp-one").unwrap();
         let dir = first.dir().to_path_buf();
         clean(&script(), &one, &dir, &path, false).expect("first clean");
         assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "clean --workspace -q", "no record yet: the workspace crates are cleaned");
@@ -569,7 +569,7 @@ mod tests {
         let two = d.path().join("wt-two");
         workspace(&two, "pub fn b() { let _ = 1; }\n");
         std::fs::remove_file(&log).unwrap();
-        let second = lease(&[base.clone()], "sp-two").unwrap();
+        let second = lease(std::slice::from_ref(&base), "sp-two").unwrap();
         assert_eq!(second.dir(), dir, "the idle directory is reused, not a new empty one");
         assert!(second.reused);
         let out = clean(&script(), &two, second.dir(), &path, false).expect("second clean");
@@ -592,9 +592,9 @@ mod tests {
         let base = d.path().join("base");
         std::fs::create_dir_all(base.join("dir.1")).unwrap();
         let some = |p: &Path| Some(p.as_os_str().to_os_string());
-        assert_eq!(owned(some(&base.join("dir.1")), &[base.clone()]), Some(base.join("dir.1")));
-        assert_eq!(owned(some(&base), &[base.clone()]), None, "the base itself is no directory of its own");
-        assert_eq!(owned(some(&d.path().join("elsewhere")), &[base.clone()]), None);
+        assert_eq!(owned(some(&base.join("dir.1")), std::slice::from_ref(&base)), Some(base.join("dir.1")));
+        assert_eq!(owned(some(&base), std::slice::from_ref(&base)), None, "the base itself is no directory of its own");
+        assert_eq!(owned(some(&d.path().join("elsewhere")), std::slice::from_ref(&base)), None);
         assert_eq!(owned(some(&base.join("dir.1")), &[]), None, "no base configured: nothing is owned");
         assert_eq!(owned(Some("rel/dir.1".into()), &[PathBuf::from("rel")]), None);
     }
