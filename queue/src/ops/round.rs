@@ -53,6 +53,9 @@ const FENCE_RED_PREFIX: &str = "fence-";
 /// The fence that runs the round image's setup on the merged tree before any suite.
 pub(super) const PREFLIGHT_RED: &str = "fence-round-image-preflight";
 pub(super) const UNIT_RED: &str = "unit-tests";
+/// The merged tree's config delta does not parse or apply: the attribution's own check
+/// (`batcher::drive::CONFIG_DELTA`), which it ejects the culprit for.
+pub(super) const CONFIG_DELTA_RED: &str = "config-delta";
 
 /// The round VM's two test phases (sp-cddf76), each leaving its red as a record: the unit phase
 /// (tests inside src/) before any suite, the integration phase (tests/ and doc-tests) beside them.
@@ -131,9 +134,9 @@ pub(super) fn phase_reds(results: &std::path::Path) -> Vec<PhaseRed> {
 }
 
 /// Steps a round runs over its whole tree that are not testenv suites; only a green round proves them.
-pub const ROUND_STEPS: [&str; 3] = [BUILD_RED, LINT_RED, UNIT_RED];
+pub const ROUND_STEPS: [&str; 4] = [BUILD_RED, LINT_RED, UNIT_RED, CONFIG_DELTA_RED];
 /// The round steps `testenv --suites <step>` cannot run for a tip.
-pub const ROUND_ONLY_STEPS: [&str; 2] = [BUILD_RED, LINT_RED];
+pub const ROUND_ONLY_STEPS: [&str; 3] = [BUILD_RED, LINT_RED, CONFIG_DELTA_RED];
 
 /// A round step, a base fence the round runs before its suites (`fence-<name>`), or the testenv
 /// run of a repository that judges itself.
