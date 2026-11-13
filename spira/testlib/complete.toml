@@ -626,6 +626,7 @@ testenv_registry = ""
 testenv_unit_runner = "container"
 testenv_sandbox_target_root = ""
 gate_target_root = ""
+lc_backup_part_bytes = 134217728
 testenv_sandbox_target_keep = 24
 testenv_scratch_root = "/tmp/spira-testenv-scratch"
 testenv_foreign_target_max_gib = 40
