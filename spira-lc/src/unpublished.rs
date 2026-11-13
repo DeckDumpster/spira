@@ -1,5 +1,6 @@
-//! `unpublished <repo>` — a queue.local repo's unpublished range, measured against a forge tip
-//! fetched now (the last fetched tip, marked `stale` with its age, when the forge does not answer). Prints `{"forge_tip","landing_tip","count","oldest_arrival"}`; `oldest_arrival` is
+//! `unpublished <repo>` — a queue.local repo's unpublished range, measured against the cached forge tip
+//! (a repo never fetched fetches once, inline); a tip older than a few seconds is refreshed in the background,
+//! never waited on, and one older than minutes is marked `stale` with its age. Prints `{"forge_tip","landing_tip","count","oldest_arrival"}`; `oldest_arrival` is
 //! when the oldest unpublished commit reached the landing ref (its reflog), null at count 0.
 //! A repo declared to publish nowhere answers `{"declared_unpublished":true}`: nothing to measure, not a blindness.
 //! Exit 2, naming why, for anything it cannot measure — never a zero it did not read.
@@ -16,6 +17,10 @@ use crate::git_evidence::git_output;
 pub const DEADLINE: Duration = Duration::from_millis(4500);
 const CALL_BUDGET: Duration = Duration::from_secs(4);
 const FETCH_SECS: &str = "2";
+/// A cached forge tip fetched within this long is answered from as it stands; older, a background fetch refreshes it for the next call.
+const REFRESH_AFTER_SECS: u64 = 15;
+/// A cached forge tip older than this is named stale with its age: the background refreshes have not been landing.
+const STALE_AFTER_SECS: u64 = 300;
 
 pub fn run(args: &[String]) -> (i32, String) {
     let [name] = args else { return (2, "unpublished: usage: unpublished <repo>".into()) };
@@ -53,10 +58,18 @@ fn measure(name: &str) -> Result<serde_json::Value, String> {
     }
     let (remote, branch) = repos::publish_forge(&reg, name, &env).ok_or("it has no resolvable publish target")?;
     let tracking = format!("refs/remotes/{remote}/{branch}");
-    let stale = match fetch(repo, &remote, &branch) {
-        Ok(()) => None,
-        Err(Fetch::TimedOut) => Some(tip_age(repo, &tracking)?),
-        Err(Fetch::Failed(why)) => return Err(why),
+    let stale = match plan(last_fetch_age(repo), rev(repo, &tracking).is_ok()) {
+        Plan::Cached { refresh, stale } => {
+            if refresh {
+                refresh_in_background(repo, &remote, &branch);
+            }
+            stale
+        }
+        Plan::FetchNow => match fetch(repo, &remote, &branch) {
+            Ok(()) => None,
+            Err(Fetch::TimedOut) => Some(tip_age(repo, &tracking)?),
+            Err(Fetch::Failed(why)) => return Err(why),
+        },
     };
     let forge_tip = rev(repo, &tracking)?;
     let landing_tip = rev(repo, &base)?;
@@ -67,6 +80,42 @@ fn measure(name: &str) -> Result<serde_json::Value, String> {
         answer["forge_tip_age_secs"] = age.into();
     }
     Ok(answer)
+}
+
+#[derive(Debug, PartialEq)]
+enum Plan {
+    FetchNow,
+    Cached { refresh: bool, stale: Option<u64> },
+}
+
+fn plan(fetch_age: Option<u64>, have_tip: bool) -> Plan {
+    match fetch_age {
+        Some(age) if have_tip => Plan::Cached { refresh: age >= REFRESH_AFTER_SECS, stale: (age >= STALE_AFTER_SECS).then_some(age) },
+        _ => Plan::FetchNow,
+    }
+}
+
+/// Seconds since a fetch last completed in the checkout (FETCH_HEAD is rewritten even when no ref moved).
+fn last_fetch_age(repo: &Path) -> Option<u64> {
+    let rel = git_output(repo, &["rev-parse", "--git-path", "FETCH_HEAD"])?;
+    let modified = std::fs::metadata(repo.join(rel.trim())).ok()?.modified().ok()?;
+    Some(std::time::SystemTime::now().duration_since(modified).map_or(0, |d| d.as_secs()))
+}
+
+fn refresh_in_background(repo: &Path, remote: &str, branch: &str) {
+    let spawned = spira_config::bounded::bounded_for("git", FETCH_SECS)
+        .arg("-C")
+        .arg(repo)
+        .args(["fetch", "-q", remote, branch])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    if let Ok(mut child) = spawned {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
 }
 
 enum Fetch {
@@ -185,6 +234,37 @@ mod tests {
         assert_eq!(short.0, 2);
         assert_eq!(long.0, 2);
         assert!(short.1.is_some() && long.1.is_some());
+    }
+
+    #[test]
+    fn a_cached_forge_tip_is_answered_from_and_only_refreshed_or_named_stale_by_its_age() {
+        assert_eq!(plan(Some(1), true), Plan::Cached { refresh: false, stale: None });
+        assert_eq!(plan(Some(60), true), Plan::Cached { refresh: true, stale: None });
+        assert_eq!(plan(Some(900), true), Plan::Cached { refresh: true, stale: Some(900) });
+        assert_eq!(plan(None, true), Plan::FetchNow);
+        assert_eq!(plan(Some(1), false), Plan::FetchNow);
+    }
+
+    #[test]
+    fn fifty_unpublished_commits_are_counted_from_one_range_list_and_one_reflog_read() {
+        let scratch = testkit::TempDir::new("unpublished-fifty");
+        let dir = scratch.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "published"]);
+        let forge = git(dir, &["rev-parse", "HEAD"]);
+        for i in 0..50 {
+            git(dir, &["commit", "-q", "--allow-empty", "-m", &format!("c{i}")]);
+        }
+        let tip = git(dir, &["rev-parse", "HEAD"]);
+        git(dir, &["update-ref", "refs/remotes/origin/main", &forge]);
+        std::fs::write(dir.join(".git/FETCH_HEAD"), "").unwrap();
+        let age = last_fetch_age(dir).expect("FETCH_HEAD is read");
+        assert!(age < REFRESH_AFTER_SECS, "{age}");
+        let started = std::time::Instant::now();
+        let (count, arrival) = range_facts(dir, "main", &forge, &tip).unwrap();
+        assert_eq!(count, 50);
+        assert!(arrival.is_some());
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
