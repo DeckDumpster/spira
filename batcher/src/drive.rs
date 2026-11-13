@@ -108,6 +108,11 @@ pub trait RoundRunner {
     fn runner_survives(&mut self, _members: &[Member]) -> Option<bool> {
         None
     }
+    /// What the filter probe that last answered red printed; empty when it printed nothing or the
+    /// runner keeps no output.
+    fn probe_output(&mut self) -> String {
+        String::new()
+    }
     /// Like `filter_green`, judging only `scope` (`unitattr::rerun_scope`): the tests that failed.
     fn filter_green_in(
         &mut self,
@@ -613,23 +618,53 @@ fn probe_filter_owners<R: RoundRunner>(
     members: &[Member],
 ) -> (Vec<Action>, &'static str, String) {
     let red = format!("{} red{tests}", f.name);
-    let mut actions = bisect_members(
-        &red,
-        &mut |m| runner.filter_green_in(&f.name, scope, m),
-        members,
-    )
-    .unwrap_or_default();
+    let mut said: Vec<(Vec<Id>, String)> = vec![];
+    let mut green_in = |runner: &mut R, m: &[Member]| {
+        let v = runner.filter_green_in(&f.name, scope, m);
+        if v == Some(false) {
+            said.push((m.iter().map(|x| x.id.clone()).collect(), runner.probe_output()));
+        }
+        v
+    };
+    let mut actions = bisect_members(&red, &mut |m| green_in(runner, m), members).unwrap_or_default();
     if actions.is_empty() {
         actions = sole_member_culprit(&red, members);
     }
     if actions.is_empty() && members.len() > 1 {
-        match red_alone(&red, &mut |m| runner.filter_green_in(&f.name, scope, m), members) {
-            Alone::Owners(found) => return (found, "unattributed", String::new()),
+        match red_alone(&red, &mut |m| green_in(runner, m), members) {
+            Alone::Owners(found) => return (with_probe_output(found, &said), "unattributed", String::new()),
             Alone::Base(said) => return (actions, "base", said),
             Alone::Cleared(said) => return (actions, "unattributed", said),
         }
     }
-    (actions, "unattributed", String::new())
+    (with_probe_output(actions, &said), "unattributed", String::new())
+}
+
+/// How much of a red probe's output an eject note carries: the tail, where a failing check says why.
+const MAX_PROBE_OUTPUT: usize = 1500;
+
+/// Appends to each ejection the output of the red probe that convicted it: the probe of that
+/// member alone when there was one, else the last red probe.
+fn with_probe_output(actions: Vec<Action>, said: &[(Vec<Id>, String)]) -> Vec<Action> {
+    actions
+        .into_iter()
+        .map(|a| {
+            let id = action_id(&a).clone();
+            let out = said
+                .iter()
+                .find(|(subset, _)| subset.as_slice() == [id.clone()])
+                .or(said.last())
+                .map(|(_, o)| o.trim())
+                .filter(|o| !o.is_empty());
+            let Some(out) = out else { return a };
+            let from = (out.len().saturating_sub(MAX_PROBE_OUTPUT)..=out.len()).find(|i| out.is_char_boundary(*i)).unwrap_or(0);
+            let tail = &out[from..];
+            match a {
+                Action::Eject { id, line } => Action::Eject { id, line: format!("{line}\n{tail}") },
+                Action::Sequence { id, behind, line } => Action::Sequence { id, behind, line: format!("{line}\n{tail}") },
+            }
+        })
+        .collect()
 }
 
 /// A filter's red names its owners: they leave with the red as their evidence and the survivors
@@ -1571,6 +1606,8 @@ pub(crate) mod tests {
         /// A lint-like filter: red for a tree holding these members, naming the given ones.
         pub filter: Option<FilterFn>,
         pub filtered: Option<FilterRed>,
+        /// What a red filter probe prints.
+        pub probe_said: String,
         /// A compiler: the error text for a tree holding these members, if it does not build.
         pub compiler: Option<BuildFn>,
         pub build_failed: Option<String>,
@@ -1629,6 +1666,7 @@ pub(crate) mod tests {
                 on_base: None,
                 filter: None,
                 filtered: None,
+                probe_said: String::new(),
                 compiler: None,
                 build_failed: None,
                 aborts_with: None,
@@ -1740,6 +1778,9 @@ pub(crate) mod tests {
                 p.done = Some(MainEnd::Ran);
             }
             Ok(p)
+        }
+        fn probe_output(&mut self) -> String {
+            self.probe_said.clone()
         }
         fn filter_red(&mut self) -> Option<FilterRed> {
             self.filtered.take()
@@ -4204,6 +4245,18 @@ pub(crate) mod tests {
             ops.eject_evidence
         );
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+    }
+
+    #[test]
+    fn a_filter_red_ejection_carries_what_the_red_probe_printed() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(unit_red_together(&["m2"]));
+        f.bisects = true;
+        f.probe_said = "fence-run: callers.rs:726: retires x_secs".into();
+        let mut ops = Ops::default();
+        attribute_round(&mut f, &mut ops, &corpus(3), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        let note = &ops.eject_evidence[0].1;
+        assert!(note.contains("with only m2 merged") && note.contains("callers.rs:726: retires x_secs"), "{note}");
     }
 
     #[test]

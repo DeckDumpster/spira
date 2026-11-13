@@ -2,6 +2,7 @@
 name = "batcher-cut"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "batcher-cut — the IO seam (git, testenv-batch, the forge, the bead store) that drives the batcher crate's pure core, wired into the queue in place of batch.sh's cut (sp-jzfog)."
 
 [[bin]]
@@ -30,6 +31,11 @@ store-view = { path = "../store-view" }
 runtime = { path = "../runtime" }
 libc = "0.2"
 
+
+[[test]]
+name = "fence_green"
+path = "tests/fence_green.rs"
+required-features = ["integration"]
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

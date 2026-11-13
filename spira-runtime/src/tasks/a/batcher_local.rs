@@ -2419,7 +2419,14 @@ pub mod edge {
         let mut open = io::open_rounds(env, repo)?.into_iter().map(|r| {
             let driven = io::certify_driven(env, &repo.name, &r.id);
             let unfit = io::round_certifiable(env, repo, &r.id).err();
-            let gate_red = io::gate_red_rows(env, &r.members);
+            let queue = landing_pass::gateq::GateQueue::new(&env.run);
+            let gate_red = io::gate_red_rows(env, &r.members)
+                .into_iter()
+                .map(|(id, tip, mark)| match queue.failing_at(&repo.name, &format!("spira/{id}"), &tip) {
+                    Some(at) => (id, tip, format!("{mark}; {at}")),
+                    None => (id, tip, mark),
+                })
+                .collect();
             Round { id: r.id, members: r.members, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
         });
         let open_round = open.next();
