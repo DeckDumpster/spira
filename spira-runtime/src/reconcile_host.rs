@@ -363,6 +363,13 @@ impl Host for RuntimeHost {
         tmux_server_identity().map(Some)
     }
 
+    fn round_legs_live(&self, repo: &str, batch: &str) -> bool {
+        runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock))
+            .map_err(|e| e.0)
+            .and_then(|u| runtime::units::live_round_units(&u, repo, batch, &|_| false))
+            .map_or(true, |live| !live.is_empty())
+    }
+
     fn head_branch(&self, path: &Path) -> Option<String> {
         let head = fs::read_to_string(git_dirs(path)?.0.join("HEAD")).ok()?;
         let head = head.trim();

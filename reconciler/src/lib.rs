@@ -283,6 +283,10 @@ pub trait Host: Send + Sync {
     fn ready_count(&self, _labels: &str, _exclude: &str) -> Option<i64> {
         None
     }
+    /// Whether a leg of `batch`'s round in `repo` is running; true when that cannot be told.
+    fn round_legs_live(&self, _repo: &str, _batch: &str) -> bool {
+        true
+    }
     /// The tmux server: `Some(Some(identity))` when one answers, `Some(None)` when it is certainly down, `None` when only tmux can say.
     fn tmux_server(&self) -> Option<Option<String>> {
         None
@@ -451,6 +455,22 @@ impl Config {
                 self.lc_client()?.answer(argv).map_err(|e| format!("{bin} {}: {e}", argv.join(" ")))
             }
         }
+    }
+
+    /// `requeue-orphans --apply` spares the rounds whose legs are live; with the dry run
+    /// unreadable it applies nothing.
+    fn orphan_apply_argv(&self, argv: &[&str]) -> Option<Vec<String>> {
+        let dry: Vec<&str> = argv.iter().copied().filter(|a| *a != "--apply").collect();
+        let seen: serde_json::Value = serde_json::from_str(self.lc(&dry).ok()?.trim()).ok()?;
+        let mut out: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
+        let repos = seen.get("repos").and_then(|r| r.as_object())?;
+        for (batch, repo) in repos {
+            let live = repo.as_str().is_some_and(|repo| self.host.as_ref().is_none_or(|h| h.round_legs_live(repo, batch)));
+            if live {
+                out.extend(["--live-round".to_string(), batch.clone()]);
+            }
+        }
+        Some(out)
     }
 
     fn lc_client(&self) -> Result<LcClient, String> {
@@ -2167,6 +2187,15 @@ pub fn perform(cfg: &Config, alerted: &mut AlertedSinceMap, acts: Vec<Act>) {
                 for (program, args) in &steps {
                     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
                     if *program == cfg.seams.spira_lc && lc_served(&argv) {
+                        if argv.first() == Some(&"requeue-orphans") && argv.contains(&"--apply") {
+                            match cfg.orphan_apply_argv(&argv) {
+                                Some(probed) => {
+                                    let _ = cfg.lc(&probed.iter().map(String::as_str).collect::<Vec<_>>());
+                                }
+                                None => log_print(cfg, "reconciler: requeue-orphans dry run unreadable; nothing applied"),
+                            }
+                            continue;
+                        }
                         let _ = cfg.lc(&argv);
                         continue;
                     }
@@ -2699,7 +2728,11 @@ mod tests {
     impl spira_store::lc_call::Transport for Store {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            Ok(spira_store::lc_call::Reply { code: 0, out: format!("answered {}", argv[0]), err: String::new() })
+            let out = match argv.iter().any(|a| a == "--apply") {
+                false if argv[0] == "requeue-orphans" => r#"{"orphans":["sp-a","sp-b"],"repos":{"b-live":"r","b-dead":"r"}}"#.to_string(),
+                _ => format!("answered {}", argv[0]),
+            };
+            Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new() })
         }
     }
 
@@ -2732,8 +2765,85 @@ mod tests {
     fn a_served_lc_remedy_step_goes_over_the_client() {
         let (cfg, store) = served_config();
         let program = cfg.seams.spira_lc.clone();
-        perform(&cfg, &mut AlertedSinceMap::new(), vec![Act::Remedy { key: "k".into(), steps: vec![(program, vec!["requeue-orphans".into(), "--actor".into(), "reconciler".into(), "--apply".into()])] }]);
-        assert_eq!(store.0.lock().unwrap().as_slice(), &[vec!["requeue-orphans".to_string(), "--actor".into(), "reconciler".into(), "--apply".into()]]);
+        perform(&cfg, &mut AlertedSinceMap::new(), vec![Act::Remedy { key: "k".into(), steps: vec![(program, vec!["show".into(), "sp-1".into()])] }]);
+        assert_eq!(store.0.lock().unwrap().as_slice(), &[vec!["show".to_string(), "sp-1".into()]]);
+    }
+
+    struct Legs(&'static str, Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl Host for Legs {
+        fn unit_state(&self, _: &str, _: &str) -> Result<String, String> {
+            Ok("active".into())
+        }
+        fn list_enable(&self) -> String {
+            String::new()
+        }
+        fn free_pct(&self, _: &str) -> Option<i64> {
+            Some(90)
+        }
+        fn lc(&self, argv: &[&str]) -> Result<String, String> {
+            if argv.contains(&"--apply") {
+                *self.1.lock().unwrap() = argv.iter().map(|a| a.to_string()).collect();
+            }
+            Ok(r#"{"orphans":["sp-a"],"repos":{"b-live":"r","b-dead":"r"}}"#.into())
+        }
+        fn certified_list(&self, _: &Path) -> String {
+            String::new()
+        }
+        fn config(&self, _: &[&str]) -> String {
+            String::new()
+        }
+        fn stranded_runners(&self, _: &Path) -> String {
+            String::new()
+        }
+        fn send_mail(&self, _: &Mail) -> Result<(), String> {
+            Ok(())
+        }
+        fn round_legs_live(&self, _: &str, batch: &str) -> bool {
+            batch == self.0
+        }
+    }
+
+    fn orphan_apply(cfg: &Config) {
+        let program = cfg.seams.spira_lc.clone();
+        perform(cfg, &mut AlertedSinceMap::new(), vec![Act::Remedy { key: "k".into(), steps: vec![(program, vec!["requeue-orphans".into(), "--actor".into(), "reconciler".into(), "--apply".into()])] }]);
+    }
+
+    fn applied(store: &Store) -> Vec<String> {
+        store.0.lock().unwrap().iter().find(|a| a.iter().any(|x| x == "--apply")).cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn orphan_apply_spares_a_round_whose_leg_is_live() {
+        let mut cfg = test_config();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        cfg.host = Some(Arc::new(Legs("b-live", Arc::clone(&seen))));
+        orphan_apply(&cfg);
+        assert_eq!(*seen.lock().unwrap(), ["requeue-orphans", "--actor", "reconciler", "--apply", "--live-round", "b-live"]);
+    }
+
+    #[test]
+    fn orphan_apply_spares_every_round_when_liveness_cannot_be_told() {
+        let (cfg, store) = served_config();
+        orphan_apply(&cfg);
+        let argv = applied(&store);
+        assert!(argv.windows(2).any(|w| w == ["--live-round", "b-live"]) && argv.windows(2).any(|w| w == ["--live-round", "b-dead"]), "{argv:?}");
+    }
+
+    #[test]
+    fn orphan_apply_without_a_readable_dry_run_applies_nothing() {
+        struct Garbled(Arc<std::sync::Mutex<Vec<String>>>);
+        impl spira_store::lc_call::Transport for Garbled {
+            fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+                self.0.lock().unwrap().extend(argv.iter().cloned());
+                Ok(spira_store::lc_call::Reply { code: 0, out: "not json".into(), err: String::new() })
+            }
+        }
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut cfg = test_config();
+        cfg.lc_client = Some(LcClient::over(Arc::new(Garbled(Arc::clone(&seen))) as Arc<dyn spira_store::lc_call::Transport>, true));
+        orphan_apply(&cfg);
+        assert!(!seen.lock().unwrap().iter().any(|a| a == "--apply"));
     }
 
     #[test]
