@@ -731,3 +731,24 @@ impl Txn {
         errs
     }
 }
+
+#[cfg(test)]
+mod retire_tests {
+    use super::*;
+
+    #[test]
+    fn a_task_retired_by_the_command_is_dropped_from_the_hosts_modes_not_refused() {
+        let t = testkit::TempDir::new("retire-task-activation");
+        let reg = t.path().join("spira/conf.d/SPIRA_TASK_MODES");
+        fs::create_dir_all(reg.parent().unwrap()).unwrap();
+        fs::write(&reg, "TYPE=string\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_TASK_MODES:=alpha=act old.task=act}\"\nSPIRA_CONF_DEFAULT_EOF\n").unwrap();
+        let live = "alpha=act old.task=act";
+        let before = spira_config::registry::load(&t.path().join("spira/conf.d")).unwrap();
+        let default = |m: &BTreeMap<String, spira_config::registry::RegistryKey>| m["SPIRA_TASK_MODES"].default_expr().unwrap().to_string();
+        assert!(drop_removed_tasks(live, &default(&before).replace("old.task=act", "").trim().to_string(), &[]).is_err(), "control: an unnamed dropped task is refused");
+        spira_config::retire::retire_task(t.path(), "old.task").unwrap();
+        let after = spira_config::registry::load(&t.path().join("spira/conf.d")).unwrap();
+        let delta = Delta::parse(&fs::read_to_string(t.path().join(spira_config::retire::DELTA)).unwrap()).unwrap();
+        assert_eq!(drop_removed_tasks(live, &default(&after), &delta.removed_tasks).unwrap(), "alpha=act");
+    }
+}
