@@ -576,6 +576,57 @@ fn sp_56d3l3_a_pause_remembers_the_base_its_red_round_was_cut_on_so_a_landing_li
     assert_eq!(carry.repos["spira"].paused_on, None);
 }
 
+/// A red pause no landing lifts (nothing lands while it holds) is lifted by the task itself once
+/// it has outlived `SPIRA_BATCHER_PAUSE_LIFT_SECS`, and the repo cuts in the same pass.
+fn expiring(held_secs: u64, lifts: u32) -> (Carry, Snapshot) {
+    let mut snap = paused("b0");
+    snap.repos.get_mut("spira").unwrap().paused_since = Some(NOW / 1000 - held_secs);
+    let mut carry = paused_on("b0");
+    carry.repos.get_mut("spira").unwrap().pace.pause_lifts = lifts;
+    (carry, snap)
+}
+
+fn pinned_lift(secs: u64) -> Policy {
+    Policy { pause_lift_s: secs, ..Policy::default() }
+}
+
+#[test]
+fn sp_qmd5g4_a_red_pause_past_its_bound_is_lifted_and_cuts_with_no_landing() {
+    let (carry, snap) = expiring(500, 0);
+    let (carry, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert_eq!(names, [PAUSE, FETCH, ASSEMBLE], "{acts:?}");
+    let lift: Leg = serde_json::from_str(&acts[0].input).unwrap();
+    assert_eq!(lift.bead, "lift", "{lift:?}");
+    assert!(lift.why.contains("400s"), "{}", lift.why);
+    assert_eq!(carry.repos["spira"].pace.pause_lifts, 1);
+}
+
+#[test]
+fn sp_qmd5g4_a_red_pause_inside_its_bound_stays_held() {
+    let (carry, snap) = expiring(300, 0);
+    let (carry, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Held);
+}
+
+#[test]
+fn sp_qmd5g4_a_second_red_after_a_lift_stays_paused_however_long_it_stands() {
+    let (carry, snap) = expiring(100_000, 1);
+    let (carry, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Held);
+}
+
+#[test]
+fn sp_qmd5g4_an_operators_hold_is_never_lifted_by_the_bound() {
+    let (carry, mut snap) = expiring(100_000, 0);
+    snap.repos.get_mut("spira").unwrap().paused = Some("hold: operator maintenance".into());
+    let (carry, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Held);
+}
+
 fn ran_of(leg: &str) -> runtime::units::UnitRan {
     runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, leg).unwrap(), exit: runtime::units::Exit::Code(0), duration_ms: 1 }
 }

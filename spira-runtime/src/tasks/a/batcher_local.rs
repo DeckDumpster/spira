@@ -279,6 +279,9 @@ pub struct Repo {
     /// round wrote it. A text that starts with `hold:` is an operator's deliberate hold.
     #[serde(default)]
     pub paused: Option<String>,
+    /// When a red round's pause was set, in epoch seconds; `None` for no pause or a `hold:`.
+    #[serde(default)]
+    pub paused_since: Option<u64>,
     pub declares_own_testenv: bool,
     /// Why `round certify` would refuse the open round at once (`round_certifiable`), if it would.
     #[serde(default)]
@@ -828,12 +831,13 @@ pub struct Policy {
     pub wall_ms: u64,
     pub max_members: usize,
     pub max_open: usize,
+    pub pause_lift_s: u64,
 }
 
 impl Default for Policy {
     /// The registered defaults (`spira/conf.d/SPIRA_BATCHER_ORPHAN_REDRIVE_SECS`, `_WALL_SECS`).
     fn default() -> Self {
-        Policy { orphan_wait_s: 600, wall_ms: 3_600_000, max_members: batcher_cut::MAX_CUT_MEMBERS, max_open: 1 }
+        Policy { orphan_wait_s: 600, wall_ms: 3_600_000, max_members: batcher_cut::MAX_CUT_MEMBERS, max_open: 1, pause_lift_s: 900 }
     }
 }
 
@@ -841,7 +845,7 @@ impl Policy {
     pub fn pinned(pinned: &BTreeMap<String, String>) -> Policy {
         let d = Policy::default();
         let num = |k: &str| pinned.get(k).and_then(|v| v.trim().parse::<u64>().ok());
-        Policy { orphan_wait_s: num("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS").unwrap_or(d.orphan_wait_s), wall_ms: num("SPIRA_BATCHER_WALL_SECS").map_or(d.wall_ms, |s| s * 1000), max_open: num("SPIRA_ROUND_MAX_OPEN").map_or(d.max_open, |n| (n as usize).max(1)), ..d }
+        Policy { orphan_wait_s: num("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS").unwrap_or(d.orphan_wait_s), wall_ms: num("SPIRA_BATCHER_WALL_SECS").map_or(d.wall_ms, |s| s * 1000), max_open: num("SPIRA_ROUND_MAX_OPEN").map_or(d.max_open, |n| (n as usize).max(1)), pause_lift_s: num("SPIRA_BATCHER_PAUSE_LIFT_SECS").unwrap_or(d.pause_lift_s), ..d }
     }
 }
 
@@ -1380,7 +1384,7 @@ impl Machine<'_> {
             return;
         }
         let st = self.rc.pace.core();
-        let paused = self.pause_in_force(repo);
+        let paused = self.pause_in_force(policy, repo);
         if let Some(h) = pace::hold(paused, repo.stopped) {
             self.rc.skip_why = Some(hold_why(&h, self.repo, repo));
             self.go(Trigger::Stopped);
@@ -1478,7 +1482,7 @@ impl Machine<'_> {
     /// The pause a red round wrote, if it still holds the repo. It carries the base its round was
     /// cut on; once a round lands past that base the red it guarded is behind the repo, so the pause is
     /// lifted (removed, and the lift logged). An operator's `hold:` is never lifted here.
-    fn pause_in_force(&mut self, repo: &Repo) -> bool {
+    fn pause_in_force(&mut self, policy: &Policy, repo: &Repo) -> bool {
         let Some(text) = repo.paused.as_deref() else {
             if self.rc.paused_on.as_deref().is_some_and(|on| !repo.base_sha.is_empty() && on != repo.base_sha) {
                 self.rc.paused_on = None;
@@ -1487,6 +1491,16 @@ impl Machine<'_> {
         };
         if text.starts_with("hold:") {
             return true;
+        }
+        let held_for = repo.paused_since.map(|since| (self.now_ms / 1000).saturating_sub(since));
+        let mut st = self.rc.pace.core();
+        if held_for.is_some_and(|held| pace::pause_expired(&st, held, policy.pause_lift_s)) {
+            st.pause_lifts += 1;
+            self.rc.pace = Pace::of(&st, &self.rc.pace.refusals);
+            self.rc.paused_on = None;
+            let why = format!("{} pause held {}s past its {}s bound — lifted, cutting; a second red stays paused ({})", self.repo, held_for.unwrap_or_default(), policy.pause_lift_s, text.trim());
+            self.acts.push(Leg { why, key: format!("{}:rounds:lift:expired:{}", self.repo, self.now_ms / 1000), bead: "lift".into(), ..Leg::on(self.repo) }.act(PAUSE));
+            return false;
         }
         match self.rc.paused_on.clone() {
             None => {
@@ -2439,19 +2453,19 @@ pub mod edge {
         });
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();
-        let (stopped, stop_why, paused) = holds(env, &repo.name);
+        let (stopped, stop_why, paused, paused_since) = holds(env, &repo.name);
         let unfit = open_round.as_ref().and_then(|r| r.unfit.clone());
         let base_sha = if open_round.is_some() { io::resolve_base_sha(repo).unwrap_or_default() } else { io::resolve_base_sha(repo)? };
-        Ok(Repo { pool, blockers, branch_tips, open_round, open_above, base_sha, stopped, stop_why, paused, unfit, ..Repo::default() })
+        Ok(Repo { pool, blockers, branch_tips, open_round, open_above, base_sha, stopped, stop_why, paused, paused_since, unfit, ..Repo::default() })
     }
 
     /// The repo's holds: the scoped stop of its `rounds` lane (and its reason), and the pace's
     /// pause file's text — each told apart, so the hold the pass names is the one that stands.
-    fn holds(env: &Env, repo: &str) -> (bool, Option<String>, Option<String>) {
+    fn holds(env: &Env, repo: &str) -> (bool, Option<String>, Option<String>, Option<u64>) {
         let files = batcher_cut::pace::Files::new(&env.run, repo);
         let stop = spira_config::scoped_stop::stop_for(&env.run, repo, "rounds").map(|s| format!("{}: {} (until: {})", s.owner, s.reason, s.until));
         let paused = files.pause_file().exists().then(|| std::fs::read_to_string(files.pause_file()).unwrap_or_default());
-        (stop.is_some(), stop, paused)
+        (stop.is_some(), stop, paused, files.pause_since())
     }
 
     fn repo_of(env: &Env, leg: &Leg) -> Result<batcher_cut::io::Repo, String> {
