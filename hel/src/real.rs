@@ -175,6 +175,10 @@ impl Real {
         }
     }
 
+    pub fn resolve_repo(&self, arg: &str) -> Result<PathBuf, String> {
+        reap::resolve_repo(&self.repo_registry(), arg)
+    }
+
     /// `hel destroy-branch`'s own entry point: the trait only has the combined `send`
     /// (witness recheck + full reap), so a standalone destroy-branch (for bash callers that
     /// are not the sweep itself — `held.sh`, and lib.sh's `spira_destroy_branch` shim) goes

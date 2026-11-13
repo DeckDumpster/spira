@@ -98,7 +98,14 @@ fn cmd_destroy_branch(mut args: Vec<String>) -> ExitCodeLike {
         Err(e) => return die(&e),
     };
     let caller = args.get(4).map(String::as_str).unwrap_or("");
-    let repo = Path::new(&args[2]);
+    let repo = match w.resolve_repo(&args[2]) {
+        Ok(r) => r,
+        Err(e) => {
+            print!("{e}");
+            return 1;
+        }
+    };
+    let repo = repo.as_path();
     // `--base` overrides for a caller that already resolved it; otherwise resolve it the
     // same way the retired bash body did (`spira_landref "$repo"`, through the unchanged
     // family-W seam) — an unresolvable base is not an error here, it is the same "skip the
