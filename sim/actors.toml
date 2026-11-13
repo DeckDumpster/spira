@@ -16,3 +16,13 @@ command = "round-controller pass"
 timer = "spira-round-controller.timer"
 duration = "land.phase.tools"
 sim_only = true
+
+# The forge batcher's pass: settle the open batch (which sweeps what a crashed open left), then cut.
+# The service runs it as a task of its own; a world scenario that selects it through real_actors
+# sees the pass's real effects on a queue.forge repo and never a shipped timer.
+[[actor]]
+name = "rounds-forge"
+command = "batcher rounds-forge"
+timer = "spira-rounds-forge.timer"
+duration = "land.phase.tools"
+sim_only = true

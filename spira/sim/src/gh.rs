@@ -408,7 +408,35 @@ fn pr_create(st: &mut State, cwd: &Path, args: &[String]) -> R<Out> {
         "headRefOid": sha, "url": url, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "isDraft": false,
         "autoMergeRequest": Value::Null, "comments": [], "createdAt": now, "mergedAt": Value::Null, "mergeSha": Value::Null,
     }));
+    if let Some(victim) = st.v["crash_after_create"].as_str().map(str::to_string) {
+        st.v["crash_after_create"] = Value::Null;
+        st.save()?;
+        crash_ancestor(&victim)?;
+    }
     text(format!("{url}\n"))
+}
+
+extern "C" {
+    fn kill(pid: i32, sig: i32) -> i32;
+}
+
+/// The armed crash: SIGKILL the nearest ancestor process named `comm`, as a host dying
+/// between the forge's answer and whatever the caller does next. An armed crash with no such
+/// ancestor is an error, so a scenario cannot mean a crash that never came.
+fn crash_ancestor(comm: &str) -> R<()> {
+    let mut pid = std::process::id();
+    while pid > 1 {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).map_err(|e| format!("crash_after_create: {e}"))?;
+        let (head, rest) = stat.rsplit_once(") ").ok_or("crash_after_create: unreadable stat")?;
+        let name = head.split_once(" (").map(|(_, n)| n).unwrap_or("");
+        if pid != std::process::id() && name == comm {
+            // SAFETY: kill(2) on the one ancestor just matched by name.
+            unsafe { kill(pid as i32, 9) };
+            return Ok(());
+        }
+        pid = rest.split_whitespace().nth(1).and_then(|p| p.parse().ok()).unwrap_or(0);
+    }
+    Err(format!("crash_after_create: no ancestor process named {comm}"))
 }
 
 fn json_or_text(items: Vec<&Value>, f: &Flags, render: impl Fn(&Value) -> String) -> R<Out> {
@@ -887,6 +915,12 @@ pub fn ctl(dir: &Path, args: &[String]) -> R<String> {
             let [tag] = &f.pos[..] else { return Err("usage: release <tag> [--draft] [--asset <name>]...".into()) };
             let assets: Vec<String> = f.all("--asset").iter().map(|s| s.to_string()).collect();
             st.release_add(tag, f.has("--draft"), &assets)?;
+            String::new()
+        }
+        "crash-after-create" => {
+            let f = parse(a, &[], &[])?;
+            let [comm] = &f.pos[..] else { return Err("usage: crash-after-create <process name>".into()) };
+            st.v["crash_after_create"] = json!(comm);
             String::new()
         }
         "clock" => {
