@@ -59,7 +59,8 @@ pub trait Ports {
     fn push(&self, branch: &str) -> Result<(), String>;
     fn delete(&self, branch: &str);
     fn dispatch(&self, branch: &str) -> Result<(), String>;
-    fn result(&self, branch: &str) -> Option<Build>;
+    /// `Err` names what could not be read: the route and the forge's own answer.
+    fn result(&self, branch: &str) -> Result<Build, String>;
     fn log_tail(&self, run: &str, lines: usize) -> Vec<String>;
     fn now(&self) -> u64;
     fn sleep(&self, secs: u64);
@@ -83,9 +84,9 @@ pub fn gate(p: &dyn Ports, bead: &str, tip: &str, nonce: u64, wait_secs: u64) ->
     let (mut pushed, mut dispatched, mut idle) = (false, false, 0u32);
     let out = loop {
         match p.result(&branch) {
-            None => break Err("the forge cannot be read for the round image build".to_string()),
-            Some(Build::Success(run)) => break Ok(Verdict::Built(run)),
-            Some(Build::Failure(run, steps)) => {
+            Err(e) => break Err(format!("the forge cannot be read for the round image build: {e}")),
+            Ok(Build::Success(run)) => break Ok(Verdict::Built(run)),
+            Ok(Build::Failure(run, steps)) => {
                 let step = steps.first().map(String::as_str).unwrap_or("<unknown step>");
                 let mut msg = format!("the round image build {run} failed at step {step}");
                 for l in p.log_tail(&run, LOG_TAIL) {
@@ -94,15 +95,15 @@ pub fn gate(p: &dyn Ports, bead: &str, tip: &str, nonce: u64, wait_secs: u64) ->
                 }
                 break Err(msg);
             }
-            Some(Build::Running(_)) => idle = 0,
-            Some(Build::NotStarted) if !dispatched => {
+            Ok(Build::Running(_)) => idle = 0,
+            Ok(Build::NotStarted) if !dispatched => {
                 let started = p.push(&branch).map(|()| pushed = true).and_then(|()| p.dispatch(&branch));
                 if let Err(e) = started {
                     break Err(format!("cannot start the round image build on {branch}: {e}"));
                 }
                 dispatched = true;
             }
-            Some(Build::NotStarted) => {
+            Ok(Build::NotStarted) => {
                 idle += 1;
                 if idle >= IDLE_POLLS {
                     break Err(format!("the round image build dispatched on {branch} never started"));
@@ -156,9 +157,10 @@ mod tests {
             self.calls.borrow_mut().push(format!("dispatch {b}"));
             Ok(())
         }
-        fn result(&self, _: &str) -> Option<Build> {
+        fn result(&self, _: &str) -> Result<Build, String> {
             let mut r = self.results.borrow_mut();
-            if r.len() > 1 { r.remove(0) } else { r[0].clone() }
+            let next = if r.len() > 1 { r.remove(0) } else { r[0].clone() };
+            next.ok_or_else(|| "route stub: the forge answered `?`".to_string())
         }
         fn log_tail(&self, _: &str, _: usize) -> Vec<String> {
             vec!["ami-setup: ROUND_USER must name the unprivileged user rounds run as".into()]
@@ -203,7 +205,7 @@ mod tests {
     #[test]
     fn an_unreadable_forge_refuses_rather_than_passes() {
         let f = fake(&["round-vm/ami-setup.sh"], vec![None]);
-        assert!(gate(&f, "sp-x", "abc", 1, 5400).unwrap_err().contains("forge cannot be read"));
+        assert!(gate(&f, "sp-x", "abc", 1, 5400).unwrap_err().contains("forge cannot be read for the round image build: route stub: the forge answered `?`"));
     }
 
     #[test]

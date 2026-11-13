@@ -328,6 +328,7 @@ pub static ENTRIES: &[Entry] = &[
     lane("landing-pass", "Runs the landing pass.", "Landing persona only.", &["<sub>"]),
     lane("strand", "Runs the stranded-work tool.", "Operations persona only.", &["<sub>"]),
     lane("fence", "Runs the fence tool.", "Operations persona only.", &["<sub>"]),
+    lane("forge", "Reads and starts the round image build on the forge for your bead's candidate branch. `work submit` calls it for you.", "Never by hand: submit runs it when the branch changes the round image recipe.", &["ami-result|ami-dispatch|ami-delete <candidate-branch> | ami-push <candidate-branch> <tip> | ami-log <run-id> <lines>"]),
     lane("hel", "Runs the hel tool.", "Operations persona only.", &["<sub>"]),
     lane("mender", "Runs the mender tool.", "Mender persona only.", &["diagnose|outcome <path> ... (text on stdin)"]),
     Entry {

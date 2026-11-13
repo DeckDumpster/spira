@@ -37,6 +37,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         "superseded-by" => cmd_superseded_by(bead_id, rest, conn),
         "ack" => cmd_ack(bead_id, rest),
         "fence" => cmd_fence(rest),
+        "forge" => cmd_forge(bead_id, rest),
         other if LANE_VERBS.contains(&other) => cmd_lane(bead_id, other, rest, conn),
         other => (
             CANNOT_TELL,
@@ -951,7 +952,7 @@ fn landing_commit(conn: &Conn, id: &str) -> Option<String> {
 /// bead the client is bound to; these name their target (or none) themselves.
 pub const LANE_VERBS: &[&str] = &[
     "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident",
-    "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender",
+    "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender", "forge",
 ];
 
 const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack"];
@@ -1046,6 +1047,11 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("strand report", &["czar", "groomer"]),
     ("strand detect-livelocked", &["groomer"]),
     ("fence", &["czar"]),
+    ("forge ami-result", &["builder", "pilgrim"]),
+    ("forge ami-dispatch", &["builder", "pilgrim"]),
+    ("forge ami-log", &["builder", "pilgrim"]),
+    ("forge ami-push", &["builder", "pilgrim"]),
+    ("forge ami-delete", &["builder", "pilgrim"]),
     ("hel --dry-run", &["ops", "czar"]),
     ("mender start", &["mender"]),
     ("mender pack", &["mender"]),
@@ -1128,6 +1134,7 @@ pub fn bind_peer(argv: &[String], peer_uid: Option<u32>, map: &[(u32, String)]) 
 /// The operation key [`ALLOW`] is read with.
 pub fn op_key(verb: &str, args: &[String]) -> String {
     match TOOLS.iter().find(|(v, _)| *v == verb) {
+        None if verb == "forge" => format!("{verb} {}", args.first().map(String::as_str).unwrap_or("")),
         Some(_) if verb != "census" => format!("{verb} {}", args.first().map(String::as_str).unwrap_or("")),
         _ => verb.to_string(),
     }
@@ -1527,6 +1534,79 @@ fn cmd_fence(rest: &[String]) -> (i32, String) {
     fence_answer(class, stage.as_deref())
 }
 
+/// What a session may ask the forge for on its own bead's behalf: the round image build and
+/// nothing else. The session holds no forge credentials; the service that does acts here, on
+/// a candidate branch that names the bound bead, so no other branch can be pushed or deleted.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ForgeOp {
+    Verb { verb: &'static str, args: Vec<String> },
+    Push { branch: String, tip: String },
+    Delete { branch: String },
+}
+
+pub fn forge_op(bound: &str, args: &[String]) -> Result<ForgeOp, (i32, String)> {
+    let candidate = |b: &str| -> Result<String, (i32, String)> {
+        let prefix = format!("spira-round-candidate/{bound}-");
+        let ok = b.starts_with(&prefix) && !b.contains("..") && b.chars().all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c));
+        if ok { Ok(b.to_string()) } else { Err(usage("forge", &format!("{b:?} is not a round image candidate branch of {bound}"))) }
+    };
+    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["ami-result", b] => Ok(ForgeOp::Verb { verb: "ami-result", args: vec![candidate(b)?] }),
+        ["ami-dispatch", b] => Ok(ForgeOp::Verb { verb: "ami-dispatch", args: vec![candidate(b)?] }),
+        ["ami-delete", b] => Ok(ForgeOp::Delete { branch: candidate(b)? }),
+        ["ami-push", b, tip] if (7..=64).contains(&tip.len()) && tip.chars().all(|c| c.is_ascii_hexdigit()) => Ok(ForgeOp::Push { branch: candidate(b)?, tip: tip.to_string() }),
+        ["ami-log", run, n] if run.chars().all(|c| c.is_ascii_digit()) && n.chars().all(|c| c.is_ascii_digit()) => Ok(ForgeOp::Verb { verb: "ami-log", args: vec![run.to_string(), n.to_string()] }),
+        _ => Err(usage("forge", "want ami-result|ami-dispatch|ami-delete <candidate-branch>, ami-push <candidate-branch> <tip>, or ami-log <run-id> <lines>")),
+    }
+}
+
+/// `work forge <sub> ...`: the round image build's forge reads and writes, run here because
+/// the calling session has no forge credentials.
+fn cmd_forge(bound: &str, rest: &[String]) -> (i32, String) {
+    let call = split_reserved(rest);
+    let op = match forge_op(bound, &call.args) {
+        Ok(o) => o,
+        Err(e) => return e,
+    };
+    let repo = match forge_repo(bound) {
+        Ok(r) => r,
+        Err(e) => return (CANNOT_TELL, format!("work forge: {e}")),
+    };
+    match op {
+        ForgeOp::Verb { verb, args } => {
+            let forge = match spira_config::process::cfg("SPIRA_FORGE") {
+                Ok(f) => f,
+                Err(e) => return (CANNOT_TELL, format!("work forge: {e}")),
+            };
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let r = forge::client::run(&forge::client::route_of(std::path::Path::new(&forge)), verb, &repo, &args, None);
+            (r.code, if r.ok() { r.out } else { format!("{}{}", r.out, r.err) })
+        }
+        ForgeOp::Push { branch, tip } => forge_git(&repo, &["push", "--", "{remote}", &format!("{tip}:refs/heads/{branch}")]),
+        ForgeOp::Delete { branch } => forge_git(&repo, &["push", "--", "{remote}", &format!(":refs/heads/{branch}")]),
+    }
+}
+
+fn forge_repo(bound: &str) -> Result<std::path::PathBuf, String> {
+    let name = crate::bd::repo_label(bound)?.ok_or_else(|| format!("{bound} carries no repo: label"))?;
+    let cfg = crate::repo_config::from_process()?;
+    let section = cfg.repos.get(&name).ok_or_else(|| format!("no repository {name:?} in the config in force"))?;
+    Ok(std::path::PathBuf::from(&section.path))
+}
+
+fn forge_git(repo: &std::path::Path, args: &[&str]) -> (i32, String) {
+    let remote = match spira_config::process::cfg("SPIRA_PUBLISH_REMOTE") {
+        Ok(r) => r,
+        Err(e) => return (CANNOT_TELL, format!("work forge: {e}")),
+    };
+    let args: Vec<String> = args.iter().map(|a| a.replace("{remote}", &remote)).collect();
+    match spira_config::bounded::bounded("git").args(&args).current_dir(repo).output() {
+        Ok(o) if o.status.success() => (0, String::new()),
+        Ok(o) => (REFUSED, String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        Err(e) => (CANNOT_TELL, format!("work forge: git: {e}")),
+    }
+}
+
 /// `groom split-piece <original-id> "<title>" [flags]`: the tail reaches `bd create`, so it
 /// is held to the create flags a piece needs — never `-C`/`--db` or anything else bd takes.
 fn split_piece_args(a: &[String]) -> Result<(), (i32, String)> {
@@ -1728,6 +1808,27 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_builder_may_ask_the_forge_about_its_own_round_image_candidate_and_no_other_branch() {
+        let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let own = "spira-round-candidate/sp-95s21z.2-0123456789ab-7";
+        assert_eq!(super::forge_op("sp-95s21z.2", &v(&["ami-result", own])).unwrap(), super::ForgeOp::Verb { verb: "ami-result", args: v(&[own]) });
+        assert_eq!(super::forge_op("sp-95s21z.2", &v(&["ami-push", own, "0123456789abcdef"])).unwrap(), super::ForgeOp::Push { branch: own.into(), tip: "0123456789abcdef".into() });
+        for refused in [
+            v(&["ami-delete", "main"]),
+            v(&["ami-push", "main", "0123456789abcdef"]),
+            v(&["ami-delete", "spira-round-candidate/sp-other-0123456789ab-7"]),
+            v(&["ami-delete", "spira-round-candidate/sp-95s21z.2-../main"]),
+            v(&["ami-push", own, "--force"]),
+            v(&["ami-runs"]),
+        ] {
+            assert!(super::forge_op("sp-95s21z.2", &refused).is_err(), "{refused:?}");
+        }
+        let op = super::op_key("forge", &v(&["ami-result", own]));
+        assert!(super::permitted(&op, Some("builder")).is_ok());
+        assert!(super::permitted(&op, Some("groomer")).is_err());
+    }
+
     #[test]
     fn a_pilgrims_follow_up_is_filed_into_the_builder_partition_but_a_split_stays_put() {
         let runes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");

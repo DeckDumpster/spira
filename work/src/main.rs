@@ -471,8 +471,8 @@ fn law(args: &[String]) -> i32 {
 struct ImagePorts {
     root: std::path::PathBuf,
     tip: String,
-    forge: std::path::PathBuf,
-    remote: String,
+    bound: String,
+    actor: String,
     started: std::time::Instant,
 }
 
@@ -485,8 +485,16 @@ impl ImagePorts {
             Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
         }
     }
-    fn forge(&self, verb: &str, args: &[&str]) -> forge::client::Reply {
-        forge::client::run(&forge::client::route_of(&self.forge), verb, &self.root, args, None)
+    /// The session holds no forge credentials: the forge is reached through the broker's `forge` verb.
+    fn forge(&self, args: &[&str]) -> Result<String, String> {
+        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        let req = work::build_request_in(&self.bound, "forge", &args, None, &self.actor, None, None)?;
+        let route = format!("`work forge {}` through the broker socket", args[0]);
+        match send(&req, TOOL_TIMEOUT) {
+            Ok((0, out)) => Ok(out),
+            Ok((code, out)) => Err(format!("{route} exited {code}: {}", out.trim())),
+            Err(e) => Err(format!("{route}: {e}")),
+        }
     }
 }
 
@@ -496,21 +504,20 @@ impl work::image::Ports for ImagePorts {
         Some(out.lines().map(String::from).collect())
     }
     fn push(&self, branch: &str) -> Result<(), String> {
-        self.git(&["push", &self.remote, &format!("{}:refs/heads/{branch}", self.tip)]).map(drop)
+        self.forge(&["ami-push", branch, &self.tip]).map(drop)
     }
     fn delete(&self, branch: &str) {
-        let _ = self.git(&["push", &self.remote, &format!(":refs/heads/{branch}")]);
+        let _ = self.forge(&["ami-delete", branch]);
     }
     fn dispatch(&self, branch: &str) -> Result<(), String> {
-        let r = self.forge("ami-dispatch", &[branch]);
-        if r.ok() { Ok(()) } else { Err(format!("the forge refused the dispatch: {}", r.err.trim())) }
+        self.forge(&["ami-dispatch", branch]).map(drop).map_err(|e| format!("the forge refused the dispatch: {e}"))
     }
-    fn result(&self, branch: &str) -> Option<work::image::Build> {
-        work::image::Build::parse(&self.forge("ami-result", &[branch]).stdout()?)
+    fn result(&self, branch: &str) -> Result<work::image::Build, String> {
+        let out = self.forge(&["ami-result", branch])?;
+        work::image::Build::parse(&out).ok_or_else(|| format!("`work forge ami-result` answered {:?}, which is not a build state", out.trim()))
     }
     fn log_tail(&self, run: &str, lines: usize) -> Vec<String> {
-        let tail = lines.to_string();
-        let out = self.forge("ami-log", &[run, &tail]).stdout().unwrap_or_default();
+        let out = self.forge(&["ami-log", run, &lines.to_string()]).unwrap_or_default();
         out.lines().filter(|l| l.trim() != "?").map(String::from).collect()
     }
     fn now(&self) -> u64 {
@@ -530,7 +537,6 @@ fn image_gate(bead: &str) -> Result<(), String> {
     if git_line(&["rev-parse", "--verify", "--quiet", work::CHECKS_BASE]).is_none() {
         return Ok(());
     }
-    let cfg = spira_config::process::cfg;
     let touched = git_line(&["diff", "--name-only", "--no-renames", &format!("{}...{tip}", work::CHECKS_BASE)])
         .map(|o| o.lines().map(String::from).collect::<Vec<_>>());
     if touched.as_deref().is_some_and(|c| !work::image::touches_recipe(c)) {
@@ -539,8 +545,8 @@ fn image_gate(bead: &str) -> Result<(), String> {
     let ports = ImagePorts {
         root: root.into(),
         tip: tip.clone(),
-        forge: cfg("SPIRA_FORGE")?.into(),
-        remote: cfg("SPIRA_PUBLISH_REMOTE")?,
+        bound: bead.to_string(),
+        actor: std::env::var("SPIRA_RUNE").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "dwarf".to_string()),
         started: std::time::Instant::now(),
     };
     let wait = spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_AMI_WAIT_SECS")?;

@@ -256,13 +256,13 @@ pub const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", 
 /// this client's — a client-side check is one the caller could skip.
 pub const LANE_VERBS: &[&str] = &[
     "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident",
-    "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender",
+    "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender", "forge",
 ];
 
 pub const VERBS: &[&str] = &[
     "show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "ask", "read", "list", "search", "note-on", "label-add",
     "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand",
-    "fence", "hel", "mender",
+    "fence", "hel", "mender", "forge",
 ];
 
 /// Verbs answered in this process, never sent to the socket.
@@ -618,6 +618,14 @@ mod tests {
         assert_eq!(
             build_request("sp-3m1p9", "note-on", &v(&["sp-other1", "hi"]), None, "groomer").unwrap(),
             v(&["work", "sp-3m1p9", "note-on", "sp-other1", "hi", "--actor", "groomer"])
+        );
+    }
+
+    #[test]
+    fn the_image_gate_reaches_the_forge_as_a_brokered_verb_of_the_bound_bead() {
+        assert_eq!(
+            build_request("sp-95s21z.2", "forge", &v(&["ami-result", "spira-round-candidate/sp-95s21z.2-abc-1"]), None, "builder").unwrap(),
+            v(&["work", "sp-95s21z.2", "forge", "ami-result", "spira-round-candidate/sp-95s21z.2-abc-1", "--actor", "builder"])
         );
     }
 
