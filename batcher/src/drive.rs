@@ -2864,6 +2864,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
         assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["integration-tests".to_string()])]);
         assert!(f.scoped.is_empty() && f.main_kind.is_empty(), "{:?} {:?}", f.scoped, f.main_kind);
+        assert!(ops.eject_evidence.iter().any(|(id, line)| id == "m1" && line.contains("FAIL dir:testenv t")), "{:?}", ops.eject_evidence);
     }
 
     #[test]
@@ -2875,6 +2876,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
         assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-03.sh".to_string()])]);
         assert!(f.main_kind.is_empty(), "{:?}", f.main_kind);
+        assert!(ops.eject_evidence.iter().any(|(id, line)| id == "m1" && line.contains("test-03.sh")), "{:?}", ops.eject_evidence);
     }
 
     #[test]
