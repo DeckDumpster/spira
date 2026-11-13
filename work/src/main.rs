@@ -489,7 +489,8 @@ impl ImagePorts {
     fn forge(&self, args: &[&str]) -> Result<String, String> {
         let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
         let req = work::build_request_in(&self.bound, "forge", &args, None, &self.actor, None, None)?;
-        let route = format!("`work forge {}` through the broker socket", args[0]);
+        let socket = spira_config::process::cfg("SPIRA_LC_SOCKET").unwrap_or_default();
+        let route = format!("`work forge {}` via the broker at {socket}", args[0]);
         match send(&req, TOOL_TIMEOUT) {
             Ok((0, out)) => Ok(out),
             Ok((code, out)) => Err(format!("{route} exited {code}: {}", out.trim())),
