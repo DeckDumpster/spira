@@ -1,6 +1,6 @@
 //! `unpublished <repo>` — a queue.local repo's unpublished range, measured against the cached forge tip
 //! (a repo never fetched fetches once, inline); a tip older than a few seconds is refreshed in the background,
-//! never waited on, and one older than minutes is marked `stale` with its age. Prints `{"forge_tip","landing_tip","count","oldest_arrival"}`; `oldest_arrival` is
+//! never waited on, and one older than a minute is marked `stale` with its age. Prints `{"forge_tip","landing_tip","count","oldest_arrival"}`; `oldest_arrival` is
 //! when the oldest unpublished commit reached the landing ref (its reflog), null at count 0.
 //! A repo declared to publish nowhere answers `{"declared_unpublished":true}`: nothing to measure, not a blindness.
 //! Exit 2, naming why, for anything it cannot measure — never a zero it did not read.
@@ -20,7 +20,10 @@ const FETCH_SECS: &str = "2";
 /// A cached forge tip fetched within this long is answered from as it stands; older, a background fetch refreshes it for the next call.
 const REFRESH_AFTER_SECS: u64 = 15;
 /// A cached forge tip older than this is named stale with its age: the background refreshes have not been landing.
-const STALE_AFTER_SECS: u64 = 300;
+const STALE_AFTER_SECS: u64 = 60;
+/// A refresh started within this long is still in flight (its fetch is bounded by `FETCH_SECS`); no second one starts.
+const REFRESH_MARK: &str = "spira-unpublished-refresh";
+const REFRESH_IN_FLIGHT_SECS: u64 = 5;
 
 pub fn run(args: &[String]) -> (i32, String) {
     let [name] = args else { return (2, "unpublished: usage: unpublished <repo>".into()) };
@@ -97,12 +100,29 @@ fn plan(fetch_age: Option<u64>, have_tip: bool) -> Plan {
 
 /// Seconds since a fetch last completed in the checkout (FETCH_HEAD is rewritten even when no ref moved).
 fn last_fetch_age(repo: &Path) -> Option<u64> {
-    let rel = git_output(repo, &["rev-parse", "--git-path", "FETCH_HEAD"])?;
-    let modified = std::fs::metadata(repo.join(rel.trim())).ok()?.modified().ok()?;
+    git_path_age(repo, "FETCH_HEAD")
+}
+
+/// Seconds since `rel` (a path inside the git dir) was last written, `None` when it never was.
+fn git_path_age(repo: &Path, rel: &str) -> Option<u64> {
+    let path = git_output(repo, &["rev-parse", "--git-path", rel])?;
+    let modified = std::fs::metadata(repo.join(path.trim())).ok()?.modified().ok()?;
     Some(std::time::SystemTime::now().duration_since(modified).map_or(0, |d| d.as_secs()))
 }
 
+/// Claims the right to start a refresh: false while an earlier one is within its bound.
+fn claim_refresh(repo: &Path) -> bool {
+    if git_path_age(repo, REFRESH_MARK).is_some_and(|age| age < REFRESH_IN_FLIGHT_SECS) {
+        return false;
+    }
+    let Some(path) = git_output(repo, &["rev-parse", "--git-path", REFRESH_MARK]) else { return false };
+    std::fs::write(repo.join(path.trim()), "").is_ok()
+}
+
 fn refresh_in_background(repo: &Path, remote: &str, branch: &str) {
+    if !claim_refresh(repo) {
+        return;
+    }
     let spawned = spira_config::bounded::bounded_for("git", FETCH_SECS)
         .arg("-C")
         .arg(repo)
@@ -239,7 +259,7 @@ mod tests {
     #[test]
     fn a_cached_forge_tip_is_answered_from_and_only_refreshed_or_named_stale_by_its_age() {
         assert_eq!(plan(Some(1), true), Plan::Cached { refresh: false, stale: None });
-        assert_eq!(plan(Some(60), true), Plan::Cached { refresh: true, stale: None });
+        assert_eq!(plan(Some(30), true), Plan::Cached { refresh: true, stale: None });
         assert_eq!(plan(Some(900), true), Plan::Cached { refresh: true, stale: Some(900) });
         assert_eq!(plan(None, true), Plan::FetchNow);
         assert_eq!(plan(Some(1), false), Plan::FetchNow);
@@ -263,6 +283,15 @@ mod tests {
         let (count, arrival) = range_facts(dir, "main", &forge, &tip).unwrap();
         assert_eq!(count, 50);
         assert!(arrival.is_some());
+    }
+
+    #[test]
+    fn a_second_refresh_within_the_first_ones_bound_is_not_started() {
+        let scratch = testkit::TempDir::new("unpublished-claim");
+        let dir = scratch.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        assert!(claim_refresh(dir));
+        assert!(!claim_refresh(dir));
     }
 
     #[test]
