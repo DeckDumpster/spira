@@ -2,7 +2,8 @@
 //! backend through the verbs the deployed publisher calls, on the rig's virtual clock, over a
 //! one-hour fixture of `gate-run` rows and the manifest that states what it holds.
 
-use gate::section::{self, Lc};
+use ::gate::section::{self, Lc};
+use spira_desired_state::store::format_rfc3339;
 use reconciler_engine::assemble::{assemble, Snapshot};
 use reconciler_engine::causal_map::CausalMap;
 use reconciler_engine::flow::Flow;

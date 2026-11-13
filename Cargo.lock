@@ -570,11 +570,15 @@ dependencies = [
 name = "gate-worker"
 version = "1.0.0"
 dependencies = [
+ "gate",
  "landing-pass",
  "libc",
+ "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-store",
  "testkit",
+ "tsd",
 ]
 
 [[package]]
@@ -2130,6 +2134,7 @@ name = "spira-lc"
 version = "1.0.0"
 dependencies = [
  "bead",
+ "gate",
  "incident",
  "lifecycle",
  "opentelemetry-proto",
