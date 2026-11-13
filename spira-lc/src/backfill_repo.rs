@@ -9,6 +9,9 @@ use crate::callers::{s, usage, Answer, Machine, APPLIED, CANNOT_TELL, REFUSED};
 
 const CHUNK: usize = 100;
 const USE: &str = "backfill-repo [--apply | --dry-run] [<bead-id>...]";
+/// Rows one call writes: a sweep answers inside the service's query deadline, so a backlog is
+/// worked down over repeated calls, each skipping what the last set.
+const PER_CALL: usize = 200;
 /// What `set-repo` exits with on a WORKING row.
 const KEPT: i32 = 1;
 
@@ -59,11 +62,9 @@ pub fn backfill_repo(args: &[String], m: &mut dyn Machine) -> Answer {
         Ok(r) => r,
         Err(e) => return cannot(e),
     };
-    let unset: Vec<String> = all
-        .iter()
-        .filter(|r| s(r, "repo").is_empty() && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id"))))
-        .map(|r| s(r, "bead_id"))
-        .collect();
+    let wanted = |r: &&Value| s(r, "repo").is_empty() && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id")));
+    let unset: Vec<String> = all.iter().filter(wanted).map(|r| s(r, "bead_id")).collect();
+    let working: Vec<String> = all.iter().filter(wanted).filter(|r| s(r, "state") == "WORKING").map(|r| s(r, "bead_id")).collect();
     let named = match named(m, &unset) {
         Ok(n) => n,
         Err(e) => return cannot(e),
@@ -73,13 +74,23 @@ pub fn backfill_repo(args: &[String], m: &mut dyn Machine) -> Answer {
             return Answer { code, stderr: format!("spira-lc backfill-repo: {why}\n"), ..Default::default() };
         }
     }
-    let (mut lines, mut code, mut done, mut working) = (Vec::new(), APPLIED, 0usize, 0usize);
+    let (mut lines, mut code, mut done, mut kept, mut tried) = (Vec::new(), APPLIED, 0usize, 0usize, 0usize);
     for (id, repo) in &named {
         if !apply {
-            lines.push(format!("would set {id} -> {repo}"));
-            done += 1;
+            if working.contains(id) {
+                lines.push(format!("would keep {id}: WORKING"));
+                kept += 1;
+            } else {
+                lines.push(format!("would set {id} -> {repo}"));
+                done += 1;
+            }
             continue;
         }
+        if tried == PER_CALL {
+            lines.push(format!("stopped after {PER_CALL} rows; run again for the rest"));
+            break;
+        }
+        tried += 1;
         match m.call(&["set-repo".into(), id.clone(), repo.clone()]) {
             (0, _) => {
                 lines.push(format!("set {id} -> {repo}"));
@@ -87,7 +98,7 @@ pub fn backfill_repo(args: &[String], m: &mut dyn Machine) -> Answer {
             }
             (KEPT, _) => {
                 lines.push(format!("kept {id}: WORKING; run again once it leaves"));
-                working += 1;
+                kept += 1;
             }
             (_, why) => {
                 lines.push(format!("failed {id}: {}", why.trim()));
@@ -96,7 +107,7 @@ pub fn backfill_repo(args: &[String], m: &mut dyn Machine) -> Answer {
         }
     }
     let verb = if apply { "set" } else { "would set (dry run; --apply to write)" };
-    lines.push(format!("backfill-repo: {done} {verb}, {working} kept while WORKING, {} without a repo: label", unset.len() - named.len()));
+    lines.push(format!("backfill-repo: {done} {verb}, {kept} kept while WORKING, {} without a repo: label", unset.len() - named.len()));
     Answer::out(code, lines.join("\n"))
 }
 
@@ -184,6 +195,61 @@ mod tests {
         let mut m = fixture();
         backfill_repo(&v(&["--apply", "sp-landed"]), &mut m);
         assert_eq!(m.sets, [v(&["set-repo", "sp-landed", "harness"])]);
+    }
+
+    #[test]
+    fn backfill_repo_dry_run_does_not_promise_to_set_a_working_row() {
+        let a = backfill_repo(&[], &mut fixture());
+        assert!(a.stdout.contains("would keep sp-working: WORKING"), "{}", a.stdout);
+        assert!(a.stdout.contains("2 would set (dry run; --apply to write), 1 kept"), "{}", a.stdout);
+    }
+
+    #[test]
+    fn backfill_repo_stops_at_the_per_call_bound_and_says_to_run_again() {
+        let mut m = Lc::default();
+        for i in 0..PER_CALL + 1 {
+            m.rows.push(json!({"bead_id": format!("sp-{i}"), "state": "READY", "repo": null}));
+            m.labels.push((Box::leak(format!("sp-{i}").into_boxed_str()), vec!["repo:deck"]));
+        }
+        let a = backfill_repo(&v(&["--apply"]), &mut m);
+        assert_eq!(m.sets.len(), PER_CALL);
+        assert!(a.stdout.contains("run again"), "{}", a.stdout);
+    }
+
+    struct Down(&'static str);
+
+    impl Machine for Down {
+        fn call(&mut self, a: &[String]) -> (i32, String) {
+            if a[0] == self.0 { (2, "cannot tell: down".into()) } else { Lc::default().call(a) }
+        }
+    }
+
+    #[test]
+    fn backfill_repo_cannot_tell_when_the_rows_or_the_labels_are_unreadable() {
+        assert_eq!(backfill_repo(&[], &mut Down("list")).code, CANNOT_TELL);
+        let mut lc = fixture();
+        struct Both<'a>(&'a mut Lc);
+        impl Machine for Both<'_> {
+            fn call(&mut self, a: &[String]) -> (i32, String) {
+                if a[0] == "plan" { (2, "down".into()) } else { self.0.call(a) }
+            }
+        }
+        assert_eq!(backfill_repo(&[], &mut Both(&mut lc)).code, CANNOT_TELL);
+    }
+
+    #[test]
+    fn backfill_repo_reports_a_failed_set_and_goes_on() {
+        struct Fails(Lc);
+        impl Machine for Fails {
+            fn call(&mut self, a: &[String]) -> (i32, String) {
+                if a[0] == "set-repo" && a[1] == "sp-ready" { (2, "boom".into()) } else { self.0.call(a) }
+            }
+        }
+        let mut m = Fails(fixture());
+        let a = backfill_repo(&v(&["--apply"]), &mut m);
+        assert_eq!(a.code, REFUSED);
+        assert!(a.stdout.contains("failed sp-ready: boom"), "{}", a.stdout);
+        assert!(m.0.sets.iter().any(|s| s[1] == "sp-landed"), "the sweep goes on past a failure");
     }
 
     #[test]
