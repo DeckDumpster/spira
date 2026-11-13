@@ -761,7 +761,8 @@ mod tests {
     }
 
     #[test]
-    fn a_base_green_on_one_digest_then_red_twice_on_another_is_an_image_fault_under_the_real_ledger() {
+    fn a_base_green_on_one_digest_then_red_twice_on_another_is_an_image_fault_under_the_real_ledger(
+    ) {
         let w = World::new();
         let v = verbs();
         let p = w.ports(&v);
@@ -787,8 +788,13 @@ mod tests {
             .unwrap();
         let run = crate::sim::judge::JudgeRun::new(&spec, &crate::sim::profiles().unwrap()[0]);
         run.drive(&p, &w.clock, 1);
-        let fault: LaneFault =
-            decode(&w.store.get(&fault_key("lane", "b0", "sha256:d2")).unwrap().unwrap()).unwrap();
+        let fault: LaneFault = decode(
+            &w.store
+                .get(&fault_key("lane", "b0", "sha256:d2"))
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             fault.cause,
             Cause::Image {
@@ -814,19 +820,31 @@ mod tests {
         green("lane", "b0", "sha256:d1");
         green("lane", "b1", "sha256:d3");
         green("other", "b0", "sha256:d4");
-        let red = PassIdentity::new("lane", vec![m("sp-r", "1")], "b0", "sha256:d5", "h1", "all").unwrap();
-        w.ledger.record_attempt(&p, &red, "b1", &self::red("s", 2)).unwrap();
+        let red = PassIdentity::new("lane", vec![m("sp-r", "1")], "b0", "sha256:d5", "h1", "all")
+            .unwrap();
+        w.ledger
+            .record_attempt(&p, &red, "b1", &self::red("s", 2))
+            .unwrap();
         assert_eq!(
             w.ledger.green_digests(&p, "lane", "b0"),
             Ok(vec!["sha256:d1".to_string(), "sha256:d2".to_string()])
         );
-        let k = w.store.get("green-digests/lane/b0/sha256:d1").unwrap().unwrap();
+        let k = w
+            .store
+            .get("green-digests/lane/b0/sha256:d1")
+            .unwrap()
+            .unwrap();
         assert_eq!(k.value.metadata.owner_references, ["batches/lane/b1"]);
-        let id = PassIdentity::new("lane", vec![m("sp-a", "1")], "b0", "sha256:d1", "h1", "all").unwrap();
+        let id = PassIdentity::new("lane", vec![m("sp-a", "1")], "b0", "sha256:d1", "h1", "all")
+            .unwrap();
         w.ledger
             .record_attempt(&p, &id, "b9", &attempt(Class::Green, 9))
             .unwrap();
-        let k = w.store.get("green-digests/lane/b0/sha256:d1").unwrap().unwrap();
+        let k = w
+            .store
+            .get("green-digests/lane/b0/sha256:d1")
+            .unwrap()
+            .unwrap();
         assert_eq!(
             k.value.metadata.owner_references,
             ["batches/lane/b9"],
@@ -854,14 +872,20 @@ mod tests {
              [[drive]]\npass = 1\n",
         )
         .unwrap();
-        let id = PassIdentity::new("lane", vec![m("sp-a", "1")], "b0", "sha256:d2", "h1", "all").unwrap();
+        let id = PassIdentity::new("lane", vec![m("sp-a", "1")], "b0", "sha256:d2", "h1", "all")
+            .unwrap();
         w.ledger
             .record_attempt(&p, &id, "r1", &attempt(Class::Green, 1))
             .unwrap();
         let run = crate::sim::judge::JudgeRun::new(&spec, &crate::sim::profiles().unwrap()[0]);
         run.drive(&p, &w.clock, 1);
-        let fault: LaneFault =
-            decode(&w.store.get(&fault_key("lane", "b0", "sha256:d2")).unwrap().unwrap()).unwrap();
+        let fault: LaneFault = decode(
+            &w.store
+                .get(&fault_key("lane", "b0", "sha256:d2"))
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(fault.cause, Cause::Base);
     }
 
