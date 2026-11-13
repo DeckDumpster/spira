@@ -793,6 +793,19 @@ fn sole_member_culprit(red: &str, members: &[Member]) -> Vec<Action> {
     }
 }
 
+/// A one-member round red in the corpus pass ends by ejecting that member: no rerun, no probe.
+fn eject_sole_member<O: RoundOps>(
+    ops: &mut O,
+    members: &[Member],
+    red: &str,
+    filter: &str,
+) -> Result<RoundEnd, String> {
+    let actions = sole_member_culprit(red, members);
+    let left = who_left(members, &leaving(members, &actions, filter));
+    apply_build_actions(ops, members, &actions, filter)?;
+    Ok(RoundEnd::Emptied(format!("{filter} red {left}")))
+}
+
 enum FilterEject {
     Unnamed(String),
     /// Nothing is left to land; who left and who stayed.
@@ -1126,6 +1139,10 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             "batcher: {} red in the corpus pass — attributing it by its failing tests, without running the corpus again",
             f.name
         );
+        if let [_] = members[..] {
+            let red = format!("{} red{}", f.name, noted_tests(&f.failed));
+            return eject_sole_member(ops, &members, &red, &f.name);
+        }
         return Ok(match eject_filter_owners(runner, ops, &f, &members)? {
             FilterEject::Survivors(members) => RoundEnd::Land {
                 members,
@@ -1148,6 +1165,11 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             "batcher: {} suite(s) red in the corpus pass — attributing them alone, without the corpus again",
             prior_reds.len()
         );
+        if let [_] = members[..] {
+            let filter = prior_reds.join(",");
+            let red = format!("{filter} red in the corpus pass");
+            return eject_sole_member(ops, &members, &red, &filter);
+        }
         suites = prior_reds;
         kind = MainKind::Verify;
     }
@@ -2825,6 +2847,34 @@ pub(crate) mod tests {
         );
         assert!(ops.deleted.is_empty());
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+    }
+
+    #[test]
+    fn a_one_member_round_red_in_a_prior_filter_ejects_its_member_without_a_probe() {
+        let red = FilterRed {
+            name: "integration-tests".into(),
+            named: vec![],
+            failed: vec!["FAIL dir:testenv t".into()],
+        };
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.prior = Some(red);
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["integration-tests".to_string()])]);
+        assert!(f.scoped.is_empty() && f.main_kind.is_empty(), "{:?} {:?}", f.scoped, f.main_kind);
+    }
+
+    #[test]
+    fn a_one_member_round_red_in_prior_suites_ejects_its_member_without_a_run() {
+        let mut f = Fake::new(|_, _| false);
+        f.prior_suites = vec!["test-03.sh".into()];
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-03.sh".to_string()])]);
+        assert!(f.main_kind.is_empty(), "{:?}", f.main_kind);
     }
 
     #[test]

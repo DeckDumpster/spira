@@ -620,11 +620,18 @@ impl<'a> VmRunner<'a> {
         suites: &[String],
         build: &str,
     ) -> Result<(), String> {
+        let path = self.spool.join("req").join(format!("{job}.req"));
+        if self.child.is_none() {
+            return Err(format!(
+                "no round-vm is running to answer {} (job {job}, suites {}, build {build})",
+                path.display(),
+                suites.join(",")
+            ));
+        }
         let body = format!(
             "branch={branch}\nsuites={}\nbuild={build}\n",
             suites.join(",")
         );
-        let path = self.spool.join("req").join(format!("{job}.req"));
         let tmp = self.spool.join(format!(".{job}.req.tmp"));
         fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
         fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
@@ -1786,6 +1793,17 @@ mod abandon_tests {
         assert!(r.prior_red_suites().is_empty(), "no prior pass: the corpus runs");
         let mut r = r.after_pass(Some(d.path().to_path_buf()));
         assert_eq!(r.prior_red_suites(), vec!["b.sh".to_string(), "c.sh".to_string()]);
+    }
+
+    #[test]
+    fn a_request_with_no_round_vm_to_answer_it_fails_naming_the_request() {
+        let d = testkit::TempDir::new("vm-request-no-child");
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        let err = r.request("v1", "br", &["test-a.sh".to_string()], "round").unwrap_err();
+        assert!(err.contains("v1.req") && err.contains("test-a.sh") && err.contains("round"), "{err}");
+        assert!(!r.spool.join("req").join("v1.req").exists());
     }
 
     #[test]
