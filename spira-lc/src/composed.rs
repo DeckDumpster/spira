@@ -53,6 +53,10 @@ pub trait Content {
     fn ask_label(&self) -> Result<String, String>;
     /// The repo map a create's `repo:` label is judged against.
     fn registry(&self) -> spira_config::repos::Registry;
+    /// The filing contract's policy; a double that holds no personas files nothing under it.
+    fn policy(&self) -> Result<bead::filing::Policy, String> {
+        Ok(bead::filing::Policy::none())
+    }
 }
 
 /// A read that was not answered; `cannot_tell` is the store being unreadable, not the request
@@ -103,6 +107,9 @@ impl Content for LiveContent {
         let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
         let home = std::path::PathBuf::from(env.get("SPIRA_HOME").cloned().unwrap_or_default());
         spira_config::repos::Registry::from_env(env, &home)
+    }
+    fn policy(&self) -> Result<bead::filing::Policy, String> {
+        bead::filing::Policy::load(&spira_config::process::spira_home(), &spira_config::process::cfg)
     }
 }
 
@@ -177,9 +184,14 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
                 return refused;
             }
             let (ask_label, registry) = (|| content.ask_label(), || content.registry());
-            let guards = crate::content::Guards { caller, ask_label: &ask_label, registry: &registry, now };
+            let policy = || content.policy();
+            let repo_of = |id: &str| {
+                let shown = content.read(&["show".to_string(), id.to_string(), "--json".to_string()]).ok()?;
+                bead::parse_show_row(&shown)?.labels.iter().find_map(|l| l.strip_prefix("repo:").map(str::to_string))
+            };
+            let guards = crate::content::Guards { caller, ask_label: &ask_label, registry: &registry, policy: &policy, repo_of: &repo_of, now };
             let (m, bd) = (std::cell::RefCell::new(m), std::cell::RefCell::new(bd));
-            let mut guard = |a: &[String], body: Option<&str>| crate::content::guard(a, body, &guards, &mut **m.borrow_mut());
+            let mut guard = |a: &mut [String], body: &mut Option<String>| crate::content::guard(a, body, &guards, &mut **m.borrow_mut());
             let mut after = |a: &[String], out: &str| crate::content::after(a, out, &mut **m.borrow_mut(), &mut **bd.borrow_mut(), ROW_BACKOFF_MS);
             crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| content.write_stdin(a, body))
         }

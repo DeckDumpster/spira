@@ -93,6 +93,11 @@ fn ask_fields(args: &[String]) -> (String, String, String) {
     (title, desc, labels)
 }
 
+/// A create's title, description argument and labels, as the ask-shape fence reads them.
+pub fn create_fields(args: &[String]) -> (String, String, String) {
+    ask_fields(args)
+}
+
 /// Title/description extracted by `_bdq_check_schema_delete`'s loop — identical shape to
 /// [`ask_fields`] but with NO `--labels`/`-l` case at all: a `--labels` token there
 /// falls into the bare `-*)` skip branch instead of consuming the next arg as a value.

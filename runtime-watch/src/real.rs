@@ -77,14 +77,6 @@ impl Real {
             _ => Err(format!("cannot tell whether {id} is open: {}", out.out.trim())),
         }
     }
-
-    fn bead(&self, args: &[&str]) -> Result<String, String> {
-        // batch-job: bead.sh opens the store and runs as long as the filing takes
-        // FORK-EDGE: content store write (bead.sh file/label is the operator filing tool)
-        let mut c = bounded_for("bead.sh", "120");
-        c.args(args);
-        run(c)
-    }
 }
 
 impl World for Real {
@@ -146,13 +138,9 @@ impl World for Real {
     }
 
     fn file_bump(&self, repo: &Repo, rt: Runtime, title: &str, body: &str) -> Result<String, String> {
-        let p = std::env::temp_dir().join(format!("runtime-watch-{}.md", std::process::id()));
-        std::fs::write(&p, body).map_err(|e| e.to_string())?;
-        let out = self.bead(&["file", title, "--for", &self.persona, "--repo", &repo.name, "--body-file", &p.to_string_lossy()]);
-        let _ = std::fs::remove_file(&p);
-        let id = out?.lines().rev().map(str::trim).find(|l| !l.is_empty()).ok_or("bead.sh printed no id")?.to_string();
+        let id = bead::door::file_work(&self.lc, &self.persona, &repo.name, title, body)?;
         self.record(key(repo, rt), &id)?;
-        let _ = self.bead(&["label", "add", &id, LABEL]);
+        let _ = bead::door::label_add(&self.lc, &id, LABEL);
         Ok(id)
     }
 
@@ -217,5 +205,14 @@ mod lc_tests {
         let d = testkit::TempDir::new("rw-cannot");
         let (r, _) = real(d.path(), "deck\tnode\tsp-bump1\n", vec![("show", 2, "cannot tell: down")]);
         assert!(r.open_bump(&repo(), Runtime::Node).unwrap_err().contains("cannot tell whether sp-bump1 is open"));
+    }
+}
+
+#[cfg(test)]
+mod no_bead_fork {
+    #[test]
+    fn this_crate_files_through_the_content_door_and_forks_no_bead_tool() {
+        let found = bead::door::forks_a_bead_tool_under(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+        assert!(found.is_empty(), "a bead tool is forked:\n{}", found.join("\n"));
     }
 }

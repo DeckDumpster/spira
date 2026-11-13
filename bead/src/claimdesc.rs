@@ -102,6 +102,11 @@ pub fn refusal(id: &str, c: &LiveClaim) -> String {
     )
 }
 
+/// Whether `text` is [`refusal`]'s: a description edit stopped by a live claim.
+pub fn is_refusal(text: &str) -> bool {
+    text.contains(" is claimed by ") && text.contains(FORCE_FLAG)
+}
+
 pub fn override_note(actor: &str, c: &LiveClaim, reason: &str) -> String {
     let reason = if reason.is_empty() { "no reason given" } else { reason };
     format!(
