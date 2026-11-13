@@ -7574,6 +7574,91 @@ fn a_settings_refusal_no_member_adds_names_the_harness_and_counts_against_none()
     assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
 }
 
+const THROTTLED: &str = "aws ec2: An error occurred (InsufficientInstanceCapacity) when calling the RunInstances operation: throttled due to an operational issue in availability zone usw2-az2\n";
+
+fn launch_refused_next_pass(t: &T) {
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 2,
+        out: String::new(),
+        err: THROTTLED.into(),
+    };
+    *t.scripts.round_vm_files.borrow_mut() = vec![];
+}
+
+#[test]
+fn a_pass_whose_vm_never_launched_ejects_nobody_however_often_it_repeats() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    launch_refused_next_pass(&t);
+    for _ in 0..4 {
+        assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    }
+    assert!(
+        !t.lib.has("bead_reopen"),
+        "no suite ran: {:?}",
+        t.lib.calls.borrow()
+    );
+    assert!(kv_of(&t, "round")
+        .get("members")
+        .is_some_and(|m| m.contains("sp-a")));
+}
+
+#[test]
+fn repeated_launch_faults_page_the_infrastructure_cause_not_the_bead() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    launch_refused_next_pass(&t);
+    for _ in 0..2 {
+        assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    }
+    let paged: Vec<String> = t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("notify") && c.contains("cannot be placed"))
+        .cloned()
+        .collect();
+    assert_eq!(paged.len(), 1, "{:?}", t.lib.calls.borrow());
+    assert!(
+        paged[0].contains("usw2-az2") && !paged[0].contains("sp-a"),
+        "{}",
+        paged[0]
+    );
+}
+
+#[test]
+fn a_launch_fault_between_two_member_faults_does_not_reset_or_extend_their_count() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    fault_next_pass(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    launch_refused_next_pass(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    assert!(!t.lib.has("bead_reopen"), "{:?}", t.lib.calls.borrow());
+    fault_next_pass(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    assert!(t.lib.has("bead_reopen sp-a eject-red"));
+}
+
 #[test]
 fn a_green_pass_between_two_faults_makes_the_second_a_first_again() {
     let t = round_world();
