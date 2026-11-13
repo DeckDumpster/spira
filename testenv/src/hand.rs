@@ -61,15 +61,14 @@ fn written_since(p: &Path, cutoff: SystemTime) -> bool {
     md.is_dir() && fs::read_dir(p).is_ok_and(|rd| rd.flatten().any(|e| written_since(&e.path(), cutoff)))
 }
 
-/// Seconds since `t.path` was last written, or `None` when it was written within `min_idle_secs`
-/// of `now` or cannot be read: the caller keeps it.
-pub fn stale_age_secs(t: &Path, now: SystemTime, min_idle_secs: u64) -> Option<u64> {
+/// When `t` was last written (Unix seconds), or `None` when that was within `min_idle_secs` of
+/// `now` or cannot be read: the caller keeps it.
+pub fn stale_written_at(t: &Path, now: SystemTime, min_idle_secs: u64) -> Option<u64> {
     let cutoff = now.checked_sub(Duration::from_secs(min_idle_secs))?;
     if written_since(t, cutoff) {
         return None;
     }
-    let newest = newest_write(t)?;
-    Some(now.duration_since(newest).map_or(0, |d| d.as_secs()))
+    newest_write(t)?.duration_since(SystemTime::UNIX_EPOCH).ok().map(|d| d.as_secs())
 }
 
 fn newest_write(p: &Path) -> Option<SystemTime> {
@@ -101,7 +100,7 @@ pub struct Reaped {
 pub fn reap(roots: &[PathBuf], now: SystemTime, min_idle_secs: u64, is_held: &dyn Fn(&HandTarget) -> bool) -> Result<Reaped, String> {
     let mut out = Reaped::default();
     for t in candidates(roots) {
-        if stale_age_secs(&t.path, now, min_idle_secs).is_none() {
+        if stale_written_at(&t.path, now, min_idle_secs).is_none() {
             continue;
         }
         if is_held(&t) {
@@ -112,65 +111,6 @@ pub fn reap(roots: &[PathBuf], now: SystemTime, min_idle_secs: u64, is_held: &dy
         out.removed.push(t.path);
     }
     Ok(out)
-}
-
-/// One filesystem as the alarm reads it.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Disk {
-    pub mount: String,
-    pub used_pct: u64,
-    pub free_bytes: u64,
-}
-
-/// The mount point holding `path` according to `/proc/self/mountinfo` text: the longest mount
-/// point that is a prefix of it.
-pub fn mount_of(mountinfo: &str, path: &Path) -> Option<String> {
-    let unescape = |s: &str| {
-        let (mut out, b) = (String::new(), s.as_bytes());
-        let mut i = 0;
-        while i < b.len() {
-            match (b[i], s.get(i + 1..i + 4).and_then(|o| u8::from_str_radix(o, 8).ok())) {
-                (b'\\', Some(c)) => {
-                    out.push(c as char);
-                    i += 4;
-                }
-                (c, _) => {
-                    out.push(c as char);
-                    i += 1;
-                }
-            }
-        }
-        out
-    };
-    mountinfo.lines().filter_map(|l| l.split(' ').nth(4)).map(unescape).filter(|m| path.starts_with(m)).max_by_key(|m| m.len())
-}
-
-/// Used share (as `df` computes it) and free bytes of the filesystem holding `path`.
-pub fn usage(path: &Path) -> Option<(u64, u64)> {
-    use std::os::unix::ffi::OsStrExt;
-    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
-    // SAFETY: a zeroed statvfs is a valid out-parameter, and `c` is a NUL-terminated path.
-    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
-        return None;
-    }
-    let used = (s.f_blocks - s.f_bfree) as u64;
-    let denom = used + s.f_bavail as u64;
-    Some((if denom == 0 { 0 } else { (used * 100).div_ceil(denom) }, s.f_bavail as u64 * s.f_frsize as u64))
-}
-
-/// One reading per distinct filesystem among `paths`, named by its mount point; a path that
-/// cannot be read is left out.
-pub fn disks(paths: &[PathBuf], mountinfo: &str) -> Vec<Disk> {
-    let mut out: Vec<Disk> = vec![];
-    for p in paths {
-        let Some((used_pct, free_bytes)) = usage(p) else { continue };
-        let mount = mount_of(mountinfo, p).unwrap_or_else(|| p.display().to_string());
-        if !out.iter().any(|d| d.mount == mount) {
-            out.push(Disk { mount, used_pct, free_bytes });
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -273,24 +213,5 @@ mod tests {
         assert_eq!(candidates(std::slice::from_ref(&root)), vec![]);
         reap(&[root], later(10), DAY, &|_| false).unwrap();
         assert!(elsewhere.join("keep.txt").exists());
-    }
-
-    #[test]
-    fn the_mount_naming_a_path_is_the_longest_prefix() {
-        let mi = "1 0 8:1 / / rw - ext4 /dev/a rw\n2 1 8:2 / /srv/ssd\\040b rw - ext4 /dev/b rw\n3 1 8:3 / /srv rw - ext4 /dev/c rw\n";
-        assert_eq!(mount_of(mi, Path::new("/srv/ssd b/scratch")).as_deref(), Some("/srv/ssd b"));
-        assert_eq!(mount_of(mi, Path::new("/srv/ssd-c/x")).as_deref(), Some("/srv"));
-        assert_eq!(mount_of(mi, Path::new("/var/tmp")).as_deref(), Some("/"));
-        assert_eq!(mount_of("", Path::new("/var/tmp")), None);
-    }
-
-    #[test]
-    fn usage_reads_the_filesystem_and_one_disk_is_reported_once() {
-        let (pct, free) = usage(Path::new("/")).unwrap();
-        assert!(pct <= 100 && free > 0);
-        assert_eq!(usage(Path::new("/no/such/dir")), None);
-        let d = disks(&[PathBuf::from("/"), PathBuf::from("/")], "1 0 8:1 / / rw - ext4 /dev/a rw\n");
-        assert_eq!(d.len(), 1);
-        assert_eq!(d[0].mount, "/");
     }
 }

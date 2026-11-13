@@ -746,3 +746,5 @@ transitions_task_bound
 sccache_dav_root
 gate_target_root
 lc_backup_part_bytes
+hand_target_roots
+hand_target_idle_secs

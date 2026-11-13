@@ -13,6 +13,12 @@
 //! overlay dirs it cannot remove (`testenv/src/foreign.rs:246`). The foreign-cache sweep runs
 //! **before** the floor check, on every tick (`target_reap_main.rs:77-84`).
 //!
+//! **Hand-built targets.** Every tick it also removes a cargo target that hand-driven work left
+//! under a root in `SPIRA_HAND_TARGET_ROOTS` (`testenv::hand`): written last at least
+//! `SPIRA_HAND_TARGET_IDLE_SECS` ago, and held by no process. A hand build points
+//! `CARGO_TARGET_DIR` at `<root>/<purpose>/target`; only that `target` is removed, never the logs
+//! or checkout beside it. Watchtower watches each root's filesystem for free space.
+//!
 //! ## Tick
 //!
 //! - Cadence 2 min (`spira-target-reap-prod.timer`: OnBootSec 2 min, OnUnitActiveSec 2 min).
@@ -113,6 +119,7 @@ pub const STATE: EventKindTag = "sweep.target.state";
 pub const OBSERVE: &str = "sweep.target.observe";
 pub const REMOVE_TARGET: &str = "sweep.target.remove_target";
 pub const REMOVE_FOREIGN_RUN: &str = "sweep.target.remove_foreign_run";
+pub const REMOVE_HAND_TARGET: &str = "sweep.target.remove_hand_target";
 
 pub const CADENCE_MS: u64 = 120_000;
 /// The probe walks worktrees and `/proc` on the `host` class; the contract gives it no deadline.
@@ -120,10 +127,10 @@ pub const OBSERVE_DEADLINE_MS: u64 = 60_000;
 /// `STALE_RUN_AGE` (`foreign.rs:236`).
 pub const STALE_RUN_AGE_SECS: u64 = 3_600;
 
-pub const ACTS: &[(&str, u64)] = &[(REMOVE_TARGET, 120_000), (REMOVE_FOREIGN_RUN, 300_000)];
+pub const ACTS: &[(&str, u64)] = &[(REMOVE_TARGET, 120_000), (REMOVE_FOREIGN_RUN, 300_000), (REMOVE_HAND_TARGET, 300_000)];
 pub const EMITS: &[EventKindTag] = &[];
-pub const EFFECTS: &[&str] = &[OBSERVE, REMOVE_TARGET, REMOVE_FOREIGN_RUN];
-pub const KEYS: &[&str] = &["SPIRA_REAP_DISK_FLOOR_GIB", "SPIRA_REAP_IDLE_SECS", "SPIRA_RUN"];
+pub const EFFECTS: &[&str] = &[OBSERVE, REMOVE_TARGET, REMOVE_FOREIGN_RUN, REMOVE_HAND_TARGET];
+pub const KEYS: &[&str] = &["SPIRA_REAP_DISK_FLOOR_GIB", "SPIRA_REAP_IDLE_SECS", "SPIRA_RUN", "SPIRA_HAND_TARGET_ROOTS", "SPIRA_HAND_TARGET_IDLE_SECS"];
 pub const UNREGISTERED: &[&str] = &[];
 
 pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
@@ -147,6 +154,17 @@ pub struct ForeignRun {
     pub bytes: u64,
 }
 
+/// A hand-built target nothing has written for the idle threshold. `written_at` is when it was
+/// last written, in Unix seconds, so a rebuilt target at the same path is a new removal.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandTarget {
+    pub path: String,
+    pub guard: String,
+    pub written_at: u64,
+    pub busy: bool,
+    pub bytes: u64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     /// `statvfs` of the worktree root; `None` when unreadable, which reclaims nothing.
@@ -157,6 +175,8 @@ pub struct Snapshot {
     pub idle_secs_min: u64,
     pub candidates: Vec<Candidate>,
     pub foreign_stale: Vec<ForeignRun>,
+    #[serde(default)]
+    pub hand_stale: Vec<HandTarget>,
 }
 
 /// No carried state: every tick re-observes.
@@ -174,6 +194,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
         .filter(|r| testenv::foreign::is_stale(Some(std::time::Duration::from_secs(r.age_secs)), stale_age, r.busy))
         .map(|r| Act::new(REMOVE_FOREIGN_RUN, r.path.clone()).with_input(serde_json::to_string(r).unwrap_or_default()))
         .collect();
+    acts.extend(snap.hand_stale.iter().filter(|h| !h.busy).map(|h| Act::new(REMOVE_HAND_TARGET, format!("{}@{}", h.path, h.written_at)).with_input(serde_json::to_string(h).unwrap_or_default())));
     let Some(free) = snap.free_bytes else { return (carry.clone(), acts) };
     if free >= snap.floor_bytes {
         return (carry.clone(), acts);
@@ -225,7 +246,17 @@ pub fn observe(run: &std::path::Path) -> Result<String, String> {
         .filter(|(_, age)| testenv::foreign::is_stale(*age, stale_age, false))
         .map(|(path, age)| ForeignRun { busy: testenv::busy::worktree_busy(&path), bytes: testenv::reap::size_of(&path), age_secs: age.map_or(0, |a| a.as_secs()), path: path.display().to_string() })
         .collect();
-    serde_json::to_string(&Snapshot { free_bytes, floor_bytes, idle_secs_min, candidates, foreign_stale }).map_err(|e| e.to_string())
+    let hand_idle = pinned_u64("SPIRA_HAND_TARGET_IDLE_SECS")?;
+    let roots: Vec<_> = spira_config::process::cfg("SPIRA_HAND_TARGET_ROOTS")?.split_whitespace().map(std::path::PathBuf::from).collect();
+    let now = std::time::SystemTime::now();
+    let hand_stale = testenv::hand::candidates(&roots)
+        .into_iter()
+        .filter_map(|t| {
+            let written_at = testenv::hand::stale_written_at(&t.path, now, hand_idle)?;
+            Some(HandTarget { busy: testenv::hand::held(&t), bytes: testenv::reap::size_of(&t.path), path: t.path.display().to_string(), guard: t.guard.display().to_string(), written_at })
+        })
+        .collect();
+    serde_json::to_string(&Snapshot { free_bytes, floor_bytes, idle_secs_min, candidates, foreign_stale, hand_stale }).map_err(|e| e.to_string())
 }
 
 /// Remove one idle target, re-checking at run time that it is neither busy nor younger than
@@ -262,6 +293,21 @@ pub fn remove_foreign_run(input: &str) -> Result<String, String> {
     } else {
         Err(format!("{REMOVE_FOREIGN_RUN}: {} could not be removed", path.display()))
     }
+}
+
+/// Remove one hand-built target, re-checking at run time that it is still unwritten past the
+/// threshold, under a configured root, and held by no process. Answers the bytes freed.
+pub fn remove_hand_target(input: &str) -> Result<String, String> {
+    let h: HandTarget = serde_json::from_str(input).map_err(|e| format!("{REMOVE_HAND_TARGET}: bad input: {e}"))?;
+    let roots: Vec<_> = spira_config::process::cfg("SPIRA_HAND_TARGET_ROOTS")?.split_whitespace().map(std::path::PathBuf::from).collect();
+    let t = testenv::hand::candidates(&roots).into_iter().find(|t| t.path.as_os_str() == h.path.as_str()).ok_or_else(|| format!("{REMOVE_HAND_TARGET}: {} is under no configured root — refused", h.path))?;
+    if testenv::hand::stale_written_at(&t.path, std::time::SystemTime::now(), pinned_u64("SPIRA_HAND_TARGET_IDLE_SECS")?).is_none() {
+        return Err(format!("{REMOVE_HAND_TARGET}: {} was written within the threshold — refused", h.path));
+    }
+    if testenv::hand::held(&t) {
+        return Err(format!("{REMOVE_HAND_TARGET}: {} is held by a process — refused", h.path));
+    }
+    testenv::reap::remove_target(&t.path).map(|n| n.to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -24,7 +24,7 @@ fn target(id: &str, idle_secs: u64, busy: bool, gib: u64) -> Candidate {
 
 /// The contract's idle fixture: free space at the floor and an empty foreign-cache.
 fn idle() -> Snapshot {
-    Snapshot { free_bytes: Some(50 * GIB), floor_bytes: 50 * GIB, idle_secs_min: 21_600, candidates: vec![target("old", 90_000, false, 8)], foreign_stale: vec![] }
+    Snapshot { free_bytes: Some(50 * GIB), floor_bytes: 50 * GIB, idle_secs_min: 21_600, candidates: vec![target("old", 90_000, false, 8)], foreign_stale: vec![], hand_stale: vec![] }
 }
 
 /// 20 GiB short of the floor, with idle, young and busy targets.
@@ -113,4 +113,19 @@ fn nothing_is_kept_because_every_tick_re_observes() {
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+}
+
+fn hand(path: &str, written_at: u64, busy: bool) -> HandTarget {
+    HandTarget { path: path.into(), guard: path.trim_end_matches("/target").into(), written_at, busy, bytes: GIB }
+}
+
+/// A hand-built target is removed above the floor too, once, and keyed by when it was last
+/// written so a rebuild at the same path is a new removal; a held one stays.
+#[test]
+fn a_stale_hand_built_target_goes_at_any_free_space_and_a_held_one_stays() {
+    let snap = Snapshot { hand_stale: vec![hand("/h/a/target", 100, false), hand("/h/b/target", 100, true)], ..idle() };
+    let acts = decide(&Carry::default(), &snap).1;
+    assert_eq!(acts.iter().filter(|a| a.effect == REMOVE_HAND_TARGET).map(|a| a.key.as_str()).collect::<Vec<_>>(), ["/h/a/target@100"]);
+    let rebuilt = Snapshot { hand_stale: vec![hand("/h/a/target", 900, false)], ..idle() };
+    assert_eq!(decide(&Carry::default(), &rebuilt).1[0].key, "/h/a/target@900");
 }

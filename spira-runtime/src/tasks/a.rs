@@ -156,7 +156,7 @@ pub static TASKS: &[Task] = &[
         boot: sweep_target::SweepTarget::boot,
         cadence_ms: |_| sweep_target::CADENCE_MS,
         effects: sweep_target::EFFECTS,
-        runners: &[(sweep_target::OBSERVE, |e, _, _| sweep_target::observe(&e.world.run_dir)), (sweep_target::REMOVE_TARGET, |_, _, s| sweep_target::remove_target(&s.input)), (sweep_target::REMOVE_FOREIGN_RUN, |_, _, s| sweep_target::remove_foreign_run(&s.input))],
+        runners: &[(sweep_target::OBSERVE, |e, _, _| sweep_target::observe(&e.world.run_dir)), (sweep_target::REMOVE_TARGET, |_, _, s| sweep_target::remove_target(&s.input)), (sweep_target::REMOVE_FOREIGN_RUN, |_, _, s| sweep_target::remove_foreign_run(&s.input)), (sweep_target::REMOVE_HAND_TARGET, |_, _, s| sweep_target::remove_hand_target(&s.input))],
         keys: &[sweep_target::KEYS],
         build: |s| sweep_target::SweepTarget::from_settings(s).registration(),
     },

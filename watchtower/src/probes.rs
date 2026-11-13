@@ -345,9 +345,10 @@ pub const ROOT_PATH: &str = "/";
 pub const DEFAULT_TMP_PATH: &str = "/tmp";
 pub const DEFAULT_PSI_DIR: &str = "/proc/pressure";
 
-/// Root, the run directory and the build pool, then the operator's extra paths.
-pub fn watch_paths(run: &Path, extra: &str, build_base: &str) -> Vec<String> {
-    [ROOT_PATH, &run.to_string_lossy()].into_iter().chain(build_base.split_whitespace()).chain(extra.split_whitespace()).map(String::from).collect()
+/// Root, the run directory, the build pool and the roots hand builds leave targets under, then
+/// the operator's extra paths.
+pub fn watch_paths(run: &Path, extra: &str, build_base: &str, hand_roots: &str) -> Vec<String> {
+    [ROOT_PATH, &run.to_string_lossy()].into_iter().chain(build_base.split_whitespace()).chain(hand_roots.split_whitespace()).chain(extra.split_whitespace()).map(String::from).collect()
 }
 
 pub fn disk_room(cfg: &Cfg, now: i64, read: &dyn Fn(&str) -> Option<FsReading>) -> Reading {
@@ -979,8 +980,20 @@ mod tests {
     }
 
     #[test]
-    fn watch_paths_always_name_root_run_and_build_pool_before_the_extras() {
-        assert_eq!(watch_paths(Path::new("/r"), "/nix/store /x", "/b /c"), ["/", "/r", "/b", "/c", "/nix/store", "/x"]);
+    fn a_hand_build_root_on_its_own_disk_pages_at_the_floor_and_names_it() {
+        let d = testkit::TempDir::new("wt-disk-hand");
+        let mut c = cfg(&d);
+        c.disk_watch_paths = watch_paths(Path::new("/run-dir"), "", "", "/srv/scratch");
+        let read = |p: &str| if p == "/srv/scratch" { fs(3, 6, 99) } else { fs(1, 400, 20) };
+        let s = standing(disk_room(&c, 1_000, &read));
+        assert_eq!(s.len(), 1, "{s:?}");
+        assert_eq!(s[0].key, "disk-free-_srv_scratch");
+        assert!(s[0].title.contains("/srv/scratch") && s[0].title.contains("1% free"), "{}", s[0].title);
+    }
+
+    #[test]
+    fn watch_paths_always_name_root_run_build_pool_and_hand_roots_before_the_extras() {
+        assert_eq!(watch_paths(Path::new("/r"), "/nix/store /x", "/b /c", "/h /i"), ["/", "/r", "/b", "/c", "/h", "/i", "/nix/store", "/x"]);
     }
 
     #[test]

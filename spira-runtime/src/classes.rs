@@ -305,6 +305,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("sweep.reclaim.trim_cache", Host),
     ("sweep.target.observe", Store),
     ("sweep.target.remove_foreign_run", Host),
+    ("sweep.target.remove_hand_target", Host),
     ("sweep.target.remove_target", Host),
     ("sweep.tsd.observe", Host),
     ("sweep.tsd.prune", Host),
