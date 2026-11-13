@@ -516,15 +516,14 @@ fn superseded_program(exe: &Path, releases: &Path, new: &Path) -> Option<PathBuf
     (release != new.file_name()? && release != CURRENT).then(|| parts.as_path().to_path_buf())
 }
 
-/// Units that are up with a process executing a binary from a superseded release whose bytes
-/// differ from the same program in `new` (identical bytes are no reason to cycle a service).
-fn stale_executables(ctx: &Ctx, rendered: &[(String, String, String, bool)], new: &Path) -> Vec<String> {
+/// Up, long-lived units with a process executing a binary from a superseded release whose
+/// bytes differ from the same program in `new` (identical bytes are no reason to cycle a
+/// service), each with that binary. A unit that never restarts, or restarts itself when idle,
+/// is returned too: the caller names it rather than restarting it.
+fn stale_executables(ctx: &Ctx, rendered: &[(String, String, String, bool)], new: &Path) -> Vec<(String, PathBuf)> {
     let mut stale = Vec::new();
-    for (unit, _, text, _) in rendered {
-        if !unit.ends_with(".service") || units::never_restart(text).is_some() || units::restart_when_idle(text).is_some() {
-            continue;
-        }
-        if !matches!(ctx.sc.state(unit), Ok(st) if is_up(&st.active) && st.kind != "oneshot") {
+    for (unit, _, _, _) in rendered {
+        if !unit.ends_with(".service") || !matches!(ctx.sc.state(unit), Ok(st) if is_up(&st.active) && st.kind != "oneshot") {
             continue;
         }
         for exe in ctx.sc.executables(unit) {
@@ -532,7 +531,7 @@ fn stale_executables(ctx: &Ctx, rendered: &[(String, String, String, bool)], new
             if matches!((fs::read(&exe), fs::read(new.join(&rel_path))), (Ok(a), Ok(b)) if a == b) {
                 continue;
             }
-            stale.push(format!("{unit}: a process runs {}", exe.display()));
+            stale.push((unit.clone(), exe));
             break;
         }
     }
@@ -542,28 +541,34 @@ fn stale_executables(ctx: &Ctx, rendered: &[(String, String, String, bool)], new
 /// Activation does not finish while a long-lived service still executes a superseded
 /// release's binary: restart it, say so, and fail (rolling back) if it is still there.
 fn heal_stale_executables(ctx: &Ctx, rendered: &[(String, String, String, bool)], new: &Path, out: &mut Switched, attempted: &mut Vec<String>) -> Vec<String> {
-    let first = stale_executables(ctx, rendered, new);
+    let exempt = |u: &str| rendered.iter().find(|r| r.0 == u).is_some_and(|r| units::never_restart(&r.2).is_some() || units::restart_when_idle(&r.2).is_some());
+    let (left, first): (Vec<_>, Vec<_>) = stale_executables(ctx, rendered, new).into_iter().partition(|(u, _)| exempt(u));
+    for (unit, exe) in left {
+        let line = format!("{unit} (a process runs {}; not restarted by activation, by its own declaration)", exe.display());
+        if !out.stale.iter().chain(&out.when_idle).any(|s| s.starts_with(&unit)) {
+            out.stale.push(line);
+        }
+    }
     let mut failed = Vec::new();
-    for line in &first {
-        let unit = line.split(':').next().unwrap_or_default().to_string();
-        eprintln!("release: HEALED: {line}; restarting it onto {}", new.display());
+    for (unit, exe) in &first {
+        eprintln!("release: HEALED: {unit}: a process runs {}; restarting it onto {}", exe.display(), new.display());
         attempted.push(unit.clone());
-        if let Err(e) = ctx.sc.reset_failed(&unit).and_then(|()| restart_unit(ctx.sc, &unit)) {
+        if let Err(e) = ctx.sc.reset_failed(unit).and_then(|()| restart_unit(ctx.sc, unit)) {
             failed.push(format!("{unit}: still executes a superseded release and restarting it failed: {e}"));
-        } else if !out.restarted.contains(&unit) {
-            out.restarted.push(unit);
+        } else if !out.restarted.contains(unit) {
+            out.restarted.push(unit.clone());
         }
     }
     if first.is_empty() || !failed.is_empty() {
         return failed;
     }
-    let healed: Vec<String> = first.iter().map(|l| l.split(':').next().unwrap_or_default().to_string()).collect();
+    let healed: Vec<String> = first.into_iter().map(|(u, _)| u).collect();
     for (u, st) in crate::systemctl::await_settled(ctx.sc, &healed, ctx.settle) {
         if !matches!(&st, Ok(s) if s.active == "active") {
             failed.push(format!("{u}: did not come up after the restart that cleared its superseded executable"));
         }
     }
-    failed.extend(stale_executables(ctx, rendered, new).into_iter().map(|l| format!("{l} after its restart")));
+    failed.extend(stale_executables(ctx, rendered, new).into_iter().filter(|(u, _)| healed.contains(u)).map(|(u, e)| format!("{u}: a process still runs {} after its restart", e.display())));
     failed
 }
 

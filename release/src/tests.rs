@@ -1171,6 +1171,39 @@ fn an_activation_that_cannot_move_lc_serve_off_the_superseded_binary_is_rolled_b
 }
 
 #[test]
+fn a_running_process_is_found_executing_the_binary_it_was_started_from() {
+    let t = Sandbox::new();
+    let bin = t.p().join("rel/bin/sleeper");
+    exe(&bin, "#!/bin/sh\nexec sleep 30\n");
+    let mut child = std::process::Command::new(&bin).spawn().unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    let seen = crate::systemctl::exes_of(&[child.id(), u32::MAX]);
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert!(seen[0].ends_with("sleep"), "an exec'd process shows its real program: {seen:?}");
+    assert_eq!(crate::systemctl::exes_of(&[u32::MAX]), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn an_activation_names_a_stale_lc_serve_that_declares_it_is_never_restarted() {
+    let (w, old_bin) = world_with_an_lc_serve_left_on_the_previous_release();
+    let text = format!("{LC_UNIT}X-Spira-NoRestart=the operator's panes\n");
+    for name in [A.to_string(), "p".repeat(40)] {
+        file(&w.cfg.releases.join(name).join("systemd/lc-serve.service"), &text);
+    }
+    let rel = w.cfg.releases.join(A);
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    file(&w.cfg.unit_dir.join("lc-serve.service"), &text.replace("@SPIRA_PROD_ROOT@", &rel.display().to_string()));
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    lc_serve_running(&sc, &old_bin);
+    let out = activate_with(&w, &sc).unwrap();
+    assert!(sc.restarts.borrow().is_empty());
+    assert!(out.stale.iter().any(|s| s.starts_with("lc-serve.service") && s.contains("spira-lc")), "{:?}", out.stale);
+}
+
+#[test]
 fn an_activation_leaves_a_service_alone_whose_old_release_binary_has_the_same_bytes() {
     let (w, old_bin) = world_with_an_lc_serve_left_on_the_previous_release();
     exe(&old_bin, "spira-lc v2 with holds");

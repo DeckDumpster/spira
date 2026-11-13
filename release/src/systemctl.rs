@@ -47,6 +47,12 @@ pub fn release_of_environ(environ: &[u8]) -> Option<String> {
     environ.split(|b| *b == 0).find_map(|kv| kv.strip_prefix(b"SPIRA_RELEASE=")).map(|v| String::from_utf8_lossy(v).into_owned())
 }
 
+/// Where each of `pids` is executing from, as `/proc/<pid>/exe` resolves; a pid that is gone
+/// or unreadable is left out.
+pub fn exes_of(pids: &[u32]) -> Vec<std::path::PathBuf> {
+    pids.iter().filter_map(|p| std::fs::read_link(format!("/proc/{p}/exe")).ok()).collect()
+}
+
 pub trait Systemctl {
     fn daemon_reload(&self) -> Result<(), String>;
     fn state(&self, unit: &str) -> Result<UnitState, String>;
@@ -232,7 +238,7 @@ impl Systemctl for RealSystemctl {
         if pids.is_empty() {
             pids = show("MainPID").and_then(|p| p.parse().ok()).into_iter().filter(|p| *p > 0).collect();
         }
-        pids.into_iter().filter_map(|p| std::fs::read_link(format!("/proc/{p}/exe")).ok()).collect()
+        exes_of(&pids)
     }
     fn running_release(&self, unit: &str) -> Option<String> {
         let pid: u32 = self.run(&["show", unit, "-p", "MainPID", "--value"]).ok()?.trim().parse().ok()?;
