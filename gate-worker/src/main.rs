@@ -143,7 +143,31 @@ fn real_main(meter: &spira_otel::metrics::Run) -> ExitCode {
     for mut c in children {
         let _ = c.wait();
     }
+    if !spawned {
+        match publish_section(&s.run) {
+            Ok(r) => println!("gate-worker: Gate/gate published: {} gate(s) in the hour, {:.3} without a verdict", r.gates, r.no_verdict_share),
+            Err(e) => eprintln!("gate-worker: Gate/gate not published: {e}"),
+        }
+    }
     result
+}
+
+struct SpiraLc(spira_store::lc_call::LcClient);
+
+impl gate::section::Lc for SpiraLc {
+    fn call(&self, args: &[String]) -> (i32, serde_json::Value) {
+        match self.0.call(args) {
+            Ok(r) => (r.code, serde_json::from_str(r.out.trim()).unwrap_or_else(|_| serde_json::json!({ "cannot_tell": r.why() }))),
+            Err(e) => (-1, serde_json::json!({ "cannot_tell": e.to_string() })),
+        }
+    }
+}
+
+/// The tick's last act, whether or not it gated anything: a section that is not republished
+/// goes stale, which is how a stopped gate-worker is seen.
+fn publish_section(run: &std::path::Path) -> Result<gate::section::Reading, String> {
+    let lc = SpiraLc(spira_store::lc_call::LcClient::configured()?);
+    gate::section::publish(&lc, run, Wall.now_ms() / 1000)
 }
 
 #[cfg(test)]

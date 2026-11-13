@@ -1,0 +1,17 @@
+# The Gate section's spec: the share of an hour's gates that may end without a verdict.
+# Not part of the default document, which every install composes and publishes: a section spec
+# reaches the control store, so it is applied when the section is armed
+# (`spira compose desired-state/examples/default.toml desired-state/examples/gate.toml`).
+
+[producer]
+producer = "spira-default"
+version = "1"
+time = "2026-11-10T00:00:00Z"
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "Gate"
+[resources.metadata]
+name = "gate"
+[resources.spec]
+no_verdict_share = { value = 0.05, statute = "law-a-concurrency-ceiling-names-its-measurement" }

@@ -13,12 +13,16 @@ name = "gate-worker"
 path = "src/main.rs"
 
 [features]
-integration = ["landing-pass/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration"]
+integration = ["gate/integration", "landing-pass/integration", "spira-config/integration", "spira-otel/integration", "spira-store/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 landing-pass = { path = "../landing-pass" }
 libc = "0.2"
+gate = { path = "../gate" }
+serde_json = "1"
+spira-store = { path = "../spira-store" }
+tsd = { path = "../tsd" }
 spira-config = { path = "../spira-config" }
 
 [dev-dependencies]
