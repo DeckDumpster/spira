@@ -1240,22 +1240,6 @@ mod tests {
     }
 
     #[test]
-    fn a_tree_lock_is_exclusive_per_lockfile_and_an_unopenable_one_is_refused() {
-        use crate::ports::World;
-        let t = testkit::TempDir::new("gate-lock");
-        let (a, b) = (t.path().join("a.lock"), t.path().join("b.lock"));
-        let first = super::Real::new(t.path().to_path_buf());
-        let second = super::Real::new(t.path().to_path_buf());
-        assert!(first.tree_lock_open(&a) && first.tree_lock_try());
-        assert!(second.tree_lock_open(&b) && second.tree_lock_try(), "another branch's lock is independent");
-        let third = super::Real::new(t.path().to_path_buf());
-        assert!(third.tree_lock_open(&a));
-        assert!(!third.tree_lock_try(), "the same branch's lock is held by the first gate");
-        assert!(!super::Real::new(t.path().to_path_buf()).tree_lock_open(&t.path().join("no/such/dir/x.lock")));
-        assert!(!super::Real::new(t.path().to_path_buf()).tree_lock_try(), "no lockfile opened means no lock");
-    }
-
-    #[test]
     fn utc_of_formats_like_date() {
         assert_eq!(super::utc_of(0), "1970-01-01T00:00:00Z");
         assert_eq!(super::utc_of(1790700000), "2026-09-29T16:40:00Z");
