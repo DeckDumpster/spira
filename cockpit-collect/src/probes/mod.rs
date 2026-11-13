@@ -7,6 +7,7 @@
 
 mod admission;
 mod core_detail;
+mod goodput;
 mod inflight;
 pub mod lc;
 mod queue;
