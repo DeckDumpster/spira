@@ -57,6 +57,7 @@ authority.
 | `verdicts/<repo>/<hash>` | the identity's summary: class, attempt count, back-off, last attempt | CAS on `mod_rev` |
 | `verdicts/<repo>/<hash>/attempt/<n>` | one attempt's verdict, with its sub-passes | create-if-absent |
 | `verdicts/<repo>/by-member/<id>/<tip>` | the identity hash that proved this member red | the Judge, only for proven members |
+| `green-digests/<repo>/<base>/<image-digest>` | an image digest the base was green on, written in the green attempt's txn; read by the Judge to type an Image lane fault | the ledger; owned by the round |
 | `lanes/<repo>` | what every cut on the repo is tested on: `landing_ref`, `image_digest`, `harness_version`, `selection`, `concurrency` | `pass`'s lane step, CAS; the Lander moves `landing_ref` in its landing txn |
 | `faults/<repo>/<base>/<image-digest>` | a standing lane fault: cause (Base, Image, Install), evidence, since | the Judge |
 | `locks/round/<repo>/<batch>` | the round's driver lease | the contract's `lock` |

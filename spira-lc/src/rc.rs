@@ -15,6 +15,7 @@ pub const WRITE_PREFIXES: &[&str] = &[
     "batches/",
     "verdicts/",
     "faults/",
+    "green-digests/",
     "lanes/",
     "slots/",
     "telemetry/round-controller/",
