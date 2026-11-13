@@ -583,7 +583,7 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
         }
     };
     let root = std::path::Path::new(&root);
-    let rows = match declared_rows(root) {
+    let rows = match work::declared_rows(root) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{}", refusal(R::ChecksConfig, "checks", &[("err", &e.to_string())]));
@@ -710,18 +710,6 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
         eprintln!("work checks: failed: {}", failed.join(", "));
         (REFUSED, Vec::new())
     }
-}
-
-/// The `[[check]]` rows the repository declares, then one per fence of its `gate.steps`. A tree
-/// with no `gate.steps` owes no fence rows; one that does not parse is refused.
-fn declared_rows(root: &std::path::Path) -> Result<Vec<habits::config::Check>, String> {
-    let mut rows = habits::config::load_checks(root)?;
-    match std::fs::read_to_string(root.join(gate::def::PATH)) {
-        Ok(text) => rows.extend(work::fence_rows(&text).map_err(|e| format!("{}: {e}", gate::def::PATH))?),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(format!("{}: {e}", gate::def::PATH)),
-    }
-    Ok(rows)
 }
 
 /// Where a `work checks` run leaves what each row cost and decided: a line in `<run>/checks.log`
@@ -900,7 +888,7 @@ fn unresolved_programs() -> Vec<String> {
     }
     let root = spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     if let Some(root) = root.as_deref().map(std::path::Path::new) {
-        for row in declared_rows(root).unwrap_or_default().into_iter().filter(|r| r.build.is_none()) {
+        for row in work::declared_rows(root).unwrap_or_default().into_iter().filter(|r| r.build.is_none()) {
             let argv = work::done_argv(&row.run);
             if let Some(prog) = argv.first().filter(|p| work::trusted::resolve(p, &dirs).is_none()) {
                 out.push(format!("check {:?} runs {prog:?}, which resolves nowhere; `work checks` will fail it", row.name));

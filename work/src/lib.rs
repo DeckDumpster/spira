@@ -52,10 +52,22 @@ pub fn fence_rows(gate_steps: &str) -> Result<Vec<habits::config::Check>, String
             run: format!("gate fence-run {} --repo . --tip HEAD --base {CHECKS_BASE}", f.name),
             name: format!("fence-{}", f.name),
             budget_ms: FENCE_ROW_BUDGET_MS,
-            build: None,
+            build: Some("gate".into()),
             deferred_to: None,
         })
         .collect())
+}
+
+/// The `[[check]]` rows the repository declares, then one per fence of its `gate.steps`. A tree
+/// with no `gate.steps` owes no fence rows; one that does not parse is refused.
+pub fn declared_rows(root: &std::path::Path) -> Result<Vec<habits::config::Check>, String> {
+    let mut rows = habits::config::load_checks(root)?;
+    match std::fs::read_to_string(root.join(gate::def::PATH)) {
+        Ok(text) => rows.extend(fence_rows(&text).map_err(|e| format!("{}: {e}", gate::def::PATH))?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("{}: {e}", gate::def::PATH)),
+    }
+    Ok(rows)
 }
 
 /// The per-worktree file (under the worktree's git dir) a passing `work checks` is recorded in.
@@ -495,6 +507,27 @@ mod tests {
         assert_eq!(names(&more), ["fence-lifecycle-guard", "fence-new-thing"]);
         let row = &fence_rows(&more).unwrap()[1];
         assert_eq!(row.run, "gate fence-run new-thing --repo . --tip HEAD --base local/main");
+    }
+
+    #[test]
+    fn the_repositorys_own_gate_steps_owe_the_lifecycle_guard_and_the_config_fence() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let rows = declared_rows(&root).unwrap();
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        let round: Vec<String> = gate::fences::list(&gate::def::parse(&std::fs::read_to_string(root.join("gate.steps")).unwrap()).unwrap(), None).unwrap().into_iter().map(|f| format!("fence-{}", f.name)).collect();
+        assert!(names.contains(&"fence-lifecycle-guard") && names.contains(&"fence-gate"), "{names:?}");
+        assert!(round.iter().all(|n| names.contains(&n.as_str())), "every fence the round lists is a row: {round:?} vs {names:?}");
+        assert!(rows.iter().filter(|r| r.name.starts_with("fence-")).all(|r| r.build.as_deref() == Some("gate")), "a derived row runs the tree's own gate");
+    }
+
+    #[test]
+    fn a_tree_without_gate_steps_owes_no_fence_rows_and_a_broken_one_is_refused() {
+        let dir = testkit::TempDir::new("declared-rows");
+        assert!(declared_rows(dir.path()).unwrap().is_empty());
+        std::fs::write(dir.join("gate.steps"), "frobnicate x\n").unwrap();
+        assert!(declared_rows(dir.path()).err().unwrap().contains("gate.steps"));
+        std::fs::write(dir.join("gate.steps"), "step bash spira/planted.sh\n").unwrap();
+        assert_eq!(declared_rows(dir.path()).unwrap().into_iter().map(|r| r.name).collect::<Vec<_>>(), ["fence-planted"], "a planted fence is found, so an empty answer means none");
     }
 
     #[test]
