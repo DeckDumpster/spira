@@ -954,9 +954,8 @@ pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
         snap.q("SP_BEADS_SPARK_CLOSED"),
     ));
     out.push(format!(
-        "        {DIM}landed{RST} {}  {DIM}{}{RST} in 24h",
-        snap.q("SP_BEADS_SPARK_LANDED"),
-        snap.q("SP_BEADS_LANDED_24H"),
+        "        {DIM}landed{RST} {} in 24h",
+        snap.q("SP_LC_LANDED_24H"),
     ));
     out.push(format!(
         "        {DIM}{}{RST}",
