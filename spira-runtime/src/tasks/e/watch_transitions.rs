@@ -72,7 +72,8 @@ const TAG: &str = "transitions";
 /// The states tabled, in flow order; `ASK` is the ask-held row, orthogonal to state.
 pub const ROWS: [&str; 7] = ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK", "ASK"];
 /// The edges judged, in the order `stalls` judges them.
-pub const EDGES: [&str; 5] = ["WORKING→SUBMITTED", "SUBMITTED→IN_DELIVERY", "IN_DELIVERY→LANDED", "LANDED→ACTIVATED", "ASK→ANSWERED"];
+pub const EDGES: [&str; 5] = ["WORKING→SUBMITTED", CUT_EDGE, DELIVERY_EDGE, "LANDED→ACTIVATED", ASK_EDGE];
+pub const ASK_EDGE: &str = "ASK→ANSWERED";
 /// All repos together, as a scope.
 pub const ALL: &str = "*";
 
@@ -137,7 +138,20 @@ impl Config {
     /// minutes more. An exit not seen inside it is known to be older than the horizon, which is
     /// all a bound needs.
     pub fn window_s(&self) -> u64 {
-        [self.submit_bound_s, self.cut_bound_s, self.deliver_bound_s, self.activate_bound_s].into_iter().max().unwrap_or(0) + 600
+        EDGES.iter().filter(|e| **e != ASK_EDGE).filter_map(|e| self.bound(e)).max().unwrap_or(0) + 600
+    }
+
+    /// The wait `edge` tolerates before it stalls; `None` for a name that is no edge. The one
+    /// place an edge's bound is read, for the page, the audit window and the carry.
+    pub fn bound(&self, edge: &str) -> Option<u64> {
+        match edge {
+            "WORKING→SUBMITTED" => Some(self.submit_bound_s),
+            CUT_EDGE => Some(self.cut_bound_s),
+            DELIVERY_EDGE => Some(self.deliver_bound_s),
+            "LANDED→ACTIVATED" => Some(self.activate_bound_s),
+            ASK_EDGE => Some(self.ask_bound_s),
+            _ => None,
+        }
     }
 
     pub fn period_ms(&self) -> u64 {
@@ -388,17 +402,6 @@ pub fn table_line(snap: &Snapshot, now: u64, cfg: &Config) -> String {
     format!("WAIT {} || since last — {}", states.join(" | "), if repos.is_empty() { "no repo has work or events".into() } else { repos.join("; ") })
 }
 
-/// The wait an edge tolerates before it stalls.
-fn edge_bound(edge: &str, cfg: &Config) -> u64 {
-    match edge {
-        "WORKING→SUBMITTED" => cfg.submit_bound_s,
-        "SUBMITTED→IN_DELIVERY" => cfg.cut_bound_s,
-        "IN_DELIVERY→LANDED" => cfg.deliver_bound_s,
-        "LANDED→ACTIVATED" => cfg.activate_bound_s,
-        _ => cfg.ask_bound_s,
-    }
-}
-
 /// One stalled edge in one scope, with its evidence.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stall {
@@ -455,15 +458,15 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
         for edge in EDGES {
             let found = match edge {
                 "WORKING→SUBMITTED" => (t["WORKING"].count as u64 >= cfg.working_min.max(1) && quiet(snap, &scope, "Submit", now, cfg.submit_bound_s)).then(|| evidence(snap, &scope, now, &["WORKING"], "Submit", cfg.submit_bound_s)),
-                "SUBMITTED→IN_DELIVERY" => {
+                CUT_EDGE => {
                     (quiet(snap, &scope, "Delivered", now, cfg.cut_bound_s) && uncovered_wait(snap, &scope, now, cfg) >= cfg.cut_bound_s).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s))
                 }
-                "IN_DELIVERY→LANDED" => (t["IN_DELIVERY"].oldest >= cfg.deliver_bound_s && quiet(snap, &scope, "Delivered", now, cfg.deliver_bound_s)).then(|| evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", cfg.deliver_bound_s)),
+                DELIVERY_EDGE => (t["IN_DELIVERY"].oldest >= cfg.deliver_bound_s && quiet(snap, &scope, "Delivered", now, cfg.deliver_bound_s)).then(|| evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", cfg.deliver_bound_s)),
                 "LANDED→ACTIVATED" if scope == cfg.release_repo => snap.landed_after.get(&scope).copied().filter(|l| now.saturating_sub(*l) >= cfg.activate_bound_s).map(|landed| {
                     let act = snap.activated_at.map_or("never".into(), iso8601);
                     format!("oldest landing not yet active {} ago at {} (bound {}); last activation {act}; last Delivered {}", dur(now.saturating_sub(landed)), iso8601(landed), dur(cfg.activate_bound_s), last_at(snap, &scope, "Delivered"))
                 }),
-                "ASK→ANSWERED" => {
+                ASK_EDGE => {
                     let ask = t["ASK"];
                     (ask.count > 0 && ask.oldest >= cfg.ask_bound_s).then(|| {
                         let over = ages(snap, &scope, "ASK", now).into_iter().filter(|a| *a >= cfg.ask_bound_s).count();
@@ -690,7 +693,8 @@ fn say(now_ms: u64, line: &str) -> EffectSpec {
     EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:{now_ms}:{:016x}", fnv1a(line)), pattern::inbox_line(now_ms, TAG, line), DEADLINE_MS)
 }
 
-fn pace_owners(run_dir: &std::path::Path) -> Vec<(String, Owner)> {
+/// Each repo's cut owner under `<run_dir>/rounds-pace/<repo>/`; a repo with no `state` has none.
+pub fn pace_owners(run_dir: &std::path::Path) -> Vec<(String, Owner)> {
     let mtime = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
     let Ok(repos) = std::fs::read_dir(run_dir.join("rounds-pace")) else { return vec![] };
     repos
@@ -755,7 +759,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     let amended = with_delivered(snap, &next.delivered);
     let snap = &amended;
     acts.push(say(now_ms, &table_line(snap, now, cfg)));
-    let found: Vec<Stall> = stalls(snap, now, cfg).into_iter().filter(|s| carry.stalled.contains(&s.key()) || now.saturating_sub(carry.resumed_at) >= edge_bound(s.edge, cfg)).collect();
+    let found: Vec<Stall> = stalls(snap, now, cfg).into_iter().filter(|s| carry.stalled.contains(&s.key()) || cfg.bound(s.edge).is_none_or(|b| now.saturating_sub(carry.resumed_at) >= b)).collect();
     let keys: BTreeSet<String> = found.iter().map(Stall::key).collect();
     for s in &found {
         if !carry.stalled.contains(&s.key()) {
