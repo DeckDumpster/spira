@@ -104,6 +104,7 @@ fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_
             session_token: Some("tok".into()),
             region: "us-test-1".into(),
             endpoint: Some("http://endpoint.test".into()),
+            part_bytes: 256 << 20,
         }),
         proc: Arc::new(curl.clone()),
         deadline: Duration::from_secs(10),
