@@ -7,6 +7,7 @@
 
 mod admission;
 mod core_detail;
+mod goodput;
 mod inflight;
 pub mod lc;
 mod queue;
@@ -153,6 +154,7 @@ pub fn full_pass(cfg: &Cfg) -> Kv {
     out.extend(queue::queue_keys(cfg));
     out.extend(round::round_keys(cfg.round_cap_secs));
     out.extend(inflight::inflight_keys(cfg));
+    out.extend(goodput::goodput_keys());
     out.extend(reachable::reachable_keys(cfg));
     out.extend(well_keys(cfg));
     out.extend(repo_label_keys(cfg));
@@ -185,6 +187,7 @@ pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
         "queue" => Some(queue::queue_keys(cfg)),
         "round" => Some(round::round_keys(cfg.round_cap_secs)),
         "inflight" => Some(inflight::inflight_keys(cfg)),
+        "goodput" => Some(goodput::goodput_keys()),
         "reachable" => Some(reachable::reachable_keys(cfg)),
         "well" => Some(well_keys(cfg)),
         "repo_labels" => Some(repo_label_keys(cfg)),

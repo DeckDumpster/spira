@@ -12,7 +12,6 @@ pub struct DayCounts {
     pub claims: u64,
     pub submits: u64,
     pub cuts: u64,
-    pub landings: u64,
 }
 
 /// The configured store's counts: `Err` names why they could not be read.
@@ -30,7 +29,6 @@ pub fn read(url: &str) -> Result<DayCounts, String> {
         claims: count("event:\"Claim\"")?,
         submits: count("event:\"Submit\"")?,
         cuts: count("event:\"Deliver\"")?,
-        landings: count("to:\"LANDED\"")?,
     })
 }
 
@@ -49,9 +47,9 @@ mod tests {
 
     #[test]
     fn the_closed_in_24h_is_a_logsql_count_of_bead_transitions_into_a_terminal_state() {
-        let logs = answering(&[("to:in(", 41), ("event:\"Claim\"", 50), ("event:\"Submit\"", 44), ("event:\"Deliver\"", 40), ("to:\"LANDED\"", 38)]);
+        let logs = answering(&[("to:in(", 41), ("event:\"Claim\"", 50), ("event:\"Submit\"", 44), ("event:\"Deliver\"", 40)]);
         let got = read(&logs.url()).unwrap();
-        assert_eq!(got, DayCounts { closed: 41, claims: 50, submits: 44, cuts: 40, landings: 38 });
+        assert_eq!(got, DayCounts { closed: 41, claims: 50, submits: 44, cuts: 40 });
         let asked = logs.queries();
         assert!(asked.iter().all(|q| q.starts_with(&transitions_filter("bead", None, 86_400))), "{asked:?}");
         assert!(asked.iter().any(|q| q.contains("to:in(\"LANDED\"")), "{asked:?}");

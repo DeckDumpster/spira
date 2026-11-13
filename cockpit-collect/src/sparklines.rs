@@ -1,12 +1,12 @@
-//! The BEADS section's opened/closed/landed counts and sparklines, from bead JSON and
-//! landing.log alone.
+//! The BEADS section's opened/closed counts and sparklines, from bead JSON and the store's
+//! day counts. The landed count is the Lifecycle section's, written by the goodput probe.
 
 use std::collections::BTreeMap;
 
 use serde_json::Value;
 
 use crate::counts::DayCounts;
-use crate::timeutil::{parse_iso, parse_strict};
+use crate::timeutil::parse_iso;
 
 const BUCKETS: usize = 8;
 const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
@@ -36,7 +36,7 @@ fn closed_when(row: &Value) -> Option<f64> {
 }
 
 /// `None` when stdin is not JSON: nothing is emitted, as before.
-pub fn render(stdin: &str, landing_log: &str, now: i64, counts: &Result<DayCounts, String>) -> Option<String> {
+pub fn render(stdin: &str, now: i64, counts: &Result<DayCounts, String>) -> Option<String> {
     let d: Value = serde_json::from_str(stdin).ok()?;
     let rows: Vec<&Value> = match &d {
         Value::Array(a) => a.iter().collect(),
@@ -77,26 +77,6 @@ pub fn render(stdin: &str, landing_log: &str, now: i64, counts: &Result<DayCount
     }
     out += &format!("SP_BEADS_SPARK_OPENED={}\nSP_BEADS_SPARK_CLOSED={}\n", spark(&ob), spark(&cb));
 
-    let landed = (!landing_log.is_empty() && std::path::Path::new(landing_log).exists())
-        .then(|| std::fs::read(landing_log).ok())
-        .flatten()
-        .map(|b| {
-            let text = String::from_utf8_lossy(&b).into_owned();
-            let mut lb = [0i64; BUCKETS];
-            let mut n = 0;
-            for line in text.lines().filter(|l| l.contains("spira: landed")) {
-                if let Some(t) = line.get(..20).and_then(parse_strict).map(|t| t as f64).filter(|t| *t >= cut) {
-                    n += 1;
-                    lb[bucket(t, cut)] += 1;
-                }
-            }
-            (lb, n)
-        });
-    let landed_24h = shown(|c| c.landings);
-    match landed {
-        Some((lb, _)) => out += &format!("SP_BEADS_SPARK_LANDED={}\nSP_BEADS_LANDED_24H={landed_24h}\n", spark(&lb)),
-        None => out += &format!("SP_BEADS_SPARK_LANDED=?\nSP_BEADS_LANDED_24H={landed_24h}\n"),
-    }
     Some(out)
 }
 
@@ -112,7 +92,7 @@ mod tests {
     }
 
     #[test]
-    fn counts_and_missing_log() {
+    fn counts_and_no_landed_series() {
         let now = 1788998400 + 86400;
         let at = |off: i64| {
             let t = now - 86400 + off;
@@ -125,17 +105,17 @@ mod tests {
             at(14400),
             at(57000)
         );
-        let counts = Ok(DayCounts { closed: 41, claims: 50, submits: 44, cuts: 40, landings: 38 });
-        let out = render(&json, "/nonexistent", now, &counts).unwrap();
+        let counts = Ok(DayCounts { closed: 41, claims: 50, submits: 44, cuts: 40 });
+        let out = render(&json, now, &counts).unwrap();
         assert!(out.contains("SP_CLOSED_24H=41\nSP_OPENED_24H=2\nSP_CLAIMS_24H=50\nSP_SUBMITS_24H=44\nSP_CUTS_24H=40\nSP_CLOSED_KINDS=bug 1\n"), "{out}");
-        assert!(out.ends_with("SP_BEADS_SPARK_LANDED=?\nSP_BEADS_LANDED_24H=38\n"), "{out}");
-        assert!(render("not json", "", now, &counts).is_none());
+        assert!(!out.contains("LANDED"), "the landed count is the Lifecycle section's, not this probe's: {out}");
+        assert!(render("not json", now, &counts).is_none());
     }
 
     #[test]
     fn unreadable_counts_are_unknown_with_the_error_not_zero() {
-        let out = render("[]", "", 1_000_000, &Err("victorialogs-unreachable: refused".into())).unwrap();
-        for k in ["SP_CLOSED_24H", "SP_CLAIMS_24H", "SP_SUBMITS_24H", "SP_CUTS_24H", "SP_BEADS_LANDED_24H"] {
+        let out = render("[]", 1_000_000, &Err("victorialogs-unreachable: refused".into())).unwrap();
+        for k in ["SP_CLOSED_24H", "SP_CLAIMS_24H", "SP_SUBMITS_24H", "SP_CUTS_24H"] {
             assert!(out.contains(&format!("{k}=?\n")), "{k}: {out}");
         }
         assert!(out.contains("SP_COUNTS_ERR=victorialogs-unreachable: refused\n"), "{out}");

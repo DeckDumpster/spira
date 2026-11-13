@@ -157,6 +157,7 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
     let age_secs = snap.get("SP_AT").and_then(|v| v.parse::<i64>().ok()).map(|at| now - at);
     let hhmm = cockpit_ops::layout::local_time(now).map(|t| t.hhmm()).unwrap_or_default();
     let snap_stale_s = spira_config::process::cfg_parse::<i64>("SPIRA_SNAP_STALE_S").unwrap_or(60);
+    let deadman_secs = cockpit_ops::health::goodput::deadman_secs();
     let trace_lines = spira_config::process::cfg_parse::<i64>("COCKPIT_TRACE_LINES").unwrap_or(2);
 
     let inputs = FrameInputs {
@@ -179,6 +180,7 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
         collector_rev: snap.get("SP_COLLECTOR_REV").unwrap_or("").to_string(),
         tok_win_spark: String::new(),
         now,
+        deadman_secs,
     };
     (inputs, content)
 }

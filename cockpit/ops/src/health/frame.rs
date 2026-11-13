@@ -30,6 +30,7 @@ pub struct FrameInputs<'a> {
     pub collector_rev: String,
     pub tok_win_spark: String,
     pub now: i64,
+    pub deadman_secs: i64,
 }
 
 pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
@@ -50,7 +51,9 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
         &inputs.halt,
         &inputs.drain,
         inputs.now,
+        inputs.deadman_secs,
     );
+    let goodput_rows = super::goodput::sections_section(&snap, cols, inputs.deadman_secs, inputs.now);
     let slots = slots_line(&snap);
     let tokens = tokens_section(
         &snap,
@@ -94,12 +97,13 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
         Spec::new(want[5], want[5], true),
     ];
 
-    let fixed = head.len() as i64 + 1 + tokens.len() as i64 + round.len() as i64 + inflight.len() as i64 + flow.len() as i64 + standing.len() as i64;
+    let fixed = head.len() as i64 + 1 + tokens.len() as i64 + round.len() as i64 + inflight.len() as i64 + flow.len() as i64 + standing.len() as i64 + goodput_rows.len() as i64;
     let give = share(rows, fixed, &specs);
 
     let mut out = Vec::new();
     out.extend(head);
     out.push(slots);
+    out.extend(goodput_rows);
     out.extend(tokens);
     out.extend(round);
     out.extend(inflight);
@@ -151,6 +155,7 @@ mod tests {
             collector_rev: String::new(),
             tok_win_spark: String::new(),
             now: 1000,
+            deadman_secs: 300,
         }
     }
 
@@ -269,5 +274,73 @@ mod tests {
         // itself is genuinely shorter) delivered — never truncated with a drop marker.
         assert!(out.len() <= 81);
         assert!(!out[0].contains('\u{25be}'), "header carries a fold-drop marker: {}", out[0]);
+    }
+
+    const GOODPUT_FIXTURE: &str = "SP_AT='1000000000'\nSP_GP_RATE='3.2'\nSP_GP_TARGET='5'\nSP_GP_PASS_AT='986'\n\
+        SP_GP_BINDING='round-controller/pokebot'\nSP_GP_DISTANCE='1 repeat identity open'\nSP_GP_STEP='hold-member b-17@3f2a'\nSP_GP_STEP_ACK='14:02'\nSP_GP_STEP_HORIZON='10m'\n\
+        SP_GP_SEC_N='3'\nSP_GP_SEC0_REF='round-controller/pokebot'\nSP_GP_SEC0_DIST='1'\nSP_GP_SEC0_AGE='12'\nSP_GP_SEC0_FRESH='fresh'\n\
+        SP_GP_SEC1_REF='lifecycle/all'\nSP_GP_SEC1_DIST='0'\nSP_GP_SEC1_AGE='40'\nSP_GP_SEC1_FRESH='fresh'\n\
+        SP_GP_SEC2_REF='alarms/all'\nSP_GP_SEC2_DIST='2'\nSP_GP_SEC2_AGE='7'\nSP_GP_SEC2_FRESH='fresh'\n";
+
+    fn goodput_frame(content: &'static str, cols: i64) -> Vec<String> {
+        let mut inputs = base_inputs();
+        inputs.snapshot_content = content;
+        inputs.snapshot_exists = true;
+        inputs.cols = cols;
+        render(40, cols, &inputs)
+    }
+
+    #[test]
+    fn the_pane_shows_the_goodput_top_line_and_a_row_per_section() {
+        let out = goodput_frame(GOODPUT_FIXTURE, 120).join("\n");
+        assert!(out.contains("round-controller/pokebot: 1 repeat identity open; step `hold-member b-17@3f2a` acked 14:02, horizon 10m"), "{out}");
+        for s in ["round-controller/pokebot distance 1", "lifecycle/all distance 0", "alarms/all distance 2"] {
+            assert_eq!(out.matches(s).count(), 1, "{s}: {out}");
+        }
+    }
+
+    #[test]
+    fn the_panes_goodput_lines_fit_a_phone_page() {
+        let out = goodput_frame(GOODPUT_FIXTURE, 40);
+        assert!(out.iter().any(|l| l.contains("GOODPUT")), "{out:?}");
+        for l in out.iter().filter(|l| ["GOODPUT", "distance", "pokebot", "step"].iter().any(|k| l.contains(k))) {
+            let mut plain = String::new();
+            let mut in_esc = false;
+            for c in l.chars() {
+                match (in_esc, c) {
+                    (_, '\u{1b}') => in_esc = true,
+                    (true, 'm') => in_esc = false,
+                    (false, c) => plain.push(c),
+                    _ => {}
+                }
+            }
+            assert!(plain.chars().count() <= 40, "{l:?}");
+        }
+    }
+
+    #[test]
+    fn the_pane_greys_a_stale_pass_and_says_how_old_it_is() {
+        let out = goodput_frame(&*Box::leak(GOODPUT_FIXTURE.replace("PASS_AT='986'", "PASS_AT='1'").into_boxed_str()), 120);
+        let line = out.iter().find(|l| l.contains("stale pass, 999s old")).expect("a stale-pass line");
+        assert!(line.starts_with(super::super::colors::DIM), "{line:?}");
+    }
+
+    #[test]
+    fn the_pane_shows_question_marks_when_no_pass_record_was_written() {
+        let out = goodput_frame("SP_AT='1000000000'\n", 120).join("\n");
+        assert!(out.contains("GOODPUT ?/day of ?") && out.contains("pass ?"), "{out}");
+    }
+
+    #[test]
+    fn landed_in_24h_is_the_lifecycle_sections_count_and_unread_is_a_question_mark() {
+        let lands_line = |content: &'static str| {
+            let mut inputs = base_inputs();
+            inputs.snapshot_content = content;
+            inputs.snapshot_exists = true;
+            render(120, 120, &inputs).into_iter().find(|l| l.contains("in 24h")).expect("the landed line")
+        };
+        let read = lands_line("SP_LC_LANDED_24H='80'\nSP_BEADS_LANDED_24H='7'\n");
+        assert!(read.contains("landed") && read.contains("80 in 24h") && !read.contains('7'), "{read}");
+        assert!(lands_line("SP_AT='1'\n").contains("? in 24h"));
     }
 }

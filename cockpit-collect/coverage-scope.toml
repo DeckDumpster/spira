@@ -1,0 +1,4 @@
+# The goodput probe (sp-4wz56p's gate reports any branch no test takes).
+[[scope]]
+path = "cockpit-collect/src/probes/goodput.rs"
+functions = ["keys_on", "pass_keys", "in_flight", "section_ref", "number", "plain"]

@@ -3,6 +3,7 @@
 //! the collector's snapshot files; none reads `bd`.
 
 pub mod dwarves;
+pub mod goodput;
 pub mod factory;
 pub mod forge_rounds;
 pub mod next;
@@ -65,6 +66,8 @@ pub struct Config {
     pub limits: std::collections::BTreeMap<String, String>,
     /// The bounds `watch.transitions` judges by, pinned once; the refusal when they cannot be.
     pub transitions: Result<spira_runtime::tasks::e::watch_transitions::Config, String>,
+    /// The age past which the reconciler's pass is shown stale.
+    pub deadman_secs: i64,
 }
 
 impl Config {
@@ -99,6 +102,7 @@ impl Config {
             queue: spira_config::release_env::tool("queue")?,
             limits: factory::LIMIT_KEYS.iter().map(|k| cfg(k).map(|v| (k.to_string(), v)).map_err(|e| format!("loom: {e}"))).collect::<Result<_, _>>()?,
             transitions: spira_runtime::tasks::e::watch_transitions::Config::pinned(),
+            deadman_secs: cockpit_ops::health::goodput::deadman_secs(),
         })
     }
 }
@@ -590,6 +594,35 @@ async fn dwarves_data(loom: &Loom) -> Result<(cockpit_ops::health::model::Snapsh
     Ok((cockpit_ops::health::model::Snapshot::parse(&text), working, note))
 }
 
+fn goodput_data(loom: &Loom) -> Result<(cockpit_ops::health::model::Snapshot, i64, i64), String> {
+    let path = std::path::Path::new(&loom.config().run).join("cockpit.env");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    Ok((cockpit_ops::health::model::Snapshot::parse(&text), loom.config().deadman_secs, now_s()))
+}
+
+async fn goodput_page_route(State(loom): State<Arc<Loom>>) -> Response {
+    match goodput_data(&loom) {
+        Ok((snap, deadman, now)) => {
+            let bar = lifecycle_snapshot(&loom).map_or_else(|_| shell::Bar::default(), |(s, _)| now::bar(Some(&s), now));
+            html_response(StatusCode::OK, shell::with_bar(&goodput::render_page(&snap, deadman, now), &bar))
+        }
+        Err(e) => unavailable("goodput view", &e),
+    }
+}
+
+async fn goodput_api_route(State(loom): State<Arc<Loom>>) -> Response {
+    let (status, body) = match goodput_data(&loom) {
+        Ok((snap, deadman, now)) => (StatusCode::OK, goodput::render_json(&snap, deadman, now).to_string()),
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, serde_json::json!({ "error": e }).to_string()),
+    };
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(body.into())
+        .expect("a response with a valid status and headers")
+}
+
 async fn dwarves_page_route(State(loom): State<Arc<Loom>>) -> Response {
     match dwarves_data(&loom).await {
         Ok((snap, working, note)) => {
@@ -900,6 +933,8 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/api/rounds/spira/{id}", get(round_api_route))
         .route("/api/ops", get(ops_route))
         .route("/dwarves", get(dwarves_page_route))
+        .route("/goodput", get(goodput_page_route))
+        .route("/api/goodput", get(goodput_api_route))
         .route("/api/dwarves", get(dwarves_api_route))
         .route("/", get(next_route))
         .route("/rounds/{repo}/{batch}", get(round_route))
@@ -973,6 +1008,7 @@ mod in_process_tests {
             queue: String::new(),
             limits: std::collections::BTreeMap::from([("SPIRA_COMPILE_PAR".to_string(), "9".to_string())]),
             transitions: Err("not pinned in this test".into()),
+            deadman_secs: 300,
         }
     }
 
@@ -1023,6 +1059,43 @@ mod in_process_tests {
         assert!(html.contains("class=lm-top"), "the bar");
         assert!(html.contains("<a href=\"/factory\" class=on aria-current=page>Factory</a>"), "the tabs, Factory current");
         assert!(html.contains("fetch(\"/api/factory\""), "the page reads the factory JSON itself");
+    }
+
+    async fn goodput_routes(snapshot: Option<&str>, deadman_secs: i64) -> ((StatusCode, String), (StatusCode, String)) {
+        let run = testkit::TempDir::new("loom-goodput");
+        if let Some(text) = snapshot {
+            std::fs::write(run.join("cockpit.env"), text).unwrap();
+        }
+        let mut cfg = test_config();
+        cfg.run = run.path().to_string_lossy().into_owned();
+        cfg.deadman_secs = deadman_secs;
+        let loom = Arc::new(Loom::new(cfg));
+        let read = |res: Response| async move {
+            let status = res.status();
+            (status, String::from_utf8(axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap())
+        };
+        (read(goodput_api_route(State(loom.clone())).await).await, read(goodput_page_route(State(loom)).await).await)
+    }
+
+    #[tokio::test]
+    async fn the_goodput_routes_serve_the_snapshot_and_judge_staleness_by_the_configured_deadman() {
+        let at = now_s() - 500;
+        let snap = format!("SP_GP_RATE='3.2'\nSP_GP_TARGET='5'\nSP_GP_PASS_AT='{at}'\nSP_GP_BINDING='-'\nSP_GP_SEC_N='0'\n");
+        let ((status, api), (_, page)) = goodput_routes(Some(&snap), 300).await;
+        let v: Value = serde_json::from_str(&api).unwrap();
+        assert_eq!((status, v["stale"].clone()), (StatusCode::OK, json!(true)), "500s old against a 300s deadman: {api}");
+        assert!(v["top"][0].as_str().unwrap().starts_with("stale pass, 5"), "{api}");
+        assert!(page.contains("<pre class=\"dim\">") && page.contains("Goodput"), "{page}");
+        let ((_, api), (_, page)) = goodput_routes(Some(&snap), 900).await;
+        assert_eq!(serde_json::from_str::<Value>(&api).unwrap()["stale"], json!(false), "the same pass is current against a 900s deadman");
+        assert!(page.contains("GOODPUT 3.2/day of 5"), "{page}");
+    }
+
+    #[tokio::test]
+    async fn the_goodput_routes_say_so_when_the_snapshot_cannot_be_read() {
+        let ((status, api), (page_status, _)) = goodput_routes(None, 300).await;
+        assert_eq!((status, page_status), (StatusCode::SERVICE_UNAVAILABLE, StatusCode::SERVICE_UNAVAILABLE));
+        assert!(api.contains("cannot read"), "{api}");
     }
 
     #[test]

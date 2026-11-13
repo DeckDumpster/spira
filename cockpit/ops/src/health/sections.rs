@@ -154,6 +154,7 @@ pub fn header_line(
     halt: &HaltState,
     drain: &DrainState,
     now: i64,
+    deadman_secs: i64,
 ) -> Vec<String> {
     let mut out = Vec::new();
 
@@ -185,6 +186,8 @@ pub fn header_line(
         dot(snap.get("SP_HEIMDALL_TIMER") == Some("1")),
         age_str(snap.q("SP_HEIMDALL_AGE"), 180),
     ));
+
+    out.extend(super::goodput::top_lines(snap, cols, deadman_secs, now));
 
     let firing = snap.get("SP_HEIMDALL_FIRING").unwrap_or("0");
     if firing == "?" {
@@ -951,9 +954,8 @@ pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
         snap.q("SP_BEADS_SPARK_CLOSED"),
     ));
     out.push(format!(
-        "        {DIM}landed{RST} {}  {DIM}{}{RST} in 24h",
-        snap.q("SP_BEADS_SPARK_LANDED"),
-        snap.q("SP_BEADS_LANDED_24H"),
+        "        {DIM}landed{RST} {} in 24h",
+        snap.q("SP_LC_LANDED_24H"),
     ));
     out.push(format!(
         "        {DIM}{}{RST}",

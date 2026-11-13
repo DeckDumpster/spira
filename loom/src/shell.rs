@@ -2,9 +2,10 @@
 
 use crate::stuck::esc;
 
-pub const SECTIONS: [(&str, &str, &str); 6] = [
+pub const SECTIONS: [(&str, &str, &str); 7] = [
     ("overview", "Overview", "/"),
     ("dwarves", "Dwarves", "/dwarves"),
+    ("goodput", "Goodput", "/goodput"),
     ("rounds", "Rounds", "/rounds"),
     ("stuck", "Stuck", "/stuck"),
     ("units", "Units", "/units"),
@@ -113,7 +114,7 @@ mod tests {
         let t = tabs("factory");
         assert!(t.contains("<a href=\"/factory\" class=on aria-current=page>Factory</a>"), "{t}");
         assert_eq!(t.matches("aria-current").count(), 1);
-        assert_eq!(SECTIONS.len(), 6);
+        assert_eq!(SECTIONS.len(), 7);
     }
 
     #[test]
