@@ -269,4 +269,4 @@ serve`; `sim/actors.toml` keeps only sim-only actors, so a scenario naming one n
 | `rc-stale-round-pointer`, `rc-attributing-redrive`, `rc-fences-in-vm`, `run-state-trail` | ported: `tests/it/loop_rounds.rs` on batcher.local's machine; `run-state-trail`'s `members=` line is asserted by queue's `open_certify_land_is_one_round_the_whole_way`; porting it found the publish task's record missing `members`, `remote` and `forge_branch` (reported) |
 | `supersede`, `supersede-holds` | ported: `tests/it/loop_supersede.rs` on the supersede-duty task |
 | `gate-verdict-red`, `gate-verdict-silent` | ported: `tests/it/loop_gate.rs` on the gate.worker task |
-| `cut-in-bare-env`, `publish-then-cut` | ported: `tests/it/ci_cut.rs`, gate.yml's cut job on a scripted git and forge (bare env, and with built binaries standing for the release), with refusal controls |
+| `cut-in-bare-env`, `publish-then-cut` | deleted 2026-11-13 (flipped under load; sp-w8ljl3); was `tests/it/ci_cut.rs`, gate.yml's cut job on a scripted git and forge (bare env, and with built binaries standing for the release), with refusal controls |
