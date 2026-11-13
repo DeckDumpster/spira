@@ -63,6 +63,11 @@ pub trait Systemctl {
     fn running_exe(&self, _unit: &str) -> Option<std::path::PathBuf> {
         None
     }
+    /// Where each process in the unit's cgroup (else its main process) is executing from, as
+    /// `/proc/<pid>/exe` resolves: empty when it has none or the fake does not model one.
+    fn executables(&self, _unit: &str) -> Vec<std::path::PathBuf> {
+        Vec::new()
+    }
     /// The `SPIRA_RELEASE` the unit's main process started with (`/proc/<MainPID>/environ`),
     /// which the unit file no longer shows once an activation rewrote it without restarting
     /// the process (sp-sv2lw2). `None` when unreadable or the fake does not model one.
@@ -216,6 +221,18 @@ impl Systemctl for RealSystemctl {
     fn running_exe(&self, unit: &str) -> Option<std::path::PathBuf> {
         let pid: u32 = self.run(&["show", unit, "-p", "MainPID", "--value"]).ok()?.trim().parse().ok()?;
         (pid > 0).then(|| std::path::PathBuf::from(format!("/proc/{pid}/exe")))
+    }
+    fn executables(&self, unit: &str) -> Vec<std::path::PathBuf> {
+        let show = |p: &str| self.run(&["show", unit, "-p", p, "--value"]).ok().map(|t| t.trim().to_string());
+        let mut pids: Vec<u32> = show("ControlGroup")
+            .filter(|g| !g.is_empty())
+            .and_then(|g| std::fs::read_to_string(format!("/sys/fs/cgroup{g}/cgroup.procs")).ok())
+            .map(|t| t.lines().filter_map(|l| l.trim().parse().ok()).collect())
+            .unwrap_or_default();
+        if pids.is_empty() {
+            pids = show("MainPID").and_then(|p| p.parse().ok()).into_iter().filter(|p| *p > 0).collect();
+        }
+        pids.into_iter().filter_map(|p| std::fs::read_link(format!("/proc/{p}/exe")).ok()).collect()
     }
     fn running_release(&self, unit: &str) -> Option<String> {
         let pid: u32 = self.run(&["show", unit, "-p", "MainPID", "--value"]).ok()?.trim().parse().ok()?;

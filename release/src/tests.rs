@@ -191,6 +191,10 @@ struct FakeSystemctl {
     /// Units that go inactive once `state` has been asked about them this many more times.
     exits_after: RefCell<BTreeMap<String, usize>>,
     cache_server_stops: RefCell<usize>,
+    /// Where a unit's process executes from; a restart moves it to `restart_lands` unless pinned.
+    exes: RefCell<BTreeMap<String, PathBuf>>,
+    restart_lands: Option<PathBuf>,
+    pinned: BTreeSet<String>,
 }
 
 impl FakeSystemctl {
@@ -219,6 +223,9 @@ impl FakeSystemctl {
             at_restart: RefCell::new(vec![]),
             exits_after: RefCell::new(BTreeMap::new()),
             cache_server_stops: RefCell::new(0),
+            exes: RefCell::new(BTreeMap::new()),
+            restart_lands: None,
+            pinned: BTreeSet::new(),
         }
     }
 }
@@ -240,6 +247,9 @@ impl Systemctl for FakeSystemctl {
             }
         }
         Ok(self.states.borrow().get(unit).cloned().unwrap_or_else(|| UnitState { active: "inactive".into(), result: "success".into(), kind: "simple".into() }))
+    }
+    fn executables(&self, unit: &str) -> Vec<PathBuf> {
+        self.exes.borrow().get(unit).cloned().into_iter().collect()
     }
     fn cat(&self, _unit: &str) -> Result<String, String> {
         Err("cat: not modelled by this fake — activate/rollback never call it".into())
@@ -271,6 +281,9 @@ impl Systemctl for FakeSystemctl {
             return Err(format!("{unit}: RefuseManualStop=yes denies a restart job"));
         }
         self.restarts.borrow_mut().push(unit.into());
+        if let (Some(to), false) = (&self.restart_lands, self.pinned.contains(unit)) {
+            self.exes.borrow_mut().insert(unit.into(), to.clone());
+        }
         if let Some(p) = &self.on_restart {
             self.at_restart.borrow_mut().push(p());
         }
@@ -1106,6 +1119,65 @@ fn an_activation_that_changes_the_cache_backends_unit_restarts_it_and_stops_the_
     activate_with(&w, &sc).unwrap();
     assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
     assert_eq!(*sc.cache_server_stops.borrow(), 1);
+}
+
+const LC_UNIT: &str = "[Service]\nType=simple\nExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc serve\n";
+
+/// Release `A` whose `spira-lc` differs from the previous release `P`'s, with `current`
+/// already on `A` and the installed unit already naming `A`: nothing in the unit or the
+/// links says the running server is old. Returns the world and where the old server runs.
+fn world_with_an_lc_serve_left_on_the_previous_release() -> (World, PathBuf) {
+    let w = World::with_git(FakeGit::default());
+    let prev = "p".repeat(40);
+    for (name, bin) in [(prev.as_str(), "spira-lc v1"), (A, "spira-lc v2 with holds")] {
+        file(&w.cfg.releases.join(name).join("systemd/lc-serve.service"), LC_UNIT);
+        exe(&w.cfg.releases.join(name).join("bin/spira-lc"), bin);
+    }
+    let rel = w.cfg.releases.join(A);
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    std::os::unix::fs::symlink(A, w.cfg.releases.join("current")).unwrap();
+    file(&w.cfg.unit_dir.join("lc-serve.service"), &LC_UNIT.replace("@SPIRA_PROD_ROOT@", &rel.display().to_string()));
+    let old = w.cfg.releases.join(&prev).join("bin/spira-lc");
+    (w, old)
+}
+
+fn lc_serve_running(sc: &FakeSystemctl, from: &Path) {
+    sc.states.borrow_mut().insert("lc-serve.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
+    sc.exes.borrow_mut().insert("lc-serve.service".into(), from.to_path_buf());
+}
+
+#[test]
+fn an_activation_restarts_an_lc_serve_still_executing_the_superseded_releases_binary() {
+    let (w, old_bin) = world_with_an_lc_serve_left_on_the_previous_release();
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_lands = Some(w.cfg.releases.join(A).join("bin/spira-lc"));
+    lc_serve_running(&sc, &old_bin);
+    let out = activate_with(&w, &sc).unwrap();
+    assert_eq!(*sc.restarts.borrow(), vec!["lc-serve.service".to_string()]);
+    assert!(out.restarted.contains(&"lc-serve.service".to_string()), "{:?}", out.restarted);
+    assert!(sc.executables("lc-serve.service").iter().all(|e| e.starts_with(w.cfg.releases.join(A))));
+}
+
+#[test]
+fn an_activation_that_cannot_move_lc_serve_off_the_superseded_binary_is_rolled_back() {
+    let (w, old_bin) = world_with_an_lc_serve_left_on_the_previous_release();
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_lands = Some(w.cfg.releases.join(A).join("bin/spira-lc"));
+    sc.pinned.insert("lc-serve.service".into());
+    lc_serve_running(&sc, &old_bin);
+    let e = activate_with(&w, &sc).unwrap_err();
+    assert!(e.contains("lc-serve.service") && e.contains("rolled back"), "{e}");
+}
+
+#[test]
+fn an_activation_leaves_a_service_alone_whose_old_release_binary_has_the_same_bytes() {
+    let (w, old_bin) = world_with_an_lc_serve_left_on_the_previous_release();
+    exe(&old_bin, "spira-lc v2 with holds");
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    lc_serve_running(&sc, &old_bin);
+    activate_with(&w, &sc).unwrap();
+    assert!(sc.restarts.borrow().is_empty(), "{:?}", sc.restarts.borrow());
 }
 
 #[test]
