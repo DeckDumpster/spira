@@ -150,7 +150,7 @@ pub fn reads_whole_history<S: AsRef<str>>(argv: &[S]) -> bool {
 /// guards read from their own environment (`bead::guard`) — the rune, the czar class and
 /// trigger bead, and every czar stage. The service judges the write on these, as bdq would have
 /// in this process.
-pub const GUARD_VARS: &[&str] = &["SPIRA_RUNE", "SPIRA_CZAR_CLASS", "SPIRA_CZAR_TRIGGER_BEAD"];
+pub const GUARD_VARS: &[&str] = &["SPIRA_RUNE", "SPIRA_CZAR_CLASS", "SPIRA_CZAR_TRIGGER_BEAD", "BEAD_CROSS_REPO_CONSIDERED", "BEAD_STATUTE_CONSIDERED", "SPIRA_BEAD_LANE_OVERRIDE"];
 /// Every `SPIRA_CZAR_STAGE_<CLASS>` is a guard variable.
 pub const GUARD_PREFIX: &str = "SPIRA_CZAR_STAGE_";
 

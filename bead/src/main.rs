@@ -10,8 +10,8 @@ use spira_config::amendment;
 use bead::claimdesc::notify_live_dwarf;
 use bead::{
     runes_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
-    lane_check, stack_after_refusal, lint_judge, parse_created_id, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
-    persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
+    stack_after_refusal, lint_judge, parse_created_id, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
+    persona_line, repos_by_name, repos_section, work_labels,
 };
 
 fn main() {
@@ -776,23 +776,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
 
-        if requires_build_spec(home, &for_rune) {
-            let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
-            if !bead::has_build_spec(&body) {
-                eprintln!(
-                    "bead: refusing: a bead for {for_rune} must name what to build under a `{}` heading (the artifact, component or change, and where). An outcome with no named deliverable is design work: file it --for spike, which returns a proposed build spec for approval.",
-                    bead::BUILD_HEADING
-                );
-                return 2;
-            }
-        }
-
-        let lane_override = env::var("SPIRA_BEAD_LANE_OVERRIDE")
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
-        if let LaneCheck::Refused(msg) = lane_check(&rune_labels, &repo, &repos, lane_override) {
-            eprintln!("{msg}");
-            return 2;
+        let persona = bead::filing::Persona { name: for_rune.clone(), labels: rune_labels.split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(), requires_build_spec: requires_build_spec(home, &for_rune), unresolved: None };
+        let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
+        if let Err(r) = bead::filing::persona_guards(&persona, &repo, &body, &repos, &|k| env::var(k).ok()) {
+            eprint!("{}", r.text);
+            return r.code;
         }
 
         if let Some(base) = &stack_after {
@@ -1857,9 +1845,9 @@ fn cmd_label(home: &str, args: &[String]) -> i32 {
         })
         .collect();
     let partitions = runes_partitions(&personas, "");
-    if partitions.iter().any(|p| p == &label) || label.starts_with("rune:") {
-        eprintln!("bead: label {verb}: refusing — {label} is a partition label; `bead.sh file --for <persona>` derives those from the persona's own predicate, so a hand-set one can disagree with it");
-        return 1;
+    if let Err(r) = bead::filing::partition_label(verb, &label, &partitions) {
+        eprint!("{}", r.text);
+        return r.code;
     }
 
     let (_, out) = door(&s(&["show", &id, "--json"]));
