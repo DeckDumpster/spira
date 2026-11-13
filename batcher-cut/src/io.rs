@@ -1647,6 +1647,13 @@ pub fn config_key_changes(repo: &Repo, base_sha: &str, tip: &str) -> (Vec<String
     (added, retired)
 }
 
+pub const CONFIG_DELTA: &str = "spira/config-delta.toml";
+
+/// `path` at `rev`; `None` when `rev` has no such file.
+pub fn file_at(repo: &Repo, rev: &str, path: &str) -> Option<String> {
+    run(Command::new("git").arg("-C").arg(&repo.path).args(["show", &format!("{rev}:{path}")]), "git show file").ok()
+}
+
 /// The paths `tip` changed since it forked from `base_sha` (`git diff base...tip`) — what
 /// attribution orders suspects by and decides a rerun's build by.
 pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
@@ -5212,5 +5219,29 @@ mod config_key_tests {
         let (added, retired) = config_key_changes(&repo, &base, &tip);
         assert_eq!((added, retired), (vec!["NEW_SECS".to_string(), "new_secs".to_string()], vec!["retired_secs".to_string()]));
         assert_eq!(config_key_changes(&repo, &base, &by), (vec![], vec![]));
+    }
+
+    #[test]
+    fn two_clean_merged_removed_lines_are_a_delta_that_does_not_parse_and_one_alone_is_not() {
+        let root = testkit::TempDir::new("config-delta-merge");
+        let d = root.path();
+        testkit::git(d, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir_all(d.join("spira")).unwrap();
+        let delta = d.join(CONFIG_DELTA);
+        std::fs::write(&delta, "# head\n\n\n\n\n\n\n# tail\n\n[spira]\nk = 1\n").unwrap();
+        commit(d, "base");
+        testkit::git(d, &["checkout", "-q", "-b", "a"]);
+        std::fs::write(&delta, "# head\nremoved = [\"x\"]\n\n\n\n\n\n\n# tail\n\n[spira]\nk = 1\n").unwrap();
+        let a = commit(d, "a");
+        testkit::git(d, &["checkout", "-q", "main"]);
+        testkit::git(d, &["checkout", "-q", "-b", "b"]);
+        std::fs::write(&delta, "# head\n\n\n\n\n\n\n# tail\nremoved = [\"y\"]\n\n[spira]\nk = 1\n").unwrap();
+        let b = commit(d, "b");
+        let repo = Repo { name: "alpha".into(), path: d.to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+        let parses = |rev: &str| file_at(&repo, rev, CONFIG_DELTA).is_none_or(|t| spira_config::delta_added(&t).is_ok());
+        assert!(parses(&a) && parses(&b), "each member alone parses");
+        testkit::git(d, &["checkout", "-q", "a"]);
+        testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit", &b]);
+        assert!(!parses("HEAD"), "git merged both lines without a conflict, and the result is not TOML");
     }
 }

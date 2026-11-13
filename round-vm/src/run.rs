@@ -719,7 +719,7 @@ path = "$HOME/round-work"
 base = "origin/base"
 ROUNDCFG
 export SPIRA_TOML="$HOME/round-work/spira/testlib/complete.toml:$HOME/round-config.toml"
-SPIRA_TOML="$(target/release/release config-stage "$HOME/round-work")" || { echo "round-vm: cannot apply the head's config delta" >&2; exit 2; }
+SPIRA_TOML="$(target/release/release config-stage "$HOME/round-work")" || { echo "round-vm: CONFIG-DELTA: RED — the head's config delta does not apply on the merged tree" >&2; exit 4; }
 # A layer can name a file in round-work, which an attribution rerun checks out over; the legs read a copy.
 frozen="$HOME/round-config.d"; rm -rf "$frozen"; mkdir -p "$frozen"
 IFS=: read -ra layer_files <<< "$SPIRA_TOML"; frozen_spec=""
@@ -3635,6 +3635,12 @@ mod tests {
             let step = &before[at..];
             assert!(allowed.iter().any(|a| step.starts_with(a)) || step.starts_with("target/release\""), "runs a binary before SPIRA_RELEASE is declared: {}", step.lines().next().unwrap_or(""));
         }
+    }
+
+    #[test]
+    fn a_config_delta_that_does_not_apply_ends_the_pass_red_not_as_a_harness_fault() {
+        let stage = REMOTE_SCRIPT.lines().find(|l| l.contains("release config-stage")).expect("the stage line");
+        assert!(stage.contains("CONFIG-DELTA: RED") && stage.ends_with("exit 4; }"), "{stage}");
     }
 
     #[test]

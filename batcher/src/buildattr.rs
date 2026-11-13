@@ -207,6 +207,14 @@ pub const RECIPE_PATHS: [&str; 8] = [
     ".github/workflows/round-ami-build.yml",
 ];
 
+/// The line round-vm prints when the merged tree's config delta cannot be applied.
+pub const CONFIG_DELTA_RED: &str = "CONFIG-DELTA: RED";
+
+/// Whether the round's output says the merged config delta did not apply.
+pub fn is_config_delta_red(output: &str) -> bool {
+    output.lines().any(|l| l.contains(CONFIG_DELTA_RED))
+}
+
 /// Whether the round's build output is the image build's failure rather than the compiler's.
 pub fn is_image_build_red(output: &str) -> bool {
     output

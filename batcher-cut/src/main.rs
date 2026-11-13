@@ -617,6 +617,7 @@ impl drive::RoundOps for LiveOps<'_> {
             spira_config::host_disk::CAUSE => "the host filesystem is full; no member is implicated",
             "integration" => "red only in the merged tree, not fixed in the round",
             "mender-page" => "the menders' passes ended in a box fault the loop cannot fix",
+            drive::CONFIG_DELTA => "the merged config delta does not apply",
             _ => "workspace failed to build",
         };
         match io::file_local_red_incident(

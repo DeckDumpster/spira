@@ -72,6 +72,15 @@ pub fn stderr_tail(text: &str) -> String {
     out
 }
 
+/// How a pass that exited 4 (the tree did not build) ended: its config delta, or the compiler.
+pub fn build_end(stderr: &str) -> MainEnd {
+    if batcher::buildattr::is_config_delta_red(stderr) {
+        MainEnd::ConfigDelta
+    } else {
+        MainEnd::WorkspaceBuild
+    }
+}
+
 /// The corpus run's end, typed from round-vm's exit code (round-vm DESIGN.md §2.2). `Ok` is
 /// a verdict the round can be judged on; every `Err` is a harness fault — the round is not
 /// judged (no verdict) — and carries round-vm's stderr.
@@ -101,7 +110,7 @@ pub fn corpus_end(
             };
             format!("round-vm: infrastructure fault — the round VM ({host}) was unreachable ({status}) and 0 of {total} suites reported within the {wall_secs}s wall bound; no member is implicated, and this is not a cap breach (rc {rc})")
         }
-        4 => return Ok(MainEnd::WorkspaceBuild),
+        4 => return Ok(build_end(stderr)),
         2 => {
             if let Some(line) = stderr.lines().find(|l| l.contains("batch: unknown suite:")) {
                 return Err(format!(
@@ -873,6 +882,14 @@ impl RoundRunner for VmRunner<'_> {
         self.probe_subset(subset, "workspace", &[], build_probe_result)
     }
 
+    fn config_applies(&mut self, subset: &[Member]) -> Option<bool> {
+        let removal: Vec<Id> = self.members.iter().filter(|m| !subset.iter().any(|s| s.id == m.id)).map(|m| m.id.clone()).collect();
+        self.build_n += 1;
+        let key = format!("b{}", self.build_n);
+        let branch = self.tree_without(self.branch(&key), &key, &removal).ok()?;
+        Some(io::file_at(self.repo, &branch, io::CONFIG_DELTA).is_none_or(|d| spira_config::delta_added(&d).is_ok()))
+    }
+
     fn filter_green(&mut self, name: &str, subset: &[Member]) -> Option<bool> {
         self.filter_green_in(name, &[], subset)
     }
@@ -1014,7 +1031,7 @@ impl RoundRunner for VmRunner<'_> {
                 }
                 p.done = Some(MainEnd::Ran);
             }
-            4 => p.done = Some(MainEnd::WorkspaceBuild),
+            4 => p.done = Some(build_end(&self.stderr_text())),
             c => {
                 return Err(format!(
                     "the survivors' verification faulted (rc {c}){}",
@@ -1436,6 +1453,8 @@ mod tests {
         assert_eq!(corpus_end(0, err, 600, 1, 1), Ok(MainEnd::Ran));
         assert_eq!(corpus_end(1, err, 600, 1, 1), Ok(MainEnd::Ran));
         assert_eq!(corpus_end(4, err, 600, 1, 1), Ok(MainEnd::WorkspaceBuild));
+        let delta = "round-vm: CONFIG-DELTA: RED — the head's config delta does not apply on the merged tree\n";
+        assert_eq!(corpus_end(4, delta, 600, 0, 3), Ok(MainEnd::ConfigDelta), "an unappliable merged config delta is a red with its own check, not a fault");
         for rc in [2, 3, 101, 124, 137, -1] {
             let e = corpus_end(rc, err, 600, 3, 5).unwrap_err();
             assert!(e.contains("harness fault"), "rc {rc}: {e}");
