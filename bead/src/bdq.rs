@@ -458,6 +458,17 @@ pub fn should_retry(rc: i32, try_n: u32, max_tries: u32, stderr_has_invalid_conn
     rc != 0 && try_n < max_tries.max(1) && stderr_has_invalid_connection
 }
 
+/// What bdq says when bd failed and said nothing, so the caller's refusal carries a cause
+/// instead of an empty stderr. A write that exited non-zero may still have committed.
+pub fn silent_failure_note(args: &[String], rc: i32, stderr: &str, tries: u32, ms: u128) -> Option<String> {
+    if rc == 0 || !stderr.trim().is_empty() {
+        return None;
+    }
+    let verb = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
+    let unknown = if is_write(args) { "; the write's outcome is unknown, read it back before repeating it" } else { "" };
+    Some(format!("bdq: bd {verb} exited {rc} with no output after {tries} attempt(s) in {ms}ms{unknown}\n"))
+}
+
 const READ_VERBS: &[&str] = &["show", "list", "count", "ready", "blocked", "query", "search", "stats", "status", "children", "dep", "graph", "find", "export"];
 
 /// A read may be retried on any dropped connection. A write only when bd never got as far as
@@ -803,6 +814,16 @@ mod tests {
         assert!(!is_write(&s(&["show", "x"])));
         assert!(!is_write(&s(&["--json", "list"])));
         assert!(!is_write(&[]));
+    }
+
+    #[test]
+    fn a_silent_failed_write_says_its_outcome_is_unknown_and_a_loud_one_adds_nothing() {
+        let w = silent_failure_note(&s(&["create", "t"]), 2, "", 3, 1200).unwrap();
+        assert!(w.contains("bd create exited 2 with no output after 3 attempt(s)") && w.contains("outcome is unknown"), "{w}");
+        let r = silent_failure_note(&s(&["list"]), 2, "  \n", 1, 5).unwrap();
+        assert!(!r.contains("unknown"), "{r}");
+        assert_eq!(silent_failure_note(&s(&["create", "t"]), 2, "boom", 1, 5), None);
+        assert_eq!(silent_failure_note(&s(&["create", "t"]), 0, "", 1, 5), None);
     }
 
     #[test]

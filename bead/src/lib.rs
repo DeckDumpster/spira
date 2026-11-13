@@ -518,6 +518,32 @@ pub fn find_id_by_title(json: &str, title: &str) -> Option<String> {
     hits.next().is_none().then_some(id)
 }
 
+/// What reading a title back from the store says about a create whose reply was lost.
+#[derive(Debug, PartialEq)]
+pub enum Readback {
+    Found(String),
+    Absent,
+    Ambiguous,
+    Unreadable,
+}
+
+/// Reads a `bd list --json` answer for the bead a lost create may have written. A listing
+/// that failed or is not JSON is `Unreadable`, never `Absent`: only a readable listing
+/// without the title proves nothing was written.
+pub fn readback(list_code: i32, listing: &str, title: &str) -> Readback {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(listing) else { return Readback::Unreadable };
+    if list_code != 0 || !v.is_array() {
+        return Readback::Unreadable;
+    }
+    match find_id_by_title(listing, title) {
+        Some(id) => Readback::Found(id),
+        None => {
+            let n = v.as_array().map_or(0, |a| a.iter().filter(|d| d.get("title").and_then(|t| t.as_str()) == Some(title)).count());
+            if n > 1 { Readback::Ambiguous } else { Readback::Absent }
+        }
+    }
+}
+
 /// The `branch:` label a bead carries, if any (first one found, matching the bash's
 /// `break` on first match).
 pub fn branch_label(labels: &[String]) -> Option<&str> {
@@ -1071,6 +1097,18 @@ mod tests {
         let two = r#"[{"id":"sp-a","title":"t"},{"id":"sp-b","title":"t"}]"#;
         assert_eq!(find_id_by_title(two, "t"), None);
         assert_eq!(find_id_by_title("nope", "t"), None);
+    }
+
+    #[test]
+    fn readback_tells_a_missing_bead_from_an_unreadable_store() {
+        let rows = r#"[{"id":"sp-a","title":"t"},{"id":"sp-b","title":"u"}]"#;
+        assert_eq!(readback(0, rows, "t"), Readback::Found("sp-a".into()));
+        assert_eq!(readback(0, rows, "gone"), Readback::Absent);
+        assert_eq!(readback(0, "[]", "t"), Readback::Absent);
+        assert_eq!(readback(2, "", "t"), Readback::Unreadable);
+        assert_eq!(readback(2, "[]", "t"), Readback::Unreadable);
+        assert_eq!(readback(0, "{}", "t"), Readback::Unreadable);
+        assert_eq!(readback(0, r#"[{"id":"x","title":"t"},{"id":"y","title":"t"}]"#, "t"), Readback::Ambiguous);
     }
 
     #[test]
