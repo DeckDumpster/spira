@@ -1581,7 +1581,12 @@ fn cmd_forge(bound: &str, rest: &[String]) -> (i32, String) {
             };
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
             let r = forge::client::run(&forge::client::route_of(std::path::Path::new(&forge)), verb, &repo, &args, None);
-            (r.code, if r.ok() { r.out } else { format!("{}{}", r.out, r.err) })
+            if r.ok() {
+                return (r.code, r.out);
+            }
+            let line = format!("work forge {verb}: refused for persona {actor}: {}", forge_said(&format!("{}{}", r.out, r.err), r.code));
+            log_forge_refusal(&line);
+            (r.code, line)
         }
         ForgeOp::Push { branch, tip } => forge_refspec(&repo, "ami-push", actor, &format!("{tip}:refs/heads/{branch}")),
         ForgeOp::Delete { branch } => forge_refspec(&repo, "ami-delete", actor, &format!(":refs/heads/{branch}")),
@@ -1621,20 +1626,29 @@ fn forge_git(repo: &std::path::Path, remote: &str, refspec: &str, verb: &str, ac
     if o.status.success() {
         return (0, String::new());
     }
-    let said = String::from_utf8_lossy(&o.stderr).trim().to_string();
-    let why = match (o.status.code(), said.is_empty()) {
-        (_, false) => said,
-        (Some(124), true) => format!("git did not finish within {secs}s and was stopped"),
-        (code, true) => format!("git exited {} and printed nothing", code.map_or("by signal".to_string(), |c| c.to_string())),
+    let said = String::from_utf8_lossy(&o.stderr);
+    let why = match o.status.code() {
+        Some(124) if said.trim().is_empty() => format!("git did not finish within {secs}s and was stopped"),
+        code => forge_said(&said, code.unwrap_or(-1)),
     };
     (REFUSED, format!("work forge {verb}: refused for persona {actor}: the forge remote {remote} failed: {why}"))
 }
 
+fn forge_said(said: &str, code: i32) -> String {
+    match said.trim() {
+        "" => format!("exit {code}, and the forge printed nothing"),
+        t => t.to_string(),
+    }
+}
+
 fn log_forge_refusal(line: &str) {
-    let Some(run) = spira_config::process::cfg("SPIRA_RUN").ok().filter(|r| !r.is_empty()) else {
-        return;
-    };
-    let path = std::path::Path::new(&run).join("broker.log");
+    if let Some(run) = spira_config::process::cfg("SPIRA_RUN").ok().filter(|r| !r.is_empty()) {
+        append_refusal(std::path::Path::new(&run), line);
+    }
+}
+
+fn append_refusal(run: &std::path::Path, line: &str) {
+    let path = run.join("broker.log");
     if let Err(e) = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{line}\n").as_bytes())) {
         eprintln!("spira-lc work forge: {}: {e}", path.display());
     }
@@ -1875,16 +1889,26 @@ mod tests {
     fn a_forge_call_cut_off_at_its_deadline_says_so_instead_of_printing_nothing() {
         let (_dir, repo, remote) = forge_fixture("forge-slow");
         forge_hook(&remote, "sleep 30");
-        let (code, out) = send_tip(&repo, &remote, "1");
+        let (code, out) = send_tip(&repo, &remote, "0.3");
         assert_eq!(code, super::REFUSED);
-        assert!(out.contains("did not finish within 1s"), "{out:?}");
+        assert!(out.contains("did not finish within 0.3s"), "{out:?}");
     }
 
     #[test]
-    fn a_builders_forge_call_that_takes_longer_than_a_store_call_succeeds() {
-        let (_dir, repo, remote) = forge_fixture("forge-ok");
-        forge_hook(&remote, "sleep 6");
-        assert_eq!(send_tip(&repo, &remote, super::FORGE_PUSH_SECS), (0, String::new()));
+    fn a_forge_call_gets_more_than_a_store_call_and_the_request_deadline_covers_it() {
+        let secs: f64 = super::FORGE_PUSH_SECS.parse().unwrap();
+        assert!(secs > spira_config::bounded::CALL_TIMEOUT_SECS.parse::<f64>().unwrap());
+        assert!(secs < crate::serve::TOOL_DEADLINE.as_secs_f64());
+        assert!(super::brokers_tool("forge"));
+    }
+
+    #[test]
+    fn a_forge_refusal_is_appended_to_the_broker_log_under_the_run_dir() {
+        let dir = testkit::TempDir::new("forge-log");
+        super::append_refusal(dir.path(), "work forge ami-push: refused for persona builder: x");
+        super::append_refusal(dir.path(), "second");
+        let log = std::fs::read_to_string(dir.path().join("broker.log")).unwrap();
+        assert_eq!(log, "work forge ami-push: refused for persona builder: x\nsecond\n");
     }
 
     #[test]
