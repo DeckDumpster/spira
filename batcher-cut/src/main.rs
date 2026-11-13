@@ -2478,6 +2478,11 @@ mod tests {
         assert!(!wt.join("spira/config-delta.d/sp-a.toml").exists() && !wt.join("spira/config-delta.d/sp-b.toml").exists());
         let status = testkit::git(&wt, &["status", "--porcelain"]);
         assert!(status.trim().is_empty(), "the fold is committed, not left dirty: {status}");
+        assert!(testkit::git(&wt, &["log", "-1", "--format=%B"]).contains("Members: sp-a sp-b"));
+        merge_round(&env, &repo, &wt, &base, merged.clone()).unwrap();
+        assert_eq!(testkit::git(&wt, &["rev-list", "--count", &format!("{base}..HEAD")]).trim(), "5", "a rebuild folds once from a reset tree: two members, two merges, one fold");
+        g(&["-C", wt.to_str().unwrap(), "checkout", "-q", "--detach", &base]);
+        assert_eq!(io::fold_config_delta(&env, &wt, &merged).unwrap(), 0, "a tree with no fragments gets no commit");
     }
 
     const ALL: Switches = Switches {

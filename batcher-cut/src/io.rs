@@ -2396,13 +2396,9 @@ pub fn hold_blocking(env: &Env, repo: &str, key: &str) -> Option<String> {
 }
 
 /// Folds the round tree's `config-delta.d` fragments into `config-delta.toml` as one commit,
-/// so the folded base lands with the round and the directory does not grow. A fold that fails
-/// leaves the fragments in place: they are still a valid delta.
+/// so the folded base lands with the round and the directory does not grow. Any failure puts
+/// the delta files back as the round merged them: a half-folded tree must not be tested.
 pub fn fold_config_delta(env: &Env, wt: &Path, members: &[Member]) -> Result<usize, String> {
-    let folded = spira_config::delta::fold_fragments(&wt.join("spira"))?;
-    if folded.is_empty() {
-        return Ok(0);
-    }
     let git = |args: &[&str]| {
         run(
             spira_config::bounded::bounded("git")
@@ -2418,15 +2414,24 @@ pub fn fold_config_delta(env: &Env, wt: &Path, members: &[Member]) -> Result<usi
             "git",
         )
     };
-    git(&["add", "-A", "--", CONFIG_DELTA, CONFIG_DELTA_DIR])?;
-    let ids: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
-    git(&[
-        "commit",
-        "-q",
-        "-m",
-        &format!("round: fold {} config delta fragment(s) into {CONFIG_DELTA}\n\nMembers: {}\n", folded.len(), ids.join(" ")),
-    ])?;
-    Ok(folded.len())
+    let fold = || -> Result<usize, String> {
+        let folded = spira_config::delta::fold_fragments(&wt.join("spira"))?;
+        if folded.is_empty() {
+            return Ok(0);
+        }
+        git(&["add", "-A", "--", CONFIG_DELTA, CONFIG_DELTA_DIR])?;
+        let ids: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
+        git(&[
+            "commit",
+            "-q",
+            "-m",
+            &format!("round: fold {} config delta fragment(s) into {CONFIG_DELTA}\n\nMembers: {}\n", folded.len(), ids.join(" ")),
+        ])?;
+        Ok(folded.len())
+    };
+    fold().inspect_err(|_| {
+        let _ = git(&["reset", "-q", "--hard", "HEAD"]);
+    })
 }
 
 /// Repairs the integration breaks that are mechanical, on the round tree, as one commit
