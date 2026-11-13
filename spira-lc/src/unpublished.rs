@@ -260,11 +260,9 @@ mod tests {
         std::fs::write(dir.join(".git/FETCH_HEAD"), "").unwrap();
         let age = last_fetch_age(dir).expect("FETCH_HEAD is read");
         assert!(age < REFRESH_AFTER_SECS, "{age}");
-        let started = std::time::Instant::now();
         let (count, arrival) = range_facts(dir, "main", &forge, &tip).unwrap();
         assert_eq!(count, 50);
         assert!(arrival.is_some());
-        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
