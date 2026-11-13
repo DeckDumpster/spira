@@ -88,14 +88,14 @@ impl Reaper for TargetReap {
     }
 }
 
-/// The paths the roles are measured at, from the declared config and the probes' own overrides.
-pub fn cfg_of(run: &Path) -> Result<Cfg, String> {
-    let get = crate::process::getenv;
+/// The paths the roles are measured at: `scratch` and `psi_dir` are the probes' own, as the
+/// caller resolved them, and the worktrees sit under the run directory at the declared subdir.
+pub fn cfg_of(run: &Path, scratch: Option<String>, psi_dir: Option<String>) -> Result<Cfg, String> {
     Ok(Cfg {
-        scratch: get("SPIRA_TMP_PROBE_PATH").unwrap_or_else(|| crate::probes::DEFAULT_TMP_PATH.to_string()),
+        scratch: scratch.unwrap_or_else(|| crate::probes::DEFAULT_TMP_PATH.to_string()),
         worktrees: run.join(spira_config::process::cfg("SPIRA_HOST_WORKTREE_SUBDIR")?).to_string_lossy().into_owned(),
         root: crate::probes::ROOT_PATH.to_string(),
-        psi_dir: get("SPIRA_PSI_DIR").unwrap_or_else(|| crate::probes::DEFAULT_PSI_DIR.to_string()),
+        psi_dir: psi_dir.unwrap_or_else(|| crate::probes::DEFAULT_PSI_DIR.to_string()),
     })
 }
 

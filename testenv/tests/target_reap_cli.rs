@@ -38,10 +38,10 @@ fn call(args: &[&str]) -> (u8, String) {
 fn a_tenth_of_twenty_idle_targets_removes_exactly_the_two_oldest() {
     let _env = testkit::env(&[("SPIRA_REAP_IDLE_SECS", Some("3600"))]);
     let dir = testkit::TempDir::new("reap-fraction");
-    plant(&dir.path(), 20);
+    plant(dir.path(), 20);
     let (code, said) = call(&["--fraction", "0.1", "--worktrees", dir.path().to_str().unwrap()]);
     assert_eq!(code, 0, "{said}");
-    assert_eq!(reaped(&dir.path(), 20), vec![18, 19], "the two oldest, w19 and w18, and no others");
+    assert_eq!(reaped(dir.path(), 20), vec![18, 19], "the two oldest, w19 and w18, and no others");
     assert!(dir.path().join("sp-w19/src.rs").is_file(), "source stays");
 }
 
@@ -49,10 +49,10 @@ fn a_tenth_of_twenty_idle_targets_removes_exactly_the_two_oldest() {
 fn a_dry_run_names_the_bound_and_removes_nothing() {
     let _env = testkit::env(&[("SPIRA_REAP_IDLE_SECS", Some("3600"))]);
     let dir = testkit::TempDir::new("reap-fraction-dry");
-    plant(&dir.path(), 20);
+    plant(dir.path(), 20);
     let (code, said) = call(&["--dry-run", "--fraction", "0.1", "--worktrees", dir.path().to_str().unwrap()]);
     assert_eq!(code, 0, "{said}");
-    assert!(reaped(&dir.path(), 20).is_empty());
+    assert!(reaped(dir.path(), 20).is_empty());
     assert!(said.contains("sp-w19") && said.contains("sp-w18") && !said.contains("sp-w17"), "{said}");
 }
 
@@ -60,9 +60,9 @@ fn a_dry_run_names_the_bound_and_removes_nothing() {
 fn a_bound_over_a_few_still_takes_the_oldest_one() {
     let _env = testkit::env(&[("SPIRA_REAP_IDLE_SECS", Some("3600"))]);
     let dir = testkit::TempDir::new("reap-fraction-few");
-    plant(&dir.path(), 3);
+    plant(dir.path(), 3);
     assert_eq!(call(&["--fraction", "0.1", "--worktrees", dir.path().to_str().unwrap()]).0, 0);
-    assert_eq!(reaped(&dir.path(), 3), vec![2]);
+    assert_eq!(reaped(dir.path(), 3), vec![2]);
 }
 
 #[test]

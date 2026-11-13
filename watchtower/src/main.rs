@@ -329,7 +329,7 @@ fn main() {
                 state: run.join("conditions").join("content-drift.state"),
             };
             conditions::reconcile(n, &ctx, "content-drift", probes::content_drift(&drift_cfg));
-            match host_real::cfg_of(&run).and_then(|c| host_real::pass(n as u64, &c, &run)) {
+            match host_real::cfg_of(&run, getenv("SPIRA_TMP_PROBE_PATH"), getenv("SPIRA_PSI_DIR")).and_then(|c| host_real::pass(n as u64, &c, &run)) {
                 Ok(m) => log::log(&m),
                 Err(e) => log::log(&format!("watchtower: host section refused — {e}")),
             }
