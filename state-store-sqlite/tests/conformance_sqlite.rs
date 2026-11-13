@@ -86,6 +86,7 @@ scenarios!(
     get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
     a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
+    gc_range_and_open_skip_the_history_prefix,
 );
 
 /// Scenarios with no unit test here: each runs over 100 ms (sp-bym7j8) and stays in the suite
@@ -463,7 +464,7 @@ fn compact_below_the_floor_works_and_compact_above_it_stops_at_the_floor() {
 }
 
 #[test]
-fn gc_range_skips_the_audit_history_and_pages_across_it() {
+fn gc_range_skips_events_and_history_and_pages_across_them() {
     let dir = TempDir::new("sqlite-gc-range");
     let b = open(&dir.path().join("s.db"));
     let keys = [
@@ -472,6 +473,9 @@ fn gc_range_skips_the_audit_history_and_pages_across_it() {
         "events/00000000000000000002",
         "f",
         "g",
+        "history/sp-a/0/r1",
+        "history/sp-a/1/r2",
+        "i",
     ];
     let batch: Vec<Write> = keys.iter().map(|k| put_write(k, b"{}", 1, None)).collect();
     b.commit(0, &batch).unwrap();
@@ -481,7 +485,7 @@ fn gc_range_skips_the_audit_history_and_pages_across_it() {
         after = Some(k.clone());
         got.push(k);
     }
-    assert_eq!(got, ["a", "f", "g"]);
+    assert_eq!(got, ["a", "f", "g", "i"]);
 }
 
 #[test]

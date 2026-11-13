@@ -2,7 +2,7 @@
 //! a snapshot revision, commits a batch atomically and durably if the head is still the one the
 //! caller read, serves the watch log and compacts. The contract computes every revision it stores.
 
-use crate::{Result, Rev, EVENTS_PREFIX};
+use crate::{Result, Rev, EVENTS_PREFIX, HISTORY_PREFIX};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Version {
@@ -83,8 +83,8 @@ pub trait Backend: Send + Sync {
     fn compacted(&self) -> Result<u64> {
         Ok(0)
     }
-    /// `range("")` without the keys under `events/`: what the GC controller and the TTL restart
-    /// read, since the audit history never carries metadata or a TTL and grows without bound.
+    /// `range("")` without the keys under `events/` and `history/`: what the GC controller and the
+    /// TTL restart read, since neither carries metadata or a TTL and both grow without bound.
     /// The default filters `range`; a backend whose index can skip the prefix overrides it.
     fn gc_range(
         &self,
@@ -100,7 +100,7 @@ pub trait Backend: Send + Sync {
             cursor = page.last().map(|(k, _)| k.clone());
             out.extend(
                 page.into_iter()
-                    .filter(|(k, _)| !k.starts_with(EVENTS_PREFIX)),
+                    .filter(|(k, _)| !skipped_by_gc(k)),
             );
             if !full {
                 break;
@@ -109,6 +109,11 @@ pub trait Backend: Send + Sync {
         out.truncate(limit);
         Ok(out)
     }
+}
+
+/// Whether GC has nothing to do with `key`: it is under `events/` or `history/`.
+pub fn skipped_by_gc(key: &str) -> bool {
+    key.starts_with(EVENTS_PREFIX) || key.starts_with(HISTORY_PREFIX)
 }
 
 /// The value's `data.state`, when it is a JSON object carrying one as a string.
