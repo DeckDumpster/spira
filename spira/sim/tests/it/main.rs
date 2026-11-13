@@ -2,7 +2,6 @@
 //! former `tests/<name>.rs` file, which linked as its own executable carrying the whole crate.
 
 mod agent;
-mod ci_cut;
 mod ci;
 mod jq;
 mod loop_gate;
