@@ -1661,8 +1661,8 @@ mod abandon_tests {
         let (ma, mb) = (member("sp-a", &a), member("sp-b", &b));
         let mut run = VmRunner::new(&env, &repo, &repo.path, &base, "r1", BTreeMap::new()).unwrap();
         run.set_members(&[ma.clone(), mb.clone()]);
-        assert_eq!(run.config_applies(&[ma.clone()]), Some(true));
-        assert_eq!(run.config_applies(&[mb.clone()]), Some(true));
+        assert_eq!(run.config_applies(std::slice::from_ref(&ma)), Some(true));
+        assert_eq!(run.config_applies(std::slice::from_ref(&mb)), Some(true));
         assert_eq!(run.config_applies(&[ma, mb]), Some(false));
     }
 
