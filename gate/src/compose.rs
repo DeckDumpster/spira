@@ -558,7 +558,7 @@ pub fn run_all(cmd: &str) -> String {
 
 /// (crate, package) pairs: the crate's tests run the package's binary prebuilt in the target
 /// directory (spira-sim's ci_cut runs spira-config), so selecting the crate builds it too.
-const NEEDS_BUILT: [(&str, &str); 1] = [("spira-sim", "spira-config")];
+const NEEDS_BUILT: [(&str, &str); 2] = [("spira-sim", "spira-config"), ("batcher-cut", "gate")];
 
 /// The words of the unit build line, shared by the gate's build phase and testenv's unit tier so
 /// both produce the same artefacts for the same crates: no profile, no config override, no `-j`.
@@ -1137,6 +1137,13 @@ mod tests {
         assert!(!t.1.contains("spira-config"), "{}", t.1);
         let [b, _] = unit_commands(&["spira-sim".into(), "spira-config".into()], 4);
         assert_eq!(b.1.matches("-p spira-config").count(), 1, "{}", b.1);
+    }
+
+    #[test]
+    fn selecting_batcher_cut_builds_the_gate_its_fence_probe_test_runs() {
+        let [b, t] = unit_commands(&["batcher-cut".into()], 4);
+        assert!(b.1.ends_with(" -p batcher-cut -p gate"), "{}", b.1);
+        assert!(!t.1.contains("-p gate"), "{}", t.1);
     }
 
     #[test]

@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 use batcher::core::Member;
 use batcher::drive::RoundRunner;
@@ -11,11 +10,9 @@ use batcher_cut::io::{lifecycle_tests_env, Land, Repo};
 use batcher_cut::vm::VmRunner;
 
 fn gate_bin() -> PathBuf {
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let built = Command::new(cargo).args(["build", "-q", "-p", "gate", "--bin", "gate"]).status().unwrap();
-    assert!(built.success(), "gate did not build");
-    let exe = std::env::current_exe().unwrap();
-    exe.parent().unwrap().parent().unwrap().join("gate")
+    let gate = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join("gate");
+    assert!(gate.is_file(), "the build that runs this test builds gate beside it: {}", gate.display());
+    gate
 }
 
 fn member(id: &str, tip: &str) -> Member {
