@@ -6,6 +6,9 @@
 use super::colors::*;
 use super::model::Snapshot;
 
+/// Loom's page width: its lines wrap here, where a phone shows them without scrolling.
+pub const PHONE_COLS: i64 = 40;
+
 pub struct View {
     pub stale: bool,
     pub top: Vec<String>,
@@ -185,5 +188,24 @@ mod tests {
             }
         }
         assert!(view(&snap("14"), 40, DEADMAN).top.len() > 1, "a long top line wraps instead of being cut");
+    }
+
+    #[test]
+    fn a_step_not_yet_acked_says_so_and_a_pass_with_no_open_gap_names_none() {
+        let unacked = Snapshot::parse("SP_GP_PASS_AGE_S='1'\nSP_GP_BINDING='a/b'\nSP_GP_DISTANCE='2 x'\nSP_GP_STEP='hold t'\nSP_GP_STEP_HORIZON='5m'\n");
+        let top = strip(&top_lines(&unacked, 200, DEADMAN).join("\n"));
+        assert!(top.contains("a/b: 2 x; step `hold t` unacked, horizon 5m"), "{top}");
+        let idle = strip(&top_lines(&Snapshot::parse("SP_GP_PASS_AGE_S='1'\nSP_GP_BINDING='-'\n"), 200, DEADMAN).join("\n"));
+        assert!(idle.contains("no gap open") && !idle.contains("binding ?"), "{idle}");
+        let unread = strip(&top_lines(&Snapshot::parse("SP_GP_PASS_AGE_S='1'\nSP_GP_BINDING='a/b'\n"), 200, DEADMAN).join("\n"));
+        assert!(unread.contains("a/b: ?") && !unread.contains("step"), "{unread}");
+    }
+
+    #[test]
+    fn a_word_longer_than_the_page_is_cut_rather_than_overflowing() {
+        let long = format!("SP_GP_PASS_AGE_S='1'\nSP_GP_BINDING='{}/x'\n", "k".repeat(80));
+        for l in view(&Snapshot::parse(&long), 30, DEADMAN).top {
+            assert!(l.chars().count() <= 30, "{l:?}");
+        }
     }
 }

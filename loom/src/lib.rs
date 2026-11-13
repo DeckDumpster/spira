@@ -3,6 +3,7 @@
 //! the collector's snapshot files; none reads `bd`.
 
 pub mod dwarves;
+pub mod goodput;
 pub mod factory;
 pub mod forge_rounds;
 pub mod next;
@@ -590,6 +591,37 @@ async fn dwarves_data(loom: &Loom) -> Result<(cockpit_ops::health::model::Snapsh
     Ok((cockpit_ops::health::model::Snapshot::parse(&text), working, note))
 }
 
+fn goodput_data(loom: &Loom) -> Result<(cockpit_ops::health::model::Snapshot, i64), String> {
+    let path = std::path::Path::new(&loom.config().run).join("cockpit.env");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    // An unreadable threshold reads as zero: the pass is then shown stale, never current.
+    let deadman = spira_config::process::cfg_parse::<i64>("SPIRA_RECONCILER_DEADMAN_SECS").unwrap_or(0);
+    Ok((cockpit_ops::health::model::Snapshot::parse(&text), deadman))
+}
+
+async fn goodput_page_route(State(loom): State<Arc<Loom>>) -> Response {
+    match goodput_data(&loom) {
+        Ok((snap, deadman)) => {
+            let bar = lifecycle_snapshot(&loom).map_or_else(|_| shell::Bar::default(), |(s, _)| now::bar(Some(&s), now_s()));
+            html_response(StatusCode::OK, shell::with_bar(&goodput::render_page(&snap, deadman), &bar))
+        }
+        Err(e) => unavailable("goodput view", &e),
+    }
+}
+
+async fn goodput_api_route(State(loom): State<Arc<Loom>>) -> Response {
+    let (status, body) = match goodput_data(&loom) {
+        Ok((snap, deadman)) => (StatusCode::OK, goodput::render_json(&snap, deadman).to_string()),
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, serde_json::json!({ "error": e }).to_string()),
+    };
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(body.into())
+        .expect("a response with a valid status and headers")
+}
+
 async fn dwarves_page_route(State(loom): State<Arc<Loom>>) -> Response {
     match dwarves_data(&loom).await {
         Ok((snap, working, note)) => {
@@ -900,6 +932,8 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/api/rounds/spira/{id}", get(round_api_route))
         .route("/api/ops", get(ops_route))
         .route("/dwarves", get(dwarves_page_route))
+        .route("/goodput", get(goodput_page_route))
+        .route("/api/goodput", get(goodput_api_route))
         .route("/api/dwarves", get(dwarves_api_route))
         .route("/", get(next_route))
         .route("/rounds/{repo}/{batch}", get(round_route))

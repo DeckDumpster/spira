@@ -1,0 +1,4 @@
+# Loom's goodput page (sp-4wz56p's gate reports any branch no test takes).
+[[scope]]
+path = "loom/src/goodput.rs"
+functions = ["render_json", "render_page"]

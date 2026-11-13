@@ -243,4 +243,35 @@ mod tests {
         assert_eq!(k["SP_GP_BINDING"], "-");
         assert!(!k.contains_key("SP_GP_STEP") && !k.contains_key("SP_GP_DISTANCE"), "{k:?}");
     }
+
+    #[test]
+    fn with_no_intent_in_flight_the_distance_comes_from_the_binding_sections_own_action() {
+        let mut snap: serde_json::Value = serde_json::from_str(&snapshot()).unwrap();
+        snap["intents"][1]["intent"]["judgement"] = json!({ "result": "failed" });
+        let k = keys(&snap.to_string());
+        assert_eq!(k["SP_GP_DISTANCE"], "1 repeat identity open");
+        assert!(!k.contains_key("SP_GP_STEP"), "every intent is judged: {k:?}");
+    }
+
+    #[test]
+    fn a_binding_the_snapshot_does_not_list_has_no_distance_and_an_unparseable_time_has_no_age() {
+        let mut snap: serde_json::Value = serde_json::from_str(&snapshot()).unwrap();
+        snap["pass"]["binding"] = json!("Ghost/none");
+        snap["pass"]["at"] = json!("yesterday");
+        snap["intents"][1]["intent"]["ack"] = serde_json::Value::Null;
+        let k = keys(&snap.to_string());
+        assert_eq!(k["SP_GP_BINDING"], "Ghost/none");
+        assert!(!k.contains_key("SP_GP_DISTANCE") && !k.contains_key("SP_GP_PASS_AGE_S"), "{k:?}");
+        assert_eq!(k["SP_GP_PASS_AT"], "yesterday");
+        snap["pass"]["binding"] = json!("RoundController/pokebot");
+        let k = keys(&snap.to_string());
+        assert!(k.contains_key("SP_GP_STEP") && !k.contains_key("SP_GP_STEP_ACK"), "a step not yet acked names no ack time: {k:?}");
+    }
+
+    #[test]
+    fn a_line_break_in_a_value_cannot_start_a_second_key() {
+        assert_eq!(plain("a\nSP_X=1"), "a SP_X=1");
+        assert_eq!(number(&json!("x")), None);
+        assert_eq!(number(&json!(0.25)).as_deref(), Some("0.2"));
+    }
 }
