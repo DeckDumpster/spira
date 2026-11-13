@@ -214,7 +214,7 @@ check_units() {
         return
     fi
     local out rc
-    out="$("$inst" --render 2>&1)"
+    out="$(SPIRA_HOME="$REL/spira" SPIRA_REPO="$REL" "$inst" --render 2>&1)"
     rc=$?
     if [ "$rc" -ne 0 ]; then
         fail units "units-install --render exited $rc: $(printf '%s' "$out" | tail -5)"
