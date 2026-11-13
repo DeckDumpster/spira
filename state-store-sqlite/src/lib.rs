@@ -30,7 +30,9 @@ use std::time::Duration;
 
 use runtime::ports::Clock;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
-use state_store::{Backend, Error, LogEntry, Result, Rev, Version, Write, EVENTS_PREFIX};
+use state_store::{
+    Backend, Error, LogEntry, Result, Rev, Version, Write, EVENTS_PREFIX, HISTORY_PREFIX,
+};
 
 const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value INTEGER NOT NULL)",
@@ -883,8 +885,8 @@ impl Backend for SqliteBackend {
         }
     }
 
-    /// The two key ranges either side of `events/`, read from the key index, so the audit
-    /// history is never visited.
+    /// The key ranges outside `events/` and `history/`, read from the key index, so neither is
+    /// ever visited.
     fn gc_range(
         &self,
         after: Option<&str>,
@@ -893,25 +895,28 @@ impl Backend for SqliteBackend {
     ) -> Result<Vec<(String, Version)>> {
         self.read(|conn, snap, deadline| {
             snap.readable(at)?;
-            let events = EVENTS_PREFIX.as_bytes();
-            let past_events = successor(events).unwrap_or_default();
-            let lo = lower_bound(b"", after);
+            let skipped = [EVENTS_PREFIX, HISTORY_PREFIX]
+                .map(|p| (p.as_bytes(), successor(p.as_bytes()).unwrap_or_default()));
+            let mut lo = lower_bound(b"", after);
             let steps = &self.0.read_steps;
             let mut out = Vec::new();
-            if lo.as_slice() < events {
-                out = range_rows(conn, source(snap, at), &lo, Some(events), limit, steps, deadline)?;
-            }
-            if out.len() < limit {
-                let lo = lo.max(past_events);
-                out.extend(range_rows(
-                    conn,
-                    source(snap, at),
-                    &lo,
-                    None,
-                    limit - out.len(),
-                    steps,
-                    deadline,
-                )?);
+            let ends = skipped.iter().map(|(start, _)| Some(*start)).chain([None]);
+            for (end, skip) in ends.zip(skipped.iter().map(Some).chain([None])) {
+                if out.len() < limit && end.map_or(true, |hi| lo.as_slice() < hi) {
+                    let rows = range_rows(
+                        conn,
+                        source(snap, at),
+                        &lo,
+                        end,
+                        limit - out.len(),
+                        steps,
+                        deadline,
+                    )?;
+                    out.extend(rows);
+                }
+                if let Some((_, past)) = skip {
+                    lo = lo.max(past.clone());
+                }
             }
             Ok(out)
         })

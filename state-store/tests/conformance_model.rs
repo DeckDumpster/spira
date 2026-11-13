@@ -65,6 +65,7 @@ scenarios!(
     get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
     a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
+    gc_range_and_open_skip_the_history_prefix,
 );
 
 /// Scenarios with no unit test here: each runs over 100 ms (sp-bym7j8) and stays in the suite

@@ -2,7 +2,7 @@
 //! `Rig` supplies a fresh backend and reopens the same one, which is how a restart is staged.
 //! Every scenario runs on a `VirtualClock`.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use runtime::ports::VirtualClock;
@@ -14,7 +14,7 @@ use crate::contract::{
 };
 use crate::gc::Controller;
 use crate::limits::{self, MAX_REQUEST_BYTES, MAX_TXN_COMPARES, MAX_TXN_OPS};
-use crate::{events_key, request_key, Error, Limit, Object, Result, Rev};
+use crate::{events_key, request_key, Error, Limit, Object, Result, Rev, HISTORY_PREFIX};
 
 pub trait Rig {
     type B: Backend + 'static;
@@ -62,6 +62,7 @@ pub struct Interpose<B: Backend> {
     inner: B,
     after_range: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     ambiguous_commit: AtomicBool,
+    gc_rows: AtomicUsize,
 }
 
 impl<B: Backend> Interpose<B> {
@@ -70,11 +71,17 @@ impl<B: Backend> Interpose<B> {
             inner,
             after_range: Mutex::new(None),
             ambiguous_commit: AtomicBool::new(false),
+            gc_rows: AtomicUsize::new(0),
         }
     }
 
     pub fn after_next_range(&self, f: impl FnOnce() + Send + 'static) {
         *self.after_range.lock().unwrap() = Some(Box::new(f));
+    }
+
+    /// The rows `gc_range` has returned so far.
+    pub fn gc_rows(&self) -> usize {
+        self.gc_rows.load(Ordering::SeqCst)
     }
 
     /// The next commit is applied, and its caller is told it failed.
@@ -135,7 +142,9 @@ impl<B: Backend> Backend for Interpose<B> {
         limit: usize,
         at: u64,
     ) -> Result<Vec<(String, Version)>> {
-        self.inner.gc_range(after, limit, at)
+        let rows = self.inner.gc_range(after, limit, at)?;
+        self.gc_rows.fetch_add(rows.len(), Ordering::SeqCst);
+        Ok(rows)
     }
 }
 
@@ -1395,6 +1404,54 @@ pub fn a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below
     assert_eq!(read[0].mod_rev.main, head - 1, "p/b as rewritten");
 }
 
+/// `gc_range` and `Contract::open` never visit `history/`, however many keys it holds: open
+/// reads exactly the rows it reads from a store without them.
+pub fn gc_range_and_open_skip_the_history_prefix<R: Rig>(rig: &R) {
+    const HISTORY_KEYS: usize = 10_000;
+    let clock = VirtualClock::new(T0);
+    let open_rows = |history: usize| -> usize {
+        let b = rig.fresh();
+        if history > 0 {
+            let value = obj(json!({})).encode();
+            let batch: Vec<Write> = (0..history)
+                .map(|i| Write::Put {
+                    key: format!("{HISTORY_PREFIX}sp-x/{i:020}/r"),
+                    value: value.clone(),
+                    create_rev: Rev::new(1, 0),
+                    prev: None,
+                })
+                .collect();
+            b.commit(0, &batch).expect("history commit");
+        }
+        let c = open(b, &clock);
+        for (i, k) in ["a", "g", "z"].into_iter().enumerate() {
+            put(&c, k, obj(json!(i)), &format!("p{i}"));
+        }
+        let b = rig.reopen(c.backend());
+        drop(c);
+        let counted = Interpose::new(b);
+        let c = open(counted, &clock);
+        let rows = c.backend().gc_rows();
+        let mut after: Option<String> = None;
+        loop {
+            let head = c.head().expect("head");
+            let page = c.backend().gc_range(after.as_deref(), 500, head).expect("gc_range");
+            assert!(
+                page.iter().all(|(k, _)| !k.starts_with(HISTORY_PREFIX)),
+                "gc_range visited a history key"
+            );
+            if page.len() < 500 {
+                break;
+            }
+            after = page.last().map(|(k, _)| k.clone());
+        }
+        rows
+    };
+    let without = open_rows(0);
+    assert!(without >= 3, "open scanned the plain keys: {without}");
+    assert_eq!(open_rows(HISTORY_KEYS), without);
+}
+
 /// Every scenario, in order; a backend's own test file names each one as its own test.
 pub fn run_all<R: Rig>(rig: &R) {
     for s in scenarios::<R>() {
@@ -1454,4 +1511,5 @@ scenarios!(
     get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
     a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
+    gc_range_and_open_skip_the_history_prefix,
 );

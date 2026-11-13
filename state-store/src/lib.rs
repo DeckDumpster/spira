@@ -27,6 +27,7 @@ pub use model::Modeled;
 /// The prefix of the message a backend ends a read with once it outlives its limit.
 pub const READ_ENDED: &str = "read ended: held past max_read_ms";
 pub const EVENTS_PREFIX: &str = "events/";
+pub const HISTORY_PREFIX: &str = "history/";
 pub const REQUESTS_PREFIX: &str = "requests/";
 pub const LOCKS_PREFIX: &str = "locks/";
 /// Writes under this prefix are regenerable telemetry: revisioned and watched, never audited.
