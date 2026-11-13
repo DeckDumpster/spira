@@ -186,19 +186,22 @@ impl Judging<'_> {
     }
 
     fn alert(&mut self, key: &str, verdict: &Verdict) {
+        let shadowed = is_shadowed(&self.cfg.shadow_kinds, key);
         let (fire, next) = should_alert(verdict, self.pass.carry.alerted.get(key).copied());
-        match next {
-            Some(since) => {
-                self.pass.carry.alerted.insert(key.to_string(), since);
-            }
-            None => {
-                self.pass.carry.alerted.remove(key);
+        if !shadowed {
+            match next {
+                Some(since) => {
+                    self.pass.carry.alerted.insert(key.to_string(), since);
+                }
+                None => {
+                    self.pass.carry.alerted.remove(key);
+                }
             }
         }
         if fire {
             let evidence = compose_alert(key, self.now, verdict, None);
             let mail = Mail { subject: format!("RECONCILER: flow gap — {key}"), body: format!("{evidence}\nThis has no deterministic remedy — it needs judgement, not a retry.\n") };
-            if is_shadowed(&self.cfg.shadow_kinds, key) {
+            if shadowed {
                 self.pass.held.push(mail);
             } else {
                 self.pass.mails.push(mail);
@@ -384,6 +387,8 @@ mod tests {
         let held = judge(&shadowed, 1_000, &Carry::default(), &stalled());
         assert!(held.mails.is_empty(), "a shadowed key sends nothing");
         assert_eq!(subjects(&held.held), both);
+        let after = judge(&live, 2_000, &held.carry, &stalled());
+        assert_eq!(subjects(&after.mails), both, "a page held while shadowed is sent once the key is unshadowed");
     }
 
     #[test]
