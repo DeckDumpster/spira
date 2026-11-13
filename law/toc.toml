@@ -49,4 +49,13 @@ slugs = [
   "law-a-loops-hot-read-is-in-process",
   "law-landing-rounds-run-the-full-suite-on-a-vm",
   "law-a-landing-stall-starts-a-repair",
+  "law-a-round-loser-is-fixed-and-landed-by-hand",
+  "law-a-page-is-looked-at-then-the-issue-or-the-detector-is-fixed",
+  "law-the-lifecycle-store-serves-online-data",
+  "law-only-spira-lc-talks-to-the-stores",
+  "law-gates-run-in-a-clean-environment",
+  "law-a-round-lost-without-cause-stops-the-rounds",
+  "law-every-bead-is-written-or-reviewed-by-skuld",
+  "law-every-decision-passes-the-statute-check",
+  "law-check-the-law-at-the-decision",
 ]
