@@ -105,6 +105,7 @@ fn every_lifecycle_driven_state_drops_a_row_whose_batch_is_landed() {
 
 fn land_acts_for_landing_row(in_flight: Option<Vec<String>>) -> Vec<String> {
     let row = STORED.replace("\"waiting\":{\"state\":\"Landing\",\"since_ms\":1794349965000}", "\"waiting\":null");
+    assert_ne!(row, STORED, "the fixture still carries its waiting");
     let rc: RepoCarry = serde_json::from_str(&row).unwrap();
     let carry = Carry { repos: [("spira".to_string(), rc)].into() };
     let mut snap = waiting_pool("some-other-batch", NOW);

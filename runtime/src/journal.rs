@@ -219,10 +219,7 @@ impl FaultyJournal {
         Arc::new(FaultyJournal { inner, fail: Mutex::new(None), gone: Mutex::new(false) })
     }
 
-    /// The next call of `op` (`boot`, `commit`, `poison`) fails, once. `append` is a crash, not a
-    /// failure: the next event handed to `record` is not kept, and the journal answers nothing
-    /// after it (every later call fails `injected fault in append`) as a process that died there.
-    /// Another journal over the same inner one is the restart.
+    /// The next call of `op` fails, once; `append` is a crash: that event is dropped and every later call fails.
     pub fn fail_next(&self, op: &'static str) {
         *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, Class::Fault));
     }
