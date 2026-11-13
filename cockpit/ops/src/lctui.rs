@@ -1254,6 +1254,22 @@ mod tests {
     }
 
     #[test]
+    fn an_ask_about_no_work_bead_has_no_repo_tag_in_the_tree() {
+        let mut v = repo_view();
+        v.decide = vec![Item { id: "sp-loose".into(), title: "loose ask".into(), age: "1m".into(), ..Default::default() }];
+        let mut lines = Vec::new();
+        fn walk(n: &[Node], out: &mut Vec<String>) {
+            for x in n {
+                out.push(x.line.clone());
+                walk(&x.kids, out);
+            }
+        }
+        walk(&tree(&v), &mut lines);
+        let line = lines.iter().find(|l| l.contains("loose ask")).expect("the ask is listed");
+        assert!(!line.contains('?') && !line.contains(TEAL), "{line:?}");
+    }
+
+    #[test]
     fn the_lc_view_text_render_tags_next_blocked_and_recent_rows() {
         let out = crate::lcview::render(&repo_view(), 120).join("\n");
         for (id, repo) in [("sp-c1", "cubby"), ("sp-d1", "deckdumpster"), ("sp-u1", "?")] {
