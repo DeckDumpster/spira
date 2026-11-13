@@ -12,4 +12,4 @@ functions = ["SpiraConfig::call", "SpiraConfig::get", "SpiraConfig::set", "LcPor
 
 [[scope]]
 path = "sentinel/src/call.rs"
-functions = ["world_gate"]
+functions = ["Sentinel::world_gate"]

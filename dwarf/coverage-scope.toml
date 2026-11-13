@@ -2,4 +2,4 @@
 
 [[scope]]
 path = "dwarf/src/run.rs"
-functions = ["decline", "checkpoint_across_stop"]
+functions = ["Run::decline", "Run::checkpoint_across_stop"]
