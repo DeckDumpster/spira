@@ -2224,18 +2224,6 @@ pub mod edge {
             .collect()
     }
 
-    #[cfg(test)]
-    mod failing_tests {
-        use super::with_failing;
-
-        #[test]
-        fn a_gate_red_mark_gains_the_failing_step_and_line_only_where_the_gate_recorded_one() {
-            let rows = vec![("a".to_string(), "t1".to_string(), "suites-failed".to_string()), ("b".to_string(), "t2".to_string(), "no-rebase".to_string())];
-            let got = with_failing(rows, |id, _| (id == "a").then(|| "failing step: s; failing line: error: x".to_string()));
-            assert_eq!(got[0].2, "suites-failed; failing step: s; failing line: error: x");
-            assert_eq!(got[1].2, "no-rebase");
-        }
-    }
     use crate::{Effects, EffectSpec};
 
     /// The seam's environment from the pinned config, as the `batcher` binary builds it.
@@ -2689,5 +2677,18 @@ pub mod edge {
             std::fs::write(&p, &leg.why).map_err(|e| format!("{}: {e}", p.display()))?;
         }
         Ok("{}".into())
+    }
+
+    #[cfg(test)]
+    mod failing_tests {
+        use super::with_failing;
+
+        #[test]
+        fn a_gate_red_mark_gains_the_failing_step_and_line_only_where_the_gate_recorded_one() {
+            let rows = vec![("a".to_string(), "t1".to_string(), "suites-failed".to_string()), ("b".to_string(), "t2".to_string(), "no-rebase".to_string())];
+            let got = with_failing(rows, |id, _| (id == "a").then(|| "failing step: s; failing line: error: x".to_string()));
+            assert_eq!(got[0].2, "suites-failed; failing step: s; failing line: error: x");
+            assert_eq!(got[1].2, "no-rebase");
+        }
     }
 }
