@@ -180,6 +180,13 @@ impl Tree {
         self.content(e).map(|b| String::from_utf8_lossy(b).into_owned())
     }
 
+    /// The tree's config delta: the base file and every fragment the tree lists, merged.
+    pub fn delta_text(&self) -> Option<String> {
+        let mut parts: Vec<(String, String)> = self.entries.iter().filter(|e| e.path == "spira/config-delta.toml" || (e.path.starts_with("spira/config-delta.d/") && e.path.ends_with(".toml"))).filter_map(|e| Some((e.path.clone(), self.text_of(&e.path)?))).collect();
+        parts.sort();
+        spira_config::delta::merge_delta_texts(&parts).ok().flatten()
+    }
+
     /// A repo-relative file's text, for allow files. Missing reads as empty — the bash
     /// fences' `2>/dev/null`.
     pub fn read_text(&self, rel: &str) -> String {

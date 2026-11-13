@@ -787,6 +787,21 @@ fn the_shipped_delta_declares_the_deleted_watch_tasks_removed() {
     }
 }
 
+#[test]
+fn a_release_whose_two_changes_each_retire_a_key_in_their_own_fragment_loads_both() {
+    let tmp = TempDir::new("delta-fragments");
+    let tree = tmp.path().to_path_buf();
+    file(&tree.join(config_delta::DELTA_PATH), "[spira]\nk = 1\n");
+    file(&tree.join("spira/config-delta.d/sp-a.toml"), "removed = [\"spira.x\"]\nremoved_tasks = [\"t.a\"]\n");
+    file(&tree.join("spira/config-delta.d/sp-b.toml"), "removed = [\"spira.y\"]\nremoved_tasks = [\"t.b\"]\n");
+    let d = config_delta::load(&tree).unwrap().expect("the tree ships a delta");
+    assert_eq!(d.removed, ["spira.x", "spira.y"]);
+    assert_eq!(d.removed_tasks, ["t.a", "t.b"]);
+    file(&tree.join("spira/config-delta.d/sp-c.toml"), "[spira]\nk = 2\n");
+    let e = config_delta::load(&tree).unwrap_err();
+    assert!(e.contains("config-delta.toml") && e.contains("sp-c.toml"), "{e}");
+}
+
 const TC: &str = "1.99.0 abc";
 
 #[test]
@@ -826,9 +841,10 @@ fn the_shipped_delta_carries_every_required_key_with_every_task_in_act_on_system
     let d = config_delta::load(&tree).unwrap().expect("the tree ships a delta");
     let nothing_known = TempDir::new("no-active-release");
     let done = config_delta::complete(&[toml::map::Map::new()], &tree, Some(nothing_known.path()), Some(d.clone()));
-    assert!(done.is_ok(), "{}", done.unwrap_err());
+    let done = done.unwrap_or_else(|e| panic!("{e}")).expect("a completed delta");
+    assert!(!d.added.contains_key("spira.task_modes"), "a retirement never rewrites a task_modes line; the registry default carries it");
     assert_eq!(d.added.get("spira.units"), Some(&toml::Value::String("systemd".into())));
-    let modes = d.added.get("spira.task_modes").and_then(|v| v.as_str()).expect("task_modes is declared");
+    let modes = done.added.get("spira.task_modes").and_then(|v| v.as_str()).expect("task_modes completes from the registry default");
     let pairs: Vec<&str> = modes.split_whitespace().collect();
     assert!(pairs.len() >= 82, "every task is named: {}", pairs.len());
     assert!(pairs.iter().all(|p| p.ends_with("=act")), "every task runs in act: {modes}");

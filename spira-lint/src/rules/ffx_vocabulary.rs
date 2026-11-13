@@ -241,7 +241,7 @@ Line 0 is a hit in the path itself."
 
 /// The mode this release's config-delta adds, for a lint run before activation has declared the key.
 fn pending_mode(tree: &Tree) -> Option<Mode> {
-    let delta = tree.text_of("spira/config-delta.toml")?;
+    let delta = tree.delta_text()?;
     let added = spira_config::delta_added(&delta).ok()?;
     Mode::parse(added.get("spira")?.get("ffx_vocabulary_mode")?.as_str()?).ok()
 }

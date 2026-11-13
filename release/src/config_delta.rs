@@ -207,19 +207,15 @@ fn persona_name(path: &str) -> Result<&str, String> {
     }
 }
 
-/// The delta a release declares; `None` when its tree has none.
+/// The delta a release declares, base file and fragments together; `None` when its tree has none.
 pub fn load(rel: &Path) -> Result<Option<Delta>, String> {
-    let p = rel.join(DELTA_PATH);
-    let text = match fs::read_to_string(&p) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("cannot read {}: {e}", p.display())),
-    };
-    let d = Delta::parse(&text).map_err(|e| format!("{}: {e}", p.display()))?;
     let home = rel.join("spira");
+    let name = || home.join(spira_config::delta::DELTA_FILE).display().to_string();
+    let Some(text) = spira_config::delta::delta_text(&home)? else { return Ok(None) };
+    let d = Delta::parse(&text).map_err(|e| format!("{}: {e}", name()))?;
     if home.join("testlib/complete.toml").is_file() {
-        let added = spira_config::delta_added(&text).map_err(|e| format!("{}: {e}", p.display()))?;
-        spira_config::check_delta(&home, &added).map_err(|e| format!("{}: {e}", p.display()))?;
+        let added = spira_config::delta_added(&text).map_err(|e| format!("{}: {e}", name()))?;
+        spira_config::check_delta(&home, &added).map_err(|e| format!("{}: {e}", name()))?;
     }
     Ok(Some(d))
 }

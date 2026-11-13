@@ -929,7 +929,7 @@ impl RoundRunner for VmRunner<'_> {
         self.build_n += 1;
         let key = format!("b{}", self.build_n);
         let branch = self.tree_without(self.branch(&key), &key, &removal).ok()?;
-        Some(io::file_at(self.repo, &branch, io::CONFIG_DELTA).is_none_or(|d| spira_config::delta_added(&d).is_ok()))
+        Some(io::config_delta_at(self.repo, &branch).is_ok_and(|d| d.is_none_or(|d| spira_config::delta_added(&d).is_ok())))
     }
 
     fn filter_green(&mut self, name: &str, subset: &[Member]) -> Option<bool> {
@@ -1714,6 +1714,38 @@ mod abandon_tests {
         assert_eq!(run.config_applies(std::slice::from_ref(&ma)), Some(true));
         assert_eq!(run.config_applies(std::slice::from_ref(&mb)), Some(true));
         assert_eq!(run.config_applies(&[ma, mb]), Some(false));
+    }
+
+    #[test]
+    fn two_members_that_each_retire_a_key_in_their_own_fragment_pass_the_delta_together() {
+        let d = testkit::TempDir::new("vm-config-fragments");
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let r = &repo.path;
+        fs::create_dir_all(r.join("spira/config-delta.d")).unwrap();
+        testkit::git(r, &["init", "-q", "-b", "main"]);
+        fs::write(r.join(io::CONFIG_DELTA), "[spira]\nk = 1\n").unwrap();
+        let commit = |msg: &str| {
+            testkit::git(r, &["add", "-A"]);
+            testkit::git(r, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg]);
+            testkit::git(r, &["rev-parse", "HEAD"]).trim().to_string()
+        };
+        let base = commit("base");
+        let branch = |name: &str, key: &str| {
+            testkit::git(r, &["checkout", "-q", "-b", name, "main"]);
+            fs::create_dir_all(r.join("spira/config-delta.d")).unwrap();
+            fs::write(r.join(format!("spira/config-delta.d/{name}.toml")), format!("removed = [\"{key}\"]\n")).unwrap();
+            commit(name)
+        };
+        let (a, b) = (branch("sp-a", "spira.x"), branch("sp-b", "spira.y"));
+        testkit::git(r, &["checkout", "-q", "main"]);
+        let member = |id: &str, tip: &str| Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![] };
+        let (ma, mb) = (member("sp-a", &a), member("sp-b", &b));
+        let mut run = VmRunner::new(&env, &repo, &repo.path, &base, "r1", BTreeMap::new()).unwrap();
+        run.set_members(&[ma.clone(), mb.clone()]);
+        assert_eq!(run.config_applies(&[ma, mb]), Some(true));
+        let merged = io::config_delta_at(&repo, "sp-a").unwrap().unwrap();
+        assert!(merged.contains("spira.x") && !merged.contains("spira.y"), "{merged}");
     }
 
     #[test]
