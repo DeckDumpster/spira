@@ -37,6 +37,27 @@ pub fn done_argv(run: &str) -> Vec<String> {
 
 /// The ref `work checks` selects the affected crates against, as `work crates` does.
 pub const CHECKS_BASE: &str = "local/main";
+/// The budget of a row derived from a round fence.
+const FENCE_ROW_BUDGET_MS: u64 = 300_000;
+
+/// The rows `work checks` owes for the fences the round runs before any suite: one per fence of
+/// the tree's `gate.steps` (`gate::fences::list`, the list the round itself is handed), run as
+/// `gate fence-run` on the tip. Nothing here names a fence, so a fence added to `gate.steps` is
+/// checked with no second edit.
+pub fn fence_rows(gate_steps: &str) -> Result<Vec<habits::config::Check>, String> {
+    let def = gate::def::parse(gate_steps)?;
+    Ok(gate::fences::list(&def, None)?
+        .into_iter()
+        .map(|f| habits::config::Check {
+            run: format!("gate fence-run {} --repo . --tip HEAD --base {CHECKS_BASE}", f.name),
+            name: format!("fence-{}", f.name),
+            budget_ms: FENCE_ROW_BUDGET_MS,
+            build: None,
+            deferred_to: None,
+        })
+        .collect())
+}
+
 /// The per-worktree file (under the worktree's git dir) a passing `work checks` is recorded in.
 pub const CHECKS_PASS_FILE: &str = "spira-checks.pass";
 /// The token in a `[[check]]` row's `run` that becomes the crates the diff affects.
@@ -463,6 +484,22 @@ mod tests {
 
     fn line<'a>(rc: Option<i32>, staged: bool, record: Option<&'a gate::unitrecord::UnitRecord>) -> CheckLine<'a> {
         CheckLine { ts: "2026-11-11T11:25:06Z", repo: "spira", branch: "spira/sp-x", bead: "sp-x", row: "unit-tests", via: "submit", rc, staged, ran_s: 121, budget_s: 180, load1: Some(31.5), record }
+    }
+
+    #[test]
+    fn a_fence_added_to_the_round_is_a_row_with_no_edit_to_the_checks() {
+        let steps = "bin SPIRA_LINT_BIN spira-lint\nbin SPIRA_GUARD_BIN lifecycle-guard\nstep \"$SPIRA_LINT_BIN\"\nstep \"$SPIRA_GUARD_BIN\" --gate .\nstep bash spira/build-fence.sh\n";
+        let names = |s: &str| fence_rows(s).unwrap().into_iter().map(|r| r.name).collect::<Vec<_>>();
+        assert_eq!(names(steps), ["fence-lifecycle-guard"], "the lint and build steps are the round's own, not listed fences");
+        let more = format!("{steps}step bash spira/new-thing.sh\n");
+        assert_eq!(names(&more), ["fence-lifecycle-guard", "fence-new-thing"]);
+        let row = &fence_rows(&more).unwrap()[1];
+        assert_eq!(row.run, "gate fence-run new-thing --repo . --tip HEAD --base local/main");
+    }
+
+    #[test]
+    fn a_gate_definition_that_does_not_parse_yields_no_rows_rather_than_none_owed() {
+        assert!(fence_rows("frobnicate x\n").is_err());
     }
 
     #[test]
