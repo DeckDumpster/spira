@@ -86,7 +86,7 @@ pub fn unknown_class_refusal(class: &str) -> Option<String> {
 }
 
 /// A body that satisfies both the kind's required sections and the routing's class basis;
-/// `--default` and `--class` supply the `Default:`/`Class:` lines the decision bead needs.
+/// `send` appends the `Default:`/`Class:` lines the bead lint reads from `--default` and `--class`.
 pub const ASK_EXAMPLE_BODY: &str = "## Question\n<the decision, as a question>\n\n## Default\n<what you will do if no answer comes>\n\n## Class basis\n<why this is one of the classes>\n";
 
 /// Every way a dwarf's decision ask for the operator does not qualify, empty if it does. A class
