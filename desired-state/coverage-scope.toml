@@ -44,3 +44,7 @@ functions = ["check_spec", "check_status"]
 [[scope]]
 path = "desired-state/src/sections/gate.rs"
 functions = ["check_spec", "check_status"]
+
+[[scope]]
+path = "desired-state/src/sections/host.rs"
+functions = ["check_spec", "check_status"]

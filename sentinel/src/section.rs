@@ -20,9 +20,11 @@ const DAY: u64 = 24 * HOUR;
 /// A section unchanged is still published this often, inside its 15 m `max_age`.
 pub const KEEPALIVE_SECS: u64 = 300;
 
+use spira_desired_state::sections::host;
+
 /// The kind and condition of the `host` section this one mirrors. Absent until it is armed.
-pub const HOST_KIND: &str = "Host";
-pub const HOST_SHEDDING_CONDITION: &str = "Shedding";
+pub const HOST_KIND: &str = host::NAME;
+pub const HOST_SHEDDING_CONDITION: &str = host::HOST_SHEDDING;
 
 /// One dwarf run: a `born` line matched with the `done` line it ended on, or still alive.
 #[derive(Clone, Debug, PartialEq, Eq)]
