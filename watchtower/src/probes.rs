@@ -250,6 +250,12 @@ pub fn psi_full_avg60(text: &str) -> Option<f64> {
     line.split_whitespace().find_map(|w| w.strip_prefix("avg60="))?.parse().ok()
 }
 
+/// The `full avg300` of a `/proc/pressure/<resource>` file.
+pub fn psi_full_avg300(text: &str) -> Option<f64> {
+    let line = text.lines().find(|l| l.starts_with("full "))?;
+    line.split_whitespace().find_map(|w| w.strip_prefix("avg300="))?.parse().ok()
+}
+
 fn cond(key: &str, title: String, body: String, sustain: i64) -> Cond {
     Cond { key: key.into(), reference: format!("incident:pressure-{key}"), title, body, priority: 1, sustain_secs: sustain }
 }
@@ -335,9 +341,13 @@ fn path_key(path: &str) -> String {
     path.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect()
 }
 
+pub const ROOT_PATH: &str = "/";
+pub const DEFAULT_TMP_PATH: &str = "/tmp";
+pub const DEFAULT_PSI_DIR: &str = "/proc/pressure";
+
 /// Root, the run directory and the build pool, then the operator's extra paths.
 pub fn watch_paths(run: &Path, extra: &str, build_base: &str) -> Vec<String> {
-    ["/", &run.to_string_lossy()].into_iter().chain(build_base.split_whitespace()).chain(extra.split_whitespace()).map(String::from).collect()
+    [ROOT_PATH, &run.to_string_lossy()].into_iter().chain(build_base.split_whitespace()).chain(extra.split_whitespace()).map(String::from).collect()
 }
 
 pub fn disk_room(cfg: &Cfg, now: i64, read: &dyn Fn(&str) -> Option<FsReading>) -> Reading {

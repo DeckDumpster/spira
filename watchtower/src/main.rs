@@ -4,7 +4,7 @@
 //! unit-tested.
 
 use watchtower::process::{self, getenv, getenv_i64, lib_sh_dir, resolved_incident_sh};
-use watchtower::{conditions, czar_outcome, deploy_fault, drift, git, load_fence, lock_holders, log, pr_stall, probes, release_skew, sccache_wedge, dolt_drop, slow_query, sweep, throttle};
+use watchtower::{host_real, conditions, czar_outcome, deploy_fault, drift, git, load_fence, lock_holders, log, pr_stall, probes, release_skew, sccache_wedge, dolt_drop, slow_query, sweep, throttle};
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -329,6 +329,10 @@ fn main() {
                 state: run.join("conditions").join("content-drift.state"),
             };
             conditions::reconcile(n, &ctx, "content-drift", probes::content_drift(&drift_cfg));
+            match host_real::cfg_of(&run).and_then(|c| host_real::pass(n as u64, &c, &run)) {
+                Ok(m) => log::log(&m),
+                Err(e) => log::log(&format!("watchtower: host section refused — {e}")),
+            }
         }
         Some("--dolt-drop-check") => {
             if world_halted(&run) {

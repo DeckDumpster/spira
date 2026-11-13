@@ -155,7 +155,7 @@ fn conditions_check(n: i64, run: &Path) -> Result<(), String> {
     conditions::reconcile(n, &ctx, "rowless-beads", probes::rowless_beads(&rowless, n));
     let drift = probes::ContentDriftCfg { lc: client()?, slack: getenv_i64("SPIRA_CONTENT_DRIFT_SLACK", 10).max(0) as usize, sustain_secs: getenv_i64("SPIRA_CONTENT_DRIFT_SUSTAIN_SECS", 1800), state: run.join("conditions").join("content-drift.state") };
     conditions::reconcile(n, &ctx, "content-drift", probes::content_drift(&drift));
-    Ok(())
+    watchtower::host_real::cfg_of(run).and_then(|c| watchtower::host_real::pass(n as u64, &c, run)).map(|_| ())
 }
 
 #[cfg(test)]

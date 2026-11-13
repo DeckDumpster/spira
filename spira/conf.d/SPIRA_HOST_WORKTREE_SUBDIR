@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=watchtower
+DOC=The directory under the run directory that holds the bead worktrees; the host section measures free space on the filesystem holding it.
+SCHEMA=Name of the worktree directory inside the run directory (no slash). The host section reads the free share of the disk this directory sits on.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_HOST_WORKTREE_SUBDIR:=worktree}"
+SPIRA_CONF_DEFAULT_EOF

@@ -278,6 +278,7 @@ desired_dir = "/fixture/userhome/.config/spira/desired"
 desired_fragments_dir = "/fixture/userhome/.config/spira/desired.d"
 disk_floor_pct = "15"
 disk_fill_hours = 6
+host_worktree_subdir = "worktree"
 disk_watch_paths = "/nix/store"
 scratch_max_age_hours = 24
 dolt_data = "/fixture/userhome/spira/dolt"
