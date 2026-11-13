@@ -21,7 +21,7 @@ pub const CANNOT_TELL: i32 = 2;
 pub const DEADLINE: Duration = Duration::from_secs(5);
 
 /// The repair sweeps over every row, which the service bounds at its query deadline.
-const SWEEPS: &[&str] = &["reconcile-asks", "reconcile-epics", "reconcile-content", "drop-orphans", "facts-query"];
+const SWEEPS: &[&str] = &["reconcile-asks", "reconcile-epics", "reconcile-content", "backfill-repo", "drop-orphans", "facts-query"];
 /// How long a client waits for a sweep: the service's query deadline plus the reply.
 pub const SWEEP_DEADLINE: Duration = Duration::from_secs(12); // batch-job: a sweep the service bounds at its 10 s query deadline
 
