@@ -1500,6 +1500,8 @@ impl Machine<'_> {
             self.rc.paused_on = None;
             let why = format!("{} pause held {}s past its {}s bound — lifted, cutting; a second red stays paused ({})", self.repo, held_for.unwrap_or_default(), policy.pause_lift_s, text.trim());
             self.acts.push(Leg { why, key: format!("{}:rounds:lift:expired:{}", self.repo, self.now_ms / 1000), bead: "lift".into(), ..Leg::on(self.repo) }.act(PAUSE));
+            let page = format!("[watch:rounds] PAUSE LIFTED {} after {}s — cutting again; a second red stays paused", self.repo, held_for.unwrap_or_default());
+            self.acts.push(Act::new(INBOX_APPEND, page.clone()).with_input(page_line(self.now_ms, &page)));
             return false;
         }
         match self.rc.paused_on.clone() {

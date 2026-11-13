@@ -595,11 +595,25 @@ fn sp_qmd5g4_a_red_pause_past_its_bound_is_lifted_and_cuts_with_no_landing() {
     let (carry, snap) = expiring(500, 0);
     let (carry, acts) = decide_with(&pinned_lift(400), &carry, &snap);
     let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
-    assert_eq!(names, [PAUSE, FETCH, ASSEMBLE], "{acts:?}");
+    assert_eq!(names, [PAUSE, INBOX_APPEND, FETCH, ASSEMBLE], "{acts:?}");
     let lift: Leg = serde_json::from_str(&acts[0].input).unwrap();
     assert_eq!(lift.bead, "lift", "{lift:?}");
-    assert!(lift.why.contains("400s"), "{}", lift.why);
+    assert!(lift.why.contains("500s") && lift.why.contains("400s"), "{}", lift.why);
     assert_eq!(carry.repos["spira"].pace.pause_lifts, 1);
+}
+
+#[test]
+fn sp_qmd5g4_a_pause_exactly_at_its_bound_is_lifted() {
+    let (carry, snap) = expiring(400, 0);
+    let (_, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    assert_eq!(acts[0].effect, PAUSE, "{acts:?}");
+}
+
+#[test]
+fn sp_qmd5g4_the_lift_bound_is_read_from_its_key() {
+    let pinned: BTreeMap<String, String> = [("SPIRA_BATCHER_PAUSE_LIFT_SECS".to_string(), "77".to_string())].into();
+    assert_eq!(Policy::pinned(&pinned).pause_lift_s, 77);
+    assert_eq!(Policy::pinned(&BTreeMap::new()).pause_lift_s, 900);
 }
 
 #[test]
