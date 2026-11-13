@@ -61,7 +61,16 @@ pub struct S3Creds {
 
 impl S3Creds {
     pub fn from_env() -> Result<S3Creds, String> {
-        Self::from_vars(|k| std::env::var(k).ok())
+        let creds = Self::from_vars(|k| std::env::var(k).ok())?;
+        creds.with_part_bytes(spira_config::process::cfg_parse::<u64>("SPIRA_LC_BACKUP_PART_BYTES")?)
+    }
+
+    /// These keys cutting a multipart upload into `n`-byte parts, `n` within S3's bounds.
+    pub fn with_part_bytes(self, n: u64) -> Result<S3Creds, String> {
+        if !(MIN_PART_BYTES..=MAX_PUT_BYTES).contains(&n) {
+            return Err(format!("SPIRA_LC_BACKUP_PART_BYTES={n} is not a size from {MIN_PART_BYTES} to {MAX_PUT_BYTES}"));
+        }
+        Ok(S3Creds { part_bytes: n, ..self })
     }
 
     /// The same keys read through `lookup`, so a caller can resolve them from a unit's
@@ -78,16 +87,8 @@ impl S3Creds {
         let region = var("AWS_DEFAULT_REGION")
             .or_else(|| var("AWS_REGION"))
             .ok_or("AWS_DEFAULT_REGION is not in the environment")?;
-        let part_bytes = match var("SPIRA_LC_BACKUP_PART_BYTES") {
-            None => PART_BYTES,
-            Some(v) => v
-                .parse::<u64>()
-                .ok()
-                .filter(|n| (MIN_PART_BYTES..=MAX_PUT_BYTES).contains(n))
-                .ok_or_else(|| format!("SPIRA_LC_BACKUP_PART_BYTES={v} is not a size from {MIN_PART_BYTES} to {MAX_PUT_BYTES}"))?,
-        };
         Ok(S3Creds {
-            part_bytes,
+            part_bytes: PART_BYTES,
             access_key,
             secret_key,
             session_token: var("AWS_SESSION_TOKEN"),
@@ -579,18 +580,12 @@ mod tests {
     }
 
     #[test]
-    fn the_part_size_is_a_key_that_defaults_to_256_mib_and_refuses_what_s3_would() {
-        let with = |v: Option<&str>| {
-            S3Creds::from_vars(|k| match k {
-                "SPIRA_LC_BACKUP_PART_BYTES" => v.map(String::from),
-                "AWS_REGION" => Some("r".into()),
-                _ => Some("x".into()),
-            })
-        };
-        assert_eq!(with(None).unwrap().part_bytes, 256 << 20);
-        assert_eq!(with(Some("10485760")).unwrap().part_bytes, 10 << 20);
-        for bad in ["1024", "0", "abc", "9999999999999"] {
-            assert!(with(Some(bad)).is_err(), "{bad}");
+    fn the_part_size_defaults_to_256_mib_and_refuses_what_s3_would() {
+        let base = S3Creds::from_vars(|k| Some(if k == "AWS_REGION" { "r".into() } else { "x".into() })).unwrap();
+        assert_eq!(base.part_bytes, 256 << 20);
+        assert_eq!(base.clone().with_part_bytes(10 << 20).unwrap().part_bytes, 10 << 20);
+        for bad in [0, 1024, MAX_PUT_BYTES + 1] {
+            assert!(base.clone().with_part_bytes(bad).is_err(), "{bad}");
         }
     }
 
