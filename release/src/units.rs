@@ -317,6 +317,12 @@ pub fn restart_when_idle(text: &str) -> Option<String> {
     reason_of(text, "X-Spira-RestartWhenIdle")
 }
 
+/// The reason a running watcher restarts itself when idle: only a watcher whose installed
+/// unit already carried the key runs code able to do so.
+pub fn restarts_itself_when_idle(installed: &str, shipped: &str) -> Option<String> {
+    restart_when_idle(shipped).filter(|_| restart_when_idle(installed).is_some())
+}
+
 fn reason_of(text: &str, key: &str) -> Option<String> {
     text.lines()
         .filter_map(|l| l.trim().split_once('='))

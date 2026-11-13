@@ -419,7 +419,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn() -> Result
         };
         eprintln!("release: {unit}: {why}");
         if long_running {
-            match (units::never_restart(new), units::restart_when_idle(new)) {
+            match (units::never_restart(new), units::restarts_itself_when_idle(old, new)) {
                 (Some(reason), _) => out.stale.push(left_running(unit, &why, &reason)),
                 (None, Some(how)) => out.when_idle.push(format!("{unit} ({why}; restarts itself when idle: {how})")),
                 (None, None) => out.restarted.push(unit.clone()),
@@ -541,7 +541,7 @@ fn stale_executables(ctx: &Ctx, rendered: &[(String, String, String, bool)], new
 /// Activation does not finish while a long-lived service still executes a superseded
 /// release's binary: restart it, say so, and fail (rolling back) if it is still there.
 fn heal_stale_executables(ctx: &Ctx, rendered: &[(String, String, String, bool)], new: &Path, out: &mut Switched, attempted: &mut Vec<String>) -> Vec<String> {
-    let exempt = |u: &str| rendered.iter().find(|r| r.0 == u).is_some_and(|r| units::never_restart(&r.2).is_some() || units::restart_when_idle(&r.2).is_some());
+    let exempt = |u: &str| rendered.iter().find(|r| r.0 == u).is_some_and(|r| units::never_restart(&r.2).is_some() || units::restarts_itself_when_idle(&r.1, &r.2).is_some());
     let (left, first): (Vec<_>, Vec<_>) = stale_executables(ctx, rendered, new).into_iter().partition(|(u, _)| exempt(u));
     for (unit, exe) in left {
         let line = format!("{unit} (a process runs {}; not restarted by activation, by its own declaration)", exe.display());

@@ -1320,3 +1320,35 @@ fn the_real_reads_run_the_releases_own_spira_lc_and_carry_a_refusal_in_its_words
     let missing = activate::Reads::lc(&reads, &w.cfg.releases.join(B), &["list"]).unwrap_err();
     assert!(!missing.is_empty());
 }
+
+fn lc_serve_running_old_binary_under(installed: &str, shipped: &str) -> (activate::Switched, Vec<String>) {
+    let (w, old_bin) = world_with_an_lc_serve_left_on_the_previous_release();
+    file(&w.cfg.releases.join(A).join("systemd/lc-serve.service"), shipped);
+    let rel = w.cfg.releases.join(A);
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    file(&w.cfg.unit_dir.join("lc-serve.service"), &installed.replace("@SPIRA_PROD_ROOT@", &rel.display().to_string()));
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_lands = Some(rel.join("bin/spira-lc"));
+    lc_serve_running(&sc, &old_bin);
+    let out = activate_with(&w, &sc).unwrap();
+    let restarts = sc.restarts.borrow().clone();
+    (out, restarts)
+}
+
+#[test]
+fn an_activation_restarts_a_watcher_whose_running_release_predates_the_idle_restart_key() {
+    let with_key = format!("{LC_UNIT}X-Spira-RestartWhenIdle=ends its own pass\n");
+    let (out, restarts) = lc_serve_running_old_binary_under(LC_UNIT, &with_key);
+    assert_eq!(restarts, vec!["lc-serve.service".to_string()]);
+    assert!(out.restarted.contains(&"lc-serve.service".to_string()), "{:?}", out.restarted);
+    assert!(out.when_idle.is_empty(), "{:?}", out.when_idle);
+}
+
+#[test]
+fn an_activation_leaves_a_watcher_to_restart_itself_when_its_installed_unit_already_carried_the_key() {
+    let with_key = format!("{LC_UNIT}X-Spira-RestartWhenIdle=ends its own pass\n");
+    let (out, restarts) = lc_serve_running_old_binary_under(&with_key, &with_key);
+    assert!(restarts.is_empty(), "{restarts:?}");
+    assert!(out.restarted.is_empty() && out.stale.iter().chain(&out.when_idle).any(|s| s.starts_with("lc-serve.service")), "{out:?}");
+}
