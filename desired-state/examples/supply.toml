@@ -14,4 +14,4 @@ kind = "Supply"
 [resources.metadata]
 name = "supply"
 [resources.spec]
-landable_filed_per_day = { value = 150, statute = "law-a-landing-stall-starts-a-repair" }
+landable_filed_per_day = { value = 150, statute = "law-throughput-floor" }
