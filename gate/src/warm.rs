@@ -171,8 +171,8 @@ pub fn bound(root: &Path, cap_bytes: u64) -> String {
 /// The gate's side of donation, for a finished `tree` whose `target/debug` links to the tmpfs;
 /// the pool is then held under `cap_mib`. The line for the gate's log when something was donated.
 pub fn donate_tree(tree: &Path, cap_mib: u64) -> Option<String> {
-    let Ok(dest) = fs::read_link(tree.join("target").join(BUILD_DIR)) else { return None };
-    let Some(root) = dest.parent().and_then(Path::parent).filter(|_| !crate::target::is_warm(&dest)) else { return None };
+    let dest = fs::read_link(tree.join("target").join(BUILD_DIR)).ok()?;
+    let root = dest.parent().and_then(Path::parent).filter(|_| !crate::target::is_warm(&dest))?;
     let out = Command::new("git").arg("-C").arg(tree).args(["rev-parse", "HEAD"]).output(); // batch-job: local rev-parse in the gate tree
     let commit = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     donate(root, &dest, &commit).then(|| bound(root, cap_mib << 20))
