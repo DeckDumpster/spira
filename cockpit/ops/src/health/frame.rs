@@ -30,6 +30,7 @@ pub struct FrameInputs<'a> {
     pub collector_rev: String,
     pub tok_win_spark: String,
     pub now: i64,
+    pub deadman_secs: i64,
 }
 
 pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
@@ -50,7 +51,9 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
         &inputs.halt,
         &inputs.drain,
         inputs.now,
+        inputs.deadman_secs,
     );
+    let goodput_rows = super::goodput::sections_section(&snap, cols, inputs.deadman_secs);
     let slots = slots_line(&snap);
     let tokens = tokens_section(
         &snap,
@@ -94,12 +97,13 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
         Spec::new(want[5], want[5], true),
     ];
 
-    let fixed = head.len() as i64 + 1 + tokens.len() as i64 + round.len() as i64 + inflight.len() as i64 + flow.len() as i64 + standing.len() as i64;
+    let fixed = head.len() as i64 + 1 + tokens.len() as i64 + round.len() as i64 + inflight.len() as i64 + flow.len() as i64 + standing.len() as i64 + goodput_rows.len() as i64;
     let give = share(rows, fixed, &specs);
 
     let mut out = Vec::new();
     out.extend(head);
     out.push(slots);
+    out.extend(goodput_rows);
     out.extend(tokens);
     out.extend(round);
     out.extend(inflight);
@@ -151,6 +155,7 @@ mod tests {
             collector_rev: String::new(),
             tok_win_spark: String::new(),
             now: 1000,
+            deadman_secs: 300,
         }
     }
 
@@ -269,5 +274,41 @@ mod tests {
         // itself is genuinely shorter) delivered — never truncated with a drop marker.
         assert!(out.len() <= 81);
         assert!(!out[0].contains('\u{25be}'), "header carries a fold-drop marker: {}", out[0]);
+    }
+
+    const GOODPUT_FIXTURE: &str = "SP_AT='1000000000'\nSP_GP_RATE='3.2'\nSP_GP_TARGET='5'\nSP_GP_PASS_AT='2026-11-12T14:05:00Z'\nSP_GP_PASS_AGE_S='14'\n\
+        SP_GP_BINDING='round-controller/pokebot'\nSP_GP_DISTANCE='1 repeat identity open'\nSP_GP_STEP='hold-member b-17@3f2a'\nSP_GP_STEP_ACK='14:02'\nSP_GP_STEP_HORIZON='10m'\n\
+        SP_GP_SEC_N='3'\nSP_GP_SEC0_REF='round-controller/pokebot'\nSP_GP_SEC0_DIST='1'\nSP_GP_SEC0_AGE='12'\nSP_GP_SEC0_FRESH='fresh'\n\
+        SP_GP_SEC1_REF='lifecycle/all'\nSP_GP_SEC1_DIST='0'\nSP_GP_SEC1_AGE='40'\nSP_GP_SEC1_FRESH='fresh'\n\
+        SP_GP_SEC2_REF='alarms/all'\nSP_GP_SEC2_DIST='2'\nSP_GP_SEC2_AGE='7'\nSP_GP_SEC2_FRESH='fresh'\n";
+
+    fn goodput_frame(content: &'static str, cols: i64) -> Vec<String> {
+        let mut inputs = base_inputs();
+        inputs.snapshot_content = content;
+        inputs.snapshot_exists = true;
+        inputs.cols = cols;
+        render(40, cols, &inputs)
+    }
+
+    #[test]
+    fn the_pane_shows_the_goodput_top_line_and_a_row_per_section() {
+        let out = goodput_frame(GOODPUT_FIXTURE, 120).join("\n");
+        assert!(out.contains("round-controller/pokebot: 1 repeat identity open; step `hold-member b-17@3f2a` acked 14:02, horizon 10m"), "{out}");
+        for s in ["round-controller/pokebot distance 1", "lifecycle/all distance 0", "alarms/all distance 2"] {
+            assert_eq!(out.matches(s).count(), 1, "{s}: {out}");
+        }
+    }
+
+    #[test]
+    fn the_pane_greys_a_stale_pass_and_says_how_old_it_is() {
+        let out = goodput_frame(&*Box::leak(GOODPUT_FIXTURE.replace("AGE_S='14'", "AGE_S='999'").into_boxed_str()), 120);
+        let line = out.iter().find(|l| l.contains("stale pass, 999s old")).expect("a stale-pass line");
+        assert!(line.starts_with(super::super::colors::DIM), "{line:?}");
+    }
+
+    #[test]
+    fn the_pane_shows_question_marks_when_no_pass_record_was_written() {
+        let out = goodput_frame("SP_AT='1000000000'\n", 120).join("\n");
+        assert!(out.contains("GOODPUT ?/day of ?") && out.contains("pass ?"), "{out}");
     }
 }
