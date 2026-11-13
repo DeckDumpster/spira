@@ -1652,8 +1652,6 @@ impl<'w, W: World> Trial<'w, W> {
     fn target_limits(ctx: &Ctx) -> crate::target::Limits {
         crate::target::Limits::from_vars(
             ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
-            ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
-            ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
             ctx.var("SPIRA_TMPFS_SHED_FREE_MIB"),
         )
     }

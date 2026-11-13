@@ -85,9 +85,8 @@ Before each trial (under the trial's tree lock):
    `$SPIRA_GATE_TARGET_CAP_MIB` (default 12288), the least recently used one whose tree lock
    is free (a non-blocking `flock` succeeds) is removed. A locked one is a running trial and
    is never touched.
-3. **Room**: `<root>` needs `$SPIRA_GATE_TARGET_MIN_FREE_MIB` (default 4096) free and
-   `MemAvailable` at least `$SPIRA_GATE_TARGET_MIN_MEM_MIB` (default 4096); short is
-   `NO_VERDICT reason=scratch-short` — **never a fall back to the disk**.
+3. **No room check**: a trial is never refused for want of free space or memory; a disk that
+   fills is classified after the fact as `NO_VERDICT reason=scratch-short`.
 4. A real build directory left in the tree (a tree from before this change) is removed (its
    disk is freed) and replaced by the link; a dangling link gets its directory back.
 
@@ -172,7 +171,6 @@ No new config keys in `spira.toml`. Environment only:
 | `SPIRA_BUILD_CACHE` | gate, testenv, release, dwarf | unset/`sccache`: required; `off`: explicit opt-out |
 | `SPIRA_GATE_TARGET_ROOT` | gate | tmpfs root for gate-tree targets |
 | `SPIRA_GATE_TARGET_CAP_MIB` | gate | total size cap before LRU eviction (12288) |
-| `SPIRA_GATE_TARGET_MIN_FREE_MIB` / `_MIN_MEM_MIB` | gate | room a trial needs (4096 / 4096) |
 
 `sccache` is declared in `spira/deps.toml` (tier `operator`: doctor checks it on an operated
 box; the fixture image waives it, `spira/testenv/doctor-waivers`): the cache lives in its default

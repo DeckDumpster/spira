@@ -49,10 +49,6 @@ pub struct Limits {
     /// Total MiB of every tree's directory under the root before the least recently used
     /// unlocked ones are evicted.
     pub cap_mib: u64,
-    /// MiB the root must have free for this trial.
-    pub min_free_mib: u64,
-    /// MiB of MemAvailable this trial needs (tmpfs pages are RAM; short means swap, a disk).
-    pub min_mem_mib: u64,
     /// sp-s8v5r: besides the byte cap, keep evicting LRU unlocked trees while the root's
     /// real free space is below this (`SPIRA_TMPFS_SHED_FREE_MIB`).
     /// law-reduce-the-count-never-throttle-the-job: reduce the count of cached trees here
@@ -62,12 +58,10 @@ pub struct Limits {
 
 impl Limits {
     /// From the operator's variables (empty or unparsable = the default).
-    pub fn from_vars(cap: &str, free: &str, mem: &str, shed: &str) -> Limits {
+    pub fn from_vars(cap: &str, shed: &str) -> Limits {
         let n = |s: &str, d: u64| s.trim().parse::<u64>().unwrap_or(d);
         Limits {
             cap_mib: n(cap, 12288),
-            min_free_mib: n(free, 4096),
-            min_mem_mib: n(mem, 4096),
             shed_free_mib: n(shed, 6144),
         }
     }
@@ -126,16 +120,14 @@ pub struct Prepared {
 
 /// Put `tree`'s build directories on `root` (DESIGN-build-cache.md §2.3): remove orphans (a
 /// directory whose gate tree `trees_dir/<name>` is gone), evict the least recently used
-/// unlocked trees' directories while the total is over the cap, check the room, and link.
-/// `free_mib`/`mem_mib` are the room probes (statvfs of the root, MemAvailable). Err is the
-/// refusal: the trial must not fall back to the disk.
+/// unlocked trees' directories while the total is over the cap, and link. `free_mib` is the
+/// statvfs probe that drives eviction; room is never a reason to refuse.
 pub fn prepare(
     root: &Path,
     trees_dir: &Path,
     tree: &Path,
     lim: &Limits,
     free_mib: &dyn Fn(&Path) -> Option<u64>,
-    mem_mib: &dyn Fn() -> u64,
     held: &dyn Fn(&str) -> bool,
 ) -> Result<Prepared, String> {
     let name = tree
@@ -192,28 +184,7 @@ pub fn prepare(
         out.evicted.push(n);
     }
 
-    // 3. The room this trial needs — short is a refusal, never the disk.
-    let mut free = free_mib(root).ok_or_else(|| format!("gate: cannot statvfs {}", root.display()))?;
-    if free < lim.min_free_mib {
-        crate::warm::shed(root);
-        free = free_mib(root).unwrap_or(free);
-    }
-    if free < lim.min_free_mib {
-        return Err(format!(
-            "gate: the gate-tree target root {} has {free} MiB free, below the {} MiB a trial needs (SPIRA_GATE_TARGET_MIN_FREE_MIB) — refusing to build on the disk",
-            root.display(),
-            lim.min_free_mib
-        ));
-    }
-    let mem = mem_mib();
-    if mem < lim.min_mem_mib {
-        return Err(format!(
-            "gate: MemAvailable is {mem} MiB, below the {} MiB a tmpfs build needs (SPIRA_GATE_TARGET_MIN_MEM_MIB) — refusing to build on the disk",
-            lim.min_mem_mib
-        ));
-    }
-
-    // 4. Link. A real directory from before is removed (its disk freed); a dangling or
+    // 3. Link. A real directory from before is removed (its disk freed); a dangling or
     //    foreign link is replaced.
     let target = tree.join("target");
     if fs::symlink_metadata(&target).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
@@ -371,20 +342,6 @@ pub fn free_mib(p: &Path) -> Option<u64> {
     spira_config::room::avail_mib(p)
 }
 
-/// MemAvailable in MiB (0 when unreadable, which refuses).
-pub fn mem_available_mib() -> u64 {
-    fs::read_to_string("/proc/meminfo")
-        .ok()
-        .and_then(|s| {
-            s.lines()
-                .find(|l| l.starts_with("MemAvailable:"))
-                .and_then(|l| l.split_whitespace().nth(1))
-                .and_then(|v| v.parse::<u64>().ok())
-        })
-        .map(|kb| kb / 1024)
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,13 +362,10 @@ mod tests {
     }
 
     fn lim(cap: u64) -> Limits {
-        Limits { cap_mib: cap, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 0 }
+        Limits { cap_mib: cap, shed_free_mib: 0 }
     }
     fn roomy(_: &Path) -> Option<u64> {
         Some(1 << 20)
-    }
-    fn mem() -> u64 {
-        1 << 20
     }
     fn write_mib(p: &Path, mib: usize) {
         fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -424,7 +378,7 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
         write_mib(&tree.join("target/debug/deps/libx.rlib"), 2);
-        let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         assert_eq!(p.dir, root.join(".gate.harness.b"));
         assert_eq!(p.disk_freed_mib, 2);
         for d in LINKED {
@@ -434,7 +388,7 @@ mod tests {
         }
         // cargo writes through the link; a second prepare leaves it (and the bytes) alone.
         write_mib(&tree.join("target/debug/deps/liby.rlib"), 1);
-        let p2 = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        let p2 = prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         assert_eq!(p2.disk_freed_mib, 0);
         assert!(root.join(".gate.harness.b/debug/deps/liby.rlib").is_file());
         // `target` itself stays a real directory: git ignores `target/` in every revision.
@@ -448,7 +402,7 @@ mod tests {
         let tree = trees.join(".gate.harness.r");
         fs::create_dir_all(&tree).unwrap();
         write_mib(&root.join("warm-dwarf").join("e1/dwarf/deps/libz.rlib"), 1);
-        let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         assert!(!root.join("warm-dwarf").exists());
         assert!(p.orphans.is_empty(), "removed as the retired pool, not reported as an orphan: {:?}", p.orphans);
     }
@@ -460,23 +414,10 @@ mod tests {
         let tree = trees.join(".gate.harness.p");
         fs::create_dir_all(&tree).unwrap();
         write_mib(&root.join(crate::warm::POOL).join("e1/debug/deps/libz.rlib"), 1);
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         assert!(root.join(crate::warm::POOL).join("e1").is_dir());
-        prepare(&root, &trees, &tree, &lim(0), &roomy, &mem, &|_| false).unwrap();
+        prepare(&root, &trees, &tree, &lim(0), &roomy, &|_| false).unwrap();
         assert!(!root.join(crate::warm::POOL).exists());
-    }
-
-    #[test]
-    fn a_root_short_of_room_gives_up_its_warm_pool_before_refusing() {
-        let s = Scratch::new("pool-room");
-        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
-        let tree = trees.join(".gate.harness.r");
-        fs::create_dir_all(&tree).unwrap();
-        write_mib(&root.join(crate::warm::POOL).join("e1/debug/deps/libz.rlib"), 1);
-        let pool = root.join(crate::warm::POOL);
-        let free = |_: &Path| Some(if pool.exists() { 1 } else { 1 << 20 });
-        prepare(&root, &trees, &tree, &lim(100), &free, &mem, &|_| false).unwrap();
-        assert!(!pool.exists());
     }
 
     #[test]
@@ -486,13 +427,13 @@ mod tests {
         let tree = trees.join(".gate.harness.h");
         fs::create_dir_all(tree.join("spira")).unwrap();
         fs::write(tree.join("spira/lib.sh"), "").unwrap();
-        let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         // Where current_exe() lands for a binary run through target/release: the tmpfs side.
         let exe = p.dir.join("release").join("groomer");
         assert!(exe.parent().unwrap().join("../spira/lib.sh").is_file(), "<exe>/../spira/lib.sh must resolve");
         assert_eq!(fs::read_link(p.dir.join("spira")).unwrap(), tree.join("spira"));
         // Idempotent: a second prepare leaves the link as it is.
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         assert_eq!(fs::read_link(p.dir.join("spira")).unwrap(), tree.join("spira"));
     }
 
@@ -503,9 +444,9 @@ mod tests {
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
         std::os::unix::fs::symlink("/nonexistent", tree.join("target")).unwrap();
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         fs::remove_dir_all(root.join(".gate.harness.b")).unwrap(); // evicted by another trial
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         assert!(tree.join("target/debug").is_dir(), "the link resolves again");
     }
 
@@ -527,7 +468,7 @@ mod tests {
         write_mib(&root.join(".gate.harness.gone/debug/x"), 1); // its tree was swept
         let tree = trees.join(".gate.harness.new");
         fs::create_dir_all(&tree).unwrap();
-        let p = prepare(&root, &trees, &tree, &lim(5), &roomy, &mem, &|_| false).unwrap();
+        let p = prepare(&root, &trees, &tree, &lim(5), &roomy, &|_| false).unwrap();
         assert_eq!(p.orphans, vec![".gate.harness.gone".to_string()]);
         assert_eq!(p.evicted, vec![".gate.harness.old".to_string()], "held is skipped, old goes, then under the cap");
         assert!(root.join(".gate.harness.held/debug/x").is_file());
@@ -541,11 +482,11 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
-        let lim = Limits { cap_mib: 100, min_free_mib: 4096, min_mem_mib: 4096, shed_free_mib: 0 };
-        let p = prepare(&root, &trees, &tree, &lim, &|_| Some(100), &|| 12, &|_| false).unwrap();
-        assert!(tree.join("target").is_symlink(), "linked and building");
+        let lim = Limits { cap_mib: 100, shed_free_mib: 0 };
+        let p = prepare(&root, &trees, &tree, &lim, &|_| Some(100), &|_| false).unwrap();
+        assert!(tree.join("target").is_dir(), "linked and building");
         assert_eq!(p.dir, root.join(".gate.harness.b"));
-        prepare(&root, &trees, &tree, &lim, &|_| None, &|| 0, &|_| false).unwrap();
+        prepare(&root, &trees, &tree, &lim, &|_| None, &|_| false).unwrap();
     }
 
     #[test]
@@ -556,10 +497,10 @@ mod tests {
         assert_ne!(a, root("", "/srv/b/run", true).unwrap(), "two installs never share a root");
         assert_eq!(root("", "/run", false), None);
         assert_eq!(
-            Limits::from_vars("", "x", "7", ""),
-            Limits { cap_mib: 12288, min_free_mib: 4096, min_mem_mib: 7, shed_free_mib: 6144 }
+            Limits::from_vars("", "x"),
+            Limits { cap_mib: 12288, shed_free_mib: 6144 }
         );
-        assert_eq!(Limits::from_vars("1", "2", "3", "500").shed_free_mib, 500);
+        assert_eq!(Limits::from_vars("1", "500").shed_free_mib, 500);
     }
 
     /// sp-s8v5r, positive control: the byte cap alone (deliberately huge) would evict
@@ -596,8 +537,8 @@ mod tests {
             calls.set(n + 1);
             Some(if n < 2 { 50 } else { 300 })
         };
-        let lim_floor = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 200 };
-        let p = prepare(&root, &trees, &tree, &lim_floor, &short, &mem, &|_| false).unwrap();
+        let lim_floor = Limits { cap_mib: 1_000_000, shed_free_mib: 200 };
+        let p = prepare(&root, &trees, &tree, &lim_floor, &short, &|_| false).unwrap();
         assert_eq!(p.evicted, vec![".gate.harness.old".to_string()], "held is skipped despite being the LRU; old alone clears the floor");
         assert!(root.join(".gate.harness.held/debug/x").is_file());
         assert!(root.join(".gate.harness.mid/debug/x").is_file());
@@ -606,8 +547,8 @@ mod tests {
         // is shed, so the behavior above is the floor's, not an eviction that always runs.
         let tree2 = trees.join(".gate.harness.new2");
         fs::create_dir_all(&tree2).unwrap();
-        let lim_ok = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 10 };
-        let p2 = prepare(&root, &trees, &tree2, &lim_ok, &|_| Some(50u64), &mem, &|_| false).unwrap();
+        let lim_ok = Limits { cap_mib: 1_000_000, shed_free_mib: 10 };
+        let p2 = prepare(&root, &trees, &tree2, &lim_ok, &|_| Some(50u64), &|_| false).unwrap();
         assert!(p2.evicted.is_empty(), "50 MiB free already clears a 10 MiB floor — nothing to shed");
         drop(f);
     }
@@ -617,7 +558,7 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         write_mib(&tree.join("target/debug/x"), 2);
         write_mib(&tree.join("target/release/y"), 1);
         assert_eq!(release_tree(&tree, true), 2);
@@ -687,7 +628,7 @@ mod tests {
 
         let tree = trees.join(".gate.harness.spira-sp-c3");
         fs::create_dir_all(&tree).unwrap();
-        prepare(&root, &trees, &tree, &lim(0), &roomy, &mem, &held).unwrap();
+        prepare(&root, &trees, &tree, &lim(0), &roomy, &held).unwrap();
         assert!(root.join(".gate.harness.spira-sp-a1/debug/x").is_file(), "a cap-evicting trial skips it too");
         drop(f);
     }
@@ -709,7 +650,7 @@ mod tests {
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
         assert!(intact(&tree), "no links, built in place");
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         assert!(intact(&tree));
         fs::remove_dir_all(root.join(".gate.harness.b/debug")).unwrap();
         assert!(!intact(&tree));
@@ -724,7 +665,7 @@ mod tests {
         }
         for n in ["pin", "plain"] {
             let t = trees.join(format!(".gate.harness.{n}"));
-            prepare(&root, &trees, &t, &lim(1000), &roomy, &mem, &|_| false).unwrap();
+            prepare(&root, &trees, &t, &lim(1000), &roomy, &|_| false).unwrap();
             write_mib(&t.join("target/release/y"), 2);
             release_tree(&t, true);
         }
@@ -733,7 +674,7 @@ mod tests {
         for n in ["pin", "plain"] {
             fs::File::open(root.join(format!(".gate.harness.{n}"))).unwrap().set_modified(old).unwrap();
         }
-        let p = prepare(&root, &trees, &trees.join(".gate.harness.new"), &lim(1), &roomy, &mem, &|_| false).unwrap();
+        let p = prepare(&root, &trees, &trees.join(".gate.harness.new"), &lim(1), &roomy, &|_| false).unwrap();
         assert_eq!(p.evicted, vec![".gate.harness.plain".to_string()]);
         assert!(root.join(".gate.harness.pin/release/y").is_file(), "pinned release kept");
         let two_s = std::time::Duration::from_secs(0);
@@ -755,7 +696,7 @@ mod tests {
         release_tree(&tree, false);
         assert!(slot.join("deps/libz.rlib").is_file(), "release_tree cleared a warm slot through a stale link");
         std::os::unix::fs::symlink(&slot, tree.join("target/debug")).unwrap();
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem, &|_| false).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         assert_eq!(fs::read_link(tree.join("target/debug")).unwrap(), root.join(".gate.harness.w/debug"), "relinked to the tmpfs");
         assert!(slot.join("deps/libz.rlib").is_file(), "prepare cleared a warm slot through a stale link");
     }
