@@ -340,7 +340,7 @@ fn a_shed_the_host_has_recovered_from_is_not_yet_planned_back_by_the_selector() 
     let cfg = PassConfig { holder: "inv-1".into(), timeout_secs: 50, shadow: vec![], halted: false };
     let Outcome::Passed(p) = pass(&Dispatch(&w.r), &w.r.clock, &cfg).unwrap() else { panic!("the pass stood by") };
     let rec: reconciler_engine::pass_record::PassRecord = serde_json::from_value(w.r.store.get(reconciler_engine::pass_record::PASS_KEY).unwrap().unwrap().value.data).unwrap();
-    // The selector visits open gaps only and a recovered host has none: sp-oroflg.2 makes this plan the restore.
+    // The selector visits open gaps only and a recovered host has none, so the restore is never planned from here.
     assert!(rec.steps.iter().all(|s| s.section != "Host/host"), "{:?}", rec.steps);
     drop(p);
 }
