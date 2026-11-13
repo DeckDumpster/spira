@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/metrics/grafana/** work/src/main.rs habits/src/lib.rs gate/src/telemetry.rs spira/testlib.sh
+# covers: spira/metrics/grafana/** work/src/main.rs habits/src/lib.rs gate/src/telemetry.rs queue/src/ops/round.rs spira/testlib.sh
 #
 # The gate-tooling dashboard's check panels (the yield meter and the unit-tests check seconds)
 # parse clean and query only series something pushes.
@@ -34,7 +34,7 @@ undeclared() {
   printf '%s' "${miss# }"
 }
 
-SRC=("$ROOT/work/src/main.rs" "$ROOT/habits/src/lib.rs" "$ROOT/gate/src/telemetry.rs")
+SRC=("$ROOT/work/src/main.rs" "$ROOT/queue/src/ops/round.rs" "$ROOT/gate/src/telemetry.rs")
 queried="$(series "$DASH" 9,10)"
 
 want "positive control: the check panels' series were found" "check_seconds" "$queried"
