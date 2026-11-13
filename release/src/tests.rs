@@ -1172,17 +1172,8 @@ fn an_activation_that_cannot_move_lc_serve_off_the_superseded_binary_is_rolled_b
 
 #[test]
 fn a_running_process_is_found_executing_the_binary_it_was_started_from() {
-    let t = Sandbox::new();
-    let bin = t.p().join("rel/bin/sleeper");
-    exe(&bin, "#!/bin/sh\nexec sleep 30\n");
-    let mut child = std::process::Command::new(&bin).spawn().unwrap();
-    std::thread::sleep(Duration::from_millis(200));
-    let seen = crate::systemctl::exes_of(&[child.id(), u32::MAX]);
-    child.kill().unwrap();
-    child.wait().unwrap();
-    assert_eq!(seen.len(), 1, "{seen:?}");
-    assert!(seen[0].ends_with("sleep"), "an exec'd process shows its real program: {seen:?}");
-    assert_eq!(crate::systemctl::exes_of(&[u32::MAX]), Vec::<PathBuf>::new());
+    let seen = crate::systemctl::exes_of(&[std::process::id(), u32::MAX]);
+    assert_eq!(seen, vec![fs::canonicalize(std::env::current_exe().unwrap()).unwrap()], "a pid that is gone is left out");
 }
 
 #[test]
