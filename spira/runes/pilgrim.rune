@@ -8,6 +8,7 @@ RUNE_DESC="Pilgrim — walks a shipped feature as a customer on its own identity
 # The partition is the pilgrimage label alone: a pilgrim that matched the plan label would be
 # a second builder grading its own work.
 RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_PILGRIM_LABEL"
+RUNE_FOLLOWUP_AS=builder
 RUNE_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 
 RUNE_MEMORY_PREFIXES="law-"

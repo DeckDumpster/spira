@@ -810,8 +810,12 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
     let Some(title) = args.first() else {
         return (CANNOT_TELL, format!("work {verb}: missing <title>"));
     };
-    let Some(persona) = flag(args, "--for") else {
+    let Some(filer) = flag(args, "--for") else {
         return (CANNOT_TELL, format!("work {verb}: --for <persona> is required"));
+    };
+    let persona = match filed_as(verb, &filer) {
+        Ok(p) => p,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
     let repo = match child_repo(args) {
         Ok(r) => r,
@@ -840,6 +844,16 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
         },
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
     }
+}
+
+/// The persona a filing takes its partition from: a `file-followup` goes to the lane its filer's
+/// rune names, so a defect lands where it can be built; a `split` stays in its own lane.
+fn filed_as(verb: &str, filer: &str) -> Result<String, String> {
+    if verb != "file-followup" {
+        return Ok(filer.to_string());
+    }
+    let home = spira_config::resolve::locate_home_for_process()?;
+    spira_config::runes::followup_persona_in(&spira_config::runes::runes_dir(&home), filer)
 }
 
 fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
@@ -1714,6 +1728,23 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_pilgrims_follow_up_is_filed_into_the_builder_partition_but_a_split_stays_put() {
+        let runes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let at = |p: &str| spira_config::runes::followup_persona_in(&runes, p).unwrap();
+        assert_eq!(at("pilgrim"), "builder");
+        assert_eq!(at("builder"), "builder");
+        assert_eq!(at("archivist"), "archivist");
+        assert_eq!(super::filed_as("split", "pilgrim").unwrap(), "pilgrim");
+    }
+
+    #[test]
+    fn the_pilgrims_contract_files_defects_with_the_verb_the_broker_admits() {
+        let md = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes/pilgrim.md")).unwrap();
+        assert!(md.contains("work file-followup \""));
+        assert!(!md.lines().any(|l| l.trim_start().starts_with("work file \"")));
+    }
+
     #[test]
     fn a_unit_red_on_base_must_name_a_bead_that_exists_and_leaves_a_note_line() {
         let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();

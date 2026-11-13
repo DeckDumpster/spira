@@ -325,6 +325,20 @@ pub fn working_exits_in(runes: &Path, rune: &str) -> Result<Vec<String>, String>
     Ok(exits)
 }
 
+pub const FOLLOWUP_AS_KEY: &str = "RUNE_FOLLOWUP_AS";
+
+/// The persona whose partition a follow-up filed by `rune` takes: the rune's
+/// `RUNE_FOLLOWUP_AS`, or `rune` itself when it declares none or has no rune file.
+pub fn followup_persona_in(runes: &Path, rune: &str) -> Result<String, String> {
+    let path = runes.join(format!("{rune}.rune"));
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(rune.to_string()),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    Ok(assigned_value(&text, FOLLOWUP_AS_KEY).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| rune.to_string()))
+}
+
 /// `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS`, fully resolved and fail-closed — THE shared
 /// evaluator every ready-counting/claiming caller (`spira-claim`, sentinel's own
 /// `express_ready_in_task_pool`, `bead --for`) goes through, replacing each one's own copy
@@ -547,6 +561,17 @@ mod tests {
         assert!(working_exits_in(&dir, "bare").unwrap_err().contains("RUNE_WORKING_EXITS is not declared"));
         assert!(working_exits_in(&dir, "odd").unwrap_err().contains("\"landed\""));
         assert!(working_exits_in(&dir, "ghost").is_err());
+    }
+
+    #[test]
+    fn a_follow_up_takes_the_persona_its_rune_names_else_the_filers_own() {
+        let ws = testkit::TempDir::new("spira-config-runes-followup");
+        write_rune(&ws, "walker", "RUNE_FOLLOWUP_AS=fixer\n");
+        write_rune(&ws, "plain", "RUNE_NAME=plain\n");
+        let dir = runes_dir(&ws);
+        assert_eq!(followup_persona_in(&dir, "walker").unwrap(), "fixer");
+        assert_eq!(followup_persona_in(&dir, "plain").unwrap(), "plain");
+        assert_eq!(followup_persona_in(&dir, "ghost").unwrap(), "ghost", "a persona with no rune file files as itself");
     }
 
     #[test]
