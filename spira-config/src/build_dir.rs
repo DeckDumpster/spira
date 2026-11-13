@@ -299,7 +299,7 @@ pub fn evict_idle_with(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path
         return gone;
     }
     let mut idle: Vec<(SystemTime, usize, u64, u64)> =
-        sized.into_iter().filter(|&(i, n, b)| b > 0).map(|(i, n, b)| (idle_since(&bases[i], n), i, n, b)).collect();
+        sized.into_iter().filter(|&(_, _, b)| b > 0).map(|(i, n, b)| (idle_since(&bases[i], n), i, n, b)).collect();
     idle.sort();
     for (_, i, n, bytes) in idle {
         if total <= budget_bytes {
