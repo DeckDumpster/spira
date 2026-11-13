@@ -32,7 +32,7 @@ fn snap(open: Vec<Round>, now_ms: u64) -> Snapshot {
 }
 
 fn round(id: &str, members: &[&str], head: &str, age_secs: u64) -> Round {
-    Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), head: head.into(), worktree: format!("/w/{id}"), driven: true, red: false, age_secs, unfit: None, phase: String::new() }
+    Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), head: head.into(), worktree: format!("/w/{id}"), driven: true, red: false, age_secs, unfit: None, phase: String::new(), gate_red: vec![] }
 }
 
 fn names(acts: &[Act]) -> Vec<&str> {

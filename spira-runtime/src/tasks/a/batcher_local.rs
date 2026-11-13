@@ -68,6 +68,7 @@
 //! | `batcher.local.corpus` | unit (`unit.start`) | `SPIRA_BATCHER_WALL_SECS` | batch + run n | 2nd run while one live (`vm.rs:370`) |
 //! | `batcher.local.stage` / `.stage_test` | unit | wall secs | staged batch | hypervisor full (`io.rs:1881`, `:1906`) |
 //! | `batcher.local.eject` | store | 30 s | batch + bead | not in round (`io.rs:1600`, `:1628`) |
+//! | `batcher.local.preempt` | store | 300 s | batch + members + head | no pass running |
 //! | `batcher.local.withdraw` | store | 10 s | bead + version | state ≠ CERTIFIED (`io.rs:851-887`) |
 //! | `batcher.local.rebase_stale` | unit | 600 s (unverified) | bead + base sha | not due (`io.rs:178`) |
 //! | `batcher.local.certify` | unit | wall secs | batch | head ≠ worktree (`io.rs:1662`) |
@@ -118,6 +119,7 @@ pub const CORPUS: &str = "batcher.local.corpus";
 pub const STAGE: &str = "batcher.local.stage";
 pub const STAGE_TEST: &str = "batcher.local.stage_test";
 pub const EJECT: &str = "batcher.local.eject";
+pub const PREEMPT: &str = "batcher.local.preempt";
 pub const WITHDRAW: &str = "batcher.local.withdraw";
 pub const REBASE_STALE: &str = "batcher.local.rebase_stale";
 pub const CERTIFY: &str = "batcher.local.certify";
@@ -148,6 +150,7 @@ pub const ACTS: &[(&str, u64)] = &[
     (STAGE, UNIT_START_DEADLINE_MS),
     (STAGE_TEST, UNIT_START_DEADLINE_MS),
     (EJECT, 30_000),
+    (PREEMPT, 300_000),
     (WITHDRAW, 10_000),
     (REBASE_STALE, UNIT_START_DEADLINE_MS),
     (CERTIFY, UNIT_START_DEADLINE_MS),
@@ -164,7 +167,7 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, PREEMPT, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -246,6 +249,9 @@ pub struct Round {
     /// The round's phase as `queue round status` names it; `green` once a pass on its head passed.
     #[serde(default)]
     pub phase: String,
+    /// Members whose own gate went red while the round holds them, as `(id, tip, the gate's mark)`.
+    #[serde(default)]
+    pub gate_red: Vec<(String, String, String)>,
 }
 
 /// One admitted `queue.local` repository.
@@ -1189,6 +1195,10 @@ impl Machine<'_> {
         if self.superseded_by_green_head(repo) {
             return;
         }
+        let passing = matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying) && !self.rc.certify_held;
+        if passing && self.preempt_gate_red(repo) {
+            return;
+        }
         match self.rc.state {
             State::Certifying if self.rc.certify_held => self.release_certify(policy, repo),
             State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > leg_deadline_ms(policy, self.rc.state == State::Attributing, self.rc.members.len()) => self.leg_ended(Exit::Unknown),
@@ -1207,6 +1217,21 @@ impl Machine<'_> {
             }
             _ => {}
         }
+    }
+
+    /// A member whose own gate went red at the tip the round holds leaves at once: its pass is
+    /// stopped, it is ejected with the gate's mark as evidence, and the round goes on without it.
+    fn preempt_gate_red(&mut self, repo: &Repo) -> bool {
+        let Some(open) = self.rc.batch.as_deref().and_then(|b| repo.open_rounds().find(|r| r.id == b)) else { return false };
+        let red: Vec<&(String, String, String)> = open.gate_red.iter().filter(|(id, tip, _)| self.rc.members.iter().any(|(m, t)| m == id && t == tip)).collect();
+        if red.is_empty() || repo.in_flight.as_ref().is_some_and(|f| f.iter().any(|e| e == PREEMPT)) {
+            return false;
+        }
+        let ids: Vec<String> = red.iter().map(|(id, ..)| id.clone()).collect();
+        let why = red.iter().map(|(id, tip, mark)| format!("{id}: its own gate went red at {tip} while round {} was running ({mark})", open.id)).collect::<Vec<_>>().join("; ");
+        let key = format!("{}:{}:preempt:{}:{}", self.repo, open.id, ids.join(","), open.head);
+        self.acts.push(Leg { bead: ids.join(","), why, key, ..self.leg() }.act(PREEMPT));
+        true
     }
 
     /// Follows the round's head. A leg started for an earlier head is orphaned: its result is
@@ -1666,6 +1691,10 @@ impl Machine<'_> {
                 self.opened(leg.why == "suites");
             }
             (State::Corpus | State::Attributing, CORPUS) | (State::Certifying, CERTIFY) if !ok && self.rc.leg.as_deref() == Some(leg.unit.as_str()) => self.leg_unstarted(&format!("it could not be started ({})", body.trim())),
+            (State::Corpus | State::Attributing | State::Certifying, PREEMPT) if ok => {
+                self.rc.members.retain(|(id, _)| !leg.bead.split(',').any(|b| b == id));
+                self.rc.round_key = Some(core::round_key(&self.rc.members));
+            }
             (State::Landing, LAND) if ok => {
                 let l: Landed = serde_json::from_str(body).unwrap_or_default();
                 if let Some(base) = l.base_moved {
@@ -2367,7 +2396,8 @@ pub mod edge {
         let mut open = io::open_rounds(env, repo)?.into_iter().map(|r| {
             let driven = io::certify_driven(env, &repo.name, &r.id);
             let unfit = io::round_certifiable(env, repo, &r.id).err();
-            Round { id: r.id, members: r.members, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit, phase: r.phase }
+            let gate_red = io::gate_red_rows(env, &r.members);
+            Round { id: r.id, members: r.members, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
         });
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();
@@ -2493,6 +2523,13 @@ pub mod edge {
         let suites = if leg.reds.is_empty() { vec!["ci".to_string()] } else { leg.reds.clone() };
         io::round_eject_sole_red(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.bead, &suites, &leg.why)?;
         batcher_cut::redtip::record(&env.run, &leg.repo, &leg.bead, &leg.head);
+        Ok("{}".into())
+    }
+
+    pub fn preempt(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let ids: Vec<String> = leg.bead.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect();
+        io::round_preempt(&env, &repo_of(&env, &leg)?, &leg.batch, &ids, &leg.why)?;
         Ok("{}".into())
     }
 

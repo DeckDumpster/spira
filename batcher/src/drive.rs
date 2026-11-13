@@ -4607,6 +4607,38 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_fence_red_naming_no_member_ejects_the_member_whose_tree_fails_the_fence_and_lands_the_rest() {
+        let mut f = Fake::new(|_, _| false);
+        f.runs_alone = true;
+        f.filter = Some(Box::new(|tree| {
+            tree.contains("m2").then(|| FilterRed {
+                name: "fence-fixture-config".into(),
+                named: vec![],
+                failed: vec![],
+            })
+        }));
+        let mut ops = Ops::default();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        let ejected: Vec<&str> = ops.ejected.iter().map(|(m, _)| m.as_str()).collect();
+        assert_eq!(ejected, ["m2"], "{:?}", ops.eject_evidence);
+        assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2),
+            "{end:?}"
+        );
+    }
+
+    #[test]
     fn a_lint_red_naming_no_member_is_filed_once_and_does_not_run_the_corpus_again() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(Box::new(|_| {
