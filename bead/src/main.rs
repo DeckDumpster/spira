@@ -161,12 +161,13 @@ fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, 
     if incident.is_none() && stack_after.is_none() && lookup_title.is_none() && !express {
         return bdq_status(home, args);
     }
+    let since = bead::bdq::utc_stamp_nanos(std::time::SystemTime::now() - std::time::Duration::from_secs(60));
     let (mut code, mut stdout) = bdq_capture_with(home, args, Stdio::inherit());
     if parse_created_id(&stdout).is_none() {
         if let Some(title) = lookup_title {
             if code == 0 || code == CANNOT_TELL {
                 let (list_code, listing) = door(&s(&["list", "--limit", "0", "--json"]));
-                match bead::readback(list_code, &listing, title) {
+                match bead::readback(list_code, &listing, title, &since[..19]) {
                     bead::Readback::Found(found) => {
                         eprintln!("bead: file: bd create exited {code} without an id; read back from the store: {found} exists, reporting it as filed");
                         stdout = format!("{found}\n");
