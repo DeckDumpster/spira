@@ -2066,6 +2066,18 @@ fn a_beadless_branch_already_on_the_base_is_not_reported_as_not_landed() {
     h.git.merged.borrow_mut().insert("spira/hand-landed".into());
     h.run();
     assert!(!h.logged("CHECK6 hand-landed: spira/hand-landed not landed"));
+    assert!(h.lc.certified.borrow().is_empty());
+}
+
+#[test]
+fn an_unsettled_bead_whose_branch_is_already_on_the_base_is_not_reported_as_not_landed() {
+    let h = H::new(LandMode::Queue);
+    h.bead("sp-open", "in_progress", &[]);
+    h.git.add("spira/sp-open", "t1");
+    h.git.merged.borrow_mut().insert("spira/sp-open".into());
+    h.run();
+    assert!(!h.logged("CHECK6 sp-open: spira/sp-open not landed"));
+    assert!(h.lc.certified.borrow().is_empty());
 }
 
 #[test]
