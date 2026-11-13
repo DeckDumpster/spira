@@ -261,3 +261,23 @@ fn io_pressure_picks_the_shed_not_a_reap_and_steps_certify_par_down_by_one() {
     assert_eq!(p.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(), ["shed-gate-slot"]);
     assert_eq!((p.steps[0].intent.from.clone(), p.steps[0].intent.to.clone()), (json!(3), json!(2)));
 }
+
+#[test]
+fn a_calm_host_under_shed_restores_a_gate_slot_though_its_gap_is_closed() {
+    let calm = plan(vec![host(&["HostShedding", "Shed"], 0.0)], host_knobs());
+    assert_eq!(calm.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(), ["restore-gate-slot"], "{calm:?}");
+    assert_eq!((calm.steps[0].intent.from.clone(), calm.steps[0].intent.to.clone()), (json!(3), json!(4)));
+}
+
+#[test]
+fn a_closed_gap_takes_only_capacity_raise_steps_and_keeps_every_refusal() {
+    let calm = plan(vec![host(&["HostShedding", "IoPressure"], 0.0)], host_knobs());
+    assert!(calm.steps.is_empty() && calm.refused.is_empty() && calm.no_lever.is_empty(), "a lower is never taken on a closed gap: {calm:?}");
+    let mut s = host(&["Shed"], 0.0);
+    s["section"]["metadata"]["observedAt"] = json!("2026-10-31T10:00:00Z");
+    let stale = plan(vec![s], host_knobs());
+    assert!(stale.steps.is_empty());
+    assert_eq!(refused(&stale), ["stale-input"]);
+    let no_knob = plan(vec![host(&["Shed"], 0.0)], json!({}));
+    assert_eq!(refused(&no_knob), ["knob-absent"]);
+}
