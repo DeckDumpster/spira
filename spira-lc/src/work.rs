@@ -1568,6 +1568,7 @@ fn cmd_forge(bound: &str, rest: &[String]) -> (i32, String) {
         Ok(o) => o,
         Err(e) => return e,
     };
+    let actor = call.actor.as_deref().unwrap_or("-");
     let repo = match forge_repo(bound) {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("work forge: {e}")),
@@ -1582,8 +1583,8 @@ fn cmd_forge(bound: &str, rest: &[String]) -> (i32, String) {
             let r = forge::client::run(&forge::client::route_of(std::path::Path::new(&forge)), verb, &repo, &args, None);
             (r.code, if r.ok() { r.out } else { format!("{}{}", r.out, r.err) })
         }
-        ForgeOp::Push { branch, tip } => forge_git(&repo, &["push", "--", "{remote}", &format!("{tip}:refs/heads/{branch}")]),
-        ForgeOp::Delete { branch } => forge_git(&repo, &["push", "--", "{remote}", &format!(":refs/heads/{branch}")]),
+        ForgeOp::Push { branch, tip } => forge_refspec(&repo, "ami-push", actor, &format!("{tip}:refs/heads/{branch}")),
+        ForgeOp::Delete { branch } => forge_refspec(&repo, "ami-delete", actor, &format!(":refs/heads/{branch}")),
     }
 }
 
@@ -1594,16 +1595,48 @@ fn forge_repo(bound: &str) -> Result<std::path::PathBuf, String> {
     Ok(std::path::PathBuf::from(&section.path))
 }
 
-fn forge_git(repo: &std::path::Path, args: &[&str]) -> (i32, String) {
+/// A network round trip outlasts the five-second store-call bound; the request's own
+/// deadline (`TOOL_DEADLINE`) is the outer limit.
+const FORGE_PUSH_SECS: &str = "120";
+
+fn forge_refspec(repo: &std::path::Path, verb: &str, actor: &str, refspec: &str) -> (i32, String) {
     let remote = match spira_config::process::cfg("SPIRA_PUBLISH_REMOTE") {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("work forge: {e}")),
     };
-    let args: Vec<String> = args.iter().map(|a| a.replace("{remote}", &remote)).collect();
-    match spira_config::bounded::bounded("git").args(&args).current_dir(repo).output() {
-        Ok(o) if o.status.success() => (0, String::new()),
-        Ok(o) => (REFUSED, String::from_utf8_lossy(&o.stderr).trim().to_string()),
-        Err(e) => (CANNOT_TELL, format!("work forge: git: {e}")),
+    let (code, out) = forge_git(repo, &remote, refspec, verb, actor, FORGE_PUSH_SECS);
+    if code != 0 {
+        log_forge_refusal(&out);
+    }
+    (code, out)
+}
+
+/// A refusal names the verb, the persona and what git said, and says so when git said
+/// nothing (a run cut off at its deadline).
+fn forge_git(repo: &std::path::Path, remote: &str, refspec: &str, verb: &str, actor: &str, secs: &str) -> (i32, String) {
+    let o = match spira_config::bounded::bounded_for("git", secs).args(["push", "--", remote, refspec]).current_dir(repo).output() {
+        Ok(o) => o,
+        Err(e) => return (CANNOT_TELL, format!("work forge {verb}: persona {actor}: git: {e}")),
+    };
+    if o.status.success() {
+        return (0, String::new());
+    }
+    let said = String::from_utf8_lossy(&o.stderr).trim().to_string();
+    let why = match (o.status.code(), said.is_empty()) {
+        (_, false) => said,
+        (Some(124), true) => format!("git did not finish within {secs}s and was stopped"),
+        (code, true) => format!("git exited {} and printed nothing", code.map_or("by signal".to_string(), |c| c.to_string())),
+    };
+    (REFUSED, format!("work forge {verb}: refused for persona {actor}: the forge remote {remote} failed: {why}"))
+}
+
+fn log_forge_refusal(line: &str) {
+    let Some(run) = spira_config::process::cfg("SPIRA_RUN").ok().filter(|r| !r.is_empty()) else {
+        return;
+    };
+    let path = std::path::Path::new(&run).join("broker.log");
+    if let Err(e) = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{line}\n").as_bytes())) {
+        eprintln!("spira-lc work forge: {}: {e}", path.display());
     }
 }
 
@@ -1808,6 +1841,52 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
 
 #[cfg(test)]
 mod tests {
+    fn send_tip(repo: &std::path::Path, remote: &std::path::Path, secs: &str) -> (i32, String) {
+        let tip = testkit::git(repo, &["rev-parse", "HEAD"]);
+        super::forge_git(repo, remote.to_str().unwrap(), &format!("{}:refs/heads/spira-round-candidate/sp-x-1", tip.trim()), "ami-push", "builder", secs)
+    }
+
+    fn forge_fixture(tag: &str) -> (testkit::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let dir = testkit::TempDir::new(tag);
+        let (repo, remote) = (dir.path().join("repo"), dir.path().join("forge.git"));
+        std::fs::create_dir_all(&repo).unwrap();
+        testkit::git(dir.path(), &["init", "--bare", "-q", remote.to_str().unwrap()]);
+        testkit::git(&repo, &["init", "-q"]);
+        testkit::git(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-q", "-m", "x"]);
+        (dir, repo, remote)
+    }
+
+    fn forge_hook(remote: &std::path::Path, body: &str) {
+        testkit::write_exe(remote.join("hooks/pre-receive"), &format!("#!/bin/sh\n{body}\n"));
+    }
+
+    #[test]
+    fn a_forge_refusal_prints_the_verb_the_persona_and_the_forges_message() {
+        let (_dir, repo, remote) = forge_fixture("forge-refuse");
+        forge_hook(&remote, "echo 'stub forge: protected branch' >&2\nexit 1");
+        let (code, out) = send_tip(&repo, &remote, "20");
+        assert_eq!(code, super::REFUSED);
+        for want in ["ami-push", "builder", "stub forge: protected branch"] {
+            assert!(out.contains(want), "{want} missing from {out:?}");
+        }
+    }
+
+    #[test]
+    fn a_forge_call_cut_off_at_its_deadline_says_so_instead_of_printing_nothing() {
+        let (_dir, repo, remote) = forge_fixture("forge-slow");
+        forge_hook(&remote, "sleep 30");
+        let (code, out) = send_tip(&repo, &remote, "1");
+        assert_eq!(code, super::REFUSED);
+        assert!(out.contains("did not finish within 1s"), "{out:?}");
+    }
+
+    #[test]
+    fn a_builders_forge_call_that_takes_longer_than_a_store_call_succeeds() {
+        let (_dir, repo, remote) = forge_fixture("forge-ok");
+        forge_hook(&remote, "sleep 6");
+        assert_eq!(send_tip(&repo, &remote, super::FORGE_PUSH_SECS), (0, String::new()));
+    }
+
     #[test]
     fn a_builder_may_ask_the_forge_about_its_own_round_image_candidate_and_no_other_branch() {
         let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
