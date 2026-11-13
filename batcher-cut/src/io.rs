@@ -2937,14 +2937,18 @@ pub fn gate_red_marks(env: &Env, members: &[(String, String)]) -> Vec<(String, S
 /// `queue round preempt`: stops the pass of `batch` that is running, ejects `ids` (each carries
 /// `reason` back as its evidence) and starts the next pass on the rebuilt head.
 pub fn round_preempt(env: &Env, repo: &Repo, batch: &str, ids: &[String], reason: &str) -> Result<(), String> {
-    let csv = ids.join(",");
-    let args = ["preempt", batch, &repo.name, "--eject", &csv, "--suites", GATE_STEP, "--reason-file", "-"];
-    let run = round_verb(env, &args, reason)?;
+    let args = preempt_args(batch, &repo.name, ids);
+    let run = round_verb(env, &args.iter().map(String::as_str).collect::<Vec<_>>(), reason)?;
     if run.code == Some(0) {
         Ok(())
     } else {
         Err(verb_failed("queue round preempt", &run))
     }
+}
+
+/// The arguments after `queue round` for [`round_preempt`]; the reason comes on stdin.
+pub fn preempt_args(batch: &str, repo: &str, ids: &[String]) -> Vec<String> {
+    ["preempt", batch, repo, "--eject", &ids.join(","), "--suites", GATE_STEP, "--reason-file", "-"].map(String::from).to_vec()
 }
 
 /// The check a gate-red member is charged with when it leaves a round.

@@ -69,3 +69,16 @@ fn an_ejected_member_leaves_the_carried_round_when_its_preempt_is_answered() {
     let (kept, _) = on_outcome(&carried(State::Corpus), PREEMPT, false, "refused", &leg, NOW);
     assert_eq!(kept.repos["spira"].members.len(), 2, "a refused preempt ejected nobody");
 }
+
+#[test]
+fn the_preempt_the_batcher_asks_is_one_the_queue_cli_parses_with_its_evidence_on_stdin() {
+    let ids = vec!["sp-a".to_string(), "sp-b".to_string()];
+    let argv: Vec<String> = std::iter::once("round".to_string()).chain(batcher_cut::io::preempt_args("r9", "spira", &ids)).collect();
+    match queue::cli::parse(&argv) {
+        Ok(queue::cli::Cmd::Round(queue::cli::Round::Preempt { batch, repo, eject, reason, suites })) => {
+            assert_eq!((batch.as_str(), repo.as_deref(), eject.as_str(), suites.as_str()), ("r9", Some("spira"), "sp-a,sp-b", batcher_cut::io::GATE_STEP));
+            assert!(matches!(reason, queue::cli::Text::Stdin), "{reason:?}");
+        }
+        other => panic!("not a preempt: {other:?}"),
+    }
+}
