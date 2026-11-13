@@ -841,27 +841,37 @@ impl<'w, W: World> Trial<'w, W> {
                     mark_err.get_or_insert(e);
                 }
             };
-            run_composed(
-                w,
-                &tree,
-                &comp,
-                &with_bins(
-                    env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp),
-                    tree_def.as_ref(),
+            let mut run = |envs: Vec<(String, String)>| {
+                run_composed(
+                    w,
+                    &tree,
+                    &comp,
+                    &with_bins(envs, tree_def.as_ref(), tools.as_ref()),
+                    &timeout,
+                    &limits,
+                    &mut self.s.test_secs,
+                    &cmd,
                     tools.as_ref(),
-                ),
-                &timeout,
-                &limits,
-                &mut self.s.test_secs,
-                &cmd,
-                tools.as_ref(),
-                jobs,
-                &re.required,
-                "",
-                fkey.as_ref(),
-                &mut mark,
-                &mut self.s.build_timing,
-            )
+                    jobs,
+                    &re.required,
+                    "",
+                    fkey.as_ref(),
+                    &mut mark,
+                    &mut self.s.build_timing,
+                )
+            };
+            let first_env = env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp);
+            let cached = first_env.iter().any(|(k, v)| k == "RUSTC_WRAPPER" && !v.is_empty())
+                && !first_env.iter().any(|(k, v)| k == spira_config::build::CACHE_ENV && v == "off");
+            let first = run(first_env.clone());
+            if cached && first.0 != 0 && parse::cache_transport_failure(&first.1) {
+                w.eprint("gate: the build's sccache server was lost mid-build — retrying the trial once without the compiler cache");
+                let (rc, out, ph) = run(without_cache(first_env));
+                let ph = first.2.into_iter().chain(ph).collect();
+                (rc, out, ph)
+            } else {
+                first
+            }
         };
         self.s.tools_from = match tools.as_ref() {
             Some(t) if t.release => "release",
@@ -2168,6 +2178,23 @@ pub fn release_bins_command() -> String {
         "cargo build --release --workspace --locked {} || {{ _r=$?; find target/release -mindepth 1 -delete 2>/dev/null; exit $_r; }}",
         spira_config::build::one_shot_words("release")
     )
+}
+
+/// The trial's environment with its compiler cache switched off: under `spira-admit` the
+/// wrapper stays (the compile slot) and its inner compiler is rustc itself.
+fn without_cache(mut env: Vec<(String, String)>) -> Vec<(String, String)> {
+    let admitted = env.iter().any(|(k, _)| k == spira_config::admission::INNER_ENV);
+    let mut set = |k: &str, v: &str| match env.iter_mut().find(|(n, _)| n == k) {
+        Some(e) => e.1 = v.to_string(),
+        None => env.push((k.to_string(), v.to_string())),
+    };
+    if admitted {
+        set(spira_config::admission::INNER_ENV, "");
+    } else {
+        set("RUSTC_WRAPPER", "");
+    }
+    set(spira_config::build::CACHE_ENV, "off");
+    env
 }
 
 pub fn with_bins(

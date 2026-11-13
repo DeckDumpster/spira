@@ -355,10 +355,16 @@ impl Fake {
         if let Some(r) = lint.and_then(|l| self.lint_by_bin.borrow().get(&l).cloned()) {
             return r;
         }
+        let uncached = env.iter().any(|(k, v)| k == "SPIRA_BUILD_CACHE" && v == "off");
+        let key = if uncached && self.runs.borrow().contains_key(&format!("{br}:uncached")) {
+            format!("{br}:uncached")
+        } else {
+            br.clone()
+        };
         let (rc, out) = self
             .runs
             .borrow()
-            .get(&br)
+            .get(&key)
             .cloned()
             .unwrap_or((0, String::new()));
         if rc != 0 {
@@ -3507,6 +3513,21 @@ fn a_build_that_loses_sccache_is_no_verdict_but_a_compile_error_is_red() {
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nerror[E0308]: mismatched types".into()));
     assert_eq!(f.run(), FAIL, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
+}
+
+/// A trial that loses its sccache server is run once more with the cache off, and the gate
+/// says so; if the uncached run is clean the gate passes.
+#[test]
+fn a_trial_that_loses_sccache_retries_once_without_the_cache() {
+    let wedged = "test-a.sh RED\nsccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)";
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, wedged.into()));
+    f.runs.borrow_mut().insert(format!("{MERGE_SHA}:uncached"), (0, String::new()));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.stderr().contains("retrying the trial once without the compiler cache"), "{}", f.stderr());
+    let n = f.ran.borrow().len();
+    assert_eq!(f.env_of(n - 1, "SPIRA_BUILD_CACHE"), "off");
+    assert_eq!(f.env_of(n - 1, "RUSTC_WRAPPER"), "");
 }
 
 /// A test binary the gate built and something else removed is the host's fault: the red text
