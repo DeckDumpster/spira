@@ -125,15 +125,7 @@ struct Fake {
     target_swept: Cell<bool>,
     targets: RefCell<Vec<PathBuf>>,
     released: RefCell<Vec<(PathBuf, bool)>>,
-    /// The build-dir fact the builder recorded (or the read's failure); the leases taken as
-    /// (recorded directory asked for); the directories released; whether another process holds
-    /// the recorded one; the clean's failure; the (tip) mtimes were aged against.
-    build_fact: RefCell<Result<Option<(String, String)>, String>>,
-    leases: RefCell<Vec<Option<String>>>,
-    released_dirs: RefCell<Vec<String>>,
-    lease_held: Cell<bool>,
-    clean_err: RefCell<Option<String>>,
-    aged_from: RefCell<Vec<String>>,
+    judged: RefCell<Vec<bool>>,
     // ---- the base-suite cache (sp-kqger)
     /// What `testenv container tag` answers; a real image tag by default so every test not
     /// about this cache specifically exercises it exactly as it would for real.
@@ -188,7 +180,6 @@ fn ctx() -> Ctx {
         ("SPIRA_GATE_BUDGET", "300"),
         ("SPIRA_GATE_DEADLINE", "300"),
         ("SPIRA_GATE_BUILD_STALL", "300"),
-        ("SPIRA_DWARF_BUILD_BASE", "/fixture-builds"),
     ] {
         vars.insert(k.to_string(), v.to_string());
     }
@@ -288,12 +279,7 @@ impl Fake {
             target_clears_tools: Cell::new(false),
             targets: RefCell::new(Vec::new()),
             released: RefCell::new(Vec::new()),
-            build_fact: RefCell::new(Ok(None)),
-            leases: RefCell::new(Vec::new()),
-            released_dirs: RefCell::new(Vec::new()),
-            lease_held: Cell::new(false),
-            clean_err: RefCell::new(None),
-            aged_from: RefCell::new(Vec::new()),
+            judged: RefCell::new(Vec::new()),
             image_tag: RefCell::new((0, "tag1".into())),
             base_tree_override: RefCell::new(None),
             certify_par_live: Cell::new(None),
@@ -656,34 +642,8 @@ impl World for Fake {
     fn target_intact(&self, _: &Path) -> bool {
         !self.target_swept.get()
     }
-    fn build_dir_fact(&self, _: &str) -> Result<Option<(String, String)>, String> {
-        self.build_fact.borrow().clone()
-    }
-    fn lease_build_dir(&self, _: &str, recorded: Option<&str>, who: &str) -> Result<(String, &'static str), String> {
-        assert_eq!(who, spira_config::build_dir::gate_label(who.strip_prefix("gate ").unwrap_or("")), "the gate leases under the label the reservation is made out to");
-        self.leases.borrow_mut().push(recorded.map(String::from));
-        Ok(match recorded {
-            Some(d) if !self.lease_held.get() => (d.to_string(), "recorded"),
-            Some(_) => ("/fixture-builds/dir.2".to_string(), "held"),
-            None => ("/fixture-builds/dir.2".to_string(), "unrecorded"),
-        })
-    }
-    fn clean_build_dir(&self, _: &Path, _: &str, _: &str, _: bool) -> Result<String, String> {
-        self.clean_err.borrow().clone().map_or(Ok(String::new()), Err)
-    }
-    fn empty_build_dir(&self, _: &str) {}
-    fn normalize_mtimes(&self, _: &Path, tip: &str) -> Result<usize, String> {
-        self.aged_from.borrow_mut().push(tip.to_string());
-        Ok(0)
-    }
-    fn link_build_dir(&self, _: &Path, _: &str) -> Result<(), String> {
-        Ok(())
-    }
-    fn release_build_dir(&self, _: &Path, dir: &str, _: &str) -> String {
-        self.released_dirs.borrow_mut().push(dir.to_string());
-        format!("gate: released build directory {dir}")
-    }
-    fn release_target(&self, tree: &Path, keep_release: bool) {
+    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool) {
+        self.judged.borrow_mut().push(judged);
         self.released.borrow_mut().push((tree.to_path_buf(), keep_release));
     }
     fn install_tools(&self, _: &Path, pkgs: &[String], dir: &Path, id: &str) -> Result<(), String> {
@@ -2189,62 +2149,6 @@ fn meter(f: &Fake) -> String {
     f.appended.borrow().last().cloned().unwrap_or_default()
 }
 
-fn builder_built_in(f: &Fake, dir: &str) {
-    f.put_var("SPIRA_GATE_BEAD", "sp-a");
-    *f.build_fact.borrow_mut() = Ok(Some(("builder-tip".into(), dir.into())));
-}
-
-#[test]
-fn a_unit_gate_builds_in_the_directory_its_builder_leased_and_says_so() {
-    let f = unit_fake(&["spira-config/src/lib.rs"]);
-    builder_built_in(&f, "/fixture-builds/dir.7");
-    assert_eq!(f.run(), PASS, "{}", f.stderr());
-    assert!(f.stderr().contains("gate: build in /fixture-builds/dir.7 (leased from sp-a's builder)"), "{}", f.stderr());
-    assert_eq!(*f.leases.borrow(), [Some("/fixture-builds/dir.7".to_string())]);
-    assert_eq!(*f.aged_from.borrow(), ["builder-tip".to_string()]);
-    let builds: Vec<_> = f.cmds.borrow().iter().cloned().zip(f.ran.borrow().iter().cloned()).filter(|(c, _)| c.contains("cargo test")).collect();
-    assert_eq!(builds.len(), 2, "the build and the test phase: {:?}", f.cmds.borrow());
-    for (c, env) in &builds {
-        assert!(env.iter().any(|(k, v)| k == "CARGO_TARGET_DIR" && v == "/fixture-builds/dir.7"), "{c}: {env:?}");
-    }
-    assert_eq!(*f.released_dirs.borrow(), ["/fixture-builds/dir.7".to_string()], "the lease is held to the end and released");
-}
-
-#[test]
-fn a_held_or_unrecorded_build_directory_is_a_cold_build_that_names_why() {
-    let held = unit_fake(&["spira-config/src/lib.rs"]);
-    builder_built_in(&held, "/fixture-builds/dir.7");
-    held.lease_held.set(true);
-    held.run();
-    assert!(held.stderr().contains("gate: build in /fixture-builds/dir.2 (cold: held)"), "{}", held.stderr());
-    assert!(held.aged_from.borrow().is_empty(), "another build's directory is not aged against the builder's tip");
-
-    let none = unit_fake(&["spira-config/src/lib.rs"]);
-    none.put_var("SPIRA_GATE_BEAD", "sp-a");
-    none.run();
-    assert!(none.stderr().contains("(cold: unrecorded)"), "{}", none.stderr());
-}
-
-#[test]
-fn a_failed_clean_empties_the_directory_and_logs_the_build_as_cold() {
-    let f = unit_fake(&["spira-config/src/lib.rs"]);
-    builder_built_in(&f, "/fixture-builds/dir.7");
-    *f.clean_err.borrow_mut() = Some("script exited 1".into());
-    f.run();
-    assert!(f.stderr().contains("gate: build in /fixture-builds/dir.7 (cold: selective clean failed, directory emptied: script exited 1)"), "{}", f.stderr());
-}
-
-#[test]
-fn a_facts_read_that_fails_gives_no_verdict_and_never_a_cold_build() {
-    let f = unit_fake(&["spira-config/src/lib.rs"]);
-    f.put_var("SPIRA_GATE_BEAD", "sp-a");
-    *f.build_fact.borrow_mut() = Err("spira-lc facts exited 2".into());
-    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
-    assert!(f.stderr().contains("cannot tell where sp-a's builder built"), "{}", f.stderr());
-    assert!(f.leases.borrow().is_empty(), "nothing is leased on a guess");
-    assert!(f.cmds.borrow().iter().all(|c| !c.contains("cargo test")), "no build ran");
-}
-
 #[test]
 fn a_unit_builds_with_timings_and_the_gate_log_and_run_row_say_where_the_build_went() {
     let f = unit_fake(&["spira-config/src/lib.rs"]);
@@ -2731,7 +2635,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
         (101, "test tests::x ... FAILED".into()),
     );
     assert_eq!(f.run(), FAIL);
-    assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=branch-red"));
     let cmds = f.cmds.borrow().clone();
     assert_eq!(
         cmds.len(),
@@ -3526,6 +3430,19 @@ fn the_gate_tree_builds_on_tmpfs_and_short_room_is_no_verdict() {
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=scratch-short"), "{}", f.verdict_line());
     assert!(f.cmds.borrow().is_empty(), "nothing built: {:?}", f.cmds.borrow());
+}
+
+/// Only a tree the gate judged hands its build directory on; a cut or refused one does not.
+#[test]
+fn a_build_directory_is_handed_on_only_when_the_gate_judged_the_tree() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(f.judged.borrow().as_slice(), &[true]);
+
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nNo space left on device".into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(!f.judged.borrow().contains(&true), "{:?}", f.judged.borrow());
 }
 
 /// A build that dies on the exhausted scratch filesystem is infrastructure — never the

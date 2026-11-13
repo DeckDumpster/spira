@@ -341,19 +341,6 @@ pub fn tail_bytes(s: &str, n: usize) -> String {
     full[start..].trim_end_matches('\n').to_string()
 }
 
-/// The builder's `(tip, directory)` from `spira-lc facts --kinds build-dir` output: the last
-/// row's cause, `<tip>\t<dir>`. Ok(None) when there is no row; Err when the output or the
-/// row is not what a fact reads as.
-pub fn latest_build_dir(facts_json: &str) -> Result<Option<(String, String)>, String> {
-    let rows: Vec<serde_json::Value> = serde_json::from_str(facts_json).map_err(|e| format!("the build-dir facts do not parse: {e}"))?;
-    let Some(last) = rows.last() else { return Ok(None) };
-    let cause = last["new_value"].as_str().unwrap_or("");
-    match cause.split_once('\t') {
-        Some((tip, dir)) if !tip.is_empty() && !dir.is_empty() => Ok(Some((tip.to_string(), dir.to_string()))),
-        _ => Err(format!("the latest build-dir fact reads {cause:?}, not <tip><tab><dir>")),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     const NONE: &[String] = &[];
@@ -621,14 +608,5 @@ mod tests {
         assert_eq!(tail_bytes("abcdef", 4), "def");
         assert_eq!(tail_bytes("ab", 100), "ab");
         assert_eq!(tail_bytes("a—b", 3), "b");
-    }
-
-    #[test]
-    fn the_latest_build_dir_fact_names_the_tip_and_directory_and_none_is_none() {
-        let rows = r#"[{"new_value":"aaa\t/b/dir.1"},{"new_value":"bbb\t/b/dir.2"}]"#;
-        assert_eq!(latest_build_dir(rows), Ok(Some(("bbb".into(), "/b/dir.2".into()))));
-        assert_eq!(latest_build_dir("[]"), Ok(None));
-        assert!(latest_build_dir(r#"[{"new_value":"no-tab"}]"#).is_err());
-        assert!(latest_build_dir("not json").is_err());
     }
 }
