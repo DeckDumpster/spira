@@ -50,6 +50,7 @@
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
+//! | Landing | observe: no `land` in flight (a restart) | Landing (`lc_certify`, `land` again; each walks the store's own state) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
 //! | Landing | land refused (lock busy ×N, or any other refusal) | Done (output kept, round left open, page with the refusing line, no pause) |
 //! | Promoting | promotion named | Corpus / Certifying for the staged round (`main.rs:1069`) |
@@ -1219,6 +1220,8 @@ impl Machine<'_> {
                     self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), why: why.into(), ..self.leg() }.act(ROUND_OPEN));
                 }
             }
+            // A restart keeps no request in flight; the store, not the lost outcome, says how far the land got.
+            State::Landing if self.unsent(repo, LAND) => self.land_now(),
             State::Certified if !self.below => {
                 self.go(Trigger::LowerEnded);
                 self.land_now();

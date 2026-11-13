@@ -27,7 +27,7 @@ impl EffectRunner for Runner {
         self.ran.lock().unwrap().push(spec.name.clone());
         match spec.name.as_str() {
             OBSERVE => Ok(serde_json::to_string(&waiting_pool(&self.settled, self.clock.now_ms())).unwrap()),
-            FETCH | CERTIFY => Ok("{}".into()),
+            FETCH | CERTIFY | LAND => Ok("{}".into()),
             ASSEMBLE => Ok(serde_json::to_string(&assembled()).unwrap()),
             ROUND_OPEN => Ok(serde_json::to_string(&Opened { batch: "next-round".into(), ..Opened::default() }).unwrap()),
             other => Err(format!("no double for {other}")),
@@ -65,9 +65,10 @@ fn a_tick_on_a_stored_landing_row_for_a_landed_batch_cuts_the_waiting_member() {
 }
 
 #[test]
-fn a_tick_on_a_stored_landing_row_for_a_batch_the_lifecycle_has_not_settled_waits() {
+fn a_tick_on_a_stored_landing_row_for_a_batch_the_lifecycle_has_not_settled_lands_it_before_cutting_another() {
     let ran = tick_on_row(STORED, "some-other-batch");
-    assert!(!ran.iter().any(|n| n == ROUND_OPEN), "{ran:?}");
+    let land = ran.iter().position(|n| n == LAND).unwrap_or_else(|| panic!("the unsettled round was not landed again: {ran:?}"));
+    assert!(ran.iter().position(|n| n == ROUND_OPEN).is_none_or(|open| open > land), "{ran:?}");
 }
 
 #[test]
@@ -100,4 +101,33 @@ fn every_lifecycle_driven_state_drops_a_row_whose_batch_is_landed() {
         let (_, acts) = decide(&carry, &waiting_pool(BATCH, NOW));
         assert!(acts.iter().any(|a| a.effect == ASSEMBLE), "{state}: the settled round was forgotten and the next cut: {acts:?}");
     }
+}
+
+fn land_acts_for_landing_row(in_flight: Option<Vec<String>>) -> Vec<String> {
+    let row = STORED.replace("\"waiting\":{\"state\":\"Landing\",\"since_ms\":1794349965000}", "\"waiting\":null");
+    assert_ne!(row, STORED, "the fixture still carries its waiting");
+    let rc: RepoCarry = serde_json::from_str(&row).unwrap();
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let mut snap = waiting_pool("some-other-batch", NOW);
+    snap.repos.get_mut("spira").unwrap().in_flight = in_flight;
+    let (_, acts) = decide(&carry, &snap);
+    acts.iter().map(|a| a.effect.clone()).collect()
+}
+
+#[test]
+fn a_landing_round_asks_to_land_again_only_when_the_scheduler_holds_other_effects_in_flight_and_no_land() {
+    let asked = land_acts_for_landing_row(Some(vec![]));
+    assert!(asked.iter().any(|e| e == LAND), "{asked:?}");
+}
+
+#[test]
+fn a_landing_round_does_not_ask_again_while_its_land_is_in_flight() {
+    let asked = land_acts_for_landing_row(Some(vec![LAND.to_string()]));
+    assert!(!asked.iter().any(|e| e == LAND), "{asked:?}");
+}
+
+#[test]
+fn a_landing_round_does_not_ask_again_when_the_scheduler_reports_no_in_flight_view() {
+    let asked = land_acts_for_landing_row(None);
+    assert!(!asked.iter().any(|e| e == LAND), "{asked:?}");
 }

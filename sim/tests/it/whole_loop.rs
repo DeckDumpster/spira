@@ -26,10 +26,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use lifecycle::bead::{BeadEvent, BeadEventKind, BeadRow, BeadState};
 use lifecycle::reason::GateRedReason;
 use runtime::host::{EffectRunner, VirtualDriver};
-use runtime::journal::Journal;
+use runtime::event::{Event, EFFECT_FAILED, EFFECT_REQUESTED, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT};
+use runtime::journal::{Boot, FaultyJournal, Journal, Poison, Turn};
 use runtime::ports::{Clock, CountingProc, Proc, ProcSpec, VirtualClock};
 use runtime::sources::Sources;
 use runtime::units::{self, Exit, ScopeSpec, ScriptedUnits, StartSpec, UnitSpec, UNIT_RUN_SCOPE, UNIT_START};
+use runtime::event::StreamKey;
 use runtime::{Engine, MemJournal};
 use sim::doubles::Doubles;
 use spira_runtime::tasks::a::{batcher_local as bl, queue_step as qs, sentinel_call as sc, sift};
@@ -57,6 +59,14 @@ enum Due {
     Event { bead: String, actor: String, kind: BeadEventKind },
 }
 
+/// The round the queue holds open: its batch, members and the worktree it was opened with.
+#[derive(Debug)]
+struct OpenRound {
+    batch: String,
+    members: Vec<(String, String)>,
+    wt: String,
+}
+
 /// The in-memory lifecycle store: rows, the writes due later (a dwarf submits when its session
 /// ends), the round the batcher has open, and each row's history.
 #[derive(Default)]
@@ -65,8 +75,9 @@ struct Lc {
     due: Vec<(u64, Due)>,
     history: Vec<(u64, String, String, String)>,
     refused: Vec<String>,
-    round: Option<(String, Vec<(String, String)>)>,
+    round: Option<OpenRound>,
     rounds: u32,
+    landed: Vec<String>,
     dwarves: BTreeMap<String, u64>,
     items: BTreeMap<String, String>,
 }
@@ -123,8 +134,25 @@ struct Script {
     guilty: Option<&'static str>,
 }
 
+/// Where the scheduler dies: after `after` of the named double's store writes have reached the store.
+#[derive(Clone, Copy)]
+struct Crash {
+    double: &'static str,
+    after: u32,
+}
+
+#[derive(Default)]
+struct Crashing {
+    writes: u32,
+    fired: bool,
+    down: bool,
+}
+
 struct World {
     clock: VirtualClock,
+    crash: Option<Crash>,
+    crashing: Mutex<Crashing>,
+    faulty: Arc<FaultyJournal>,
     units: Arc<ScriptedUnits>,
     lc: Mutex<Lc>,
     script: Script,
@@ -136,6 +164,36 @@ struct World {
 impl World {
     fn now(&self) -> u64 {
         self.clock.now_ms()
+    }
+
+    /// Called before each store write and once after the last: at the crash point the outcome's
+    /// journal commit is made to fail, and from then on no double reaches the store.
+    fn gate(&self, double: &str) -> Result<(), String> {
+        let mut c = self.crashing.lock().unwrap_or_else(|e| e.into_inner());
+        if c.down {
+            return Err("the scheduler is down".into());
+        }
+        if self.crash.is_some_and(|t| t.double == double && !c.fired && c.writes == t.after) {
+            c.fired = true;
+            c.down = true;
+            self.faulty.fail_next("append");
+            return Err("the scheduler crashed here".into());
+        }
+        Ok(())
+    }
+
+    fn wrote(&self, double: &str) {
+        if self.crash.is_some_and(|t| t.double == double) {
+            self.crashing.lock().unwrap_or_else(|e| e.into_inner()).writes += 1;
+        }
+    }
+
+    /// One counted write of `double` through the store's machine.
+    fn write(&self, double: &str, lc: &mut Lc, id: &str, actor: &str, kind: BeadEventKind) -> Result<(), String> {
+        self.gate(double)?;
+        lc.apply(self.now(), id, actor, kind)?;
+        self.wrote(double);
+        Ok(())
     }
 
     fn lc(&self) -> MutexGuard<'_, Lc> {
@@ -185,13 +243,15 @@ fn sentinel_unit_start(w: &World, input: &str) -> Result<String, String> {
     let unit = units::unit_name(sc::NAME, &start.key).map_err(|e| e.0)?;
     let mut lc = w.lc();
     let bead = lc.in_state(BeadState::Ready).first().map(|r| r.bead_id.clone()).ok_or("the dwarf found nothing ready")?;
-    lc.apply(now, &bead, &unit, BeadEventKind::Claim { holder: unit.clone(), lease_until: ((now + DWARF_MS) / 1000) as i64 + 600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None })?;
+    w.write("sentinel_unit_start", &mut lc, &bead, &unit, BeadEventKind::Claim { holder: unit.clone(), lease_until: ((now + DWARF_MS) / 1000) as i64 + 600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None })?;
     lc.due.push((now + DWARF_MS - 1, Due::Event { bead: bead.clone(), actor: unit.clone(), kind: BeadEventKind::Submit { tip: tip_of(&bead) } }));
     lc.dwarves.insert(unit, now + DWARF_MS);
     drop(lc);
     w.units.script(sc::NAME, DWARF_MS, Exit::Code(0));
     let spec = UnitSpec { task: sc::NAME.into(), key: start.key, argv: vec!["dwarf".into(), "--home".into(), "/sim/home".into(), start.rune], env: vec![], cwd: None };
-    units::effect(&*w.units, UNIT_START, &json(&StartSpec { unit: spec, props: sc::dwarf_props("3600")? })?)
+    let started = units::effect(&*w.units, UNIT_START, &json(&StartSpec { unit: spec, props: sc::dwarf_props("3600")? })?)?;
+    w.gate("sentinel_unit_start")?;
+    Ok(started)
 }
 
 // --- sift ---------------------------------------------------------------------------------------
@@ -211,7 +271,7 @@ fn sift_observe(w: &World) -> Result<String, String> {
         repo.items.insert(r.bead_id.clone(), lc.items.get(&r.bead_id).cloned().unwrap_or_default());
         repo.candidates.insert(r.bead_id.clone(), sift::Candidate { base: BASE.into(), patch_id: Some(format!("patch-{}", r.bead_id)), ..sift::Candidate::default() });
     }
-    if let Some((_, members)) = &lc.round {
+    if let Some(OpenRound { members, .. }) = &lc.round {
         repo.open_round = members.iter().map(|(i, t)| format!("{i}:{t}")).collect();
     }
     json(&sift::Snapshot { repos: [(REPO.to_string(), repo)].into() })
@@ -219,8 +279,8 @@ fn sift_observe(w: &World) -> Result<String, String> {
 
 fn sift_record_pass(w: &World, input: &str) -> Result<String, String> {
     let wr: sift::Write = parse(sift::RECORD_PASS, input)?;
-    let now = w.now();
-    w.lc().apply(now, &wr.id, sift::NAME, BeadEventKind::Sifted { tip: wr.tip })?;
+    w.write("sift_record_pass", &mut w.lc(), &wr.id, sift::NAME, BeadEventKind::Sifted { tip: wr.tip })?;
+    w.gate("sift_record_pass")?;
     Ok("{}".into())
 }
 
@@ -238,7 +298,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
         .filter(|r| matches!(r.state, BeadState::Submitted | BeadState::Certified))
         .map(|r| bl::Member { id: r.bead_id.clone(), state: r.state.as_str().into(), version: r.version, tip: r.tip.clone().unwrap_or_default(), sifted_tip: r.sifted_tip.clone(), title: r.bead_id.clone(), priority: 2, ..bl::Member::default() })
         .collect();
-    let open_round = lc.round.as_ref().map(|(id, m)| bl::Round { id: id.clone(), members: m.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: format!("/sim/wt/{id}"), driven: held.as_ref() == Some(id), ..bl::Round::default() });
+    let open_round = lc.round.as_ref().map(|r| bl::Round { id: r.batch.clone(), members: r.members.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: r.wt.clone(), driven: held.as_ref() == Some(&r.batch), ..bl::Round::default() });
     let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), ..bl::Repo::default() };
     json(&bl::Snapshot { repos: [(REPO.to_string(), repo)].into(), now_ms: w.now() })
 }
@@ -252,12 +312,15 @@ fn batcher_assemble(input: &str) -> Result<String, String> {
 fn batcher_round_open(w: &World, input: &str) -> Result<String, String> {
     let leg: bl::Leg = parse(bl::ROUND_OPEN, input)?;
     let mut lc = w.lc();
+    w.gate("batcher_round_open")?;
     if lc.round.is_some() {
         return Err("a round is already open".into());
     }
     lc.rounds += 1;
     let batch = format!("round-{}", lc.rounds);
-    lc.round = Some((batch.clone(), leg.members));
+    lc.round = Some(OpenRound { batch: batch.clone(), members: leg.members, wt: leg.wt });
+    w.wrote("batcher_round_open");
+    w.gate("batcher_round_open")?;
     json(&bl::Opened { batch, ..bl::Opened::default() })
 }
 
@@ -296,32 +359,46 @@ fn batcher_certify(w: &World, input: &str) -> Result<String, String> {
 /// `round certify`'s store half: every member SUBMITTED → CERTIFIED at its tip.
 fn batcher_lc_certify(w: &World, input: &str) -> Result<String, String> {
     let leg: bl::Leg = parse(bl::LC_CERTIFY, input)?;
-    let now = w.now();
     let mut lc = w.lc();
     for (id, tip) in &leg.members {
-        lc.apply(now, id, bl::NAME, BeadEventKind::GatePass { tip: tip.clone(), gate_key: format!("round:{}", leg.round_key) })?;
+        if lc.rows.get(id).is_none_or(|r| r.state != BeadState::Submitted) {
+            continue;
+        }
+        w.write("batcher_lc_certify", &mut lc, id, bl::NAME, BeadEventKind::GatePass { tip: tip.clone(), gate_key: format!("round:{}", leg.round_key) })?;
     }
+    w.gate("batcher_lc_certify")?;
     Ok("{}".into())
 }
 
 /// `queue round land`: the round's members delivered and landed, and the round closed.
 fn batcher_land(w: &World, input: &str) -> Result<String, String> {
     let leg: bl::Leg = parse(bl::LAND, input)?;
-    let now = w.now();
     let mut lc = w.lc();
+    if lc.landed.contains(&leg.batch) {
+        return json(&bl::Landed::default());
+    }
     match &lc.round {
-        Some((batch, _)) if *batch == leg.batch => {}
+        Some(r) if r.batch == leg.batch => {}
         other => return Err(format!("land {}: the open round is {other:?}", leg.batch)),
     }
     for (id, _) in &leg.members {
-        lc.apply(now, id, bl::NAME, BeadEventKind::Deliver)?;
-        lc.apply(now, id, bl::NAME, BeadEventKind::Delivered { merge_sha: BASE.into(), proof: format!("round {}", leg.batch) })?;
+        if lc.rows.get(id).is_some_and(|r| r.state == BeadState::Certified) {
+            w.write("batcher_land", &mut lc, id, bl::NAME, BeadEventKind::Deliver)?;
+        }
+        if lc.rows.get(id).is_some_and(|r| r.state == BeadState::InDelivery) {
+            w.write("batcher_land", &mut lc, id, bl::NAME, BeadEventKind::Delivered { merge_sha: BASE.into(), proof: format!("round {}", leg.batch) })?;
+        }
     }
+    w.gate("batcher_land")?;
     lc.round = None;
+    lc.landed.push(leg.batch.clone());
+    w.wrote("batcher_land");
+    w.gate("batcher_land")?;
     json(&bl::Landed::default())
 }
 
 fn batcher_abandon(w: &World) -> Result<String, String> {
+    w.gate("batcher_abandon")?;
     w.lc().round = None;
     Ok("{}".into())
 }
@@ -369,9 +446,64 @@ struct Run {
     states: BTreeMap<String, BeadState>,
     spawned: u64,
     wall: std::time::Duration,
+    /// The error the first scheduler died with, when a crash was planned.
+    crashed: Option<String>,
+    rounds: u32,
+    round_open: bool,
+    /// Each requested effect and the ids of the outcome events shipped for it.
+    effects: Vec<(String, Vec<String>)>,
+    /// Every request id a committed turn resolved, in order.
+    resolved: Vec<String>,
+}
+
+/// How a run is interrupted: where the scheduler dies, and whether the restarted one is told
+/// nothing about the effects the first left open (the planted fault that shows the checks can see a lost effect).
+#[derive(Clone, Copy, Default)]
+struct Interrupt {
+    crash: Option<Crash>,
+    blind: bool,
+}
+
+/// A journal that boots with no unresolved effect and delegates everything else.
+struct Blind(Arc<dyn Journal>);
+
+impl Journal for Blind {
+    fn record(&self, ev: &Event) {
+        self.0.record(ev)
+    }
+    fn boot(&self) -> runtime::Result<Boot> {
+        self.0.boot().map(|b| Boot { effects: vec![], ..b })
+    }
+    fn commit(&self, turn: &Turn) -> runtime::Result<()> {
+        self.0.commit(turn)
+    }
+    fn poison(&self, p: &Poison) -> runtime::Result<()> {
+        self.0.poison(p)
+    }
+    fn poisoned(&self, stream: &StreamKey) -> runtime::Result<Option<Poison>> {
+        self.0.poisoned(stream)
+    }
+    fn history(&self) -> Vec<Event> {
+        self.0.history()
+    }
+}
+
+fn effects_of(history: &[Event]) -> Vec<(String, Vec<String>)> {
+    let outcome = |e: &Event| [EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT].contains(&e.kind.tag.as_str());
+    history
+        .iter()
+        .filter(|e| e.kind.tag == EFFECT_REQUESTED)
+        .map(|r| (r.id.0.clone(), history.iter().filter(|o| outcome(o) && o.cause.as_ref() == Some(&r.id)).map(|o| o.id.0.clone()).collect()))
+        .collect()
 }
 
 fn run(seed: u64, script: Script) -> Run {
+    let r = run_interrupted(seed, script, Interrupt::default());
+    assert!(r.crashed.is_none(), "the loop settles: {:?}", r.crashed);
+    r
+}
+
+fn run_interrupted(seed: u64, script: Script, interrupt: Interrupt) -> Run {
     let began = std::time::Instant::now();
     let clock = VirtualClock::new(0);
     let c: Arc<dyn Clock> = Arc::new(clock.clone());
@@ -380,18 +512,31 @@ fn run(seed: u64, script: Script) -> Run {
     for (at, id) in &script.file {
         lc.due.push((*at, Due::File(id.to_string())));
     }
-    let world = Arc::new(World { clock: clock.clone(), units: units.clone(), lc: Mutex::new(lc), script, proc: CountingProc::refusing() });
+    let mem = MemJournal::new();
+    let journal: Arc<dyn Journal> = mem.clone();
+    let faulty = FaultyJournal::new(journal.clone());
+    let world = Arc::new(World { clock: clock.clone(), crash: interrupt.crash, crashing: Mutex::default(), faulty: faulty.clone(), units: units.clone(), lc: Mutex::new(lc), script, proc: CountingProc::refusing() });
     let runner = Arc::new(doubles(&world));
-    let journal: Arc<dyn Journal> = MemJournal::new();
-    let settings = common::settings_with(&[("SPIRA_BATCHER_WALL_SECS", "3600")]);
-    let mut engine = Engine::open(journal.clone(), c.clone(), registrations(&settings), seed).expect("the service's registrations open");
-    for (_, stream, kind) in tasks::boots() {
-        engine.start(stream, kind);
+    let settings = common::settings_with(&[("SPIRA_BATCHER_WALL_SECS", "3600"), ("SPIRA_ROUND_MAX_OPEN", "1")]);
+    let boot = |over: Arc<dyn Journal>| {
+        let mut engine = Engine::open(over, c.clone(), registrations(&settings), seed).expect("the service's registrations open");
+        for (_, stream, kind) in tasks::boots() {
+            engine.start(stream, kind);
+        }
+        let mut sources = Sources::default();
+        sources.register(Box::new(spira_runtime::sources::units::scripted(units.clone(), c.clone()))).expect("the unit.ran source");
+        VirtualDriver::new(engine, clock.clone(), runner.clone() as Arc<dyn EffectRunner>).with_sources(sources).expect("scripted sources only")
+    };
+    let mut crashed = None;
+    let mut driver = boot(faulty.clone());
+    if let Err(e) = driver.run_until(UNTIL_MS) {
+        crashed = Some(e.to_string());
+        drop(driver);
+        world.crashing.lock().unwrap_or_else(|e| e.into_inner()).down = false;
+        let over: Arc<dyn Journal> = if interrupt.blind { Arc::new(Blind(journal.clone())) } else { journal.clone() };
+        driver = boot(over);
+        driver.run_until(UNTIL_MS).expect("the restarted loop settles");
     }
-    let mut sources = Sources::default();
-    sources.register(Box::new(spira_runtime::sources::units::scripted(units.clone(), c.clone()))).expect("the unit.ran source");
-    let mut driver = VirtualDriver::new(engine, clock, runner.clone() as Arc<dyn EffectRunner>).with_sources(sources).expect("scripted sources only");
-    driver.run_until(UNTIL_MS).expect("the loop settles");
     let lc = world.lc();
     Run {
         trace: runtime::conformance::trace(&*journal),
@@ -402,6 +547,11 @@ fn run(seed: u64, script: Script) -> Run {
         states: lc.rows.iter().map(|(id, r)| (id.clone(), r.state)).collect(),
         spawned: world.proc.spawned(),
         wall: began.elapsed(),
+        crashed,
+        rounds: lc.rounds,
+        round_open: lc.round.is_some(),
+        effects: effects_of(&journal.history()),
+        resolved: mem.commits().into_iter().flat_map(|t| t.resolved).collect(),
     }
 }
 
@@ -514,4 +664,148 @@ fn two_members_sifted_in_one_pass_are_cut_into_one_round() {
     for id in ["sp-w3a", "sp-w3b"] {
         assert_eq!(a.states[id], BeadState::Landed, "{id}: {}", dump(&a));
     }
+}
+
+// --- a crash between a store write and its journaled outcome --------------------------------------
+
+const GREEN2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: None };
+const RED2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: Some("sp-w3b") };
+const BEADS: [&str; 2] = ["sp-w3a", "sp-w3b"];
+
+/// Every requested effect has an outcome, and no outcome was handled twice. An outcome
+/// shipped by a turn that never committed is shipped again as the restart's own, under the
+/// same event id: one outcome event, resolved once.
+fn effects_resolved(r: &Run) -> Result<(), String> {
+    let mut ids: Vec<(&String, std::collections::BTreeSet<&String>)> = r.effects.iter().map(|(k, o)| (k, o.iter().collect())).collect();
+    ids.retain(|(_, o)| o.len() != 1);
+    if !ids.is_empty() {
+        return Err(format!("effects without exactly one outcome: {ids:?}"));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let twice: Vec<&String> = r.resolved.iter().filter(|id| !seen.insert(*id)).collect();
+    if !twice.is_empty() {
+        return Err(format!("outcomes handled twice: {twice:?}"));
+    }
+    Ok(())
+}
+
+/// What the interrupted run must equal the uninterrupted one on, as the first difference.
+fn converged(crashed: &Run, clean: &Run) -> Result<(), String> {
+    for b in BEADS {
+        if lifecycle_of(crashed, b) != lifecycle_of(clean, b) {
+            return Err(format!("{b} lifecycle {:?}, uninterrupted {:?}\n{}", lifecycle_of(crashed, b), lifecycle_of(clean, b), dump(crashed)));
+        }
+    }
+    if crashed.states != clean.states {
+        return Err(format!("final states {:?}, uninterrupted {:?}", crashed.states, clean.states));
+    }
+    if crashed.rounds != clean.rounds || crashed.round_open {
+        return Err(format!("rounds opened {} (uninterrupted {}), a round still open: {}\n{}", crashed.rounds, clean.rounds, crashed.round_open, dump(crashed)));
+    }
+    effects_resolved(crashed)?;
+    let not_landed: Vec<&String> = crashed.trace.iter().filter(|e| e.1 == bl::STREAM && e.3.contains("NOT LANDED")).map(|e| &e.3).collect();
+    if !not_landed.is_empty() {
+        return Err(format!("the batcher journaled a verdict the store contradicts: {not_landed:?}"));
+    }
+    if batcher_states(&crashed.trace).last().map(String::as_str) != Some("Idle") {
+        return Err(format!("the batcher ended {:?}\n{}", batcher_states(&crashed.trace), dump(crashed)));
+    }
+    Ok(())
+}
+
+fn crash_at(name: &str, script: fn() -> Script, seed: u64, double: &'static str, after: u32) {
+    crash_at_cutting(name, script, seed, double, after, None);
+}
+
+/// [`crash_at`], for a crash after which the cut is made from what the store shows sifted so
+/// far: `rounds` is how many rounds that takes, where the uninterrupted run took the clean count.
+fn crash_at_cutting(name: &str, script: fn() -> Script, seed: u64, double: &'static str, after: u32, rounds: Option<u32>) {
+    let interrupt = Interrupt { crash: Some(Crash { double, after }), blind: false };
+    let clean = run(seed, script());
+    let a = run_interrupted(seed, script(), interrupt);
+    let b = run_interrupted(seed, script(), interrupt);
+    show(name, &a);
+    assert_eq!(a.crashed.as_deref(), Some("injected fault in append"), "the crash was seen at {double} after {after} writes");
+    let mut want = clean;
+    want.rounds = rounds.unwrap_or(want.rounds);
+    let clean = want;
+    if let Err(why) = converged(&a, &clean) {
+        panic!("{name}: {why}\n{}", dump(&a));
+    }
+    assert_no_process(&a);
+    assert_eq!(a.trace, b.trace, "one seed, one trace");
+}
+
+#[test]
+fn a_crash_after_the_dwarfs_claim_converges_on_the_store() {
+    crash_at("claim", GREEN2, 12, "sentinel_unit_start", 1);
+}
+
+#[test]
+fn a_crash_after_sift_recorded_both_passes_converges_on_the_store() {
+    crash_at("sifted_both", GREEN2, 12, "sift_record_pass", 2);
+}
+
+/// Sift's first pass reached the store and the second did not: the batcher's first look at the
+/// restarted store finds one member sifted and cuts it alone, and the other lands in the next round.
+#[test]
+fn a_crash_after_sift_recorded_one_pass_cuts_what_the_store_shows_sifted() {
+    crash_at_cutting("sifted_one", GREEN2, 12, "sift_record_pass", 1, Some(2));
+}
+
+#[test]
+fn a_crash_after_the_round_was_recorded_converges_on_the_store() {
+    crash_at("round_open", GREEN2, 12, "batcher_round_open", 1);
+}
+
+#[test]
+fn a_crash_after_the_first_member_was_certified_converges_on_the_store() {
+    crash_at("lc_certify", GREEN2, 12, "batcher_lc_certify", 1);
+}
+
+#[test]
+fn a_crash_after_the_first_members_deliver_converges_on_the_store() {
+    crash_at("land_1_deliver", GREEN2, 12, "batcher_land", 1);
+}
+
+#[test]
+fn a_crash_after_the_first_member_landed_converges_on_the_store() {
+    crash_at("land_1_delivered", GREEN2, 12, "batcher_land", 2);
+}
+
+#[test]
+fn a_crash_after_the_last_member_landed_converges_on_the_store() {
+    crash_at("land_2_delivered", GREEN2, 12, "batcher_land", 4);
+}
+
+#[test]
+fn a_crash_after_the_round_was_closed_converges_on_the_store() {
+    crash_at("land_closed", GREEN2, 12, "batcher_land", 5);
+}
+
+#[test]
+fn a_crash_after_the_last_member_was_certified_converges_on_the_store() {
+    crash_at("lc_certify_both", GREEN2, 12, "batcher_lc_certify", 2);
+}
+
+#[test]
+fn a_crash_after_the_round_was_recorded_converges_when_one_member_is_red() {
+    crash_at("red_round_open", RED2, 12, "batcher_round_open", 1);
+}
+
+#[test]
+fn a_crash_after_the_survivor_was_delivered_converges_when_one_member_is_red() {
+    crash_at("red_land", RED2, 12, "batcher_land", 1);
+}
+
+/// The checks above must be able to see a lost effect: a restart that is told nothing about
+/// the effects the first scheduler left open never answers the round open, and they fail.
+#[test]
+fn the_checks_see_an_effect_lost_at_a_restart() {
+    let blind = Interrupt { crash: Some(Crash { double: "batcher_round_open", after: 1 }), blind: true };
+    let a = run_interrupted(12, GREEN2(), blind);
+    assert_eq!(a.crashed.as_deref(), Some("injected fault in append"));
+    let pending = effects_resolved(&a).expect_err("the open round_open has no outcome");
+    assert!(pending.contains("without exactly one outcome"), "{pending}");
+    assert!(converged(&a, &run(12, GREEN2())).is_err(), "and the run does not converge");
 }
