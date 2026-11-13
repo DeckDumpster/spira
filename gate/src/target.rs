@@ -477,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn a_trial_starts_on_a_root_reporting_less_free_space_and_memory_than_the_old_floors() {
+    fn a_trial_starts_on_a_root_reporting_less_free_space_than_the_old_4096_mib_floor() {
         let s = Scratch::new("short");
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
