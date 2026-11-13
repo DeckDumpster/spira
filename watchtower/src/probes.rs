@@ -250,6 +250,12 @@ pub fn psi_full_avg60(text: &str) -> Option<f64> {
     line.split_whitespace().find_map(|w| w.strip_prefix("avg60="))?.parse().ok()
 }
 
+/// The `full avg300` of a `/proc/pressure/<resource>` file.
+pub fn psi_full_avg300(text: &str) -> Option<f64> {
+    let line = text.lines().find(|l| l.starts_with("full "))?;
+    line.split_whitespace().find_map(|w| w.strip_prefix("avg300="))?.parse().ok()
+}
+
 fn cond(key: &str, title: String, body: String, sustain: i64) -> Cond {
     Cond { key: key.into(), reference: format!("incident:pressure-{key}"), title, body, priority: 1, sustain_secs: sustain }
 }
@@ -335,9 +341,13 @@ fn path_key(path: &str) -> String {
     path.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect()
 }
 
+pub const ROOT_PATH: &str = "/";
+pub const DEFAULT_TMP_PATH: &str = "/tmp";
+pub const DEFAULT_PSI_DIR: &str = "/proc/pressure";
+
 /// Root, the run directory and the build pool, then the operator's extra paths.
 pub fn watch_paths(run: &Path, extra: &str, build_base: &str) -> Vec<String> {
-    ["/", &run.to_string_lossy()].into_iter().chain(build_base.split_whitespace()).chain(extra.split_whitespace()).map(String::from).collect()
+    [ROOT_PATH, &run.to_string_lossy()].into_iter().chain(build_base.split_whitespace()).chain(extra.split_whitespace()).map(String::from).collect()
 }
 
 pub fn disk_room(cfg: &Cfg, now: i64, read: &dyn Fn(&str) -> Option<FsReading>) -> Reading {
@@ -840,6 +850,10 @@ mod tests {
         let psi = "some avg10=1.00 avg60=2.00 avg300=0.50 total=1\nfull avg10=0.00 avg60=12.34 avg300=1.00 total=1\n";
         assert_eq!(psi_full_avg60(psi), Some(12.34));
         assert_eq!(psi_full_avg60("some avg60=9.0\n"), None);
+        let both = "some avg10=1.00 avg60=2.00 avg300=3.00 total=4\nfull avg10=5.00 avg60=6.00 avg300=52.50 total=7\n";
+        assert_eq!(psi_full_avg300(both), Some(52.5), "the full line's avg300, not some's");
+        assert_eq!(psi_full_avg300("some avg300=9.0\n"), None);
+        assert_eq!(psi_full_avg300("full avg10=1.0 avg60=2.0\n"), None);
     }
 
     fn cfg(dir: &Path) -> Cfg {

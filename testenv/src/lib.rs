@@ -20,6 +20,7 @@ pub mod preflight;
 pub mod prebuilt;
 pub mod prune;
 pub mod reap;
+pub mod target_reap;
 pub mod resume;
 pub mod record;
 pub mod run;

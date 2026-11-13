@@ -15,6 +15,8 @@ pub mod failed_units;
 pub mod fsstat;
 pub mod gate_wait;
 pub mod git;
+pub mod host_real;
+pub mod host_section;
 pub mod incident;
 pub mod lc;
 pub mod lapsed;

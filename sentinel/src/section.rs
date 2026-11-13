@@ -20,9 +20,11 @@ const DAY: u64 = 24 * HOUR;
 /// A section unchanged is still published this often, inside its 15 m `max_age`.
 pub const KEEPALIVE_SECS: u64 = 300;
 
+use spira_desired_state::sections::host;
+
 /// The kind and condition of the `host` section this one mirrors. Absent until it is armed.
-pub const HOST_KIND: &str = "Host";
-pub const HOST_SHEDDING_CONDITION: &str = "Shedding";
+pub const HOST_KIND: &str = host::NAME;
+pub const HOST_SHEDDING_CONDITION: &str = host::HOST_SHEDDING;
 
 /// One dwarf run: a `born` line matched with the `done` line it ended on, or still alive.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -428,6 +430,28 @@ mod tests {
         let (status, _) = status_of(None, &f, true, NOW);
         let shedding = status["conditions"].as_array().unwrap().iter().find(|c| c["type"] == fleet::HOST_SHEDDING).unwrap();
         assert_eq!(shedding["status"], "True");
+    }
+
+    #[test]
+    fn the_mirror_reads_the_condition_the_watchtower_publishes() {
+        use watchtower::host_section::{status_of, Host, Sample};
+        let h = |shed_from| Host {
+            sample: Sample { scratch: Some(0.9), worktrees: Some(0.9), root: Some(0.9), io: Some(1.0) },
+            certify_par: 1,
+            shed_from,
+            stale_scratch: 0,
+            stale_targets: 0,
+        };
+        let published = |shed_from| {
+            let (status, _) = status_of(None, &h(shed_from), NOW);
+            json!({ "section": {
+                "apiVersion": "spira/v1", "kind": HOST_KIND,
+                "metadata": { "name": "host", "owner": "watchtower", "observedAt": "2026-10-31T19:40:00Z", "target_latency": "5m", "max_age": "15m" },
+                "status": status,
+            }})
+        };
+        assert!(host_shedding(&json!({ "sections": [published(Some(2))] })), "a shed in force raises what the fleet mirrors");
+        assert!(!host_shedding(&json!({ "sections": [published(None)] })));
     }
 
     #[test]

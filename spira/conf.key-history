@@ -140,6 +140,7 @@ groomer_label
 groom_threshold
 health_timeout
 home_repo
+host_worktree_subdir
 hypervisor_mem_mib
 hook_lines
 id_prefix

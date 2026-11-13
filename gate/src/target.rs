@@ -313,33 +313,50 @@ pub fn intact(tree: &Path) -> bool {
     })
 }
 
+/// How many of `stale` entries a `fraction` of the stale set allows: at least one while any is
+/// stale, so a bound never stalls a reap.
+pub fn bound(stale: usize, fraction: f64) -> usize {
+    ((stale as f64) * fraction - 1e-9).ceil().max(if stale > 0 { 1.0 } else { 0.0 }) as usize
+}
+
 /// Backstop for crashed gates: remove every `root/<name>` untouched for `max_age` that no
 /// gate holds (`trees_dir/<name>.lock` free, no admission slot naming it, `busy` false).
-/// Returns the names removed (or, with `dry`, that would be). A `trees_dir` that is not a
-/// directory proves no lock free, so nothing is removed.
+/// With `fraction`, only that share of the stale set by count goes, oldest first. Returns the
+/// names removed (or, with `dry`, that would be). A `trees_dir` that is not a directory proves
+/// no lock free, so nothing is removed.
 pub fn reap_stale(
     root: &Path,
     trees_dir: &Path,
     max_age: std::time::Duration,
+    fraction: Option<f64>,
     dry: bool,
     busy: &dyn Fn(&Path) -> bool,
     held: &dyn Fn(&str) -> bool,
 ) -> Vec<String> {
     let now = std::time::SystemTime::now();
-    let mut out = Vec::new();
+    let mut stale = Vec::new();
     if !trees_dir.is_dir() {
-        return out;
+        return Vec::new();
     }
-    let Ok(rd) = fs::read_dir(root) else { return out };
+    let Ok(rd) = fs::read_dir(root) else { return Vec::new() };
     for e in rd.flatten() {
         let n = e.file_name().to_string_lossy().into_owned();
         let p = e.path();
-        if n == crate::warm::POOL || !p.is_dir() || now.duration_since(mtime(&p)).unwrap_or_default() < max_age {
+        let modified = mtime(&p);
+        if n == crate::warm::POOL || !p.is_dir() || now.duration_since(modified).unwrap_or_default() < max_age {
             continue;
         }
         if !lock_free(&trees_dir.join(format!("{n}.lock"))) || pinned(&p) || busy(&p) || busy(&trees_dir.join(&n)) || held(&n) {
             continue;
         }
+        stale.push((modified, n, p));
+    }
+    stale.sort();
+    if let Some(f) = fraction {
+        stale.truncate(bound(stale.len(), f));
+    }
+    let mut out = Vec::new();
+    for (_, n, p) in stale {
         if !dry {
             let _ = fs::remove_dir_all(&p);
         }
@@ -371,6 +388,11 @@ pub fn mem_available_mib() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bound_is_a_share_of_the_stale_set_by_count_and_never_zero_while_any_is_stale() {
+        assert_eq!([bound(20, 0.1), bound(5, 0.1), bound(1, 0.1), bound(0, 0.1), bound(10, 1.0)], [2, 1, 1, 0, 10]);
+    }
 
     #[allow(dead_code)]
     struct Scratch(testkit::TempDir, PathBuf);
@@ -628,13 +650,13 @@ mod tests {
         };
         let busy = |p: &Path| p.ends_with("busy");
         let two_h = std::time::Duration::from_secs(2 * 3600);
-        assert_eq!(reap_stale(&root, &trees, two_h, true, &busy, &|_| false), vec!["stale".to_string()]);
+        assert_eq!(reap_stale(&root, &trees, two_h, None, true, &busy, &|_| false), vec!["stale".to_string()]);
         assert!(root.join("stale").exists(), "dry run removes nothing");
-        assert_eq!(reap_stale(&root, &trees, two_h, false, &busy, &|_| false), vec!["stale".to_string()]);
+        assert_eq!(reap_stale(&root, &trees, two_h, None, false, &busy, &|_| false), vec!["stale".to_string()]);
         assert!(!root.join("stale").exists());
         write_mib(&root.join(crate::warm::POOL).join("e/debug/x"), 1);
         fs::File::open(root.join(crate::warm::POOL)).unwrap().set_modified(old).unwrap();
-        assert!(reap_stale(&root, &trees, two_h, false, &busy, &|_| false).is_empty(), "an idle warm pool is not a stale tree");
+        assert!(reap_stale(&root, &trees, two_h, None, false, &busy, &|_| false).is_empty(), "an idle warm pool is not a stale tree");
         for n in ["held", "busy", "fresh"] {
             assert!(root.join(n).join("debug/x").is_file(), "{n} kept");
         }
@@ -661,7 +683,7 @@ mod tests {
             fs::File::open(root.join(n)).unwrap().set_modified(old).unwrap();
         }
         let two_h = std::time::Duration::from_secs(2 * 3600);
-        assert_eq!(reap_stale(&root, &trees, two_h, false, &|_| false, &held), vec![".gate.harness.spira-sp-b2".to_string()]);
+        assert_eq!(reap_stale(&root, &trees, two_h, None, false, &|_| false, &held), vec![".gate.harness.spira-sp-b2".to_string()]);
         assert!(root.join(".gate.harness.spira-sp-a1/debug/x").is_file(), "the slot holder's target survives");
 
         let tree = trees.join(".gate.harness.spira-sp-c3");
@@ -677,7 +699,7 @@ mod tests {
         let root = s.1.join("root");
         write_mib(&root.join("stale/debug/x"), 1);
         fs::File::open(root.join("stale")).unwrap().set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(9 * 3600)).unwrap();
-        assert!(reap_stale(&root, &s.1.join("nowhere"), std::time::Duration::from_secs(60), false, &|_| false, &|_| false).is_empty());
+        assert!(reap_stale(&root, &s.1.join("nowhere"), std::time::Duration::from_secs(60), None, false, &|_| false, &|_| false).is_empty());
         assert!(root.join("stale/debug/x").is_file());
     }
 
@@ -716,7 +738,7 @@ mod tests {
         assert_eq!(p.evicted, vec![".gate.harness.plain".to_string()]);
         assert!(root.join(".gate.harness.pin/release/y").is_file(), "pinned release kept");
         let two_s = std::time::Duration::from_secs(0);
-        assert!(reap_stale(&root, &trees, two_s, true, &|_| false, &|_| false).iter().all(|n| n != ".gate.harness.pin"), "reaper spares a pin");
+        assert!(reap_stale(&root, &trees, two_s, None, true, &|_| false, &|_| false).iter().all(|n| n != ".gate.harness.pin"), "reaper spares a pin");
         let stale = std::time::SystemTime::now() - PIN_MAX_AGE - std::time::Duration::from_secs(60);
         fs::File::open(root.join(".gate.harness.pin/release").join(PIN)).unwrap().set_modified(stale).unwrap();
         assert!(!pinned(&root.join(".gate.harness.pin")), "an old pin expires");

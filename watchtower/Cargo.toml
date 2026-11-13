@@ -11,7 +11,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration"]
+integration = ["reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -22,6 +22,8 @@ spira-store = { path = "../spira-store" }
 spira-ctrl = { path = "../spira-ctrl" }
 strand = { path = "../strand" }
 runtime = { path = "../runtime" }
+spira-desired-state = { path = "../desired-state" }
+reconciler-engine = { path = "../reconciler-engine" }
 
 [lib]
 name = "watchtower"
