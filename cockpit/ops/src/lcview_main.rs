@@ -423,7 +423,17 @@ fn gather() -> Snapshot {
     s.forge_base = spira_config::process::cfg("SPIRA_FORGE_REPO").ok().and_then(|r| r.trim().split_once('/').map(|(o, _)| format!("https://github.com/{o}"))).unwrap_or_default();
     s.loom_base = spira_config::process::cfg("SPIRA_LOOM_ADDR").ok().map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).map(|a| format!("http://{}", a.replacen("0.0.0.0", "localhost", 1)));
     gather_menders(&mut s);
-    s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_DWARVES").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+    let file_ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_DWARVES").ok().map(|v| v.trim().to_string());
+    let limit = spira_config::scheduler_link::Limit::read("SPIRA_MAX_LIVE_DWARVES", file_ceiling.as_deref());
+    let shown = limit.held().map(str::to_string).or(match &limit {
+        spira_config::scheduler_link::Limit::Unanswered { file, .. } => file.clone(),
+        _ => None,
+    });
+    s.ceiling = shown.and_then(|v| v.parse().ok()).unwrap_or(0);
+    if let Some(p) = limit.pending() {
+        s.ceiling_pending = p.config.clone();
+        s.ceiling_waits = p.waits.clone();
+    }
     s.failures = s.errors.len() as u64;
     s.gather_ms = started.elapsed().as_millis() as u64;
     s

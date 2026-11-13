@@ -20,6 +20,7 @@
 use std::env;
 use std::path::PathBuf;
 
+use spira_config::scheduler_link::Limit;
 use spira_config::SpiraToml;
 use spira_world::{fleet, seam, sysctl};
 
@@ -70,8 +71,13 @@ fn cmd_status() -> i32 {
         }
     };
     let spira = doc.as_ref().and_then(|d| d.spira.as_ref());
-    let ceiling = spira.and_then(|s| spira_config::said(s.get_u32("SPIRA_MAX_LIVE_DWARVES")));
-    let pool = spira.and_then(|s| spira_config::said(s.get_u32("SPIRA_MAX_DWARVES")));
+    let file_ceiling = spira.and_then(|s| spira_config::said(s.get_u32("SPIRA_MAX_LIVE_DWARVES")));
+    let file_pool = spira.and_then(|s| spira_config::said(s.get_u32("SPIRA_MAX_DWARVES")));
+    let limit_ceiling = Limit::read("SPIRA_MAX_LIVE_DWARVES", file_ceiling.map(|c| c.to_string()).as_deref());
+    let limit_pool = Limit::read("SPIRA_MAX_DWARVES", file_pool.map(|c| c.to_string()).as_deref());
+    let enforced = |l: &Limit, file: Option<u32>| l.held().and_then(|h| h.parse::<u32>().ok()).or(file);
+    let ceiling = enforced(&limit_ceiling, file_ceiling);
+    let pool = enforced(&limit_pool, file_pool);
     let lanes_cap = spira.and_then(|s| spira_config::said(s.get_u32("SPIRA_LANES_MAX_LIVE")));
 
     let lib_sh = spira_world::locate_home().map(|h| h.join("lib.sh"));
@@ -81,13 +87,13 @@ fn cmd_status() -> i32 {
     for line in roster.live_lines(None, false) {
         println!("{line}");
     }
-    match ceiling {
-        Some(c) => println!("  fleet ceiling     {c}   (SPIRA_MAX_LIVE_DWARVES — counts every lane dwarf; a directed one is outside it)"),
-        None => println!("  fleet ceiling     none  (SPIRA_MAX_LIVE_DWARVES unset)"),
+    match (&limit_ceiling, file_ceiling) {
+        (Limit::Unanswered { file: None, .. }, None) => println!("  fleet ceiling     none  (SPIRA_MAX_LIVE_DWARVES unset)"),
+        (l, _) => println!("  fleet ceiling     {}   (SPIRA_MAX_LIVE_DWARVES — counts every lane dwarf; a directed one is outside it)", l.render()),
     }
-    match pool {
-        Some(p) => println!("  task pool         {p}   (SPIRA_MAX_DWARVES — builders and other task runes)"),
-        None => println!("  task pool         ?   (SPIRA_MAX_DWARVES — builders and other task runes)"),
+    match (&limit_pool, file_pool) {
+        (Limit::Unanswered { file: None, .. }, None) => println!("  task pool         ?   (SPIRA_MAX_DWARVES — builders and other task runes)"),
+        (l, _) => println!("  task pool         {}   (SPIRA_MAX_DWARVES — builders and other task runes)", l.render()),
     }
     println!("  lanes             {lt}   ({ld} — each draws OUTSIDE the pool)");
     let pool_n = pool.unwrap_or(0);

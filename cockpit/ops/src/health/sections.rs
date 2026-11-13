@@ -245,8 +245,19 @@ pub fn slots_line(snap: &Snapshot) -> String {
         (Some(_), Ok(p), Ok(l)) => format!("  {DIM}(builders {}-{p}, lanes 0-{l}){RST}", (p - l).max(0)),
         _ => String::new(),
     };
+    let pending = match snap.get("SP_SLOTS_PENDING").filter(|p| !p.is_empty()) {
+        Some(p) => {
+            let waits = snap.get("SP_SLOTS_WAITS").filter(|w| !w.is_empty()).map(|w| format!(", waiting for {w}")).unwrap_or_default();
+            format!("  {WARN}config {p} pending{waits}{RST}")
+        }
+        None => String::new(),
+    };
+    let directed = match snap.get("SP_SLOTS_DIRECTED").map(|d| d.trim()) {
+        Some("0") | Some("") | None => String::new(),
+        Some(d) => format!("  {DIM}{d} directed{RST}"),
+    };
     format!(
-        " {DIM}SLOTS{RST}   {B}{}/{}{RST}  {col}{free} free{RST}{split}",
+        " {DIM}SLOTS{RST}   {B}{}/{}{RST}  {col}{free} free{RST}{split}{pending}{directed}",
         snap.q("SP_SLOTS_LIVE"),
         snap.q("SP_SLOTS_CEILING"),
     )
