@@ -24,8 +24,8 @@ pub fn artifacts_dir(worktree: &Path, profile: &str) -> PathBuf {
 /// The calling session's owned build directory (`CARGO_TARGET_DIR` under `dwarf_build_base`,
 /// sp-ke0uk8): any other value is ignored, so an inherited override can never redirect a build
 /// elsewhere.
-pub fn warm_target(var: Option<std::ffi::OsString>, base: Option<&Path>) -> Option<PathBuf> {
-    spira_config::build_dir::owned(var, base)
+pub fn warm_target(var: Option<std::ffi::OsString>, bases: &[PathBuf]) -> Option<PathBuf> {
+    spira_config::build_dir::owned(var, bases)
 }
 
 /// Make `<worktree>/target/<profile dir>` resolve to the warm slot's, so every reader of
@@ -128,11 +128,7 @@ impl Builder for Cargo {
     ) -> Result<Duration, BuildError> {
         let warm = warm_target(
             std::env::var_os("CARGO_TARGET_DIR"),
-            spira_config::process::cfg(spira_config::build_dir::BASE_ENV)
-                .ok()
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .as_deref(),
+            &spira_config::build_dir::configured_bases(),
         );
         build_in(worktree, profile, deadline, warm)
     }
@@ -318,11 +314,11 @@ mod tests {
         std::fs::create_dir_all(&slot).unwrap();
         let other = d.join("elsewhere");
         std::fs::create_dir_all(&other).unwrap();
-        assert_eq!(warm_target(Some(slot.clone().into()), Some(&base)), Some(slot.clone()));
-        assert_eq!(warm_target(Some(other.into()), Some(&base)), None);
-        assert_eq!(warm_target(Some("warm-base/slot.9".into()), Some(&base)), None);
-        assert_eq!(warm_target(Some(slot.clone().into()), None), None);
-        assert_eq!(warm_target(None, Some(&base)), None);
+        assert_eq!(warm_target(Some(slot.clone().into()), std::slice::from_ref(&base)), Some(slot.clone()));
+        assert_eq!(warm_target(Some(other.into()), std::slice::from_ref(&base)), None);
+        assert_eq!(warm_target(Some("warm-base/slot.9".into()), std::slice::from_ref(&base)), None);
+        assert_eq!(warm_target(Some(slot.clone().into()), &[]), None);
+        assert_eq!(warm_target(None, std::slice::from_ref(&base)), None);
     }
 
     #[test]
@@ -351,7 +347,7 @@ mod tests {
         std::fs::write(wt.join("target").join("debug").join("tool"), "x").unwrap();
         let slot = base.join("slot.1");
         std::os::unix::fs::symlink(wt.join("target"), &slot).unwrap();
-        assert_eq!(warm_target(Some(slot.clone().into()), Some(&base)), Some(slot.clone()));
+        assert_eq!(warm_target(Some(slot.clone().into()), std::slice::from_ref(&base)), Some(slot.clone()));
         link_artifacts(&wt, "dev", &slot).unwrap();
         assert!(artifacts_dir(&wt, "dev").join("tool").is_file());
     }

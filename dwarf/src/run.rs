@@ -1463,12 +1463,11 @@ impl<'a> Run<'a> {
         use spira_config::build_dir as bd;
         let f = self.f().to_string();
         if self.s.build_dir.is_none() {
-            let base = self.conf.s(bd::BASE_ENV);
-            if base.is_empty() {
+            let bases = bd::parse_bases(&self.conf.s(bd::BASE_ENV));
+            if bases.is_empty() {
                 return Err(Abort::Harness(format!("{} is not set — a building dwarf has no build directory; set dwarf_build_base in the config document", bd::BASE_ENV)));
             }
-            let base = PathBuf::from(base);
-            let lease = bd::lease(&base, &self.s.bead).map_err(|e| Abort::Harness(format!("cannot lease a build directory under {}: {e}", base.display())))?;
+            let lease = bd::lease(&bases, &self.s.bead).map_err(|e| Abort::Harness(format!("cannot lease a build directory under {}: {e}", self.conf.s(bd::BASE_ENV))))?;
             let dir = lease.dir().to_path_buf();
             self.log(&format!("{f}: build directory {} — {}", dir.display(), if lease.reused { "warm: the most recently idled one" } else { "new" }));
             // The shared selective clean: only the workspace crates whose bytes differ from the
@@ -1487,7 +1486,7 @@ impl<'a> Run<'a> {
                 }
             }
             let budget = (self.conf.i(bd::BUDGET_ENV).max(0) as u64).saturating_mul(1 << 30);
-            for gone in bd::evict_idle(&base, budget) {
+            for gone in bd::evict_idle(&bases, budget) {
                 self.log(&format!("{f}: evicted idle build directory {} (over the {} GiB budget)", gone.display(), budget >> 30));
             }
             self.s.build_dir = Some(lease);

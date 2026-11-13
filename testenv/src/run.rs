@@ -2926,8 +2926,7 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
     let script = crate::unit::SCRIPT;
     // THE SESSION'S ONE TARGET (sp-ke0uk8): a dwarf session's owned build directory, else the
     // branch's own under the sandbox root.
-    let base = spira_config::process::cfg(spira_config::build_dir::BASE_ENV).ok().filter(|b| !b.is_empty()).map(PathBuf::from);
-    let owned = spira_config::build_dir::owned((deps.env)("CARGO_TARGET_DIR").map(Into::into), base.as_deref());
+    let owned = spira_config::build_dir::owned((deps.env)("CARGO_TARGET_DIR").map(Into::into), &spira_config::build_dir::configured_bases());
     let is_owned = owned.is_some();
     {
         let mut r = rec.borrow_mut();

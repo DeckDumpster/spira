@@ -1114,10 +1114,11 @@ impl Scripts for RealScripts {
     fn build_release(&self, wt: &Path, who: &str) -> Result<Box<dyn std::any::Any>, String> {
         use spira_config::build_dir as bd;
         let base = spira_config::process::cfg(bd::BASE_ENV)?;
-        if base.is_empty() {
+        let bases = bd::parse_bases(&base);
+        if bases.is_empty() {
             return Err(format!("{} is not set — set dwarf_build_base in the config document", bd::BASE_ENV));
         }
-        let lease = bd::lease(Path::new(&base), who).map_err(|e| format!("cannot lease a build directory under {base}: {e}"))?;
+        let lease = bd::lease(&bases, who).map_err(|e| format!("cannot lease a build directory under {base}: {e}"))?;
         let held = HeldBuild(Some(lease));
         let dir = held.0.as_ref().map(|l| l.dir().to_path_buf()).unwrap_or_default();
         // FORK-EDGE: machine leg cargo (release build)
