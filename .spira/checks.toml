@@ -8,3 +8,11 @@ name = "spira-lint"
 run = "spira-lint --diff refs/heads/local/main"
 build = "spira-lint"
 budget_ms = 300000
+
+# The config fences a round runs, at submit: the fixture resolves against this tree and the
+# landing ref, and this tree's config delta still parses once merged with the landing ref.
+[[check]]
+name = "config"
+run = "gate fixture-config --tree . --base refs/heads/local/main"
+build = "gate"
+budget_ms = 300000

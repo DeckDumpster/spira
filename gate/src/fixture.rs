@@ -40,8 +40,37 @@ pub fn check(tree: &Path, base: Option<&str>) -> Result<usize, String> {
         let landed = unpacked.then(|| landing_doc(&fixture, &scratch.join("spira")).and_then(|landing| resolve_against(&landing, &scratch.join("spira/conf.d"), &format!("the landing ref {base}'s config keys (a round runs that code against this fixture)"))));
         let _ = std::fs::remove_dir_all(&scratch);
         landed.unwrap_or_else(|| Err(format!("could not unpack the landing ref {base}'s config keys")))?;
+        merged_delta(tree, base)?;
     }
     Ok(resolved.values.len())
+}
+
+pub const DELTA: &str = "spira/config-delta.toml";
+
+/// The config delta of this tree's commit merged with the landing ref must still parse. Two
+/// branches that each add a `removed` line merge without a conflict into a file with two, which
+/// no round can build; the branch that is behind is told here, before a round carries it.
+fn merged_delta(tree: &Path, base: &str) -> Result<(), String> {
+    let git = |args: &[&str]| Command::new("timeout").args(["5", "git", "-C"]).arg(tree).args(args).output().map_err(|e| format!("git {}: {e}", args.join(" ")));
+    let merge = git(&["merge-tree", "--write-tree", base, "HEAD"])?;
+    let merged = String::from_utf8_lossy(&merge.stdout).lines().next().unwrap_or("").trim().to_string();
+    match merge.status.code() {
+        Some(0) => {}
+        // A textual conflict is the merge's own refusal, made where the branch is merged.
+        Some(1) => return Ok(()),
+        _ => return Err(format!("could not merge this tree with the landing ref {base} to read its config delta: {}", String::from_utf8_lossy(&merge.stderr).trim())),
+    }
+    let shown = git(&["show", &format!("{merged}:{DELTA}")])?;
+    if !shown.status.success() {
+        return Ok(());
+    }
+    merged_delta_parses(&String::from_utf8_lossy(&shown.stdout), base)
+}
+
+fn merged_delta_parses(text: &str, base: &str) -> Result<(), String> {
+    spira_config::delta_added(text).map(drop).map_err(|e| {
+        format!("{DELTA} of this tree merged with the landing ref {base} does not parse: {e} — rebase onto the landing ref and fold your entries into the lines it already has")
+    })
 }
 
 /// The fixture read against the landing ref's registry, so a key the tip's registry retired is
@@ -126,6 +155,35 @@ mod tests {
         check(t.path(), None).expect("the tip alone is consistent: it retired the key from both");
         let e = check(t.path(), Some("main")).unwrap_err();
         assert!(e.contains("SPIRA_ARCHIVIST_EVERY") && e.contains("landing ref"), "{e}");
+    }
+
+    #[test]
+    fn a_delta_with_two_removed_lines_is_refused_naming_the_landing_ref() {
+        let e = merged_delta_parses("removed = [\"spira.a\"]\nremoved = [\"spira.b\"]\n[spira]\nx = \"1\"\n", "main").unwrap_err();
+        assert!(e.contains("merged with the landing ref main") && e.contains("rebase"), "{e}");
+        merged_delta_parses("removed = [\"spira.a\", \"spira.b\"]\n[spira]\nx = \"1\"\n", "main").expect("one removed line parses");
+    }
+
+    #[test]
+    fn a_tip_whose_delta_only_breaks_once_merged_with_the_landing_ref_is_refused() {
+        let t = copy_tree();
+        let delta = t.path().join(DELTA);
+        std::fs::write(&delta, "# one\n# two\n# three\n# four\n[spira]\nx = \"1\"\n").unwrap();
+        let git = |args: &[&str]| testkit::git(t.path(), args);
+        let commit = |msg: &str| git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", msg]);
+        git(&["init", "-q", "-b", "main"]);
+        git(&["add", "-A"]);
+        commit("base");
+        git(&["checkout", "-q", "-b", "tip"]);
+        std::fs::write(&delta, "# one\n# two\n# three\n# four\nremoved = [\"spira.b\"]\n[spira]\nx = \"1\"\n").unwrap();
+        commit("the tip retires a key");
+        check(t.path(), Some("main")).expect("alone, and on its own base, the tip's delta parses");
+        git(&["checkout", "-q", "main"]);
+        std::fs::write(&delta, "# one\nremoved = [\"spira.a\"]\n# two\n# three\n# four\n[spira]\nx = \"1\"\n").unwrap();
+        commit("the landing ref retires another");
+        git(&["checkout", "-q", "tip"]);
+        let e = check(t.path(), Some("main")).unwrap_err();
+        assert!(e.contains(DELTA) && e.contains("merged with the landing ref main") && e.contains("duplicate key"), "{e}");
     }
 
     #[test]
