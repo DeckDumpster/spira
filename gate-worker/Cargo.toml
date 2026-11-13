@@ -13,7 +13,7 @@ name = "gate-worker"
 path = "src/main.rs"
 
 [features]
-integration = ["landing-pass/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration"]
+integration = ["gate/integration", "landing-pass/integration", "spira-config/integration", "spira-otel/integration", "spira-store/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }
