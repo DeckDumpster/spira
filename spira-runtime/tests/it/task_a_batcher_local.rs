@@ -1240,8 +1240,8 @@ fn effects(acts: &[Act]) -> Vec<&str> {
 }
 
 #[test]
-fn sp_5u1oru_an_open_round_whose_open_answer_is_lost_is_adopted_when_the_queue_records_no_tree_for_it() {
-    let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-a", "sp-b"], ""));
+fn sp_5u1oru_an_open_round_whose_open_answer_is_lost_is_adopted_at_the_next_tick() {
+    let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-a", "sp-b"], "/w"));
     assert!(effects(&acts).contains(&CORPUS), "the first pass starts on this tick: {acts:?}");
     let rc = &carry.repos["spira"];
     assert_eq!((rc.state, rc.batch.as_deref()), (State::Corpus, Some("r9")));
@@ -1255,8 +1255,15 @@ fn sp_5u1oru_an_open_round_of_other_members_is_not_adopted() {
 }
 
 #[test]
+fn sp_5u1oru_a_round_opened_seconds_ago_is_left_to_its_opener() {
+    let (_, acts) = decide(&Carry::default(), &open_with("opened", &["sp-a"], "/w"));
+    assert!(!effects(&acts).contains(&REDRIVE), "{acts:?}");
+}
+
+#[test]
 fn sp_5u1oru_an_open_round_with_no_pass_and_no_driver_is_redriven_at_once_and_only_once() {
-    let snap = open_with("opened", &["sp-a"], "/w");
+    let mut snap = open_with("opened", &["sp-a"], "/w");
+    snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().age_secs = 60;
     let (carry, acts) = decide(&Carry::default(), &snap);
     assert!(effects(&acts).contains(&REDRIVE), "no orphan wait for a round that never began: {acts:?}");
     let (_, again) = decide(&carry, &snap);

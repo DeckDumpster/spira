@@ -140,6 +140,8 @@ pub const OBSERVE_DEADLINE_MS: u64 = 10_000;
 /// `unit.ran`.
 pub const UNIT_START_DEADLINE_MS: u64 = 10_000;
 /// Past the longest effect this task waits on (`land`, 900 s): an outcome that has not come is lost.
+/// A just-opened round is given this long to be driven by whoever opened it before the tick starts its pass.
+const UNDRIVEN_GRACE_S: u64 = 20;
 pub const OUTCOME_WAIT_MS: u64 = 1_200_000;
 
 pub const ACTS: &[(&str, u64)] = &[
@@ -1440,7 +1442,7 @@ impl Machine<'_> {
         let unfit = if repo.open_round.as_ref().is_some_and(|r| r.id == open.id) { repo.unfit.clone() } else { open.unfit.clone() };
         let fit = unfit.map_or(Ok(()), Err);
         let now_s = self.now_ms / 1000;
-        let wait = if open.phase == "opened" && st.redriven != open.id { 0 } else { policy.orphan_wait_s };
+        let wait = if open.phase == "opened" && open.age_secs >= UNDRIVEN_GRACE_S && st.redriven != open.id { 0 } else { policy.orphan_wait_s };
         let (mut next, verdict) = pace::orphan_step(st, &open.id, now_s, wait, fit);
         if matches!(verdict, pace::Orphan::Redrive) && wait == 0 {
             eprintln!("{NAME} {}: open round {} has no pass and no driver — starting its first pass", self.repo, open.id);
@@ -1754,11 +1756,10 @@ impl Machine<'_> {
         }
     }
 
-    /// An opened round whose `round open` outcome has not arrived, and which the queue already
-    /// holds with exactly our members in our tree (or in none recorded: a round the queue names no tree for is not in another), is driven now rather than after [`OUTCOME_WAIT_MS`].
+    /// A round the queue holds with exactly our members in our tree is ours: driven now, not after [`OUTCOME_WAIT_MS`].
     fn adopt_opened(&mut self, repo: &Repo) {
         let ours: std::collections::BTreeSet<&str> = self.rc.members.iter().map(|(id, _)| id.as_str()).collect();
-        let held = repo.open_rounds().find(|r| !ours.is_empty() && (self.rc.wt.is_empty() || r.worktree.is_empty() || r.worktree == self.rc.wt) && r.members.iter().map(String::as_str).collect::<std::collections::BTreeSet<_>>() == ours);
+        let held = repo.open_rounds().find(|r| !ours.is_empty() && (self.rc.wt.is_empty() || r.worktree == self.rc.wt) && r.members.iter().map(String::as_str).collect::<std::collections::BTreeSet<_>>() == ours);
         let Some(held) = held else { return };
         eprintln!("{NAME} {}: round open's outcome did not arrive; adopting the queue's open round {} and starting its first pass", self.repo, held.id);
         self.rc.batch = Some(held.id.clone());
