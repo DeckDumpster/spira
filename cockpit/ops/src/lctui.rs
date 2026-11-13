@@ -1214,7 +1214,7 @@ mod tests {
         let mut v = busy_view();
         let repos = [("sp-c1", "cubby"), ("sp-s1", "spira"), ("sp-d1", "deckdumpster"), ("sp-u1", "")];
         let items = |_: ()| repos.iter().map(|(i, r)| it(i, r)).collect::<Vec<_>>();
-        v.decide = items(());
+        v.decide = items(()).into_iter().map(|i| Item { work_bead: format!("work-of-{}", i.id), ..i }).collect();
         v.now_items = items(());
         v.next = items(());
         v.blocked = items(());
