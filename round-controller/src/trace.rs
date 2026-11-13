@@ -343,6 +343,19 @@ mod tests {
     }
 
     #[test]
+    fn the_briefs_promise_only_the_tools_the_agent_is_allowed() {
+        for path in TracePath::BOTH {
+            let b = render_brief(path, &facts());
+            assert!(!b.contains("grep and cat"), "{b}");
+            for verb in ["show", "ls-tree", "grep", "log", "diff", "cat-file"] {
+                assert!(b.contains(verb) && TRACER_TOOLS.contains(&format!("Bash(git {verb}:*)")), "{verb}");
+            }
+            let line = b.lines().find(|l| l.starts_with("- <certain|likely|possible>")).expect("the shape line");
+            assert_eq!(parse_predictions(&line.replace("<certain|likely|possible>", "certain")).len(), 1, "{line}");
+        }
+    }
+
+    #[test]
     fn members_parse_with_either_separator_and_a_bare_id_awaits_its_branch() {
         let m = parse_members("sp-a:abcdef1,sp-b@1234567,sp-c").unwrap();
         assert_eq!((m[0].tip.as_str(), m[1].tip.as_str(), m[2].tip.as_str()), ("abcdef1", "1234567", ""));

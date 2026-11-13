@@ -14,7 +14,7 @@ First check each member: its tip must hold the work the bead describes. A member
 Failure classes already known to kill rounds; check each against the merged tree first:
 {classes}
 
-Rules: change nothing; run only read-only git, grep and cat. Cite file:line in the merged tree. Do not report a hypothesis without the line that makes it so; say "possible" instead of "certain" when you could not close the chain.
+Rules: change nothing. You have Read, Grep, Glob and Bash limited to git show, ls-tree, grep, log, diff and cat-file. Cite file:line in the merged tree. Do not report a hypothesis without the line that makes it so; say "possible" instead of "certain" when you could not close the chain.
 
 Finish with one line per prediction, exactly this shape, and nothing after them:
 - <certain|likely|possible> | <the failure, in one sentence> | <file:line evidence> | <the preventive change, and whether it can ride a member's branch>
