@@ -261,3 +261,70 @@ fn io_pressure_picks_the_shed_not_a_reap_and_steps_certify_par_down_by_one() {
     assert_eq!(p.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(), ["shed-gate-slot"]);
     assert_eq!((p.steps[0].intent.from.clone(), p.steps[0].intent.to.clone()), (json!(3), json!(2)));
 }
+
+#[test]
+fn a_calm_host_under_shed_restores_a_gate_slot_though_its_gap_is_closed() {
+    let calm = plan(vec![host(&["HostShedding", "Shed"], 0.0)], host_knobs());
+    assert_eq!(calm.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(), ["restore-gate-slot"], "{calm:?}");
+    assert_eq!((calm.steps[0].intent.from.clone(), calm.steps[0].intent.to.clone()), (json!(3), json!(4)));
+}
+
+#[test]
+fn a_closed_gap_takes_only_capacity_raise_steps_and_keeps_every_refusal() {
+    let calm = plan(vec![host(&["HostShedding", "IoPressure"], 0.0)], host_knobs());
+    assert!(calm.steps.is_empty() && calm.refused.is_empty() && calm.no_lever.is_empty(), "a lower is never taken on a closed gap: {calm:?}");
+    let mut s = host(&["Shed"], 0.0);
+    s["section"]["metadata"]["observedAt"] = json!("2026-10-31T10:00:00Z");
+    let stale = plan(vec![s], host_knobs());
+    assert!(stale.steps.is_empty());
+    assert_eq!(refused(&stale), ["stale-input"]);
+    let no_knob = plan(vec![host(&["Shed"], 0.0)], json!({}));
+    assert_eq!(refused(&no_knob), ["knob-absent"]);
+}
+
+fn fleet(conditions: &[&str], utilisation: f64, actions: serde_json::Value) -> serde_json::Value {
+    let conds: Vec<_> = ["Saturated", "HostShedding"]
+        .iter()
+        .map(|c| json!({ "type": c, "status": if conditions.contains(c) { "True" } else { "False" }, "reason": "t", "lastTransitionTime": NOW }))
+        .collect();
+    json!({ "section": {
+        "apiVersion": "spira/v1", "kind": "DwarfFleet",
+        "metadata": { "name": "fleet", "owner": "sentinel", "observedAt": NOW, "target_latency": "5m", "max_age": "15m" },
+        "status": { "observedGeneration": 0, "conditions": conds, "utilisation_1h": { "value": utilisation, "window": "1h" } },
+        "distance": { "fn": "max(0, utilisation_1h - 0.85)", "open": 0.05, "close": 0.0 },
+        "actions": actions,
+    }})
+}
+
+fn fleet_actions() -> serde_json::Value {
+    json!([
+        { "name": "max-live-dwarves-raise", "class": "capacity-raise", "step": "+1", "moves": "utilisation_1h",
+          "addresses": ["Saturated"], "expected_effect": -0.1, "horizon": "65m" },
+        { "name": "max-live-dwarves-lower", "class": "capacity-lower", "step": "-1", "moves": "utilisation_1h",
+          "addresses": ["HostShedding"], "expected_effect": 0.1, "horizon": "65m" },
+    ])
+}
+
+fn fleet_knobs() -> serde_json::Value {
+    json!({ "knobs/DwarfFleet/fleet/max-live-dwarves-raise": 4, "knobs/DwarfFleet/fleet/max-live-dwarves-lower": 4 })
+}
+
+#[test]
+fn the_fleet_lowers_on_host_shedding_only_while_its_gap_is_open() {
+    let open = plan(vec![fleet(&["HostShedding"], 0.99, fleet_actions())], fleet_knobs());
+    assert_eq!(open.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(), ["max-live-dwarves-lower"], "{open:?}");
+    let closed = plan(vec![fleet(&["HostShedding"], 0.5, fleet_actions())], fleet_knobs());
+    assert!(closed.steps.is_empty() && closed.refused.is_empty() && closed.no_lever.is_empty(), "{closed:?}");
+}
+
+#[test]
+fn a_closed_fleet_with_nothing_addressed_reports_neither_a_missing_lever_nor_a_term() {
+    let p = plan(vec![fleet(&["HostShedding"], 0.5, json!([]))], json!({}));
+    assert_eq!(p, Plan::default(), "{p:?}");
+}
+
+#[test]
+fn a_closed_fleet_still_raises_for_a_saturated_condition_still_open_on_it() {
+    let p = plan(vec![fleet(&["Saturated"], 0.5, fleet_actions())], fleet_knobs());
+    assert_eq!(p.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(), ["max-live-dwarves-raise"], "{p:?}");
+}

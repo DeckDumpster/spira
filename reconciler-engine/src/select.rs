@@ -456,19 +456,27 @@ impl<'a> Selector<'a> {
             .unwrap_or(0)
     }
 
-    fn gap(&mut self, section: &str, plan: &mut Plan) {
+    /// A closed gap still owes the capacity a shed took: only raises addressing a condition open
+    /// on it are candidates, and what no action addresses is not reported as a missing lever.
+    fn gap(&mut self, section: &str, closed: bool, plan: &mut Plan) {
         let a = self.inp.assembled;
         let Some(cur) = a.current.sections.get(section) else { return };
         if cur.actions.is_empty() {
-            plan.terms.push(section.into());
+            if !closed {
+                plan.terms.push(section.into());
+            }
             return;
         }
         let open = open_conditions(cur);
         let addressed = |c: &String| cur.actions.iter().any(|act| act.addresses.contains(c));
         let unaddressed: Vec<String> = open.iter().filter(|c| !addressed(c)).cloned().collect();
-        let mut candidates: Vec<&Action> = cur.actions.iter().filter(|act| act.addresses.iter().any(|c| open.contains(c))).collect();
+        let mut candidates: Vec<&Action> = cur
+            .actions
+            .iter()
+            .filter(|act| act.addresses.iter().any(|c| open.contains(c)) && (!closed || act.class == ActionClass::CapacityRaise))
+            .collect();
         let owner_silent = unaddressed.iter().any(|c| c == INTENTS_UNACKNOWLEDGED);
-        if !unaddressed.is_empty() || candidates.is_empty() {
+        if !closed && (!unaddressed.is_empty() || candidates.is_empty()) {
             let since = a
                 .prev
                 .as_ref()
@@ -548,8 +556,8 @@ pub fn select(inp: &Inputs) -> Plan {
     }
     let open: BTreeSet<&str> = inp.gaps.iter().filter(|g| g.open).map(|g| g.section.as_str()).collect();
     let mut s = Selector { inp, flow, now, attempts, held, open };
-    for g in inp.gaps.iter().filter(|g| g.open) {
-        s.gap(&g.section, &mut plan);
+    for g in inp.gaps {
+        s.gap(&g.section, !g.open, &mut plan);
     }
     plan
 }

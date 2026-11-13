@@ -326,7 +326,7 @@ fn a_config_that_cannot_state_certify_par_stops_the_pass_before_it_acks_anything
 }
 
 #[test]
-fn a_shed_the_host_has_recovered_from_is_not_yet_planned_back_by_the_selector() {
+fn a_shed_the_host_has_recovered_from_is_planned_back_by_the_selector() {
     use reconciler_engine::goodput_pass::{run as pass, Outcome, PassConfig};
     let w = world(2, 0, 0);
     w.run(&calm()).unwrap();
@@ -340,7 +340,7 @@ fn a_shed_the_host_has_recovered_from_is_not_yet_planned_back_by_the_selector() 
     let cfg = PassConfig { holder: "inv-1".into(), timeout_secs: 50, shadow: vec![], halted: false };
     let Outcome::Passed(p) = pass(&Dispatch(&w.r), &w.r.clock, &cfg).unwrap() else { panic!("the pass stood by") };
     let rec: reconciler_engine::pass_record::PassRecord = serde_json::from_value(w.r.store.get(reconciler_engine::pass_record::PASS_KEY).unwrap().unwrap().value.data).unwrap();
-    // The selector visits open gaps only and a recovered host has none, so the restore is never planned from here.
-    assert!(rec.steps.iter().all(|s| s.section != "Host/host"), "{:?}", rec.steps);
+    let restores: Vec<_> = rec.steps.iter().filter(|s| s.section == "Host/host").map(|s| s.action.as_str()).collect();
+    assert_eq!(restores, ["restore-gate-slot"], "{:?}", rec.steps);
     drop(p);
 }
