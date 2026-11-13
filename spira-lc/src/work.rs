@@ -828,7 +828,7 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
     let body = split_reserved(args).stdin;
     let parent = if after_landing { None } else { Some(bead_id) };
     match crate::bd::file_child(title, &persona, &repo, parent, body.as_deref()) {
-        Ok(new_id) => match crate::dispatch(&[s("create-bead"), new_id.clone(), s("--ready")], conn) {
+        Ok(new_id) => match crate::dispatch(&[s("create-bead"), new_id.clone(), s("--ready"), s("--repo"), repo.clone()], conn) {
             (0, _) if after_landing => match crate::bd::add_blocker(&new_id, bead_id) {
                 Ok(()) => (0, new_id),
                 Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be made to wait on {bead_id} (do not file it again; add the dependency): {e}")),
@@ -1179,7 +1179,7 @@ pub enum Step {
     /// every state with `all`), joined to bd's content rows filtered by `bd_args`.
     LcList { states: Vec<String>, all: bool, bd_args: Vec<String>, json: bool, full: bool, limit: Option<usize> },
     Tool { program: &'static str, args: Vec<String>, stdin: Option<String> },
-    CreateRow,
+    CreateRow { repo: String },
     /// `Hold { Ask, OperatorQuestion }` on `bead`: the bead waits on the operator's answer
     /// (only a `Reply` or `AskWithdrawn` lifts it), and dwarf's teardown reads the hold to
     /// release the session operator-wait, uncharged (sp-v62vn follow-up: it replaced the
@@ -1423,7 +1423,7 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
                 stdin: call.stdin.clone(),
             }];
             if persona.is_some() {
-                steps.push(Step::CreateRow);
+                steps.push(Step::CreateRow { repo: get(&f, "--repo").unwrap_or_default().to_string() });
             }
             Ok(steps)
         }
@@ -1834,9 +1834,9 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
                     ),
                 }
             }
-            Step::CreateRow => {
+            Step::CreateRow { repo } => {
                 let new_id = out.trim().to_string();
-                match crate::dispatch(&[s("create-bead"), new_id.clone(), s("--ready")], conn) {
+                match crate::dispatch(&[s("create-bead"), new_id.clone(), s("--ready"), s("--repo"), repo], conn) {
                     (0, _) => (0, String::new()),
                     (_, e) => (
                         CANNOT_TELL,
@@ -2489,7 +2489,7 @@ mod tests {
             plan("file", "-", &c).unwrap(),
             vec![
                 Step::Tool { program: "bead.sh", args: v(&["file", "a title", "--for", "builder", "--repo", "spira", "--body-file", "-"]), stdin: Some("body".into()) },
-                Step::CreateRow
+                Step::CreateRow { repo: "spira".into() }
             ]
         );
         let rec = plan("file", "-", &call(&["a finding", "--kind", "insight", "--repo", "spira"], "archivist")).unwrap();

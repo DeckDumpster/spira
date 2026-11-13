@@ -163,6 +163,8 @@ pub struct AskRow {
     pub opened_at: i64,
     pub title: String,
     pub class: String,
+    #[serde(default)]
+    pub work_bead: String,
 }
 
 /// Fills each untitled ask from its decision bead's `plan items` row.
@@ -543,6 +545,9 @@ pub struct Item {
     pub rework: bool,
     #[serde(default)]
     pub repo: String,
+    /// A decide item only: the bead the ask is about; none, and it has no repo tag.
+    #[serde(default)]
+    pub work_bead: String,
     #[serde(default)]
     pub holds: Vec<String>,
     #[serde(default)]
@@ -1304,6 +1309,11 @@ pub fn repo_tag(repo: &str) -> String {
     format!("{TEAL}{}{R} ", if repo.is_empty() { "?" } else { repo })
 }
 
+/// A decide item's tag: its work bead's repo, and nothing for an ask about no bead.
+pub fn ask_tag(i: &Item) -> String {
+    if i.work_bead.is_empty() { String::new() } else { repo_tag(&i.repo) }
+}
+
 pub fn cut(s: &str, n: usize) -> String {
     if s.chars().count() > n {
         format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>())
@@ -1571,7 +1581,8 @@ pub fn view(s: &Snapshot) -> View {
             id: a.id.clone(),
             age: age(s.now - a.opened_at),
             class: a.class.clone(),
-            repo: repo_of(&a.id),
+            repo: repo_of(&a.work_bead),
+            work_bead: a.work_bead.clone(),
             title: Some(a.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| title(&a.id)),
             ..Default::default()
         })
@@ -1688,7 +1699,7 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     });
     for i in v.decide.iter().take(5) {
         let class = if i.class.is_empty() { String::new() } else { format!("{} ", i.class) };
-        out.push(format!("  {YEL}{:<12}{R} {D}{:>4}{R} {class}{}{}", i.id, i.age, repo_tag(&i.repo), cut(&i.title, w.saturating_sub(24 + class.len() + i.repo.len().max(1) + 1))));
+        out.push(format!("  {YEL}{:<12}{R} {D}{:>4}{R} {class}{}{}", i.id, i.age, ask_tag(i), cut(&i.title, w.saturating_sub(24 + class.len() + if i.work_bead.is_empty() { 0 } else { i.repo.len().max(1) + 1 }))));
     }
     if v.decide.len() > 5 {
         out.push(format!("  {D}+{} more{R}", v.decide.len() - 5));
@@ -2260,8 +2271,8 @@ mod tests {
         s.ask_label = "fixture-ask-label".into();
         s.claimable = Some(vec!["sp-ask1".into(), "sp-work1".into()]); // even listed, an ask is never NEXT
         s.asks = vec![
-            AskRow { id: "sp-newer".into(), opened_at: 90_000, title: "newer ask".into(), class: "policy".into() },
-            AskRow { id: "sp-older".into(), opened_at: 80_000, title: String::new(), class: String::new() },
+            AskRow { id: "sp-newer".into(), opened_at: 90_000, title: "newer ask".into(), class: "policy".into(), ..Default::default() },
+            AskRow { id: "sp-older".into(), opened_at: 80_000, title: String::new(), class: String::new(), ..Default::default() },
         ];
         s.meta.insert("sp-older".into(), Meta { title: "older ask".into(), ..Default::default() });
         for id in ["sp-ask1", "sp-done-ask"] {
@@ -2276,9 +2287,23 @@ mod tests {
     }
 
     #[test]
+    fn an_ask_shows_its_work_beads_repo_and_an_ask_about_no_bead_shows_no_tag() {
+        let mut s = snap(vec![Row { repo: "cubby".into(), ..row("sp-work", "READY", 90_000) }]);
+        s.asks = vec![
+            AskRow { id: "sp-a1".into(), opened_at: 1, title: "about work".into(), work_bead: "sp-work".into(), ..Default::default() },
+            AskRow { id: "sp-a2".into(), opened_at: 2, title: "about nothing".into(), ..Default::default() },
+        ];
+        let v = view(&s);
+        let line = |t: &str| plain(&render(&v, 120)).lines().find(|l| l.contains(t)).unwrap().to_string();
+        assert!(line("about work").contains("cubby"), "{}", line("about work"));
+        assert!(!line("about nothing").contains('?'), "{}", line("about nothing"));
+        assert_eq!(ask_tag(&v.decide[1]), "");
+    }
+
+    #[test]
     fn an_ask_with_no_bead_row_takes_its_title_from_the_content_store() {
         let mut s = snap(vec![]);
-        s.asks = vec![AskRow { id: "sp-dec".into(), opened_at: 1, title: String::new(), class: String::new() }];
+        s.asks = vec![AskRow { id: "sp-dec".into(), opened_at: 1, title: String::new(), class: String::new(), ..Default::default() }];
         let content: Vec<serde_json::Value> = serde_json::from_str(r#"[{"id":"sp-dec","title":"Fill credentials?"}]"#).unwrap();
         fill_ask_titles(&mut s.asks, &content);
         let v = view(&s);

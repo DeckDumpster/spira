@@ -416,7 +416,7 @@ fn cmd_bdq(args: &[String]) -> i32 {
         let _ = std::io::stdout().write_all(&created_out);
         let _ = std::io::stdout().flush();
         if rc == 0 {
-            if let Err(e) = spira_store::lifecycle_row::after_create_ids("bdq", &String::from_utf8_lossy(&created_out)) {
+            if let Err(e) = spira_store::lifecycle_row::after_create_ids("bdq", &String::from_utf8_lossy(&created_out), bead::bdq::created_repo(args).as_deref()) {
                 eprintln!("bdq: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
             }
         }

@@ -11,7 +11,7 @@
 //!
 //! Everything here is pure (view, choices, size in; lines out) so it is tested without a terminal.
 
-use crate::lcview::{cut, repo_tag, View};
+use crate::lcview::{ask_tag, cut, repo_tag, View};
 #[cfg(test)]
 use crate::lcview::TEAL;
 use std::collections::{HashMap, HashSet};
@@ -223,7 +223,7 @@ fn waiting_node(v: &View) -> Node {
         .take(WAITING_SHOWN)
         .map(|i| {
             let class = if i.class.is_empty() { String::new() } else { format!("{D}{}{R} ", i.class) };
-            Node::new(format!("decide/{}", i.id), format!("{YEL}{:<12}{R} {D}{:>4}{R} {class}{}{}", i.id, i.age, repo_tag(&i.repo), i.title))
+            Node::new(format!("decide/{}", i.id), format!("{YEL}{:<12}{R} {D}{:>4}{R} {class}{}{}", i.id, i.age, ask_tag(i), i.title))
         })
         .collect();
     if v.decide.len() > WAITING_SHOWN {
