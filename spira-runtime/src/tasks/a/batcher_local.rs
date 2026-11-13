@@ -592,6 +592,9 @@ pub struct RepoCarry {
     /// Since when the round has waited, unmoved, on the outcome of an effect it issued.
     #[serde(default)]
     pub waiting: Option<Waiting>,
+    /// Members already preempted by their gate red, with the tip: a preempt is asked once per pair.
+    #[serde(default)]
+    pub preempted: Vec<(String, String)>,
     /// The batch the last reconcile dropped because the lifecycle had already settled it.
     #[serde(default)]
     pub reconciled: Option<String>,
@@ -633,6 +636,7 @@ impl RepoCarry {
             stacked: self.stacked,
             landing_base: self.landing_base.clone(),
             waiting: self.waiting,
+            preempted: self.preempted.clone(),
             ..RepoCarry::default()
         }
     }
@@ -666,6 +670,7 @@ impl RepoCarry {
             stacked: round.stacked,
             landing_base: round.landing_base.clone(),
             waiting: round.waiting,
+            preempted: round.preempted.clone(),
             ..self
         }
     }
@@ -1223,11 +1228,13 @@ impl Machine<'_> {
     /// stopped, it is ejected with the gate's mark as evidence, and the round goes on without it.
     fn preempt_gate_red(&mut self, repo: &Repo) -> bool {
         let Some(open) = self.rc.batch.as_deref().and_then(|b| repo.open_rounds().find(|r| r.id == b)) else { return false };
-        let red: Vec<&(String, String, String)> = open.gate_red.iter().filter(|(id, tip, _)| self.rc.members.iter().any(|(m, t)| m == id && t == tip)).collect();
+        let mut red: Vec<&(String, String, String)> = open.gate_red.iter().filter(|(id, tip, _)| self.rc.members.iter().any(|(m, t)| m == id && t == tip) && !self.rc.preempted.iter().any(|(m, t)| m == id && t == tip)).collect();
+        red.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
         if red.is_empty() || repo.in_flight.as_ref().is_some_and(|f| f.iter().any(|e| e == PREEMPT)) {
             return false;
         }
         let ids: Vec<String> = red.iter().map(|(id, ..)| id.clone()).collect();
+        self.rc.preempted.extend(red.iter().map(|(id, tip, _)| (id.clone(), tip.clone())));
         let why = red.iter().map(|(id, tip, mark)| format!("{id}: its own gate went red at {tip} while round {} was running ({mark})", open.id)).collect::<Vec<_>>().join("; ");
         let key = format!("{}:{}:preempt:{}:{}", self.repo, open.id, ids.join(","), open.head);
         self.acts.push(Leg { bead: ids.join(","), why, key, ..self.leg() }.act(PREEMPT));
@@ -1505,6 +1512,11 @@ impl Machine<'_> {
     fn leg_ended_with(&mut self, exit: Exit, out: &str) {
         self.rc.leg_restarts = 0;
         self.rc.leg_missing = 0;
+        if exit == Exit::Code(queue::ops::round::PREEMPTED) && matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying) {
+            self.rc.leg = None;
+            self.rc.leg_at_ms = self.now_ms;
+            return;
+        }
         let ok = green(exit);
         match (self.rc.state, ok) {
             (State::Corpus, true) => {
@@ -1694,6 +1706,10 @@ impl Machine<'_> {
             (State::Corpus | State::Attributing | State::Certifying, PREEMPT) if ok => {
                 self.rc.members.retain(|(id, _)| !leg.bead.split(',').any(|b| b == id));
                 self.rc.round_key = Some(core::round_key(&self.rc.members));
+            }
+            (State::Corpus | State::Attributing | State::Certifying, PREEMPT) if body.contains(queue::ops::round::NOTHING_TO_PREEMPT) => {
+                let ids: Vec<&str> = leg.bead.split(',').collect();
+                self.rc.preempted.retain(|(id, _)| !ids.contains(&id.as_str()));
             }
             (State::Landing, LAND) if ok => {
                 let l: Landed = serde_json::from_str(body).unwrap_or_default();

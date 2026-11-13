@@ -82,3 +82,45 @@ fn the_preempt_the_batcher_asks_is_one_the_queue_cli_parses_with_its_evidence_on
         other => panic!("not a preempt: {other:?}"),
     }
 }
+
+#[test]
+fn a_member_is_preempted_once_though_its_gate_red_is_still_read_and_no_preempt_is_in_flight() {
+    let (next, first) = decide(&carried(State::Certifying), &snapshot(vec![("sp-a", "t1")], None));
+    assert_eq!(preempts(&first).len(), 1);
+    let (_, again) = decide(&next, &snapshot(vec![("sp-a", "t1")], None));
+    assert!(preempts(&again).is_empty(), "the member was already preempted at this tip: {again:?}");
+}
+
+#[test]
+fn two_gate_red_facts_for_the_same_member_and_tip_raise_one_preempt_naming_it_once() {
+    let (_, acts) = decide(&carried(State::Certifying), &snapshot(vec![("sp-a", "t1"), ("sp-a", "t1")], None));
+    let legs = preempts(&acts);
+    assert_eq!(legs.len(), 1, "{acts:?}");
+    assert_eq!(legs[0].bead, "sp-a");
+}
+
+#[test]
+fn a_leg_stopped_by_a_preempt_ends_as_preempted_and_neither_attributes_nor_abandons_the_round() {
+    for (state, leg) in [(State::Corpus, "spira.r9.corpus1"), (State::Certifying, "spira.r9.certify1"), (State::Attributing, "spira.r9.attribute1")] {
+        let mut carry = carried(state);
+        carry.repos.get_mut("spira").unwrap().leg = Some(leg.into());
+        let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, leg).unwrap(), exit: runtime::units::Exit::Code(queue::ops::round::PREEMPTED), duration_ms: 1 };
+        let (next, acts) = on_ran(&carry, &ran, NOW).expect("the carried leg ended");
+        assert!(acts.is_empty(), "{state:?}: a preempted leg starts and ends nothing: {acts:?}");
+        let rc = &next.repos["spira"];
+        assert_eq!((rc.state, rc.batch.as_deref(), rc.leg.as_deref()), (state, Some("r9"), None), "the round goes on with the pass the preempt started");
+    }
+}
+
+#[test]
+fn a_preempt_refused_because_no_pass_was_running_is_asked_again_at_the_next_tick() {
+    let (next, acts) = decide(&carried(State::Corpus), &snapshot(vec![("sp-a", "t1")], None));
+    let leg = preempts(&acts).remove(0);
+    let refusal = format!("queue round preempt: round r9 is opened, with no pass running — {}", queue::ops::round::NOTHING_TO_PREEMPT);
+    let (after, _) = on_outcome(&next, PREEMPT, false, &refusal, &leg, NOW);
+    let (_, again) = decide(&after, &snapshot(vec![("sp-a", "t1")], None));
+    assert_eq!(preempts(&again).len(), 1, "a refusal that stopped nothing leaves the member to be preempted");
+    let (failed, _) = on_outcome(&next, PREEMPT, false, "eject of sp-a failed — the next pass was not started", &leg, NOW);
+    let (_, never) = decide(&failed, &snapshot(vec![("sp-a", "t1")], None));
+    assert!(preempts(&never).is_empty(), "a preempt that acted is never asked twice: {never:?}");
+}
