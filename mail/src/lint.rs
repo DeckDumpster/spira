@@ -90,6 +90,7 @@ pub fn lint_check(input: &LintInput, kinds_dir: &Path, id_prefix: &str) -> Resul
                         input.kind
                     ));
                 }
+                let before = msgs.len();
                 for section in &k.sections {
                     if kinds::section_empty(section, input.body) {
                         msgs.push(format!(
@@ -97,6 +98,9 @@ pub fn lint_check(input: &LintInput, kinds_dir: &Path, id_prefix: &str) -> Resul
                             section, input.kind
                         ));
                     }
+                }
+                if input.kind == "question" && msgs.len() > before {
+                    msgs.push(format!("mail: lint: a question for the operator needs ## Question, ## Default and ## Class basis sections (plus --default and --class); a complete body:\n{}", crate::cmds::ASK_EXAMPLE_BODY));
                 }
             }
         }
@@ -182,6 +186,19 @@ mod tests {
         );
         let e = r.unwrap_err();
         assert!(e.contains("rule"), "{e}");
+    }
+
+    // covers: UC-operator-channel-02
+
+    #[test]
+    fn an_empty_question_is_refused_with_the_complete_example_body() {
+        let d = kinds_tmp();
+        let input = LintInput { from: "S <s@s>", subject: "Pick?", kind: "question", default: "x", urgent: false, body: "text only", digest: false };
+        let e = check(input, d.path()).unwrap_err();
+        assert!(e.contains("section \"Question\" is empty") && e.contains("section \"Default\" is empty"), "{e}");
+        assert!(e.contains(crate::cmds::ASK_EXAMPLE_BODY), "{e}");
+        let ok = LintInput { from: "S <s@s>", subject: "Pick?", kind: "question", default: "x", urgent: false, body: crate::cmds::ASK_EXAMPLE_BODY, digest: false };
+        assert!(check(ok, d.path()).is_ok());
     }
 
     // covers: UC-operator-channel-02
