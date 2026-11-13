@@ -78,6 +78,7 @@ fn an_unknown_key_or_task_is_refused_and_changes_nothing() {
         let out = retire(t.path(), args);
         assert!(!out.status.success(), "{args:?}");
     }
+    assert!(!retire(t.path(), &["spira.old_knob", "--tree"]).status.success(), "--tree needs a value");
     assert_eq!(read(t.path(), "spira/config-delta.toml"), "removed_tasks = [\"gone\"]\nremoved = [\"spira.gone\"] # keep\n[spira]\nadded = 1\n");
 }
 

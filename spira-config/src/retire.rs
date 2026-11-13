@@ -66,8 +66,8 @@ pub fn retire_key(root: &Path, dotted: &str) -> Result<Report, String> {
         .ok_or_else(|| format!("no registry file declares {dotted} under {}", REGISTRY_DIRS.join(" or ")))?;
     let mut delta = read_delta(root)?;
     delta_list(&mut delta, "removed", dotted)?;
-    write(root, DELTA, &delta.to_string())?;
     fs::remove_file(root.join(&file)).map_err(|e| format!("{file}: {e}"))?;
+    write(root, DELTA, &delta.to_string())?;
 
     let mut rep = Report::default();
     rep.changed.push(format!("removed {file}"));
@@ -98,8 +98,8 @@ pub fn retire_task(root: &Path, name: &str) -> Result<Report, String> {
     let edited = format!("{}{}", &reg[..from], &reg[to..]);
     let mut delta = read_delta(root)?;
     delta_list(&mut delta, "removed_tasks", name)?;
-    write(root, DELTA, &delta.to_string())?;
     write(root, TASK_MODES, &edited)?;
+    write(root, DELTA, &delta.to_string())?;
 
     let mut rep = Report::default();
     rep.changed.push(format!("{TASK_MODES}: {name} dropped from the default"));

@@ -117,7 +117,13 @@ fn cmd_retire(args: &[String]) -> ExitCode {
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--tree" => tree = it.next().cloned(),
+            "--tree" => match it.next() {
+                Some(t) => tree = Some(t.clone()),
+                None => {
+                    eprintln!("{RETIRE_USAGE}");
+                    return ExitCode::FAILURE;
+                }
+            },
             "--task" => task = true,
             "--help" | "-h" => {
                 println!("{RETIRE_USAGE}");
