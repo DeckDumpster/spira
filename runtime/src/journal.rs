@@ -211,14 +211,18 @@ impl Journal for MemJournal {
 pub struct FaultyJournal {
     inner: Arc<dyn Journal>,
     fail: Mutex<Option<(&'static str, Class)>>,
+    gone: Mutex<bool>,
 }
 
 impl FaultyJournal {
     pub fn new(inner: Arc<dyn Journal>) -> Arc<Self> {
-        Arc::new(FaultyJournal { inner, fail: Mutex::new(None) })
+        Arc::new(FaultyJournal { inner, fail: Mutex::new(None), gone: Mutex::new(false) })
     }
 
-    /// The next call of `op` (`boot`, `commit`, `poison`) fails, once.
+    /// The next call of `op` (`boot`, `commit`, `poison`) fails, once. `append` is a crash, not a
+    /// failure: the next event handed to `record` is not kept, and the journal answers nothing
+    /// after it (every later call fails `injected fault in append`) as a process that died there.
+    /// Another journal over the same inner one is the restart.
     pub fn fail_next(&self, op: &'static str) {
         *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, Class::Fault));
     }
@@ -234,6 +238,9 @@ impl FaultyJournal {
     }
 
     fn gate(&self, op: &'static str) -> Result<()> {
+        if *self.gone.lock().unwrap_or_else(|e| e.into_inner()) {
+            return Err(RuntimeError::new("injected fault in append"));
+        }
         let mut f = self.fail.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((want, class)) = f.filter(|(want, _)| *want == op) {
             *f = None;
@@ -250,7 +257,15 @@ impl FaultyJournal {
 
 impl Journal for FaultyJournal {
     fn record(&self, ev: &Event) {
-        self.inner.record(ev)
+        let mut gone = self.gone.lock().unwrap_or_else(|e| e.into_inner());
+        let mut f = self.fail.lock().unwrap_or_else(|e| e.into_inner());
+        if f.is_some_and(|(want, _)| want == "append") {
+            *f = None;
+            *gone = true;
+        }
+        if !*gone {
+            self.inner.record(ev)
+        }
     }
     fn boot(&self) -> Result<Boot> {
         self.gate("boot")?;
@@ -272,5 +287,29 @@ impl Journal for FaultyJournal {
     }
     fn shipped(&self) -> Option<ShipCounts> {
         self.inner.shipped()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ev(id: &str) -> Event {
+        Event { id: EventId(id.into()), stream: StreamKey("s".into()), kind: EventKind::new("t", ""), at: 0, cause: None, correlation: crate::event::CorrelationId(id.into()) }
+    }
+
+    #[test]
+    fn an_append_fault_keeps_nothing_from_that_event_on_and_fails_every_later_call() {
+        let inner = MemJournal::new();
+        let faulty = FaultyJournal::new(inner.clone());
+        faulty.record(&ev("before"));
+        faulty.fail_next("append");
+        faulty.record(&ev("lost"));
+        faulty.record(&ev("after"));
+        let kept: Vec<String> = inner.history().into_iter().map(|e| e.id.0).collect();
+        assert_eq!(kept, ["before"]);
+        assert_eq!(faulty.commit(&Turn::default()).unwrap_err().to_string(), "injected fault in append");
+        assert_eq!(faulty.boot().unwrap_err().to_string(), "injected fault in append");
+        assert!(inner.boot().is_ok(), "the inner journal is what a restart opens");
     }
 }
