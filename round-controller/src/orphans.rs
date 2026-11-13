@@ -286,7 +286,12 @@ pub fn redrive(p: &Ports, o: &Orphan, launch: &dyn Launch) -> Redrive {
 
 /// Records the runner's unit under its slot before launching it, so a slot whose holder lapses
 /// is granted again only once that unit is shown stopped.
-pub(crate) fn record_unit(p: &Ports, slot: &mut SlotGrant, batch: &str, token: Rev) -> Result<(), String> {
+pub(crate) fn record_unit(
+    p: &Ports,
+    slot: &mut SlotGrant,
+    batch: &str,
+    token: Rev,
+) -> Result<(), String> {
     let unit = unit_name(batch, token)?;
     slot.record_holder(p, &unit, None)
         .map_err(|e| format!("slot {} did not record {unit}: {e:?}", slot.slot()))
@@ -395,8 +400,10 @@ mod tests {
         let b = Bench::new();
         let t = Rev::new(3, 0);
         batch(&b, "b1", "CI_RUNNING", Some(t));
-        b.units
-            .set(&unit_name("b1", t).unwrap(), UnitState::Stopped("inactive".into()));
+        b.units.set(
+            &unit_name("b1", t).unwrap(),
+            UnitState::Stopped("inactive".into()),
+        );
         b.launch.script(Ok(()));
         let p = b.ports();
         let r = redrive(&p, &orphan(t), &b.launch);
@@ -430,7 +437,11 @@ mod tests {
             n: 0,
         };
         assert_eq!(tried[0].slot, slot.to_string());
-        let lock = p.store.get(&format!("locks/{}", slot.lock())).unwrap().unwrap();
+        let lock = p
+            .store
+            .get(&format!("locks/{}", slot.lock()))
+            .unwrap()
+            .unwrap();
         assert_eq!(
             (lock.create_rev, lock.lock_expires_at_ms.is_some()),
             (tried[0].slot_token, true),
@@ -484,8 +495,10 @@ mod tests {
         let b = Bench::new();
         let t = Rev::new(3, 0);
         batch(&b, "b1", "CI_RUNNING", Some(t));
-        b.units
-            .set(&unit_name("b1", t).unwrap(), UnitState::Running("active".into()));
+        b.units.set(
+            &unit_name("b1", t).unwrap(),
+            UnitState::Running("active".into()),
+        );
         let p = b.ports();
         assert_eq!(
             redrive(&p, &orphan(t), &b.launch),
@@ -622,8 +635,10 @@ mod tests {
         let b = Bench::new();
         let t = Rev::new(3, 0);
         batch(&b, "b1", "CI_RUNNING", Some(t));
-        b.units
-            .set(&unit_name("b1", t).unwrap(), UnitState::Stopped("inactive".into()));
+        b.units.set(
+            &unit_name("b1", t).unwrap(),
+            UnitState::Stopped("inactive".into()),
+        );
         b.vms.set(&unit_name("b1", t).unwrap(), VmFact::NoVm);
         b.launch.script(Ok(()));
         step(&b.ports(), "r");

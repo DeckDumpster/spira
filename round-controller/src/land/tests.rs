@@ -584,7 +584,11 @@ fn every_blocker_has_its_own_word() {
 
 #[test]
 fn a_held_round_whose_head_landed_outside_the_lander_is_recorded_landed_from_git() {
-    let b = bench(vec![refuse("k1", Some(1), "refused: the gate is red at k1-h\n")]);
+    let b = bench(vec![refuse(
+        "k1",
+        Some(1),
+        "refused: the gate is red at k1-h\n",
+    )]);
     round(&b, "k1", "Green", "k1-h", "base-0", None);
     assert!(matches!(
         land(&b.ports(), "lane").unwrap()[..],
@@ -595,7 +599,10 @@ fn a_held_round_whose_head_landed_outside_the_lander_is_recorded_landed_from_git
         land(&b.ports(), "lane").unwrap(),
         [("k1".into(), Landing::FastForward { at: "k1-h".into() })]
     );
-    assert_eq!((state(&b, "k1"), landing_ref(&b)), (BatchState::Landed, "k1-h".to_string()));
+    assert_eq!(
+        (state(&b, "k1"), landing_ref(&b)),
+        (BatchState::Landed, "k1-h".to_string())
+    );
     assert_eq!(lands(&b), 1, "recorded from git, with no second land call");
 }
 
@@ -605,21 +612,39 @@ fn a_held_round_whose_head_landed_outside_the_lander_is_recorded_landed_from_git
 /// the text says.
 #[test]
 fn a_land_refusal_is_classified_by_its_exit_code_never_by_the_words_on_stderr() {
-    let b = bench(vec![refuse("k1", Some(1), "base-moved: but the exit is a plain refusal")]);
+    let b = bench(vec![refuse(
+        "k1",
+        Some(1),
+        "base-moved: but the exit is a plain refusal",
+    )]);
     round(&b, "k1", "Green", "k1-h", "base-0", None);
     assert_eq!(
         land(&b.ports(), "lane").unwrap(),
-        [("k1".into(), Landing::Held(Blocker::Refused { text: "base-moved: but the exit is a plain refusal".into() }))],
+        [(
+            "k1".into(),
+            Landing::Held(Blocker::Refused {
+                text: "base-moved: but the exit is a plain refusal".into()
+            })
+        )],
         "a plain refusal holds the round, whatever its first word"
     );
     let verbs: Vec<_> = b.verbs.calls().iter().map(|c| c.verb).collect();
     assert_eq!(verbs, [Verb::Land], "never superseded on a word");
 
-    let b = bench(vec![refuse("k1", Some(LAND_BASE_MOVED_EXIT), "local/main moved"), ok("supersede", "k1")]);
+    let b = bench(vec![
+        refuse("k1", Some(LAND_BASE_MOVED_EXIT), "local/main moved"),
+        ok("supersede", "k1"),
+    ]);
     round(&b, "k1", "Green", "k1-h", "base-0", None);
-    assert_eq!(land(&b.ports(), "lane").unwrap(), [("k1".into(), Landing::Superseded)]);
+    assert_eq!(
+        land(&b.ports(), "lane").unwrap(),
+        [("k1".into(), Landing::Superseded)]
+    );
 
     let b = bench(vec![refuse("k1", Some(LAND_STACKED_EXIT), "waiting on k0")]);
     round(&b, "k1", "Green", "k1-h", "base-0", Some("k0"));
-    assert!(matches!(&land(&b.ports(), "lane").unwrap()[0].1, Landing::Held(Blocker::StackedOnUnlanded { .. })));
+    assert!(matches!(
+        &land(&b.ports(), "lane").unwrap()[0].1,
+        Landing::Held(Blocker::StackedOnUnlanded { .. })
+    ));
 }

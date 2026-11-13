@@ -89,7 +89,6 @@ impl Log for DwellLog<'_> {
 mod tests {
     use super::*;
 
-
     #[test]
     fn each_verb_is_its_own_operation_and_anything_else_is_other() {
         assert_eq!(operation(Some("version")), "version");

@@ -319,7 +319,9 @@ fn held(holds: Option<&serde_json::Value>) -> bool {
         None | Some(Value::Null) => false,
         Some(Value::Array(a)) => !a.is_empty(),
         Some(Value::String(t)) if t.trim().is_empty() => false,
-        Some(Value::String(t)) => serde_json::from_str::<Vec<Value>>(t).map_or(true, |a| !a.is_empty()),
+        Some(Value::String(t)) => {
+            serde_json::from_str::<Vec<Value>>(t).map_or(true, |a| !a.is_empty())
+        }
         Some(_) => true,
     }
 }

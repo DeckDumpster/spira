@@ -306,7 +306,12 @@ pub fn pass_result(end: &CertifyEnd, phases: &[String]) -> PassResult {
         ejected: end
             .fields
             .get("ejected")
-            .map(|e| e.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect())
+            .map(|e| {
+                e.split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default(),
     }
 }

@@ -76,7 +76,8 @@ pub fn pass_with(p: &Ports, repos: &[String], steps: &[Step]) {
             for s in steps.iter().filter(|s| UNDER_A_STOP.contains(&s.name)) {
                 (s.run)(p, repo);
             }
-            p.log.write(&Outcome::stopped(p.clock.now_ms(), repo, &stop));
+            p.log
+                .write(&Outcome::stopped(p.clock.now_ms(), repo, &stop));
             continue;
         }
         for s in steps {
@@ -88,7 +89,11 @@ pub fn pass_with(p: &Ports, repos: &[String], steps: &[Step]) {
 
 /// Every registered step but those named in `without`.
 pub fn steps_without(without: &[String]) -> Vec<Step> {
-    STEPS.iter().filter(|s| !without.iter().any(|w| w == s.name)).copied().collect()
+    STEPS
+        .iter()
+        .filter(|s| !without.iter().any(|w| w == s.name))
+        .copied()
+        .collect()
 }
 
 #[cfg(test)]
@@ -102,13 +107,32 @@ mod tests {
         let names: Vec<&str> = STEPS.iter().map(|s| s.name).collect();
         assert_eq!(
             names,
-            ["forge-sweep", "orphans", "supersede", "land", "lane", "schedule", "intents", "section"]
+            [
+                "forge-sweep",
+                "orphans",
+                "supersede",
+                "land",
+                "lane",
+                "schedule",
+                "intents",
+                "section"
+            ]
         );
         let kept: Vec<&str> = steps_without(&["intents".into(), "section".into()])
             .iter()
             .map(|s| s.name)
             .collect();
-        assert_eq!(kept, ["forge-sweep", "orphans", "supersede", "land", "lane", "schedule"]);
+        assert_eq!(
+            kept,
+            [
+                "forge-sweep",
+                "orphans",
+                "supersede",
+                "land",
+                "lane",
+                "schedule"
+            ]
+        );
     }
 
     #[test]

@@ -3,7 +3,7 @@
 
 use serde_json::json;
 use spira_desired_state::sections::round_controller::{
-    runbook, CONTRADICTIONS, CUT_OF_JUDGED_RED, EJECT_REFUSED, LANE_BLOCKED, LAND_REFUSED,
+    runbook, CONTRADICTIONS, CUT_OF_JUDGED_RED, EJECT_REFUSED, LAND_REFUSED, LANE_BLOCKED,
     PRIOR_RUNNER_ALIVE, REDRIVE_EXHAUSTED, STUCK_RUNNER, TWO_ANSWERS_OPEN_ROUND,
 };
 use spira_desired_state::store::format_rfc3339;
@@ -12,8 +12,8 @@ use state_store::{Object, Request, Selector, Txn};
 use crate::death::{prove_dead, Holder, Proof};
 use crate::judge::Progress;
 use crate::land::{self, Blocker};
-use crate::ledger::LaneFault;
 use crate::lease::{holder_of, token_word, Resource};
+use crate::ledger::LaneFault;
 use crate::liveness::{mark_key, Phase, RunnerMark};
 use crate::orphans;
 use crate::ports::Ports;
@@ -60,13 +60,19 @@ pub fn raise(p: &Ports, repo: &str) -> Result<Vec<Cond>, Refusal> {
 
 fn land_refused(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Refusal> {
     let mut out = Vec::new();
-    for r in rounds.iter().filter(|r| r.round.row.state == lifecycle::batch::BatchState::Green) {
+    for r in rounds
+        .iter()
+        .filter(|r| r.round.row.state == lifecycle::batch::BatchState::Green)
+    {
         if let Some(s) = land::read_status(p, &land::status_key(repo, &r.batch))? {
             if let Blocker::Refused { text } = s.blocker {
                 out.push(raised(
                     LAND_REFUSED,
                     format!("{}@{}", r.batch, s.inputs.head),
-                    format!("{} is GREEN with a certificate for {} and land refused it: {text}", r.batch, s.inputs.head),
+                    format!(
+                        "{} is GREEN with a certificate for {} and land refused it: {text}",
+                        r.batch, s.inputs.head
+                    ),
                 ));
             }
         }
@@ -78,7 +84,11 @@ fn eject_refused(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Re
     let mut out = Vec::new();
     for r in rounds {
         let key = format!("{}/progress", round_key(repo, &r.batch));
-        let Some(item) = p.store.get(&key).map_err(|e| Refusal::unreadable(&key, e))? else {
+        let Some(item) = p
+            .store
+            .get(&key)
+            .map_err(|e| Refusal::unreadable(&key, e))?
+        else {
             continue;
         };
         let progress: Progress =
@@ -87,7 +97,13 @@ fn eject_refused(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Re
             out.push(raised(
                 EJECT_REFUSED,
                 format!("{}/{}/{}", r.batch, h.member, h.suites.join(",")),
-                format!("could not eject {} from {}, suites {}: {}", h.member, r.batch, h.suites.join(","), h.text),
+                format!(
+                    "could not eject {} from {}, suites {}: {}",
+                    h.member,
+                    r.batch,
+                    h.suites.join(","),
+                    h.text
+                ),
             ));
         }
     }
@@ -95,12 +111,22 @@ fn eject_refused(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Re
 }
 
 fn observed_key(repo: &str, batch: &str) -> String {
-    format!("{}/terminal-lease/{batch}", refusal::standing_key(repo, "").trim_end_matches('/'))
+    format!(
+        "{}/terminal-lease/{batch}",
+        refusal::standing_key(repo, "").trim_end_matches('/')
+    )
 }
 
 fn put_observed(p: &Ports, key: &str, t: Txn) -> Result<(), Refusal> {
-    let req = Request::new(&format!("terminal-lease-{key}-{}", p.next_u64()), "round-controller", "terminal-lease");
-    p.store.txn(&t, &req).map(|_| ()).map_err(|e| Refusal::unreadable(key, e))
+    let req = Request::new(
+        &format!("terminal-lease-{key}-{}", p.next_u64()),
+        "round-controller",
+        "terminal-lease",
+    );
+    p.store
+        .txn(&t, &req)
+        .map(|_| ())
+        .map_err(|e| Refusal::unreadable(key, e))
 }
 
 fn two_answers(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Refusal> {
@@ -110,23 +136,48 @@ fn two_answers(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Refu
         let store_says = if rounds.is_empty() {
             "the store holds no open round".to_string()
         } else {
-            format!("the store holds {}", rounds.iter().map(|r| r.batch.as_str()).collect::<Vec<_>>().join(", "))
+            format!(
+                "the store holds {}",
+                rounds
+                    .iter()
+                    .map(|r| r.batch.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         };
         out.push(raised(
             TWO_ANSWERS_OPEN_ROUND,
             format!("{repo}:{}", files.join(",")),
-            format!("run/queue/{repo}/{} exists but {store_says}: two answers to what round is open", files.join(", ")),
+            format!(
+                "run/queue/{repo}/{} exists but {store_says}: two answers to what round is open",
+                files.join(", ")
+            ),
         ));
     }
     let prefix = format!("locks/round/{repo}/");
-    let (locks, _) = p.store.list(&[prefix.as_str()], &Selector::Everything).map_err(|e| Refusal::unreadable(&prefix, e))?;
+    let (locks, _) = p
+        .store
+        .list(&[prefix.as_str()], &Selector::Everything)
+        .map_err(|e| Refusal::unreadable(&prefix, e))?;
     let now = p.clock.now_ms();
     let mut seen = Vec::new();
-    for lock in locks.iter().filter(|l| l.lock_expires_at_ms.is_some_and(|e| e > now)) {
-        let Some(batch) = lock.key.strip_prefix(&prefix) else { continue };
+    for lock in locks
+        .iter()
+        .filter(|l| l.lock_expires_at_ms.is_some_and(|e| e > now))
+    {
+        let Some(batch) = lock.key.strip_prefix(&prefix) else {
+            continue;
+        };
         let rkey = round_key(repo, batch);
-        let Some(item) = p.store.get(&rkey).map_err(|e| Refusal::unreadable(&rkey, e))? else { continue };
-        let round: Round = serde_json::from_value(item.value.data).map_err(|e| Refusal::unreadable(&rkey, e))?;
+        let Some(item) = p
+            .store
+            .get(&rkey)
+            .map_err(|e| Refusal::unreadable(&rkey, e))?
+        else {
+            continue;
+        };
+        let round: Round =
+            serde_json::from_value(item.value.data).map_err(|e| Refusal::unreadable(&rkey, e))?;
         if !round.row.state.is_terminal() {
             continue;
         }
@@ -136,9 +187,21 @@ fn two_answers(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Refu
             .store
             .get(&okey)
             .map_err(|e| Refusal::unreadable(&okey, e))?
-            .and_then(|i| i.value.data.get("since").and_then(serde_json::Value::as_u64));
+            .and_then(|i| {
+                i.value
+                    .data
+                    .get("since")
+                    .and_then(serde_json::Value::as_u64)
+            });
         let Some(since) = since else {
-            put_observed(p, &okey, Txn::new().put(&okey, Object::new(json!({ "since": now })).with_ttl(STANDING_TTL_SECS)))?;
+            put_observed(
+                p,
+                &okey,
+                Txn::new().put(
+                    &okey,
+                    Object::new(json!({ "since": now })).with_ttl(STANDING_TTL_SECS),
+                ),
+            )?;
             continue;
         };
         if now.saturating_sub(since) > p.leases.ttl_ms {
@@ -155,8 +218,14 @@ fn two_answers(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Refu
         }
     }
     let ostem = observed_key(repo, "");
-    let (kept, _) = p.store.list(&[ostem.as_str()], &Selector::Everything).map_err(|e| Refusal::unreadable(&ostem, e))?;
-    for i in kept.iter().filter(|i| !seen.iter().any(|b| i.key == observed_key(repo, b))) {
+    let (kept, _) = p
+        .store
+        .list(&[ostem.as_str()], &Selector::Everything)
+        .map_err(|e| Refusal::unreadable(&ostem, e))?;
+    for i in kept
+        .iter()
+        .filter(|i| !seen.iter().any(|b| i.key == observed_key(repo, b)))
+    {
         put_observed(p, &i.key, Txn::new().delete(&i.key))?;
     }
     Ok(out)
@@ -166,7 +235,9 @@ fn cut_of_judged_red(p: &Ports, repo: &str) -> Result<Vec<Cond>, Refusal> {
     Ok(refusal::standing(p, repo, crate::cut::STEP)?
         .filter(|(word, _)| *word == Refusal::CutOfJudgedRed { key: String::new() }.word())
         .map(|(_, key)| {
-            let reason = format!("an explicit cut named {key}, which the ledger judged red, and was refused");
+            let reason = format!(
+                "an explicit cut named {key}, which the ledger judged red, and was refused"
+            );
             raised(CUT_OF_JUDGED_RED, key, reason)
         })
         .into_iter()
@@ -175,12 +246,25 @@ fn cut_of_judged_red(p: &Ports, repo: &str) -> Result<Vec<Cond>, Refusal> {
 
 fn lane_blocked(p: &Ports, repo: &str) -> Result<Vec<Cond>, Refusal> {
     let prefix = format!("faults/{repo}/");
-    let (items, _) = p.store.list(&[prefix.as_str()], &Selector::Everything).map_err(|e| Refusal::unreadable(&prefix, e))?;
+    let (items, _) = p
+        .store
+        .list(&[prefix.as_str()], &Selector::Everything)
+        .map_err(|e| Refusal::unreadable(&prefix, e))?;
     items
         .iter()
         .map(|i| {
-            let f: LaneFault = serde_json::from_value(i.value.data.clone()).map_err(|e| Refusal::unreadable(&i.key, e))?;
-            Ok(raised(LANE_BLOCKED, i.key.clone(), format!("{} fault stands on {}: {}", f.cause.word(), i.key, f.evidence)))
+            let f: LaneFault = serde_json::from_value(i.value.data.clone())
+                .map_err(|e| Refusal::unreadable(&i.key, e))?;
+            Ok(raised(
+                LANE_BLOCKED,
+                i.key.clone(),
+                format!(
+                    "{} fault stands on {}: {}",
+                    f.cause.word(),
+                    i.key,
+                    f.evidence
+                ),
+            ))
         })
         .collect()
 }
@@ -189,13 +273,24 @@ fn stuck_runner(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Ref
     let now = p.clock.now_ms();
     let mut out = Vec::new();
     for r in rounds.iter().filter(|r| r.leased) {
-        let Some(held) = holder_of(p, &Resource::round(repo, &r.batch)).map_err(|e| Refusal::unreadable(&r.batch, e))? else {
+        let Some(held) = holder_of(p, &Resource::round(repo, &r.batch))
+            .map_err(|e| Refusal::unreadable(&r.batch, e))?
+        else {
             continue;
         };
         let key = mark_key(repo, &r.batch);
-        let Some(item) = p.store.get(&key).map_err(|e| Refusal::unreadable(&key, e))? else { continue };
-        let mark: RunnerMark = serde_json::from_value(item.value.data).map_err(|e| Refusal::unreadable(&key, e))?;
-        let Some(phase) = Phase::from_word(&mark.phase) else { continue };
+        let Some(item) = p
+            .store
+            .get(&key)
+            .map_err(|e| Refusal::unreadable(&key, e))?
+        else {
+            continue;
+        };
+        let mark: RunnerMark =
+            serde_json::from_value(item.value.data).map_err(|e| Refusal::unreadable(&key, e))?;
+        let Some(phase) = Phase::from_word(&mark.phase) else {
+            continue;
+        };
         let age = now.saturating_sub(mark.at_ms);
         if mark.token == held.token && age > p.leases.deadline_ms(phase) {
             out.push(raised(
@@ -216,24 +311,41 @@ fn stuck_runner(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Ref
 }
 
 fn orphaned(p: &Ports, repo: &str) -> Result<Vec<Cond>, Refusal> {
-    let found = orphans::orphans(p, repo).map_err(|e| Refusal::unreadable(&format!("batches/{repo}/"), e))?;
+    let found = orphans::orphans(p, repo)
+        .map_err(|e| Refusal::unreadable(&format!("batches/{repo}/"), e))?;
     let mut out = Vec::new();
     for o in found {
         let key = orphans::record_key(repo, &o.batch);
         let (rec, _) = orphans::read(p, &key).map_err(|e| Refusal::unreadable(&key, e))?;
         let id = format!("{}/{}", o.batch, token_word(o.expired));
         if rec.failures() >= p.leases.redrive_retries {
-            let last = rec.attempts.last().map(|a| a.launch_result.as_str()).unwrap_or_default();
+            let last = rec
+                .attempts
+                .last()
+                .map(|a| a.launch_result.as_str())
+                .unwrap_or_default();
             out.push(raised(
                 REDRIVE_EXHAUSTED,
                 o.batch.clone(),
-                format!("{} launches of {} failed in a row, the last: {last}", rec.failures(), o.batch),
+                format!(
+                    "{} launches of {} failed in a row, the last: {last}",
+                    rec.failures(),
+                    o.batch
+                ),
             ));
             continue;
         }
-        let old = Holder { repo: repo.into(), batch: o.batch.clone(), token: o.expired };
+        let old = Holder {
+            repo: repo.into(),
+            batch: o.batch.clone(),
+            token: o.expired,
+        };
         if let Proof::Unknown { why } = prove_dead(p, &old) {
-            out.push(raised(PRIOR_RUNNER_ALIVE, id, format!("{}'s old runner is not shown dead: {why}", o.batch)));
+            out.push(raised(
+                PRIOR_RUNNER_ALIVE,
+                id,
+                format!("{}'s old runner is not shown dead: {why}", o.batch),
+            ));
         }
     }
     out.extend(unproven_slot_holders(p, repo)?);
@@ -247,9 +359,15 @@ fn unproven_slot_holders(p: &Ports, repo: &str) -> Result<Vec<Cond>, Refusal> {
         return Ok(Vec::new());
     }
     let prefix = format!("batches/{repo}/");
-    let (items, _) = p.store.list(&[prefix.as_str()], &Selector::Everything).map_err(|e| Refusal::unreadable(&prefix, e))?;
-    let batches: Vec<&str> =
-        items.iter().filter_map(|i| i.key.strip_prefix(&prefix)).filter(|b| !b.contains('/')).collect();
+    let (items, _) = p
+        .store
+        .list(&[prefix.as_str()], &Selector::Everything)
+        .map_err(|e| Refusal::unreadable(&prefix, e))?;
+    let batches: Vec<&str> = items
+        .iter()
+        .filter_map(|i| i.key.strip_prefix(&prefix))
+        .filter(|b| !b.contains('/'))
+        .collect();
     Ok(held
         .into_iter()
         .filter_map(|h| {

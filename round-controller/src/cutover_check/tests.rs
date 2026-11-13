@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use batcher::core::Member as RoundMember;
 use batcher::attrib::Job;
+use batcher::core::Member as RoundMember;
 use batcher::drive::{MainEnd, MainKind, MainPoll, RoundRunner};
 use lifecycle::batch::{BatchRow, BatchState};
 use runtime::ports::{Clock, VirtualClock};
@@ -40,7 +40,11 @@ impl FakeFacts {
             ..FakeFacts::default()
         };
         f.tree("alpha", DECL, "ci_entry = \"bash ci.sh\"\n");
-        f.tree("beta", GATE_STEPS, "# the gate\nstep make check\nstep make lint\n");
+        f.tree(
+            "beta",
+            GATE_STEPS,
+            "# the gate\nstep make check\nstep make lint\n",
+        );
         f.submitted.insert("alpha".into(), 2);
         f.submitted.insert("beta".into(), 1);
         f
@@ -59,7 +63,10 @@ impl Facts for FakeFacts {
         if self.unreadable_tree.as_deref() == Some(repo) {
             return Err("git cat-file exited Some(128)".into());
         }
-        Ok(self.trees.get(&(repo.to_string(), path.to_string())).cloned())
+        Ok(self
+            .trees
+            .get(&(repo.to_string(), path.to_string()))
+            .cloned())
     }
     fn names_at_landing(&self, repo: &str, dir: &str) -> Result<Vec<String>, String> {
         self.names
@@ -115,7 +122,14 @@ fn m(id: &str, tip: &str) -> Member {
     }
 }
 
-fn round(repo: &str, batch: &str, state: BatchState, head: &str, base: &str, members: Vec<Member>) -> serde_json::Value {
+fn round(
+    repo: &str,
+    batch: &str,
+    state: BatchState,
+    head: &str,
+    base: &str,
+    members: Vec<Member>,
+) -> serde_json::Value {
     let mut row = BatchRow::cut(batch, repo, head, base);
     row.state = state;
     if matches!(state, BatchState::Landed | BatchState::Deploying) {
@@ -134,9 +148,23 @@ fn round(repo: &str, batch: &str, state: BatchState, head: &str, base: &str, mem
 fn ready(b: &Bench) {
     seed_lane(b, "alpha", "a1", "sha256:img2");
     seed_lane(b, "beta", "b2", "sha256:img2");
-    record(b, &base_identity("alpha", &lane_of(b, "alpha")), Class::Green);
+    record(
+        b,
+        &base_identity("alpha", &lane_of(b, "alpha")),
+        Class::Green,
+    );
     let members = vec![m("sp-x", "t1")];
-    b.seed("batches/beta/k1", round("beta", "k1", BatchState::Landed, "b2", "b1", members.clone()));
+    b.seed(
+        "batches/beta/k1",
+        round(
+            "beta",
+            "k1",
+            BatchState::Landed,
+            "b2",
+            "b1",
+            members.clone(),
+        ),
+    );
     let id = PassIdentity {
         members,
         base: "b1".into(),
@@ -146,7 +174,8 @@ fn ready(b: &Bench) {
 }
 
 fn row<'a>(r: &'a Readiness, scope: &str) -> &'a Row {
-    r.row(scope).unwrap_or_else(|| panic!("no row {scope}: {}", r.render()))
+    r.row(scope)
+        .unwrap_or_else(|| panic!("no row {scope}: {}", r.render()))
 }
 
 fn why<'a>(r: &'a Readiness, scope: &str, check: &str) -> &'a Check {
@@ -160,9 +189,18 @@ fn every_row_green_exits_0_and_names_each_check() {
     let r = readiness(&b.ports(), &FakeFacts::two());
     assert_eq!(r.code(), 0, "{}", r.render());
     let text = r.render();
-    assert!(text.contains("alpha green ci=green base=green submitted=green"), "{text}");
-    assert!(text.contains("beta green ci=green base=green submitted=green"), "{text}");
-    assert!(text.contains("global green repos=green rounds=green open-batches=green"), "{text}");
+    assert!(
+        text.contains("alpha green ci=green base=green submitted=green"),
+        "{text}"
+    );
+    assert!(
+        text.contains("beta green ci=green base=green submitted=green"),
+        "{text}"
+    );
+    assert!(
+        text.contains("global green repos=green rounds=green open-batches=green"),
+        "{text}"
+    );
     assert!(text.ends_with("readiness=green\n"), "{text}");
     assert!(why(&r, "alpha", "ci").why.contains("bash ci.sh"));
     assert!(why(&r, "beta", "ci").why.contains("2 steps"));
@@ -184,7 +222,9 @@ fn a_repo_with_no_ci_entry_and_no_gate_steps_is_a_red_row() {
         let c = why(&r, repo, "ci");
         assert!(!c.green && c.why.contains("no ci_entry"), "{c:?}");
     }
-    assert!(r.render().contains("alpha red ci=red base=green submitted=green"));
+    assert!(r
+        .render()
+        .contains("alpha red ci=red base=green submitted=green"));
 }
 
 #[test]
@@ -224,12 +264,25 @@ fn a_base_green_only_on_another_image_or_another_base_is_red() {
         ..base_identity("alpha", &lane_of(&b, "alpha"))
     };
     record(&b, &old_image, Class::Green);
-    b.seed("batches/alpha/k0", round("alpha", "k0", BatchState::Landed, "a0", "z", vec![m("sp-y", "t")]));
+    b.seed(
+        "batches/alpha/k0",
+        round(
+            "alpha",
+            "k0",
+            BatchState::Landed,
+            "a0",
+            "z",
+            vec![m("sp-y", "t")],
+        ),
+    );
     let r = readiness(&b.ports(), &FakeFacts::two());
     let c = why(&r, "alpha", "base");
     assert!(!c.green && c.why.contains("--probe-base alpha"), "{c:?}");
     let c = why(&r, "beta", "base");
-    assert!(!c.green && c.why.contains("no lane record at lanes/beta"), "{c:?}");
+    assert!(
+        !c.green && c.why.contains("no lane record at lanes/beta"),
+        "{c:?}"
+    );
 }
 
 #[test]
@@ -266,7 +319,9 @@ fn a_repo_with_no_submitted_bead_or_an_unreadable_count_is_a_red_row() {
     let c = why(&r, "alpha", "submitted");
     assert_eq!((c.green, c.why.as_str()), (false, "no SUBMITTED bead"));
     assert!(why(&r, "beta", "submitted").why.contains("cannot read"));
-    assert!(r.render().contains("alpha red ci=green base=green submitted=red"));
+    assert!(r
+        .render()
+        .contains("alpha red ci=green base=green submitted=red"));
     assert_eq!(r.code(), 1);
 }
 
@@ -274,11 +329,24 @@ fn a_repo_with_no_submitted_bead_or_an_unreadable_count_is_a_red_row() {
 fn a_non_terminal_round_reds_the_global_row_and_names_it() {
     let b = Bench::new();
     ready(&b);
-    b.seed("batches/beta/k2", round("beta", "k2", BatchState::Attributing, "b3", "b2", vec![m("sp-z", "t")]));
+    b.seed(
+        "batches/beta/k2",
+        round(
+            "beta",
+            "k2",
+            BatchState::Attributing,
+            "b3",
+            "b2",
+            vec![m("sp-z", "t")],
+        ),
+    );
     b.seed("batches/beta/k2/progress", json!({ "pass": 1 }));
     let r = readiness(&b.ports(), &FakeFacts::two());
     let c = why(&r, GLOBAL, "rounds");
-    assert_eq!((c.green, c.why.as_str()), (false, "1 non-terminal: beta/k2 ATTRIBUTING"));
+    assert_eq!(
+        (c.green, c.why.as_str()),
+        (false, "1 non-terminal: beta/k2 ATTRIBUTING")
+    );
     assert!(row(&r, "alpha").green() && row(&r, "beta").green());
     assert_eq!(r.code(), 1);
 }
@@ -292,13 +360,20 @@ fn an_open_batch_or_an_unreadable_one_reds_the_global_row() {
     f.open.insert("beta".into(), "spira-9".into());
     let r = readiness(&b.ports(), &f);
     let c = why(&r, GLOBAL, "open-batches");
-    assert_eq!((c.green, c.why.as_str()), (false, "alpha/deck-1 beta/spira-9"));
+    assert_eq!(
+        (c.green, c.why.as_str()),
+        (false, "alpha/deck-1 beta/spira-9")
+    );
     assert_eq!(r.code(), 1);
     let mut f = FakeFacts::two();
     f.unreadable_queue = Some("beta".into());
     let r = readiness(&b.ports(), &f);
     let c = why(&r, GLOBAL, "open-batches");
-    assert!(!c.green && c.why.contains("cannot tell whether beta has an open batch"), "{}", c.why);
+    assert!(
+        !c.green && c.why.contains("cannot tell whether beta has an open batch"),
+        "{}",
+        c.why
+    );
     assert_eq!(r.code(), 1);
 }
 
@@ -313,7 +388,9 @@ fn no_round_repo_or_an_unreadable_registry_is_red() {
         ..FakeFacts::default()
     };
     let r = readiness(&b.ports(), &f);
-    assert!(why(&r, GLOBAL, "repos").why.contains("no repository registry"));
+    assert!(why(&r, GLOBAL, "repos")
+        .why
+        .contains("no repository registry"));
     assert_eq!(r.code(), 1);
 }
 
@@ -326,7 +403,9 @@ fn a_store_that_cannot_be_read_is_red_never_green() {
         let c = why(&r, repo, "base");
         assert!(!c.green && c.why.contains("no spira-lc door"), "{c:?}");
     }
-    assert!(why(&r, GLOBAL, "rounds").why.contains("cannot read the rounds"));
+    assert!(why(&r, GLOBAL, "rounds")
+        .why
+        .contains("cannot read the rounds"));
 }
 
 #[test]
@@ -339,7 +418,10 @@ fn an_undecodable_round_or_summary_is_red_naming_its_key() {
     assert!(why(&r, GLOBAL, "rounds").why.contains("batches/alpha/bad"));
     let b = Bench::new();
     seed_lane(&b, "alpha", "a1", "sha256:img2");
-    b.seed(&summary_key(&base_identity("alpha", &lane_of(&b, "alpha"))), json!({ "class": 7 }));
+    b.seed(
+        &summary_key(&base_identity("alpha", &lane_of(&b, "alpha"))),
+        json!({ "class": 7 }),
+    );
     let r = readiness(&b.ports(), &FakeFacts::two());
     assert!(why(&r, "alpha", "base").why.contains("verdicts/alpha/"));
 }
@@ -352,9 +434,15 @@ fn a_lane_the_landing_ref_moved_past_or_a_ref_git_cannot_read_is_red() {
     b.git.break_repo("beta", "git rev-parse exited Some(128)");
     let r = readiness(&b.ports(), &FakeFacts::two());
     let c = why(&r, "alpha", "base");
-    assert!(!c.green && c.why.contains("names a1") && c.why.contains("at a2"), "{c:?}");
+    assert!(
+        !c.green && c.why.contains("names a1") && c.why.contains("at a2"),
+        "{c:?}"
+    );
     let c = why(&r, "beta", "base");
-    assert!(!c.green && c.why.contains("cannot read beta's landing ref"), "{c:?}");
+    assert!(
+        !c.green && c.why.contains("cannot read beta's landing ref"),
+        "{c:?}"
+    );
 }
 
 #[test]
@@ -367,12 +455,24 @@ fn a_faulted_base_probe_leaves_the_landed_round_to_answer() {
         Class::Fault { cause: Cause::Vm },
     );
     let r = readiness(&b.ports(), &FakeFacts::two());
-    assert!(why(&r, "beta", "base").why.contains("round k1 landed"), "{}", r.render());
+    assert!(
+        why(&r, "beta", "base").why.contains("round k1 landed"),
+        "{}",
+        r.render()
+    );
 }
 
 /// A batch transition as spira-lc commits one: the record, a history entry under the batch, and
 /// the audit as the request's evidence, which the contract keeps at `events/<rev>`.
-fn transition(b: &Bench, repo: &str, batch: &str, state: BatchState, head: &str, event: &str, applied: bool) -> u64 {
+fn transition(
+    b: &Bench,
+    repo: &str,
+    batch: &str,
+    state: BatchState,
+    head: &str,
+    event: &str,
+    applied: bool,
+) -> u64 {
     let planned = b.store.head().unwrap();
     let id = format!("{batch}-{event}-{planned}");
     let req = Request {
@@ -383,15 +483,29 @@ fn transition(b: &Bench, repo: &str, batch: &str, state: BatchState, head: &str,
         ..Request::new(&id, "queue", "batch-event")
     };
     let t = Txn::new()
-        .put(&round_key(repo, batch), Object::new(round(repo, batch, state, head, "base", vec![])))
-        .put(&format!("history/{batch}/{planned:020}/{id}"), Object::new(json!({})));
+        .put(
+            &round_key(repo, batch),
+            Object::new(round(repo, batch, state, head, "base", vec![])),
+        )
+        .put(
+            &format!("history/{batch}/{planned:020}/{id}"),
+            Object::new(json!({})),
+        );
     b.store.txn(&t, &req).unwrap();
     b.store.head().unwrap()
 }
 
 /// A landing through spira-lc: the ref moves at the FastForward, and the release follows.
 fn landed(b: &Bench, repo: &str, batch: &str, head: &str) -> u64 {
-    let at = transition(b, repo, batch, BatchState::Deploying, head, "FastForward", true);
+    let at = transition(
+        b,
+        repo,
+        batch,
+        BatchState::Deploying,
+        head,
+        "FastForward",
+        true,
+    );
     transition(b, repo, batch, BatchState::Landed, head, "Deployed", true);
     at
 }
@@ -403,7 +517,10 @@ fn recorded_landed(b: &Bench, repo: &str, batch: &str, head: &str) -> u64 {
         Object::new(round(repo, batch, BatchState::Landed, head, "base", vec![])),
     );
     b.store
-        .txn(&t, &Request::new(&format!("rc-{batch}"), "round-controller", "land"))
+        .txn(
+            &t,
+            &Request::new(&format!("rc-{batch}"), "round-controller", "land"),
+        )
         .unwrap();
     b.store.head().unwrap()
 }
@@ -436,16 +553,35 @@ fn since_rev_with_both_landed_exits_0_naming_each_repos_first_round() {
     landed(&b, "alpha", "k1", "a2");
     recorded_landed(&b, "beta", "k4", "b4");
     let (out, err, code) = render_since(&since_rev(&b.ports(), &FakeFacts::two(), rev).unwrap());
-    assert_eq!((out.as_str(), err.as_str(), code), ("alpha k2 a3\nbeta k4 b4\n", "", 0));
+    assert_eq!(
+        (out.as_str(), err.as_str(), code),
+        ("alpha k2 a3\nbeta k4 b4\n", "", 0)
+    );
 }
 
 #[test]
 fn a_landing_before_the_revision_counts_even_when_its_release_is_recorded_after() {
     let b = Bench::new();
-    transition(&b, "alpha", "k1", BatchState::Deploying, "a2", "FastForward", true);
+    transition(
+        &b,
+        "alpha",
+        "k1",
+        BatchState::Deploying,
+        "a2",
+        "FastForward",
+        true,
+    );
     recorded_landed(&b, "beta", "k2", "b2");
     let rev = b.store.head().unwrap();
-    transition(&b, "alpha", "k1", BatchState::Landed, "a2", "Deployed", true);
+    transition(
+        &b,
+        "alpha",
+        "k1",
+        BatchState::Landed,
+        "a2",
+        "Deployed",
+        true,
+    );
     let (out, _, code) = render_since(&since_rev(&b.ports(), &FakeFacts::two(), rev).unwrap());
     assert_eq!((out.as_str(), code), ("alpha none\nbeta none\n", 1));
 }
@@ -453,14 +589,37 @@ fn a_landing_before_the_revision_counts_even_when_its_release_is_recorded_after(
 #[test]
 fn a_refused_or_unapplied_fast_forward_is_not_the_landing() {
     let b = Bench::new();
-    transition(&b, "alpha", "k1", BatchState::Green, "a2", "FastForward", false);
+    transition(
+        &b,
+        "alpha",
+        "k1",
+        BatchState::Green,
+        "a2",
+        "FastForward",
+        false,
+    );
     let rev = b.store.head().unwrap();
-    transition(&b, "alpha", "k1", BatchState::Green, "a2", "LandAborted", true);
+    transition(
+        &b,
+        "alpha",
+        "k1",
+        BatchState::Green,
+        "a2",
+        "LandAborted",
+        true,
+    );
     let (out, _, code) = render_since(&since_rev(&b.ports(), &FakeFacts::two(), rev).unwrap());
-    assert_eq!((out.as_str(), code), ("alpha none\nbeta none\n", 1), "a GREEN round has not landed");
+    assert_eq!(
+        (out.as_str(), code),
+        ("alpha none\nbeta none\n", 1),
+        "a GREEN round has not landed"
+    );
     let at = landed(&b, "alpha", "k1", "a2");
     let rows = since_rev(&b.ports(), &FakeFacts::two(), rev).unwrap();
-    assert_eq!(rows[0].1.as_ref().unwrap().as_ref().map(|l| l.rev), Some(at));
+    assert_eq!(
+        rows[0].1.as_ref().unwrap().as_ref().map(|l| l.rev),
+        Some(at)
+    );
 }
 
 #[test]
@@ -468,7 +627,10 @@ fn since_rev_that_cannot_read_a_repo_prints_none_and_says_why() {
     let b = Bench::unserved();
     let (out, err, code) = render_since(&since_rev(&b.ports(), &FakeFacts::two(), 0).unwrap());
     assert_eq!((out.as_str(), code), ("alpha none\nbeta none\n", 1));
-    assert!(err.contains("alpha: batches/alpha/") && err.contains("no spira-lc door"), "{err}");
+    assert!(
+        err.contains("alpha: batches/alpha/") && err.contains("no spira-lc door"),
+        "{err}"
+    );
     let f = FakeFacts {
         repos: Some(Err("no registry".into())),
         ..FakeFacts::default()
@@ -480,7 +642,10 @@ fn since_rev_that_cannot_read_a_repo_prints_none_and_says_why() {
 fn the_modes_are_named_and_mutually_exclusive() {
     assert_eq!(parse(&["--readiness"]), Ok(Mode::Readiness));
     assert_eq!(parse(&["--since-rev", "42"]), Ok(Mode::SinceRev(42)));
-    assert_eq!(parse(&["--probe-base", "alpha"]), Ok(Mode::ProbeBase("alpha".into())));
+    assert_eq!(
+        parse(&["--probe-base", "alpha"]),
+        Ok(Mode::ProbeBase("alpha".into()))
+    );
     for bad in [
         &["--readiness", "--since-rev", "4"][..],
         &["--since-rev", "x"],
@@ -496,18 +661,44 @@ fn the_modes_are_named_and_mutually_exclusive() {
 #[test]
 fn the_probe_runs_the_selection_or_for_all_the_landing_trees_whole_corpus() {
     let mut f = FakeFacts::two();
-    assert_eq!(probe_suites(&f, "alpha", "test-a.sh, test-b.sh"), Ok(vec!["test-a.sh".into(), "test-b.sh".into()]));
-    assert!(probe_suites(&f, "alpha", " , ").unwrap_err().contains("names no suite"));
-    f.tree("alpha", DECL, "ci_entry = \"bash ci.sh\"\n[tier.unit]\ncmd = \"x\"\n[tier.e2e]\ncmd = \"y\"\n");
-    assert_eq!(probe_suites(&f, "alpha", "all"), Ok(vec!["e2e".into(), "unit".into()]));
+    assert_eq!(
+        probe_suites(&f, "alpha", "test-a.sh, test-b.sh"),
+        Ok(vec!["test-a.sh".into(), "test-b.sh".into()])
+    );
+    assert!(probe_suites(&f, "alpha", " , ")
+        .unwrap_err()
+        .contains("names no suite"));
+    f.tree(
+        "alpha",
+        DECL,
+        "ci_entry = \"bash ci.sh\"\n[tier.unit]\ncmd = \"x\"\n[tier.e2e]\ncmd = \"y\"\n",
+    );
+    assert_eq!(
+        probe_suites(&f, "alpha", "all"),
+        Ok(vec!["e2e".into(), "unit".into()])
+    );
     f.tree("alpha", HARNESS_IMAGE, "FROM x\n");
-    f.names.insert(("alpha".into(), "spira".into()), vec!["test-a.sh".into(), "lib.sh".into(), "test-b.sh".into()]);
-    assert_eq!(probe_suites(&f, "alpha", "all"), Ok(vec!["test-a.sh".into(), "test-b.sh".into()]));
-    assert_eq!(probe_suites(&f, "beta", "all").unwrap_err(), "git ls-tree exited Some(128): no spira in beta");
-    f.names.insert(("beta".into(), "spira".into()), vec!["lib.sh".into()]);
-    assert!(probe_suites(&f, "beta", "all").unwrap_err().contains("declares no suite"));
+    f.names.insert(
+        ("alpha".into(), "spira".into()),
+        vec!["test-a.sh".into(), "lib.sh".into(), "test-b.sh".into()],
+    );
+    assert_eq!(
+        probe_suites(&f, "alpha", "all"),
+        Ok(vec!["test-a.sh".into(), "test-b.sh".into()])
+    );
+    assert_eq!(
+        probe_suites(&f, "beta", "all").unwrap_err(),
+        "git ls-tree exited Some(128): no spira in beta"
+    );
+    f.names
+        .insert(("beta".into(), "spira".into()), vec!["lib.sh".into()]);
+    assert!(probe_suites(&f, "beta", "all")
+        .unwrap_err()
+        .contains("declares no suite"));
     f.tree("beta", DECL, "tier = 3\n");
-    assert!(probe_suites(&f, "beta", "all").unwrap_err().contains("does not parse"));
+    assert!(probe_suites(&f, "beta", "all")
+        .unwrap_err()
+        .contains("does not parse"));
 }
 
 /// A round VM that serves the base run, and is gone once closed unless it lingers.
@@ -661,7 +852,11 @@ fn green_run() -> Ends {
     Ends::Ran(vec![("test-a.sh", true), ("test-b.sh", true)], MainEnd::Ran)
 }
 
-fn probe_with(b: &Bench, slots: Option<&crate::slots::SlotSettings>, subs: &mut Subs) -> Result<Probed, String> {
+fn probe_with(
+    b: &Bench,
+    slots: Option<&crate::slots::SlotSettings>,
+    subs: &mut Subs,
+) -> Result<Probed, String> {
     let ledger = StoreLedger { policy: POLICY };
     let base = b.ports();
     let p = Ports {
@@ -694,37 +889,81 @@ fn a_green_base_probe_is_recorded_under_the_base_identity_and_readiness_reads_it
     let mut subs = Subs::new(&b, &v, green_run(), 120_000);
     subs.during = Some(&b);
     let probed = probe(&b, &mut subs).unwrap();
-    assert_eq!((probed.class.clone(), probed.attempt, probed.slot_kept, probed.code()), (Class::Green, 1, false, 0));
-    assert_eq!(probed.identity, base_identity("alpha", &lane_of(&b, "alpha")));
-    assert_eq!(subs.members, Some(vec![]), "the base tree carries no member");
-    assert_eq!(subs.started.as_ref().map(|(_, s)| s.clone()), Some(suites()));
+    assert_eq!(
+        (
+            probed.class.clone(),
+            probed.attempt,
+            probed.slot_kept,
+            probed.code()
+        ),
+        (Class::Green, 1, false, 0)
+    );
+    assert_eq!(
+        probed.identity,
+        base_identity("alpha", &lane_of(&b, "alpha"))
+    );
+    assert_eq!(
+        subs.members,
+        Some(vec![]),
+        "the base tree carries no member"
+    );
+    assert_eq!(
+        subs.started.as_ref().map(|(_, s)| s.clone()),
+        Some(suites())
+    );
     assert!(
-        !subs.seen.is_empty() && subs.seen.iter().all(|s| s["unit"] == "probe.scope" && s["holder"] == PROBE_HOLDER),
+        !subs.seen.is_empty()
+            && subs
+                .seen
+                .iter()
+                .all(|s| s["unit"] == "probe.scope" && s["holder"] == PROBE_HOLDER),
         "the slot names its holder's unit while the VM is up: {:?}",
         subs.seen
     );
     let slot = b.store.get("slots/proxmox/0").unwrap().unwrap();
     assert_eq!(slot.value.data["released"], true, "{:?}", slot.value.data);
-    assert!(b.store.get("locks/runner-slot/proxmox/0").unwrap().is_none(), "the slot is given back");
+    assert!(
+        b.store
+            .get("locks/runner-slot/proxmox/0")
+            .unwrap()
+            .is_none(),
+        "the slot is given back"
+    );
     let key = summary_key(&probed.identity);
-    let owners = b.store.get(&key).unwrap().unwrap().value.metadata.owner_references;
+    let owners = b
+        .store
+        .get(&key)
+        .unwrap()
+        .unwrap()
+        .value
+        .metadata
+        .owner_references;
     assert_eq!(owners, vec!["lanes/alpha"], "kept while the lane lives");
     let r = readiness(&b.ports(), &FakeFacts::two());
     assert!(why(&r, "alpha", "base").green, "{}", r.render());
-    assert!(probed.render().starts_with("probe=green repo=alpha base=a9 image=sha256:img2 attempt=1"));
+    assert!(probed
+        .render()
+        .starts_with("probe=green repo=alpha base=a9 image=sha256:img2 attempt=1"));
 }
 
 #[test]
 fn a_red_unfinished_or_faulted_base_probe_is_recorded_and_exits_1() {
     for (ends, class, readiness_says) in [
         (
-            Ends::Ran(vec![("test-a.sh", true), ("test-b.sh", false)], MainEnd::Ran),
-            Class::Red { step: "test-b.sh".into() },
+            Ends::Ran(
+                vec![("test-a.sh", true), ("test-b.sh", false)],
+                MainEnd::Ran,
+            ),
+            Class::Red {
+                step: "test-b.sh".into(),
+            },
             "was red",
         ),
         (
             Ends::Ran(vec![], MainEnd::WorkspaceBuild),
-            Class::Red { step: "workspace-build".into() },
+            Class::Red {
+                step: "workspace-build".into(),
+            },
             "was red",
         ),
         (
@@ -759,7 +998,10 @@ fn a_probe_whose_vm_outlives_its_teardown_keeps_the_slot_to_lapse() {
     let probed = probe(&b, &mut subs).unwrap();
     assert!(probed.slot_kept && probed.render().contains("slot=kept"));
     let slot = b.store.get("slots/proxmox/0").unwrap().unwrap();
-    assert_ne!(slot.value.data["released"], true, "a slot whose VM may live is not marked released");
+    assert_ne!(
+        slot.value.data["released"], true,
+        "a slot whose VM may live is not marked released"
+    );
 }
 
 #[test]
@@ -767,7 +1009,9 @@ fn a_probe_refuses_a_held_slot_a_stale_lane_or_no_lane_and_gives_back_a_failed_s
     let b = Bench::new();
     let v = vm(false);
     let mut subs = Subs::new(&b, &v, green_run(), 0);
-    assert!(probe(&b, &mut subs).unwrap_err().contains("no lane record at lanes/alpha"));
+    assert!(probe(&b, &mut subs)
+        .unwrap_err()
+        .contains("no lane record at lanes/alpha"));
     seed_lane(&b, "alpha", "a1", "sha256:img2");
     b.git.advance("alpha", "a2");
     let e = probe(&b, &mut subs).unwrap_err();
@@ -775,14 +1019,23 @@ fn a_probe_refuses_a_held_slot_a_stale_lane_or_no_lane_and_gives_back_a_failed_s
     b.git.advance("alpha", "a1");
     let mut down = Subs::new(&b, &v, Ends::NoStart, 0);
     assert!(probe(&b, &mut down).unwrap_err().contains("did not start"));
-    assert!(b.store.get("locks/runner-slot/proxmox/0").unwrap().is_none(), "a failed start gives the slot back");
+    assert!(
+        b.store
+            .get("locks/runner-slot/proxmox/0")
+            .unwrap()
+            .is_none(),
+        "a failed start gives the slot back"
+    );
     let held = grant_for_hand(&b.ports(), "round-recert").unwrap();
     let one_slot = crate::slots::SlotSettings {
         ec2_slots: 0,
         spill: false,
     };
     let e = probe_with(&b, Some(&one_slot), &mut subs).unwrap_err();
-    assert!(e.contains("round-recert"), "a refusal names the holder: {e}");
+    assert!(
+        e.contains("round-recert"),
+        "a refusal names the holder: {e}"
+    );
     assert!(subs.started.is_none(), "nothing ran without a slot");
     held.release(&b.ports()).unwrap();
 }

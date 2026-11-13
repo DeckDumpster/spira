@@ -314,13 +314,7 @@ impl Outcome {
     }
 
     /// A runner the schedule step launched as `unit`, or whose launch failed with `failed`.
-    pub fn launch(
-        at: u64,
-        repo: &str,
-        batch: &str,
-        unit: &str,
-        failed: Option<&str>,
-    ) -> Outcome {
+    pub fn launch(at: u64, repo: &str, batch: &str, unit: &str, failed: Option<&str>) -> Outcome {
         Outcome {
             at,
             repo: repo.into(),
@@ -381,7 +375,12 @@ impl Outcome {
         s
     }
 
-    pub fn published(at: u64, repo: &str, green_unlanded_minutes: u64, repeat_identity_passes_24h: u64) -> Outcome {
+    pub fn published(
+        at: u64,
+        repo: &str,
+        green_unlanded_minutes: u64,
+        repeat_identity_passes_24h: u64,
+    ) -> Outcome {
         Outcome {
             at,
             repo: repo.into(),

@@ -135,7 +135,10 @@ mod tests {
             .under_landing_ref("lane", "h9")
             .unwrap_err()
             .contains("bad object h9"));
-        assert_eq!(g.under_landing_ref("lane", "h3").unwrap_err(), "spawn failed");
+        assert_eq!(
+            g.under_landing_ref("lane", "h3").unwrap_err(),
+            "spawn failed"
+        );
         assert_eq!(
             p.1.lock().unwrap()[0].args,
             [

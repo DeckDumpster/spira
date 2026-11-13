@@ -677,7 +677,9 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
         .iter()
         .find(|w| !crate::pass::STEPS.iter().any(|s| s.name == w.as_str()))
     {
-        return Err(format!("scenario: same_without names {w:?}, which is no step of pass"));
+        return Err(format!(
+            "scenario: same_without names {w:?}, which is no step of pass"
+        ));
     }
     for r in &f.run_pass {
         r.check().map_err(|e| format!("scenario: {e}"))?;
@@ -1326,10 +1328,13 @@ impl World<'_> {
             self.b
                 .store
                 .txn(
-                    &state_store::Txn::new().put(&s.key, match s.ttl_secs {
-                        Some(t) => Object::new(data).with_ttl(t),
-                        None => Object::new(data),
-                    }),
+                    &state_store::Txn::new().put(
+                        &s.key,
+                        match s.ttl_secs {
+                            Some(t) => Object::new(data).with_ttl(t),
+                            None => Object::new(data),
+                        },
+                    ),
                     &req,
                 )
                 .map_err(|e| format!("store step {} at pass {}: {e}", s.key, s.pass))?;
@@ -1551,7 +1556,12 @@ mod tests {
 
     #[test]
     fn a_step_whose_removal_changes_a_decision_breaks_same_without_naming_the_first() {
-        assert_eq!(run_all(&format!("same_without = [\"section\"]\n{LANDING}"), 1).unwrap().len(), 2);
+        assert_eq!(
+            run_all(&format!("same_without = [\"section\"]\n{LANDING}"), 1)
+                .unwrap()
+                .len(),
+            2
+        );
         let e = run_all(&format!("same_without = [\"land\"]\n{LANDING}"), 1).unwrap_err();
         assert!(
             e.contains("invariant same-decisions-without violated under default: without land, decision 0: Some(\"Call { verb: Land"),
@@ -1559,7 +1569,10 @@ mod tests {
         );
         assert!(e.contains("under reference-minimum"), "{e}");
         let e = parse(&format!("same_without = [\"cut\"]\n{LANDING}")).unwrap_err();
-        assert!(e.contains("same_without names \"cut\", which is no step of pass"), "{e}");
+        assert!(
+            e.contains("same_without names \"cut\", which is no step of pass"),
+            "{e}"
+        );
     }
 
     #[test]
@@ -1609,7 +1622,12 @@ mod tests {
         let e = |p: &str, v: u64| {
             format!("[[expect]]\nname = \"{p}\"\ncount = \"outcomes\"\nequals = {v}\nprofile = \"{p}\"\n")
         };
-        go(&format!("{}{}", e("default", 99), e("reference-minimum", 4))).unwrap();
+        go(&format!(
+            "{}{}",
+            e("default", 99),
+            e("reference-minimum", 4)
+        ))
+        .unwrap();
         let err = go(&e("reference-minimum", 99)).unwrap_err();
         assert!(err.contains("expectation reference-minimum unmet"), "{err}");
         let err = parse(&format!("{BASE}{}", e("tiny", 0))).unwrap_err();
@@ -1622,7 +1640,8 @@ mod tests {
             format!("[[expect]]\nname = \"{n}\"\ncount = \"{c}\"\nequals = {v}\n")
         };
         let text = [
-            "[off]\nstop = [{ repo = \"a\", owner = \"o\", reason = \"r\", until = \"u\" }]\n".to_string(),
+            "[off]\nstop = [{ repo = \"a\", owner = \"o\", reason = \"r\", until = \"u\" }]\n"
+                .to_string(),
             "[[store]]\nkey = \"lifecycle/sp-x\"\ndata = { state = \"LANDED\" }\n".into(),
             expect("s", "outcomes:stopped", 2),
             expect("ss", "stops:scoped-stop", 2),
@@ -1650,7 +1669,8 @@ mod tests {
         b.seed("batches/a/k1", serde_json::json!({ "state": "Open" }));
         b.launch.script_running(30_000);
         let p = b.ports();
-        let lease = crate::lease::acquire(&p, &crate::lease::Resource::round("a", "k1"), "t").unwrap();
+        let lease =
+            crate::lease::acquire(&p, &crate::lease::Resource::round("a", "k1"), "t").unwrap();
         let slot = crate::slots::grant(&p, &[Pool::Proxmox], "t").unwrap();
         let _ = crate::ports::Launch::start(&b.launch, &p, "a", "k1", lease.token(), &slot);
         let started = b.clock.now_ms();
@@ -1983,7 +2003,10 @@ mod tests {
         assert_eq!(sc.launches, [(Ok(()), None), (Err("no".to_string()), None)]);
         let sc = parse(&format!("{BASE}[[launch]]\nok = true\nfinish_secs = 30\n")).unwrap();
         assert_eq!(sc.launches, [(Ok(()), Some(30_000))]);
-        let e = parse(&format!("{BASE}[[launch]]\nrefuse = \"x\"\nfinish_secs = 30\n")).unwrap_err();
+        let e = parse(&format!(
+            "{BASE}[[launch]]\nrefuse = \"x\"\nfinish_secs = 30\n"
+        ))
+        .unwrap_err();
         assert!(e.contains("a refused launch starts no runner"), "{e}");
         for bad in [
             "fact = \"ec2-unreadable\"\n",

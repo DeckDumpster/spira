@@ -23,7 +23,15 @@ fn text(slug: &str) -> String {
 /// A replay's virtual walls and Judge passes are reported on stdout, never asserted.
 fn reported(reports: &[Report]) {
     for line in reports.iter().flat_map(|r| &r.lines) {
-        if ["virtual-wall ", "judge-passes ", "redrives ", "replay-passes "].iter().any(|p| line.starts_with(p)) {
+        if [
+            "virtual-wall ",
+            "judge-passes ",
+            "redrives ",
+            "replay-passes ",
+        ]
+        .iter()
+        .any(|p| line.starts_with(p))
+        {
             println!("{line}");
         }
     }

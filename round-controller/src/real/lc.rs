@@ -37,17 +37,29 @@ mod tests {
 
     use super::*;
 
-    pub(crate) struct Answers(pub Mutex<Vec<Result<Reply, String>>>, pub Mutex<Vec<(Vec<String>, Option<String>)>>);
+    pub(crate) struct Answers(
+        pub Mutex<Vec<Result<Reply, String>>>,
+        pub Mutex<Vec<(Vec<String>, Option<String>)>>,
+    );
 
     impl Transport for Answers {
-        fn exchange(&self, argv: &[String], stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+        fn exchange(
+            &self,
+            argv: &[String],
+            stdin: Option<&str>,
+            _d: Duration,
+        ) -> Result<Reply, String> {
             crate::lock(&self.1).push((argv.to_vec(), stdin.map(str::to_string)));
             crate::lock(&self.0).remove(0)
         }
     }
 
     fn out(code: i32, stdout: &str, stderr: &str) -> Result<Reply, String> {
-        Ok(Reply { code, out: stdout.into(), err: stderr.into() })
+        Ok(Reply {
+            code,
+            out: stdout.into(),
+            err: stderr.into(),
+        })
     }
 
     #[test]
@@ -61,8 +73,14 @@ mod tests {
             ]),
             Mutex::default(),
         ));
-        let lc = SpiraLc { client: LcClient::over(answers.clone(), true) };
-        let args = vec!["section".to_string(), "get".into(), "RoundController/r".into()];
+        let lc = SpiraLc {
+            client: LcClient::over(answers.clone(), true),
+        };
+        let args = vec![
+            "section".to_string(),
+            "get".into(),
+            "RoundController/r".into(),
+        ];
         let (code, v) = lc.call(&args);
         assert_eq!((code, v["refused"]["field"].as_str()), (3, Some("status")));
         let (code, v) = lc.call(&args);

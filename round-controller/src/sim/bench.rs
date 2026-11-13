@@ -190,8 +190,10 @@ impl FakeLaunch {
                 &Request::new(&format!("runner-green-{}", r.batch), "runner", "green"),
             );
         }
-        let lease =
-            crate::lease::Lease::handed(crate::lease::Resource::round(&r.repo, &r.batch), r.lease_token);
+        let lease = crate::lease::Lease::handed(
+            crate::lease::Resource::round(&r.repo, &r.batch),
+            r.lease_token,
+        );
         let _ = lease.release(p);
         let _ = SlotGrant::handed(p, r.slot, r.slot_token).release(p);
     }
@@ -271,7 +273,10 @@ impl FakeStops {
 
     /// A round record file named `name` under `repo`'s queue directory.
     pub fn round_record(&self, repo: &str, name: &str) {
-        crate::lock(&self.records).entry(repo.into()).or_default().push(name.into());
+        crate::lock(&self.records)
+            .entry(repo.into())
+            .or_default()
+            .push(name.into());
     }
 
     /// A stop on `repo`'s rounds lane.
@@ -301,7 +306,10 @@ impl Stops for FakeStops {
             .cloned()
     }
     fn round_records(&self, repo: &str) -> Vec<String> {
-        crate::lock(&self.records).get(repo).cloned().unwrap_or_default()
+        crate::lock(&self.records)
+            .get(repo)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
@@ -345,8 +353,11 @@ impl LcCall {
     /// The section a committed `section publish-status` wrote.
     pub fn published(&self) -> Option<serde_json::Value> {
         let at = self.args.iter().position(|a| a == "--json")?;
-        let ok = self.code == 0 && self.args.get(..2) == Some(&["section".to_string(), "publish-status".to_string()][..]);
-        ok.then(|| serde_json::from_str(self.args.get(at + 1)?).ok()).flatten()
+        let ok = self.code == 0
+            && self.args.get(..2)
+                == Some(&["section".to_string(), "publish-status".to_string()][..]);
+        ok.then(|| serde_json::from_str(self.args.get(at + 1)?).ok())
+            .flatten()
     }
 }
 
@@ -496,7 +507,10 @@ impl Bench {
 
     /// Every section `section publish-status` committed, in order.
     pub fn published(&self) -> Vec<serde_json::Value> {
-        crate::lock(&self.lc_calls).iter().filter_map(LcCall::published).collect()
+        crate::lock(&self.lc_calls)
+            .iter()
+            .filter_map(LcCall::published)
+            .collect()
     }
 
     pub fn ports(&self) -> Ports<'_> {
@@ -592,7 +606,8 @@ impl Lc for Bench {
             metrics: &sink,
         };
         let (code, text) = spira_lc::sections::run(self.store.as_ref(), args, &call);
-        let answer = serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({ "cannot_tell": text }));
+        let answer = serde_json::from_str(&text)
+            .unwrap_or_else(|_| serde_json::json!({ "cannot_tell": text }));
         calls.push(LcCall {
             args: args.to_vec(),
             code,
@@ -713,11 +728,8 @@ mod tests {
     fn a_unit_set_until_a_time_is_unknown_from_then_on() {
         let b = Bench::new();
         let now = runtime::ports::Clock::now_ms(&b.clock);
-        b.units.set_until(
-            "u",
-            UnitState::Running("activating".into()),
-            Some(now + 10),
-        );
+        b.units
+            .set_until("u", UnitState::Running("activating".into()), Some(now + 10));
         assert_eq!(b.units.state("u"), UnitState::Running("activating".into()));
         b.clock.advance(10);
         assert_eq!(b.units.state("u"), UnitState::Stopped("unknown".into()));

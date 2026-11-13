@@ -111,11 +111,15 @@ impl SectionCount {
                 .iter()
                 .filter(|i| i.pointer("/ack/result/refused/stale") == Some(v))
                 .count() as u64,
-            SectionCount::Pages(t) => b.pages.get_or_init(|| crate::sim::pages::pages(&published))
+            SectionCount::Pages(t) => b
+                .pages
+                .get_or_init(|| crate::sim::pages::pages(&published))
                 .iter()
                 .filter(|pg| t.as_ref().is_none_or(|t| pg.condition == *t))
                 .count() as u64,
-            SectionCount::PageText(t) => b.pages.get_or_init(|| crate::sim::pages::pages(&published))
+            SectionCount::PageText(t) => b
+                .pages
+                .get_or_init(|| crate::sim::pages::pages(&published))
                 .iter()
                 .filter(|pg| pg.body.contains(t.as_str()))
                 .count() as u64,

@@ -504,7 +504,19 @@ impl RoundRunner for RedWhole {
         Ok(())
     }
     fn poll_jobs(&mut self) -> Vec<(u64, JobResult)> {
-        self.0.drain(..).map(|(id, whole)| (id, if whole { JobResult::Red } else { JobResult::Green })).collect()
+        self.0
+            .drain(..)
+            .map(|(id, whole)| {
+                (
+                    id,
+                    if whole {
+                        JobResult::Red
+                    } else {
+                        JobResult::Green
+                    },
+                )
+            })
+            .collect()
     }
     fn now(&self) -> u64 {
         0
@@ -520,18 +532,32 @@ fn a_refused_eject_is_kept_in_the_progress_for_the_section_to_read() {
         repo: None,
         batch: None,
         ok: None,
-        refuse: Some(crate::sim::verbs::Refuse { code: Some(1), text: text.into() }),
+        refuse: Some(crate::sim::verbs::Refuse {
+            code: Some(1),
+            text: text.into(),
+        }),
         lock_hold_ms: 0,
     };
-    let vm = crate::sim::FakeVm::new(vec![], crate::sim::profiles().unwrap().remove(0), w.clock.clone());
-    w.verbs = crate::sim::FakeVerbs::new(vec![refuse("--suites names ci")], vm, w.clock.clone()).unwrap();
+    let vm = crate::sim::FakeVm::new(
+        vec![],
+        crate::sim::profiles().unwrap().remove(0),
+        w.clock.clone(),
+    );
+    w.verbs =
+        crate::sim::FakeVerbs::new(vec![refuse("--suites names ci")], vm, w.clock.clone()).unwrap();
     let r = round(&["sp-a"]);
     let p = ports(&w, &w.store, &w.ledger);
     let j = judge(&p, &mut RedWhole(vec![]), &r, &pass(1, &["ci"], None));
     assert!(matches!(&j, Judged::Held { .. }), "{j:?}");
-    let kept: Progress = serde_json::from_value(w.store.get(&r.progress_key()).unwrap().unwrap().value.data).unwrap();
+    let kept: Progress =
+        serde_json::from_value(w.store.get(&r.progress_key()).unwrap().unwrap().value.data)
+            .unwrap();
     assert_eq!(
         kept.held,
-        Some(EjectHeld { member: "sp-a".into(), suites: vec!["ci".into()], text: "--suites names ci".into() })
+        Some(EjectHeld {
+            member: "sp-a".into(),
+            suites: vec!["ci".into()],
+            text: "--suites names ci".into()
+        })
     );
 }

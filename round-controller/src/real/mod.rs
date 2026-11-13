@@ -29,7 +29,10 @@ pub fn clock(spira_now: Option<u64>) -> Box<dyn Clock> {
 pub struct Unserved;
 
 fn unserved<T>() -> state_store::Result<T> {
-    Err(Error::Backend("this store is the Unserved test double, with no spira-lc door: nothing is read or written".into()))
+    Err(Error::Backend(
+        "this store is the Unserved test double, with no spira-lc door: nothing is read or written"
+            .into(),
+    ))
 }
 
 impl Store for Unserved {
@@ -130,7 +133,10 @@ mod tests {
         );
         let (code, v) = Unserved.call(&["section".into(), "get".into()]);
         assert_eq!(code, 2);
-        assert!(v["cannot_tell"].as_str().unwrap().contains("no spira-lc door"));
+        assert!(v["cannot_tell"]
+            .as_str()
+            .unwrap()
+            .contains("no spira-lc door"));
     }
 
     #[test]

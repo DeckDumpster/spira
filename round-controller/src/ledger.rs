@@ -225,6 +225,7 @@ pub fn record_attempt(
             transient_faults,
             backoff_until: transient.then(|| policy.backoff(transient_faults, attempt.at)),
             last_attempt: attempt.at,
+            absolved: false,
         };
         let t = attempt_txn(id, batch, n, attempt, &summary, cur.as_ref());
         let req = Request::new(
@@ -406,8 +407,12 @@ pub fn refuses(p: &Ports, id: &PassIdentity) -> Result<Option<LedgerRefusal>, Le
     let hash = id.hash();
     if let Some(i) = p.store.get(&summary_key(id))? {
         let s: Summary = decode(&i)?;
-        match (s.class, s.backoff_until) {
-            (Class::Red { step }, _) => return Ok(Some(LedgerRefusal::RedIdentity { hash, step })),
+        match (s.class.clone(), s.backoff_until) {
+            (Class::Red { step }, _) => {
+                if !absolved_red_identity(p, id, &hash, &i, &s)? {
+                    return Ok(Some(LedgerRefusal::RedIdentity { hash, step }));
+                }
+            }
             (Class::Fault { .. }, Some(Backoff::Standing)) => {
                 return Ok(Some(LedgerRefusal::BackingOff { hash, until: None }))
             }
@@ -447,6 +452,43 @@ fn absolved(p: &Ports, m: &Member) -> Result<bool, LedgerError> {
             .get("ejected_red_tip")
             .is_some_and(|t| t.as_str() != Some(m.tip.as_str()))
     }))
+}
+
+/// The lifecycle absolved a member proven red under this very identity, so the identity is
+/// re-admitted; the absolve is written onto its summary the first time it is read.
+fn absolved_red_identity(
+    p: &Ports,
+    id: &PassIdentity,
+    hash: &str,
+    read: &Item,
+    s: &Summary,
+) -> Result<bool, LedgerError> {
+    let mut any = false;
+    for m in &id.members {
+        let Some(i) = p.store.get(&by_member_key(&id.repo, m))? else {
+            continue;
+        };
+        if decode::<ProvenRed>(&i)?.hash == hash && absolved(p, m)? {
+            any = true;
+            break;
+        }
+    }
+    if any && !s.absolved {
+        let key = summary_key(id);
+        let marked = Summary {
+            absolved: true,
+            ..s.clone()
+        };
+        let t = Txn::new()
+            .when(Compare::ModRev(key.clone(), Some(read.mod_rev)))
+            .put(
+                &key,
+                owned(encode(&marked), &read.value.metadata.owner_references),
+            );
+        let req = Request::new(&format!("ledger-absolve-{hash}"), ACTOR, "ledger-absolve");
+        p.store.txn(&t, &req)?;
+    }
+    Ok(any)
 }
 
 /// The Judge's [`Ledger`] port over this module's free functions, through `p.store`.
@@ -660,6 +702,7 @@ mod tests {
             transient_faults: 0,
             backoff_until: None,
             last_attempt: 0,
+            absolved: false,
         };
         let t = attempt_txn(&id, "b1", 1, &attempt(Class::Green, 0), &s, None);
         assert_eq!((t.ops.len(), t.compares.len(), t.else_ops.len()), (2, 2, 0));
@@ -1043,6 +1086,38 @@ mod tests {
             serde_json::json!({ "ejected_red_tip": null }),
         );
         assert_eq!(refuses(&p, &ac), Ok(None));
+    }
+
+    #[test]
+    fn a_lifecycle_absolve_re_admits_the_red_identity_and_is_recorded_on_its_summary() {
+        let w = World::new();
+        let v = verbs();
+        let p = w.ports(&v);
+        let a = ident(&[("sp-a", "1")]);
+        record_attempt(&p, &a, "b1", &red("s", 1), &POLICY).unwrap();
+        mark_proven(&p, &a, &[m("sp-a", "1")], 2).unwrap();
+        assert!(matches!(
+            refuses(&p, &a),
+            Ok(Some(LedgerRefusal::RedIdentity { .. }))
+        ));
+        w.put(
+            "lifecycle/sp-a",
+            serde_json::json!({ "ejected_red_tip": "1" }),
+        );
+        assert!(matches!(
+            refuses(&p, &a),
+            Ok(Some(LedgerRefusal::RedIdentity { .. }))
+        ));
+        w.put(
+            "lifecycle/sp-a",
+            serde_json::json!({ "ejected_red_tip": null }),
+        );
+        assert_eq!(refuses(&p, &a), Ok(None));
+        let s: Summary = decode(&w.store.get(&summary_key(&a)).unwrap().unwrap()).unwrap();
+        assert!(s.absolved, "the absolve is on the summary");
+        assert_eq!(refuses(&p, &a), Ok(None), "and stays admitted");
+        let again = record_attempt(&p, &a, "b2", &red("s", 3), &POLICY).unwrap();
+        assert!(!again.summary.absolved, "a new red withdraws it");
     }
 
     #[test]

@@ -49,12 +49,11 @@ pub fn schedule(p: &Ports, repo: &str) -> Result<Vec<Scheduled>, Refusal> {
         if cut::plan(p, repo)?.is_none() {
             break;
         }
-        let slot = slots::grant(p, &slots::HAND_PREFERENCE, HOLDER).map_err(|no| {
-            Refusal::NoSlot {
+        let slot =
+            slots::grant(p, &slots::HAND_PREFERENCE, HOLDER).map_err(|no| Refusal::NoSlot {
                 key: format!("{LOCKS_PREFIX}runner-slot/"),
                 text: no.to_string(),
-            }
-        })?;
+            })?;
         let opened = match cut::cut(p, repo, &slot) {
             Ok(Some(o)) => o,
             Ok(None) => {
@@ -191,8 +190,12 @@ mod tests {
         let mut b = Bench::new();
         let profile = crate::sim::profiles().unwrap().remove(0);
         let vm = FakeVm::new(vec![], profile, b.clock.clone());
-        let verbs = FakeVerbs::new(opens.iter().map(|o| open_ok(o)).collect(), vm, b.clock.clone())
-            .unwrap();
+        let verbs = FakeVerbs::new(
+            opens.iter().map(|o| open_ok(o)).collect(),
+            vm,
+            b.clock.clone(),
+        )
+        .unwrap();
         b.verbs = if writes {
             verbs.with_store(b.store.clone())
         } else {
@@ -213,7 +216,11 @@ mod tests {
     }
 
     fn kinds(b: &Bench) -> Vec<&'static str> {
-        b.log.outcomes().into_iter().map(|o| o.kind.word()).collect()
+        b.log
+            .outcomes()
+            .into_iter()
+            .map(|o| o.kind.word())
+            .collect()
     }
 
     #[test]
@@ -352,13 +359,21 @@ mod tests {
         match schedule(&p, "r") {
             Err(Refusal::LeaseNotTaken { key, text }) => {
                 assert_eq!(key, "locks/round/r/k1");
-                assert!(text.contains("does not exist") && !text.contains("refused"), "{text}");
+                assert!(
+                    text.contains("does not exist") && !text.contains("refused"),
+                    "{text}"
+                );
             }
             r => panic!("{r:?}"),
         }
         assert!(b.launch.tried().is_empty());
         assert_eq!(crate::lock(&b.slot_releases).len(), 1);
-        let verbs: Vec<_> = b.verbs.calls().into_iter().map(|c| (c.verb, c.batch)).collect();
+        let verbs: Vec<_> = b
+            .verbs
+            .calls()
+            .into_iter()
+            .map(|c| (c.verb, c.batch))
+            .collect();
         assert_eq!(
             verbs,
             [

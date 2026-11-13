@@ -52,12 +52,18 @@ impl Ports<'_> {
 /// What starting a runner came to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Launched {
-    Started { unit: String },
+    Started {
+        unit: String,
+    },
     /// The unit was already running under this name, so it is this launch's runner: the name
     /// carries the lease token, and a token is never taken twice.
-    Running { unit: String },
+    Running {
+        unit: String,
+    },
     /// Nothing runs under the name; `text` is the launcher's own answer, whole.
-    Failed { text: String },
+    Failed {
+        text: String,
+    },
 }
 
 /// Starts the runner of `batch` under the round lease `lease_token` and the slot `slot` holds, as

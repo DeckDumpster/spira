@@ -81,10 +81,19 @@ impl Runner {
             return;
         }
         self.marked = Some(at_ms);
-        let mark = crate::liveness::RunnerMark { token, phase: self.phase.word().into(), at_ms };
+        let mark = crate::liveness::RunnerMark {
+            token,
+            phase: self.phase.word().into(),
+            at_ms,
+        };
         let key = crate::liveness::mark_key(&self.script.repo, &self.script.batch);
-        let req = state_store::Request::new(&format!("sim-mark-{key}-{at_ms}"), "round-controller", "run.mark");
-        let put = state_store::Txn::new().put(&key, state_store::Object::new(serde_json::json!(mark)));
+        let req = state_store::Request::new(
+            &format!("sim-mark-{key}-{at_ms}"),
+            "round-controller",
+            "run.mark",
+        );
+        let put =
+            state_store::Txn::new().put(&key, state_store::Object::new(serde_json::json!(mark)));
         let _ = p.store.txn(&put, &req);
     }
 
@@ -106,7 +115,14 @@ impl Runner {
                 ttl_ms: self.script.hold_secs.map_or(p.leases.ttl_ms, |s| s * 1000),
                 ..p.leases.clone()
             };
-            match acquire(&Ports { leases: &held, ..*p }, &res, "round-controller-run") {
+            match acquire(
+                &Ports {
+                    leases: &held,
+                    ..*p
+                },
+                &res,
+                "round-controller-run",
+            ) {
                 Ok(l) => {
                     self.write_mark(p, l.token(), now);
                     let unit = unit_name(&self.script.batch, l.token())
