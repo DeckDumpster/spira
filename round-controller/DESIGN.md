@@ -83,9 +83,7 @@ authority.
 
 1. Its own controller scenario, seen red at the parent tip without the fix, then green.
 2. Its world-sim twin green against the sim-only `round-controller` actor.
-3. No uncovered branch in its scoped code, from the coverage run in its own gate
-   (`coverage-scope.toml`: per test across this crate).
-4. The `test-real-clock` lint clean, and durations quoted from the per-test report.
+3. The `test-real-clock` lint clean, and durations quoted from the per-test report.
 
 ## Seen red
 

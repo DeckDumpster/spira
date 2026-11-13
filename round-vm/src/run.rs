@@ -376,13 +376,11 @@ disk_sampler() {
         sleep 5
     done
 }
-# The pass's last report; coverage profiles go once the line report has read them, or once a red
-# unit tier means none will. Its `peak` line is the pass's start total plus the largest growth sampled.
+# The pass's last report. Its `peak` line is the pass's start total plus the largest growth sampled.
 disk_report_last() {
     local growth
     [ -z "${disk_sampler_pid:-}" ] || { kill "$disk_sampler_pid" 2>/dev/null; wait "$disk_sampler_pid" 2>/dev/null || true; }
     disk_report "$1"
-    find "$HOME/round-work/target" \( -name '*.profraw' -o -name '*.profdata' \) -delete 2>/dev/null || true
     [ -z "${disk_walks[*]-}" ] || wait "${disk_walks[@]}" 2>/dev/null || true
     growth="$(cat "$disk_growth_file" 2>/dev/null || true)"
     case "$growth" in
@@ -552,7 +550,7 @@ unit_env() {
         CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SERVER_PORT="${SCCACHE_SERVER_PORT:-4226}" \
         SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
-        UNIT_COV_ENV="$unit_cov_env" bash -c 'eval "$UNIT_COV_ENV"; exec cargo "$@"' _ "$@"
+        cargo "$@"
 }
 unit_cargo() {
     unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false "$@"
@@ -563,17 +561,7 @@ write_unit_nextest_config() {
 unit_nextest() {
     unit_env nextest run --config-file "$HOME/round-nextest.toml" --cargo-profile unittest --workspace --features integration --config profile.unittest.incremental=false "$@"
 }
-unit_cov_init() {
-    unit_cov_env=""
-    if [ -x "$CARGO_HOME/bin/cargo-llvm-cov" ]; then
-        # A clean environment: an inherited CARGO_TARGET_DIR, LLVM_PROFILE_FILE or CARGO_LLVM_COV_*
-        # (e.g. from an outer coverage run) would point the profiles somewhere the report never reads.
-        unit_cov_env=$(env -i HOME="$HOME" CARGO_HOME="$CARGO_HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" cargo llvm-cov show-env --export-prefix) || unit_cov_env=""
-    fi
-    [ -n "$unit_cov_env" ] || echo "round-vm: COVERAGE: lines unavailable (the image has no cargo-llvm-cov)" >&2
-}
 phase unit-build
-unit_cov_init
 unit_build_mark="$HOME/round-work/.runtime/spira/batch-results/unit-build"
 mkdir -p "$(dirname "$unit_build_mark")"
 echo building > "$unit_build_mark"
@@ -1112,22 +1100,6 @@ else
     grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-integration-tests.log | head -120 >&2
     test_phase_red integration-tests ~/round-integration-tests.log "$integ_rc" "$integ_secs" "$integ_hung" "$rdir/integration-tests.out" "$rdir/integration.json" false
     [ "$rc" -eq 0 ] && rc=1
-fi
-if [ -n "$unit_cov_env" ]; then
-    # The line report is read off the profile data the unit run just wrote; it reports and never gates.
-    # The report must read the same show-env environment the unit run used, or it looks in the
-    # wrong target dir and finds no binaries ("No filenames specified").
-    if unit_cargo_report=$(env -i HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" CARGO_HOME="$CARGO_HOME" \
-        UNIT_COV_ENV="$unit_cov_env" bash -c 'eval "$UNIT_COV_ENV"; exec cargo llvm-cov report --profile unittest --json --summary-only --output-path "$HOME/coverage-lines.json"' 2>&1); then
-        cov_rdir="$HOME/round-work/.runtime/spira/batch-results"
-        cov_leaf="$(find "$cov_rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
-        cov_leaf="${cov_leaf:-$cov_rdir}"
-        mkdir -p "$cov_leaf"
-        cp "$HOME/coverage-lines.json" "$cov_leaf/coverage-lines.json"
-        printf '%s\n' "$HOME/round-work" > "$cov_leaf/coverage-root"
-    else
-        echo "round-vm: COVERAGE: lines unavailable (cargo llvm-cov report failed): $(printf '%s' "$unit_cargo_report" | tail -5)" >&2
-    fi
 fi
 phase post
 disk_report_last suites
@@ -3086,8 +3058,7 @@ pub const REMOTE_RESULTS: &str = "round-work/.runtime/spira/batch-results/";
 
 /// Everything after the remote corpus returned `remote_rc`: pull results, tsd and binaries,
 /// write the manifest, install by tree sha. Returns `run`'s exit code.
-#[allow(clippy::too_many_arguments)]
-/// The round's coverage artifacts and its delta against the last green round; a red round has
+/// The round's use-case coverage report and its delta against the last green round; a red round has
 /// none, and a fault here is printed and never changes the round's verdict.
 fn record_coverage(args: &RunArgs, state_dir: &Path, results_dir: &Path, round: &str, green: bool) {
     if !green {
@@ -3619,15 +3590,6 @@ mod tests {
     }
 
     #[test]
-    fn coverage_profiles_are_deleted_only_after_the_line_report_has_read_them() {
-        let report = REMOTE_SCRIPT.find("cargo llvm-cov report").expect("the line report");
-        let last = REMOTE_SCRIPT.find("disk_report_last suites").expect("the pass's last report");
-        assert!(report < last);
-        let f = REMOTE_SCRIPT.find("disk_report_last() {").unwrap();
-        assert!(REMOTE_SCRIPT[f..f + 300].contains("-name '*.profraw' -o -name '*.profdata' \\) -delete"), "profiles deleted with the last report");
-    }
-
-    #[test]
     fn the_remote_script_says_whether_the_template_holds_the_rounds_image() {
         let clone = REMOTE_SCRIPT.find("git clone").unwrap();
         let check = clone + REMOTE_SCRIPT[clone..].find("podman image exists").unwrap();
@@ -3913,18 +3875,10 @@ mod tests {
         assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
         let body = script_fn("unit_cargo");
         assert!(body.contains("unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false"), "{body}");
-        assert_eq!(REMOTE_SCRIPT.matches("exec cargo \"$@\"").count(), 1, "one definition of the cargo environment, shared by compile and both runs");
-    }
-
-    #[test]
-    fn line_coverage_is_the_unit_command_itself_when_the_image_has_llvm_cov_and_never_a_second_run() {
-        assert!(REMOTE_SCRIPT.contains("cargo llvm-cov show-env --export-prefix"));
-        assert!(!REMOTE_SCRIPT.contains("llvm-cov --no-report"), "no llvm-cov subcommand wraps the cargo test flags");
-        assert!(REMOTE_SCRIPT.contains("lines unavailable (the image has no cargo-llvm-cov)"), "a missing tool is reported, not a failed round");
-        let report = REMOTE_SCRIPT.find("cargo llvm-cov report --profile unittest --json --summary-only").unwrap();
-        let waited = REMOTE_SCRIPT.find("wait \"$unit_pid\"; unit_rc=$?").unwrap();
-        assert!(waited < report, "the report is read off the profile data after the unit run");
-        assert_eq!(REMOTE_SCRIPT.matches("exec cargo \"$@\"").count(), 1);
+        for gone in ["llvm-cov", "unit_cov", "COVERAGE:", "profraw"] {
+            assert!(!REMOTE_SCRIPT.contains(gone), "the round script carries no line-coverage step ({gone})");
+        }
+        assert_eq!(REMOTE_SCRIPT.matches("        cargo \"$@\"\n").count(), 1, "one definition of the cargo environment, shared by compile and both runs");
     }
 
     #[test]

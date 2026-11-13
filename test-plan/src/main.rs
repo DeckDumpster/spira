@@ -36,10 +36,9 @@
 //!                          --out-json PATH --out-md PATH
 //!       matrix + render in one process, written to PATH and PATH instead of stdout.
 //!
-//!   test-plan coverage-report --catalogue-dir DIR --suites FILE|- [--llvm-cov FILE --root DIR]
+//!   test-plan coverage-report --catalogue-dir DIR --suites FILE|-
 //!                             [--prev FILE] [--round ID] --out-json PATH --out-txt PATH
-//!       the round's coverage report: line coverage from `cargo llvm-cov report --json
-//!       --summary-only` (absent: "lines: unavailable") and per-area use-case coverage, written
+//!       the round's coverage report: per-area use-case coverage, written
 //!       as JSON and text; with --prev, the text ends in the delta and one `delta:` line is
 //!       printed. Pushes the gauges to SPIRA_METRICS_ENDPOINT. Reports, never gates.
 //!
@@ -93,7 +92,6 @@ struct Args {
     root: Option<String>,
     out_json: Option<String>,
     out_md: Option<String>,
-    llvm_cov: Option<String>,
     prev: Option<String>,
     round: Option<String>,
     out_txt: Option<String>,
@@ -109,7 +107,6 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
         root: None,
         out_json: None,
         out_md: None,
-        llvm_cov: None,
         prev: None,
         round: None,
         out_txt: None,
@@ -126,7 +123,6 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
             "--root" => a.root = val.cloned(),
             "--out-json" => a.out_json = val.cloned(),
             "--out-md" => a.out_md = val.cloned(),
-            "--llvm-cov" => a.llvm_cov = val.cloned(),
             "--prev" => a.prev = val.cloned(),
             "--round" => a.round = val.cloned(),
             "--out-txt" => a.out_txt = val.cloned(),
@@ -560,7 +556,7 @@ fn usage() -> ExitCode {
          \x20 matrix --catalogue-dir DIR --suites FILE|- [--timings FILE]\n\
          \x20 render [--matrix FILE|-]\n\
          \x20 write-matrix --catalogue-dir DIR --suites FILE|- [--timings FILE] --out-json PATH --out-md PATH\n\
-         \x20 coverage-report --catalogue-dir DIR --suites FILE|- [--llvm-cov FILE --root DIR] [--prev FILE] [--round ID] --out-json PATH --out-txt PATH\n\
+         \x20 coverage-report --catalogue-dir DIR --suites FILE|- [--prev FILE] [--round ID] --out-json PATH --out-txt PATH\n\
          \x20 schema <catalogue|matrix>"
     );
     ExitCode::FAILURE
@@ -575,7 +571,7 @@ fn cmd_coverage_report(rest: &[String]) -> ExitCode {
         }
     };
     let (Some(dir), Some(suites_spec), Some(out_json), Some(out_txt)) = (a.catalogue_dir, a.suites, a.out_json, a.out_txt) else {
-        eprintln!("usage: test-plan coverage-report --catalogue-dir DIR --suites FILE|- [--llvm-cov FILE --root DIR] [--prev FILE] [--round ID] --out-json PATH --out-txt PATH");
+        eprintln!("usage: test-plan coverage-report --catalogue-dir DIR --suites FILE|- [--prev FILE] [--round ID] --out-json PATH --out-txt PATH");
         return ExitCode::FAILURE;
     };
     let cats = match load_or_report(&dir) {
@@ -589,17 +585,7 @@ fn cmd_coverage_report(rest: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let lines = match &a.llvm_cov {
-        None => None,
-        Some(f) => match read_text(f).and_then(|t| coverage::parse_llvm_cov(&t, a.root.as_deref().unwrap_or(""))) {
-            Ok(l) => Some(l),
-            Err(e) => {
-                eprintln!("test-plan: lines unavailable: {e}");
-                None
-            }
-        },
-    };
-    let report = coverage::build_report(a.round.as_deref(), lines, &build_matrix(&cats, &suites, &BTreeMap::new()));
+    let report = coverage::build_report(a.round.as_deref(), &build_matrix(&cats, &suites, &BTreeMap::new()));
     let prev: Option<coverage::CoverageReport> = a.prev.as_deref().and_then(|f| {
         match fs::read_to_string(f).map_err(|e| e.to_string()).and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string())) {
             Ok(p) => Some(p),
