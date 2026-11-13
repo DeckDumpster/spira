@@ -477,6 +477,9 @@ impl<'a> Pass<'a> {
             return Screen::Done(Flow::Next);
         }
         let bead = w.beads.get(id);
+        if bead.is_none() && w.merged.contains(br) {
+            return Screen::Done(Flow::Next);
+        }
         let st = bead.map(|b| b.state.as_str()).unwrap_or("");
         if !crate::model::handed_on(st) {
             let shown = if st.is_empty() { "-" } else { st };

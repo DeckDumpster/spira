@@ -2060,6 +2060,23 @@ fn a_gatepass_refused_for_a_held_tip_resubmits_the_branch_tip_and_certifies() {
 }
 
 #[test]
+fn a_beadless_branch_already_on_the_base_is_not_reported_as_not_landed() {
+    let h = H::new(LandMode::Queue);
+    h.git.add("spira/hand-landed", "t1");
+    h.git.merged.borrow_mut().insert("spira/hand-landed".into());
+    h.run();
+    assert!(!h.logged("CHECK6 hand-landed: spira/hand-landed not landed"));
+}
+
+#[test]
+fn a_beadless_branch_off_the_base_is_still_reported_as_not_landed() {
+    let h = H::new(LandMode::Queue);
+    h.git.add("spira/hand-built", "t1");
+    h.run();
+    assert!(h.logged("CHECK6 hand-built: spira/hand-built not landed — its bead is - and no dwarf holds it"));
+}
+
+#[test]
 fn a_refused_gatepass_is_not_offered_again_for_the_same_tip() {
     let h = H::new(LandMode::QueueLocal);
     h.bead("sp-a", "SUBMITTED", &[]);
