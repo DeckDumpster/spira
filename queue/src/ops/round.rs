@@ -1475,7 +1475,7 @@ pub(super) fn merge_member(w: &World, c: &Ctx, wt: &Path, id: &str, tip: &str) -
         tip,
         &c.s.git_name,
         &c.s.git_email,
-    ) && migration_numbers::settle(wt).is_ok()
+    ) && w.git.settle_migrations(wt)
 }
 
 pub(super) fn assemble(

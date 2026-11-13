@@ -298,6 +298,9 @@ impl Git for RealGit {
         let _ = fs::remove_file(&msg);
         r
     }
+    fn settle_migrations(&self, wt: &Path) -> bool {
+        migration_numbers::settle(wt).is_ok()
+    }
     fn merge_abort(&self, wt: &Path) {
         let _ = ok(git(wt).args(["merge", "--abort"]).stderr(Stdio::null()));
     }

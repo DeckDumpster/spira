@@ -36,6 +36,7 @@ struct FGit {
     /// `git branch -f` refuses a branch checked out in a worktree.
     branch_set_fails: Cell<bool>,
     merge_fail: RefCell<BTreeSet<String>>,
+    settle_fails: Cell<bool>,
     /// Tips whose rebase onto the round's head conflicts, with the paths it names.
     rebase_fail: RefCell<BTreeMap<String, Vec<String>>>,
     branches: RefCell<Vec<(String, String)>>,
@@ -225,6 +226,10 @@ impl Git for FGit {
         self.refs.borrow_mut().insert("HEAD".into(), head);
         let _ = wt;
         true
+    }
+    fn settle_migrations(&self, _: &Path) -> bool {
+        self.calls.borrow_mut().push("settle_migrations".into());
+        !self.settle_fails.get()
     }
     fn merge_abort(&self, _: &Path) {}
     fn rebase_onto(
