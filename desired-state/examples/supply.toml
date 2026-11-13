@@ -1,0 +1,17 @@
+# The Supply section's spec: the landable work the groomer should see filed in a day. Not part
+# of the default document, which every install composes and publishes: a section spec reaches
+# the control store, so it is applied when the section is armed
+# (`spira compose desired-state/examples/default.toml desired-state/examples/supply.toml`).
+
+[producer]
+producer = "spira-default"
+version = "1"
+time = "2026-11-12T00:00:00Z"
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "Supply"
+[resources.metadata]
+name = "supply"
+[resources.spec]
+landable_filed_per_day = { value = 150, statute = "law-a-landing-stall-starts-a-repair" }

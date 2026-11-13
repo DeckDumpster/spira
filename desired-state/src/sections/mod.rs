@@ -11,6 +11,7 @@ pub mod gate;
 pub mod lifecycle;
 pub mod probe;
 pub mod round_controller;
+pub mod supply;
 pub mod vm_pool;
 
 /// The andon cord's kind. Its own design registers it; until then it is refused by name.
@@ -67,7 +68,7 @@ pub fn typed<T: DeserializeOwned>(v: &Value) -> Result<(), SchemaError> {
         .map_err(|e| (e.path().to_string(), e.inner().to_string()))
 }
 
-static KINDS: &[SectionKind] = &[alarms::KIND, dwarf_fleet::KIND, gate::KIND, lifecycle::KIND, probe::KIND, round_controller::KIND, vm_pool::KIND];
+static KINDS: &[SectionKind] = &[alarms::KIND, dwarf_fleet::KIND, gate::KIND, lifecycle::KIND, probe::KIND, round_controller::KIND, supply::KIND, vm_pool::KIND];
 
 pub fn registry() -> &'static [SectionKind] {
     KINDS

@@ -18,6 +18,7 @@ mod assemble;
 mod dwarf_fleet;
 mod gate;
 mod goodput_pass;
+mod supply;
 mod vm_pool;
 
 const FLOOR_MS: u64 = 1_000;

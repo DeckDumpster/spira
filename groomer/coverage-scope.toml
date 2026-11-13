@@ -1,0 +1,5 @@
+# The Supply section's status core and publisher: the bead's own gate reports any branch in
+# them no test takes.
+[[scope]]
+path = "groomer/src/section.rs"
+functions = ["measure", "transitions_of_rows", "status_of", "section_body", "lc_ok", "claimable_ready", "filed_transitions", "run", "publish"]
