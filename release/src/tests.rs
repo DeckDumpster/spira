@@ -482,6 +482,23 @@ fn host_values_carries_the_configured_path_tail_and_refuses_a_bad_one() {
 }
 
 #[test]
+fn host_values_carries_the_cache_store_root_the_sccache_dav_unit_renders() {
+    // The unit template reads @SPIRA_SCCACHE_DAV_ROOT@; activation refused every release
+    // ("placeholders nothing fills") while this map lacked it.
+    let mut env = Env::new();
+    env.insert("HOME".into(), "/h".into());
+    let reg = Registered { releases: "/e".into(), run: "/h/run".into(), releases_keep: "10".into(), ..Default::default() };
+    let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
+    assert_eq!(c.host_values().unwrap().get("SPIRA_SCCACHE_DAV_ROOT").map(String::as_str), Some("/h/run/sccache-dav"), "empty means the run directory's store");
+    let reg = Registered { releases: "/e".into(), run: "/h/run".into(), releases_keep: "10".into(), sccache_dav_root: "/mnt/other/store".into(), ..Default::default() };
+    let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
+    assert_eq!(c.host_values().unwrap().get("SPIRA_SCCACHE_DAV_ROOT").map(String::as_str), Some("/mnt/other/store"));
+    let unit = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/sccache-dav.service")).unwrap();
+    let rendered = units::render("sccache-dav.service", &unit, std::path::Path::new("/e/0123"), &c.host_values().unwrap(), None, "");
+    assert!(!rendered.as_ref().err().is_some_and(|e| e.contains("SPIRA_SCCACHE_DAV_ROOT")), "{rendered:?}");
+}
+
+#[test]
 fn rfc3339_is_correct() {
     assert_eq!(fsutil::rfc3339(0), "1970-01-01T00:00:00Z");
     assert_eq!(fsutil::rfc3339(1_790_640_000), "2026-09-29T00:00:00Z");

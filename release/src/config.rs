@@ -49,6 +49,7 @@ pub struct Registered {
     pub snap_stale_s: String,
     pub watchtower_start_timeout_s: String,
     pub sccache_dav_addr: String,
+    pub sccache_dav_root: String,
     pub lc_password_file: String,
     pub repo_map: String,
 }
@@ -70,6 +71,7 @@ pub struct Config {
     snap_stale_s: String,
     watchtower_start_timeout_s: String,
     sccache_dav_addr: String,
+    sccache_dav_root: String,
     lc_password_file: String,
     repo_map: String,
     /// `spira.hotfix_alert_hours` from the host config document — `SPIRA_HOTFIX_ALERT_HOURS`
@@ -125,6 +127,10 @@ impl Config {
             snap_stale_s: cfg("SPIRA_SNAP_STALE_S")?,
             watchtower_start_timeout_s: cfg("SPIRA_WATCHTOWER_START_TIMEOUT_S")?,
             sccache_dav_addr: cfg("SPIRA_SCCACHE_DAV_ADDR")?,
+            // `release build` and `activate` resolve against the ACTIVE release's registry, which
+            // does not register this key until the release that adds it is the active one:
+            // unregistered there is unset, and unset means the run directory's store.
+            sccache_dav_root: cfg("SPIRA_SCCACHE_DAV_ROOT").unwrap_or_default(),
             lc_password_file: cfg("SPIRA_LC_PASSWORD_FILE")?,
             repo_map: cfg("SPIRA_REPO_MAP")?,
         };
@@ -170,6 +176,7 @@ impl Config {
             snap_stale_s: reg.snap_stale_s.clone(),
             watchtower_start_timeout_s: reg.watchtower_start_timeout_s.clone(),
             sccache_dav_addr: reg.sccache_dav_addr.clone(),
+            sccache_dav_root: reg.sccache_dav_root.clone(),
             lc_password_file: reg.lc_password_file.clone(),
             repo_map: reg.repo_map.clone(),
             hotfix_alert_hours_toml,
@@ -239,6 +246,10 @@ impl Config {
         m.insert("SPIRA_ENV_PATH".into(), env_bin);
         m.insert("DOLT".into(), self.env("DOLT").or_else(|| crate::fsutil::is_executable(&env_dolt).then(|| env_dolt.display().to_string())).or_else(|| self.which("dolt")).unwrap_or_default());
         m.insert(crate::units::SCCACHE_DAV_ADDR_KEY.into(), self.sccache_dav_addr.clone());
+        // Empty means the run directory's store, as `install` resolves it (bootstrap.rs).
+        let run = self.run.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+        let dav_root = if self.sccache_dav_root.is_empty() && !run.is_empty() { format!("{run}/sccache-dav") } else { self.sccache_dav_root.clone() };
+        m.insert("SPIRA_SCCACHE_DAV_ROOT".into(), dav_root);
         m.insert("SPIRA_LC_PASSWORD_FILE".into(), self.lc_password_file.clone());
         // The spec every unit runs under (the one source); empty refuses any template using it.
         m.insert("SPIRA_TOML".into(), self.env("SPIRA_TOML").unwrap_or_default());
