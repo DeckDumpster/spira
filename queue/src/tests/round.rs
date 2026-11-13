@@ -8730,3 +8730,15 @@ fn a_worktree_carrying_a_commit_no_member_owns_is_not_adopted_by_certify() {
     assert!(t.err().contains("is not at the round's head"), "{}", t.err());
     assert_ne!(kv_of(&t, "round")["head"], "merged-ta");
 }
+
+#[test]
+fn preempt_stops_a_pass_that_runs_as_a_leg_with_no_scope_or_handle() {
+    let (t, batch) = preempt_world();
+    t.scripts.pass_alive.set(false);
+    seed_suite(&t, "test-b.sh");
+    t.scripts.round_legs.borrow_mut().push(("spira".into(), batch.clone(), "spira-batcher-local-spira-corpus1.service".into()));
+    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red", "--suites", "test-b.sh"]);
+    assert_eq!(rc, 0, "{}", t.err());
+    assert!(!t.scripts.round_legs.borrow().iter().any(|(_, b, _)| b == &batch), "the leg running the pass is stopped");
+    assert!(t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")));
+}

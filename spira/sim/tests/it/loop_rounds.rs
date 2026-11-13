@@ -354,6 +354,7 @@ fn a_gate_red_recorded_for_a_provisional_member_mid_pass_preempts_the_pass_and_e
     };
     let (r, w) = run_keeping(36, script, |d, _| d);
     show("provisional-gate-red", &r);
+    assert_eq!(times(&r, bl::PREEMPT).len(), 1, "one preempt asked: {:?}", r.exec_log);
     let preempts = w.lc().preempts.clone();
     assert_eq!(preempts.len(), 1, "one preempt: {}", r.dump());
     assert_eq!(preempts[0].1, "sp-gr01", "the member whose gate went red was ejected");
@@ -366,5 +367,20 @@ fn a_gate_red_recorded_for_a_provisional_member_mid_pass_preempts_the_pass_and_e
     assert_eq!(r.opened[0].len(), 2, "both members were cut into the first round: {:?}", r.opened);
     assert!(!r.asked.iter().any(|n| n == bl::ABANDON), "the round was not abandoned: {:?}", r.asked);
     assert!(r.refused.is_empty(), "{:?}", r.refused);
+    assert_no_process(&r);
+}
+
+/// Two gate-red facts for one tip (the gate reported twice) preempt the member once.
+#[test]
+fn two_gate_red_facts_for_one_tip_preempt_the_member_once_and_the_other_lands() {
+    let red = |at| loopworld::VerdictAt { at, bead: "sp-gr03".into(), verdict: loopworld::Verdict::Red };
+    let script = Script { beads: vec![early("sp-gr03"), early("sp-gr04")], max_concurrent: 2, verdicts: vec![red(4 * MIN), red(4 * MIN + 10_000)], until: 40 * MIN, ..Script::default() };
+    let (r, w) = run_keeping(37, script, |d, _| d);
+    show("gate-red-twice", &r);
+    assert_eq!(w.lc().preempts.len(), 1, "{}", r.dump());
+    assert_eq!(times(&r, bl::PREEMPT).len(), 1, "{:?}", r.exec_log);
+    let tip = r.submitted["sp-gr04"][0].clone();
+    assert_eq!(r.lands[0], [("sp-gr04".to_string(), tip)], "{}", r.dump());
+    assert!(!r.asked.iter().any(|n| n == bl::ABANDON), "{:?}", r.asked);
     assert_no_process(&r);
 }

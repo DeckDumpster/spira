@@ -36,6 +36,8 @@ pub const FAULT: i32 = 4;
 
 /// certify's exit when `round preempt` stopped its pass: the verb, not certify, records that.
 pub const PREEMPTED: i32 = 5;
+/// Every refusal of `round preempt` after it stopped the pass names this; one before it names nothing of the kind.
+pub const PREEMPT_ACTED: &str = "next pass";
 
 /// round-vm's exit, and certify's, when the round VM died under the pass: no verdict, no member
 /// at fault, the pass is run again.
@@ -4498,7 +4500,8 @@ fn preempt(
         } else {
             Vec::new()
         };
-        if phase != "certifying" || (pid.is_none() && scopes.is_empty()) {
+        let leg_runs = pid.is_none() && scopes.is_empty() && phase == "certifying" && w.scripts.round_legs_live(&c.r.name, batch);
+        if phase != "certifying" || (pid.is_none() && scopes.is_empty() && !leg_runs) {
             w.err(format!("queue.sh {label}: round {batch} is {phase}, with no pass running — nothing to preempt"));
             return FAIL;
         }
@@ -4521,7 +4524,7 @@ fn preempt(
                 w.err(format!("queue.sh {label}: the pass of round {batch} (pid {pid}) did not stop after {PREEMPT_POLLS} polls — left running, not killed: a kill would lose its salvaged results"));
                 return FAIL;
             }
-        } else if let Err(e) = w.scripts.stop_pass_scopes(&c.r.name, batch) {
+        } else if let Err(e) = if leg_runs { Ok(Vec::new()) } else { w.scripts.stop_pass_scopes(&c.r.name, batch) } {
             let _ = fs::remove_file(preempt_marker(&c, batch));
             w.err(format!("queue.sh {label}: the pass scope of round {batch} did not stop ({e}) — left running"));
             return FAIL;
