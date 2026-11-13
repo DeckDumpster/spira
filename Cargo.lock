@@ -527,6 +527,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-desired-state",
  "spira-otel",
  "suite-select",
  "testkit",

@@ -11,7 +11,7 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "suite-select/integration", "testkit/integration", "tsd/integration"]
+integration = ["spira-config/integration", "spira-desired-state/integration", "spira-otel/integration", "suite-select/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 libc = "0.2"
@@ -22,6 +22,7 @@ toml = "0.8"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 tsd = { path = "../tsd" }
+spira-desired-state = { path = "../desired-state" }
 suite-select = { path = "../suite-select" }
 
 [profile.release]
