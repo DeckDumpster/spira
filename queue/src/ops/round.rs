@@ -3118,6 +3118,50 @@ fn no_output_pass(w: &World, label: &str, c: &Ctx, batch: &str, err: &str) -> i3
     VM_NO_OUTPUT
 }
 
+const INFRA_KEY: &str = "infra-fault";
+
+/// A pass that never reached a suite (no VM, no boot, no checkout) holds no verdict, so it
+/// touches no member and no pass ledger: the next certify places the pass again. The second on
+/// one head is paged under the infrastructure cause.
+fn infra_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 {
+    w.out(format!("fault={INFRA_KEY}"));
+    let _g = match lock(w, label, c) {
+        Ok(g) => g,
+        Err(_) => return FAULT,
+    };
+    let Ok(mut kv) = load(w, label, c, batch) else {
+        return FAULT;
+    };
+    let head = kv.get("head").unwrap_or("").to_string();
+    let n = kv
+        .get(INFRA_KEY)
+        .and_then(|v| v.split_once(':'))
+        .filter(|(h, _)| *h == head)
+        .and_then(|(_, n)| n.parse::<u32>().ok())
+        .unwrap_or(0)
+        + 1;
+    set(&mut kv, INFRA_KEY, &format!("{head}:{n}"));
+    if save(w, label, c, &kv).is_err() {
+        return FAULT;
+    }
+    if n == 2 {
+        w.lib.notify(
+            &c.s.mailbox,
+            &c.r.name,
+            &format!(
+                "Round {batch} cannot be placed, no suite ran twice on {head}: {}",
+                one_line(&bounded_text(why))
+            ),
+            &format!(
+                "Round {batch} of {} ended {n} passes on {head} before any suite ran. No member is implicated and nobody was ejected; the pass is placed again on the next certify. The infrastructure is the cause:\n{}",
+                c.r.name,
+                bounded_text(why)
+            ),
+        );
+    }
+    FAULT
+}
+
 /// The pass of `batch` ended without a verdict: remember it, and eject each member that has now
 /// been aboard for [`FAULTED_PASSES_RED`] such passes. When every member of a multi-member pass
 /// qualifies, nothing separates them from the host, so none is ejected. Returns [`FAULT`] either way.
@@ -3712,6 +3756,13 @@ fn certify_pass(
             w.err(format!(
                 "queue.sh {label}: {why}; the round is not judged\n{shown}"
             ));
+            let reached_no_suite = found.is_empty()
+                && vm_named.is_none()
+                && fixture_fault_cause(&results).is_none()
+                && !matches!(out.rc, 0 | 1 | 4 | 124 | 137 | IMAGE_UNJUDGED);
+            if reached_no_suite {
+                return infra_pass(w, label, c, batch, &format!("{why}\n{shown}"));
+            }
             if let Some(f) = vm_named.as_ref().filter(|f| f.cause == why) {
                 w.out(format!("fault={}", one_line(&f.cause)));
                 w.err(format!(
@@ -3780,6 +3831,7 @@ fn certify_pass(
         let mut judged = kv.clone();
         judged.remove("over-cap");
         judged.remove(NO_OUTPUT_KEY);
+        judged.remove(INFRA_KEY);
         set(&mut judged, "red", &reds.join(","));
         let ride = Ride::with(w, &judged);
         let recorded = (if reds != [BUILD_RED] {
@@ -3834,6 +3886,7 @@ fn certify_pass(
     let mut judged = kv.clone();
     judged.remove("over-cap");
     judged.remove(NO_OUTPUT_KEY);
+    judged.remove(INFRA_KEY);
     set(&mut judged, "ran", &ran.to_string());
     let ride = Ride::with(w, &judged);
     let greened = suites_started(w, batch, false)
