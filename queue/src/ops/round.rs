@@ -36,8 +36,8 @@ pub const FAULT: i32 = 4;
 
 /// certify's exit when `round preempt` stopped its pass: the verb, not certify, records that.
 pub const PREEMPTED: i32 = 5;
-/// What `round preempt` says when it stopped nothing and changed nothing.
-pub const NOTHING_TO_PREEMPT: &str = "nothing to preempt";
+/// Every refusal of `round preempt` after it stopped the pass names this; one before it names nothing of the kind.
+pub const PREEMPT_ACTED: &str = "next pass";
 
 /// round-vm's exit, and certify's, when the round VM died under the pass: no verdict, no member
 /// at fault, the pass is run again.
@@ -4502,7 +4502,7 @@ fn preempt(
         };
         let leg_runs = pid.is_none() && scopes.is_empty() && phase == "certifying" && w.scripts.round_legs_live(&c.r.name, batch);
         if phase != "certifying" || (pid.is_none() && scopes.is_empty() && !leg_runs) {
-            w.err(format!("queue.sh {label}: round {batch} is {phase}, with no pass running — {NOTHING_TO_PREEMPT}"));
+            w.err(format!("queue.sh {label}: round {batch} is {phase}, with no pass running — nothing to preempt"));
             return FAIL;
         }
         let _ = fs::create_dir_all(rounds_dir(&c));

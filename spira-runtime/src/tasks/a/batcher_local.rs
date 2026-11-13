@@ -1228,8 +1228,8 @@ impl Machine<'_> {
     /// stopped, it is ejected with the gate's mark as evidence, and the round goes on without it.
     fn preempt_gate_red(&mut self, repo: &Repo) -> bool {
         let Some(open) = self.rc.batch.as_deref().and_then(|b| repo.open_rounds().find(|r| r.id == b)) else { return false };
-        let mut red: Vec<&(String, String, String)> = open.gate_red.iter().filter(|(id, tip, _)| self.rc.members.iter().any(|(m, t)| m == id && t == tip) && !self.rc.preempted.iter().any(|(m, t)| m == id && t == tip)).collect();
-        red.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        let mut seen = std::collections::BTreeSet::new();
+        let red: Vec<&(String, String, String)> = open.gate_red.iter().filter(|(id, tip, _)| self.rc.members.iter().any(|(m, t)| m == id && t == tip) && !self.rc.preempted.iter().any(|(m, t)| m == id && t == tip) && seen.insert((id, tip))).collect();
         if red.is_empty() || repo.in_flight.as_ref().is_some_and(|f| f.iter().any(|e| e == PREEMPT)) {
             return false;
         }
@@ -1707,7 +1707,7 @@ impl Machine<'_> {
                 self.rc.members.retain(|(id, _)| !leg.bead.split(',').any(|b| b == id));
                 self.rc.round_key = Some(core::round_key(&self.rc.members));
             }
-            (State::Corpus | State::Attributing | State::Certifying, PREEMPT) if body.contains(queue::ops::round::NOTHING_TO_PREEMPT) => {
+            (State::Corpus | State::Attributing | State::Certifying, PREEMPT) if !ok && !body.contains(queue::ops::round::PREEMPT_ACTED) => {
                 let ids: Vec<&str> = leg.bead.split(',').collect();
                 self.rc.preempted.retain(|(id, _)| !ids.contains(&id.as_str()));
             }

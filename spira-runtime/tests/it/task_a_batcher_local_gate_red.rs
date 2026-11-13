@@ -116,11 +116,17 @@ fn a_leg_stopped_by_a_preempt_ends_as_preempted_and_neither_attributes_nor_aband
 fn a_preempt_refused_because_no_pass_was_running_is_asked_again_at_the_next_tick() {
     let (next, acts) = decide(&carried(State::Corpus), &snapshot(vec![("sp-a", "t1")], None));
     let leg = preempts(&acts).remove(0);
-    let refusal = format!("queue round preempt: round r9 is opened, with no pass running — {}", queue::ops::round::NOTHING_TO_PREEMPT);
+    let refusal = "queue round preempt: round r9 is opened, with no pass running — nothing to preempt".to_string();
     let (after, _) = on_outcome(&next, PREEMPT, false, &refusal, &leg, NOW);
     let (_, again) = decide(&after, &snapshot(vec![("sp-a", "t1")], None));
     assert_eq!(preempts(&again).len(), 1, "a refusal that stopped nothing leaves the member to be preempted");
     let (failed, _) = on_outcome(&next, PREEMPT, false, "eject of sp-a failed — the next pass was not started", &leg, NOW);
     let (_, never) = decide(&failed, &snapshot(vec![("sp-a", "t1")], None));
     assert!(preempts(&never).is_empty(), "a preempt that acted is never asked twice: {never:?}");
+}
+
+#[test]
+fn gate_red_facts_for_one_member_apart_from_each_other_name_it_once() {
+    let (_, acts) = decide(&carried(State::Certifying), &snapshot(vec![("sp-a", "t1"), ("sp-b", "t2"), ("sp-a", "t1")], None));
+    assert_eq!(preempts(&acts)[0].bead, "sp-a,sp-b");
 }
