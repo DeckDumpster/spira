@@ -442,55 +442,24 @@ fn load_identity() -> std::collections::BTreeMap<String, Vec<String>> {
     std::fs::read_to_string(&path).map(|t| bead::identity::parse(&t)).unwrap_or_default()
 }
 
-/// `Err` is the exit code of a refusal; `Ok(Some(reason))` means the named override admitted
-/// text that carried another repo's terms.
+/// `Err` is the exit code of a refusal; `Ok(Some(line))` is the line to record on the bead
+/// when the named override admitted text that carried another repo's terms.
 fn identity_guard(repo: &str, text: &str) -> Result<Option<String>, i32> {
-    let hits = bead::identity::foreign_terms(&load_identity(), repo, text);
-    if hits.is_empty() {
-        return Ok(None);
-    }
-    match bead::identity::override_reason(env::var(bead::identity::OVERRIDE_ENV).ok()) {
-        Some(why) => Ok(Some(why)),
-        None => {
-            eprintln!("{}", bead::identity::refusal(repo, &hits));
-            Err(2)
-        }
-    }
+    bead::filing::identity_guard(&load_identity(), repo, text, &|k| env::var(k).ok()).map_err(refused)
+}
+
+fn refused(r: bead::guard::Refusal) -> i32 {
+    eprint!("{}", r.text);
+    r.code
 }
 
 /// The statute check on a decision's own text. `Ok(Some(line))` is the line to record on the
-/// bead: every statute the registry matched, and the override reason when one admitted a
-/// contradiction. An unreadable or malformed registry refuses; only an empty key is inert.
+/// bead; an unreadable or malformed registry refuses, and only an empty key is inert.
 fn statute_guard(text: &str) -> Result<Option<String>, i32> {
-    let path = cfg_label("SPIRA_STATUTE_GUARDS");
-    if path.is_empty() {
-        return Ok(None);
-    }
-    let registry = std::fs::read_to_string(&path).map_err(|e| {
-        eprintln!("bead: refusing: cannot read the statute registry {path}: {e}");
-        1
-    })?;
-    let hits = bead::statute::check(&registry, text).map_err(|e| {
-        eprintln!("bead: refusing: statute registry {path}: {e}");
-        1
-    })?;
-    if hits.is_empty() {
-        return Ok(None);
-    }
-    if !hits.iter().any(|h| h.refuses) {
-        eprint!("{}", bead::statute::shown(&hits));
-        return Ok(Some(bead::statute::recorded_line(&hits, None)));
-    }
-    match bead::statute::override_reason(env::var(bead::statute::OVERRIDE_ENV).ok()) {
-        Some(why) => {
-            eprint!("{}", bead::statute::shown(&hits));
-            Ok(Some(bead::statute::recorded_line(&hits, Some(&why))))
-        }
-        None => {
-            eprintln!("{}", bead::statute::refusal(&hits));
-            Err(2)
-        }
-    }
+    let statutes = bead::filing::Statutes::at(&cfg_label("SPIRA_STATUTE_GUARDS"));
+    let note = bead::filing::statute_guard(&statutes, text, &|k| env::var(k).ok()).map_err(refused)?;
+    eprint!("{}", note.shown);
+    Ok(note.line)
 }
 
 /// One source of config (per Ryan 2026-10-05): a registered key's value, through
@@ -659,7 +628,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             Err(rc) => return rc,
             Ok(Some(why)) => {
                 let path = env::temp_dir().join(format!("bead-crossrepo-{}.md", std::process::id()));
-                if let Err(e) = std::fs::write(&path, format!("{}\n\n{body}", bead::identity::recorded_line(&why))) {
+                if let Err(e) = std::fs::write(&path, format!("{why}\n\n{body}")) {
                     eprintln!("bead: writing {}: {e}", path.display());
                     return 1;
                 }
@@ -780,8 +749,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         let persona = bead::filing::Persona { name: for_rune.clone(), labels: rune_labels.split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(), requires_build_spec: requires_build_spec(home, &for_rune), unresolved: None };
         let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
         if let Err(r) = bead::filing::persona_guards(&persona, &repo, &body, &repos, lane_override) {
-            eprint!("{}", r.text);
-            return r.code;
+            return refused(r);
         }
 
         if let Some(base) = &stack_after {
@@ -1134,7 +1102,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
             }
             match identity_guard(&repo, &text) {
                 Err(rc) => return rc,
-                Ok(why) => override_note = why.map(|w| bead::identity::recorded_line(&w)),
+                Ok(line) => override_note = line,
             }
         }
     }

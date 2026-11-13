@@ -40,6 +40,19 @@ pub enum Statutes {
     Unreadable(String),
 }
 
+impl Statutes {
+    /// The registry at `path`; an empty path declares none, and an unreadable one refuses.
+    pub fn at(path: &str) -> Statutes {
+        if path.is_empty() {
+            return Statutes::Off;
+        }
+        match std::fs::read_to_string(path) {
+            Ok(text) => Statutes::Registry { path: path.to_string(), text },
+            Err(e) => Statutes::Unreadable(format!("bead: refusing: cannot read the statute registry {path}: {e}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Policy {
     pub personas: Vec<Persona>,
@@ -60,13 +73,7 @@ impl Policy {
         let path = |key: &str| cfg(key).map(|v| (!v.is_empty()).then_some(v));
         let repos = path("SPIRA_REPO_MAP")?.and_then(|p| std::fs::read_to_string(p).ok()).map(|t| repos_by_name(&t)).unwrap_or_default();
         let identity = path("SPIRA_REPO_IDENTITY")?.and_then(|p| std::fs::read_to_string(p).ok()).map(|t| identity::parse(&t)).unwrap_or_default();
-        let statutes = match path("SPIRA_STATUTE_GUARDS")? {
-            None => Statutes::Off,
-            Some(p) => match std::fs::read_to_string(&p) {
-                Ok(text) => Statutes::Registry { path: p, text },
-                Err(e) => Statutes::Unreadable(format!("bead: refusing: cannot read the statute registry {p}: {e}")),
-            },
-        };
+        let statutes = Statutes::at(&cfg("SPIRA_STATUTE_GUARDS")?);
         Ok(Policy { personas: personas(home), repos, identity, statutes })
     }
 

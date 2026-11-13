@@ -1042,6 +1042,34 @@ mod tests {
         fn registry(&self) -> spira_config::repos::Registry {
             spira_config::repos::Registry::new(Some("spira|/r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("/r/spira"))
         }
+        fn policy(&self) -> Result<bead::filing::Policy, String> {
+            let builder = bead::filing::Persona { name: "builder".into(), labels: vec!["builder-lane".into()], requires_build_spec: true, unresolved: None };
+            Ok(bead::filing::Policy { personas: vec![builder], ..bead::filing::Policy::none() })
+        }
+    }
+
+    fn served_with(w: &World, c: &dyn crate::composed::Content, argv: &[&str], stdin: &str) -> super::Answer {
+        let req = super::Request { argv: argv.iter().map(|a| a.to_string()).collect(), stdin: Some(stdin.to_string()), caller: Default::default(), min_rev: None, task: None };
+        let (mut m, mut b) = (w, w);
+        super::answer(req, &mut m, &mut b, c, &|| Err("no run dir here".to_string()))
+    }
+
+    /// A filing as a crate sends it: refused by the server for a missing build spec, written and
+    /// given its row with one; a description replacement from the request body is a served verb.
+    #[test]
+    fn a_work_filing_over_the_door_meets_the_contract_and_is_written_with_its_row() {
+        let w = World::new();
+        let f = Filing(&w, "sp-new");
+        let create = ["content", "create", "T", "--labels", "builder-lane,repo:spira", "--body-file", "-", "--silent"];
+        let ans = served_with(&w, &f, &create, "just an outcome");
+        assert_eq!(ans.code, 2, "{ans:?}");
+        assert!(ans.stderr.starts_with("bead: refusing: a bead for builder must name what to build"), "{ans:?}");
+        assert!(state(&w, "sp-new").is_none(), "nothing was filed");
+        let ans = served_with(&w, &f, &create, "## Build\nthe artifact, and where\n");
+        assert_eq!((ans.code, ans.stdout.as_str()), (0, "sp-new\n"), "{ans:?}");
+        assert_eq!(state(&w, "sp-new").map(|r| r.state), Some("READY".to_string()));
+        let ans = served_with(&w, &f, &["content", "update", "sp-new", "--body-file", "-"], "a new description");
+        assert_eq!(ans.code, 0, "{ans:?}");
     }
 
     fn served(w: &World, c: &dyn crate::composed::Content, argv: &[&str], caller: &[(&str, &str)]) -> super::Answer {
