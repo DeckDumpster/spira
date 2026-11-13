@@ -71,6 +71,11 @@ fn report(out: &mut dyn Write, label: &str, r: Result<reap::Reaped, String>, dry
     }
 }
 
+/// Where the bead worktrees sit: `subdir` of the run directory, the same one the host section measures.
+pub fn worktrees_under(run: &str, subdir: &str) -> PathBuf {
+    PathBuf::from(run).join(subdir)
+}
+
 /// The entry both the binary and its tests call; returns the process exit code.
 pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
     let a = match parse(args) {
@@ -84,7 +89,13 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
     let dir = match a.dir.clone() {
         Some(d) => d,
         None => match spira_config::process::cfg("SPIRA_RUN") {
-            Ok(r) => PathBuf::from(r).join("worktree"),
+            Ok(r) => match spira_config::process::cfg("SPIRA_HOST_WORKTREE_SUBDIR") {
+                Ok(sub) => worktrees_under(&r, &sub),
+                Err(e) => {
+                    let _ = writeln!(err, "target-reap: {e}");
+                    return 2;
+                }
+            },
             Err(e) => {
                 let _ = writeln!(err, "target-reap: {e}");
                 return 2;

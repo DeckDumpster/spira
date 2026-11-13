@@ -14,6 +14,6 @@ kind = "Host"
 [resources.metadata]
 name = "host"
 [resources.spec]
-scratch_free_share = { value = 0.30, statute = "law-a-concurrency-ceiling-names-its-measurement" }
-worktree_free_share = { value = 0.20, statute = "law-a-concurrency-ceiling-names-its-measurement" }
-io_full_avg300 = { value = 40.0, statute = "law-a-concurrency-ceiling-names-its-measurement" }
+scratch_free_share = { value = 0.30, statute = "law-diagnose-before-you-buy-capacity" }
+worktree_free_share = { value = 0.20, statute = "law-diagnose-before-you-buy-capacity" }
+io_full_avg300 = { value = 40.0, statute = "law-diagnose-before-you-buy-capacity" }

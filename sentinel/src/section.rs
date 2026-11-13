@@ -433,6 +433,28 @@ mod tests {
     }
 
     #[test]
+    fn the_mirror_reads_the_condition_the_watchtower_publishes() {
+        use watchtower::host_section::{status_of, Host, Sample};
+        let h = |shed_from| Host {
+            sample: Sample { scratch: Some(0.9), worktrees: Some(0.9), root: Some(0.9), io: Some(1.0) },
+            certify_par: 1,
+            shed_from,
+            stale_scratch: 0,
+            stale_targets: 0,
+        };
+        let published = |shed_from| {
+            let (status, _) = status_of(None, &h(shed_from), NOW);
+            json!({ "section": {
+                "apiVersion": "spira/v1", "kind": HOST_KIND,
+                "metadata": { "name": "host", "owner": "watchtower", "observedAt": "2026-10-31T19:40:00Z", "target_latency": "5m", "max_age": "15m" },
+                "status": status,
+            }})
+        };
+        assert!(host_shedding(&json!({ "sections": [published(Some(2))] })), "a shed in force raises what the fleet mirrors");
+        assert!(!host_shedding(&json!({ "sections": [published(None)] })));
+    }
+
+    #[test]
     fn only_unacknowledged_dwarf_fleet_intents_are_open() {
         let intent = |action: &str, ack: Value| {
             let mut v = json!({

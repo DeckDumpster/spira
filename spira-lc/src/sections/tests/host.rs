@@ -324,3 +324,23 @@ fn a_config_that_cannot_state_certify_par_stops_the_pass_before_it_acks_anything
     let e = hs::run(&Ports { lc: &d, config: &Unreadable, reaper: &w.stale, record: &|_| {} }, secs(&w.r), &calm()).unwrap_err();
     assert!(e.contains("unreadable"), "{e}");
 }
+
+#[test]
+fn a_shed_the_host_has_recovered_from_is_not_yet_planned_back_by_the_selector() {
+    use reconciler_engine::goodput_pass::{run as pass, Outcome, PassConfig};
+    let w = world(2, 0, 0);
+    w.run(&calm()).unwrap();
+    let key = w.put("1", host::SHED_SLOT, 2, 1);
+    w.run(&calm()).unwrap();
+    assert_eq!(w.ack(&key)["result"], "applied");
+    let s = w.section();
+    assert_eq!((condition(&s, host::SHED), w.par.par.get()), ("True".to_string(), 1), "recovered: Shed is raised");
+    let token = w.token.borrow().clone().unwrap();
+    w.r.ok(&["lock", "release", "reconciler", "--token", &token, "--holder", "goodput-pass"], None);
+    let cfg = PassConfig { holder: "inv-1".into(), timeout_secs: 50, shadow: vec![], halted: false };
+    let Outcome::Passed(p) = pass(&Dispatch(&w.r), &w.r.clock, &cfg).unwrap() else { panic!("the pass stood by") };
+    let rec: reconciler_engine::pass_record::PassRecord = serde_json::from_value(w.r.store.get(reconciler_engine::pass_record::PASS_KEY).unwrap().unwrap().value.data).unwrap();
+    // The selector visits open gaps only and a recovered host has none: sp-oroflg.2 makes this plan the restore.
+    assert!(rec.steps.iter().all(|s| s.section != "Host/host"), "{:?}", rec.steps);
+    drop(p);
+}

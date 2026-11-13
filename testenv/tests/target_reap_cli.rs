@@ -54,6 +54,7 @@ fn a_dry_run_names_the_bound_and_removes_nothing() {
     assert_eq!(code, 0, "{said}");
     assert!(reaped(dir.path(), 20).is_empty());
     assert!(said.contains("sp-w19") && said.contains("sp-w18") && !said.contains("sp-w17"), "{said}");
+    assert!(said.contains("would remove 2 target dir(s)"), "the count the host section parses is worded as it expects: {said}");
 }
 
 #[test]
@@ -112,4 +113,9 @@ fn every_flag_parses_and_an_unknown_one_is_usage() {
     assert!(args(&["--bogus"]).unwrap_err().starts_with("usage:"));
     assert!(args(&["--worktrees"]).is_err());
     assert_eq!(args(&[]).unwrap(), testenv::target_reap::Args::default());
+}
+
+#[test]
+fn the_default_worktrees_directory_is_the_configured_subdir_of_the_run_directory() {
+    assert_eq!(testenv::target_reap::worktrees_under("/r", "trees"), Path::new("/r/trees"));
 }
