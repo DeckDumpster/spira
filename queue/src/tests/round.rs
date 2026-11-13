@@ -334,6 +334,31 @@ fn an_eject_red_on_lint_is_accepted_and_forces_the_lint_step_on_recertification(
 }
 
 #[test]
+fn an_eject_for_the_config_delta_check_is_taken_as_a_round_step() {
+    // The attribution ejects a member whose merge breaks the config delta with
+    // `--suites config-delta`; refused, the round kept the member its worktree no longer held.
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    assert_eq!(
+        t.run(&[
+            "round", "eject", &batch, "sp-b", "--reason", "the merged config delta does not apply", "--red", "--suites", "config-delta"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
+    assert!(crate::ops::round::is_round_step("config-delta"));
+    assert!(crate::ops::round::ROUND_ONLY_STEPS.contains(&"config-delta"));
+}
+
+#[test]
 fn an_eject_forcing_a_suite_testenv_does_not_know_is_refused_naming_the_known_ones_and_changes_nothing(
 ) {
     let t = round_world();
@@ -354,7 +379,7 @@ fn an_eject_forcing_a_suite_testenv_does_not_know_is_refused_naming_the_known_on
     );
     let e = t.err();
     assert!(
-        e.contains("round steps: workspace-build spira-lint unit-tests"),
+        e.contains("round steps: workspace-build spira-lint unit-tests config-delta"),
         "{e}"
     );
     assert!(
