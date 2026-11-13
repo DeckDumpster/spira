@@ -159,8 +159,9 @@ pub trait World {
     /// else removed the output this trial built.
     fn target_intact(&self, tree: &Path) -> bool;
     /// Drop the tmpfs build output of a finished trial (target::release_tree); `keep_release`
-    /// spares `release` for a caller that still has to stage it.
-    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool);
+    /// spares `release` for a caller that still has to stage it; a judged trial's `debug` joins
+    /// the warm pool, which is held under `cap_mib`.
+    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, cap_mib: u64);
 
     /// `timeout <secs> bash -c <cmd>` in `tree` under exactly `env` → (status, combined output
     /// with trailing newlines stripped).

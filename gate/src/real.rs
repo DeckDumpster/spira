@@ -954,9 +954,11 @@ impl World for Real {
     fn target_intact(&self, tree: &Path) -> bool {
         crate::target::intact(tree)
     }
-    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool) {
+    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, cap_mib: u64) {
         if judged {
-            crate::warm::donate_tree(tree);
+            if let Some(line) = crate::warm::donate_tree(tree, cap_mib) {
+                self.eprint(&line);
+            }
         }
         crate::target::release_tree(tree, keep_release);
     }
@@ -1241,10 +1243,32 @@ mod tests {
         r.target_on_tmpfs(&a, root.to_str().unwrap(), run, &lim).unwrap();
         fs::create_dir_all(a.join("target/debug/deps")).unwrap();
         fs::write(a.join("target/debug/deps/libx.rlib"), "x").unwrap();
-        r.release_target(&a, false, true);
+        r.release_target(&a, false, true, 1 << 20);
         let line = r.target_on_tmpfs(&b, root.to_str().unwrap(), run, &lim).unwrap();
         assert!(line.contains("warm from"), "{line}");
         assert!(b.join("target/debug/deps/libx.rlib").is_file());
+    }
+
+    #[test]
+    fn a_finished_gate_leaves_the_warm_directory_under_the_cap() {
+        use crate::ports::World;
+        use std::fs;
+        let t = testkit::TempDir::new("gate-world-warm-cap");
+        let (root, trees) = (t.path().join("root"), t.path().join("worktree"));
+        let a = trees.join(".gate.h.a");
+        fs::create_dir_all(&a).unwrap();
+        for args in [&["init", "-q"][..], &["add", "."], &["commit", "-qm", "c", "--allow-empty"]] {
+            let o = std::process::Command::new("git").arg("-C").arg(&a).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(o.status.success());
+        }
+        let lim = crate::target::Limits { cap_mib: 3, min_free_mib: 0, min_mem_mib: 0, shed_free_mib: 0 };
+        let r = super::Real::new(t.path().to_path_buf());
+        r.target_on_tmpfs(&a, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim).unwrap();
+        fs::create_dir_all(a.join("target/debug/deps")).unwrap();
+        fs::write(a.join("target/debug/deps/libbig.rlib"), vec![7u8; 5 << 20]).unwrap();
+        r.release_target(&a, false, true, lim.cap_mib);
+        let held = crate::warm::size(&root);
+        assert!(held <= lim.cap_mib << 20, "the warm directory holds {held} bytes over a {} MiB cap", lim.cap_mib);
     }
 
     #[test]

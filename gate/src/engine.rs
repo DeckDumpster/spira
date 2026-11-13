@@ -81,6 +81,7 @@ struct State {
     repo: PathBuf,
     run: String,
     target_root: String,
+    target_cap_mib: u64,
     /// yield.sh records need the repository; armed once it resolved.
     armed: bool,
     gate_log: PathBuf,
@@ -211,6 +212,7 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.repo = repo.clone();
         self.s.run = ctx.var("SPIRA_RUN").to_string();
         self.s.target_root = ctx.var("SPIRA_GATE_TARGET_ROOT").to_string();
+        self.s.target_cap_mib = crate::target::Limits::from_vars(ctx.var("SPIRA_GATE_TARGET_CAP_MIB"), "", "", "").cap_mib;
         self.s.gate_log = PathBuf::from(
             ctx.var_or("SPIRA_GATE_LOG", &format!("{}/gate.log", self.s.run))
                 .to_string(),
@@ -1753,7 +1755,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.remove(&f);
         }
         if let Some(t) = &self.s.tree {
-            w.release_target(t, vd.status == PASS && self.a.release_bins, vd.status != NOVERDICT);
+            w.release_target(t, vd.status == PASS && self.a.release_bins, vd.status != NOVERDICT, self.s.target_cap_mib);
             w.remove(&PathBuf::from(format!("{}.lock.holder", t.display())));
             if self.s.held_lock && vd.status != PASS && w.exists(&t.join(".git")) {
                 w.remove_worktree(&self.s.repo, t);

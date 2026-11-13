@@ -649,7 +649,7 @@ impl World for Fake {
     fn target_intact(&self, _: &Path) -> bool {
         !self.target_swept.get()
     }
-    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool) {
+    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, _: u64) {
         self.judged.borrow_mut().push(judged);
         self.released.borrow_mut().push((tree.to_path_buf(), keep_release));
     }
