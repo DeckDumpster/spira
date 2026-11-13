@@ -21,7 +21,7 @@
 use crate::common;
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use lifecycle::bead::{BeadEvent, BeadEventKind, BeadRow, BeadState};
@@ -158,7 +158,7 @@ struct World {
     faulty: Arc<FaultyJournal>,
     /// Until this virtual time every store-class double answers `Err`.
     cold_until: AtomicU64,
-    cold_refusals: AtomicU32,
+    cold_refused: Mutex<Vec<String>>,
     units: Arc<ScriptedUnits>,
     lc: Mutex<Lc>,
     script: Script,
@@ -430,9 +430,10 @@ fn doubles(w: &Arc<World>) -> Doubles {
     let on = |d: Doubles, name: &str, f: fn(&World, &str) -> Result<String, String>| {
         let w = w.clone();
         let store = STORE_CLASS.contains(&name);
-        d.double(name, move |input| {
+        let name = name.to_string();
+        d.double(&name.clone(), move |input| {
             if store && w.now() < w.cold_until.load(Ordering::SeqCst) {
-                w.cold_refusals.fetch_add(1, Ordering::SeqCst);
+                w.cold_refused.lock().unwrap_or_else(|e| e.into_inner()).push(name.clone());
                 return Err("the lifecycle store is cold".into());
             }
             f(&w, input)
@@ -481,7 +482,8 @@ struct Run {
     resolved: Vec<String>,
     /// The batcher's pages, without their stamp.
     pages: Vec<String>,
-    cold_refusals: u32,
+    /// The store-class effects the cold store refused, by name.
+    cold_refused: Vec<String>,
 }
 
 /// How a run is interrupted: where the scheduler dies, and whether the restarted one is told
@@ -559,7 +561,7 @@ impl Rig {
         }
         let mem = MemJournal::new();
         let faulty = FaultyJournal::new(mem.clone());
-        let world = Arc::new(World { clock: clock.clone(), crash, crashing: Mutex::default(), faulty: faulty.clone(), cold_until: AtomicU64::new(0), cold_refusals: AtomicU32::new(0), units: units.clone(), lc: Mutex::new(lc), script, proc: CountingProc::refusing() });
+        let world = Arc::new(World { clock: clock.clone(), crash, crashing: Mutex::default(), faulty: faulty.clone(), cold_until: AtomicU64::new(0), cold_refused: Mutex::default(), units: units.clone(), lc: Mutex::new(lc), script, proc: CountingProc::refusing() });
         let runner = Arc::new(doubles(&world));
         Rig { seed, clock, c, units, mem, faulty, world, runner }
     }
@@ -598,7 +600,7 @@ impl Rig {
             effects: effects_of(&journal.history()),
             resolved: self.mem.commits().into_iter().flat_map(|t| t.resolved).collect(),
             pages: lc.pages.clone(),
-            cold_refusals: self.world.cold_refusals.load(Ordering::SeqCst),
+            cold_refused: self.world.cold_refused.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         }
     }
 }
@@ -744,6 +746,8 @@ fn two_members_sifted_in_one_pass_are_cut_into_one_round() {
 const GREEN2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: None };
 const RED2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: Some("sp-w3b") };
 const BEADS: [&str; 2] = ["sp-w3a", "sp-w3b"];
+/// The store writes one landing of `BEADS` makes: deliver and delivered per member, then the round's close.
+const LAND_WRITES: u32 = 2 * BEADS.len() as u32 + 1;
 
 /// Every requested effect has an outcome, and no outcome was handled twice. An outcome
 /// shipped by a turn that never committed is shipped again as the restart's own, under the
@@ -902,8 +906,10 @@ fn assert_recovers(base: &Run, r: &Run, at: &str) {
 #[test]
 fn a_restart_after_land_applied_ends_the_round_landed_without_a_landing_refused_page() {
     let base = run(12, GREEN2());
-    let r = run_interrupted(12, GREEN2(), Interrupt { crash: Some(Crash { double: "batcher_land", after: 5 }), ..Interrupt::default() });
+    let r = run_interrupted(12, GREEN2(), Interrupt { crash: Some(Crash { double: "batcher_land", after: LAND_WRITES }), ..Interrupt::default() });
     assert!(r.crashed.is_some(), "the scheduler died after land applied");
+    let lost = r.trace.iter().filter(|e| e.1 == bl::STREAM && e.2 == runtime::EFFECT_TIMED_OUT && e.3 == runtime::engine::LOST_AT_RESTART).count();
+    assert!(lost >= 1, "the restart closed the unanswered land as lost at restart: {}", dump(&r));
     assert!(!r.pages.iter().any(|p| p.contains("LANDING REFUSED")), "{:?}", r.pages);
     assert_recovers(&base, &r, "crash after land applied");
     for b in BEADS {
@@ -915,9 +921,9 @@ fn a_restart_after_land_applied_ends_the_round_landed_without_a_landing_refused_
 #[test]
 fn a_restart_at_landing_with_the_store_cold_for_two_minutes_raises_no_withdraw_abandon_pause_or_page() {
     let base = run(12, GREEN2());
-    let cold = Interrupt { crash: Some(Crash { double: "batcher_land", after: 5 }), cold_ms: 2 * MIN, ..Interrupt::default() };
+    let cold = Interrupt { crash: Some(Crash { double: "batcher_land", after: LAND_WRITES }), cold_ms: 2 * MIN, ..Interrupt::default() };
     let r = run_interrupted(12, GREEN2(), cold);
-    assert!(r.cold_refusals > 0, "the cold store refused some effect after the restart: {}", dump(&r));
+    assert!(r.cold_refused.iter().any(|n| n.starts_with(bl::NAME)), "the cold store refused a batcher effect after the restart: {:?}", r.cold_refused);
     assert_recovers(&base, &r, "restart at landing, store cold");
 }
 
@@ -934,6 +940,8 @@ fn a_crash_mid_certify_lands_the_round_from_the_units_end_without_a_redrive() {
     assert!(r.crashed.is_some(), "the scheduler was killed mid-certify");
     let ends = r.trace.iter().filter(|e| e.1 == bl::STREAM && e.2 == units::UNIT_RAN && e.4 > at).count();
     assert!(ends >= 1, "the certify leg's end reached the restarted batcher: {}", dump(&r));
+    let certifies = |run: &Run| run.unit_calls.iter().filter(|c| c.contains("certify")).count();
+    assert_eq!(certifies(&r), certifies(&base), "no second certify leg was started: {:?}", r.unit_calls);
     assert_recovers(&base, &r, "crash mid certify");
 }
 
