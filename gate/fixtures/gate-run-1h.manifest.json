@@ -1,0 +1,9 @@
+{
+  "now": "2026-10-31T05:00:00Z",
+  "gates": 20,
+  "no_verdict": 6,
+  "no_verdict_run_secs": 4300,
+  "total_run_secs": 11500,
+  "by_cause": [["died-twice", 3], ["scratch-short", 2], ["harness-fault", 1]],
+  "excluded": "three NO_VERDICT rows at 03:30:00Z, 04:00:00Z (the open end) and 05:00:01Z, each 9999 s"
+}

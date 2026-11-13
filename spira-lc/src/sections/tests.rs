@@ -16,6 +16,7 @@ use super::{run, Call};
 mod alarms_pass;
 mod assemble;
 mod dwarf_fleet;
+mod gate;
 mod goodput_pass;
 mod vm_pool;
 
