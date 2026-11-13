@@ -17,7 +17,7 @@ use std::path::Path;
 
 use serde_json::Value;
 use state_store::{
-    carries_ttl, events_key, Backend, LogEntry, Object, Rev, Version, EVENTS_PREFIX,
+    carries_ttl, events_key, Backend, LogEntry, Object, Rev, Version, EVENTS_PREFIX, HISTORY_PREFIX,
     REQUESTS_PREFIX, TELEMETRY_PREFIX,
 };
 
@@ -90,14 +90,23 @@ impl Report {
 
 const PAGE: usize = 1_000;
 
-/// Every key at `at`, read in pages. A page the store ends for passing `max_read_ms` is read
-/// again at half the size, down to one key, and the size recovers by doubling after each page that fits, so no single read is held across the keyspace.
+/// Every key at `at` but the bookkeeping, `history/` included though GC skips it.
 fn all_keys(b: &SqliteBackend, at: u64) -> Result<Vec<(String, Version)>, String> {
+    let mut out = paged(|after, size| b.gc_range(after, size, at))?;
+    out.extend(paged(|after, size| b.range(HISTORY_PREFIX, after, size, at))?);
+    Ok(out)
+}
+
+/// A read paged through `read`. A page the store ends for passing `max_read_ms` is read
+/// again at half the size, down to one key, and the size recovers by doubling after each page that fits, so no single read is held across the keyspace.
+fn paged(
+    read: impl Fn(Option<&str>, usize) -> state_store::Result<Vec<(String, Version)>>,
+) -> Result<Vec<(String, Version)>, String> {
     let mut out = Vec::new();
     let mut after: Option<String> = None;
     let mut size = PAGE;
     loop {
-        let page = match b.gc_range(after.as_deref(), size, at) {
+        let page = match read(after.as_deref(), size) {
             Ok(page) => page,
             Err(e) if size > 1 && crate::is_read_ended(&e) => {
                 size /= 2;
