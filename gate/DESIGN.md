@@ -926,7 +926,7 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   hashes into every key and so would split the cache from a dwarf's interactive builds).
 * **The gate tree builds on tmpfs** (`src/target.rs`, `World::target_on_tmpfs`): after the
   checkout, `target/{dwarf,release,debug,tree-tools}` are links into
-  `$SPIRA_GATE_TARGET_ROOT` (default `/tmp/spira-gate-target-<run hash>`); orphaned
+  `$SPIRA_GATE_TARGET_ROOT` (registered key `gate_target_root`; default `/tmp/spira-gate-target-<run hash>`); orphaned
   directories are removed, the least recently used unlocked ones evicted over
   `SPIRA_GATE_TARGET_CAP_MIB`, and short of room (`_MIN_FREE_MIB`, `_MIN_MEM_MIB`) is
   `NO_VERDICT reason=scratch-short` — never the disk. No trial reserves room in advance: the

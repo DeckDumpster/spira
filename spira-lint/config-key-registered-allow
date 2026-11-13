@@ -286,9 +286,6 @@ SPIRA_GATE_TARGET_MIN_FREE_MIB gate/src/engine.rs
 SPIRA_GATE_TARGET_MIN_FREE_MIB gate/src/real.rs
 SPIRA_GATE_TARGET_MIN_MEM_MIB gate/src/engine.rs
 SPIRA_GATE_TARGET_MIN_MEM_MIB gate/src/real.rs
-SPIRA_GATE_TARGET_ROOT gate/src/engine.rs
-SPIRA_GATE_TARGET_ROOT gate/src/real.rs
-SPIRA_GATE_TARGET_ROOT testenv/src/target_reap.rs
 SPIRA_GATE_TICK gate-run/src/main.rs
 SPIRA_GATE_TIERS suite-select/src/gate.rs
 SPIRA_GOAL spira-config/src/convert.rs

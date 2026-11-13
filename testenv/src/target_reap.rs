@@ -58,6 +58,10 @@ fn var(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|v| !v.is_empty())
 }
 
+fn gate_target_root() -> Option<String> {
+    var("SPIRA_GATE_TARGET_ROOT").or_else(|| spira_config::process::cfg("SPIRA_GATE_TARGET_ROOT").ok().filter(|v| !v.is_empty()))
+}
+
 fn report(out: &mut dyn Write, label: &str, r: Result<reap::Reaped, String>, dry: bool) -> bool {
     match r {
         Ok(r) => {
@@ -173,7 +177,7 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
 }
 
 fn reap_scratch(dir: &Path, fraction: f64, dry: bool, busy_fn: &dyn Fn(&Path) -> bool, out: &mut dyn Write, err: &mut dyn Write) -> bool {
-    if spira_config::process::cfg("SPIRA_RUN").is_err() && var("SPIRA_GATE_TARGET_ROOT").is_none() {
+    if spira_config::process::cfg("SPIRA_RUN").is_err() && gate_target_root().is_none() {
         let _ = writeln!(err, "target-reap: no SPIRA_RUN and no SPIRA_GATE_TARGET_ROOT — no gate scratch to find");
         return false;
     }
@@ -187,7 +191,7 @@ fn reap_scratch(dir: &Path, fraction: f64, dry: bool, busy_fn: &dyn Fn(&Path) ->
 /// the temp dir is a tmpfs, which is where it lives unless a root is named).
 pub fn reap_scratch_report(dir: &Path, fraction: Option<f64>, dry: bool, tmpfs: bool, busy_fn: &dyn Fn(&Path) -> bool, out: &mut dyn Write) -> bool {
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
-    let explicit = var("SPIRA_GATE_TARGET_ROOT").unwrap_or_default();
+    let explicit = gate_target_root().unwrap_or_default();
     let max_age = var("SPIRA_GATE_TARGET_MAX_AGE_MIN").and_then(|v| v.parse::<u64>().ok()).unwrap_or(120);
     let held_fn = |name: &str| gate::target::held_by_gate(Path::new(&run), name);
     let Some(root) = gate::target::root(&explicit, &run, tmpfs) else { return false };
