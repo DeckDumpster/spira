@@ -939,7 +939,6 @@ SPIRA_WORK_ACTOR spira-runtime/src/tasks/f/persona_archivist.rs
 SPIRA_WORK_ACTOR work/src/main.rs
 SPIRA_WORK_BEAD_ID broker/src/login.rs
 SPIRA_WORK_BEAD_ID dwarf/src/restrict.rs
-SPIRA_WORK_BEAD_ID habits/src/unit.rs
 SPIRA_WORK_BEAD_ID spira-config/src/admit_main.rs
 SPIRA_WORK_BEAD_ID spira/sim/src/call.rs
 SPIRA_WORK_BEAD_ID testenv/src/run.rs
