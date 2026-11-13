@@ -1197,3 +1197,15 @@ fn a_stall_is_judged_on_the_bound_the_config_names_for_its_edge() {
     let page = spira_runtime::tasks::e::watch_transitions::stalls(&s, now, &loose).into_iter().find(|x| x.edge == DELIVERY_EDGE).expect("2h in delivery is past a 1h bound");
     assert!(page.evidence.contains("bound 1h00m"), "{}", page.evidence);
 }
+
+#[test]
+fn a_stall_is_held_back_until_its_own_edges_bound_has_passed_since_the_plane_resumed() {
+    let now = T0;
+    let cfg = Config { submit_bound_s: 5_000, ..config() };
+    let s = todays_case(now - 6_000);
+    let age = |resumed_for: u64| Carry { resumed_at: now - resumed_for, ..Carry::default() };
+    let held = decide(&age(4_999), &s, now * 1000, &cfg).1;
+    assert!(pages(&held).is_empty(), "{:?}", pages(&held));
+    let due = decide(&age(5_000), &s, now * 1000, &cfg).1;
+    assert_eq!(pages(&due).len(), 1, "{:?}", pages(&due));
+}
