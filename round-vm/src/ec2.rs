@@ -625,16 +625,18 @@ impl AwsCli {
     }
 
     fn aws(&self, args: Vec<String>) -> Result<String, String> {
+        retry_throttled(&THROTTLE_BACKOFF, &mut std::thread::sleep, || self.aws_once(args.clone()))
+    }
+
+    fn aws_once(&self, args: Vec<String>) -> Result<String, String> {
         let mut argv = self.base();
         argv.extend(args);
-        retry_throttled(&THROTTLE_BACKOFF, &mut std::thread::sleep, || {
-            let out = crate::procs::command("aws").args(&argv).output().map_err(|e| format!("aws: {e}"))?;
-            if out.status.success() {
-                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-            } else {
-                Err(format!("aws {}: {}", argv.get(4).map(String::as_str).unwrap_or(""), String::from_utf8_lossy(&out.stderr).trim()))
-            }
-        })
+        let out = crate::procs::command("aws").args(&argv).output().map_err(|e| format!("aws: {e}"))?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        } else {
+            Err(format!("aws {}: {}", argv.get(4).map(String::as_str).unwrap_or(""), String::from_utf8_lossy(&out.stderr).trim()))
+        }
     }
 
     pub fn run_args(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data_file: &str, spot: bool) -> Vec<String> {
@@ -685,14 +687,17 @@ impl AwsCli {
         let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&file).map_err(|e| format!("{}: {e}", file.display()))?;
         f.write_all(user_data.as_bytes()).map_err(|e| e.to_string())?;
         let path = file.to_string_lossy();
-        let r = if self.spot_first {
-            self.aws(self.dry_flag(self.run_args(ami, instance_type, handle, name, &path, true), dry)).or_else(|spot_err| {
-                eprintln!("round-vm: spot launch refused ({spot_err}); falling back to on-demand");
-                self.aws(self.dry_flag(self.run_args(ami, instance_type, handle, name, &path, false), dry))
-            })
-        } else {
-            self.aws(self.dry_flag(self.run_args(ami, instance_type, handle, name, &path, false), dry))
-        };
+        let once = |spot: bool| self.aws_once(self.dry_flag(self.run_args(ami, instance_type, handle, name, &path, spot), dry));
+        let r = retry_throttled(&THROTTLE_BACKOFF, &mut std::thread::sleep, || {
+            if self.spot_first {
+                once(true).or_else(|spot_err| {
+                    eprintln!("round-vm: spot launch refused ({spot_err}); falling back to on-demand");
+                    once(false)
+                })
+            } else {
+                once(false)
+            }
+        });
         let _ = std::fs::remove_file(&file);
         r.map(|s| s.trim().to_string())
     }

@@ -2332,6 +2332,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         HostPlacement::NotOffered => (None, None),
     };
     let spill_setting = crate::config::declared("SPIRA_ROUND_VM_SPILL");
+    let leased_at = crate::progress::now_secs();
     let acquired = if host_slot.is_some() {
         Ok((Vm { handle: crate::host::HOST_HANDLE.to_string(), addr: HOST_ADDR.to_string() }, AcquireMode::Warm))
     } else {
@@ -2373,11 +2374,15 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         Ok(v) => v,
         Err(e) => {
             eprintln!("round-vm run: acquire failed: {e}");
-            if let Some(code) = crate::ec2::throttle_code(&e) {
-                eprintln!("round-vm run: infrastructure refusal, not a suite red: AWS answered {code}; the pass did not run");
+            let history = pool_recent(&env.pool.state_file(), leased_at);
+            progress.placement(&results_dir, placement_record(spill_setting.as_deref(), spill_reason.as_deref(), None, &history, Some(&e)));
+            match crate::ec2::throttle_code(&e) {
+                Some(code) => {
+                    eprintln!("round-vm run: infrastructure refusal, not a suite red: AWS answered {code}; the pass did not run");
+                    progress.finish_infra_refused(&results_dir, format!("AWS answered {code}: {e}"));
+                }
+                None => progress.finish(&results_dir, 2),
             }
-            progress.placement(&results_dir, placement_record(spill_setting.as_deref(), spill_reason.as_deref(), None, &[], Some(&e)));
-            progress.finish(&results_dir, 2);
             return 2;
         }
     };
@@ -2525,6 +2530,11 @@ fn placement_record(setting: Option<&str>, host_refusal: Option<&str>, placed: O
         "refusal": refusal,
         "aws_refusal": refusal.and_then(crate::ec2::throttle_code),
     })
+}
+
+fn pool_recent(state_file: &Path, since: u64) -> Vec<String> {
+    let Ok(s) = crate::pool::read_state(state_file) else { return Vec::new() };
+    s.events.iter().filter(|e| e.at >= since).map(|e| format!("{}: {}", e.vm, e.reason)).collect()
 }
 
 fn pool_history(state_file: &Path, handle: &str) -> Vec<String> {
@@ -4947,6 +4957,37 @@ mod tests {
         go_with_host(&fx, &vm_remote, &plan, &round_args(&fx));
         assert_eq!(fx.fp.count("clone"), 1, "the round went to a VM");
         assert_ne!(recorded_where(&fx), "host");
+    }
+
+    #[test]
+    fn an_aws_request_limit_on_a_spilled_round_ends_infra_refused_with_the_setting_and_decision_recorded() {
+        let fx = fixture();
+        let fake = crate::testutil::FakeEc2::default();
+        fake.throttle();
+        let key = fx.d.path().join("ts.key");
+        fs::write(&key, "tskey").unwrap();
+        let cfg = crate::ec2::Ec2Config {
+            profile: "p".into(), region: "r".into(), ami: "a".into(), instance_types: vec!["t".into()], subnet: "s".into(), security_group: String::new(), instance_profile: String::new(), spot_first: false,
+            tailscale_key_file: key.to_string_lossy().into(), run_deadline: Duration::from_secs(7200), host_addr: "h".into(), recipe_sha: String::new(), max_lifetime: Duration::from_secs(10_800),
+        };
+        let ec2: std::sync::Arc<dyn crate::provider::Provider> = std::sync::Arc::new(crate::ec2::Ec2::new(fake, &cfg).unwrap());
+        let t = Timing { boot_tries: 1, poll: Duration::ZERO, gone_tries: 1 };
+        let (fp, ec2f) = (fx.fp.clone(), ec2.clone());
+        let f = move || {
+            let plan = crate::pool::SpillPlan { ec2: ec2f.clone(), rule: crate::spill::Rule { wait: Duration::ZERO, io_full_5m_tm90: 30.0, always: true }, only: true, pressure: Box::new(|| None), timing: t };
+            Ok(Attempt { provider: Box::new(crate::route::Routed { local: Box::new(fp.clone()), ec2: Some(ec2f.clone()) }), spill: Some(plan), iface: "ens18".into(), ssh_user: "root".into(), pubkey: "k".into(), timing: t })
+        };
+        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
+        let alarm = FakeAlarm::default();
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
+        let remote = FakeRemote::green();
+        let code = run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote: &remote, record: &FakeRecorder::default(), host_plan: None }, &round_args(&fx));
+        assert_eq!(code, 2);
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join(crate::progress::FILE)).unwrap()).unwrap();
+        assert_eq!(v["verdict"], "infra-refused");
+        assert_eq!(v["placement"]["aws_refusal"], "RequestLimitExceeded");
+        assert!(v["placement"]["refusal"].as_str().unwrap().contains("placement ec2-always") || v["placement"]["refusal"].as_str().unwrap().contains("ec2-only"), "{v}");
+        assert!(v["placement"]["pool_history"].as_array().unwrap().iter().any(|h| h.as_str().unwrap().contains("spilled to ec2: placement ec2-always")), "{v}");
     }
 
     #[test]
