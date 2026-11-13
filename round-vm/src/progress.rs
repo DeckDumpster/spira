@@ -97,6 +97,7 @@ pub struct Progress {
     suites_reported: bool,
     unpublished: Option<String>,
     place: Option<&'static str>,
+    placement: Option<Value>,
     last: Option<Value>,
     base: &'static str,
     detail: Option<String>,
@@ -171,6 +172,7 @@ impl Progress {
             suites_reported: false,
             unpublished: None,
             place: None,
+            placement: None,
             last: None,
             base: "vm",
             detail: Some("leasing a VM".into()),
@@ -247,6 +249,12 @@ impl Progress {
         self.write(results_dir, None);
     }
 
+    /// The spill setting, the decision that preceded EC2 and what the acquire came to, kept in the pass's own record.
+    pub fn placement(&mut self, results_dir: &Path, record: Value) {
+        self.placement = Some(record);
+        self.write(results_dir, None);
+    }
+
     /// Says what the current phase is doing; a changed detail counts as progress.
     pub fn detail(&mut self, results_dir: &Path, detail: String) {
         self.detail = Some(detail);
@@ -320,6 +328,7 @@ impl Progress {
             "suites_started": self.suites_started,
             "cap": self.cap,
             "place": self.place,
+            "placement": self.placement,
         });
         if self.last.as_ref() == Some(&body) {
             return;

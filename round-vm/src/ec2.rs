@@ -179,6 +179,33 @@ pub fn refused_for_capacity(err: &str) -> bool {
     ["VcpuLimitExceeded", "InsufficientInstanceCapacity", "InstanceLimitExceeded", "SpotInstanceTermination", "capacity-not-available"].iter().any(|c| err.contains(c))
 }
 
+const THROTTLE_CODES: [&str; 3] = ["RequestLimitExceeded", "Throttling", "ThrottlingException"];
+
+/// The AWS request-rate refusal code in `err`, if it is one: the call was not processed, so it is
+/// safe to repeat, and it says nothing about the branch.
+pub fn throttle_code(err: &str) -> Option<&'static str> {
+    THROTTLE_CODES.iter().find(|c| err.contains(**c)).copied()
+}
+
+pub const THROTTLE_BACKOFF: [Duration; 4] = [Duration::from_secs(2), Duration::from_secs(5), Duration::from_secs(15), Duration::from_secs(30)];
+
+/// Repeats `call` after each delay while AWS answers with a request-rate refusal; the last
+/// refusal comes back naming how many repeats were spent.
+pub fn retry_throttled<T>(delays: &[Duration], sleep: &mut dyn FnMut(Duration), mut call: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+    let mut spent = 0;
+    loop {
+        match call() {
+            Err(e) if throttle_code(&e).is_some() && spent < delays.len() => {
+                eprintln!("round-vm: AWS refused for request rate ({e}); retry {}/{} after {}s", spent + 1, delays.len(), delays[spent].as_secs());
+                sleep(delays[spent]);
+                spent += 1;
+            }
+            Err(e) if spent > 0 && throttle_code(&e).is_some() => return Err(format!("{e} (still refused after {spent} retries with backoff)")),
+            other => return other,
+        }
+    }
+}
+
 /// Tries each type in order, moving on only when `launch` is refused for capacity; the type that
 /// launched, or the last refusal.
 pub fn first_accepted<T>(types: &[String], mut launch: impl FnMut(&str) -> Result<T, String>) -> Result<(String, T), String> {
@@ -600,12 +627,14 @@ impl AwsCli {
     fn aws(&self, args: Vec<String>) -> Result<String, String> {
         let mut argv = self.base();
         argv.extend(args);
-        let out = crate::procs::command("aws").args(&argv).output().map_err(|e| format!("aws: {e}"))?;
-        if out.status.success() {
-            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-        } else {
-            Err(format!("aws {}: {}", argv.get(4).map(String::as_str).unwrap_or(""), String::from_utf8_lossy(&out.stderr).trim()))
-        }
+        retry_throttled(&THROTTLE_BACKOFF, &mut std::thread::sleep, || {
+            let out = crate::procs::command("aws").args(&argv).output().map_err(|e| format!("aws: {e}"))?;
+            if out.status.success() {
+                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+            } else {
+                Err(format!("aws {}: {}", argv.get(4).map(String::as_str).unwrap_or(""), String::from_utf8_lossy(&out.stderr).trim()))
+            }
+        })
     }
 
     pub fn run_args(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data_file: &str, spot: bool) -> Vec<String> {
@@ -925,6 +954,36 @@ pub fn parse_iso(s: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_request_limit_is_retried_with_backoff_then_named_when_it_persists() {
+        let err = "aws run-instances: An error occurred (RequestLimitExceeded) when calling the RunInstances operation";
+        let delays = [Duration::from_secs(2), Duration::from_secs(5)];
+        let (mut slept, mut calls) = (Vec::new(), 0);
+        let r: Result<(), String> = super::retry_throttled(&delays, &mut |d| slept.push(d), || { calls += 1; Err(err.to_string()) });
+        assert_eq!((calls, slept), (3, delays.to_vec()));
+        let e = r.unwrap_err();
+        assert!(e.contains("RequestLimitExceeded") && e.contains("after 2 retries"), "{e}");
+    }
+
+    #[test]
+    fn a_request_limit_that_clears_launches_and_other_errors_are_not_retried() {
+        let mut n = 0;
+        let ok = super::retry_throttled(&[Duration::ZERO; 3], &mut |_| {}, || { n += 1; if n < 3 { Err("Throttling: Rate exceeded".to_string()) } else { Ok(n) } });
+        assert_eq!(ok, Ok(3));
+        let mut calls = 0;
+        let r: Result<(), String> = super::retry_throttled(&[Duration::ZERO; 3], &mut |_| {}, || { calls += 1; Err("UnauthorizedOperation".to_string()) });
+        assert_eq!((calls, r.is_err()), (1, true));
+    }
+
+    #[test]
+    fn a_request_limit_is_not_a_capacity_refusal_so_no_smaller_type_is_tried() {
+        assert_eq!(super::throttle_code("(RequestLimitExceeded)"), Some("RequestLimitExceeded"));
+        assert!(!super::refused_for_capacity("RequestLimitExceeded"));
+        let mut tried = 0;
+        let r = super::first_accepted(&["a".to_string(), "b".to_string()], |_| { tried += 1; Err::<(), _>("RequestLimitExceeded".to_string()) });
+        assert_eq!((tried, r.is_err()), (1, true));
+    }
+
     use super::*;
 
     #[test]
