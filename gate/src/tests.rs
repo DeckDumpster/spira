@@ -636,8 +636,11 @@ impl World for Fake {
         }
         match self.target_err.borrow().clone() {
             Some(e) => Err(e),
-            None => Ok(format!("gate: build on tmpfs at /tmp/t/{}", tree.file_name().unwrap().to_string_lossy())),
+            None => Ok(format!("gate: build on /tmp/t/{}", tree.file_name().unwrap().to_string_lossy())),
         }
+    }
+    fn target_room(&self, root: &str, _: &str) -> String {
+        format!("gate: target root {root}: 1 MiB writable, gate targets hold 7 MiB there")
     }
     fn target_intact(&self, _: &Path) -> bool {
         !self.target_swept.get()
@@ -3421,7 +3424,7 @@ fn the_gate_tree_builds_on_tmpfs_and_short_room_is_no_verdict() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert_eq!(f.targets.borrow().as_slice(), &[PathBuf::from(GATE_TREE)]);
-    assert!(f.stderr().contains("gate: build on tmpfs at"), "{}", f.stderr());
+    assert!(f.stderr().contains("gate: build on /tmp/t/"), "{}", f.stderr());
 
     assert_eq!(f.released.borrow().as_slice(), &[(PathBuf::from(GATE_TREE), false)], "a finished gate drops its target");
 
@@ -3430,6 +3433,18 @@ fn the_gate_tree_builds_on_tmpfs_and_short_room_is_no_verdict() {
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=scratch-short"), "{}", f.verdict_line());
     assert!(f.cmds.borrow().is_empty(), "nothing built: {:?}", f.cmds.borrow());
+}
+
+/// The gate's target root is config; a scratch-short verdict names the room the root had.
+#[test]
+fn a_scratch_short_verdict_names_the_configured_root_and_what_the_targets_held() {
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_TARGET_ROOT", "/cfg/root");
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nDisk quota exceeded (os error 122)".into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    let e = f.stderr();
+    assert!(e.contains("gate: target root /cfg/root: 1 MiB writable, gate targets hold 7 MiB there"), "{e}");
+    assert!(e.contains("the user's quota"), "{e}");
 }
 
 /// Only a tree the gate judged hands its build directory on; a cut or refused one does not.

@@ -926,7 +926,7 @@ impl World for Real {
         let trees = tree.parent().unwrap_or(Path::new("/"));
         let held = |name: &str| target::held_by_gate(Path::new(run), name);
         let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &target::mem_available_mib, &held)?;
-        let mut line = format!("gate: build on tmpfs at {}", p.dir.display());
+        let mut line = format!("gate: build on {}", p.dir.display());
         if let Some(warm) = crate::warm::warm_start(&root, &p.dir.join("debug"), tree) {
             line.push_str(&format!("\n{warm}"));
         }
@@ -937,6 +937,19 @@ impl World for Real {
             line.push_str(&format!("; removed {} orphaned and evicted {} least recently used target(s)", p.orphans.len(), p.evicted.len()));
         }
         Ok(line)
+    }
+    fn target_room(&self, explicit_root: &str, run: &str) -> String {
+        use crate::target;
+        let Some(root) = target::root(explicit_root, run, target::on_tmpfs(Path::new("/tmp"))) else {
+            return "gate: the build ran in its tree (no target root)".into();
+        };
+        let held = target::size_of(&root) / (1024 * 1024);
+        let free = |p: &Path| target::free_mib(p).map_or("unreadable".to_string(), |m| format!("{m} MiB"));
+        format!(
+            "gate: target root {}: {} writable by this user (quota or filesystem, whichever is less), gate targets hold {held} MiB there",
+            root.display(),
+            free(&root)
+        )
     }
     fn target_intact(&self, tree: &Path) -> bool {
         crate::target::intact(tree)
@@ -1141,6 +1154,33 @@ fn end_group(pgid: i32) {
 
 #[cfg(test)]
 mod tests {
+    use crate::ports::World;
+
+    #[test]
+    fn the_gate_builds_where_the_configured_target_root_says() {
+        let t = testkit::TempDir::new("gate-root");
+        let root = t.path().join("configured-root");
+        let tree = t.path().join("trees/.gate.r.b");
+        std::fs::create_dir_all(&tree).unwrap();
+        let lim = crate::target::Limits { cap_mib: 1024, min_free_mib: 0, min_mem_mib: 0, shed_free_mib: 0 };
+        let line = super::Real::new(t.path().to_path_buf())
+            .target_on_tmpfs(&tree, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim)
+            .unwrap();
+        assert!(line.starts_with(&format!("gate: build on {}", root.display())), "{line}");
+        assert!(root.join(".gate.r.b").is_dir());
+    }
+
+    #[test]
+    fn the_room_report_names_the_root_and_what_the_gates_targets_hold() {
+        let t = testkit::TempDir::new("gate-room");
+        let root = t.path().join("r");
+        std::fs::create_dir_all(root.join(".gate.x/debug")).unwrap();
+        std::fs::write(root.join(".gate.x/debug/f"), vec![1u8; 3 << 20]).unwrap();
+        let line = super::Real::new(t.path().to_path_buf()).target_room(root.to_str().unwrap(), "run");
+        assert!(line.contains(&root.display().to_string()), "{line}");
+        assert!(line.contains("gate targets hold 3 MiB"), "{line}");
+        assert!(line.contains("writable by this user"), "{line}");
+    }
     fn watched(stall_ms: u64, cmd: &str) -> (i32, String) {
         let t = testkit::TempDir::new("gate-watch");
         let tmp = t.path().to_path_buf();

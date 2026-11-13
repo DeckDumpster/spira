@@ -106,11 +106,18 @@ impl LocalRemote {
 
     fn shell(&self, script: &str) -> std::process::Command {
         let mut c = command("bash");
-        c.arg("-c").arg(script).current_dir(&self.home).env_clear().env("HOME", &self.home);
+        let tmp = self.tmpdir();
+        let _ = fs::create_dir_all(&tmp);
+        c.arg("-c").arg(script).current_dir(&self.home).env_clear().env("HOME", &self.home).env("TMPDIR", tmp);
         for (k, v) in round_env(&|k| std::env::var(k).ok()) {
             c.env(k, v);
         }
         c
+    }
+
+    /// The round's temporary files go under its own scratch directory, off the shared `/tmp` and its per-user quota.
+    fn tmpdir(&self) -> PathBuf {
+        self.home.join("round-scratch").join("tmp")
     }
 
     fn group_file(&self) -> PathBuf {
@@ -323,6 +330,16 @@ mod tests {
         let _probe = testkit::env(&[("SPIRA_ROUND_ENV_LEAK_PROBE", Some("leak"))]);
         let out = remote.shell("printf '%s|%s|%s' \"${SPIRA_ROUND_ENV_LEAK_PROBE-unset}\" \"$PATH\" \"$HOME\"").output().unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout), format!("unset|{LOGIN_PATH}|{}", home.path().display()));
+    }
+
+    #[test]
+    fn a_host_round_writes_its_temporary_files_under_its_own_scratch_directory() {
+        let home = testkit::TempDir::new("host-round-tmpdir");
+        let remote = LocalRemote { home: home.path().to_path_buf() };
+        let out = remote.shell("printf '%s' \"$TMPDIR\"; touch \"$TMPDIR/probe\"").output().unwrap();
+        let want = home.path().join("round-scratch/tmp");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want.display().to_string());
+        assert!(want.join("probe").exists());
     }
 
     #[test]

@@ -80,6 +80,7 @@ struct State {
     repo_name: String,
     repo: PathBuf,
     run: String,
+    target_root: String,
     /// yield.sh records need the repository; armed once it resolved.
     armed: bool,
     gate_log: PathBuf,
@@ -209,6 +210,7 @@ impl<'w, W: World> Trial<'w, W> {
         let repo = PathBuf::from(repo);
         self.s.repo = repo.clone();
         self.s.run = ctx.var("SPIRA_RUN").to_string();
+        self.s.target_root = ctx.var("SPIRA_GATE_TARGET_ROOT").to_string();
         self.s.gate_log = PathBuf::from(
             ctx.var_or("SPIRA_GATE_LOG", &format!("{}/gate.log", self.s.run))
                 .to_string(),
@@ -952,7 +954,8 @@ impl<'w, W: World> Trial<'w, W> {
         }
         if spira_config::scratch::is_exhaustion(&out) {
             return v(NOVERDICT, "scratch-short", format!(
-                "gate: {name}'s build ran out of scratch space mid-trial — the host's room, not a fault in {br}.\n{}",
+                "gate: {name}'s build ran out of scratch space mid-trial — the host's room, not a fault in {br}.\n{}\n{}",
+                self.scratch_cause(&out),
                 parse::tail_bytes(&out, 4000)));
         }
         if parse::missing_built_binary(&out) || !w.target_intact(&tree) {
@@ -1259,7 +1262,8 @@ impl<'w, W: World> Trial<'w, W> {
         }
         if spira_config::scratch::is_exhaustion(&base_out) {
             return v(NOVERDICT, "scratch-short", format!(
-                "gate: {name}'s base trial ran out of scratch space — the host's room; it judged neither {base} nor {br}.\n{}",
+                "gate: {name}'s base trial ran out of scratch space — the host's room; it judged neither {base} nor {br}.\n{}\n{}",
+                self.scratch_cause(&base_out),
                 parse::tail_bytes(&base_out, 4000)));
         }
         if parse::missing_built_binary(&base_out) || !w.target_intact(&tree) {
@@ -1629,6 +1633,18 @@ impl<'w, W: World> Trial<'w, W> {
         };
         w.mkdir_p(&dir);
         w.write_atomic(&dir, &self.s.merged_tree, &cert::render(&c));
+    }
+
+    /// What filled the room: the user's quota or the filesystem (by the error the build hit),
+    /// and the target root's room and what the gate's own targets held.
+    fn scratch_cause(&self, out: &str) -> String {
+        let lower = out.to_lowercase();
+        let what = if lower.contains("disk quota exceeded") {
+            "the user's quota ran out (the filesystem may still have room)"
+        } else {
+            "the filesystem ran out of space"
+        };
+        format!("gate: {what}\n{}", self.w.target_room(&self.s.target_root, &self.s.run))
     }
 
     /// The refusals a tree build meets before it starts: no build cache, no room on tmpfs.

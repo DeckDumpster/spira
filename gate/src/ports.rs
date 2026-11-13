@@ -152,6 +152,8 @@ pub trait World {
     fn build_wrapper(&self, path: &str, setting: &str) -> Result<spira_config::build::Wrapper, String>;
     /// Put the gate tree's build directories on tmpfs (sp-z61hj, target.rs): Ok(a line for the
     /// trial's stderr), Err(the refusal — short of room; never a fall back to the disk).
+    /// What the target root has left for this user and what the gate's own targets hold there.
+    fn target_room(&self, explicit_root: &str, run: &str) -> String;
     fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits) -> Result<String, String>;
     /// False when a build directory `target_on_tmpfs` linked no longer resolves: something
     /// else removed the output this trial built.
