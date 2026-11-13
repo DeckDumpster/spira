@@ -135,11 +135,11 @@ fn first_arg(text: &str, open: usize) -> &str {
     &text[open + 1..]
 }
 
-fn line_at(text: &str, at: usize) -> usize {
+pub(crate) fn line_at(text: &str, at: usize) -> usize {
     1 + text.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count()
 }
 
-fn rust_text(src: &[u8]) -> String {
+pub(crate) fn rust_text(src: &[u8]) -> String {
     String::from_utf8_lossy(&rust::classify(src).without_comments()).into_owned()
 }
 
@@ -210,7 +210,7 @@ fn store_program(word: &str) -> bool {
 }
 
 /// The argv a wrapper (`exec`, `command`, `timeout DUR`) runs.
-fn unwrapped(argv: &[shell::Word]) -> &[shell::Word] {
+pub(crate) fn unwrapped(argv: &[shell::Word]) -> &[shell::Word] {
     let mut a = argv;
     loop {
         match a.first().map(|w| w.unquoted()).as_deref() {
@@ -265,7 +265,7 @@ fn scan(path: &str, src: &[u8], hits: Vec<(usize, &'static str)>) -> Vec<Finding
 
 /// The crate a Rust file belongs to: the path before its `src/`, `tests/`, `benches/` or
 /// `examples/`; names flow between a crate's files, so taint is collected per crate.
-fn crate_of(path: &str) -> &str {
+pub(crate) fn crate_of(path: &str) -> &str {
     ["/src/", "/tests/", "/benches/", "/examples/"].iter().filter_map(|d| path.find(d)).min().map_or_else(|| path.rsplit_once('/').map_or("", |(d, _)| d), |i| &path[..i])
 }
 
