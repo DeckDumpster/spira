@@ -109,6 +109,57 @@ fn describe_locate_failure(outcome: &LocateOutcome) -> String {
     }
 }
 
+const RETIRE_USAGE: &str = "usage: spira-config retire <spira.key> | --task <name>  [--tree <repo>]\n\nMakes every change the rules require when a config key or scheduler task goes away; run it in the worktree, then delete the code that reads it. The protocol: release/DESIGN.md, \"Retiring a key or a task\".";
+
+fn cmd_retire(args: &[String]) -> ExitCode {
+    let mut tree = None;
+    let (mut task, mut key) = (false, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--tree" => match it.next() {
+                Some(t) => tree = Some(t.clone()),
+                None => {
+                    eprintln!("{RETIRE_USAGE}");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--task" => task = true,
+            "--help" | "-h" => {
+                println!("{RETIRE_USAGE}");
+                return ExitCode::SUCCESS;
+            }
+            other if key.is_none() && !other.starts_with("--") => key = Some(other.to_string()),
+            _ => {
+                eprintln!("{RETIRE_USAGE}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let Some(name) = key else {
+        eprintln!("{RETIRE_USAGE}");
+        return ExitCode::FAILURE;
+    };
+    let root = match tree.map(PathBuf::from).map_or_else(env::current_dir, Ok) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("spira-config retire: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let done = if task { spira_config::retire::retire_task(&root, &name) } else { spira_config::retire::retire_key(&root, &name) };
+    match done {
+        Ok(rep) => {
+            print!("{}", rep.render());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("spira-config retire: {e}; nothing changed");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn cmd_locate() -> ExitCode {
     match locate(None) {
         LocateOutcome::Found(p) => {
@@ -1706,6 +1757,7 @@ fn dispatch(args: &[String]) -> ExitCode {
         Some("check-bd") => cmd_check_bd(),
         Some("convert") => cmd_convert(&args[1..]),
         Some("repo") => cmd_repo(&args[1..]),
+        Some("retire") => cmd_retire(&args[1..]),
         Some("set") => match split_release(&args[1..]) {
             Ok((reg, [path, value, file])) => tell_scheduler(cmd_set(reg.as_ref(), path, value, file), reg.is_none(), path),
             Ok(_) => {

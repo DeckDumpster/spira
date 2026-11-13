@@ -171,3 +171,31 @@ pub fn rules() -> Vec<Box<dyn crate::Rule>> {
         Box::new(ConfigDelta::default()),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::TempDir;
+
+    #[test]
+    fn a_retired_key_is_declared_removed_so_the_rule_is_silent() {
+        let t = TempDir::new("config-delta-retire");
+        for k in ["SPIRA_OLD_KNOB", "SPIRA_KEPT"] {
+            t.write(&format!("spira/conf.d/{k}"), "TYPE=string\nDOC=d\n");
+        }
+        t.write(DELTA, "removed = []\n");
+        t.write("spira/testlib/complete.toml", "[spira]\n");
+        t.write("spira/conf.toml.d/SPIRA_TOML_ONLY", "TYPE=string\nDOC=d\n");
+        for args in [&["init", "-q", "-b", "main"][..], &["add", "-A"], &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]] {
+            assert!(std::process::Command::new("git").arg("-C").arg(t.path()).args(args).status().unwrap().success());
+        }
+        let rule = ConfigDelta::default();
+        let tree = || Tree::from_git(t.path()).unwrap().with_base(Some("main".into()));
+        t.remove("spira/conf.d/SPIRA_OLD_KNOB");
+        assert!(rule.check(&tree()).unwrap().iter().any(|f| f.message.contains("registry key spira.old_knob is removed")), "control: an undeclared removal is found");
+        t.write("spira/conf.d/SPIRA_OLD_KNOB", "TYPE=string\nDOC=d\n");
+        spira_config::retire::retire_key(t.path(), "spira.old_knob").unwrap();
+        let found = rule.check(&tree()).unwrap();
+        assert!(found.is_empty(), "{:?}", found.iter().map(|f| &f.message).collect::<Vec<_>>());
+    }
+}

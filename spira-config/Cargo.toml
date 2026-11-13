@@ -32,6 +32,11 @@ path = "tests/repo_set_cli.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "retire"
+path = "tests/retire.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "set_release"
 path = "tests/set_release.rs"
 required-features = ["integration"]

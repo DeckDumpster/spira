@@ -55,6 +55,7 @@ pub mod release_tag;
 pub mod repo_admin;
 pub mod repos;
 pub mod resolve;
+pub mod retire;
 pub mod room;
 pub mod scoped_stop;
 pub mod scratch;

@@ -224,6 +224,22 @@ After a successful flip `activate` runs the new release's own `bin/unit-ensure`,
 and enables the units the release adds (`switch` only rewrites units already on disk). Its
 failure is an activation error, never a silent miss; the release stays active.
 
+### Retiring a key or a task
+
+`spira-config retire spira.<key>` and `spira-config retire --task <name>`, run in the worktree,
+make every change below; its `--help` points here.
+
+| Rule | Where it fires | What retire does |
+| --- | --- | --- |
+| The registry no longer declares the key | `config-delta` lint | deletes `spira/conf.d/<KEY>` (or `conf.toml.d`) |
+| The delta names it | `config-delta` lint, activation | adds it to `removed` in `spira/config-delta.toml` |
+| The landing ref still requires the fixture line | `gate fixture-config --base` | leaves the line in `spira/testlib/complete.toml`; delete it in a follow-up once the retirement has landed |
+| A retired task is named | activation | drops it from the `SPIRA_TASK_MODES` default and adds it to `removed_tasks` |
+
+What retire cannot do is delete the code that reads the key or registers the task; it prints
+that as left to the builder. Fixture lines are removed only after the landing ref no longer
+registers the key, never in the same change.
+
 ### Hotfix: activate an unlanded commit
 
 `activate <sha> --hotfix "<reason>"` activates as above and records
