@@ -201,6 +201,8 @@ pub struct Lc {
     pub refused: Vec<String>,
     pub outside: Vec<Outside>,
     pub round: Option<(String, Vec<(String, String)>)>,
+    /// The tree `round open` was handed, which the queue records as the round's worktree.
+    pub round_wt: String,
     /// The members of the open round whose own gate went red there, as `id -> (tip, the gate's
     /// mark)`: the row stays IN_DELIVERY and carries the mark, it does not leave the round.
     pub gate_red: BTreeMap<String, (String, String)>,
@@ -467,7 +469,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
         .collect();
     let open_round = lc.round.as_ref().map(|(id, m)| {
         let gate_red = m.iter().filter_map(|(i, _)| lc.gate_red.get(i).map(|(tip, mark)| (i.clone(), tip.clone(), mark.clone()))).collect();
-        bl::Round { id: id.clone(), members: m.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: format!("/sim/wt/{id}"), driven: held.as_ref() == Some(id), gate_red, ..bl::Round::default() }
+        bl::Round { id: id.clone(), members: m.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: lc.round_wt.clone(), driven: held.as_ref() == Some(id), gate_red, ..bl::Round::default() }
     });
     let live_legs = units::Units::list(&*w.units, &units::task_glob(bl::NAME)).ok().map(|all| bl::running_legs(&all));
     let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), stopped: w.now() < w.script.stopped_until, live_legs, scoped_batches: Some(w.live_pass_scopes()), ..bl::Repo::default() };
@@ -506,6 +508,7 @@ pub fn batcher_round_open(w: &World, input: &str) -> Result<String, String> {
     lc.rounds += 1;
     let batch = format!("round-{}", lc.rounds);
     lc.opened.push(leg.members.clone());
+    lc.round_wt = leg.wt;
     lc.round = Some((batch.clone(), leg.members));
     json(&bl::Opened { batch, ..bl::Opened::default() })
 }

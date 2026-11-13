@@ -1240,8 +1240,8 @@ fn effects(acts: &[Act]) -> Vec<&str> {
 }
 
 #[test]
-fn sp_5u1oru_an_open_round_whose_open_answer_is_lost_is_adopted_whatever_its_worktree_string() {
-    let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-a", "sp-b"], "/resolved/w"));
+fn sp_5u1oru_an_open_round_whose_open_answer_is_lost_is_adopted_when_the_queue_records_no_tree_for_it() {
+    let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-a", "sp-b"], ""));
     assert!(effects(&acts).contains(&CORPUS), "the first pass starts on this tick: {acts:?}");
     let rc = &carry.repos["spira"];
     assert_eq!((rc.state, rc.batch.as_deref()), (State::Corpus, Some("r9")));
