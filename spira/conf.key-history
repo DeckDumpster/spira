@@ -745,3 +745,4 @@ hel_pace_ms
 transitions_task_bound
 sccache_dav_root
 gate_target_root
+lc_backup_part_bytes

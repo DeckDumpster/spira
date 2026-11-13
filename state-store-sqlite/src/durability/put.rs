@@ -55,11 +55,22 @@ pub struct S3Creds {
     pub region: String,
     /// `AWS_ENDPOINT_URL_S3`: path-style requests to this endpoint instead of AWS's.
     pub endpoint: Option<String>,
+    /// `SPIRA_LC_BACKUP_PART_BYTES`: the size of each part of a multipart upload.
+    pub part_bytes: u64,
 }
 
 impl S3Creds {
     pub fn from_env() -> Result<S3Creds, String> {
-        Self::from_vars(|k| std::env::var(k).ok())
+        let creds = Self::from_vars(|k| std::env::var(k).ok())?;
+        creds.with_part_bytes(spira_config::process::cfg_parse::<u64>("SPIRA_LC_BACKUP_PART_BYTES")?)
+    }
+
+    /// These keys cutting a multipart upload into `n`-byte parts, `n` within S3's bounds.
+    pub fn with_part_bytes(self, n: u64) -> Result<S3Creds, String> {
+        if !(MIN_PART_BYTES..=MAX_PUT_BYTES).contains(&n) {
+            return Err(format!("SPIRA_LC_BACKUP_PART_BYTES={n} is not a size from {MIN_PART_BYTES} to {MAX_PUT_BYTES}"));
+        }
+        Ok(S3Creds { part_bytes: n, ..self })
     }
 
     /// The same keys read through `lookup`, so a caller can resolve them from a unit's
@@ -77,6 +88,7 @@ impl S3Creds {
             .or_else(|| var("AWS_REGION"))
             .ok_or("AWS_DEFAULT_REGION is not in the environment")?;
         Ok(S3Creds {
+            part_bytes: PART_BYTES,
             access_key,
             secret_key,
             session_token: var("AWS_SESSION_TOKEN"),
@@ -88,8 +100,10 @@ impl S3Creds {
 
 /// S3's ceiling on one `PutObject`; a larger file goes up as a multipart upload.
 pub const MAX_PUT_BYTES: u64 = 5 << 30;
-/// The size of each part of a multipart upload.
+/// The default size of each part of a multipart upload.
 const PART_BYTES: u64 = 256 << 20;
+/// S3's floor on every part but the last.
+const MIN_PART_BYTES: u64 = 5 << 20;
 /// S3's ceiling on the parts of one upload.
 const MAX_PARTS: u64 = 10_000;
 
@@ -244,7 +258,6 @@ impl Uploader {
         let _ = std::fs::remove_file(&piece);
         let _ = std::fs::remove_file(&done);
         if let Err(e) = sent {
-            let _ = self.call("DELETE", &format!("{base}?{upload}"), None, false);
             return Err((0, e));
         }
         Ok(())
@@ -304,7 +317,7 @@ impl Uploader {
                     "PUT {key}: {len} bytes is over S3's single-PUT limit of {MAX_PUT_BYTES}, and a conditional upload has no multipart form"
                 )));
             }
-            return self.multipart(bucket, key, file, len, PART_BYTES);
+            return self.multipart(bucket, key, file, len, c.part_bytes);
         }
         let mut body = std::fs::File::open(file).map_err(io)?;
         let mut hash = Sha256::new();
@@ -434,7 +447,7 @@ mod tests {
 
     fn s3(status: u16) -> (Uploader, Arc<Answering>) {
         let curl = Arc::new(Answering(status, Default::default()));
-        let creds = S3Creds { access_key: "AK".into(), secret_key: "sk".into(), session_token: None, region: "r".into(), endpoint: Some("http://s3.test".into()) };
+        let creds = S3Creds { access_key: "AK".into(), secret_key: "sk".into(), session_token: None, region: "r".into(), endpoint: Some("http://s3.test".into()), part_bytes: PART_BYTES };
         let up = Uploader { dest: Dest::parse("s3://b/p/").unwrap(), creds: Some(creds), proc: curl.clone(), deadline: Duration::from_secs(5) };
         (up, curl)
     }
@@ -516,7 +529,7 @@ mod tests {
     }
 
     fn uploader_on(store: &Arc<Store>) -> Uploader {
-        let creds = S3Creds { access_key: "AK".into(), secret_key: "sk".into(), session_token: None, region: "r".into(), endpoint: Some("http://s3.test".into()) };
+        let creds = S3Creds { access_key: "AK".into(), secret_key: "sk".into(), session_token: None, region: "r".into(), endpoint: Some("http://s3.test".into()), part_bytes: PART_BYTES };
         Uploader { dest: Dest::parse("s3://b/p/").unwrap(), creds: Some(creds), proc: store.clone(), deadline: Duration::from_secs(5) }
     }
 
@@ -542,14 +555,14 @@ mod tests {
     }
 
     #[test]
-    fn a_part_the_store_refuses_aborts_the_upload_and_leaves_no_temporary() {
+    fn a_part_the_store_refuses_fails_the_upload_without_an_abort_the_key_could_not_send_and_leaves_no_temporary() {
         let dir = testkit::TempDir::new("put-multipart-abort");
         let f = dir.path().join("snap");
         std::fs::write(&f, vec![7u8; 2_500]).unwrap();
         let store = Arc::new(Store { fail_part: Some(2), ..Store::default() });
         let err = uploader_on(&store).multipart("b", "k", &f, 2_500, 1_000).unwrap_err();
         assert!(err.1.contains("curl exit 22"), "{err:?}");
-        assert!(store.calls.lock().unwrap().last().unwrap().starts_with("DELETE "), "{:?}", store.calls);
+        assert!(store.calls.lock().unwrap().iter().all(|c| !c.starts_with("DELETE ")), "{:?}", store.calls);
         assert!(store.completed.lock().unwrap().is_none());
         assert!(!dir.path().join("snap.part").exists());
     }
@@ -564,6 +577,16 @@ mod tests {
         let err = uploader_on(&store).put(&f, "snapshot/1").unwrap_err();
         assert!(!err.contains("single-PUT limit"), "{err}");
         assert!(store.calls.lock().unwrap()[0].ends_with("?uploads"), "{:?}", store.calls);
+    }
+
+    #[test]
+    fn the_part_size_defaults_to_256_mib_and_refuses_what_s3_would() {
+        let base = S3Creds::from_vars(|k| Some(if k == "AWS_REGION" { "r".into() } else { "x".into() })).unwrap();
+        assert_eq!(base.part_bytes, 256 << 20);
+        assert_eq!(base.clone().with_part_bytes(10 << 20).unwrap().part_bytes, 10 << 20);
+        for bad in [0, 1024, MAX_PUT_BYTES + 1] {
+            assert!(base.clone().with_part_bytes(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

@@ -1,0 +1,6 @@
+TYPE=u64
+GROUP=lc
+DOC=Bytes in each part of a multipart upload of a backup table file over S3's 5 GiB single-PUT limit (S3 allows 5 MiB to 5 GiB; at most 10000 parts).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_BACKUP_PART_BYTES:=268435456}"
+SPIRA_CONF_DEFAULT_EOF
