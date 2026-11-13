@@ -1,7 +1,0 @@
-TYPE=u32
-GROUP=round
-DOC=SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW — unread; kept until the next release retires it.
-SCHEMA=Unread: its watcher was deleted. Kept so the active release still validates; to be retired (default 3600).
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW:=3600}"
-SPIRA_CONF_DEFAULT_EOF
