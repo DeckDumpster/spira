@@ -2907,23 +2907,48 @@ pub fn added_lines(repo: &Repo, base_sha: &str, tip: &str) -> String {
     .collect()
 }
 
-/// Members of an open round whose lifecycle row carries a red gate verdict at the very tip the
-/// round holds, as `(id, the row's mark)`: the gate already judged this tree red, so the round's
-/// corpus need not rediscover it.
-pub fn gate_red_marks(env: &Env, members: &[(String, String)]) -> Vec<(String, String)> {
-    members
-        .iter()
-        .filter_map(|(id, tip)| {
+/// Members of `ids` whose lifecycle row carries a red gate verdict, as `(id, tip, the row's mark)`.
+pub fn gate_red_rows(env: &Env, ids: &[String]) -> Vec<(String, String, String)> {
+    ids.iter()
+        .filter_map(|id| {
             let row =
                 serde_json::from_str::<serde_json::Value>(&lcq(env, &["show", id]).ok()?).ok()?;
             let bead = row.get("bead")?;
             let field = |k: &str| bead.get(k).and_then(|v| v.as_str()).unwrap_or("");
             let mark = field("reason").strip_prefix(lifecycle::bead::GATE_RED_MARK)?;
-            (field("state") == "IN_DELIVERY" && field("tip") == tip)
-                .then(|| (id.clone(), mark.to_string()))
+            (field("state") == "IN_DELIVERY")
+                .then(|| (id.clone(), field("tip").to_string(), mark.to_string()))
         })
         .collect()
 }
+
+/// Members of an open round whose lifecycle row carries a red gate verdict at the very tip the
+/// round holds, as `(id, the row's mark)`: the gate already judged this tree red, so the round's
+/// corpus need not rediscover it.
+pub fn gate_red_marks(env: &Env, members: &[(String, String)]) -> Vec<(String, String)> {
+    let ids: Vec<String> = members.iter().map(|(id, _)| id.clone()).collect();
+    gate_red_rows(env, &ids)
+        .into_iter()
+        .filter(|(id, tip, _)| members.iter().any(|(m, t)| m == id && t == tip))
+        .map(|(id, _, mark)| (id, mark))
+        .collect()
+}
+
+/// `queue round preempt`: stops the pass of `batch` that is running, ejects `ids` (each carries
+/// `reason` back as its evidence) and starts the next pass on the rebuilt head.
+pub fn round_preempt(env: &Env, repo: &Repo, batch: &str, ids: &[String], reason: &str) -> Result<(), String> {
+    let csv = ids.join(",");
+    let args = ["preempt", batch, &repo.name, "--eject", &csv, "--suites", GATE_STEP, "--reason-file", "-"];
+    let run = round_verb(env, &args, reason)?;
+    if run.code == Some(0) {
+        Ok(())
+    } else {
+        Err(verb_failed("queue round preempt", &run))
+    }
+}
+
+/// The check a gate-red member is charged with when it leaves a round.
+pub const GATE_STEP: &str = "gate";
 
 /// `queue round eject` for a member the gate had already marked red while it sat in the round.
 pub fn round_eject_gate_red(

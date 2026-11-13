@@ -25,6 +25,7 @@ mod task_a_batcher_local_landing_row;
 mod task_a_batcher_local_leg_lost;
 mod task_a_batcher_local_stacked;
 mod task_a_batcher_local_stale_certifying;
+mod task_a_batcher_local_gate_red;
 mod task_a_batcher_local_superseded_leg;
 mod task_a_batcher_local_vm_lost;
 mod task_a_czar;

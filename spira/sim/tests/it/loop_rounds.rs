@@ -339,3 +339,32 @@ fn run_state_trail_the_landing_names_its_member_after_its_certificate_and_the_pu
     assert!(r.refused.is_empty(), "{:?}", r.refused);
     assert_no_process(&r);
 }
+
+/// A provisional member (cut while SUBMITTED, its gate still running) whose own gate goes red
+/// minutes into the pass leaves the round at once: the pass is preempted, the member is ejected
+/// with the gate's mark as its evidence and goes back to its dwarf, and the other member lands.
+#[test]
+fn a_gate_red_recorded_for_a_provisional_member_mid_pass_preempts_the_pass_and_ejects_it() {
+    let script = Script {
+        beads: vec![early("sp-gr01"), early("sp-gr02")],
+        max_concurrent: 2,
+        verdicts: vec![loopworld::VerdictAt { at: 4 * MIN, bead: "sp-gr01".into(), verdict: loopworld::Verdict::Red }],
+        until: 40 * MIN,
+        ..Script::default()
+    };
+    let (r, w) = run_keeping(36, script, |d, _| d);
+    show("provisional-gate-red", &r);
+    let preempts = w.lc().preempts.clone();
+    assert_eq!(preempts.len(), 1, "one preempt: {}", r.dump());
+    assert_eq!(preempts[0].1, "sp-gr01", "the member whose gate went red was ejected");
+    assert!(preempts[0].2.contains("its own gate went red") && preempts[0].2.contains("suites-failed"), "the gate's mark is the evidence: {}", preempts[0].2);
+    let preempted_at = times(&r, bl::PREEMPT)[0];
+    assert!(preempted_at >= 4 * MIN && preempted_at < 6 * MIN, "preempted as soon as the red was seen: {preempted_at}");
+    assert_eq!(entered(&r, "sp-gr01", "REWORK"), Some(preempted_at), "the ejected member went back to its dwarf: {}", r.dump());
+    let tip = r.submitted["sp-gr02"][0].clone();
+    assert_eq!(r.lands[0], [("sp-gr02".to_string(), tip)], "the other member landed alone from the same round: {}", r.dump());
+    assert_eq!(r.opened[0].len(), 2, "both members were cut into the first round: {:?}", r.opened);
+    assert!(!r.asked.iter().any(|n| n == bl::ABANDON), "the round was not abandoned: {:?}", r.asked);
+    assert!(r.refused.is_empty(), "{:?}", r.refused);
+    assert_no_process(&r);
+}
