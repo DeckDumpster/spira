@@ -108,11 +108,11 @@ fn verdicts(c: &ArmCheck) -> Vec<(&'static str, bool)> {
 #[test]
 fn arming_a_kind_takes_it_off_the_list_and_puts_every_old_path_it_replaces_on_in_one_list() {
     let armed = armed_list(&list(ALL), "RoundController").unwrap();
-    assert_eq!(armed, list("Lifecycle Alarms batch-landed queue-mergeable lc-orphan-in-delivery queue-lock-age"));
+    assert_eq!(armed, list("Lifecycle Alarms batch-landed queue-mergeable lc-orphan-in-delivery queue-lock-age flow:velocity:queue flow:round-health"));
     let again = armed_list(&list("Lifecycle queue-mergeable RoundController"), "RoundController").unwrap();
     assert_eq!(
         again,
-        list("Lifecycle queue-mergeable batch-landed lc-orphan-in-delivery queue-lock-age"),
+        list("Lifecycle queue-mergeable batch-landed lc-orphan-in-delivery queue-lock-age flow:velocity:queue flow:round-health"),
         "a path shadowed already at the cutover is not listed twice"
     );
     assert_eq!(armed_list(&list(ALL), "Lifecycle").unwrap(), list("RoundController Alarms"), "Lifecycle replaces no path still running");

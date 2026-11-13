@@ -6,7 +6,7 @@ use spira_runtime::tasks::a::kit;
 use spira_runtime::watchers::reconciler_flow::*;
 
 fn registration() -> runtime::Registration {
-    ReconcilerFlow { interval_ms: 1_800_000, window_hours: 0.5, baseline_hours: 24.0, grace_secs: 1800, unobservable_grace_secs: 3600, rework_window_hours: 6.0, sentinel_timer_secs: 900 }.registration()
+    ReconcilerFlow { interval_ms: 1_800_000, window_hours: 0.5, baseline_hours: 24.0, grace_secs: 1800, unobservable_grace_secs: 3600, rework_window_hours: 6.0, sentinel_timer_secs: 900, shadow_kinds: vec![] }.registration()
 }
 
 fn backlog_grown_at(now: u64) -> FlowSnapshot {

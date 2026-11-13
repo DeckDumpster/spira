@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use reconciler_engine::alert::{compose_alert, should_alert};
+use reconciler_engine::effect::is_shadowed;
 use reconciler_engine::core::{step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{status_record, AlertedSinceMap, StateMap};
 use reconciler_flow::core::{
@@ -41,6 +42,7 @@ pub struct ReconcilerFlow {
     pub unobservable_grace_secs: u64,
     pub rework_window_hours: f64,
     pub sentinel_timer_secs: u64,
+    pub shadow_kinds: Vec<String>,
 }
 
 /// What the world is asked to read: the instant and the windows the series are cut by.
@@ -134,6 +136,8 @@ pub struct Pass {
     pub carry: Carry,
     pub statuses: Vec<serde_json::Value>,
     pub mails: Vec<Mail>,
+    /// Pages a shadowed key would have sent: recorded, never mailed.
+    pub held: Vec<Mail>,
 }
 
 fn status_word(v: &Verdict) -> &'static str {
@@ -193,14 +197,19 @@ impl Judging<'_> {
         }
         if fire {
             let evidence = compose_alert(key, self.now, verdict, None);
-            self.pass.mails.push(Mail { subject: format!("RECONCILER: flow gap — {key}"), body: format!("{evidence}\nThis has no deterministic remedy — it needs judgement, not a retry.\n") });
+            let mail = Mail { subject: format!("RECONCILER: flow gap — {key}"), body: format!("{evidence}\nThis has no deterministic remedy — it needs judgement, not a retry.\n") };
+            if is_shadowed(&self.cfg.shadow_kinds, key) {
+                self.pass.held.push(mail);
+            } else {
+                self.pass.mails.push(mail);
+            }
         }
     }
 }
 
 /// The verdicts, mails and carried state one snapshot calls for.
 pub fn judge(cfg: &ReconcilerFlow, now: u64, carry: &Carry, snap: &FlowSnapshot) -> Pass {
-    let mut j = Judging { cfg, now, pass: Pass { carry: Carry { words: BTreeMap::new(), ..carry.clone() }, statuses: vec![], mails: vec![] } };
+    let mut j = Judging { cfg, now, pass: Pass { carry: Carry { words: BTreeMap::new(), ..carry.clone() }, statuses: vec![], mails: vec![], held: vec![] } };
 
     let backlog_raw = match (&snap.backlog, &snap.baseline) {
         (Ok(cur), Ok(base)) => backlog_trend_raw(&BacklogObserved { current: *cur, baseline: *base }),
@@ -309,6 +318,7 @@ impl Handler for ReconcilerFlow {
         let carry: Carry = super::carried(view, &ev.stream, STATE);
         let pass = judge(self, now, &carry, &snap);
         ctx.event().set("reconciler_flow.mails", pass.mails.len() as u64);
+        ctx.event().set("reconciler_flow.held", pass.held.len() as u64);
         let mut cmds = vec![];
         if pass.carry != carry {
             cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&pass.carry).unwrap_or_default())));
@@ -328,7 +338,7 @@ mod tests {
     use super::*;
 
     fn cfg() -> ReconcilerFlow {
-        ReconcilerFlow { interval_ms: 1_800_000, window_hours: 0.5, baseline_hours: 24.0, grace_secs: 1800, unobservable_grace_secs: 3600, rework_window_hours: 6.0, sentinel_timer_secs: 900 }
+        ReconcilerFlow { interval_ms: 1_800_000, window_hours: 0.5, baseline_hours: 24.0, grace_secs: 1800, unobservable_grace_secs: 3600, rework_window_hours: 6.0, sentinel_timer_secs: 900, shadow_kinds: vec![] }
     }
 
     fn quiet() -> FlowSnapshot {
@@ -353,6 +363,27 @@ mod tests {
         assert_eq!(first.statuses.len(), 12);
         let second = judge(&cfg(), 2_800, &first.carry, &quiet());
         assert_eq!(second.carry, first.carry, "a pass whose verdicts did not change carries the same state");
+    }
+
+    fn stalled() -> FlowSnapshot {
+        let mut snap = quiet();
+        snap.velocity_floor = Some(5.0);
+        snap.stage = Ok(Stage { waiting: 3, velocity: (1.0, 1.0), round_health: (10, 20, 0, 40), ..match quiet().stage { Ok(s) => s, Err(_) => unreachable!() } });
+        snap
+    }
+
+    #[test]
+    fn a_shadowed_velocity_or_round_health_gap_is_held_not_mailed_and_an_unshadowed_one_is_mailed() {
+        let subjects = |m: &[Mail]| m.iter().map(|m| m.subject.clone()).collect::<Vec<_>>();
+        let both = vec!["RECONCILER: flow gap — flow:velocity:queue".to_string(), "RECONCILER: flow gap — flow:round-health".to_string()];
+        let live = ReconcilerFlow { grace_secs: 0, ..cfg() };
+        let sent = judge(&live, 1_000, &Carry::default(), &stalled());
+        assert_eq!(subjects(&sent.mails), both);
+        assert!(sent.held.is_empty());
+        let shadowed = ReconcilerFlow { shadow_kinds: vec!["flow:velocity:queue".into(), "flow:round-health".into()], ..live };
+        let held = judge(&shadowed, 1_000, &Carry::default(), &stalled());
+        assert!(held.mails.is_empty(), "a shadowed key sends nothing");
+        assert_eq!(subjects(&held.held), both);
     }
 
     #[test]

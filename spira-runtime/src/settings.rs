@@ -238,6 +238,7 @@ impl Settings {
             unobservable_grace_secs: get("SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS")?.trim().parse().map_err(|_| "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS must be a non-negative integer".to_string())?,
             rework_window_hours: hours("SPIRA_FLOW_REWORK_WINDOW_HOURS")?,
             sentinel_timer_secs: secs("SPIRA_FLOW_SENTINEL_PERIOD_SECS")?,
+            shadow_kinds: get("SPIRA_RECONCILER_SHADOW_KINDS")?.split_whitespace().map(String::from).collect(),
         };
         let view_program = get("SPIRA_VIEW")?;
         let view_session = get("SPIRA_VIEW_SESSION")?;

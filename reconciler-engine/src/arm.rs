@@ -16,11 +16,10 @@ use crate::effect::is_shadowed;
 use crate::pass_record::{PassRecord, Step};
 
 /// The one-for-one map: each section kind, and the old check kinds whose remedies it replaces on
-/// its arm day. The key holds an old kind's remedy back; it does not silence the old kind's
-/// alerts, nor the `flow:*` alerts spira-runtime's flow watcher raises, which never read it. So
-/// `Lifecycle` and `Alarms`, which replace only alerting, swap in nothing here.
+/// its arm day. The key holds an old kind's remedy and its page back, and the flow watcher
+/// reads it by full `flow:*` key. `Lifecycle` and `Alarms` swap in nothing here.
 pub const REPLACES: &[(&str, &[&str])] = &[
-    (round_controller::NAME, &["batch-landed", "queue-mergeable", "lc-orphan-in-delivery", "queue-lock-age"]),
+    (round_controller::NAME, &["batch-landed", "queue-mergeable", "lc-orphan-in-delivery", "queue-lock-age", "flow:velocity:queue", "flow:round-health"]),
     (dwarf_fleet::NAME, &["fleet"]),
     (host::NAME, &["disk"]),
     (lifecycle::NAME, &[]),

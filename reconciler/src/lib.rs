@@ -2209,6 +2209,11 @@ fn escalate(rules: &Rules, acts: &mut Vec<Act>, alerted: &mut AlertedSinceMap, k
     }
     let subject = format!("RECONCILER: {} — {}", key, describe(verdict));
     let evidence = compose_alert(key, rules.now_secs, verdict, last_remedy);
+    if is_shadowed(&rules.shadow_kinds, kind_of(key)) {
+        acts.push(Act::Log(format!("reconciler: {key} → escalation held (shadow)")));
+        event(acts, "shadow-page", key, &subject, 1.0, None);
+        return;
+    }
     acts.push(Act::Log(format!("reconciler: {} → escalate", key)));
     let body = format!("## Alert\n{subject}\n\nThe reconciler found a structural gap that has outlasted its grace period.\n\n{evidence}");
     acts.push(Act::Mail {
@@ -2879,6 +2884,22 @@ mod tests {
             assert!(matches!(observe_cockpit(&down).raw, RawStatus::Gap { observed, .. } if observed == "no server"));
         }
         assert_eq!(launches(&log), "", "a server the host knows is down needs no tmux to say so");
+    }
+
+    fn escalation_acts(shadow: &[&str]) -> Vec<Act> {
+        let rules = Rules { now_secs: 100, grace_secs: 0, effect_passes: 2, shadow_kinds: shadow.iter().map(|k| k.to_string()).collect() };
+        let raw = RawStatus::Gap { desired: "up".into(), observed: "down".into(), since_hint: None };
+        decide(&rules, &mut StateMap::new(), &mut PendingMap::new(), &mut AlertedSinceMap::new(), Check { key: "fleet:a".into(), raw, remedy: Remedy::Escalate })
+    }
+
+    #[test]
+    fn a_shadowed_kinds_page_is_recorded_not_sent_and_an_unshadowed_kinds_page_is_sent() {
+        let sent = |acts: &[Act]| acts.iter().any(|a| matches!(a, Act::Mail { .. }));
+        let recorded = |acts: &[Act]| acts.iter().any(|a| matches!(a, Act::Event(e) if e.event == "shadow-page" && e.key == "fleet:a"));
+        let live = escalation_acts(&["disk"]);
+        assert!(sent(&live) && !recorded(&live));
+        let held = escalation_acts(&["fleet"]);
+        assert!(!sent(&held) && recorded(&held));
     }
 
     fn test_config() -> Config {
