@@ -571,7 +571,7 @@ pub fn fetch(conn: &Conn, ids: &[&str]) -> Result<Vec<Value>, String> {
     fetch_with(conn, ids, false, false)
 }
 
-const TEXT_COLUMNS: &str = ", description, notes, external_ref";
+const TEXT_COLUMNS: &str = ", description, notes, external_ref, close_reason, DATE_FORMAT(closed_at, '%Y-%m-%dT%H:%i:%sZ') AS closed_at";
 
 fn by_external_ref(conn: &Conn, needle: &str, full: bool, open: bool) -> Result<Vec<Value>, String> {
     let cdb = content_db()?;
@@ -632,7 +632,7 @@ fn fetch_with(conn: &Conn, ids: &[&str], full: bool, open: bool) -> Result<Vec<V
     let mut out = assemble(&issues, &labels, &deps);
     if full {
         for (row, issue) in out.iter_mut().zip(issues.iter().filter(|i| s(i, "id").is_some())) {
-            for col in ["description", "notes", "external_ref"] {
+            for col in ["description", "notes", "external_ref", "close_reason", "closed_at"] {
                 row[col] = json!(issue.get(col).and_then(Value::as_str).unwrap_or(""));
             }
         }
