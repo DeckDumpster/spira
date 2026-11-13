@@ -123,7 +123,7 @@ impl Config {
     /// silence window: otherwise the page would fire before a dead owner could be told from a slow one.
     pub fn bounds_fit_owners(&self) -> Result<(), String> {
         for edge in EDGES {
-            let bound = edge_bound(edge, self);
+            let bound = self.bound(edge).unwrap_or(0);
             if bound > MAX_BOUND_S {
                 return Err(format!("the {edge} bound {bound}s exceeds the {MAX_BOUND_S}s ceiling"));
             }
