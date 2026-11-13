@@ -2,13 +2,14 @@
 #
 # test-beads-sparklines.sh — BEADS section sparklines derived from timestamps.
 #
-# Verifies that the three sparklines (opened, closed, landed) are computed from
-# bead timestamps and landing.log alone, with no cockpit-history.csv involved.
+# Verifies that the two sparklines (opened, closed) are computed from bead
+# timestamps alone, with no cockpit-history.csv involved. The landed count is the
+# Lifecycle section's, written by the goodput probe, so this renderer emits none.
 #
 # Positive controls:
 #   - known timestamps produce the expected bucket distribution
 #   - zero buckets render ▁, not a dropped point (law-absence-needs-a-positive-control)
-#   - an unreadable landing.log source renders ?
+#   - the renderer emits no landed series at all
 #
 # The closed/landed counts come from VictoriaLogs: a loopback fake answers them, and an
 # unreachable store must show ?, never 0.
@@ -73,17 +74,6 @@ if [ -z "$BEADS_JSON" ]; then
 fi
 ok "fixture: generated bead JSON"
 
-# Landing log: 3 landings at bucket 0, bucket 3, bucket 7
-LANDING_LOG="$TMP/landing.log"
-{
-    echo "$(ts_at 5000) spira: landed spira/sp-ta"
-    echo "$(ts_at 38000) spira: landed spira/sp-tb"
-    echo "$(ts_at 80000) spira: landed spira/sp-tc"
-    echo "$(ts_at 10000) some other event"
-    echo "$(ts_at -3600) spira: landed spira/sp-old"
-} > "$LANDING_LOG"
-ok "fixture: generated landing.log"
-
 # ---------------------------------------------------------------------------
 # Run the real script with fixture data.
 # ---------------------------------------------------------------------------
@@ -95,7 +85,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
         q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("query", [""])[0]
-        n = 5 if "to:\"LANDED\"" in q else 3 if "in(" in q else 1
+        n = 3 if "in(" in q else 1
         body = ("{\"n\":\"%d\"}\n" % n).encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
@@ -112,10 +102,10 @@ trap 'kill "$VL_PID" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 for _ in $(seq 100); do [ -s "$PORTFILE" ] && break; sleep 0.1; done
 VL_URL="http://127.0.0.1:$(cat "$PORTFILE" 2>/dev/null)"
 
-run_block() {   # run_block [landing.log] [victorialogs url]
-    local landing="${1:-$LANDING_LOG}" url="${2:-$VL_URL}"
+run_block() {   # run_block [victorialogs url]
+    local url="${1:-$VL_URL}"
     printf '%s\n' "$BEADS_JSON" \
-        | SPIRA_TOML="$(tl_layer SPIRA_VICTORIALOGS_URL="$url")" "$COLLECT" sparklines "$landing" 2>/dev/null
+        | SPIRA_TOML="$(tl_layer SPIRA_VICTORIALOGS_URL="$url")" "$COLLECT" sparklines 2>/dev/null
 }
 
 OUT="$(run_block)"
@@ -133,13 +123,10 @@ has "SP_CLOSED_KINDS has task 2" "$(field SP_CLOSED_KINDS)" "task 2"
 # ---------------------------------------------------------------------------
 SPARK_O="$(field SP_BEADS_SPARK_OPENED)"
 SPARK_C="$(field SP_BEADS_SPARK_CLOSED)"
-SPARK_L="$(field SP_BEADS_SPARK_LANDED)"
-LANDED_N="$(field SP_BEADS_LANDED_24H)"
 
 is "SP_BEADS_SPARK_OPENED present"   "8" "$(printf '%s' "$SPARK_O" | wc -m | tr -d ' ')"
 is "SP_BEADS_SPARK_CLOSED present"   "8" "$(printf '%s' "$SPARK_C" | wc -m | tr -d ' ')"
-is "SP_BEADS_SPARK_LANDED present"   "8" "$(printf '%s' "$SPARK_L" | wc -m | tr -d ' ')"
-is "SP_BEADS_LANDED_24H is the LANDED-transition count" "5" "$LANDED_N"
+is "no landed series is emitted" "0" "$(grep -c 'LANDED' <<< "$OUT" || true)"
 
 # ---------------------------------------------------------------------------
 # Positive control: zero buckets render ▁, not a dropped point.
@@ -150,20 +137,10 @@ is "SP_BEADS_LANDED_24H is the LANDED-transition count" "5" "$LANDED_N"
                   || bad "opened sparkline non-empty with zero buckets present" "was empty"
 
 # ---------------------------------------------------------------------------
-# Unreadable landing.log renders the sparkline ?; the count is the store's.
-# ---------------------------------------------------------------------------
-OUT_NOLAND="$(run_block "$TMP/nonexistent.log")"
-is "missing landing.log → SP_BEADS_SPARK_LANDED=?" "?" \
-   "$(sed -n 's/^SP_BEADS_SPARK_LANDED=//p' <<< "$OUT_NOLAND")"
-is "missing landing.log → SP_BEADS_LANDED_24H stays the store's count" "5" \
-   "$(sed -n 's/^SP_BEADS_LANDED_24H=//p' <<< "$OUT_NOLAND")"
-has "missing landing.log → opened sparkline still renders" "$OUT_NOLAND" "SP_BEADS_SPARK_OPENED="
-
-# ---------------------------------------------------------------------------
 # Unreadable store: the counts are ?, never 0, and the error is named.
 # ---------------------------------------------------------------------------
-OUT_DOWN="$(run_block "$LANDING_LOG" "http://127.0.0.1:1")"
-for k in SP_CLOSED_24H SP_BEADS_LANDED_24H SP_CLAIMS_24H; do
+OUT_DOWN="$(run_block "http://127.0.0.1:1")"
+for k in SP_CLOSED_24H SP_CLAIMS_24H; do
     is "unreachable store → $k=?" "?" "$(sed -n "s/^$k=//p" <<< "$OUT_DOWN")"
 done
 has "unreachable store → the error is named" "$OUT_DOWN" "SP_COUNTS_ERR="
@@ -171,7 +148,7 @@ has "unreachable store → opened sparkline still renders" "$OUT_DOWN" "SP_BEADS
 
 # ---------------------------------------------------------------------------
 # cockpit-history.csv is never touched.
-# The renderer reads from stdin (bdjson) and landing.log only. No HIST reference.
+# The renderer reads from stdin (bdjson) only. No HIST reference.
 # ---------------------------------------------------------------------------
 HIST_REF="$(grep -c 'cockpit-history\|HIST_COLS\|append_history' "$HERE/../cockpit-collect/src/sparklines.rs" 2>/dev/null || true)"
 is "renderer has no HIST_COLS/append_history reference" "0" "${HIST_REF:-0}"

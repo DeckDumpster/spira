@@ -33,7 +33,7 @@ fn run(args: &[String]) -> i32 {
     }
     match args.first().map(String::as_str) {
         Some("metrics") => return cmd_metrics(&args[1..]),
-        Some("sparklines") => return cmd_sparklines(&args[1..]),
+        Some("sparklines") => return cmd_sparklines(),
         _ => {}
     }
     // spira/cockpit.sh sourced lib.sh (which cascades into conf.sh) unconditionally at its
@@ -121,7 +121,7 @@ fn cmd_probe(name: Option<&str>) -> i32 {
         }
         None => {
             eprintln!(
-                "usage: cockpit-collect probe [now|core|core_detail|unsent|strands|sops|ratelim|reachable|well|repo_labels|livelock|dup_refs|statute|drift|mail|czar_triggers|hel|queue|slots|admission|tsd]"
+                "usage: cockpit-collect probe [now|core|core_detail|unsent|strands|sops|ratelim|reachable|well|repo_labels|livelock|dup_refs|statute|drift|mail|czar_triggers|hel|goodput|queue|slots|admission|tsd]"
             );
             1
         }
@@ -146,11 +146,11 @@ fn cmd_metrics(args: &[String]) -> i32 {
     0
 }
 
-fn cmd_sparklines(args: &[String]) -> i32 {
+fn cmd_sparklines() -> i32 {
     use std::io::Read;
     let mut stdin = String::new();
     let _ = std::io::stdin().read_to_string(&mut stdin);
-    if let Some(out) = sparklines::render(&stdin, args.first().map_or("", String::as_str), timeutil::now_secs(), &counts::from_config()) {
+    if let Some(out) = sparklines::render(&stdin, timeutil::now_secs(), &counts::from_config()) {
         print!("{out}");
     }
     0

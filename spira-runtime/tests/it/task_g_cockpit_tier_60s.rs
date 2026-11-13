@@ -92,7 +92,7 @@ fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_eleven_probes()
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::PENDING"));
     assert_eq!(row.stream(), STREAM);
     assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
-    assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.slots", "cockpit.reachable", "cockpit.tsd", "cockpit.admission", "cockpit.well", "cockpit.repo_labels", "cockpit.strands", "cockpit.ratelim", "cockpit.core", "cockpit.queue", "cockpit.mail"]);
+    assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.slots", "cockpit.reachable", "cockpit.tsd", "cockpit.admission", "cockpit.well", "cockpit.repo_labels", "cockpit.strands", "cockpit.ratelim", "cockpit.core", "cockpit.queue", "cockpit.mail", "cockpit.goodput"]);
     let mut r = TaskRig::new(1, handler().registration()).unwrap();
     let (_, stream, kind) = (row.boot)();
     r.tick(stream, kind).unwrap();

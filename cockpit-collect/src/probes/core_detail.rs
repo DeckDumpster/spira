@@ -31,7 +31,7 @@ pub fn core_detail_keys(cfg: &Cfg) -> Kv {
     recent_section(&mut out, &run);
     inflow_section(&mut out, &run);
     awaiting_ci_section(&mut out, cfg);
-    throughput_section(&mut out, &run, cfg);
+    throughput_section(&mut out, cfg);
     tokens_section(&mut out);
 
     out
@@ -446,12 +446,11 @@ fn awaiting_ci_section(out: &mut Kv, cfg: &Cfg) {
 // THROUGHPUT / TOKENS — both fully delegated to their existing external tools.
 // ---------------------------------------------------------------------------------------
 
-fn throughput_section(out: &mut Kv, run: &std::path::Path, cfg: &Cfg) {
+fn throughput_section(out: &mut Kv, cfg: &Cfg) {
     let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
     let raw = io::history_beads(&label, io::DAY_WINDOW_SECS).unwrap_or_default();
-    let landing_log = run.join("landing.log");
-    if let Some(sparklines) = crate::sparklines::render(&raw, landing_log.to_str().unwrap_or(""), crate::timeutil::now_secs(), &crate::counts::from_config()) {
+    if let Some(sparklines) = crate::sparklines::render(&raw, crate::timeutil::now_secs(), &crate::counts::from_config()) {
         for line in sparklines.lines() {
             if let Some((k, v)) = line.split_once('=') {
                 push(out, k, v.to_string());

@@ -1,5 +1,5 @@
 //! `cockpit-tier-60s`: the pane's minute tier, probes `slots`, `reachable`, `tsd`,
-//! `admission`, `well`, `repo_labels`, `strands`, `ratelim`, `core`, `queue` and `mail`. Pattern P1.
+//! `admission`, `well`, `repo_labels`, `strands`, `ratelim`, `core`, `queue`, `mail` and `goodput`. Pattern P1.
 //! Contract: `wiki/projects/spira/designs/tasks/cockpit-tier-60s.md`; siblings
 //! [`super::cockpit_tier_5s`] and
 //! [`super::cockpit_tier_600s`]. The decision, the merge and the runners are shared in
@@ -84,6 +84,7 @@ pub const PROBES: &[(&str, u64)] = &[
     ("cockpit.core", OBSERVE_DEADLINE_MS),
     ("cockpit.queue", 90_000),
     ("cockpit.mail", 90_000),
+    ("cockpit.goodput", 30_000),
 ];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_60S_SECS";
