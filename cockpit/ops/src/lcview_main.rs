@@ -366,7 +366,7 @@ fn gather() -> Snapshot {
                 if !label.is_empty() {
                     s.meta.entry(id.clone()).or_default().labels.push(label.clone());
                 }
-                s.asks.push(AskRow { id, opened_at: num(&a["opened_at"]).unwrap_or(0), title: text(&a["title"]), class: text(&a["class"]) });
+                s.asks.push(AskRow { id, opened_at: num(&a["opened_at"]).unwrap_or(0), title: text(&a["title"]), class: text(&a["class"]), work_bead: text(&a["work_bead"]) });
             }
         }
         Err(e) => {

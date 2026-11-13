@@ -177,13 +177,21 @@ pub fn created_ids(stdout: &str) -> Vec<String> {
 }
 
 pub fn ensure_rows_with(bin: &str, ids: &[String]) -> Result<(), String> {
-    let errs: Vec<String> = ids.iter().filter_map(|id| ensure_row_with(bin, id).err()).collect();
+    let errs: Vec<String> = ids.iter().filter_map(|id| ensure_row_with(bin, id, None).err()).collect();
     if errs.is_empty() { Ok(()) } else { Err(errs.join("; ")) }
 }
 
+/// `create-bead <id> --ready`, naming `repo` when the create's labels did: a row that already
+/// exists is left as it is, so the repo must be sent the first time.
+fn create_row_args<'a>(id: &'a str, repo: Option<&'a str>) -> Vec<&'a str> {
+    let mut args = vec!["create-bead", id, "--ready"];
+    args.extend(repo.into_iter().flat_map(|r| ["--repo", r]));
+    args
+}
+
 /// `Ok(())`: the row exists now.
-pub fn ensure_row_with(bin: &str, id: &str) -> Result<(), String> {
-    lc_status(bin, &["create-bead", id, "--ready"])
+pub fn ensure_row_with(bin: &str, id: &str, repo: Option<&str>) -> Result<(), String> {
+    lc_status(bin, &create_row_args(id, repo))
 }
 
 /// Record `Express`/`Unexpress` on the bead's lifecycle row: express is lifecycle state.
@@ -204,21 +212,33 @@ pub fn promote(id: &str) -> Result<(), String> {
     promote_with(&lc_bin()?, id)
 }
 
-pub fn ensure_row(id: &str) -> Result<(), String> {
-    ensure_row_retrying(&lc_bin()?, id, ROW_ATTEMPTS, 250)
+fn row_on(c: &LcClient, id: &str, repo: Option<&str>, backoff_ms: u64) -> Result<(), String> {
+    let mut last = status_on(c, &create_row_args(id, repo));
+    for n in 1..ROW_ATTEMPTS {
+        if last.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(backoff_ms * u64::from(n)));
+        last = status_on(c, &create_row_args(id, repo));
+    }
+    last
+}
+
+pub fn ensure_row(id: &str, repo: Option<&str>) -> Result<(), String> {
+    ensure_row_retrying(&lc_bin()?, id, repo, ROW_ATTEMPTS, 250)
 }
 
 const ROW_ATTEMPTS: u32 = 3;
 
 /// `create-bead` is idempotent, so a transient failure is retried before it is reported.
-pub fn ensure_row_retrying(bin: &str, id: &str, attempts: u32, backoff_ms: u64) -> Result<(), String> {
-    let mut last = ensure_row_with(bin, id);
+pub fn ensure_row_retrying(bin: &str, id: &str, repo: Option<&str>, attempts: u32, backoff_ms: u64) -> Result<(), String> {
+    let mut last = ensure_row_with(bin, id, repo);
     for n in 1..attempts {
         if last.is_ok() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(backoff_ms * u64::from(n)));
-        last = ensure_row_with(bin, id);
+        last = ensure_row_with(bin, id, repo);
     }
     last
 }
@@ -231,7 +251,7 @@ pub fn after_create(who: &str, created_stdout: &str) -> Result<(), String> {
         eprintln!("{who}: LIFECYCLE: {e}; the new bead has no lifecycle row and cannot be claimed");
         return Err(e);
     };
-    ensure_row(&id).map_err(|e| {
+    ensure_row(&id, None).map_err(|e| {
         eprintln!("{who}: LIFECYCLE: {id} was created but has NO lifecycle row and cannot be claimed: {e}");
         e
     })
@@ -334,15 +354,21 @@ pub fn reopen(id: &str, cause: &str, actor: &str) -> Result<(), String> {
 }
 
 /// `after_create` for a verb that may create many beads (`import`, `mol pour|wisp|bond`),
-/// which must have been run with `--json`.
-pub fn after_create_ids(who: &str, created_stdout: &str) -> Result<(), String> {
+/// which must have been run with `--json`. `repo` is the create's `repo:` label, if any.
+pub fn after_create_ids(who: &str, created_stdout: &str, repo: Option<&str>) -> Result<(), String> {
+    let c = client(&lc_bin()?)?;
+    after_create_ids_on(&c, who, created_stdout, repo, 250)
+}
+
+/// [`after_create_ids`] through `c`, so a test can run it against an in-process service.
+pub fn after_create_ids_on(c: &LcClient, who: &str, created_stdout: &str, repo: Option<&str>, backoff_ms: u64) -> Result<(), String> {
     let ids = created_ids(created_stdout);
     if ids.is_empty() {
         let e = format!("cannot read any created bead id from {created_stdout:?}");
         eprintln!("{who}: LIFECYCLE: {e}; the new beads have no lifecycle row and cannot be claimed");
         return Err(e);
     }
-    let errs: Vec<String> = ids.iter().filter_map(|id| ensure_row(id).err()).collect();
+    let errs: Vec<String> = ids.iter().filter_map(|id| row_on(c, id, repo, backoff_ms).err()).collect();
     if errs.is_empty() {
         return Ok(());
     }

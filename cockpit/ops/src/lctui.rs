@@ -11,7 +11,7 @@
 //!
 //! Everything here is pure (view, choices, size in; lines out) so it is tested without a terminal.
 
-use crate::lcview::{cut, repo_tag, View};
+use crate::lcview::{ask_tag, cut, repo_tag, View};
 #[cfg(test)]
 use crate::lcview::TEAL;
 use std::collections::{HashMap, HashSet};
@@ -223,7 +223,7 @@ fn waiting_node(v: &View) -> Node {
         .take(WAITING_SHOWN)
         .map(|i| {
             let class = if i.class.is_empty() { String::new() } else { format!("{D}{}{R} ", i.class) };
-            Node::new(format!("decide/{}", i.id), format!("{YEL}{:<12}{R} {D}{:>4}{R} {class}{}{}", i.id, i.age, repo_tag(&i.repo), i.title))
+            Node::new(format!("decide/{}", i.id), format!("{YEL}{:<12}{R} {D}{:>4}{R} {class}{}{}", i.id, i.age, ask_tag(i), i.title))
         })
         .collect();
     if v.decide.len() > WAITING_SHOWN {
@@ -1214,7 +1214,7 @@ mod tests {
         let mut v = busy_view();
         let repos = [("sp-c1", "cubby"), ("sp-s1", "spira"), ("sp-d1", "deckdumpster"), ("sp-u1", "")];
         let items = |_: ()| repos.iter().map(|(i, r)| it(i, r)).collect::<Vec<_>>();
-        v.decide = items(());
+        v.decide = items(()).into_iter().map(|i| Item { work_bead: format!("work-of-{}", i.id), ..i }).collect();
         v.now_items = items(());
         v.next = items(());
         v.blocked = items(());
@@ -1251,6 +1251,22 @@ mod tests {
         }
         let page = render_page(&repo_view(), None, 5);
         assert!(page.contains("<span class=teal>deckdumpster</span>"), "the page paints the tag");
+    }
+
+    #[test]
+    fn an_ask_about_no_work_bead_has_no_repo_tag_in_the_tree() {
+        let mut v = repo_view();
+        v.decide = vec![Item { id: "sp-loose".into(), title: "loose ask".into(), age: "1m".into(), ..Default::default() }];
+        let mut lines = Vec::new();
+        fn walk(n: &[Node], out: &mut Vec<String>) {
+            for x in n {
+                out.push(x.line.clone());
+                walk(&x.kids, out);
+            }
+        }
+        walk(&tree(&v), &mut lines);
+        let line = lines.iter().find(|l| l.contains("loose ask")).expect("the ask is listed");
+        assert!(!line.contains('?') && !line.contains(TEAL), "{line:?}");
     }
 
     #[test]

@@ -1076,6 +1076,31 @@ mod tests {
         assert!(state(&w, "sp-ev").is_none(), "a rowless type gets no row, as through bdq");
     }
 
+    /// `World` behind the store client's transport, so bdq's own after-create step runs in-process.
+    struct InProcess(std::sync::Mutex<World>);
+
+    impl spira_store::lc_call::Transport for InProcess {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            let world = self.0.lock().unwrap();
+            let mut m = &*world;
+            let (code, out) = m.call(argv);
+            Ok(spira_store::lc_call::Reply { code, out, err: String::new() })
+        }
+    }
+
+    #[test]
+    fn bdqs_after_create_step_gives_the_row_the_repo_the_create_was_labelled_with() {
+        let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
+        let client = spira_store::lc_call::LcClient::over(world.clone(), true);
+        let args: Vec<String> = ["create", "T", "--silent", "--labels", "repo:spira"].iter().map(|a| a.to_string()).collect();
+        let repo = bead::bdq::created_repo(&args);
+        spira_store::lifecycle_row::after_create_ids_on(&client, "bdq", "sp-new\n", repo.as_deref(), 0).unwrap();
+        let live = world.0.lock().unwrap().ok(&["list", "--live"]);
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&live).unwrap();
+        let row = rows.iter().find(|r| r["bead_id"] == "sp-new").expect("the row exists");
+        assert_eq!(row["repo"], "spira", "{row}");
+    }
+
     #[test]
     fn a_lifecycle_row_the_server_cannot_write_is_reported_and_bds_create_stands() {
         let w = World::new();
