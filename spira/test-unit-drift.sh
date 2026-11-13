@@ -177,4 +177,15 @@ out="$(env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH
 is "skew units exits 3 when installer missing" "3" "$rc"
 want "skew units names the missing installer" "missing" "$out"
 
+# ==========================================================================
+echo
+echo "pre-activate — the units check renders the release's own templates, whatever the caller exports:"
+# ==========================================================================
+mkdir -p "$TMP/decoy/spira" "$TMP/decoy/systemd"
+pre_out="$(env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" PATH="$FIXTURE/bin:$PATH" HOME="$TMP/home" \
+    SPIRA_CONF=/nonexistent SPIRA_HOME="$TMP/decoy/spira" SPIRA_REPO="$TMP/decoy" \
+    bash "$HERE/pre-activate.sh" "$FIXTURE" 2>&1)"
+want "units check passes against the release, not the caller's SPIRA_HOME" "pre-activate: ok   units" "$pre_out"
+case "$pre_out" in *"FAIL units"*) bad "no units failure" "$pre_out" ;; *) ok "no units failure" ;; esac
+
 tl_summary

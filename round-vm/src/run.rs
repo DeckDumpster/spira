@@ -2564,7 +2564,10 @@ fn place_on_host(env: &RunEnv, args: &RunArgs) -> HostPlacement {
         Err(e) => return HostPlacement::Spill(format!("the host round slot is unreadable: {e}")),
     };
     match decide_host(&plan.rule, slot.is_some(), (plan.load)()) {
-        HostPlace::Host => slot.map_or(HostPlacement::NotOffered, HostPlacement::Host),
+        HostPlace::Host(line) => {
+            eprintln!("round-vm run: {line}");
+            slot.map_or(HostPlacement::NotOffered, HostPlacement::Host)
+        }
         HostPlace::Ec2(why) => HostPlacement::Spill(why),
     }
 }
@@ -4864,7 +4867,7 @@ mod tests {
 
     fn host_plan(remote: FakeRemote, load: crate::spill::HostLoad) -> crate::host::HostPlan {
         crate::host::HostPlan {
-            rule: crate::spill::HostRule { io_full_avg60: 30.0, cpu_some_avg60: 60.0 },
+            rule: crate::spill::HostRule { io_full_5m_tm90: 50.0, cpu_some_5m_tm90: 60.0 },
             home: PathBuf::from("/unused"),
             load: Box::new(move || load),
             remote: Box::new(remote),
@@ -4886,7 +4889,7 @@ mod tests {
         row["where"].as_str().unwrap().to_string()
     }
 
-    const CALM: crate::spill::HostLoad = crate::spill::HostLoad { io_full_avg60: Some(1.0), cpu_some_avg60: Some(1.0) };
+    const CALM: crate::spill::HostLoad = crate::spill::HostLoad { io_full: Some(crate::spill::Pressure { value: 1.0, basis: crate::spill::Basis::Tm90 }), cpu_some: Some(crate::spill::Pressure { value: 1.0, basis: crate::spill::Basis::Tm90 }) };
 
     #[test]
     fn a_round_with_the_host_slot_free_runs_on_the_host_and_leases_no_vm() {
@@ -4945,7 +4948,7 @@ mod tests {
     fn a_round_cut_under_host_pressure_does_not_run_on_the_host() {
         let fx = fixture();
         let vm_remote = FakeRemote::green();
-        let hot = crate::spill::HostLoad { io_full_avg60: Some(55.0), cpu_some_avg60: Some(1.0) };
+        let hot = crate::spill::HostLoad { io_full: Some(crate::spill::Pressure { value: 55.0, basis: crate::spill::Basis::Tm90 }), ..CALM };
         let plan = host_plan(FakeRemote::green(), hot);
         go_with_host(&fx, &vm_remote, &plan, &round_args(&fx));
         assert_eq!(fx.fp.count("clone"), 1);

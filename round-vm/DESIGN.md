@@ -270,7 +270,7 @@ the template with round-vm template`.
 
 A pass runs on EC2 instead of the local pool when `SPIRA_ROUND_VM_SPILL=ec2` and either the
 pass has waited `SPIRA_ROUND_VM_SPILL_WAIT_SECS` (30) without a local lease, or this box's
-`/proc/pressure/io` `full avg60` is above `SPIRA_ROUND_VM_SPILL_IO_FULL_AVG60` (30). An unreadable
+the host's io `full` pressure, as the five-minute tm90 (below), is above `SPIRA_ROUND_VM_SPILL_IO_FULL_5M_TM90` (50). An unreadable
 pressure never spills; under `ec2` a spill that fails falls back to local for that acquire. The lease event
 records the provider and the reason (`spilled to ec2: ...`, `provider: proxmox`), and the manifest
 carries `provider`. A spilled pass is not the pool of one (G1): it is recorded in `spilled` before
@@ -303,7 +303,7 @@ the newest image built from one: a round whose head changes the recipe dispatche
 
 A harness round is offered to this host first (`SPIRA_ROUND_VM_HOST`, default `on`; `off` restores the VM-first behaviour). It runs here, as the same round script a VM runs, under a home of its own (`$SPIRA_RUN/host-round`) so the build target stays warm, in the same testenv container; the mirror, results pull and attribution spool are the VM's, over a local `Remote` instead of ssh. A foreign repo's CI round is never offered. The pass's script runs as its own process group, recorded in the home; a pass that ends, is cancelled, or is signalled kills the group, and the next pass kills any group an earlier round-vm left, so two passes never share the home's checkout, target and results.
 
-The host takes a round only when the host slot (a kernel lock in the state dir, freed when its holder dies) is free and neither `/proc/pressure/io` `full avg60` (`SPIRA_ROUND_VM_HOST_IO_FULL_AVG60`, 30) nor `/proc/pressure/cpu` `some avg60` (`SPIRA_ROUND_VM_HOST_CPU_SOME_AVG60`, 60) is over its threshold (`spill::decide_host`; an unreadable pressure never refuses). Otherwise the pass is placed on EC2 as a spill, whatever the local pool holds, and falls back to the local VM only when EC2 cannot be had. Attribution legs ride the round's own place. The pass row records `where=host`, with boot/build/suites seconds, so the rounds dashboard compares host and spilled rounds.
+The host takes a round only when the host slot (a kernel lock in the state dir, freed when its holder dies) is free and neither io `full` pressure (`SPIRA_ROUND_VM_HOST_IO_FULL_5M_TM90`, 50) nor cpu `some` pressure (`SPIRA_ROUND_VM_HOST_CPU_SOME_5M_TM90`, 60) is over its threshold, each judged as the tm90 (mean with the top tenth dropped) of the last five minutes of `avg10` readings that `round-vm psi-sample` records every ten seconds (timer `spira-psi-sample`) into `psi-samples` in the run directory, or on the kernel's `avg300` when fewer than half the thirty samples are present, the line saying so (`spill::decide_host`; an unreadable pressure never refuses). Otherwise the pass is placed on EC2 as a spill, whatever the local pool holds, and falls back to the local VM only when EC2 cannot be had. Attribution legs ride the round's own place. The pass row records `where=host`, with boot/build/suites seconds, so the rounds dashboard compares host and spilled rounds.
 
 ### 2.3 Guarantees
 

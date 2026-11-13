@@ -1,0 +1,14 @@
+[Unit]
+Description=Sample the host's pressure every ten seconds
+
+[Timer]
+OnBootSec=10s
+OnUnitActiveSec=10s
+AccuracySec=1s
+Unit=spira-psi-sample.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability

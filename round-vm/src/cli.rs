@@ -19,7 +19,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template [--adopt <vmid>]|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|ami-prune|reap|ec2-probe [--dry-run]|section";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template [--adopt <vmid>]|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|ami-prune|reap|ec2-probe [--dry-run]|section|psi-sample";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -81,15 +81,16 @@ fn spill_wiring(cfg: &Config) -> Result<(Option<std::sync::Arc<dyn crate::provid
         }
     };
     let num = |k: &str, d: u64| crate::config::declared(k).and_then(|v| v.parse().ok()).unwrap_or(d);
+    let run_dir = cfg.run_dir.clone();
     let plan = SpillPlan {
         ec2: ec2.clone(),
         rule: Rule {
             wait: Duration::from_secs(num("SPIRA_ROUND_VM_SPILL_WAIT_SECS", 30)),
-            io_full_avg60: crate::config::declared("SPIRA_ROUND_VM_SPILL_IO_FULL_AVG60").and_then(|v| v.parse().ok()).unwrap_or(30.0),
+            io_full_5m_tm90: crate::config::declared("SPIRA_ROUND_VM_SPILL_IO_FULL_5M_TM90").and_then(|v| v.parse().ok()).unwrap_or(50.0),
             always: mode.as_deref() != Some("ec2"),
         },
         only,
-        pressure: Box::new(|| crate::spill::read_io_full_avg60(crate::spill::PSI_IO)),
+        pressure: Box::new(move || crate::spill::host_load(&run_dir, crate::spill::unix_now()).io_full),
         timing: Timing { boot_tries: num("SPIRA_ROUND_VM_EC2_BOOT_TRIES", 150) as u32, poll: cfg.boot_poll, gone_tries: 60 },
     };
     Ok((Some(ec2), Some(plan)))
@@ -299,6 +300,18 @@ pub fn ec2_api() -> Result<(AwsCli, Ec2Config), String> {
     Ok((AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2")), ec2cfg))
 }
 
+/// `psi-sample`: one tick of the pressure sampler the placement judges on (spill.rs).
+fn psi_sample() -> i32 {
+    let outcome = Config::load().and_then(|cfg| crate::spill::sample_now(&cfg.run_dir.join(crate::spill::SAMPLES_FILE), crate::spill::unix_now()));
+    match outcome {
+        Ok(_) => 0,
+        Err(e) => {
+            eprintln!("round-vm psi-sample: {e}");
+            1
+        }
+    }
+}
+
 /// `section`: publishes `VmPool/pool` from the hour's `cert-pass` rows and the pool's leases.
 fn section_pass() -> i32 {
     match publish_section() {
@@ -423,6 +436,9 @@ pub fn main_with(args: Vec<String>) -> i32 {
     }
     if verb == "ec2-probe" {
         return ec2_probe(&rest);
+    }
+    if verb == "psi-sample" {
+        return psi_sample();
     }
     if verb == "section" {
         return section_pass();

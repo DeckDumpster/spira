@@ -42,14 +42,12 @@ impl HostPlan {
                 Some(v) => v.parse().map_err(|_| format!("round-vm: {key} = {v:?} is not a number")),
             }
         };
+        let sampled_dir = run_dir.to_path_buf();
         Ok(Some(HostPlan {
-            rule: HostRule { io_full_avg60: num("SPIRA_ROUND_VM_HOST_IO_FULL_AVG60", 30.0)?, cpu_some_avg60: num("SPIRA_ROUND_VM_HOST_CPU_SOME_AVG60", 60.0)? },
+            rule: HostRule { io_full_5m_tm90: num("SPIRA_ROUND_VM_HOST_IO_FULL_5M_TM90", 50.0)?, cpu_some_5m_tm90: num("SPIRA_ROUND_VM_HOST_CPU_SOME_5M_TM90", 60.0)? },
             home: round_home(run_dir),
             remote: Box::new(LocalRemote { home: round_home(run_dir) }),
-            load: Box::new(|| HostLoad {
-                io_full_avg60: crate::spill::read_io_full_avg60(crate::spill::PSI_IO),
-                cpu_some_avg60: crate::spill::read_cpu_some_avg60(crate::spill::PSI_CPU),
-            }),
+            load: Box::new(move || crate::spill::host_load(&sampled_dir, crate::spill::unix_now())),
         }))
     }
 }
@@ -353,14 +351,14 @@ mod tests {
     #[test]
     fn the_thresholds_and_the_round_home_come_from_config_not_from_the_defaults() {
         let get = |k: &str| match k {
-            "SPIRA_ROUND_VM_HOST_IO_FULL_AVG60" => Some("7.5".to_string()),
-            "SPIRA_ROUND_VM_HOST_CPU_SOME_AVG60" => Some("11".to_string()),
+            "SPIRA_ROUND_VM_HOST_IO_FULL_5M_TM90" => Some("7.5".to_string()),
+            "SPIRA_ROUND_VM_HOST_CPU_SOME_5M_TM90" => Some("11".to_string()),
             _ => None,
         };
         let p = HostPlan::from_config(Path::new("/some/run"), &get).unwrap().unwrap();
-        assert_eq!((p.rule.io_full_avg60, p.rule.cpu_some_avg60), (7.5, 11.0));
+        assert_eq!((p.rule.io_full_5m_tm90, p.rule.cpu_some_5m_tm90), (7.5, 11.0));
         assert_eq!(p.home, Path::new("/some/run/host-round"));
-        let bad = |k: &str| (k == "SPIRA_ROUND_VM_HOST_CPU_SOME_AVG60").then(|| "lots".to_string());
+        let bad = |k: &str| (k == "SPIRA_ROUND_VM_HOST_CPU_SOME_5M_TM90").then(|| "lots".to_string());
         assert!(HostPlan::from_config(Path::new("/r"), &bad).err().is_some());
     }
 
@@ -473,5 +471,20 @@ mod tests {
         let remote = LocalRemote { home: home.path().to_path_buf() };
         let rc = remote.run_attr("h", &attr_job()).expect("the script's exit, not a stdin error");
         assert_ne!(rc, 0);
+    }
+
+    #[test]
+    fn the_plans_load_is_the_samples_file_not_the_kernels_one_minute_reading() {
+        let tmp = testkit::TempDir::new("host-plan-load");
+        let now = crate::spill::unix_now();
+        for i in 0..30u64 {
+            let io_full = if i >= 27 { 95.0 } else { 10.0 };
+            let at = now - (29 - i) * crate::spill::SAMPLE_EVERY_SECS;
+            crate::spill::record_sample(&tmp.path().join(crate::spill::SAMPLES_FILE), crate::spill::Sample { at, io_full, cpu_some: 1.0 }).unwrap();
+        }
+        let plan = HostPlan::from_config(tmp.path(), &|_| None).unwrap().unwrap();
+        let load = (plan.load)();
+        assert_eq!(load.io_full.map(|p| (p.value, p.basis)), Some((10.0, crate::spill::Basis::Tm90)));
+        assert_eq!(plan.rule.io_full_5m_tm90, 50.0);
     }
 }

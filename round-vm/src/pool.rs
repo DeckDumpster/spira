@@ -28,7 +28,7 @@ pub struct SpillPlan {
     pub rule: Rule,
     /// `ec2-only`: a failed EC2 acquire is the pass's error, never a local lease.
     pub only: bool,
-    pub pressure: Box<dyn Fn() -> Option<f64>>,
+    pub pressure: Box<dyn Fn() -> Option<crate::spill::Pressure>>,
     pub timing: Timing,
 }
 
@@ -2244,12 +2244,12 @@ mod tests {
         Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap())
     }
 
-    fn spilling(p: &FakeProvider, ec2: Arc<dyn Provider>, pressure: Option<f64>) -> Attempt {
+    fn spilling(p: &FakeProvider, ec2: Arc<dyn Provider>, pressure: Option<crate::spill::Pressure>) -> Attempt {
         let plan = SpillPlan {
             ec2: ec2.clone(),
             rule: Rule {
                 wait: Duration::ZERO,
-                io_full_avg60: 30.0,
+                io_full_5m_tm90: 30.0,
                 always: false,
             },
             only: false,
@@ -2291,7 +2291,7 @@ mod tests {
         );
         let ec2 = ec2_provider(&d, &fake);
         let pl = pool(&d, 1);
-        let f = || Ok(spilling(&fp, ec2.clone(), Some(41.0)));
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(crate::spill::Pressure { value: 41.0, basis: crate::spill::Basis::Tm90 })));
         let (vm, _) = pl
             .acquire(
                 &Deps {
@@ -2335,7 +2335,7 @@ mod tests {
         );
         let ec2 = ec2_provider(&d, &fake);
         let pl = pool(&d, 1);
-        let f = || Ok(spilling(&fp, ec2.clone(), Some(3.0)));
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(crate::spill::Pressure { value: 3.0, basis: crate::spill::Basis::Tm90 })));
         let (vm, _) = pl
             .acquire_placed(
                 &Deps {
@@ -2359,7 +2359,7 @@ mod tests {
         let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
         let ec2 = ec2_provider(&d, &fake);
         let pl = pool(&d, 1);
-        let f = || Ok(spilling(&fp, ec2.clone(), Some(0.0)));
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(crate::spill::Pressure { value: 0.0, basis: crate::spill::Basis::Tm90 })));
         let deps = Deps { factory: &f, alarm: &alarm, spawner: &sp };
         let (vm, _) = pl.acquire_placed(&deps, None, None, Forced::HostRefused("the host round slot is taken".into())).unwrap();
         assert!(crate::ec2::is_ec2_handle(&vm.handle), "{vm:?}");
@@ -2378,7 +2378,7 @@ mod tests {
         );
         let ec2 = ec2_provider(&d, &fake);
         let pl = pool(&d, 1);
-        let f = || Ok(spilling(&fp, ec2.clone(), Some(3.0)));
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(crate::spill::Pressure { value: 3.0, basis: crate::spill::Basis::Tm90 })));
         let (vm, _) = pl
             .acquire(
                 &Deps {
@@ -2413,7 +2413,7 @@ mod tests {
             })
         })
         .unwrap();
-        let f = || Ok(spilling(&fp, ec2.clone(), Some(1.0)));
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(crate::spill::Pressure { value: 1.0, basis: crate::spill::Basis::Tm90 })));
         let (vm, _) = pl
             .acquire(
                 &Deps {
@@ -2443,7 +2443,7 @@ mod tests {
             let mut a = spilling(p, e, None);
             a.spill.as_mut().unwrap().rule = Rule {
                 wait: Duration::from_secs(30),
-                io_full_avg60: 30.0,
+                io_full_5m_tm90: 30.0,
                 always: true,
             };
             a
@@ -2524,7 +2524,7 @@ mod tests {
         fake.refuse_type("big");
         let ec2 = two_type_ec2(&d, &fake);
         let pl = pool(&d, 1);
-        let f = || Ok(spilling(&fp, ec2.clone(), Some(41.0)));
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(crate::spill::Pressure { value: 41.0, basis: crate::spill::Basis::Tm90 })));
         let (vm, _) = pl
             .acquire(
                 &Deps {
@@ -2554,7 +2554,7 @@ mod tests {
         fake.refuse_type("small");
         let ec2 = two_type_ec2(&d, &fake);
         let pl = pool(&d, 1);
-        let f = || Ok(spilling(&fp, ec2.clone(), Some(41.0)));
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(crate::spill::Pressure { value: 41.0, basis: crate::spill::Basis::Tm90 })));
         let (vm, _) = pl
             .acquire(
                 &Deps {
@@ -2639,7 +2639,7 @@ mod tests {
         fake.fail_run();
         let ec2 = ec2_provider(&d, &fake);
         let pl = pool(&d, 1);
-        let f = || Ok(spilling(&fp, ec2.clone(), Some(99.0)));
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(crate::spill::Pressure { value: 99.0, basis: crate::spill::Basis::Tm90 })));
         let (vm, _) = pl
             .acquire(
                 &Deps {
@@ -2668,7 +2668,7 @@ mod tests {
         fake.plant("i-untagged", None, "round-ec2-old2", 1);
         let ec2 = ec2_provider(&d, &fake);
         let pl = pool(&d, 1);
-        let f = || Ok(spilling(&fp, ec2.clone(), Some(1.0)));
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(crate::spill::Pressure { value: 1.0, basis: crate::spill::Basis::Tm90 })));
         pl.acquire(
             &Deps {
                 factory: &f,
@@ -2707,7 +2707,7 @@ mod tests {
             s.note("ec2-gone", VmState::Provisioning, "spilled");
         })
         .unwrap();
-        let f = || Ok(spilling(&fp, ec2.clone(), Some(1.0)));
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(crate::spill::Pressure { value: 1.0, basis: crate::spill::Basis::Tm90 })));
         pl.acquire(
             &Deps {
                 factory: &f,
