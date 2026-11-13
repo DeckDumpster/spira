@@ -61,7 +61,7 @@ fn a_check_does_not_stand_down_while_one_repo_still_takes_the_detectors_lane() {
     stop(&run, "spira");
     for check in CHECKS.iter().filter(|c| **c != "sweep") {
         let out = run_check(&d, &run, check);
-        assert!(!out.contains("the heimdall lane of"), "{check}: {out}");
+        assert!(!out.contains("the heimdall lane of") && !out.contains("stopped on purpose"), "{check}: {out}");
     }
 }
 
