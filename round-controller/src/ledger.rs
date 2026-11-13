@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use state_store::{Compare, Item, Object, Request, Txn};
+use state_store::{Compare, Item, Object, Request, Selector, Txn};
 
 use crate::ports::{Ledger, Member, Ports};
 use crate::resources::{round_key, Attempt, Backoff, Cause, Class, PassIdentity, Summary};
@@ -25,6 +25,14 @@ pub fn by_member_key(repo: &str, m: &Member) -> String {
 
 pub fn fault_key(repo: &str, base: &str, image_digest: &str) -> String {
     format!("faults/{repo}/{base}/{image_digest}")
+}
+
+pub fn green_digest_key(repo: &str, base: &str, image_digest: &str) -> String {
+    format!("{}{image_digest}", green_digests_prefix(repo, base))
+}
+
+fn green_digests_prefix(repo: &str, base: &str) -> String {
+    format!("green-digests/{repo}/{base}/")
 }
 
 fn lifecycle_key(id: &str) -> String {
@@ -156,7 +164,8 @@ fn owned(data: serde_json::Value, owners: &[String]) -> Object {
 }
 
 /// The verdict write: attempt `n` created only if absent, and the summary CAS'd on the
-/// `mod_rev` it was read at (`None`: absent). Two user ops; the contract adds two more. The
+/// `mod_rev` it was read at (`None`: absent). Two user ops, three for a green, which also notes
+/// the digest its base was green on; the contract adds two more. The
 /// summary keeps every owner it had, so a green after a red cannot let the round's collection
 /// take the summary and strand the red's attempts.
 pub fn attempt_txn(
@@ -175,11 +184,18 @@ pub fn attempt_txn(
             kept.push(o.clone());
         }
     }
-    Txn::new()
+    let t = Txn::new()
         .when(Compare::ModRev(attempt_key(id, n), None))
         .when(Compare::ModRev(summary_key(id), read.map(|i| i.mod_rev)))
         .put(&attempt_key(id, n), owned(encode(attempt), &own))
-        .put(&summary_key(id), owned(encode(summary), &kept))
+        .put(&summary_key(id), owned(encode(summary), &kept));
+    match attempt.class {
+        Class::Green => t.put(
+            &green_digest_key(&id.repo, &id.base, &id.image_digest),
+            owned(encode(&id.image_digest), &own),
+        ),
+        _ => t,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -538,12 +554,16 @@ impl Ledger for StoreLedger {
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
-    /// A summary keeps no identity, so the ledger cannot list the digests a base was green on;
-    /// refused, naming why, rather than answered empty (which would type every image fault Base).
-    fn green_digests(&self, _: &Ports, repo: &str, base: &str) -> Result<Vec<String>, String> {
-        Err(format!(
-            "the verdict ledger keeps no green digests by base: cannot list {repo} {base}"
-        ))
+    fn green_digests(&self, p: &Ports, repo: &str, base: &str) -> Result<Vec<String>, String> {
+        let prefix = green_digests_prefix(repo, base);
+        let (items, _) = p
+            .store
+            .list(&[prefix.as_str()], &Selector::Everything)
+            .map_err(|e| e.to_string())?;
+        Ok(items
+            .iter()
+            .filter_map(|i| i.key.strip_prefix(&prefix).map(String::from))
+            .collect())
     }
 }
 
@@ -695,7 +715,7 @@ mod tests {
     };
 
     #[test]
-    fn a_verdict_write_is_two_user_ops_and_fits_the_limits() {
+    fn a_verdict_write_is_two_user_ops_three_for_a_green_and_fits_the_limits() {
         let id = ident(&[("sp-a", "1")]);
         let s = Summary {
             class: Class::Green,
@@ -706,8 +726,10 @@ mod tests {
             absolved: false,
         };
         let t = attempt_txn(&id, "b1", 1, &attempt(Class::Green, 0), &s, None);
-        assert_eq!((t.ops.len(), t.compares.len(), t.else_ops.len()), (2, 2, 0));
+        assert_eq!((t.ops.len(), t.compares.len(), t.else_ops.len()), (3, 2, 0));
         assert_eq!(state_store::limits::check(&t, TXN_BOOKKEEPING), Ok(()));
+        let t = attempt_txn(&id, "b1", 1, &red("s", 0), &s, None);
+        assert_eq!(t.ops.len(), 2);
     }
 
     #[test]
@@ -735,10 +757,71 @@ mod tests {
             .record_lane_fault(&p, "lane", "b0", "sha256:i1", &f)
             .unwrap_err()
             .contains("NotALaneCause"));
-        assert!(l
-            .green_digests(&p, "lane", "b0")
-            .unwrap_err()
-            .contains("no green digests"));
+        assert_eq!(l.green_digests(&p, "lane", "b0"), Ok(vec![]));
+    }
+
+    #[test]
+    fn a_base_green_on_one_digest_then_red_twice_on_another_is_an_image_fault_under_the_real_ledger() {
+        let w = World::new();
+        let v = verbs();
+        let p = w.ports(&v);
+        let spec: crate::sim::judge::JudgeSpec = toml::from_str(
+            "repo = \"lane\"\nbatch = \"r2\"\nbase = \"b0\"\nimage_digest = \"sha256:d2\"\n\
+             [[member]]\nid = \"sp-a\"\ntip = \"1\"\n\
+             [result]\nexit = 1\nred = [\"test-x.sh\"]\n\
+             [[job]]\nremoval = []\nresults = [\"red\"]\nsecs = 5\n\
+             [[job]]\nremoval = [\"sp-a\"]\nresults = [\"red\", \"red\"]\nsecs = 5\n\
+             [[drive]]\npass = 1\n",
+        )
+        .unwrap();
+        let green_on_d1 = PassIdentity {
+            members: vec![],
+            ..ident(&[("sp-a", "1")])
+        };
+        let green_on_d1 = PassIdentity {
+            image_digest: "sha256:d1".into(),
+            ..green_on_d1
+        };
+        w.ledger
+            .record_attempt(&p, &green_on_d1, "r1", &attempt(Class::Green, 1))
+            .unwrap();
+        let run = crate::sim::judge::JudgeRun::new(&spec, &crate::sim::profiles().unwrap()[0]);
+        run.drive(&p, &w.clock, 1);
+        let fault: LaneFault =
+            decode(&w.store.get(&fault_key("lane", "b0", "sha256:d2")).unwrap().unwrap()).unwrap();
+        assert_eq!(
+            fault.cause,
+            Cause::Image {
+                digest: "sha256:d2".into()
+            }
+        );
+        assert_eq!(crate::lock(&run.judged).len(), 1);
+    }
+
+    #[test]
+    fn green_digests_lists_each_digest_a_base_was_green_on_and_no_other_base_or_repo() {
+        let w = World::new();
+        let v = verbs();
+        let p = w.ports(&v);
+        let green = |repo: &str, base: &str, d: &str| {
+            let id = PassIdentity::new(repo, vec![m("sp-a", "1")], base, d, "h1", "all").unwrap();
+            w.ledger
+                .record_attempt(&p, &id, "b1", &attempt(Class::Green, 1))
+                .unwrap();
+        };
+        green("lane", "b0", "sha256:d1");
+        green("lane", "b0", "sha256:d2");
+        green("lane", "b0", "sha256:d1");
+        green("lane", "b1", "sha256:d3");
+        green("other", "b0", "sha256:d4");
+        let red = PassIdentity::new("lane", vec![m("sp-r", "1")], "b0", "sha256:d5", "h1", "all").unwrap();
+        w.ledger.record_attempt(&p, &red, "b1", &self::red("s", 2)).unwrap();
+        assert_eq!(
+            w.ledger.green_digests(&p, "lane", "b0"),
+            Ok(vec!["sha256:d1".to_string(), "sha256:d2".to_string()])
+        );
+        let k = w.store.get("green-digests/lane/b0/sha256:d1").unwrap().unwrap();
+        assert_eq!(k.value.metadata.owner_references, ["batches/lane/b1"]);
     }
 
     #[test]
