@@ -2461,7 +2461,7 @@ fn held(cfg: &Config) -> Option<String> {
     if world_halted(cfg) {
         return Some("reconciler: skipped — world is halted".to_string());
     }
-    spira_config::scoped_stop::skip_if_stopped_registered(&cfg.spira_run, "reconciler", REMEDIES_LANE)
+    spira_config::scoped_stop::skip_if_stopped_registered(&cfg.spira_run, "reconciler", REMEDIES_LANE).unwrap_or_else(|e| Some(format!("reconciler: refused — {e}")))
 }
 
 /// One pass's reads: the groups, the suspensions due for a reminder, and the hold sweep (which

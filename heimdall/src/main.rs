@@ -171,7 +171,8 @@ fn pass() -> i32 {
     };
 
     if !report {
-        if let Some(why) = spira_config::scoped_stop::skip_if_stopped_registered(&run_dir, "heimdall", gather::LANE) {
+        let held = spira_config::scoped_stop::skip_if_stopped_registered(&run_dir, "heimdall", gather::LANE).unwrap_or_else(|e| Some(format!("heimdall: refused — {e}")));
+        if let Some(why) = held {
             sink.out(&util::log_line(now, &why));
             return 0;
         }

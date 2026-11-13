@@ -82,6 +82,7 @@ fn stand_down(run: &std::path::Path, check: &str) -> Option<String> {
         return Some(format!("watchtower: {check} skipped — world is halted"));
     }
     spira_config::scoped_stop::skip_if_stopped_registered(run, &format!("watchtower: {check}"), DETECTORS_LANE)
+        .unwrap_or_else(|e| Some(format!("watchtower: {check} refused — {e}")))
 }
 
 const DETECTORS_LANE: &str = "heimdall";

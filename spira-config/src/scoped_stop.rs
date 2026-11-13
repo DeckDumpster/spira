@@ -244,10 +244,10 @@ pub fn stop_everywhere<S: AsRef<str>>(run: &Path, repos: &[S], lane: &str) -> Op
 }
 
 /// [`stop_everywhere`] over this process's registered repos, for a binary that holds no registry
-/// of its own. A process that cannot locate its home reads no stop.
-pub fn stop_everywhere_registered(run: &Path, lane: &str) -> Option<RepoStop> {
-    let home = crate::resolve::locate_home_for_process().ok()?;
-    stop_everywhere(run, &crate::repos::Registry::from_env(std::env::vars().collect(), &home).all(), lane)
+/// of its own. A process that cannot locate its home cannot tell, and says so.
+pub fn stop_everywhere_registered(run: &Path, lane: &str) -> Result<Option<RepoStop>, String> {
+    let home = crate::resolve::locate_home_for_process().map_err(|e| format!("cannot tell whether the {lane} lane is stopped: {e}"))?;
+    Ok(stop_everywhere(run, &crate::repos::Registry::from_env(std::env::vars().collect(), &home).all(), lane))
 }
 
 /// The line an actor logs when it skips work under a stop on `lane`: deliberate, never a fault.
@@ -261,8 +261,8 @@ pub fn skip_if_stopped<S: AsRef<str>>(run: &Path, repos: &[S], actor: &str, lane
 }
 
 /// [`skip_if_stopped`] over this process's registered repos.
-pub fn skip_if_stopped_registered(run: &Path, actor: &str, lane: &str) -> Option<String> {
-    stop_everywhere_registered(run, lane).map(|s| skip_line(actor, lane, &s))
+pub fn skip_if_stopped_registered(run: &Path, actor: &str, lane: &str) -> Result<Option<String>, String> {
+    Ok(stop_everywhere_registered(run, lane)?.map(|s| skip_line(actor, lane, &s)))
 }
 
 /// Writes `stop` as the whole record for its repo, replacing any there: how a lifted overlay
@@ -446,12 +446,20 @@ mod tests {
         let edits: Vec<(&str, Option<&str>)> = edits.iter().map(|(k, v)| (*k, v.as_deref())).collect();
         let _env = testkit::env(&edits);
         pause_repo(&run, "spira", &lanes("czar"), "o", "r", "u", 1).unwrap();
-        assert!(stop_everywhere_registered(&run, "czar").is_none(), "the other registered repo still runs");
-        assert!(skip_if_stopped_registered(&run, "czar pass", "czar").is_none());
+        assert!(stop_everywhere_registered(&run, "czar").unwrap().is_none(), "the other registered repo still runs");
+        assert!(skip_if_stopped_registered(&run, "czar pass", "czar").unwrap().is_none());
         pause_repo(&run, "other", &lanes("czar"), "o", "r", "u", 1).unwrap();
-        let line = skip_if_stopped_registered(&run, "czar pass", "czar").expect("stopped on both registered repos");
+        let line = skip_if_stopped_registered(&run, "czar pass", "czar").unwrap().expect("stopped on both registered repos");
         assert!(line.starts_with("czar pass: skipped") && line.contains("czar lane of spira"), "{line}");
-        assert!(skip_if_stopped_registered(&run, "reconciler", "remedies").is_none(), "another lane is no stop");
+        assert!(skip_if_stopped_registered(&run, "reconciler", "remedies").unwrap().is_none(), "another lane is no stop");
+    }
+    #[test]
+    fn an_unresolvable_home_refuses_rather_than_reading_not_stopped() {
+        let d = testkit::TempDir::new("scoped-stop-no-home");
+        let _env = testkit::env(&[("SPIRA_HOME", None), ("SPIRA_RELEASE", None)]);
+        let e = stop_everywhere_registered(d.path(), "czar").expect_err("no home is no answer");
+        assert!(e.contains("cannot tell") && e.contains("SPIRA_HOME"), "{e}");
+        assert!(skip_if_stopped_registered(d.path(), "czar pass", "czar").is_err());
     }
     #[test]
     fn put_repo_replaces_the_record_whole() {
