@@ -120,10 +120,15 @@ fn shipped_names() -> Vec<String> {
 /// would bring the unit back as an actor process under another name (ruling D6).
 const MIGRATED_COMMANDS: &[&str] = &["sentinel --call-only", "landing-pass land", "landing-pass --pass", "round-controller sifts", "batcher rounds", "gate-worker run", "queue publish-settle", "supersede-duty.sh", "reconciler goodput-pass"];
 
+/// Scenarios that call a migrated unit's binary on purpose: what they exercise is that binary's
+/// own cutover-lane refusal, which no task of the serve loop reaches.
+const CUTOVER_LANE_SCENARIOS: &[&str] = &["rc-cutover-mode"];
+
 #[test]
 fn no_shipped_scenario_runs_a_migrated_unit_as_an_inline_actor() {
     let found: Vec<(String, String)> = shipped()
         .into_iter()
+        .filter(|(n, _)| !CUTOVER_LANE_SCENARIOS.contains(&n.as_str()))
         .flat_map(|(n, sc)| sc.actors.into_iter().filter(|a| MIGRATED_COMMANDS.iter().any(|m| a.command.contains(m))).map(move |a| (n.clone(), a.command)))
         .collect();
     assert!(found.is_empty(), "these inline actors run a unit that is a task of spira-runtime serve: {found:?}");
