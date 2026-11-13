@@ -902,7 +902,7 @@ impl Backend for SqliteBackend {
             let mut out = Vec::new();
             let ends = skipped.iter().map(|(start, _)| Some(*start)).chain([None]);
             for (end, skip) in ends.zip(skipped.iter().map(Some).chain([None])) {
-                if out.len() < limit && end.map_or(true, |hi| lo.as_slice() < hi) {
+                if out.len() < limit && end.is_none_or(|hi| lo.as_slice() < hi) {
                     let rows = range_rows(
                         conn,
                         source(snap, at),
