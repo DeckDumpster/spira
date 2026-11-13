@@ -49,6 +49,7 @@ testkit = { path = "../testkit" }
 reconciler-engine = { path = "../reconciler-engine" }
 incident = { path = "../incident" }
 sentinel = { path = "../sentinel" }
+watchtower = { path = "../watchtower" }
 round-vm = { path = "../round-vm" }
 gate = { path = "../gate" }
 groomer = { path = "../groomer" }

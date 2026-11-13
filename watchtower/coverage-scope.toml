@@ -1,0 +1,9 @@
+# The Host section's status core and its appliers: the bead's own gate reports any branch in
+# them no test takes.
+[[scope]]
+path = "watchtower/src/host_section.rs"
+functions = ["free_share", "sample", "targets_of", "distance", "level", "condition", "status_of", "section_body", "decide", "decide_reap", "open_intents", "previous", "shed_from_of", "ack_args", "reap_of", "apply_one", "sync_knobs", "unreadable", "run"]
+
+[[scope]]
+path = "watchtower/src/probes.rs"
+functions = ["psi_full_avg300"]

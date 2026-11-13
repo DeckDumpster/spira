@@ -2157,6 +2157,7 @@ dependencies = [
  "state-store-sqlite",
  "testkit",
  "tsd",
+ "watchtower",
 ]
 
 [[package]]

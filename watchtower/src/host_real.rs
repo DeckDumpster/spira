@@ -115,7 +115,8 @@ pub fn pass(now: u64, cfg: &Cfg, run: &Path) -> Result<String, String> {
     };
     let sample = hs::sample(cfg, &|p| crate::fsstat::usage(p), &|p| std::fs::read_to_string(p).ok());
     let r = hs::run(&Ports { lc: &lc, config: &config, reaper: &reaper, record: &record }, now, &sample)?;
-    Ok(format!("watchtower: host section — acked {} step(s){}", r.acked.len(), if r.published { ", published" } else { "" }))
+    let unreadable = if r.unreadable.is_empty() { String::new() } else { format!(", not published: cannot read {}", r.unreadable.join(" ")) };
+    Ok(format!("watchtower: host section — acked {} step(s){}{unreadable}", r.acked.len(), if r.published { ", published" } else { "" }))
 }
 
 #[cfg(test)]

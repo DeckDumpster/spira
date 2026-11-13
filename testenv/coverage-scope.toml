@@ -1,0 +1,12 @@
+# target-reap's bounded reap: the bead's own gate reports any branch in them no test takes.
+[[scope]]
+path = "testenv/src/target_reap.rs"
+functions = ["parse", "reap_scratch", "reap_scratch_report"]
+
+[[scope]]
+path = "gate/src/target.rs"
+functions = ["bound", "reap_stale"]
+
+[[scope]]
+path = "testenv/src/reap.rs"
+functions = ["reap_idle"]

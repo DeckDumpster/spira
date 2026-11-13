@@ -244,6 +244,14 @@ pub struct Report {
     /// Each intent key and the word it was acked with.
     pub acked: Vec<(String, String)>,
     pub published: bool,
+    /// Terms the sample could not read: the distance names them, so nothing is published and
+    /// the section ages into `Stale` rather than carry a guess.
+    pub unreadable: Vec<&'static str>,
+}
+
+/// The terms of the distance the sample could not read.
+pub fn unreadable(s: &Sample) -> Vec<&'static str> {
+    [(host::SCRATCH, s.scratch), (host::WORKTREES, s.worktrees), (host::IO, s.io)].into_iter().filter(|(_, v)| v.is_none()).map(|(n, _)| n).collect()
 }
 
 fn argv(parts: &[&str]) -> Vec<String> {
@@ -370,6 +378,10 @@ pub fn run(p: &Ports, now: u64, sample: &Sample) -> Result<Report, String> {
     let (stale_scratch, stale_targets) = (p.reaper.stale(Stale::Scratch)?, p.reaper.stale(Stale::Targets)?);
     sync_knobs(p, par, stale_scratch, stale_targets)?;
     let h = Host { sample: sample.clone(), certify_par: par, shed_from, stale_scratch, stale_targets };
+    report.unreadable = unreadable(sample);
+    if !report.unreadable.is_empty() {
+        return Ok(report);
+    }
     let (status, unchanged) = status_of(prev.as_ref(), &h, now);
     if unchanged {
         return Ok(report);
@@ -379,4 +391,75 @@ pub fn run(p: &Ports, now: u64, sample: &Sample) -> Result<Report, String> {
     lc_ok(p, "publish Host/host", &argv(&["section", "publish-status", "--actor", host::OWNER, "--expect-rev", &rev, "--json", &body]))?;
     report.published = true;
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn intent(action: &str, from: Value, to: Value) -> Intent {
+        parse_intent(&json!({
+            "id": "1", "action": action, "target": "knobs/Host/host/x", "from": from, "to": to,
+            "moves": "io_full_avg300", "baseline": 1.0, "expected_effect": -1.0, "horizon": "15m",
+            "addresses": [], "taken_at": "2026-10-31T19:40:00Z", "by": { "pass": "p", "lock_token": "1.0" },
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_free_share_is_a_fraction_of_the_size_and_a_zero_size_has_none() {
+        assert_eq!(free_share(1500, 10_000), Some(0.15));
+        assert_eq!(free_share(20_000, 10_000), Some(1.0), "more available than size is clamped");
+        assert_eq!(free_share(-5, 10_000), Some(0.0));
+        assert_eq!(free_share(5, 0), None);
+    }
+
+    #[test]
+    fn an_action_the_kind_does_not_declare_or_with_no_whole_count_is_refused() {
+        assert!(matches!(decide(&intent("drain", json!(2), json!(1)), 2, None), Step::Refuse(m) if m.contains("drain")));
+        assert!(matches!(decide(&intent(host::SHED_SLOT, json!("2"), json!(1)), 2, None), Step::Refuse(m) if m.contains("whole")));
+        assert!(matches!(decide_reap(&intent(host::REAP_SCRATCH, json!("2"), json!(1)), 2), ReapStep::Refuse(m) if m.contains("whole")));
+        assert_eq!(decide_reap(&intent(host::REAP_SCRATCH, json!(20), json!(18)), 20), ReapStep::Reap);
+        assert_eq!(decide(&intent(host::SHED_SLOT, json!(3), json!(2)), 3, None), Step::Set(2));
+    }
+
+    #[test]
+    fn only_unacknowledged_host_intents_are_open() {
+        let item = |key: &str, action: &str, acked: bool| {
+            let mut i = json!({
+                "id": "1", "action": action, "target": "knobs/x/y/z", "from": 3, "to": 2, "moves": "io_full_avg300", "baseline": 9.0,
+                "expected_effect": -5.0, "horizon": "15m", "addresses": [], "taken_at": "2026-10-31T19:40:00Z", "by": { "pass": "p", "lock_token": "1.0" },
+            });
+            if acked {
+                i["ack"] = json!({ "at": "2026-10-31T19:41:00Z", "result": "applied", "observed_rev": 3 });
+            }
+            json!({ "key": key, "intent": i })
+        };
+        let snap = json!({ "intents": [
+            item("intents/Host/host/1", host::SHED_SLOT, false),
+            item("intents/Host/host/2", host::SHED_SLOT, true),
+            item("intents/DwarfFleet/fleet/3", "max-live-dwarves-raise", false),
+            { "key": "intents/Host/host/4", "intent": { "id": "4" } },
+            item("not-an-intent-key", host::SHED_SLOT, false),
+        ]});
+        assert_eq!(open_intents(&snap).iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["intents/Host/host/1"]);
+        assert!(open_intents(&json!({})).is_empty());
+        assert!(previous(&json!({})).is_none());
+    }
+
+    #[test]
+    fn the_unreadable_terms_are_exactly_the_ones_the_distance_names() {
+        let s = Sample { scratch: None, worktrees: Some(0.5), root: None, io: None };
+        assert_eq!(unreadable(&s), [host::SCRATCH, host::IO], "root is detail, not a term");
+        assert!(unreadable(&Sample { scratch: Some(0.5), worktrees: Some(0.5), root: None, io: Some(1.0) }).is_empty());
+    }
+
+    #[test]
+    fn with_no_spec_seeded_no_condition_is_raised() {
+        let h = Host { sample: Sample { scratch: Some(0.0), worktrees: Some(0.0), root: Some(0.0), io: Some(99.0) }, certify_par: 2, shed_from: None, stale_scratch: 0, stale_targets: 0 };
+        let (status, unchanged) = status_of(None, &h, 1_793_475_600);
+        assert!(!unchanged);
+        assert!(status["conditions"].as_array().unwrap().iter().all(|c| c["status"] == "False"));
+        assert_eq!(targets_of(None), None);
+    }
 }

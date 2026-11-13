@@ -18,6 +18,7 @@ mod assemble;
 mod dwarf_fleet;
 mod gate;
 mod goodput_pass;
+mod host;
 mod supply;
 mod vm_pool;
 

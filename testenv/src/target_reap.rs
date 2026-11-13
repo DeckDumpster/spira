@@ -153,7 +153,7 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
     let idle_ok = report(out, "idle: ", reap::reap_idle(&dir, dry, idle_secs, &reap::idle_age_secs, &busy_fn, None, None), dry);
     let state_fn = |id: &str| landed::lc_state(&lc_bin, &path_env, id);
     let tmp_ok = report(out, "tmp: ", reap::reap_tmp_targets(Path::new("/tmp"), dry, &state_fn, &busy_fn), dry);
-    let _ = reap_scratch_report(&dir, None, dry, &busy_fn, out);
+    let _ = reap_scratch_report(&dir, None, dry, gate::target::on_tmpfs(Path::new("/tmp")), &busy_fn, out);
     if landed_ok && idle_ok && tmp_ok {
         0
     } else {
@@ -166,18 +166,20 @@ fn reap_scratch(dir: &Path, fraction: f64, dry: bool, busy_fn: &dyn Fn(&Path) ->
         let _ = writeln!(err, "target-reap: no SPIRA_RUN and no SPIRA_GATE_TARGET_ROOT — no gate scratch to find");
         return false;
     }
-    if !reap_scratch_report(dir, Some(fraction), dry, busy_fn, out) {
+    if !reap_scratch_report(dir, Some(fraction), dry, gate::target::on_tmpfs(Path::new("/tmp")), busy_fn, out) {
         let _ = writeln!(out, "target-reap: {} 0 stale gate target dir(s): this box keeps no gate scratch", if dry { "would remove" } else { "removed" });
     }
     true
 }
 
-fn reap_scratch_report(dir: &Path, fraction: Option<f64>, dry: bool, busy_fn: &dyn Fn(&Path) -> bool, out: &mut dyn Write) -> bool {
+/// Reaps (or counts) the stale gate scratch; `false` when this box keeps none (`tmpfs`: whether
+/// the temp dir is a tmpfs, which is where it lives unless a root is named).
+pub fn reap_scratch_report(dir: &Path, fraction: Option<f64>, dry: bool, tmpfs: bool, busy_fn: &dyn Fn(&Path) -> bool, out: &mut dyn Write) -> bool {
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
     let explicit = var("SPIRA_GATE_TARGET_ROOT").unwrap_or_default();
     let max_age = var("SPIRA_GATE_TARGET_MAX_AGE_MIN").and_then(|v| v.parse::<u64>().ok()).unwrap_or(120);
     let held_fn = |name: &str| gate::target::held_by_gate(Path::new(&run), name);
-    let Some(root) = gate::target::root(&explicit, &run, gate::target::on_tmpfs(Path::new("/tmp"))) else { return false };
+    let Some(root) = gate::target::root(&explicit, &run, tmpfs) else { return false };
     let gone = gate::target::reap_stale(&root, dir, std::time::Duration::from_secs(max_age * 60), fraction, dry, busy_fn, &held_fn);
     let _ = writeln!(
         out,

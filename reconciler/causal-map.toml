@@ -42,3 +42,9 @@ kind = "Supply"
 weight = 0.5
 unit = "landed per day per unit of distance"
 source = "throughput-bounds §3-4: landable filings run at about 75-90 a day against a floor of 150; the shortfall bounds landings only once drafting is the constraint, judgement not measured"
+
+[[weight]]
+kind = "Host"
+weight = 24.0
+unit = "landed per day per unit of distance"
+source = "throughput-bounds §4.2: before going past 5 dwarves add disk or RAM, so a host gap caps the slots the fleet's +24 a day each depends on; judgement, not measured"

@@ -850,6 +850,10 @@ mod tests {
         let psi = "some avg10=1.00 avg60=2.00 avg300=0.50 total=1\nfull avg10=0.00 avg60=12.34 avg300=1.00 total=1\n";
         assert_eq!(psi_full_avg60(psi), Some(12.34));
         assert_eq!(psi_full_avg60("some avg60=9.0\n"), None);
+        let both = "some avg10=1.00 avg60=2.00 avg300=3.00 total=4\nfull avg10=5.00 avg60=6.00 avg300=52.50 total=7\n";
+        assert_eq!(psi_full_avg300(both), Some(52.5), "the full line's avg300, not some's");
+        assert_eq!(psi_full_avg300("some avg300=9.0\n"), None);
+        assert_eq!(psi_full_avg300("full avg10=1.0 avg60=2.0\n"), None);
     }
 
     fn cfg(dir: &Path) -> Cfg {
