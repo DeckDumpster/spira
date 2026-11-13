@@ -37,22 +37,17 @@ pub fn hand_unit_name(batch: &str, token: Rev) -> Result<String, String> {
 
 /// Whether `unit` is a runner of `batch`, under any lease token and either driver.
 pub fn unit_drives(unit: &str, batch: &str) -> bool {
-    [
-        unit_name(batch, Rev::new(0, 0)),
-        hand_unit_name(batch, Rev::new(0, 0)),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|zero| {
-        let stem = zero.strip_suffix("0-0").unwrap_or(&zero);
-        unit.strip_prefix(stem).is_some_and(|t| {
-            t.split_once('-').is_some_and(|(a, b)| {
-                [a, b]
-                    .iter()
-                    .all(|w| !w.is_empty() && w.bytes().all(|c| c.is_ascii_digit()))
+    [unit_name(batch, Rev::new(0, 0)), hand_unit_name(batch, Rev::new(0, 0))]
+        .into_iter()
+        .flatten()
+        .any(|zero| {
+            let stem = zero.strip_suffix("0-0").unwrap_or(&zero);
+            unit.strip_prefix(stem).is_some_and(|t| {
+                t.split_once('-').is_some_and(|(a, b)| {
+                    [a, b].iter().all(|w| !w.is_empty() && w.bytes().all(|c| c.is_ascii_digit()))
+                })
             })
         })
-    })
 }
 
 /// A lease's past holder: the runner launched for `batch` under `token`.
@@ -199,10 +194,7 @@ mod tests {
         for batch in ["b1", "b0", "b0-0", "b"] {
             for t in [Rev::new(7, 0), Rev::new(10, 3)] {
                 assert!(unit_drives(&unit_name(batch, t).unwrap(), batch), "{batch}");
-                assert!(
-                    unit_drives(&hand_unit_name(batch, t).unwrap(), batch),
-                    "{batch}"
-                );
+                assert!(unit_drives(&hand_unit_name(batch, t).unwrap(), batch), "{batch}");
             }
         }
         let long = unit_name("b-1", Rev::new(7, 0)).unwrap();
@@ -270,10 +262,8 @@ mod tests {
     #[test]
     fn a_stopped_unit_and_no_vm_is_proof() {
         let b = Bench::new();
-        b.units.set(
-            &old().unit().unwrap(),
-            UnitState::Stopped("inactive".into()),
-        );
+        b.units
+            .set(&old().unit().unwrap(), UnitState::Stopped("inactive".into()));
         assert_eq!(
             prove_dead(&b.ports(), &old()),
             Proof::Dead {

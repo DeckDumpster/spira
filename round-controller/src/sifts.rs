@@ -11,8 +11,8 @@ use std::process::Command;
 
 use serde_json::Value;
 use sift::{Acts, Candidate, FileStore, GitProbe};
-use spira_config::repos::Registry;
 use spira_store::lc_call::LcClient;
+use spira_config::repos::Registry;
 
 const WHO: &str = "round-controller";
 
@@ -254,11 +254,7 @@ fn lc_answer(
 ) -> Result<String, String> {
     let r = r.map_err(|e| format!("spira-lc: {e}"))?;
     if r.code != 0 {
-        let said = if r.err.trim().is_empty() {
-            &r.out
-        } else {
-            &r.err
-        };
+        let said = if r.err.trim().is_empty() { &r.out } else { &r.err };
         let last = said.lines().last().unwrap_or("").trim();
         return Err(format!(
             "spira-lc exited {}{}",
@@ -292,12 +288,7 @@ fn lcq_held_with(lc: &LcClient, args: &[&str]) -> Result<String, String> {
 /// The held lifecycle rows `q` keeps, as `list` printed them, when the process keeps the store's
 /// watch; `None` when it does not.
 fn held_rows(q: &store_view::RowQuery) -> Option<Result<Vec<Value>, String>> {
-    store_view::shared().map(|views| {
-        views
-            .rows(q)
-            .map(|r| r.value)
-            .map_err(|e| format!("could not say: {e}"))
-    })
+    store_view::shared().map(|views| views.rows(q).map(|r| r.value).map_err(|e| format!("could not say: {e}")))
 }
 
 /// `show <id>`'s answer, from the held row when the process keeps the store's watch.
@@ -305,11 +296,7 @@ fn show_text(lc: &LcClient, id: &str) -> Result<String, String> {
     let Some(views) = store_view::shared() else {
         return lcq_with(lc, &["show", id]);
     };
-    match views
-        .show(id)
-        .map_err(|e| format!("could not say: {e}"))?
-        .value
-    {
+    match views.show(id).map_err(|e| format!("could not say: {e}"))?.value {
         Some(shown) => Ok(shown.to_string()),
         None => Err(format!("spira-lc exited 1: no row for {id}")),
     }
@@ -322,13 +309,13 @@ fn parsed(text: &str, what: &str) -> Result<Value, String> {
 /// The SUBMITTED and CERTIFIED rows, read once per repository: the pool and the sifted tips
 /// are both filters of this one snapshot.
 fn pool_rows(env: &Env) -> Result<Vec<Value>, String> {
-    if let Some(rows) = held_rows(&store_view::RowQuery {
-        states: &["SUBMITTED", "CERTIFIED"],
-        ..Default::default()
-    }) {
+    if let Some(rows) = held_rows(&store_view::RowQuery { states: &["SUBMITTED", "CERTIFIED"], ..Default::default() }) {
         return rows;
     }
-    let text = lcq(env, &["list", "--state", "SUBMITTED,CERTIFIED"])?;
+    let text = lcq(
+        env,
+        &["list", "--state", "SUBMITTED,CERTIFIED"],
+    )?;
     serde_json::from_str(&text).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))
 }
 
@@ -336,10 +323,7 @@ fn rows_of(env: &Env, ids: &[String]) -> Result<Vec<Value>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    if let Some(rows) = held_rows(&store_view::RowQuery {
-        ids: Some(ids),
-        ..Default::default()
-    }) {
+    if let Some(rows) = held_rows(&store_view::RowQuery { ids: Some(ids), ..Default::default() }) {
         return rows;
     }
     let text = lcq(env, &["list", "--ids", &ids.join(",")])?;
@@ -441,85 +425,34 @@ fn certified_pool(env: &Env, repo: &Repo, rows: &[Value]) -> Result<Vec<Candidat
     .iter()
     .filter_map(|r| str_of(r, "id").map(str::to_string))
     .collect();
-    let stacks: BTreeMap<String, Vec<String>> = ids
-        .iter()
-        .filter(|id| shown.contains(*id))
-        .map(|id| (id.clone(), live_stack(env, id)))
-        .collect();
+    let stacks: BTreeMap<String, Vec<String>> = ids.iter().filter(|id| shown.contains(*id)).map(|id| (id.clone(), live_stack(env, id))).collect();
     let pooled: BTreeSet<&str> = rows.iter().filter_map(|r| str_of(r, "bead_id")).collect();
-    let outside: Vec<String> = stacks
-        .values()
-        .flatten()
-        .filter(|id| !pooled.contains(id.as_str()))
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    let outside: Vec<String> = stacks.values().flatten().filter(|id| !pooled.contains(id.as_str())).cloned().collect::<BTreeSet<_>>().into_iter().collect();
     let outside = rows_of(env, &outside)?;
     Ok(select_pool(rows, &outside, &branches, &shown, &stacks))
 }
 
 /// The ids of the unheld pool rows whose recorded tip is their branch's live tip.
 fn at_live_tips(rows: &[Value], branches: &BTreeMap<String, String>) -> Vec<String> {
-    read_pool(rows)
-        .into_iter()
-        .filter(|(id, tip)| branches.get(id) == Some(tip))
-        .map(|(id, _)| id)
-        .collect()
+    read_pool(rows).into_iter().filter(|(id, tip)| branches.get(id) == Some(tip)).map(|(id, _)| id).collect()
 }
 
 /// The pool, pure: of the unheld `rows` not ejected at their tip, those at their branch's live
 /// tip with a content row (`shown`), less every member stacked (by `stacks`, its unfinished
 /// prerequisites) on a bead held or ejected at its tip in `rows` or `outside`, on one whose tip
 /// moved, or on a member dropped for that reason.
-pub fn select_pool(
-    rows: &[Value],
-    outside: &[Value],
-    branches: &BTreeMap<String, String>,
-    shown: &BTreeSet<String>,
-    stacks: &BTreeMap<String, Vec<String>>,
-) -> Vec<Candidate> {
-    let (current, moved): (Vec<_>, Vec<_>) = read_pool(rows)
-        .into_iter()
-        .partition(|(id, tip)| branches.get(id) == Some(tip));
+pub fn select_pool(rows: &[Value], outside: &[Value], branches: &BTreeMap<String, String>, shown: &BTreeSet<String>, stacks: &BTreeMap<String, Vec<String>>) -> Vec<Candidate> {
+    let (current, moved): (Vec<_>, Vec<_>) = read_pool(rows).into_iter().partition(|(id, tip)| branches.get(id) == Some(tip));
     let mut barred: BTreeSet<String> = moved.into_iter().map(|(id, _)| id).collect();
-    let members: Vec<Member> = current
-        .into_iter()
-        .filter(|(id, _)| shown.contains(id))
-        .map(|(id, tip)| Member {
-            stacked_on: stacks.get(&id).cloned().unwrap_or_default(),
-            id,
-            tip,
-        })
-        .collect();
-    barred.extend(
-        rows.iter()
-            .chain(outside)
-            .filter(|r| !holds_empty(r) || ejected_at_tip(r))
-            .filter_map(|r| str_of(r, "bead_id").map(str::to_string)),
-    );
-    drop_stacked_on_barred(members, barred)
-        .into_iter()
-        .map(|m| Candidate {
-            id: m.id,
-            tip: m.tip,
-        })
-        .collect()
+    let members: Vec<Member> = current.into_iter().filter(|(id, _)| shown.contains(id)).map(|(id, tip)| Member { stacked_on: stacks.get(&id).cloned().unwrap_or_default(), id, tip }).collect();
+    barred.extend(rows.iter().chain(outside).filter(|r| !holds_empty(r) || ejected_at_tip(r)).filter_map(|r| str_of(r, "bead_id").map(str::to_string)));
+    drop_stacked_on_barred(members, barred).into_iter().map(|m| Candidate { id: m.id, tip: m.tip }).collect()
 }
 
 /// The prerequisites of `stack` not yet finished by `state` (LANDED, SUPERSEDED, DROPPED); an
 /// unread prerequisite is live, the safe side.
 pub fn live_prereqs(stack: &[String], state: &BTreeMap<String, String>) -> Vec<String> {
-    stack
-        .iter()
-        .filter(|k| {
-            !matches!(
-                state.get(*k).map(String::as_str),
-                Some("LANDED" | "SUPERSEDED" | "DROPPED")
-            )
-        })
-        .cloned()
-        .collect()
+    stack.iter().filter(|k| !matches!(state.get(*k).map(String::as_str), Some("LANDED" | "SUPERSEDED" | "DROPPED"))).cloned().collect()
 }
 
 /// The prerequisites `id`'s recorded stack names that are not yet finished. A failed or
@@ -562,17 +495,7 @@ fn stack_of(show: &Value) -> Vec<String> {
         Some(other) => other.clone(),
         None => return Vec::new(),
     };
-    stack
-        .as_object()
-        .map(|o| {
-            o.iter()
-                .filter(|(_, v)| v.is_string())
-                .map(|(k, _)| k.clone())
-                .collect::<BTreeSet<String>>()
-                .into_iter()
-                .collect()
-        })
-        .unwrap_or_default()
+    stack.as_object().map(|o| o.iter().filter(|(_, v)| v.is_string()).map(|(k, _)| k.clone()).collect::<BTreeSet<String>>().into_iter().collect()).unwrap_or_default()
 }
 
 /// A prerequisite recorded LANDED, SUPERSEDED or DROPPED sequences nothing; an unreadable row
@@ -614,10 +537,7 @@ fn bd_show(env: &Env, ids: &[String]) -> Result<Value, String> {
     if ids.is_empty() {
         return Ok(Value::Array(vec![]));
     }
-    plan_items(&lcq_held(
-        env,
-        &["plan", "items", "--full", "--ids", &ids.join(",")],
-    )?)
+    plan_items(&lcq_held(env, &["plan", "items", "--full", "--ids", &ids.join(",")])?)
 }
 
 /// The `items` of a `plan items` answer.
@@ -660,13 +580,8 @@ fn batch_show(env: &Env, repo: &str) -> Result<String, String> {
 /// `repo`'s open batch record from `views`, its batch records current (read afresh unless a watch keeps them so). A read the store
 /// refused, or a view it cannot vouch for, could not say: it is never read as no batch.
 fn shown_in(views: &store_view::Projection, repo: &str) -> Result<String, String> {
-    views
-        .batches_current()
-        .map_err(|e| format!("could not say: {e}"))?;
-    views
-        .batch_view(repo)
-        .map(|r| r.value.shown())
-        .map_err(|e| format!("could not say: {e}"))
+    views.batches_current().map_err(|e| format!("could not say: {e}"))?;
+    views.batch_view(repo).map(|r| r.value.shown()).map_err(|e| format!("could not say: {e}"))
 }
 
 /// The members of the repository's open round, whose patches a candidate may duplicate, read
@@ -747,13 +662,7 @@ fn lc_state(env: &Env, id: &str) -> Result<String, String> {
         .ok_or_else(|| "show: no state".to_string())
 }
 
-fn bead_event(
-    lc: &LcClient,
-    id: &str,
-    state: &str,
-    version: u64,
-    kind: Value,
-) -> Result<(), String> {
+fn bead_event(lc: &LcClient, id: &str, state: &str, version: u64, kind: Value) -> Result<(), String> {
     let (version, kind) = (version.to_string(), kind.to_string());
     lcq_with(
         lc,
@@ -846,26 +755,11 @@ impl PoolRow {
         Some(PoolRow {
             id: str_of(r, "bead_id")?.to_string(),
             state: str_of(r, "state").unwrap_or("").to_string(),
-            version: r
-                .get("version")
-                .and_then(|v| {
-                    v.as_u64()
-                        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
-                })
-                .unwrap_or(0),
+            version: r.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))).unwrap_or(0),
             tip: str_of(r, "tip").unwrap_or("none").to_string(),
             holds: match r.get("holds") {
-                Some(Value::Array(a)) => a
-                    .iter()
-                    .filter_map(|h| h.as_str().map(str::to_string))
-                    .collect(),
-                Some(Value::String(t)) => serde_json::from_str::<Vec<Value>>(t)
-                    .map(|a| {
-                        a.iter()
-                            .map(|h| h.as_str().map_or_else(|| h.to_string(), str::to_string))
-                            .collect()
-                    })
-                    .unwrap_or_else(|_| vec![t.clone()]),
+                Some(Value::Array(a)) => a.iter().filter_map(|h| h.as_str().map(str::to_string)).collect(),
+                Some(Value::String(t)) => serde_json::from_str::<Vec<Value>>(t).map(|a| a.iter().map(|h| h.as_str().map_or_else(|| h.to_string(), str::to_string)).collect()).unwrap_or_else(|_| vec![t.clone()]),
                 None | Some(Value::Null) => vec![],
                 Some(other) => vec![other.to_string()],
             },
@@ -927,26 +821,16 @@ impl RepoFacts {
         let rows: Vec<Value> = self.rows.iter().map(PoolRow::value).collect();
         let outside: Vec<Value> = self.outside.iter().map(PoolRow::value).collect();
         let shown: BTreeSet<String> = self.items.keys().cloned().collect();
-        let stacks: BTreeMap<String, Vec<String>> = self
-            .stack
-            .iter()
-            .map(|(id, s)| (id.clone(), live_prereqs(s, &self.prereq_state)))
-            .collect();
+        let stacks: BTreeMap<String, Vec<String>> = self.stack.iter().map(|(id, s)| (id.clone(), live_prereqs(s, &self.prereq_state))).collect();
         select_pool(&rows, &outside, &self.branch_tips, &shown, &stacks)
     }
 
     /// The open round's members as the screen takes them.
     pub fn open_members(&self) -> Vec<Candidate> {
-        self.open_round
-            .iter()
-            .map(|t| {
-                let (id, tip) = t.split_once(':').unwrap_or((t, ""));
-                Candidate {
-                    id: id.to_string(),
-                    tip: tip.to_string(),
-                }
-            })
-            .collect()
+        self.open_round.iter().map(|t| {
+            let (id, tip) = t.split_once(':').unwrap_or((t, ""));
+            Candidate { id: id.to_string(), tip: tip.to_string() }
+        }).collect()
     }
 }
 
@@ -962,13 +846,10 @@ pub struct Reads<'a> {
 
 /// Every `queue` and `queue.local` repository, with whether it is local.
 pub fn screened_repos(reg: &Registry) -> Vec<(String, bool)> {
-    reg.all()
-        .into_iter()
-        .filter_map(|name| {
-            let land = reg.land(&name);
-            matches!(land.as_str(), "queue" | "queue.local").then(|| (name, land == "queue.local"))
-        })
-        .collect()
+    reg.all().into_iter().filter_map(|name| {
+        let land = reg.land(&name);
+        matches!(land.as_str(), "queue" | "queue.local").then(|| (name, land == "queue.local"))
+    }).collect()
 }
 
 /// One repository's facts, read in-process: the store over `lc`, the open round from the
@@ -976,80 +857,33 @@ pub fn screened_repos(reg: &Registry) -> Vec<(String, bool)> {
 /// no git past the branch list and fetches nothing.
 pub fn observe_repo(r: &Reads, name: &str, local: bool) -> Result<RepoFacts, String> {
     let repo = find_repo(r.reg, name, local)?;
-    let rows: Vec<Value> = match held_rows(&store_view::RowQuery {
-        states: &["SUBMITTED", "CERTIFIED"],
-        ..Default::default()
-    }) {
+    let rows: Vec<Value> = match held_rows(&store_view::RowQuery { states: &["SUBMITTED", "CERTIFIED"], ..Default::default() }) {
         Some(rows) => rows?,
-        None => serde_json::from_str(&lcq_with(
-            r.lc,
-            &["list", "--state", "SUBMITTED,CERTIFIED"],
-        )?)
-        .map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?,
+        None => serde_json::from_str(&lcq_with(r.lc, &["list", "--state", "SUBMITTED,CERTIFIED"])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?,
     };
-    let mut f = RepoFacts {
-        rows: rows.iter().filter_map(PoolRow::of).collect(),
-        branch_tips: branch_tips(&repo)?,
-        ..RepoFacts::default()
-    };
+    let mut f = RepoFacts { rows: rows.iter().filter_map(PoolRow::of).collect(), branch_tips: branch_tips(&repo)?, ..RepoFacts::default() };
     let ids = at_live_tips(&rows, &f.branch_tips);
     if !ids.is_empty() {
-        let items = plan_items(&lcq_held_with(
-            r.lc,
-            &["plan", "items", "--full", "--ids", &ids.join(",")],
-        )?)?;
+        let items = plan_items(&lcq_held_with(r.lc, &["plan", "items", "--full", "--ids", &ids.join(",")])?)?;
         for row in items.as_array().into_iter().flatten() {
             if let Some(id) = str_of(row, "id") {
-                f.items.insert(
-                    id.to_string(),
-                    format!(
-                        "{}\n{}",
-                        str_of(row, "description").unwrap_or(""),
-                        str_of(row, "notes").unwrap_or("")
-                    ),
-                );
+                f.items.insert(id.to_string(), format!("{}\n{}", str_of(row, "description").unwrap_or(""), str_of(row, "notes").unwrap_or("")));
             }
         }
     }
     for id in ids.iter().filter(|id| f.items.contains_key(*id)) {
-        let stack = show_text(r.lc, id)
-            .ok()
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-            .map(|v| stack_of(&v))
-            .unwrap_or_default();
+        let stack = show_text(r.lc, id).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).map(|v| stack_of(&v)).unwrap_or_default();
         for k in &stack {
-            if let Some(state) = show_text(r.lc, k)
-                .ok()
-                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-                .and_then(|v| {
-                    v.get("bead")
-                        .and_then(|b| str_of(b, "state"))
-                        .map(str::to_string)
-                })
-            {
+            if let Some(state) = show_text(r.lc, k).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.get("bead").and_then(|b| str_of(b, "state")).map(str::to_string)) {
                 f.prereq_state.insert(k.clone(), state);
             }
         }
         f.stack.insert(id.clone(), stack);
     }
     let pooled: BTreeSet<&str> = f.rows.iter().map(|p| p.id.as_str()).collect();
-    let outside: Vec<String> = f
-        .stack
-        .values()
-        .flatten()
-        .filter(|k| !pooled.contains(k.as_str()))
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    f.outside = rows_of_with(r.lc, &outside)?
-        .iter()
-        .filter_map(PoolRow::of)
-        .collect();
-    f.open_round = open_round(&|repo| shown_in(r.views, repo), name)?
-        .into_iter()
-        .map(|c| format!("{}:{}", c.id, c.tip))
-        .collect();
+    let outside: Vec<String> = f.stack.values().flatten().filter(|k| !pooled.contains(k.as_str())).cloned().collect::<BTreeSet<_>>().into_iter().collect();
+    f.outside = rows_of_with(r.lc, &outside)?.iter().filter_map(PoolRow::of).collect();
+    f.open_round = open_round(&|repo| shown_in(r.views, repo), name)?.into_iter().map(|c| format!("{}:{}", c.id, c.tip)).collect();
     let pool = f.pool();
     if pool.is_empty() {
         return Ok(f);
@@ -1058,9 +892,7 @@ pub fn observe_repo(r: &Reads, name: &str, local: bool) -> Result<RepoFacts, Str
     if !f.fetched {
         return Ok(f);
     }
-    f.identity_pages = sift::identity::load(r.wiki, r.identity_projects, &r.reg.names())
-        .ok()
-        .map(|m| m.keys().cloned().collect());
+    f.identity_pages = sift::identity::load(r.wiki, r.identity_projects, &r.reg.names()).ok().map(|m| m.keys().cloned().collect());
     let probe = GitProbe {
         repo: repo.path.clone(),
         name: repo.name.clone(),
@@ -1074,18 +906,14 @@ pub fn observe_repo(r: &Reads, name: &str, local: bool) -> Result<RepoFacts, Str
     };
     let base = sift::Probe::base(&probe).unwrap_or_default();
     for c in pool.iter().chain(&f.open_members()) {
-        f.candidates
-            .insert(c.id.clone(), facts_of(&probe, &base, c));
+        f.candidates.insert(c.id.clone(), facts_of(&probe, &base, c));
     }
     Ok(f)
 }
 
 fn facts_of(probe: &GitProbe, base: &str, c: &Candidate) -> CandidateFacts {
     use sift::Probe;
-    let mut f = CandidateFacts {
-        base: base.to_string(),
-        ..CandidateFacts::default()
-    };
+    let mut f = CandidateFacts { base: base.to_string(), ..CandidateFacts::default() };
     match probe.merge(&c.tip) {
         Ok(sift::Merge::Conflict(files)) => f.conflicts = files,
         Ok(sift::Merge::Clean(_)) => {}
@@ -1110,14 +938,10 @@ fn rows_of_with(lc: &LcClient, ids: &[String]) -> Result<Vec<Value>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    if let Some(rows) = held_rows(&store_view::RowQuery {
-        ids: Some(ids),
-        ..Default::default()
-    }) {
+    if let Some(rows) = held_rows(&store_view::RowQuery { ids: Some(ids), ..Default::default() }) {
         return rows;
     }
-    serde_json::from_str(&lcq_with(lc, &["list", "--ids", &ids.join(",")])?)
-        .map_err(|e| format!("spira-lc list --ids: unparsed reply: {e}"))
+    serde_json::from_str(&lcq_with(lc, &["list", "--ids", &ids.join(",")])?).map_err(|e| format!("spira-lc list --ids: unparsed reply: {e}"))
 }
 
 /// Fetches `name`'s base remote: what the screen's pass is refused without.
@@ -1128,21 +952,7 @@ pub fn fetch_repo_base(reg: &Registry, name: &str, local: bool) -> Result<(), St
 /// Supersedes `id` by `keeper` through the store's close.
 pub fn lc_supersede(lc: &LcClient, id: &str, keeper: &str) -> Result<(), String> {
     let reason = format!("Sift: identical patch (patch-id) to {keeper}.");
-    let r = lc
-        .call_stdin(
-            &[
-                "close",
-                id,
-                "--reason-file",
-                "-",
-                "--actor",
-                "sift",
-                "--superseded-by",
-                keeper,
-            ],
-            &reason,
-        )
-        .map_err(|e| format!("spira-lc close {id}: {e}"))?;
+    let r = lc.call_stdin(&["close", id, "--reason-file", "-", "--actor", "sift", "--superseded-by", keeper], &reason).map_err(|e| format!("spira-lc close {id}: {e}"))?;
     match r.code {
         0 => Ok(()),
         code => Err(format!("spira-lc close {id} exited {code}: {}", r.text())),
@@ -1152,15 +962,10 @@ pub fn lc_supersede(lc: &LcClient, id: &str, keeper: &str) -> Result<(), String>
 /// The evidence a send-back stands on, written on the bead's notes through the store's `work`
 /// door (`work <id> note -`, the text on stdin).
 pub fn lc_note(lc: &LcClient, id: &str, text: &str) -> Result<(), String> {
-    let r = lc
-        .call_stdin(&["work", id, "note", "-"], text)
-        .map_err(|e| format!("spira-lc work {id} note: {e}"))?;
+    let r = lc.call_stdin(&["work", id, "note", "-"], text).map_err(|e| format!("spira-lc work {id} note: {e}"))?;
     match r.code {
         0 => Ok(()),
-        code => Err(format!(
-            "spira-lc work {id} note exited {code}: {}",
-            r.text()
-        )),
+        code => Err(format!("spira-lc work {id} note exited {code}: {}", r.text())),
     }
 }
 
@@ -1176,35 +981,19 @@ mod tests {
         };
         let open = open_round(&show, "deck").unwrap();
         assert_eq!(
-            open.iter()
-                .map(|c| (c.id.as_str(), c.tip.as_str()))
-                .collect::<Vec<_>>(),
+            open.iter().map(|c| (c.id.as_str(), c.tip.as_str())).collect::<Vec<_>>(),
             [("sp-a", "ta"), ("sp-b", "tb")]
         );
-        let opening =
-            |_: &str| Ok("batch_id=deck-1\nforge.phase=opening\nmembers=sp-a:ta\n".to_string());
-        assert!(
-            open_round(&opening, "deck").unwrap().is_empty(),
-            "no PR yet: nothing to duplicate"
-        );
-        assert!(open_round(&|_| Ok(String::new()), "deck")
-            .unwrap()
-            .is_empty());
-        assert!(
-            open_round(&|_| Err("queue batch show exited 1".into()), "deck").is_err(),
-            "cannot tell is not no round"
-        );
+        let opening = |_: &str| Ok("batch_id=deck-1\nforge.phase=opening\nmembers=sp-a:ta\n".to_string());
+        assert!(open_round(&opening, "deck").unwrap().is_empty(), "no PR yet: nothing to duplicate");
+        assert!(open_round(&|_| Ok(String::new()), "deck").unwrap().is_empty());
+        assert!(open_round(&|_| Err("queue batch show exited 1".into()), "deck").is_err(), "cannot tell is not no round");
     }
 
     struct Store(std::sync::Mutex<Vec<Result<spira_store::lc_call::Reply, String>>>);
 
     impl spira_store::lc_call::Transport for Store {
-        fn exchange(
-            &self,
-            argv: &[String],
-            _stdin: Option<&str>,
-            _d: std::time::Duration,
-        ) -> Result<spira_store::lc_call::Reply, String> {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             assert_eq!(argv[..2], ["rc", "list"], "only the batch records are read");
             crate::lock(&self.0).remove(0)
         }
@@ -1212,23 +1001,10 @@ mod tests {
 
     /// Views on `answers` whose clock moves a second at every look, so a zero staleness is stale
     /// by the first read.
-    fn views(
-        answers: Vec<Result<spira_store::lc_call::Reply, String>>,
-        stale: std::time::Duration,
-    ) -> store_view::Projection {
-        let client = spira_store::lc_call::LcClient::over(
-            std::sync::Arc::new(Store(std::sync::Mutex::new(answers))),
-            true,
-        );
-        let (t0, looks) = (
-            std::time::Instant::now(),
-            std::sync::atomic::AtomicU64::new(0),
-        );
-        let clock = move || {
-            t0 + std::time::Duration::from_secs(
-                looks.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            )
-        };
+    fn views(answers: Vec<Result<spira_store::lc_call::Reply, String>>, stale: std::time::Duration) -> store_view::Projection {
+        let client = spira_store::lc_call::LcClient::over(std::sync::Arc::new(Store(std::sync::Mutex::new(answers))), true);
+        let (t0, looks) = (std::time::Instant::now(), std::sync::atomic::AtomicU64::new(0));
+        let clock = move || t0 + std::time::Duration::from_secs(looks.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         store_view::Projection::new(client, stale, std::sync::Arc::new(clock))
     }
 
@@ -1238,41 +1014,18 @@ mod tests {
             {"key": "batches/deck/deck-1", "create_rev": {"main": 2}, "value": {"data": {
                 "batch_id": "deck-1", "state": "OPEN", "repo": "deck",
                 "round": {"members": "sp-a:ta sp-b:tb", "forge.phase": "armed", "pr": "12"}}}}]}});
-        let ok = Ok(spira_store::lc_call::Reply {
-            code: 0,
-            out: listed.to_string(),
-            err: String::new(),
-        });
-        let v = views(
-            vec![ok.clone(), ok.clone()],
-            std::time::Duration::from_secs(60),
-        );
+        let ok = Ok(spira_store::lc_call::Reply { code: 0, out: listed.to_string(), err: String::new() });
+        let v = views(vec![ok.clone(), ok.clone()], std::time::Duration::from_secs(60));
         let open = open_round(&|r| shown_in(&v, r), "deck").unwrap();
-        assert_eq!(
-            open.iter()
-                .map(|c| (c.id.as_str(), c.tip.as_str()))
-                .collect::<Vec<_>>(),
-            [("sp-a", "ta"), ("sp-b", "tb")]
-        );
-        assert!(
-            open_round(&|r| shown_in(&v, r), "other")
-                .unwrap()
-                .is_empty(),
-            "no batch open: nothing to duplicate"
-        );
+        assert_eq!(open.iter().map(|c| (c.id.as_str(), c.tip.as_str())).collect::<Vec<_>>(), [("sp-a", "ta"), ("sp-b", "tb")]);
+        assert!(open_round(&|r| shown_in(&v, r), "other").unwrap().is_empty(), "no batch open: nothing to duplicate");
 
-        let down = views(
-            vec![Err("the lifecycle service is not answering".into())],
-            std::time::Duration::from_secs(60),
-        );
+        let down = views(vec![Err("the lifecycle service is not answering".into())], std::time::Duration::from_secs(60));
         let e = open_round(&|r| shown_in(&down, r), "deck").unwrap_err();
         assert!(e.starts_with("could not say:"), "{e}");
         let stale = views(vec![ok], std::time::Duration::ZERO);
         let e = open_round(&|r| shown_in(&stale, r), "deck").unwrap_err();
-        assert!(
-            e.starts_with("could not say:") && e.contains("stale past"),
-            "{e}"
-        );
+        assert!(e.starts_with("could not say:") && e.contains("stale past"), "{e}");
     }
 
     #[test]

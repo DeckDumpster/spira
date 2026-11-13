@@ -82,7 +82,10 @@ fn kill_child_terminates_the_group_and_waits_out_its_teardown() {
     let sleep = Advance(b.clock.clone());
     let c = Stubborn::new(&b.clock, Some(12_000), false);
     let start = b.clock.now_ms();
-    assert_eq!(kill_child(&p, &env(&sleep), &c, &mut || {}), Killed::Term);
+    assert_eq!(
+        kill_child(&p, &env(&sleep), &c, &mut || {}),
+        Killed::Term
+    );
     assert_eq!(*crate::lock(&c.signals), [(start, Signal::Term)]);
     assert_eq!(
         b.clock.now_ms() - start,
@@ -98,7 +101,10 @@ fn kill_child_escalates_to_kill_past_the_teardown_deadline() {
     let sleep = Advance(b.clock.clone());
     let c = Stubborn::new(&b.clock, None, false);
     let start = b.clock.now_ms();
-    assert_eq!(kill_child(&p, &env(&sleep), &c, &mut || {}), Killed::Kill);
+    assert_eq!(
+        kill_child(&p, &env(&sleep), &c, &mut || {}),
+        Killed::Kill
+    );
     assert_eq!(
         *crate::lock(&c.signals),
         [(start, Signal::Term), (start + 30_000, Signal::Kill)]
@@ -514,7 +520,12 @@ fn a_refused_pass_start_runs_no_pass() {
     let b = Bench::new();
     seeded(&b);
     let a = handed(&b);
-    let e = run(&b.ports(), &env(&Advance(b.clock.clone())), &mut Idle, &a);
+    let e = run(
+        &b.ports(),
+        &env(&Advance(b.clock.clone())),
+        &mut Idle,
+        &a,
+    );
     let RunEnd::Refused { why } = e else {
         panic!("{e:?}")
     };
@@ -536,7 +547,12 @@ fn a_runner_whose_first_renewal_fails_starts_nothing_and_writes_nothing() {
         },
         slot_token: Rev::new(2, 0),
     };
-    let e = run(&p, &env(&Advance(b.clock.clone())), &mut Idle, &a);
+    let e = run(
+        &p,
+        &env(&Advance(b.clock.clone())),
+        &mut Idle,
+        &a,
+    );
     assert_eq!(
         e,
         RunEnd::LeaseLost {
@@ -650,7 +666,12 @@ fn a_sub_pass_that_stalls_past_its_deadline_kills_its_vm_records_nothing_and_fre
         supersede: None,
     };
     let start = b.clock.now_ms();
-    let e = run(&p, &env(&Advance(b.clock.clone())), &mut subs, &a);
+    let e = run(
+        &p,
+        &env(&Advance(b.clock.clone())),
+        &mut subs,
+        &a,
+    );
     assert_eq!(
         e,
         RunEnd::LeaseLost {
@@ -705,7 +726,12 @@ fn a_round_superseded_under_a_live_lease_is_seen_at_the_next_renewal_and_its_vm_
         supersede: Some(&b),
     };
     let start = b.clock.now_ms();
-    let e = run(&p, &env(&Advance(b.clock.clone())), &mut subs, &a);
+    let e = run(
+        &p,
+        &env(&Advance(b.clock.clone())),
+        &mut subs,
+        &a,
+    );
     assert_eq!(
         e,
         RunEnd::LeaseLost {

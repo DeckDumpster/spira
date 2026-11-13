@@ -83,20 +83,13 @@ pub enum Stop {
     },
     /// A cord in the andon section `section` is pulled with `condition`, and its scope covers
     /// the repo.
-    AndonPulled {
-        section: String,
-        condition: String,
-    },
+    AndonPulled { section: String, condition: String },
     /// The andon sections could not be read. A pass that cannot read its off switch does nothing.
-    AndonUnreadable {
-        key: String,
-        why: String,
-    },
+    AndonUnreadable { key: String, why: String },
 }
 
 impl Stop {
-    pub const WORDS: [&'static str; 4] =
-        ["halted", "scoped-stop", "andon-pulled", "andon-unreadable"];
+    pub const WORDS: [&'static str; 4] = ["halted", "scoped-stop", "andon-pulled", "andon-unreadable"];
 
     pub fn word(&self) -> &'static str {
         match self {
@@ -187,11 +180,7 @@ fn andon(p: &Ports, repo: &str) -> Option<Stop> {
     };
     let ours = format!("{SECTION_KIND}/{repo}");
     for i in items {
-        let section = i
-            .key
-            .strip_prefix(ANDON_PREFIX)
-            .unwrap_or(&i.key)
-            .to_string();
+        let section = i.key.strip_prefix(ANDON_PREFIX).unwrap_or(&i.key).to_string();
         let Some(Value::Array(conditions)) = i.value.data.pointer("/status/conditions") else {
             continue;
         };
@@ -240,11 +229,7 @@ mod tests {
     fn the_halt_stamp_comes_before_a_scoped_stop_and_a_pulled_cord() {
         let b = Bench::new();
         b.stops.stop("r", "ops", "drill", "manual");
-        cord(
-            &b,
-            "main",
-            json!([pulled("Stop", "True", "RoundController/r")]),
-        );
+        cord(&b, "main", json!([pulled("Stop", "True", "RoundController/r")]));
         let p = b.ports();
         assert_eq!(check(&p, "r").unwrap().word(), "scoped-stop");
         b.stops.halt();
@@ -277,11 +262,7 @@ mod tests {
                 pulled("Stop", "True", "Claims/r"),
             ]),
         );
-        b.seed_ttl(
-            &format!("{ANDON_PREFIX}bare"),
-            json!({ "kind": "Andon" }),
-            604_800,
-        );
+        b.seed_ttl(&format!("{ANDON_PREFIX}bare"), json!({ "kind": "Andon" }), 604_800);
         let p = b.ports();
         assert_eq!(check(&p, "r"), None);
         assert_eq!(
@@ -291,11 +272,7 @@ mod tests {
                 condition: "Stop".into()
             })
         );
-        cord(
-            &b,
-            "all",
-            json!([pulled("Freeze", "True", "RoundController")]),
-        );
+        cord(&b, "all", json!([pulled("Freeze", "True", "RoundController")]));
         let s = check(&p, "r").unwrap();
         assert_eq!(
             (s.word(), s.owner(), s.reason(), s.until()),
@@ -306,20 +283,14 @@ mod tests {
                 "Freeze is no longer True".into()
             )
         );
-        assert_eq!(
-            s.why("r"),
-            "the andon cord Andon/all is pulled on r: Freeze"
-        );
+        assert_eq!(s.why("r"), "the andon cord Andon/all is pulled on r: Freeze");
     }
 
     #[test]
     fn andon_sections_that_cannot_be_listed_stop_the_pass() {
         let down = Bench::unserved();
         let s = check(&down.ports(), "r").unwrap();
-        assert_eq!(
-            (s.word(), s.owner()),
-            ("andon-unreadable", ANDON_PREFIX.to_string())
-        );
+        assert_eq!((s.word(), s.owner()), ("andon-unreadable", ANDON_PREFIX.to_string()));
         assert!(s.until().contains("reads again") && s.why("r").contains("cannot be read"));
         assert!(!s.reason().is_empty());
     }
@@ -335,11 +306,7 @@ mod tests {
         cord(&b, "half", json!([{ "type": "Stop" }]));
         let p = b.ports();
         assert_eq!(check(&p, "r"), None);
-        cord(
-            &b,
-            "real",
-            json!([pulled("Stop", "True", "RoundController/r")]),
-        );
+        cord(&b, "real", json!([pulled("Stop", "True", "RoundController/r")]));
         assert_eq!(check(&p, "r").unwrap().owner(), "Andon/real");
     }
 

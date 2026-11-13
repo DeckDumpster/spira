@@ -4,8 +4,8 @@
 
 pub mod clear;
 pub mod conditions;
-pub mod cut;
 pub mod cutover_check;
+pub mod cut;
 pub mod death;
 pub mod intents;
 pub mod judge;
@@ -61,8 +61,7 @@ mod tests {
 mod fork_fence {
     #[test]
     fn round_controller_starts_no_spira_child_that_is_not_a_named_fork_edge() {
-        let got =
-            forge::fork_scan::scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+        let got = forge::fork_scan::scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
         assert!(got.is_empty(), "unmarked children:\n{}", got.join("\n"));
     }
 }

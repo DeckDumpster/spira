@@ -27,16 +27,9 @@ fn every_corpus_exit_is_typed_and_a_fault_carries_round_vm_s_stderr() {
     let err = "round-vm run: 103 192.168.1.194 warm\nerror: `cargo run` could not determine which binary to run.\n";
     assert_eq!(corpus_end(0, err, None, 600, 1, 1), Ok(MainEnd::Ran));
     assert_eq!(corpus_end(1, err, None, 600, 1, 1), Ok(MainEnd::Ran));
-    assert_eq!(
-        corpus_end(4, err, None, 600, 1, 1),
-        Ok(MainEnd::WorkspaceBuild)
-    );
-    let delta =
-        "round-vm: CONFIG-DELTA: RED — the head's config delta does not apply on the merged tree\n";
-    assert_eq!(
-        corpus_end(4, delta, None, 600, 0, 3),
-        Ok(MainEnd::ConfigDelta)
-    );
+    assert_eq!(corpus_end(4, err, None, 600, 1, 1), Ok(MainEnd::WorkspaceBuild));
+    let delta = "round-vm: CONFIG-DELTA: RED — the head's config delta does not apply on the merged tree\n";
+    assert_eq!(corpus_end(4, delta, None, 600, 0, 3), Ok(MainEnd::ConfigDelta));
     for rc in [2, 3, 101, 124, 137, -1] {
         let e = corpus_end(rc, err, None, 600, 3, 5).unwrap_err();
         assert!(e.contains("harness fault"), "rc {rc}: {e}");
@@ -70,10 +63,7 @@ fn every_corpus_exit_is_typed_and_a_fault_carries_round_vm_s_stderr() {
         5,
     )
     .unwrap_err();
-    assert!(
-        !prose.contains("(FAULT over-cap"),
-        "stderr prose names no cap: {prose}"
-    );
+    assert!(!prose.contains("(FAULT over-cap"), "stderr prose names no cap: {prose}");
     let mismatch = corpus_end(2, "batch: unknown suite: test-x.sh\n", None, 600, 0, 5).unwrap_err();
     assert!(mismatch.contains("suite list mismatch"), "{mismatch}");
 }
@@ -440,15 +430,8 @@ fn an_over_cap_fault_kind_file_in_the_results_names_the_cap_and_no_file_names_no
     assert_eq!(over_cap_detail(&d), None);
     fs::write(d.join("round-fault-kind"), "other something\n").unwrap();
     assert_eq!(over_cap_detail(&d), None);
-    fs::write(
-        d.join("round-fault-kind"),
-        "over-cap guard=suites-cap cap=900s\n",
-    )
-    .unwrap();
-    assert_eq!(
-        over_cap_detail(&d).as_deref(),
-        Some("guard=suites-cap cap=900s")
-    );
+    fs::write(d.join("round-fault-kind"), "over-cap guard=suites-cap cap=900s\n").unwrap();
+    assert_eq!(over_cap_detail(&d).as_deref(), Some("guard=suites-cap cap=900s"));
 }
 
 #[test]
@@ -456,14 +439,6 @@ fn an_install_that_hit_a_full_filesystem_is_a_host_disk_fault_naming_it() {
     let err = "tar: spira-install: Cannot write: Disk quota exceeded\nround-vm run: host-disk: filesystem /tmp is full (x); largest: /tmp/k5 6020 MiB\n";
     let e = corpus_end(INSTALL_FAILED_RC, err, None, 600, 0, 5).unwrap_err();
     assert!(e.contains("host-disk: install failed, /tmp is full"), "{e}");
-    let plain = corpus_end(
-        INSTALL_FAILED_RC,
-        "tar: x: Permission denied",
-        None,
-        600,
-        0,
-        5,
-    )
-    .unwrap_err();
+    let plain = corpus_end(INSTALL_FAILED_RC, "tar: x: Permission denied", None, 600, 0, 5).unwrap_err();
     assert!(!plain.contains("host-disk"), "{plain}");
 }

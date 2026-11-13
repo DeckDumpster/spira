@@ -1,3 +1,4 @@
+
 use serde_json::json;
 
 use super::*;
@@ -85,8 +86,7 @@ fn goodput_pass(b: &Bench) -> reconciler_engine::pass_record::PassRecord {
 }
 
 #[test]
-fn a_hold_the_reconciler_steps_on_the_section_is_acked_by_the_controller_s_pass_and_judged_fulfilled(
-) {
+fn a_hold_the_reconciler_steps_on_the_section_is_acked_by_the_controller_s_pass_and_judged_fulfilled() {
     use crate::sim::bench::EPOCH_MS;
     let b = Bench::new();
     lane(&b);
@@ -123,12 +123,7 @@ fn a_hold_the_reconciler_steps_on_the_section_is_acked_by_the_controller_s_pass_
         .iter()
         .map(|s| (s.action.as_str(), s.target.as_str()))
         .collect();
-    assert_eq!(
-        stepped,
-        [(HOLD_MEMBER, hold)],
-        "refused: {:?}",
-        first.refused
-    );
+    assert_eq!(stepped, [(HOLD_MEMBER, hold)], "refused: {:?}", first.refused);
     let key = first.steps[0].intent.clone().unwrap();
 
     controller();

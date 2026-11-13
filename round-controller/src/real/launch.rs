@@ -239,7 +239,10 @@ mod tests {
 
     fn started(proc_: &Script, l: &Systemd) -> Launched {
         let b = Bench::new();
-        let p = Ports { proc_, ..b.ports() };
+        let p = Ports {
+            proc_,
+            ..b.ports()
+        };
         start(&p, l, "r", "b1", Rev::new(9, 0), &slot())
     }
 

@@ -596,15 +596,8 @@ fn judge_red<R: RoundRunner>(
 
 /// certify already ejected the recipe changers a red image preflight names: the red is theirs,
 /// recorded once with no sub-pass, and each is proven.
-fn certify_ejected(
-    p: &Ports,
-    round: &Round,
-    pass: &PassResult,
-    steps: &[String],
-) -> Result<Judged, String> {
-    let class = Class::Red {
-        step: steps.join(","),
-    };
+fn certify_ejected(p: &Ports, round: &Round, pass: &PassResult, steps: &[String]) -> Result<Judged, String> {
+    let class = Class::Red { step: steps.join(",") };
     let evidence = format!(
         "certify ejected {}: each changes a round-recipe input and {PREFLIGHT_RED} went red\n{}",
         pass.ejected.join(","),
@@ -612,19 +605,9 @@ fn certify_ejected(
     );
     let n = attempt(p, round, &class, vec![], evidence)?;
     let identity = round.identity(&[]);
-    let proven: Vec<Member> = identity
-        .members
-        .iter()
-        .filter(|m| pass.ejected.contains(&m.id))
-        .cloned()
-        .collect();
-    p.ledger
-        .mark_proven(p, &identity, &proven, p.clock.now_ms())?;
-    Ok(Judged::Recorded {
-        n,
-        class,
-        ejected: pass.ejected.clone(),
-    })
+    let proven: Vec<Member> = identity.members.iter().filter(|m| pass.ejected.contains(&m.id)).cloned().collect();
+    p.ledger.mark_proven(p, &identity, &proven, p.clock.now_ms())?;
+    Ok(Judged::Recorded { n, class, ejected: pass.ejected.clone() })
 }
 
 /// The Attributor's removal sets, the base run green: each set is its own identity, reused

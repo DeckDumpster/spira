@@ -143,10 +143,7 @@ fn an_input_or_a_lane_that_cannot_be_read_is_refused_naming_it_and_told_once() {
     );
 
     let b = bench();
-    b.seed(
-        &lane_key("alpha"),
-        json!({ "landing_ref": "base-0", "depth": 2 }),
-    );
+    b.seed(&lane_key("alpha"), json!({ "landing_ref": "base-0", "depth": 2 }));
     assert!(
         matches!(record(&b.ports(), "alpha"), Err(Refusal::Unreadable { key, text }) if key == lane_key("alpha") && text.contains("depth"))
     );
@@ -205,10 +202,7 @@ fn a_lane_another_writer_moved_is_re_read_and_one_that_keeps_moving_is_refused()
     };
     assert_eq!(record(&p, "alpha"), Ok(Recorded::Written));
     let lane = stack::lane(&b.ports(), "alpha").unwrap().unwrap();
-    assert_eq!(
-        (lane.landing_ref.as_str(), lane.image_digest.as_str()),
-        ("base-1", IMAGE)
-    );
+    assert_eq!((lane.landing_ref.as_str(), lane.image_digest.as_str()), ("base-1", IMAGE));
 
     let b = bench();
     let always = Rival {
@@ -242,20 +236,11 @@ fn lane_record_writes_each_repo_alone_and_names_the_ones_it_could_not() {
     assert!(!ok);
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "repo=alpha lane=written");
-    assert!(
-        lines[1].starts_with("repo=ghost lane=refused unreadable git/ghost/landing-ref"),
-        "{out}"
-    );
-    assert!(
-        b.verbs.calls().is_empty(),
-        "lane record cuts and lands nothing"
-    );
+    assert!(lines[1].starts_with("repo=ghost lane=refused unreadable git/ghost/landing-ref"), "{out}");
+    assert!(b.verbs.calls().is_empty(), "lane record cuts and lands nothing");
     let (out, ok) = record_all(&b.ports(), &["alpha".into()]);
     assert_eq!((out.as_str(), ok), ("repo=alpha lane=unchanged\n", true));
 
     let none = Bench::new();
-    assert_eq!(
-        record_all(&none.ports(), &["alpha".into()]),
-        ("repo=alpha lane=not-rounds\n".to_string(), true)
-    );
+    assert_eq!(record_all(&none.ports(), &["alpha".into()]), ("repo=alpha lane=not-rounds\n".to_string(), true));
 }

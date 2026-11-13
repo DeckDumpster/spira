@@ -12,7 +12,7 @@ use state_store::{events_key, Selector};
 
 use crate::ledger::summary_key;
 use crate::ports::{
-    Attempt, Cause, Class, InitiatedBy, Member, PassIdentity, Ports, SubPass, SubPassKind, Summary,
+    Attempt, Class, Cause, InitiatedBy, Member, PassIdentity, Ports, SubPass, SubPassKind, Summary,
 };
 use crate::resources::round_key;
 use crate::run::{kill_child, wait_gone, Killed, RunEnv, SubPasses};
@@ -142,12 +142,7 @@ impl Readiness {
                 .iter()
                 .map(|c| format!("{}={}", c.name, word(c.green)))
                 .collect();
-            out.push_str(&format!(
-                "{} {} {}\n",
-                r.scope,
-                word(r.green()),
-                cols.join(" ")
-            ));
+            out.push_str(&format!("{} {} {}\n", r.scope, word(r.green()), cols.join(" ")));
             for c in &r.checks {
                 out.push_str(&format!("  {}: {}\n", c.name, c.why));
             }
@@ -162,10 +157,9 @@ pub fn readiness(p: &Ports, f: &dyn Facts) -> Readiness {
     let mut global = Vec::new();
     match f.round_repos() {
         Err(e) => global.push(red("repos", format!("cannot read the registry: {e}"))),
-        Ok(repos) if repos.is_empty() => global.push(red(
-            "repos",
-            "the registry names no queue.local or queue.forge repo",
-        )),
+        Ok(repos) if repos.is_empty() => {
+            global.push(red("repos", "the registry names no queue.local or queue.forge repo"))
+        }
         Ok(repos) => {
             global.push(green("repos", repos.join(" ")));
             for repo in repos {
@@ -193,9 +187,7 @@ struct Decl {
 
 fn steps(text: &str) -> usize {
     text.lines()
-        .filter(|l| {
-            l.split_whitespace().next() == Some("step") && l.split_whitespace().nth(1).is_some()
-        })
+        .filter(|l| l.split_whitespace().next() == Some("step") && l.split_whitespace().nth(1).is_some())
         .count()
 }
 
@@ -204,13 +196,10 @@ fn ci(f: &dyn Facts, repo: &str) -> Check {
     match f.at_landing(repo, DECL) {
         Err(e) => return red(NAME, format!("cannot read {DECL} at the landing ref: {e}")),
         Ok(Some(text)) => match spira_config::parse_foreign::<Decl>(&text) {
-            Err(e) => {
-                return red(
-                    NAME,
-                    format!("{DECL} at the landing ref does not parse: {e}"),
-                )
-            }
-            Ok(Decl { ci_entry: Some(c) }) if !c.trim().is_empty() => {
+            Err(e) => return red(NAME, format!("{DECL} at the landing ref does not parse: {e}")),
+            Ok(Decl {
+                ci_entry: Some(c),
+            }) if !c.trim().is_empty() => {
                 return green(NAME, format!("{DECL} declares ci_entry {:?}", c.trim()))
             }
             Ok(_) => {}
@@ -218,14 +207,10 @@ fn ci(f: &dyn Facts, repo: &str) -> Check {
         Ok(None) => {}
     }
     match f.at_landing(repo, GATE_STEPS) {
-        Err(e) => red(
-            NAME,
-            format!("cannot read {GATE_STEPS} at the landing ref: {e}"),
-        ),
-        Ok(Some(text)) if steps(&text) > 0 => green(
-            NAME,
-            format!("{GATE_STEPS} declares {} steps", steps(&text)),
-        ),
+        Err(e) => red(NAME, format!("cannot read {GATE_STEPS} at the landing ref: {e}")),
+        Ok(Some(text)) if steps(&text) > 0 => {
+            green(NAME, format!("{GATE_STEPS} declares {} steps", steps(&text)))
+        }
         Ok(_) => red(
             NAME,
             format!("the landing ref declares no ci_entry in {DECL} and no step in {GATE_STEPS}"),
@@ -276,11 +261,7 @@ fn rounds_of(p: &Ports, repo: &str) -> Result<Vec<(String, crate::resources::Rou
     items
         .into_iter()
         .filter_map(|i| {
-            let batch = i
-                .key
-                .strip_prefix(&prefix)
-                .filter(|b| !b.contains('/'))?
-                .to_string();
+            let batch = i.key.strip_prefix(&prefix).filter(|b| !b.contains('/'))?.to_string();
             Some(
                 serde_json::from_value(i.value.data)
                     .map(|r| (batch, r, i.mod_rev.main))
@@ -332,10 +313,7 @@ fn base(p: &Ports, repo: &str) -> Check {
         match summary(p, &id) {
             Err(e) => return red(NAME, e),
             Ok(Some(s)) if s.class == Class::Green => {
-                return green(
-                    NAME,
-                    format!("round {batch} landed {at} and was green there"),
-                )
+                return green(NAME, format!("round {batch} landed {at} and was green there"))
             }
             Ok(_) => {}
         }
@@ -368,10 +346,7 @@ fn every_round(p: &Ports) -> Result<Vec<(String, String, BatchState)>, String> {
         .map_err(|e| format!("batches/: {e}"))?;
     let mut out = Vec::new();
     for i in items {
-        let Some((repo, batch)) = i
-            .key
-            .strip_prefix("batches/")
-            .and_then(|k| k.split_once('/'))
+        let Some((repo, batch)) = i.key.strip_prefix("batches/").and_then(|k| k.split_once('/'))
         else {
             continue;
         };
@@ -398,10 +373,7 @@ fn rounds(p: &Ports) -> Check {
             if live.is_empty() {
                 green(NAME, "no non-terminal round")
             } else {
-                red(
-                    NAME,
-                    format!("{} non-terminal: {}", live.len(), live.join(", ")),
-                )
+                red(NAME, format!("{} non-terminal: {}", live.len(), live.join(", ")))
             }
         }
     }
@@ -419,12 +391,7 @@ fn open_batches(f: &dyn Facts) -> Check {
         match f.open_batch(&repo) {
             Ok(None) => {}
             Ok(Some(id)) => open.push(format!("{repo}/{id}")),
-            Err(e) => {
-                return red(
-                    NAME,
-                    format!("cannot tell whether {repo} has an open batch: {e}"),
-                )
-            }
+            Err(e) => return red(NAME, format!("cannot tell whether {repo} has an open batch: {e}")),
         }
     }
     if open.is_empty() {
@@ -483,11 +450,7 @@ fn landed_since(p: &Ports, repo: &str, rev: u64) -> Result<Option<Landed>, Strin
         };
         let at = landed_at(p, &batch, mod_rev)?;
         if at > rev && first.as_ref().is_none_or(|f| at < f.rev) {
-            first = Some(Landed {
-                batch,
-                sha,
-                rev: at,
-            });
+            first = Some(Landed { batch, sha, rev: at });
         }
     }
     Ok(first)

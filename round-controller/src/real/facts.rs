@@ -19,11 +19,7 @@ pub fn round_repos(reg: &Registry) -> Result<Vec<String>, String> {
     if !reg.map_present() {
         return Err("no repository registry is declared".into());
     }
-    Ok(reg
-        .all()
-        .into_iter()
-        .filter(|r| reg.land_queued(r))
-        .collect())
+    Ok(reg.all().into_iter().filter(|r| reg.land_queued(r)).collect())
 }
 
 pub struct RealFacts {
@@ -90,9 +86,7 @@ impl Facts for RealFacts {
             (Some(0), out, _) if out.trim().is_empty() => return Ok(None),
             (Some(0), _, _) => {}
             (code, _, err) => {
-                return Err(format!(
-                    "git ls-tree {sha} {path} in {root} exited {code:?}: {err}"
-                ))
+                return Err(format!("git ls-tree {sha} {path} in {root} exited {code:?}: {err}"))
             }
         }
         match self.git(&root, &["cat-file", "-p", &format!("{sha}:{path}")])? {
@@ -107,14 +101,8 @@ impl Facts for RealFacts {
         let (root, sha) = self.landing(repo)?;
         let tree = format!("{sha}:{dir}");
         match self.git(&root, &["ls-tree", "--name-only", &tree])? {
-            (Some(0), out, _) => Ok(out
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(String::from)
-                .collect()),
-            (code, _, err) => Err(format!(
-                "git ls-tree {tree} in {root} exited {code:?}: {err}"
-            )),
+            (Some(0), out, _) => Ok(out.lines().filter(|l| !l.is_empty()).map(String::from).collect()),
+            (code, _, err) => Err(format!("git ls-tree {tree} in {root} exited {code:?}: {err}")),
         }
     }
 
@@ -131,22 +119,12 @@ impl Facts for RealFacts {
                         .filter(|id| !id.is_empty())
                         .unwrap_or_else(|| "open".into()),
                 )),
-                (code, out, err) => Err(format!(
-                    "queue batch show exited {code:?}: {} {err}",
-                    out.trim()
-                )),
+                (code, out, err) => Err(format!("queue batch show exited {code:?}: {} {err}", out.trim())),
             };
         }
-        let views = self
-            .views
-            .as_ref()
-            .map_err(|e| format!("could not say: {e}"))?;
-        views
-            .refresh_batches()
-            .map_err(|e| format!("could not say: {e}"))?;
-        let read = views
-            .batch_view(repo)
-            .map_err(|e| format!("could not say: {e}"))?;
+        let views = self.views.as_ref().map_err(|e| format!("could not say: {e}"))?;
+        views.refresh_batches().map_err(|e| format!("could not say: {e}"))?;
+        let read = views.batch_view(repo).map_err(|e| format!("could not say: {e}"))?;
         Ok(read.value.open.map(|r| r.id))
     }
 
@@ -244,102 +222,57 @@ mod tests {
         let reg = Registry::new(Some(map), &BTreeMap::new(), Path::new("/h/alpha"));
         assert_eq!(round_repos(&reg), Ok(vec!["alpha".into(), "gamma".into()]));
         let none = Registry::new(None, &BTreeMap::new(), Path::new("/h/alpha"));
-        assert!(round_repos(&none)
-            .unwrap_err()
-            .contains("no repository registry"));
+        assert!(round_repos(&none).unwrap_err().contains("no repository registry"));
     }
 
     #[test]
     fn a_file_at_the_landing_ref_is_read_and_an_absent_one_is_none() {
-        let f = facts(&[
-            ("rev-parse", out(0, "abc\n", "")),
-            ("ls-tree", out(0, "gate.steps\n", "")),
-            ("cat-file", out(0, "step make\n", "")),
-        ]);
-        assert_eq!(
-            f.at_landing("alpha", "gate.steps"),
-            Ok(Some("step make\n".into()))
+        let f = facts(
+            &[
+                ("rev-parse", out(0, "abc\n", "")),
+                ("ls-tree", out(0, "gate.steps\n", "")),
+                ("cat-file", out(0, "step make\n", "")),
+            ],
         );
-        let f = facts(&[
-            ("rev-parse", out(0, "abc\n", "")),
-            ("ls-tree", out(0, "", "")),
-        ]);
+        assert_eq!(f.at_landing("alpha", "gate.steps"), Ok(Some("step make\n".into())));
+        let f = facts(&[("rev-parse", out(0, "abc\n", "")), ("ls-tree", out(0, "", ""))]);
         assert_eq!(f.at_landing("alpha", "gate.steps"), Ok(None));
     }
 
     #[test]
     fn a_landing_ref_or_file_git_cannot_read_is_refused_naming_the_call() {
         let f = facts(&[]);
-        assert!(f
-            .at_landing("ghost", "x")
-            .unwrap_err()
-            .contains("no checkout"));
-        assert!(f
-            .at_landing("alpha", "x")
-            .unwrap_err()
-            .contains("unscripted rev-parse"));
+        assert!(f.at_landing("ghost", "x").unwrap_err().contains("no checkout"));
+        assert!(f.at_landing("alpha", "x").unwrap_err().contains("unscripted rev-parse"));
         let f = facts(&[("rev-parse", out(128, "", "unknown revision"))]);
-        assert!(f
-            .at_landing("alpha", "x")
-            .unwrap_err()
-            .contains("unknown revision"));
-        let f = facts(&[
-            ("rev-parse", out(0, "abc", "")),
-            ("ls-tree", out(128, "", "bad tree")),
-        ]);
-        assert!(f
-            .at_landing("alpha", "x")
-            .unwrap_err()
-            .contains("git ls-tree abc x"));
-        let f = facts(&[
-            ("rev-parse", out(0, "abc", "")),
-            ("ls-tree", out(0, "x\n", "")),
-            ("cat-file", out(128, "", "bad object")),
-        ]);
-        assert!(f
-            .at_landing("alpha", "x")
-            .unwrap_err()
-            .contains("bad object"));
+        assert!(f.at_landing("alpha", "x").unwrap_err().contains("unknown revision"));
+        let f = facts(&[("rev-parse", out(0, "abc", "")), ("ls-tree", out(128, "", "bad tree"))]);
+        assert!(f.at_landing("alpha", "x").unwrap_err().contains("git ls-tree abc x"));
+        let f = facts(
+            &[
+                ("rev-parse", out(0, "abc", "")),
+                ("ls-tree", out(0, "x\n", "")),
+                ("cat-file", out(128, "", "bad object")),
+            ],
+        );
+        assert!(f.at_landing("alpha", "x").unwrap_err().contains("bad object"));
     }
 
     #[test]
     fn the_names_under_a_directory_of_the_landing_ref_are_listed() {
-        let f = facts(&[
-            ("rev-parse", out(0, "abc\n", "")),
-            ("ls-tree", out(0, "test-a.sh\nlib.sh\n", "")),
-        ]);
-        assert_eq!(
-            f.names_at_landing("alpha", "spira"),
-            Ok(vec!["test-a.sh".into(), "lib.sh".into()])
-        );
+        let f = facts(&[("rev-parse", out(0, "abc\n", "")), ("ls-tree", out(0, "test-a.sh\nlib.sh\n", ""))]);
+        assert_eq!(f.names_at_landing("alpha", "spira"), Ok(vec!["test-a.sh".into(), "lib.sh".into()]));
         let spec = crate::lock(&f.script.seen).last().cloned().unwrap();
-        assert_eq!(
-            spec.args.join(" "),
-            "-C /r/alpha ls-tree --name-only abc:spira"
-        );
-        let f = facts(&[
-            ("rev-parse", out(0, "abc\n", "")),
-            ("ls-tree", out(128, "", "not a tree")),
-        ]);
-        assert!(f
-            .names_at_landing("alpha", "spira")
-            .unwrap_err()
-            .contains("not a tree"));
-        assert!(f
-            .names_at_landing("ghost", "spira")
-            .unwrap_err()
-            .contains("no checkout"));
+        assert_eq!(spec.args.join(" "), "-C /r/alpha ls-tree --name-only abc:spira");
+        let f = facts(&[("rev-parse", out(0, "abc\n", "")), ("ls-tree", out(128, "", "not a tree"))]);
+        assert!(f.names_at_landing("alpha", "spira").unwrap_err().contains("not a tree"));
+        assert!(f.names_at_landing("ghost", "spira").unwrap_err().contains("no checkout"));
     }
 
     struct Store(Mutex<Vec<Result<spira_store::lc_call::Reply, String>>>);
 
     impl spira_store::lc_call::Transport for Store {
-        fn exchange(
-            &self,
-            argv: &[String],
-            _stdin: Option<&str>,
-            _d: Duration,
-        ) -> Result<spira_store::lc_call::Reply, String> {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<spira_store::lc_call::Reply, String> {
             assert_eq!(argv[..2], ["rc", "list"], "only the batch records are read");
             crate::lock(&self.0).remove(0)
         }
@@ -347,45 +280,22 @@ mod tests {
 
     fn listed(items: serde_json::Value) -> Result<spira_store::lc_call::Reply, String> {
         let out = serde_json::json!({"ok": {"list_rev": 4, "items": items}}).to_string();
-        Ok(spira_store::lc_call::Reply {
-            code: 0,
-            out,
-            err: String::new(),
-        })
+        Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new() })
     }
 
     #[test]
     fn the_open_batch_is_read_from_the_store_views_and_a_refused_read_could_not_say() {
         let batch = serde_json::json!([{"key": "batches/alpha/deck-1", "create_rev": {"main": 2}, "value": {"data": {
             "batch_id": "deck-1", "state": "OPEN", "repo": "alpha", "round": {"forge.phase": "armed", "pr": "12"}}}}]);
-        let answers = vec![
-            listed(serde_json::json!([])),
-            listed(batch),
-            Err("the lifecycle service is not answering".into()),
-        ];
-        let client =
-            spira_store::lc_call::LcClient::over(Arc::new(Store(Mutex::new(answers))), true);
+        let answers = vec![listed(serde_json::json!([])), listed(batch), Err("the lifecycle service is not answering".into())];
+        let client = spira_store::lc_call::LcClient::over(Arc::new(Store(Mutex::new(answers))), true);
         let mut f = facts(&[]);
-        f.facts.views = Ok(store_view::Projection::new(
-            client,
-            Duration::from_secs(60),
-            Arc::new(std::time::Instant::now),
-        ));
+        f.facts.views = Ok(store_view::Projection::new(client, Duration::from_secs(60), Arc::new(std::time::Instant::now)));
         assert_eq!(f.open_batch("alpha"), Ok(None));
-        assert_eq!(
-            f.open_batch("alpha"),
-            Ok(Some("deck-1".into())),
-            "each ask reads the batch records afresh"
-        );
-        assert!(f
-            .open_batch("alpha")
-            .unwrap_err()
-            .starts_with("could not say:"));
+        assert_eq!(f.open_batch("alpha"), Ok(Some("deck-1".into())), "each ask reads the batch records afresh");
+        assert!(f.open_batch("alpha").unwrap_err().starts_with("could not say:"));
         assert!(crate::lock(&f.script.seen).is_empty(), "no queue process");
-        assert!(facts(&[])
-            .open_batch("alpha")
-            .unwrap_err()
-            .contains("could not say: this test holds no store views"));
+        assert!(facts(&[]).open_batch("alpha").unwrap_err().contains("could not say: this test holds no store views"));
     }
 
     /// Before the cutover the views refuse and the record is the queue's: `queue batch show`
@@ -397,29 +307,17 @@ mod tests {
             f.facts.queue = Some("queue".into());
             f
         };
-        assert_eq!(
-            with_queue(&[("queue", out(0, "", ""))]).open_batch("alpha"),
-            Ok(None)
-        );
+        assert_eq!(with_queue(&[("queue", out(0, "", ""))]).open_batch("alpha"), Ok(None));
         let f = with_queue(&[("queue", out(0, "batch_id=deck-1\npr=12\n", ""))]);
         assert_eq!(f.open_batch("alpha"), Ok(Some("deck-1".into())));
         let spec = crate::lock(&f.script.seen).last().cloned().unwrap();
-        assert_eq!(
-            (spec.prog.as_str(), spec.args.join(" ")),
-            ("queue", "batch show --repo alpha".into())
-        );
-        assert!(with_queue(&[("queue", out(1, "", "no queue"))])
-            .open_batch("alpha")
-            .unwrap_err()
-            .contains("queue batch show exited"));
+        assert_eq!((spec.prog.as_str(), spec.args.join(" ")), ("queue", "batch show --repo alpha".into()));
+        assert!(with_queue(&[("queue", out(1, "", "no queue"))]).open_batch("alpha").unwrap_err().contains("queue batch show exited"));
     }
 
     #[test]
     fn the_submitted_beads_are_counted_from_spira_lc_and_a_bad_answer_is_refused() {
-        let f = facts(&[(
-            "spira-lc",
-            out(0, "[{\"bead_id\":\"sp-a\"},{\"bead_id\":\"sp-b\"}]\n", ""),
-        )]);
+        let f = facts(&[("spira-lc", out(0, "[{\"bead_id\":\"sp-a\"},{\"bead_id\":\"sp-b\"}]\n", ""))]);
         assert_eq!(f.submitted("alpha"), Ok(2));
         let spec = crate::lock(&f.script.seen).last().cloned().unwrap();
         assert_eq!(

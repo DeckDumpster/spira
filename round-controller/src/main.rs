@@ -6,9 +6,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use round_controller::cut;
-use round_controller::cutover_check;
 use round_controller::ledger::{FaultPolicy, StoreLedger};
 use round_controller::ledger_verbs;
+use round_controller::cutover_check;
+use round_controller::real::facts::RealFacts;
 use round_controller::liveness::LeaseSettings;
 use round_controller::outcome::StdoutLog;
 use round_controller::pass::pass;
@@ -16,7 +17,6 @@ use round_controller::ports::{Launched, Ports};
 use round_controller::probe::{probe, ThreadSleep};
 use round_controller::real;
 use round_controller::real::child::SysSpawn;
-use round_controller::real::facts::RealFacts;
 use round_controller::real::git::RealGit;
 use round_controller::real::installed::InstalledRelease;
 use round_controller::real::launch::{Programs, Systemd, SystemdUnits};
@@ -27,8 +27,8 @@ use round_controller::real::verbs::{Deadlines, RealVerbs};
 use round_controller::real::vm_runner::{Repo, VmEnv, VmRunner};
 use round_controller::resources::RoundView;
 use round_controller::run::{self, RunEnv};
-use round_controller::slots::{self, SlotGrant, SlotSettings};
 use round_controller::switches::RunDir;
+use round_controller::slots::{self, SlotGrant, SlotSettings};
 use round_controller::telemetry;
 use runtime::ports::{Proc, ProcSpec, SeededRng, SysProc};
 
@@ -163,22 +163,20 @@ fn dispatch(args: &[String]) -> i32 {
                 eprintln!("round-controller cut: {e}\n{USAGE}");
                 2
             }
-            Ok((repo, members)) => {
-                match with_ports(|p| Ok(cut::explicit_recorded(p, &repo, members))) {
-                    Ok(Ok(o)) => {
-                        println!("batch={}\nhead={}", o.batch, o.head);
-                        0
-                    }
-                    Ok(Err(r)) => {
-                        eprintln!("round-controller cut: refused {r}");
-                        1
-                    }
-                    Err(e) => {
-                        eprintln!("round-controller cut: {e}");
-                        2
-                    }
+            Ok((repo, members)) => match with_ports(|p| Ok(cut::explicit_recorded(p, &repo, members))) {
+                Ok(Ok(o)) => {
+                    println!("batch={}\nhead={}", o.batch, o.head);
+                    0
                 }
-            }
+                Ok(Err(r)) => {
+                    eprintln!("round-controller cut: refused {r}");
+                    1
+                }
+                Err(e) => {
+                    eprintln!("round-controller cut: {e}");
+                    2
+                }
+            },
         },
         ["lease", "clear", "--repo", repo, "--batch", batch] => {
             match with_ports(|p| round_controller::clear::clear(p, repo, batch)) {
@@ -202,10 +200,11 @@ fn dispatch(args: &[String]) -> i32 {
         }
         ["ledger", verb @ ("record" | "refuses"), rest @ ..] => {
             let answer = match *verb {
-                "record" => ledger_verbs::parse_record(rest).and_then(|r| {
-                    let policy = FaultPolicy::from_config()?;
-                    with_ports(|p| ledger_verbs::record(p, &policy, &r))
-                }),
+                "record" => ledger_verbs::parse_record(rest)
+                    .and_then(|r| {
+                        let policy = FaultPolicy::from_config()?;
+                        with_ports(|p| ledger_verbs::record(p, &policy, &r))
+                    }),
                 _ => ledger_verbs::parse_refuses(rest)
                     .and_then(|id| with_ports(|p| ledger_verbs::refuses(p, &id))),
             };
@@ -291,8 +290,7 @@ fn cutover(p: &Ports, mode: &cutover_check::Mode) -> Result<i32, String> {
             Ok(r.code())
         }
         cutover_check::Mode::SinceRev(rev) => {
-            let (out, err, code) =
-                cutover_check::render_since(&cutover_check::since_rev(p, &facts, *rev)?);
+            let (out, err, code) = cutover_check::render_since(&cutover_check::since_rev(p, &facts, *rev)?);
             print!("{out}");
             eprint!("{err}");
             Ok(code)
@@ -324,9 +322,7 @@ fn probe_base(
     let root = registry
         .root(repo)
         .ok_or_else(|| format!("{repo} has no checkout in the registry"))?;
-    let wt = run_dir
-        .join("worktree")
-        .join(format!(".round-controller-{round}-{repo}"));
+    let wt = run_dir.join("worktree").join(format!(".round-controller-{round}-{repo}"));
     let git = |args: &[&str]| -> Result<(), String> {
         let mut all = vec!["-C".to_string(), root.clone()];
         all.extend(args.iter().map(|a| a.to_string()));
@@ -367,16 +363,7 @@ fn probe_base(
         path: root.clone().into(),
         base: registry.base(repo).unwrap_or_default(),
     };
-    let mut subs = VmRunner::new(
-        p,
-        &spawn,
-        &ThreadSleep,
-        env,
-        vm_repo,
-        &wt,
-        &lane.landing_ref,
-        &round,
-    )?;
+    let mut subs = VmRunner::new(p, &spawn, &ThreadSleep, env, vm_repo, &wt, &lane.landing_ref, &round)?;
     let renv = RunEnv {
         sleep: &ThreadSleep,
         poll_ms: run::POLL_MS,
@@ -511,9 +498,7 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
         }),
     );
     let door = spira_store::lc_call::LcClient::for_bin(&spira_store::lifecycle_row::lc_bin()?)?;
-    let lc = SpiraLc {
-        client: door.clone(),
-    };
+    let lc = SpiraLc { client: door.clone() };
     let store = LcStore { client: door };
     let ledger = StoreLedger {
         policy: FaultPolicy::from_config()?,

@@ -237,29 +237,17 @@ fn the_concurrency_knob_sets_the_depth_over_the_lane_and_a_hold_keeps_its_member
     w.round("k2", "CiRunning", "k1-head", &[]);
     w.member("sp-a", json!({}));
     w.member("sp-b", json!({}));
-    assert_eq!(
-        w.cut(),
-        Ok(None),
-        "k1 and k2 fill the lane's default depth 2"
-    );
+    assert_eq!(w.cut(), Ok(None), "k1 and k2 fill the lane's default depth 2");
     w.put(&crate::knobs::concurrency_key("lane"), json!(3));
     w.put(
         &crate::knobs::hold_key("lane", &mem("sp-a")),
         json!({ "lifted_by": "reconciler" }),
     );
     w.cut().unwrap().unwrap();
-    assert_eq!(
-        w.verbs.calls()[0].place.as_deref(),
-        Some("stack-on:k2"),
-        "the knob's depth 3 admits a third"
-    );
+    assert_eq!(w.verbs.calls()[0].place.as_deref(), Some("stack-on:k2"), "the knob's depth 3 admits a third");
     assert_eq!(w.opened_members(), ["sp-b"], "sp-a is held at its tip");
     w.put(&crate::knobs::concurrency_key("lane"), json!("deep"));
-    assert_eq!(
-        w.cut().unwrap_err().word(),
-        "unreadable",
-        "a knob that is no depth is not read as the default"
-    );
+    assert_eq!(w.cut().unwrap_err().word(), "unreadable", "a knob that is no depth is not read as the default");
 }
 
 #[test]
@@ -703,19 +691,11 @@ fn the_members_a_supersede_releases_are_re_cut_on_the_new_head_in_the_same_pass(
 }
 
 #[test]
-fn an_explicit_cut_of_a_judged_red_member_leaves_its_refusal_standing_until_an_explicit_cut_opens()
-{
+fn an_explicit_cut_of_a_judged_red_member_leaves_its_refusal_standing_until_an_explicit_cut_opens() {
     let w = World::new(vec![open_ok("r1")]);
     let p = w.ports();
     let red = ident(&["sp-a"], "base-0");
-    record_attempt(
-        &p,
-        &red,
-        "old",
-        &attempt(Class::Red { step: "s".into() }),
-        &POLICY,
-    )
-    .unwrap();
+    record_attempt(&p, &red, "old", &attempt(Class::Red { step: "s".into() }), &POLICY).unwrap();
     mark_proven(&p, &red, &[mem("sp-a")], 0).unwrap();
     assert!(explicit_recorded(&p, "lane", vec![mem("sp-a")]).is_err());
     assert_eq!(
@@ -731,14 +711,7 @@ fn the_planner_leaving_a_member_proven_red_out_of_its_own_cut_raises_no_contradi
     let w = World::new(vec![open_ok("r1")]);
     let p = w.ports();
     let red = ident(&["sp-a"], "base-0");
-    record_attempt(
-        &p,
-        &red,
-        "old",
-        &attempt(Class::Red { step: "s".into() }),
-        &POLICY,
-    )
-    .unwrap();
+    record_attempt(&p, &red, "old", &attempt(Class::Red { step: "s".into() }), &POLICY).unwrap();
     mark_proven(&p, &red, &[mem("sp-a")], 0).unwrap();
     w.member("sp-a", json!({}));
     w.member("sp-b", json!({}));
@@ -746,10 +719,6 @@ fn the_planner_leaving_a_member_proven_red_out_of_its_own_cut_raises_no_contradi
     record(&p, "lane", &got);
     got.unwrap().unwrap();
     assert_eq!(w.opened_members(), ["sp-b"]);
-    let raised: Vec<_> = crate::conditions::raise(&p, "lane")
-        .unwrap()
-        .into_iter()
-        .filter(|c| c.raised.is_some())
-        .collect();
+    let raised: Vec<_> = crate::conditions::raise(&p, "lane").unwrap().into_iter().filter(|c| c.raised.is_some()).collect();
     assert!(raised.is_empty(), "{raised:?}");
 }

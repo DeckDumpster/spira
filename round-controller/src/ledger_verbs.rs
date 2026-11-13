@@ -178,18 +178,8 @@ mod tests {
     use super::*;
 
     const ID: [&str; 12] = [
-        "--repo",
-        "r",
-        "--members",
-        "sp-b@t2,sp-a@t1",
-        "--base",
-        "b0",
-        "--image-digest",
-        "d1",
-        "--harness-version",
-        "h1",
-        "--selection",
-        "all",
+        "--repo", "r", "--members", "sp-b@t2,sp-a@t1", "--base", "b0", "--image-digest", "d1",
+        "--harness-version", "h1", "--selection", "all",
     ];
 
     fn with(extra: &[&'static str]) -> Vec<&'static str> {
@@ -200,22 +190,10 @@ mod tests {
 
     #[test]
     fn a_record_names_its_identity_batch_and_class() {
-        let r = parse_record(&with(&[
-            "--batch",
-            "b1",
-            "--class",
-            "red:build",
-            "--evidence",
-            "e",
-        ]))
-        .unwrap();
+        let r = parse_record(&with(&["--batch", "b1", "--class", "red:build", "--evidence", "e"]))
+            .unwrap();
         assert_eq!(r.batch, "b1");
-        assert_eq!(
-            r.class,
-            Class::Red {
-                step: "build".into()
-            }
-        );
+        assert_eq!(r.class, Class::Red { step: "build".into() });
         assert_eq!(r.evidence, "e");
         let ids: Vec<&str> = r.identity.members.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, ["sp-a", "sp-b"]);
@@ -227,46 +205,18 @@ mod tests {
             ("green", Class::Green),
             ("flaky", Class::Flaky),
             ("fault:vm", Class::Fault { cause: Cause::Vm }),
-            (
-                "fault:over-cap",
-                Class::Fault {
-                    cause: Cause::OverCap,
-                },
-            ),
-            (
-                "fault:fences-cap",
-                Class::Fault {
-                    cause: Cause::FencesCap,
-                },
-            ),
+            ("fault:over-cap", Class::Fault { cause: Cause::OverCap }),
+            ("fault:fences-cap", Class::Fault { cause: Cause::FencesCap }),
             ("fault:base", Class::Fault { cause: Cause::Base }),
-            (
-                "fault:install",
-                Class::Fault {
-                    cause: Cause::Install,
-                },
-            ),
+            ("fault:install", Class::Fault { cause: Cause::Install }),
             (
                 "fault:image:sha256:x",
-                Class::Fault {
-                    cause: Cause::Image {
-                        digest: "sha256:x".into(),
-                    },
-                },
+                Class::Fault { cause: Cause::Image { digest: "sha256:x".into() } },
             ),
         ] {
             assert_eq!(parse_class(w), Ok(c), "{w}");
         }
-        for w in [
-            "",
-            "red",
-            "red:",
-            "green:x",
-            "fault:",
-            "fault:image:",
-            "fault:disk",
-            "blue",
-        ] {
+        for w in ["", "red", "red:", "green:x", "fault:", "fault:image:", "fault:disk", "blue"] {
             assert!(parse_class(w).is_err(), "{w}");
         }
     }
@@ -281,9 +231,7 @@ mod tests {
         let mut bad = ID.to_vec();
         bad[3] = "sp-a";
         assert!(err(bad).contains("not <id>@<tip>"));
-        assert!(parse_record(&with(&["--class", "green"]))
-            .unwrap_err()
-            .contains("--batch"));
+        assert!(parse_record(&with(&["--class", "green"])).unwrap_err().contains("--batch"));
     }
 
     #[test]
@@ -292,39 +240,23 @@ mod tests {
         assert_eq!(render_refusal(&None), "refuses=none");
         for (r, want) in [
             (
-                LedgerRefusal::RedIdentity {
-                    hash: hash(),
-                    step: "build".into(),
-                },
+                LedgerRefusal::RedIdentity { hash: hash(), step: "build".into() },
                 "refuses=red-identity step=build",
             ),
             (
-                LedgerRefusal::RedMember {
-                    id: "sp-a".into(),
-                    tip: "t1".into(),
-                    hash: hash(),
-                },
+                LedgerRefusal::RedMember { id: "sp-a".into(), tip: "t1".into(), hash: hash() },
                 "refuses=red-member member=sp-a@t1",
             ),
             (
-                LedgerRefusal::LaneFault {
-                    key: "faults/r/b0/d1".into(),
-                    cause: Cause::Base,
-                },
+                LedgerRefusal::LaneFault { key: "faults/r/b0/d1".into(), cause: Cause::Base },
                 "refuses=lane-fault key=faults/r/b0/d1 cause=base",
             ),
             (
-                LedgerRefusal::BackingOff {
-                    hash: hash(),
-                    until: Some(9),
-                },
+                LedgerRefusal::BackingOff { hash: hash(), until: Some(9) },
                 "refuses=backing-off until=9",
             ),
             (
-                LedgerRefusal::BackingOff {
-                    hash: hash(),
-                    until: None,
-                },
+                LedgerRefusal::BackingOff { hash: hash(), until: None },
                 "refuses=backing-off until=standing",
             ),
         ] {

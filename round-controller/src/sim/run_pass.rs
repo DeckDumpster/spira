@@ -16,9 +16,9 @@ use crate::lease::{acquire, Resource};
 use crate::ports::{Child, Ports};
 use crate::probe::Sleep;
 use crate::run::{self, RunArgs, RunEnd, RunEnv, SubPasses};
+use crate::switches::Stops;
 use crate::sim::judge::{job_result, JobSpec};
 use crate::slots::{grant, Pool};
-use crate::switches::Stops;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
