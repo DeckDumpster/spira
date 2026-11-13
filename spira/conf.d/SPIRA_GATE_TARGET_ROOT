@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=gate
+DOC=WHERE THE UNIT GATE BUILDS: the directory holding each gate tree's cargo target. Empty keeps the default, a per-run directory on /tmp when /tmp is a tmpfs; set it to a directory on a disk with room when /tmp is under a per-user quota the rounds share.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE THE UNIT GATE BUILDS: one cargo target per gate tree under this directory. Empty
+    # keeps the default (a per-run directory on /tmp when /tmp is a tmpfs, else the tree
+    # itself). A /tmp quota is per user, so set this where the gate's targets and a round's
+    # temporary files do not share one.
+    : "${SPIRA_GATE_TARGET_ROOT:=}"
+SPIRA_CONF_DEFAULT_EOF
