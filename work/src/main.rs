@@ -583,7 +583,7 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
         }
     };
     let root = std::path::Path::new(&root);
-    let rows = match habits::config::load_checks(root) {
+    let rows = match work::declared_rows(root) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{}", refusal(R::ChecksConfig, "checks", &[("err", &e.to_string())]));
@@ -888,7 +888,7 @@ fn unresolved_programs() -> Vec<String> {
     }
     let root = spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     if let Some(root) = root.as_deref().map(std::path::Path::new) {
-        for row in habits::config::load_checks(root).unwrap_or_default().into_iter().filter(|r| r.build.is_none()) {
+        for row in work::declared_rows(root).unwrap_or_default().into_iter().filter(|r| r.build.is_none()) {
             let argv = work::done_argv(&row.run);
             if let Some(prog) = argv.first().filter(|p| work::trusted::resolve(p, &dirs).is_none()) {
                 out.push(format!("check {:?} runs {prog:?}, which resolves nowhere; `work checks` will fail it", row.name));
