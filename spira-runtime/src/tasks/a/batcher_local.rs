@@ -140,6 +140,8 @@ pub const OBSERVE_DEADLINE_MS: u64 = 10_000;
 /// `unit.ran`.
 pub const UNIT_START_DEADLINE_MS: u64 = 10_000;
 /// Past the longest effect this task waits on (`land`, 900 s): an outcome that has not come is lost.
+/// A just-opened round is given this long to be driven by whoever opened it before the tick starts its pass.
+const UNDRIVEN_GRACE_S: u64 = 20;
 pub const OUTCOME_WAIT_MS: u64 = 1_200_000;
 
 pub const ACTS: &[(&str, u64)] = &[
@@ -1193,6 +1195,7 @@ impl Machine<'_> {
             return;
         }
         if self.voided(repo) || self.outcome_lost() || self.assemble_unsent(repo) {
+            eprintln!("{NAME} {}: forgetting its {:?} round (batch {:?}): voided, outcome never came back, or assemble never sent", self.repo, self.rc.state, self.rc.batch);
             self.forget_round();
             return;
         }
@@ -1446,7 +1449,11 @@ impl Machine<'_> {
         let unfit = if repo.open_round.as_ref().is_some_and(|r| r.id == open.id) { repo.unfit.clone() } else { open.unfit.clone() };
         let fit = unfit.map_or(Ok(()), Err);
         let now_s = self.now_ms / 1000;
-        let (mut next, verdict) = pace::orphan_step(st, &open.id, now_s, policy.orphan_wait_s, fit);
+        let wait = if open.phase == "opened" && open.age_secs >= UNDRIVEN_GRACE_S && st.redriven != open.id { 0 } else { policy.orphan_wait_s };
+        let (mut next, verdict) = pace::orphan_step(st, &open.id, now_s, wait, fit);
+        if matches!(verdict, pace::Orphan::Redrive) && wait == 0 {
+            eprintln!("{NAME} {}: open round {} has no pass and no driver — starting its first pass", self.repo, open.id);
+        }
         let leg = Leg { batch: open.id.clone(), wt: open.worktree.clone(), ..Leg::on(self.repo) };
         match verdict {
             pace::Orphan::Wait => {}
@@ -1687,7 +1694,7 @@ impl Machine<'_> {
                 let a: Assembled = serde_json::from_str(body).unwrap_or_default();
                 self.assembled(a, leg);
             }
-            (State::Opened, ROUND_OPEN) if !ok && body == runtime::engine::LOST_AT_RESTART => {}
+            (State::Opened, ROUND_OPEN) if !ok && body == runtime::engine::LOST_AT_RESTART => eprintln!("{NAME} {}: round open's outcome was lost at a restart — the next tick adopts the open round", self.repo),
             (State::Opened, ROUND_OPEN) => {
                 let o: Opened = if ok { serde_json::from_str(body).unwrap_or_default() } else { Opened::default() };
                 if o.batch.is_empty() && !o.refused.is_empty() {
@@ -1765,12 +1772,12 @@ impl Machine<'_> {
         }
     }
 
-    /// An opened round whose `round open` outcome has not arrived, and which the queue already
-    /// holds with exactly our members in our tree, is driven now rather than after [`OUTCOME_WAIT_MS`].
+    /// A round the queue holds with exactly our members in our tree is ours: driven now, not after [`OUTCOME_WAIT_MS`].
     fn adopt_opened(&mut self, repo: &Repo) {
         let ours: std::collections::BTreeSet<&str> = self.rc.members.iter().map(|(id, _)| id.as_str()).collect();
         let held = repo.open_rounds().find(|r| !ours.is_empty() && (self.rc.wt.is_empty() || r.worktree == self.rc.wt) && r.members.iter().map(String::as_str).collect::<std::collections::BTreeSet<_>>() == ours);
         let Some(held) = held else { return };
+        eprintln!("{NAME} {}: round open's outcome did not arrive; adopting the queue's open round {} and starting its first pass", self.repo, held.id);
         self.rc.batch = Some(held.id.clone());
         self.opened(self.rc.suites.unwrap_or(true));
     }
@@ -2494,7 +2501,7 @@ pub mod edge {
         }
         let repo = repo_of(&env, &leg)?;
         if !leg.batch.is_empty() {
-            io::round_pass_start(&env, &repo, &leg.batch);
+            io::try_round_pass_start(&env, &repo, &leg.batch)?;
         }
         let wt = PathBuf::from(&leg.wt);
         let history = std::fs::read_to_string(tsd::family_path(&env.run, "suite-timing")).unwrap_or_default();

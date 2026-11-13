@@ -184,6 +184,32 @@ fn a_corpus_leg_that_never_runs_is_started_again_once_then_the_round_is_abandone
     assert_no_process(&r);
 }
 
+/// A round the queue opened whose `round open` answer never reached the batcher (the call ended
+/// at the open) is still driven: the next tick finds the open round holding exactly its members
+/// and starts its first pass, well inside the outcome wait, and the round lands.
+#[test]
+fn a_round_whose_open_answer_is_lost_is_driven_by_the_next_tick_and_lands() {
+    let script = Script { beads: vec![Bead::new("sp-lo01", 30_000)], max_concurrent: 1, until: 30 * MIN, ..Script::default() };
+    let first = Arc::new(Mutex::new(true));
+    let (r, _) = run_keeping(36, script, move |d, w| {
+        let w = w.clone();
+        d.double(bl::ROUND_OPEN, move |input| {
+            let opened = loopworld::batcher_round_open(&w, input)?;
+            let mut first = first.lock().unwrap_or_else(|e| e.into_inner());
+            if std::mem::take(&mut *first) {
+                return Err(runtime::engine::LOST_AT_RESTART.into());
+            }
+            Ok(opened)
+        })
+    });
+    show("open-answer-lost", &r);
+    let (open, corpus) = (times(&r, bl::ROUND_OPEN)[0], times(&r, bl::CORPUS)[0]);
+    assert!(corpus - open < 5 * MIN, "the first pass started on the next ticks, not after the outcome wait: open {open}, corpus {corpus}");
+    assert!(times(&r, bl::ABANDON).is_empty(), "the round was not abandoned: {}", r.dump());
+    assert_eq!(r.lifecycle_of("sp-lo01").last().map(String::as_str), Some("LANDED"), "{}", r.dump());
+    assert_no_process(&r);
+}
+
 /// The attribution line `batcher attribute` writes on its captured stdout.
 fn attribution_land(members: &[(String, String)]) -> String {
     format!("attribution\t{}\n", serde_json::json!({ "end": "land", "members": members, "attribution_secs": 60, "mended": false }))

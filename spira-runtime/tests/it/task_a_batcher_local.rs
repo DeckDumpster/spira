@@ -1219,3 +1219,53 @@ fn sp_byw57t_a_certify_legs_stderr_is_kept_with_its_stdout() {
     let why = serde_json::from_str::<Leg>(&kept.input).unwrap().why;
     assert_eq!(why, "starting\nqueue round certify: refused, the round worktree is not at the head");
 }
+
+// --- sp-5u1oru: a round the batcher opened is always driven ---
+
+fn open_with(phase: &str, members: &[&str], worktree: &str) -> Snapshot {
+    let round = Round { id: "r9".into(), members: members.iter().map(|m| m.to_string()).collect(), head: "h".into(), worktree: worktree.into(), phase: phase.into(), ..Round::default() };
+    Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), ..busy().repos["spira"].clone() })].into(), now_ms: NOW }
+}
+
+fn opened_unanswered() -> Carry {
+    let mut c = driving(State::Opened, "");
+    let rc = c.repos.get_mut("spira").unwrap();
+    rc.batch = None;
+    rc.leg = None;
+    c
+}
+
+fn effects(acts: &[Act]) -> Vec<&str> {
+    acts.iter().map(|a| a.effect.as_str()).collect()
+}
+
+#[test]
+fn sp_5u1oru_an_open_round_whose_open_answer_is_lost_is_adopted_at_the_next_tick() {
+    let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-a", "sp-b"], "/w"));
+    assert!(effects(&acts).contains(&CORPUS), "the first pass starts on this tick: {acts:?}");
+    let rc = &carry.repos["spira"];
+    assert_eq!((rc.state, rc.batch.as_deref()), (State::Corpus, Some("r9")));
+}
+
+#[test]
+fn sp_5u1oru_an_open_round_of_other_members_is_not_adopted() {
+    let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-x"], "/w"));
+    assert!(!effects(&acts).contains(&CORPUS), "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Opened);
+}
+
+#[test]
+fn sp_5u1oru_a_round_opened_seconds_ago_is_left_to_its_opener() {
+    let (_, acts) = decide(&Carry::default(), &open_with("opened", &["sp-a"], "/w"));
+    assert!(!effects(&acts).contains(&REDRIVE), "{acts:?}");
+}
+
+#[test]
+fn sp_5u1oru_an_open_round_with_no_pass_and_no_driver_is_redriven_at_once_and_only_once() {
+    let mut snap = open_with("opened", &["sp-a"], "/w");
+    snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().age_secs = 60;
+    let (carry, acts) = decide(&Carry::default(), &snap);
+    assert!(effects(&acts).contains(&REDRIVE), "no orphan wait for a round that never began: {acts:?}");
+    let (_, again) = decide(&carry, &snap);
+    assert!(!effects(&again).contains(&REDRIVE) && !effects(&again).contains(&ABANDON), "the second tick waits: {again:?}");
+}
