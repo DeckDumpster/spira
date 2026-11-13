@@ -450,13 +450,16 @@ pub fn destroy_branch(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo:
     Ok(())
 }
 
-/// The checkout `destroy-branch` acts on: an existing directory is taken as the path, anything
-/// else is a registry name resolved to its root. An unknown name is an error, never a path.
+/// The checkout `destroy-branch` acts on: a registered name resolves to its root first (a bare
+/// name must not meet a same-named directory in the cwd), else an existing directory is the path.
 pub fn resolve_repo(reg: &spira_config::repos::Registry, arg: &str) -> Result<PathBuf, String> {
+    if let Some(root) = reg.root(arg) {
+        return Ok(PathBuf::from(root));
+    }
     if Path::new(arg).is_dir() {
         return Ok(PathBuf::from(arg));
     }
-    reg.root(arg).map(PathBuf::from).ok_or_else(|| format!("{arg} is neither a directory nor a registered repository"))
+    Err(format!("{arg} is neither a registered repository nor a directory"))
 }
 
 /// 0 (recovery off) when the key cannot be read: a lock is never moved on a guessed threshold.
@@ -763,6 +766,18 @@ mod tests {
         assert_eq!(resolve_repo(&reg, elsewhere.path().to_str().unwrap()).unwrap(), elsewhere.path());
         assert_eq!(resolve_repo(&reg, "spira").unwrap(), t.path());
         assert!(resolve_repo(&reg, "nowhere").is_err());
+    }
+
+    #[test]
+    fn a_registered_name_wins_over_a_same_named_directory_in_the_cwd_and_the_destroy_acts_on_its_root() {
+        let run = tempdir();
+        let repo = fixture_repo(&run);
+        assert!(Path::new("src").is_dir(), "the decoy: a directory in the test's cwd");
+        let reg = spira_config::repos::Registry::new(Some(&format!("src|{}|push\n", repo.display())), &Default::default(), run.path());
+        let resolved = resolve_repo(&reg, "src").unwrap();
+        assert_eq!(resolved, repo);
+        assert!(destroy_branch(&run, &run.join("reap.log"), "sp-gone", "spira/sp-gone", &resolved, "test", "hel", None, &open()).is_ok());
+        assert!(!Git(&repo).branch_exists("spira/sp-gone"));
     }
 
     // ---- holder_witnesses ------------------------------------------------------------------
