@@ -25,7 +25,7 @@
 //! (`Snapshot::owners`) is older than `SPIRA_TRANSITIONS_HEARTBEAT_BOUND`, was never seen, or
 //! carries a failed action. An owner beating with nothing failed is handling the expiry itself
 //! (the round driver abandoning a stalled pass, a requeue sweep), and the table line says so
-//! without waking anyone. Two edges have an owner heartbeat: IN_DELIVERY→LANDED (round-progress, whose `stalled:` detail is `round-vm`'s own expiry report) and, per repo, SUBMITTED→IN_DELIVERY (the batcher's `rounds-pace/<repo>/state` rewritten each pass; a standing `pause` is its failed action). Every other edge is unowned and pages on its bound alone.
+//! without waking anyone. Two edges have an owner heartbeat: IN_DELIVERY→LANDED (round-progress, whose `stalled:` detail is `round-vm`'s own expiry report) and, per repo, SUBMITTED→IN_DELIVERY (the batcher's `rounds-pace/<repo>/state` rewritten each pass; a standing `pause` is its failed action). ASK→ANSWERED, WORKING→SUBMITTED and LANDED→ACTIVATED are owned by a runtime task's pulse (`TASK_OWNERS`), judged against `SPIRA_TRANSITIONS_TASK_BOUND`; an edge bound is at most two hours and longer than that window (`bounds_fit_owners`).
 //!
 //! Each edge is judged per repo, and over all repos together (scope `*`) where no one repo is
 //! stalled on it. A store or release
@@ -59,6 +59,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_TRANSITIONS_ASK_BOUND",
     "SPIRA_TRANSITIONS_RELEASE_REPO",
     "SPIRA_TRANSITIONS_HEARTBEAT_BOUND",
+    "SPIRA_TRANSITIONS_TASK_BOUND",
     "SPIRA_ROUND_MAX_OPEN",
     "SPIRA_RELEASES",
     "SPIRA_REPO_MAP",
@@ -86,6 +87,7 @@ pub struct Config {
     pub ask_bound_s: u64,
     pub release_repo: String,
     pub heartbeat_bound_s: u64,
+    pub task_bound_s: u64,
     pub round_max_open: u64,
     pub releases: std::path::PathBuf,
     pub repo_map: std::path::PathBuf,
@@ -97,7 +99,7 @@ impl Config {
         if period_s == 0 {
             return Err("SPIRA_TRANSITIONS_PERIOD must be at least 1".into());
         }
-        Ok(Config {
+        let cfg = Config {
             period_s,
             working_min: cfg_parse("SPIRA_TRANSITIONS_WORKING_MIN")?,
             submit_bound_s: cfg_parse("SPIRA_TRANSITIONS_SUBMIT_BOUND")?,
@@ -107,10 +109,28 @@ impl Config {
             ask_bound_s: cfg_parse("SPIRA_TRANSITIONS_ASK_BOUND")?,
             release_repo: cfg("SPIRA_TRANSITIONS_RELEASE_REPO")?,
             heartbeat_bound_s: cfg_parse("SPIRA_TRANSITIONS_HEARTBEAT_BOUND")?,
+            task_bound_s: cfg_parse("SPIRA_TRANSITIONS_TASK_BOUND")?,
             round_max_open: cfg_parse("SPIRA_ROUND_MAX_OPEN")?,
             releases: cfg("SPIRA_RELEASES")?.into(),
             repo_map: cfg("SPIRA_REPO_MAP")?.into(),
-        })
+        };
+        cfg.bounds_fit_owners()?;
+        Ok(cfg)
+    }
+
+    /// Every edge bound is at most `MAX_BOUND_S`, and each task-owned edge outlasts its owner's
+    /// silence window: otherwise the page would fire before a dead owner could be told from a slow one.
+    pub fn bounds_fit_owners(&self) -> Result<(), String> {
+        for edge in EDGES {
+            let bound = edge_bound(edge, self);
+            if bound > MAX_BOUND_S {
+                return Err(format!("the {edge} bound {bound}s exceeds the {MAX_BOUND_S}s ceiling"));
+            }
+            if task_owner_of(edge).is_some() && bound <= self.task_bound_s {
+                return Err(format!("the {edge} bound {bound}s must exceed SPIRA_TRANSITIONS_TASK_BOUND {}s", self.task_bound_s));
+            }
+        }
+        Ok(())
     }
 
     /// How far back the audit log must be read to judge every bound: the longest, and ten
@@ -210,6 +230,24 @@ pub fn round_owner(progress: &str) -> Option<Owner> {
     Some(Owner { beat: Some(beat), failed })
 }
 
+/// The longest an edge may wait before it pages: two hours.
+pub const MAX_BOUND_S: u64 = 7_200;
+
+/// The runtime task whose pulse (`spira_config::ticked`) is the heartbeat of an edge's owner, and
+/// the action it takes when the bound expires: the asks watcher keeps the ask in front of the
+/// operator, the sentinel pass reclaims a silent dwarf's bead, the batcher activates what it lands.
+pub const TASK_OWNERS: [(&str, &str); 3] = [("ASK→ANSWERED", "asks"), ("WORKING→SUBMITTED", "sentinel-pass"), ("LANDED→ACTIVATED", "batcher.local")];
+
+pub fn task_owner_of(edge: &str) -> Option<&'static str> {
+    TASK_OWNERS.iter().find(|(e, _)| *e == edge).map(|(_, t)| *t)
+}
+
+/// The owner a task's pulse makes: it beat `quiet_s` seconds before `now`; a task that never
+/// stamped has not beaten.
+pub fn task_owner(quiet_s: Option<u64>, now: u64) -> Owner {
+    Owner { beat: quiet_s.map(|q| now.saturating_sub(q)), failed: None }
+}
+
 /// The edge a repo's batcher pass owns: a cut is the batcher's to make, repo by repo.
 pub const CUT_EDGE: &str = "SUBMITTED→IN_DELIVERY";
 
@@ -226,7 +264,8 @@ pub fn pace_owner(state_mtime: Option<u64>, pause: Option<&str>) -> Owner {
 /// Whether the owner of `edge` in `scope` (its own record first, else the edge's) beat inside
 /// the bound and has no failed action: an edge with no owner record is unowned, so never acting.
 fn owner_acting(snap: &Snapshot, edge: &str, scope: &str, now: u64, cfg: &Config) -> bool {
-    let beating = |o: &Owner| o.failed.is_none() && o.beat.is_some_and(|b| now.saturating_sub(b) < cfg.heartbeat_bound_s);
+    let window = if task_owner_of(edge).is_some() { cfg.task_bound_s } else { cfg.heartbeat_bound_s };
+    let beating = |o: &Owner| o.failed.is_none() && o.beat.is_some_and(|b| now.saturating_sub(b) < window);
     if scope == ALL && edge == CUT_EDGE {
         let waiting: BTreeSet<&str> = snap.beads.iter().filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED")).map(|b| b.repo.as_str()).collect();
         return !waiting.is_empty() && waiting.iter().all(|r| snap.owners.get(&cut_owner_key(r)).is_some_and(beating));
@@ -642,6 +681,8 @@ pub fn observe(
     snap.owners
         .extend(progress.map(|o| (DELIVERY_EDGE.to_string(), o)));
     snap.owners.extend(pace_owners(run_dir));
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    snap.owners.extend(TASK_OWNERS.iter().map(|(edge, task)| (edge.to_string(), task_owner(spira_config::ticked::quiet_secs(run_dir, task), now))));
     snap
 }
 

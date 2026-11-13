@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=runtime
+DOC=Seconds a runtime task that owns a watch.transitions edge (asks, sentinel pass, batcher) may go without observing before its edge's STALL is paged; each such edge's bound must exceed it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_TRANSITIONS_TASK_BOUND:=600}"
+SPIRA_CONF_DEFAULT_EOF

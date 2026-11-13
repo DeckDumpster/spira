@@ -54,6 +54,7 @@ transitions_activate_bound = 900
 transitions_ask_bound = 3600
 transitions_release_repo = "spira"
 transitions_heartbeat_bound = 90
+transitions_task_bound = 500
 throughput_ratio_min_pct = 50
 throughput_ratio_min_runs = 6
 throughput_passed_grace = 300
