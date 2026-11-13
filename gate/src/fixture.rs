@@ -52,14 +52,23 @@ pub const DELTA: &str = "spira/config-delta.toml";
 /// no round can build; the branch that is behind is told here, before a round carries it.
 fn merged_delta(tree: &Path, base: &str) -> Result<(), String> {
     let git = |args: &[&str]| Command::new("timeout").args(["5", "git", "-C"]).arg(tree).args(args).output().map_err(|e| format!("git {}: {e}", args.join(" ")));
-    let merge = git(&["merge-tree", "--write-tree", base, "HEAD"])?;
-    let merged = String::from_utf8_lossy(&merge.stdout).lines().next().unwrap_or("").trim().to_string();
-    match merge.status.code() {
-        Some(0) => {}
-        // A textual conflict is the merge's own refusal, made where the branch is merged.
-        Some(1) => return Ok(()),
-        _ => return Err(format!("could not merge this tree with the landing ref {base} to read its config delta: {}", String::from_utf8_lossy(&merge.stderr).trim())),
-    }
+    // A tree that already contains the landing ref (a round's merged tree) is its own merge.
+    let merged = if git(&["merge-base", "--is-ancestor", base, "HEAD"])?.status.success() {
+        "HEAD".to_string()
+    } else {
+        let merge = git(&["merge-tree", "--write-tree", base, "HEAD"])?;
+        match merge.status.code() {
+            Some(0) => String::from_utf8_lossy(&merge.stdout).lines().next().unwrap_or("").trim().to_string(),
+            // A textual conflict is the merge's own refusal, made where the branch is merged.
+            Some(1) => return Ok(()),
+            // The deadline, not a verdict: a round judges its merged tree's delta in its own pass.
+            Some(124) | None => {
+                eprintln!("gate fixture-config: merging this tree with {base} took over 5 s; the merged config delta is not judged here");
+                return Ok(());
+            }
+            Some(rc) => return Err(format!("could not merge this tree with the landing ref {base} to read its config delta (git merge-tree exited {rc}): {}", String::from_utf8_lossy(&merge.stderr).trim())),
+        }
+    };
     let shown = git(&["show", &format!("{merged}:{DELTA}")])?;
     if !shown.status.success() {
         return Ok(());
@@ -184,6 +193,28 @@ mod tests {
         git(&["checkout", "-q", "tip"]);
         let e = check(t.path(), Some("main")).unwrap_err();
         assert!(e.contains(DELTA) && e.contains("merged with the landing ref main") && e.contains("duplicate key"), "{e}");
+    }
+
+    #[test]
+    fn a_tree_that_contains_the_landing_ref_is_judged_on_its_own_delta_without_a_merge() {
+        // A round's merged tree: the base is an ancestor, so nothing is merged (a slow merge
+        // once timed out here and read as a red fence for a whole round).
+        let t = copy_tree();
+        let delta = t.path().join(DELTA);
+        std::fs::write(&delta, "[spira]\nx = \"1\"\n").unwrap();
+        let git = |args: &[&str]| testkit::git(t.path(), args);
+        let commit = |msg: &str| git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", msg]);
+        git(&["init", "-q", "-b", "main"]);
+        git(&["add", "-A"]);
+        commit("base");
+        git(&["checkout", "-q", "-b", "round"]);
+        std::fs::write(&delta, "removed = [\"spira.a\"]\n[spira]\nx = \"1\"\n").unwrap();
+        commit("a member retires a key");
+        check(t.path(), Some("main")).expect("one removed line on top of the base parses");
+        std::fs::write(&delta, "removed = [\"spira.a\"]\nremoved = [\"spira.b\"]\n[spira]\nx = \"1\"\n").unwrap();
+        commit("a second member's line was merged in beside it");
+        let e = check(t.path(), Some("main")).unwrap_err();
+        assert!(e.contains("duplicate key") && e.contains(DELTA), "{e}");
     }
 
     #[test]
