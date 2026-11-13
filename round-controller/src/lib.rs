@@ -34,6 +34,7 @@ pub mod stack;
 pub mod supersede;
 pub mod switches;
 pub mod telemetry;
+pub mod trace;
 
 /// A mutex's guard, poisoned or not: every lock here guards data a panic cannot leave half-written.
 pub fn lock<T: ?Sized>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {

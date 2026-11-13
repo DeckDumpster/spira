@@ -51,6 +51,8 @@ const USAGE: &str = "usage: round-controller <verb>
   cutover-check --readiness                 one row per round repo (ci, base, submitted) and the world's; exit 0 only when all are green
   cutover-check --since-rev <rev>           each round repo's first round landed after store revision rev, or none; exit 0 only when none reads none
   cutover-check --probe-base <repo>         the base run on the landing ref at the lane's image, under a hand slot, recorded as the base identity's attempt
+  trace <batch|id:tip,...> [--base <ref>] [--model <m>] [--timeout <secs>]
+                                            spawn the VM-path and host-path adversarial tracers over the members' merged tree; write run/rounds/<batch>.trace.md; exit 1 if either names a certain failure, 3 if a tracer produced no report
   version                                   print the version
   -h, --help";
 
@@ -132,6 +134,13 @@ fn dispatch(args: &[String]) -> i32 {
                     2
                 }
             },
+        },
+        ["trace", rest @ ..] => match trace_verb(rest) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("round-controller trace: {e}");
+                2
+            }
         },
         ["version"] => {
             println!("round-controller {}", env!("CARGO_PKG_VERSION"));
@@ -527,4 +536,55 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
         installed: &installed,
     };
     f(&ports)
+}
+
+/// `trace`: the members come from the argument or, for a batch name, from its `cert-pass` rows.
+fn trace_verb(args: &[&str]) -> Result<i32, String> {
+    use round_controller::trace;
+    let mut spec = None;
+    let (mut base, mut model, mut secs) = ("local/main".to_string(), None, 1800u64); // batch-job: a tracer reads a whole merged tree
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = |what: &str| it.next().map(|v| v.to_string()).ok_or_else(|| format!("{what} wants a value"));
+        match *a {
+            "--base" => base = value("--base")?,
+            "--model" => model = Some(value("--model")?),
+            "--timeout" => secs = value("--timeout")?.parse().map_err(|_| "--timeout wants a whole number of seconds".to_string())?,
+            s if !s.starts_with("--") && spec.is_none() => spec = Some(s.to_string()),
+            other => return Err(format!("unexpected argument {other:?}")),
+        }
+    }
+    let spec = spec.ok_or("name a batch or a member list (id:tip,...)")?;
+    let run = std::path::PathBuf::from(spira_config::process::cfg("SPIRA_RUN")?);
+    let proc_ = SysProc;
+    let members = if trace::is_member_list(&spec) {
+        trace::parse_members(&spec)?
+    } else {
+        let rows = std::fs::read_to_string(run.join("tsd/cert-pass.jsonl")).map_err(|e| format!("cert-pass.jsonl: {e}"))?;
+        let ids = trace::batch_members(&rows, &spec).ok_or_else(|| format!("no cert-pass row of {spec} records its members; give id:tip,..."))?;
+        trace::parse_members(&ids.join(","))?
+    };
+    let members = trace::resolve_tips(&proc_, members)?;
+    let release = std::env::var(spira_config::RELEASE_ENV).ok().filter(|r| !r.is_empty()).ok_or_else(|| format!("{} is not set: no release is installed to trace against", spira_config::RELEASE_ENV))?;
+    let manifest = std::fs::read_to_string(std::path::Path::new(&release).join("MANIFEST")).map_err(|e| format!("{release}/MANIFEST: {e}"))?;
+    let installed = round_controller::real::installed::manifest_commit(&manifest).ok_or("the installed MANIFEST names no commit")?;
+    let model = match model {
+        Some(m) => m,
+        None => {
+            let spec = spira_config::process::spec()?;
+            let cfg = spira_config::load(std::path::Path::new(&spec))?;
+            cfg.persona.get("concierge").map(|p| p.model.clone()).filter(|m| !m.is_empty()).ok_or("persona.concierge.model is not declared; pass --model")?
+        }
+    };
+    let agent = trace::Agent { program: spira_config::process::cfg("SPIRA_AGENT")?, model, deadline: Duration::from_secs(secs) };
+    let req = trace::Request { name: trace::trace_name(&spec, &members), base, members, installed };
+    let trace::Traced { file, certain, failed } = trace::trace(&proc_, &agent, &run, &req)?;
+    println!("trace={}", file.display());
+    for (via, p) in &certain {
+        println!("certain ({}): {} | {} | {}", via.word(), p.failure, p.evidence, p.preventive);
+    }
+    for via in &failed {
+        eprintln!("round-controller trace: the {} tracer produced no report", via.word());
+    }
+    Ok(if !certain.is_empty() { 1 } else if failed.is_empty() { 0 } else { 3 })
 }
