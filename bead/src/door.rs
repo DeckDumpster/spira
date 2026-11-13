@@ -38,7 +38,7 @@ fn write(client: &LcClient, argv: &[&str], body: Option<&str>) -> Result<String,
 /// `bead.sh file --for <persona> --repo <repo>` through the door: the new bead's id. The door
 /// applies the filing contract and writes the bead's lifecycle row.
 pub fn file_work(client: &LcClient, persona: &str, repo: &str, title: &str, body: &str) -> Result<String, String> {
-    file_under(client, &crate::filing::work_labels(&std::path::PathBuf::from(std::env::var("SPIRA_HOME").unwrap_or_default()), persona, repo)?, persona, repo, title, body)
+    file_under(client, &crate::filing::work_labels(&spira_config::process::spira_home(), persona, repo)?, persona, repo, title, body)
 }
 
 fn file_under(client: &LcClient, labels: &str, persona: &str, repo: &str, title: &str, body: &str) -> Result<String, String> {

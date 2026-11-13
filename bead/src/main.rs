@@ -776,9 +776,10 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
 
+        let lane_override = env::var("SPIRA_BEAD_LANE_OVERRIDE").map(|v| !v.is_empty()).unwrap_or(false);
         let persona = bead::filing::Persona { name: for_rune.clone(), labels: rune_labels.split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(), requires_build_spec: requires_build_spec(home, &for_rune), unresolved: None };
         let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
-        if let Err(r) = bead::filing::persona_guards(&persona, &repo, &body, &repos, &|k| env::var(k).ok()) {
+        if let Err(r) = bead::filing::persona_guards(&persona, &repo, &body, &repos, lane_override) {
             eprint!("{}", r.text);
             return r.code;
         }

@@ -139,7 +139,7 @@ pub struct Guards<'a> {
 /// request body a create judges as its description. A refusal is bdq's: exit 1 and its text,
 /// so a write through this door is refused whenever the same write through bdq would be.
 /// `Ok` carries the lines to log (an overridden state write).
-pub fn guard(args: &mut Vec<String>, body: &mut Option<String>, g: &Guards, m: &mut dyn crate::callers::Machine) -> Result<String, Answer> {
+pub fn guard(args: &mut [String], body: &mut Option<String>, g: &Guards, m: &mut dyn crate::callers::Machine) -> Result<String, Answer> {
     let rows = std::cell::RefCell::new(m);
     let row = |id: &str| match rows.borrow_mut().call(&["show".to_string(), id.to_string()]) {
         (0, out) => spira_store::lc_state::parse_show(&out).ok().flatten(),
@@ -235,7 +235,7 @@ pub fn after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine,
 
 /// A content write's guards: `Ok` is the lines to log, `Err` the refusal answered instead of
 /// the write. Given the write's argv and its request body.
-pub type Guard<'a> = &'a mut dyn FnMut(&mut Vec<String>, &mut Option<String>) -> Result<String, Answer>;
+pub type Guard<'a> = &'a mut dyn FnMut(&mut [String], &mut Option<String>) -> Result<String, Answer>;
 /// What a write bd applied owes the lifecycle machine: the lines reporting any that failed.
 pub type After<'a> = &'a mut dyn FnMut(&[String], &str) -> String;
 
@@ -718,7 +718,7 @@ mod tests {
             return Err((2, format!("bead: {why}\n")));
         }
         let Some(repo) = repo else { return Err((2, "bead: --repo <name> required\n".into())) };
-        bead::filing::persona_guards(persona, repo, body, &policy.repos, &vars).map_err(err)
+        bead::filing::persona_guards(persona, repo, body, &policy.repos, false).map_err(err)
     }
 
     fn through_the_door(persona: &str, repo: Option<&str>, title: &str, body: &str, env: &BTreeMap<String, String>) -> Verdict {
@@ -728,16 +728,19 @@ mod tests {
         filing_guard(&v(&["create", title, "--labels", &labels.join(","), "--body-file", "-"]), Some(body), env).0
     }
 
+    /// A case: its name, persona, repo, body and the caller's variables.
+    type Filing<'a> = (&'a str, &'a str, Option<&'a str>, String, BTreeMap<String, String>);
+
     #[test]
     fn a_filing_is_refused_through_the_socket_with_the_text_bead_sh_refuses_it_with() {
         const SPEC: &str = "## Build\nthe artifact, and where\n";
         let over = |k: &str, v: &str| caller(&[(k, v)]);
-        let cases: Vec<(&str, &str, Option<&str>, String, BTreeMap<String, String>)> = vec![
+        let cases: Vec<Filing> = vec![
             ("no build spec", "builder", Some("deck"), "just an outcome".into(), caller(&[])),
             ("empty build section", "builder", Some("deck"), "## Build\n\n## Notes\nx".into(), caller(&[])),
             ("build spec", "builder", Some("deck"), SPEC.into(), caller(&[])),
             ("lane not admitted", "scout", Some("deck"), "x".into(), caller(&[])),
-            ("lane not admitted, overridden", "scout", Some("deck"), "x".into(), over("SPIRA_BEAD_LANE_OVERRIDE", "1")),
+            ("lane not admitted, override set", "scout", Some("deck"), "x".into(), over("SPIRA_BEAD_LANE_OVERRIDE", "1")),
             ("lane admitted", "scout", Some("spira"), "x".into(), caller(&[])),
             ("no repo", "builder", None, SPEC.into(), caller(&[])),
             ("foreign identity", "builder", Some("spira"), format!("{SPEC}uses pokedex"), caller(&[])),
@@ -756,10 +759,11 @@ mod tests {
             assert_eq!(door, beadsh, "{name}");
             refused += usize::from(beadsh.is_err());
         }
-        assert_eq!(refused, 9, "the table refuses where it should: an unrefused filing proves nothing");
+        assert_eq!(refused, 10, "the table refuses where it should: an unrefused filing proves nothing");
         let refusal = |name: &str| through_the_door(cases.iter().find(|c| c.0 == name).unwrap().1, cases.iter().find(|c| c.0 == name).unwrap().2, "T", &cases.iter().find(|c| c.0 == name).unwrap().3, &cases.iter().find(|c| c.0 == name).unwrap().4).unwrap_err();
         assert_eq!(refusal("no repo"), (2, "bead: --repo <name> required\n".to_string()));
         assert!(refusal("no build spec").1.starts_with("bead: refusing: a bead for builder must name what to build under a `## Build` heading"));
+        // literal-ok: the override's name is bead.sh's refusal text
         assert!(refusal("lane not admitted").1.contains("bead: repo:deck does not admit lane mimir-sweep — refused by its admitted lanes (plan,incident,groom,spike)\nbead: override: SPIRA_BEAD_LANE_OVERRIDE=1"));
         assert!(refusal("foreign identity").1.contains("\"pokedex\" belongs to deck"));
         assert!(refusal("contradicted statute").1.contains("law-x"));
@@ -861,16 +865,16 @@ mod tests {
         let ask = || Ok::<_, String>(ASK.to_string());
         let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, now: NOW };
         let mut machine = Rows(None);
-        let mut gd = |a: &mut Vec<String>, b: &mut Option<String>| guard(a, b, &g, &mut machine);
+        let mut gd = |a: &mut [String], b: &mut Option<String>| guard(a, b, &g, &mut machine);
         let mut no_after = |_: &[String], _: &str| -> String { panic!("nothing was written") };
         let mut body = || Ok::<String, String>("never read".into());
         let ans = run(&v(&["update", "sp-a", "--add-label", "x"]), &mut body, &mut gd, &mut no_after, &never, &never_w);
         assert_eq!((ans.code, ans.stderr.as_str()), (1, "czar-fence: deadlock is shadow — mutation refused (SPIRA_CZAR_STAGE_DEADLOCK=act to enable)\n"));
-        let mut gd = |a: &mut Vec<String>, b: &mut Option<String>| guard(a, b, &g, &mut Rows(None));
+        let mut gd = |a: &mut [String], b: &mut Option<String>| guard(a, b, &g, &mut Rows(None));
         let mut ask_body = || Ok::<String, String>("no shape at all".into());
         let ans = run(&v(&["create", "Pick", "--labels", ASK, "--body-file", "-"]), &mut ask_body, &mut gd, &mut no_after, &never, &never_w);
         assert_eq!(ans.code, 1, "the request body is judged as the ask's description: {ans:?}");
-        let mut refuse_all = |_: &mut Vec<String>, _: &mut Option<String>| Err(Answer { code: 1, stderr: "no\n".into(), ..Default::default() });
+        let mut refuse_all = |_: &mut [String], _: &mut Option<String>| Err(Answer { code: 1, stderr: "no\n".into(), ..Default::default() });
         let ans = run(&v(&["show", "sp-a"]), &mut body, &mut refuse_all, &mut no_after, &|_| Ok("read".into()), &never_w);
         assert_eq!((ans.code, ans.stdout.as_str()), (0, "read"), "a read is never guarded");
     }
@@ -936,7 +940,7 @@ mod tests {
     #[test]
     fn a_lifecycle_write_that_fails_after_bd_applied_is_reported_with_bds_answer() {
         let w = |_: &[String], _: Option<&str>| Ok::<_, String>("sp-new\n".to_string());
-        let mut admit = |_: &mut Vec<String>, _: &mut Option<String>| Ok(String::new());
+        let mut admit = |_: &mut [String], _: &mut Option<String>| Ok(String::new());
         let mut failed = |_: &[String], out: &str| format!("LIFECYCLE: {} has no row\n", out.trim());
         let mut body = || Err::<String, String>("none".into());
         let ans = run(&v(&["create", "T", "--silent"]), &mut body, &mut admit, &mut failed, &|_| panic!(), &w);
@@ -952,7 +956,7 @@ mod tests {
         let never = |_: &[String]| -> Result<String, crate::composed::ReadError> { panic!("bd must not run") };
         let never_w = |_: &[String], _: Option<&str>| -> Result<String, String> { panic!("bd must not run") };
         let mut no_stdin = || Err::<String, String>("nothing was sent".into());
-        let mut admit = |_: &mut Vec<String>, _: &mut Option<String>| Ok(String::new());
+        let mut admit = |_: &mut [String], _: &mut Option<String>| Ok(String::new());
         let mut no_after = |_: &[String], _: &str| String::new();
         let ans = run(&v(&["delete", "sp-a"]), &mut no_stdin, &mut admit, &mut no_after, &never, &never_w);
         assert_eq!(ans.code, REFUSED);

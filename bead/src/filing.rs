@@ -13,9 +13,9 @@ use crate::{bdq, identity, lane_check, repos_by_name, statute, LaneCheck};
 
 pub type Vars<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
-pub const LANE_OVERRIDE_ENV: &str = "SPIRA_BEAD_LANE_OVERRIDE";
-/// The caller variables the contract reads, which a content request must carry.
-pub const VARS: &[&str] = &[identity::OVERRIDE_ENV, statute::OVERRIDE_ENV, LANE_OVERRIDE_ENV];
+/// The caller variables the contract reads, which a content request must carry. The lane
+/// override is `bead.sh`'s alone: the door has none, so a lane the repo does not admit stays refused.
+pub const VARS: &[&str] = &[identity::OVERRIDE_ENV, statute::OVERRIDE_ENV];
 
 /// Exit code `bead.sh` refuses a filing with.
 const REFUSED: i32 = 2;
@@ -177,8 +177,7 @@ pub fn build_spec_guard(persona: &str, body: &str) -> Result<(), Refusal> {
     ))
 }
 
-pub fn lane_guard(persona: &Persona, repo: &str, repos: &BTreeMap<String, RepoSection>, vars: &Vars) -> Result<(), Refusal> {
-    let override_set = vars(LANE_OVERRIDE_ENV).is_some_and(|v| !v.is_empty());
+pub fn lane_guard(persona: &Persona, repo: &str, repos: &BTreeMap<String, RepoSection>, override_set: bool) -> Result<(), Refusal> {
     match lane_check(&persona.labels.join(","), repo, repos, override_set) {
         LaneCheck::Admitted => Ok(()),
         LaneCheck::Refused(msg) => Err(refuse(REFUSED, msg)),
@@ -240,11 +239,11 @@ fn put_text(args: &mut [String], body: &mut Option<String>, text: String) {
 }
 
 /// What a persona's filing must satisfy once its text is admitted: the build spec, then the lane.
-pub fn persona_guards(persona: &Persona, repo: &str, body: &str, repos: &BTreeMap<String, RepoSection>, vars: &Vars) -> Result<(), Refusal> {
+pub fn persona_guards(persona: &Persona, repo: &str, body: &str, repos: &BTreeMap<String, RepoSection>, lane_override: bool) -> Result<(), Refusal> {
     if persona.requires_build_spec {
         build_spec_guard(&persona.name, body)?;
     }
-    lane_guard(persona, repo, repos, vars)
+    lane_guard(persona, repo, repos, lane_override)
 }
 
 /// The contract on a create that files a persona's work, in `bead.sh file`'s order: identity,
@@ -276,7 +275,7 @@ pub fn create(args: &mut [String], body: &mut Option<String>, policy: &Policy, v
         return Err(refuse(REFUSED, format!("bead: {why}")));
     }
     let Some(repo) = repo else { return Err(refuse(REFUSED, "bead: --repo <name> required")) };
-    persona_guards(persona, &repo, &text, &policy.repos, vars)?;
+    persona_guards(persona, &repo, &text, &policy.repos, false)?;
     if !recorded.is_empty() {
         put_text(args, body, prefixed(&recorded, &text));
     }

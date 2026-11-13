@@ -109,8 +109,7 @@ impl Content for LiveContent {
         spira_config::repos::Registry::from_env(env, &home)
     }
     fn policy(&self) -> Result<bead::filing::Policy, String> {
-        let home = std::path::PathBuf::from(std::env::var("SPIRA_HOME").unwrap_or_default());
-        bead::filing::Policy::load(&home, &spira_config::process::cfg)
+        bead::filing::Policy::load(&spira_config::process::spira_home(), &spira_config::process::cfg)
     }
 }
 
@@ -192,7 +191,7 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
             };
             let guards = crate::content::Guards { caller, ask_label: &ask_label, registry: &registry, policy: &policy, repo_of: &repo_of, now };
             let (m, bd) = (std::cell::RefCell::new(m), std::cell::RefCell::new(bd));
-            let mut guard = |a: &mut Vec<String>, body: &mut Option<String>| crate::content::guard(a, body, &guards, &mut **m.borrow_mut());
+            let mut guard = |a: &mut [String], body: &mut Option<String>| crate::content::guard(a, body, &guards, &mut **m.borrow_mut());
             let mut after = |a: &[String], out: &str| crate::content::after(a, out, &mut **m.borrow_mut(), &mut **bd.borrow_mut(), ROW_BACKOFF_MS);
             crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| content.write_stdin(a, body))
         }

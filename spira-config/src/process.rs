@@ -219,6 +219,11 @@ pub fn fixture_world_env(dir: &std::path::Path, run: &std::path::Path, repos: &[
     ]
 }
 
+/// Where the harness is installed, as this process's environment says; empty when it names none.
+pub fn spira_home() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("SPIRA_HOME").unwrap_or_default())
+}
+
 /// The environment that points a spawned binary's config door at a fixture declaring
 /// `SPIRA_METRICS_ENDPOINT = endpoint` (and `declare`'s other keys), for tests of what it pushes.
 pub fn fixture_metrics_env(dir: &std::path::Path, endpoint: &str, declare: &[(&str, &str)]) -> Vec<(&'static str, String)> {
