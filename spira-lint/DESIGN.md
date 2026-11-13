@@ -1641,6 +1641,8 @@ each with its reason in `bdq_read.rs`: `spira-lc/`, the bdq program and library,
 `spira-lint/`, `spira/test-*`, and any `tests/` path. `BDQ_READ_CONSIDERED="<why>"` on the line
 passes it and logs `bdq-read: considered <path>:<line>: <why>`.
 
+**Not covered.** An argv that leads with a flag, a bare `[..]` array without `&`/`vec!`, and `.args([..])` forms are not seen; the rule counts the three literal forms above.
+
 **Allow list.** `spira-lint/bdq-read-allow`, lines `<count> <path>`, shrink-only, parsed as
 `call-deadline`'s is. More hits than the count (or a file not listed) is refused with
 `(N allowed, M found)`; fewer is a stale entry to lower or remove. Regenerate with
