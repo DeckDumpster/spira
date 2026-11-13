@@ -497,7 +497,7 @@ fn batcher_assemble(w: &World, input: &str) -> Result<String, String> {
     json(&bl::Assembled { merged, conflicts, base_conflicts, wt: format!("/sim/wt/{}", bl::digest(&leg.round_key)), base: leg.base, suites: true, ..bl::Assembled::default() })
 }
 
-fn batcher_round_open(w: &World, input: &str) -> Result<String, String> {
+pub fn batcher_round_open(w: &World, input: &str) -> Result<String, String> {
     let leg: bl::Leg = parse_json(bl::ROUND_OPEN, input)?;
     let mut lc = w.lc();
     if lc.round.is_some() {
