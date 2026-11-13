@@ -14,6 +14,7 @@ pub mod colors;
 pub mod fmt;
 pub mod inflight;
 pub mod frame;
+pub mod goodput;
 pub mod model;
 pub mod round;
 pub mod sections;
