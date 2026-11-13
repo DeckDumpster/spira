@@ -1186,3 +1186,14 @@ fn every_edge_reads_its_bound_from_the_config_and_an_unknown_edge_has_none() {
     let asks_longest = Config { ask_bound_s: 9_999, ..cfg };
     assert_eq!(asks_longest.window_s(), 44 + 600, "an ask's age comes from the store, so it does not widen the audit read");
 }
+
+#[test]
+fn a_stall_is_judged_on_the_bound_the_config_names_for_its_edge() {
+    let now = T0;
+    let s = stuck_delivery(now);
+    let tight = Config { deliver_bound_s: 3 * HOUR, ..config() };
+    let loose = Config { deliver_bound_s: HOUR, ..config() };
+    assert!(spira_runtime::tasks::e::watch_transitions::stalls(&s, now, &tight).iter().all(|x| x.edge != DELIVERY_EDGE), "2h in delivery is inside a 3h bound");
+    let page = spira_runtime::tasks::e::watch_transitions::stalls(&s, now, &loose).into_iter().find(|x| x.edge == DELIVERY_EDGE).expect("2h in delivery is past a 1h bound");
+    assert!(page.evidence.contains("bound 1h00m"), "{}", page.evidence);
+}

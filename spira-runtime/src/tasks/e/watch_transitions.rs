@@ -456,22 +456,23 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
     for scope in scopes(snap) {
         let t = table(snap, &scope, now);
         for edge in EDGES {
+            let bound = cfg.bound(edge).unwrap_or(0);
             let found = match edge {
-                "WORKING→SUBMITTED" => (t["WORKING"].count as u64 >= cfg.working_min.max(1) && quiet(snap, &scope, "Submit", now, cfg.submit_bound_s)).then(|| evidence(snap, &scope, now, &["WORKING"], "Submit", cfg.submit_bound_s)),
+                "WORKING→SUBMITTED" => (t["WORKING"].count as u64 >= cfg.working_min.max(1) && quiet(snap, &scope, "Submit", now, bound)).then(|| evidence(snap, &scope, now, &["WORKING"], "Submit", bound)),
                 CUT_EDGE => {
-                    (quiet(snap, &scope, "Delivered", now, cfg.cut_bound_s) && uncovered_wait(snap, &scope, now, cfg) >= cfg.cut_bound_s).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", cfg.cut_bound_s))
+                    (quiet(snap, &scope, "Delivered", now, bound) && uncovered_wait(snap, &scope, now, cfg) >= bound).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", bound))
                 }
-                DELIVERY_EDGE => (t["IN_DELIVERY"].oldest >= cfg.deliver_bound_s && quiet(snap, &scope, "Delivered", now, cfg.deliver_bound_s)).then(|| evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", cfg.deliver_bound_s)),
-                "LANDED→ACTIVATED" if scope == cfg.release_repo => snap.landed_after.get(&scope).copied().filter(|l| now.saturating_sub(*l) >= cfg.activate_bound_s).map(|landed| {
+                DELIVERY_EDGE => (t["IN_DELIVERY"].oldest >= bound && quiet(snap, &scope, "Delivered", now, bound)).then(|| evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", bound)),
+                "LANDED→ACTIVATED" if scope == cfg.release_repo => snap.landed_after.get(&scope).copied().filter(|l| now.saturating_sub(*l) >= bound).map(|landed| {
                     let act = snap.activated_at.map_or("never".into(), iso8601);
-                    format!("oldest landing not yet active {} ago at {} (bound {}); last activation {act}; last Delivered {}", dur(now.saturating_sub(landed)), iso8601(landed), dur(cfg.activate_bound_s), last_at(snap, &scope, "Delivered"))
+                    format!("oldest landing not yet active {} ago at {} (bound {}); last activation {act}; last Delivered {}", dur(now.saturating_sub(landed)), iso8601(landed), dur(bound), last_at(snap, &scope, "Delivered"))
                 }),
                 ASK_EDGE => {
                     let ask = t["ASK"];
-                    (ask.count > 0 && ask.oldest >= cfg.ask_bound_s).then(|| {
-                        let over = ages(snap, &scope, "ASK", now).into_iter().filter(|a| *a >= cfg.ask_bound_s).count();
-                        let ids: Vec<&str> = snap.beads.iter().filter(|b| b.ask_held && (scope == ALL || b.repo == scope) && now.saturating_sub(b.ask_since.unwrap_or(b.since)) >= cfg.ask_bound_s).map(|b| b.id.as_str()).collect();
-                        format!("{}; {over} held past {} unanswered: {}", row_text("ASK", &ask), dur(cfg.ask_bound_s), ids.join(" "))
+                    (ask.count > 0 && ask.oldest >= bound).then(|| {
+                        let over = ages(snap, &scope, "ASK", now).into_iter().filter(|a| *a >= bound).count();
+                        let ids: Vec<&str> = snap.beads.iter().filter(|b| b.ask_held && (scope == ALL || b.repo == scope) && now.saturating_sub(b.ask_since.unwrap_or(b.since)) >= bound).map(|b| b.id.as_str()).collect();
+                        format!("{}; {over} held past {} unanswered: {}", row_text("ASK", &ask), dur(bound), ids.join(" "))
                     })
                 }
                 _ => None,
