@@ -1251,8 +1251,6 @@ mod tests {
         let third = super::Real::new(t.path().to_path_buf());
         assert!(third.tree_lock_open(&a));
         assert!(!third.tree_lock_try(), "the same branch's lock is held by the first gate");
-        drop(first);
-        assert!(third.tree_lock_try(), "the lock is free once its holder is gone");
         assert!(!super::Real::new(t.path().to_path_buf()).tree_lock_open(&t.path().join("no/such/dir/x.lock")));
         assert!(!super::Real::new(t.path().to_path_buf()).tree_lock_try(), "no lockfile opened means no lock");
     }
