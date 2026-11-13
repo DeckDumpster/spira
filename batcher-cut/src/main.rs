@@ -804,6 +804,9 @@ fn merge_round(
         Some(MergeResult::Empty) => stacked_into(&before, &m.id),
         _ => false,
     });
+    if let Err(e) = io::fold_config_delta(env_, wt, &members) {
+        eprintln!("batcher {}: config delta not folded: {e}", repo.name);
+    }
     Ok(members)
 }
 
@@ -2441,6 +2444,45 @@ mod tests {
         assert_eq!(named_suites(all.clone(), None), all);
         assert_eq!(named_suites(all.clone(), Some("test-b.sh, test-z.sh")), ["test-b.sh"]);
         assert!(named_suites(all, Some("test-z.sh")).is_empty());
+    }
+
+    #[test]
+    fn a_cut_round_lands_the_config_delta_folded_and_its_fragments_gone() {
+        let root = testkit::TempDir::new("batcher-cut-fold");
+        let d = root.path().join("repo");
+        std::fs::create_dir_all(d.join("spira/config-delta.d")).unwrap();
+        let g = |args: &[&str]| testkit::git(&d, args);
+        g(&["init", "-q", "-b", "main"]);
+        std::fs::write(d.join("spira/config-delta.toml"), "# base\n[spira]\nk = 1\n").unwrap();
+        let commit = |msg: &str| {
+            g(&["add", "-A"]);
+            g(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg]);
+            g(&["rev-parse", "HEAD"]).trim().to_string()
+        };
+        let base = commit("base");
+        let mut members = Vec::new();
+        for (id, key) in [("sp-a", "spira.x"), ("sp-b", "spira.y")] {
+            g(&["checkout", "-q", "-b", id, &base]);
+            std::fs::create_dir_all(d.join("spira/config-delta.d")).unwrap();
+            std::fs::write(d.join(format!("spira/config-delta.d/{id}.toml")), format!("removed = [\"{key}\"]\n")).unwrap();
+            members.push(Member { id: id.into(), tip: commit(id), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: vec![] });
+        }
+        g(&["checkout", "-q", "main"]);
+        let env = io::lifecycle_tests_env(root.path());
+        let repo = Repo { name: "alpha".into(), path: d.clone(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+        let wt = root.path().join("wt");
+        let merged = merge_round(&env, &repo, &wt, &base, members).unwrap();
+        assert_eq!(merged.len(), 2);
+        let delta = std::fs::read_to_string(wt.join("spira/config-delta.toml")).unwrap();
+        assert!(delta.contains("# base") && delta.contains("spira.x") && delta.contains("spira.y"), "{delta}");
+        assert!(!wt.join("spira/config-delta.d/sp-a.toml").exists() && !wt.join("spira/config-delta.d/sp-b.toml").exists());
+        let status = testkit::git(&wt, &["status", "--porcelain"]);
+        assert!(status.trim().is_empty(), "the fold is committed, not left dirty: {status}");
+        assert!(testkit::git(&wt, &["log", "-1", "--format=%B"]).contains("Members: sp-a sp-b"));
+        merge_round(&env, &repo, &wt, &base, merged.clone()).unwrap();
+        assert_eq!(testkit::git(&wt, &["rev-list", "--count", &format!("{base}..HEAD")]).trim(), "5", "a rebuild folds once from a reset tree: two members, two merges, one fold");
+        g(&["-C", wt.to_str().unwrap(), "checkout", "-q", "--detach", &base]);
+        assert_eq!(io::fold_config_delta(&env, &wt, &merged).unwrap(), 0, "a tree with no fragments gets no commit");
     }
 
     const ALL: Switches = Switches {
