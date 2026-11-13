@@ -340,8 +340,13 @@ pub fn agent_args(sysfile: &Path, model: &str, wiki_dir: Option<&str>) -> Vec<St
 pub fn commit_after(cfg: &Env, sid: &str, before: Option<Result<brain::Snapshot, String>>) -> Option<Result<usize, String>> {
     let dir = Path::new(cfg.wiki.as_deref().filter(|w| !w.is_empty())?);
     let committed = before?.and_then(|b| {
-        let touched = brain::touched(&b, &brain::snapshot(dir)?);
+        let after = brain::snapshot(dir)?;
+        let touched = brain::with_announced(dir, brain::touched(&b, &after), &after);
         brain::commit_paths(dir, &touched, &format!("archivist: {} page(s) from session {sid}\n", touched.len()))
+    });
+    let committed = committed.map_err(|e| match brain::snapshot(dir) {
+        Ok(dirty) if !dirty.is_empty() => format!("{e}; left dirty: {}", dirty.keys().cloned().collect::<Vec<_>>().join(", ")),
+        _ => e,
     });
     if let Err(e) = &committed {
         log(&format!("archivist: {sid} could not commit the wiki pages it wrote — {e}"));

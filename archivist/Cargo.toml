@@ -22,3 +22,8 @@ test = false
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "exit_commit"
+path = "tests/exit_commit.rs"
+required-features = ["integration"]

@@ -93,6 +93,41 @@ pub fn snapshot(dir: &Path) -> Result<Snapshot, String> {
     Ok(snap)
 }
 
+/// Pages named by `[[wikilink]]` in `added` (text a run appended to `log.md` or `index.md`), as
+/// the `wiki/` paths among `dirty` whose file stem they name and `have` does not already hold.
+pub fn announced_dirty(added: &str, dirty: &Snapshot, have: &[String]) -> Vec<String> {
+    let mut slugs: Vec<&str> = Vec::new();
+    for part in added.split("[[").skip(1) {
+        let Some((inner, _)) = part.split_once("]]") else { continue };
+        let slug = inner.split(['|', '#']).next().unwrap_or("").trim();
+        if !slug.is_empty() {
+            slugs.push(slug);
+        }
+    }
+    dirty
+        .keys()
+        .filter(|p| p.starts_with("wiki/") && p.ends_with(".md") && !have.contains(p))
+        .filter(|p| Path::new(p).file_stem().and_then(|s| s.to_str()).is_some_and(|stem| slugs.contains(&stem)))
+        .cloned()
+        .collect()
+}
+
+/// `touched`, plus every dirty page that a touched `log.md` or `index.md` announces: an
+/// announcement is committed with the page it points at or not at all.
+pub fn with_announced(dir: &Path, touched: Vec<String>, after: &Snapshot) -> Vec<String> {
+    let mut added = String::new();
+    for p in touched.iter().filter(|p| *p == "log.md" || *p == "index.md") {
+        match git(dir, &["diff", "HEAD", "-U0", "--", p], None) {
+            Ok(d) if !d.is_empty() => added.extend(d.lines().filter(|l| l.starts_with('+') && !l.starts_with("+++")).map(|l| format!("{l}\n"))),
+            _ => added.push_str(&std::fs::read_to_string(dir.join(p)).unwrap_or_default()),
+        }
+    }
+    let mut all = touched;
+    let extra = announced_dirty(&added, after, &all);
+    all.extend(extra);
+    all
+}
+
 pub fn touched(before: &Snapshot, after: &Snapshot) -> Vec<String> {
     after.iter().filter(|(p, h)| before.get(*p) != Some(*h)).map(|(p, _)| p.clone()).collect()
 }
@@ -237,6 +272,23 @@ pub(crate) mod tests {
     thread_local! {
         /// A stand-in for `git` that only this thread's `Git::real()` uses.
         pub(crate) static GIT_PROGRAM: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    }
+
+    fn snap(paths: &[&str]) -> Snapshot {
+        paths.iter().map(|p| (p.to_string(), "h".to_string())).collect()
+    }
+
+    #[test]
+    fn a_log_entry_pulls_in_the_dirty_page_it_links_to() {
+        let dirty = snap(&["log.md", "wiki/projects/spira/disk-model.md", "wiki/notes/other.md"]);
+        let got = announced_dirty("+- Updated: [[disk-model]], [[gone|alias]]\n", &dirty, &["log.md".to_string()]);
+        assert_eq!(got, vec!["wiki/projects/spira/disk-model.md".to_string()]);
+    }
+
+    #[test]
+    fn an_announced_page_already_in_the_set_is_not_added_twice() {
+        let dirty = snap(&["wiki/notes/a.md"]);
+        assert!(announced_dirty("[[a#section]]", &dirty, &["wiki/notes/a.md".to_string()]).is_empty());
     }
 
     #[test]
