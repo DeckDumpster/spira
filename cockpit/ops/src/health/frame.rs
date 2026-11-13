@@ -300,6 +300,25 @@ mod tests {
     }
 
     #[test]
+    fn the_panes_goodput_lines_fit_a_phone_page() {
+        let out = goodput_frame(GOODPUT_FIXTURE, 40);
+        assert!(out.iter().any(|l| l.contains("GOODPUT")), "{out:?}");
+        for l in out.iter().filter(|l| ["GOODPUT", "distance", "pokebot", "step"].iter().any(|k| l.contains(k))) {
+            let mut plain = String::new();
+            let mut in_esc = false;
+            for c in l.chars() {
+                match (in_esc, c) {
+                    (_, '\u{1b}') => in_esc = true,
+                    (true, 'm') => in_esc = false,
+                    (false, c) => plain.push(c),
+                    _ => {}
+                }
+            }
+            assert!(plain.chars().count() <= 40, "{l:?}");
+        }
+    }
+
+    #[test]
     fn the_pane_greys_a_stale_pass_and_says_how_old_it_is() {
         let out = goodput_frame(&*Box::leak(GOODPUT_FIXTURE.replace("PASS_AT='986'", "PASS_AT='1'").into_boxed_str()), 120);
         let line = out.iter().find(|l| l.contains("stale pass, 999s old")).expect("a stale-pass line");
