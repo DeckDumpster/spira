@@ -16,7 +16,7 @@ pub struct ConfigRegistryRuntime {
 
 const NAME: &str = "config-registry-runtime";
 const OWN_SOURCE: &str = "spira-lint/src/rules/config_registry_runtime.rs";
-const REGISTRY_FILES: [&str; 5] = ["conf.d", "conf.toml.d", "conf.key-history", "complete.toml", "config-delta.toml"];
+const REGISTRY_FILES: [&str; 6] = ["conf.d", "conf.toml.d", "conf.key-history", "complete.toml", "config-delta.toml", "config-delta.d"];
 
 fn embed_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();

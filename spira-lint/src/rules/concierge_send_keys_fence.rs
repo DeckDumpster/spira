@@ -27,6 +27,7 @@ const WAKE_ALLOWED: &[&str] = &[
     "spira/conf.d.defaults.generated.sh",
     "spira/conf.d/",
     "spira/config-delta.toml",
+    "spira/config-delta.d/",
 ];
 
 fn keys_re() -> &'static Regex {

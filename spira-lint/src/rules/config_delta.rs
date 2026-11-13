@@ -85,7 +85,7 @@ impl Rule for ConfigDelta {
     }
 
     fn applies_to(&self, e: &Entry) -> bool {
-        DIRS.iter().any(|d| e.path.starts_with(&format!("{d}/"))) || e.path == DELTA
+        DIRS.iter().any(|d| e.path.starts_with(&format!("{d}/"))) || e.path == DELTA || e.path.starts_with("spira/config-delta.d/")
     }
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
@@ -118,7 +118,7 @@ impl Rule for ConfigDelta {
                 prior.len()
             )));
         }
-        let text = std::fs::read_to_string(tree.root.join(DELTA)).unwrap_or_default();
+        let text = spira_config::delta::delta_text(&tree.root.join("spira")).map_err(|e| LintError::Refused(format!("{DELTA}: {e}")))?.unwrap_or_default();
         let (added, removed) =
             declared(&text).map_err(|e| LintError::Refused(format!("{DELTA} does not parse: {e}")))?;
         let typed = spira_config::delta_added(&text).and_then(|a| spira_config::check_delta(&tree.root.join("spira"), &a));

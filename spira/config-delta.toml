@@ -1,4 +1,5 @@
-# Keys this release adds to the one source (release/src/config_delta.rs, sp-pr6jn6), applied at activation.
+# Keys this release adds to the one source (release/src/config_delta.rs), applied at activation.
+# A change adds its own file under config-delta.d/ rather than editing this one; the release tool folds them in.
 removed_tasks = ["watch.perf_happy", "watch.spill_key", "watch.statute_audit"]
 removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_label", "spira.round_marker_max_age", "spira.liveness_model", "spira.tier_budget_window", "spira.attribute_maxpar", "spira.batch_bins_ttl", "spira.gate_select_cap", "spira.preflight_suite_max_secs", "spira.queue_repro_ci_maxsec", "spira.queue_repro_ci_pollsec", "spira.queue_stuck_age", "spira.reconciler_label", "spira.round_vm_provider", "spira.suites_budget", "spira.suite_times_log", "spira.tier_allowlist", "spira.tier_area_allowlist", "spira.reviewer_diff_limit", "spira.reviewer_model", "spira.reviewer_timeout", "spira.reviewer_verdicts", "spira.mirror", "spira.qa_depth", "spira.self_test", "spira.prefix_map", "spira.check5_max_resolve", "spira.delivers_check_timeout", "spira.cert_prices", "spira.dolt_maintenance_units", "spira.testdb_data", "spira.testdb_port", "spira.lc_testdb_data", "spira.lc_testdb_port", "spira.release_rust_toolchain", "spira.sift_mend_hold_secs", "spira.maechen_label", "spira.maechen_landing_interval", "spira.maechen_max_beads", "spira.maechen_max_gap_seconds", "spira.maechen_remedy_label", "spira.auron_restarts", "spira.auron_restart_window", "spira.chamber", "spira.chamber_overlay", "spira.fayths", "spira.lanes_reserve", "spira.unit_test_slow_secs", "spira.unit_test_terminate_after", "spira.solo_max_skips", "spira.throughput_floor_per_day", "spira.throughput_restop_after", "spira.lc_live_check_secs", "spira.runtime_repo_events_secs", "spira.lc_snapshot", "spira.lc_snapshot_secs", "spira.round_vm_ec2_key_warn_days", "spira.round_vm_ec2_launch_window", "spira.round_vm_ec2_probe_deadline", "spira.round_vm_spill_io_full_avg60", "spira.round_vm_host_io_full_avg60", "spira.round_vm_host_cpu_some_avg60"] # ffx-ok
 [spira]
@@ -265,9 +266,8 @@ lc_ship_dir = ""
 plane_skew_max = 25
 runtime_reconciler_secs = 60
 testenv_scratch_root = ""
-# sp-ipwlic, the scheduler consolidation: the keys its tasks pin (S10). TASK_MODES puts every
-# task in act (ruling D4) and UNITS runs them on systemd. The empty strings are box paths the
-# operator sets before activating (an added key a layer already sets is left as it is).
+# Keys the scheduler tasks pin. The empty strings are box paths the operator sets before
+# activating (an added key a layer already sets is left as it is).
 bdq_conn_retries = 3
 export_git_retry_wait = 10
 gh_intake_api = "https://api.github.com"
@@ -361,7 +361,6 @@ runtime_trigger_mimir_secs = 900
 runtime_dwarf_usage_secs = 60
 runtime_trigger_warden_secs = 7200
 store_view_stale_ms = 10000
-task_modes = "heartbeat=act round-duty=act inbox-keeper=act pr-notify=act asks=act design-asks=act brain-dirty=act supersede-duty=act bead-sweep=act publish-backlog=act overrides=act readiness-dependents=act view=act reconciler=act reconciler-flow=act asks.ideas=act asks.moot=act asks.verify=act batcher.forge=act batcher.local=act cert.full=act cert.sample=act cockpit-tier-5s=act cockpit-tier-600s=act cockpit-tier-60s=act czar=act gate.check=act gate.worker=act hel.reap_stale=act hel.reap_terminal=act hel.sweep=act inbox.notify=act incident.alarms=act incident.probe=act incident.settle=act intake.filings=act intake.gh=act intake.kit_bump=act landing=act mail.reconcile=act mail.tidy=act mail.wake=act persona.archivist=act persona.ops=act publish=act queue.step=act reconcile.content=act reconcile.continuity=act reconcile.goodput=act reconcile.heimdall=act reconcile.section=act roundvm.ami_prune=act roundvm.drain=act sentinel-call=act sentinel-pass=act sift=act submission-provision=act sweep.archive=act sweep.escape_census=act sweep.export_beads=act sweep.nix_gc=act sweep.reclaim=act sweep.target=act sweep.tsd=act trigger.groom=act trigger.mimir=act trigger.warden=act watch.ami_stale=act watch.backup_age=act watch.ci_spill=act watch.dwarf_usage=act watch.mend=act watch.pass_rate=act watch.perf=act watch.refusals=act watch.runtime=act watch.skew=act watch.sop_lint=act watch.testenv_cap=act watch.throughput=act watch.tower=act watch.transitions=act watch.warm_full=act"
 trace_mark = "=== spira attempt"
 units = "systemd"
 watchdog_bound_secs = 300

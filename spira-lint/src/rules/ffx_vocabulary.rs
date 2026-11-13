@@ -241,7 +241,7 @@ Line 0 is a hit in the path itself."
 
 /// The mode this release's config-delta adds, for a lint run before activation has declared the key.
 fn pending_mode(tree: &Tree) -> Option<Mode> {
-    let delta = tree.text_of("spira/config-delta.toml")?;
+    let delta = tree.delta_text().ok()??;
     let added = spira_config::delta_added(&delta).ok()?;
     Mode::parse(added.get("spira")?.get("ffx_vocabulary_mode")?.as_str()?).ok()
 }
@@ -280,6 +280,18 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert!(!r.check(&tr).unwrap().is_empty());
         let bare = tree(&t, &["src/all.txt"]);
         assert!(r.check(&bare).is_err(), "no delta entry must still refuse");
+    }
+
+    #[test]
+    fn a_fragment_may_add_the_mode_and_two_fragments_that_disagree_read_as_undeclared() {
+        let t = fixture();
+        t.write("spira/config-delta.d/sp-a.toml", "[spira]\nffx_vocabulary_mode = \"enforce\"\n");
+        let r = FfxVocabulary::with_mode(Err("undeclared".into()));
+        assert!(!r.check(&tree(&t, &["src/all.txt", "spira/config-delta.d/sp-a.toml"])).unwrap().is_empty());
+        t.write("spira/config-delta.d/sp-b.toml", "[spira]\nffx_vocabulary_mode = \"report\"\n");
+        let both = tree(&t, &["src/all.txt", "spira/config-delta.d/sp-a.toml", "spira/config-delta.d/sp-b.toml"]);
+        assert!(both.delta_text().is_err());
+        assert!(r.check(&both).is_err());
     }
 
     #[test]

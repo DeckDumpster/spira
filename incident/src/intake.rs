@@ -164,7 +164,7 @@ impl Env {
             path: env_or("SPIRA_INCIDENT_PATH", "?"),
             lock_path: std::path::PathBuf::from(env_or("SPIRA_INCIDENT_LOCK", &format!("{spira_run}/incident.lock"))),
             lock_wait_s: env("SPIRA_INCIDENT_LOCK_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30),
-            retired_keys: spira_home_dir().ok().and_then(|h| std::fs::read_to_string(h.join("config-delta.toml")).ok()).map(|t| decide::delta_removed_keys(&t)).unwrap_or_default(),
+            retired_keys: spira_home_dir().ok().and_then(|h| spira_config::delta::delta_text(&h).ok().flatten()).map(|t| decide::delta_removed_keys(&t)).unwrap_or_default(),
             spira_run,
         }
     }

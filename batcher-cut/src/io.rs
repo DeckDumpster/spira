@@ -1648,10 +1648,26 @@ pub fn config_key_changes(repo: &Repo, base_sha: &str, tip: &str) -> (Vec<String
 }
 
 pub const CONFIG_DELTA: &str = "spira/config-delta.toml";
+const CONFIG_DELTA_DIR: &str = "spira/config-delta.d";
 
 /// `path` at `rev`; `None` when `rev` has no such file.
 pub fn file_at(repo: &Repo, rev: &str, path: &str) -> Option<String> {
     run(Command::new("git").arg("-C").arg(&repo.path).args(["show", &format!("{rev}:{path}")]), "git show file").ok()
+}
+
+/// The config delta `rev` declares, base file and fragments merged as every other reader does;
+/// `None` when it has none, `Err` when the files conflict or do not parse.
+pub fn config_delta_at(repo: &Repo, rev: &str) -> Result<Option<String>, String> {
+    let mut parts: Vec<(String, String)> = file_at(repo, rev, CONFIG_DELTA).map(|t| (CONFIG_DELTA.to_string(), t)).into_iter().collect();
+    let listed = run(Command::new("git").arg("-C").arg(&repo.path).args(["ls-tree", "--name-only", rev, &format!("{CONFIG_DELTA_DIR}/")]), "git ls-tree config delta").unwrap_or_default();
+    let mut names: Vec<&str> = listed.lines().filter(|l| l.ends_with(".toml")).collect();
+    names.sort();
+    for n in names {
+        if let Some(t) = file_at(repo, rev, n) {
+            parts.push((n.to_string(), t));
+        }
+    }
+    spira_config::delta::merge_delta_texts(&parts)
 }
 
 /// The paths `tip` changed since it forked from `base_sha` (`git diff base...tip`) — what
@@ -5272,5 +5288,28 @@ mod config_key_tests {
         testkit::git(d, &["checkout", "-q", "a"]);
         testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit", &b]);
         assert!(!parses("HEAD"), "git merged both lines without a conflict, and the result is not TOML");
+    }
+
+    #[test]
+    fn two_merged_fragments_are_a_delta_that_parses_with_both_retirements() {
+        let root = testkit::TempDir::new("config-delta-fragments");
+        let d = root.path();
+        testkit::git(d, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir_all(d.join("spira")).unwrap();
+        std::fs::write(d.join(CONFIG_DELTA), "[spira]\nk = 1\n").unwrap();
+        commit(d, "base");
+        let fragment = |branch: &str, key: &str| {
+            testkit::git(d, &["checkout", "-q", "-b", branch, "main"]);
+            std::fs::create_dir_all(d.join(CONFIG_DELTA_DIR)).unwrap();
+            std::fs::write(d.join(CONFIG_DELTA_DIR).join(format!("{branch}.toml")), format!("removed = [\"{key}\"]\n")).unwrap();
+            commit(d, branch)
+        };
+        let (a, b) = (fragment("a", "spira.x"), fragment("b", "spira.y"));
+        let repo = Repo { name: "alpha".into(), path: d.to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+        testkit::git(d, &["checkout", "-q", "a"]);
+        testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit", &b]);
+        let text = config_delta_at(&repo, "HEAD").unwrap().unwrap();
+        assert!(spira_config::delta_added(&text).is_ok() && text.contains("spira.x") && text.contains("spira.y"), "{text}");
+        assert!(config_delta_at(&repo, &a).unwrap().unwrap().contains("spira.x"));
     }
 }
