@@ -221,3 +221,15 @@ fn a_list_or_ready_set_that_fails_stops_the_pass_before_any_write() {
 fn rows_that_are_not_a_list_are_no_transitions() {
     assert!(section::transitions_of_rows(&json!({ "error": "x" })).is_empty());
 }
+
+#[test]
+fn a_section_the_store_holds_but_the_schema_cannot_read_stops_the_publish() {
+    struct Garbled;
+    impl Lc for Garbled {
+        fn call(&self, args: &[String]) -> (i32, Value) {
+            assert_eq!(args[1], "get", "nothing is written over a section that cannot be read");
+            (0, json!({ "section": { "kind": 3 } }))
+        }
+    }
+    assert!(section::run(&Garbled, MIDNIGHT, INTERVAL, &[], 0).unwrap_err().contains("Supply/supply is unreadable"));
+}

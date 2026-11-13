@@ -49,7 +49,8 @@ pub fn measure(transitions: &[Transition], now: u64, claimable_ready: u64) -> Re
 }
 
 /// Transitions from `spira-lc list` rows, which carry a bead's current state and the time it
-/// entered it but not where it came from.
+/// entered it but not where it came from: a bead that reached READY and left it within the day
+/// is not seen, so a live `landable` is a lower bound.
 pub fn transitions_of_rows(rows: &Value) -> Vec<Transition> {
     let num = |v: &Value| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()).map(|f| f as i64));
     rows.as_array()
