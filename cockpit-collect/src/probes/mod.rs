@@ -681,13 +681,9 @@ pub fn slots_keys(cfg: &Cfg) -> Kv {
     let file_pool = io::max_dwarves();
     let pool_limit = Limit::read("SPIRA_MAX_DWARVES", Some(file_pool.trim()).filter(|p| !p.is_empty()));
     let ceiling_limit = Limit::read("SPIRA_MAX_LIVE_DWARVES", Some(&cfg.max_live_dwarves.to_string()));
-    let shown = |l: &Limit| l.held().map(str::to_string).or_else(|| match l {
-        Limit::Unanswered { file, .. } => file.clone(),
-        Limit::Held { .. } => None,
-    });
-    let ceiling = shown(&ceiling_limit).unwrap_or_else(|| "?".to_string());
+    let ceiling = ceiling_limit.shown().unwrap_or("?").to_string();
     push(&mut out, "SP_SLOTS_CEILING", ceiling.clone());
-    push(&mut out, "SP_SLOTS_POOL", shown(&pool_limit).unwrap_or_else(|| "0".to_string()));
+    push(&mut out, "SP_SLOTS_POOL", pool_limit.shown().unwrap_or("?").to_string());
     let pending: Vec<(&str, &spira_config::scheduler_link::Pending)> = [("ceiling", &ceiling_limit), ("pool", &pool_limit)].into_iter().filter_map(|(n, l)| l.pending().map(|p| (n, p))).collect();
     push(&mut out, "SP_SLOTS_PENDING", pending.iter().map(|(n, p)| format!("{n} {}", p.config)).collect::<Vec<_>>().join(", "));
     push(&mut out, "SP_SLOTS_WAITS", pending.first().map(|(_, p)| p.waits.clone()).unwrap_or_default());

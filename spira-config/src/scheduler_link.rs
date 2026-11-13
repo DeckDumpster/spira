@@ -81,7 +81,7 @@ pub fn running(sock: &str, key: &str) -> Result<String, String> {
 /// scheduler holds, and any re-pin it has yet to take.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Limit {
-    Held { value: String, pending: Option<Pending> },
+    Held { value: String, pending: Option<Pending>, file_differs: Option<String> },
     Unanswered { file: Option<String>, why: String },
 }
 
@@ -98,18 +98,15 @@ impl Limit {
             Ok(v) => v.trim().to_string(),
             Err(why) => return Limit::Unanswered { file: file.map(str::to_string), why },
         };
-        let recorded = status.and_then(|s| s.pointer(&format!("/repin/pending/{key}/wanted"))).and_then(serde_json::Value::as_str);
-        let differs = file.filter(|f| *f != held);
-        let pending = match (recorded, differs) {
-            (Some(wanted), _) => Some(wanted),
-            (None, f) => f,
-        }
-        .filter(|w| *w != held)
-        .map(|config| Pending {
-            config: config.to_string(),
-            waits: status.and_then(|s| s.pointer("/repin/waits")).and_then(serde_json::Value::as_str).filter(|w| !w.is_empty()).unwrap_or("the scheduler's next start").to_string(),
-        });
-        Limit::Held { value: held, pending }
+        let pending = status
+            .and_then(|s| s.pointer(&format!("/repin/pending/{key}/wanted")))
+            .and_then(serde_json::Value::as_str)
+            .map(|config| Pending {
+                config: config.to_string(),
+                waits: status.and_then(|s| s.pointer("/repin/waits")).and_then(serde_json::Value::as_str).filter(|w| !w.is_empty()).unwrap_or("its next safe point").to_string(),
+            });
+        let file_differs = file.filter(|f| *f != held).filter(|_| pending.is_none()).map(str::to_string);
+        Limit::Held { value: held, pending, file_differs }
     }
 
     pub fn read(key: &str, file: Option<&str>) -> Limit {
@@ -122,6 +119,14 @@ impl Limit {
         let running = call(sock, &["scheduler", "running", key]);
         let status = running.is_ok().then(|| call(sock, &["scheduler", "status"]).ok().and_then(|d| serde_json::from_str(&d).ok())).flatten();
         Limit::from_parts(key, file, running, status.as_ref())
+    }
+
+    /// The number to count with: the held value, else the file's when the scheduler is silent.
+    pub fn shown(&self) -> Option<&str> {
+        match self {
+            Limit::Held { value, .. } => Some(value),
+            Limit::Unanswered { file, .. } => file.as_deref(),
+        }
     }
 
     /// The number the scheduler enforces; `None` when it did not answer.
@@ -143,8 +148,9 @@ impl Limit {
     /// file value labelled as the file's when the scheduler is silent.
     pub fn render(&self) -> String {
         match self {
-            Limit::Held { value, pending: None } => value.clone(),
-            Limit::Held { value, pending: Some(p) } => format!("{value} held; config says {}, taken when {}", p.config, p.waits),
+            Limit::Held { value, pending: None, file_differs: None } => value.clone(),
+            Limit::Held { value, pending: None, file_differs: Some(f) } => format!("{value} held; config file says {f}, no re-pin pending"),
+            Limit::Held { value, pending: Some(p), .. } => format!("{value} held; config says {}, taken when {}", p.config, p.waits),
             Limit::Unanswered { file: Some(f), why } => format!("{f} per the config file, NOT confirmed held ({why})"),
             Limit::Unanswered { file: None, why } => format!("? ({why})"),
         }
@@ -172,6 +178,12 @@ mod tests {
         assert_eq!(l.held(), Some("7"));
         assert_eq!(l.pending(), Some(&Pending { config: "9".into(), waits: "the batcher to finish the round it is driving".into() }));
         assert_eq!(l.render(), "7 held; config says 9, taken when the batcher to finish the round it is driving");
+    }
+
+    #[test]
+    fn a_file_that_differs_with_no_recorded_re_pin_is_not_given_a_wait() {
+        let l = Limit::from_parts("SPIRA_MAX_DWARVES", Some("9"), Ok("7".into()), Some(&json!({"repin": {"pending": {}}})));
+        assert_eq!((l.pending(), l.render().as_str()), (None, "7 held; config file says 9, no re-pin pending"));
     }
 
     #[test]

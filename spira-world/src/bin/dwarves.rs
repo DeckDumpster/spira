@@ -75,7 +75,7 @@ fn cmd_status() -> i32 {
     let file_pool = spira.and_then(|s| spira_config::said(s.get_u32("SPIRA_MAX_DWARVES")));
     let limit_ceiling = Limit::read("SPIRA_MAX_LIVE_DWARVES", file_ceiling.map(|c| c.to_string()).as_deref());
     let limit_pool = Limit::read("SPIRA_MAX_DWARVES", file_pool.map(|c| c.to_string()).as_deref());
-    let enforced = |l: &Limit, file: Option<u32>| l.held().and_then(|h| h.parse::<u32>().ok()).or(file);
+    let enforced = |l: &Limit, file: Option<u32>| l.shown().and_then(|h| h.parse::<u32>().ok()).or(file);
     let ceiling = enforced(&limit_ceiling, file_ceiling);
     let pool = enforced(&limit_pool, file_pool);
     let lanes_cap = spira.and_then(|s| spira_config::said(s.get_u32("SPIRA_LANES_MAX_LIVE")));

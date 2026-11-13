@@ -425,11 +425,7 @@ fn gather() -> Snapshot {
     gather_menders(&mut s);
     let file_ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_DWARVES").ok().map(|v| v.trim().to_string());
     let limit = spira_config::scheduler_link::Limit::read("SPIRA_MAX_LIVE_DWARVES", file_ceiling.as_deref());
-    let shown = limit.held().map(str::to_string).or(match &limit {
-        spira_config::scheduler_link::Limit::Unanswered { file, .. } => file.clone(),
-        _ => None,
-    });
-    s.ceiling = shown.and_then(|v| v.parse().ok()).unwrap_or(0);
+    s.ceiling = limit.shown().and_then(|v| v.parse().ok()).unwrap_or(0);
     if let Some(p) = limit.pending() {
         s.ceiling_pending = p.config.clone();
         s.ceiling_waits = p.waits.clone();
