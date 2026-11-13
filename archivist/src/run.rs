@@ -339,15 +339,13 @@ pub fn agent_args(sysfile: &Path, model: &str, wiki_dir: Option<&str>) -> Vec<St
 /// The wiki pages the session touched, committed: `None` with no wiki configured.
 pub fn commit_after(cfg: &Env, sid: &str, before: Option<Result<brain::Snapshot, String>>) -> Option<Result<usize, String>> {
     let dir = Path::new(cfg.wiki.as_deref().filter(|w| !w.is_empty())?);
+    let mut attempted: Vec<String> = Vec::new();
     let committed = before?.and_then(|b| {
         let after = brain::snapshot(dir)?;
-        let touched = brain::with_announced(dir, brain::touched(&b, &after), &after);
-        brain::commit_paths(dir, &touched, &format!("archivist: {} page(s) from session {sid}\n", touched.len()))
+        attempted = brain::with_announced(dir, brain::touched(&b, &after), &after);
+        brain::commit_paths(dir, &attempted, &format!("archivist: {} page(s) from session {sid}\n", attempted.len()))
     });
-    let committed = committed.map_err(|e| match brain::snapshot(dir) {
-        Ok(dirty) if !dirty.is_empty() => format!("{e}; left dirty: {}", dirty.keys().cloned().collect::<Vec<_>>().join(", ")),
-        _ => e,
-    });
+    let committed = committed.map_err(|e| if attempted.is_empty() { e } else { format!("{e}; paths not landed: {}", attempted.join(", ")) });
     if let Err(e) = &committed {
         log(&format!("archivist: {sid} could not commit the wiki pages it wrote — {e}"));
     }

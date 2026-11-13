@@ -49,12 +49,11 @@ fn a_failed_exit_commit_fails_the_run_naming_the_dirty_path() {
     let before = archivist::brain::snapshot(&work);
     std::fs::write(work.join("wiki/notes/new-page.md"), "page\n").unwrap();
     let hook = work.join(".git/hooks/pre-commit");
-    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-    std::process::Command::new("chmod").arg("+x").arg(&hook).status().unwrap();
+    testkit::write_exe(&hook, "#!/bin/sh\nexit 1\n");
 
     let committed = commit_after(&cfg, "sess", Some(before)).unwrap();
     let err = committed.clone().unwrap_err();
-    assert!(err.contains("left dirty: wiki/notes/new-page.md"), "error must list the dirty path: {err}");
+    assert!(err.contains("paths not landed: wiki/notes/new-page.md"), "error must list the dirty path: {err}");
     assert_eq!(Outcome::of(0, &Some(committed)), Outcome::CommitFailed);
 }
 
