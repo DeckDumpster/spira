@@ -579,8 +579,7 @@ fn run_pass() -> Result<(), String> {
         log_print("czar pass: skipped — world is halted");
         return Ok(());
     }
-    let held = spira_config::scoped_stop::skip_if_stopped_registered(&cfg.spira_run, "czar pass", CZAR_LANE).unwrap_or_else(|e| Some(format!("czar pass: refused — {e}")));
-    if let Some(why) = held {
+    if let Some(why) = spira_config::scoped_stop::skip_if_stopped_registered(&cfg.spira_run, "czar pass", CZAR_LANE).map_err(|e| format!("czar pass: refused — {e}"))? {
         log_print(&why);
         return Ok(());
     }
