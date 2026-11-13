@@ -1131,7 +1131,7 @@ fn world_release(release: &Path, at: &Path, sim_exe: &Path) -> Result<(), String
         let e = e.map_err(|e| e.to_string())?;
         link(&e.path(), &at.join("bin").join(e.file_name()))?;
     }
-    for stub in std::iter::once(&"round-vm").chain(INERT_TOOLS) {
+    for stub in ["round-vm", "cargo"].iter().chain(INERT_TOOLS) {
         let p = at.join("bin").join(stub);
         let _ = std::fs::remove_file(&p);
         link(sim_exe, &p)?;

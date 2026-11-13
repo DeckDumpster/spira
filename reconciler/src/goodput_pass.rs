@@ -57,7 +57,7 @@ fn config() -> Result<PassConfig, String> {
         holder: holder(),
         timeout_secs: cfg_parse::<u64>("SPIRA_RECONCILER_PASS_TIMEOUT_SECS")?,
         shadow: cfg("SPIRA_RECONCILER_SHADOW_KINDS")?.split_whitespace().map(String::from).collect(),
-        halted: run_dir.join("world.halted").exists(),
+        halted: run_dir.join("world.halted").exists() || spira_config::scoped_stop::stop_everywhere_registered(&run_dir, reconciler::REMEDIES_LANE).is_some(),
     })
 }
 
@@ -143,5 +143,26 @@ mod tests {
         let (code, v) = lc.call(&["section".to_string(), "snapshot".into()]);
         assert_eq!(code, 2);
         assert!(v["cannot_tell"].as_str().unwrap().contains("cannot tell: down"), "{v}");
+    }
+
+    #[test]
+    fn the_pass_config_is_halted_by_the_stamp_or_by_a_remedies_stop_on_every_repo() {
+        let d = testkit::TempDir::new("goodput-pass-config");
+        let run = d.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let edits = spira_config::process::fixture_world_env(d.path(), &run, &["spira", "other"]);
+        let edits: Vec<(&str, Option<&str>)> = edits.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let _env = testkit::env(&edits);
+        let stop = |repo: &str| spira_config::scoped_stop::pause_repo(&run, repo, &["remedies".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+        assert!(!config().unwrap().halted);
+        stop("spira");
+        assert!(!config().unwrap().halted, "the other repo still takes remedies");
+        stop("other");
+        assert!(config().unwrap().halted);
+        spira_config::scoped_stop::unpause_repo(&run, "other", &[]).unwrap();
+        spira_config::scoped_stop::unpause_repo(&run, "spira", &[]).unwrap();
+        assert!(!config().unwrap().halted);
+        std::fs::write(run.join("world.halted"), "").unwrap();
+        assert!(config().unwrap().halted);
     }
 }

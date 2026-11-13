@@ -1,0 +1,9 @@
+# The remedies lane the reconciler honours.
+
+[[scope]]
+path = "reconciler/src/lib.rs"
+functions = ["held", "observe", "run_pass"]
+
+[[scope]]
+path = "reconciler/src/goodput_pass.rs"
+functions = ["config"]

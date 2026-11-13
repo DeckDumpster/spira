@@ -208,6 +208,9 @@ fn parse_stamp_first_line(path: &Path) -> i64 {
     }
 }
 
+/// The scoped-stop lane that holds heimdall, as it holds every detector that pages.
+pub const LANE: &str = "heimdall";
+
 pub fn world_state(run_dir: &Path) -> WorldState {
     let mut w = WorldState::default();
     let halted_path = run_dir.join("world.halted");

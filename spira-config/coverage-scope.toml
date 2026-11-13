@@ -1,0 +1,4 @@
+# The scoped-stop lanes the actors read.
+[[scope]]
+path = "spira-config/src/scoped_stop.rs"
+functions = ["parse_lanes", "stop_for", "stop_everywhere", "stop_everywhere_registered", "skip_line", "skip_if_stopped", "skip_if_stopped_registered", "put_repo"]

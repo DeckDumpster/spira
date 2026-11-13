@@ -1,0 +1,5 @@
+# The heimdall lane the actors here honour.
+
+[[scope]]
+path = "heimdall/src/main.rs"
+functions = ["pass"]
