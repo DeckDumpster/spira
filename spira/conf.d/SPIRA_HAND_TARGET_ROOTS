@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=testenv
+DOC=WHERE HAND-DRIVEN BUILDS MAY LEAVE A CARGO TARGET: the parent directories sweep.target reaps by last-write age, and whose filesystems watchtower watches for free space.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE HAND-DRIVEN BUILDS MAY LEAVE A CARGO TARGET. A build run by hand (a hotfix, a merge,
+    # a testenv run) points CARGO_TARGET_DIR at <root>/<purpose>/target under one of these
+    # whitespace-separated directories. sweep.target removes such a target, and only the
+    # target, once nothing under it was written for SPIRA_HAND_TARGET_IDLE_SECS and no
+    # process holds it; a direct child named target or *-target is covered the same way. List a
+    # root on each disk that hand builds use, since each is watched for free space too.
+    : "${SPIRA_HAND_TARGET_ROOTS:=$SPIRA_RUN/hand-build}"
+SPIRA_CONF_DEFAULT_EOF

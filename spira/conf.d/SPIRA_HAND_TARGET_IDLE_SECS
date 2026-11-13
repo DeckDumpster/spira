@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=testenv
+DOC=HOW LONG A HAND-BUILT TARGET MUST GO UNWRITTEN BEFORE sweep.target REMOVES IT.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A HAND-BUILT TARGET MUST GO UNWRITTEN BEFORE sweep.target REMOVES IT. Measured
+    # from the newest write anywhere under the target; a target a process holds is kept
+    # whatever its age.
+    : "${SPIRA_HAND_TARGET_IDLE_SECS:=172800}"
+SPIRA_CONF_DEFAULT_EOF

@@ -10,6 +10,7 @@ pub mod cli;
 pub mod container;
 pub mod fixture;
 pub mod foreign;
+pub mod hand;
 pub mod landed;
 pub mod lint;
 pub mod load;

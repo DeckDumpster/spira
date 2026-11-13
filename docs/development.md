@@ -168,6 +168,13 @@ on `spira/<id>`, implements it, runs only the touched crates' unit tests, and ca
 it from there ([architecture](architecture.md)), and a release is built, verified and activated from the landed
 commit. For a repository in `pr` mode, open the pull request instead.
 
+A hand-driven build (a hotfix, a merge, a by-hand testenv run) sets `CARGO_TARGET_DIR` to
+`<root>/<purpose>/target`, where `<root>` is a directory in `SPIRA_HAND_TARGET_ROOTS` (default
+`$SPIRA_RUN/hand-build`; list one per disk you build on). `sweep.target` removes that `target`, and
+only it, once nothing under it has been written for `SPIRA_HAND_TARGET_IDLE_SECS` and no process
+holds it; watchtower pages when a root's filesystem runs low. A target anywhere else is nobody's to
+reap.
+
 When working by hand, arm the tracked hooks once with `bash spira/exclude.sh install [root]`
 (writes the `.gitignore` stanza and points `core.hooksPath` at `spira/hooks`). The pre-commit
 hook runs `exclude.sh staged` (refuses beads data), the cheap lint rules, and

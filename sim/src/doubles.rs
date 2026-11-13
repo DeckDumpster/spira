@@ -75,7 +75,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("gate.worker", &["gate.worker.observe", "gate.worker.tip", "gate.worker.claim", "gate.worker.discard", "gate.worker.retain_output", "gate.worker.complete", "gate.worker.recover", "unit.start"]),
     ("gate.check", &["gate.check.observe", "gate.check.discover", "gate.check.resolve", "gate.check.ci_failed"]),
     ("landing", &["landing.observe", "landing.fetch", "landing.deliver_pr_merged", "landing.deliver_pr_closed", "landing.deliver_by_content", "landing.reopen", "landing.event", "landing.note", "landing.bump_requeue", "landing.ask", "landing.rebase", "landing.confine", "landing.force_push", "landing.pr_create", "landing.pr_automerge"]),
-    ("sweep.target", &["sweep.target.observe", "sweep.target.remove_target", "sweep.target.remove_foreign_run"]),
+    ("sweep.target", &["sweep.target.observe", "sweep.target.remove_target", "sweep.target.remove_foreign_run", "sweep.target.remove_hand_target"]),
     ("submission-provision", &["submission-provision.observe", "submission-provision.cert_renew", "submission-provision.config_set", "submission-provision.password_write", "submission-provision.firewall_open", "submission-provision.unit_restart", "inbox.append"]),
     ("reconcile.section", &["reconcile.section.publish"]),
     ("reconcile.goodput", &["reconcile.goodput.observe", "reconcile.goodput.lock", "reconcile.goodput.standby", "reconcile.goodput.judge", "reconcile.goodput.put", "reconcile.goodput.record", "reconcile.goodput.release"]),

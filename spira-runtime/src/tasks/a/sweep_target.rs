@@ -13,6 +13,12 @@
 //! overlay dirs it cannot remove (`testenv/src/foreign.rs:246`). The foreign-cache sweep runs
 //! **before** the floor check, on every tick (`target_reap_main.rs:77-84`).
 //!
+//! **Hand-built targets.** Every tick it also removes a cargo target that hand-driven work left
+//! under a root in `SPIRA_HAND_TARGET_ROOTS` (`testenv::hand`): written last at least
+//! `SPIRA_HAND_TARGET_IDLE_SECS` ago, and held by no process. A hand build points
+//! `CARGO_TARGET_DIR` at `<root>/<purpose>/target`; only that `target` is removed, never the logs
+//! or checkout beside it. Watchtower watches each root's filesystem for free space.
+//!
 //! ## Tick
 //!
 //! - Cadence 2 min (`spira-target-reap-prod.timer`: OnBootSec 2 min, OnUnitActiveSec 2 min).
@@ -113,6 +119,7 @@ pub const STATE: EventKindTag = "sweep.target.state";
 pub const OBSERVE: &str = "sweep.target.observe";
 pub const REMOVE_TARGET: &str = "sweep.target.remove_target";
 pub const REMOVE_FOREIGN_RUN: &str = "sweep.target.remove_foreign_run";
+pub const REMOVE_HAND_TARGET: &str = "sweep.target.remove_hand_target";
 
 pub const CADENCE_MS: u64 = 120_000;
 /// The probe walks worktrees and `/proc` on the `host` class; the contract gives it no deadline.
@@ -120,10 +127,10 @@ pub const OBSERVE_DEADLINE_MS: u64 = 60_000;
 /// `STALE_RUN_AGE` (`foreign.rs:236`).
 pub const STALE_RUN_AGE_SECS: u64 = 3_600;
 
-pub const ACTS: &[(&str, u64)] = &[(REMOVE_TARGET, 120_000), (REMOVE_FOREIGN_RUN, 300_000)];
+pub const ACTS: &[(&str, u64)] = &[(REMOVE_TARGET, 120_000), (REMOVE_FOREIGN_RUN, 300_000), (REMOVE_HAND_TARGET, 300_000)];
 pub const EMITS: &[EventKindTag] = &[];
-pub const EFFECTS: &[&str] = &[OBSERVE, REMOVE_TARGET, REMOVE_FOREIGN_RUN];
-pub const KEYS: &[&str] = &["SPIRA_REAP_DISK_FLOOR_GIB", "SPIRA_REAP_IDLE_SECS", "SPIRA_RUN"];
+pub const EFFECTS: &[&str] = &[OBSERVE, REMOVE_TARGET, REMOVE_FOREIGN_RUN, REMOVE_HAND_TARGET];
+pub const KEYS: &[&str] = &["SPIRA_REAP_DISK_FLOOR_GIB", "SPIRA_REAP_IDLE_SECS", "SPIRA_RUN", "SPIRA_HAND_TARGET_ROOTS", "SPIRA_HAND_TARGET_IDLE_SECS"];
 pub const UNREGISTERED: &[&str] = &[];
 
 pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
@@ -147,6 +154,17 @@ pub struct ForeignRun {
     pub bytes: u64,
 }
 
+/// A hand-built target nothing has written for the idle threshold. `written_at` is when it was
+/// last written, in Unix seconds, so a rebuilt target at the same path is a new removal.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandTarget {
+    pub path: String,
+    pub guard: String,
+    pub written_at: u64,
+    pub busy: bool,
+    pub bytes: u64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     /// `statvfs` of the worktree root; `None` when unreadable, which reclaims nothing.
@@ -157,6 +175,8 @@ pub struct Snapshot {
     pub idle_secs_min: u64,
     pub candidates: Vec<Candidate>,
     pub foreign_stale: Vec<ForeignRun>,
+    #[serde(default)]
+    pub hand_stale: Vec<HandTarget>,
 }
 
 /// No carried state: every tick re-observes.
@@ -174,6 +194,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
         .filter(|r| testenv::foreign::is_stale(Some(std::time::Duration::from_secs(r.age_secs)), stale_age, r.busy))
         .map(|r| Act::new(REMOVE_FOREIGN_RUN, r.path.clone()).with_input(serde_json::to_string(r).unwrap_or_default()))
         .collect();
+    acts.extend(snap.hand_stale.iter().filter(|h| !h.busy).map(|h| Act::new(REMOVE_HAND_TARGET, format!("{}@{}", h.path, h.written_at)).with_input(serde_json::to_string(h).unwrap_or_default())));
     let Some(free) = snap.free_bytes else { return (carry.clone(), acts) };
     if free >= snap.floor_bytes {
         return (carry.clone(), acts);
@@ -225,7 +246,8 @@ pub fn observe(run: &std::path::Path) -> Result<String, String> {
         .filter(|(_, age)| testenv::foreign::is_stale(*age, stale_age, false))
         .map(|(path, age)| ForeignRun { busy: testenv::busy::worktree_busy(&path), bytes: testenv::reap::size_of(&path), age_secs: age.map_or(0, |a| a.as_secs()), path: path.display().to_string() })
         .collect();
-    serde_json::to_string(&Snapshot { free_bytes, floor_bytes, idle_secs_min, candidates, foreign_stale }).map_err(|e| e.to_string())
+    let hand_stale = observe_hand(&hand_roots()?, std::time::SystemTime::now(), pinned_u64("SPIRA_HAND_TARGET_IDLE_SECS")?);
+    serde_json::to_string(&Snapshot { free_bytes, floor_bytes, idle_secs_min, candidates, foreign_stale, hand_stale }).map_err(|e| e.to_string())
 }
 
 /// Remove one idle target, re-checking at run time that it is neither busy nor younger than
@@ -262,6 +284,42 @@ pub fn remove_foreign_run(input: &str) -> Result<String, String> {
     } else {
         Err(format!("{REMOVE_FOREIGN_RUN}: {} could not be removed", path.display()))
     }
+}
+
+fn hand_roots() -> Result<Vec<std::path::PathBuf>, String> {
+    Ok(spira_config::process::cfg("SPIRA_HAND_TARGET_ROOTS")?.split_whitespace().map(std::path::PathBuf::from).collect())
+}
+
+/// Every target under `roots` unwritten for `idle_secs`. A held one is reported without its size:
+/// it is not removed, and sizing it again every tick is the cost this snapshot must not pay.
+pub fn observe_hand(roots: &[std::path::PathBuf], now: std::time::SystemTime, idle_secs: u64) -> Vec<HandTarget> {
+    testenv::hand::candidates(roots)
+        .into_iter()
+        .filter_map(|t| {
+            let written_at = testenv::hand::stale_written_at(&t.path, now, idle_secs)?;
+            let busy = testenv::hand::held(&t);
+            let bytes = if busy { 0 } else { testenv::reap::size_of(&t.path) };
+            Some(HandTarget { busy, bytes, path: t.path.display().to_string(), guard: t.guard.display().to_string(), written_at })
+        })
+        .collect()
+}
+
+/// Remove one hand-built target, re-checking at run time that it is still unwritten past the
+/// threshold, under a configured root, and held by no process. Answers the bytes freed.
+pub fn remove_hand_target(input: &str) -> Result<String, String> {
+    remove_hand(input, &hand_roots()?, std::time::SystemTime::now(), pinned_u64("SPIRA_HAND_TARGET_IDLE_SECS")?)
+}
+
+pub fn remove_hand(input: &str, roots: &[std::path::PathBuf], now: std::time::SystemTime, idle_secs: u64) -> Result<String, String> {
+    let h: HandTarget = serde_json::from_str(input).map_err(|e| format!("{REMOVE_HAND_TARGET}: bad input: {e}"))?;
+    let t = testenv::hand::candidates(roots).into_iter().find(|t| t.path.as_os_str() == h.path.as_str()).ok_or_else(|| format!("{REMOVE_HAND_TARGET}: {} is under no configured root — refused", h.path))?;
+    if testenv::hand::stale_written_at(&t.path, now, idle_secs).is_none() {
+        return Err(format!("{REMOVE_HAND_TARGET}: {} was written within the threshold — refused", h.path));
+    }
+    if testenv::hand::held(&t) {
+        return Err(format!("{REMOVE_HAND_TARGET}: {} is held by a process — refused", h.path));
+    }
+    testenv::reap::remove_target(&t.path).map(|n| n.to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -304,5 +362,92 @@ impl Handler for SweepTarget {
         let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
         let (next, acts) = decide(&carry, &snap);
         kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, SystemTime};
+
+    const DAY: u64 = 86_400;
+
+    fn put(p: &Path) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, b"x").unwrap();
+    }
+
+    fn later(days: u64) -> SystemTime {
+        SystemTime::now() + Duration::from_secs(days * DAY)
+    }
+
+    /// One root of each shape: a purpose directory holding logs, a checkout and a target; a direct
+    /// `*-target` child; and a bead worktree whose own target belongs to the landing reaper.
+    fn roots(t: &Path) -> Vec<PathBuf> {
+        let (scratch, direct) = (t.join("scratch"), t.join("direct"));
+        put(&scratch.join("proj/target/debug/a.o"));
+        put(&scratch.join("proj/logs/build.log"));
+        put(&scratch.join("proj/src/main.rs"));
+        put(&direct.join("old-target/debug/b.o"));
+        put(&direct.join("notes.txt"));
+        put(&direct.join("sp-abc123/target/debug/live.o"));
+        vec![scratch, direct]
+    }
+
+    fn removed(t: &Path, snap: &[HandTarget], held: &[&str]) -> Vec<String> {
+        let roots = roots_of(t);
+        let _held: Vec<_> = held.iter().map(|p| std::fs::File::open(t.join(p)).unwrap()).collect();
+        snap.iter().filter_map(|h| remove_hand(&serde_json::to_string(h).unwrap(), &roots, later(10), 2 * DAY).ok().map(|_| h.path.clone())).collect()
+    }
+
+    fn roots_of(t: &Path) -> Vec<PathBuf> {
+        vec![t.join("scratch"), t.join("direct")]
+    }
+
+    #[test]
+    fn a_stale_target_under_each_root_goes_through_observe_and_remove_and_its_siblings_stay() {
+        let t = testkit::TempDir::new("sweep-hand");
+        let roots = roots(t.path());
+        let snap = observe_hand(&roots, later(10), 2 * DAY);
+        assert_eq!(snap.len(), 2, "{snap:?}");
+        assert!(snap.iter().all(|h| !h.busy && h.bytes > 0));
+        let acts = decide(&Carry::default(), &Snapshot { hand_stale: snap.clone(), ..Default::default() }).1;
+        assert_eq!(acts.iter().filter(|a| a.effect == REMOVE_HAND_TARGET).count(), 2);
+        for a in acts.iter().filter(|a| a.effect == REMOVE_HAND_TARGET) {
+            remove_hand(&a.input, &roots, later(10), 2 * DAY).unwrap();
+        }
+        assert!(!t.path().join("scratch/proj/target").exists());
+        assert!(!t.path().join("direct/old-target").exists());
+        for kept in ["scratch/proj/logs/build.log", "scratch/proj/src/main.rs", "direct/notes.txt", "direct/sp-abc123/target/debug/live.o"] {
+            assert!(t.path().join(kept).exists(), "{kept} was removed");
+        }
+    }
+
+    #[test]
+    fn a_target_a_live_process_holds_is_reported_busy_and_refused_at_removal() {
+        let t = testkit::TempDir::new("sweep-hand-held");
+        let roots = roots(t.path());
+        let held_file = std::fs::File::open(t.path().join("direct/old-target/debug/b.o")).unwrap();
+        let snap = observe_hand(&roots, later(10), 2 * DAY);
+        let h = snap.iter().find(|h| h.path.ends_with("old-target")).unwrap();
+        assert!(h.busy);
+        assert_eq!(decide(&Carry::default(), &Snapshot { hand_stale: vec![h.clone()], floor_bytes: 0, ..Default::default() }).1, vec![]);
+        let e = remove_hand(&serde_json::to_string(h).unwrap(), &roots, later(10), 2 * DAY).unwrap_err();
+        assert!(e.contains("held by a process"), "{e}");
+        assert!(t.path().join("direct/old-target/debug/b.o").exists());
+        drop(held_file);
+        assert_eq!(removed(t.path(), &snap, &[]).len(), 2);
+    }
+
+    #[test]
+    fn a_removal_is_refused_for_a_path_under_no_root_or_written_within_the_threshold() {
+        let t = testkit::TempDir::new("sweep-hand-refuse");
+        let roots = roots(t.path());
+        let snap = observe_hand(&roots, later(10), 2 * DAY);
+        let outside = HandTarget { path: t.path().join("scratch/proj/logs").display().to_string(), ..snap[0].clone() };
+        assert!(remove_hand(&serde_json::to_string(&outside).unwrap(), &roots, later(10), 2 * DAY).unwrap_err().contains("under no configured root"));
+        assert!(remove_hand(&serde_json::to_string(&snap[0]).unwrap(), &roots, later(1), 2 * DAY).unwrap_err().contains("within the threshold"));
+        assert!(t.path().join("scratch/proj/logs/build.log").exists() && Path::new(&snap[0].path).exists());
     }
 }
