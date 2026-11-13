@@ -27,6 +27,7 @@ fn config() -> Config {
         ask_bound_s: 60 * MIN,
         release_repo: "spira".into(),
         heartbeat_bound_s: 120,
+        task_bound_s: 600,
         round_max_open: 1,
         releases: "/rel".into(),
         repo_map: "/map".into(),
@@ -1064,4 +1065,82 @@ fn a_store_that_stays_unreadable_for_two_ticks_after_an_activation_still_pages_b
 fn an_unreadable_store_long_after_an_activation_pages_at_once() {
     let (r, _) = rig_at(|now| blind_after_activation(now, 10 * MIN));
     assert_eq!(lines(&r).iter().filter(|l| l.contains("P0 BLIND")).count(), 1, "{:?}", lines(&r));
+}
+
+fn ask_stall(now: u64) -> Snapshot {
+    let mut s = healthy(now);
+    let mut asked = bead("sp-q1", "spira", "READY", now - 3 * HOUR);
+    asked.ask_held = true;
+    asked.ask_since = Some(now - 61 * MIN);
+    s.beads.push(asked);
+    s
+}
+
+fn activation_stall(now: u64) -> Snapshot {
+    let mut s = healthy(now);
+    s.landed_after.insert("spira".into(), now - 16 * MIN);
+    s
+}
+
+fn submit_stall(now: u64) -> Snapshot {
+    let mut s = todays_case(now);
+    s.last = last("spira", &[("Claim", now - 20 * MIN), ("Submit", now - 3 * HOUR), ("Cut", now - 3 * HOUR), ("Delivered", now - 20 * MIN)]);
+    s
+}
+
+fn owned_by_task(mut s: Snapshot, edge: &str, quiet: Option<u64>, now: u64) -> Snapshot {
+    s.owners.insert(edge.into(), task_owner(quiet, now));
+    s
+}
+
+fn edge_pages(s: &Snapshot, edge: &str, now: u64) -> usize {
+    stalls_of(s, now).iter().filter(|x| x.edge == edge).count()
+}
+
+#[test]
+fn each_task_owned_edge_pages_unowned_is_quiet_while_its_task_pulses_and_pages_when_it_is_silent() {
+    let now = T0;
+    type Make = fn(u64) -> Snapshot;
+    let edges: [(&str, Make); 3] = [("ASK→ANSWERED", ask_stall), ("LANDED→ACTIVATED", activation_stall), ("WORKING→SUBMITTED", submit_stall)];
+    for (edge, make) in edges {
+        assert_eq!(edge_pages(&make(now), edge, now), 1, "{edge}: no owner record pages on the bound");
+        assert_eq!(edge_pages(&owned_by_task(make(now), edge, Some(300), now), edge, now), 0, "{edge}: a task that observed 5m ago is acting");
+        assert_eq!(edge_pages(&owned_by_task(make(now), edge, Some(601), now), edge, now), 1, "{edge}: a task silent past the task bound pages");
+        assert_eq!(edge_pages(&owned_by_task(make(now), edge, None, now), edge, now), 1, "{edge}: a task that never observed pages");
+    }
+}
+
+#[test]
+fn the_task_pulse_window_is_the_task_bound_not_the_round_heartbeat_bound() {
+    let now = T0;
+    let cfg = Config { task_bound_s: 1_000, heartbeat_bound_s: 10, ..config() };
+    let s = owned_by_task(ask_stall(now), "ASK→ANSWERED", Some(500), now);
+    assert!(spira_runtime::tasks::e::watch_transitions::stalls(&s, now, &cfg).iter().all(|x| x.edge != "ASK→ANSWERED"));
+}
+
+#[test]
+fn an_observe_reads_each_owner_task_pulse_from_the_run_dir() {
+    let lc = |_: &[&str]| Ok(serde_json::json!({ "beads": [], "horizon": 0, "last": {}, "landed_after": {} }));
+    let ancestor = |_: &str, _: &str| Ok(true);
+    let (rec, rel) = stale_record_other_release_in_effect();
+    let before = observe(rec.path(), rel.path(), "spira", &lc, &ancestor, 3_600);
+    assert!(before.readable, "{}", before.why);
+    for (edge, _) in TASK_OWNERS {
+        assert_eq!(before.owners[edge].beat, None, "{edge}: nothing stamped yet");
+    }
+    for (_, task) in TASK_OWNERS {
+        spira_config::ticked::stamp(rec.path(), task);
+    }
+    let after = observe(rec.path(), rel.path(), "spira", &lc, &ancestor, 3_600);
+    for (edge, _) in TASK_OWNERS {
+        assert!(after.owners[edge].beat.is_some(), "{edge}: stamped");
+    }
+}
+
+#[test]
+fn a_bound_over_two_hours_or_inside_its_owners_window_is_refused() {
+    assert!(config().bounds_fit_owners().is_ok());
+    assert!(Config { submit_bound_s: 2 * HOUR + 1, ..config() }.bounds_fit_owners().is_err());
+    assert!(Config { ask_bound_s: 600, ..config() }.bounds_fit_owners().is_err());
+    assert!(Config { activate_bound_s: 601, ..config() }.bounds_fit_owners().is_ok());
 }

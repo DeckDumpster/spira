@@ -86,11 +86,24 @@ pub const TASK_SILENT_S: u64 = 120;
 /// A row when `waiting` work is parked on `task` and it has not observed for `TASK_SILENT_S`.
 /// A host with no stamp at all has never run the task, which is silence too.
 fn task_silent(run_dir: &Path, task: &str, waiting: usize, what: &str) -> Option<PartRow> {
+    task_silent_past(run_dir, task, TASK_SILENT_S, waiting, what)
+}
+
+/// The scheduler's own tick, `watch.transitions`, which runs whether or not work waits: silent
+/// for `SCHEDULER_MISSED_TICKS` of its period means the scheduler is not ticking at all.
+pub const SCHEDULER_TASK: &str = "watch.transitions";
+pub const SCHEDULER_MISSED_TICKS: u64 = 3;
+
+fn scheduler_silent(run_dir: &Path, period_s: u64) -> Option<PartRow> {
+    task_silent_past(run_dir, SCHEDULER_TASK, period_s * SCHEDULER_MISSED_TICKS, 1, "lifecycle wait(s) unwatched")
+}
+
+fn task_silent_past(run_dir: &Path, task: &str, silent_s: u64, waiting: usize, what: &str) -> Option<PartRow> {
     if waiting == 0 {
         return None;
     }
     let quiet = spira_config::ticked::quiet_secs(run_dir, task);
-    if quiet.is_some_and(|s| s <= TASK_SILENT_S) {
+    if quiet.is_some_and(|s| s <= silent_s) {
         return None;
     }
     let since = quiet.map_or("never".to_string(), |s| format!("{}m ago", s / 60));
@@ -192,6 +205,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let certified = lc_rows.iter().filter(|r| r.state == "CERTIFIED" && !r.terminal()).count();
     rows.extend(task_silent(&run_dir, "gate.worker", ungated.len(), "SUBMITTED bead(s) ungated"));
     rows.extend(task_silent(&run_dir, "batcher.local", certified, "CERTIFIED bead(s) waiting for a round"));
+    rows.extend(scheduler_silent(&run_dir, spira_config::process::cfg_parse("SPIRA_TRANSITIONS_PERIOD")?));
     if cfg.labels.is_none() {
         let claimable: std::collections::HashSet<String> = lc_rows
             .iter()
@@ -790,5 +804,20 @@ mod ungated_submitted_tests {
             fs::File::options().write(true).open(spira_config::ticked::path(&run, task)).unwrap().set_modified(old).unwrap();
             assert!(task_silent(&run, task, 1, "waiting").is_some(), "ticked over two minutes ago");
         }
+    }
+
+    #[test]
+    fn a_scheduler_whose_transitions_tick_went_stale_is_reported_whether_or_not_work_waits() {
+        let run = testkit::TempDir::new("strand-scheduler-silent");
+        let silent = scheduler_silent(&run, 300).expect("never ticked");
+        assert_eq!(silent.row.kind, "watch-transitions-silent");
+        spira_config::ticked::stamp(&run, SCHEDULER_TASK);
+        assert!(scheduler_silent(&run, 300).is_none(), "ticked just now");
+        let late = std::time::SystemTime::now() - std::time::Duration::from_secs(300 * SCHEDULER_MISSED_TICKS - 60);
+        fs::File::options().write(true).open(spira_config::ticked::path(&run, SCHEDULER_TASK)).unwrap().set_modified(late).unwrap();
+        assert!(scheduler_silent(&run, 300).is_none(), "two periods late is not yet three missed ticks");
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(300 * SCHEDULER_MISSED_TICKS + 60);
+        fs::File::options().write(true).open(spira_config::ticked::path(&run, SCHEDULER_TASK)).unwrap().set_modified(old).unwrap();
+        assert!(scheduler_silent(&run, 300).is_some(), "three periods without a tick");
     }
 }
