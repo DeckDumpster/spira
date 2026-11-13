@@ -1259,7 +1259,7 @@ mod tests {
             let o = std::process::Command::new("git").arg("-C").arg(&a).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
             assert!(o.status.success());
         }
-        let lim = crate::target::Limits { cap_mib: 3, min_free_mib: 0, min_mem_mib: 0, shed_free_mib: 0 };
+        let lim = crate::target::Limits { cap_mib: 3, shed_free_mib: 0 };
         let r = super::Real::new(t.path().to_path_buf());
         r.target_on_tmpfs(&a, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim).unwrap();
         fs::create_dir_all(a.join("target/debug/deps")).unwrap();
