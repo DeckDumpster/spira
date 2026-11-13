@@ -335,6 +335,25 @@ mod tests {
     }
 
     #[test]
+    fn trimming_a_pooled_entry_drops_the_dependency_files_nothing_touched_for_a_day() {
+        let t = testkit::TempDir::new("gate-warm-trim");
+        let root = t.path();
+        let d = root.join("t/debug");
+        fill(&d, 1);
+        let stale = d.join("deps/libstale.rlib");
+        fs::write(&stale, "s").unwrap();
+        let old = SystemTime::now() - Duration::from_secs(3 * 86_400);
+        let f = fs::File::options().write(true).open(&stale).unwrap();
+        f.set_modified(old).unwrap();
+        f.set_times(fs::FileTimes::new().set_accessed(old).set_modified(old)).unwrap();
+        assert!(donate(root, &d, "c"));
+        bound(root, 1 << 30);
+        let kept = entries(root).pop().unwrap().join("debug/deps");
+        assert!(kept.join("libbig.rlib").is_file());
+        assert!(!kept.join("libstale.rlib").exists());
+    }
+
+    #[test]
     fn a_finished_tree_donates_the_directory_its_link_points_at() {
         let t = testkit::TempDir::new("gate-warm-tree");
         let root = t.path().join("root");

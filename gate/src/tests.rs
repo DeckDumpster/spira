@@ -127,6 +127,7 @@ struct Fake {
     target_roots: RefCell<Vec<String>>,
     released: RefCell<Vec<(PathBuf, bool)>>,
     judged: RefCell<Vec<bool>>,
+    release_caps: RefCell<Vec<u64>>,
     // ---- the base-suite cache (sp-kqger)
     /// What `testenv container tag` answers; a real image tag by default so every test not
     /// about this cache specifically exercises it exactly as it would for real.
@@ -282,6 +283,7 @@ impl Fake {
             target_roots: RefCell::new(Vec::new()),
             released: RefCell::new(Vec::new()),
             judged: RefCell::new(Vec::new()),
+            release_caps: RefCell::new(Vec::new()),
             image_tag: RefCell::new((0, "tag1".into())),
             base_tree_override: RefCell::new(None),
             certify_par_live: Cell::new(None),
@@ -649,8 +651,9 @@ impl World for Fake {
     fn target_intact(&self, _: &Path) -> bool {
         !self.target_swept.get()
     }
-    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, _: u64) {
+    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, cap_mib: u64) {
         self.judged.borrow_mut().push(judged);
+        self.release_caps.borrow_mut().push(cap_mib);
         self.released.borrow_mut().push((tree.to_path_buf(), keep_release));
     }
     fn install_tools(&self, _: &Path, pkgs: &[String], dir: &Path, id: &str) -> Result<(), String> {
@@ -4336,4 +4339,13 @@ fn a_deadline_record_keeps_only_the_last_4000_bytes() {
     let y = f.yields.borrow().iter().find(|y| y.get(1).map(String::as_str) == Some("record")).cloned().expect("a record");
     let detail = y.last().unwrap();
     assert!(detail.contains("suites:400") && !detail.contains("HEAD-MARK") && detail.len() <= 4100, "{}", detail.len());
+}
+
+/// The configured cap on the gate's target root also bounds the warm build directory.
+#[test]
+fn the_configured_target_cap_reaches_the_release_of_the_gate_tree() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    f.put_var("SPIRA_GATE_TARGET_CAP_MIB", "7777");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(f.release_caps.borrow().as_slice(), &[7777]);
 }

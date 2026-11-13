@@ -212,7 +212,7 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.repo = repo.clone();
         self.s.run = ctx.var("SPIRA_RUN").to_string();
         self.s.target_root = ctx.var("SPIRA_GATE_TARGET_ROOT").to_string();
-        self.s.target_cap_mib = crate::target::Limits::from_vars(ctx.var("SPIRA_GATE_TARGET_CAP_MIB"), "", "", "").cap_mib;
+        self.s.target_cap_mib = Self::target_limits(&ctx).cap_mib;
         self.s.gate_log = PathBuf::from(
             ctx.var_or("SPIRA_GATE_LOG", &format!("{}/gate.log", self.s.run))
                 .to_string(),
@@ -1649,18 +1649,22 @@ impl<'w, W: World> Trial<'w, W> {
         format!("gate: {what}\n{}", self.w.target_room(&self.s.target_root, &self.s.run))
     }
 
+    fn target_limits(ctx: &Ctx) -> crate::target::Limits {
+        crate::target::Limits::from_vars(
+            ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
+            ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
+            ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
+            ctx.var("SPIRA_TMPFS_SHED_FREE_MIB"),
+        )
+    }
+
     /// The refusals a tree build meets before it starts: no build cache, no room on tmpfs.
     fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path) -> Option<Verdict> {
         let w = self.w;
         if let Some(e) = &self.s.cache_refusal {
             return Some(v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")));
         }
-        let lim = crate::target::Limits::from_vars(
-            ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
-            ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
-            ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
-            ctx.var("SPIRA_TMPFS_SHED_FREE_MIB"),
-        );
+        let lim = Self::target_limits(ctx);
         let short = |e: String| Some(v(NOVERDICT, "scratch-short", format!("{e}\ngate: this is the host's room, not a fault in the branch.")));
         match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
             Ok(line) => {
