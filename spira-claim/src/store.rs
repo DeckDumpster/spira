@@ -70,6 +70,8 @@ pub struct Config {
     pub runes: String,
     /// `SPIRA_INCIDENT_LABEL` — an incident never stacks on a fix that has not landed.
     pub incident_label: String,
+    /// `SPIRA_PILGRIM_LABEL` — a pilgrimage never stacks on a fix that has not landed.
+    pub pilgrim_label: String,
     /// `SPIRA_QUEUE_DIR` — where each repo's `integrations` record lives; a member it names is not claimable.
     pub queue_dir: String,
     /// `SPIRA_READY_TTL_S` — how old a published ready answer a reader accepts, and how long `ready-count` shares one it judged itself; 0 = always judge.
@@ -96,6 +98,7 @@ pub fn load_config() -> Result<Config, String> {
         claim_retry_delay_s: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRY_DELAY_S")?,
         runes: spira_config::process::cfg("SPIRA_RUNES")?,
         incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
+        pilgrim_label: spira_config::process::cfg("SPIRA_PILGRIM_LABEL")?,
         queue_dir: spira_config::process::cfg("SPIRA_QUEUE_DIR")?,
         ready_ttl_s: spira_config::process::cfg_parse("SPIRA_READY_TTL_S")?,
         control_store: !spira_config::process::cfg("SPIRA_LC_STORE_PATH")?.is_empty(),

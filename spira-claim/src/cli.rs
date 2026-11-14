@@ -585,7 +585,7 @@ fn machine_filter(a: &Args, env: &mut Env, st: &Store, rows: &mut Vec<rank::Read
         Ok(r) => rank::index_rows(r),
         Err(e) => return Err(Outcome::cannot_tell(format!("{rune}: blocker records: {e}"))),
     };
-    rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }));
+    rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, &env.config.pilgrim_label, stack_max)), Verdict::Claimable { .. }));
     retain_unstopped(rows, std::path::Path::new(&env.config.run));
     let fixture = a.get("--lifecycle").is_some();
     if let Err(e) = retain_uncarried(rows, &mut lc, (!fixture).then_some(st), &env.config.queue_dir) {
@@ -656,7 +656,7 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
         let v = serde_json::json!({"claimable": false, "reason": "Carried", "carrier": carrier});
         return Outcome { code: 3, out: format!("{v}\n"), err: String::new() };
     }
-    match rank::stack_plan(&cand, &lc, &bd, rank::stack_cap(&cand, &env.config.incident_label, stack_max)) {
+    match rank::stack_plan(&cand, &lc, &bd, rank::stack_cap(&cand, &env.config.incident_label, &env.config.pilgrim_label, stack_max)) {
         Ok((stack, depth)) => {
             let v = serde_json::json!({"claimable": true, "stack": stack, "stack_depth": depth, "stack_max_depth": stack_max});
             Outcome::ok(format!("{}\n", v))
@@ -1080,7 +1080,7 @@ fn judge_rows(a: &Args, env: &Env, st: &Store, only: Option<&BTreeSet<String>>, 
     let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);
     let mut claimable = Vec::new();
     for r in rows {
-        let (kind, blocker) = match rank::claimable(&r, &lc, &bd, rank::stack_cap(&r, &env.config.incident_label, stack_max)) {
+        let (kind, blocker) = match rank::claimable(&r, &lc, &bd, rank::stack_cap(&r, &env.config.incident_label, &env.config.pilgrim_label, stack_max)) {
             Verdict::Claimable { .. } => {
                 claimable.push(r);
                 continue;
