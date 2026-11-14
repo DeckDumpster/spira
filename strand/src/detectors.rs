@@ -494,6 +494,7 @@ mod tests {
     // covers: UC-ops-detection-remediation-29
     #[test]
     fn an_ask_without_overseer_is_reported_and_one_with_it_is_not() {
+        // literal-ok: fixture bead labelled with the fixture config's own ask label
         let asks = r#"[{"id":"sp-a1","title":"q","labels":["needs-operator"]},{"id":"sp-a2","title":"q","labels":["needs-operator","overseer"]}]"#;
         let out = livelock_report(MAP, &[], "", asks, "[]", "[]");
         assert!(out.contains("LIVELOCK sp-a1 ask-no-overseer"), "{out}");
