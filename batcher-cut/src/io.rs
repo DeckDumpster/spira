@@ -4775,6 +4775,8 @@ mod land_exit_tests {
             [("r1", "h1", false, 90), ("r2", "h2", true, 30)]
         );
         assert_eq!(rounds[0].members, ["sp-a", "sp-b"]);
+        assert_eq!(rounds[0].tips, ["ta", "tb"]);
+        assert_eq!(split_members("sp-a:ta sp-b"), (vec!["sp-a".to_string(), "sp-b".to_string()], vec!["ta".to_string(), String::new()]));
         assert!(open_rounds_of("round=none\nrepo=spira\n").is_empty());
     }
 }

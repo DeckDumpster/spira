@@ -1459,8 +1459,9 @@ impl Machine<'_> {
             return;
         }
         if open.phase == "green" {
-            if repo.open_round.as_ref().is_some_and(|r| r.id == open.id) {
-                self.adopt_green(open);
+            let whole = open.tips.len() == open.members.len() && open.tips.iter().all(|t| !t.is_empty());
+            if whole && repo.open_round.as_ref().is_some_and(|r| r.id == open.id) {
+                self.adopt_green(open, st);
             }
             return;
         }
@@ -1492,9 +1493,10 @@ impl Machine<'_> {
     }
 
     /// A green round no pass drives is landed on the pass that made it green, as one of this task's own.
-    fn adopt_green(&mut self, open: &Round) {
+    fn adopt_green(&mut self, open: &Round, st: &pace::State) {
+        self.rc.pace = Pace::of(&pace::State { orphan: String::new(), orphan_since: 0, redriven: String::new(), ..st.clone() }, &self.rc.pace.refusals);
         self.rc.batch = Some(open.id.clone());
-        self.rc.members = open.members.iter().enumerate().map(|(i, id)| (id.clone(), open.tips.get(i).cloned().unwrap_or_default())).collect();
+        self.rc.members = open.members.iter().enumerate().map(|(i, id)| (id.clone(), open.tips[i].clone())).collect();
         self.rc.round_key = Some(core::round_key(&self.rc.members));
         self.rc.wt = open.worktree.clone();
         self.rc.head = open.head.clone();

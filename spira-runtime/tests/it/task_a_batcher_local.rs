@@ -1355,6 +1355,16 @@ fn sp_k7ltss_a_green_round_with_no_driver_is_landed_not_abandoned() {
     let rc = &carry.repos["spira"];
     assert_eq!((rc.state, rc.batch.as_deref(), rc.members.clone()), (State::Landing, Some("r9"), vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())]));
     assert_eq!((rc.wt.as_str(), rc.head.as_str()), ("/w", "h"));
+    assert_eq!((rc.pace.orphan.len(), rc.pace.redriven.as_str()), (0, ""), "the orphan clock is cleared");
+}
+
+#[test]
+fn sp_k7ltss_a_green_round_whose_tips_are_unknown_is_not_adopted() {
+    let (carry, mut snap) = green_orphan();
+    snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().tips.clear();
+    let (carry, acts) = decide(&carry, &snap);
+    assert!(!effects(&acts).contains(&LAND) && !effects(&acts).contains(&ABANDON), "{acts:?}");
+    assert_ne!(carry.repos["spira"].state, State::Landing);
 }
 
 #[test]
