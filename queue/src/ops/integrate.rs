@@ -117,24 +117,29 @@ pub fn backfill_carriers(w: &World, apply: bool) -> i32 {
                 continue;
             }
             let refs: Vec<&str> = members.iter().map(String::as_str).collect();
-            match w.lc.set_carrier(&refs, Some(&id), true) {
-                Ok(out) => {
-                    let held: BTreeSet<&str> = out.lines().filter_map(|l| l.strip_prefix("kept ")).collect();
-                    for m in &members {
-                        if held.contains(m.as_str()) {
-                            kept += 1;
-                            w.out(format!("kept {m}"));
-                        } else {
-                            set += 1;
-                            w.out(format!("set {m} -> {id}"));
-                        }
-                    }
-                }
-                Err((code, out)) => {
-                    failed += members.len();
-                    for m in &members {
-                        w.out(format!("failed {m} -> {id} (rc={code}: {})", out.trim()));
-                    }
+            let (code, out) = match w.lc.set_carrier(&refs, Some(&id), true) {
+                Ok(out) => (0, out),
+                Err(e) => e,
+            };
+            let held: BTreeSet<&str> = out.lines().filter_map(|l| l.strip_prefix("kept ")).collect();
+            let unwritten: Option<BTreeSet<&str>> = if code == 0 {
+                Some(BTreeSet::new())
+            } else {
+                out.lines()
+                    .find_map(|l| l.strip_prefix("set-carrier: no lifecycle record for "))
+                    .map(|l| l.split_whitespace().collect())
+            };
+            for m in &members {
+                let m = m.as_str();
+                if unwritten.as_ref().is_none_or(|u| u.contains(m)) {
+                    failed += 1;
+                    w.out(format!("failed {m} -> {id} (rc={code}: {})", out.trim()));
+                } else if held.contains(m) {
+                    kept += 1;
+                    w.out(format!("kept {m}"));
+                } else {
+                    set += 1;
+                    w.out(format!("set {m} -> {id}"));
                 }
             }
         }

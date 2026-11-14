@@ -1277,7 +1277,7 @@ impl Lc for FLc {
         let only = if only_if_unset { " --only-if-unset" } else { "" };
         self.calls.borrow_mut().push(format!("set-carrier {} {tail}{only}", members.join(" ")));
         if by.is_some_and(|b| self.carrier_refused.borrow().iter().any(|r| r == b)) {
-            return Err((1, "set-carrier: no lifecycle record".into()));
+            return Err((1, format!("set-carrier: no lifecycle record for {}", members.last().unwrap_or(&""))));
         }
         let carried = self.carried.borrow();
         Ok(members.iter().filter(|m| carried.iter().any(|c| c == *m)).map(|m| format!("kept {m}\n")).collect())
@@ -5320,4 +5320,17 @@ fn backfill_carriers_refuses_an_unknown_option() {
     );
     assert_eq!(p(&["backfill-carriers", "--apply"]), Ok(Cmd::BackfillCarriers { apply: true }));
     assert!(cli::USAGE.contains("queue.sh backfill-carriers"));
+}
+
+#[test]
+fn backfill_carriers_partial_failure_fails_only_the_member_the_verb_names() {
+    let t = T::new(LandMode::QueueLocal);
+    integrations_of(&t, "spira", "sp-bad sp-a sp-ghost\n");
+    *t.lib.repos.borrow_mut() = Ok(vec!["spira".into()]);
+    t.lc_row("sp-bad", "WORKING", "t", 1);
+    t.lc.carrier_refused.borrow_mut().push("sp-bad".into());
+    assert_ne!(t.run(&["backfill-carriers", "--apply"]), 0);
+    let out = t.out();
+    assert!(out.contains("failed sp-ghost") && out.contains("set sp-a -> sp-bad") && !out.contains("failed sp-a"), "{out}");
+    assert!(out.contains("spira: set=1 kept=0 failed=1"), "{out}");
 }
