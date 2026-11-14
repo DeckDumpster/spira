@@ -89,7 +89,7 @@ Cost is ci_secs from the main-push run. When a file covers several use cases, it
 | 21 | test-reclaim-needs-ryan::3; test-reclaim-escalated::cases 1–4; other area test-check2-reclaim | T1 2 s; T2 7 s | reclaim-needs-ryan **MERGE-INTO** the strand-classify table (test-strand-partition.sh, ops area). Keep reclaim-escalated as the single T2 chain and **DELETE** its case 1 (same control as needs-ryan). Recommend that test-check2-reclaim drop its label-only assertions. |
 | 22 | test-unmapped-repo-park::all 5 | T3 5 s, **exercises only bd's own `--exclude-label`**, never dwarf.sh | **DELETE (tests the dependency, not Spira)**; replace with a T1 test of the dwarf.sh park path (G13) |
 | 23 | test-rune::`default CPUQuota=70%`, `custom CPUQuota=90%`; test-rune-project-instructions (secondary) | T1 (shared); 2 s | MERGE the CPUQuota rows into the retired call-rune suite. project-instructions stays in dwarf-execution, but covers only sweep mode (G17). |
-| 24 | test-ops-allowlist (secondary) | T1 6 s | KEEP in safety-fences; the matcher is the test's own glob, not CLI semantics |
+| 24 | dwarf::persona_tools_tests | T1 | Rust (sp-706kgd); the matcher is the test's own glob, not CLI semantics |
 
 ---
 
