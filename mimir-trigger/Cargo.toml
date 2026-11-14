@@ -9,7 +9,7 @@ name = "mimir-trigger"
 path = "src/main.rs"
 
 [features]
-integration = ["spira-config/integration", "spira-store/integration", "spira-otel/integration", "strand/integration"]
+integration = ["spira-config/integration", "spira-store/integration", "spira-otel/integration", "strand/integration", "testkit/integration"]
 
 [dependencies]
 spira-config = { path = "../spira-config" }
@@ -17,6 +17,9 @@ spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 serde_json = "1"
 strand = { path = "../strand" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
 
 [profile.release]
 opt-level = "z"

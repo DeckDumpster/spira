@@ -1130,6 +1130,7 @@ dependencies = [
  "spira-otel",
  "spira-store",
  "strand",
+ "testkit",
 ]
 
 [[package]]
