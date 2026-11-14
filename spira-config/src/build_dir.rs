@@ -282,8 +282,9 @@ pub fn trim(dir: &Path, lease_start: SystemTime, now: SystemTime) -> Trimmed {
     t
 }
 
-/// Evict idle directories under `bases`, least recently used first, until every directory
-/// together holds at most `budget_bytes`. A live directory is measured but never touched.
+/// Evict idle directories under `bases`, least recently used first, until everything under the
+/// bases together holds at most `budget_bytes`. A live slot is measured but never touched; a
+/// directory that is not a slot goes by the age of its newest write unless a live process stands in it.
 /// Returns the directories removed, in the order they went. Bytes are each directory's own
 /// blocks ([`crate::build::size_of`]); the filesystem's fullness is never read.
 pub fn evict_idle(bases: &[PathBuf], budget_bytes: u64) -> Vec<PathBuf> {
@@ -292,24 +293,62 @@ pub fn evict_idle(bases: &[PathBuf], budget_bytes: u64) -> Vec<PathBuf> {
 
 /// [`evict_idle`] with the measurement injected: `size` answers the bytes one directory holds.
 pub fn evict_idle_with(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) -> u64) -> Vec<PathBuf> {
-    let sized: Vec<(usize, u64, u64)> = bases.iter().enumerate().flat_map(|(i, b)| slots(b).into_iter().map(move |n| (i, n, size(&dir_path(b, n))))).collect();
+    evict_idle_in(bases, budget_bytes, size, Path::new("/proc"))
+}
+
+/// [`evict_idle_with`] with the process table's root injected.
+pub fn evict_idle_in(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) -> u64, proc_root: &Path) -> Vec<PathBuf> {
+    enum Entry {
+        Slot(usize, u64),
+        Stray,
+    }
+    let mut sized: Vec<(Entry, PathBuf, u64)> = Vec::new();
+    for (i, b) in bases.iter().enumerate() {
+        let slot_dirs: Vec<PathBuf> = slots(b).into_iter().map(|n| dir_path(b, n)).collect();
+        for n in slots(b) {
+            sized.push((Entry::Slot(i, n), dir_path(b, n), size(&dir_path(b, n))));
+        }
+        for p in dirs(b).into_iter().filter(|p| !slot_dirs.contains(p)) {
+            let bytes = size(&p);
+            sized.push((Entry::Stray, p, bytes));
+        }
+    }
     let mut total: u64 = sized.iter().map(|(_, _, b)| b).sum();
     let mut gone = Vec::new();
     if total <= budget_bytes {
         return gone;
     }
-    let mut idle: Vec<(SystemTime, usize, u64, u64)> =
-        sized.into_iter().filter(|&(_, _, b)| b > 0).map(|(i, n, b)| (idle_since(&bases[i], n), i, n, b)).collect();
-    idle.sort();
-    for (_, i, n, bytes) in idle {
+    let mut idle: Vec<(SystemTime, Entry, PathBuf, u64)> = sized
+        .into_iter()
+        .filter(|&(_, _, b)| b > 0)
+        .map(|(e, p, b)| {
+            let at = match e {
+                Entry::Slot(i, n) => idle_since(&bases[i], n),
+                Entry::Stray => newest_touch(&p, true),
+            };
+            (at, e, p, b)
+        })
+        .collect();
+    idle.sort_by_key(|(at, _, p, _)| (*at, p.clone()));
+    let held = held_by_processes(proc_root);
+    for (_, entry, dir, bytes) in idle {
         if total <= budget_bytes {
             break;
         }
-        // Under the slot's own lock: a directory a session takes meanwhile is skipped, and one
-        // evicted here is an empty directory the next lease takes last.
-        let Some(_held) = try_lock(&bases[i], n) else { continue };
-        let dir = dir_path(&bases[i], n);
-        empty(&dir);
+        match entry {
+            // Under the slot's own lock: a directory a session takes meanwhile is skipped, and one
+            // evicted here is an empty directory the next lease takes last.
+            Entry::Slot(i, n) => {
+                let Some(_held) = try_lock(&bases[i], n) else { continue };
+                empty(&dir);
+            }
+            Entry::Stray => {
+                if held.iter().any(|h| h.starts_with(&dir)) {
+                    continue;
+                }
+                remove_any(&dir);
+            }
+        }
         total = total.saturating_sub(bytes);
         gone.push(dir);
     }
@@ -368,6 +407,20 @@ pub fn meter(bases: &[PathBuf], dir: &Path, budget_bytes: u64) {
 /// Push one event per directory evicted.
 pub fn meter_evictions(gone: &[PathBuf]) {
     push(&crate::process::metrics_sink("build-dir"), &eviction_samples(gone));
+}
+
+/// Where every live process stands: its cwd and the `CARGO_TARGET_DIR` it was handed.
+fn held_by_processes(proc_root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for pid in children(proc_root).into_iter().filter(|p| p.file_name().is_some_and(|n| n.as_encoded_bytes().iter().all(u8::is_ascii_digit))) {
+        out.extend(std::fs::read_link(pid.join("cwd")));
+        for kv in std::fs::read(pid.join("environ")).unwrap_or_default().split(|b| *b == 0) {
+            if let Some(v) = kv.strip_prefix(b"CARGO_TARGET_DIR=") {
+                out.push(PathBuf::from(String::from_utf8_lossy(v).into_owned()));
+            }
+        }
+    }
+    out
 }
 
 /// The owned build directory a caller's `CARGO_TARGET_DIR` names, when it is one: an absolute
@@ -760,6 +813,34 @@ mod tests {
         for want in ["build_dir_evicted", "dir", "/x/dir.7", "build-dir"] {
             assert!(body.contains(want), "{want} missing from the push");
         }
+    }
+
+    fn proc_naming(d: &Path, pid: u32, target: &Path) -> PathBuf {
+        let proc = d.join("proc");
+        std::fs::create_dir_all(proc.join(pid.to_string())).unwrap();
+        std::fs::write(proc.join(pid.to_string()).join("environ"), format!("A=b\0CARGO_TARGET_DIR={}\0", target.display())).unwrap();
+        proc
+    }
+
+    #[test]
+    fn eviction_reclaims_a_non_slot_directory_by_age_and_spares_a_live_slot_and_a_named_one() {
+        let d = testkit::TempDir::new("bdir-nonslot");
+        let base = d.path().join("base");
+        let live = lease(std::slice::from_ref(&base), "sp-live").unwrap();
+        fill(&live.dir().join("debug/x"), 1);
+        let stale = base.join("hand.1");
+        let named = base.join("hand.2");
+        for p in [&stale, &named] {
+            fill(&p.join("debug/x"), 1);
+            touch(&p.join("debug/x"), 4 * 86400, 4 * 86400);
+        }
+        let held = |p: &Path| if p.join("debug/x").exists() || holds_anything(p) { 100 } else { 0 };
+        let proc = proc_naming(d.path(), 4242, &named.join("debug"));
+        let gone = evict_idle_in(std::slice::from_ref(&base), 250, &held, &proc);
+        assert_eq!(gone, vec![stale.clone()], "the unreferenced non-slot directory goes, counted against the budget");
+        assert!(!stale.exists());
+        assert!(named.join("debug/x").exists(), "a directory a live process's CARGO_TARGET_DIR names stays");
+        assert!(live.dir().join("debug/x").exists(), "a live slot is left alone");
     }
 
     #[test]
