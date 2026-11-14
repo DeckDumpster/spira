@@ -131,7 +131,7 @@ space before that call runs. Ported as-is for the same reason.
   `cockpit-collect once` computes the full pass in memory, then opens, writes and renames
   the snapshot temp in one tight sequence, instead of holding a `mktemp`'d file open,
   redirected, for the whole probe pass the way the bash did. `fs::rename` is atomic on
-  POSIX. `test-cockpit-history-leak.sh` and the kill-mid-probe half of `test-cockpit-tmp.sh`
+  POSIX. `test-cockpit-history-leak.sh` and the kill-mid-probe half of the temp-sweep suite
   are retired on this basis (rung 4 of the ladder — impossible, not refused); sweep-temps
   itself stays tested, since a previous process's own crash between write and rename is
   still possible and still needs clearing at startup.
@@ -160,7 +160,7 @@ unilaterally.
 - **Unit**: every quoting/date/sanitize helper, the `reachable` BFS (seeds, stoppers, suspended partitions,
   scope), `strand_keys`' ghost/other classification, `dwarf_alive`'s cmdline match.
 - **Parity**: every rewritten `test-cockpit-*.sh` (and the handful of other suites that
-  called a probe by name — `test-mail-pane.sh`, `test-mimir-closed-record.sh`,
+  called a probe by name — `test-mimir-closed-record.sh`,
   `test-livelock.sh`, `test-law-synth.sh`, `test-statute-projection.sh`,
   `test-watchtower.sh`, `test-closed-strand.sh`,
   `test-tsd-producers.sh`) is repointed to call the real compiled binary
