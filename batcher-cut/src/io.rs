@@ -2311,6 +2311,17 @@ pub fn file_local_red_incident(
     filed_id(&out)
 }
 
+/// A round landed green at `head`: the repo's open local-red incidents are over, and
+/// incident.sh closes them naming it. A failure is said, never blocks the landing.
+pub fn close_superseded_reds(repo: &Repo, head: &str) {
+    let mut cmd = Command::new("incident.sh");
+    cmd.args(["supersede-red", &repo.name, head]);
+    match run(&mut cmd, "incident.sh supersede-red") {
+        Ok(said) => println!("batcher {}: {}", repo.name, said.trim()),
+        Err(e) => eprintln!("batcher {}: could not close the superseded local reds: {e}", repo.name),
+    }
+}
+
 fn local_red_cause(reason: &str) -> &'static str {
     if reason == spira_config::host_disk::CAUSE {
         spira_config::host_disk::CAUSE

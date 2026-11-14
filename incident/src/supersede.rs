@@ -1,0 +1,123 @@
+//! A round that lands green on a repo proves the red its earlier rounds filed is over: the
+//! "local round red … nothing can land" incidents still open for that repo are closed with the
+//! landing as evidence. One whose last recurrence is after the landing is a newer red and stays.
+
+/// The prefix `batcher` gives a local-red incident's external_ref (`basefail-local:<repo>:…`).
+pub fn red_ref_prefix(repo: &str) -> String {
+    format!("basefail-local:{repo}:")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenRed {
+    pub id: String,
+    pub external_ref: Option<String>,
+    /// When the incident was filed or last bumped, in epoch seconds; `None` if it cannot be read.
+    pub last_seen: Option<i64>,
+}
+
+pub trait Superseder {
+    fn open_incidents(&self) -> Result<Vec<OpenRed>, String>;
+    fn close(&self, id: &str, evidence: &str) -> Result<(), String>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    Closed(String),
+    Kept { id: String, why: &'static str },
+    Refused { id: String, why: String },
+}
+
+pub fn supersede(s: &dyn Superseder, repo: &str, landing: &str, landed_at: i64) -> Result<Vec<Outcome>, String> {
+    let prefix = red_ref_prefix(repo);
+    let evidence = format!("a later round landed green on {repo} at {landing}; the red this reported is over");
+    Ok(s.open_incidents()?
+        .into_iter()
+        .filter(|b| b.external_ref.as_deref().is_some_and(|r| r.starts_with(&prefix)))
+        .map(|b| match b.last_seen {
+            Some(t) if t <= landed_at => match s.close(&b.id, &evidence) {
+                Ok(()) => Outcome::Closed(b.id),
+                Err(why) => Outcome::Refused { id: b.id, why },
+            },
+            Some(_) => Outcome::Kept { id: b.id, why: "recurred after the landing" },
+            None => Outcome::Kept { id: b.id, why: "its last recurrence cannot be read" },
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    struct Fake {
+        open: Vec<OpenRed>,
+        closed: RefCell<Vec<(String, String)>>,
+    }
+
+    impl Superseder for Fake {
+        fn open_incidents(&self) -> Result<Vec<OpenRed>, String> {
+            Ok(self.open.clone())
+        }
+        fn close(&self, id: &str, evidence: &str) -> Result<(), String> {
+            self.closed.borrow_mut().push((id.into(), evidence.into()));
+            Ok(())
+        }
+    }
+
+    fn red(id: &str, repo: &str, suite: &str, last_seen: Option<i64>) -> OpenRed {
+        OpenRed { id: id.into(), external_ref: Some(format!("basefail-local:{repo}:{suite}:local-tier:1234abcd")), last_seen }
+    }
+
+    #[test]
+    fn a_green_landing_closes_every_earlier_round_red_of_its_repo_naming_the_landing() {
+        let f = Fake { open: vec![red("sp-a", "fx", "t1.sh", Some(100)), red("sp-b", "fx", "t2.sh", Some(200))], closed: Default::default() };
+        let out = supersede(&f, "fx", "deadbeef", 300).unwrap();
+        assert_eq!(out, vec![Outcome::Closed("sp-a".into()), Outcome::Closed("sp-b".into())]);
+        let closed = f.closed.borrow();
+        assert_eq!(closed.len(), 2);
+        assert!(closed.iter().all(|(_, e)| e.contains("deadbeef")), "{closed:?}");
+    }
+
+    #[test]
+    fn a_red_of_another_repo_a_newer_red_and_one_with_no_readable_time_stay_open() {
+        let mut other = red("sp-o", "other", "t.sh", Some(1));
+        other.external_ref = Some("basefail-local:other:t.sh:x:1".into());
+        let plain = OpenRed { id: "sp-p".into(), external_ref: Some("land-deploy-fault:fx:abc".into()), last_seen: Some(1) };
+        let f = Fake {
+            open: vec![other, plain, red("sp-new", "fx", "t.sh", Some(301)), red("sp-nil", "fx", "t.sh", None)],
+            closed: Default::default(),
+        };
+        let out = supersede(&f, "fx", "deadbeef", 300).unwrap();
+        assert_eq!(
+            out,
+            vec![
+                Outcome::Kept { id: "sp-new".into(), why: "recurred after the landing" },
+                Outcome::Kept { id: "sp-nil".into(), why: "its last recurrence cannot be read" },
+            ]
+        );
+        assert!(f.closed.borrow().is_empty());
+    }
+}
+
+/// The store as [`Superseder`]: the unfinished incidents, closed through the lifecycle row.
+pub struct RealSuperseder<'a> {
+    pub bd: &'a crate::real::RealBd,
+    pub incident_label: String,
+}
+
+impl Superseder for RealSuperseder<'_> {
+    fn open_incidents(&self) -> Result<Vec<OpenRed>, String> {
+        let rows = self.bd.list_beads(crate::decide::Scope::Unfinished, Some(&self.incident_label), None)?;
+        Ok(rows
+            .into_iter()
+            .map(|(row, bead)| {
+                let stamp = |k: &str| bead.get(k).and_then(|v| v.as_str()).and_then(crate::run::parse_iso8601);
+                OpenRed { id: row.id, external_ref: row.external_ref, last_seen: stamp("updated_at").or_else(|| stamp("created_at")) }
+            })
+            .collect())
+    }
+
+    fn close(&self, id: &str, evidence: &str) -> Result<(), String> {
+        spira_store::lifecycle_row::close(id, evidence, "incident", None)
+    }
+}
