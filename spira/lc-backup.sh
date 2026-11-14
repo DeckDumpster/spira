@@ -200,7 +200,7 @@ cmd_age() {
 _lcb_drill_db() {
     local db="$1" lock
     lock="$(_lcb_lock "$db")" || return 1
-    ( flock -n 9 || { echo "lc-backup: drill: $db: a run holds the lock, deferred"; exit 0; }
+    ( flock -w "$SPIRA_LC_BACKUP_DRILL_WAIT_SECS" 9 || { echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $db: a run holds the lock" | _lcb_record_deferral >&2; exit 1; }
       _lcb_drill_db_locked "$db" ) 9>"$lock"
 }
 
