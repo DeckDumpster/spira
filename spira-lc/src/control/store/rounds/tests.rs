@@ -1387,3 +1387,19 @@ fn list_answers_a_beads_claimability_from_its_prerequisite_when_it_is_read() {
     assert_eq!(claim_view_of(&r, "sp-b")["verdict"], "claimable", "no write-back stands between the landing and the next list");
     assert!(claim_view_of(&r, "sp-a").is_null(), "a LANDED record has no claim view");
 }
+
+#[test]
+fn list_with_unreadable_view_inputs_still_lists_and_each_ready_row_says_it_cannot_tell() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--repo", "spira", "--ready"]);
+    r.ok(&["create-bead", "sp-w", "--repo", "spira"]);
+    let args: Vec<String> = ["list"].iter().map(|s| s.to_string()).collect();
+    let req = r.req();
+    let (rc, out) = state::run(&r.s, &args, &Call { now: AT, request: &req.id, inputs: &crate::control::claimable::UNREADABLE });
+    assert_eq!(rc, 0, "{out}");
+    let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let by = |id: &str| rows.as_array().unwrap().iter().find(|r| r["bead_id"] == id).unwrap().clone();
+    assert_eq!(by("sp-a")["claim_view"]["verdict"], "cannot-tell");
+    assert!(by("sp-a")["claim_view"]["error"].as_str().unwrap().contains("SPIRA_STACK_MAX_DEPTH"));
+    assert!(by("sp-w")["claim_view"].is_null(), "a record the view does not cover is untouched");
+}

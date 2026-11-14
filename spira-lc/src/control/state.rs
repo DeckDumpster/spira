@@ -216,23 +216,25 @@ fn row(rec: &LifecycleRecord, r: Option<&Readiness>, view: &Value, cols: &[&str]
 }
 
 /// The claim view of each READY or REWORK record in `recs`, asked once for all of them; every
-/// other record has none.
-fn claim_views<B: Backend>(
-    store: &Store<B>,
-    rev: u64,
-    recs: &[&LifecycleRecord],
-    call: &Call,
-) -> Result<BTreeMap<String, Value>, String> {
-    let cands = recs
+/// other record has none. When the view's inputs cannot be read, each of those records says it
+/// cannot tell and why, so a reader of `list` still gets its rows.
+fn claim_views<B: Backend>(store: &Store<B>, rev: u64, recs: &[&LifecycleRecord], call: &Call) -> BTreeMap<String, Value> {
+    let cands: Vec<LifecycleRecord> = recs
         .iter()
         .filter(|r| matches!(r.row.state, BeadState::Ready | BeadState::Rework))
         .map(|r| (*r).clone())
         .collect();
-    let (_, views) = claimable::view(store, rev, cands, call.inputs, call.now)?;
-    Ok(views
-        .into_iter()
-        .map(|(id, v)| (id, serde_json::json!({ "verdict": v.verdict, "blocker": v.blocker, "runes": v.runes })))
-        .collect())
+    let ids: Vec<String> = cands.iter().map(|r| r.row.bead_id.clone()).collect();
+    match claimable::view(store, rev, cands, call.inputs, call.now) {
+        Ok((_, views)) => views
+            .into_iter()
+            .map(|(id, v)| (id, serde_json::json!({ "verdict": v.verdict, "blocker": v.blocker, "runes": v.runes })))
+            .collect(),
+        Err(why) => ids
+            .into_iter()
+            .map(|id| (id, serde_json::json!({ "verdict": claimable::Verdict::CannotTell, "blocker": null, "runes": [], "error": why })))
+            .collect(),
+    }
 }
 
 /// `r` with only the prerequisites that still block, by `state_of` each one's record.
@@ -262,7 +264,7 @@ fn show<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
             return Ok(None);
         };
         let rev = store.contract().head().map_err(e)?;
-        let view = claim_views(store, rev, &[&rec.value], call)?.remove(id).unwrap_or(Value::Null);
+        let view = claim_views(store, rev, &[&rec.value], call).remove(id).unwrap_or(Value::Null);
         let readiness = blocking(store.readiness(id).map_err(e)?.map(|r| r.value), |b| {
             Ok(store.record(b)?.map(|r| r.value.row.state))
         })
@@ -345,7 +347,7 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
             .records_page(rev, indexed.as_deref(), ids.as_deref(), after.as_deref(), limit, kept)
             .map_err(e)?;
         let recs: Vec<&LifecycleRecord> = records.iter().map(|r| &r.value).collect();
-        let mut views = claim_views(store, rev, &recs, call)?;
+        let mut views = claim_views(store, rev, &recs, call);
         let ids: Vec<&str> = recs.iter().map(|r| r.row.bead_id.as_str()).collect();
         let mut readiness = store.readiness_of(&ids, rev).map_err(e)?;
         let mut rows = Vec::with_capacity(records.len());

@@ -381,5 +381,31 @@ impl Inputs for Fixed {
     }
 }
 
+/// Inputs that cannot be read.
+#[cfg(test)]
+pub(crate) struct Unreadable;
+
+#[cfg(test)]
+pub(crate) static UNREADABLE: Unreadable = Unreadable;
+
+#[cfg(test)]
+impl Inputs for Unreadable {
+    fn config(&self) -> Result<Config, String> {
+        Err("SPIRA_STACK_MAX_DEPTH is unreadable".into())
+    }
+
+    fn statuses(&self, _: &[String]) -> Result<BTreeMap<String, (String, String)>, String> {
+        Err("the content store is unreadable".into())
+    }
+
+    fn run_dir(&self) -> Result<PathBuf, String> {
+        Err("the run directory is unreadable".into())
+    }
+
+    fn partitions(&self, _: &Config) -> Result<Vec<Partition>, String> {
+        Err("the runes are unreadable".into())
+    }
+}
+
 #[cfg(test)]
 mod tests;

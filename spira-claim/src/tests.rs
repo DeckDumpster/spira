@@ -406,6 +406,25 @@ mod claim_view_read {
     }
 
     #[test]
+    fn urgent_lists_the_views_rework_beads_and_reads_the_view_once() {
+        let (svc, st) = setup(0);
+        let out = env_over(|env| urgent_over(&Args::parse(&[]).unwrap(), env, &st).unwrap());
+        assert_eq!(out, "", "sp-a is READY at priority 2, so nothing outranks the lanes");
+        let calls = seen(&svc);
+        assert_eq!(calls.iter().filter(|c| *c == "claimable").count(), 1, "{calls:?}");
+        assert!(!calls.iter().any(|c| c == "ready-set"), "{calls:?}");
+    }
+
+    #[test]
+    fn ready_count_express_counts_the_views_claimable_rows_that_are_express() {
+        let (_, st) = setup(0);
+        let n = env_over(|env| ready_count_over(&Args::parse(&["".into(), "--express".into()]).unwrap(), env, &st));
+        assert_eq!((n.code, n.out.as_str()), (0, "0"), "{n:?}");
+        let n = env_over(|env| ready_count_over(&Args::parse(&["".into()]).unwrap(), env, &st));
+        assert_eq!((n.code, n.out.as_str()), (0, "1"), "{n:?}");
+    }
+
+    #[test]
     fn an_unreadable_view_is_the_reads_error_and_nothing_judges_in_its_place() {
         let (svc, st) = setup(2);
         let err = env_over(|env| claimable_over(&Args::parse(&[]).unwrap(), env, &st).err().expect("the view is unreadable"));
