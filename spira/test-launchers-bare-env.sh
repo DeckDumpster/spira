@@ -6,11 +6,11 @@
 #
 # Each launcher is run twice: with the profile export, where it must run, and with nothing, where
 # it must refuse — the second proves the bare environment is bare and the first could have failed.
-# The mail client and the ops pane are covered by unit tests in mail/src/env.rs and
-# cockpit/ops/src/health/frame.rs; cockpit.sh and concierge.sh are bash with no Rust owner.
+# The mail client is covered by a unit test in mail/src/env.rs; the ops pane's startup lives in a
+# bin main with no library seam, and cockpit.sh and concierge.sh are bash.
 #
 # tier: T3
-# covers: cockpit.sh concierge.sh spira/conf.sh UC-operator-launchers-02 UC-operator-launchers-03
+# covers: cockpit.sh concierge.sh cockpit/ops/src/* spira/conf.sh UC-operator-launchers-02 UC-operator-launchers-03 UC-operator-launchers-04
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -46,6 +46,11 @@ out="$(profile "$ROOT/concierge.sh" status </dev/null 2>&1)"; rc=$?
 nowant "concierge.sh status names no missing config" "SPIRA_TOML" "$out"
 case "$rc" in 0|1) ok "concierge.sh status reports a state (exit $rc)" ;; *) bad "concierge.sh status reports a state" "exit $rc: $out" ;; esac
 refuses_bare "concierge.sh" "$ROOT/concierge.sh" status
+
+# --- UC-operator-launchers-04: the ops pane ------------------------------------------------
+out="$(profile SPIRA_HOME="$HERE" health once </dev/null 2>&1)"; rc=$?
+nowant "ops pane names no missing config" "SPIRA_TOML" "$out"
+wantrc "ops pane renders once from a bare login environment" 0 "$rc"
 
 echo
 tl_summary

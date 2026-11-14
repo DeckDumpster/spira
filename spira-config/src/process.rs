@@ -132,8 +132,16 @@ pub fn cfg_parse<T: FromStr>(key: &str) -> Result<T, String>
 where
     T::Err: std::fmt::Display,
 {
-    let v = cfg(key)?;
-    v.trim().parse::<T>().map_err(|e| format!("{key} = {v:?} in spira.toml does not parse: {e}"))
+    parse_declared(key, &cfg(key)?)
+}
+
+/// `value` as `key`'s declared type; the parse [`cfg_parse`] applies, for a caller that reads
+/// the value from another source.
+pub fn parse_declared<T: FromStr>(key: &str, value: &str) -> Result<T, String>
+where
+    T::Err: std::fmt::Display,
+{
+    value.trim().parse::<T>().map_err(|e| format!("{key} = {value:?} in spira.toml does not parse: {e}"))
 }
 
 /// The metrics sink for `service`: `SPIRA_METRICS_ENDPOINT` as declared, disabled when the config

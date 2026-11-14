@@ -59,7 +59,7 @@ impl Env {
     pub fn from_config(home: PathBuf, source: &dyn Fn(&str) -> Result<String, String>) -> Result<Env, String> {
         let fail = |e: String| format!("FATAL: {e}");
         let cfg = |k: &str| source(k).map_err(fail);
-        let cfg_u64 = |k: &str| cfg(k).and_then(|v| v.trim().parse::<u64>().map_err(|e| format!("FATAL: {k} = {v:?} in the config file does not parse: {e}")));
+        let cfg_u64 = |k: &str| source(k).and_then(|v| spira_config::process::parse_declared::<u64>(k, &v)).map_err(fail);
         let path = |k: &str| cfg(k).map(PathBuf::from);
         Ok(Env {
             mail_root: path("SPIRA_MAIL")?,

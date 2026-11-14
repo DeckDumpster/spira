@@ -831,19 +831,16 @@ mod tests {
         write_rune(&ws, "newcomer", "RUNE_LABELS=a,d\n");
         assert!(spira_runes(&ws, None).contains("newcomer"), "installing a rune file is the whole registration");
 
-        let (mut task, mut lane, mut operator) = (0, 0, 0);
-        for (name, text) in shipped_rune_texts() {
-            let vars = crate::rune_file::parse(&name, &text, &|_| None).unwrap();
-            let is = |k: &str| vars.get(k).is_some_and(|v| !v.is_empty());
-            let is_operator = vars.get("RUNE_CALL").is_some_and(|v| v == "operator");
-            assert!(!(is_operator && is("RUNE_LANE")), "{name}: operator and lane");
-            match (is_operator, is("RUNE_LANE")) {
-                (true, _) => operator += 1,
-                (_, true) => lane += 1,
-                _ => task += 1,
-            }
-        }
-        assert!(task > 0 && lane > 0 && operator > 0, "positive control: every class is populated ({task}/{lane}/{operator})");
+        let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let _env = testkit::env(&[("SPIRA_RUNES_DIR", Some(shipped.join("runes").to_str().unwrap()))]);
+        let split = |s: String| s.split_whitespace().map(str::to_string).collect::<std::collections::BTreeSet<_>>();
+        let all = split(spira_runes(&shipped, None));
+        let (task, lane) = (split(spira_task_runes(&shipped, None)), split(spira_lane_runes(&shipped, None)));
+        let operator: std::collections::BTreeSet<String> = all.iter().filter(|n| rune_get(&shipped, n, "RUNE_CALL", "auto") == "operator").cloned().collect();
+        assert_eq!(all.len(), shipped_rune_texts().len(), "the roster is every rune file");
+        assert!(!task.is_empty() && !lane.is_empty() && !operator.is_empty(), "positive control: every class is populated");
+        assert!(task.is_disjoint(&lane) && task.is_disjoint(&operator) && lane.is_disjoint(&operator));
+        assert_eq!(task.len() + lane.len() + operator.len(), all.len(), "every persona is one of the three");
     }
 
     // covers: UC-dispatch-08
@@ -875,7 +872,10 @@ mod tests {
         let _env = testkit::env(&pairs);
         for name in callable {
             let labels = rune_predicate(&ws, &name).unwrap_or_else(|e| panic!("{e}")).labels;
-            assert!(labels.contains("pinned-SPIRA_"), "{name}: predicate {labels:?} does not follow the configured label");
+            let text = std::fs::read_to_string(runes_dir(&ws).join(format!("{name}.rune"))).unwrap();
+            for n in bare_references(&assigned_value(&text, "RUNE_LABELS").unwrap()) {
+                assert!(labels.contains(&format!("pinned-{n}")), "{name}: predicate {labels:?} does not follow {n}");
+            }
         }
     }
 }
