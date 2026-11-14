@@ -844,7 +844,7 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
                 Ok(()) => (0, new_id),
                 Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be marked a split child, so it would be claimable before {bead_id} lands (do not file it again; add the label {}): {e}", spira_config::nonwork::SPLIT_LABEL)),
             },
-            (0, _) => match blocking_edge(verb, &filer, bead_id, &new_id) {
+            (0, _) => match blocking_edge(verb, flag(args, "--actor").as_deref().unwrap_or(""), bead_id, &new_id) {
                 Some((blocked, blocker)) => match crate::bd::add_blocker(blocked, blocker) {
                     Ok(()) => (0, new_id),
                     Err(e) => (CANNOT_TELL, format!("{new_id} was filed but {bead_id} could not be made to wait on it (do not file it again; add the dependency): {e}")),
@@ -862,8 +862,8 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
 
 /// A pilgrimage is called again only when its defects land, so a pilgrim's filing blocks the bound
 /// bead on the new one: `(blocked, blocker)`.
-fn blocking_edge<'a>(verb: &str, filer: &str, bound: &'a str, new_id: &'a str) -> Option<(&'a str, &'a str)> {
-    (verb == "file-followup" && filer == "pilgrim").then_some((bound, new_id))
+fn blocking_edge<'a>(verb: &str, actor: &str, bound: &'a str, new_id: &'a str) -> Option<(&'a str, &'a str)> {
+    (verb == "file-followup" && actor == "pilgrim").then_some((bound, new_id))
 }
 
 /// The persona a filing takes its partition from: a `file-followup` goes to the lane its filer's
