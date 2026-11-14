@@ -855,7 +855,7 @@ impl World {
         let day = 24 * 3600;
         let halt = read_halt(&self.run_dir);
         let activated_at = crate::watchers::last_activation(&self.run_dir);
-        let store_up_s = crate::watchers::store_up_s();
+        let store_up_s = store_up_s();
         let blind = ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, store_up_s, ..Default::default() };
         let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&blind) };
         let Ok(mut landings) = self.landed_on_refs(p.now, &prefix) else { return to_json(&blind) };
@@ -985,6 +985,19 @@ impl World {
 struct ThroughputParams {
     now: u64,
     abandon_window_s: u64,
+}
+
+/// Seconds the store server unit has been active, asked of systemd; `None` when it is not active or cannot be asked.
+// loop-safe: runs inside an observe effect, never in a handler or on the loop
+pub fn store_up_s() -> Option<u64> {
+    let out = spira_config::bounded::bounded("systemctl")
+        .args(["--user", "show", "lc-serve.service", "-p", "ActiveEnterTimestampMonotonic", "--value"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let entered_us: u64 = String::from_utf8_lossy(&out.stdout).trim().parse().ok().filter(|us| *us > 0)?;
+    let uptime_s: f64 = fs::read_to_string("/proc/uptime").ok()?.split_whitespace().next()?.parse().ok()?;
+    Some((uptime_s as u64).saturating_sub(entered_us / 1_000_000))
 }
 
 use crate::tasks::e::watch_throughput::{RepoLanding, RepoRounds, Records, Snapshot as ThroughputSnapshot, Unlanded};

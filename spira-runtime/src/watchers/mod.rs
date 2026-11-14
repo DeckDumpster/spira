@@ -47,20 +47,6 @@ pub fn restart_excuses_read(activated_at: Option<u64>, store_up_s: Option<u64>, 
     just_activated(activated_at, now_s) || store_up_s.is_some_and(|up| up <= STORE_RESTART_RETRY_S)
 }
 
-/// Seconds the store server unit has been active, asked of systemd; `None` when it is not active or cannot be asked.
-pub fn store_up_s() -> Option<u64> {
-    let out = spira_config::bounded::bounded(std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".to_string()))
-        .args(["--user", "show", "lc-serve.service", "-p", "ActiveState", "-p", "ActiveEnterTimestampMonotonic"])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let prop = |k: &str| text.lines().find_map(|l| l.strip_prefix(k)?.strip_prefix('=')).map(str::to_string);
-    let entered_us: u64 = prop("ActiveEnterTimestampMonotonic")?.parse().ok()?;
-    let uptime_s: f64 = std::fs::read_to_string("/proc/uptime").ok()?.split_whitespace().next()?.parse().ok()?;
-    (prop("ActiveState")? == "active" && entered_us > 0).then(|| (uptime_s as u64).saturating_sub(entered_us / 1_000_000))
-}
-
 /// The newest `Activated` entry among the release machine records under `run_dir`, epoch seconds.
 pub fn last_activation(run_dir: &std::path::Path) -> Option<u64> {
     let releases = release::machine::all(&run_dir.join("release")).ok()?;

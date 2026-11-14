@@ -41,7 +41,7 @@ use spira_config::process::{cfg, cfg_parse};
 
 use crate::tasks::d::pattern;
 use crate::watchers::halt::Halt;
-use crate::watchers::{answers_observe, carried, iso8601, restart_excuses_read, store_up_s, INBOX_APPEND};
+use crate::watchers::{answers_observe, carried, iso8601, restart_excuses_read, INBOX_APPEND};
 
 pub const NAME: &str = "watch.transitions";
 pub const STREAM: &str = "watch.transitions";
@@ -654,7 +654,7 @@ pub fn observe(
         .map(|(_, e)| e.at)
         .max();
     let activated = crate::watchers::last_activation(run_dir);
-    let up = store_up_s();
+    let up = crate::world::store_up_s();
     let blind = |why: &str| Snapshot { activated_at: activated, store_up_s: up, ..blind(why) };
     let in_effect = releases_in_effect(&releases, releases_dir);
     let window = window_s.to_string();
