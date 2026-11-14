@@ -504,47 +504,6 @@ pub fn trust_answers(http: &dyn gh_intake::ports::Http, api: &str, slug: &str, i
     (accept, hidden)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gh_intake::ports::Http;
-    use std::collections::HashMap;
-
-    struct Fake(HashMap<String, (u16, Vec<u8>)>);
-    impl Http for Fake {
-        fn get(&self, url: &str, _t: u64) -> Result<(u16, Vec<u8>), String> {
-            self.0.get(url).cloned().ok_or_else(|| format!("no fixture for {url}"))
-        }
-    }
-
-    fn contributor(login: &str) -> gh_intake::model::GhIssue {
-        let page = format!(r#"[{{"number":348,"title":"t","body":"b","user":{{"login":"{login}","type":"User"}},"labels":[],"author_association":"CONTRIBUTOR"}}]"#);
-        gh_intake::model::parse_issues_page(page.as_bytes()).unwrap().remove(0)
-    }
-
-    #[test]
-    fn a_contributor_with_write_access_is_admitted_as_an_author() {
-        let api = "https://api.example";
-        let http = Fake(HashMap::from([
-            (format!("{api}/orgs/acme/members/rgantt"), (404, vec![])),
-            (format!("{api}/repos/acme/widgets/collaborators/rgantt/permission"), (200, br#"{"permission":"admin"}"#.to_vec())),
-        ]));
-        let (accept, hidden) = trust_answers(&http, api, "acme/widgets", &[contributor("rgantt")], Some(&vec![]));
-        assert_eq!(accept.len(), 1);
-        assert!(accept[0].actor.is_none() && accept[0].has_access && !accept[0].hidden);
-        assert!(hidden.is_empty());
-    }
-
-    #[test]
-    fn a_contributor_without_access_stays_a_hidden_member_question() {
-        let api = "https://api.example";
-        let http = Fake(HashMap::from([(format!("{api}/orgs/acme/members/rgantt"), (404, vec![]))]));
-        let (accept, hidden) = trust_answers(&http, api, "acme/widgets", &[contributor("rgantt")], Some(&vec![]));
-        assert!(accept.is_empty());
-        assert_eq!(hidden.len(), 1);
-    }
-}
-
 fn file(e: &Effects, s: &EffectSpec, labels: impl Fn(&BTreeMap<String, String>, &Filing) -> (String, String)) -> Result<String, String> {
     use gh_intake::ports::Bd;
     let p: Pinned<Filing> = parse(&s.input)?;
@@ -601,4 +560,45 @@ pub fn run_unverifiable(_: &Effects, _key: &str, s: &EffectSpec) -> Result<Strin
     let p: Pinned<Unverifiable> = parse(&s.input)?;
     let (subject, body) = gh::unverifiable_note(&p.act.login, &p.act.slug);
     mail(&p.cfg).send_operator_note(&subject, body.as_bytes()).then(|| subject.clone()).ok_or_else(|| format!("could not send: {subject}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gh_intake::ports::Http;
+    use std::collections::HashMap;
+
+    struct Fake(HashMap<String, (u16, Vec<u8>)>);
+    impl Http for Fake {
+        fn get(&self, url: &str, _t: u64) -> Result<(u16, Vec<u8>), String> {
+            self.0.get(url).cloned().ok_or_else(|| format!("no fixture for {url}"))
+        }
+    }
+
+    fn contributor(login: &str) -> gh_intake::model::GhIssue {
+        let page = format!(r#"[{{"number":348,"title":"t","body":"b","user":{{"login":"{login}","type":"User"}},"labels":[],"author_association":"CONTRIBUTOR"}}]"#);
+        gh_intake::model::parse_issues_page(page.as_bytes()).unwrap().remove(0)
+    }
+
+    #[test]
+    fn a_contributor_with_write_access_is_admitted_as_an_author() {
+        let api = "https://api.example";
+        let http = Fake(HashMap::from([
+            (format!("{api}/orgs/acme/members/rgantt"), (404, vec![])),
+            (format!("{api}/repos/acme/widgets/collaborators/rgantt/permission"), (200, br#"{"permission":"admin"}"#.to_vec())),
+        ]));
+        let (accept, hidden) = trust_answers(&http, api, "acme/widgets", &[contributor("rgantt")], Some(&vec![]));
+        assert_eq!(accept.len(), 1);
+        assert!(accept[0].actor.is_none() && accept[0].has_access && !accept[0].hidden);
+        assert!(hidden.is_empty());
+    }
+
+    #[test]
+    fn a_contributor_without_access_stays_a_hidden_member_question() {
+        let api = "https://api.example";
+        let http = Fake(HashMap::from([(format!("{api}/orgs/acme/members/rgantt"), (404, vec![]))]));
+        let (accept, hidden) = trust_answers(&http, api, "acme/widgets", &[contributor("rgantt")], Some(&vec![]));
+        assert!(accept.is_empty());
+        assert_eq!(hidden.len(), 1);
+    }
 }
