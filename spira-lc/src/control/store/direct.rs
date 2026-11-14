@@ -101,6 +101,23 @@ impl<B: Backend> Store<B> {
         self.set_record_inputs(id, |r| r.claim = Some(inputs.clone()), req)
     }
 
+    /// Writes `inputs` only while `claim` has never been written, decided in the write's own
+    /// transaction. `None` when there is no record, `Some(false)` when the claim was kept.
+    pub fn set_claim_inputs_if_unset(&self, id: &str, inputs: ClaimInputs, req: &Request) -> Result<Option<bool>> {
+        let kept = std::cell::Cell::new(false);
+        let found = self.set_record_inputs(
+            id,
+            |r| {
+                kept.set(r.claim.is_some());
+                if !kept.get() {
+                    r.claim = Some(inputs.clone());
+                }
+            },
+            req,
+        )?;
+        Ok(found.then(|| !kept.get()))
+    }
+
     /// With `only_if_unset`, a record that already names a carrier is left as it is and reported `Kept`.
     pub fn set_carrier(&self, id: &str, by: Option<&str>, only_if_unset: bool, req: &Request) -> Result<Carrier> {
         let kept = std::cell::Cell::new(false);

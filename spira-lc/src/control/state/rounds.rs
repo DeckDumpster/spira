@@ -497,7 +497,7 @@ fn values(args: &[String], name: &str) -> Vec<String> {
     args.windows(2).filter(|w| w[0] == name).map(|w| w[1].clone()).collect()
 }
 
-/// `set-claim-inputs <bead-id> [--parent P] [--block ID]... [--label L]...`: the whole set the
+/// `set-claim-inputs <bead-id> [--parent P] [--block ID]... [--label L]... [--only-if-unset]`: the whole set the
 /// record's `claim` holds from now on. No record is answered 1 and none is made.
 fn set_claim_inputs<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let Some(id) = args.first().filter(|id| crate::cutover::is_row_key(id)) else {
@@ -505,6 +505,14 @@ fn set_claim_inputs<B: Backend>(store: &Store<B>, args: &[String], call: &Call) 
     };
     let inputs = ClaimInputs { blocks: values(args, "--block"), parent: flag(args, "--parent"), labels: values(args, "--label") };
     let req = Request::new(call.request, "set-claim-inputs", "lc.set-claim-inputs");
+    if args.iter().any(|a| a == "--only-if-unset") {
+        return match store.set_claim_inputs_if_unset(id, inputs, &req) {
+            Ok(Some(true)) => (0, String::new()),
+            Ok(Some(false)) => (0, format!("kept {id}: already written")),
+            Ok(None) => (NO_ROW, format!("set-claim-inputs: {id} has no lifecycle record")),
+            Err(e) => cannot_tell(e),
+        };
+    }
     match store.set_claim_inputs(id, inputs, &req) {
         Ok(true) => (0, String::new()),
         Ok(false) => (NO_ROW, format!("set-claim-inputs: {id} has no lifecycle record")),

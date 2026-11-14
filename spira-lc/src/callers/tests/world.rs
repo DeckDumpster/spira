@@ -108,7 +108,7 @@ impl Machine for &World {
         if args.first().map(String::as_str) == Some(crate::claim_sync::VERB) {
             let (mut machine, mut bd): (&World, &World) = (*self, *self);
             let ans = crate::claim_sync::run(&args[1..], &mut machine, &mut bd);
-            return (ans.code, ans.stderr);
+            return (ans.code, format!("{}{}", ans.stdout, ans.stderr));
         }
         if args.first().map(String::as_str) == Some("create-bead") {
             let mut read = |ids: &[&str]| {
