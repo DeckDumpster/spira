@@ -39,6 +39,7 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
         Cmd::Churn { since, until, repo } => {
             simple::churn(w, since.as_deref(), until.as_deref(), repo.as_deref())
         }
+        Cmd::BackfillCarriers { apply } => integrate::backfill_carriers(w, *apply),
         Cmd::Flush { repo } => simple::flush(w, repo.as_deref()),
         Cmd::Step { repo } => simple::step(w, repo),
         Cmd::StepAll => simple::step_all(w),

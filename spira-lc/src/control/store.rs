@@ -1179,7 +1179,7 @@ mod rounds;
 mod sweeps;
 
 pub use asks::{AskClose, AskRecord};
-pub use direct::{Edge, RepoSet};
+pub use direct::{Carrier, Edge, RepoSet};
 pub use mending::{MendingRecord, Move, Stepped};
 pub use readiness::{Judged, Pass};
 pub use rounds::{Cut, Ran, Turned, Withdrawn};

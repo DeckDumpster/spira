@@ -20,6 +20,15 @@ pub enum RepoSet {
     Set,
 }
 
+/// What `set-carrier` found.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Carrier {
+    NoRecord,
+    /// `--only-if-unset` met a record that already names a carrier.
+    Kept,
+    Set,
+}
+
 /// How a `dep-add` or `dep-remove` changes the prerequisites a record waits on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Edge {
@@ -92,8 +101,24 @@ impl<B: Backend> Store<B> {
         self.set_record_inputs(id, |r| r.claim = Some(inputs.clone()), req)
     }
 
-    pub fn set_carrier(&self, id: &str, by: Option<&str>, req: &Request) -> Result<bool> {
-        self.set_record_inputs(id, |r| r.carried_by = by.map(str::to_string), req)
+    /// With `only_if_unset`, a record that already names a carrier is left as it is and reported `Kept`.
+    pub fn set_carrier(&self, id: &str, by: Option<&str>, only_if_unset: bool, req: &Request) -> Result<Carrier> {
+        let kept = std::cell::Cell::new(false);
+        let found = self.set_record_inputs(
+            id,
+            |r| {
+                kept.set(only_if_unset && r.carried_by.is_some());
+                if !kept.get() {
+                    r.carried_by = by.map(str::to_string);
+                }
+            },
+            req,
+        )?;
+        Ok(match (found, kept.get()) {
+            (false, _) => Carrier::NoRecord,
+            (true, true) => Carrier::Kept,
+            (true, false) => Carrier::Set,
+        })
     }
 
     /// Adds `dep` to, or takes it from, the prerequisites `id`'s readiness names as blocking it.

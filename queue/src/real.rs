@@ -1915,16 +1915,19 @@ impl Lc for RealLc {
     fn create_bead_in(&self, id: &str, repo: &str) {
         let _ = self.run(&["create-bead", id, "--repo", repo, "--ready"]);
     }
-    fn set_carrier(&self, members: &[&str], by: Option<&str>) {
+    fn set_carrier(&self, members: &[&str], by: Option<&str>, only_if_unset: bool) -> Result<String, (i32, String)> {
         let mut argv = vec!["set-carrier"];
         argv.extend(members);
         match by {
             Some(id) => argv.extend(["--by", id]),
             None => argv.push("--clear"),
         }
-        let (rc, out) = self.run(&argv);
-        if rc != 0 {
-            eprintln!("queue: set-carrier exited {rc}: {}; the members' records do not name their integration", out.trim());
+        if only_if_unset {
+            argv.push("--only-if-unset");
+        }
+        match self.run(&argv) {
+            (0, out) => Ok(out),
+            (rc, out) => Err((rc, out)),
         }
     }
     fn cut(
