@@ -522,7 +522,10 @@ impl<'a> Pass<'a> {
             self.gate_provisional(w, br, id, bead);
             return Screen::Done(Flow::Next);
         }
-        if self.procs.holder_alive(id) {
+        // A queued repository only certifies: a SUBMITTED row is the hand-over, and a later
+        // Submit at a new tip replaces the job, so the live builder need not be waited for.
+        let hand_over = repo.mode.queued() && bead.state == "SUBMITTED";
+        if !hand_over && self.procs.holder_alive(id) {
             self.log(&format!("CHECK6 {id}: a live dwarf still holds {br} — deferring the land"));
             return Screen::Retry;
         }
