@@ -119,11 +119,6 @@ pub trait Backend: Send + Sync {
     }
 }
 
-/// Whether GC has nothing to do with `key`: it is under `events/` or `history/`.
-pub fn skipped_by_gc(key: &str) -> bool {
-    key.starts_with(EVENTS_PREFIX) || key.starts_with(HISTORY_PREFIX)
-}
-
 /// The value's `data.state`, when it is a JSON object carrying one as a string.
 pub fn state_of(value: &[u8]) -> Option<String> {
     #[derive(serde::Deserialize)]

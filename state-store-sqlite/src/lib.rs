@@ -895,6 +895,9 @@ impl Backend for SqliteBackend {
     ) -> Result<Vec<(String, Version)>> {
         self.read(|conn, snap, deadline| {
             snap.readable(at)?;
+            if skip.contains(&"") {
+                return Ok(Vec::new());
+            }
             let mut sorted: Vec<&str> = skip.to_vec();
             sorted.sort_unstable();
             let mut skipped: Vec<(&[u8], Vec<u8>)> = Vec::new();
@@ -1258,6 +1261,11 @@ mod tests {
         assert_eq!(rows.len(), 10);
         assert!(rows.iter().all(|(k, _)| k.starts_with("m/")));
         assert!(steps <= 20 * 10, "{steps} VM steps for 10 rows");
+        let unsorted = ["requests/", "events/", "requests/x", "history/"];
+        assert_eq!(b.range_outside(&unsorted, None, 1000, head).unwrap(), rows);
+        let after_m = b.range_outside(&skip, Some("m/04"), 1000, head).unwrap();
+        assert_eq!(after_m.len(), 5);
+        assert!(b.range_outside(&[""], None, 1000, head).unwrap().is_empty());
         let gc = b.gc_range(None, 100_000, head).unwrap();
         let gc_steps = b.take_read_steps();
         assert_eq!(gc.len(), 20_010, "gc_range still reads requests/");
