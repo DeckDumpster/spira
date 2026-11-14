@@ -73,6 +73,15 @@ pub struct PrTarget {
 /// A repo absent from the map has no recorded PR; one mapped to `Err` could not be read.
 pub type RecordedPrs = BTreeMap<String, Result<Vec<u64>, String>>;
 
+fn pr_number(v: &str) -> Option<u64> {
+    v.trim().trim_start_matches('#').parse().ok()
+}
+
+/// The PR the repo's publish record names; an unreadable record is an `Err`, an absent one `None`.
+fn publish_pr(queue_dir: &Path, repo: &str) -> Result<Option<u64>, String> {
+    queue::records::read_kv(&queue_dir.join(repo).join("publish")).map(|kv| kv.and_then(|kv| kv.get("pr").and_then(pr_number)))
+}
+
 /// The forge's word on each PR in `records` or already tracked in `carry`, asked by number.
 /// A repo's open set is `None` when its records or any answer is missing; strays are looked for
 /// only when a tracked PR left the open set.
@@ -324,14 +333,13 @@ impl World {
     fn recorded_prs(&self, targets: &[PrTarget]) -> RecordedPrs {
         let lc = spira_store::lc_call::LcClient::socket(&self.lc_socket).within(std::time::Duration::from_secs(5));
         let views = store_view::Projection::hot(lc).and_then(|v| v.batches_current().map(|()| v).map_err(|e| e.to_string()));
-        let number = |v: &str| v.trim().trim_start_matches('#').parse::<u64>().ok();
         let mut out = RecordedPrs::new();
         for t in targets {
             let batch = match &views {
-                Ok(v) => v.batch_view(&t.name).map(|view| view.value.open.and_then(|r| r.get("pr").and_then(number))).map_err(|e| e.to_string()),
+                Ok(v) => v.batch_view(&t.name).map(|view| view.value.open.and_then(|r| r.get("pr").and_then(pr_number))).map_err(|e| e.to_string()),
                 Err(e) => Err(e.clone()),
             };
-            let publish = queue::records::read_kv(&self.queue_dir.join(&t.name).join("publish")).map(|kv| kv.and_then(|kv| kv.get("pr").and_then(number)));
+            let publish = publish_pr(&self.queue_dir, &t.name);
             out.insert(t.name.clone(), batch.and_then(|b| publish.map(|p| b.into_iter().chain(p).collect())));
         }
         out
@@ -1151,6 +1159,32 @@ mod pr_snapshot_tests {
         let obs = snapshot(&out).repos[0].1.clone();
         assert_eq!(obs.finals[&12].state, "CLOSED");
         assert_eq!(obs.open, Some(vec![]));
+    }
+
+    #[test]
+    fn the_publish_record_names_its_pr_and_an_unreadable_one_is_an_error_not_no_pr() {
+        let tmp = testkit::TempDir::new("pr-snap");
+        let dir = tmp.path().to_path_buf();
+        fs::create_dir_all(dir.join("r")).unwrap();
+        fs::create_dir_all(dir.join("bad").join("publish")).unwrap();
+        fs::write(dir.join("r").join("publish"), "pr=41\nhead=x\n").unwrap();
+        assert_eq!(publish_pr(&dir, "r"), Ok(Some(41)));
+        assert_eq!(publish_pr(&dir, "none"), Ok(None));
+        assert!(publish_pr(&dir, "bad").is_err());
+    }
+
+    #[test]
+    fn strays_are_listed_only_on_the_tick_a_tracked_pr_leaves_the_open_set() {
+        let (api, seen) = stub(vec![]);
+        pr_snapshot_from(&RecordedPrs::new(), &[target("r", "pr")], &forge_at(api), &Carry::default()).unwrap();
+        assert!(seen.join().unwrap().is_empty(), "a quiet tick lists no branches");
+
+        let closed = r#"{"number":12,"state":"closed","merged":false,"head":{"sha":"abc","ref":"b"}}"#;
+        let (api, seen) = stub(vec![answer("200 OK", "", closed), answer("200 OK", "", closed), answer("200 OK", "", "[]")]);
+        let out = pr_snapshot_from(&RecordedPrs::new(), &[target("r", "pr")], &forge_at(api), &tracking(12)).unwrap();
+        let seen = seen.join().unwrap();
+        assert!(seen[2].starts_with("get /repos/o/r/branches"), "{}", seen[2]);
+        assert_eq!(snapshot(&out).repos[0].1.strays, Some(vec![]));
     }
 
     #[test]
