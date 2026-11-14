@@ -8,17 +8,17 @@
 //! because nothing here depends on `python3` at all now.
 //!
 //! `deps.toml` itself (`spira/deps.toml`) is untouched by this bead: same fields, same file,
-//! same authority (doctor's own checks, `testenv/doctor-check.sh`, `test-bin-manifest.sh`).
+//! same authority (doctor's own checks, `testenv/doctor-check.sh`).
 //! Only `version_min`/`version_probe` are left unread here — nothing in the five functions
-//! this module replaces ever read them either; `test-bin-manifest.sh` parses those two
-//! fields itself, directly, as its own expected-value oracle.
+//! this module replaces ever read them either; the shipped-manifest test below parses
+//! `version_probe` itself.
 
 use serde::Deserialize;
 use std::path::Path;
 
 /// The two fallbacks `conf.sh`'s own functions gave an undeclared name, or a declared one
-/// missing the field — preserved byte for byte because `test-bin-manifest.sh` asserts on
-/// both as its positive control.
+/// missing the field — preserved byte for byte; the shipped-manifest test uses
+/// them as its positive control.
 pub const DEFAULT_TIER: &str = "optional";
 pub const DEFAULT_PURPOSE: &str = "required by the harness";
 
@@ -297,5 +297,7 @@ version_probe = ""
         assert_eq!(bad(&|d| !tiers.contains(&d.tier.as_str())), Vec::<&str>::new(), "a program with no valid tier");
         assert_eq!(bad(&|d| d.purpose == DEFAULT_PURPOSE), Vec::<&str>::new(), "a program stating no purpose");
         assert_eq!(bad(&|d| probes[d.name.as_str()].is_empty()), Vec::<&str>::new(), "a program with no version probe");
+        assert!(absent_of(&manifest.deps, "bd-embedded").contains("shared Dolt server"), "a silent downgrade names what it falls back to");
+        assert_eq!(tier_of(&manifest.deps, "spira-no-such-program"), DEFAULT_TIER, "positive control: an undeclared program is untiered");
     }
 }

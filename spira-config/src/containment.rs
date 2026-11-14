@@ -205,6 +205,31 @@ mod tests {
 
     // covers: UC-config-store-preflight-16
     #[test]
+    fn a_symlink_inside_the_workspace_is_judged_by_where_it_points() {
+        let d = testkit::TempDir::new("spira-config-containment-links");
+        let ws = d.path().join("ws");
+        let outside = d.path().join("outside");
+        std::fs::create_dir_all(ws.join("real")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, ws.join("escapes")).unwrap();
+        std::os::unix::fs::symlink(ws.join("real"), ws.join("stays")).unwrap();
+        let root = ws.canonicalize().unwrap();
+        let root = root.to_str().unwrap();
+        let map = |name: &str| format!("{name}|{}/{name}\n", root);
+        assert!(check_with("test", root, Some(&map("escapes")), &no_remotes).is_err(), "a link pointing out is outside");
+        assert_eq!(check_with("test", root, Some(&map("stays")), &no_remotes), Ok(()), "a link pointing in is inside");
+    }
+
+    // covers: UC-config-store-preflight-16
+    #[test]
+    fn a_workspace_of_slash_confines_nothing_and_a_sibling_prefix_is_not_inside() {
+        assert!(is_under("/anywhere/at/all", "/"));
+        assert!(is_under("/ws/a", "/ws/"));
+        assert!(!is_under("/ws-other/a", "/ws"), "a shared name prefix is not containment");
+    }
+
+    // covers: UC-config-store-preflight-16
+    #[test]
     fn prod_is_not_confined_even_with_an_outside_path_and_a_network_remote() {
         let remotes = |_: &str| vec!["https://example.invalid/x.git".to_string()];
         assert_eq!(check_with("prod", "/ws", Some("x|/elsewhere\n"), &remotes), Ok(()));

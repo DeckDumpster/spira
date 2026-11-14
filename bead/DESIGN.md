@@ -206,9 +206,7 @@ shims in `lib.sh` thread them through explicitly on every call, the same shape
 `BD_TIMEOUT`/`SPIRA_BDQ_CONN_RETRIES`/`SOP_APPLIED_TRACE*`/`GH_TIMEOUT`/`SPIRA_GH` are never
 `conf.sh` keys at all (set, if at all, by an already-exported caller environment — a dwarf's
 session env, a test fixture's `export`, a systemd unit's `Environment=`), so none of those
-need re-threading. `spira/test-repo-map.sh`'s "EXEC BOUNDARY" section sets the five
-unexported names via plain assignment (no `export`) ahead of sourcing `lib.sh`, proving the
-shim carries them across regardless.
+need re-threading. The shim carries the five unexported names across explicitly.
 
 **What ported vs what stayed bash, this time:** everything — all three fences, the czar-fence
 dispatch (still a subprocess call to `czar-fence.sh`, unchanged), the
