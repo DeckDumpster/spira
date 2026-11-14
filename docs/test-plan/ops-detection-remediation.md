@@ -222,16 +222,9 @@ fixture, parallel mode, single run — not averaged; never on the host):
 
 ```
 Before (§7's own baseline, this slice's touched suites only, main-push run 35947142904):
-  test-czar-pass.sh    14 s  (no cargo test; 5 of its 22 Rust tests did not compile —
-                              cargo test -p czar-pass was never run as part of this suite)
   test-census.sh        9 s  (3 rows: bump writes, cause column, since-filter)
 
 After (measured this run):
-  test-czar-pass.sh    40 s  (+26 s: cargo test -p czar-pass — 42 tests, <0.2s wall itself;
-                              the rest of the delta is a second full cargo compile of the
-                              czar-pass/reconciler-engine crates under a scratch
-                              CARGO_TARGET_DIR, separate from the release-binary build the
-                              suite already paid for)
   test-census.sh       73 s  (+64 s: this run built its own fresh embedded testdb baseline
                               rather than reusing a warm one, which section 1-5's original
                               9 s baseline did not have to pay; the Fenrir row itself is one
@@ -241,9 +234,9 @@ After (measured this run):
 Also run this slice: `test-plan-lint.sh`
 (33 s) and `test-plan-matrix.sh` (33 s), both exercising the new catalogue file itself.
 
-Verified: `bash spira/testenv-batch.sh --suites test-czar-pass.sh,test-census.sh
+Verified: `bash spira/testenv-batch.sh --suites test-census.sh
 spira/sp-n1twd` and `bash spira/testenv-batch.sh --suites
-test-plan-lint.sh,test-plan-matrix.sh spira/sp-n1twd` in testenv — all four green.
+test-plan-lint.sh,test-plan-matrix.sh spira/sp-n1twd` in testenv — all green.
 `spira/plan-matrix.sh` regenerated `coverage.json`/`COVERAGE.md`;
 `spira/plan-matrix.sh --check` and `test-plan validate --catalogue-dir docs/test-plan`
 both confirm the committed files match.

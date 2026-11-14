@@ -154,7 +154,7 @@ fn an_unreadable_input_is_unobservable_and_never_clear() {
 }
 
 fn recording_seams(dir: &Path, cfg: &mut Config) {
-    cfg.seams.incident = script(dir, "incident", "printf 'cause=%s ref=%s\\n' \"$SPIRA_INCIDENT_CAUSE\" \"$SPIRA_INCIDENT_REF\" >> \"$0.calls\"");
+    cfg.seams.incident = script(dir, "incident", "printf 'cause=%s ref=%s priority=%s express=%s repo=%s body=%s\\n' \"$SPIRA_INCIDENT_CAUSE\" \"$SPIRA_INCIDENT_REF\" \"$SPIRA_INCIDENT_PRIORITY\" \"$SPIRA_INCIDENT_EXPRESS\" \"$SPIRA_INCIDENT_REPO\" \"$(cat | tr '\\n' ' ')\" >> \"$0.calls\"");
     cfg.seams.sentinel = script(dir, "sentinel", "echo \"$*\" >> \"$0.calls\"");
 }
 
@@ -242,4 +242,46 @@ fn a_concurrent_pass_is_skipped_under_flock_and_a_halted_world_exits_clean_witho
     fs::remove_file(run.join("world.halted")).unwrap();
     assert_eq!(run_pass(), Ok(()));
     assert!(run.join("czar.log").exists(), "positive control: the same world with the lock free and no halt does run");
+}
+
+// covers: UC-ops-detection-remediation-23
+#[test]
+fn a_red_base_files_p0_express_naming_its_failing_suites_under_one_ref_however_often_it_is_seen() {
+    let dir = scratch_dir("base-red-filing");
+    let out = "run-id: 5\nrun-conclusion: failure\nred-suite: test-b.sh\nred-suite: test-a.sh";
+    let mut cfg = with_open_batch(&dir, forge_saying(&dir, out));
+    recording_seams(&dir, &mut cfg);
+    cfg.stages.insert("BASE_RED".into(), Stage::Act);
+    detect_base_red(&cfg, &mut StateMap::new());
+    cfg.now_secs += 60;
+    detect_base_red(&cfg, &mut StateMap::new());
+    let filed = calls(&dir, "incident");
+    let first = filed.lines().next().unwrap();
+    assert!(first.contains("priority=0 express=1 repo=r"), "{first}");
+    assert!(first.contains("test-a.sh, test-b.sh"), "{first}");
+    assert_eq!(filed.lines().count(), 2);
+    let refs: Vec<&str> = filed.lines().map(|l| l.split_whitespace().nth(1).unwrap()).collect();
+    assert_eq!(refs[0], refs[1], "a second sighting is a recurrence of the same bead");
+}
+
+// covers: UC-ops-detection-remediation-23
+#[test]
+fn a_stalled_ci_job_is_rerun_once_then_escalated_under_a_ref_that_ignores_how_long_it_has_waited() {
+    let dir = scratch_dir("ci-stalled-remedy");
+    let forge = |dir: &Path, queued_ago: u64| {
+        script(dir, "forge", &format!("case \"$1\" in workflow-rerun) echo rerun >> \"$0.calls\";; esac\nprintf 'run-id: 7\\nqueued-since: %s\\n' {}", NOW - queued_ago))
+    };
+    let mut cfg = with_open_batch(&dir, forge(&dir, 700));
+    recording_seams(&dir, &mut cfg);
+    cfg.stages.insert("CI_STALLED".into(), Stage::Act);
+    let mut state = StateMap::new();
+    assert_eq!(detect_ci(&cfg, &mut state).1, "det-rerun");
+    assert_eq!(calls(&dir, "forge"), "rerun\n");
+    cfg.now_secs += 30;
+    cfg.seams.forge = forge(&dir, 730);
+    assert_eq!(detect_ci(&cfg, &mut state).1, "inference", "the rerun did not close the gap");
+    assert_eq!(calls(&dir, "forge"), "rerun\n", "no second blind rerun");
+    let incident = calls(&dir, "incident");
+    assert_eq!(incident.lines().count(), 1, "{incident}");
+    assert!(incident.contains("ref=incident:queue-ci-stalled-r "), "the ref carries no measured duration: {incident}");
 }
