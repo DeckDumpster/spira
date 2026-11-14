@@ -3034,6 +3034,12 @@ pub fn round_eject_gate_red(
     round_eject_with(env, repo, batch, id, &reason, "")
 }
 
+/// `queue round eject` for a member whose preempt recorded the preemption and then could not eject it.
+pub fn round_eject_after_refused_preempt(env: &Env, repo: &Repo, batch: &str, id: &str, refusal: &str) -> Result<(), String> {
+    let reason = format!("Ejected from the round: spira/{id}'s gate went red, and the preempt that should have ejected it was refused ({refusal}).");
+    round_eject_with(env, repo, batch, id, &reason, "")
+}
+
 fn round_eject_with(
     env: &Env,
     repo: &Repo,
