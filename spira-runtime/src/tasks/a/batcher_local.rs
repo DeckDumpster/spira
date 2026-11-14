@@ -489,6 +489,9 @@ pub struct Pace {
     pub redriven: String,
     #[serde(default)]
     pub pause_lifts: u32,
+    /// The batch that last advanced `infra`: one round counts once.
+    #[serde(default)]
+    pub infra_batch: String,
 }
 
 impl Pace {
@@ -504,17 +507,18 @@ impl Pace {
         }
     }
 
-    pub fn of(st: &pace::State, refusals: &[u64]) -> Pace {
+    pub fn of(st: &pace::State, prev: &Pace) -> Pace {
         let one = |s: &str| if s.is_empty() { vec![] } else { vec![s.to_string()] };
         Pace {
             infra: st.infra,
             no_vm: st.no_vm,
             paged: one(&st.paged_open),
             orphan: one(&st.orphan),
-            refusals: refusals.to_vec(),
+            refusals: prev.refusals.clone(),
             orphan_since_ms: st.orphan_since * 1000,
             redriven: st.redriven.clone(),
             pause_lifts: st.pause_lifts,
+            infra_batch: prev.infra_batch.clone(),
         }
     }
 }
@@ -1150,15 +1154,22 @@ impl Machine<'_> {
         }
     }
 
-    /// `Done`: the pace advances on the round's outcome, its pages and pause are written, and the
-    /// machine is Idle with the round forgotten.
-    fn finish(&mut self, outcome: pace::Outcome, detail: &str) {
-        let (st, fx) = pace::advance(&self.rc.pace.core(), &outcome, self.repo, detail);
-        self.rc.pace = Pace::of(&st, &self.rc.pace.refusals);
-        if fx.pause {
-            let on = if self.rc.landing_base.is_empty() { &self.rc.base } else { &self.rc.landing_base };
-            self.rc.paused_on = Some(on.clone()).filter(|b| !b.is_empty());
+    /// `pace::advance`, except that a batch which already advanced `infra` does not advance it again.
+    fn advance_once(&self, st: &pace::State, outcome: &pace::Outcome, detail: &str, batch: &str) -> (pace::State, pace::Effects, String) {
+        let carried = self.rc.pace.infra_batch.clone();
+        if matches!(outcome, pace::Outcome::Infra) {
+            if !batch.is_empty() && batch == carried {
+                return (st.clone(), pace::Effects::default(), carried);
+            }
+            let (next, fx) = pace::advance(st, outcome, self.repo, detail);
+            return (next, fx, batch.to_string());
         }
+        let (next, fx) = pace::advance(st, outcome, self.repo, detail);
+        (next, fx, carried)
+    }
+
+    /// The hold an advance asks for, then its pages: a page about a stop follows the stop's write.
+    fn push_effects(&mut self, fx: &pace::Effects, detail: &str) {
         if fx.pause || fx.stop {
             let leg = Leg { why: detail.to_string(), key: format!("{}:rounds", self.repo), bead: if fx.stop { "stop".into() } else { "pause".into() }, ..Leg::on(self.repo) };
             self.acts.push(leg.act(PAUSE));
@@ -1166,6 +1177,19 @@ impl Machine<'_> {
         for p in &fx.pages {
             self.acts.push(Act::new(INBOX_APPEND, p.clone()).with_input(page_line(self.now_ms, p)));
         }
+    }
+
+    /// `Done`: the pace advances on the round's outcome, its pages and pause are written, and the
+    /// machine is Idle with the round forgotten.
+    fn finish(&mut self, outcome: pace::Outcome, detail: &str) {
+        let batch = self.rc.batch.clone().unwrap_or_default();
+        let (st, fx, infra_batch) = self.advance_once(&self.rc.pace.core(), &outcome, detail, &batch);
+        self.rc.pace = Pace { infra_batch, ..Pace::of(&st, &self.rc.pace) };
+        if fx.pause {
+            let on = if self.rc.landing_base.is_empty() { &self.rc.base } else { &self.rc.landing_base };
+            self.rc.paused_on = Some(on.clone()).filter(|b| !b.is_empty());
+        }
+        self.push_effects(&fx, detail);
         self.go(Trigger::Advanced);
         self.forget_round();
     }
@@ -1457,7 +1481,7 @@ impl Machine<'_> {
         if open.driven {
             self.go(Trigger::OpenRoundDriven);
             if !st.orphan.is_empty() {
-                self.rc.pace = Pace::of(&pace::State { orphan: String::new(), orphan_since: 0, ..st.clone() }, &self.rc.pace.refusals);
+                self.rc.pace = Pace::of(&pace::State { orphan: String::new(), orphan_since: 0, ..st.clone() }, &self.rc.pace);
             }
             return;
         }
@@ -1477,6 +1501,7 @@ impl Machine<'_> {
         if matches!(verdict, pace::Orphan::Redrive) && wait == 0 {
             eprintln!("{NAME} {}: open round {} has no pass and no driver — starting its first pass", self.repo, open.id);
         }
+        let mut infra_batch = self.rc.pace.infra_batch.clone();
         let leg = Leg { batch: open.id.clone(), wt: open.worktree.clone(), ..Leg::on(self.repo) };
         match verdict {
             pace::Orphan::Wait => {}
@@ -1484,20 +1509,19 @@ impl Machine<'_> {
             pace::Orphan::Incident(why) => {
                 let why = format!("round {} had no driver: {why}", open.id);
                 self.acts.push(Leg { key: format!("{}:{}", self.repo, open.id), why: why.clone(), bead: NO_DRIVER.into(), ..leg }.act(ABANDON));
-                let (after, fx) = pace::advance(&next, &pace::Outcome::Infra, self.repo, &why);
+                let (after, fx, batch) = self.advance_once(&next, &pace::Outcome::Infra, &why, &open.id);
                 next = after;
-                for p in &fx.pages {
-                    self.acts.push(Act::new(INBOX_APPEND, p.clone()).with_input(page_line(self.now_ms, p)));
-                }
+                infra_batch = batch;
+                self.push_effects(&fx, &why);
             }
         }
-        self.rc.pace = Pace::of(&next, &self.rc.pace.refusals);
+        self.rc.pace = Pace { infra_batch, ..Pace::of(&next, &self.rc.pace) };
         self.go(Trigger::OrphanStepped);
     }
 
     /// A green round no pass drives is landed on the pass that made it green, as one of this task's own.
     fn adopt_green(&mut self, open: &Round, st: &pace::State) {
-        self.rc.pace = Pace::of(&pace::State { orphan: String::new(), orphan_since: 0, redriven: String::new(), ..st.clone() }, &self.rc.pace.refusals);
+        self.rc.pace = Pace::of(&pace::State { orphan: String::new(), orphan_since: 0, redriven: String::new(), ..st.clone() }, &self.rc.pace);
         self.rc.batch = Some(open.id.clone());
         self.rc.members = open.members.iter().enumerate().map(|(i, id)| (id.clone(), open.tips[i].clone())).collect();
         self.rc.round_key = Some(core::round_key(&self.rc.members));
@@ -1524,7 +1548,7 @@ impl Machine<'_> {
         let mut st = self.rc.pace.core();
         if held_for.is_some_and(|held| pace::pause_expired(&st, held, policy.pause_lift_s)) {
             st.pause_lifts += 1;
-            self.rc.pace = Pace::of(&st, &self.rc.pace.refusals);
+            self.rc.pace = Pace::of(&st, &self.rc.pace);
             self.rc.paused_on = None;
             let why = format!("{} pause held {}s past its {}s bound — lifted, cutting; a second red stays paused ({})", self.repo, held_for.unwrap_or_default(), policy.pause_lift_s, text.trim());
             self.acts.push(Leg { why, key: format!("{}:rounds:lift:expired:{}", self.repo, self.now_ms / 1000), bead: "lift".into(), ..Leg::on(self.repo) }.act(PAUSE));

@@ -149,6 +149,50 @@ fn a_round_certify_would_refuse_is_abandoned_after_the_wait_not_left_open() {
     assert!(leg.why.contains("cannot be re-driven") && leg.why.contains("moved"), "{}", leg.why);
 }
 
+/// Observes `id` open, undriven and unfit from `from` until it is abandoned, as the existing
+/// abandon test does; the open round is gone once an ABANDON is asked.
+fn abandon_undriven(mut carry: Carry, id: &str, from: u64) -> (Carry, Vec<Act>, u64) {
+    let repo = Repo { open_round: Some(Round { id: id.into(), worktree: "/w".into(), ..Round::default() }), unfit: Some("the round worktree is moved".into()), ..Repo::default() };
+    let (mut acts, mut t) = (vec![], from);
+    while t <= from + (Policy::default().orphan_wait_s + 60) * 1000 {
+        let (c, a) = decide(&carry, &Snapshot { repos: [("spira".to_string(), repo.clone())].into(), now_ms: t });
+        carry = c;
+        let done = names(&a).contains(&ABANDON);
+        acts.extend(a);
+        t += TICK;
+        if done {
+            break;
+        }
+    }
+    (carry, acts, t)
+}
+
+#[test]
+fn a_second_undriven_round_abandoned_in_a_row_writes_the_stop_before_it_pages() {
+    let (carry, first, t) = abandon_undriven(Carry::default(), "r8", NOW);
+    assert!(!names(&first).contains(&PAUSE), "{first:?}");
+    let (_, second, _) = abandon_undriven(carry, "r9", t);
+    let n = names(&second);
+    let stop = second.iter().position(|a| a.effect == PAUSE && serde_json::from_str::<Leg>(&a.input).is_ok_and(|l| l.bead == "stop")).unwrap_or_else(|| panic!("no stop written: {n:?}"));
+    let page = second.iter().position(|a| a.effect == INBOX_APPEND && a.input.contains("ROUNDS STOPPED spira:")).unwrap_or_else(|| panic!("no page: {n:?}"));
+    assert!(stop < page, "the stop is written before the page: {n:?}");
+}
+
+#[test]
+fn one_round_that_faulted_then_was_abandoned_undriven_counts_once() {
+    let mut rc = RepoCarry { state: State::Certifying, round_key: Some("k".into()), batch: Some("r9".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), leg: Some("spira.c3".into()), run: 1, attributed: true, ..RepoCarry::default() };
+    rc.leg_at_ms = NOW;
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.c3").unwrap(), exit: runtime::units::Exit::Code(1), duration_ms: 1 };
+    let out = runtime::units::RanOutput::captured(b"queue.sh round certify: refused, nothing ran\n", b"");
+    let (carry, faulted) = on_ran_with(&carry, &ran, &out, NOW + TICK).unwrap();
+    assert!(!names(&faulted).contains(&ABANDON), "{faulted:?}");
+    assert_eq!(carry.repos["spira"].pace.infra, 1);
+    let (carry, acts, _) = abandon_undriven(carry, "r9", NOW + 2 * TICK);
+    assert_eq!(names(&acts), [ABANDON], "{acts:?}");
+    assert_eq!(carry.repos["spira"].pace.infra, 1);
+}
+
 #[test]
 fn running_legs_are_this_task_s_active_units_by_key() {
     use runtime::units::{UnitDetail, UnitHandle, UnitState};
