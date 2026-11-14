@@ -41,7 +41,7 @@ use spira_config::process::{cfg, cfg_parse};
 
 use crate::tasks::d::pattern;
 use crate::watchers::halt::Halt;
-use crate::watchers::{answers_observe, carried, iso8601, just_activated, INBOX_APPEND};
+use crate::watchers::{answers_observe, carried, iso8601, restart_excuses_read, INBOX_APPEND};
 
 pub const NAME: &str = "watch.transitions";
 pub const STREAM: &str = "watch.transitions";
@@ -221,6 +221,9 @@ pub struct Snapshot {
     pub owners: BTreeMap<String, Owner>,
     #[serde(default)]
     pub halt: Option<Halt>,
+    /// Seconds the store server had been up when this was read; `None` when systemd could not say.
+    #[serde(default)]
+    pub store_up_s: Option<u64>,
 }
 
 /// An edge owner's last sign of life, epoch seconds, and the action of its that failed, if one did.
@@ -519,6 +522,7 @@ pub fn snapshot_of(
         open_rounds: None,
         owners: BTreeMap::new(),
         halt: None,
+        store_up_s: None,
     })
 }
 
@@ -650,7 +654,7 @@ pub fn observe(
         .map(|(_, e)| e.at)
         .max();
     let activated = crate::watchers::last_activation(run_dir);
-    let blind = |why: &str| Snapshot { activated_at: activated, ..blind(why) };
+    let blind = |why: &str| Snapshot { activated_at: activated, store_up_s: crate::world::store_up_s(), ..blind(why) };
     let in_effect = releases_in_effect(&releases, releases_dir);
     let window = window_s.to_string();
     let after = if current.is_some() {
@@ -735,7 +739,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     }
     next.halted.clear();
     if !snap.readable {
-        if !carry.blind && !carry.retried && just_activated(snap.activated_at, now) {
+        if !carry.blind && !carry.retried && restart_excuses_read(snap.activated_at, snap.store_up_s, now) {
             next.retried = true;
             return (next, acts);
         }

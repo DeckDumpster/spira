@@ -38,6 +38,15 @@ pub fn just_activated(activated_at: Option<u64>, now_s: u64) -> bool {
     activated_at.is_some_and(|at| at <= now_s && now_s - at <= ACTIVATION_RETRY_S)
 }
 
+/// How long the store server must have been up before one unreadable read is believed.
+pub const STORE_RESTART_RETRY_S: u64 = 120;
+
+/// Whether a read that fails now is the first after a restart of the store server, by the
+/// activation that restarted it or by the server's own age: it is read again before it is paged.
+pub fn restart_excuses_read(activated_at: Option<u64>, store_up_s: Option<u64>, now_s: u64) -> bool {
+    just_activated(activated_at, now_s) || store_up_s.is_some_and(|up| up <= STORE_RESTART_RETRY_S)
+}
+
 /// The newest `Activated` entry among the release machine records under `run_dir`, epoch seconds.
 pub fn last_activation(run_dir: &std::path::Path) -> Option<u64> {
     let releases = release::machine::all(&run_dir.join("release")).ok()?;
@@ -83,8 +92,15 @@ pub fn iso8601(secs: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{iso8601, just_activated, last_activation};
+    use super::{iso8601, just_activated, last_activation, restart_excuses_read};
     use release::machine::{enter, ReleaseState};
+
+    #[test]
+    fn a_server_up_exactly_two_minutes_excuses_one_read_and_one_second_more_does_not() {
+        assert!(restart_excuses_read(None, Some(120), 10_000));
+        assert!(!restart_excuses_read(None, Some(121), 10_000));
+        assert!(!restart_excuses_read(None, None, 10_000), "an age systemd could not give excuses nothing");
+    }
 
     #[test]
     fn the_last_activation_is_the_activated_record_under_run_dir_and_nothing_else() {

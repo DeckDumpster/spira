@@ -55,6 +55,7 @@ fn healthy(now: u64) -> Snapshot {
         open_rounds: Some(BTreeMap::new()),
         owners: BTreeMap::new(),
         halt: None,
+        store_up_s: None,
     }
 }
 
@@ -1064,6 +1065,26 @@ fn a_store_that_stays_unreadable_for_two_ticks_after_an_activation_still_pages_b
 #[test]
 fn an_unreadable_store_long_after_an_activation_pages_at_once() {
     let (r, _) = rig_at(|now| blind_after_activation(now, 10 * MIN));
+    assert_eq!(lines(&r).iter().filter(|l| l.contains("P0 BLIND")).count(), 1, "{:?}", lines(&r));
+}
+
+/// A store that cannot be read when the server has been up `up_s` seconds, no activation in sight.
+fn blind_with_server_up(up_s: u64) -> Snapshot {
+    Snapshot { activated_at: None, store_up_s: Some(up_s), ..blind("spira-lc dwell: cannot tell: deadline") }
+}
+
+#[test]
+fn one_unreadable_tick_after_the_store_server_restarted_pages_nothing_and_two_in_a_row_page() {
+    let (mut r, _) = rig_at(|_| blind_with_server_up(50));
+    assert!(lines(&r).iter().all(|l| !l.contains("BLIND")), "the first read after a restart is retried: {:?}", lines(&r));
+    r.advance(300_000).unwrap();
+    let pages = lines(&r).into_iter().filter(|l| l.contains("P0 BLIND")).count();
+    assert_eq!(pages, 1, "the second unreadable tick pages: {:?}", lines(&r));
+}
+
+#[test]
+fn an_unreadable_tick_with_the_store_server_up_more_than_two_minutes_pages_at_once() {
+    let (r, _) = rig_at(|_| blind_with_server_up(121));
     assert_eq!(lines(&r).iter().filter(|l| l.contains("P0 BLIND")).count(), 1, "{:?}", lines(&r));
 }
 
