@@ -1012,8 +1012,12 @@ mod tests {
         let snap = Snapshot { now_ms: NOW, open_batch: batches, ci, base_ci, ..Snapshot::default() };
         let (next, _) = decide(&policy(), &carry, &snap);
         assert!(next.base_pending.contains_key("fa"));
-        let k = &next.keys["ci-stalled:fa"];
-        assert!(matches!(&k.hysteresis, h if *h != HysteresisState::default()) || k.phase != Phase::Satisfied, "ci-stalled:fa is carried as a gap or unobservable, not dropped as satisfied");
+        for key in ["ci-stalled:fa", "ci-red:fa"] {
+            let reason = &next.keys[key].hysteresis;
+            assert!(*reason != HysteresisState::default() || next.keys[key].phase != Phase::Satisfied, "{key} is carried, not dropped as satisfied");
+        }
+        let (judged, _) = step(snap.now_ms / 1000, unobservable("x"), 0, HysteresisState::default());
+        assert!(matches!(judged.status, RawStatus::Unobservable { .. }));
     }
 
     #[test]
@@ -1026,5 +1030,22 @@ mod tests {
         let (next, acts) = decide(&pol, &carry, &snap);
         assert!(acts.iter().any(|a| a.effect == FILE_BASE_RED));
         assert!(next.base_pending.is_empty());
+    }
+
+    #[test]
+    fn a_settled_landing_forgets_its_base_red_streak_so_the_next_red_files_again() {
+        let mut pol = policy();
+        pol.stages.insert("base-red".into(), Stage::Act);
+        let red = |at| BaseCi { conclusion: Some("failure".into()), head_sha: "abc".into(), red_suites: vec!["unit".into()], completed_at_ms: Some(at), ..BaseCi::default() };
+        let snap = |now, at| Snapshot { now_ms: now, open_batch: [("fa".to_string(), Read::Observed(None))].into(), base_ci: [("fa".to_string(), Read::Observed(red(at)))].into(), ..Snapshot::default() };
+        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
+        let (c1, _) = decide(&pol, &carry, &snap(NOW + 5_000, NOW + 1_000));
+        assert!(c1.keys.contains_key("base-red:fa") && c1.base_pending.is_empty());
+        let idle = Snapshot { now_ms: NOW + 40_000, open_batch: [("fa".to_string(), Read::Observed(None))].into(), ..Snapshot::default() };
+        let (c2, _) = decide(&pol, &c1, &idle);
+        assert!(!c2.keys.contains_key("base-red:fa"), "an unwatched repo keeps no streak");
+        let again = Carry { base_pending: [("fa".to_string(), NOW + 100_000)].into(), ..c2 };
+        let (_, acts) = decide(&pol, &again, &snap(NOW + 200_000, NOW + 150_000));
+        assert!(acts.iter().any(|a| a.effect == FILE_BASE_RED));
     }
 }
