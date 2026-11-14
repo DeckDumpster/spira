@@ -1,0 +1,79 @@
+//! `sync-claim-inputs <id>...`: writes each record's claim inputs (blocking edges, parent,
+//! labels) from the content store, the whole set each time, so a repeat converges.
+
+use spira_config::edges;
+
+use crate::callers::{Answer, Bd, Machine, CANNOT_TELL, NO_ROW};
+use crate::content_sql::Edge;
+
+pub const VERB: &str = "sync-claim-inputs";
+
+/// What the content store holds of one bead that the claim rule reads.
+pub struct ClaimRead {
+    pub parent: Option<String>,
+    pub labels: Vec<String>,
+    pub edges: Vec<Edge>,
+}
+
+/// The ids `rank::declared_blockers` yields for a bead: its own blocking edges, parent excluded.
+pub fn blocks(id: &str, read: &ClaimRead) -> Vec<String> {
+    read.edges
+        .iter()
+        .filter(|e| edges::blocks(edges::Edge::Dep(&e.kind)))
+        .filter(|e| e.issue_id == id)
+        .map(|e| e.depends_on_id.clone())
+        .filter(|b| read.parent.as_deref() != Some(b.as_str()))
+        .collect()
+}
+
+pub fn run(ids: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    if ids.is_empty() {
+        return Answer { code: CANNOT_TELL, stderr: format!("usage: spira-lc {VERB} <bead-id>...\n"), ..Default::default() };
+    }
+    let (mut worst, mut said) = (0, String::new());
+    for id in ids {
+        let (code, why) = match bd.claim_read(id) {
+            Err(e) => (CANNOT_TELL, format!("{id}: the content store cannot be read: {}", e.trim())),
+            Ok(None) => (NO_ROW, format!("{id}: no such bead in the content store")),
+            Ok(Some(read)) => {
+                let mut argv = vec!["set-claim-inputs".to_string(), id.clone()];
+                argv.extend(blocks(id, &read).into_iter().flat_map(|b| ["--block".to_string(), b]));
+                argv.extend(read.parent.iter().flat_map(|p| ["--parent".to_string(), p.clone()]));
+                argv.extend(read.labels.iter().flat_map(|l| ["--label".to_string(), l.clone()]));
+                let (code, out) = m.call(&argv);
+                (code, if code == 0 { String::new() } else { format!("{id}: {}", out.trim()) })
+            }
+        };
+        if code != 0 {
+            worst = worst.max(code);
+            said.push_str(&format!("{why}\n"));
+        }
+    }
+    Answer { code: worst, stderr: said, ..Default::default() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn edge(issue: &str, to: &str, kind: &str) -> Edge {
+        Edge { issue_id: issue.into(), depends_on_id: to.into(), kind: kind.into() }
+    }
+
+    #[test]
+    fn only_the_beads_own_blocking_edges_other_than_its_parent_are_blocks() {
+        let read = ClaimRead {
+            parent: Some("sp-e".into()),
+            labels: vec![],
+            edges: vec![
+                edge("sp-a", "sp-e", "parent-child"),
+                edge("sp-a", "sp-e", "blocks"),
+                edge("sp-a", "sp-b", "blocks"),
+                edge("sp-a", "sp-c", "blocked-by"),
+                edge("sp-a", "sp-r", "related"),
+                edge("sp-x", "sp-y", "blocks"),
+            ],
+        };
+        assert_eq!(blocks("sp-a", &read), ["sp-b", "sp-c"]);
+    }
+}

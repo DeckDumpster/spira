@@ -21,6 +21,8 @@ pub struct Item {
     pub status: String,
     pub parent: Option<String>,
     pub labels: Vec<String>,
+    /// `(depends_on, kind)` edges out of the bead, the parent-child edge not among them.
+    pub dependencies: Vec<(String, String)>,
 }
 
 pub struct World {
@@ -44,7 +46,7 @@ impl World {
 
     /// A bead in the planning plane, open.
     pub fn file(&self, id: &str, kind: &str, parent: Option<&str>, labels: &[&str]) {
-        let item = Item { kind: kind.into(), status: "open".into(), parent: parent.map(str::to_string), labels: labels.iter().map(|l| l.to_string()).collect() };
+        let item = Item { kind: kind.into(), status: "open".into(), parent: parent.map(str::to_string), labels: labels.iter().map(|l| l.to_string()).collect(), dependencies: Vec::new() };
         self.plan.borrow_mut().insert(id.into(), item);
     }
 
@@ -103,6 +105,11 @@ impl Machine for &World {
         if args.first().map(String::as_str) == Some(crate::skew::CHECK_VERB) {
             return (0, format!("{}: the planes agree", crate::skew::CHECK_VERB));
         }
+        if args.first().map(String::as_str) == Some(crate::claim_sync::VERB) {
+            let (mut machine, mut bd): (&World, &World) = (*self, *self);
+            let ans = crate::claim_sync::run(&args[1..], &mut machine, &mut bd);
+            return (ans.code, ans.stderr);
+        }
         if args.first().map(String::as_str) == Some("create-bead") {
             let mut read = |ids: &[&str]| {
                 let argv: Vec<String> = ["plan", "items", "--ids", &ids.join(",")].iter().map(|s| s.to_string()).collect();
@@ -155,6 +162,14 @@ impl Bd for &World {
     }
     fn external(&mut self, _id: &str) -> Result<bool, String> {
         Ok(false)
+    }
+    fn claim_read(&mut self, id: &str) -> Result<Option<crate::claim_sync::ClaimRead>, String> {
+        let plan = self.plan.borrow();
+        let edges = |i: &Item| {
+            let parent = i.parent.iter().map(|p| (p.clone(), "parent-child".to_string()));
+            i.dependencies.iter().cloned().chain(parent).map(|(to, kind)| crate::content_sql::Edge { issue_id: id.to_string(), depends_on_id: to, kind }).collect()
+        };
+        Ok(plan.get(id).map(|i| crate::claim_sync::ClaimRead { parent: i.parent.clone(), labels: i.labels.clone(), edges: edges(i) }))
     }
     fn blocking_dependents(&mut self, _id: &str) -> Result<Vec<String>, String> {
         Ok(Vec::new())

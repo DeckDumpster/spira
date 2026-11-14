@@ -7,7 +7,7 @@ use state_store::{Backend, Compare, Error, Object, Request, Result, Txn};
 
 use super::{object_like, sub_request, Store, MERGE_ATTEMPTS};
 use crate::control::keys;
-use crate::control::records::{decode, encode, LifecycleRecord, Readiness};
+use crate::control::records::{decode, encode, ClaimInputs, LifecycleRecord, Readiness};
 
 /// What `set-repo` found.
 #[derive(Clone, Debug, PartialEq)]
@@ -61,6 +61,39 @@ impl<B: Backend> Store<B> {
         Err(Error::Backend(format!(
             "{key}: set-repo lost {MERGE_ATTEMPTS} races in a row"
         )))
+    }
+
+    /// Applies `edit` to `id`'s record under a compare, re-planned when it loses. `false` when
+    /// there is no record; a record `edit` leaves unchanged is not rewritten.
+    pub fn set_record_inputs(&self, id: &str, edit: impl Fn(&mut LifecycleRecord), req: &Request) -> Result<bool> {
+        let key = keys::lifecycle(id);
+        for attempt in 0..MERGE_ATTEMPTS {
+            let Some(item) = self.contract().get(&key)? else {
+                return Ok(false);
+            };
+            let mut rec: LifecycleRecord = decode(&key, &item.value)?;
+            let before = rec.clone();
+            edit(&mut rec);
+            if rec == before {
+                return Ok(true);
+            }
+            let t = Txn::new()
+                .when(Compare::ModRev(key.clone(), Some(item.mod_rev)))
+                .put(&key, object_like(&item, encode(&rec)?));
+            let sub = sub_request(req, &format!("set-inputs/{id}/{attempt}"), Value::Null);
+            if self.contract().txn(&t, &sub)?.succeeded {
+                return Ok(true);
+            }
+        }
+        Err(Error::Backend(format!("{key}: a claim-input write lost {MERGE_ATTEMPTS} races in a row")))
+    }
+
+    pub fn set_claim_inputs(&self, id: &str, inputs: ClaimInputs, req: &Request) -> Result<bool> {
+        self.set_record_inputs(id, |r| r.claim = Some(inputs.clone()), req)
+    }
+
+    pub fn set_carrier(&self, id: &str, by: Option<&str>, req: &Request) -> Result<bool> {
+        self.set_record_inputs(id, |r| r.carried_by = by.map(str::to_string), req)
     }
 
     /// Adds `dep` to, or takes it from, the prerequisites `id`'s readiness names as blocking it.

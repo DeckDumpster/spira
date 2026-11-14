@@ -377,6 +377,33 @@ pub fn after_create_ids_on(c: &LcClient, who: &str, created_stdout: &str, repo: 
     Err(e)
 }
 
+/// Writes the claim inputs of each of `ids` onto its lifecycle record (`spira-lc
+/// sync-claim-inputs`). A failure is reported with its repair and returned; the bd write it
+/// follows stands.
+pub fn sync_claim_inputs_on(c: &LcClient, who: &str, ids: &[String]) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut argv = vec!["sync-claim-inputs"];
+    argv.extend(ids.iter().map(String::as_str));
+    let failed = match c.call(&argv) {
+        Ok(r) if r.code == 0 => return Ok(()),
+        Ok(r) => format!("exited {}: {}", r.code, r.text().trim()),
+        Err(e) => e.to_string(),
+    };
+    eprintln!("{who}: LIFECYCLE: {failed}; claim inputs not written; repair: spira-lc sync-claim-inputs {}", ids.join(" "));
+    Err(failed)
+}
+
+/// [`sync_claim_inputs_on`] through the configured `spira-lc`.
+pub fn sync_claim_inputs(who: &str, ids: &[String]) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let c = client(&lc_bin()?)?;
+    sync_claim_inputs_on(&c, who, ids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

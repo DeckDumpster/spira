@@ -1,5 +1,6 @@
 //! The values stored under the control plane's keys. A lifecycle record holds the state
-//! machine's fields plus `repo`; nothing here copies a planning-plane field.
+//! machine's fields plus `repo` and the claim rule's inputs (`claim`, `carried_by`); a title,
+//! a priority or a body is never copied onto it.
 
 use std::collections::BTreeMap;
 
@@ -19,6 +20,23 @@ pub struct LifecycleRecord {
     pub repo: Option<String>,
     /// Epoch seconds of the last write, for display only.
     pub updated_at: i64,
+    /// The claim rule's content inputs as the last `sync-claim-inputs` read them; `None` until
+    /// one has, which is not the same as no edges.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<ClaimInputs>,
+    /// The integration whose record line names this bead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carried_by: Option<String>,
+}
+
+/// What the claim rule reads of a bead from the content store.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ClaimInputs {
+    /// The ids `rank::declared_blockers` yields: blocking edges the bead declares, its parent excluded.
+    pub blocks: Vec<String>,
+    pub parent: Option<String>,
+    /// The full label set: the labels the rule tests are configuration.
+    pub labels: Vec<String>,
 }
 
 impl LifecycleRecord {
@@ -35,6 +53,8 @@ impl LifecycleRecord {
             row,
             repo: repo.map(str::to_string),
             updated_at: at,
+            claim: None,
+            carried_by: None,
         }
     }
 
@@ -58,6 +78,8 @@ impl LifecycleRecord {
                 ..r.row.clone()
             },
             updated_at: 0,
+            claim: None,
+            carried_by: None,
             ..r.clone()
         };
         unstamped(self) == unstamped(other)
@@ -198,10 +220,11 @@ mod tests {
     fn a_record_round_trips_and_carries_no_planning_field() {
         let r = LifecycleRecord::born("sp-a", Some("harness"), None, 100);
         let v = encode(&r).unwrap();
-        for planning in ["title", "priority", "blocked_by", "labels"] {
+        for planning in ["title", "priority", "description"] {
             assert!(v.get(planning).is_none(), "{planning} in {v}");
         }
         assert_eq!(v["repo"], "harness");
+        assert!(v.get("claim").is_none() && v.get("carried_by").is_none(), "never written is absent: {v}");
         assert_eq!(
             decode::<LifecycleRecord>("lifecycle/sp-a", &Object::new(v)).unwrap(),
             r

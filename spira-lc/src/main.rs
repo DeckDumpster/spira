@@ -17,6 +17,7 @@ mod bd;
 mod bd_facts;
 mod callers;
 mod churn;
+mod claim_sync;
 mod claim_verdicts;
 mod classify_cmd;
 mod composed;

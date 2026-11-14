@@ -191,14 +191,28 @@ const ROW_ATTEMPTS: u32 = 3;
 /// closed bead. bd's write stands whatever happens; a lifecycle write that fails is reported
 /// (the returned stderr lines), never swallowed and never a reason to repeat the bd write.
 pub fn after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine, bd: &mut dyn crate::callers::Bd, backoff_ms: u64) -> String {
+    let (mut report, rowed) = rows_after(args, stdout, m, bd, backoff_ms);
+    let ids: Vec<String> = spira_store::planning::claim_inputs_changed(args, stdout).into_iter().filter(|i| rowed.as_ref().is_none_or(|ok| ok.contains(i))).collect();
+    if !ids.is_empty() {
+        let ans = crate::claim_sync::run(&ids, m, bd);
+        if ans.code != 0 {
+            report.push_str(&format!("spira-lc content: LIFECYCLE: {}; claim inputs not written; repair: spira-lc sync-claim-inputs {}\n", ans.stderr.trim(), ids.join(" ")));
+        }
+    }
+    report
+}
+
+/// The lifecycle half of [`after`]: its report, and, for a create, the ids whose row now exists.
+fn rows_after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine, bd: &mut dyn crate::callers::Bd, backoff_ms: u64) -> (String, Option<Vec<String>>) {
     match bead::guard::after(args) {
-        bead::guard::After::Nothing => String::new(),
+        bead::guard::After::Nothing if bead::bdq::creates_beads(args) => (String::new(), Some(Vec::new())),
+        bead::guard::After::Nothing => (String::new(), None),
         bead::guard::After::Rows => {
             let ids = spira_store::lifecycle_row::created_ids(stdout);
             if ids.is_empty() {
-                return format!("spira-lc content: LIFECYCLE: cannot read any created bead id from {stdout:?}; the new beads have no lifecycle row and cannot be claimed\n");
+                return (format!("spira-lc content: LIFECYCLE: cannot read any created bead id from {stdout:?}; the new beads have no lifecycle row and cannot be claimed\n"), Some(Vec::new()));
             }
-            let mut errs = Vec::new();
+            let (mut errs, mut rowed) = (Vec::new(), Vec::new());
             for id in &ids {
                 let mut argv = vec!["create-bead".to_string(), id.clone(), "--ready".to_string()];
                 if let Some(repo) = bead::bdq::created_repo(args) {
@@ -214,21 +228,25 @@ pub fn after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine,
                 }
                 if last.0 != 0 {
                     errs.push(format!("create-bead {id} --ready exited {}: {}", last.0, last.1.trim()));
+                } else {
+                    rowed.push(id.clone());
                 }
             }
-            if errs.is_empty() {
+            let report = if errs.is_empty() {
                 String::new()
             } else {
                 format!("spira-lc content: LIFECYCLE: some created beads have NO lifecycle row and cannot be claimed: {}\n", errs.join("; "))
-            }
+            };
+            (report, Some(rowed))
         }
         bead::guard::After::Terminal(id) => {
             let ans = crate::callers::reconcile_closed(&["--apply".to_string(), id.clone()], m, bd);
-            if ans.code == 0 {
+            let report = if ans.code == 0 {
                 String::new()
             } else {
                 format!("spira-lc content: LIFECYCLE: {id} was closed but its lifecycle row is not terminal and may read as claimable: {}\n", format!("{}{}", ans.stdout, ans.stderr).trim())
-            }
+            };
+            (report, None)
         }
     }
 }
@@ -921,12 +939,15 @@ mod tests {
         fn planning_watermark(&mut self) -> Result<Option<u64>, String> {
             unreachable!("a create owes no bd read")
         }
+        fn claim_read(&mut self, _: &str) -> Result<Option<crate::claim_sync::ClaimRead>, String> {
+            Ok(Some(crate::claim_sync::ClaimRead { parent: None, labels: vec![], edges: vec![] }))
+        }
     }
 
     fn rows_written_after(args: &[&str]) -> Vec<Vec<String>> {
         let mut m = Recorder(vec![]);
         assert_eq!(after(&v(args), "sp-new\n", &mut m, &mut NoBd, 0), "");
-        m.0
+        m.0.into_iter().filter(|a| a[0] == "create-bead").collect()
     }
 
     #[test]

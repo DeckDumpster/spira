@@ -15,6 +15,7 @@ pub const CALLER_SIDE: &[&str] = &["deliver", "content-on-base"];
 
 /// The composed verbs other than the caller verbs.
 const OWN: &[&str] = &[
+    crate::claim_sync::VERB,
     "unclaim",
     "reconcile-closed",
     "close-ask",
@@ -137,6 +138,7 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
     let Ports { m, bd, content, stdin, run_dir, now, caller } = p;
     match verb {
         "unclaim" => callers::unclaim(rest, m),
+        crate::claim_sync::VERB => crate::claim_sync::run(rest, m, bd),
         "reconcile-closed" => callers::reconcile_closed(rest, m, bd),
         // The ask's state is written first; its decision bead then follows through reconcile-content.
         "close-ask" => {

@@ -61,6 +61,8 @@ pub(super) fn land_carried(w: &World, c: &Ctx, id: &str, head: &str) -> Vec<Stri
         }
     }
     if stuck.is_empty() {
+        let members: Vec<&str> = members.iter().map(String::as_str).collect();
+        w.lc.set_carrier(&members, None);
         let rest: String = all
             .iter()
             .filter(|(i, _)| i != id)
@@ -217,6 +219,7 @@ pub(super) fn file(
         ));
         return None;
     }
+    w.lc.set_carrier(&ids, Some(&id));
     w.out(format!(
         "queue.sh {label}: integration {id} filed for {list} — one dwarf integrates them; no round admits them meanwhile"
     ));

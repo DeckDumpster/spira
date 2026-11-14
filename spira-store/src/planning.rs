@@ -46,6 +46,22 @@ pub fn claim_input_change<S: AsRef<str>>(args: &[S]) -> Option<(String, Vec<Stri
     }
 }
 
+/// The ids whose claim inputs (parent, labels, blocking edges) a successful write of `args`
+/// changed, `stdout` being what the write printed: every bead a create verb made, the dependent
+/// of a `dep` write, the bead of a label write or of an `update` of its parent or labels.
+pub fn claim_inputs_changed<S: AsRef<str>>(args: &[S], stdout: &str) -> Vec<String> {
+    let all: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
+    let words: Vec<&str> = all.iter().copied().filter(|a| !a.starts_with('-')).collect();
+    let word = |i: usize| words.get(i).map(|w| w.to_string()).into_iter().collect::<Vec<_>>();
+    match words.first().copied() {
+        Some("create" | "import" | "mol" | "q") => crate::lifecycle_row::created_ids(stdout),
+        Some("dep") if words.get(1).is_some_and(|sub| !READ_SUBCOMMANDS.iter().any(|(v, reads)| *v == "dep" && reads.contains(sub))) => word(2),
+        Some("label") if matches!(words.get(1).copied(), Some("add" | "remove" | "rm")) => word(2),
+        Some("update") if all.iter().any(|a| ["--parent", "--add-label", "--remove-label"].iter().any(|f| a == f || a.starts_with(&format!("{f}=")))) => word(1),
+        _ => Vec::new(),
+    }
+}
+
 /// Runs `spira-lc plan stamp` after a planning write `caller` made. A stamp that fails is
 /// reported, never raised: the write it follows has already landed.
 pub fn stamp_after(caller: &str) {
@@ -59,7 +75,7 @@ pub fn stamp_after(caller: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{claim_input_change, is_planning_write};
+    use super::{claim_input_change, claim_inputs_changed, is_planning_write};
 
     #[test]
     fn a_dependency_a_priority_or_the_split_label_change_a_beads_claim_inputs_and_a_note_does_not() {
@@ -70,6 +86,21 @@ mod tests {
         assert_eq!(got(&["label", "add", "sp-a", spira_config::nonwork::SPLIT_LABEL]), Some(("sp-a".into(), vec![])));
         for none in [&["label", "add", "sp-a", "plan"][..], &["note", "sp-a", "x"], &["update", "sp-a", "--assignee", "x"], &["dep", "relate", "a", "b"], &["create", "t"]] {
             assert_eq!(got(none), None, "{none:?}");
+        }
+    }
+
+    #[test]
+    fn a_write_that_moves_a_parent_a_label_or_an_edge_names_the_bead_whose_claim_inputs_it_changed() {
+        let got = |a: &[&str], out: &str| claim_inputs_changed(a, out);
+        assert_eq!(got(&["dep", "add", "sp-a", "sp-b"], ""), ["sp-a"]);
+        assert_eq!(got(&["dep", "remove", "sp-a", "sp-b"], ""), ["sp-a"]);
+        assert_eq!(got(&["label", "add", "sp-a", "x"], ""), ["sp-a"]);
+        assert_eq!(got(&["update", "sp-a", "--parent", "sp-e"], ""), ["sp-a"]);
+        assert_eq!(got(&["update", "sp-a", "--add-label", "x"], ""), ["sp-a"]);
+        assert_eq!(got(&["create", "T", "--json"], "{\"ids\":[\"sp-n\",\"sp-m\"]}"), ["sp-n", "sp-m"]);
+        assert_eq!(got(&["create", "T", "--silent"], "sp-n\n"), ["sp-n"]);
+        for none in [&["note", "sp-a", "x"][..], &["update", "sp-a", "--assignee", "x"], &["dep", "list", "sp-a"], &["label", "list", "sp-a"], &["show", "sp-a"]] {
+            assert!(got(none, "sp-a\n").is_empty(), "{none:?}");
         }
     }
 
