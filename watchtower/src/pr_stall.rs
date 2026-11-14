@@ -223,9 +223,9 @@ pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &
                 s.repo
             ));
         }
-        handle(&s, &repo_path, &facts, &lc, cfg, &mut |f| {
+        handle(&s, &repo_path, &facts, &Acting { lc: &lc, cfg, db, home_repo }, &mut |f| {
             incident::alarm(incident_sh, f);
-        }, db, home_repo);
+        });
     }
     log("watchtower: pr-stall-check complete");
 }
@@ -256,7 +256,16 @@ fn auto_merge_off_finding(s: &Stalled, db: &str, home_repo: &str) -> Finding {
 
 /// What the check does for one stalled bead given the repo's facts: escalate through `raise`,
 /// requeue through `lc`, or arm auto-merge through the configured `gh`.
-fn handle(s: &Stalled, repo_path: &str, facts: &PrFacts, lc: &LcClient, cfg: &Cfg, raise: &mut dyn FnMut(&Finding), db: &str, home_repo: &str) {
+/// The store, config and filing identity one check pass acts with.
+struct Acting<'a> {
+    lc: &'a LcClient,
+    cfg: &'a Cfg,
+    db: &'a str,
+    home_repo: &'a str,
+}
+
+fn handle(s: &Stalled, repo_path: &str, facts: &PrFacts, act: &Acting, raise: &mut dyn FnMut(&Finding)) {
+    let Acting { lc, cfg, db, home_repo } = *act;
     let red = is_red(&facts.concls);
     let conflicting = facts.mergeable == "CONFLICTING";
     match decide(red, facts.allow_auto_merge == Some(false), conflicting) {
@@ -379,7 +388,7 @@ mod tests {
 
     fn acted(s: &Stalled, f: &PrFacts, lc: &LcClient, cfg: &Cfg, repo_path: &str) -> Vec<Finding> {
         let mut raised = Vec::new();
-        handle(s, repo_path, f, lc, cfg, &mut |x| raised.push(x.clone()), "db", "spira");
+        handle(s, repo_path, f, &Acting { lc, cfg, db: "db", home_repo: "spira" }, &mut |x| raised.push(x.clone()));
         raised
     }
 
