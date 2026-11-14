@@ -397,6 +397,12 @@ pub enum DestroyBranchErr {
 /// contradict on an empty-commit branch.
 #[allow(clippy::too_many_arguments)]
 pub fn destroy_branch(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo: &Path, why: &str, caller: &str, base: Option<&str>, bd: &dyn ClaimProbe) -> Result<(), DestroyBranchErr> {
+    destroy_branch_with_state(run, reaplog_path, id, br, repo, why, caller, base, bd, &lc_state)
+}
+
+/// [`destroy_branch`] with the lifecycle `state` read injected.
+#[allow(clippy::too_many_arguments)]
+fn destroy_branch_with_state(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo: &Path, why: &str, caller: &str, base: Option<&str>, bd: &dyn ClaimProbe, state_of: &dyn Fn(&str) -> Option<String>) -> Result<(), DestroyBranchErr> {
     let g = Git(repo);
     if !g.ok(&["rev-parse", "--git-dir"]) {
         let msg = format!("{} is not a git repository, so branch {br} was not looked for", repo.display());
@@ -408,7 +414,7 @@ pub fn destroy_branch(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo:
     }
     // CERTIFIED/BATCHED GUARD. No caller bypass: even the Hel must not race verdict.sh's
     // LANDED write.
-    if let Some(state) = lc_state(id).filter(|s| is_queued_state(s)) {
+    if let Some(state) = state_of(id).filter(|s| is_queued_state(s)) {
         reaplog(reaplog_path, "REFUSED", id, &format!("branch {br} — lifecycle state is {state}; not deleting a queued branch"));
         return Err(DestroyBranchErr::CertifiedQueued);
     }
@@ -736,6 +742,72 @@ mod tests {
         let repo = fixture_repo(&run);
         assert!(destroy_branch(&run, &run.join("reap.log"), "sp-gone", "spira/sp-gone", &repo, "test", "hel", None, &open()).is_ok());
         assert!(!Git(&repo).branch_exists("spira/sp-gone"));
+    }
+
+    // covers: UC-landed-audit-reaping-15
+    #[test]
+    fn destroy_branch_refuses_queued_held_checked_out_and_unlanded_and_deletes_only_after_the_fences() {
+        let git = |repo: &Path, args: &[&str]| {
+            let o = Command::new("git").arg("-C").arg(repo).args(args).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").output().unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        let run = tempdir();
+        let repo = fixture_repo(&run);
+        let log = run.join("reap.log");
+        let logged = || std::fs::read_to_string(&log).unwrap_or_default();
+        let none = |_: &str| None;
+        let go = |id: &str, caller: &str, bd: &FakeBd, state: &dyn Fn(&str) -> Option<String>| destroy_branch_with_state(&run, &log, id, &format!("spira/{id}"), &repo, "test", caller, Some("main"), bd, state);
+        let branch_with_file = |id: &str| {
+            git(&repo, &["checkout", "-q", "-b", &format!("spira/{id}"), "main"]);
+            std::fs::write(repo.join(format!("{id}.txt")), id).unwrap();
+            git(&repo, &["add", "."]);
+            git(&repo, &["commit", "-q", "-m", &format!("{id}: work")]);
+            git(&repo, &["checkout", "-q", "main"]);
+        };
+
+        // Queued: refused even with a caller bypass.
+        branch_with_file("sp-q");
+        let certified = |_: &str| Some("CERTIFIED".to_string());
+        assert!(matches!(go("sp-q", "hel", &open(), &certified), Err(DestroyBranchErr::CertifiedQueued)));
+        assert!(Git(&repo).branch_exists("spira/sp-q"));
+        assert!(logged().contains("REFUSED") && logged().contains("lifecycle state is CERTIFIED"), "{}", logged());
+
+        // A live holder witness: refused.
+        std::fs::write(run.join("hold-sp-q.pid"), std::process::id().to_string()).unwrap();
+        assert!(matches!(go("sp-q", "hel", &open(), &none), Err(DestroyBranchErr::Refused(ref m)) if m.contains("live process")));
+        std::fs::remove_file(run.join("hold-sp-q.pid")).unwrap();
+        assert!(Git(&repo).branch_exists("spira/sp-q"));
+
+        // Checked out in a worktree: refused.
+        let wt = run.join("wt-sp-q");
+        git(&repo, &["worktree", "add", "-q", wt.to_str().unwrap(), "spira/sp-q"]);
+        assert!(matches!(go("sp-q", "hel", &open(), &none), Err(DestroyBranchErr::Refused(ref m)) if m.contains("checked out at")));
+        git(&repo, &["worktree", "remove", "--force", wt.to_str().unwrap()]);
+
+        // Unlanded content, no caller bypass: refused and the work survives; the bypass reaches the delete.
+        assert!(matches!(go("sp-q", "", &open(), &none), Err(DestroyBranchErr::Refused(ref m)) if m.contains("content not on main")));
+        assert!(Git(&repo).branch_exists("spira/sp-q"));
+        assert!(go("sp-q", "slain", &open(), &none).is_ok());
+        assert!(!Git(&repo).branch_exists("spira/sp-q"));
+
+        // Squash-landed content is not an ancestor of the branch, yet counts as landed.
+        branch_with_file("sp-s");
+        git(&repo, &["merge", "-q", "--squash", "spira/sp-s"]);
+        git(&repo, &["commit", "-q", "-m", "squash sp-s"]);
+        assert!(go("sp-s", "", &open(), &none).is_ok());
+        assert!(!Git(&repo).branch_exists("spira/sp-s"));
+        assert!(logged().contains("REMOVED"), "{}", logged());
+    }
+
+    // covers: UC-landed-audit-reaping-15
+    #[test]
+    fn destroy_branch_logs_failed_when_the_ref_survives_the_delete() {
+        let run = tempdir();
+        let repo = fixture_repo(&run);
+        testkit::write_exe(&repo.join(".git/hooks/reference-transaction"), "#!/bin/sh\ncat >/dev/null\n[ \"$1\" = prepared ] && exit 1\nexit 0\n");
+        let log = run.join("reap.log");
+        assert!(matches!(destroy_branch(&run, &log, "sp-gone", "spira/sp-gone", &repo, "test", "hel", None, &open()), Err(DestroyBranchErr::Failed(_))));
+        assert!(std::fs::read_to_string(&log).unwrap().lines().any(|l| l.split_whitespace().nth(1) == Some("FAILED")));
     }
 
     #[test]

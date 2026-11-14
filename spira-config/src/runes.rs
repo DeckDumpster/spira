@@ -592,7 +592,7 @@ mod tests {
     #[test]
     fn rune_get_evaluates_shell_parameter_expansion() {
         // A rune file is a shell fragment, not a key=value format — this is exactly the
-        // shape test-rune.sh exercises (SPIRA_SCOPE_LABEL referenced from the rune).
+        // shape the shipped runes have (SPIRA_SCOPE_LABEL referenced from the rune).
         let ws = testkit::TempDir::new("spira-config-runes-get-expansion");
         write_rune(&ws, "scoped", "RUNE_LABELS=\"${SPIRA_SCOPE_LABEL:-spira},plan\"\n");
         assert_eq!(rune_get(&ws, "scoped", "RUNE_LABELS", ""), "spira,plan");
@@ -804,5 +804,78 @@ mod tests {
         std::fs::create_dir_all(dir.join("runes")).unwrap();
         let p = rune_predicate(&dir, "ghost").unwrap();
         assert_eq!(p, Predicate::default());
+    }
+
+    fn shipped_rune_texts() -> Vec<(String, String)> {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let mut v: Vec<(String, String)> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "rune"))
+            .map(|p| (p.file_stem().unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&p).unwrap()))
+            .collect();
+        v.sort();
+        v
+    }
+
+    // covers: UC-dispatch-07
+    #[test]
+    fn the_roster_is_the_rune_files_and_no_persona_is_two_of_task_lane_and_operator() {
+        let ws = testkit::TempDir::new("spira-config-runes-exclusive");
+        write_rune(&ws, "worker", "RUNE_LABELS=a,b\n");
+        write_rune(&ws, "warden", "RUNE_LABELS=a,c\nRUNE_LANE=priority\n");
+        write_rune(&ws, "steward", "RUNE_CALL=operator\nRUNE_LABELS=\"\"\n");
+        assert_eq!(spira_runes(&ws, None).split_whitespace().collect::<std::collections::BTreeSet<_>>(), ["steward", "warden", "worker"].into());
+        assert_eq!(spira_task_runes(&ws, None), "worker");
+        assert_eq!(spira_lane_runes(&ws, None), "warden");
+        write_rune(&ws, "newcomer", "RUNE_LABELS=a,d\n");
+        assert!(spira_runes(&ws, None).contains("newcomer"), "installing a rune file is the whole registration");
+
+        let (mut task, mut lane, mut operator) = (0, 0, 0);
+        for (name, text) in shipped_rune_texts() {
+            let vars = crate::rune_file::parse(&name, &text, &|_| None).unwrap();
+            let is = |k: &str| vars.get(k).is_some_and(|v| !v.is_empty());
+            let is_operator = vars.get("RUNE_CALL").is_some_and(|v| v == "operator");
+            assert!(!(is_operator && is("RUNE_LANE")), "{name}: operator and lane");
+            match (is_operator, is("RUNE_LANE")) {
+                (true, _) => operator += 1,
+                (_, true) => lane += 1,
+                _ => task += 1,
+            }
+        }
+        assert!(task > 0 && lane > 0 && operator > 0, "positive control: every class is populated ({task}/{lane}/{operator})");
+    }
+
+    // covers: UC-dispatch-08
+    #[test]
+    fn every_auto_called_predicate_is_built_from_a_label_variable_and_follows_its_configured_value() {
+        let offender = r#"RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan""#;
+        let built_from_variable = |text: &str| assigned_value(text, "RUNE_LABELS").is_some_and(|raw| bare_references(&raw).iter().any(|n| n.starts_with("SPIRA_") && n.ends_with("_LABEL")));
+        assert!(!built_from_variable(offender), "positive control: a bare literal is caught");
+
+        let ws = testkit::TempDir::new("spira-config-runes-built-from-labels");
+        let mut pins: Vec<(String, String)> = Vec::new();
+        let mut callable = Vec::new();
+        for (name, text) in shipped_rune_texts() {
+            write_rune(&ws, &name, &text);
+            let vars = crate::rune_file::parse(&name, &text, &|_| None).unwrap();
+            if vars.get("RUNE_CALL").is_some_and(|v| v == "operator") {
+                continue;
+            }
+            assert!(built_from_variable(&text), "{name}: RUNE_LABELS carries a literal partition");
+            for var in ["RUNE_LABELS", "RUNE_EXCLUDE_LABELS"] {
+                for n in bare_references(&assigned_value(&text, var).unwrap_or_default()) {
+                    pins.push((n.clone(), format!("pinned-{n}")));
+                }
+            }
+            callable.push(name);
+        }
+        assert!(!callable.is_empty(), "positive control: some persona is auto-called");
+        let pairs: Vec<(&str, Option<&str>)> = pins.iter().map(|(k, v)| (k.as_str(), Some(v.as_str()))).collect();
+        let _env = testkit::env(&pairs);
+        for name in callable {
+            let labels = rune_predicate(&ws, &name).unwrap_or_else(|e| panic!("{e}")).labels;
+            assert!(labels.contains("pinned-SPIRA_"), "{name}: predicate {labels:?} does not follow the configured label");
+        }
     }
 }

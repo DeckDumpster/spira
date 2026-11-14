@@ -188,6 +188,15 @@ mod tests {
         assert!(got.contains("UNCLAIMABLE w —") && !got.contains("UNCLAIMABLE p —"), "{got}");
     }
 
+    // covers: UC-dispatch-17
+    #[test]
+    fn check_7c_agrees_with_the_cockpit_next_attribution() {
+        let beads = r#"[{"id":"sp-free","labels":["myscope","plan"]},{"id":"sp-ops-on-plan","labels":["rune:ops","myscope","plan"]},{"id":"sp-ops-on-incident","labels":["rune:ops","myscope","incident"]},{"id":"sp-ghost","labels":["rune:nobody","myscope","plan"]}]"#;
+        let got = classify(beads, PARTS, PARTS, "", &labels());
+        let flagged: Vec<&str> = got.lines().filter_map(|l| l.strip_prefix("UNCLAIMABLE ")?.split_whitespace().next()).collect();
+        assert_eq!(flagged, ["sp-ops-on-plan", "sp-ghost"]);
+    }
+
     #[test]
     fn a_parked_persona_makes_the_bead_wait_not_unclaimable() {
         let all = format!("{PARTS}spike|myscope,spike|\n");

@@ -675,7 +675,7 @@ park_unmapped() {
 # DELIBERATELY NOT SHIMMED (wave 4.23, sp-0ffox), unlike dwarf_count/dwarves_live_total above.
 # strand/src/probe.rs carries its own Rust copy of this same arithmetic for any FUTURE
 # in-process Rust caller, but THIS body stays bash: it calls rune_get/dwarf_count BY NAME,
-# and several suites (test-dwarf-elastic-concurrency.sh, test-rune.sh,
+# and several suites (test-dwarf-elastic-concurrency.sh,
 # test-builder-qa-proposed.sh, test-dependents.sh) redefine those
 # bash functions after sourcing this file, to control rune_free's inputs without a real
 # process table. Reducing rune_free itself to a one-line exec shim would move that
@@ -1488,7 +1488,7 @@ all_partition_members() {
 # reporting-its-own-report cycle guard, the sp-lyglx/sp-vcxmz branch-collision incidents).
 # `detect_unclaimable_ready` classifies in-process (sentinel/src/unclaimable.rs); the pure classifier
 # is also `sentinel --classify-unclaimable`, so a fixture-JSON table (test-unclaimable.sh) and
-# cockpit-collect's cross-check (test-cockpit-unclaimable.sh, UC-dispatch-17) can drive it
+# cockpit-collect's cross-check (UC-dispatch-17) can drive it
 # directly. The bash-only re-exec
 # that used to re-source lib.sh from the production checkout when called from a worktree
 # (sp-b0j0s) is retired, not ported: it was a workaround for a bash function having no

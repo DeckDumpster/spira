@@ -535,6 +535,30 @@ mod tests {
         assert_eq!((kv(&out, "SP_READY"), kv(&out, "SP_NEXT_N")), (Some("?"), Some("?")));
     }
 
+    // covers: UC-cockpit-observability-17 UC-dispatch-17
+    #[test]
+    fn next_attributes_each_bead_to_its_claimant_or_unclaimable() {
+        let part_map: HashMap<String, String> =
+            [("plan,scp", "builder"), ("incident,scp", "ops")].iter().map(|(l, n)| (l.to_string(), n.to_string())).collect();
+        let bead = |id: &str, labels: &str| format!(r#"{{"id":"{id}","priority":1,"title":"t","labels":[{labels}]}}"#);
+        let rows: Vec<Value> = [
+            bead("sp-free", r#""plan","scp""#),
+            bead("sp-ops-on-plan", r#""rune:ops","plan","scp""#),
+            bead("sp-ops-on-incident", r#""rune:ops","incident","scp""#),
+            bead("sp-ghost", r#""rune:nobody","plan","scp""#),
+        ]
+        .iter()
+        .map(|b| serde_json::from_str(b).unwrap())
+        .collect();
+        let mut out = Kv::new();
+        next_section(&mut out, &part_map, &Cfg::default(), &|_| Some(rows.clone()));
+        let line_of = |id: &str| out.iter().find(|(k, v)| k.starts_with("SP_NEXT") && v.contains(id)).map(|(_, v)| v.clone()).unwrap_or_default();
+        assert_eq!(line_of("sp-free"), "P1 builder sp-free t");
+        assert_eq!(line_of("sp-ops-on-plan"), "P1 unclaimable sp-ops-on-plan t", "the partition query that found it is not who can claim it");
+        assert_eq!(line_of("sp-ops-on-incident"), "P1 ops sp-ops-on-incident t");
+        assert_eq!(line_of("sp-ghost"), "P1 unclaimable sp-ghost t");
+    }
+
     // covers: UC-cockpit-observability-08
     #[test]
     fn the_server_inflow_reply_parses_to_the_same_shape_as_the_row_aggregate() {

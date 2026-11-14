@@ -175,6 +175,26 @@ mod tests {
         render(rows, 80, &i).iter().map(|l| strip(l)).collect::<Vec<_>>().join("\n")
     }
 
+    // covers: UC-operator-launchers-04
+    #[test]
+    fn the_pane_resolves_its_run_dir_from_the_operators_config_alone_and_renders_before_any_snapshot_exists() {
+        let t = testkit::TempDir::new("health-bare-login");
+        let toml = t.path().join("login.toml");
+        std::fs::write(&toml, spira_config::process::complete_fixture_text()).unwrap();
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spira");
+        let repo = home.parent().unwrap().to_path_buf();
+        let mut login: std::collections::BTreeMap<String, String> =
+            [("HOME", "/nonexistent"), ("PATH", "/usr/bin"), ("SPIRA_RELEASE", repo.to_str().unwrap())].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let refused = spira_config::resolve::resolve_for_process(&home, &repo, &login).expect_err("positive control: no SPIRA_TOML refuses");
+        assert!(refused.contains("SPIRA_TOML"), "{refused}");
+        login.insert("SPIRA_TOML".into(), toml.display().to_string());
+        let resolved = spira_config::resolve::resolve_for_process(&home, &repo, &login).expect("the toml alone resolves");
+        assert!(!resolved.get("SPIRA_RUN").is_empty());
+
+        let out = render(0, 80, &base_inputs());
+        assert!(!out.is_empty() && out.iter().all(|l| !l.contains("SPIRA_TOML")), "{out:?}");
+    }
+
     #[test]
     fn slots_row_shows_live_ceiling_free_and_split() {
         let out = slots_frame("SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\nSP_SLOTS_POOL='8'\nSP_SLOTS_LANES_CAP='2'\n", 0);
