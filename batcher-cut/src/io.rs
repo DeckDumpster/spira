@@ -3017,11 +3017,8 @@ pub fn round_preempt(env: &Env, repo: &Repo, batch: &str, ids: &[String], reason
 
 /// The arguments after `queue round` for [`round_preempt`]; the reason comes on stdin.
 pub fn preempt_args(batch: &str, repo: &str, ids: &[String]) -> Vec<String> {
-    ["preempt", batch, repo, "--eject", &ids.join(","), "--suites", GATE_STEP, "--reason-file", "-"].map(String::from).to_vec()
+    ["preempt", batch, repo, "--eject", &ids.join(","), "--reason-file", "-"].map(String::from).to_vec()
 }
-
-/// The check a gate-red member is charged with when it leaves a round.
-pub const GATE_STEP: &str = "gate";
 
 /// `queue round eject` for a member the gate had already marked red while it sat in the round.
 pub fn round_eject_gate_red(

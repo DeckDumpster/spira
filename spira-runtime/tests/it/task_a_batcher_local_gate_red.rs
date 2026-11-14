@@ -76,7 +76,7 @@ fn the_preempt_the_batcher_asks_is_one_the_queue_cli_parses_with_its_evidence_on
     let argv: Vec<String> = std::iter::once("round".to_string()).chain(batcher_cut::io::preempt_args("r9", "spira", &ids)).collect();
     match queue::cli::parse(&argv) {
         Ok(queue::cli::Cmd::Round(queue::cli::Round::Preempt { batch, repo, eject, reason, suites })) => {
-            assert_eq!((batch.as_str(), repo.as_deref(), eject.as_str(), suites.as_str()), ("r9", Some("spira"), "sp-a,sp-b", batcher_cut::io::GATE_STEP));
+            assert_eq!((batch.as_str(), repo.as_deref(), eject.as_str(), suites.as_str()), ("r9", Some("spira"), "sp-a,sp-b", ""));
             assert!(matches!(reason, queue::cli::Text::Stdin), "{reason:?}");
         }
         other => panic!("not a preempt: {other:?}"),
