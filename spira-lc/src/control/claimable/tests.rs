@@ -201,8 +201,8 @@ fn a_wait_hold_with_a_snooze_in_the_future_is_snoozed_and_a_lapsed_one_is_not() 
 #[test]
 fn a_no_loop_labelled_record_is_out_of_scope_and_a_missing_scope_label_is_too() {
     let mut r = rec("A", BeadState::Ready);
-    r.claim.as_mut().unwrap().labels.push("no-loop".into());
-    let c = Ctx { no_loop_label: "no-loop".into(), ..ctx() };
+    r.claim.as_mut().unwrap().labels.push("fixture-parked".into());
+    let c = Ctx { no_loop_label: "fixture-parked".into(), ..ctx() };
     assert_eq!(verdict(&r, &[], &c).verdict, Verdict::OutOfScope);
     let plain = rec("A", BeadState::Ready);
     let c = Ctx { scope_label: "mine".into(), ..ctx() };
