@@ -278,6 +278,9 @@ pub struct Viewed {
     pub gates: BTreeMap<String, Option<Gate>>,
 }
 
+/// The records a view consulted, and its answer per candidate.
+pub type ViewRead = (BTreeMap<String, LifecycleRecord>, BTreeMap<String, Viewed>);
+
 /// The claim view of `cands` (READY and REWORK records), read from the records at `rev` and
 /// the inputs, with the records it consulted. Nothing is kept between calls.
 pub fn view<B: Backend>(
@@ -286,7 +289,7 @@ pub fn view<B: Backend>(
     cands: Vec<LifecycleRecord>,
     inputs: &dyn Inputs,
     now: i64,
-) -> Result<(BTreeMap<String, LifecycleRecord>, BTreeMap<String, Viewed>), String> {
+) -> Result<ViewRead, String> {
     if cands.is_empty() {
         return Ok((BTreeMap::new(), BTreeMap::new()));
     }
