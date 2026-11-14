@@ -1211,6 +1211,33 @@ mod tests {
     }
 
     #[test]
+    fn set_carrier_names_the_integration_on_each_member_and_clear_takes_it_off_and_a_member_without_a_record_is_named() {
+        let w = World::new();
+        filed(&w, "sp-a");
+        filed(&w, "sp-b");
+        let carried = |id: &str| -> serde_json::Value {
+            serde_json::from_str::<Vec<serde_json::Value>>(&w.ok(&["list", "--live"])).unwrap().into_iter().find(|r| r["bead_id"] == id).unwrap()["carried_by"].clone()
+        };
+        assert_eq!(carried("sp-a"), serde_json::Value::Null);
+        w.ok(&["set-carrier", "sp-a", "sp-b", "--by", "sp-int"]);
+        assert_eq!((carried("sp-a"), carried("sp-b")), ("sp-int".into(), "sp-int".into()));
+        let (code, out) = w.lc(&["set-carrier", "sp-a", "sp-ghost", "sp-b", "--clear"]);
+        assert_eq!(code, 1, "{out}");
+        assert!(out.contains("sp-ghost") && !out.contains("sp-a"), "{out}");
+        assert_eq!((carried("sp-a"), carried("sp-b")), (serde_json::Value::Null, serde_json::Value::Null), "the rest are written");
+    }
+
+    #[test]
+    fn a_claim_input_sync_that_fails_after_the_content_write_is_reported_with_its_repair_and_the_write_stands() {
+        let w = World::new();
+        filed(&w, "sp-a");
+        w.plan.borrow_mut().remove("sp-a");
+        let ans = served(&w, &Filing(&w, "sp-a"), &["label", "add", "sp-a", "x"], &[]);
+        assert_eq!(ans.code, 0, "{ans:?}");
+        assert!(ans.stderr.contains("claim inputs not written; repair: spira-lc sync-claim-inputs sp-a"), "{ans:?}");
+    }
+
+    #[test]
     fn syncing_an_id_with_no_record_names_it_and_makes_none() {
         let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
         world.0.lock().unwrap().file("sp-ghost", "task", None, &[]);

@@ -13,10 +13,8 @@ use state_store::{Backend, Request};
 use super::{cannot_tell, number, Call};
 use crate::control::store::{Cut, Edge, Ran, RepoSet, Store, Turned, Verdict};
 use crate::control::records::ClaimInputs;
+use crate::callers::NO_ROW;
 use crate::{flag, CANNOT_TELL, REFUSED};
-
-/// The shell library's own "no row" exit.
-const NO_ROW: i32 = 1;
 
 /// The verbs this module answers.
 pub const VERBS: &[&str] = &[

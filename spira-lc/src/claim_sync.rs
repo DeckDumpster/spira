@@ -51,3 +51,29 @@ pub fn run(ids: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
     }
     Answer { code: worst, stderr: said, ..Default::default() }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn edge(issue: &str, to: &str, kind: &str) -> Edge {
+        Edge { issue_id: issue.into(), depends_on_id: to.into(), kind: kind.into() }
+    }
+
+    #[test]
+    fn only_the_beads_own_blocking_edges_other_than_its_parent_are_blocks() {
+        let read = ClaimRead {
+            parent: Some("sp-e".into()),
+            labels: vec![],
+            edges: vec![
+                edge("sp-a", "sp-e", "parent-child"),
+                edge("sp-a", "sp-e", "blocks"),
+                edge("sp-a", "sp-b", "blocks"),
+                edge("sp-a", "sp-c", "blocked-by"),
+                edge("sp-a", "sp-r", "related"),
+                edge("sp-x", "sp-y", "blocks"),
+            ],
+        };
+        assert_eq!(blocks("sp-a", &read), ["sp-b", "sp-c"]);
+    }
+}

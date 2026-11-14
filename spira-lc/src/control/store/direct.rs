@@ -63,9 +63,8 @@ impl<B: Backend> Store<B> {
         )))
     }
 
-    /// Replaces the claim inputs of `id`'s record with `inputs` (the whole set, so a repeat
-    /// converges), and its carrier with `carried_by` when that is `Some`. `false` when there is
-    /// no record. A record already holding them is not rewritten.
+    /// Applies `edit` to `id`'s record under a compare, re-planned when it loses. `false` when
+    /// there is no record; a record `edit` leaves unchanged is not rewritten.
     pub fn set_record_inputs(&self, id: &str, edit: impl Fn(&mut LifecycleRecord), req: &Request) -> Result<bool> {
         let key = keys::lifecycle(id);
         for attempt in 0..MERGE_ATTEMPTS {
@@ -81,7 +80,7 @@ impl<B: Backend> Store<B> {
             let t = Txn::new()
                 .when(Compare::ModRev(key.clone(), Some(item.mod_rev)))
                 .put(&key, object_like(&item, encode(&rec)?));
-            let sub = sub_request(req, &format!("set-inputs/{attempt}"), Value::Null);
+            let sub = sub_request(req, &format!("set-inputs/{id}/{attempt}"), Value::Null);
             if self.contract().txn(&t, &sub)?.succeeded {
                 return Ok(true);
             }
