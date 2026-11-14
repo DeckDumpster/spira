@@ -691,35 +691,25 @@ pub fn run_cmd_ok(program: &str, args: &[&str]) -> bool {
 // cross-crate dependency for six lines of parsing.
 // ──────────────────────────────────────────────────────────────────────────────
 
-fn repo_root(name: &str, repo_map: &Option<PathBuf>) -> Option<PathBuf> {
-    let map_path = repo_map.as_ref()?;
-    let content = fs::read_to_string(map_path).ok()?;
-    for line in content.lines() {
-        let t = line.trim();
-        if t.starts_with('#') || t.is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = t.splitn(6, '|').collect();
-        if parts.len() >= 2 {
-            let n = parts[0].trim();
-            let p = parts[1].trim();
-            if n == name && !p.is_empty() {
-                return Some(PathBuf::from(p));
-            }
-        }
-    }
-    None
-}
-
-fn repo_map_names(repo_map: &Option<PathBuf>) -> Vec<String> {
+fn repo_map_rows(repo_map: &Option<PathBuf>) -> Vec<(String, PathBuf)> {
     let Some(content) = repo_map.as_ref().and_then(|p| fs::read_to_string(p).ok()) else { return Vec::new() };
-    let mut names: Vec<String> = content
+    content
         .lines()
         .map(str::trim)
         .filter(|t| !t.starts_with('#') && !t.is_empty())
-        .filter_map(|t| t.split('|').next().map(|n| n.trim().to_string()))
-        .filter(|n| !n.is_empty())
-        .collect();
+        .filter_map(|t| {
+            let parts: Vec<&str> = t.splitn(6, '|').collect();
+            (parts.len() >= 2 && !parts[1].trim().is_empty()).then(|| (parts[0].trim().to_string(), PathBuf::from(parts[1].trim())))
+        })
+        .collect()
+}
+
+fn repo_root(name: &str, repo_map: &Option<PathBuf>) -> Option<PathBuf> {
+    repo_map_rows(repo_map).into_iter().find(|(n, _)| n == name).map(|(_, p)| p)
+}
+
+fn repo_map_names(repo_map: &Option<PathBuf>) -> Vec<String> {
+    let mut names: Vec<String> = repo_map_rows(repo_map).into_iter().map(|(n, _)| n).collect();
     names.sort();
     names.dedup();
     names
@@ -1598,7 +1588,9 @@ fn observe_queue_stranded_runs(cfg: &Config) -> Vec<Check> {
         }
     }
     if seen != before {
-        let _ = fs::write(&cfg.stranded_seen_path, serde_json::to_string(&seen).unwrap_or_else(|_| "{}".into()));
+        if let Err(e) = fs::write(&cfg.stranded_seen_path, serde_json::to_string(&seen).unwrap_or_else(|_| "{}".into())) {
+            log_print(cfg, &format!("reconciler: cannot record stranded-sweep state in {}: {e}", cfg.stranded_seen_path.display()));
+        }
     }
     checks
 }
@@ -2926,12 +2918,15 @@ mod tests {
     }
 
     #[test]
-    fn a_trailing_sweep_owed_survives_a_restart() {
+    fn a_trailing_sweep_owed_is_kept_on_disk_until_it_runs() {
         let (mut cfg, _, _dir) = stranded_world("stranded-restart", &[("beta", Ok(true))]);
         cfg.now_secs = 50;
         observe_queue_stranded_runs(&cfg);
-        let seen = fs::read_to_string(&cfg.stranded_seen_path).unwrap();
-        assert!(seen.contains("beta") && !seen.contains("alpha"), "{seen}");
+        assert_eq!(load_stranded_seen(&cfg.stranded_seen_path), [("beta".to_string(), 50)].into());
+        cfg.host = Some(Arc::new(Ci { in_flight: std::collections::BTreeMap::new(), asked: Default::default() }));
+        cfg.now_secs = 50 + cfg.stranded_min_age;
+        observe_queue_stranded_runs(&cfg);
+        assert!(load_stranded_seen(&cfg.stranded_seen_path).is_empty(), "the swept entry is cleared");
     }
 
     #[test]
