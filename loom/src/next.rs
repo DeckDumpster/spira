@@ -41,7 +41,7 @@ pub const VIEW_HOMES: &[(&str, &str)] = &[
     ("rework_items", "states › flow"),
     ("next_count", "states › flow"),
     ("next_unknown", "states › flow"),
-    ("next_age", "states › flow"),
+    ("cannot_tell", "states › flow"),
     ("next", "states › flow"),
     ("blocked", "more › blocked"),
     ("recent", "more › recent"),
@@ -256,10 +256,10 @@ fn pipeline(p: &Page) -> String {
         v.ready, v.ready_held, v.held_pct, v.rework, cockpit_ops::lcview::shown_opt(v.dropped_24h), cockpit_ops::lcview::shown_opt(v.superseded_24h), cockpit_ops::lcview::shown_opt(v.landed_total), esc(&v.terminal)
     );
     if v.next_unknown {
-        more.push_str("<div class=\"row small amber\">up next: unknown — the dispatcher's verdicts are unreadable</div>");
+        more.push_str("<div class=\"row small amber\">up next: unknown — the claim view is unreadable</div>");
     } else if !v.next.is_empty() {
-        let as_of = if v.next_age.is_empty() { String::new() } else { format!(" · as of {} ago", esc(&v.next_age)) };
-        more.push_str(&format!("<div class=\"row small dim\">up next · {}{as_of}</div>{}", v.next_count, items(&v.next)));
+        let cannot_tell = if v.cannot_tell > 0 { format!(" · cannot tell {}", v.cannot_tell) } else { String::new() };
+        more.push_str(&format!("<div class=\"row small dim\">up next · {}{cannot_tell}</div>{}", v.next_count, items(&v.next)));
     }
     for l in v.pipe.iter().filter(|l| l.count > 0) {
         more.push_str(&format!("<div class=\"row small dim\">{} {} · oldest {}</div>{}", esc(&l.state), l.count, esc(&l.oldest), items(&l.items)));

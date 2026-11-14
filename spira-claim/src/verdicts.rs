@@ -16,6 +16,8 @@ pub enum Kind {
     Carried,
     Stopped,
     OutOfScope,
+    /// A record the view is missing an input for.
+    CannotTell,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
