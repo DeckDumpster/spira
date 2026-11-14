@@ -551,8 +551,7 @@ fn a_readiness_publish_after_a_verdict_pass_does_not_restamp_claim_at_and_a_new_
     };
     let listed = || -> Vec<Value> {
         let out = r.ok(&["list", "--state", "READY,REWORK"]);
-        let v: Value = serde_json::from_str(&out).unwrap();
-        v.as_array().cloned().unwrap_or_else(|| v["beads"].as_array().unwrap().clone())
+        serde_json::from_str::<Vec<Value>>(&out).unwrap()
     };
     let stamps = || -> Vec<(String, String, String)> {
         listed()
@@ -573,6 +572,8 @@ fn a_readiness_publish_after_a_verdict_pass_does_not_restamp_claim_at_and_a_new_
     let after = stamps();
     assert_eq!(after, before);
     assert!(after.iter().all(|(_, at, _)| at == "2026-11-01T12:00:00Z"), "{after:?}");
+    let judged = r.store.readiness("sp-c").unwrap().unwrap().value.judged_at;
+    assert_eq!(judged.as_deref(), Some("2026-11-01T12:00:01Z"));
 
     pass("2026-11-01T12:00:02Z");
     let moved = stamps();
