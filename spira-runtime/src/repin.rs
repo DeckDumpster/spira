@@ -1,6 +1,6 @@
 //! A config change reaching the running scheduler. `spira-config set` names the key; the scheduler
 //! reads it again and rebuilds the tasks that pin it, between turns and never while the batcher is
-//! driving a round or one of those tasks has an effect in flight. Keys stay pinned in between: a
+//! driving a round on a key it pins, or one of those tasks has an effect in flight. Keys stay pinned in between: a
 //! task sees one value for the whole of a tick.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -83,23 +83,22 @@ impl Repin {
         if wanted.is_empty() {
             return;
         }
-        if engine.carry_body(batcher_local::NAME, batcher_local::STATE).is_some_and(|b| batcher_local::driving(&b)) {
-            self.state().waits = "the batcher to finish the round it is driving".into();
-            return;
-        }
+        let driving = engine.carry_body(batcher_local::NAME, batcher_local::STATE).is_some_and(|b| batcher_local::driving(&b));
         let status = engine.status();
         let busy: BTreeSet<&str> = status.tasks.iter().filter(|t| !t.in_flight.is_empty()).map(|t| t.name.as_str()).collect();
         let mut take = BTreeMap::new();
-        let mut waits = String::new();
+        let mut held = vec![];
         for (key, value) in &wanted {
             let blocked = crate::tasks::all().find(|t| busy.contains(t.name) && t.keys.iter().flat_map(|ks| ks.iter()).any(|k| k == key));
-            match blocked {
-                Some(t) => waits = format!("{} to finish the effect it has in flight", t.name),
-                None => {
-                    take.insert(key.clone(), value.clone());
-                }
+            if driving && batcher_local::KEYS.contains(&key.as_str()) {
+                held.push(format!("{key}: the batcher to finish the round it is driving"));
+            } else if let Some(t) = blocked {
+                held.push(format!("{key}: {} to finish the effect it has in flight", t.name));
+            } else {
+                take.insert(key.clone(), value.clone());
             }
         }
+        let waits = held.join("; ");
         if take.is_empty() {
             self.state().waits = waits;
             return;
