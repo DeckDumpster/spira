@@ -1350,44 +1350,44 @@ mod tests {
 
     #[test]
     fn a_base_blamed_lint_finding_is_the_member_whose_diff_touches_the_path_it_names() {
-        let ms = [member("sp-vpwykr"), member("sp-dnm9wy")];
+        let ms = [member("sp-owner1"), member("sp-other2")];
         let one = changed_of(&[
-            ("sp-vpwykr", &["spira/lib-test-install.sh", "spira/aeon.sh"]),
-            ("sp-dnm9wy", &["batcher/src/core.rs"]),
+            ("sp-owner1", &["spira/lib-test-install.sh", "spira/aeon.sh"]),
+            ("sp-other2", &["batcher/src/core.rs"]),
         ]);
         assert_eq!(
             named_path_owner(BASE_LINE, &ms, &one),
-            Some(("sp-vpwykr".to_string(), BASE_LINE.to_string()))
+            Some(("sp-owner1".to_string(), BASE_LINE.to_string()))
         );
         let both = changed_of(&[
-            ("sp-vpwykr", &["spira/lib-test-install.sh"]),
-            ("sp-dnm9wy", &["spira/lib-test-install.sh"]),
+            ("sp-owner1", &["spira/lib-test-install.sh"]),
+            ("sp-other2", &["spira/lib-test-install.sh"]),
         ]);
         assert_eq!(named_path_owner(BASE_LINE, &ms, &both), None);
         let neither = changed_of(&[
-            ("sp-vpwykr", &["spira/aeon.sh"]),
-            ("sp-dnm9wy", &["batcher/src/core.rs"]),
+            ("sp-owner1", &["spira/aeon.sh"]),
+            ("sp-other2", &["batcher/src/core.rs"]),
         ]);
         assert_eq!(named_path_owner(BASE_LINE, &ms, &neither), None);
-        assert_eq!(named_path_owner("member=sp-vpwykr r: f.rs:1: x", &ms, &one), None);
+        assert_eq!(named_path_owner("member=sp-owner1 r: f.rs:1: x", &ms, &one), None);
     }
 
     #[test]
     fn filter_red_ejects_the_member_a_base_blamed_lint_finding_names() {
         let d = testkit::TempDir::new("vm-filter-red-path");
-        let ms = [member("sp-vpwykr"), member("sp-dnm9wy")];
+        let ms = [member("sp-owner1"), member("sp-other2")];
         let changed = changed_of(&[
-            ("sp-vpwykr", &["spira/lib-test-install.sh", "spira/aeon.sh"]),
-            ("sp-dnm9wy", &["batcher/src/core.rs"]),
+            ("sp-owner1", &["spira/lib-test-install.sh", "spira/aeon.sh"]),
+            ("sp-other2", &["batcher/src/core.rs"]),
         ]);
         fs::write(d.path().join("spira-lint.result"), "red 1 2 - - - 1\n").unwrap();
         fs::write(d.path().join("spira-lint.out"), format!("{BASE_LINE}\n")).unwrap();
         let red = filter_red_in(d.path(), &ms, &changed).unwrap();
-        assert_eq!(red.named, [("sp-vpwykr".to_string(), BASE_LINE.to_string())]);
+        assert_eq!(red.named, [("sp-owner1".to_string(), BASE_LINE.to_string())]);
         assert!(filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap().named.is_empty());
         let both = changed_of(&[
-            ("sp-vpwykr", &["spira/lib-test-install.sh"]),
-            ("sp-dnm9wy", &["spira/lib-test-install.sh"]),
+            ("sp-owner1", &["spira/lib-test-install.sh"]),
+            ("sp-other2", &["spira/lib-test-install.sh"]),
         ]);
         assert!(filter_red_in(d.path(), &ms, &both).unwrap().named.is_empty());
         fs::remove_file(d.path().join("spira-lint.result")).unwrap();
