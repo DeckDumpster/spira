@@ -449,9 +449,9 @@ pub(super) fn gate_run_scan(run: &Path) -> (Vec<(String, String, String, String)
     gate_scan_with(run, io::now(), &|pid| io::proc_exists(pid).then(|| io::proc_cmdline(pid).unwrap_or_default()))
 }
 
-/// `cmdline_of` answers the process's command line, or `None` when no such process is alive.
+/// `argv_of` answers the process's command line, or `None` when no such process is alive.
 #[allow(clippy::type_complexity)]
-fn gate_scan_with(run: &Path, now: i64, cmdline_of: &dyn Fn(i64) -> Option<String>) -> (Vec<(String, String, String, String)>, usize, usize) {
+fn gate_scan_with(run: &Path, now: i64, argv_of: &dyn Fn(i64) -> Option<String>) -> (Vec<(String, String, String, String)>, usize, usize) {
     let dir = run.join("gate-run");
     let mut rows = Vec::new();
     let mut n = 0;
@@ -469,7 +469,7 @@ fn gate_scan_with(run: &Path, now: i64, cmdline_of: &dyn Fn(i64) -> Option<Strin
                 Some(p) => p,
                 None => continue,
             };
-            let Some(cmd) = cmdline_of(pid) else { continue };
+            let Some(cmd) = argv_of(pid) else { continue };
             if !cmd.contains("gate") {
                 continue;
             }
@@ -821,12 +821,12 @@ mod gate_scan_tests {
         gate_dir(run.path(), "dead", 11);
         gate_dir(run.path(), "recycled", 22);
         gate_dir(run.path(), "live", 33);
-        let cmdline = |pid: i64| match pid {
+        let argv_of = |pid: i64| match pid {
             22 => Some("sleep 3600".to_string()),
             33 => Some("/bin/bash gate-run.sh spira/sp-x".to_string()),
             _ => None,
         };
-        let (rows, n, live) = gate_scan_with(run.path(), 1000, &cmdline);
+        let (rows, n, live) = gate_scan_with(run.path(), 1000, &argv_of);
         assert_eq!((n, live), (1, 1));
         assert_eq!((rows[0].0.as_str(), rows[0].1.as_str(), rows[0].2.as_str()), ("live", "100", "running"));
     }

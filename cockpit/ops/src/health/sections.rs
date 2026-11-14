@@ -1230,7 +1230,7 @@ mod tests {
     fn no_snapshot_anywhere_says_so_and_a_snapshot_at_the_other_path_is_a_path_mismatch_naming_both() {
         let none = snap_absent_banner(80, "/repo/.runtime/spira", None).join("\n");
         assert!(none.contains("no snapshot") && !none.contains("PATH MISMATCH"), "{none}");
-        let mismatch = snap_absent_banner(80, "/repo/.runtime/spira", Some("/home/u/.local/share/spira/run")).join("\n");
+        let mismatch = snap_absent_banner(80, "/repo/.runtime/spira", Some("/xdg/.local/share/spira/run")).join("\n");
         assert!(mismatch.contains("PATH MISMATCH"), "{mismatch}");
         assert!(mismatch.contains(".local/share/spira") && mismatch.contains(".runtime/spira"), "both paths are named: {mismatch}");
     }
