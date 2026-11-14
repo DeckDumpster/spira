@@ -534,3 +534,47 @@ fn the_judged_claimable_set_is_the_ready_records_a_pass_judged_claimable_and_not
     let (_, judged) = r.store.judged_claimable().unwrap().0.remove(0);
     assert_eq!(judged.judged_at_planning_watermark.as_deref(), Some("w-7"));
 }
+
+#[test]
+fn a_readiness_publish_after_a_verdict_pass_does_not_restamp_claim_at_and_a_new_verdict_pass_does() {
+    let r = Rig::new();
+    for id in ["sp-a", "sp-b", "sp-c"] {
+        r.ok(&["create-bead", id, "--ready"]);
+    }
+    let pass = |at: &str| {
+        let entries: Vec<Value> = [("sp-a", "claimable"), ("sp-b", "blocked"), ("sp-c", "claimable")]
+            .iter()
+            .map(|(id, v)| json!({ "id": id, "verdict": v, "runes": [] }))
+            .collect();
+        let body = json!({ "computed_at": at, "entries": entries });
+        r.ok(&["claim-verdicts", "--json", &body.to_string()]);
+    };
+    let listed = || -> Vec<Value> {
+        let out = r.ok(&["list", "--state", "READY,REWORK"]);
+        let v: Value = serde_json::from_str(&out).unwrap();
+        v.as_array().cloned().unwrap_or_else(|| v["beads"].as_array().unwrap().clone())
+    };
+    let stamps = || -> Vec<(String, String, String)> {
+        listed()
+            .iter()
+            .map(|b| {
+                (
+                    b["bead_id"].as_str().unwrap().into(),
+                    b["claim_at"].as_str().unwrap_or("").into(),
+                    b["claim_verdict"].as_str().unwrap_or("").into(),
+                )
+            })
+            .collect()
+    };
+    pass("2026-11-01T12:00:00Z");
+    let before = stamps();
+    let body = json!({ "computed_at": "2026-11-01T12:00:01Z", "entries": [{ "id": "sp-c", "claimable": true }] });
+    r.ok(&["publish-readiness", "--json", &body.to_string()]);
+    let after = stamps();
+    assert_eq!(after, before);
+    assert!(after.iter().all(|(_, at, _)| at == "2026-11-01T12:00:00Z"), "{after:?}");
+
+    pass("2026-11-01T12:00:02Z");
+    let moved = stamps();
+    assert!(moved.iter().all(|(_, at, _)| at == "2026-11-01T12:00:02Z"), "{moved:?}");
+}

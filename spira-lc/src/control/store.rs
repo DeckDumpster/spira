@@ -1058,6 +1058,7 @@ impl<B: Backend> Store<B> {
                 r.blocker = v.blocker.clone();
                 r.runes = v.runes.clone();
                 r.judged_at = Some(judged_at.to_string());
+                r.verdict_at = Some(judged_at.to_string());
                 if !r.judged_for_claim {
                     r.judged_at_rev = head;
                 }

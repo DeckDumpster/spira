@@ -81,6 +81,9 @@ pub struct Readiness {
     /// The producer's own clock, as it stamped the pass.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub judged_at: Option<String>,
+    /// The `computed_at` of the verdict pass that wrote `verdict`; only `publish_verdicts` writes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub judged_at_planning_watermark: Option<String>,
     #[serde(default)]
