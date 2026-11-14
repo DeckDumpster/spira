@@ -307,6 +307,7 @@ impl Run<'_> {
             if o.success() { o.text().trim().to_string() } else { "?".into() }
         };
         let requeue_cause = self.s.requeue_cause.clone();
+        i.sent_back = self.stop.was_sent_back();
         // capacity_reset_at, in-process now (wave 4.26). `Some(0)` ("hit, but no
         // resetsAt") still counts as a capacity return — see capacity.rs's own doc.
         let cr = crate::capacity::reset_at(Path::new(&logf), &self.conf.trace_mark());
@@ -371,6 +372,12 @@ impl Run<'_> {
         let status = d.ledger_status.clone();
         let thrash_minutes = self.conf.i("SPIRA_THRASH_MINUTES");
         match d.note {
+            NoteKey::SentBack => {
+                let why = lc.as_ref().map(|r| r.state.clone()).unwrap_or_default();
+                self.note(&format!("Session stopped: this bead was sent back ({why}) after `work submit` while the session still ran. Branch spira/{id} is kept; anything uncommitted is left in the worktree."));
+                self.log(&format!("{f}: {id} sent back while the session ran — stopped, nothing released, no attempt charged"));
+                return self.finish(rc, &status);
+            }
             NoteKey::Capacity => {
                 let at: i64 = reset.trim().parse().unwrap_or(0);
                 if let Some(line) = crate::capacity::pause_set(&self.conf.capacity_pause(), &self.conf.ledger(), self.now(), self.conf.capacity_backoff(), at, &id) {
