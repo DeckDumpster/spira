@@ -362,10 +362,10 @@ fn gate_slow(d: &SweepData, cfg: &Cfg, raise: Raise) {
         return;
     };
     let body = format!(
-        "The gate's p90 wall (gate.log ran= less waited=) over the last 24h is {}s across {} gates; the ceiling is {}s.\n\nSee the phases= field of the slowest gate.log rows for the phase that overruns; the whole-gate deadline (SPIRA_GATE_DEADLINE) and per-phase caps are in gate/DESIGN.md.\n",
-        s.p90, s.rows, cfg.gate_p90_limit_s
+        "The gate's p90 test_clock (gate.log, the seconds charged to SPIRA_GATE_DEADLINE) over the last 24h is {}s across {} gates; the deadline is {}s. Build time is not counted.\n\nSee the phases= field of the slowest gate.log rows for the test phase that overruns; per-phase caps are in gate/DESIGN.md.\n",
+        s.p90, s.rows, cfg.gate_deadline_s
     );
-    let f = Finding::new(&cfg.db, &cfg.home_repo, "GATE SLOW: p90 gate wall over the ceiling", &body)
+    let f = Finding::new(&cfg.db, &cfg.home_repo, "GATE SLOW: p90 gate test clock at the deadline", &body)
         .priority(1)
         .reference("incident:gate-slow")
         .cause("gate-slow");
@@ -451,7 +451,7 @@ mod tests {
             snap_stale_s: 60,
             gate_window_s: 21600,
             gate_silence_window_s: 3600,
-            gate_p90_limit_s: 300,
+            gate_deadline_s: 300,
             gate_log: None,
             yield_window_s: 86400,
             yield_sh: None,
@@ -580,6 +580,24 @@ mod tests {
     fn unadopted_refs_is_silent_at_zero_and_at_a_question_mark() {
         assert!(file_one("wt-esc-un0", unadopted_refs, &[("SP_UNADOPTED", "0")]).is_empty());
         assert!(file_one("wt-esc-unq", unadopted_refs, &[("SP_UNADOPTED", "?")]).is_empty());
+    }
+
+    #[test]
+    fn gate_slow_files_the_deadline_it_was_configured_with() {
+        let d = testkit::TempDir::new("wt-esc-gslow");
+        let mut cfg = cfg_with(&d, fake_incident(&d));
+        cfg.gate_deadline_s = 777;
+        let mut data = SweepData::fixture_nominal(1_700_000_000);
+        let mut raised: Vec<Finding> = Vec::new();
+        let mut keep = |f: &Finding| {
+            raised.push(f.clone());
+            incident::AlarmOutcome::Noted
+        };
+        gate_slow(&data, &cfg, &mut keep);
+        data.gate_slow = Some(crate::gate_wait::Slow { p90: 780, rows: 25 });
+        gate_slow(&data, &cfg, &mut keep);
+        assert_eq!(raised.len(), 1, "silent until the measure says slow");
+        assert!(raised[0].body.contains("the deadline is 777s"), "{}", raised[0].body);
     }
 
     #[test]

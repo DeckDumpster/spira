@@ -109,27 +109,44 @@ fn field_seconds(line: &str, key: &str) -> Option<i64> {
     digits.parse().ok()
 }
 
-/// The gate's own wall (`ran=` less `waited=`) at the 90th percentile (nearest rank) over the
-/// window, when it exceeds `limit_s` across at least `min_rows` rows: the five-minute ceiling
-/// is a distribution, and a row-by-row alarm would page on the slow tail it already tolerates.
-pub fn slow(gate_log_text: &str, now: i64, window_s: i64, limit_s: i64, min_rows: usize) -> Option<Slow> {
+/// The tests' clock (`test_clock=`, the seconds charged to SPIRA_GATE_DEADLINE) at the 90th
+/// percentile (nearest rank) over the window, when it reaches `deadline_s` across at least
+/// `min_rows` rows. Build time is not charged to that clock and raises nothing; a row with no
+/// `test_clock=` predates the field and is not a measurement.
+pub fn slow(gate_log_text: &str, now: i64, window_s: i64, deadline_s: i64, min_rows: usize) -> Option<Slow> {
     let since = fmt_iso(now - window_s);
-    let mut walls: Vec<i64> = gate_log_text
+    let mut clocks: Vec<i64> = gate_log_text
         .lines()
         .filter(|l| {
             l.split_whitespace()
                 .next()
                 .is_some_and(|ts| ts >= since.as_str() && is_iso_timestamp(ts))
         })
-        .filter_map(|l| Some((field_seconds(l, " ran=")? - field_seconds(l, " waited=").unwrap_or(0)).max(0)))
+        .filter_map(|l| field_seconds(l, " test_clock="))
         .collect();
-    if walls.len() < min_rows.max(1) {
+    if clocks.len() < min_rows.max(1) {
         return None;
     }
-    walls.sort_unstable();
-    let rank = (walls.len() * 9).div_ceil(10);
-    let p90 = walls[rank - 1];
-    (p90 > limit_s).then_some(Slow { p90, rows: walls.len() })
+    clocks.sort_unstable();
+    let rank = (clocks.len() * 9).div_ceil(10);
+    let p90 = clocks[rank - 1];
+    (p90 >= deadline_s).then_some(Slow { p90, rows: clocks.len() })
+}
+
+/// The p90 (nearest rank) of the seconds a gate spent outside the tests' clock:
+/// `ran=` less `waited=` less `test_clock=`. Shown on the panel; it raises no alarm.
+pub fn build_p90(gate_log_text: &str, now: i64, window_s: i64) -> Option<i64> {
+    let since = fmt_iso(now - window_s);
+    let mut v: Vec<i64> = gate_log_text
+        .lines()
+        .filter(|l| l.split_whitespace().next().is_some_and(|ts| ts >= since.as_str() && is_iso_timestamp(ts)))
+        .filter_map(|l| {
+            let clock = field_seconds(l, " test_clock=")?;
+            Some((field_seconds(l, " ran=")? - field_seconds(l, " waited=").unwrap_or(0) - clock).max(0))
+        })
+        .collect();
+    v.sort_unstable();
+    (!v.is_empty()).then(|| v[(v.len() * 9).div_ceil(10) - 1])
 }
 
 pub fn disp(oldest_wait: Option<i64>) -> String {
@@ -154,17 +171,27 @@ mod tests {
     const NOW: i64 = 1_700_100_000;
 
     #[test]
-    fn slow_pages_on_the_p90_of_ran_less_waited_and_not_on_a_lone_outlier() {
+    fn slow_reads_the_p90_test_clock_against_the_deadline_and_not_the_wall() {
         let t = fmt_iso(NOW - 10);
-        let row = |ran: i64, waited: i64| format!("{t} spira sp-a waited={waited}s ran={ran}s rc=0 pass\n");
-        let fast: String = (0..9).map(|_| row(100, 0)).collect();
-        let one_outlier = format!("{fast}{}", row(1660, 0));
-        assert!(slow(&one_outlier, NOW, 86400, 300, 10).is_none(), "p90 of nine fast and one slow is fast");
-        let mostly_slow: String = (0..8).map(|_| row(100, 0)).chain((0..2).map(|_| row(400, 0))).collect();
-        assert_eq!(slow(&mostly_slow, NOW, 86400, 300, 10).map(|s| (s.p90, s.rows)), Some((400, 10)));
-        let queued: String = (0..10).map(|_| row(900, 700)).collect();
-        assert!(slow(&queued, NOW, 86400, 300, 10).is_none(), "queue wait is not the gate's wall");
-        assert!(slow(&mostly_slow, NOW, 86400, 300, 11).is_none(), "too few rows to call a distribution");
+        let row = |ran: i64, clock: i64| format!("{t} spira sp-a waited=0s ran={ran}s rc=0 pass test_clock={clock}s\n");
+        let built_long: String = (0..10).map(|_| row(400, 60)).collect();
+        assert!(slow(&built_long, NOW, 86400, 300, 10).is_none(), "a long build is not slow tests");
+        let at_deadline: String = (0..10).map(|_| row(400, 300)).collect();
+        assert_eq!(slow(&at_deadline, NOW, 86400, 300, 10).map(|s| (s.p90, s.rows)), Some((300, 10)));
+        let one_outlier: String = (0..9).map(|_| row(100, 10)).chain([row(900, 300)]).collect();
+        assert!(slow(&one_outlier, NOW, 86400, 300, 10).is_none(), "a lone slow gate is the tail");
+        assert!(slow(&at_deadline, NOW, 86400, 300, 11).is_none(), "too few rows to call a distribution");
+        let old_rows: String = (0..10).map(|_| format!("{t} spira sp-a waited=0s ran=900s rc=0 pass\n")).collect();
+        assert!(slow(&old_rows, NOW, 86400, 300, 1).is_none(), "rows without test_clock measure nothing");
+    }
+
+    #[test]
+    fn build_p90_is_the_wall_outside_the_wait_and_the_test_clock() {
+        let t = fmt_iso(NOW - 10);
+        let row = |ran: i64, waited: i64, clock: i64| format!("{t} spira sp-a waited={waited}s ran={ran}s rc=0 pass test_clock={clock}s\n");
+        let log: String = (0..10).map(|_| row(400, 40, 60)).collect();
+        assert_eq!(build_p90(&log, NOW, 86400), Some(300));
+        assert_eq!(build_p90("", NOW, 86400), None, "no rows is unknown, not zero");
     }
 
     #[test]
