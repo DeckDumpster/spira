@@ -1334,3 +1334,50 @@ fn sp_5u1oru_an_open_round_with_no_pass_and_no_driver_is_redriven_at_once_and_on
     let (_, again) = decide(&carry, &snap);
     assert!(!effects(&again).contains(&REDRIVE) && !effects(&again).contains(&ABANDON), "the second tick waits: {again:?}");
 }
+
+// --- sp-k7ltss: a green round no pass drives is landed, not abandoned ---
+
+fn green_orphan() -> (Carry, Snapshot) {
+    let mut snap = open_with("green", &["sp-a", "sp-b"], "/w");
+    let round = snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap();
+    round.tips = vec!["t1".into(), "t2".into()];
+    round.age_secs = 1_400;
+    let pace = Pace { orphan: vec!["r9".into()], orphan_since_ms: NOW - 700_000, redriven: "r9".into(), ..Pace::default() };
+    let carry = Carry { repos: [("spira".to_string(), RepoCarry { pace, ..RepoCarry::default() })].into() };
+    (carry, snap)
+}
+
+#[test]
+fn sp_k7ltss_a_green_round_with_no_driver_is_landed_not_abandoned() {
+    let (carry, snap) = green_orphan();
+    let (carry, acts) = decide(&carry, &snap);
+    assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "{acts:?}");
+    let rc = &carry.repos["spira"];
+    assert_eq!((rc.state, rc.batch.as_deref(), rc.members.clone()), (State::Landing, Some("r9"), vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())]));
+    assert_eq!((rc.wt.as_str(), rc.head.as_str()), ("/w", "h"));
+    assert_eq!((rc.pace.orphan.len(), rc.pace.redriven.as_str()), (0, ""), "the orphan clock is cleared");
+}
+
+#[test]
+fn sp_k7ltss_a_green_round_whose_tips_are_unknown_is_not_adopted() {
+    let (carry, mut snap) = green_orphan();
+    snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().tips.clear();
+    let (carry, acts) = decide(&carry, &snap);
+    assert!(!effects(&acts).contains(&LAND) && !effects(&acts).contains(&ABANDON), "{acts:?}");
+    assert_ne!(carry.repos["spira"].state, State::Landing);
+}
+
+#[test]
+fn sp_k7ltss_a_green_round_above_another_open_round_waits() {
+    let (_, mut snap) = green_orphan();
+    let repo = snap.repos.get_mut("spira").unwrap();
+    let green = Round { id: "r10".into(), ..repo.open_round.take().unwrap() };
+    repo.open_round = Some(Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-b".into()], head: "h0".into(), worktree: "/w".into(), driven: true, phase: "certifying".into(), ..Round::default() });
+    repo.open_above = vec![green];
+    let mut carry = driving(State::Certifying, "spira.c3");
+    carry.repos.get_mut("spira").unwrap().pace = Pace { orphan: vec!["r10".into()], orphan_since_ms: NOW - 700_000, redriven: "r10".into(), ..Pace::default() };
+    let max_two = Policy { max_open: 2, ..Policy::default() };
+    let (carry, acts) = decide_with(&max_two, &carry, &snap);
+    assert!(!effects(&acts).contains(&LAND) && !effects(&acts).contains(&ABANDON), "{acts:?}");
+    assert_ne!(carry.repos["spira"].batch.as_deref(), Some("r10"), "the round above is not adopted");
+}

@@ -236,6 +236,9 @@ impl Member {
 pub struct Round {
     pub id: String,
     pub members: Vec<String>,
+    /// Each member's tip, in `members` order.
+    #[serde(default)]
+    pub tips: Vec<String>,
     pub head: String,
     pub worktree: String,
     /// A `round certify` or this task's own machine holds the round.
@@ -342,6 +345,8 @@ pub enum Trigger {
     Released,
     OpenRoundDriven,
     OpenRoundUndriven,
+    /// A round the queue holds with no driver is green and the lowest open: it lands.
+    OpenRoundGreen,
     /// `orphan_step` answered Wait, Redrive or Incident (not in the contract's table, which gives
     /// `Orphan` no exit).
     OrphanStepped,
@@ -414,6 +419,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Held, Trigger::Released, State::Idle),
     (State::Idle, Trigger::OpenRoundDriven, State::Idle),
     (State::Idle, Trigger::OpenRoundUndriven, State::Orphan),
+    (State::Idle, Trigger::OpenRoundGreen, State::Landing),
     (State::Orphan, Trigger::OrphanStepped, State::Idle),
     (State::Idle, Trigger::NoTrigger, State::Idle),
     (State::Idle, Trigger::Cut, State::Assembling),
@@ -1452,6 +1458,13 @@ impl Machine<'_> {
             }
             return;
         }
+        if open.phase == "green" {
+            let whole = open.tips.len() == open.members.len() && open.tips.iter().all(|t| !t.is_empty());
+            if whole && repo.open_round.as_ref().is_some_and(|r| r.id == open.id) {
+                self.adopt_green(open, st);
+            }
+            return;
+        }
         self.go(Trigger::OpenRoundUndriven);
         let unfit = if repo.open_round.as_ref().is_some_and(|r| r.id == open.id) { repo.unfit.clone() } else { open.unfit.clone() };
         let fit = unfit.map_or(Ok(()), Err);
@@ -1477,6 +1490,18 @@ impl Machine<'_> {
         }
         self.rc.pace = Pace::of(&next, &self.rc.pace.refusals);
         self.go(Trigger::OrphanStepped);
+    }
+
+    /// A green round no pass drives is landed on the pass that made it green, as one of this task's own.
+    fn adopt_green(&mut self, open: &Round, st: &pace::State) {
+        self.rc.pace = Pace::of(&pace::State { orphan: String::new(), orphan_since: 0, redriven: String::new(), ..st.clone() }, &self.rc.pace.refusals);
+        self.rc.batch = Some(open.id.clone());
+        self.rc.members = open.members.iter().enumerate().map(|(i, id)| (id.clone(), open.tips[i].clone())).collect();
+        self.rc.round_key = Some(core::round_key(&self.rc.members));
+        self.rc.wt = open.worktree.clone();
+        self.rc.head = open.head.clone();
+        self.go(Trigger::OpenRoundGreen);
+        self.land_now();
     }
 
     /// The pause a red round wrote, if it still holds the repo. It carries the base its round was
@@ -2451,7 +2476,7 @@ pub mod edge {
             let unfit = io::round_certifiable(env, repo, &r.id).err();
             let queue = landing_pass::gateq::GateQueue::new(&env.run);
             let gate_red = with_failing(io::gate_red_rows(env, &r.members), |id, tip| queue.failing_at(&repo.name, &format!("spira/{id}"), tip));
-            Round { id: r.id, members: r.members, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
+            Round { id: r.id, members: r.members, tips: r.tips, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
         });
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();
