@@ -711,6 +711,7 @@ mod tests {
 
     // ---- wiki_write_paths / wiki_commit_paths (test-dwarf-wiki-dirty.sh T1) ----
 
+    // covers: UC-dwarf-execution-17
     #[test]
     fn wiki_commit_paths_selects_own_dirty_writes_never_tasks_md() {
         let writes = vec!["wiki/notes/new.md".to_string()];

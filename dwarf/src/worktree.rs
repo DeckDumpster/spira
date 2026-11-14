@@ -236,7 +236,134 @@ mod tests {
         assert!(live_occupants(&proc, &t.join("worktree/sp-none"), 999).is_empty());
     }
 
+    use crate::util::Out;
+    use std::sync::Mutex;
 
+    type Answer = Box<dyn Fn(&Path, &[&str], usize) -> Out + Send + Sync>;
 
+    /// Answers each git call from a script and records every call, in order. The script is
+    /// told how many calls of the same verb came before.
+    struct Scripted {
+        calls: Mutex<Vec<Vec<String>>>,
+        answer: Answer,
+    }
+    impl Scripted {
+        fn new(answer: impl Fn(&Path, &[&str], usize) -> Out + Send + Sync + 'static) -> Self {
+            Scripted { calls: Mutex::default(), answer: Box::new(answer) }
+        }
+        fn called(&self, verb: &[&str]) -> Vec<Vec<String>> {
+            self.calls.lock().unwrap().iter().filter(|c| c.iter().map(String::as_str).take(verb.len()).eq(verb.iter().copied())).cloned().collect()
+        }
+    }
+    impl Git for Scripted {
+        fn git(&self, dir: &Path, args: &[&str]) -> Out {
+            let n = self.called(args.get(..2).unwrap_or(args)).len();
+            self.calls.lock().unwrap().push(args.iter().map(|a| a.to_string()).collect());
+            (self.answer)(dir, args, n)
+        }
+    }
 
+    fn ensure_args<'a>(git: &'a dyn Git, repo: &'a Path, work: &'a Path, root: &'a Path, bead: &'a str) -> Ensure<'a> {
+        Ensure { git, repo, work, bead_id: bead, root, base: "main", base_fq: "origin/main", rune: "builder", now: 1000 }
+    }
+
+    // covers: UC-dwarf-execution-01
+    #[test]
+    fn a_new_bead_gets_a_worktree_cut_from_the_fetched_remote_base_not_the_local_branch() {
+        let t = testkit::TempDir::new("dwarf-wt-fresh");
+        let git = Scripted::new(|_, a, _| if a[0] == "show-ref" { Out::fail(1, "") } else { Out::ok("") });
+        let (repo, work, root) = (t.join("repo"), t.join("run/worktree/sp-a"), t.join("run/worktree"));
+        let mut branch = "spira/sp-a".to_string();
+        ensure(&ensure_args(&git, &repo, &work, &root, "sp-a"), &mut branch, &|| {}).unwrap();
+        let add = git.called(&["worktree", "add"]);
+        assert_eq!(add.len(), 1);
+        assert_eq!(add[0], ["worktree", "add", "-q", "-b", "spira/sp-a", &work.display().to_string(), "origin/main"]);
+    }
+
+    fn foreign_git(work: &Path) -> Scripted {
+        let w = work.to_path_buf();
+        Scripted::new(move |dir, a, _| match a {
+            ["rev-parse", ..] if dir == w => Out::ok("/x/otherrepo/.git\n"),
+            ["rev-parse", ..] => Out::ok("/x/thisrepo/.git\n"),
+            _ => Out::fail(1, "cannot move"),
+        })
+    }
+
+    // covers: UC-dwarf-execution-01
+    #[test]
+    fn a_tree_of_another_repository_at_the_worktree_path_is_moved_aside_with_its_contents() {
+        let t = testkit::TempDir::new("dwarf-wt-foreign");
+        let work = t.join("worktree/sp-a");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(work.join(".git"), "gitdir: elsewhere\n").unwrap();
+        std::fs::write(work.join("precious"), "unsaved").unwrap();
+        let git = foreign_git(&work);
+        let aside = t.join("worktree/sp-a.otherrepo");
+        assert_eq!(evict_foreign(&git, &work, &t.join("repo"), 7), Evict::Moved(aside.clone()));
+        assert!(!work.exists(), "the foreign tree no longer occupies the path");
+        assert_eq!(std::fs::read_to_string(aside.join("precious")).unwrap(), "unsaved", "moved, never removed");
+        assert!(git.called(&["worktree", "remove"]).is_empty() && git.called(&["clean"]).is_empty());
+    }
+
+    // covers: UC-dwarf-execution-01
+    #[test]
+    fn this_repositorys_own_tree_at_the_path_is_left_alone() {
+        let t = testkit::TempDir::new("dwarf-wt-own");
+        let work = t.join("worktree/sp-a");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(work.join(".git"), "gitdir: x\n").unwrap();
+        let git = Scripted::new(|_, _, _| Out::ok("/x/thisrepo/.git\n"));
+        assert_eq!(evict_foreign(&git, &work, &t.join("repo"), 7), Evict::Kept);
+        assert!(git.called(&["worktree", "move"]).is_empty());
+        assert!(work.join(".git").exists());
+    }
+
+    // covers: UC-dwarf-execution-01
+    #[test]
+    fn a_bead_whose_own_branch_sits_at_an_old_path_has_that_tree_moved_aside_and_the_branch_reattached() {
+        let t = testkit::TempDir::new("dwarf-wt-prior");
+        let (repo, root) = (t.join("repo"), t.join("run/worktree"));
+        let work = root.join("sp-a");
+        let old = t.join("elsewhere/sp-a");
+        std::fs::create_dir_all(&old).unwrap();
+        let porcelain = format!("worktree {}\nbranch refs/heads/spira/sp-a\n", old.display());
+        let git = Scripted::new(move |_, a, n| match (a[0], a.get(1).copied()) {
+            ("worktree", Some("add")) if n == 0 => Out::fail(128, "already checked out"),
+            ("worktree", Some("list")) => Out::ok(porcelain.clone()),
+            _ => Out::ok(""),
+        });
+        let mut branch = "spira/sp-a".to_string();
+        let acts = ensure(&ensure_args(&git, &repo, &work, &root, "sp-a"), &mut branch, &|| {}).unwrap();
+        let aside = format!("{}.prior", old.display());
+        assert_eq!(git.called(&["worktree", "move"])[0][2..], [old.display().to_string(), aside.clone()]);
+        assert_eq!(git.called(&["checkout"]).len(), 1, "the moved tree's HEAD is detached so the branch is free");
+        assert_eq!(git.called(&["worktree", "add"]).len(), 2, "the branch is attached again at the canonical path");
+        assert!(git.called(&["worktree", "remove"]).is_empty());
+        assert!(acts.iter().any(|a| matches!(a, Act::Note(n) if n.contains("nothing deleted") && n.contains(&aside))));
+        assert_eq!(branch, "spira/sp-a");
+    }
+
+    // covers: UC-dwarf-execution-01
+    #[test]
+    fn a_branch_checked_out_in_another_beads_worktree_is_never_adopted() {
+        let t = testkit::TempDir::new("dwarf-wt-collision");
+        let (repo, root) = (t.join("repo"), t.join("run/worktree"));
+        let work = root.join("sp-b");
+        let other = root.join("sp-a");
+        std::fs::create_dir_all(&other).unwrap();
+        let porcelain = format!("worktree {}\nbranch refs/heads/spira/sp-a\n", other.display());
+        let git = Scripted::new(move |_, a, _| match (a[0], a.get(1).copied()) {
+            ("show-ref", _) if a.last() == Some(&"refs/heads/spira/sp-a") => Out::ok(""),
+            ("show-ref", _) => Out::fail(1, ""),
+            ("worktree", Some("add")) if !a.contains(&"-b") => Out::fail(128, "already checked out"),
+            ("worktree", Some("list")) => Out::ok(porcelain.clone()),
+            _ => Out::ok(""),
+        });
+        let mut branch = "spira/sp-a".to_string();
+        let acts = ensure(&ensure_args(&git, &repo, &work, &root, "sp-b"), &mut branch, &|| {}).unwrap();
+        assert_eq!(branch, "spira/sp-b");
+        assert!(acts.contains(&Act::SetBranch("spira/sp-b".into())));
+        assert!(git.called(&["worktree", "move"]).is_empty(), "the other bead's tree is untouched");
+        assert_eq!(git.called(&["worktree", "add", "-q", "-b", "spira/sp-b"]).len(), 1, "a fresh branch is cut from the base");
+    }
 }

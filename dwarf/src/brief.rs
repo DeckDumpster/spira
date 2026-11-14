@@ -855,6 +855,7 @@ mod tests {
         }
     }
 
+    // covers: UC-dwarf-execution-07
     #[test]
     fn resume_slain_deadline_renderers() {
         assert_eq!(resume_brief("b", "/w", "0", "x"), "");
@@ -873,6 +874,29 @@ mod tests {
         assert!(dl.ends_with("    echo $(( 1000600 - $(date +%s) ))"));
         assert!(deadline_brief(Some(5), 0, None).contains("killed at epoch 5 —"));
         assert!(deadline_brief(None, 0, None).starts_with("**This session has no wall-clock deadline.**"));
+    }
+
+    // covers: UC-dwarf-execution-07
+    #[test]
+    fn a_prompt_rendered_from_every_brief_leaves_no_placeholder_for_the_model() {
+        let t = Tokens {
+            single: vec![("BEAD_ID", "sp-a".into()), ("BRANCH", "spira/sp-a".into())],
+            bead: "the bead".into(),
+            park: park_brief("local/main", "spira/sp-a", "spira", "main"),
+            fixture: String::new(),
+            deadline: deadline_brief(Some(1_000_600), 1_000_000, None),
+            finish: format!(
+                "{}\n{}\n{}",
+                resume_brief("spira/sp-a", "/w", "2", "abc one"),
+                slain_brief("sp-a: wip — salvaged at slay (stop)", "3", "origin/main", "", "", "/l"),
+                already_done_brief("origin/main", "sp-a", "/w")
+            ),
+        };
+        let p = render_prompt("work {{BEAD_ID}} on {{BRANCH}}\n{{BEAD}}\n{{PARK}}\n{{FIXTURE}}{{DEADLINE}}\n{{FINISH}}", &t, None);
+        assert!(!p.contains("{{"), "{p}");
+        for part in ["Prior work on this branch", "slain at", "killed at epoch 1000600", "work superseded-by"] {
+            assert!(p.contains(part), "{part} missing from {p}");
+        }
     }
 
     #[test]
@@ -1043,6 +1067,7 @@ mod tests {
         );
     }
 
+    // covers: UC-dwarf-execution-07
     #[test]
     fn close_and_already_done_blocks() {
         assert!(close_brief("local/main", "/w", "").contains("    # local/main is a local ref already in this checkout; no fetch needed\n    git -C /w rebase local/main"));

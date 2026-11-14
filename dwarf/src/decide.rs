@@ -487,6 +487,19 @@ mod tests {
         assert_eq!(world_stop(true, "", false), WorldStop::Stop);
     }
 
+    // covers: UC-dwarf-execution-09
+    #[test]
+    fn the_thrash_wall_trips_only_when_the_fuse_and_the_session_age_both_clear_it() {
+        let now = 1_000_000;
+        let thrash = |fuse: &str, age_min: i64| hb_tick(1, 1, now, now + 600, false, fuse, 20, now - age_min * 60);
+        assert_eq!(thrash("20", 20), HbTick::Thrash, "both at the wall");
+        assert_eq!(thrash("19", 90), HbTick::Ok, "an old session with a fresh fuse");
+        assert_eq!(thrash("90", 19), HbTick::Ok, "an old fuse in a young session");
+        for unknown in ["?", "gate", "", "-5", "+30"] {
+            assert_eq!(thrash(unknown, 90), HbTick::Ok, "fuse {unknown:?} is not a number of minutes");
+        }
+    }
+
     // test-dwarf-lease.sh / test-thrash.sh's hb_tick rows.
     #[test]
     fn hb_tick_table() {
