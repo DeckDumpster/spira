@@ -940,6 +940,7 @@ fn viewed(a: &Args, env: &Env, st: &Store) -> Result<Viewed, String> {
     let (scope, no_loop) = (scope_label(a, env), no_loop_label(a, env));
     let mut rows: Vec<rank::ReadyRow> = if ids.is_empty() { Vec::new() } else { st.items_by_ids(&ids)? };
     rows.retain(|r| ids.contains(&r.id) && ready::in_scope(r, &scope, &no_loop));
+    retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
     rows.sort_by(|x, y| x.id.cmp(&y.id));
     let express = st.express_ids()?;
     let runes = view.iter().map(|v| (v.id.clone(), v.runes.clone())).collect();

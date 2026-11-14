@@ -89,8 +89,6 @@ fn express_is_a_bool_flag_and_never_swallows_what_follows() {
     assert_eq!(a.pos, vec!["labels".to_string(), String::new()]);
 }
 
-// ---- ready-count shares one computation per ready_ttl_s (sp-su318h) ----------------------
-
 // ---- readiness is published for every live state ----------------------------------------
 
 mod published {
