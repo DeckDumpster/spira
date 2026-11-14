@@ -329,7 +329,7 @@ statement = "`world status` annotates a kept timer's row with its service's last
 [[use_case]]
 id = "UC-instance-lifecycle-45"
 tier = "T1"
-statement = "`ctrl.sh`: a suspension needs a reason and an owner; check/list/resume work; divergence reports suspended-but-running and masked-but-undeclared units"
+statement = "`ctrl`: a suspension needs a reason and an owner; divergence reports suspended-but-running and masked-but-undeclared units"
 
 [[use_case]]
 id = "UC-instance-lifecycle-46"

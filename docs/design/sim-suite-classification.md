@@ -137,7 +137,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | archive-no-sessions | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
 | archivist-conf | no | - | 18 | single-tool or static contract: no hand-off between loop actors |
 | archivist | no | - | 23 | single-tool or static contract: no hand-off between loop actors |
-| artifact-install | no | - | 150 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | asks | no | - | ? | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | attempts-sql | partly | new:red-gate-holds | 44 | attempt counting SQL over a real events trail |
 | attempts | partly | new:red-gate-holds | 42 | what counts as an attempt; counts need a reopened-by-red bead |
@@ -239,7 +238,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | content-landed-empty-branch | partly | happy-path | 14 | zero-commit branch is not reported landed; the world's invariant is "LANDED means content landed" |
 | covers-seam-closure | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | cross-repo | partly | new:second-repo | 15 | a non-home repo's worktree and commits; worktree plumbing stays bash |
-| ctrl | no | - | 45 | static, configuration or single-tool contract: no hand-off between loop actors |
 | ctx-pointer | no | - | 5 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cutover-deploy | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | czar-lint | no | - | 1 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
@@ -529,7 +527,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | withdrawn-suites-recert | replaceable | resubmit-moved-tip + new:red-gate-holds | ? | withdrawn-for-red re-certifies against the suites |
 | work-container | partly | happy-path, submit-from-other-cwd | ? | the work client over a real socket; refusal/cannot-tell rows stay container |
 | work-crate | no | - | ? | single-tool or static contract: no hand-off between loop actors |
-| work-services-exclusion | no | - | 4 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | workflow-run-check | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | workspace-dist | no | - | 2 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | worktree-absent | no | - | 3 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
@@ -538,6 +535,5 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | world-degraded | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | world-drain-deadline | no | - | 3 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | world-timer-names | no | - | 4 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
-| world-timer-service-result | no | - | 4 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | world | no | - | 8 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | yield | no | - | 31 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
