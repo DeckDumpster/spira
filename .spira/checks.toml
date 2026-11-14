@@ -5,7 +5,8 @@ budget_ms = 900000
 
 [[check]]
 name = "unit-build"
-run = "{unit-build}"
+run = "gate unit-build {affected}"
+build = "gate"
 budget_ms = 900000
 
 [[check]]

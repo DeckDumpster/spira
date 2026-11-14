@@ -74,8 +74,6 @@ pub fn declared_rows(root: &std::path::Path) -> Result<Vec<habits::config::Check
 pub const CHECKS_PASS_FILE: &str = "spira-checks.pass";
 /// The token in a `[[check]]` row's `run` that becomes the crates the diff affects.
 pub const AFFECTED: &str = "{affected}";
-/// The token that becomes the gate's unit build line for the affected crates.
-pub const UNIT_BUILD: &str = "{unit-build}";
 
 /// The file under the worktree's git directory a row's record is written to.
 pub const CHECKS_RECORD_FILE: &str = "spira-check-record.json";
@@ -108,18 +106,6 @@ pub fn affected_scope(diff_raw: &[u8], metadata_json: &str) -> Result<Affected, 
 /// crate, so there is nothing for it to check.
 pub fn check_argv(run: &str, affected: &Affected, branch: &str, record: &std::path::Path) -> Option<Vec<String>> {
     let argv = habits::config::argv(run, &[("branch", branch), ("record", &record.to_string_lossy())]);
-    if argv.iter().any(|t| t == UNIT_BUILD) {
-        let words = match affected {
-            Affected::Workspace => {
-                let mut w = gate::compose::unit_build_words(&[]);
-                w.push("--workspace".into());
-                w
-            }
-            Affected::Crates(c) if c.is_empty() => return None,
-            Affected::Crates(c) => gate::compose::unit_build_words(c),
-        };
-        return Some(argv.into_iter().flat_map(|t| if t == UNIT_BUILD { words.clone() } else { vec![t] }).collect());
-    }
     if !argv.iter().any(|t| t == AFFECTED) {
         return Some(argv);
     }
@@ -594,29 +580,15 @@ mod tests {
     }
 
     #[test]
-    fn the_unit_build_token_is_the_gates_build_line_for_the_affected_crates() {
-        let crates = vec!["a".to_string(), "b".to_string()];
-        let got = check_argv("{unit-build}", &Affected::Crates(crates.clone()), "spira/sp-x", rec_path()).unwrap();
-        assert_eq!(got, gate::compose::unit_build_words(&crates));
-        assert_eq!(check_argv("{unit-build}", &Affected::Crates(Vec::new()), "spira/sp-x", rec_path()), None);
-    }
-
-    #[test]
-    fn the_repositorys_checks_include_a_row_that_is_the_gates_unit_build_line() {
+    fn the_repositorys_checks_build_the_units_with_the_gates_line_for_the_affected_crates() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let rows = habits::config::load_checks(&root).unwrap();
-        let row = rows.iter().find(|r| r.run == UNIT_BUILD).expect("a unit-build row in .spira/checks.toml");
-        let crates = vec!["x".to_string()];
+        let row = rows.iter().find(|r| r.run.starts_with("gate unit-build")).expect("a unit-build row in .spira/checks.toml");
+        assert_eq!(row.build.as_deref(), Some("gate"));
+        let crates = vec!["x".to_string(), "y".to_string()];
         let argv = check_argv(&row.run, &Affected::Crates(crates.clone()), "b", rec_path()).unwrap();
-        assert_eq!(argv, gate::compose::unit_build_words(&crates));
-        assert!(row.build.is_none(), "cargo runs from the caller's PATH and CARGO_TARGET_DIR, not a built binary");
-    }
-
-    #[test]
-    fn a_workspace_wide_change_builds_the_whole_workspace_with_the_gates_flags() {
-        let argv = check_argv("{unit-build}", &Affected::Workspace, "b", rec_path()).unwrap();
-        assert_eq!(&argv[..argv.len() - 1], gate::compose::unit_build_words(&[]).as_slice());
-        assert_eq!(argv.last().map(String::as_str), Some("--workspace"));
+        assert_eq!(argv[..2], ["gate", "unit-build"]);
+        assert_eq!(gate::compose::unit_build_argv(&argv[2..]), gate::compose::unit_build_words(&crates));
     }
 
     #[test]
