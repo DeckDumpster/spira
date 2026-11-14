@@ -463,6 +463,17 @@ mod tests {
     }
 
     #[test]
+    fn open_prs_reports_a_cancelled_run_a_queued_run_replaced_as_pending() {
+        let pulls = r#"[{"number":5,"title":"publish","head":{"sha":"abc","ref":"spira/publish/a"}}]"#;
+        let checks = r#"{"check_runs":[{"name":"gate","status":"completed","conclusion":"cancelled","check_suite":{"id":1}},{"name":"gate","status":"queued","conclusion":null,"check_suite":{"id":2}}]}"#;
+        let runs = r#"{"workflow_runs":[{"id":1,"workflow_id":7,"name":"Publish","head_branch":"spira/publish/a","check_suite_id":1,"status":"completed","conclusion":"cancelled"},{"id":2,"workflow_id":7,"name":"Publish","head_branch":"spira/publish/a","check_suite_id":2,"status":"queued","conclusion":null}]}"#;
+        let (api, seen) = stub(vec![answer("200 OK", "", pulls), answer("200 OK", "", checks), answer("200 OK", "", runs)]);
+        let open = forge_at(api).open_prs("o/r").unwrap();
+        seen.join().unwrap();
+        assert_eq!((open[0].0.status.as_str(), open[0].0.fail.as_str()), ("pending", ""));
+    }
+
+    #[test]
     fn an_unchanged_poll_is_revalidated_by_etag_and_answered_from_the_kept_body() {
         let (api, seen) = stub(vec![answer("200 OK", "ETag: \"v1\"\r\n", "[]"), answer("304 Not Modified", "", "")]);
         let forge = forge_at(api);
