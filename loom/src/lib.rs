@@ -1082,23 +1082,28 @@ mod in_process_tests {
         assert_eq!(first, second);
     }
 
-    fn compile_limit(floor: &Value) -> Value {
-        floor["components"].as_array().unwrap().iter().find(|c| c["id"] == "compile").unwrap()["queues"][0]["config"].clone()
+    fn fleet_ceiling(floor: &Value) -> Value {
+        floor["components"].as_array().unwrap().iter().find(|c| c["id"] == "dwarf-session").unwrap()["queues"][0]["config"].clone()
     }
 
     #[tokio::test]
     async fn a_limit_changed_in_the_file_reaches_the_same_loom_when_the_cache_ages_out_and_a_reader_error_fails_the_build() {
         let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let n = reads.clone();
-        let reader: Limits = Arc::new(move |_| match n.fetch_add(1, Ordering::SeqCst) {
-            0 => Ok(std::collections::BTreeMap::from([("SPIRA_COMPILE_PAR".to_string(), "8".to_string())])),
-            1 => Ok(std::collections::BTreeMap::from([("SPIRA_COMPILE_PAR".to_string(), "9".to_string())])),
-            _ => Err("config no longer resolves".to_string()),
+        let reader: Limits = Arc::new(move |keys| {
+            let asked: Vec<&str> = keys.iter().map(String::as_str).collect();
+            assert_eq!(asked, factory::LIMIT_KEYS, "the floor asks for exactly the limit keys");
+            let live = |v: &str| Ok(std::collections::BTreeMap::from([("SPIRA_MAX_LIVE_DWARVES".to_string(), v.to_string())]));
+            match n.fetch_add(1, Ordering::SeqCst) {
+                0 => live("8"),
+                1 => live("9"),
+                _ => Err("config no longer resolves".to_string()),
+            }
         });
         let loom = Loom::with_limits(Config { cache: Duration::ZERO, ..test_config() }, reader);
         let healthy = Arc::new(Counted(Default::default(), vec![]));
-        assert_eq!(compile_limit(&loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap()), 8);
-        assert_eq!(compile_limit(&loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap()), 9);
+        assert_eq!(fleet_ceiling(&loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap()), 8);
+        assert_eq!(fleet_ceiling(&loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap()), 9);
         let e = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap_err();
         assert_eq!(e, "config no longer resolves");
     }

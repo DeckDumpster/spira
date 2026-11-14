@@ -65,7 +65,7 @@ run_loom() {      # run_loom <window> <marker>
         ARMED_MARKER="${2:-}" PINNED_FILE="$PINNED_FILE" FAKE_EXIT="${FAKE_EXIT:-}" \
         SPIRA_LOOM_TICK="$TICK" \
         SPIRA_TOML="$SPIRA_TOML" \
-        bash "$HERE/loom.sh"
+        bash "$HERE/loom.sh" ${3:+"$3"}
 }
 
 for name in loom; do
@@ -124,10 +124,10 @@ for name in loom; do
 
     # ── SIGNAL: SIGTERM names itself with a timestamp ─────────────────────────────────
     marker_sig="$RUN/armed-sig"
-    "run_$name" "$WIN_CHANGE" "$marker_sig" >/dev/null 2>"$TMP/$name-sig.log" &
+    "run_$name" "$WIN_CHANGE" "$marker_sig" "sigcase-$$" >/dev/null 2>"$TMP/$name-sig.log" &
     sig_pid=$!
     wait_for_marker "$marker_sig" || bad "$label: signal — armed" "marker never appeared within 10s"
-    pkill -TERM -f "bash $HERE/loom.sh" 2>/dev/null
+    pkill -TERM -f "^bash $HERE/loom.sh sigcase-$$\$" 2>/dev/null
     wait "$sig_pid" 2>/dev/null
     if grep -Eq '^loom\.sh: [0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+ SIGTERM received' "$TMP/$name-sig.log"; then
         ok "$label: SIGTERM — timestamped line"
