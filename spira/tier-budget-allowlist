@@ -54,7 +54,6 @@ test-batch-repeat-refused-delivers.sh	T1	18.5
 test-beads-sparklines.sh	T1	3.0
 test-bin-manifest.sh	T1	3.0
 test-branch-guard.sh	T1	3.0
-test-broker.sh	T1	15.0
 test-builder-qa-proposed.sh	T1	4.0
 test-cadence-tool.sh	T1	2.0
 test-cadence.sh	T1	1.5
@@ -121,7 +120,6 @@ test-forge-run-metadata.sh	T1	2.0
 test-forge-runs-active.sh	T1	3.0
 test-freshclone.sh	T1	11.5
 test-gate-check-red-twice.sh	T1	18.5
-test-gate-check-stderr.sh	T1	3.0
 test-gate-ci-diag.sh	T1	3.5
 test-gate-diag.sh	T1	1.5
 test-gate-discover-branch.sh	T1	2.0
@@ -147,8 +145,6 @@ test-install-unit-directive.sh	T1	2.0
 test-install-unit-ensure.sh	T1	16.0
 test-install-unit-prune.sh	T1	45.0
 test-landed-stays-landed.sh	T1	44.5
-test-landing-base-fail.sh	T1	32.5
-test-landing-halt.sh	T1	17.5
 test-landing-pass.sh	T1	10.5
 test-landing-phase2-order.sh	T1	21.0
 test-landing-pr.sh	T1	36.0
@@ -168,8 +164,6 @@ test-poison-ask.sh	T1	37.5
 test-poison-edge.sh	T1	77.5
 test-pr-notify.sh	T1	3.0
 test-pr-stall.sh	T1	4.0
-test-queue-ops.sh	T1	12.5
-test-queue-submit.sh	T1	5.0
 # literal-ok: a real suite filename, not a use of the configured label it happens to contain
 test-reclaim-needs-ryan.sh	T1	2.0
 test-ref-guard.sh	T1	3.0
@@ -213,7 +207,6 @@ test-verify-asks.sh	T1	8.5
 test-watchtower-czar-outcome.sh	T1	11.5
 test-watchtower-lapse.sh	T1	126.0
 test-watchtower-queue.sh	T1	26.0
-test-watchtower-throttle.sh	T1	11.0
 test-watchtower.sh	T1	143.0
 test-wiki-add-fence.sh	T1	1.5
 test-work-services-exclusion.sh	T1	2.5

@@ -9,7 +9,7 @@
 #   broker-allowlist-lint.sh --scan-build F  scan one file as a stand-in for build.sh
 #   broker-allowlist-lint.sh --scan-shim F   scan one file as a stand-in for broker.sh
 #
-# WHY THIS IS A LINT, NOT A CARGO-GATED SUITE. test-broker.sh used to carry these as grep
+# WHY THIS IS A LINT, NOT A CARGO-GATED SUITE. the broker suite used to carry these as grep
 # assertions behind "if cargo is missing, skip the whole suite" — so a checkout with no Rust
 # toolchain never ran them, even though none of the five checks below touches the broker
 # binary at all. Splitting them out means they run everywhere test-*.sh runs, cargo or not.

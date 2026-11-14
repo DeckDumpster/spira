@@ -544,6 +544,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "testkit",
 ]
 
 [[package]]

@@ -685,6 +685,7 @@ fn a_base_red_with_no_suite_name_is_keyed_by_the_base_sha() {
     assert!(!inc.contains("basefail:spira:- "), "{inc}");
 }
 
+// covers: UC-landing-merge-queue-10
 #[test]
 fn a_red_base_files_one_incident_per_repository_per_pass_and_charges_nobody() {
     let h = H::new(LandMode::QueueLocal);
@@ -703,6 +704,23 @@ fn a_red_base_files_one_incident_per_repository_per_pass_and_charges_nobody() {
     assert!(h.logged("CHECK6 spira: the base's own red is sp-inc1 (suite test-x.sh)"));
     assert!(!h.lib.has("reopen"));
     assert!(h.logged("CHECK6 sp-a: held — the base fails its own gate (suite test-x.sh)"));
+}
+
+// covers: UC-landing-merge-queue-10
+#[test]
+fn a_branch_held_behind_a_red_base_is_certified_on_the_pass_after_the_base_is_green() {
+    let h = H::new(LandMode::QueueLocal);
+    h.closed("sp-a", "t1");
+    let red = "--- base\ntest-x.sh RED\ngate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=test-x.sh\n";
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (76, red.into()));
+    fs::create_dir_all(h.s.incident.parent().unwrap()).unwrap();
+    fs::write(&h.s.incident, "").unwrap();
+    h.run();
+    assert!(!h.mailbox().contains("certified spira/sp-a"), "held, not certified");
+    assert!(!h.lib.has("reopen"));
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (0, "gate: VERDICT=PASS\n".into()));
+    h.run();
+    assert!(h.mailbox().contains("certified spira/sp-a"), "{}", h.mailbox());
 }
 
 #[test]
@@ -1518,6 +1536,7 @@ fn halt_setup(ignores_term: bool) -> (crate::testutil::TmpDir, FakeHalt) {
     (dir, h)
 }
 
+// covers: UC-landing-merge-queue-24
 #[test]
 fn halt_dry_run_reports_and_touches_nothing() {
     let (dir, ports) = halt_setup(false);
@@ -1533,6 +1552,7 @@ fn halt_dry_run_reports_and_touches_nothing() {
     assert_eq!((rc, out[0].as_str()), (1, "landing: no pass running"));
 }
 
+// covers: UC-landing-merge-queue-24
 #[test]
 fn halt_terms_then_kills_records_why_and_tears_down_only_live_containers() {
     let (dir, mut ports) = halt_setup(true);
@@ -1556,6 +1576,7 @@ fn halt_terms_then_kills_records_why_and_tears_down_only_live_containers() {
     assert_eq!(out.last().unwrap(), "landing: halted — interrupted at phase=gate in spira (100s)");
 }
 
+// covers: UC-landing-merge-queue-24
 #[test]
 fn halt_keeps_every_batch_branch_of_a_repo_whose_open_batch_the_queue_cannot_show() {
     let (dir, mut ports) = halt_setup(false);
@@ -1572,6 +1593,7 @@ fn halt_keeps_every_batch_branch_of_a_repo_whose_open_batch_the_queue_cannot_sho
     assert!(out.iter().any(|l| l.contains("cannot tell spira's open batch (queue batch show exited 1)")), "{out:?}");
 }
 
+// covers: UC-landing-merge-queue-24
 #[test]
 fn halt_refuses_when_no_pass_is_running_or_the_record_is_our_own_pid() {
     let (dir, ports) = halt_setup(false);

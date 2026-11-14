@@ -188,3 +188,6 @@ fn tsd_ingest_recent(world: &dyn World, home: &std::path::Path, repo: &str) {
         world.tsd_ingest(home, repo, &run_id);
     }
 }
+
+#[cfg(test)]
+mod run_tests;

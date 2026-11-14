@@ -213,6 +213,16 @@ fn repo_map_lookup(repo: &str) -> Result<Option<String>, String> {
 mod tests {
     use super::*;
 
+    // covers: UC-landing-merge-queue-55
+    #[test]
+    fn a_verb_outside_the_read_table_is_refused_before_any_repo_lookup_or_gh_call() {
+        for verb in ["run-rerun", "run-cancel", "submit", "execute", "pr-merge", ""] {
+            let err = run(&[verb.to_string(), "some-repo/1".to_string()]).unwrap_err();
+            assert!(err.contains("run-view run-jobs artifact-download"), "{verb}: {err}");
+        }
+    }
+
+    // covers: UC-landing-merge-queue-55
     #[test]
     fn run_view_asks_for_safe_fields_only() {
         let args = run_view_args("12345");
@@ -248,6 +258,7 @@ mod tests {
         assert_eq!(v["run"]["url"], "https://github.com/o/r/actions/runs/7");
     }
 
+    // covers: UC-landing-merge-queue-55
     #[test]
     fn artifact_download_names_the_artifact_and_output_dir() {
         let args = artifact_download_args("12345", "batch-results", "/tmp/out");

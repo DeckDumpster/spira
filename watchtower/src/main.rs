@@ -428,6 +428,7 @@ mod tests {
         assert_eq!(getenv_i64("SPIRA_DISK_WARN_PCT", 90), 99, "an explicit env override still wins over the registry");
     }
 
+    // covers: UC-landing-merge-queue-12
     #[test]
     fn world_halted_reads_the_stamp() {
         let dir = testkit::TempDir::new("watchtower-halted");

@@ -1961,6 +1961,7 @@ impl T {
 
 // ------------------------------------------------------------------------------ submit
 
+// covers: UC-landing-merge-queue-27
 #[test]
 fn submit_queue_mode_refuses_a_branch_outside_spira() {
     let t = T::new(LandMode::QueueLocal);
@@ -1973,6 +1974,7 @@ fn submit_queue_mode_refuses_a_branch_outside_spira() {
 
 /// sp-lck63: a suite-state edit is a bead on spira/<id> like any other change; the old
 /// bead-less `spira-suite-state/*` route, certified only in a queue record, is refused.
+// covers: UC-landing-merge-queue-27
 #[test]
 fn submit_refuses_a_bead_less_suite_state_branch() {
     for mode in [LandMode::Queue, LandMode::QueueLocal] {
@@ -1998,6 +2000,7 @@ fn submit_refuses_a_bead_less_suite_state_branch() {
     }
 }
 
+// covers: UC-landing-merge-queue-27
 #[test]
 fn submit_red_gate_logs_caught_and_propagates_the_gate_code() {
     let t = T::new(LandMode::Queue);
@@ -2371,6 +2374,7 @@ fn eject_with_a_locked_lifecycle_store_exits_nonzero_naming_the_lock() {
     );
 }
 
+// covers: UC-landing-merge-queue-29
 #[test]
 fn eject_member_records_the_harness_cause_and_returns_it_to_rework_on_spira_lc() {
     let t = T::new(LandMode::Queue);
@@ -2569,6 +2573,7 @@ fn eject_takes_a_comma_separated_suites_list_and_still_refuses_a_bad_name_in_it(
     );
 }
 
+// covers: UC-landing-merge-queue-29
 #[test]
 fn eject_of_a_stranger_names_the_members_and_changes_nothing() {
     let t = T::new(LandMode::Queue);
@@ -2761,6 +2766,7 @@ fn an_eject_that_settles_runs_no_sweep() {
     assert!(!t.lc.has("requeue-orphans"), "{:?}", t.lc.calls.borrow());
 }
 
+// covers: UC-landing-merge-queue-29
 #[test]
 fn eject_of_the_last_member_abandons_the_emptied_batch_row() {
     let t = T::new(LandMode::Queue);
@@ -2907,6 +2913,7 @@ fn czar_fence_refusal_stops_eject_before_anything() {
 
 // ----------------------------------------------------------------------------- abandon
 
+// covers: UC-landing-merge-queue-29
 #[test]
 fn abandon_requires_a_reason() {
     let t = T::new(LandMode::Queue);
@@ -3015,6 +3022,23 @@ fn verdict_ejects_a_provisional_member_whose_gate_went_red_naming_the_gate_lines
         "{:?}",
         t.lib.calls.borrow()
     );
+}
+
+// covers: UC-landing-merge-queue-41
+#[test]
+fn open_batch_pr_body_lists_id_and_title_per_member() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    t.submitted(&["sp-a", "sp-b"]);
+    for (id, title) in [("sp-a", "first fix"), ("sp-b", "second fix")] {
+        t.bd.rows.borrow_mut().iter_mut().find(|r| r.id == id).unwrap().title = Some(title.into());
+        t.git.set(&format!("refs/heads/spira/{id}"), "ts");
+        t.lc_row(id, "CERTIFIED", "ts", 1);
+    }
+    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ts".into()), ("spira/sp-b".into(), "ts".into())];
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}\n{}", t.out(), t.err());
+    let pr = t.forge.calls.borrow().iter().find(|c| c.starts_with("pr-create")).cloned().unwrap_or_default();
+    assert!(pr.contains("- sp-a — first fix\n") && pr.contains("- sp-b — second fix"), "{pr}");
 }
 
 #[test]
@@ -4534,6 +4558,7 @@ fn settle_exits_zero_and_logs_when_the_queue_lock_is_held() {
     assert!(t.forge.calls.borrow().is_empty());
 }
 
+// covers: UC-landing-merge-queue-27
 #[test]
 fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_keeps_no_record_of_its_own() {
     let mut t = T::new(LandMode::Queue);
@@ -4556,6 +4581,7 @@ fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_keeps_no_record_of_its
     assert!(t.out().contains("queue.sh submit: certified spira/sp-a"));
 }
 
+// covers: UC-landing-merge-queue-27
 #[test]
 fn submit_does_not_certify_when_spira_lc_refuses() {
     let t = T::new(LandMode::Queue);
@@ -4584,6 +4610,7 @@ fn eject_dry_run_writes_nothing() {
     assert!(t.lib.calls.borrow().is_empty());
 }
 
+// covers: UC-landing-merge-queue-29
 #[test]
 fn abandon_keeps_reworked_members_archives_and_audits() {
     let t = T::new(LandMode::Queue);
