@@ -4,7 +4,7 @@
 #
 #   lc-backup.sh run                 per database: sync the local backup dir, upload its new table files and a new manifest, stamp it
 #   lc-backup.sh age [--now EPOCH]   exit 0 when every database's newest good backup is younger than SPIRA_LC_BACKUP_MAX_AGE
-#   lc-backup.sh drill [--db NAME]   per database: restore the newest uploaded manifest's file set into a scratch dir; row counts must equal live; exit 0 with a recorded DEFERRED verdict when the store stays busy past the cap. With SPIRA_LC_STORE_PATH set, the control store (--db control) first: spira-lc admin-drill
+#   lc-backup.sh drill [--db NAME]   per database: restore the newest uploaded manifest's file set into a scratch dir; row counts must equal live; exit 1 with a recorded DEFERRED verdict when the store stays busy past the wait cap (once a day, no second slot). With SPIRA_LC_STORE_PATH set, the control store (--db control) first: spira-lc admin-drill
 #   lc-backup.sh watch [--interval S] [--ticks N]   watchd daemon: mails the crossing into and out of stale
 #   lc-backup.sh health              exit non-zero when the watch loop has stopped polling
 #   lc-backup.sh explain             after a failed run: put the log's last error line on stderr and in the journal
@@ -272,7 +272,9 @@ _lcb_drill_busy() {
 _lcb_record_deferral() {
     local line db; line="$(cat)"; echo "$line"
     for db in $(_lcb_dbs); do
-        mkdir -p "$(dirname "$(_lcb_verdict "$db")")" && printf '%s\n' "$line" > "$(dirname "$(_lcb_verdict "$db")")/drill.deferred"
+        mkdir -p "$(dirname "$(_lcb_verdict "$db")")" || continue
+        printf '%s\n' "$line" > "$(dirname "$(_lcb_verdict "$db")")/drill.deferred"
+        printf '%s\n' "$line" > "$(_lcb_verdict "$db")"
     done
 }
 
@@ -320,7 +322,7 @@ cmd_drill() {
         _lcb_drill_control || rc=1
         [ "$only" = control ] && return "$rc"
     fi
-    _lcb_drill_wait_quiet || return "$rc"
+    _lcb_drill_wait_quiet || return 1
     for db in ${only:-$(_lcb_dbs)}; do _lcb_drill_db "$db" || rc=1; done
     return "$rc"
 }

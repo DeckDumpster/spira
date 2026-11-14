@@ -11,7 +11,7 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr
 Type=oneshot
 ExecStart=@SPIRA_HOME@/lc-backup.sh drill
 ExecStopPost=@SPIRA_HOME@/lc-backup.sh explain-drill
-TimeoutStartSec=4h
+TimeoutStartSec=8h
 IOSchedulingClass=idle
 IOWeight=10
 Nice=19
