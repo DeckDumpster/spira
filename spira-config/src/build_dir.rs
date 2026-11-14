@@ -330,7 +330,6 @@ pub fn evict_idle_in(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) 
         })
         .collect();
     idle.sort_by_key(|(at, _, p, _)| (*at, p.clone()));
-    let held = held_by_processes(proc_root);
     for (_, entry, dir, bytes) in idle {
         if total <= budget_bytes {
             break;
@@ -343,7 +342,8 @@ pub fn evict_idle_in(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) 
                 empty(&dir);
             }
             Entry::Stray => {
-                if held.iter().any(|h| h.starts_with(&dir)) {
+                // Read at the removal, not before the age scan: a process may have started standing here since.
+                if held_by_processes(proc_root).iter().any(|h| h.starts_with(&dir)) {
                     continue;
                 }
                 remove_any(&dir);
@@ -841,6 +841,43 @@ mod tests {
         assert!(!stale.exists());
         assert!(named.join("debug/x").exists(), "a directory a live process's CARGO_TARGET_DIR names stays");
         assert!(live.dir().join("debug/x").exists(), "a live slot is left alone");
+    }
+
+    #[test]
+    fn a_non_slot_directory_is_ranked_with_idle_slots_oldest_first_and_a_process_cwd_inside_it_spares_it() {
+        let d = testkit::TempDir::new("bdir-nonslot-order");
+        let base = d.path().join("base");
+        let a = lease(std::slice::from_ref(&base), "sp-a").unwrap();
+        let b = lease(std::slice::from_ref(&base), "sp-b").unwrap();
+        let (da, db) = (a.dir().to_path_buf(), b.dir().to_path_buf());
+        fill(&da.join("debug/x"), 1);
+        fill(&db.join("debug/x"), 1);
+        a.release();
+        b.release();
+        let stray = base.join("spike.1");
+        let cwd_held = base.join("spike.2");
+        for p in [&stray, &cwd_held] {
+            touch(&p.join("x"), 3 * 86400, 3 * 86400);
+        }
+        set_idle(&base, &da, 5 * 86400);
+        set_idle(&base, &db, 86400);
+        let held = |p: &Path| u64::from(holds_anything(p)) * 100;
+        let proc = d.path().join("proc");
+        std::fs::create_dir_all(proc.join("77")).unwrap();
+        std::os::unix::fs::symlink(cwd_held.join("sub"), proc.join("77/cwd")).unwrap();
+        let gone = evict_idle_in(std::slice::from_ref(&base), 100, &held, &proc);
+        assert_eq!(gone, vec![da, stray, db], "idle slots and strays go in one oldest-first order");
+        assert!(cwd_held.join("x").exists(), "a process standing in a stray keeps it");
+    }
+
+    #[test]
+    fn the_public_eviction_counts_a_non_slot_directory_against_the_budget() {
+        let d = testkit::TempDir::new("bdir-nonslot-public");
+        let base = d.path().join("base");
+        let stray = base.join("hand.1");
+        touch(&stray.join("x"), 3 * 86400, 3 * 86400);
+        let held = |p: &Path| u64::from(holds_anything(p)) * 100;
+        assert_eq!(evict_idle_with(std::slice::from_ref(&base), 0, &held), vec![stray]);
     }
 
     #[test]
