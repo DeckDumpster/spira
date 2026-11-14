@@ -724,11 +724,11 @@ impl World for Real {
             .stderr(Stdio::null())
             .status();
     }
-    fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) -> String {
+    fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str, step: &str, message: &str) -> String {
         // spira-lc's caller verb: it reads the switch itself and answers "cannot tell" having
         // touched nothing when it is off.
         spira_config::bounded::bounded("spira-lc")
-            .args(["certify", bead, tip, outcome, detail, "gate"])
+            .args(["certify", bead, tip, outcome, detail, "gate", step, message])
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
             .stdout(Stdio::null())

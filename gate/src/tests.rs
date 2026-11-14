@@ -575,9 +575,9 @@ impl World for Fake {
     fn lc_failure(&self, bead: &str, tip: &str, files: &[String], output: &str) {
         self.failures.borrow_mut().push((bead.into(), tip.into(), files.to_vec(), output.into()));
     }
-    fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) -> String {
+    fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str, step: &str, message: &str) -> String {
         self.lc.borrow_mut().push(
-            [bead, tip, outcome, detail]
+            [bead, tip, outcome, detail, step, message]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
@@ -2105,6 +2105,18 @@ fn the_meter_row_and_yield_on_a_pass() {
         f.yields.borrow()[0],
         [RUN, "pass", "spira", BR, "tree-of-spira/sp-a"]
     );
+}
+
+#[test]
+fn a_red_certification_carries_the_failed_step_and_its_last_message_line() {
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "gate-step RED rc=1 :: fence-f\n  test-s1.sh RED rc=1 after 3s".into()));
+    f.runs.borrow_mut().insert(BASE.into(), (0, String::new()));
+    f.run();
+    let lc = f.lc.borrow()[0].clone();
+    assert_eq!(lc[2], "red", "{lc:?}");
+    assert!(!lc[4].is_empty() && lc[5].contains("test-s1.sh RED"), "{lc:?}");
 }
 
 #[test]
