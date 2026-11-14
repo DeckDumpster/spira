@@ -49,7 +49,6 @@ spira/publish-backlog.sh
 spira/release.sh
 spira/stage.sh
 spira/test-concierge.sh
-spira/test-czar-pass.sh
 spira/test-deploy.sh
 spira/test-doctor-config-files.sh
 spira/test-doctor-gate-compile-check.sh

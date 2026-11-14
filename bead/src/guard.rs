@@ -242,6 +242,7 @@ mod tests {
     const CZAR: &[(&str, &str)] = &[("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "loop-stalled"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-trig")];
 
     // covers: UC-safety-fences-31
+    // covers: UC-ops-detection-remediation-24
     #[test]
     fn every_czar_class_the_conf_declares_defaults_to_shadow_and_names_its_key() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d");
@@ -261,6 +262,7 @@ mod tests {
     }
 
     // covers: UC-safety-fences-31
+    // covers: UC-ops-detection-remediation-24
     #[test]
     fn the_stage_answers_with_the_scripts_codes_and_text() {
         let e = env(&[("SPIRA_CZAR_STAGE_LOOP_STALLED", "act"), ("SPIRA_CZAR_STAGE_DEADLOCK", "loud")]);
